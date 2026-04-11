@@ -307,12 +307,19 @@ defaults:
     auth_kind: steward
     ref_default: refs/heads/dev
 
-enums:
-  # Repo-local extensions to the protocol enums.
-  lamad_verb_extras: []
-  shefa_contribution_kind_extras:
-    - benchmark
-    - reproducibility-evidence
+defaults:
+  # Per-repo defaults and helpers. The elohim-protocol vocabulary is CLOSED
+  # (see §14.1 #6 resolution) — this block does NOT extend enums. It records
+  # repo-local DEFAULTS (e.g., prefer `refactors-no-lamad` for test-only
+  # commits) and HELPER HINTS the LLM can use when filling in trailers.
+  # A different app schema plugged into brit-epr supplies its own vocabulary
+  # via its own manifest; brit never mixes vocabularies at the repo level.
+  prefer_lamad_verb_when:
+    test_only_change: refactors-no-lamad
+    docs_only_change: documents
+  shefa_contribution_kind_hints:
+    - benchmark    # hint: commit-template suggests this kind for bench/ dir changes
+    - reproducibility-evidence  # hint: suggests this for ci/reproduce/ changes
 
 protection_rules:
   refs/heads/main:
@@ -1223,10 +1230,20 @@ Verification: read the file, strip `[signature]`, recompute the bytes, verify ag
 
 **Cold start (no previous signature to verify against).** The first commit that adds `.brit/doorway.toml` is a *root-of-trust* event. There is no chain to walk back to. The verifier accepts the first signature and trusts it. From that point forward, each rotation must be verifiable via the chain. This means a hostile steward who creates a brand new repo and signs its registration cannot be detected by signature alone — but the wider network can refuse to talk to that doorway based on agent reputation and constitutional policy. Trust chains start somewhere.
 
-### 10.6 Open questions (cross-referenced to §14)
+### 10.6 Key recovery is a protocol-substrate concern, not a brit concern
+
+*(Resolved 2026-04-11.)* When a steward loses their signing key, recovery is **not** a brit-schema flow — it's the **Elohim Protocol social recovery substrate** operating one layer below brit. The steward's key material is stored as sharded blobs (Shamir-style or equivalent threshold scheme), and those shards are EPR-addressed to the steward's trust base: family, friends, institutions. Recovery is reconstituting N-of-M shards from that social graph via the protocol's existing sharding + addressing machinery.
+
+What this means for brit:
+
+- The `stewardSigningKey` field in `.brit/doorway.toml` is trust-rooted in the social recovery substrate, not in any brit-specific recovery procedure.
+- After social-recovery completes (new shards reassembled, new key material in the steward's hands), the steward uses the normal rotation flow from §10 — authoring a rotation commit with the new `steward_agent` and `steward_signing_key`. The rotation is signed by the **recovered** key; the chain-of-trust from the previous registration commit to the new one is preserved.
+- Co-steward quorum rotation (where N-of-M co-stewards can rotate out a lost key via multi-signature) remains valid as an *additional* safety mechanism layered on top of social recovery — not a replacement for it. Co-stewards protect against hostile capture; social recovery protects against accidental loss.
+- Solo repos are NOT a special case. Every repo has a social recovery graph underneath because the protocol substrate guarantees one. There is no "solo repo recovery" in brit because there are no truly solo repos in the protocol's storage layer — "solo" is a UX term, not a substrate term.
+
+### 10.7 Open questions (cross-referenced to §14)
 
 - Should the file carry a co-signature from the constitutional layer for stronger trust? §14.
-- Is there a standard reset/recovery path when the steward loses their key? §14.
 - Should `web2_mirrors` be authoritative or hint-only? Lean: hint-only.
 
 ---
@@ -1482,13 +1499,13 @@ This section is the honest list of decisions the schema doesn't make. Each one n
 
 2. **Doorway signature trust model.** Is `.brit/doorway.toml` signed by the steward's agent key alone (as in §10), or should it carry a co-signature from the constitutional layer for stronger trust? Lean: steward-only at v1, with a future `constitutional_endorsement` field that the constitutional layer can populate later. The cold-start case (solo developer pre-network) makes constitutional co-signature impossible at first.
 
-3. **Steward key recovery.** What happens when a steward loses their signing key? There must be a recovery path, but it can't be a backdoor. Options: (a) constitutional council can issue a recovery decree as a special qahal node; (b) co-stewards can rotate the lost key via quorum; (c) the repo is forked under a new steward and the old repo is marked as orphaned. Lean: (b) for repos with co-stewards, (a) for solo repos. Needs design.
+3. **Steward key recovery.** *(Resolved 2026-04-11.)* Recovery is **not** a brit-schema concern — it lives in the Elohim Protocol's **social recovery substrate**. A steward's signing key material is stored as sharded blobs (Shamir-style or equivalent threshold scheme), and those shards are EPR-addressed to the steward's trust base — family, friends, institutions — via the same content-addressing mechanism the protocol uses for all other storage. Recovery is reconstituting N-of-M shards from that social graph. The brit schema assumes this layer exists and does not define a parallel mechanism. Implications for §10 (DoorwayRegistration): the `stewardSigningKey` field and its rotation policy are trust-rooted in the social recovery graph, not in a brit-specific recovery flow. Co-steward quorum rotation (option b above) remains valid for repos that want it, but it's an *additional* safety mechanism layered on top of social recovery, not a replacement.
 
 4. **`brit merge` blocking vs. async.** Does `brit merge` to a protected branch *block* synchronously waiting for qahal consent, or *gossip* the proposal as a `brit.merge.proposed` signal and return immediately, with the developer (or LLM) checking back later? Lean: configurable per-repo, default async, with `--wait` flag for sync. Async is more LLM-friendly.
 
 5. **`Built-By:` trailer ergonomics.** §6.3 reserves `Built-By:` as a repeatable trailer for build attestations. With many builders, the trailer block could grow large. At what point do we move attestations out of the trailer and into a separate `refs/notes/brit-builds` log? Lean: trailer is fine for ≤5 attestations, log is required beyond that. Needs calibration against real attestation volumes.
 
-6. **Pillar summary enums — closed or extensible?** §6.5 declares fixed verbs/actor-kinds/auth-kinds. Should these be closed (protocol law), open (schema-scoped), or hybrid (closed core + per-repo extensions via `commit-template.yaml`)? Lean: closed core for v1, with the per-repo template allowed to extend `shefa_contribution_kind_extras` and similar lists. Closed is safest for round-trip and interop; per-repo extensions offer the safety valve.
+6. **Pillar summary enums — closed or extensible?** *(Resolved 2026-04-11.)* **Closed.** The elohim-protocol app schema's vocabulary (verbs, actor-kinds, auth-kinds) is fixed. The extensibility axis is NOT "per-repo enum additions" — it's **the feature-module boundary itself**. If another app needs different primitives (e.g., a music-composition app, a carbon-accounting app, a biological-sequence app), it supplies its own EPR manifest via its own app schema that plugs into the same `brit-epr` engine. The brit-epr engine counts trailers without knowing which vocabulary it's counting; the app schema provides the vocabulary. This preserves round-trip interop (every brit-using-elohim-protocol repo has the same vocabulary), keeps per-repo `commit-template.yaml` honest (it configures *defaults and helpers*, not new enum values), and matches the "one engine, many app schemas" separation from §2. §6.5 and §4.3 should be read as closed-vocabulary specs. Per-repo templates that appear to extend enums are actually carrying **per-repo defaults** (e.g., "this repo prefers `refactors-no-lamad` when the commit touches only test files") — not new enum values.
 
 7. **Agent-scoped vs. repo-scoped branch identity.** §5.5 uses a composite `{repo_cid, branch_name, owning_agent}` as the stable id. This means two agents with a `main` branch on the same repo have two different BranchContentNodes. Honors the per-steward view, but breaks the git intuition of "one main per repo." Lean: keep the composite, add tooling that hides it for the common case where there's only one steward.
 
