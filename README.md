@@ -1,460 +1,160 @@
-[![CI](https://github.com/GitoxideLabs/gitoxide/workflows/ci/badge.svg)](https://github.com/GitoxideLabs/gitoxide/actions)
-[![Crates.io](https://img.shields.io/crates/v/gitoxide.svg)](https://crates.io/crates/gitoxide)
-<img src="etc/msrv-badge.svg">
+# brit
 
-`gitoxide` is an implementation of `git` written in Rust for developing future-proof applications which strive for correctness and
-performance while providing a pleasant and unsurprising developer experience.
+**Brit** (בְּרִית, "covenant") is an expansion of [gitoxide](https://github.com/GitoxideLabs/gitoxide) — a pure-Rust implementation of git — that integrates protocol-level primitives for tracking who built code, what value it creates, and who governs it. Every commit in a brit repo is a covenant: a witnessed agreement whose terms travel with the code, no matter where it goes.
 
-There are two primary ways to use `gitoxide`:
+The name rhymes with *git* on purpose. Git is the substrate. Brit is the covenant laid on top.
 
-1. **As Rust library**: Use the [`gix`](https://docs.rs/gix) crate as a Cargo dependency for API access.
-1. **As command-line tool**: The `gix` binary as development tool to help testing the API in real repositories,
-    and the `ein` binary with workflow-enhancing tools. Both binaries may forever be unstable,
-    *do not rely on them in scripts*.
+A brit repo is a valid git repo. You can `git clone` it from GitHub. You can push it to GitLab, Codeberg, sourcehut. Everything works. But inside the [Elohim Protocol](https://github.com/ethosengine/elohim) network, the same repo resolves to a richer view: provenance, economic events, governance context, and content-addressed links that know where your code is running.
 
-[![asciicast](etc/gix-asciicast.svg)](https://asciinema.org/a/542159)
+## Why this exists
 
-[`gix`]: https://docs.rs/gix
+### The problem: power is siloed
 
-## Development Status
+The world has three forms of power, and today they're separated:
 
-The command-line tools as well as the status of each crate is described in
-[the crate status document](https://github.com/GitoxideLabs/gitoxide/blob/main/crate-status.md).
+- **Economic power** — money, wealth, capital. Concentrated in institutions that extract value from the systems they control.
+- **Informational power** — knowledge, data, distribution. Concentrated in platforms that control what you see and who sees you.
+- **Social and network power** — trust, governance, collective decision-making. Concentrated in corporations and governments that make rules for everyone while being accountable to almost no one.
 
-For use in applications, look for the [`gix`](https://github.com/GitoxideLabs/gitoxide/blob/main/crate-status.md#gix) crate,
-which serves as entrypoint to the functionality provided by various lower-level plumbing crates like
-[`gix-config`](https://github.com/GitoxideLabs/gitoxide/blob/main/crate-status.md#gix-config).
+These silos aren't accidental. They're profitable. When economic power is decoupled from the knowledge it was built on, you get proprietary lock-in. When informational power is decoupled from governance, you get surveillance capitalism. When social power is decoupled from economic accountability, you get institutions that privatize gains and socialize costs.
 
-### Feature Discovery
+Every open-source project lives at the intersection of all three — code is knowledge (informational), contributors create value (economic), and maintainers make decisions for everyone who depends on them (governance) — but git, the tool that tracks it all, knows about exactly *none* of it. Git tracks content. It doesn't track value. It doesn't track governance. It doesn't even reliably track who contributed what, beyond a name and email in a commit header.
 
-> Can `gix` do what I need it to do?
+### The solution: couple them at the protocol level
 
-The above can be hard to answer and this paragraph is here to help with feature discovery.
+The [Elohim Protocol](https://github.com/ethosengine/elohim) introduces three coupled primitives — **lamad** (knowledge), **shefa** (value), and **qahal** (governance) — and requires that every notarized artifact in the network carries all three. You cannot create a content-addressed artifact that declares what it is without also declaring who stewards it and what governance applies. The architecture makes it structurally difficult to circulate knowledge without recognizing its stewards, and structurally easy to honor their care.
 
-Look at [`crate-status.md`](https://github.com/GitoxideLabs/gitoxide/blob/main/crate-status.md) for a rather exhaustive document that contains
-both implemented and planned features.
+Brit brings this coupling to version control.
 
-Further, the [`gix` crate documentation with the `git2` search term](https://docs.rs/gix/latest/gix?search=git2) helps to find all currently
-known `git2` equivalent method calls. Please note that this list is definitely not exhaustive yet, but might help if you are coming from `git2`.
+## What this means for code
 
-What follows is a high-level list of features and those which are planned:
+### 1. A way to pay the open source contributor, built in
 
-* [x] clone
-* [x] fetch
-* [ ] push
-* [x] blame (*plumbing*)
-* [x] status
-* [x] blob and tree-diff
-* [ ] merge
-    - [x] blobs
-    - [x] trees
-    - [ ] commits
-* [x] commit
-    - [ ] hooks
-* [x] commit-graph traversal
-* [ ] rebase
-* [x] worktree checkout and worktree stream
-* [ ] reset
-* [x] reading and writing of objects
-* [x] reading and writing of refs
-* [x] reading and writing of `.git/index`
-* [x] reading and writing of git configuration
-* [x] pathspecs
-* [x] revspecs
-* [x] `.gitignore` and `.gitattributes`
+Today, open source runs on unpaid labor. Contributions are tracked by git (author, committer), but the economic relationship between contribution and value is invisible to the tooling. Payment is an afterthought — a GitHub Sponsors button, a Patreon link, a corporate donation. None of it is wired into the act of building.
 
-### Crates
+In a brit repo, every commit carries a **shefa** trailer that declares the economic event: who contributed, what kind of work it was, what stewardship changed. When someone builds your package, the protocol's economic layer records a recognition event — not a financial transaction, but a protocol-level acknowledgment that serving knowledge generates value for those who care for it. Recognition flows proportionally to stewards based on their allocation.
 
-Follow linked crate name for detailed status. Please note that all crates follow [semver] as well as the [stability guide].
+This isn't "add a token to npm." This is the substrate knowing, at the commit level, that contribution has value and tracking it the same way git tracks authorship: as a first-class primitive that travels with the code.
 
-[semver]: https://semver.org
+### 2. Provenance-aware code — choose who you trust, not just what you run
 
-### Production Grade
+Here's a thought experiment. Imagine there's a critical piece of infrastructure — call it a cloud platform — built by a large corporation. The code is open source. You can read every line. But the corporation starts doing things you disagree with: surveillance, labor violations, environmental harm. You want to keep using the code, but you don't want your usage to legitimize their stewardship.
 
-* **Stability Tier 1**
-  - [gix-lock](https://github.com/GitoxideLabs/gitoxide/blob/main/gix-lock/README.md)
+Today, you fork the repo on GitHub and hope people notice. The fork has no formal relationship to the original. No one can tell, from the code alone, whether your fork is a legitimate community effort or a fly-by-night copy.
 
-* **Stability Tier 2**
-  - [gix-tempfile](https://github.com/GitoxideLabs/gitoxide/blob/main/gix-tempfile/README.md)
+With brit, a fork is a **first-class covenant** — a new `ForkContentNode` with its own stewardship, its own attestations, its own peers. The code is the same; the stewardship graph is different. When you choose to depend on Coop AWS instead of Amazon AWS, that choice is visible on the protocol's content graph. Your dependency isn't just a semver string in a lockfile — it's an EPR reference that points at specific stewards, specific attestations, specific governance. Everyone on the graph can see which collective you're trusting, and every steward can independently attest that the tags and branches they serve have the integrity needed for deployment.
 
-### Stabilization Candidates
+Provenance isn't metadata bolted on after the fact. It's the address.
 
-Crates that seem feature complete and need to see some more use before they can be released as 1.0.
-Documentation is complete and was reviewed at least once.
+### 3. Deployment-aware code — links that know where they're running
 
-* [gix-mailmap](https://github.com/GitoxideLabs/gitoxide/blob/main/crate-status.md#gix-mailmap)
-* [gix-chunk](https://github.com/GitoxideLabs/gitoxide/blob/main/crate-status.md#gix-chunk)
-* [gix-ref](https://github.com/GitoxideLabs/gitoxide/blob/main/crate-status.md#gix-ref)
-* [gix-config](https://github.com/GitoxideLabs/gitoxide/blob/main/crate-status.md#gix-config)
-* [gix-config-value](https://github.com/GitoxideLabs/gitoxide/blob/main/crate-status.md#gix-config-value)
-* [gix-glob](https://github.com/GitoxideLabs/gitoxide/blob/main/crate-status.md#gix-glob)
-* [gix-actor](https://github.com/GitoxideLabs/gitoxide/blob/main/crate-status.md#gix-actor)
-* [gix-hash](https://github.com/GitoxideLabs/gitoxide/blob/main/crate-status.md#gix-hash)
+Have you ever thought it would be nice if a config reference could resolve differently depending on which environment you're in? Or if a link in your documentation could point at staging when you're on the `dev` branch and production when you're on `main`?
 
-### Initial Development
+With an Elohim Protocol Reference (EPR) link, now it can. An EPR is a content address that carries context: `epr:my-service[@v2.1.0][/head][?via=doorway.example.org]`. The same link, in a brit repo, resolves differently based on:
 
-These crates may be missing some features and thus are somewhat incomplete, but what's there
-is usable to some extent.
+- **Which branch you're on** — each branch has a reach level (`private`, `self`, `trusted`, `familiar`, `community`, `public`, `commons`) that determines who sees it and what it resolves to.
+- **Which doorway you're connected to** — a doorway is a gateway node that bridges web2 (GitHub, GitLab) and the protocol network. Your doorway knows your environment.
+- **Who's asking** — the protocol's context-aware resolution adapts to the requester's position in the knowledge graph.
 
-* **usable** _(with rough but complete docs, possibly incomplete functionality)_
-  * [gix](https://github.com/GitoxideLabs/gitoxide/blob/main/crate-status.md#gix) (**⬅ entrypoint**)
-  * [gix-object](https://github.com/GitoxideLabs/gitoxide/blob/main/crate-status.md#gix-object)
-  * [gix-validate](https://github.com/GitoxideLabs/gitoxide/blob/main/crate-status.md#gix-validate)
-  * [gix-url](https://github.com/GitoxideLabs/gitoxide/blob/main/crate-status.md#gix-url)
-  * [gix-packetline](https://github.com/GitoxideLabs/gitoxide/blob/main/crate-status.md#gix-packetline)
-  * [gix-packetline-blocking](https://github.com/GitoxideLabs/gitoxide/blob/main/crate-status.md#gix-packetline)
-  * [gix-transport](https://github.com/GitoxideLabs/gitoxide/blob/main/crate-status.md#gix-transport)
-  * [gix-protocol](https://github.com/GitoxideLabs/gitoxide/blob/main/crate-status.md#gix-protocol)
-  * [gix-pack](https://github.com/GitoxideLabs/gitoxide/blob/main/crate-status.md#gix-pack)
-  * [gix-odb](https://github.com/GitoxideLabs/gitoxide/blob/main/crate-status.md#gix-odb)
-  * [gix-commitgraph](https://github.com/GitoxideLabs/gitoxide/blob/main/crate-status.md#gix-commitgraph)
-  * [gix-diff](https://github.com/GitoxideLabs/gitoxide/blob/main/crate-status.md#gix-diff)
-  * [gix-traverse](https://github.com/GitoxideLabs/gitoxide/blob/main/crate-status.md#gix-traverse)
-  * [gix-features](https://github.com/GitoxideLabs/gitoxide/blob/main/crate-status.md#gix-features)
-  * [gix-credentials](https://github.com/GitoxideLabs/gitoxide/blob/main/crate-status.md#gix-credentials)
-  * [gix-sec](https://github.com/GitoxideLabs/gitoxide/blob/main/crate-status.md#gix-sec)
-  * [gix-quote](https://github.com/GitoxideLabs/gitoxide/blob/main/crate-status.md#gix-quote)
-  * [gix-discover](https://github.com/GitoxideLabs/gitoxide/blob/main/crate-status.md#gix-discover)
-  * [gix-path](https://github.com/GitoxideLabs/gitoxide/blob/main/crate-status.md#gix-path)
-  * [gix-attributes](https://github.com/GitoxideLabs/gitoxide/blob/main/crate-status.md#gix-attributes)
-  * [gix-ignore](https://github.com/GitoxideLabs/gitoxide/blob/main/crate-status.md#gix-ignore)
-  * [gix-pathspec](https://github.com/GitoxideLabs/gitoxide/blob/main/crate-status.md#gix-pathspec)
-  * [gix-index](https://github.com/GitoxideLabs/gitoxide/blob/main/crate-status.md#gix-index)
-  * [gix-revision](https://github.com/GitoxideLabs/gitoxide/blob/main/crate-status.md#gix-revision)
-  * [gix-revwalk](https://github.com/GitoxideLabs/gitoxide/blob/main/crate-status.md#gix-revwalk)
-  * [gix-command](https://github.com/GitoxideLabs/gitoxide/blob/main/crate-status.md#gix-command)
-  * [gix-prompt](https://github.com/GitoxideLabs/gitoxide/blob/main/crate-status.md#gix-prompt)
-  * [gix-refspec](https://github.com/GitoxideLabs/gitoxide/blob/main/crate-status.md#gix-refspec)
-  * [gix-fs](https://github.com/GitoxideLabs/gitoxide/blob/main/crate-status.md#gix-fs)
-  * [gix-utils](https://github.com/GitoxideLabs/gitoxide/blob/main/crate-status.md#gix-utils)
-  * [gix-hashtable](https://github.com/GitoxideLabs/gitoxide/blob/main/crate-status.md#gix-hashtable)
-  * [gix-worktree](https://github.com/GitoxideLabs/gitoxide/blob/main/crate-status.md#gix-worktree)
-  * [gix-bitmap](https://github.com/GitoxideLabs/gitoxide/blob/main/crate-status.md#gix-bitmap)
-  * [gix-negotiate](https://github.com/GitoxideLabs/gitoxide/blob/main/crate-status.md#gix-negotiate)
-  * [gix-filter](https://github.com/GitoxideLabs/gitoxide/blob/main/crate-status.md#gix-filter)
-  * [gix-worktree-stream](https://github.com/GitoxideLabs/gitoxide/blob/main/crate-status.md#gix-worktree-stream)
-  * [gix-archive](https://github.com/GitoxideLabs/gitoxide/blob/main/crate-status.md#gix-archive)
-  * [gix-submodule](https://github.com/GitoxideLabs/gitoxide/blob/main/crate-status.md#gix-submodule)
-  * [gix-status](https://github.com/GitoxideLabs/gitoxide/blob/main/crate-status.md#gix-status)
-  * [gix-worktree-state](https://github.com/GitoxideLabs/gitoxide/blob/main/crate-status.md#gix-worktree-state)
-  * [gix-date](https://github.com/GitoxideLabs/gitoxide/blob/main/crate-status.md#gix-date)
-  * [gix-dir](https://github.com/GitoxideLabs/gitoxide/blob/main/crate-status.md#gix-dir)
-  * [gix-merge](https://github.com/GitoxideLabs/gitoxide/blob/main/crate-status.md#gix-merge)
-  * [gix-shallow](https://github.com/GitoxideLabs/gitoxide/blob/main/crate-status.md#gix-shallow)
-  * [gix-error](https://github.com/GitoxideLabs/gitoxide/blob/main/crate-status.md#gix-error)
-  * `gitoxide-core`
-* **very early**  _(possibly without any documentation and many rough edges)_
-  * [gix-blame](https://github.com/GitoxideLabs/gitoxide/blob/main/crate-status.md#gix-blame)
-* **idea** _(just a name placeholder)_
-  * [gix-note](https://github.com/GitoxideLabs/gitoxide/blob/main/crate-status.md#gix-note)
-  * [gix-fetchhead](https://github.com/GitoxideLabs/gitoxide/blob/main/crate-status.md#gix-fetchhead)
-  * [gix-lfs](https://github.com/GitoxideLabs/gitoxide/blob/main/crate-status.md#gix-lfs)
-  * [gix-rebase](https://github.com/GitoxideLabs/gitoxide/blob/main/crate-status.md#gix-rebase)
-  * [gix-sequencer](https://github.com/GitoxideLabs/gitoxide/blob/main/crate-status.md#gix-sequencer)
-  * [gix-tui](https://github.com/GitoxideLabs/gitoxide/blob/main/crate-status.md#gix-tui)
-  * [gix-tix](https://github.com/GitoxideLabs/gitoxide/blob/main/crate-status.md#gix-tix)
-  * [gix-bundle](https://github.com/GitoxideLabs/gitoxide/blob/main/crate-status.md#gix-bundle)
-  * [gix-fsck](https://github.com/GitoxideLabs/gitoxide/blob/main/crate-status.md#gix-fsck)
+Code is no longer limited to a SHA graph address. It's a living artifact in a network that knows what it is, who built it, and where it's running.
 
-### Stress Testing
-  * [x] Verify huge packs
-  * [x] Explode a pack to disk
-  * [x] Generate and verify large commit graphs
-  * [ ] Generate huge pack from a lot of loose objects
+### 4. A fully distributed landing — not just another crypto project
 
-### Stability and MSRV
+Under the hood, brit uses [IPFS/IPLD](https://ipld.io/) primitives through [rust-ipfs](https://github.com/ethosengine/rust-ipfs) to take the actual blobs of a codebase and place them on a distributed content-addressed graph. Every tree, every blob, every commit object gets a CID (content identifier) that any peer can resolve. The codebase isn't hosted on a server you hope stays up — it's distributed across a network of peers who can independently verify every byte.
 
-Our [stability guide] helps to judge how much churn can be expected when depending on crates in this workspace.
+Other P2P and crypto projects do this too. IPFS, Radicle, and various blockchain-based package registries all make code content-addressed and peer-distributed.
 
-[stability guide]: https://github.com/GitoxideLabs/gitoxide/blob/main/STABILITY.md
+What makes brit different is *where the code lands*.
 
-## Installation
+Most distributed code projects land in a network optimized for financial incentives — mine tokens, stake coins, speculate on protocol value. The network exists to create economic returns for participants. Code is the payload; speculation is the purpose.
 
-### Download a Binary Release
+Brit lands in the Elohim Protocol network — a network designed to scale **wisdom and care**: the human capacity to steward shared resources responsibly. The three pillars (knowledge, value, governance) are coupled at the substrate level specifically so that code can't circulate without acknowledging who cares for it, and stewardship can't accumulate without the community's consent. The network exists to serve the humans who depend on the code, not to create returns for token holders.
 
-Using `cargo binstall`, one is able to fetch [binary releases][releases]. You can install it via `cargo install cargo-binstall`, assuming
-the [rust toolchain][rustup] is present.
+This is not a philosophical distinction. It's an architectural one. The same content-addressing that makes code distributed also makes stewardship trackable, governance enforceable, and value flows transparent — but only if the network those primitives land in is *designed for care rather than extraction*. A content-addressed blob on a speculation-optimized network is still a blob someone will try to rent-seek from. A content-addressed blob on a care-optimized network is a shared resource the community can actually govern.
 
-Then install gitoxide with `cargo binstall gitoxide`.
+## How it works
 
-See the [releases section][releases] for manual installation and various alternative builds that are _slimmer_ or _smaller_, depending
-on your needs, for _Linux_, _MacOS_ and _Windows_.
+### Commit trailers — the protocol surface
 
-[releases]: https://github.com/GitoxideLabs/gitoxide/releases
+Every brit commit carries three trailer lines in its message, using the same RFC-822 format as `Signed-off-by:`:
 
-### Download from Arch Linux repository
+```
+feat: add two-factor auth to login flow
 
-For Arch Linux you can download `gitoxide` from `community` repository:
+Implements TOTP-based 2FA with QR code provisioning and backup codes.
 
-```sh
-pacman -S gitoxide
+Signed-off-by: Dan <dan@example.org>
+Lamad: teaches two-factor-auth pattern; advances auth learning path
+Shefa: human contributor | effort=medium | stewards=dan,sofia
+Qahal: steward | mechanism=self-review | ref=refs/heads/dev
 ```
 
-### Download from Exherbo Linux Rust repository
+Stock git reads this commit just fine. GitHub renders it. `git log` prints it. Nothing breaks. But a brit-aware tool (or an LLM agent with a brit skill) knows that this commit teaches something (`Lamad`), that Dan and Sofia steward the value it creates (`Shefa`), and that it was self-reviewed for merge to `dev` (`Qahal`).
 
-For Exherbo Linux you can download `gitoxide` from the [Rust](https://gitlab.exherbo.org/exherbo/rust/-/tree/master/packages/dev-scm/gitoxide) repository:
+### Backward-compatible with every git host
 
-```sh
-cave resolve -x repository/rust
-cave resolve -x gitoxide
+A brit repo is a git repo. `git clone https://github.com/your-org/your-brit-repo` works from any machine with stock git. Outside the Elohim Protocol network, you get the full commit history with the trailer lines — readable, diffable, `git log --format=fuller` compatible. You lose the EPR resolution (linked ContentNodes, rich provenance graph, deployment-aware links) because those live on the protocol network, but nothing is broken. The code works. The trailers are there. The provenance is readable.
+
+Inside the network, a file called `.brit/doorway.toml` in the repo points at the primary steward's doorway node. That doorway resolves the full EPR view — linked ContentNodes for each commit, per-branch README ContentNodes, attestation graphs, economic event streams, and context-aware link resolution.
+
+### Engine and app schema — pluggable by design
+
+The `brit-epr` crate has two layers:
+
+- **Engine** (unconditional) — a generic covenant engine that parses trailer blocks, validates them against an `AppSchema` trait, and manages `TrailerSet` types. Knows nothing about Lamad, Shefa, or Qahal specifically.
+- **Elohim Protocol schema** (feature-gated, default on) — the first-party implementation of `AppSchema` for the Elohim Protocol's three pillars.
+
+A downstream project could disable the `elohim-protocol` feature and plug in a different schema — a carbon-accounting protocol, a biological-sequence protocol, a music-composition protocol — without forking brit. The engine is the covenant substrate; the schema is the vocabulary.
+
+## Current status
+
+**Phase 1 complete** (trailer foundation):
+
+- `brit-epr` crate with engine/elohim feature split
+- `AppSchema` trait — the dispatch contract for app schemas
+- `TrailerSet` type and `parse_trailer_block` via gitoxide's `gix-object`
+- `ElohimProtocolSchema` implementing `AppSchema` with closed Lamad/Shefa/Qahal vocabulary
+- `parse_pillar_trailers` and `validate_pillar_trailers` convenience functions
+- `brit-verify` binary — verifies pillar trailers on a commit, exits 0/1
+- 9 tests passing; engine compiles cleanly with `--no-default-features`
+
+**Phases 2-6** (planned, not yet implemented): ContentNode adapter, libp2p transport, per-branch READMEs, DHT peer discovery, merge-as-reach-elevation with async consent, fork-as-governance. See [docs/plans/README.md](docs/plans/README.md) for the roadmap.
+
+## Quick start
+
+```bash
+# Build
+cargo build -p brit-verify
+
+# Verify a commit's pillar trailers
+cargo run -p brit-verify -- HEAD
+
+# Expected (on a brit-aware commit):
+# ✓ pillar trailers valid for abc1234
+#   Lamad: teaches two-factor-auth pattern
+#   Shefa: human contributor | effort=medium | stewards=dan,sofia
+#   Qahal: steward | mechanism=self-review | ref=refs/heads/dev
+
+# Expected (on a stock gitoxide commit):
+# ✗ pillar validation failed for abc1234: required pillar trailer missing: Lamad
 ```
 
-### From Source via Cargo
+## Relationship to gitoxide
 
-`cargo` is the Rust package manager which can easily be obtained through [rustup]. With it, you can build your own binary
-effortlessly and for your particular CPU for additional performance gains.
+Brit is a fork of [gitoxide](https://github.com/GitoxideLabs/gitoxide) by Sebastian Thiel and contributors. Gitoxide is an excellent pure-Rust git implementation with a clean modular design — each concern lives in its own `gix-*` crate and swaps independently. Brit builds on that modularity.
 
-The minimum supported Rust version is [documented in the Cargo package](https://github.com/GitoxideLabs/gitoxide/blob/main/gix/Cargo.toml#L12-L14),
-the latest stable one will work as well.
+**What brit adds:** new crates (`brit-epr`, `brit-verify`, and future `brit-cli`, `brit-transport`, `brit-store`) that layer protocol semantics onto gitoxide's object model. Zero modifications to existing `gix-*` crates. The goal is to remain upstream-rebaseable: bug fixes and additive extension points are proposed upstream where possible; protocol-specific divergence earns its own crate.
 
-There are various build configurations, all of them are [documented here](https://docs.rs/crate/gitoxide/latest). The documentation should also be useful
-for packagers who need to tune external dependencies.
+**What brit does not change:** gitoxide's core — object storage, pack format, protocol negotiation, ref management, diff, blame, worktree. Brit consumes these; it doesn't rewrite them.
 
-```sh
-# A way to install `gitoxide` with just Rust and a C compiler installed.
-# If there are problems with SSL certificates during clones, try to omit `--locked`.
-cargo install gitoxide --locked --no-default-features --features max-pure
+## Further reading
 
-# The default installation, 'max', is the fastest, but also needs `cmake` to build successfully.
-# Installing it is platform-dependent.
-cargo install gitoxide
-
-# For smaller binaries and even faster build times that are traded for a less fancy CLI implementation,
-# use the `lean` feature.
-cargo install gitoxide --locked --no-default-features --features lean
-```
-
-The following installs the latest unpublished `max` release directly from git:
-
-```sh
-cargo install --git https://github.com/GitoxideLabs/gitoxide gitoxide
-```
-
-#### How to deal with build failures
-
-On some platforms, installation may fail due to lack of tools required by *C* toolchains. This can generally be avoided by installation with:
-
-```sh
-cargo install gitoxide --no-default-features --features max-pure
-```
-
-What follows is a list of known failures.
-
-- On Fedora, `perl` needs to be installed for `OpenSSL` to build properly. This can be done with the following command (see [issue #592](https://github.com/GitoxideLabs/gitoxide/issues/592)):
-
-  ```sh
-  dnf install perl
-  ```
-
-### Using Docker
-
-Some CI/CD pipelines leverage repository cloning. Below is a copy-paste-able example to build docker images for such workflows.
-As no official image exists (at this time), an image must first be built.
-
-> [!NOTE]
-> The dockerfile isn't continuously tested as it costs too much time and thus might already be broken.
-> PRs are welcome.
-
-#### Building the most compatible base image
-
-```sh
-docker build -f etc/docker/Dockerfile.alpine -t gitoxide:latest --compress . --target=pipeline
-```
-
-#### Basic usage in a Pipeline
-
-For example, if a `Dockerfile` currently uses something like `RUN git clone https://github.com/GitoxideLabs/gitoxide`, first build the image:
-
-```sh
-docker build -f etc/docker/Dockerfile.alpine -t gitoxide:latest --compress .
-```
-
-Then copy the binaries into your image and replace the `git` directive with a `gix` equivalent.
-
-```dockerfile
-COPY --from gitoxide:latest /bin/gix /usr/local/bin/
-COPY --from gitoxide:latest /bin/ein /usr/local/bin/
-
-RUN /usr/local/bin/gix clone --depth 1 https://github.com/GitoxideLabs/gitoxide gitoxide
-```
-
-
-[releases]: https://github.com/GitoxideLabs/gitoxide/releases
-[rustup]: https://rustup.rs
-
-## Usage
-
-Once installed, there are two binaries:
-
-* **ein**
-  * high level commands, _porcelain_, for every-day use, optimized for a pleasant user experience
-* **gix**
-  * low level commands, _plumbing_, for use in more specialized cases and to validate newly written code in real-world scenarios
-
-## Project Goals
-
-Project goals can change over time as we learn more, and they can be challenged.
-
- * **a pure-rust implementation of git**
-   * including *transport*, *object database*, *references*, *cli* and *tui*
-   * a simple command-line interface is provided for the most common git operations, optimized for
-     user experience. A *simple-git* if you so will.
-   * be the go-to implementation for anyone who wants to solve problems around git, and become
-     *the* alternative to `GitPython` and *libgit2* in the process.
-   * become the foundation for a distributed alternative to GitHub, and maybe even for use within GitHub itself
- * **learn from the best to write the best possible idiomatic Rust**
-   * *libgit2* is a fantastic resource to see what abstractions work, we will use them
-   * use Rust's type system to make misuse impossible
- * **be the best performing implementation**
-   * use Rust's type system to optimize for work not done without being hard to use
-   * make use of parallelism from the get go
-   * _sparse checkout_ support from day one
- * **assure on-disk consistency**
-   * assure reads never interfere with concurrent writes
-   * assure multiple concurrent writes don't cause trouble
- * **take shortcuts, but not in quality**
-   * binaries may use `anyhow::Error` exhaustively, knowing these errors are solely user-facing.
-   * libraries use light-weight custom errors implemented using `quick-error` or `thiserror`.
-   * internationalization is nothing we are concerned with right now.
-   * IO errors due to insufficient amount of open file handles don't always lead to operation failure
- * **Cross platform support, including Windows**
-   * With the tools and experience available here there is no reason not to support Windows.
-   * [Windows is tested on CI](https://github.com/GitoxideLabs/gitoxide/blob/df66d74aa2a8cb62d8a03383135f08c8e8c579a8/.github/workflows/rust.yml#L34)
-     and failures do prevent releases.
-
-## Non-Goals
-
-Project non-goals can change over time as we learn more, and they can be challenged.
-
- * **replicate `git` command functionality perfectly**
-   * `git` is `git`, and there is no reason to not use it. Our path is the one of simplicity to make
-     getting started with git easy.
- * **be incompatible to git**
-   * the on-disk format must remain compatible, and we will never contend with it.
- * **use async IO everywhere**
-   * for the most part, git operations are heavily reliant on memory mapped IO as well as CPU to decompress data,
-     which doesn't lend itself well to async IO out of the box.
-   * Use `blocking` as well as `gix-features::interrupt` to bring operations into the async world and to control
-     long running operations.
-   * When connecting or streaming over TCP connections, especially when receiving on the server, async seems like a must
-     though, but behind a feature flag.
-
-## Contributions
-
-If what you have seen so far sparked your interest to contribute, then let us say: We are happy to have you and help you to get started.
-
-We recommend running `just test` during the development process to assure CI is green before pushing.
-
-A backlog for work ready to be picked up is [available in the Project's Kanban board][project-board], which contains instructions on how
-to pick a task. If it's empty or you have other questions, feel free to [start a discussion][discussions] or reach out to @Byron [privately][keybase].
-
-For additional details, also take a look at the [collaboration guide].
-
-[collaboration guide]: https://github.com/GitoxideLabs/gitoxide/blob/main/COLLABORATING.md
-[project-board]: https://github.com/GitoxideLabs/gitoxide/projects
-[discussions]: https://github.com/GitoxideLabs/gitoxide/discussions
-[keybase]: https://keybase.io/byronbates
-[cargo-diet]: https://crates.io/crates/cargo-diet
-
-### Getting started with Video Tutorials
-
-- [Learning Rust with Gitoxide](https://youtube.com/playlist?list=PLMHbQxe1e9Mk5kOHrm9v20-umkE2ck_gE)
-   - In 17 episodes you can learn all you need to meaningfully contribute to `gitoxide`.
-- [Getting into Gitoxide](https://youtube.com/playlist?list=PLMHbQxe1e9MkEmuj9csczEK1O06l0Npy5)
-   - Get an introduction to `gitoxide` itself which should be a good foundation for any contribution, but isn't a requirement for contributions either.
-- [Gifting Gitoxide](https://www.youtube.com/playlist?list=PLMHbQxe1e9MlhyyZQXPi_dc-bKudE-WUw)
-   - See how PRs are reviewed along with a lot of inner monologue.
-
-#### Other Media
-
-- [Rustacean Station Podcast](https://rustacean-station.org/episode/055-sebastian-thiel/)
-
-## Roadmap
-
-### Features for 1.0
-
-Provide a CLI to for the most basic user journey:
-
-* [x] initialize a repository
-* [x] fetch
-    * [ ] and update worktree
-* clone a repository
-   - [ ] bare
-   - [ ] with working tree
-* [ ] create a commit after adding worktree files
-* [x] add a remote
-* [ ] push
-  * [x] create (thin) pack
-
-### Ideas for Examples
-
-* [ ] `gix tool open-remote` open the URL of the remote, possibly after applying known transformations to go from `ssh` to `https`.
-* [ ] `tix` as example implementation of `tig`, displaying a version of the commit graph, useful for practicing how highly responsive GUIs can be made.
-* [ ] Something like [`git-sizer`](https://github.com/github/git-sizer), but leveraging extreme decompression speeds of indexed packs.
-* [ ] Open up SQL for git using [sqlite virtual tables](https://github.com/rusqlite/rusqlite/blob/master/tests/vtab.rs). Check out gitqlite
-  as well. What would an MVP look like? Maybe even something that could ship with gitoxide. See [this go implementation as example](https://github.com/filhodanuvem/gitql).
-* [ ] A truly awesome history rewriter which makes it easy to understand what happened while avoiding all pitfalls. Think BFG, but more awesome, if that's possible.
-* [ ] `gix-tui` should learn a lot from [fossil-scm] regarding the presentation of data. Maybe [this](https://github.com/Lutetium-Vanadium/requestty/) can be used for prompts. Probably [magit] has a lot to offer, too.
-
-### Ideas for Spin-Offs
-
-* [ ] A system to integrate tightly with `gix-lfs` to allow a multi-tier architecture so that assets can be stored in git and are accessible quickly from an intranet location
-  (for example by accessing the storage read-only over the network) while changes are pushed immediately by the server to other edge locations, like _the cloud_ or backups. Sparse checkouts along with explorer/finder integrations
-  make it convenient to only work on a small subset of files locally. Clones can contain all configuration somebody would need to work efficiently from their location,
-  and authentication for the git history as well as LFS resources make the system secure. One could imagine encryption support for untrusted locations in _the cloud_
-  even though more research would have to be done to make it truly secure.
-* [ ] A [syncthing] like client/server application. This is to demonstrate how lower-level crates can be combined into custom applications that use
-  only part of git's technology to achieve their very own thing. Watch out for big file support, multi-device cross-syncing, the possibility for
-  untrusted destinations using full-encryption, case-insensitive and sensitive filesystems, and extended file attributes as well as ignore files.
-* An event-based database that uses commit messages to store deltas, while occasionally aggregating the actual state in a tree. Of course it's distributed by nature, allowing
-  people to work offline.
-    - It's abstracted to completely hide the actual data model behind it, allowing for all kinds of things to be implemented on top.
-    - Commits probably need a nanosecond component for the timestamp, which can be added via custom header field.
-    - having recording all changes allows for perfect merging, both on the client or on the server, while keeping a natural audit log which makes it useful for mission critical
-      databases in business.
-    * **Applications**
-      - Can markdown be used as database so issue-trackers along with meta-data could just be markdown files which are mostly human-editable? Could user interfaces
-        be meta-data aware and just hide the meta-data chunks which are now editable in the GUI itself? Doing this would make conflicts easier to resolve than an `sqlite`
-        database.
-      - A time tracker - simple data, very likely naturally conflict free, and interesting to see it in terms of teams or companies using it with maybe GitHub as Backing for authentication.
-        - How about supporting multiple different trackers, as in different remotes?
-
-[syncthing]: https://github.com/syncthing/syncthing
-[fossil-scm]: https://www.fossil-scm.org
-[magit]: https://magit.vc
-
-## Shortcomings & Limitations
-
-Please take a look at the [`SHORTCOMINGS.md` file](https://github.com/GitoxideLabs/gitoxide/blob/main/SHORTCOMINGS.md) for details.
-
-## Credits
-
-* **itertools** _(MIT Licensed)_
-  * We use the `izip!` macro in code
-* **flate2** _(MIT Licensed)_
-  * We use the high-level `flate2` library to implement decompression and compression, which builds on the high-performance `zlib-rs` crate.
-
-## 🙏 Special Thanks 🙏
-
-At least for now this section is exclusive to highlight the incredible support that [Josh Triplett](https://github.com/joshtriplett) has provided to me
-in the form of advice, sponsorship and countless other benefits that were incredibly meaningful. Going full time with `gitoxide` would hardly have been
-feasible without his involvement, and I couldn't be more grateful 😌.
+- **[EPR-git roadmap](docs/plans/README.md)** — seven-phase plan from trailer foundation through fork-as-governance
+- **[App-level schema design](docs/schemas/elohim-protocol-manifest.md)** — the normative reference for ContentNode types, trailer grammar, signal catalog, and the engine/app-schema boundary
+- **[Merge consent critique](docs/schemas/reviews/2026-04-11-merge-consent-critique.md)** — pressure test of async-default merge design against distributed stewardship scenarios
+- **[Elohim Protocol](https://github.com/ethosengine/elohim)** — the parent protocol repository
+- **[gitoxide](https://github.com/GitoxideLabs/gitoxide)** — the upstream Rust git implementation brit is built on
 
 ## License
 
-This project is licensed under either of
-
- * Apache License, Version 2.0, ([LICENSE-APACHE](LICENSE-APACHE) or
-   http://www.apache.org/licenses/LICENSE-2.0)
- * MIT license ([LICENSE-MIT](LICENSE-MIT) or
-   http://opensource.org/licenses/MIT)
-
-at your option.
-
-## Fun facts
-
-* Originally @Byron was really fascinated by [this problem](https://github.com/gitpython-developers/GitPython/issues/765#issuecomment-396072153)
-  and believes that with `gitoxide` it will be possible to provide the fastest solution for it.
-* @Byron has been absolutely blown away by `git` from the first time he experienced git more than 13 years ago, and
-  tried to implement it in [various shapes](https://github.com/gitpython-developers/GitPython/pull/1028) and [forms](https://github.com/byron/gogit)
-  multiple [times](https://github.com/Byron/gitplusplus). Now with Rust @Byron finally feels to have found the right tool for the job!
+MIT OR Apache-2.0, following gitoxide's dual license.
