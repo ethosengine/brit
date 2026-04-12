@@ -184,9 +184,9 @@ Per Framing 1, every brit command shape-shifts a git command. The LLM already kn
 | `brit checkout` / `brit switch` | identical | Unchanged. Read-only ref movement. | No |
 | `brit push [remote] [ref]` | `git push` | After git push, emits a `brit.commit.witnessed` signal stream and posts the new commits' linked-node CIDs to the doorway for steward acceptance. | No |
 | `brit pull` / `brit fetch` | identical | After git fetch, hydrates linked ContentNodes for the fetched commits via the doorway. | No |
-| `brit merge` | `git merge` | Verifies that the proposed merge satisfies the target branch's qahal protection rules (consulting the steward's doorway for the current rule CID). If consent is required, emits a `brit.merge.proposed` signal and blocks (configurable) until consent arrives via the doorway. | No |
+| `brit merge` | `git merge` | Opens a `MergeProposalContentNode` (§5.13) against the target ref, freezing the consent requirements resolved from the target's protection rules at the moment of proposal. Default is **async**: publishes the proposal, emits `brit.merge.proposed`, prints the proposal manifest as JSON to stdout, exits 0. The proposal lives with a TTL (default inherited from the protection rule, fallback 48h). LLM re-engages via `brit status`, `brit merge --wait --proposal <id>`, or by subscribing to the proposal's doorway event stream. Fast paths skip proposal creation: `self-governance` qahal, pre-satisfied requirements, no-op merges. `--wait[=duration]` polls with cap (default 5min); `--withdraw <id>` cancels an open proposal. **Brit does not own governance** — it reads consent requirements from the parent EPR's governance primitives (see §14.1 #4 resolution). | **Yes** |
 | `brit fork` | (none directly) | Creates a `ForkContentNode`, registers a new repo CID with its own stewardship, links to the parent. The user can `git remote add` the parent themselves; `brit fork --as <new-url>` automates that and pushes. | **Yes** |
-| `brit attest <commit>` | (closest: `git notes add`) | Creates a `Reviewed-By:` trailer (amending if the commit is local and unpublished) OR an out-of-band `ReviewAttestationContentNode` linked from a `refs/notes/brit-attestations` ref. Used by steward agents and review agents. | **Yes** |
+| `brit attest <commit>` / `brit attest --proposal <id> --consent` | (closest: `git notes add`) | Unified attestation + consent surface. For commits: creates a `Reviewed-By:` trailer (amending if local and unpublished) OR an out-of-band `ReviewAttestationContentNode`. For proposals: records consent from the invoking agent against an open `MergeProposalContentNode` (§5.13); `--as-delegate-of <agent>` supports delegated consent (e.g., an elohim agent voting on behalf of a human who delegated its interests). This is the single verb for every "I stand behind this" act the LLM or human can make. | **Yes** |
 | `brit verify [revrange]` | (no direct analogue; closest: `git fsck`) | Runs the parser + schema validator across a commit range; resolves linked nodes via the doorway if reachable; reports drift between trailer summaries and linked nodes. | **Yes** |
 | `brit register-doorway <url>` | (none) | Writes/updates `.brit/doorway.toml` with the steward's doorway pointer. Optionally signs the file with the steward's agent key. | **Yes** |
 | `brit set-steward <agent>` | (none) | Updates the repo's `stewardshipAgent` field, emits `brit.repo.stewardship.changed`. Requires existing steward's signature OR co-steward quorum (see §14). | **Yes** |
@@ -706,14 +706,111 @@ These are content types brit's catalog explicitly **reserves space for** but doe
 | `BuildManifestContentNode` | p2p-native build system roadmap, Stage 1 | Lives as a `.build-manifest.json` file in a tree, addressed as a BlobContentNode + parsed projection. The CommitContentNode that introduces it gets a `Lamad: ...` trailer naming the build target. |
 | `BuildAttestationContentNode` | p2p-native build system roadmap, Stage 1+2 | Either a commit trailer (`Built-By: <agent> capability=<cid> output=<cid>` — repeatable) OR a separate ContentNode linked from a `refs/notes/brit-builds` ref. CommitContentNode's `buildAttestations` field collects them. |
 | `ReviewAttestationContentNode` | brit + governance gateway | A separate ContentNode that the `Reviewed-By:` trailer can link to via capability CID. Body carries the review text, decision, evidence. CommitContentNode's `reviewedBy` collects them. |
-| `MergeConsentContentNode` | brit + governance gateway | The qahal node that authorizes a merge to a protected branch. Linked from a CommitContentNode's `qahalNode` field. Carries voter list, dissent list, mechanism, quorum result. |
+| ~~`MergeConsentContentNode`~~ | ~~brit + governance gateway~~ | **Superseded by `MergeProposalContentNode` (§5.13), which is now a fully specified type.** The proposal subsumes the consent record: a terminal `consented` proposal IS the authorization artifact. The linked `decision_cid` in the proposal points at the governance engine's tally record (owned by the parent EPR, not brit). |
 | `StewardshipTransferContentNode` | brit + governance gateway | The qahal node that authorizes a stewardship rotation (repo-level or branch-level). Linked from the rotation commit's `qahalNode`. Carries previous steward, new steward, ratifying co-stewards, signatures. |
 
 The catalog above is **stable**: these types can be added without changing existing ContentNode shapes, because the existing types have CID reference fields (`buildAttestations`, `reviewedBy`, `qahalNode`, `mergeBackAgreement`) that accept them.
 
 ---
 
-### 5.13 Cross-cutting: what's deliberately not a new type
+### 5.13 `MergeProposalContentNode`
+
+**Purpose.** A first-class, content-addressed object representing an open merge proposal with a frozen requirement set and a lifecycle. Promoted from the reserved-slots table (§5.12) to a fully specified type after the merge consent critique pass (`docs/schemas/reviews/2026-04-11-merge-consent-critique.md`). Phase 2+ — explicitly out of scope for Phase 1.
+
+**Why this is its own type (not a transient signal).** The original schema treated `brit merge` as emitting a `brit.merge.proposed` signal and waiting for a `brit.merge.consented` signal to return. The critic pass showed this loses proposals to the void the moment the proposer's CLI exits: no proposal id to remember, no `brit status` surfacing, no expiry, no withdraw path, no partial-consent ledger. Promoting the proposal to a ContentNode gives it identity, state, and a place to accumulate consent across time and peers.
+
+**Critical framing: brit owns the proposal type; brit does NOT own governance.** The consent mechanism, the tally engine, the voting rules — all of those come from the **parent EPR** that the repo is a part of. Brit reads the `protectionRules` on the target ref, which resolves to a `qahal_node` CID in the parent EPR's governance context. That qahal_node declares what consent is required and which mechanism runs it. Brit freezes the resolved requirements into the proposal and hands the proposal to the parent EPR's governance engine via a doorway adapter. The engine tallies and emits signals; brit consumes them. This matches GitHub's model (GitHub enforces branch protection rules configured by the repo owner — it doesn't invent governance) but routes through the protocol instead of a central server.
+
+**Content address.** CID over the canonical serialization of the proposal's immutable core (`repo`, `sourceBranch`, `targetRef`, `proposedMergeBase`, `requirementsFrozen`, `proposer`, `createdAt`, `expiryAt`). Mutable state (`state`, `progress`, terminal `result`) lives in separate signal-driven updates, not in the content hash — otherwise every consent signal would re-CID the proposal.
+
+**Required fields.**
+
+| Field | Type | Purpose |
+|---|---|---|
+| `id` | CID | Content address of the immutable core. |
+| `contentType` | `"brit.merge-proposal"` | Type discriminator. |
+| `repo` | CID → RepoContentNode | The repo the proposal is against. |
+| `proposer` | agent id | Who opened the proposal (LLM or human agent). |
+| `sourceBranch` | ref name | The branch being merged. |
+| `targetRef` | ref name | Usually `refs/heads/main` or similar protected ref. |
+| `proposedMergeBase` | CID → CommitContentNode | The base commit against which the merge would be computed. Frozen — a rebase of the source branch invalidates the proposal and requires a new one. |
+| `proposedMergeMetadata` | object | Merge strategy (rebase / merge-commit / squash), proposed commit message, pillar trailer preview. |
+| `requirementsFrozen` | array of RequirementRef | The resolved consent requirements at the moment of proposal. Each requirement references a qahal_node CID in the parent EPR, a mechanism identifier, a threshold, and any mechanism-specific parameters. |
+| `createdAt` | ISO-8601 | Proposal open time. |
+| `expiryAt` | ISO-8601 | Terminal deadline. Defaults to TTL from the protection rule, fallback 48h. After expiry, the proposal transitions to `expired` and the merge cannot complete without opening a new proposal. |
+| `state` | enum | See state machine below. |
+| `progress` | array of RequirementProgress | One entry per frozen requirement. Each tracks: signals received, agents consenting, current tally result (`pending` / `partially-satisfied` / `satisfied` / `rejected`). |
+| `pillars` | object | Lamad / Shefa / Qahal coupling for the proposal itself (not the merge it would produce). The qahal here describes the *proposal act*, not the target ref's governance — don't confuse them. |
+
+**Optional fields.**
+
+| Field | Type | Purpose |
+|---|---|---|
+| `parentProposal` | CID → MergeProposalContentNode | For cascading merges (feature → dev → main as a chain). |
+| `counterpartProposal` | CID → MergeProposalContentNode | For cross-fork two-phase merges (Phase 6). |
+| `withdrawnReason` | string | Set when `state = withdrawn`. |
+| `rejectedReason` | string | Set when `state = rejected`. |
+| `fastPath` | string | If the proposal took a fast path (self-governance, pre-satisfied), this field names which. The proposal ContentNode still exists as a record even when the fast path skips the tally phase. |
+
+**State machine.**
+
+```text
+                         ┌──────────────┐
+                         │    open      │
+                         │  (initial)   │
+                         └──────┬───────┘
+                                │
+             ┌──────────────────┼──────────────────┬─────────────┐
+             │                  │                  │             │
+             ▼                  ▼                  ▼             ▼
+   ┌──────────────────┐ ┌───────────────┐ ┌─────────────┐ ┌──────────┐
+   │ partially-       │ │   rejected    │ │   expired   │ │withdrawn │
+   │ satisfied        │ │  (terminal)   │ │ (terminal)  │ │(terminal)│
+   │ (intermediate)   │ └───────────────┘ └─────────────┘ └──────────┘
+   └────────┬─────────┘
+            │
+            ▼
+   ┌──────────────────┐
+   │   consented      │
+   │   (terminal)     │
+   └──────────────────┘
+```
+
+Terminal states are immutable. `consented` triggers `brit.merge.completed` (the actual merge commit lands). `rejected`, `expired`, and `withdrawn` do not; they close the proposal without producing a merge commit.
+
+**Lamad coupling.** What knowledge the proposed merge advances — usually inherited from the source branch's lamad and summarized for the proposal.
+
+**Shefa coupling.** Who stands to receive recognition if the merge lands. Frozen at proposal time so retroactive stewardship changes don't invalidate an open proposal.
+
+**Qahal coupling.** The proposal's own governance — which agent authored the proposal, which consent mechanism is active, which parent-EPR qahal_node governs it. **Do not confuse this with the consent requirements in `requirementsFrozen`** — `requirementsFrozen` says "these consents are required to land this merge," while the `qahal` pillar says "this proposal act is itself subject to these governance rules."
+
+**Relationships.**
+
+- → `RepoContentNode` (inbound): the repo the proposal targets.
+- → `CommitContentNode` (inbound): the source branch head and the merge base.
+- → parent-EPR qahal_node (outbound reference, not a brit type): the governance rules being enforced.
+- → `BranchContentNode` (outbound): the target branch whose protection rules were resolved.
+- ← `CommitContentNode` (produced on `consented`): the resulting merge commit gets a `Qahal-Node: <proposal_cid>` trailer recording which proposal authorized it.
+
+**Relationship to the parent EPR's governance engine.** A doorway adapter projects:
+- Brit → engine: the frozen requirements + proposer identity + target ref.
+- Engine → brit: consent signals (`brit.merge.tally.progress`, `brit.merge.requirement.satisfied`, terminal `brit.merge.consented` / `brit.merge.rejected`).
+
+The adapter is the only place that knows the engine's wire format. Different parent EPRs may use different governance engines; the adapter is the swappable layer.
+
+**Open questions** (cross-referenced to §14):
+
+- Default TTL policy (brit fallback vs. required from parent EPR). §14.
+- Cascading proposals (first-class `MergeProposalChain` vs. LLM-side `parentProposal` walking). §14.
+- Cross-fork two-phase merges (paired proposal mechanism vs. deferred to Phase 6). §14.
+- Override classes (single-steward emergency fast path with post-hoc ratification). §14.
+- Proposal storage: doorway only, DHT-gossipped, or both. §14.
+- Whether `brit verify` walks pending proposals from an offline cache. §14.
+- Can the target ref move mid-proposal? Lean: no, proposal freezes its base. §14.
+
+---
+
+### 5.14 Cross-cutting: what's deliberately not a new type
 
 | Concept | Why not | Where it lives |
 |---|---|---|
@@ -1142,10 +1239,14 @@ Every signal names trigger, payload, and primary pillar. Pillar alignment determ
 | `brit.tag.yanked` | A tag is yanked. | `{repo_cid, tag_cid, reason_cid}` | qahal | best-effort |
 | `brit.fork.created` | A `ForkContentNode` is published. | `{parent_repo, fork_repo, fork_point, new_steward, reason}` | qahal | acknowledged |
 | `brit.fork.healed` | A fork is merged back into its parent. | `{parent_repo, fork_repo, healing_commit_cid}` | shefa | best-effort |
-| `brit.merge.proposed` | A merge to a protected branch awaits qahal consent. | `{commit_cid, branch_id, target_qahal_cid}` | qahal | acknowledged |
-| `brit.merge.consented` | A proposed merge has received the required consent. | `{commit_cid, branch_id, decision_cid, dissent}` | qahal | acknowledged |
-| `brit.merge.rejected` | A proposed merge fails qahal check. | `{proposed_commit_cid, branch_id, reason}` | qahal | acknowledged |
-| `brit.merge.completed` | A consented merge has been written to the target ref. | `{commit_cid, branch_id, ref_update_cid}` | shefa | best-effort |
+| `brit.merge.proposed` | A `MergeProposalContentNode` (§5.13) is opened. | `{proposal_cid, repo_cid, target_ref, proposer, expiry_at, requirements_frozen}` | qahal | acknowledged |
+| `brit.merge.tally.progress` | A tally step from the parent EPR's governance engine reports progress on an open proposal (e.g., one vote in a collective tally). | `{proposal_cid, requirement_index, signals_received, current_tally_state}` | qahal | best-effort |
+| `brit.merge.requirement.satisfied` | One requirement (of possibly many) in a frozen requirement set has flipped to `satisfied`. | `{proposal_cid, requirement_index, requirement_ref, satisfying_agents}` | qahal | acknowledged |
+| `brit.merge.consented` | All frozen requirements on a proposal have been satisfied — the merge is authorized. | `{proposal_cid, commit_cid, target_ref, decision_cid, consenting_kind, consenting_agents, dissent}` | qahal | acknowledged |
+| `brit.merge.rejected` | A proposal's governance engine returns a denial (rather than simply running out of time). | `{proposal_cid, target_ref, reason, rejecting_agents}` | qahal | acknowledged |
+| `brit.merge.expired` | A proposal's TTL has elapsed without terminal consent or rejection. | `{proposal_cid, target_ref, expired_at, last_progress}` | qahal | best-effort |
+| `brit.merge.withdrawn` | The proposer cancels an open proposal. | `{proposal_cid, target_ref, withdrawn_reason, withdrawn_at}` | qahal | best-effort |
+| `brit.merge.completed` | A consented proposal's merge commit has been written to the target ref. | `{proposal_cid, commit_cid, target_ref, ref_update_cid}` | shefa | best-effort |
 | `brit.review.attested` | A `Reviewed-By:` trailer is published. | `{commit_cid, reviewer, capability_cid, decision}` | qahal | best-effort |
 | `brit.attestation.published` | A standalone attestation ContentNode (review, build, etc.) is published. | `{target_cid, attestation_cid, kind, attester}` | qahal | best-effort |
 
@@ -1501,7 +1602,15 @@ This section is the honest list of decisions the schema doesn't make. Each one n
 
 3. **Steward key recovery.** *(Resolved 2026-04-11.)* Recovery is **not** a brit-schema concern — it lives in the Elohim Protocol's **social recovery substrate**. A steward's signing key material is stored as sharded blobs (Shamir-style or equivalent threshold scheme), and those shards are EPR-addressed to the steward's trust base — family, friends, institutions — via the same content-addressing mechanism the protocol uses for all other storage. Recovery is reconstituting N-of-M shards from that social graph. The brit schema assumes this layer exists and does not define a parallel mechanism. Implications for §10 (DoorwayRegistration): the `stewardSigningKey` field and its rotation policy are trust-rooted in the social recovery graph, not in a brit-specific recovery flow. Co-steward quorum rotation (option b above) remains valid for repos that want it, but it's an *additional* safety mechanism layered on top of social recovery, not a replacement.
 
-4. **`brit merge` blocking vs. async.** Does `brit merge` to a protected branch *block* synchronously waiting for qahal consent, or *gossip* the proposal as a `brit.merge.proposed` signal and return immediately, with the developer (or LLM) checking back later? Lean: configurable per-repo, default async, with `--wait` flag for sync. Async is more LLM-friendly.
+4. **`brit merge` blocking vs. async.** *(Resolved 2026-04-11 after critic pass at `docs/schemas/reviews/2026-04-11-merge-consent-critique.md`.)* **Async-by-default with a first-class `MergeProposalContentNode` lifecycle (§5.13).** `brit merge` opens a proposal, freezes the requirement set, prints JSON to stdout, exits 0. The proposal lives with a TTL. `--wait` is reframed as polling-with-cap, not indefinite blocking. See §3.9 for the command surface, §5.13 for the proposal type, §9 for the updated signal catalog (`brit.merge.tally.progress`, `brit.merge.expired`, `brit.merge.withdrawn`, `brit.merge.requirement.satisfied`).
+
+   **Critical clarification: brit does not own governance.** The consent requirements for a protected ref — who can consent, what threshold, what mechanism, what TTL — come from the governance primitives of **the parent EPR that the repo is a part of**. Brit reads `protectionRules` (which points at a qahal_node CID in the parent EPR's governance context), fetches the rule, and freezes the resolved requirements into the proposal. The tally itself runs in the parent EPR's governance engine (governance gateway, constitutional council, collective voting mechanism — whichever the parent EPR declares). Brit consumes the resulting `brit.merge.consented` / `brit.merge.rejected` signal. This is analogous to GitHub branch protection rules today: GitHub doesn't invent governance, it *enforces* policies configured by the repo owner. Brit enforces policies configured by the parent EPR.
+
+   Consequence: `MergeProposalContentNode` is a brit type (brit owns the proposal lifecycle, expiry, frozen requirements), but the consent mechanism and tally are NOT brit concerns. An adapter at the doorway projects the brit proposal into whatever the parent EPR's governance engine expects, and projects the engine's verdict back into brit signals.
+
+   This resolution co-resolves partially with §14.1 #12 (protection rules DSL): the DSL must be expressive enough to reference a governance qahal_node in the parent EPR, name the consent mechanism, and declare TTL defaults — but it does NOT need to reimplement the mechanisms themselves.
+
+   **Phase 1 scope impact: merge consent is explicitly OUT of Phase 1.** Phase 1 ships the trailer foundation (parser + validator + `brit verify`). `MergeProposalContentNode`, the `brit merge` flow, and the parent-EPR adapter are Phase 2+ work. The Phase 1 `brit verify` binary does NOT open proposals or gate merges.
 
 5. **`Built-By:` trailer ergonomics.** §6.3 reserves `Built-By:` as a repeatable trailer for build attestations. With many builders, the trailer block could grow large. At what point do we move attestations out of the trailer and into a separate `refs/notes/brit-builds` log? Lean: trailer is fine for ≤5 attestations, log is required beyond that. Needs calibration against real attestation volumes.
 
@@ -1517,7 +1626,7 @@ This section is the honest list of decisions the schema doesn't make. Each one n
 
 11. **Per-branch READMEs: derivation vs. publish.** §5.10 punts on whether `PerBranchReadme` is regenerated on every commit (derivation) or only on explicit publish. Lean: explicit publish, with a tooling hook that nudges when the source file in the tree has drifted.
 
-12. **Force-push policy DSL.** §5.5 and §5.7 mention `protectionRules` as a CID-addressed governance node, but the *shape* of those rules — a DSL? a structured JSON document? a set of required attestation kinds? — is Phase 2 design work. Must be decided before §5.5 hardens.
+12. **Force-push policy DSL.** §5.5 and §5.7 mention `protectionRules` as a CID-addressed governance node, but the *shape* of those rules — a DSL? a structured JSON document? a set of required attestation kinds? — is Phase 2 design work. Must be decided before §5.5 hardens. **Entanglement with §14.1 #4:** this DSL must be expressive enough to reference a governance qahal_node in the parent EPR, name the consent mechanism, declare TTL defaults, and express delegation / requirement composition / layer routing. The merge consent design (§5.13 `MergeProposalContentNode`) and the protection rules DSL co-resolve in a single Phase 2 design pass; neither can be locked in isolation.
 
 13. **What `brit fork` does to the new repo's history.** Does the fork replay every commit with new CIDs (because the fork's repo_id changed), or does it inherit the parent's commit CIDs unchanged? Lean: inherit unchanged — the fork is a new repo with the same commit DAG, not a new commit DAG. The ForkContentNode itself records the divergence; commit CIDs don't change. But there are subtleties around how `RefContentNode`s are scoped (per-repo) that need working out.
 
