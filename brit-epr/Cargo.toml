@@ -1,0 +1,27 @@
+lints.workspace = true
+
+[package]
+name = "brit-epr"
+version = "0.0.0"
+description = "Elohim Protocol primitives (pillar trailers, dispatch trait, validation) for brit — an expansion of gitoxide with covenant semantics"
+repository = "https://github.com/ethosengine/brit"
+authors = ["Matthew Dowell <matthew@ethosengine.com>"]
+license = "MIT OR Apache-2.0"
+edition = "2021"
+rust-version = "1.82"
+
+[lib]
+doctest = false
+
+[features]
+default = ["elohim-protocol"]
+# Gates the elohim module — brit's first-party app schema implementation.
+# With this feature off, brit-epr is the covenant engine alone: trailer
+# parsing, the AppSchema dispatch trait, error types. No pillar-specific
+# behavior. A downstream fork can disable this feature and ship their own
+# app schema crate.
+elohim-protocol = []
+
+[dependencies]
+gix-object = { version = "^0.58.0", path = "../gix-object" }
+thiserror = "2.0"
