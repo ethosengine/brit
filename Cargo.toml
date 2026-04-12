@@ -302,7 +302,8 @@ members = [
     "gix-config/tests",
     "gix-traverse/tests",
     "gix-shallow",
-    "brit-epr"
+    "brit-epr",
+    "brit-verify",
 ]
 
 [workspace.dependencies]

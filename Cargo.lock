@@ -339,6 +339,22 @@ dependencies = [
 ]
 
 [[package]]
+name = "brit-epr"
+version = "0.0.0"
+dependencies = [
+ "gix-object",
+ "thiserror 2.0.18",
+]
+
+[[package]]
+name = "brit-verify"
+version = "0.0.0"
+dependencies = [
+ "brit-epr",
+ "gix",
+]
+
+[[package]]
 name = "bstr"
 version = "1.12.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"

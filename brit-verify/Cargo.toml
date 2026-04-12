@@ -1,0 +1,19 @@
+lints.workspace = true
+
+[package]
+name = "brit-verify"
+version = "0.0.0"
+description = "Verify pillar trailers on a git commit — the first brit binary"
+repository = "https://github.com/ethosengine/brit"
+authors = ["Matthew Dowell <matthew@ethosengine.com>"]
+license = "MIT OR Apache-2.0"
+edition = "2021"
+rust-version = "1.82"
+
+[[bin]]
+name = "brit-verify"
+path = "src/main.rs"
+
+[dependencies]
+brit-epr = { version = "^0.0.0", path = "../brit-epr" }
+gix = { version = "^0.81.0", path = "../gix", default-features = false, features = ["revision"] }
