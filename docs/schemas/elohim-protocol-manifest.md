@@ -507,6 +507,8 @@ How to handle rebases that rewrite history? Lean: each rewritten commit gets `su
 
 **Content-address strategy.** Two ids: a *stable id* (composite: `{repo_cid, branch_name, owning_agent}`) and a *versioned content-address* (CID over the current metadata, which changes whenever the branch's head or pillar fields update). Stable id is for "the main branch of this repo over time"; versioned CID is for pinning a specific snapshot.
 
+**Reach is the central primitive.** *(Added 2026-04-11 after reach reframe.)* Every branch carries a **reach** drawn from the protocol's existing reach enum — `private`, `self`, `intimate`, `trusted`, `familiar`, `community`, `public`, `commons` — vendored from the Elohim Protocol at `schemas/elohim-protocol/v1/enums/reach.schema.json`. Reach is per-ref: the branch has the reach, commits inherit the reach of the ref they're reachable from, and moving a commit into a higher-reach ref is a reach-elevation act subject to consent. Reach is what decides whether a branch propagates at all, and to whom. An exploratory branch at `reach=self` is a local experiment the LLM is running; it does not gossip to any other peer. A `trusted` branch gossips only to the steward's relationship graph. A `public` branch gossips to the full network. **`brit push` is reach-aware** — it only announces a branch to peers whose relationship with the steward matches the branch's reach. This replaces the earlier "protection rules" framing as the primary governance gate on branches (see §14.1 #12 for the entanglement note).
+
 **Required fields.**
 
 | Field | Type | Notes |
@@ -518,6 +520,7 @@ How to handle rebases that rewrite history? Lean: each rewritten commit gets `su
 | `name` | string | Local branch name. |
 | `head` | CID of `CommitContentNode` | Current head. |
 | `steward` | agent id | Who decides what lands. |
+| `reach` | enum from protocol reach schema | **Load-bearing governance primitive.** `private` / `self` / `intimate` / `trusted` / `familiar` / `community` / `public` / `commons`. Controls propagation, visibility, and the consent rules that apply to elevations. |
 | `lamad` | object | See below. |
 | `shefa` | object | See below. |
 | `qahal` | object | See below. |
@@ -527,19 +530,41 @@ How to handle rebases that rewrite history? Lean: each rewritten commit gets `su
 | Field | Type | Notes |
 |---|---|---|
 | `readmeEpr` | CID of `PerBranchReadme` | The per-branch README ContentNode. |
-| `protectionRules` | CID of a qahal governance node | What's required to merge. |
+| `extraProtectionRules` | CID of a qahal governance node | **Optional extras LAYERED ON TOP of the reach-change consent requirements** (e.g., "this public branch also requires a security-audit attestation"). For most repos this is null and reach alone decides the consent rules. |
 | `relatedBranches` | array of stable branch ids | Branches that travel together. |
 | `abandoned` | boolean | Steward marked no-longer-maintained. |
 
-**Lamad coupling.** The branch's *audience and unlocks*. `main.lamad = {"audience": "users", "primaryPath": "brit/getting-started"}`. `dev.lamad = {"audience": "contributors", "primaryPath": "brit/developer-onboarding"}`. `feature/new-merge.lamad = {"audience": "reviewers", "unlocks": ["p2p-merge-flow"]}`. This is how per-branch READMEs get their meaning.
+**Branch lifecycle through reach.** A typical feature branch progresses:
+
+```text
+  [LLM spikes something]           reach = self        (local, nobody sees it)
+          │
+          │  brit attest ... (LLM invites review)
+          ▼
+  [shown to co-stewards]           reach = trusted     (steward's relationship graph)
+          │
+          │  brit merge feature → dev  (elevation proposal)
+          ▼
+  [merged into dev]                reach = community   (gossipped to repo community)
+          │
+          │  brit merge dev → main    (elevation proposal)
+          ▼
+  [released to network]            reach = public      (full-network gossip)
+```
+
+Each `→` arrow is a **reach-elevation event**. Each elevation is a `MergeProposalContentNode` (§5.13) whose consent requirements come from the protocol's reach-change rules at the target reach level. The LLM drives the elevations; the protocol's existing reach-change governance decides whether each elevation succeeds.
+
+**Lamad coupling.** The branch's *audience and unlocks*. `main.lamad = {"audience": "users", "primaryPath": "brit/getting-started"}`. `dev.lamad = {"audience": "contributors", "primaryPath": "brit/developer-onboarding"}`. `feature/new-merge.lamad = {"audience": "reviewers", "unlocks": ["p2p-merge-flow"]}`. Audience is NOT the same as reach — audience is *who this is for*, reach is *who can see it at all*.
 
 **Shefa coupling.** Stewardship and cost. Who is the steward, what resource events have they performed on this branch, what's the affinity rating, how much attention is consumed. Abandoned branches carry a resting-state shefa.
 
-**Qahal coupling.** Protection and mechanism. What must happen for a commit to land. Who can approve merges. Whether dissent blocks or is recorded. For `main` on a brit-substrate repo, qahal typically names a governance node with "requires steward + one other reviewer." For personal scratch branches: `{self-governance: true}`.
+**Qahal coupling.** At the branch level, qahal is mostly the *reach itself* (because reach is the governance primitive) plus any `extraProtectionRules` layered on top. For `main` on a brit-substrate repo, qahal typically resolves to "public-reach elevation requires steward + one other reviewer, plus a CI attestation." For personal scratch branches at `reach=self`: no consent needed, because self-reach content is self-governed by definition.
 
-**Relationships.** Out → repo, head commit, readme, governance node. In ← RefContentNode (a ref points at the branch), other branches (related).
+**Relationships.** Out → repo, head commit, readme, governance node (optional extras). In ← RefContentNode (a ref points at the branch), other branches (related).
 
-**Open questions.** Branch rename: lean new branch with `supersededBy` pointing at the old, since stable id includes the name. Per-steward branch identity (different agents' "main" branches are different nodes) honors the per-steward view but has UX implications. Discussed in §14.
+**Exploratory peer model.** A branch at `reach=self` is indistinguishable from "an agent trying something out." The agent's node holds it, nobody else sees it. If the agent abandons the experiment, the branch stays local and eventually garbage-collects. If the agent wants one teammate to review, they elevate to `trusted` (which requires the teammate's node to be in the agent's relationship graph — inherited from the protocol's trust mechanism). Nothing about this is brit-specific; brit is just using the same reach-based propagation that governs every other ContentNode in the protocol. **Branches are just content, subject to the same governance as any other content.**
+
+**Open questions.** Branch rename: lean new branch with `supersededBy` pointing at the old, since stable id includes the name. Per-steward branch identity (different agents' "main" branches are different nodes) honors the per-steward view but has UX implications. Reach inheritance: when a branch is created from another branch, does it inherit the parent's reach or default to `self`? Lean: default to `self` (LLM agent experimenting from a snapshot), with a `--reach` flag to override at creation. Discussed in §14.
 
 ---
 
@@ -713,13 +738,13 @@ The catalog above is **stable**: these types can be added without changing exist
 
 ---
 
-### 5.13 `MergeProposalContentNode`
+### 5.13 `MergeProposalContentNode` — also known as a reach-elevation proposal
 
-**Purpose.** A first-class, content-addressed object representing an open merge proposal with a frozen requirement set and a lifecycle. Promoted from the reserved-slots table (§5.12) to a fully specified type after the merge consent critique pass (`docs/schemas/reviews/2026-04-11-merge-consent-critique.md`). Phase 2+ — explicitly out of scope for Phase 1.
+**Purpose.** A first-class, content-addressed object representing a proposed **reach elevation** — moving content from a lower-reach ref into a higher-reach ref. Every brit merge IS a reach elevation: `feature/x` (reach=trusted) merging into `main` (reach=public) is a proposal to elevate content from trusted to public. The proposal freezes the consent requirements at the moment of proposal and tracks lifecycle. Promoted from the reserved-slots table (§5.12) to a fully specified type after the merge consent critique pass (`docs/schemas/reviews/2026-04-11-merge-consent-critique.md`) and the reach reframe (2026-04-11, §5.5). Phase 2+ — explicitly out of scope for Phase 1.
 
 **Why this is its own type (not a transient signal).** The original schema treated `brit merge` as emitting a `brit.merge.proposed` signal and waiting for a `brit.merge.consented` signal to return. The critic pass showed this loses proposals to the void the moment the proposer's CLI exits: no proposal id to remember, no `brit status` surfacing, no expiry, no withdraw path, no partial-consent ledger. Promoting the proposal to a ContentNode gives it identity, state, and a place to accumulate consent across time and peers.
 
-**Critical framing: brit owns the proposal type; brit does NOT own governance.** The consent mechanism, the tally engine, the voting rules — all of those come from the **parent EPR** that the repo is a part of. Brit reads the `protectionRules` on the target ref, which resolves to a `qahal_node` CID in the parent EPR's governance context. That qahal_node declares what consent is required and which mechanism runs it. Brit freezes the resolved requirements into the proposal and hands the proposal to the parent EPR's governance engine via a doorway adapter. The engine tallies and emits signals; brit consumes them. This matches GitHub's model (GitHub enforces branch protection rules configured by the repo owner — it doesn't invent governance) but routes through the protocol instead of a central server.
+**Critical framing: brit owns the proposal type; brit does NOT own governance.** The consent mechanism, the tally engine, the voting rules — all of those come from the **protocol's existing reach-change governance**. Brit reads the source and target refs' reach levels, looks up the reach-change consent rules for that transition in the parent EPR's governance primitives, freezes the resolved requirements into the proposal, and hands the proposal to the governance engine via a doorway adapter. The engine tallies and emits signals; brit consumes them. **Brit is NOT inventing merge governance** — it's using the same reach-change machinery that governs every other reach elevation in the protocol. A commit becoming visible to the network is no different from any other piece of content becoming visible to the network: the reach gate applies. This matches GitHub's model (GitHub enforces branch protection rules configured by the repo owner — it doesn't invent governance) but routes through the protocol's uniform reach-governance substrate instead of a forge-specific feature.
 
 **Content address.** CID over the canonical serialization of the proposal's immutable core (`repo`, `sourceBranch`, `targetRef`, `proposedMergeBase`, `requirementsFrozen`, `proposer`, `createdAt`, `expiryAt`). Mutable state (`state`, `progress`, terminal `result`) lives in separate signal-driven updates, not in the content hash — otherwise every consent signal would re-CID the proposal.
 
@@ -732,10 +757,13 @@ The catalog above is **stable**: these types can be added without changing exist
 | `repo` | CID → RepoContentNode | The repo the proposal is against. |
 | `proposer` | agent id | Who opened the proposal (LLM or human agent). |
 | `sourceBranch` | ref name | The branch being merged. |
-| `targetRef` | ref name | Usually `refs/heads/main` or similar protected ref. |
+| `sourceReach` | enum from protocol reach schema | The current reach of the source branch. |
+| `targetRef` | ref name | Usually `refs/heads/main` or similar higher-reach ref. |
+| `targetReach` | enum from protocol reach schema | The reach of the target branch. A proposal where `sourceReach >= targetReach` is a no-elevation merge and may take a fast path. |
+| `reachElevation` | boolean | Derived: `true` when `targetReach` is strictly higher than `sourceReach`. When true, the proposal is subject to reach-change consent. When false, only ordinary merge hygiene applies. |
 | `proposedMergeBase` | CID → CommitContentNode | The base commit against which the merge would be computed. Frozen — a rebase of the source branch invalidates the proposal and requires a new one. |
 | `proposedMergeMetadata` | object | Merge strategy (rebase / merge-commit / squash), proposed commit message, pillar trailer preview. |
-| `requirementsFrozen` | array of RequirementRef | The resolved consent requirements at the moment of proposal. Each requirement references a qahal_node CID in the parent EPR, a mechanism identifier, a threshold, and any mechanism-specific parameters. |
+| `requirementsFrozen` | array of RequirementRef | The resolved consent requirements at the moment of proposal. For reach-elevation proposals, these are derived from the protocol's reach-change governance rules for the `sourceReach → targetReach` transition (plus any `extraProtectionRules` layered on the target branch). For non-elevation merges, this is typically empty or carries only the extras. |
 | `createdAt` | ISO-8601 | Proposal open time. |
 | `expiryAt` | ISO-8601 | Terminal deadline. Defaults to TTL from the protection rule, fallback 48h. After expiry, the proposal transitions to `expired` and the merge cannot complete without opening a new proposal. |
 | `state` | enum | See state machine below. |
@@ -1228,11 +1256,13 @@ Every signal names trigger, payload, and primary pillar. Pillar alignment determ
 | `brit.commit.witnessed` | A commit parsed, validated, and trailers valid. | `{commit_cid, git_object_id, repo_cid, pillar_summary}` | lamad | best-effort |
 | `brit.commit.poisoned` | A commit's linked node fails schema validation. | `{commit_cid, key, cid, reason}` | qahal | best-effort |
 | `brit.commit.signed` | A commit carries a valid signature. | `{commit_cid, signer, signature_kind}` | qahal | best-effort |
-| `brit.branch.created` | A new `BranchContentNode` is published. | `{repo_cid, branch_id, steward, readme_cid?}` | qahal | best-effort |
+| `brit.branch.created` | A new `BranchContentNode` is published. | `{repo_cid, branch_id, steward, reach, readme_cid?}` | qahal | best-effort |
 | `brit.branch.head.updated` | A branch's head advances via fast-forward or merge. | `{repo_cid, branch_id, from_commit, to_commit, update_cid}` | shefa | best-effort |
+| `brit.branch.reach.elevated` | A branch's reach is elevated (e.g., `self → trusted`, `trusted → community`, `community → public`). Gossiped so peers in the new reach bracket begin seeing the branch. | `{repo_cid, branch_id, from_reach, to_reach, authorizing_proposal_cid}` | qahal | acknowledged |
+| `brit.branch.reach.reduced` | A branch's reach is reduced (quarantine, withdrawal, abandonment to local). | `{repo_cid, branch_id, from_reach, to_reach, reason_cid, authorizing_proposal_cid?}` | qahal | acknowledged |
 | `brit.branch.force-pushed` | A branch's head moves non-fast-forward. | `{repo_cid, branch_id, from_commit, to_commit, update_cid, authorizer}` | qahal | acknowledged |
 | `brit.branch.stewardship.changed` | A branch's `steward` changes. | `{repo_cid, branch_id, old_steward, new_steward, decision_cid}` | qahal | acknowledged |
-| `brit.branch.protection.changed` | A branch's protection rules CID changes. | `{repo_cid, branch_id, old_rules, new_rules}` | qahal | best-effort |
+| `brit.branch.extra-protection.changed` | A branch's `extraProtectionRules` CID changes (the OPTIONAL extras layered on top of reach-change rules; reach changes have their own signals above). | `{repo_cid, branch_id, old_rules, new_rules}` | qahal | best-effort |
 | `brit.branch.abandoned` | Steward marks branch abandoned. | `{repo_cid, branch_id}` | shefa | best-effort |
 | `brit.ref.updated` | Any `RefContentNode` gets a new update. | `{ref_id, update_cid, reason}` | qahal | best-effort |
 | `brit.tag.published` | A new `TagContentNode` is published. | `{repo_cid, tag_cid, target_commit, name}` | lamad | best-effort |
@@ -1626,7 +1656,7 @@ This section is the honest list of decisions the schema doesn't make. Each one n
 
 11. **Per-branch READMEs: derivation vs. publish.** §5.10 punts on whether `PerBranchReadme` is regenerated on every commit (derivation) or only on explicit publish. Lean: explicit publish, with a tooling hook that nudges when the source file in the tree has drifted.
 
-12. **Force-push policy DSL.** §5.5 and §5.7 mention `protectionRules` as a CID-addressed governance node, but the *shape* of those rules — a DSL? a structured JSON document? a set of required attestation kinds? — is Phase 2 design work. Must be decided before §5.5 hardens. **Entanglement with §14.1 #4:** this DSL must be expressive enough to reference a governance qahal_node in the parent EPR, name the consent mechanism, declare TTL defaults, and express delegation / requirement composition / layer routing. The merge consent design (§5.13 `MergeProposalContentNode`) and the protection rules DSL co-resolve in a single Phase 2 design pass; neither can be locked in isolation.
+12. **~~Force-push policy DSL.~~ Mostly dissolved by the reach reframe.** *(Resolved 2026-04-11.)* The original open question asked how to express a bespoke branch-protection DSL. After the reach reframe (§5.5), the central governance gate on a branch is its **reach** (from the protocol's existing reach enum — `private` → `self` → `intimate` → `trusted` → `familiar` → `community` → `public` → `commons`). Reach elevations are subject to the protocol's existing reach-change governance, which already exists for every ContentNode in the system. Brit does not invent a new DSL for this — it vendors the reach enum and consumes the reach-change consent rules the parent EPR already supplies. What remains of the original question is a small residual: `BranchContentNode.extraProtectionRules` is an optional CID pointer to "additional consent requirements layered on top of the reach-change rules" (e.g., "this public branch ALSO requires a security-audit attestation"). The shape of these extras is simple and composable — each extra is just a reference to a qahal_node in the parent EPR that adds a requirement to the frozen set of a MergeProposalContentNode. No DSL, no custom grammar. The entanglement with §14.1 #4 is thereby reduced: MergeProposalContentNode's `requirementsFrozen` array is the union of (reach-change rules at target reach) + (extras from `extraProtectionRules`, if any). Both come from the same substrate (qahal_node references in the parent EPR), not a brit-specific language.
 
 13. **What `brit fork` does to the new repo's history.** Does the fork replay every commit with new CIDs (because the fork's repo_id changed), or does it inherit the parent's commit CIDs unchanged? Lean: inherit unchanged — the fork is a new repo with the same commit DAG, not a new commit DAG. The ForkContentNode itself records the divergence; commit CIDs don't change. But there are subtleties around how `RefContentNode`s are scoped (per-repo) that need working out.
 
