@@ -1,0 +1,9 @@
+Add pillar trailer parser
+
+Wires gix-object::BodyRef::trailers() into the brit-epr engine so
+commit messages can carry Lamad / Shefa / Qahal values natively.
+
+Signed-off-by: Matthew Dowell <matthew@ethosengine.com>
+Lamad: introduces pillar trailer model; first testable EPR primitive
+Shefa: stewardship by @matthew; contributor credit via git author
+Qahal: no governance review required for scaffolding

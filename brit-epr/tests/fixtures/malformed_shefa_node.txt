@@ -1,0 +1,6 @@
+Test permissive parser behavior for malformed node ref
+
+Lamad: teaches the permissive parser behavior
+Shefa: value summary is fine
+Shefa-Node: not-a-valid-cid-at-all
+Qahal: governance review complete

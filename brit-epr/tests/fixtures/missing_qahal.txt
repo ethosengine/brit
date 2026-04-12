@@ -1,0 +1,4 @@
+Routine refactor with only two pillars declared
+
+Lamad: no knowledge change — pure refactor
+Shefa: no value flow — maintenance work
