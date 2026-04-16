@@ -8,6 +8,7 @@ mod pillar_trailers;
 mod schema;
 mod validate;
 pub mod attestation;
+pub mod refs;
 
 pub use parse::parse_pillar_trailers;
 pub use pillar_trailers::{PillarTrailers, TrailerKey};
