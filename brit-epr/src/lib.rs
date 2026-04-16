@@ -25,7 +25,7 @@ pub mod engine;
 pub mod elohim;
 
 // Unconditional re-exports
-pub use engine::{AppSchema, BritCid, CidParseError, TrailerSet, ValidationError};
+pub use engine::{AppSchema, BritCid, CidParseError, ContentNode, LocalObjectStore, ObjectStoreError, TrailerSet, ValidationError};
 
 // Feature-gated re-exports
 #[cfg(feature = "elohim-protocol")]
