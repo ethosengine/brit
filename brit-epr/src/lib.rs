@@ -33,3 +33,15 @@ pub use elohim::{
     parse_pillar_trailers, validate_pillar_trailers, ElohimProtocolSchema, PillarTrailers,
     PillarValidationError, TrailerKey,
 };
+
+/// Convenience re-exports for attestation types.
+#[cfg(feature = "elohim-protocol")]
+pub mod attestation {
+    pub use crate::elohim::attestation::build::BuildAttestationContentNode;
+    pub use crate::elohim::attestation::deploy::{DeployAttestationContentNode, HealthStatus};
+    pub use crate::elohim::attestation::reach::{compute_reach, ReachInput, ReachLevel};
+    pub use crate::elohim::attestation::validation::{
+        ValidationAttestationContentNode, ValidationResult,
+    };
+    pub use crate::elohim::refs::BritRefManager;
+}
