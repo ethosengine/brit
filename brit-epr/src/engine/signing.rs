@@ -39,6 +39,14 @@ impl AgentKey {
             fs::create_dir_all(parent).map_err(AgentKeyError::Io)?;
         }
         fs::write(key_path, signing_key.to_bytes()).map_err(AgentKeyError::Io)?;
+        // Restrict key file to owner-only read/write (0600) — the seed is a
+        // private key and must not be readable by other users on shared CI.
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::PermissionsExt;
+            fs::set_permissions(key_path, fs::Permissions::from_mode(0o600))
+                .map_err(AgentKeyError::Io)?;
+        }
         Ok(Self { signing_key, key_path: key_path.to_path_buf() })
     }
 
