@@ -8,6 +8,7 @@ use brit_epr::engine::signing::AgentKey;
 use brit_epr::elohim::attestation::build::BuildAttestationContentNode;
 use brit_epr::elohim::refs::BritRefManager;
 
+#[allow(clippy::too_many_arguments)]
 pub fn put(
     repo: &Path,
     step: &str,
