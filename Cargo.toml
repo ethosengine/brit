@@ -304,6 +304,7 @@ members = [
     "gix-shallow",
     "brit-epr",
     "brit-verify",
+    "brit-build-ref",
 ]
 
 [workspace.dependencies]

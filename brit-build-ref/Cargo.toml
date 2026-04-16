@@ -1,0 +1,22 @@
+lints.workspace = true
+
+[package]
+name = "brit-build-ref"
+version = "0.0.0"
+description = "Manage build, deploy, and validation attestation refs in a brit repo"
+repository = "https://github.com/ethosengine/brit"
+authors = ["Matthew Dowell <matthew@ethosengine.com>"]
+license = "MIT OR Apache-2.0"
+edition = "2021"
+rust-version = "1.82"
+
+[[bin]]
+name = "brit-build-ref"
+path = "src/main.rs"
+
+[dependencies]
+brit-epr = { version = "^0.0.0", path = "../brit-epr" }
+clap = { version = "4", features = ["derive"] }
+serde_json = "1"
+chrono = { version = "0.4", default-features = false, features = ["clock"] }
+anyhow = "1"
