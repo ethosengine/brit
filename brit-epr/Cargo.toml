@@ -25,3 +25,13 @@ elohim-protocol = []
 [dependencies]
 gix-object = { version = "^0.58.0", path = "../gix-object", features = ["sha1"] }
 thiserror = "2.0"
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+blake3 = "1"
+ed25519-dalek = { version = "2", features = ["rand_core"] }
+rand = "0.8"
+chrono = { version = "0.4", features = ["serde"], default-features = false }
+hex = "0.4"
+
+[dev-dependencies]
+tempfile = "3"
