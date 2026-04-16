@@ -157,7 +157,7 @@ impl BritRefManager {
         let output = Command::new("git").args(["for-each-ref", "--format=%(refname)", prefix]).current_dir(&self.repo_path).output().map_err(RefError::GitCommand)?;
         if !output.status.success() { return Ok(Vec::new()); }
         let text = String::from_utf8_lossy(&output.stdout);
-        let names: Vec<String> = text.lines().filter(|l| !l.is_empty()).filter_map(|line| line.strip_prefix(prefix)).map(|s| s.to_string()).collect();
+        let names: Vec<String> = text.lines().filter(|l| !l.is_empty()).filter_map(|line| line.strip_prefix(prefix)).map(ToString::to_string).collect();
         Ok(names)
     }
 }
