@@ -14,6 +14,7 @@ pub fn put(
     step: &str,
     manifest_cid: &str,
     output_cid: &str,
+    inputs_hash: &str,
     success: bool,
     hardware: &str,
     duration_ms: u64,
@@ -41,7 +42,7 @@ pub fn put(
     let mut node = BuildAttestationContentNode {
         manifest_cid,
         step_name: step.to_string(),
-        inputs_hash: String::new(),
+        inputs_hash: inputs_hash.to_string(),
         output_cid,
         agent_id: agent_key.agent_id(),
         hardware_profile,

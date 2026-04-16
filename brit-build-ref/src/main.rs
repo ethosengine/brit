@@ -59,6 +59,9 @@ enum BuildCmd {
         /// CID of the artifact produced.
         #[arg(long)]
         output: String,
+        /// Content hash of all declared inputs at build time.
+        #[arg(long)]
+        inputs_hash: String,
         /// Whether the build succeeded.
         #[arg(long, default_value_t = true)]
         success: bool,
@@ -103,6 +106,9 @@ enum DeployCmd {
         /// Base URL of the deployed service.
         #[arg(long)]
         endpoint: String,
+        /// EPR reference for the liveness health check.
+        #[arg(long)]
+        health_check_epr: String,
         /// Health status (healthy|degraded|unreachable).
         #[arg(long, default_value = "healthy")]
         health: String,
@@ -144,6 +150,9 @@ enum ValidateCmd {
         /// Human-readable result summary.
         #[arg(long, default_value = "")]
         summary: String,
+        /// Version of the validator tool.
+        #[arg(long, default_value = "")]
+        validator_version: String,
     },
     /// Retrieve a validation attestation.
     Get {
@@ -185,15 +194,15 @@ fn main() -> anyhow::Result<()> {
 
     match cli.command {
         TopCommand::Build { cmd } => match cmd {
-            BuildCmd::Put { step, manifest, output, success, hardware, duration_ms, commit } => {
-                build_cmd::put(&repo, &step, &manifest, &output, success, &hardware, duration_ms, &commit)
+            BuildCmd::Put { step, manifest, output, inputs_hash, success, hardware, duration_ms, commit } => {
+                build_cmd::put(&repo, &step, &manifest, &output, &inputs_hash, success, &hardware, duration_ms, &commit)
             }
             BuildCmd::Get { step, commit } => build_cmd::get(&repo, &step, &commit),
             BuildCmd::List => build_cmd::list(&repo),
         },
 
         TopCommand::Deploy { cmd } => match cmd {
-            DeployCmd::Put { step, env, artifact, endpoint, health, ttl } => {
+            DeployCmd::Put { step, env, artifact, endpoint, health_check_epr, health, ttl } => {
                 use brit_epr::elohim::attestation::deploy::HealthStatus;
                 let health_status = match health.as_str() {
                     "healthy" => HealthStatus::Healthy,
@@ -201,14 +210,14 @@ fn main() -> anyhow::Result<()> {
                     "unreachable" => HealthStatus::Unreachable,
                     other => anyhow::bail!("unknown --health value: {other} (expected healthy|degraded|unreachable)"),
                 };
-                deploy_cmd::put(&repo, &step, &env, &artifact, &endpoint, health_status, ttl)
+                deploy_cmd::put(&repo, &step, &env, &artifact, &endpoint, &health_check_epr, health_status, ttl)
             }
             DeployCmd::Get { step, env } => deploy_cmd::get(&repo, &step, &env),
             DeployCmd::List => deploy_cmd::list(&repo),
         },
 
         TopCommand::Validate { cmd } => match cmd {
-            ValidateCmd::Put { step, check, artifact, result, summary } => {
+            ValidateCmd::Put { step, check, artifact, result, summary, validator_version } => {
                 use brit_epr::elohim::attestation::validation::ValidationResult;
                 let vr = match result.as_str() {
                     "pass" => ValidationResult::Pass,
@@ -217,7 +226,7 @@ fn main() -> anyhow::Result<()> {
                     "skip" => ValidationResult::Skip,
                     other => anyhow::bail!("unknown --result value: {other} (expected pass|fail|warn|skip)"),
                 };
-                validate_cmd::put(&repo, &step, &check, &artifact, vr, &summary)
+                validate_cmd::put(&repo, &step, &check, &artifact, vr, &summary, &validator_version)
             }
             ValidateCmd::Get { step, check } => validate_cmd::get(&repo, &step, &check),
             ValidateCmd::List => validate_cmd::list(&repo),
