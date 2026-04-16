@@ -15,6 +15,6 @@ pub use cid::{BritCid, CidParseError};
 pub use content_node::ContentNode;
 pub use error::{EngineError, ValidationError};
 pub use object_store::{LocalObjectStore, ObjectStoreError};
-pub use signing::{verify_signature, AgentKey, AgentKeyError};
+pub use signing::{verify_signature, verify_signed_node, AgentKey, AgentKeyError, Signed};
 pub use trailer_block::parse_trailer_block;
 pub use trailer_set::TrailerSet;

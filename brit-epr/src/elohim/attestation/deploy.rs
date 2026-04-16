@@ -1,6 +1,7 @@
 use serde::{Deserialize, Serialize};
 use crate::engine::cid::BritCid;
 use crate::engine::content_node::ContentNode;
+use crate::engine::signing::Signed;
 
 /// Health status of a deployed service at attestation time.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
@@ -46,5 +47,15 @@ pub struct DeployAttestationContentNode {
 impl ContentNode for DeployAttestationContentNode {
     fn content_type(&self) -> &'static str {
         "brit.deploy-attestation"
+    }
+}
+
+impl Signed for DeployAttestationContentNode {
+    fn signature(&self) -> &str { &self.signature }
+    fn agent_id(&self) -> &str { &self.agent_id }
+    fn without_signature(&self) -> Self {
+        let mut c = self.clone();
+        c.signature = String::new();
+        c
     }
 }
