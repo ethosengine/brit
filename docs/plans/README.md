@@ -33,12 +33,13 @@ This is the "both" / hybrid (c) design: trailer is the protocol surface; linked 
 
 ## Phased decomposition
 
-Each phase produces working, testable software on its own. Phases 0–1 are implementation-ready today. Phases 2+ need design work before their own plans are written.
+Each phase produces working, testable software on its own. Phases 0–1 are complete. Phase 2a is in progress. Phases 2+ need design work before their own plans are written.
 
 | # | Phase | Scope | Status |
 |---|---|---|---|
-| **0** | Workspace scaffolding | New `brit-epr` crate, config-crate stub, new `brit-verify` example binary. Leaves `gix-*` crates untouched. Upstream-rebaseable. | **Plan: [2026-04-11-phase-0-epr-trailer-foundation.md](./2026-04-11-phase-0-epr-trailer-foundation.md)** |
-| **1** | Pillar trailer model | `PillarTrailers` struct, parser, validator, `brit-verify <commit>` CLI. Uses existing `gix-object::commit::message::BodyRef::trailers()`. Commits round-trip through stock git. | **Plan: [2026-04-11-phase-0-epr-trailer-foundation.md](./2026-04-11-phase-0-epr-trailer-foundation.md)** *(bundled with Phase 0 — they're tiny and related)* |
+| **0** | Workspace scaffolding | New `brit-epr` crate, config-crate stub, new `brit-verify` example binary. Leaves `gix-*` crates untouched. Upstream-rebaseable. | **Done** — [2026-04-11-phase-0-epr-trailer-foundation.md](./2026-04-11-phase-0-epr-trailer-foundation.md) |
+| **1** | Pillar trailer model | `PillarTrailers` struct, parser, validator, `brit-verify <commit>` CLI. Uses existing `gix-object::commit::message::BodyRef::trailers()`. Commits round-trip through stock git. | **Done** — bundled with Phase 0 |
+| **2a** | Build attestation primitives | `BuildAttestationContentNode`, `DeployAttestationContentNode`, `ValidationAttestationContentNode` schemas + `brit build-ref` CLI + ref namespace under `refs/notes/brit/`. Pure local — no DHT, no P2P. | **Plan: [2026-04-16-phase-2a-build-attestation-primitives.md](./2026-04-16-phase-2a-build-attestation-primitives.md)** |
 | **2** | ContentNode adapter | `RepoContentNode`, `CommitContentNode`, `BranchContentNode` types in `brit-epr`. Export adapter: git repo → ContentNodes in elohim-storage. Import the elohim monorepo itself. | 📝 needs design session |
 | **3** | libp2p transport | `brit-transport` crate wiring gix-protocol to libp2p request-response. New `/brit/fetch/1.0.0` protocol. Clone a small repo over libp2p. | 📝 needs design session |
 | **4** | Per-branch READMEs | Branches resolve to ContentNodes via `.brit/README.epr` (or equivalent). Display + tooling. Round-trip test. | 📝 needs design session |
