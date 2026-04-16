@@ -96,16 +96,46 @@ impl BritRefManager {
 
     /// Encode a ref path segment, replacing characters git rejects in ref names.
     ///
-    /// Git forbids `:`, `@`, `?`, `*`, `[`, `\`, `^`, `~`, and space in ref
-    /// names. We replace each with its percent-encoded form so the encoding is
-    /// lossless and reversible.
+    /// Per `git check-ref-format`, ref names cannot contain: `:`, `@{`, `?`,
+    /// `*`, `[`, `\`, `^`, `~`, space, DEL, or control characters. They also
+    /// cannot contain `..` or end with `.lock`. We percent-encode a superset
+    /// of forbidden characters to be safe.
     fn encode_segment(s: &str) -> String {
-        s.replace(':', "%3A").replace('@', "%40")
+        let mut out = String::with_capacity(s.len());
+        for c in s.chars() {
+            match c {
+                ':' => out.push_str("%3A"),
+                '@' => out.push_str("%40"),
+                '?' => out.push_str("%3F"),
+                '*' => out.push_str("%2A"),
+                '[' => out.push_str("%5B"),
+                '\\' => out.push_str("%5C"),
+                '^' => out.push_str("%5E"),
+                '~' => out.push_str("%7E"),
+                ' ' => out.push_str("%20"),
+                c if c.is_ascii_control() => {
+                    use std::fmt::Write;
+                    let _ = write!(out, "%{:02X}", c as u8);
+                }
+                _ => out.push(c),
+            }
+        }
+        // Also handle ".." which git forbids in ref names
+        out.replace("..", "%2E%2E")
     }
 
     /// Decode a percent-encoded ref path segment back to its original form.
     fn decode_segment(s: &str) -> String {
-        s.replace("%3A", ":").replace("%40", "@")
+        s.replace("%3A", ":")
+            .replace("%40", "@")
+            .replace("%3F", "?")
+            .replace("%2A", "*")
+            .replace("%5B", "[")
+            .replace("%5C", "\\")
+            .replace("%5E", "^")
+            .replace("%7E", "~")
+            .replace("%20", " ")
+            .replace("%2E%2E", "..")
     }
 
     fn resolve_rev(&self, rev: &str) -> Result<String, RefError> {
