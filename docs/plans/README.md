@@ -23,6 +23,7 @@ Seven phases, decomposed by **protocol capability** — what the protocol gains,
 | Phase | Capability unlocked | What the protocol gains | Status |
 |---|---|---|---|
 | **0+1** | **Commits carry covenant** | Every commit can be checked for three-pillar compliance. Trailers parse, validate, round-trip through stock git. `brit verify` works. | **Complete** ([plan](./2026-04-11-phase-0-epr-trailer-foundation.md)) |
+| **2a** | **Artifacts become self-aware** | Build, deploy, and validation attestations as signed ContentNodes. Refs under `refs/notes/brit/`. Reach computation. `brit build-ref` CLI. Pure local. | **Complete** ([plan](./2026-04-16-phase-2a-build-attestation-primitives.md)) |
 | **2** | **Git artifacts become protocol content** | Repos, commits, branches, trees addressable by CID. Schema-driven types. Rakia can emit BuildManifestContentNode. | [Summary](phases/phase-2-contentnode-adapter.md) |
 | **3** | **Git over P2P** | Clone, fetch, push over libp2p. No forge required. Rakia-peer shares transport. | [Summary](phases/phase-3-libp2p-transport.md) |
 | **4** | **Branches tell their story** | Per-branch READMEs as EPRs. Reach-governed visibility. Build status per branch. | [Summary](phases/phase-4-branch-readmes.md) |
