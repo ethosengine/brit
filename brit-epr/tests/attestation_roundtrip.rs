@@ -1,8 +1,10 @@
 use brit_epr::engine::cid::BritCid;
 use brit_epr::engine::content_node::ContentNode;
+use brit_epr::engine::signing::{verify_signed_node, AgentKey};
 use brit_epr::elohim::attestation::build::BuildAttestationContentNode;
 use brit_epr::elohim::attestation::deploy::{DeployAttestationContentNode, HealthStatus};
 use brit_epr::elohim::attestation::validation::{ValidationAttestationContentNode, ValidationResult};
+use tempfile::TempDir;
 
 fn sample_cid() -> BritCid { BritCid::compute(b"sample artifact") }
 
@@ -83,4 +85,43 @@ fn health_status_serializes_as_lowercase() {
     assert_eq!(serde_json::to_string(&HealthStatus::Healthy).unwrap(), r#""healthy""#);
     assert_eq!(serde_json::to_string(&HealthStatus::Degraded).unwrap(), r#""degraded""#);
     assert_eq!(serde_json::to_string(&HealthStatus::Unreachable).unwrap(), r#""unreachable""#);
+}
+
+#[test]
+fn build_attestation_sign_store_retrieve_verify() {
+    let tmp = TempDir::new().unwrap();
+    let key = AgentKey::generate(&tmp.path().join("agent-key")).unwrap();
+    let store = brit_epr::engine::object_store::LocalObjectStore::new(tmp.path().join("objects"));
+
+    // Construct with empty signature
+    let mut node = BuildAttestationContentNode {
+        manifest_cid: sample_cid(),
+        step_name: "test:step".into(),
+        inputs_hash: "inputs-abc".into(),
+        output_cid: BritCid::compute(b"output"),
+        agent_id: key.agent_id(),
+        hardware_profile: serde_json::json!({}),
+        build_duration_ms: 1000,
+        built_at: "2026-04-16T12:00:00Z".into(),
+        success: true,
+        signature: String::new(),
+    };
+
+    // Sign
+    let canonical = node.canonical_json().unwrap();
+    node.signature = key.sign(&canonical);
+
+    // Store
+    let cid = store.put(&node).unwrap();
+
+    // Retrieve
+    let back: BuildAttestationContentNode = store.get(&cid).unwrap();
+
+    // Verify — must succeed
+    assert!(verify_signed_node(&back).unwrap(), "signature verification should pass");
+
+    // Tamper — must fail
+    let mut tampered = back;
+    tampered.success = false;
+    assert!(!verify_signed_node(&tampered).unwrap(), "tampered node should fail verification");
 }

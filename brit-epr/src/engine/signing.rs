@@ -72,6 +72,31 @@ impl AgentKey {
     }
 }
 
+/// Trait for ContentNodes that carry a signature field.
+///
+/// Implementors provide access to the signature and agent_id, plus the
+/// ability to produce an unsigned clone for verification.
+pub trait Signed: crate::engine::content_node::ContentNode + Clone {
+    /// The hex-encoded signature.
+    fn signature(&self) -> &str;
+    /// The hex-encoded agent public key.
+    fn agent_id(&self) -> &str;
+    /// Return a clone with the signature field set to empty string.
+    fn without_signature(&self) -> Self;
+}
+
+/// Verify a signed ContentNode's signature.
+///
+/// Zeros the signature field, computes canonical JSON, and verifies against
+/// the agent_id embedded in the node.
+pub fn verify_signed_node<T: Signed>(node: &T) -> Result<bool, AgentKeyError> {
+    let unsigned = node.without_signature();
+    let canonical = unsigned
+        .canonical_json()
+        .map_err(|e| AgentKeyError::Io(std::io::Error::other(e)))?;
+    verify_signature(&canonical, node.signature(), node.agent_id())
+}
+
 /// Verify a hex-encoded signature against a hex-encoded public key.
 pub fn verify_signature(
     payload: &[u8],
