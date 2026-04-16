@@ -26,8 +26,9 @@ pub struct DeployAttestationContentNode {
     pub environment_label: String,
     /// Base URL of the deployed service.
     pub endpoint: String,
-    /// URL used to perform the liveness health check.
-    pub health_check_url: String,
+    /// EPR reference for the liveness health check (e.g. `epr:{service-cid}/health`).
+    /// Resolves through doorway when protocol-aware; degrades to no-op on stock git forges.
+    pub health_check_epr: String,
     /// Health status observed at attestation time.
     pub health_status: HealthStatus,
     /// ISO-8601 timestamp when the artifact was deployed.

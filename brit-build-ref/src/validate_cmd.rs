@@ -15,6 +15,7 @@ pub fn put(
     artifact_cid: &str,
     result: ValidationResult,
     summary: &str,
+    validator_version: &str,
 ) -> anyhow::Result<()> {
     let git_dir = repo.join(".git");
     let key_path = git_dir.join("brit").join("agent-key");
@@ -32,7 +33,7 @@ pub fn put(
         artifact_cid,
         check_name: check.to_string(),
         validator_id: agent_key.agent_id(),
-        validator_version: "0.0.0".to_string(),
+        validator_version: if validator_version.is_empty() { "unknown".to_string() } else { validator_version.to_string() },
         result,
         result_summary: summary.to_string(),
         findings_cid: None,

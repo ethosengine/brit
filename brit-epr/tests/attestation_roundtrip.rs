@@ -36,7 +36,7 @@ fn deploy_attestation_roundtrips() {
         step_name: "elohim-edge:cargo-build-storage".into(),
         environment_label: "staging".into(),
         endpoint: "https://staging.elohim.host".into(),
-        health_check_url: "https://staging.elohim.host/health".into(),
+        health_check_epr: "epr:staging-storage/health".into(),
         health_status: HealthStatus::Healthy,
         deployed_at: "2026-04-16T10:05:00Z".into(),
         attested_at: "2026-04-16T10:05:30Z".into(),

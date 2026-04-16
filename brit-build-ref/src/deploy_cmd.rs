@@ -8,12 +8,14 @@ use brit_epr::engine::signing::AgentKey;
 use brit_epr::elohim::attestation::deploy::{DeployAttestationContentNode, HealthStatus};
 use brit_epr::elohim::refs::BritRefManager;
 
+#[allow(clippy::too_many_arguments)]
 pub fn put(
     repo: &Path,
     step: &str,
     env: &str,
     artifact_cid: &str,
     endpoint: &str,
+    health_check_epr: &str,
     health: HealthStatus,
     ttl: u64,
 ) -> anyhow::Result<()> {
@@ -34,7 +36,7 @@ pub fn put(
         step_name: step.to_string(),
         environment_label: env.to_string(),
         endpoint: endpoint.to_string(),
-        health_check_url: format!("{endpoint}/health"),
+        health_check_epr: health_check_epr.to_string(),
         health_status: health,
         deployed_at: now.clone(),
         attested_at: now,
