@@ -28,7 +28,10 @@ impl LocalObjectStore {
         let cid = BritCid::compute(&json);
         fs::create_dir_all(&self.base_dir).map_err(ObjectStoreError::Io)?;
         let path = self.base_dir.join(cid.as_str());
-        fs::write(&path, &json).map_err(ObjectStoreError::Io)?;
+        // Atomic write: temp file + rename prevents partial writes on crash.
+        let tmp_path = self.base_dir.join(format!("{}.tmp", cid.as_str()));
+        fs::write(&tmp_path, &json).map_err(ObjectStoreError::Io)?;
+        fs::rename(&tmp_path, &path).map_err(ObjectStoreError::Io)?;
         Ok(cid)
     }
 

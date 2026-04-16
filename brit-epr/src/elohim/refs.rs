@@ -103,6 +103,11 @@ impl BritRefManager {
         s.replace(':', "%3A").replace('@', "%40")
     }
 
+    /// Decode a percent-encoded ref path segment back to its original form.
+    fn decode_segment(s: &str) -> String {
+        s.replace("%3A", ":").replace("%40", "@")
+    }
+
     fn resolve_rev(&self, rev: &str) -> Result<String, RefError> {
         let output = Command::new("git").args(["rev-parse", rev]).current_dir(&self.repo_path).output().map_err(RefError::GitCommand)?;
         if !output.status.success() { return Err(RefError::RevNotFound(rev.to_string())); }
@@ -132,7 +137,9 @@ impl BritRefManager {
             .stdin(std::process::Stdio::piped()).stdout(std::process::Stdio::piped()).spawn().map_err(RefError::GitCommand)?;
         {
             use std::io::Write;
-            child.stdin.take().unwrap().write_all(json.as_bytes()).map_err(RefError::GitCommand)?;
+            let mut stdin = child.stdin.take()
+                .ok_or_else(|| RefError::GitFailed("stdin pipe unavailable".into()))?;
+            stdin.write_all(json.as_bytes()).map_err(RefError::GitCommand)?;
         }
         let hash_output = child.wait_with_output().map_err(RefError::GitCommand)?;
         if !hash_output.status.success() { return Err(RefError::GitFailed("hash-object failed".into())); }
@@ -157,7 +164,7 @@ impl BritRefManager {
         let output = Command::new("git").args(["for-each-ref", "--format=%(refname)", prefix]).current_dir(&self.repo_path).output().map_err(RefError::GitCommand)?;
         if !output.status.success() { return Ok(Vec::new()); }
         let text = String::from_utf8_lossy(&output.stdout);
-        let names: Vec<String> = text.lines().filter(|l| !l.is_empty()).filter_map(|line| line.strip_prefix(prefix)).map(ToString::to_string).collect();
+        let names: Vec<String> = text.lines().filter(|l| !l.is_empty()).filter_map(|line| line.strip_prefix(prefix)).map(Self::decode_segment).collect();
         Ok(names)
     }
 }
