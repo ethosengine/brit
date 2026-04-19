@@ -1,0 +1,27 @@
+lints.workspace = true
+
+[package]
+name = "brit-cli"
+version = "0.0.0"
+description = "Unified brit CLI — graph, affected, plan, fingerprint, baseline subcommands"
+repository = "https://github.com/ethosengine/brit"
+authors = ["Matthew Dowell <matthew@ethosengine.com>"]
+license = "MIT OR Apache-2.0"
+edition = "2021"
+rust-version = "1.82"
+
+[[bin]]
+name = "brit"
+path = "src/main.rs"
+
+[dependencies]
+brit-epr = { path = "../brit-epr", default-features = false }
+brit-graph = { path = "../brit-graph" }
+rakia-core = { path = "../../rakia/rakia-core" }
+rakia-brit = { path = "../../rakia/rakia-brit" }
+
+clap = { version = "4", features = ["derive"] }
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+thiserror = "2"
+anyhow = "1"
