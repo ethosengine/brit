@@ -12,8 +12,13 @@ use petgraph::graph::{DiGraph, NodeIndex};
 
 /// A content-addressed directed graph where nodes implement `ContentNode`.
 pub struct EprGraph<N: ContentNode, E = ()> {
-    inner: DiGraph<NodeIndex, E>,
+    /// Petgraph directed graph. Node weight is the offset index into `node_data`.
+    inner: DiGraph<usize, E>,
+    /// Forward map: CID → petgraph NodeIndex.
     cid_to_index: HashMap<BritCid, NodeIndex>,
+    /// Reverse map: petgraph NodeIndex → CID (O(1) lookup for traversal).
+    index_to_cid_map: HashMap<NodeIndex, BritCid>,
+    /// Parallel Vec of node payloads; addressed by the usize stored in `inner`.
     node_data: Vec<N>,
 }
 
@@ -28,12 +33,13 @@ pub enum GraphError {
     CidError(#[from] serde_json::Error),
 }
 
-impl<N: ContentNode, E: Default> EprGraph<N, E> {
+impl<N: ContentNode, E> EprGraph<N, E> {
     /// Create an empty graph.
     pub fn new() -> Self {
         Self {
             inner: DiGraph::new(),
             cid_to_index: HashMap::new(),
+            index_to_cid_map: HashMap::new(),
             node_data: Vec::new(),
         }
     }
@@ -47,48 +53,61 @@ impl<N: ContentNode, E: Default> EprGraph<N, E> {
         }
         let data_idx = self.node_data.len();
         self.node_data.push(node);
-        let graph_idx = self.inner.add_node(NodeIndex::new(data_idx));
+        let graph_idx = self.inner.add_node(data_idx);
         self.cid_to_index.insert(cid.clone(), graph_idx);
+        self.index_to_cid_map.insert(graph_idx, cid.clone());
         Ok(cid)
     }
 
     /// Add a directed edge: `from` depends on `to`.
-    pub fn add_edge(&mut self, from: &BritCid, to: &BritCid) -> Result<(), GraphError> {
+    /// No-op if the edge already exists (prevents parallel edges).
+    pub fn add_edge(&mut self, from: &BritCid, to: &BritCid) -> Result<(), GraphError>
+    where
+        E: Default,
+    {
         let from_idx = self.resolve_index(from)?;
         let to_idx = self.resolve_index(to)?;
-        self.inner.add_edge(from_idx, to_idx, E::default());
+        if self.inner.find_edge(from_idx, to_idx).is_none() {
+            self.inner.add_edge(from_idx, to_idx, E::default());
+        }
         Ok(())
     }
 
     /// Get a node by CID.
     pub fn get_node(&self, cid: &BritCid) -> Result<&N, GraphError> {
         let graph_idx = self.resolve_index(cid)?;
-        let data_idx = self.inner[graph_idx].index();
+        let data_idx = self.inner[graph_idx];
         Ok(&self.node_data[data_idx])
     }
 
     /// Number of nodes in the graph.
+    #[must_use]
     pub fn node_count(&self) -> usize {
         self.cid_to_index.len()
     }
 
     /// Check whether the graph contains any cycles.
+    #[must_use]
     pub fn has_cycle(&self) -> bool {
         is_cyclic_directed(&self.inner)
     }
 
     /// Get all node CIDs.
+    #[must_use]
     pub fn cids(&self) -> Vec<BritCid> {
         self.cid_to_index.keys().cloned().collect()
     }
 
     /// Check if a CID exists in the graph.
+    #[must_use]
     pub fn contains(&self, cid: &BritCid) -> bool {
         self.cid_to_index.contains_key(cid)
     }
 
     /// Access the inner petgraph (for traits that need direct graph access).
-    pub(crate) fn inner_graph(&self) -> &DiGraph<NodeIndex, E> {
+    // Used by GraphConnections trait in Task 3.
+    #[allow(dead_code)]
+    pub(crate) fn inner_graph(&self) -> &DiGraph<usize, E> {
         &self.inner
     }
 
@@ -100,12 +119,11 @@ impl<N: ContentNode, E: Default> EprGraph<N, E> {
             .ok_or_else(|| GraphError::NodeNotFound(cid.clone()))
     }
 
-    /// Resolve a petgraph NodeIndex to a CID.
+    /// Resolve a petgraph NodeIndex to a CID — O(1) via reverse map.
+    // Used by GraphConnections trait in Task 3.
+    #[allow(dead_code)]
     pub(crate) fn index_to_cid(&self, idx: NodeIndex) -> Option<BritCid> {
-        self.cid_to_index
-            .iter()
-            .find(|(_, &v)| v == idx)
-            .map(|(k, _)| k.clone())
+        self.index_to_cid_map.get(&idx).cloned()
     }
 }
 
