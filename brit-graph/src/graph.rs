@@ -105,8 +105,6 @@ impl<N: ContentNode, E> EprGraph<N, E> {
     }
 
     /// Access the inner petgraph (for traits that need direct graph access).
-    // Used by GraphConnections trait in Task 3.
-    #[allow(dead_code)]
     pub(crate) fn inner_graph(&self) -> &DiGraph<usize, E> {
         &self.inner
     }
@@ -120,8 +118,6 @@ impl<N: ContentNode, E> EprGraph<N, E> {
     }
 
     /// Resolve a petgraph NodeIndex to a CID — O(1) via reverse map.
-    // Used by GraphConnections trait in Task 3.
-    #[allow(dead_code)]
     pub(crate) fn index_to_cid(&self, idx: NodeIndex) -> Option<BritCid> {
         self.index_to_cid_map.get(&idx).cloned()
     }
