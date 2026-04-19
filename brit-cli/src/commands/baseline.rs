@@ -1,19 +1,76 @@
-//! brit baseline — stubs for read/write/migrate. Implementation in Task 19.
+//! brit baseline — read, write, and migrate baseline refs.
 
-use crate::error::Result;
 use std::path::Path;
 
-pub fn read(_repo: &Path, _pipeline: &str) -> Result<()> {
-    eprintln!("brit baseline read: not yet implemented");
+use serde::Serialize;
+
+use crate::error::{CliError, Result};
+
+#[derive(Serialize)]
+struct BaselineRead {
+    pipeline: String,
+    r#ref: String,
+    commit: Option<String>,
+}
+
+#[derive(Serialize)]
+struct BaselineWrite {
+    pipeline: String,
+    r#ref: String,
+    commit: String,
+    written: bool,
+}
+
+#[derive(Serialize)]
+struct BaselineMigrate {
+    source: String,
+    migrated: Vec<String>,
+    count: usize,
+}
+
+pub fn read(repo: &Path, pipeline: &str) -> Result<()> {
+    let repo = repo.canonicalize().map_err(|source| CliError::RepoNotFound {
+        path: repo.display().to_string(),
+        source,
+    })?;
+    let commit = rakia_brit::baselines::read_baseline(&repo, pipeline)
+        .map_err(|e| CliError::Baseline(format!("{e}")))?;
+    crate::output::print_json(&BaselineRead {
+        pipeline: pipeline.to_string(),
+        r#ref: format!("refs/notes/rakia/baselines/{pipeline}"),
+        commit,
+    })?;
     Ok(())
 }
 
-pub fn write(_repo: &Path, _pipeline: &str, _commit: &str) -> Result<()> {
-    eprintln!("brit baseline write: not yet implemented");
+pub fn write(repo: &Path, pipeline: &str, commit: &str) -> Result<()> {
+    let repo = repo.canonicalize().map_err(|source| CliError::RepoNotFound {
+        path: repo.display().to_string(),
+        source,
+    })?;
+    rakia_brit::baselines::write_baseline(&repo, pipeline, commit)
+        .map_err(|e| CliError::Baseline(format!("{e}")))?;
+    crate::output::print_json(&BaselineWrite {
+        pipeline: pipeline.to_string(),
+        r#ref: format!("refs/notes/rakia/baselines/{pipeline}"),
+        commit: commit.to_string(),
+        written: true,
+    })?;
     Ok(())
 }
 
-pub fn migrate(_repo: &Path, _json_path: &Path) -> Result<()> {
-    eprintln!("brit baseline migrate: not yet implemented");
+pub fn migrate(repo: &Path, json_path: &Path) -> Result<()> {
+    let repo = repo.canonicalize().map_err(|source| CliError::RepoNotFound {
+        path: repo.display().to_string(),
+        source,
+    })?;
+    let migrated = rakia_brit::baselines::migrate_baselines(&repo, json_path)
+        .map_err(|e| CliError::Baseline(format!("{e}")))?;
+    let count = migrated.len();
+    crate::output::print_json(&BaselineMigrate {
+        source: json_path.display().to_string(),
+        migrated,
+        count,
+    })?;
     Ok(())
 }
