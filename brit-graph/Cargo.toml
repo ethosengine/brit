@@ -1,0 +1,22 @@
+lints.workspace = true
+
+[package]
+name = "brit-graph"
+version = "0.0.0"
+description = "EPR-native graph engine — DAG construction, affected tracking, topological planning"
+repository = "https://github.com/ethosengine/brit"
+authors = ["Matthew Dowell <matthew@ethosengine.com>"]
+license = "MIT OR Apache-2.0"
+edition = "2021"
+rust-version = "1.82"
+
+[lib]
+doctest = false
+
+[dependencies]
+brit-epr = { path = "../brit-epr", default-features = false }
+petgraph = "0.7"
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+
+[dev-dependencies]
