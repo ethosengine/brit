@@ -1,5 +1,6 @@
 use brit_epr::{BritCid, ContentNode};
-use brit_graph::graph::{EprGraph, GraphError};
+use brit_graph::graph::EprGraph;
+use brit_graph::traits::GraphConnections;
 use serde::{Deserialize, Serialize};
 
 /// A minimal ContentNode for testing.
@@ -90,4 +91,64 @@ fn no_cycle_in_valid_dag() {
     graph.add_edge(&cid_a, &cid_b).unwrap(); // a -> b (a depends on b)
 
     assert!(!graph.has_cycle());
+}
+
+#[test]
+fn dependencies_of_returns_direct_deps() {
+    let mut graph: EprGraph<TestNode> = EprGraph::new();
+    let a = TestNode { name: "tr-a".into() };
+    let b = TestNode { name: "tr-b".into() };
+    let c = TestNode { name: "tr-c".into() };
+    let cid_a = a.compute_cid().unwrap();
+    let cid_b = b.compute_cid().unwrap();
+    let cid_c = c.compute_cid().unwrap();
+
+    graph.add_node(a).unwrap();
+    graph.add_node(b).unwrap();
+    graph.add_node(c).unwrap();
+    graph.add_edge(&cid_a, &cid_b).unwrap(); // a depends on b
+    graph.add_edge(&cid_a, &cid_c).unwrap(); // a depends on c
+
+    let deps = graph.dependencies_of(&cid_a).unwrap();
+    assert_eq!(deps.len(), 2);
+    assert!(deps.contains(&cid_b));
+    assert!(deps.contains(&cid_c));
+}
+
+#[test]
+fn dependents_of_returns_direct_dependents() {
+    let mut graph: EprGraph<TestNode> = EprGraph::new();
+    let a = TestNode { name: "dep-a".into() };
+    let b = TestNode { name: "dep-b".into() };
+    let cid_a = a.compute_cid().unwrap();
+    let cid_b = b.compute_cid().unwrap();
+
+    graph.add_node(a).unwrap();
+    graph.add_node(b).unwrap();
+    graph.add_edge(&cid_a, &cid_b).unwrap(); // a depends on b
+
+    let dependents = graph.dependents_of(&cid_b).unwrap();
+    assert_eq!(dependents, vec![cid_a]);
+}
+
+#[test]
+fn deep_dependencies_of_returns_transitive() {
+    let mut graph: EprGraph<TestNode> = EprGraph::new();
+    let a = TestNode { name: "deep-a".into() };
+    let b = TestNode { name: "deep-b".into() };
+    let c = TestNode { name: "deep-c".into() };
+    let cid_a = a.compute_cid().unwrap();
+    let cid_b = b.compute_cid().unwrap();
+    let cid_c = c.compute_cid().unwrap();
+
+    graph.add_node(a).unwrap();
+    graph.add_node(b).unwrap();
+    graph.add_node(c).unwrap();
+    graph.add_edge(&cid_a, &cid_b).unwrap(); // a -> b
+    graph.add_edge(&cid_b, &cid_c).unwrap(); // b -> c
+
+    let deep = graph.deep_dependencies_of(&cid_a).unwrap();
+    assert_eq!(deep.len(), 2);
+    assert!(deep.contains(&cid_b));
+    assert!(deep.contains(&cid_c));
 }
