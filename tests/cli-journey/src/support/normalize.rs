@@ -16,6 +16,9 @@ pub struct Normalizer {
     posix_tempdir_re: Regex,
     macos_tempdir_re: Regex,
     rfc3339_re: Regex,
+    clock_time_re: Regex,
+    duration_re: Regex,
+    throughput_re: Regex,
     sha40_re: Regex,
     sha7_re: Regex,
     stable_shas: HashSet<String>,
@@ -46,6 +49,17 @@ impl Normalizer {
                 r"\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(?:\.\d+)?(?:[+-]\d{2}:\d{2}|Z)",
             )
             .unwrap(),
+            // Wall-clock HH:MM:SS at the start of progress lines (gitoxide).
+            // E.g. " 23:19:01 indexing done ..." → " <CLOCK> indexing done ..."
+            clock_time_re: Regex::new(r"\b\d{2}:\d{2}:\d{2}\b").unwrap(),
+            // Duration: "0.06s", "0.00s", "1.23s" — common in gitoxide progress lines.
+            duration_re: Regex::new(r"\b\d+\.\d{2}s\b").unwrap(),
+            // Throughput: "15.4k objects/s", "1.3MB/s", "450B/s", etc.
+            // Pattern: number (optional unit prefix) + (objects|files|B)/s
+            throughput_re: Regex::new(
+                r"\b\d+(?:\.\d+)?[kMG]?(?:B| objects| files)/s\b",
+            )
+            .unwrap(),
             sha40_re: Regex::new(r"\b[0-9a-f]{40}\b").unwrap(),
             sha7_re: Regex::new(r"\b[0-9a-f]{7,12}\b").unwrap(),
             stable_shas: HashSet::new(),
@@ -71,6 +85,9 @@ impl Normalizer {
         out = self.macos_tempdir_re.replace_all(&out, "<TMPDIR>").into_owned();
         out = self.posix_tempdir_re.replace_all(&out, "<TMPDIR>").into_owned();
         out = self.rfc3339_re.replace_all(&out, "<TIMESTAMP>").into_owned();
+        out = self.clock_time_re.replace_all(&out, "<CLOCK>").into_owned();
+        out = self.throughput_re.replace_all(&out, "<RATE>").into_owned();
+        out = self.duration_re.replace_all(&out, "<DUR>").into_owned();
         // SHA redaction: only redact ones not in the stable set.
         out = self
             .sha40_re
