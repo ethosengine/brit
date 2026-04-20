@@ -9,7 +9,7 @@ edition = "2021"
 license = "MIT OR Apache-2.0"
 version = "0.52.0"
 rust-version = "1.82"
-default-run = "gix"
+default-run = "brit"
 include = ["src/**/*", "/build.rs", "LICENSE-*", "README.md"]
 resolver = "2"
 
@@ -21,7 +21,7 @@ test = false
 doctest = false
 
 [[bin]]
-name = "gix"
+name = "brit"
 path = "src/gix.rs"
 doc = false
 test = false

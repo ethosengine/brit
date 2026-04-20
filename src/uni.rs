@@ -13,11 +13,11 @@ fn main() -> Result<()> {
     match std::env::current_exe()?
         .file_stem()
         .and_then(|stem| stem.to_str())
-        .unwrap_or("gix")
+        .unwrap_or("brit")
     {
-        "gix" => crate::plumbing::main(),
+        "brit" | "gix" => crate::plumbing::main(),
         "ein" => crate::porcelain::main(),
-        unknown => bail!("Executable named '{unknown}' cannot be launched. Exe must be named either `gix` or `ein`."),
+        unknown => bail!("Executable named '{unknown}' cannot be launched. Exe must be named `brit`, `gix`, or `ein`."),
     }
 }
 
