@@ -5,12 +5,6 @@ use std::process::ExitCode;
 
 use clap::Parser;
 
-mod coverage;
-mod diff;
-mod discover;
-mod format;
-mod normalize;
-
 #[derive(Parser)]
 #[command(name = "brit-test-page", version, about = "Run the brit CLI test suite and produce a markdown test page")]
 struct Cli {
