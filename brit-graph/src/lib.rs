@@ -13,4 +13,6 @@ pub mod graph;
 pub mod traits;
 pub mod affected;
 pub mod fingerprint;
+#[cfg(feature = "repo")]
+pub mod repo_fingerprint;
 pub mod topo;
