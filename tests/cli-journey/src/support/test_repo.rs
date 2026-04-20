@@ -52,13 +52,25 @@ impl TestRepo {
 
     /// Write a file and commit it. Returns the new commit SHA-1 hex.
     pub fn commit_file(&self, rel: &str, contents: &str) -> Result<String> {
+        self.commit_file_with_message(rel, contents, &format!("add {rel}"))
+    }
+
+    /// Write a file and commit it with an explicit commit message.
+    /// The `message` string is passed verbatim to `git commit -m`, so it can
+    /// include newlines and trailers. Returns the new commit SHA-1 hex.
+    pub fn commit_file_with_message(
+        &self,
+        rel: &str,
+        contents: &str,
+        message: &str,
+    ) -> Result<String> {
         let abs = self.path.join(rel);
         if let Some(parent) = abs.parent() {
             std::fs::create_dir_all(parent).context("mkdir")?;
         }
         std::fs::write(&abs, contents).context("write file")?;
         Self::git(&self.path, &["add", rel])?;
-        Self::git(&self.path, &["commit", "-q", "-m", &format!("add {rel}")])?;
+        Self::git(&self.path, &["commit", "-q", "-m", message])?;
         self.head_id()
     }
 
