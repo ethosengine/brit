@@ -7,6 +7,46 @@ use std::collections::BTreeMap;
 
 use brit_epr::BritCid;
 
+/// Errors produced by repo-aware fingerprint construction.
+///
+/// Exported regardless of the `repo` feature so downstream code can match
+/// on it without conditional compilation. The variants only get instantiated
+/// when the `repo` feature is enabled and `ContentFingerprint::from_repo_globs`
+/// is called.
+#[derive(Debug, thiserror::Error)]
+pub enum FingerprintError {
+    /// Glob pattern compilation failed.
+    #[error("invalid glob pattern '{pattern}': {message}")]
+    InvalidGlob {
+        /// The pattern that failed to compile.
+        pattern: String,
+        /// The underlying error message.
+        message: String,
+    },
+    /// Resolving the commit ref failed.
+    #[error("failed to resolve commit '{commit}': {message}")]
+    CommitResolve {
+        /// The ref or SHA being resolved.
+        commit: String,
+        /// The underlying error message.
+        message: String,
+    },
+    /// Walking the git tree failed.
+    #[error("tree walk failed: {0}")]
+    TreeWalk(String),
+    /// Reading a blob's bytes failed.
+    #[error("failed to read blob at '{path}': {message}")]
+    BlobRead {
+        /// The repo-relative path whose blob couldn't be read.
+        path: String,
+        /// The underlying error message.
+        message: String,
+    },
+    /// Path was not valid UTF-8.
+    #[error("non-UTF-8 path in tree: {0:?}")]
+    NonUtf8Path(Vec<u8>),
+}
+
 /// A deterministic content fingerprint over named inputs.
 #[derive(Debug, Clone)]
 pub struct ContentFingerprint {

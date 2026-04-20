@@ -82,6 +82,9 @@ struct FingerprintArgs {
     /// Specific step name (default: all steps in the manifest)
     #[arg(long)]
     step: Option<String>,
+    /// Git ref or SHA to fingerprint against (default: HEAD)
+    #[arg(long, default_value = "HEAD")]
+    commit: String,
 }
 
 #[derive(Subcommand)]
@@ -114,7 +117,7 @@ fn run() -> Result<()> {
         Command::Graph(GraphCmd::Show { repo, format }) => commands::graph_show::run(&repo, &format),
         Command::Affected(args) => commands::affected::run(&args.repo, args.files.as_deref(), args.since.as_deref()),
         Command::Plan(args) => commands::plan::run(&args.repo, args.files.as_deref(), args.since.as_deref(), args.pipeline.as_deref()),
-        Command::Fingerprint(args) => commands::fingerprint::run(&args.manifest, args.step.as_deref()),
+        Command::Fingerprint(args) => commands::fingerprint::run(&args.manifest, args.step.as_deref(), &args.commit),
         Command::Baseline(BaselineCmd::Read { pipeline, repo }) => commands::baseline::read(&repo, &pipeline),
         Command::Baseline(BaselineCmd::Write { pipeline, commit, repo }) => commands::baseline::write(&repo, &pipeline, &commit),
         Command::Baseline(BaselineCmd::Migrate { json_path, repo }) => commands::baseline::migrate(&repo, &json_path),
