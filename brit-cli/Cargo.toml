@@ -3,7 +3,7 @@ lints.workspace = true
 [package]
 name = "brit-cli"
 version = "0.0.0"
-description = "Unified brit CLI — graph, affected, plan, fingerprint, baseline subcommands"
+description = "Rakia operator CLI — graph, affected, plan, fingerprint, baseline subcommands (will eventually fold into the unified brit binary)"
 repository = "https://github.com/ethosengine/brit"
 authors = ["Matthew Dowell <matthew@ethosengine.com>"]
 license = "MIT OR Apache-2.0"
@@ -11,7 +11,7 @@ edition = "2021"
 rust-version = "1.82"
 
 [[bin]]
-name = "brit"
+name = "rakia"
 path = "src/main.rs"
 
 [dependencies]

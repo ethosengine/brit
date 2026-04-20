@@ -1,4 +1,9 @@
-//! brit CLI — unified entry point.
+//! rakia CLI — operator surface for the build/CI orchestrator.
+//!
+//! Composes brit (git/EPR primitives) + REA (economic primitives) into
+//! build-domain semantics. The `brit` binary itself is the daily-driver
+//! git client (gitoxide-derived); this `rakia` binary is the build app
+//! that consumes brit's primitives.
 
 use std::path::PathBuf;
 use std::process::ExitCode;

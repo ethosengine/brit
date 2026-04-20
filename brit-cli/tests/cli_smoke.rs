@@ -1,9 +1,9 @@
 use std::process::Command;
 
-fn brit_binary() -> std::path::PathBuf {
+fn rakia_binary() -> std::path::PathBuf {
     let manifest_dir = std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR"));
-    // workspace target/debug/brit (brit-cli is a workspace member)
-    manifest_dir.join("../target/debug/brit")
+    // workspace target/debug/rakia (brit-cli is a workspace member, binary renamed from `brit`)
+    manifest_dir.join("../target/debug/rakia")
 }
 
 #[test]
@@ -12,11 +12,11 @@ fn graph_discover_outputs_json_with_manifests() {
     let repo_root = std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR"))
         .join("../../../").canonicalize().unwrap();
 
-    let out = Command::new(brit_binary())
+    let out = Command::new(rakia_binary())
         .args(["graph", "discover", "--repo"])
         .arg(&repo_root)
         .output()
-        .expect("invoke brit");
+        .expect("invoke rakia");
 
     assert!(out.status.success(),
         "exit {} stderr: {}",
@@ -42,12 +42,12 @@ fn fingerprint_emits_content_addressed_hex_for_real_manifest() {
         return;
     }
 
-    let out = std::process::Command::new(brit_binary())
+    let out = std::process::Command::new(rakia_binary())
         .args(["fingerprint"])
         .arg(&manifest)
         .args(["--step", "build-angular"])
         .output()
-        .expect("invoke brit");
+        .expect("invoke rakia");
 
     assert!(
         out.status.success(),

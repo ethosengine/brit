@@ -7,7 +7,7 @@ use gix::bstr::BString;
 use crate::shared::{AsRange, AsTime};
 
 #[derive(Debug, clap::Parser)]
-#[clap(name = "gix", about = "The git underworld", version = option_env!("GIX_VERSION"))]
+#[clap(name = "brit", about = "Brit — covenant on git (gitoxide-derived)", version = option_env!("GIX_VERSION"))]
 #[clap(subcommand_required = true)]
 #[clap(arg_required_else_help = true)]
 pub struct Args {
