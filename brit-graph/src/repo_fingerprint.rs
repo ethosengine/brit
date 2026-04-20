@@ -5,9 +5,10 @@
 //! tree, NOT the working tree — fingerprints are reproducible across machines
 //! given the same commit and patterns.
 
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, VecDeque};
 
 use globset::{Glob, GlobSetBuilder};
+use gix::bstr::{BStr, BString, ByteSlice, ByteVec};
 
 use crate::fingerprint::{ContentFingerprint, FingerprintError};
 
@@ -69,7 +70,8 @@ impl ContentFingerprint {
             globset: &globset,
             inputs: &mut inputs,
             errors: &mut walk_errors,
-            path_prefix: Vec::new(),
+            path: BString::default(),
+            path_deque: VecDeque::new(),
         };
 
         tree.traverse()
@@ -87,30 +89,68 @@ impl ContentFingerprint {
 
 /// Visitor that walks a tree, matches paths against globs, and collects
 /// blob contents for matching files.
+///
+/// Path tracking mirrors `gix`'s own `Recorder` — a deque holds the full
+/// path snapshot for each pending subtree so that breadth-first traversal
+/// can restore the correct prefix when it descends into a subdirectory.
 struct TreeCollector<'a> {
     repo: &'a gix::Repository,
     globset: &'a globset::GlobSet,
     inputs: &'a mut BTreeMap<String, Vec<u8>>,
     errors: &'a mut Vec<String>,
-    path_prefix: Vec<u8>,
+    /// The current path prefix (built up as we traverse).
+    path: BString,
+    /// Snapshot queue: one entry per pending subtree (breadth-first).
+    path_deque: VecDeque<BString>,
+}
+
+impl<'a> TreeCollector<'a> {
+    fn push_element(&mut self, component: &BStr) {
+        if !self.path.is_empty() {
+            self.path.push(b'/');
+        }
+        self.path.push_str(component);
+    }
+
+    fn pop_element(&mut self) {
+        if let Some(pos) = self.path.rfind_byte(b'/') {
+            self.path.resize(pos, 0);
+        } else {
+            self.path.clear();
+        }
+    }
 }
 
 impl<'a> gix::traverse::tree::Visit for TreeCollector<'a> {
-    fn pop_back_tracked_path_and_set_current(&mut self) {}
-    fn pop_front_tracked_path_and_set_current(&mut self) {}
-    fn push_back_tracked_path_component(&mut self, _component: &gix::bstr::BStr) {}
-    fn push_path_component(&mut self, component: &gix::bstr::BStr) {
-        if !self.path_prefix.is_empty() {
-            self.path_prefix.push(b'/');
-        }
-        self.path_prefix.extend_from_slice(component);
+    /// Restore path from the back of the deque (depth-first; not used here).
+    fn pop_back_tracked_path_and_set_current(&mut self) {
+        self.path = self.path_deque.pop_back().unwrap_or_default();
     }
+
+    /// Restore path from the front of the deque (breadth-first descent).
+    fn pop_front_tracked_path_and_set_current(&mut self) {
+        self.path = self
+            .path_deque
+            .pop_front()
+            .expect("every push_back_tracked_path_component has a matching pop_front");
+    }
+
+    /// Called for tree entries that will be queued for later traversal.
+    /// Save the current path (with the directory component) so it can be
+    /// restored when we descend into this subtree.
+    fn push_back_tracked_path_component(&mut self, component: &BStr) {
+        self.push_element(component);
+        self.path_deque.push_back(self.path.clone());
+    }
+
+    /// Called for every entry (tree or nontree) before visit_*.
+    fn push_path_component(&mut self, component: &BStr) {
+        self.push_element(component);
+    }
+
+    /// Called after every entry (tree or nontree).
     fn pop_path_component(&mut self) {
-        if let Some(slash_pos) = self.path_prefix.iter().rposition(|&b| b == b'/') {
-            self.path_prefix.truncate(slash_pos);
-        } else {
-            self.path_prefix.clear();
-        }
+        self.pop_element();
     }
 
     fn visit_tree(
@@ -133,23 +173,18 @@ impl<'a> gix::traverse::tree::Visit for TreeCollector<'a> {
             return std::ops::ControlFlow::Continue(true);
         }
 
-        // Build full path
-        let mut full_path = self.path_prefix.clone();
-        if !full_path.is_empty() {
-            full_path.push(b'/');
-        }
-        full_path.extend_from_slice(entry.filename);
-
-        // UTF-8 conversion
-        let path_str = match std::str::from_utf8(&full_path) {
+        // At this point self.path already contains the full path (push_path_component
+        // was called with entry.filename before visit_nontree).
+        let path_str = match std::str::from_utf8(&self.path) {
             Ok(s) => s.to_string(),
             Err(_) => {
-                self.errors.push(format!("non-utf8 path: {:?}", full_path));
+                self.errors
+                    .push(format!("non-utf8 path: {:?}", self.path.as_bstr()));
                 return std::ops::ControlFlow::Continue(true);
             }
         };
 
-        // Glob match against the path
+        // Glob match against the full path
         if !self.globset.is_match(&path_str) {
             return std::ops::ControlFlow::Continue(true);
         }
