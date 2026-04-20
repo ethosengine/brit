@@ -1,0 +1,67 @@
+# Sync gix-main branch with upstream/main.
+#
+# gix-main is a pristine mirror of GitoxideLabs/gitoxide's main branch.
+# It MUST stay fast-forward-only. If a fast-forward fails, something
+# has gone wrong and we want to know about it immediately rather than
+# papering over it with a merge commit.
+#
+# Branch protection for gix-main should forbid direct pushes from
+# anyone but this workflow.
+name: sync-gix-main
+
+on:
+  schedule:
+    # Every 6 hours. Upstream moves at a few commits per day, this is enough
+    # cadence to have gix-main be fresh without burning Actions minutes.
+    - cron: "17 */6 * * *"
+  workflow_dispatch: {}
+
+permissions:
+  contents: write
+
+jobs:
+  sync:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout gix-main
+        uses: actions/checkout@v4
+        with:
+          ref: gix-main
+          fetch-depth: 0
+          token: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Configure git identity
+        run: |
+          git config user.name  "gix-main sync bot"
+          git config user.email "ci@ethosengine.invalid"
+
+      - name: Add upstream remote
+        run: |
+          git remote add upstream https://github.com/GitoxideLabs/gitoxide.git
+          git fetch upstream main --tags
+
+      - name: Fast-forward gix-main to upstream/main
+        id: ff
+        run: |
+          set -eu
+          before="$(git rev-parse HEAD)"
+          target="$(git rev-parse upstream/main)"
+          if [ "$before" = "$target" ]; then
+            echo "Already up-to-date at $before."
+            echo "changed=false" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+          # Fast-forward only. If this fails, gix-main has diverged from
+          # upstream/main — that should never happen and is worth a loud failure.
+          git merge --ff-only upstream/main
+          after="$(git rev-parse HEAD)"
+          echo "Advanced gix-main: $before -> $after"
+          echo "changed=true" >> "$GITHUB_OUTPUT"
+
+      - name: Push updated gix-main
+        if: steps.ff.outputs.changed == 'true'
+        run: git push origin gix-main
+
+      - name: Push mirrored tags
+        if: steps.ff.outputs.changed == 'true'
+        run: git push origin --tags
