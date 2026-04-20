@@ -178,3 +178,29 @@ function expect_run () {
   fi
   set -e
 }
+
+# Dump captured output to the cli-test-page staging directory.
+# No-op when BRIT_TEST_PAGE_STAGING is unset (so journey.sh can run standalone
+# without affecting the unrelated test-page artifact). Used by per-binary
+# journey shells to feed shell-side captures into the unified baseline.md.
+#
+# Args:
+#   $1 — binary name (e.g. "brit", "rakia")
+#   $2 — subcommand path joined by slashes (e.g. "log" or "branch/list")
+#   $3 — captured output (typically: "$(cmd 2>&1 || true)")
+function dump-to-staging() {
+  if [[ -z "${BRIT_TEST_PAGE_STAGING:-}" ]]; then
+    return 0
+  fi
+  local binary="$1"
+  local subpath="$2"
+  local content="$3"
+  local dir="${BRIT_TEST_PAGE_STAGING}/shell/${binary}/${subpath%/*}"
+  # When subpath has no slash, dirname yields the full subpath; correct that.
+  if [[ "$subpath" != */* ]]; then
+    dir="${BRIT_TEST_PAGE_STAGING}/shell/${binary}"
+  fi
+  mkdir -p "$dir"
+  local filename="${subpath##*/}"
+  printf "%s" "$content" > "${dir}/${filename}.txt"
+}
