@@ -307,6 +307,8 @@ members = [
     "brit-build-ref",
     "brit-graph",
     "brit-cli",
+    "tests/cli-journey",
+    "tests/cli-test-page",
 ]
 
 [workspace.dependencies]

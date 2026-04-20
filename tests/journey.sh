@@ -38,3 +38,6 @@ set-static-git-environment
 
 source "$root/journey/ein.sh"
 source "$root/journey/gix.sh"
+source "$root/journey/rakia.sh"
+source "$root/journey/brit-verify.sh"
+source "$root/journey/brit-build-ref.sh"
