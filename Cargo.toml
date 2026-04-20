@@ -306,6 +306,7 @@ members = [
     "brit-verify",
     "brit-build-ref",
     "brit-graph",
+    "brit-cli",
 ]
 
 [workspace.dependencies]
