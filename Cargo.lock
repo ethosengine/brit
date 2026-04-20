@@ -392,6 +392,7 @@ dependencies = [
  "brit-epr",
  "brit-graph",
  "clap",
+ "gix 0.81.0 (registry+https://github.com/rust-lang/crates.io-index)",
  "petgraph",
  "rakia-brit",
  "rakia-core",
