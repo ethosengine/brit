@@ -1,0 +1,21 @@
+lints.workspace = true
+
+[package]
+name = "cli-journey"
+version = "0.0.0"
+description = "CLI integration test infrastructure for brit-workspace binaries"
+repository = "https://github.com/ethosengine/brit"
+authors = ["Matthew Dowell <matthew@ethosengine.com>"]
+license = "MIT OR Apache-2.0"
+edition = "2021"
+rust-version = "1.82"
+
+[dependencies]
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+regex = "1"
+tempfile = "3"
+anyhow = "1"
+
+[dev-dependencies]
+# Self-tests for the support modules
