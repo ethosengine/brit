@@ -38,6 +38,24 @@ function repo-with-remotes() {
   ) &>/dev/null
 }
 
+function bare-repo-with-remotes() {
+  if [[ $((($# - 1) % 2)) != 0 ]] || [[ $# = 0 ]]; then
+    echo "need <path> (<remote> <url>)[,...] tuples"
+    exit 42
+  fi
+
+  mkdir -p "$1"
+  (
+    cd "$1"
+    shift
+    git init --bare
+    while [[ $# != 0 ]]; do
+        git remote add "$1" "$2"
+        shift 2
+    done
+  ) &>/dev/null
+}
+
 function small-repo-in-sandbox() {
   sandbox
   {
