@@ -11,6 +11,12 @@ function set-static-git-environment() {
   set +a
 }
 
+# git-init-hash-aware — drop-in replacement for `git init` in fixture
+# helpers. Respects GIX_TEST_FIXTURE_HASH (sha1 default).
+function git-init-hash-aware() {
+  git init --object-format="${GIX_TEST_FIXTURE_HASH:-sha1}" "$@"
+}
+
 function remove-paths() {
   sed -E 's#/.*#"#g'
 }
@@ -25,7 +31,7 @@ function repo-with-remotes() {
   (
     cd "$1"
     shift
-    git init
+    git-init-hash-aware
     while [[ $# != 0 ]]; do
         git remote add "$1" "$2"
         shift 2
@@ -48,7 +54,7 @@ function bare-repo-with-remotes() {
   (
     cd "$1"
     shift
-    git init --bare
+    git-init-hash-aware --bare
     while [[ $# != 0 ]]; do
         git remote add "$1" "$2"
         shift 2
@@ -59,7 +65,7 @@ function bare-repo-with-remotes() {
 function small-repo-in-sandbox() {
   sandbox
   {
-    git init
+    git-init-hash-aware
     git checkout -b main
     git config commit.gpgsign false
     git config tag.gpgsign false

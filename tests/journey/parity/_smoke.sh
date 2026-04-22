@@ -60,4 +60,34 @@ title "parity smoke test"
 
     GIX_TEST_FIXTURE_HASH="$saved_hash"
   )
+
+  (with "fixture helpers respect GIX_TEST_FIXTURE_HASH"
+    saved_hash="${GIX_TEST_FIXTURE_HASH:-sha1}"
+
+    export GIX_TEST_FIXTURE_HASH=sha256
+    (small-repo-in-sandbox
+      it "small-repo-in-sandbox honors sha256" && {
+        format="$(git config --local extensions.objectformat 2>/dev/null || echo sha1)"
+        if [[ "$format" != "sha256" ]]; then
+          fail "expected sha256, got $format"
+        fi
+        echo 1>&2 "${GREEN} - OK (small-repo-in-sandbox → sha256)"
+      }
+    )
+
+    bare_target="$(mktemp -d)/bare.git"
+    bare-repo-with-remotes "$bare_target" origin /tmp/whatever
+    (cd "$bare_target"
+      it "bare-repo-with-remotes honors sha256" && {
+        format="$(git config --local extensions.objectformat 2>/dev/null || echo sha1)"
+        if [[ "$format" != "sha256" ]]; then
+          fail "expected sha256 in bare repo, got $format"
+        fi
+        echo 1>&2 "${GREEN} - OK (bare-repo-with-remotes → sha256)"
+      }
+    )
+    rm -rf "$(dirname "$bare_target")"
+
+    GIX_TEST_FIXTURE_HASH="$saved_hash"
+  )
 )
