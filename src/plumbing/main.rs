@@ -656,6 +656,98 @@ pub fn main() -> Result<()> {
                 },
             )
         }
+        #[cfg(feature = "gitoxide-core-blocking-client")]
+        Subcommands::Push(crate::plumbing::options::push::Platform {
+            all,
+            mirror,
+            delete,
+            tags,
+            follow_tags,
+            dry_run,
+            porcelain,
+            force,
+            force_with_lease,
+            force_if_includes,
+            atomic,
+            prune,
+            set_upstream,
+            progress: push_progress,
+            no_progress,
+            thin,
+            no_thin,
+            no_verify,
+            receive_pack,
+            signed,
+            push_option,
+            recurse_submodules,
+            ipv4,
+            ipv6,
+            repo,
+            repository: push_repository,
+            refspec,
+        }) => {
+            use crate::plumbing::options::push as opts;
+            let opts = core::repository::push::Options {
+                format,
+                all,
+                mirror,
+                delete,
+                tags,
+                follow_tags,
+                dry_run,
+                porcelain,
+                force,
+                force_with_lease,
+                force_if_includes,
+                atomic,
+                prune,
+                set_upstream,
+                progress: if push_progress {
+                    Some(true)
+                } else if no_progress {
+                    Some(false)
+                } else {
+                    None
+                },
+                thin: if thin {
+                    Some(true)
+                } else if no_thin {
+                    Some(false)
+                } else {
+                    None
+                },
+                no_verify,
+                receive_pack,
+                signed: signed.map(|s| match s {
+                    opts::Signed::No => core::repository::push::Signed::No,
+                    opts::Signed::IfAsked => core::repository::push::Signed::IfAsked,
+                    opts::Signed::Yes => core::repository::push::Signed::Yes,
+                }),
+                push_options: push_option,
+                recurse_submodules: recurse_submodules.map(|r| match r {
+                    opts::RecurseSubmodules::No => core::repository::push::RecurseSubmodules::No,
+                    opts::RecurseSubmodules::Check => core::repository::push::RecurseSubmodules::Check,
+                    opts::RecurseSubmodules::OnDemand => core::repository::push::RecurseSubmodules::OnDemand,
+                    opts::RecurseSubmodules::Only => core::repository::push::RecurseSubmodules::Only,
+                }),
+                ipv4,
+                ipv6,
+                repo,
+                remote: push_repository,
+                ref_specs: refspec,
+            };
+            prepare_and_run(
+                "push",
+                trace,
+                auto_verbose,
+                progress,
+                progress_keep_open,
+                core::repository::push::PROGRESS_RANGE,
+                move |progress, out, err| {
+                    core::repository::push(repository(Mode::LenientWithGitInstallConfig)?, progress, out, err, opts)
+                },
+            )
+        }
         Subcommands::ConfigTree => show_progress(),
         Subcommands::Credential(cmd) => core::repository::credential(
             repository(Mode::StrictWithGitInstallConfig).ok(),

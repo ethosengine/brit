@@ -123,6 +123,9 @@ pub enum Subcommands {
     /// Clone a repository into a new directory.
     #[cfg(feature = "gitoxide-core-blocking-client")]
     Clone(clone::Platform),
+    /// Update remote refs along with associated objects.
+    #[cfg(feature = "gitoxide-core-blocking-client")]
+    Push(push::Platform),
     /// Interact with the mailmap.
     #[clap(subcommand)]
     Mailmap(mailmap::Subcommands),
@@ -1232,3 +1235,6 @@ pub mod submodule {
 
 ///
 pub mod free;
+
+#[cfg(feature = "gitoxide-core-blocking-client")]
+pub mod push;

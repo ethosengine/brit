@@ -12,7 +12,7 @@ Legend:
 
 | git | gix | Status | Parity file | Notes |
 |---|---|---|---|---|
-| push | gix push | absent | — | **pilot for first parity loop** |
+| push | gix push | partial | [push.sh](../../tests/journey/parity/push.sh) | **pilot for first parity loop**; scaffolded, rows TODO |
 | pull | gix pull | absent | — | composes fetch + merge |
 | fetch | gix fetch | partial | — | exists as `Fetch` subcommand; flag coverage unverified |
 | clone | gix clone | partial | — | exists as `Clone` subcommand; flag coverage unverified |
