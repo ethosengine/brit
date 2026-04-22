@@ -26,6 +26,10 @@ You are the **gix-architect** agent (see `.claude/agents/gix-architect.md`), clo
 
 ## Per-iteration contract
 
+### Iteration 0 — pre-flight (every iteration, cheap)
+
+1. Confirm binaries exist: `test -x target/debug/gix && test -x target/debug/ein && test -x target/debug/jtt`. If any missing, build: `cargo build --features http-client-curl-rustls && cargo build -p gix-testtools --bin jtt`. Incremental builds are fast (~5-30s).
+
 ### Iteration 1 — scaffold (only if `tests/journey/parity/$CMD.sh` does not exist)
 
 1. Read `vendor/git/Documentation/git-$CMD.txt`. Extract every flag and mode.
@@ -50,6 +54,21 @@ You are the **gix-architect** agent (see `.claude/agents/gix-architect.md`), clo
    - `bytes` — scriptable output consumed by tooling: `--porcelain`, `--format=*`, output of `--dry-run` where callers grep it
    - `effect` — UX, wording, progress, verbosity. Default for most flags.
 4. **Write the assertion.** Inside the `it` block, use `expect_parity <mode> -- <shared-args>` from `tests/helpers.sh`. Set up the fixture with helpers like `small-repo-in-sandbox` or `repo-with-remotes` (see `tests/utilities.sh`).
+
+   Concrete shape for a single row:
+   ```bash
+   title "gix $CMD --<flag>"
+   (small-repo-in-sandbox
+     (with "--<flag> against a local remote"
+       bare-repo-with-remotes upstream/ origin .
+       # mode=bytes for --porcelain; mode=effect for UX flags
+       it "matches git behavior" && {
+         expect_parity effect -- $CMD --<flag> origin main
+       }
+     )
+   )
+   ```
+   After the `expect_parity` call, `$PARITY_GIT_OUT` / `$PARITY_GIX_OUT` / `$PARITY_GIT_EXIT` / `$PARITY_GIX_EXIT` are available for additional token-level assertions if the mode alone isn't strict enough.
 5. **Run.** `bash tests/parity.sh tests/journey/parity/$CMD.sh`. It will fail.
 6. **Translate.** Read the failure. Edit gix source to match git behavior. **Translate invariants, not C idioms** — see `.claude/agents/gix-architect.md` translation table. Consult crate-level `CLAUDE.md` for local conventions.
 7. **Re-run.** If green, remove the TODO marker.
