@@ -155,6 +155,7 @@ function expect_parity() {
     return 2
   fi
 
-  echo 1>&2 "${GREEN} - OK ($mode parity, exit=$git_exit)"
+  local active_hash="${GIX_TEST_FIXTURE_HASH:-sha1}"
+  echo 1>&2 "${GREEN} - OK ($mode parity, hash=$active_hash, exit=$git_exit)"
   return 0
 }

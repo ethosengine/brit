@@ -24,6 +24,15 @@ title "parity smoke test"
     it "same command in both slots returns OK" && {
       expect_parity effect -- --version
     }
+    it "OK message includes active hash" && {
+      export GIX_TEST_FIXTURE_HASH=sha256
+      out="$(expect_parity effect -- --version 2>&1 || true)"
+      unset GIX_TEST_FIXTURE_HASH
+      if [[ "$out" != *"hash=sha256"* ]]; then
+        fail "expect_parity OK line missing hash tag; got: $out"
+      fi
+      echo 1>&2 "${GREEN} - OK (hash tag present)"
+    }
     exe_plumbing="$saved_exe_plumbing"
   )
 
