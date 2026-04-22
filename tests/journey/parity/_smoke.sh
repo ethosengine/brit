@@ -90,4 +90,13 @@ title "parity smoke test"
 
     GIX_TEST_FIXTURE_HASH="$saved_hash"
   )
+
+  (with "parity.sh runs each file under both hash kinds"
+    it "GIX_TEST_FIXTURE_HASH is set by the runner" && {
+      if [[ -z "${GIX_TEST_FIXTURE_HASH:-}" ]]; then
+        fail "GIX_TEST_FIXTURE_HASH not set — parity.sh should set it per iteration"
+      fi
+      echo 1>&2 "${GREEN} - OK (runner set GIX_TEST_FIXTURE_HASH=$GIX_TEST_FIXTURE_HASH)"
+    }
+  )
 )

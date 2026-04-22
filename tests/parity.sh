@@ -47,5 +47,15 @@ if [[ -f "${target}.stop" ]]; then
   exit 0
 fi
 
-# shellcheck disable=1090
-source "$target"
+# Run the target file under each hash kind. Per-row skipping (for rows
+# marked `# hash=sha1-only`) is enforced inside the target via the
+# only_for_hash helper.
+for hash_kind in sha1 sha256; do
+  echo "${WHITE}====================================================="
+  echo "${GREEN}HASH = $hash_kind"
+  echo "${WHITE}====================================================="
+  export GIX_TEST_FIXTURE_HASH="$hash_kind"
+  # shellcheck disable=1090
+  source "$target"
+done
+unset GIX_TEST_FIXTURE_HASH
