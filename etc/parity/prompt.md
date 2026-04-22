@@ -36,7 +36,9 @@ You are the **gix-architect** agent (see `.claude/agents/gix-architect.md`), clo
 2. Read `vendor/git/builtin/$CMD.c` top 200 lines — understand the overall entry-point structure.
 3. Create `tests/journey/parity/$CMD.sh` following the style of `tests/journey/gix.sh`:
    - `title "gix $CMD"` at top
-   - One section per flag: `title "gix $CMD --<flag>"` + a `TODO` `it "..."` block placeholder inside a sandbox
+   - One section per flag: `title "gix $CMD --<flag>"` + a `TODO` `it "..."` block placeholder inside a sandbox, wrapped with `only_for_hash` guard
+   - **Every section preceded by TWO comment lines:** `# mode=<effect|bytes>` AND `# hash=<dual|sha1-only "<reason>">`
+   - Default hash coverage is `dual`. Use `sha1-only` **only** when the flag cannot meaningfully exercise sha256 — e.g., if `gix $CMD` cannot yet open sha256 remotes at all, all rows are `sha1-only "gix cannot open sha256 remotes, see gix/src/clone/fetch/mod.rs unimplemented!()"` until that's fixed
    - Do **not** yet write real assertions — placeholders only
 4. If `gix $CMD` does not exist in `src/plumbing/options/mod.rs`:
    - Add `$Cmd(push::Platform)` variant (or equivalent) to `Subcommands` enum
@@ -57,11 +59,12 @@ You are the **gix-architect** agent (see `.claude/agents/gix-architect.md`), clo
 
    Concrete shape for a single row:
    ```bash
+   # mode=effect
+   # hash=dual
    title "gix $CMD --<flag>"
-   (small-repo-in-sandbox
+   only_for_hash dual && (small-repo-in-sandbox
      (with "--<flag> against a local remote"
        bare-repo-with-remotes upstream/ origin .
-       # mode=bytes for --porcelain; mode=effect for UX flags
        it "matches git behavior" && {
          expect_parity effect -- $CMD --<flag> origin main
        }
@@ -85,6 +88,8 @@ You are the **gix-architect** agent (see `.claude/agents/gix-architect.md`), clo
 - **Never touch `gix-main`** — upstream handoff is human-gated, not loop-automated.
 - **Never treat `SHORTCOMINGS.md` as a deferral whitelist** — most entries there are closeable. Defer only for hard system constraints (e.g., 32-bit address space) or explicit operator approval.
 - **Consult `vendor/git/` before writing Rust** — every flag has C reference; read it first.
+- **Every `title` section has two comment lines above it**: `# mode=<effect|bytes>` and `# hash=<dual|sha1-only "<reason>">`. No unannotated sections. `sha1-only` requires a concrete reason, not a placeholder.
+- **Wrap each section's body with `only_for_hash <coverage> && ( ... )`** so rows skip correctly when `tests/parity.sh` runs under the non-matching hash. The guard is cheap and the skip message is informative.
 - **Never modify `vendor/git/` or change its submodule pointer.** It's the reference implementation; bumping it mid-pilot changes the target mid-iteration. Out of scope.
 
 ## Agent dispatch
