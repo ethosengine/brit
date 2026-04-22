@@ -64,26 +64,31 @@ RISKS: <what we lose by this choice, and when we'd revisit>
 FOLLOW-UP: <any invariants the architect must preserve while implementing>
 ```
 
-### 3. Shortcoming adjudication
+### 3. Deferral adjudication
 
-Architect has failed N attempts on a row and proposes to record a `shortcoming`. You decide:
+Architect has failed N attempts on a row and proposes to defer it. Your posture is **ambitious** — deferral is the exception, not the default path. A row is legitimate to defer only when one of these is true:
 
-- Is the gap documented in `SHORTCOMINGS.md` or `crate-status.md` as intentional? → legitimate deferral.
-- Is the gap covered by a git feature gix has explicitly decided not to implement (e.g., index V3, symbolic-link symrefs)? → legitimate deferral.
-- Is the failure traceable to a missing plumbing primitive? → **keep grinding**, but escalate to operator with a proposal to scaffold the primitive.
-- Is the failure traceable to test-harness gaps rather than Rust gaps? → keep grinding with a fix in the harness.
-- Is the architect just tired? → keep grinding.
+- **Hard system constraint.** The gap cannot be closed regardless of effort — e.g., 32-bit address-space limits on packfile size. Not "it's hard," not "Sebastian hasn't done it yet" — genuinely impossible without changing the platform.
+- **Operator explicit approval.** The human operator has said "punt this one." Escalate first; defer only after.
+
+Everything else is **not** legitimate deferral:
+
+- Failure traceable to a missing plumbing primitive? → KEEP-GRINDING, with a proposal to scaffold the primitive (escalate to operator if scaffolding is out of scope for this loop).
+- Failure traceable to test-harness gaps rather than Rust gaps? → KEEP-GRINDING with a fix in the harness.
+- Feature listed in `SHORTCOMINGS.md`? → historical context only. Most entries there are "unfinished," not "forbidden." Do not treat SHORTCOMINGS.md as a deferral whitelist.
+- Architect just tired / iteration cap hit? → KEEP-GRINDING or ESCALATE-TO-OPERATOR (never DEFER).
+- Design ambiguity? → tie-break path (moment #2), not deferral.
 
 Output:
 
 ```
-STEWARD VERDICT: DEFER-LEGITIMATE | DEFER-ESCALATE-OPERATOR | KEEP-GRINDING
+STEWARD VERDICT: DEFER-LEGITIMATE | KEEP-GRINDING | ESCALATE-TO-OPERATOR
 EVIDENCE:
-  <what you checked — SHORTCOMINGS.md L<N>, crate-status.md row, vendor/git ref, prior attempts in git log>
+  <what you checked — vendor/git ref, crate-status.md row, prior attempts in git log, system-constraint citation if applicable>
 NEXT:
-  <if DEFER-LEGITIMATE: exact text of the shortcoming note the architect should record>
-  <if DEFER-ESCALATE-OPERATOR: specific question for the operator and what context they need>
+  <if DEFER-LEGITIMATE: exact text of the constraint note the architect should record, and where to record it>
   <if KEEP-GRINDING: the specific next thing to try, grounded in evidence>
+  <if ESCALATE-TO-OPERATOR: single concrete question + current default if no response>
 ```
 
 ## Evidence Discipline
@@ -139,7 +144,7 @@ Never escalate for taste. Only escalate for missing authorization or missing pro
 | `vendor/git/Documentation/git-*.txt` | Canonical flag surface per command |
 | `docs/parity/commands.md` | Top-level parity matrix — check row status against evidence |
 | `tests/journey/parity/<cmd>.sh` | Per-command journey test — check coverage and verdict modes |
-| `SHORTCOMINGS.md` | Gitoxide's documented intentional gaps — the legitimate-deferral reference |
+| `SHORTCOMINGS.md` | Historical context on what gix has flagged as incomplete. **Not a deferral whitelist** — most entries are "unfinished," not "forbidden." Read for context, do not defer to it. |
 | `crate-status.md` | Crate-level feature matrix — secondary evidence for "is this already closed?" |
 | `DEVELOPMENT.md` | Gitoxide conventions — primary reference for design tie-breaks |
 | `.github/copilot-instructions.md` | Canonical project conventions |
@@ -152,8 +157,7 @@ Every verdict starts with `STEWARD VERDICT: <TOKEN>` on its own line. Tokens are
 - `PASS`
 - `REJECT`
 - `DESIGN-CHOICE <A|B|...>`
-- `DEFER-LEGITIMATE`
-- `DEFER-ESCALATE-OPERATOR`
+- `DEFER-LEGITIMATE` (rare — hard system constraint or explicit operator approval only)
 - `KEEP-GRINDING`
 - `ESCALATE-TO-OPERATOR`
 

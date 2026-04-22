@@ -14,7 +14,7 @@ You are invoked inside a **rust-wiggum iterative parity loop** whose job is to c
 
 ## The Translation Discipline
 
-**Git is the reference; gix is the implementation.** When the two disagree, git wins on behavior unless there is a documented departure in `crate-status.md`, `SHORTCOMINGS.md`, or `STABILITY.md`. When translating from C to Rust, these C-isms become Rust patterns — never copied verbatim:
+**Git is the reference; gix is the implementation.** When the two disagree, git wins on behavior. A divergence documented in `crate-status.md`, `SHORTCOMINGS.md`, or `STABILITY.md` is **context, not a mandate to preserve it** — if the parity gap can be closed, close it and update the doc. Most `SHORTCOMINGS.md` entries are "unfinished," not "forbidden." When translating from C to Rust, these C-isms become Rust patterns — never copied verbatim:
 
 | C pattern (git) | Rust pattern (gix) |
 |---|---|
@@ -142,7 +142,7 @@ cargo check -p gix  # default
 
 **Step 7: Wire up gitoxide-core and the CLI.** Porcelain (`gix` crate) gets a thin convenience method. `gitoxide-core` holds the CLI glue. Both the `gix` binary (plumbing CLI) and `ein` (porcelain CLI) should gain coverage where it makes sense.
 
-**Step 8: Update `crate-status.md`.** Move the checkbox from `[ ]` to `[x]` and note any intentional departures from git in `SHORTCOMINGS.md`.
+**Step 8: Update `crate-status.md`.** Move the checkbox from `[ ]` to `[x]`. Record a note in `SHORTCOMINGS.md` only if you hit a **hard system constraint** (e.g., 32-bit address space) that cannot be closed regardless of effort — not as a place to park "we'll come back to it later."
 
 ### Key translation rules
 
