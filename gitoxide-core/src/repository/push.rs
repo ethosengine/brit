@@ -59,13 +59,15 @@ pub enum RecurseSubmodules {
 pub const PROGRESS_RANGE: std::ops::RangeInclusive<u8> = 1..=3;
 
 pub(crate) mod function {
+    use std::io::Write as _;
+
     use super::Options;
 
     pub fn push<P>(
         repo: gix::Repository,
         _progress: P,
         _out: impl std::io::Write,
-        mut err: impl std::io::Write,
+        _err: impl std::io::Write,
         opts: Options,
     ) -> anyhow::Result<()>
     where
@@ -88,24 +90,31 @@ pub(crate) mod function {
             // Matches the `die()` branch at vendor/git/builtin/push.c around line 631.
             // We preserve git's exit code (128) for parity; the message text is a
             // close render of git's wording but not byte-exact (effect-mode parity).
+            //
+            // Write directly to the process stderr rather than the passed-in `err`
+            // handle: depending on `--verbose`/`--progress` mode, `err` can be a
+            // `Vec<u8>` flushed only after `run()` returns. `process::exit` skips
+            // destructors, so a buffered write would be lost. Unix `io::stderr()`
+            // is unbuffered, so the message reaches the terminal before exit.
+            let mut stderr = std::io::stderr().lock();
             if let Some(name) = explicit {
-                writeln!(err, "fatal: bad repository '{name}'")?;
+                writeln!(stderr, "fatal: bad repository '{name}'")?;
             } else {
-                writeln!(err, "fatal: No configured push destination.")?;
+                writeln!(stderr, "fatal: No configured push destination.")?;
                 writeln!(
-                    err,
+                    stderr,
                     "Either specify the URL from the command-line or configure a remote repository using"
                 )?;
-                writeln!(err)?;
-                writeln!(err, "    git remote add <name> <url>")?;
-                writeln!(err)?;
-                writeln!(err, "and then push using the remote name")?;
-                writeln!(err)?;
-                writeln!(err, "    git push <name>")?;
+                writeln!(stderr)?;
+                writeln!(stderr, "    git remote add <name> <url>")?;
+                writeln!(stderr)?;
+                writeln!(stderr, "and then push using the remote name")?;
+                writeln!(stderr)?;
+                writeln!(stderr, "    git push <name>")?;
             }
-            err.flush()?;
-            // git's `die()` exits 128. std::process::exit skips destructors, but we're
-            // early on in the function — no pending cleanup.
+            drop(stderr);
+            // git's `die()` exits 128. No pending cleanup at this point — we're
+            // early in the function and the stderr handle has been dropped above.
             std::process::exit(128);
         }
 

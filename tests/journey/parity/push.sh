@@ -29,6 +29,24 @@ title "gix push (no configured push destination)"
   }
 )
 
+# mode=effect — mirrors the `if (repo) die("bad repository '%s'")` branch in
+# vendor/git/builtin/push.c::cmd_push. Empty-string repository (positional or
+# --repo=) hits `remote_get_1` with an empty name, which returns NULL; git
+# then dies 128.
+title "gix push '' (bad repository: empty name)"
+(sandbox
+  git init -q
+  git config commit.gpgsign false
+  git config tag.gpgsign false
+  git -c user.email=x@x -c user.name=x commit --allow-empty -qm init
+  it "matches git: positional empty repository name" && {
+    expect_parity effect -- push ''
+  }
+  it "matches git: --repo='' (empty repository override)" && {
+    expect_parity effect -- push --repo=
+  }
+)
+
 # --- positional & repository selection -------------------------------------
 
 # mode=effect
