@@ -1,5 +1,7 @@
 # brit
 
+[![Contribute](https://www.eclipse.org/che/contribute.svg)](https://code.ethosengine.com/#https://github.com/ethosengine/brit)
+
 **Brit** (בְּרִית, "covenant") is an expansion of [gitoxide](https://github.com/GitoxideLabs/gitoxide) — a pure-Rust implementation of git — that integrates protocol-level primitives for tracking who built code, what value it creates, and who governs it. Every commit in a brit repo is a covenant: a witnessed agreement whose terms travel with the code, no matter where it goes.
 
 The name rhymes with *git* on purpose. Git is the substrate. Brit is the covenant laid on top.

@@ -1,0 +1,136 @@
+schemaVersion: 2.2.0
+metadata:
+  name: brit-devspace
+  displayName: Brit Development Environment
+  description: >-
+    Pure-Rust development environment for brit — the gitoxide fork that adds
+    Elohim Protocol covenant primitives (Lamad/Shefa/Qahal trailers) to git.
+  tags:
+    - Rust
+    - gitoxide
+    - brit
+    - Claude
+  projectType: rust
+  language: Rust
+  version: 1.0.0
+
+projects:
+  - name: brit
+    git:
+      remotes:
+        origin: https://github.com/ethosengine/brit.git
+
+components:
+  - name: tools
+    container:
+      image: harbor.ethosengine.com/devspaces/rust-nix-dev:latest
+      memoryLimit: 6Gi
+      memoryRequest: 2Gi
+      cpuLimit: '2'
+      cpuRequest: '500m'
+      mountSources: true
+      sourceMapping: /projects
+      env:
+        - name: CLAUDE_CONFIG_DIR
+          value: /projects/.claude-config
+        - name: USER
+          value: user
+        - name: RUST_BACKTRACE
+          value: '1'
+        # XDG directories — subdirs under /projects-cache volume
+        - name: XDG_CACHE_HOME
+          value: /projects-cache/xdg/cache
+        - name: XDG_DATA_HOME
+          value: /projects-cache/xdg/data
+        - name: XDG_STATE_HOME
+          value: /projects-cache/xdg/state
+        - name: XDG_CONFIG_HOME
+          value: /projects-cache/xdg/config
+        # Jenkins integration
+        - name: JENKINS_URL
+          value: "https://jenkins.ethosengine.com"
+        # SonarQube MCP (SONARQUBE_TOKEN comes from K8s secret)
+        - name: STORAGE_PATH
+          value: /projects/.sonarqube-mcp
+        - name: SONARQUBE_URL
+          value: "https://sonarqube.ethosengine.com"
+        # Rust toolchain (installed to /opt/rust in the base image)
+        - name: RUSTUP_HOME
+          value: /opt/rust/rustup
+        - name: CARGO_HOME
+          value: /opt/rust/cargo
+        # Native build: no RUSTFLAGS override — brit is plain cargo, no WASM.
+        - name: CC
+          value: gcc
+        - name: PATH
+          value: '/opt/rust/cargo/bin:/home/user/bin:/home/user/.local/bin:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin'
+      volumeMounts:
+        - name: projects-cache
+          path: /projects-cache
+
+  - name: projects-cache
+    volume:
+      size: 20Gi
+
+commands:
+  - id: setup-vscode-cli
+    exec:
+      component: tools
+      commandLine: |
+        # VS Code CLI symlink (code-oss -> code). Use ubi9 binary (forward-compatible with ubi10).
+        mkdir -p /home/user/.local/bin
+        if [ -f /checode/checode-linux-libc/ubi9/bin/remote-cli/code-oss ]; then
+          ln -sf /checode/checode-linux-libc/ubi9/bin/remote-cli/code-oss /home/user/.local/bin/code
+        fi
+
+        # Link ~/.claude to persistent config dir for the Claude VS Code extension.
+        rm -rf /home/user/.claude 2>/dev/null || true
+        ln -sf "$CLAUDE_CONFIG_DIR" /home/user/.claude
+        mkdir -p /home/user/.claude/ide
+
+  - id: setup-claude-mcp
+    exec:
+      component: tools
+      workingDir: /projects/brit
+      commandLine: |
+        mkdir -p "$STORAGE_PATH"
+
+        # SonarQube MCP
+        claude mcp remove sonarqube 2>/dev/null || true
+        claude mcp add sonarqube \
+          --env STORAGE_PATH="$STORAGE_PATH" \
+          --env SONARQUBE_TOKEN="$SONARQUBE_TOKEN" \
+          --env SONARQUBE_URL="$SONARQUBE_URL" \
+          -- java -jar /opt/mcp/sonarqube-mcp.jar
+
+        # Jenkins MCP
+        claude mcp remove jenkins 2>/dev/null || true
+        if [ -n "$JENKINS_USERNAME" ] && [ -n "$JENKINS_TOKEN" ]; then
+          JENKINS_AUTH=$(echo -n "$JENKINS_USERNAME:$JENKINS_TOKEN" | base64)
+          claude mcp add jenkins "$JENKINS_URL/mcp-server/mcp" \
+            --transport http \
+            --header "Authorization: Basic $JENKINS_AUTH"
+        fi
+
+        # GitHub CLI auth
+        if [ -n "$GH_TOKEN" ]; then
+          echo "$GH_TOKEN" | gh auth login --with-token
+          gh auth status
+        fi
+
+  - id: build
+    exec:
+      component: tools
+      workingDir: /projects/brit
+      commandLine: cargo build -p brit-verify -p brit-cli -p brit-epr
+
+  - id: test
+    exec:
+      component: tools
+      workingDir: /projects/brit
+      commandLine: cargo test --workspace
+
+events:
+  postStart:
+    - setup-vscode-cli
+    - setup-claude-mcp
