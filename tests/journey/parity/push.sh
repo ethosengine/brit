@@ -14,6 +14,21 @@
 
 title "gix push"
 
+# --- error paths (pre-transport validation) --------------------------------
+
+# mode=effect — mirrors die() in vendor/git/builtin/push.c around line 631.
+# Exit code 128; message text is close-to-git but not byte-exact.
+title "gix push (no configured push destination)"
+(sandbox
+  git init -q
+  git config commit.gpgsign false
+  git config tag.gpgsign false
+  git -c user.email=x@x -c user.name=x commit --allow-empty -qm init
+  it "matches git: bare 'push' in a repo with no remotes" && {
+    expect_parity effect -- push
+  }
+)
+
 # --- positional & repository selection -------------------------------------
 
 # mode=effect

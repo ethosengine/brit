@@ -135,8 +135,15 @@ function expect_parity() {
   [[ "${1:-}" == "--" ]] && shift
 
   local git_out git_exit gix_out gix_exit
+  # Both sides may legitimately exit non-zero (e.g. "git push" with no remote
+  # dies 128). Under `set -e` + bash's inherit_errexit, a failing $(...) in a
+  # subshell aborts the enclosing block before we capture the exit code. Toggle
+  # errexit off for the duration of the comparison — the same pattern
+  # `expect_run` uses in tests/utilities.sh.
+  set +e
   git_out="$(git "$@" 2>&1)"; git_exit=$?
   gix_out="$("$exe_plumbing" "$@" 2>&1)"; gix_exit=$?
+  set -e
 
   export PARITY_GIT_OUT="$git_out" PARITY_GIT_EXIT="$git_exit"
   export PARITY_GIX_OUT="$gix_out" PARITY_GIX_EXIT="$gix_exit"

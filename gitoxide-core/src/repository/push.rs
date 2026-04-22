@@ -62,16 +62,53 @@ pub(crate) mod function {
     use super::Options;
 
     pub fn push<P>(
-        _repo: gix::Repository,
+        repo: gix::Repository,
         _progress: P,
         _out: impl std::io::Write,
-        _err: impl std::io::Write,
-        _opts: Options,
+        mut err: impl std::io::Write,
+        opts: Options,
     ) -> anyhow::Result<()>
     where
         P: gix::NestedProgress,
         P::SubProgress: 'static,
     {
+        // Resolve the push target. `opts.repo` (`--repo=<repository>`) is the canonical
+        // override; `opts.remote` holds the first positional `<repository>` from the CLI.
+        // Fall back to the repo's configured default push remote when neither is set
+        // (mirrors `pushremote_get(NULL)` in vendor/git/builtin/push.c::cmd_push).
+        let explicit = opts.repo.as_deref().or(opts.remote.as_deref());
+        let found = match explicit {
+            Some(name_or_url) => repo.find_remote(name_or_url).ok(),
+            None => repo
+                .find_default_remote(gix::remote::Direction::Push)
+                .and_then(Result::ok),
+        };
+
+        if found.is_none() {
+            // Matches the `die()` branch at vendor/git/builtin/push.c around line 631.
+            // We preserve git's exit code (128) for parity; the message text is a
+            // close render of git's wording but not byte-exact (effect-mode parity).
+            if let Some(name) = explicit {
+                writeln!(err, "fatal: bad repository '{name}'")?;
+            } else {
+                writeln!(err, "fatal: No configured push destination.")?;
+                writeln!(
+                    err,
+                    "Either specify the URL from the command-line or configure a remote repository using"
+                )?;
+                writeln!(err)?;
+                writeln!(err, "    git remote add <name> <url>")?;
+                writeln!(err)?;
+                writeln!(err, "and then push using the remote name")?;
+                writeln!(err)?;
+                writeln!(err, "    git push <name>")?;
+            }
+            err.flush()?;
+            // git's `die()` exits 128. std::process::exit skips destructors, but we're
+            // early on in the function — no pending cleanup.
+            std::process::exit(128);
+        }
+
         anyhow::bail!(
             "gix push is not yet implemented — parity rows are being closed flag-by-flag; \
              see tests/journey/parity/push.sh for the current surface"
