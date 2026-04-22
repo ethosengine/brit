@@ -26,4 +26,29 @@ title "parity smoke test"
     }
     exe_plumbing="$saved_exe_plumbing"
   )
+
+  (with "only_for_hash guard"
+    saved_hash="${GIX_TEST_FIXTURE_HASH:-sha1}"
+
+    export GIX_TEST_FIXTURE_HASH=sha1
+    it "runs under sha1 when coverage=dual" && {
+      only_for_hash dual && expect_run 0 true
+    }
+    it "runs under sha1 when coverage=sha1-only" && {
+      only_for_hash sha1-only && expect_run 0 true
+    }
+
+    export GIX_TEST_FIXTURE_HASH=sha256
+    it "runs under sha256 when coverage=dual" && {
+      only_for_hash dual && expect_run 0 true
+    }
+    it "skips under sha256 when coverage=sha1-only" && {
+      if only_for_hash sha1-only; then
+        fail "expected only_for_hash sha1-only to return non-zero under sha256"
+      fi
+      echo 1>&2 "${GREEN} - OK (skip path taken)"
+    }
+
+    GIX_TEST_FIXTURE_HASH="$saved_hash"
+  )
 )

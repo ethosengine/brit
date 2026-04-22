@@ -86,6 +86,35 @@ function launch-git-daemon() {
     trap 'kill $daemon_pid' EXIT
 }
 
+# only_for_hash <coverage> — returns 0 if the active GIX_TEST_FIXTURE_HASH
+# is in the coverage set, else 1 (caller's subshell short-circuits).
+#
+# Coverage values:
+#   dual       — always run (SHA-1 and SHA-256)
+#   sha1-only  — run under sha1, skip under sha256 (legitimate when
+#                the feature genuinely can't exercise hashing, e.g.,
+#                operating on a remote that gix doesn't yet support
+#                in sha256 mode)
+function only_for_hash() {
+  local want="${1:?only_for_hash: need coverage (dual|sha1-only)}"
+  local have="${GIX_TEST_FIXTURE_HASH:-sha1}"
+  case "$want" in
+    dual) return 0 ;;
+    sha1-only)
+      if [[ "$have" == "sha1" ]]; then
+        return 0
+      else
+        echo 1>&2 "${YELLOW}  [hash=$have] skipped (row coverage: sha1-only)"
+        return 1
+      fi
+      ;;
+    *)
+      echo 1>&2 "${RED}only_for_hash: unknown coverage '$want' (want dual|sha1-only)"
+      return 2
+      ;;
+  esac
+}
+
 # expect_parity — run the same args through git and gix, compare per-mode.
 # Usage: expect_parity <effect|bytes> [--] <shared-args...>
 # Modes:
