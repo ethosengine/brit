@@ -130,7 +130,8 @@ commands:
       workingDir: /projects/brit
       commandLine: cargo test --workspace
 
-events:
-  postStart:
-    - setup-vscode-cli
-    - setup-claude-mcp
+# Disabled until the workspace boots cleanly once — re-enable after first success.
+# events:
+#   postStart:
+#     - setup-vscode-cli
+#     - setup-claude-mcp
