@@ -85,3 +85,47 @@ function launch-git-daemon() {
     done
     trap 'kill $daemon_pid' EXIT
 }
+
+# expect_parity — run the same args through git and gix, compare per-mode.
+# Usage: expect_parity <effect|bytes> [--] <shared-args...>
+# Modes:
+#   effect  — exit-code match required; output diff reported but not fatal.
+#             Callers can use $PARITY_GIT_OUT / $PARITY_GIX_OUT for token checks.
+#   bytes   — exit-code AND byte-exact stdout+stderr match required.
+# Requires $exe_plumbing (the gix binary) in scope — sourced by tests/parity.sh
+# or tests/journey.sh.
+function expect_parity() {
+  local mode="${1:?expect_parity: need mode (effect|bytes)}"
+  shift
+  [[ "${1:-}" == "--" ]] && shift
+
+  local git_out git_exit gix_out gix_exit
+  git_out="$(git "$@" 2>&1)"; git_exit=$?
+  gix_out="$("$exe_plumbing" "$@" 2>&1)"; gix_exit=$?
+
+  export PARITY_GIT_OUT="$git_out" PARITY_GIT_EXIT="$git_exit"
+  export PARITY_GIX_OUT="$gix_out" PARITY_GIX_EXIT="$gix_exit"
+
+  if [[ "$git_exit" != "$gix_exit" ]]; then
+    echo 1>&2 "${RED} - FAIL (exit-code divergence: git=$git_exit gix=$gix_exit)"
+    echo 1>&2 "${WHITE}\$ git $*"
+    echo 1>&2 "--- git ---"; echo 1>&2 "$git_out"
+    echo 1>&2 "--- gix ---"; echo 1>&2 "$gix_out"
+    return 1
+  fi
+
+  if [[ "$mode" == "bytes" && "$git_out" != "$gix_out" ]]; then
+    echo 1>&2 "${RED} - FAIL (byte-level output divergence, exit=$git_exit)"
+    echo 1>&2 "${WHITE}\$ $*"
+    diff <(echo "$git_out") <(echo "$gix_out") 1>&2 || true
+    return 1
+  fi
+
+  if [[ "$mode" != "effect" && "$mode" != "bytes" ]]; then
+    echo 1>&2 "${RED}expect_parity: unknown mode '$mode' (want effect|bytes)"
+    return 2
+  fi
+
+  echo 1>&2 "${GREEN} - OK ($mode parity, exit=$git_exit)"
+  return 0
+}
