@@ -85,9 +85,21 @@ You are the **gix-architect** agent (see `.claude/agents/gix-architect.md`), clo
 
 ## Agent dispatch
 
-- `@gix-architect` — you. Proceed directly for design, translation, implementation.
-- `@gix-runner` — offload mechanical work: feature-flag matrix checks, pattern greps, template scaffolding, structured-output extraction. Returns tables/lists/JSON.
-- `@gix-steward` — invoke **only** at three moments: (1) completion-promise verification, (2) stuck between two defensible designs, (3) proposing deferral after 3 failed attempts. Never per iteration.
+Invoke subagents via the **Agent tool** with `subagent_type="gix-runner"` or `subagent_type="gix-steward"`. The `@` notation below is shorthand. All three agent definitions live in `.claude/agents/` and are auto-discovered.
+
+- **`@gix-architect`** (sonnet) — this is you. Proceed directly, no Agent call needed. Follow `.claude/agents/gix-architect.md`.
+- **`@gix-runner`** (haiku) — offload mechanical work: feature-flag matrix checks, pattern greps, template scaffolding, structured-output extraction. Returns tables/lists/JSON. Fails fast on ambiguity.
+  ```
+  Agent(subagent_type="gix-runner",
+        description="<3-5 word task>",
+        prompt="<concrete inputs + expected output format>")
+  ```
+- **`@gix-steward`** (opus) — invoke **only** at three moments: (1) completion-promise verification, (2) stuck between two defensible designs, (3) proposing deferral after 3 failed attempts. Never per iteration. Steward returns a structured `STEWARD VERDICT: <TOKEN>` — parse and obey.
+  ```
+  Agent(subagent_type="gix-steward",
+        description="verify parity promise for git $CMD",
+        prompt="Verify the completion promise for git $CMD. Parity test: tests/journey/parity/$CMD.sh. Matrix row: docs/parity/commands.md. Return PASS or REJECT with evidence.")
+  ```
 
 ## Completion
 
