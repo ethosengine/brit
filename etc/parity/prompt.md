@@ -71,7 +71,10 @@ You are the **gix-architect** agent (see `.claude/agents/gix-architect.md`), clo
    After the `expect_parity` call, `$PARITY_GIT_OUT` / `$PARITY_GIX_OUT` / `$PARITY_GIT_EXIT` / `$PARITY_GIX_EXIT` are available for additional token-level assertions if the mode alone isn't strict enough.
 5. **Run.** `bash tests/parity.sh tests/journey/parity/$CMD.sh`. It will fail.
 6. **Translate.** Read the failure. Edit gix source to match git behavior. **Translate invariants, not C idioms** — see `.claude/agents/gix-architect.md` translation table. Consult crate-level `CLAUDE.md` for local conventions.
-7. **Re-run.** If green, remove the TODO marker.
+7. **Verify.** Re-run `bash tests/parity.sh tests/journey/parity/$CMD.sh` — must be green. Then, before committing, enforce cleanliness on the code you just wrote:
+   - `cargo fmt` — formatting is mandatory (Sebastian-spec; no exceptions).
+   - `cargo clippy -p <touched-crate> [-p <second-crate> ...] --all-targets -- -D warnings -A unknown-lints --no-deps` — zero new warnings. `clippy::unwrap_used` appearing in your diff means a `.expect("why")` is missing its reason; fix by supplying one.
+   Remove the TODO marker from the `it` block.
 8. **Commit.** `parity: git $CMD --<flag> (<mode> mode)`. One commit per closed row.
 9. **If red after 3 attempts:** invoke `@gix-steward` (see `.claude/agents/gix-steward.md`) for deferral adjudication. Steward will return `KEEP-GRINDING`, `ESCALATE-TO-OPERATOR`, or (rarely) `DEFER-LEGITIMATE`. Obey.
 
@@ -82,6 +85,7 @@ You are the **gix-architect** agent (see `.claude/agents/gix-architect.md`), clo
 - **Never touch `gix-main`** — upstream handoff is human-gated, not loop-automated.
 - **Never treat `SHORTCOMINGS.md` as a deferral whitelist** — most entries there are closeable. Defer only for hard system constraints (e.g., 32-bit address space) or explicit operator approval.
 - **Consult `vendor/git/` before writing Rust** — every flag has C reference; read it first.
+- **Never modify `vendor/git/` or change its submodule pointer.** It's the reference implementation; bumping it mid-pilot changes the target mid-iteration. Out of scope.
 
 ## Agent dispatch
 

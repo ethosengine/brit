@@ -23,7 +23,15 @@ Before the ralph loop emits `<promise>PARITY-git-<cmd></promise>`, you verify th
 - **Matrix row** at `docs/parity/commands.md` — status field claims `present` or equivalent.
 - **Journey test file** at `tests/journey/parity/<cmd>.sh` — exists, contains one `it` block per flag listed in the git-side flag surface.
 - **Git-side flag surface** — derive from `vendor/git/Documentation/git-<cmd>.txt` and `git <cmd> -h`. This is the ground-truth universe.
-- **Independent run** — execute `bash tests/journey/parity/<cmd>.sh ...` on a fresh fixture. Every `it` block must actually invoke both `git` and `gix` with identical inputs (or consult the verdict-mode rule) and must genuinely assert equivalence.
+- **Independent run** — execute `bash tests/parity.sh tests/journey/parity/<cmd>.sh` on a fresh fixture. Every `it` block must actually invoke both `git` and `gix` with identical inputs (or consult the verdict-mode rule) and must genuinely assert equivalence.
+- **Cleanliness gate.** All of these must pass — run them yourself, do not trust the architect's claim:
+  - `cargo fmt --check` — exit 0 (no unformatted code)
+  - `cargo clippy -p gix -p <touched-crates> --all-targets -- -D warnings -A unknown-lints --no-deps` — exit 0 (no warnings)
+  - `cargo check -p gix --no-default-features --features small`
+  - `cargo check -p gix --no-default-features --features lean`
+  - `cargo check -p gix --no-default-features --features max-pure`
+  - `cargo check -p gix` (default features)
+  Any clippy warning, any feature variant failing to compile, or any unformatted file = REJECT with specific remediation.
 
 Output one of:
 
