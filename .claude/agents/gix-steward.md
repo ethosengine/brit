@@ -32,6 +32,11 @@ Before the ralph loop emits `<promise>PARITY-git-<cmd></promise>`, you verify th
   - `cargo check -p gix --no-default-features --features max-pure`
   - `cargo check -p gix` (default features)
   Any clippy warning, any feature variant failing to compile, or any unformatted file = REJECT with specific remediation.
+- **Hash coverage.** Every `title` section in `tests/journey/parity/<cmd>.sh` must be preceded by a `# hash=<coverage>` comment on its own line, where `<coverage>` is one of:
+  - `dual` — section runs under both sha1 and sha256 via `tests/parity.sh`'s hash loop
+  - `sha1-only <reason>` — section skips under sha256; `<reason>` must be a concrete justification (e.g., "gix push cannot open sha256 remotes yet, see gix/src/clone/fetch/mod.rs unimplemented!()") — not "TODO" or "later"
+  No annotation, empty `sha1-only` reason, or coverage token other than those two = REJECT.
+  Independently, `bash tests/parity.sh tests/journey/parity/<cmd>.sh` runs every section twice (once per hash). Every section's `it` blocks must pass under sha1; sections marked `# hash=dual` must also pass under sha256.
 
 Output one of:
 
@@ -51,6 +56,9 @@ MISSING:
   - flag=--<flag-name>  ·  source=vendor/git/Documentation/git-<cmd>.txt L<N>  ·  no matching it-block in tests/journey/parity/<cmd>.sh
   - flag=--<flag-name>  ·  it-block exists but does not invoke git — only gix
   - flag=--<flag-name>  ·  expect_parity mode=effect but flag is scriptable (e.g., --porcelain) and should be mode=bytes
+  - flag=--<flag-name>  ·  no `# hash=` annotation above its title
+  - flag=--<flag-name>  ·  `# hash=sha1-only` without a concrete reason string
+  - flag=--<flag-name>  ·  `# hash=dual` but fails under sha256
 REMEDIATION: <terse, specific, mapped to the architect's next iteration>
 ```
 
