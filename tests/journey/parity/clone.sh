@@ -87,9 +87,20 @@ only_for_hash sha1-only && (sandbox
 # hash=sha1-only "gix cannot open sha256 remotes, see gix/src/clone/fetch/mod.rs unimplemented!()"
 title "gix clone <bare-repo> (auto directory)"
 only_for_hash sha1-only && (sandbox
-  it "matches git behavior" && {
-    # TODO: bare upstream with one commit; expect_parity effect -- clone upstream.git
-    true
+  # Auto-directory derivation creates `upstream/` from `upstream.git`.
+  # expect_parity runs git then gix in the same cwd, so the second call
+  # would collide with the first's target dir. Split into two
+  # single-binary it-blocks, each in its own subdir with a symlink back
+  # to the shared bare upstream — same effect-mode contract
+  # (exit-code parity) without the stateful-fixture collision.
+  git-init-hash-aware -q --bare upstream.git
+  mkdir g-side && (cd g-side && ln -s ../upstream.git .)
+  mkdir x-side && (cd x-side && ln -s ../upstream.git .)
+  it "matches git: vanilla clone into auto humanish dir exits 0" && {
+    (cd g-side && expect_run 0 git clone upstream.git)
+  }
+  it "matches gix: vanilla clone into auto humanish dir exits 0" && {
+    (cd x-side && expect_run 0 "$exe_plumbing" clone upstream.git)
   }
 )
 
