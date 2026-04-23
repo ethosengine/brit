@@ -108,9 +108,17 @@ only_for_hash sha1-only && (sandbox
 # hash=sha1-only "gix cannot open sha256 remotes, see gix/src/clone/fetch/mod.rs unimplemented!()"
 title "gix clone <repo> <dir>"
 only_for_hash sha1-only && (sandbox
-  it "matches git behavior" && {
-    # TODO: expect_parity effect -- clone upstream.git my-clone
-    true
+  # Explicit destination positional — same stateful-fixture split as the
+  # auto-directory row, but here the target is the explicit `my-clone`
+  # name passed on the CLI (not derived from the URL).
+  git-init-hash-aware -q --bare upstream.git
+  mkdir g-side && (cd g-side && ln -s ../upstream.git .)
+  mkdir x-side && (cd x-side && ln -s ../upstream.git .)
+  it "matches git: explicit <dir> positional exits 0" && {
+    (cd g-side && expect_run 0 git clone upstream.git my-clone)
+  }
+  it "matches gix: explicit <dir> positional exits 0" && {
+    (cd x-side && expect_run 0 "$exe_plumbing" clone upstream.git my-clone)
   }
 )
 
