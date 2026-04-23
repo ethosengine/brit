@@ -610,6 +610,14 @@ pub mod clone {
         #[clap(long, short = 'v')]
         pub verbose: bool,
 
+        /// Operate quietly — no progress on stderr.
+        ///
+        /// Parse-only: gix clone does not auto-start a progress TUI when
+        /// stderr is piped anyway, so the flag is currently a no-op. Accepted
+        /// for CLI compatibility with git's `OPT__VERBOSITY(-q)`.
+        #[clap(long, short = 'q')]
+        pub quiet: bool,
+
         /// The clone will be bare and a working tree checkout won't be available.
         #[clap(long)]
         pub bare: bool,

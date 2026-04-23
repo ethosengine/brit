@@ -600,6 +600,7 @@ pub fn main() -> Result<()> {
         Subcommands::Clone(crate::plumbing::options::clone::Platform {
             handshake_info,
             verbose: _,
+            quiet: _,
             bare,
             no_tags,
             ref_name,

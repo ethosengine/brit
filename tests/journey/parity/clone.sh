@@ -152,13 +152,22 @@ only_for_hash sha1-only && (sandbox
 # hash=sha1-only "gix cannot open sha256 remotes, see gix/src/clone/fetch/mod.rs unimplemented!()"
 title "gix clone -q / --quiet"
 only_for_hash sha1-only && (sandbox
+  git-init-hash-aware -q --bare upstream.git
+  mkdir g-short g-long x-short x-long
+  for d in g-short g-long x-short x-long; do
+    (cd "$d" && ln -s ../upstream.git .)
+  done
   it "matches git: -q exits 0" && {
-    # TODO: expect_parity effect -- clone -q upstream.git
-    true
+    (cd g-short && expect_run 0 git clone -q upstream.git)
+  }
+  it "matches gix: -q exits 0" && {
+    (cd x-short && expect_run 0 "$exe_plumbing" clone -q upstream.git)
   }
   it "matches git: --quiet exits 0" && {
-    # TODO: expect_parity effect -- clone --quiet upstream.git
-    true
+    (cd g-long && expect_run 0 git clone --quiet upstream.git)
+  }
+  it "matches gix: --quiet exits 0" && {
+    (cd x-long && expect_run 0 "$exe_plumbing" clone --quiet upstream.git)
   }
 )
 
