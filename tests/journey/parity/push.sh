@@ -92,6 +92,21 @@ title "gix push --all (combined with refspecs)"
   }
 )
 
+# mode=effect — mirrors `if (argc >= 2) die("--mirror can't be combined
+# with refspecs")` at push.c ~577. Sibling to --all+refspecs with the
+# same die-order (post-resolve).
+title "gix push --mirror (combined with refspecs)"
+(sandbox
+  git init -q
+  git config commit.gpgsign false
+  git config tag.gpgsign false
+  git -c user.email=x@x -c user.name=x commit --allow-empty -qm init
+  git remote add origin /tmp/parity-unused
+  it "matches git: --mirror with an explicit refspec" && {
+    expect_parity effect -- push --mirror origin main
+  }
+)
+
 # --- positional & repository selection -------------------------------------
 
 # mode=effect

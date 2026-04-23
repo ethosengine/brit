@@ -183,6 +183,12 @@ pub(crate) mod function {
             drop(stderr);
             std::process::exit(128);
         }
+        if opts.mirror && !opts.ref_specs.is_empty() {
+            let mut stderr = std::io::stderr().lock();
+            writeln!(stderr, "fatal: --mirror can't be combined with refspecs")?;
+            drop(stderr);
+            std::process::exit(128);
+        }
 
         anyhow::bail!(
             "gix push is not yet implemented — parity rows are being closed flag-by-flag; \
