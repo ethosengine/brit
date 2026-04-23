@@ -18,11 +18,11 @@
 //! post-handshake transport.
 #![allow(missing_docs)] // until the API settles
 
+pub mod arguments;
 pub mod command_list;
+pub mod function;
 pub mod pack_writer;
 pub mod report;
-pub mod function;
-pub mod arguments;
 pub mod response;
 
 mod types;
