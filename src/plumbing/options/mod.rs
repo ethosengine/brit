@@ -618,6 +618,14 @@ pub mod clone {
         #[clap(long, short = 'q')]
         pub quiet: bool,
 
+        /// Force progress reporting even when stderr is not a TTY.
+        ///
+        /// Parse-only: clashes with gix's top-level `--progress` TUI; the
+        /// subcommand flag is accepted to mirror git's per-subcommand
+        /// `OPT_BOOL(0, "progress", ...)` and currently has no runtime effect.
+        #[clap(long = "progress", conflicts_with = "quiet")]
+        pub force_progress: bool,
+
         /// The clone will be bare and a working tree checkout won't be available.
         #[clap(long)]
         pub bare: bool,

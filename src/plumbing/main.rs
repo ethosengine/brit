@@ -601,6 +601,7 @@ pub fn main() -> Result<()> {
             handshake_info,
             verbose: _,
             quiet: _,
+            force_progress: _,
             bare,
             no_tags,
             ref_name,
