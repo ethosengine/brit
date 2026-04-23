@@ -546,8 +546,12 @@ only_for_hash sha1-only && (sandbox
 # hash=sha1-only "gix cannot open sha256 remotes, see gix/src/clone/fetch/mod.rs unimplemented!()"
 title "gix fetch --tags / -t"
 only_for_hash sha1-only && (sandbox
-  it "TODO: matches git: --tags pulls every remote tag" && {
-    :  # expect_parity effect -- fetch --tags origin
+  bare-empty-upstream-with-origin
+  it "matches git: --tags accepted, exit 0" && {
+    expect_parity effect -- fetch --tags origin
+  }
+  it "matches git: -t accepted, exit 0" && {
+    expect_parity effect -- fetch -t origin
   }
 )
 
@@ -555,11 +559,12 @@ only_for_hash sha1-only && (sandbox
 # hash=sha1-only "gix cannot open sha256 remotes, see gix/src/clone/fetch/mod.rs unimplemented!()"
 title "gix fetch --no-tags / -n"
 only_for_hash sha1-only && (sandbox
-  it "TODO: matches git: --no-tags suppresses tag auto-follow" && {
-    :  # expect_parity effect -- fetch --no-tags origin
+  bare-empty-upstream-with-origin
+  it "matches git: --no-tags suppresses tag auto-follow, exit 0" && {
+    expect_parity effect -- fetch --no-tags origin
   }
-  it "TODO: matches git: -n is the short alias for --no-tags" && {
-    :  # expect_parity effect -- fetch -n origin
+  it "matches git: -n is the short alias for --no-tags, exit 0" && {
+    expect_parity effect -- fetch -n origin
   }
 )
 
@@ -730,14 +735,21 @@ only_for_hash sha1-only && (sandbox
 # hash=sha1-only "gix cannot open sha256 remotes, see gix/src/clone/fetch/mod.rs unimplemented!()"
 title "gix fetch -4 / --ipv4 and -6 / --ipv6"
 only_for_hash sha1-only && (sandbox
-  it "TODO: matches git: -4 accepted" && {
-    :  # expect_parity effect -- fetch -4 origin
+  bare-empty-upstream-with-origin
+  it "matches git: -4 accepted, exit 0 against empty upstream" && {
+    expect_parity effect -- fetch -4 origin
   }
-  it "TODO: matches git: -6 accepted" && {
-    :  # expect_parity effect -- fetch -6 origin
+  it "matches git: -6 accepted, exit 0" && {
+    expect_parity effect -- fetch -6 origin
   }
-  it "TODO: matches git: -4 -6 last-wins (IPv6)" && {
-    :  # expect_parity effect -- fetch -4 -6 origin
+  it "matches git: -4 -6 last-wins (IPv6), exit 0" && {
+    expect_parity effect -- fetch -4 -6 origin
+  }
+  it "matches git: --ipv4 long-form, exit 0" && {
+    expect_parity effect -- fetch --ipv4 origin
+  }
+  it "matches git: --ipv6 long-form, exit 0" && {
+    expect_parity effect -- fetch --ipv6 origin
   }
 )
 
