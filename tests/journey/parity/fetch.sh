@@ -115,10 +115,20 @@ only_for_hash sha1-only && (sandbox
 # mode=effect — mirrors `die("options '--negotiate-only' and '--recurse-submodules' cannot be used together")`
 # when --negotiate-only is combined with --recurse-submodules=yes/on-demand.
 # hash=sha1-only "gix cannot open sha256 remotes, see gix/src/clone/fetch/mod.rs unimplemented!()"
-title "gix fetch --negotiate-only --recurse-submodules=yes"
+title "gix fetch --negotiate-only --recurse-submodules=<mode>"
 only_for_hash sha1-only && (sandbox
-  it "TODO: matches git: conflict dies 128" && {
-    :  # expect_parity effect -- fetch --negotiate-only --recurse-submodules=yes origin
+  git init -q
+  git config commit.gpgsign false
+  git -c user.email=x@x -c user.name=x commit --allow-empty -qm init
+  git remote add origin /tmp/parity-unused
+  it "matches git: --recurse-submodules=yes → conflict dies 128" && {
+    expect_parity effect -- fetch --negotiate-only --recurse-submodules=yes origin
+  }
+  it "matches git: --recurse-submodules=on-demand → conflict dies 128" && {
+    expect_parity effect -- fetch --negotiate-only --recurse-submodules=on-demand origin
+  }
+  it "matches git: --recurse-submodules=no → conflict does NOT fire (falls through to --negotiation-tip check, dies 128 with different message)" && {
+    expect_parity effect -- fetch --negotiate-only --recurse-submodules=no origin
   }
 )
 

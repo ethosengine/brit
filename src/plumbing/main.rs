@@ -643,6 +643,26 @@ pub fn main() -> Result<()> {
                     std::process::exit(128);
                 }
             }
+            // cmd_fetch pre-transport: `if (negotiate_only) { switch (recurse_submodules_cli) ... }`.
+            // Boolean-false / unset values fall through; anything else dies
+            // 128 with git's exact "options 'X' and 'Y' cannot be used together"
+            // text. This check fires BEFORE the `--negotiation-tip=*` check
+            // below, matching the order of die() calls in fetch.c.
+            if platform.negotiate_only {
+                if let Some(raw) = platform.recurse_submodules.as_deref() {
+                    use crate::plumbing::options::fetch::{parse_recurse_submodules, RecurseSubmodules};
+                    if !matches!(parse_recurse_submodules(raw), RecurseSubmodules::Off) {
+                        use std::io::Write;
+                        let mut stderr = std::io::stderr().lock();
+                        let _ = writeln!(
+                            stderr,
+                            "fatal: options '--negotiate-only' and '--recurse-submodules' cannot be used together"
+                        );
+                        drop(stderr);
+                        std::process::exit(128);
+                    }
+                }
+            }
             // `if (negotiate_only && !negotiation_tip.nr)` in cmd_fetch. Pre-transport
             // exit 128 with git's exact message (note the trailing '=*').
             if platform.negotiate_only && platform.negotiation_tip.is_empty() {

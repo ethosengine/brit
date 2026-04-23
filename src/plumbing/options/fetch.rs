@@ -275,6 +275,39 @@ pub struct ShallowOptions {
     pub unshallow: bool,
 }
 
+/// Classification of a `--recurse-submodules=<value>` argument.
+///
+/// Mirrors git's `enum recurse_submodules_cli` plus the `option_fetch_parse_recurse_submodules`
+/// callback in `vendor/git/builtin/fetch.c`: boolean-false tokens collapse to
+/// [`Off`](RecurseSubmodules::Off); `yes`/boolean-true collapses to
+/// [`On`](RecurseSubmodules::On); `on-demand` is its own state. Unknown tokens
+/// are surfaced to the caller so the dispatch layer can die-128 with git's
+/// "fatal: bad recurse-submodules argument: <value>" text.
+pub enum RecurseSubmodules {
+    /// "no" / "false" / "off" / "0".
+    Off,
+    /// "yes" / "true" / "on" / "1" / bare form (PARSE_OPT_OPTARG default).
+    On,
+    /// "on-demand".
+    OnDemand,
+    /// Any other token — caller is expected to die 128.
+    Bogus,
+}
+
+/// Parse a `--recurse-submodules` (or matching config) value into one of the
+/// four recognized buckets.
+pub fn parse_recurse_submodules(value: &str) -> RecurseSubmodules {
+    // Boolean false tokens are matched case-insensitively, matching
+    // git_parse_maybe_bool_text in vendor/git/config.c.
+    let lower = value.to_ascii_lowercase();
+    match lower.as_str() {
+        "no" | "false" | "off" | "0" => RecurseSubmodules::Off,
+        "yes" | "true" | "on" | "1" | "" => RecurseSubmodules::On,
+        "on-demand" => RecurseSubmodules::OnDemand,
+        _ => RecurseSubmodules::Bogus,
+    }
+}
+
 /// Resolve the [`ShallowOptions`] block into a [`Shallow`] semantic. Returns
 /// the parsed numeric depth / deepen values so callers can still die-128 on
 /// bad inputs with git's exact message before the protocol layer rejects
