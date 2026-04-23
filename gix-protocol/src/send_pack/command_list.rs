@@ -4,14 +4,18 @@
 //!
 //! ```text
 //! update-request  =  *shallow command-list [pack-file]
-//! command-list    =  PKT-LINE(command NUL capability-list LF)
-//!                    *PKT-LINE(command LF)
+//! command-list    =  PKT-LINE(command NUL capability-list)
+//!                    *PKT-LINE(command)
 //!                    flush-pkt
 //! command         =  create / delete / update
 //! create          =  zero-id SP new-id SP name
 //! delete          =  old-id SP zero-id SP name
 //! update          =  old-id SP new-id SP name
 //! ```
+//!
+//! Note: the spec shows `LF` after each pkt-line, but git's send-pack does NOT
+//! emit a trailing `\n` — the captured wire fixtures confirm this.  We match
+//! the actual git client behaviour, not the ABNF annotation.
 
 use std::io::Write;
 
@@ -34,15 +38,16 @@ pub fn encode_into(request: &Request, hash_kind: gix_hash::Kind, out: &mut impl 
         payload.extend_from_slice(&cmd.refname);
         if i == 0 {
             // NUL capability-list
+            // git's send-pack builds cap_buf with a leading space before every
+            // capability (" report-status", " side-band-64k", …), so the wire
+            // format is: <command>\0 cap1 cap2 …\n  (leading SP after NUL).
             payload.push(0);
-            for (j, cap) in request.capabilities.iter().enumerate() {
-                if j > 0 {
-                    payload.push(b' ');
-                }
+            for cap in request.capabilities.iter() {
+                payload.push(b' ');
                 payload.extend_from_slice(cap);
             }
         }
-        payload.push(b'\n');
+        // No trailing LF — git's send-pack omits it despite the ABNF annotation.
         gix_transport::packetline::blocking_io::encode::data_to_write(&payload, &mut *out)?;
     }
     gix_transport::packetline::blocking_io::encode::flush_to_write(&mut *out)?;
