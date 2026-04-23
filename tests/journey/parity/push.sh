@@ -195,6 +195,24 @@ title "gix push --force-with-lease=ref:<bogus-oid>"
   }
 )
 
+# mode=effect — mirrors the PUSH_DEFAULT_NOTHING arm in cmd_push. With no
+# CLI refspecs, no configured `push` refspecs on the remote, and
+# push.default=nothing, git dies 128 (it would otherwise fall through to
+# use push.default to compute a default refspec).
+title "gix push with push.default=nothing and no refspecs"
+(sandbox
+  git init -q
+  git checkout -b main
+  git config commit.gpgsign false
+  git config tag.gpgsign false
+  touch a && git add a
+  git -c user.email=x@x -c user.name=x commit -qm init
+  git remote add origin /tmp/parity-unused
+  it "matches git: -c push.default=nothing push → 128" && {
+    expect_parity effect -- -c push.default=nothing push
+  }
+)
+
 # mode=effect — push-options are transmitted over pkt-lines which don't
 # permit embedded newlines; git's cmd_push iterates push_options and
 # dies 128 "push options must not have new line characters" if any

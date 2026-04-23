@@ -330,6 +330,46 @@ pub(crate) mod function {
             }
         }
 
+        // Mirrors the PUSH_DEFAULT_NOTHING arm in vendor/git/builtin/push.c:
+        // when no CLI refspecs are given and the remote has no configured
+        // `push` refspecs, git consults `push.default`. If that resolves to
+        // `nothing`, git dies 128:
+        //     "You didn't specify any refspecs to push, and push.default is
+        //      \"nothing\"."
+        //
+        // We check it only when there are no CLI refspecs AND the remote is
+        // known — both the --all/--mirror/--tags/--delete branches and the
+        // no-remote branch would have short-circuited earlier. `found` is
+        // guaranteed Some here (the is_none-dies-128 block above returned).
+        if opts.ref_specs.is_empty() && !opts.all && !opts.mirror && !opts.tags && !opts.delete {
+            if let Some(remote) = found.as_ref() {
+                let has_push_specs = !remote.refspecs(gix::remote::Direction::Push).is_empty();
+                if !has_push_specs {
+                    // Read push.default. Absent → Simple (git's default).
+                    // Use the raw string approach for portability across
+                    // the two value_of paths (config snapshot vs tree).
+                    let default = repo
+                        .config_snapshot()
+                        .string("push.default")
+                        .as_deref()
+                        .and_then(|v| match v.to_ascii_lowercase().as_slice() {
+                            b"nothing" => Some("nothing"),
+                            _ => None,
+                        })
+                        .is_some();
+                    if default {
+                        let mut stderr = std::io::stderr().lock();
+                        writeln!(
+                            stderr,
+                            "fatal: You didn't specify any refspecs to push, and push.default is \"nothing\"."
+                        )?;
+                        drop(stderr);
+                        std::process::exit(128);
+                    }
+                }
+            }
+        }
+
         anyhow::bail!(
             "gix push is not yet implemented — parity rows are being closed flag-by-flag; \
              see tests/journey/parity/push.sh for the current surface"
