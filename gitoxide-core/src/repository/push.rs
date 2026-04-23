@@ -180,6 +180,7 @@ pub(crate) mod function {
             Ok(())
         };
         die_on_bad_bool("push.followTags")?;
+        die_on_bad_bool("push.useForceIfIncludes")?;
 
         // Validate push.default from config. Mirrors the dispatch in
         // vendor/git/environment.c that resolves `push.default` to one of
