@@ -18,6 +18,10 @@ where
     /// When `true`, delete remote refs matching a push spec's RHS that have no
     /// local counterpart — git's MATCH_REFS_PRUNE (transport.c).
     pub(super) prune: bool,
+    /// Client-side push options to transmit to the remote. Requires the
+    /// remote to advertise the `push-options` capability (git fails with
+    /// "the receiving end does not support push options" otherwise).
+    pub(super) push_options: Vec<BString>,
 }
 
 /// Builder
@@ -35,6 +39,7 @@ where
             refspecs: Vec::new(),
             dry_run: false,
             prune: false,
+            push_options: Vec::new(),
         }
     }
 
@@ -60,6 +65,18 @@ where
     /// spec's RHS pattern but have no local counterpart (git's MATCH_REFS_PRUNE).
     pub fn with_prune(mut self, prune: bool) -> Self {
         self.prune = prune;
+        self
+    }
+
+    /// Attach client-side push options — transmitted to the remote after the
+    /// commands list. Requires the server to advertise the `push-options`
+    /// capability or transmit will error before sending the pack.
+    pub fn with_push_options<I, S>(mut self, options: I) -> Self
+    where
+        I: IntoIterator<Item = S>,
+        S: AsRef<[u8]>,
+    {
+        self.push_options = options.into_iter().map(|s| BString::from(s.as_ref())).collect();
         self
     }
 }

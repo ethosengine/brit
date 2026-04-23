@@ -39,6 +39,21 @@ where
             return Err(Error::NoRefspecs);
         }
 
+        // Capability guard for `--push-option`: git dies 128 with
+        // "the receiving end does not support push options" when the client
+        // passed options but the server didn't advertise the `push-options`
+        // capability during handshake (send-pack.c::check_push_options).
+        if !self.push_options.is_empty() {
+            let supported = self
+                .connection
+                .handshake
+                .as_ref()
+                .is_some_and(|h| h.capabilities.contains("push-options"));
+            if !supported {
+                return Err(Error::PushOptionsNotSupported);
+            }
+        }
+
         // ── Step 1: Parse refspecs ────────────────────────────────────────────
         let parsed_refspecs: Vec<gix_refspec::RefSpec> = self
             .refspecs

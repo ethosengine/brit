@@ -606,11 +606,26 @@ pub(crate) mod function {
             };
             let conn = remote.connect(gix::remote::Direction::Push)?;
             let prepare = conn.prepare_push(gix::progress::Discard)?;
-            let out = prepare
+            let push_opt_bytes: Vec<&[u8]> = opts.push_options.iter().map(|s| s.as_bytes()).collect();
+            let result = prepare
                 .with_refspecs(specs_to_send.iter())
                 .with_dry_run(opts.dry_run)
                 .with_prune(opts.prune)
-                .transmit(gix::progress::Discard, &std::sync::atomic::AtomicBool::new(false))?;
+                .with_push_options(push_opt_bytes)
+                .transmit(gix::progress::Discard, &std::sync::atomic::AtomicBool::new(false));
+            // Mirror git's `send-pack.c::check_push_options` exit: when the
+            // receiver hasn't advertised `push-options`, both binaries print
+            // the `fatal:` line and exit 128.
+            let out = match result {
+                Err(gix::remote::push::Error::PushOptionsNotSupported) => {
+                    let mut stderr = std::io::stderr().lock();
+                    writeln!(stderr, "fatal: the receiving end does not support push options")?;
+                    writeln!(stderr, "fatal: the remote end hung up unexpectedly")?;
+                    drop(stderr);
+                    std::process::exit(128);
+                }
+                other => other?,
+            };
             (out, display_url)
         };
 

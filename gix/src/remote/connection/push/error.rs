@@ -36,4 +36,6 @@ pub enum Error {
     RefspecConflict(#[from] gix_refspec::match_group::validate::Error),
     #[error("refspec matched no local refs: {spec:?}")]
     NoMatch { spec: crate::bstr::BString },
+    #[error("the receiving end does not support push options")]
+    PushOptionsNotSupported,
 }

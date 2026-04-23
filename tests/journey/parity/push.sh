@@ -71,6 +71,12 @@
 #       default `git-receive-pack` both binaries exit 0 through the
 #       normal pipeline. Non-default receive-pack programs need a mock
 #       binary and a more elaborate fixture (deferred).
+#  (15) push --push-option / -o — Prepare gains `with_push_options(I)`;
+#       transmit now guards on the remote's `push-options` capability
+#       advertisement. When missing, gix returns
+#       `Error::PushOptionsNotSupported` and the CLI glue dies 128 with
+#       git's exact two-line fatal message. Actual pkt-line transmission
+#       when the capability IS advertised is a follow-up.
 #
 # send-pack substrate is online (gix-protocol send-pack + Repository::push
 # + gitoxide-core glue + gix CLI wiring). Remaining TODO rows below exercise
@@ -900,13 +906,25 @@ only_for_hash sha1-only && (sandbox
   }
 )
 
-# mode=effect
+# mode=effect — `--push-option` transmits options via a pkt-line stream
+# appended to the commands list, gated by the remote's `push-options`
+# capability advertisement. A bare file:// receive-pack does not
+# advertise `push-options`, so both binaries die 128 with
+# "the receiving end does not support push options" before the pack is
+# sent. Actual transmission (when the capability IS advertised) is a
+# follow-up.
 # hash=sha1-only "gix cannot open sha256 remotes, see gix/src/clone/fetch/mod.rs unimplemented!()"
 title "gix push -o / --push-option=<option>"
-only_for_hash sha1-only && (small-repo-in-sandbox
-  it "matches git behavior" && {
-    # TODO: expect_parity effect -- push --push-option=foo --push-option=bar origin main
-    true
+only_for_hash sha1-only && (sandbox
+  dst="$(pwd)/dst.git"
+  git init -q -b main src
+  git -C src config commit.gpgsign false
+  git -C src config tag.gpgsign false
+  git -C src -c user.email=x@x -c user.name=x commit --allow-empty -qm c1
+  git init -q --bare "$dst"
+  git -C src remote add origin "$dst"
+  it "matches git: --push-option against receiver without capability, exits 128" && {
+    cd src && expect_parity effect -- push --push-option=foo --push-option=bar origin main
   }
 )
 
