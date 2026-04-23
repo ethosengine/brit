@@ -28,9 +28,8 @@ title "gix clone"
 # hash=sha1-only "gix cannot open sha256 remotes, see gix/src/clone/fetch/mod.rs unimplemented!()"
 title "gix clone --help"
 only_for_hash sha1-only && (sandbox
-  it "matches git behavior" && {
-    # TODO: expect_parity effect -- clone --help
-    true
+  it "matches git: --help exits 0" && {
+    expect_parity effect -- clone --help
   }
 )
 
