@@ -625,24 +625,21 @@ pub fn main() -> Result<()> {
             )
         }
         #[cfg(feature = "gitoxide-core-blocking-client")]
-        Subcommands::Fetch(crate::plumbing::options::fetch::Platform {
-            dry_run,
-            handshake_info,
-            negotiation_info,
-            open_negotiation_graph,
-            remote,
-            shallow,
-            ref_spec,
-        }) => {
+        Subcommands::Fetch(platform) => {
+            let shallow = crate::plumbing::options::fetch::resolve_shallow(&platform.shallow)?;
+            // `--remote` (gix-native) overrides the git-compatible positional
+            // `<repository>` when both are supplied, matching the pre-parity
+            // CLI contract.
+            let remote_name = platform.remote.or(platform.repository);
             let opts = core::repository::fetch::Options {
                 format,
-                dry_run,
-                remote,
-                handshake_info,
-                negotiation_info,
-                open_negotiation_graph,
-                shallow: shallow.into(),
-                ref_specs: ref_spec,
+                dry_run: platform.dry_run,
+                remote: remote_name,
+                handshake_info: platform.handshake_info,
+                negotiation_info: platform.negotiation_info,
+                open_negotiation_graph: platform.open_negotiation_graph,
+                shallow,
+                ref_specs: platform.refspec,
             };
             prepare_and_run(
                 "fetch",
