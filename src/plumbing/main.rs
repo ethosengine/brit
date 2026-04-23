@@ -606,6 +606,20 @@ pub fn main() -> Result<()> {
             shallow,
             directory,
         }) => {
+            // Mirrors cmd_clone in vendor/git/builtin/clone.c:
+            //     if (argc == 0)
+            //         usage_msg_opt(_("You must specify a repository to clone."),
+            //             builtin_clone_usage, builtin_clone_options);
+            // usage_msg_opt exits 129 (PARSE_OPT_HELP). Clap's generic
+            // missing-required-arg exits 2 — override by keeping `remote`
+            // optional at the Clap level and enforcing the contract here.
+            let Some(remote) = remote else {
+                use std::io::Write;
+                let mut stderr = std::io::stderr().lock();
+                let _ = writeln!(stderr, "fatal: You must specify a repository to clone.");
+                drop(stderr);
+                std::process::exit(129);
+            };
             let opts = core::repository::clone::Options {
                 format,
                 bare,

@@ -615,7 +615,12 @@ pub mod clone {
         pub shallow: ShallowOptions,
 
         /// The url of the remote to connect to, like `https://github.com/byron/gitoxide`.
-        pub remote: OsString,
+        ///
+        /// Optional at the Clap level so the dispatch arm can emit git's
+        /// `usage_msg_opt("You must specify a repository to clone.")` exit-129
+        /// contract (see cmd_clone in vendor/git/builtin/clone.c) instead of
+        /// Clap's generic missing-required-arg exit-2.
+        pub remote: Option<OsString>,
 
         /// The name of the reference to check out.
         #[clap(long = "ref", value_parser = crate::shared::AsPartialRefName, value_name = "REF_NAME")]
