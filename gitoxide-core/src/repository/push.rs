@@ -188,6 +188,38 @@ pub(crate) mod function {
             None => None,
         };
 
+        // Parse --force-with-lease. Mirrors parse_push_cas_option in
+        // vendor/git/remote.c (lines 2584-2613).
+        //
+        // Value shape:
+        //   None        → flag not given
+        //   Some("")    → bare --force-with-lease (use tracking for all)
+        //   Some(s)     → `<refname>[:<expect>]`. Empty expect means
+        //                 "expect the ref to not exist" (null OID). Non-
+        //                 empty expect must resolve as an object name; if
+        //                 it doesn't, git dies via parse-options.c's
+        //                 callback-error path — `error: ...` then exit 129.
+        //
+        // Only the last case (invalid expect OID) needs an early die.
+        // The other three are structural parsing that the send-pack path
+        // will consume later; for now we validate-and-drop.
+        if let Some(arg) = opts.force_with_lease.as_deref() {
+            if !arg.is_empty() {
+                if let Some((_refname, expect)) = arg.split_once(':') {
+                    if !expect.is_empty() && repo.rev_parse_single(expect).is_err() {
+                        let mut stderr = std::io::stderr().lock();
+                        writeln!(stderr, "error: cannot parse expected object name '{expect}'")?;
+                        drop(stderr);
+                        // parse-options.c returns -1 from the callback;
+                        // that propagates up to usage_with_options which
+                        // exits 129 without printing a usage banner here
+                        // (git's actual behaviour — verified by probe).
+                        std::process::exit(129);
+                    }
+                }
+            }
+        }
+
         // Mirrors the `die_for_incompatible_opt4` call at the top of cmd_push
         // in vendor/git/builtin/push.c (after the repo_config + parse_options
         // block, right before the `tags → refs/tags/*` refspec append).

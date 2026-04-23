@@ -138,6 +138,24 @@ title "gix push --recurse-submodules=<bogus>"
   }
 )
 
+# mode=effect — mirrors parse_push_cas_option in vendor/git/remote.c
+# (line ~2584). When the expect part of --force-with-lease=<refname>:
+# <expect> is non-empty and doesn't resolve as an OID/ref, parse-options.c
+# propagates the callback error and git exits 129 with a single-line
+# `error: cannot parse expected object name '<expect>'` (no usage banner
+# — a quirk of this specific error path).
+title "gix push --force-with-lease=ref:<bogus-oid>"
+(sandbox
+  git init -q
+  git config commit.gpgsign false
+  git config tag.gpgsign false
+  git -c user.email=x@x -c user.name=x commit --allow-empty -qm init
+  git remote add origin /tmp/parity-unused
+  it "matches git: unparseable expect OID → exit 129" && {
+    expect_parity effect -- push --force-with-lease=main:notavalidoid origin main
+  }
+)
+
 # --- positional & repository selection -------------------------------------
 
 # mode=effect
