@@ -195,6 +195,24 @@ title "gix push --force-with-lease=ref:<bogus-oid>"
   }
 )
 
+# mode=effect — mirrors the `push.gpgsign` arm of git_push_config. The
+# config key accepts the same values as --signed (yes/true/on/1, no/false/
+# off/0, if-asked, case-insensitive via git_parse_maybe_bool). Invalid
+# values bubble through git_config with a two-line error/fatal (exit 128).
+title "gix push with push.gpgsign=<bogus>"
+(sandbox
+  git init -q
+  git checkout -b main
+  git config commit.gpgsign false
+  git config tag.gpgsign false
+  touch a && git add a
+  git -c user.email=x@x -c user.name=x commit -qm init
+  git remote add origin /tmp/parity-unused
+  it "matches git: -c push.gpgsign=bogus push → 128" && {
+    expect_parity effect -- -c push.gpgsign=bogus push origin main
+  }
+)
+
 # mode=effect — mirrors the PUSH_DEFAULT_NOTHING arm in cmd_push. With no
 # CLI refspecs, no configured `push` refspecs on the remote, and
 # push.default=nothing, git dies 128 (it would otherwise fall through to

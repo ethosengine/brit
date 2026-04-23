@@ -154,6 +154,24 @@ pub(crate) mod function {
         P: gix::NestedProgress,
         P::SubProgress: 'static,
     {
+        // Validate push.gpgsign from config. Mirrors the `push.gpgsign`
+        // arm of git_push_config in vendor/git/builtin/push.c: accepts the
+        // same value set as --signed (git_parse_maybe_bool ∪ {if-asked});
+        // invalid values propagate through git_config which dies with a
+        // two-line error/fatal. We emit the same shape (exit 128) — the
+        // "from" part of the fatal line diverges between command-line
+        // config and file config, but effect-mode only checks exit code.
+        if let Some(v) = repo.config_snapshot().string("push.gpgsign") {
+            let s = std::str::from_utf8(v.as_ref()).unwrap_or("");
+            if super::Signed::parse(s).is_err() {
+                let mut stderr = std::io::stderr().lock();
+                writeln!(stderr, "error: invalid value for 'push.gpgsign'")?;
+                writeln!(stderr, "fatal: unable to parse 'push.gpgsign' from command-line config")?;
+                drop(stderr);
+                std::process::exit(128);
+            }
+        }
+
         // Parse --signed early, mirroring option_parse_push_signed in
         // vendor/git/send-pack.c. Invalid values die 128 with the exact
         // "fatal: bad signed argument: %s" text.
