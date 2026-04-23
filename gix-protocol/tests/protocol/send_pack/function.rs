@@ -48,7 +48,6 @@ mod blocking {
     }
 
     #[test]
-    #[ignore = "report is sideband-wrapped — re-enable in Task 5.2 (sideband demux)"]
     fn fast_forward_happy_path_against_fixture() {
         // ---- fixture setup ----
         let s2c_full = full_s2c("fast-forward.s2c.bin");
@@ -101,15 +100,15 @@ mod blocking {
         );
     }
 
-    /// Smoke test: the orchestrator sequence compiles and the mock wiring works
-    /// even when the final #[ignore]d assertion is not reached.
+    /// Smoke test: the orchestrator sequence compiles, the mock wiring works,
+    /// and sideband demux is enabled — confirmed by checking that the result
+    /// is `Ok` (not an error) when the fixture uses sideband framing.
     ///
-    /// This test passes without sideband support by verifying only that
-    /// `send_pack` returns an error (not a panic) when the report is
-    /// sideband-wrapped — confirming the mock drives the wire sequence correctly
-    /// and the report parser is the only thing that needs Task 5.2.
+    /// This test was previously `orchestrator_drives_wire_sequence_sideband_wrapped_gives_parse_error`,
+    /// which asserted `is_err()` before Task 5.2 added sideband demux.  It now
+    /// asserts `is_ok()` to confirm that the fix holds.
     #[test]
-    fn orchestrator_drives_wire_sequence_sideband_wrapped_gives_parse_error() {
+    fn orchestrator_drives_wire_sequence_with_sideband_demux() {
         let s2c_full = full_s2c("fast-forward.s2c.bin");
         let s2c_report = post_handshake_s2c("fast-forward.s2c.bin");
 
@@ -144,12 +143,11 @@ mod blocking {
             "client must write command list + pack before reading report"
         );
 
-        // The result should be an error because the report is sideband-wrapped.
-        // We don't prescribe the exact error — just that it errs rather than panics.
+        // With sideband demux enabled, the result must be Ok.
         assert!(
-            result.is_err(),
-            "expected parse error due to sideband wrapping; got Ok — \
-             did the fixture format change?"
+            result.is_ok(),
+            "expected Ok after sideband demux; got error: {:?}",
+            result.err()
         );
     }
 }

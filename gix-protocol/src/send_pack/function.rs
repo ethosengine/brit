@@ -15,8 +15,8 @@ mod blocking {
     use gix_transport::client::{blocking_io::Transport, MessageKind, WriteMode};
 
     use crate::send_pack::{
-        command_list::encode_into, pack_writer::write_pack, report::parse as parse_report, Error, Options, Outcome,
-        Request,
+        command_list::encode_into, pack_writer::write_pack, report::parse as parse_report,
+        response::blocking_io::enable_sideband_demux, Error, Options, Outcome, Request,
     };
 
     /// Drive one send-pack exchange over `transport`.
@@ -63,7 +63,15 @@ mod blocking {
         // the underlying write channel before returning the reader.
         let mut reader = writer.into_read()?;
 
-        // Step 4 — parse the report-status stream.
+        // Step 4 — enable sideband demux.
+        // git-receive-pack wraps the report-status stream in sideband band-1
+        // frames when `side-band` / `side-band-64k` is in effect.  Enabling the
+        // progress handler on the reader switches `WithSidebands::fill_buf` from
+        // "raw" mode into "decode bands" mode, so band-1 bytes are yielded as
+        // data and band-2/3 (progress, error) are silently discarded.
+        enable_sideband_demux(&mut *reader);
+
+        // Step 5 — parse the report-status stream.
         let report = parse_report(&mut reader)?;
         Ok(Outcome { report })
     }

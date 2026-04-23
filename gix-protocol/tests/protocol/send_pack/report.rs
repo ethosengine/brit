@@ -1,4 +1,5 @@
 use bstr::{BString, ByteSlice};
+use gix_packetline::{blocking_io::StreamingPeekableIter, PacketLineRef};
 use gix_protocol::send_pack::report::parse;
 
 #[test]
@@ -65,17 +66,23 @@ fn multiple_refs_mixed() {
 }
 
 #[test]
-#[ignore = "report is sideband-wrapped in this fixture — re-enable in Task 5.2 (sideband demux)"]
 fn parses_captured_empty_to_new_branch_report() {
     // The s2c stream is: [ref-adv pkt-lines] [flush] [sideband pkt-line(s)] [flush].
-    // The report pkt-lines are inside sideband band-1 frames (byte prefix \x01),
-    // so skip_past_first_flush lands inside the sideband wrapper, not raw report data.
-    // Re-scope to Phase 5.2 (sideband demux).
+    // The report pkt-lines arrive inside sideband band-1 frames (byte prefix \x01).
+    // skip_past_first_flush positions us at the sideband portion.
+    // We wrap that slice with WithSidebands so band-1 content is yielded as data
+    // before passing to parse().
     let s2c = std::fs::read("tests/fixtures/push/empty-to-new-branch.s2c.bin").expect("fixture present");
 
     let tail = skip_past_first_flush(&s2c).expect("fixture has at least one flush");
 
-    let report = parse(&mut &tail[..]).expect("parse report");
+    // The tail is a pkt-line stream with sideband framing — the entire report
+    // is packed into band-1 of a single outer pkt-line.  Wrap with
+    // WithSidebands (with a no-op progress handler) to demux the band before
+    // parse() sees the inner pkt-lines.
+    let mut iter = StreamingPeekableIter::new(tail, &[PacketLineRef::Flush], false);
+    let mut sideband = iter.as_read_with_sidebands(|_is_err, _text| std::ops::ControlFlow::Continue(()));
+    let report = parse(&mut sideband).expect("parse report");
     assert_eq!(report.unpack, Ok(()));
     assert_eq!(report.refs.len(), 1, "refs: {:?}", report.refs);
     assert_eq!(report.refs[0].refname, BString::from("refs/heads/main"));
