@@ -61,9 +61,8 @@ only_for_hash sha1-only && (sandbox
 # hash=sha1-only "gix cannot open sha256 remotes, see gix/src/clone/fetch/mod.rs unimplemented!()"
 title "gix clone <nonexistent-local-path>"
 only_for_hash sha1-only && (sandbox
-  it "matches git behavior" && {
-    # TODO: expect_parity effect -- clone /nonexistent-path-for-parity
-    true
+  it "matches git: colon-less nonexistent path dies 128" && {
+    expect_parity effect -- clone /nonexistent-path-for-parity
   }
 )
 

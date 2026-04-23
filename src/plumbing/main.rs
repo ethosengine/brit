@@ -635,6 +635,33 @@ pub fn main() -> Result<()> {
                 drop(stderr);
                 std::process::exit(129);
             };
+            // Mirrors cmd_clone in vendor/git/builtin/clone.c:
+            //     path = get_repo_path(repo_name, &is_bundle);
+            //     if (path)       ...
+            //     else if (strchr(repo_name, ':'))  repo = repo_name;  // URL
+            //     else
+            //         die(_("repository '%s' does not exist"), repo_name);
+            // Exit 128. For a colon-less path that doesn't resolve as a
+            // local repo/bundle, git refuses to treat it as a URL. Replicate
+            // the minimal case (path literally doesn't exist) to get a
+            // graceful fatal before we hand the URL to gix-url/gix-clone,
+            // which otherwise leaks an anyhow backtrace on exit 1.
+            {
+                use std::os::unix::ffi::OsStrExt;
+                let bytes = remote.as_bytes();
+                let looks_like_url = bytes.contains(&b':');
+                if !looks_like_url && !std::path::Path::new(&remote).exists() {
+                    use std::io::Write;
+                    let mut stderr = std::io::stderr().lock();
+                    let _ = writeln!(
+                        stderr,
+                        "fatal: repository '{}' does not exist",
+                        remote.to_string_lossy()
+                    );
+                    drop(stderr);
+                    std::process::exit(128);
+                }
+            }
             let opts = core::repository::clone::Options {
                 format,
                 bare,
