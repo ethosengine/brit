@@ -630,6 +630,12 @@ pub mod clone {
         #[clap(long)]
         pub bare: bool,
 
+        /// Set up a mirror of the source repository. Implies --bare; actual
+        /// refspec translation (+refs/*:refs/*) and `remote.<name>.mirror=true`
+        /// is a TODO for bytes-parity — currently just implies bare.
+        #[clap(long)]
+        pub mirror: bool,
+
         /// Do not clone any tags. Useful to reduce the size of the clone if only branches are needed.
         #[clap(long)]
         pub no_tags: bool,

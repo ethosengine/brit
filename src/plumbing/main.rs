@@ -603,6 +603,7 @@ pub fn main() -> Result<()> {
             quiet: _,
             force_progress: _,
             bare,
+            mirror,
             no_tags,
             ref_name,
             remote,
@@ -610,6 +611,12 @@ pub fn main() -> Result<()> {
             directory,
             extra_positionals,
         }) => {
+            // Mirrors cmd_clone: `if (option_mirror) { option_bare = 1;
+            // option_tags = 0; }`. Upgrade --mirror to --bare + --no-tags
+            // here; actual `+refs/*:refs/*` refspec + `remote.<name>.mirror`
+            // config wiring is a follow-up for bytes-parity.
+            let bare = bare || mirror;
+            let no_tags = no_tags || mirror;
             // Mirrors cmd_clone in vendor/git/builtin/clone.c:
             //     if (argc > 2)
             //         usage_msg_opt(_("Too many arguments."), ...);

@@ -212,9 +212,18 @@ only_for_hash sha1-only && (sandbox
 # hash=sha1-only "gix cannot open sha256 remotes, see gix/src/clone/fetch/mod.rs unimplemented!()"
 title "gix clone --mirror"
 only_for_hash sha1-only && (sandbox
-  it "matches git behavior" && {
-    # TODO: expect_parity effect -- clone --mirror upstream.git
-    true
+  # Effect-mode only: gix upgrades --mirror to --bare + --no-tags to
+  # match the exit-code contract. Actual +refs/*:refs/* refspec +
+  # `remote.<name>.mirror=true` config writes are a follow-up.
+  git-init-hash-aware -q --bare src-repo.git
+  mkdir g-side x-side
+  (cd g-side && ln -s ../src-repo.git .)
+  (cd x-side && ln -s ../src-repo.git .)
+  it "matches git: --mirror + explicit target exits 0" && {
+    (cd g-side && expect_run 0 git clone --mirror src-repo.git target.git)
+  }
+  it "matches gix: --mirror + explicit target exits 0" && {
+    (cd x-side && expect_run 0 "$exe_plumbing" clone --mirror src-repo.git target.git)
   }
 )
 
