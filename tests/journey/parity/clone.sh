@@ -72,9 +72,11 @@ only_for_hash sha1-only && (sandbox
 # hash=sha1-only "gix cannot open sha256 remotes, see gix/src/clone/fetch/mod.rs unimplemented!()"
 title "gix clone <repo> <existing-non-empty-dir>"
 only_for_hash sha1-only && (sandbox
-  it "matches git behavior" && {
-    # TODO: bare upstream, non-empty target dir; expect_parity effect -- clone upstream.git target
-    true
+  git init -q --bare upstream.git
+  mkdir target
+  touch target/foo
+  it "matches git: destination exists + non-empty dies 128" && {
+    expect_parity effect -- clone upstream.git target
   }
 )
 

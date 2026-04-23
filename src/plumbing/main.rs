@@ -662,6 +662,31 @@ pub fn main() -> Result<()> {
                     std::process::exit(128);
                 }
             }
+            // Mirrors cmd_clone in vendor/git/builtin/clone.c:
+            //     dest_exists = path_exists(dir);
+            //     if (dest_exists && !is_empty_dir(dir))
+            //         die(_("destination path '%s' already exists and is not "
+            //               "an empty directory."), dir);
+            // Exit 128. Handles only the explicit-directory case here;
+            // auto-derived humanish names are checked downstream by
+            // gix-clone when the row that exercises them arrives.
+            if let Some(ref dir) = directory {
+                let path = std::path::Path::new(dir);
+                if path.exists() {
+                    let is_empty = std::fs::read_dir(path).is_ok_and(|mut it| it.next().is_none());
+                    if !is_empty {
+                        use std::io::Write;
+                        let mut stderr = std::io::stderr().lock();
+                        let _ = writeln!(
+                            stderr,
+                            "fatal: destination path '{}' already exists and is not an empty directory.",
+                            path.display()
+                        );
+                        drop(stderr);
+                        std::process::exit(128);
+                    }
+                }
+            }
             let opts = core::repository::clone::Options {
                 format,
                 bare,
