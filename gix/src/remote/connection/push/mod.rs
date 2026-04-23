@@ -13,7 +13,7 @@ mod prepare;
 mod transmit;
 
 pub use error::Error;
-pub use prepare::Prepare;
+pub use prepare::{Prepare, SignMode};
 
 use gix_transport::client::blocking_io::Transport;
 

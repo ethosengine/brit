@@ -54,6 +54,22 @@ where
             }
         }
 
+        // Capability guard for `--signed=yes`: git dies 128 with
+        // "the receiving end does not support --signed push" when
+        // SEND_PACK_PUSH_CERT_ALWAYS is requested but the server didn't
+        // advertise the `push-cert` capability (send-pack.c::send_pack).
+        // `--signed=if-asked` silently falls back to an unsigned push.
+        if matches!(self.sign, super::prepare::SignMode::Always) {
+            let supported = self
+                .connection
+                .handshake
+                .as_ref()
+                .is_some_and(|h| h.capabilities.contains("push-cert"));
+            if !supported {
+                return Err(Error::SignedPushNotSupported);
+            }
+        }
+
         // ── Step 1: Parse refspecs ────────────────────────────────────────────
         let parsed_refspecs: Vec<gix_refspec::RefSpec> = self
             .refspecs

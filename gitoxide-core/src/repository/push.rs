@@ -305,7 +305,7 @@ pub(crate) mod function {
         // Parse --signed early, mirroring option_parse_push_signed in
         // vendor/git/send-pack.c. Invalid values die 128 with the exact
         // "fatal: bad signed argument: %s" text.
-        let _signed = match opts.signed_arg.as_deref() {
+        let signed = match opts.signed_arg.as_deref() {
             Some(arg) => match super::Signed::parse(arg) {
                 Ok(s) => Some(s),
                 Err(bad) => {
@@ -607,19 +607,34 @@ pub(crate) mod function {
             let conn = remote.connect(gix::remote::Direction::Push)?;
             let prepare = conn.prepare_push(gix::progress::Discard)?;
             let push_opt_bytes: Vec<&[u8]> = opts.push_options.iter().map(|s| s.as_bytes()).collect();
+            // Translate the CLI `Signed` enum to the `SignMode` Prepare expects.
+            let sign_mode = match signed {
+                Some(super::Signed::Yes) => gix::remote::push::SignMode::Always,
+                Some(super::Signed::IfAsked) => gix::remote::push::SignMode::IfAsked,
+                Some(super::Signed::No) | None => gix::remote::push::SignMode::Never,
+            };
             let result = prepare
                 .with_refspecs(specs_to_send.iter())
                 .with_dry_run(opts.dry_run)
                 .with_prune(opts.prune)
                 .with_push_options(push_opt_bytes)
+                .with_sign_mode(sign_mode)
                 .transmit(gix::progress::Discard, &std::sync::atomic::AtomicBool::new(false));
-            // Mirror git's `send-pack.c::check_push_options` exit: when the
-            // receiver hasn't advertised `push-options`, both binaries print
-            // the `fatal:` line and exit 128.
+            // Mirror git's `send-pack.c::check_push_options` / signed-push
+            // capability checks: when the receiver hasn't advertised the
+            // required capability, both binaries print the `fatal:` line and
+            // exit 128.
             let out = match result {
                 Err(gix::remote::push::Error::PushOptionsNotSupported) => {
                     let mut stderr = std::io::stderr().lock();
                     writeln!(stderr, "fatal: the receiving end does not support push options")?;
+                    writeln!(stderr, "fatal: the remote end hung up unexpectedly")?;
+                    drop(stderr);
+                    std::process::exit(128);
+                }
+                Err(gix::remote::push::Error::SignedPushNotSupported) => {
+                    let mut stderr = std::io::stderr().lock();
+                    writeln!(stderr, "fatal: the receiving end does not support --signed push")?;
                     writeln!(stderr, "fatal: the remote end hung up unexpectedly")?;
                     drop(stderr);
                     std::process::exit(128);

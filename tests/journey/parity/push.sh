@@ -80,6 +80,12 @@
 #  (16) push -4 / -6 — on file:// transport there is no socket so both
 #       flags are effective no-ops. Exit-code parity only; a live-TCP
 #       harness would be required to assert actual family selection.
+#  (17) push --signed=<mode> — Prepare gains `with_sign_mode(SignMode)`
+#       and the new `push-cert` capability guard, mirroring the
+#       SEND_PACK_PUSH_CERT_* states in send-pack.c. `=no` is a no-op,
+#       `=if-asked` falls back to unsigned when the capability is
+#       missing, `=yes` dies 128 with git's exact message. Actual cert
+#       generation remains deferred.
 #
 # send-pack substrate is online (gix-protocol send-pack + Repository::push
 # + gitoxide-core glue + gix CLI wiring). Remaining TODO rows below exercise
@@ -980,21 +986,55 @@ only_for_hash sha1-only && (small-repo-in-sandbox
   }
 )
 
-# mode=effect — GPG signing; may be deferred if GPG toolchain absent
+# mode=effect — `--signed=<mode>` gates GPG signing of the push cert.
+# Three values from `option_parse_push_signed` in vendor/git/send-pack.c:
+#   no      — never sign (normal push)
+#   if-asked — sign only if the server advertised `push-cert`; silently
+#             falls back to unsigned when it didn't (warning only)
+#   yes     — always sign; dies 128 if server didn't advertise `push-cert`
+# Against a bare file:// receive-pack (no push-cert capability):
+#   =no      — both exit 0 through the normal pipeline
+#   =if-asked — both exit 0 (warning emitted by git; gix stays quiet)
+#   =yes     — both die 128 with "the receiving end does not support
+#              --signed push"
+# Actual cert generation (when push-cert IS advertised) needs a GPG
+# toolchain + a cert-aware receiver and is deferred.
 # hash=sha1-only "gix cannot open sha256 remotes, see gix/src/clone/fetch/mod.rs unimplemented!()"
 title "gix push --signed"
-only_for_hash sha1-only && (small-repo-in-sandbox
-  it "matches git behavior (--signed=no)" && {
-    # TODO: expect_parity effect -- push --signed=no origin main
-    true
+only_for_hash sha1-only && (sandbox
+  dst="$(pwd)/dst.git"
+  git init -q -b main src
+  git -C src config commit.gpgsign false
+  git -C src config tag.gpgsign false
+  git -C src -c user.email=x@x -c user.name=x commit --allow-empty -qm c1
+  git init -q --bare "$dst"
+  git -C src remote add origin "$dst"
+  it "matches git: --signed=no, exits 0" && {
+    cd src && expect_parity effect -- push --signed=no origin main
   }
-  it "matches git behavior (--signed=if-asked)" && {
-    # TODO: expect_parity effect -- push --signed=if-asked origin main
-    true
+)
+only_for_hash sha1-only && (sandbox
+  dst="$(pwd)/dst.git"
+  git init -q -b main src
+  git -C src config commit.gpgsign false
+  git -C src config tag.gpgsign false
+  git -C src -c user.email=x@x -c user.name=x commit --allow-empty -qm c1
+  git init -q --bare "$dst"
+  git -C src remote add origin "$dst"
+  it "matches git: --signed=if-asked against receiver without capability, exits 0" && {
+    cd src && expect_parity effect -- push --signed=if-asked origin main
   }
-  it "matches git behavior (--signed=yes)" && {
-    # TODO: expect_parity effect -- push --signed=yes origin main
-    true
+)
+only_for_hash sha1-only && (sandbox
+  dst="$(pwd)/dst.git"
+  git init -q -b main src
+  git -C src config commit.gpgsign false
+  git -C src config tag.gpgsign false
+  git -C src -c user.email=x@x -c user.name=x commit --allow-empty -qm c1
+  git init -q --bare "$dst"
+  git -C src remote add origin "$dst"
+  it "matches git: --signed=yes against receiver without capability, exits 128" && {
+    cd src && expect_parity effect -- push --signed=yes origin main
   }
 )
 

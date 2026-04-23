@@ -38,4 +38,6 @@ pub enum Error {
     NoMatch { spec: crate::bstr::BString },
     #[error("the receiving end does not support push options")]
     PushOptionsNotSupported,
+    #[error("the receiving end does not support --signed push")]
+    SignedPushNotSupported,
 }

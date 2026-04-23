@@ -1,7 +1,7 @@
 use crate::bstr::BString;
 
 #[cfg(feature = "blocking-network-client")]
-pub use super::connection::push::Error;
+pub use super::connection::push::{Error, SignMode};
 
 /// Per-ref status from a completed push.
 #[derive(Debug, Clone)]

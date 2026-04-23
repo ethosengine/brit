@@ -22,6 +22,22 @@ where
     /// remote to advertise the `push-options` capability (git fails with
     /// "the receiving end does not support push options" otherwise).
     pub(super) push_options: Vec<BString>,
+    /// GPG-sign the push: [`SignMode::Never`] (the default) never signs,
+    /// [`SignMode::IfAsked`] signs only when the server advertised the
+    /// `push-cert` capability, [`SignMode::Always`] fails if it didn't.
+    pub(super) sign: SignMode,
+}
+
+/// `--signed` argument — mirrors git's `SEND_PACK_PUSH_CERT_*` states.
+#[derive(Debug, Copy, Clone, PartialEq, Eq, Default)]
+pub enum SignMode {
+    /// `--signed=no` / `--signed=false` / `--signed=off` / `--signed=0`.
+    #[default]
+    Never,
+    /// `--signed=if-asked`.
+    IfAsked,
+    /// `--signed=yes` / `--signed=true` / `--signed=on` / `--signed=1`.
+    Always,
 }
 
 /// Builder
@@ -40,6 +56,7 @@ where
             dry_run: false,
             prune: false,
             push_options: Vec::new(),
+            sign: SignMode::Never,
         }
     }
 
@@ -77,6 +94,14 @@ where
         S: AsRef<[u8]>,
     {
         self.push_options = options.into_iter().map(|s| BString::from(s.as_ref())).collect();
+        self
+    }
+
+    /// Configure `--signed` behavior: [`SignMode::Always`] fails at transmit
+    /// when the server didn't advertise `push-cert`; [`SignMode::IfAsked`]
+    /// silently falls back to unsigned; [`SignMode::Never`] is a no-op.
+    pub fn with_sign_mode(mut self, mode: SignMode) -> Self {
+        self.sign = mode;
         self
     }
 }
