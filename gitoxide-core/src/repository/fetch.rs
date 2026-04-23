@@ -157,6 +157,14 @@ pub(crate) mod function {
         if !ref_specs.is_empty() {
             remote.replace_refspecs(ref_specs.iter(), gix::remote::Direction::Fetch)?;
             remote = remote.with_fetch_tags(gix::remote::fetch::Tags::None);
+        } else if remote.refspecs(gix::remote::Direction::Fetch).is_empty() {
+            // Anonymous URL remote (no configured fetch refspecs) — mirror
+            // cmd_fetch's behavior of implicitly fetching HEAD into
+            // FETCH_HEAD when no explicit refspec is given. Without this,
+            // gix's prepare_fetch returns MissingRefSpecs and the
+            // `gix fetch <url>` row diverges from git.
+            remote.replace_refspecs([b"HEAD".as_ref()], gix::remote::Direction::Fetch)?;
+            remote = remote.with_fetch_tags(gix::remote::fetch::Tags::None);
         }
         let res: gix::remote::fetch::Outcome = remote
             .connect(gix::remote::Direction::Fetch)?
