@@ -670,8 +670,25 @@ only_for_hash sha1-only && (sandbox
 # hash=sha1-only "gix cannot open sha256 remotes, see gix/src/clone/fetch/mod.rs unimplemented!()"
 title "gix fetch --refetch"
 only_for_hash sha1-only && (sandbox
-  it "TODO: matches git: --refetch bypasses negotiation" && {
-    :  # expect_parity effect -- fetch --refetch origin
+  # --refetch needs a real refspec AND a real upstream commit — otherwise
+  # git hangs in negotiation. With a one-commit upstream and an explicit
+  # 'master' refspec both binaries complete and exit 0.
+  git init -q --bare upstream.git
+  git clone -q upstream.git work &>/dev/null
+  (cd work
+    git config commit.gpgsign false
+    git -c user.email=x@x -c user.name=x commit --allow-empty -qm c1
+    git push -q origin master
+  )
+  git init -q clone
+  (cd clone
+    git remote add origin "$(cd .. && pwd)/upstream.git"
+    git config commit.gpgsign false
+    git -c user.email=x@x -c user.name=x commit --allow-empty -qm init
+  )
+  cd clone
+  it "matches git: --refetch with a real refspec, exit 0" && {
+    expect_parity effect -- fetch --refetch origin master
   }
 )
 
