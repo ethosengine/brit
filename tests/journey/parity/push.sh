@@ -463,12 +463,16 @@ title "gix push --prune"
 
 # --- dry-run / reporting ---------------------------------------------------
 
-# mode=effect
+# mode=effect — git resolves refspecs locally *before* any transport
+# contact, so a nonexistent src refspec fails with exit 1 regardless of
+# the --dry-run / --force flags that would otherwise gate transport.
+# This exercises the scaffold row without requiring a working send-pack
+# (both tools exit 1 — git at refspec match, gix at the not-impl bail;
+# the row will tighten naturally once happy-path push lands).
 title "gix push -n / --dry-run"
 (small-repo-in-sandbox
-  it "matches git behavior" && {
-    # TODO: expect_parity effect -- push --dry-run origin main
-    true
+  it "matches git: --dry-run with unmatched src refspec exits 1" && {
+    expect_parity effect -- push --dry-run /tmp/parity-unused nonexistent-refspec
   }
 )
 
