@@ -9,6 +9,8 @@ fn push_outcome_types_are_accessible() {
         local: BString::from("refs/heads/main"),
         remote: BString::from("refs/heads/main"),
         result: Ok(()),
+        old_oid: gix::hash::Kind::Sha1.null(),
+        new_oid: gix::hash::Kind::Sha1.null(),
     };
     let outcome = Outcome { status: vec![status] };
     assert_eq!(outcome.status.len(), 1);

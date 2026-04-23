@@ -227,13 +227,24 @@ where
         let entries = build_pack_entries(repo, &commands, hash_kind, should_interrupt)?;
 
         // ── Step 7: Dry run early return ─────────────────────────────────────
+        // Lookup table: remote refname → (old_oid, new_oid) for status rendering.
+        let cmd_oids: std::collections::HashMap<BString, (gix_hash::ObjectId, gix_hash::ObjectId)> = commands
+            .iter()
+            .map(|c| (c.refname.clone(), (c.old_oid, c.new_oid)))
+            .collect();
+
         if self.dry_run {
             let status = name_pairs
                 .into_iter()
-                .map(|(local, remote)| crate::remote::push::RefStatus {
-                    local,
-                    remote,
-                    result: Ok(()),
+                .map(|(local, remote)| {
+                    let (old_oid, new_oid) = cmd_oids.get(&remote).copied().unwrap_or((null_oid, null_oid));
+                    crate::remote::push::RefStatus {
+                        local,
+                        remote,
+                        result: Ok(()),
+                        old_oid,
+                        new_oid,
+                    }
                 })
                 .collect();
             return Ok(Outcome { status });
@@ -259,10 +270,13 @@ where
                     .find(|(_, remote)| remote == &r.refname)
                     .map(|(local, _)| local.clone())
                     .unwrap_or_default();
+                let (old_oid, new_oid) = cmd_oids.get(&r.refname).copied().unwrap_or((null_oid, null_oid));
                 crate::remote::push::RefStatus {
                     local,
                     remote: r.refname,
                     result: r.result,
+                    old_oid,
+                    new_oid,
                 }
             })
             .collect();

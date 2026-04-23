@@ -52,6 +52,12 @@
 #       remote ref matching a spec's RHS glob that has no local
 #       counterpart (mirrors MATCH_REFS_PRUNE in transport.c +
 #       match_push_refs in remote.c).
+#  (11) push --porcelain — bytes-mode; emits git's machine-readable
+#       `To <url>` + per-ref lines + `Done` on stdout (not stderr).
+#       RefStatus gains `old_oid`/`new_oid` so the flag (`*`/`-`/`=`/`!`)
+#       and summary (`[new branch]`/`[deleted]`/`[up to date]`/…) can be
+#       derived. Auto-verbose progress is suppressed on --porcelain so
+#       no ANSI escapes leak to stderr.
 #
 # send-pack substrate is online (gix-protocol send-pack + Repository::push
 # + gitoxide-core glue + gix CLI wiring). Remaining TODO rows below exercise
@@ -636,13 +642,33 @@ only_for_hash sha1-only && (small-repo-in-sandbox
   }
 )
 
-# mode=bytes — machine-readable; byte-exact
+# mode=bytes — machine-readable; byte-exact. git's porcelain format
+# (transport.c `print_ref_status`):
+#     To <url>
+#     <flag>\t<from>:<to>\t<summary>
+#     Done
+# `<flag>` is one of `*` (new), `-` (deleted), `+` (forced), `!` (rejected),
+# `=` (up-to-date), ` ` (fast-forward). `<summary>` is the bracketed human
+# string. Unlike the default human-readable path, porcelain writes to
+# stdout. Auto-verbose progress is suppressed in both binaries, so the
+# combined stdout+stderr is byte-exact.
+#
+# NOTE on fixture: `expect_parity` runs git THEN gix against the same
+# destination, so a stateful push would leave gix seeing an up-to-date
+# remote after git's run. Pair with --dry-run so neither invocation
+# mutates the remote and both report the same pre-state (`[new branch]`).
 # hash=sha1-only "gix cannot open sha256 remotes, see gix/src/clone/fetch/mod.rs unimplemented!()"
 title "gix push --porcelain"
-only_for_hash sha1-only && (small-repo-in-sandbox
-  it "matches git behavior" && {
-    # TODO: expect_parity bytes -- push --porcelain origin main
-    true
+only_for_hash sha1-only && (sandbox
+  dst="$(pwd)/dst.git"
+  git init -q -b main src
+  git -C src config commit.gpgsign false
+  git -C src config tag.gpgsign false
+  git -C src -c user.email=x@x -c user.name=x commit --allow-empty -qm c1
+  git init -q --bare "$dst"
+  git -C src remote add origin "$dst"
+  it "matches git: --porcelain --dry-run new-branch push is byte-exact" && {
+    cd src && expect_parity bytes -- push --porcelain --dry-run origin main
   }
 )
 

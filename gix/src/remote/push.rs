@@ -13,6 +13,13 @@ pub struct RefStatus {
     /// `Ok(())` when the ref update succeeded on the server; `Err(reason)` with the
     /// server's rejection message otherwise.
     pub result: Result<(), BString>,
+    /// The ref's value on the remote before the push — null when the ref was
+    /// newly created. Callers rendering porcelain / status lines use this to
+    /// distinguish new-branch (null→value) from update (value→value) and
+    /// delete (value→null) cases.
+    pub old_oid: gix_hash::ObjectId,
+    /// The ref's value after the push — null for delete commands.
+    pub new_oid: gix_hash::ObjectId,
 }
 
 /// Outcome of a

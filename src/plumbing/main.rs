@@ -728,10 +728,15 @@ pub fn main() -> Result<()> {
                 remote: push_repository,
                 ref_specs: refspec,
             };
+            // `--porcelain` emits machine-readable output; auto-verbose progress
+            // on stderr would leak ANSI escapes that confuse scripts. Same
+            // suppression applies to `--quiet`. Mirrors git's own `-q` /
+            // `--porcelain` suppression of progress output.
+            let push_auto_verbose = auto_verbose && !opts.porcelain;
             prepare_and_run(
                 "push",
                 trace,
-                auto_verbose,
+                push_auto_verbose,
                 progress,
                 progress_keep_open,
                 core::repository::push::PROGRESS_RANGE,

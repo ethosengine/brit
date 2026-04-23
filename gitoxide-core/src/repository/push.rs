@@ -581,13 +581,20 @@ pub(crate) mod function {
         // anonymous remote from a parsed URL as fallback), and an empty
         // CLI-refspec list falls back to the remote's configured
         // `remote.<name>.push` entries.
-        let outcome = {
+        let (outcome, push_display_url): (gix::remote::push::Outcome, gix::bstr::BString) = {
             use gix::bstr::ByteSlice;
             let name: &gix::bstr::BStr = remote_name.as_bstr();
             let remote = match repo.try_find_remote(name).and_then(Result::ok) {
                 Some(r) => r,
                 None => repo.remote_at(gix::url::parse(name)?)?,
             };
+            // Resolve the URL the transport will actually use, for `--porcelain` /
+            // human-readable "To <url>" rendering. mirrors `transport_anonymize_url`
+            // in transport.c (minus credential scrubbing, which remote.url does not yet).
+            let display_url: gix::bstr::BString = remote
+                .url(gix::remote::Direction::Push)
+                .map(|u| u.to_bstring())
+                .unwrap_or_default();
             let specs_to_send: Vec<gix::bstr::BString> = if effective_specs.is_empty() {
                 remote
                     .refspecs(gix::remote::Direction::Push)
@@ -599,37 +606,73 @@ pub(crate) mod function {
             };
             let conn = remote.connect(gix::remote::Direction::Push)?;
             let prepare = conn.prepare_push(gix::progress::Discard)?;
-            prepare
+            let out = prepare
                 .with_refspecs(specs_to_send.iter())
                 .with_dry_run(opts.dry_run)
                 .with_prune(opts.prune)
-                .transmit(gix::progress::Discard, &std::sync::atomic::AtomicBool::new(false))?
+                .transmit(gix::progress::Discard, &std::sync::atomic::AtomicBool::new(false))?;
+            (out, display_url)
         };
 
-        // Print per-ref status to process stderr (unbuffered) so output reaches
-        // the terminal even when the passed-in writer is buffered. A pure-delete
-        // command (empty local, new_oid=null) renders as `- [deleted]` to
-        // mirror git's own per-ref line; everything else is new/updated or
-        // rejected.
-        let mut stderr = std::io::stderr().lock();
-        for status in &outcome.status {
-            match &status.result {
-                Ok(()) if status.local.is_empty() => {
-                    writeln!(stderr, " - [deleted]      {}", status.remote)?;
-                }
-                Ok(()) => {
-                    writeln!(stderr, " * [new/updated]  {} -> {}", status.local, status.remote)?;
-                }
-                Err(reason) => {
-                    writeln!(
-                        stderr,
-                        " ! [rejected]     {} -> {}  ({reason})",
-                        status.local, status.remote
-                    )?;
+        if opts.porcelain {
+            // `--porcelain` emits machine-readable per-ref status on stdout
+            // (unlike the default human-readable path which writes stderr).
+            // Format mirrors git's transport.c `print_ref_status`:
+            //     To <url>
+            //     <flag>\t<from>:<to>\t<summary>
+            //     ...
+            //     Done
+            // `from:to` uses `local:remote` names; for pure-delete commands the
+            // local name is empty, so the pair renders as `:<remote>`. We render
+            // the remote URL (opts.repo/remote positional) when set, else the
+            // resolved remote's name — matches what the user typed at the CLI.
+            let mut stdout = std::io::stdout().lock();
+            writeln!(stdout, "To {push_display_url}")?;
+            for status in &outcome.status {
+                let flag: &str = match &status.result {
+                    Err(_) => "!",
+                    Ok(()) if status.new_oid.is_null() => "-",
+                    Ok(()) if status.old_oid.is_null() => "*",
+                    Ok(()) if status.old_oid == status.new_oid => "=",
+                    Ok(()) => " ",
+                };
+                let summary: &str = match &status.result {
+                    Err(_) => "[rejected]",
+                    Ok(()) if status.new_oid.is_null() => "[deleted]",
+                    Ok(()) if status.old_oid.is_null() => "[new branch]",
+                    Ok(()) if status.old_oid == status.new_oid => "[up to date]",
+                    Ok(()) => "",
+                };
+                writeln!(stdout, "{flag}\t{}:{}\t{summary}", status.local, status.remote)?;
+            }
+            writeln!(stdout, "Done")?;
+            drop(stdout);
+        } else {
+            // Print per-ref status to process stderr (unbuffered) so output reaches
+            // the terminal even when the passed-in writer is buffered. A pure-delete
+            // command (empty local, new_oid=null) renders as `- [deleted]` to
+            // mirror git's own per-ref line; everything else is new/updated or
+            // rejected.
+            let mut stderr = std::io::stderr().lock();
+            for status in &outcome.status {
+                match &status.result {
+                    Ok(()) if status.local.is_empty() => {
+                        writeln!(stderr, " - [deleted]      {}", status.remote)?;
+                    }
+                    Ok(()) => {
+                        writeln!(stderr, " * [new/updated]  {} -> {}", status.local, status.remote)?;
+                    }
+                    Err(reason) => {
+                        writeln!(
+                            stderr,
+                            " ! [rejected]     {} -> {}  ({reason})",
+                            status.local, status.remote
+                        )?;
+                    }
                 }
             }
+            drop(stderr);
         }
-        drop(stderr);
 
         // git exits 1 when any ref was rejected by the remote; 0 when all succeeded.
         let any_rejected = outcome.status.iter().any(|s| s.result.is_err());
