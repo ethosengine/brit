@@ -518,9 +518,76 @@ pub(crate) mod function {
             }
         }
 
-        anyhow::bail!(
-            "gix push is not yet implemented — parity rows are being closed flag-by-flag; \
-             see tests/journey/parity/push.sh for the current surface"
-        )
+        // --dry-run: print what would be pushed and exit without contacting the remote.
+        // Full dry-run through the send-pack pipeline is a later ralph iteration;
+        // for now we report the planned refspecs and bail cleanly so callers get exit 0.
+        if opts.dry_run {
+            let mut stderr = std::io::stderr().lock();
+            // Use explicit (raw name/URL) or fall back to the resolved remote name.
+            let display_remote = explicit.unwrap_or_else(|| {
+                found
+                    .as_ref()
+                    .and_then(|r| r.name())
+                    .map(|n| n.as_bstr().as_ref())
+                    .and_then(|b| std::str::from_utf8(b).ok())
+                    .unwrap_or("<remote>")
+            });
+            if opts.ref_specs.is_empty() {
+                writeln!(stderr, "dry-run: would push HEAD to {display_remote}")?;
+            } else {
+                for spec in &opts.ref_specs {
+                    writeln!(stderr, "dry-run: would push {spec} to {display_remote}")?;
+                }
+            }
+            drop(stderr);
+            return Ok(());
+        }
+
+        // Determine the effective remote name or URL to pass to Repository::push.
+        // `explicit` is the raw string from --repo=<repo> or the positional <repository>
+        // argument; when neither was given we use the name of the already-resolved default.
+        let remote_name: &gix::bstr::BStr = if let Some(s) = explicit {
+            s.into()
+        } else if let Some(name) = found.as_ref().and_then(|r| r.name()) {
+            name.as_bstr()
+        } else {
+            // Unreachable: the "found is None and explicit is None" branch already
+            // exited 128 above; arriving here with both None would be a logic error.
+            let mut stderr = std::io::stderr().lock();
+            writeln!(stderr, "fatal: No configured push destination.")?;
+            drop(stderr);
+            std::process::exit(128);
+        };
+
+        // Perform the push.
+        let outcome = repo
+            .push(remote_name, opts.ref_specs.iter())
+            .map_err(|e| anyhow::anyhow!("{e}"))?;
+
+        // Print per-ref status to process stderr (unbuffered) so output reaches
+        // the terminal even when the passed-in writer is buffered.
+        let mut stderr = std::io::stderr().lock();
+        for status in &outcome.status {
+            match &status.result {
+                Ok(()) => {
+                    writeln!(stderr, " * [new/updated]  {} -> {}", status.local, status.remote)?;
+                }
+                Err(reason) => {
+                    writeln!(
+                        stderr,
+                        " ! [rejected]     {} -> {}  ({reason})",
+                        status.local, status.remote
+                    )?;
+                }
+            }
+        }
+        drop(stderr);
+
+        // git exits 1 when any ref was rejected by the remote; 0 when all succeeded.
+        let any_rejected = outcome.status.iter().any(|s| s.result.is_err());
+        if any_rejected {
+            std::process::exit(1);
+        }
+        Ok(())
     }
 }
