@@ -12,6 +12,11 @@ pub struct Options {
     pub handshake_info: bool,
     pub negotiation_info: bool,
     pub open_negotiation_graph: Option<std::path::PathBuf>,
+    /// `true` when the user passed `--unshallow` on the command line (vs.
+    /// `--depth` being set by configuration). Triggers the
+    /// "--unshallow on a complete repository" die-128 check in cmd_fetch
+    /// (vendor/git/builtin/fetch.c).
+    pub unshallow_requested: bool,
 }
 
 pub const PROGRESS_RANGE: std::ops::RangeInclusive<u8> = 1..=3;
@@ -46,6 +51,7 @@ pub(crate) mod function {
             open_negotiation_graph,
             shallow,
             ref_specs,
+            unshallow_requested,
         }: Options,
     ) -> anyhow::Result<()>
     where
@@ -54,6 +60,24 @@ pub(crate) mod function {
     {
         if format != OutputFormat::Human {
             bail!("JSON output isn't yet supported for fetching.");
+        }
+
+        // cmd_fetch in vendor/git/builtin/fetch.c:
+        //     if (unshallow) {
+        //         if (depth) die ...     // already handled at CLI dispatch
+        //         else if (!is_repository_shallow(the_repository))
+        //             die("--unshallow on a complete repository does not make sense");
+        //     }
+        // Matches git's message text + exit code (128) exactly.
+        if unshallow_requested && !repo.is_shallow() {
+            use std::io::Write;
+            let mut stderr = std::io::stderr().lock();
+            let _ = writeln!(
+                stderr,
+                "fatal: --unshallow on a complete repository does not make sense"
+            );
+            drop(stderr);
+            std::process::exit(128);
         }
 
         let mut remote = crate::repository::remote::by_name_or_url(&repo, remote.as_deref())?;

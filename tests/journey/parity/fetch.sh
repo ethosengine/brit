@@ -182,8 +182,12 @@ only_for_hash sha1-only && (sandbox
 # hash=sha1-only "gix cannot open sha256 remotes, see gix/src/clone/fetch/mod.rs unimplemented!()"
 title "gix fetch --unshallow (on a complete repository)"
 only_for_hash sha1-only && (sandbox
-  it "TODO: matches git: --unshallow on non-shallow repo dies 128" && {
-    :  # expect_parity effect -- fetch --unshallow origin
+  git init -q
+  git config commit.gpgsign false
+  git -c user.email=x@x -c user.name=x commit --allow-empty -qm init
+  git remote add origin /tmp/parity-unused
+  it "matches git: --unshallow on non-shallow repo dies 128" && {
+    expect_parity effect -- fetch --unshallow origin
   }
 )
 
