@@ -188,6 +188,25 @@ pub(crate) mod function {
         // generic die path.
         die_on_bad_bool("submodule.recurse")?;
 
+        // color.push (and its slot-specific children color.push.{reset,error})
+        // pass through git_config_colorbool, a superset of git_config_bool:
+        // accepts bool values plus the literal tokens "always", "auto",
+        // "never". Invalid values produce the same bad-bool error shape.
+        if let Some(v) = repo.config_snapshot().string("color.push") {
+            let s = std::str::from_utf8(v.as_ref()).unwrap_or("");
+            let lower = s.to_ascii_lowercase();
+            let ok = matches!(
+                lower.as_str(),
+                "yes" | "on" | "true" | "1" | "no" | "off" | "false" | "0" | "always" | "auto" | "never"
+            );
+            if !ok {
+                let mut stderr = std::io::stderr().lock();
+                writeln!(stderr, "fatal: bad boolean config value '{s}' for 'color.push'")?;
+                drop(stderr);
+                std::process::exit(128);
+            }
+        }
+
         // Validate push.default from config. Mirrors the dispatch in
         // vendor/git/environment.c that resolves `push.default` to one of
         // {nothing, matching, simple, upstream/tracking, current}. Invalid

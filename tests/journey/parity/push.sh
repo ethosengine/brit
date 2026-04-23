@@ -221,6 +221,9 @@ title "gix push with push.followTags=<bogus>"
   it "matches git: -c submodule.recurse=bogus → 128" && {
     expect_parity effect -- -c submodule.recurse=bogus push origin main
   }
+  it "matches git: -c color.push=bogus → 128 (colorbool, wider value set)" && {
+    expect_parity effect -- -c color.push=bogus push origin main
+  }
 )
 
 # mode=effect — mirrors the push.default validator in
