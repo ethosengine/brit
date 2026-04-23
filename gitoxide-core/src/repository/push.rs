@@ -63,6 +63,35 @@ pub(crate) mod function {
 
     use super::Options;
 
+    /// Mirror git's `die_for_incompatible_opt4` in `vendor/git/parse-options.c`:
+    /// given up to four `(predicate, name)` pairs, if two or more predicates are
+    /// set, print the list of conflicting names in the exact git format and exit
+    /// 128. Returns only when at most one predicate is set.
+    ///
+    /// Keeping this function generic (rather than hard-coding the push flag set)
+    /// matches how git reuses the same primitive across builtins; it also lets
+    /// future callers (e.g., `git pull`, `git merge`) adopt the same exit-code
+    /// contract without forking the message format.
+    fn die_for_incompatible_opts(pairs: &[(bool, &str)]) -> std::io::Result<()> {
+        let set: Vec<&str> = pairs.iter().filter(|(b, _)| *b).map(|(_, n)| *n).collect();
+        if set.len() < 2 {
+            return Ok(());
+        }
+        let mut stderr = std::io::stderr().lock();
+        // git's wording, reproduced exactly for 2/3/4-way conflicts.
+        match set.as_slice() {
+            [a, b] => writeln!(stderr, "fatal: options '{a}' and '{b}' cannot be used together")?,
+            [a, b, c] => writeln!(stderr, "fatal: options '{a}', '{b}', and '{c}' cannot be used together")?,
+            [a, b, c, d] => writeln!(
+                stderr,
+                "fatal: options '{a}', '{b}', '{c}', and '{d}' cannot be used together"
+            )?,
+            _ => unreachable!("die_for_incompatible_opts only called with ≤4 pairs"),
+        }
+        drop(stderr);
+        std::process::exit(128);
+    }
+
     pub fn push<P>(
         repo: gix::Repository,
         _progress: P,
@@ -74,6 +103,18 @@ pub(crate) mod function {
         P: gix::NestedProgress,
         P::SubProgress: 'static,
     {
+        // Mirrors the `die_for_incompatible_opt4` call at the top of cmd_push
+        // in vendor/git/builtin/push.c (after the repo_config + parse_options
+        // block, right before the `tags → refs/tags/*` refspec append).
+        // Exit 128 with git-exact message text on any pair/triple/quadruple
+        // conflict between {--delete, --tags, --all/--branches, --mirror}.
+        die_for_incompatible_opts(&[
+            (opts.delete, "--delete"),
+            (opts.tags, "--tags"),
+            (opts.all, "--all/--branches"),
+            (opts.mirror, "--mirror"),
+        ])?;
+
         // Resolve the push target. `opts.repo` (`--repo=<repository>`) is the canonical
         // override; `opts.remote` holds the first positional `<repository>` from the CLI.
         // Fall back to the repo's configured default push remote when neither is set

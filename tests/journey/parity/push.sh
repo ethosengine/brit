@@ -47,6 +47,21 @@ title "gix push '' (bad repository: empty name)"
   }
 )
 
+# mode=effect — mirrors die_for_incompatible_opt4 at the top of cmd_push
+# (vendor/git/builtin/push.c). Any pair drawn from {--all/--branches,
+# --mirror, --tags, --delete} dies 128 with a git-exact message text.
+title "gix push (conflicting ref-selection flags)"
+(sandbox
+  git init -q
+  git config commit.gpgsign false
+  git config tag.gpgsign false
+  git -c user.email=x@x -c user.name=x commit --allow-empty -qm init
+  git remote add origin /tmp/parity-unused
+  it "matches git: --all + --mirror" && {
+    expect_parity effect -- push --all --mirror origin
+  }
+)
+
 # --- positional & repository selection -------------------------------------
 
 # mode=effect

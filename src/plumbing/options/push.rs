@@ -33,19 +33,28 @@ pub enum Signed {
 #[derive(Debug, clap::Parser)]
 pub struct Platform {
     /// Push all branches (equivalent to refspec `refs/heads/*`).
-    #[clap(long, visible_alias = "branches", conflicts_with_all = ["mirror", "tags", "delete"])]
+    ///
+    /// Incompatible with `--mirror`, `--tags`, and `--delete` — validated at
+    /// dispatch to match git's exit code (128) rather than Clap's default (2).
+    #[clap(long, visible_alias = "branches")]
     pub all: bool,
 
     /// Mirror all refs to the remote (implies `--force`).
-    #[clap(long, conflicts_with_all = ["all", "tags", "delete"])]
+    ///
+    /// Incompatible with `--all`, `--tags`, and `--delete` — see `--all`.
+    #[clap(long)]
     pub mirror: bool,
 
     /// Delete the given refs from the remote.
-    #[clap(long, short = 'd', conflicts_with_all = ["all", "mirror", "tags"])]
+    ///
+    /// Incompatible with `--all`, `--mirror`, and `--tags` — see `--all`.
+    #[clap(long, short = 'd')]
     pub delete: bool,
 
     /// Push all refs under `refs/tags`.
-    #[clap(long, conflicts_with_all = ["all", "mirror", "delete"])]
+    ///
+    /// Incompatible with `--all`, `--mirror`, and `--delete` — see `--all`.
+    #[clap(long)]
     pub tags: bool,
 
     /// Push all missing but reachable tags after normal refs.
