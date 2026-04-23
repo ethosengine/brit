@@ -14,6 +14,19 @@
 
 title "gix push"
 
+# --- meta / help -----------------------------------------------------------
+
+# mode=effect — `git push --help` delegates to man git-push (exit 0 when man
+# is available); gix returns Clap's auto-generated help (exit 0). Message
+# text diverges wildly and is NOT asserted — this row guards only the
+# exit-code contract that `--help` is a benign, zero-exit operation.
+title "gix push --help"
+(sandbox
+  it "matches git: --help exits 0" && {
+    expect_parity effect -- push --help
+  }
+)
+
 # --- error paths (pre-transport validation) --------------------------------
 
 # mode=effect — mirrors die() in vendor/git/builtin/push.c around line 631.
