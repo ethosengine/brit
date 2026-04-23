@@ -32,6 +32,7 @@
 # as `partial`.
 # ────────────────────────────────────────────────────────────────────────────
 
+# hash=sha1-only "gix cannot open sha256 remotes, see gix/src/clone/fetch/mod.rs unimplemented!()"
 title "gix push"
 
 # --- meta / help -----------------------------------------------------------
@@ -40,8 +41,9 @@ title "gix push"
 # is available); gix returns Clap's auto-generated help (exit 0). Message
 # text diverges wildly and is NOT asserted — this row guards only the
 # exit-code contract that `--help` is a benign, zero-exit operation.
+# hash=sha1-only "gix cannot open sha256 remotes, see gix/src/clone/fetch/mod.rs unimplemented!()"
 title "gix push --help"
-(sandbox
+only_for_hash sha1-only && (sandbox
   it "matches git: --help exits 0" && {
     expect_parity effect -- push --help
   }
@@ -51,8 +53,9 @@ title "gix push --help"
 
 # mode=effect — mirrors die() in vendor/git/builtin/push.c around line 631.
 # Exit code 128; message text is close-to-git but not byte-exact.
+# hash=sha1-only "gix cannot open sha256 remotes, see gix/src/clone/fetch/mod.rs unimplemented!()"
 title "gix push (no configured push destination)"
-(sandbox
+only_for_hash sha1-only && (sandbox
   git init -q
   git config commit.gpgsign false
   git config tag.gpgsign false
@@ -66,8 +69,9 @@ title "gix push (no configured push destination)"
 # vendor/git/builtin/push.c::cmd_push. Empty-string repository (positional or
 # --repo=) hits `remote_get_1` with an empty name, which returns NULL; git
 # then dies 128.
+# hash=sha1-only "gix cannot open sha256 remotes, see gix/src/clone/fetch/mod.rs unimplemented!()"
 title "gix push '' (bad repository: empty name)"
-(sandbox
+only_for_hash sha1-only && (sandbox
   git init -q
   git config commit.gpgsign false
   git config tag.gpgsign false
@@ -83,8 +87,9 @@ title "gix push '' (bad repository: empty name)"
 # mode=effect — mirrors die_for_incompatible_opt4 at the top of cmd_push
 # (vendor/git/builtin/push.c). Any pair drawn from {--all/--branches,
 # --mirror, --tags, --delete} dies 128 with a git-exact message text.
+# hash=sha1-only "gix cannot open sha256 remotes, see gix/src/clone/fetch/mod.rs unimplemented!()"
 title "gix push (conflicting ref-selection flags)"
-(sandbox
+only_for_hash sha1-only && (sandbox
   git init -q
   git config commit.gpgsign false
   git config tag.gpgsign false
@@ -104,8 +109,9 @@ title "gix push (conflicting ref-selection flags)"
 # mode=effect — mirrors `if (deleterefs && argc < 2) die()` at push.c line
 # ~559. --delete requires at least one refspec; if none, exit 128 before
 # remote resolution.
+# hash=sha1-only "gix cannot open sha256 remotes, see gix/src/clone/fetch/mod.rs unimplemented!()"
 title "gix push --delete (without any refs)"
-(sandbox
+only_for_hash sha1-only && (sandbox
   git init -q
   git config commit.gpgsign false
   git config tag.gpgsign false
@@ -119,8 +125,9 @@ title "gix push --delete (without any refs)"
 # mode=effect — mirrors `if (argc >= 2) die("--all can't be combined
 # with refspecs")` at push.c ~573. Runs AFTER remote resolution: the
 # remote must exist, and refspecs must be non-empty.
+# hash=sha1-only "gix cannot open sha256 remotes, see gix/src/clone/fetch/mod.rs unimplemented!()"
 title "gix push --all (combined with refspecs)"
-(sandbox
+only_for_hash sha1-only && (sandbox
   git init -q
   git config commit.gpgsign false
   git config tag.gpgsign false
@@ -134,8 +141,9 @@ title "gix push --all (combined with refspecs)"
 # mode=effect — mirrors `if (argc >= 2) die("--mirror can't be combined
 # with refspecs")` at push.c ~577. Sibling to --all+refspecs with the
 # same die-order (post-resolve).
+# hash=sha1-only "gix cannot open sha256 remotes, see gix/src/clone/fetch/mod.rs unimplemented!()"
 title "gix push --mirror (combined with refspecs)"
-(sandbox
+only_for_hash sha1-only && (sandbox
   git init -q
   git config commit.gpgsign false
   git config tag.gpgsign false
@@ -149,8 +157,9 @@ title "gix push --mirror (combined with refspecs)"
 # mode=effect — mirrors option_parse_push_signed in vendor/git/send-pack.c.
 # git accepts yes/no/true/false/on/off/1/0/if-asked (case-insensitive);
 # anything else dies 128 with `fatal: bad signed argument: <arg>`.
+# hash=sha1-only "gix cannot open sha256 remotes, see gix/src/clone/fetch/mod.rs unimplemented!()"
 title "gix push --signed=<bogus> (unknown signed argument)"
-(sandbox
+only_for_hash sha1-only && (sandbox
   git init -q
   git config commit.gpgsign false
   git config tag.gpgsign false
@@ -165,8 +174,9 @@ title "gix push --signed=<bogus> (unknown signed argument)"
 # Accepts check/on-demand/only (case-sensitive) and no/off/false/0
 # (case-insensitive); rejects yes/on/true/1 and anything else with exit
 # 128 `fatal: bad recurse-submodules argument: <arg>`.
+# hash=sha1-only "gix cannot open sha256 remotes, see gix/src/clone/fetch/mod.rs unimplemented!()"
 title "gix push --recurse-submodules=<bogus>"
-(sandbox
+only_for_hash sha1-only && (sandbox
   git init -q
   git config commit.gpgsign false
   git config tag.gpgsign false
@@ -183,8 +193,9 @@ title "gix push --recurse-submodules=<bogus>"
 # propagates the callback error and git exits 129 with a single-line
 # `error: cannot parse expected object name '<expect>'` (no usage banner
 # — a quirk of this specific error path).
+# hash=sha1-only "gix cannot open sha256 remotes, see gix/src/clone/fetch/mod.rs unimplemented!()"
 title "gix push --force-with-lease=ref:<bogus-oid>"
-(sandbox
+only_for_hash sha1-only && (sandbox
   git init -q
   git config commit.gpgsign false
   git config tag.gpgsign false
@@ -200,8 +211,9 @@ title "gix push --force-with-lease=ref:<bogus-oid>"
 # push.autoSetupRemote) reject anything outside yes/on/true/1/no/off/
 # false/0 with a single-line `fatal: bad boolean config value '<v>'
 # for '<key-lower>'`. Key is lowercased in the error text.
+# hash=sha1-only "gix cannot open sha256 remotes, see gix/src/clone/fetch/mod.rs unimplemented!()"
 title "gix push with push.followTags=<bogus>"
-(sandbox
+only_for_hash sha1-only && (sandbox
   git init -q
   git checkout -b main
   git config commit.gpgsign false
@@ -244,8 +256,9 @@ title "gix push with push.followTags=<bogus>"
 # mode=effect — mirrors the push.default validator in
 # vendor/git/environment.c. Unknown values die 128 with git's three-line
 # error/error/fatal.
+# hash=sha1-only "gix cannot open sha256 remotes, see gix/src/clone/fetch/mod.rs unimplemented!()"
 title "gix push with push.default=<bogus>"
-(sandbox
+only_for_hash sha1-only && (sandbox
   git init -q
   git checkout -b main
   git config commit.gpgsign false
@@ -262,8 +275,9 @@ title "gix push with push.default=<bogus>"
 # git_push_config, which delegates to parse_push_recurse_submodules_arg
 # (same semantics as --recurse-submodules). Invalid values die 128 with
 # "fatal: bad push.recursesubmodules argument: <v>".
+# hash=sha1-only "gix cannot open sha256 remotes, see gix/src/clone/fetch/mod.rs unimplemented!()"
 title "gix push with push.recursesubmodules=<bogus>"
-(sandbox
+only_for_hash sha1-only && (sandbox
   git init -q
   git checkout -b main
   git config commit.gpgsign false
@@ -280,8 +294,9 @@ title "gix push with push.recursesubmodules=<bogus>"
 # config key accepts the same values as --signed (yes/true/on/1, no/false/
 # off/0, if-asked, case-insensitive via git_parse_maybe_bool). Invalid
 # values bubble through git_config with a two-line error/fatal (exit 128).
+# hash=sha1-only "gix cannot open sha256 remotes, see gix/src/clone/fetch/mod.rs unimplemented!()"
 title "gix push with push.gpgsign=<bogus>"
-(sandbox
+only_for_hash sha1-only && (sandbox
   git init -q
   git checkout -b main
   git config commit.gpgsign false
@@ -298,8 +313,9 @@ title "gix push with push.gpgsign=<bogus>"
 # CLI refspecs, no configured `push` refspecs on the remote, and
 # push.default=nothing, git dies 128 (it would otherwise fall through to
 # use push.default to compute a default refspec).
+# hash=sha1-only "gix cannot open sha256 remotes, see gix/src/clone/fetch/mod.rs unimplemented!()"
 title "gix push with push.default=nothing and no refspecs"
-(sandbox
+only_for_hash sha1-only && (sandbox
   git init -q
   git checkout -b main
   git config commit.gpgsign false
@@ -316,8 +332,9 @@ title "gix push with push.default=nothing and no refspecs"
 # permit embedded newlines; git's cmd_push iterates push_options and
 # dies 128 "push options must not have new line characters" if any
 # contains '\n'. Mirrored in gix after --mirror/-refspecs checks.
+# hash=sha1-only "gix cannot open sha256 remotes, see gix/src/clone/fetch/mod.rs unimplemented!()"
 title "gix push --push-option=<value-with-newline>"
-(sandbox
+only_for_hash sha1-only && (sandbox
   git init -q
   git config commit.gpgsign false
   git config tag.gpgsign false
@@ -336,8 +353,9 @@ bar" origin main
 # match" / "failed to push"), NOT 128 (die). This row guards gix's
 # remote-resolution predicate against the overly-aggressive "is this a
 # known remote?" fail-fast that would otherwise exit 128.
+# hash=sha1-only "gix cannot open sha256 remotes, see gix/src/clone/fetch/mod.rs unimplemented!()"
 title "gix push <nonexistent-path> (falls through to transport)"
-(sandbox
+only_for_hash sha1-only && (sandbox
   git init -q
   git config commit.gpgsign false
   git config tag.gpgsign false
@@ -352,8 +370,9 @@ title "gix push <nonexistent-path> (falls through to transport)"
 # other instead of erroring like Clap's conflicts_with would. Test
 # both orders (-4 -6 and -6 -4) reach the same post-parse state and
 # exit identically.
+# hash=sha1-only "gix cannot open sha256 remotes, see gix/src/clone/fetch/mod.rs unimplemented!()"
 title "gix push -4 -6 / -6 -4 (no parse-time conflict)"
-(sandbox
+only_for_hash sha1-only && (sandbox
   git init -q
   git config commit.gpgsign false
   git config tag.gpgsign false
@@ -370,8 +389,9 @@ title "gix push -4 -6 / -6 -4 (no parse-time conflict)"
 # --- positional & repository selection -------------------------------------
 
 # mode=effect
+# hash=sha1-only "gix cannot open sha256 remotes, see gix/src/clone/fetch/mod.rs unimplemented!()"
 title "gix push <repository>"
-(small-repo-in-sandbox
+only_for_hash sha1-only && (small-repo-in-sandbox
   it "matches git behavior" && {
     # TODO: bare-repo-with-remotes upstream.git; expect_parity effect -- push upstream.git main
     true
@@ -379,8 +399,9 @@ title "gix push <repository>"
 )
 
 # mode=effect
+# hash=sha1-only "gix cannot open sha256 remotes, see gix/src/clone/fetch/mod.rs unimplemented!()"
 title "gix push <repository> <refspec>..."
-(small-repo-in-sandbox
+only_for_hash sha1-only && (small-repo-in-sandbox
   it "matches git behavior" && {
     # TODO: expect_parity effect -- push upstream.git refs/heads/main:refs/heads/main
     true
@@ -388,8 +409,9 @@ title "gix push <repository> <refspec>..."
 )
 
 # mode=effect
+# hash=sha1-only "gix cannot open sha256 remotes, see gix/src/clone/fetch/mod.rs unimplemented!()"
 title "gix push --repo=<repository>"
-(small-repo-in-sandbox
+only_for_hash sha1-only && (small-repo-in-sandbox
   it "matches git behavior" && {
     # TODO: expect_parity effect -- push --repo=upstream.git
     true
@@ -399,8 +421,9 @@ title "gix push --repo=<repository>"
 # --- branch / ref selection ------------------------------------------------
 
 # mode=effect
+# hash=sha1-only "gix cannot open sha256 remotes, see gix/src/clone/fetch/mod.rs unimplemented!()"
 title "gix push --all"
-(small-repo-in-sandbox
+only_for_hash sha1-only && (small-repo-in-sandbox
   it "matches git behavior" && {
     # TODO: expect_parity effect -- push --all origin
     true
@@ -408,8 +431,9 @@ title "gix push --all"
 )
 
 # mode=effect — alias of --all
+# hash=sha1-only "gix cannot open sha256 remotes, see gix/src/clone/fetch/mod.rs unimplemented!()"
 title "gix push --branches"
-(small-repo-in-sandbox
+only_for_hash sha1-only && (small-repo-in-sandbox
   it "matches git behavior" && {
     # TODO: expect_parity effect -- push --branches origin
     true
@@ -417,8 +441,9 @@ title "gix push --branches"
 )
 
 # mode=effect
+# hash=sha1-only "gix cannot open sha256 remotes, see gix/src/clone/fetch/mod.rs unimplemented!()"
 title "gix push --mirror"
-(small-repo-in-sandbox
+only_for_hash sha1-only && (small-repo-in-sandbox
   it "matches git behavior" && {
     # TODO: expect_parity effect -- push --mirror origin
     true
@@ -426,8 +451,9 @@ title "gix push --mirror"
 )
 
 # mode=effect
+# hash=sha1-only "gix cannot open sha256 remotes, see gix/src/clone/fetch/mod.rs unimplemented!()"
 title "gix push --tags"
-(small-repo-in-sandbox
+only_for_hash sha1-only && (small-repo-in-sandbox
   it "matches git behavior" && {
     # TODO: expect_parity effect -- push --tags origin
     true
@@ -437,16 +463,18 @@ title "gix push --tags"
 # mode=effect — --follow-tags adds reachable tags to the push after the
 # main refs but doesn't skip local src refspec matching. Same refspec-
 # first invariant as iter 30.
+# hash=sha1-only "gix cannot open sha256 remotes, see gix/src/clone/fetch/mod.rs unimplemented!()"
 title "gix push --follow-tags"
-(small-repo-in-sandbox
+only_for_hash sha1-only && (small-repo-in-sandbox
   it "matches git: --follow-tags with unmatched src refspec exits 1" && {
     expect_parity effect -- push --follow-tags /tmp/parity-unused nonexistent-refspec
   }
 )
 
 # mode=effect
+# hash=sha1-only "gix cannot open sha256 remotes, see gix/src/clone/fetch/mod.rs unimplemented!()"
 title "gix push -d / --delete"
-(small-repo-in-sandbox
+only_for_hash sha1-only && (small-repo-in-sandbox
   it "matches git behavior" && {
     # TODO: expect_parity effect -- push --delete origin feature
     true
@@ -454,8 +482,9 @@ title "gix push -d / --delete"
 )
 
 # mode=effect
+# hash=sha1-only "gix cannot open sha256 remotes, see gix/src/clone/fetch/mod.rs unimplemented!()"
 title "gix push --prune"
-(small-repo-in-sandbox
+only_for_hash sha1-only && (small-repo-in-sandbox
   it "matches git behavior" && {
     # TODO: expect_parity effect -- push --prune origin refs/heads/*:refs/heads/*
     true
@@ -470,16 +499,18 @@ title "gix push --prune"
 # This exercises the scaffold row without requiring a working send-pack
 # (both tools exit 1 — git at refspec match, gix at the not-impl bail;
 # the row will tighten naturally once happy-path push lands).
+# hash=sha1-only "gix cannot open sha256 remotes, see gix/src/clone/fetch/mod.rs unimplemented!()"
 title "gix push -n / --dry-run"
-(small-repo-in-sandbox
+only_for_hash sha1-only && (small-repo-in-sandbox
   it "matches git: --dry-run with unmatched src refspec exits 1" && {
     expect_parity effect -- push --dry-run /tmp/parity-unused nonexistent-refspec
   }
 )
 
 # mode=bytes — machine-readable; byte-exact
+# hash=sha1-only "gix cannot open sha256 remotes, see gix/src/clone/fetch/mod.rs unimplemented!()"
 title "gix push --porcelain"
-(small-repo-in-sandbox
+only_for_hash sha1-only && (small-repo-in-sandbox
   it "matches git behavior" && {
     # TODO: expect_parity bytes -- push --porcelain origin main
     true
@@ -487,8 +518,9 @@ title "gix push --porcelain"
 )
 
 # mode=effect
+# hash=sha1-only "gix cannot open sha256 remotes, see gix/src/clone/fetch/mod.rs unimplemented!()"
 title "gix push --progress / --no-progress"
-(small-repo-in-sandbox
+only_for_hash sha1-only && (small-repo-in-sandbox
   it "matches git behavior" && {
     # TODO: expect_parity effect -- push --no-progress origin main
     true
@@ -498,8 +530,9 @@ title "gix push --progress / --no-progress"
 # mode=effect — inherited from OPT__VERBOSITY. -v/-q tune stderr output
 # volume but don't alter local refspec matching. Same refspec-first
 # invariant as iter 30.
+# hash=sha1-only "gix cannot open sha256 remotes, see gix/src/clone/fetch/mod.rs unimplemented!()"
 title "gix push -v / --verbose"
-(small-repo-in-sandbox
+only_for_hash sha1-only && (small-repo-in-sandbox
   it "matches git: -v with unmatched src refspec exits 1" && {
     expect_parity effect -- push -v /tmp/parity-unused nonexistent-refspec
   }
@@ -507,8 +540,9 @@ title "gix push -v / --verbose"
 
 # mode=effect — inherited from OPT__VERBOSITY. Same invariant as -v;
 # -q tunes stderr output volume, not exit codes.
+# hash=sha1-only "gix cannot open sha256 remotes, see gix/src/clone/fetch/mod.rs unimplemented!()"
 title "gix push -q / --quiet"
-(small-repo-in-sandbox
+only_for_hash sha1-only && (small-repo-in-sandbox
   it "matches git: -q with unmatched src refspec exits 1" && {
     expect_parity effect -- push -q /tmp/parity-unused nonexistent-refspec
   }
@@ -520,16 +554,18 @@ title "gix push -q / --quiet"
 # refspec resolution. Same refspec-first invariant as --dry-run (iter 30):
 # a nonexistent src refspec exits 1 before transport regardless of
 # --force.
+# hash=sha1-only "gix cannot open sha256 remotes, see gix/src/clone/fetch/mod.rs unimplemented!()"
 title "gix push -f / --force"
-(small-repo-in-sandbox
+only_for_hash sha1-only && (small-repo-in-sandbox
   it "matches git: --force with unmatched src refspec exits 1" && {
     expect_parity effect -- push --force /tmp/parity-unused nonexistent-refspec
   }
 )
 
 # mode=effect — no-arg, with-refname, with-refname:expect
+# hash=sha1-only "gix cannot open sha256 remotes, see gix/src/clone/fetch/mod.rs unimplemented!()"
 title "gix push --force-with-lease"
-(small-repo-in-sandbox
+only_for_hash sha1-only && (small-repo-in-sandbox
   it "matches git behavior (bare --force-with-lease)" && {
     # TODO: expect_parity effect -- push --force-with-lease origin main
     true
@@ -545,8 +581,9 @@ title "gix push --force-with-lease"
 )
 
 # mode=effect — depends on --force-with-lease being in play
+# hash=sha1-only "gix cannot open sha256 remotes, see gix/src/clone/fetch/mod.rs unimplemented!()"
 title "gix push --force-if-includes"
-(small-repo-in-sandbox
+only_for_hash sha1-only && (small-repo-in-sandbox
   it "matches git behavior" && {
     # TODO: expect_parity effect -- push --force-with-lease --force-if-includes origin main
     true
@@ -556,8 +593,9 @@ title "gix push --force-if-includes"
 # mode=effect — --atomic requests a server-side atomic transaction but
 # doesn't alter local refspec matching. Same refspec-first invariant
 # as iter 30.
+# hash=sha1-only "gix cannot open sha256 remotes, see gix/src/clone/fetch/mod.rs unimplemented!()"
 title "gix push --atomic"
-(small-repo-in-sandbox
+only_for_hash sha1-only && (small-repo-in-sandbox
   it "matches git: --atomic with unmatched src refspec exits 1" && {
     expect_parity effect -- push --atomic /tmp/parity-unused nonexistent-refspec
   }
@@ -568,8 +606,9 @@ title "gix push --atomic"
 # mode=effect — --set-upstream only records remote tracking state *after*
 # a successful push, so pre-transport refspec resolution still runs.
 # Same refspec-first invariant as iter 30.
+# hash=sha1-only "gix cannot open sha256 remotes, see gix/src/clone/fetch/mod.rs unimplemented!()"
 title "gix push -u / --set-upstream"
-(small-repo-in-sandbox
+only_for_hash sha1-only && (small-repo-in-sandbox
   it "matches git: --set-upstream with unmatched src refspec exits 1" && {
     expect_parity effect -- push --set-upstream /tmp/parity-unused nonexistent-refspec
   }
@@ -579,8 +618,9 @@ title "gix push -u / --set-upstream"
 
 # mode=effect — --thin / --no-thin are packfile-generation knobs; neither
 # affects local refspec resolution. Same refspec-first invariant as iter 30.
+# hash=sha1-only "gix cannot open sha256 remotes, see gix/src/clone/fetch/mod.rs unimplemented!()"
 title "gix push --thin / --no-thin"
-(small-repo-in-sandbox
+only_for_hash sha1-only && (small-repo-in-sandbox
   it "matches git: --thin with unmatched src refspec exits 1" && {
     expect_parity effect -- push --thin /tmp/parity-unused nonexistent-refspec
   }
@@ -590,8 +630,9 @@ title "gix push --thin / --no-thin"
 )
 
 # mode=effect
+# hash=sha1-only "gix cannot open sha256 remotes, see gix/src/clone/fetch/mod.rs unimplemented!()"
 title "gix push --receive-pack=<program>"
-(small-repo-in-sandbox
+only_for_hash sha1-only && (small-repo-in-sandbox
   it "matches git behavior" && {
     # TODO: expect_parity effect -- push --receive-pack=git-receive-pack origin main
     true
@@ -599,8 +640,9 @@ title "gix push --receive-pack=<program>"
 )
 
 # mode=effect — alias of --receive-pack
+# hash=sha1-only "gix cannot open sha256 remotes, see gix/src/clone/fetch/mod.rs unimplemented!()"
 title "gix push --exec=<program>"
-(small-repo-in-sandbox
+only_for_hash sha1-only && (small-repo-in-sandbox
   it "matches git behavior" && {
     # TODO: expect_parity effect -- push --exec=git-receive-pack origin main
     true
@@ -608,8 +650,9 @@ title "gix push --exec=<program>"
 )
 
 # mode=effect
+# hash=sha1-only "gix cannot open sha256 remotes, see gix/src/clone/fetch/mod.rs unimplemented!()"
 title "gix push -o / --push-option=<option>"
-(small-repo-in-sandbox
+only_for_hash sha1-only && (small-repo-in-sandbox
   it "matches git behavior" && {
     # TODO: expect_parity effect -- push --push-option=foo --push-option=bar origin main
     true
@@ -617,8 +660,9 @@ title "gix push -o / --push-option=<option>"
 )
 
 # mode=effect — IPv4 transport family
+# hash=sha1-only "gix cannot open sha256 remotes, see gix/src/clone/fetch/mod.rs unimplemented!()"
 title "gix push -4"
-(small-repo-in-sandbox
+only_for_hash sha1-only && (small-repo-in-sandbox
   it "matches git behavior" && {
     # TODO: expect_parity effect -- push -4 origin main
     true
@@ -626,8 +670,9 @@ title "gix push -4"
 )
 
 # mode=effect — IPv6 transport family
+# hash=sha1-only "gix cannot open sha256 remotes, see gix/src/clone/fetch/mod.rs unimplemented!()"
 title "gix push -6"
-(small-repo-in-sandbox
+only_for_hash sha1-only && (small-repo-in-sandbox
   it "matches git behavior" && {
     # TODO: expect_parity effect -- push -6 origin main
     true
@@ -639,16 +684,18 @@ title "gix push -6"
 # mode=effect — --no-verify bypasses the pre-push hook (executed right
 # before send-pack), but local refspec resolution runs long before.
 # Same refspec-first invariant as iter 30.
+# hash=sha1-only "gix cannot open sha256 remotes, see gix/src/clone/fetch/mod.rs unimplemented!()"
 title "gix push --no-verify"
-(small-repo-in-sandbox
+only_for_hash sha1-only && (small-repo-in-sandbox
   it "matches git: --no-verify with unmatched src refspec exits 1" && {
     expect_parity effect -- push --no-verify /tmp/parity-unused nonexistent-refspec
   }
 )
 
 # mode=effect — GPG signing; may be deferred if GPG toolchain absent
+# hash=sha1-only "gix cannot open sha256 remotes, see gix/src/clone/fetch/mod.rs unimplemented!()"
 title "gix push --signed"
-(small-repo-in-sandbox
+only_for_hash sha1-only && (small-repo-in-sandbox
   it "matches git behavior (--signed=no)" && {
     # TODO: expect_parity effect -- push --signed=no origin main
     true
@@ -664,8 +711,9 @@ title "gix push --signed"
 )
 
 # mode=effect
+# hash=sha1-only "gix cannot open sha256 remotes, see gix/src/clone/fetch/mod.rs unimplemented!()"
 title "gix push --recurse-submodules=<mode>"
-(small-repo-in-sandbox
+only_for_hash sha1-only && (small-repo-in-sandbox
   it "matches git behavior (=no)" && {
     # TODO: expect_parity effect -- push --recurse-submodules=no origin main
     true
@@ -683,3 +731,9 @@ title "gix push --recurse-submodules=<mode>"
     true
   }
 )
+
+# End-of-file sentinel: when every row is `only_for_hash sha1-only` and the
+# active hash is sha256, the last statement returns 1 (skip), which would
+# propagate out of `source` and trip `set -e` in tests/parity.sh. A trailing
+# `:` normalizes the exit code so a fully-skipped file still returns 0.
+:
