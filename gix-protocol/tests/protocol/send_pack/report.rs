@@ -29,10 +29,7 @@ fn unpack_ok_one_ref_rejected() {
     assert_eq!(report.refs.len(), 1);
     let r = &report.refs[0];
     assert_eq!(r.refname, BString::from("refs/heads/main"));
-    assert_eq!(
-        r.result.as_ref().unwrap_err().as_bstr(),
-        b"non-fast-forward".as_bstr()
-    );
+    assert_eq!(r.result.as_ref().unwrap_err().as_bstr(), b"non-fast-forward".as_bstr());
 }
 
 #[test]
@@ -74,8 +71,7 @@ fn parses_captured_empty_to_new_branch_report() {
     // The report pkt-lines are inside sideband band-1 frames (byte prefix \x01),
     // so skip_past_first_flush lands inside the sideband wrapper, not raw report data.
     // Re-scope to Phase 5.2 (sideband demux).
-    let s2c = std::fs::read("tests/fixtures/push/empty-to-new-branch.s2c.bin")
-        .expect("fixture present");
+    let s2c = std::fs::read("tests/fixtures/push/empty-to-new-branch.s2c.bin").expect("fixture present");
 
     let tail = skip_past_first_flush(&s2c).expect("fixture has at least one flush");
 

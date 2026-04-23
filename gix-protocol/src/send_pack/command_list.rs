@@ -56,7 +56,7 @@ pub fn encode_into(request: &Request, hash_kind: gix_hash::Kind, out: &mut impl 
 
 fn write_oid_hex(out: &mut Vec<u8>, oid: &gix_hash::ObjectId, hex_len: usize) -> std::io::Result<()> {
     if oid.is_null() {
-        out.extend(std::iter::repeat(b'0').take(hex_len));
+        out.extend(std::iter::repeat_n(b'0', hex_len));
     } else {
         write!(out, "{}", oid.to_hex())?;
     }

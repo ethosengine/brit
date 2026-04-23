@@ -39,7 +39,7 @@ fn single_create_with_capabilities() {
         new = "abcdef".to_owned() + &"0".repeat(34),
     );
     let expected_len = 4 + payload_text.len();
-    let len_hex = format!("{:04x}", expected_len);
+    let len_hex = format!("{expected_len:04x}");
 
     let mut expected = Vec::new();
     expected.extend_from_slice(len_hex.as_bytes());
@@ -88,7 +88,7 @@ fn delete_only_uses_zero_new_oid() {
     encode_into(&req, gix_hash::Kind::Sha1, &mut out).unwrap();
     assert!(out
         .as_bstr()
-        .contains_str(&format!(" {} refs/heads/gone", "0".repeat(40))));
+        .contains_str(format!(" {} refs/heads/gone", "0".repeat(40))));
 }
 
 #[test]
@@ -159,11 +159,7 @@ struct ParsedCreate {
 /// space and skip the empty token that arises from that leading space.
 /// No trailing LF is expected — git's send-pack omits it.
 fn parse_single_create(cmd_list: &[u8]) -> ParsedCreate {
-    let len = usize::from_str_radix(
-        std::str::from_utf8(&cmd_list[..4]).expect("hex length"),
-        16,
-    )
-    .expect("valid hex");
+    let len = usize::from_str_radix(std::str::from_utf8(&cmd_list[..4]).expect("hex length"), 16).expect("valid hex");
     let payload = &cmd_list[4..len]; // no trailing LF
     let nul = payload.iter().position(|&b| b == 0).expect("NUL separator");
     let head = &payload[..nul];
@@ -178,7 +174,7 @@ fn parse_single_create(cmd_list: &[u8]) -> ParsedCreate {
         capabilities: caps_line
             .split(|&b| b == b' ')
             .filter(|c| !c.is_empty())
-            .map(|c| BString::from(c))
+            .map(BString::from)
             .collect(),
     }
 }

@@ -28,4 +28,5 @@ pub mod response;
 mod types;
 pub use types::{Command, Error, Options, Outcome, RefStatus, Report, Request};
 
-// pub use function::send_pack;  // uncommented in Task 5.1
+#[cfg(feature = "blocking-client")]
+pub use function::send_pack;
