@@ -551,12 +551,13 @@ title "gix push --force-if-includes"
   }
 )
 
-# mode=effect
+# mode=effect — --atomic requests a server-side atomic transaction but
+# doesn't alter local refspec matching. Same refspec-first invariant
+# as iter 30.
 title "gix push --atomic"
 (small-repo-in-sandbox
-  it "matches git behavior" && {
-    # TODO: expect_parity effect -- push --atomic origin main
-    true
+  it "matches git: --atomic with unmatched src refspec exits 1" && {
+    expect_parity effect -- push --atomic /tmp/parity-unused nonexistent-refspec
   }
 )
 
