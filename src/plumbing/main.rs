@@ -686,7 +686,6 @@ pub fn main() -> Result<()> {
             repository: push_repository,
             refspec,
         }) => {
-            use crate::plumbing::options::push as opts;
             let opts = core::repository::push::Options {
                 format,
                 all,
@@ -720,12 +719,7 @@ pub fn main() -> Result<()> {
                 receive_pack,
                 signed_arg: signed,
                 push_options: push_option,
-                recurse_submodules: recurse_submodules.map(|r| match r {
-                    opts::RecurseSubmodules::No => core::repository::push::RecurseSubmodules::No,
-                    opts::RecurseSubmodules::Check => core::repository::push::RecurseSubmodules::Check,
-                    opts::RecurseSubmodules::OnDemand => core::repository::push::RecurseSubmodules::OnDemand,
-                    opts::RecurseSubmodules::Only => core::repository::push::RecurseSubmodules::Only,
-                }),
+                recurse_submodules_arg: recurse_submodules,
                 ipv4,
                 ipv6,
                 repo,

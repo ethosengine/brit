@@ -36,7 +36,9 @@ pub struct Options {
     /// with git-compatible error semantics; use `signed()` to decode.
     pub signed_arg: Option<String>,
     pub push_options: Vec<String>,
-    pub recurse_submodules: Option<RecurseSubmodules>,
+    /// Raw `--recurse-submodules` argument. Parsed at dispatch with
+    /// git-compatible error semantics; use `RecurseSubmodules::parse`.
+    pub recurse_submodules_arg: Option<String>,
     pub ipv4: bool,
     pub ipv6: bool,
     pub repo: Option<String>,
@@ -53,8 +55,8 @@ pub enum Signed {
 
 impl Signed {
     /// Parse `--signed=<arg>` with the same value set `git_parse_maybe_bool`
-    /// + the `if-asked` literal accept (see `option_parse_push_signed` in
-    /// vendor/git/send-pack.c). All matching is case-insensitive.
+    /// accepts, plus the `if-asked` literal (see `option_parse_push_signed`
+    /// in `vendor/git/send-pack.c`). All matching is case-insensitive.
     ///
     /// Returns `Err(arg)` for any value git would reject — the caller is
     /// expected to print `fatal: bad signed argument: <arg>` and exit 128.
@@ -77,6 +79,32 @@ pub enum RecurseSubmodules {
     Check,
     OnDemand,
     Only,
+}
+
+impl RecurseSubmodules {
+    /// Parse `--recurse-submodules=<arg>` matching `parse_push_recurse` in
+    /// vendor/git/submodule-config.c. Key difference from `Signed::parse`:
+    /// the `yes`/`on`/`true`/`1` values that `git_parse_maybe_bool` accepts
+    /// as "true" are *rejected* — there is no simple "on" meaning for push.
+    /// The named modes (`check`, `on-demand`, `only`) are matched with
+    /// `strcmp` in C and are therefore case-sensitive here too.
+    ///
+    /// Returns `Err(arg)` for any value git would reject.
+    pub fn parse(arg: &str) -> Result<Self, &str> {
+        // The bool aliases use git_parse_maybe_bool, which is case-insensitive.
+        match arg.to_ascii_lowercase().as_str() {
+            "no" | "off" | "false" | "0" => return Ok(RecurseSubmodules::No),
+            "yes" | "on" | "true" | "1" => return Err(arg),
+            _ => {}
+        }
+        // Named modes — case-sensitive (strcmp in C).
+        match arg {
+            "on-demand" => Ok(RecurseSubmodules::OnDemand),
+            "check" => Ok(RecurseSubmodules::Check),
+            "only" => Ok(RecurseSubmodules::Only),
+            _ => Err(arg),
+        }
+    }
 }
 
 pub const PROGRESS_RANGE: std::ops::RangeInclusive<u8> = 1..=3;
@@ -135,6 +163,24 @@ pub(crate) mod function {
                 Err(bad) => {
                     let mut stderr = std::io::stderr().lock();
                     writeln!(stderr, "fatal: bad signed argument: {bad}")?;
+                    drop(stderr);
+                    std::process::exit(128);
+                }
+            },
+            None => None,
+        };
+
+        // Parse --recurse-submodules, mirroring parse_push_recurse in
+        // vendor/git/submodule-config.c — accepts named modes (check,
+        // on-demand, only) case-sensitive, plus no/off/false/0
+        // case-insensitive; rejects yes/on/true/1 and anything else with
+        // "fatal: bad recurse-submodules argument: %s".
+        let _recurse_submodules = match opts.recurse_submodules_arg.as_deref() {
+            Some(arg) => match super::RecurseSubmodules::parse(arg) {
+                Ok(r) => Some(r),
+                Err(bad) => {
+                    let mut stderr = std::io::stderr().lock();
+                    writeln!(stderr, "fatal: bad recurse-submodules argument: {bad}")?;
                     drop(stderr);
                     std::process::exit(128);
                 }

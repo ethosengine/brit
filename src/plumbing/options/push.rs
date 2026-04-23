@@ -6,19 +6,6 @@
 
 use std::ffi::OsString;
 
-/// How to recursively push submodules (mirrors git's `--recurse-submodules`).
-#[derive(Debug, Copy, Clone, PartialEq, Eq, clap::ValueEnum)]
-pub enum RecurseSubmodules {
-    /// Do not recurse into submodules.
-    No,
-    /// Abort the push if any submodule has unpushed commits.
-    Check,
-    /// Push submodules that have been checked out locally.
-    OnDemand,
-    /// Push only submodules, not the superproject.
-    Only,
-}
-
 #[derive(Debug, clap::Parser)]
 pub struct Platform {
     /// Push all branches (equivalent to refspec `refs/heads/*`).
@@ -125,8 +112,16 @@ pub struct Platform {
     pub push_option: Vec<String>,
 
     /// Recursion strategy for submodules.
-    #[clap(long, value_name = "MODE", value_enum)]
-    pub recurse_submodules: Option<RecurseSubmodules>,
+    ///
+    /// Accepts the same values as `git --recurse-submodules`: `check`,
+    /// `on-demand`, `only`, or `no`/`false`/`off`/`0` (case-sensitive for
+    /// the named modes; case-insensitive for the bool aliases, matching
+    /// git's `parse_push_recurse` in submodule-config.c). Unlike `--signed`,
+    /// `yes`/`on`/`true`/`1` are *rejected* — pushing submodules has no
+    /// simple "on" meaning. Invalid values fail at dispatch with git's
+    /// exact `fatal: bad recurse-submodules argument` message.
+    #[clap(long, value_name = "MODE")]
+    pub recurse_submodules: Option<String>,
 
     /// Force IPv4 connections to the remote.
     #[clap(short = '4', long, conflicts_with = "ipv6")]

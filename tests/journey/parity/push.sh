@@ -122,6 +122,22 @@ title "gix push --signed=<bogus> (unknown signed argument)"
   }
 )
 
+# mode=effect — mirrors parse_push_recurse in vendor/git/submodule-config.c.
+# Accepts check/on-demand/only (case-sensitive) and no/off/false/0
+# (case-insensitive); rejects yes/on/true/1 and anything else with exit
+# 128 `fatal: bad recurse-submodules argument: <arg>`.
+title "gix push --recurse-submodules=<bogus>"
+(sandbox
+  git init -q
+  git config commit.gpgsign false
+  git config tag.gpgsign false
+  git -c user.email=x@x -c user.name=x commit --allow-empty -qm init
+  git remote add origin /tmp/parity-unused
+  it "matches git: --recurse-submodules=bogus is rejected pre-transport" && {
+    expect_parity effect -- push --recurse-submodules=bogus origin main
+  }
+)
+
 # --- positional & repository selection -------------------------------------
 
 # mode=effect
