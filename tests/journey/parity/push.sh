@@ -64,6 +64,9 @@
 #       (mirrors git's PARSE_OPT_OPTARG heuristic). Fast-forward
 #       fixture covers all three CLI shapes; actual lease-mismatch
 #       handling remains a follow-up.
+#  (13) push --force-if-includes — effect-mode only; in a fast-forward
+#       fixture the lease + includes checks trivially pass, so both
+#       binaries exit 0. Actual enforcement landed with lease-mismatch.
 #
 # send-pack substrate is online (gix-protocol send-pack + Repository::push
 # + gitoxide-core glue + gix CLI wiring). Remaining TODO rows below exercise
@@ -789,13 +792,28 @@ only_for_hash sha1-only && (sandbox
   }
 )
 
-# mode=effect — depends on --force-with-lease being in play
+# mode=effect — `--force-if-includes` refines `--force-with-lease` by also
+# requiring that the local branch contains every commit the remote has.
+# When `--force-with-lease` isn't in play, git silently ignores
+# `--force-if-includes` (vendor/git/builtin/push.c sets
+# `cas.use_force_if_includes = 1` only if `!is_empty_cas(&cas)`).
+# Fast-forward fixture: both the lease and the includes checks trivially
+# pass, so both binaries exit 0 through the normal pipeline; actual
+# enforcement semantics are a follow-up along with lease-mismatch.
 # hash=sha1-only "gix cannot open sha256 remotes, see gix/src/clone/fetch/mod.rs unimplemented!()"
 title "gix push --force-if-includes"
-only_for_hash sha1-only && (small-repo-in-sandbox
-  it "matches git behavior" && {
-    # TODO: expect_parity effect -- push --force-with-lease --force-if-includes origin main
-    true
+only_for_hash sha1-only && (sandbox
+  dst="$(pwd)/dst.git"
+  git init -q -b main src
+  git -C src config commit.gpgsign false
+  git -C src config tag.gpgsign false
+  git -C src -c user.email=x@x -c user.name=x commit --allow-empty -qm c1
+  git init -q --bare "$dst"
+  git -C src remote add origin "$dst"
+  git -C src push -q origin main
+  git -C src -c user.email=x@x -c user.name=x commit --allow-empty -qm c2
+  it "matches git: --force-with-lease --force-if-includes on fast-forward, exits 0" && {
+    cd src && expect_parity effect -- push --force-with-lease --force-if-includes origin main
   }
 )
 
