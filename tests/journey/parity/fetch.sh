@@ -620,17 +620,18 @@ only_for_hash sha1-only && (sandbox
 # hash=sha1-only "gix cannot open sha256 remotes, see gix/src/clone/fetch/mod.rs unimplemented!()"
 title "gix fetch --recurse-submodules[=<mode>]"
 only_for_hash sha1-only && (sandbox
-  it "TODO: matches git: --recurse-submodules=yes" && {
-    :  # expect_parity effect -- fetch --recurse-submodules=yes origin
+  bare-empty-upstream-with-origin
+  it "matches git: --recurse-submodules=yes accepted, exit 0 (no submodules in fixture)" && {
+    expect_parity effect -- fetch --recurse-submodules=yes origin
   }
-  it "TODO: matches git: --recurse-submodules=on-demand" && {
-    :  # expect_parity effect -- fetch --recurse-submodules=on-demand origin
+  it "matches git: --recurse-submodules=on-demand accepted, exit 0" && {
+    expect_parity effect -- fetch --recurse-submodules=on-demand origin
   }
-  it "TODO: matches git: --recurse-submodules=no" && {
-    :  # expect_parity effect -- fetch --recurse-submodules=no origin
+  it "matches git: --recurse-submodules=no accepted, exit 0" && {
+    expect_parity effect -- fetch --recurse-submodules=no origin
   }
-  it "TODO: matches git: bare --recurse-submodules defaults to yes" && {
-    :  # expect_parity effect -- fetch --recurse-submodules origin
+  it "matches git: bare --recurse-submodules defaults to yes, exit 0" && {
+    expect_parity effect -- fetch --recurse-submodules origin
   }
 )
 
@@ -638,8 +639,9 @@ only_for_hash sha1-only && (sandbox
 # hash=sha1-only "gix cannot open sha256 remotes, see gix/src/clone/fetch/mod.rs unimplemented!()"
 title "gix fetch --no-recurse-submodules"
 only_for_hash sha1-only && (sandbox
-  it "TODO: matches git: --no-recurse-submodules" && {
-    :  # expect_parity effect -- fetch --no-recurse-submodules origin
+  bare-empty-upstream-with-origin
+  it "matches git: --no-recurse-submodules accepted, exit 0" && {
+    expect_parity effect -- fetch --no-recurse-submodules origin
   }
 )
 
@@ -797,8 +799,9 @@ only_for_hash sha1-only && (sandbox
 # hash=sha1-only "gix cannot open sha256 remotes, see gix/src/clone/fetch/mod.rs unimplemented!()"
 title "gix fetch --stdin"
 only_for_hash sha1-only && (sandbox
-  it "TODO: matches git: --stdin reads refspecs from stdin" && {
-    :  # expect_parity effect -- fetch --stdin origin
+  bare-empty-upstream-with-origin
+  it "matches git: --stdin accepted with empty stdin, exit 0" && {
+    expect_parity effect -- fetch --stdin origin </dev/null
   }
 )
 
