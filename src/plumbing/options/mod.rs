@@ -719,6 +719,26 @@ pub mod clone {
         #[clap(long, short = 'j', value_name = "N")]
         pub jobs: Option<u32>,
 
+        /// Template directory for init. Parse-only — gix init doesn't
+        /// consume templates today.
+        #[clap(long, value_name = "DIR")]
+        pub template: Option<PathBuf>,
+
+        /// Place .git at <dir> with a gitfile link back from the worktree.
+        /// Parse-only — gix doesn't redirect the git dir today.
+        #[clap(long = "separate-git-dir", value_name = "DIR")]
+        pub separate_git_dir: Option<PathBuf>,
+
+        /// Ref storage format. Parse-only — gix uses `files` regardless.
+        /// Unknown values die 128.
+        #[clap(long = "ref-format", value_name = "FMT")]
+        pub ref_format: Option<String>,
+
+        /// Clone-scoped `-c/--config=<key=value>` overrides, merged with
+        /// the top-level `-c` list before the initial fetch.
+        #[clap(long = "config", short = 'c', value_parser = crate::shared::AsBString, value_name = "KEY=VAL")]
+        pub config_overrides: Vec<gix::bstr::BString>,
+
         /// Employ a sparse-checkout initialized to just the toplevel directory.
         ///
         /// Parse-only: empty-upstream clones have no toplevel anything to

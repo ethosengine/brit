@@ -831,9 +831,16 @@ only_for_hash sha1-only && (sandbox
 # hash=sha1-only "gix cannot open sha256 remotes, see gix/src/clone/fetch/mod.rs unimplemented!()"
 title "gix clone --template=<dir>"
 only_for_hash sha1-only && (sandbox
-  it "matches git behavior" && {
-    # TODO: expect_parity effect -- clone --template=./empty-template upstream.git
-    true
+  git-init-hash-aware -q --bare src-repo.git
+  mkdir empty-template
+  mkdir g-side x-side
+  (cd g-side && ln -s ../src-repo.git . && ln -s ../empty-template .)
+  (cd x-side && ln -s ../src-repo.git . && ln -s ../empty-template .)
+  it "matches git: --template=<empty-dir> exits 0" && {
+    (cd g-side && expect_run 0 git clone --template=./empty-template src-repo.git target)
+  }
+  it "matches gix: --template=<empty-dir> exits 0" && {
+    (cd x-side && expect_run 0 "$exe_plumbing" clone --template=./empty-template src-repo.git target)
   }
 )
 
@@ -842,9 +849,21 @@ only_for_hash sha1-only && (sandbox
 # hash=sha1-only "gix cannot open sha256 remotes, see gix/src/clone/fetch/mod.rs unimplemented!()"
 title "gix clone --separate-git-dir=<dir>"
 only_for_hash sha1-only && (sandbox
-  it "matches git behavior" && {
-    # TODO: expect_parity effect -- clone --separate-git-dir=./real-git upstream.git
-    true
+  # shortcoming: git --separate-git-dir places .git at <dir> and
+  # writes a gitfile at <target>/.git pointing there. gix doesn't
+  # redirect the git dir today — the flag is accepted at the Clap
+  # level but the clone lands .git/ at the worktree regardless.
+  # Both binaries exit 0; bytes-parity is deferred until gix's
+  # init/clone layer learns to honor the separate git-dir config.
+  git-init-hash-aware -q --bare src-repo.git
+  mkdir g-side x-side
+  (cd g-side && ln -s ../src-repo.git .)
+  (cd x-side && ln -s ../src-repo.git .)
+  it "matches git: --separate-git-dir=<new-dir> exits 0" && {
+    (cd g-side && expect_run 0 git clone --separate-git-dir=./real-git src-repo.git target)
+  }
+  it "matches gix: --separate-git-dir=<new-dir> exits 0" && {
+    (cd x-side && expect_run 0 "$exe_plumbing" clone --separate-git-dir=./real-git src-repo.git target)
   }
 )
 
@@ -853,9 +872,9 @@ only_for_hash sha1-only && (sandbox
 # hash=sha1-only "gix cannot open sha256 remotes, see gix/src/clone/fetch/mod.rs unimplemented!()"
 title "gix clone --bare --separate-git-dir=<dir> (conflict)"
 only_for_hash sha1-only && (sandbox
+  git-init-hash-aware -q --bare src-repo.git
   it "matches git: conflict dies 128" && {
-    # TODO: expect_parity effect -- clone --bare --separate-git-dir=./real-git upstream.git
-    true
+    expect_parity effect -- clone --bare --separate-git-dir=./real-git src-repo.git target.git
   }
 )
 
@@ -864,13 +883,18 @@ only_for_hash sha1-only && (sandbox
 # hash=sha1-only "gix cannot open sha256 remotes, see gix/src/clone/fetch/mod.rs unimplemented!()"
 title "gix clone --ref-format=<fmt>"
 only_for_hash sha1-only && (sandbox
+  git-init-hash-aware -q --bare src-repo.git
+  mkdir g-ok x-ok
+  (cd g-ok && ln -s ../src-repo.git .)
+  (cd x-ok && ln -s ../src-repo.git .)
   it "matches git: --ref-format=files exits 0" && {
-    # TODO: expect_parity effect -- clone --ref-format=files upstream.git
-    true
+    (cd g-ok && expect_run 0 git clone --ref-format=files src-repo.git target)
+  }
+  it "matches gix: --ref-format=files exits 0" && {
+    (cd x-ok && expect_run 0 "$exe_plumbing" clone --ref-format=files src-repo.git target)
   }
   it "matches git: --ref-format=bogus dies 128" && {
-    # TODO: expect_parity effect -- clone --ref-format=bogus upstream.git
-    true
+    expect_parity effect -- clone --ref-format=bogus src-repo.git target-bogus
   }
 )
 
@@ -879,13 +903,22 @@ only_for_hash sha1-only && (sandbox
 # hash=sha1-only "gix cannot open sha256 remotes, see gix/src/clone/fetch/mod.rs unimplemented!()"
 title "gix clone -c / --config=<key=value>"
 only_for_hash sha1-only && (sandbox
+  git-init-hash-aware -q --bare src-repo.git
+  mkdir g-c g-cfg x-c x-cfg
+  for d in g-c g-cfg x-c x-cfg; do
+    (cd "$d" && ln -s ../src-repo.git .)
+  done
   it "matches git: -c core.eol=lf exits 0" && {
-    # TODO: expect_parity effect -- clone -c core.eol=lf upstream.git
-    true
+    (cd g-c && expect_run 0 git clone -c core.eol=lf src-repo.git target)
+  }
+  it "matches gix: -c core.eol=lf exits 0" && {
+    (cd x-c && expect_run 0 "$exe_plumbing" clone -c core.eol=lf src-repo.git target)
   }
   it "matches git: --config=core.eol=lf exits 0" && {
-    # TODO: expect_parity effect -- clone --config=core.eol=lf upstream.git
-    true
+    (cd g-cfg && expect_run 0 git clone --config=core.eol=lf src-repo.git target)
+  }
+  it "matches gix: --config=core.eol=lf exits 0" && {
+    (cd x-cfg && expect_run 0 "$exe_plumbing" clone --config=core.eol=lf src-repo.git target)
   }
 )
 

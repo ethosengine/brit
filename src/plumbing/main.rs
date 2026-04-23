@@ -620,6 +620,10 @@ pub fn main() -> Result<()> {
             ipv4: _,
             ipv6: _,
             jobs: _,
+            template: _,
+            separate_git_dir,
+            ref_format,
+            config_overrides,
             sparse: _,
             origin: _,
             local: _,
@@ -666,6 +670,47 @@ pub fn main() -> Result<()> {
             // config wiring is a follow-up for bytes-parity.
             let bare = bare || mirror;
             let no_tags = no_tags || mirror;
+            // Mirrors cmd_clone in vendor/git/builtin/clone.c:
+            //     if (option_bare) {
+            //         if (real_git_dir)
+            //             die(_("options '%s' and '%s' cannot be used together"),
+            //                 "--bare", "--separate-git-dir");
+            //         ...
+            //     }
+            // Exit 128.
+            if bare && separate_git_dir.is_some() {
+                use std::io::Write;
+                let mut stderr = std::io::stderr().lock();
+                let _ = writeln!(
+                    stderr,
+                    "fatal: options '--bare' and '--separate-git-dir' cannot be used together"
+                );
+                drop(stderr);
+                std::process::exit(128);
+            }
+            // Mirrors cmd_clone's ref-format validation (clone.c:1028):
+            //     if (ref_format) {
+            //         ref_storage_format = ref_storage_format_by_name(ref_format);
+            //         if (ref_storage_format == REF_STORAGE_FORMAT_UNKNOWN)
+            //             die(_("unknown ref storage format '%s'"), ref_format);
+            //     }
+            // Exit 128. git 2.47 accepts only `files` as a known ref format;
+            // `reftable` exists in newer vendor/git but not system-git.
+            if let Some(ref fmt) = ref_format {
+                if fmt != "files" && fmt != "reftable" {
+                    use std::io::Write;
+                    let mut stderr = std::io::stderr().lock();
+                    let _ = writeln!(stderr, "fatal: unknown ref storage format '{fmt}'");
+                    drop(stderr);
+                    std::process::exit(128);
+                }
+                let _ = separate_git_dir;
+            }
+            // Merge subcommand-scoped -c/--config overrides into the
+            // top-level `config` Vec. Mirrors cmd_clone's `option_config`
+            // list being appended after init_db.
+            let mut config = config;
+            config.extend(config_overrides);
             // Mirrors cmd_clone in vendor/git/builtin/clone.c:
             //     if (argc > 2)
             //         usage_msg_opt(_("Too many arguments."), ...);
