@@ -12,7 +12,7 @@
 #   bytes  — scriptable output; byte-exact match required (e.g. --porcelain)
 #   effect — exit-code + UX; output diff reported but not fatal
 #
-# ─── PARITY STATE (iter 17) ────────────────────────────────────────────────
+# ─── PARITY STATE (iter 18) ────────────────────────────────────────────────
 # Closed (all effect-mode, pre-transport dies & parse-time contracts):
 #   no-destination (128), bad-repository '' (128), --all+--mirror (128),
 #   --delete w/o refs (128), --all+refspecs (128), --mirror+refspecs (128),
@@ -20,16 +20,15 @@
 #   --force-with-lease=ref:<bogus-oid> (129), <nonexistent-path> fallthrough,
 #   -4/-6 overrides_with, --help (0), 3-way conflict (128), 4-way (128),
 #   --push-option=<\n> (128).
+# Happy-path rows closed (send-pack substrate landed, iter 18):
+#   (1) push origin refs/heads/main:refs/heads/main (bare file:// remote,
+#       fast-forward / initial push) — exit 0 parity confirmed.
 #
-# BLOCKED: every remaining TODO row below exercises happy-path push
-# (connect → handshake → ls-refs → send-pack → report), but gix-protocol
-# has no send-pack implementation — only the fetch side is wired
-# (gix-protocol/src/fetch/). Closing these rows requires adding a
-# send-pack client in gix-protocol + a push pipeline in gix-core, not a
-# per-iteration row-closing effort. The ralph loop is paused at the
-# error-path ceiling; further progress is a concentrated implementation
-# sprint, not iterative parity. `docs/parity/commands.md` reflects this
-# as `partial`.
+# send-pack substrate is online (gix-protocol send-pack + Repository::push
+# + gitoxide-core glue + gix CLI wiring). Remaining TODO rows below exercise
+# happy-path variants, flags, and transport options that can now be closed
+# iteratively. `docs/parity/commands.md` updated from partial/blocked to
+# partial/iterative.
 # ────────────────────────────────────────────────────────────────────────────
 
 # hash=sha1-only "gix cannot open sha256 remotes, see gix/src/clone/fetch/mod.rs unimplemented!()"
@@ -398,13 +397,24 @@ only_for_hash sha1-only && (small-repo-in-sandbox
   }
 )
 
-# mode=effect
+# mode=effect — first happy-path parity row closed by the send-pack
+# substrate (gix-protocol send-pack + Repository::push + CLI wiring).
+# Sets up a bare file:// remote so both git and gix perform a real
+# initial-push over the local transport; both exit 0.
+# See etc/plan/2026-04-23-send-pack-substrate.md for the full substrate
+# history (Tasks 1–9).
 # hash=sha1-only "gix cannot open sha256 remotes, see gix/src/clone/fetch/mod.rs unimplemented!()"
-title "gix push <repository> <refspec>..."
-only_for_hash sha1-only && (small-repo-in-sandbox
-  it "matches git behavior" && {
-    # TODO: expect_parity effect -- push upstream.git refs/heads/main:refs/heads/main
-    true
+title "gix push origin refs/heads/main:refs/heads/main (bare file:// remote, fast-forward)"
+only_for_hash sha1-only && (sandbox
+  dst="$(pwd)/dst.git"
+  git init -q -b main src
+  git -C src config commit.gpgsign false
+  git -C src config tag.gpgsign false
+  git -C src -c user.email=x@x -c user.name=x commit --allow-empty -qm "init"
+  git init -q --bare "$dst"
+  git -C src remote add origin "$dst"
+  it "matches git: push origin refs/heads/main:refs/heads/main exits 0" && {
+    cd src && expect_parity effect -- push origin refs/heads/main:refs/heads/main
   }
 )
 

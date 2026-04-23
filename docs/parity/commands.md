@@ -12,7 +12,7 @@ Legend:
 
 | git | gix | Status | Parity file | Notes |
 |---|---|---|---|---|
-| push | gix push | partial | [push.sh](../../tests/journey/parity/push.sh) | error-path parity closed (16 rows); happy-path blocked on gix-protocol send-pack (not yet implemented) |
+| push | gix push | partial | [push.sh](../../tests/journey/parity/push.sh) | error-path parity closed (17 rows); send-pack substrate landed (iter 18); happy-path parity now iterative — 1 of ~40 happy-path rows closed (push origin refs/heads/main:refs/heads/main, bare file:// remote) |
 | pull | gix pull | absent | — | composes fetch + merge |
 | fetch | gix fetch | partial | — | exists as `Fetch` subcommand; flag coverage unverified |
 | clone | gix clone | partial | — | exists as `Clone` subcommand; flag coverage unverified |
