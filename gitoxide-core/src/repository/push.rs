@@ -255,16 +255,26 @@ pub(crate) mod function {
                 .and_then(Result::ok),
         };
 
-        if found.is_none() {
-            // Matches the `die()` branch at vendor/git/builtin/push.c around line 631.
-            // We preserve git's exit code (128) for parity; the message text is a
-            // close render of git's wording but not byte-exact (effect-mode parity).
-            //
-            // Write directly to the process stderr rather than the passed-in `err`
-            // handle: depending on `--verbose`/`--progress` mode, `err` can be a
-            // `Vec<u8>` flushed only after `run()` returns. `process::exit` skips
-            // destructors, so a buffered write would be lost. Unix `io::stderr()`
-            // is unbuffered, so the message reaches the terminal before exit.
+        // Mirrors vendor/git/builtin/push.c around line 631:
+        //     if (!remote) {
+        //         if (repo) die("bad repository '%s'", repo);
+        //         die("No configured push destination.\n...");
+        //     }
+        // but with a tighter predicate: git's `remote_get_1` returns NULL
+        // only for empty names — any non-empty string is wrapped as an
+        // anonymous URL-based remote and propagates to the transport layer
+        // (where missing files / unreachable hosts surface as exit 1 via
+        // `do_push`, not 128 via die). So only the *empty* case dies here;
+        // a non-empty string that gix couldn't open falls through to the
+        // not-yet-implemented bail below and exits 1, matching git's
+        // failure-at-transport contract.
+        //
+        // Write directly to process stderr rather than the passed-in `err`:
+        // in the --verbose/auto-verbose prepare_and_run branch the latter
+        // is a Vec<u8> flushed only after run() returns, and process::exit
+        // skips that flush. Unix stderr is unbuffered, so this reaches the
+        // terminal before exit.
+        if found.is_none() && matches!(explicit, Some("") | None) {
             let mut stderr = std::io::stderr().lock();
             if let Some(name) = explicit {
                 writeln!(stderr, "fatal: bad repository '{name}'")?;

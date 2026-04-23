@@ -156,6 +156,24 @@ title "gix push --force-with-lease=ref:<bogus-oid>"
   }
 )
 
+# mode=effect — git's `remote_get_1` accepts any non-empty name/URL and
+# synthesizes an anonymous Remote from it; failure surfaces at the
+# transport layer, not at `bad repository` resolution. Pushing to a
+# nonexistent local path thus exits 1 (transport-level "refspec didn't
+# match" / "failed to push"), NOT 128 (die). This row guards gix's
+# remote-resolution predicate against the overly-aggressive "is this a
+# known remote?" fail-fast that would otherwise exit 128.
+title "gix push <nonexistent-path> (falls through to transport)"
+(sandbox
+  git init -q
+  git config commit.gpgsign false
+  git config tag.gpgsign false
+  git -c user.email=x@x -c user.name=x commit --allow-empty -qm init
+  it "matches git: nonexistent path is not a bad-repository die" && {
+    expect_parity effect -- push /tmp/gix-parity-definitely-does-not-exist main
+  }
+)
+
 # mode=effect — git's OPT_IPVERSION binds -4 and -6 to the same
 # transport_family variable, so the two flags silently override each
 # other instead of erroring like Clap's conflicts_with would. Test
