@@ -50,9 +50,8 @@ only_for_hash sha1-only && (sandbox
 # hash=sha1-only "gix cannot open sha256 remotes, see gix/src/clone/fetch/mod.rs unimplemented!()"
 title "gix clone <repo> <dir> <extra> (too many args)"
 only_for_hash sha1-only && (sandbox
-  it "matches git behavior" && {
-    # TODO: expect_parity effect -- clone /nonexistent.git foo bar
-    true
+  it "matches git: three positionals dies 129 (usage)" && {
+    expect_parity effect -- clone /nonexistent.git foo bar
   }
 )
 

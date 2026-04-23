@@ -605,7 +605,22 @@ pub fn main() -> Result<()> {
             remote,
             shallow,
             directory,
+            extra_positionals,
         }) => {
+            // Mirrors cmd_clone in vendor/git/builtin/clone.c:
+            //     if (argc > 2)
+            //         usage_msg_opt(_("Too many arguments."), ...);
+            // usage_msg_opt exits 129. Clap's trailing_var_arg catches the
+            // overflow here so the message order matches git's (too-many
+            // beats the "no repository" check because Clap still sees a
+            // repo at position 0).
+            if !extra_positionals.is_empty() {
+                use std::io::Write;
+                let mut stderr = std::io::stderr().lock();
+                let _ = writeln!(stderr, "fatal: Too many arguments.");
+                drop(stderr);
+                std::process::exit(129);
+            }
             // Mirrors cmd_clone in vendor/git/builtin/clone.c:
             //     if (argc == 0)
             //         usage_msg_opt(_("You must specify a repository to clone."),

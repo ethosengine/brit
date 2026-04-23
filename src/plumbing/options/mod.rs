@@ -628,6 +628,14 @@ pub mod clone {
 
         /// The directory to initialize with the new repository and to which all data should be written.
         pub directory: Option<PathBuf>,
+
+        /// Overflow positionals beyond `<repo> [<dir>]`.
+        ///
+        /// Captured here so the dispatch arm can mirror cmd_clone's
+        /// `usage_msg_opt("Too many arguments.")` exit-129 contract rather
+        /// than Clap's generic unexpected-positional exit-2.
+        #[clap(trailing_var_arg = true, hide = true)]
+        pub extra_positionals: Vec<OsString>,
     }
 
     #[derive(Debug, clap::Parser)]
