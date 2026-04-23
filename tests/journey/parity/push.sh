@@ -175,6 +175,23 @@ title "gix push --force-with-lease=ref:<bogus-oid>"
   }
 )
 
+# mode=effect — push-options are transmitted over pkt-lines which don't
+# permit embedded newlines; git's cmd_push iterates push_options and
+# dies 128 "push options must not have new line characters" if any
+# contains '\n'. Mirrored in gix after --mirror/-refspecs checks.
+title "gix push --push-option=<value-with-newline>"
+(sandbox
+  git init -q
+  git config commit.gpgsign false
+  git config tag.gpgsign false
+  git -c user.email=x@x -c user.name=x commit --allow-empty -qm init
+  git remote add origin /tmp/parity-unused
+  it "matches git: newline in push-option → 128" && {
+    expect_parity effect -- push "--push-option=foo
+bar" origin main
+  }
+)
+
 # mode=effect — git's `remote_get_1` accepts any non-empty name/URL and
 # synthesizes an anonymous Remote from it; failure surfaces at the
 # transport layer, not at `bad repository` resolution. Pushing to a

@@ -317,6 +317,19 @@ pub(crate) mod function {
             std::process::exit(128);
         }
 
+        // Mirrors the `for_each_string_list_item(item, push_options)` loop
+        // near the end of cmd_push: push-options are transmitted as
+        // pkt-lines, which forbid embedded newlines. Die 128 if any
+        // --push-option=<value> contains one.
+        for opt in &opts.push_options {
+            if opt.contains('\n') {
+                let mut stderr = std::io::stderr().lock();
+                writeln!(stderr, "fatal: push options must not have new line characters")?;
+                drop(stderr);
+                std::process::exit(128);
+            }
+        }
+
         anyhow::bail!(
             "gix push is not yet implemented — parity rows are being closed flag-by-flag; \
              see tests/journey/parity/push.sh for the current surface"
