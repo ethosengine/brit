@@ -11,6 +11,26 @@
 # Verdict modes (comment above each block):
 #   bytes  — scriptable output; byte-exact match required (e.g. --porcelain)
 #   effect — exit-code + UX; output diff reported but not fatal
+#
+# ─── PARITY STATE (iter 17) ────────────────────────────────────────────────
+# Closed (all effect-mode, pre-transport dies & parse-time contracts):
+#   no-destination (128), bad-repository '' (128), --all+--mirror (128),
+#   --delete w/o refs (128), --all+refspecs (128), --mirror+refspecs (128),
+#   --signed=<bogus> (128), --recurse-submodules=<bogus> (128),
+#   --force-with-lease=ref:<bogus-oid> (129), <nonexistent-path> fallthrough,
+#   -4/-6 overrides_with, --help (0), 3-way conflict (128), 4-way (128),
+#   --push-option=<\n> (128).
+#
+# BLOCKED: every remaining TODO row below exercises happy-path push
+# (connect → handshake → ls-refs → send-pack → report), but gix-protocol
+# has no send-pack implementation — only the fetch side is wired
+# (gix-protocol/src/fetch/). Closing these rows requires adding a
+# send-pack client in gix-protocol + a push pipeline in gix-core, not a
+# per-iteration row-closing effort. The ralph loop is paused at the
+# error-path ceiling; further progress is a concentrated implementation
+# sprint, not iterative parity. `docs/parity/commands.md` reflects this
+# as `partial`.
+# ────────────────────────────────────────────────────────────────────────────
 
 title "gix push"
 
