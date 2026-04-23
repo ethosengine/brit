@@ -14,7 +14,7 @@ Legend:
 |---|---|---|---|---|
 | push | gix push | present | [push.sh](../../tests/journey/parity/push.sh) | happy-path + error-path parity across the full documented flag surface (68 green `it` blocks across 48 sections); sha256 remotes, actual lease-mismatch / force-if-includes enforcement, non-default receive-pack programs, actual push-option transmission, push-cert generation, submodule-push, and live-TCP `-4`/`-6` family selection documented in the push.sh header as deferred follow-ups |
 | pull | gix pull | absent | — | composes fetch + merge |
-| fetch | gix fetch | partial | [fetch.sh](../../tests/journey/parity/fetch.sh) | scaffolded; all rows TODO. `gix fetch` exists but its Clap surface is gix-native, not git-compatible; iterations close rows as the git-fetch flags land |
+| fetch | gix fetch | present | [fetch.sh](../../tests/journey/parity/fetch.sh) | happy-path + error-path parity across the full documented flag surface (89 green `it` blocks across 61 sections); sha256 remotes, --shallow-exclude protocol-error alignment, --unshallow happy-path (stateful, needs per-binary fixture reset in expect_parity), --negotiate-only happy-path (needs ack-only-capability enforcement in gix-protocol), and --multiple positional re-dispatch are documented in the fetch.sh header as deferred follow-ups |
 | clone | gix clone | partial | — | exists as `Clone` subcommand; flag coverage unverified |
 | merge | gix merge | partial | — | exists; CLI surface incomplete |
 | rebase | — | absent | — | stub crate `gix-rebase` exists |

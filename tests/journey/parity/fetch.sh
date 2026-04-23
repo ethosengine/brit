@@ -11,7 +11,7 @@
 #   effect — exit-code + UX; output diff reported but not fatal
 #
 # ─── PARITY STATE ──────────────────────────────────────────────────────────
-# Closed rows: 89 green `it` blocks across 55 sections, covering happy
+# Closed rows: 89 green `it` blocks across 61 sections, covering happy
 # paths (zero-arg, named remote, <url> anonymous remote, <remote>
 # <refspec>) plus the full error-path surface cmd_fetch validates
 # pre-transport:
