@@ -254,8 +254,16 @@ only_for_hash sha1-only && (sandbox
 # hash=sha1-only "gix cannot open sha256 remotes, see gix/src/clone/fetch/mod.rs unimplemented!()"
 title "gix fetch (zero-arg, implicit origin)"
 only_for_hash sha1-only && (sandbox
-  it "TODO: matches git: bare 'fetch' uses implicit remote" && {
-    :  # expect_parity effect -- fetch
+  git init -q --bare upstream.git
+  git init -q clone
+  (cd clone
+    git remote add origin "$(cd .. && pwd)/upstream.git"
+    git config commit.gpgsign false
+    git -c user.email=x@x -c user.name=x commit --allow-empty -qm init
+  )
+  it "matches git: bare 'fetch' uses implicit remote, exit 0" && {
+    cd clone
+    expect_parity effect -- fetch
   }
 )
 
@@ -386,8 +394,16 @@ only_for_hash sha1-only && (sandbox
 # hash=sha1-only "gix cannot open sha256 remotes, see gix/src/clone/fetch/mod.rs unimplemented!()"
 title "gix fetch --dry-run"
 only_for_hash sha1-only && (sandbox
-  it "TODO: matches git: --dry-run leaves FETCH_HEAD untouched" && {
-    :  # expect_parity effect -- fetch --dry-run origin
+  git init -q --bare upstream.git
+  git init -q clone
+  (cd clone
+    git remote add origin "$(cd .. && pwd)/upstream.git"
+    git config commit.gpgsign false
+    git -c user.email=x@x -c user.name=x commit --allow-empty -qm init
+  )
+  it "matches git: --dry-run against an empty upstream, exit 0" && {
+    cd clone
+    expect_parity effect -- fetch --dry-run origin
   }
 )
 
