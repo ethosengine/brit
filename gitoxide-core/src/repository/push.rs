@@ -207,6 +207,28 @@ pub(crate) mod function {
             }
         }
 
+        // color.push.<slot> (reset, error) take a color value. Invalid color
+        // values die 128 via git_config's "unable to parse" shape with a
+        // distinct "error: invalid color value: <v>" leader (from
+        // color_parse in vendor/git/color.c). Delegate parsing to
+        // gix-config-value's Color type — its grammar matches git's
+        // (bright-prefixes, ANSI names, -1, numeric 0-255, #rrggbb,
+        // attributes), and is the same parser gix uses for other color
+        // config consumers.
+        for slot in ["color.push.reset", "color.push.error"] {
+            if let Some(v) = repo.config_snapshot().string(slot) {
+                let parsed = gix::bstr::BStr::new(v.as_ref());
+                if gix_config_value::Color::try_from(parsed).is_err() {
+                    let s = std::str::from_utf8(v.as_ref()).unwrap_or("");
+                    let mut stderr = std::io::stderr().lock();
+                    writeln!(stderr, "error: invalid color value: {s}")?;
+                    writeln!(stderr, "fatal: unable to parse '{slot}' from command-line config")?;
+                    drop(stderr);
+                    std::process::exit(128);
+                }
+            }
+        }
+
         // Validate push.default from config. Mirrors the dispatch in
         // vendor/git/environment.c that resolves `push.default` to one of
         // {nothing, matching, simple, upstream/tracking, current}. Invalid
