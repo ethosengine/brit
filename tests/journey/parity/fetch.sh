@@ -73,18 +73,28 @@ only_for_hash sha1-only && (sandbox
 # hash=sha1-only "gix cannot open sha256 remotes, see gix/src/clone/fetch/mod.rs unimplemented!()"
 title "gix fetch --all <repository> (conflict: repo arg)"
 only_for_hash sha1-only && (sandbox
-  it "TODO: matches git: --all with a positional repository" && {
-    :  # expect_parity effect -- fetch --all origin
+  git init -q
+  git config commit.gpgsign false
+  git -c user.email=x@x -c user.name=x commit --allow-empty -qm init
+  git remote add origin /tmp/parity-unused
+  it "matches git: --all with a positional repository" && {
+    expect_parity effect -- fetch --all origin
   }
 )
 
 # mode=effect — mirrors `die("fetch --all does not make sense with refspecs")`
-# in cmd_fetch. Exit 128.
+# in cmd_fetch. Exit 128. git checks for refspecs (argc > 1) *before* the
+# repository-only check, so --all with repository + refspecs hits this
+# message rather than the "does not take a repository argument" one.
 # hash=sha1-only "gix cannot open sha256 remotes, see gix/src/clone/fetch/mod.rs unimplemented!()"
 title "gix fetch --all <repo> <refspec> (conflict: refspecs)"
 only_for_hash sha1-only && (sandbox
-  it "TODO: matches git: --all with refspecs" && {
-    :  # expect_parity effect -- fetch --all origin main
+  git init -q
+  git config commit.gpgsign false
+  git -c user.email=x@x -c user.name=x commit --allow-empty -qm init
+  git remote add origin /tmp/parity-unused
+  it "matches git: --all with refspecs" && {
+    expect_parity effect -- fetch --all origin main
   }
 )
 

@@ -626,6 +626,23 @@ pub fn main() -> Result<()> {
         }
         #[cfg(feature = "gitoxide-core-blocking-client")]
         Subcommands::Fetch(platform) => {
+            // Pre-transport validation, mirrors cmd_fetch in
+            // vendor/git/builtin/fetch.c around the `if (all) { ... }` block:
+            // refspec-present case beats the repository-present case, and
+            // both exit 128 with git's exact message text.
+            if platform.all {
+                use std::io::Write;
+                let mut stderr = std::io::stderr().lock();
+                if !platform.refspec.is_empty() {
+                    let _ = writeln!(stderr, "fatal: fetch --all does not make sense with refspecs");
+                    drop(stderr);
+                    std::process::exit(128);
+                } else if platform.repository.is_some() {
+                    let _ = writeln!(stderr, "fatal: fetch --all does not take a repository argument");
+                    drop(stderr);
+                    std::process::exit(128);
+                }
+            }
             let shallow = crate::plumbing::options::fetch::resolve_shallow(&platform.shallow)?;
             // `--remote` (gix-native) overrides the git-compatible positional
             // `<repository>` when both are supplied, matching the pre-parity

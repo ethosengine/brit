@@ -1,0 +1,8 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(git -C /projects/brit branch -a)",
+      "Bash(git -C /projects/brit remote -v)"
+    ]
+  }
+}
