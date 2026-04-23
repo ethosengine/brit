@@ -195,6 +195,25 @@ title "gix push --force-with-lease=ref:<bogus-oid>"
   }
 )
 
+# mode=effect — mirrors git_config_bool's die path. Boolean config keys
+# used by cmd_push (push.followTags, push.useForceIfIncludes,
+# push.autoSetupRemote) reject anything outside yes/on/true/1/no/off/
+# false/0 with a single-line `fatal: bad boolean config value '<v>'
+# for '<key-lower>'`. Key is lowercased in the error text.
+title "gix push with push.followTags=<bogus>"
+(sandbox
+  git init -q
+  git checkout -b main
+  git config commit.gpgsign false
+  git config tag.gpgsign false
+  touch a && git add a
+  git -c user.email=x@x -c user.name=x commit -qm init
+  git remote add origin /tmp/parity-unused
+  it "matches git: -c push.followTags=bogus → 128" && {
+    expect_parity effect -- -c push.followTags=bogus push origin main
+  }
+)
+
 # mode=effect — mirrors the push.default validator in
 # vendor/git/environment.c. Unknown values die 128 with git's three-line
 # error/error/fatal.

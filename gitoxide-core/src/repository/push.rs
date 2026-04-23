@@ -154,6 +154,33 @@ pub(crate) mod function {
         P: gix::NestedProgress,
         P::SubProgress: 'static,
     {
+        // Mirror git_config_bool's die shape (vendor/git/config.c):
+        //     fatal: bad boolean config value '<v>' for '<key-lower>'
+        // Keys come in as mixed-case (push.followTags) but git lowercases
+        // the key in the error text. Reusable across the several bool
+        // config keys that cmd_push consults.
+        let die_on_bad_bool = |key: &str| -> std::io::Result<()> {
+            if let Some(v) = repo.config_snapshot().string(key) {
+                let s = std::str::from_utf8(v.as_ref()).unwrap_or("");
+                if super::Signed::parse(s).is_err() || matches!(s.to_ascii_lowercase().as_str(), "if-asked" | "") {
+                    // Parse-bool accepts yes/on/true/1/no/off/false/0 only —
+                    // Signed::parse also accepts `if-asked` and empty, so
+                    // filter those out here to match git_config_bool's
+                    // stricter check.
+                    let mut stderr = std::io::stderr().lock();
+                    writeln!(
+                        stderr,
+                        "fatal: bad boolean config value '{s}' for '{}'",
+                        key.to_ascii_lowercase()
+                    )?;
+                    drop(stderr);
+                    std::process::exit(128);
+                }
+            }
+            Ok(())
+        };
+        die_on_bad_bool("push.followTags")?;
+
         // Validate push.default from config. Mirrors the dispatch in
         // vendor/git/environment.c that resolves `push.default` to one of
         // {nothing, matching, simple, upstream/tracking, current}. Invalid
