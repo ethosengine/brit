@@ -1,0 +1,21 @@
+use crate::bstr::BString;
+
+/// Per-ref status from a completed push.
+#[derive(Debug, Clone)]
+pub struct RefStatus {
+    /// The local ref name that was pushed (empty for pure-delete commands).
+    pub local: BString,
+    /// The remote ref name that was updated.
+    pub remote: BString,
+    /// `Ok(())` when the ref update succeeded on the server; `Err(reason)` with the
+    /// server's rejection message otherwise.
+    pub result: Result<(), BString>,
+}
+
+/// Outcome of a
+/// [`Prepare::transmit`](crate::remote::connection::push::Prepare::transmit) call.
+#[derive(Debug, Clone)]
+pub struct Outcome {
+    /// Per-ref status in the order the server reported.
+    pub status: Vec<RefStatus>,
+}
