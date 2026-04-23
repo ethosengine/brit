@@ -53,7 +53,19 @@ pub struct Platform {
     ///
     /// Accepts an optional `[<refname>[:<expect>]]`. Passing just the flag
     /// compares against the locally-recorded remote-tracking branch.
-    #[clap(long, value_name = "REFNAME[:EXPECT]", num_args = 0..=1, default_missing_value = "")]
+    ///
+    /// `require_equals = true` so that `--force-with-lease` on its own
+    /// doesn't greedily consume the next positional argument — git's
+    /// `PARSE_OPT_OPTARG` heuristic treats the next token as a positional
+    /// when it doesn't look like an option, and Clap needs the explicit
+    /// `=` form to match that behavior.
+    #[clap(
+        long,
+        value_name = "REFNAME[:EXPECT]",
+        num_args = 0..=1,
+        default_missing_value = "",
+        require_equals = true,
+    )]
     pub force_with_lease: Option<String>,
 
     /// Require remote refs to include our locally-known commits before force-update.
@@ -117,7 +129,13 @@ pub struct Platform {
     /// values fail at dispatch with git's exact `fatal: bad signed argument`
     /// message, not Clap's default enum-validation error, to match git's
     /// exit code (128).
-    #[clap(long, value_name = "MODE", num_args = 0..=1, default_missing_value = "yes")]
+    #[clap(
+        long,
+        value_name = "MODE",
+        num_args = 0..=1,
+        default_missing_value = "yes",
+        require_equals = true,
+    )]
     pub signed: Option<String>,
 
     /// Transmit the given option to the receive-pack on the other side.

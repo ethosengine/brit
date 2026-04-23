@@ -58,6 +58,12 @@
 #       and summary (`[new branch]`/`[deleted]`/`[up to date]`/…) can be
 #       derived. Auto-verbose progress is suppressed on --porcelain so
 #       no ANSI escapes leak to stderr.
+#  (12) push --force-with-lease (three sub-rows) — Clap options gain
+#       `require_equals = true` on `--force-with-lease` and `--signed`
+#       so the bare forms don't greedily consume the next positional
+#       (mirrors git's PARSE_OPT_OPTARG heuristic). Fast-forward
+#       fixture covers all three CLI shapes; actual lease-mismatch
+#       handling remains a follow-up.
 #
 # send-pack substrate is online (gix-protocol send-pack + Repository::push
 # + gitoxide-core glue + gix CLI wiring). Remaining TODO rows below exercise
@@ -728,21 +734,58 @@ only_for_hash sha1-only && (small-repo-in-sandbox
   }
 )
 
-# mode=effect — no-arg, with-refname, with-refname:expect
+# mode=effect — three CLI forms: bare, =<refname>, =<refname>:<expect>.
+# All three drive the same lease-check code path in git (parse_push_cas
+# in vendor/git/remote.c). For effect-mode parity in a fast-forward
+# scenario the lease always passes, so git and gix both exit 0 through
+# the normal push pipeline; actual lease-mismatch semantics are a
+# follow-up once Prepare gains lease-checking logic.
+# Clap note: `require_equals = true` on the `--force-with-lease` option
+# keeps the bare form from greedily consuming the next positional.
 # hash=sha1-only "gix cannot open sha256 remotes, see gix/src/clone/fetch/mod.rs unimplemented!()"
 title "gix push --force-with-lease"
-only_for_hash sha1-only && (small-repo-in-sandbox
-  it "matches git behavior (bare --force-with-lease)" && {
-    # TODO: expect_parity effect -- push --force-with-lease origin main
-    true
+only_for_hash sha1-only && (sandbox
+  dst="$(pwd)/dst.git"
+  git init -q -b main src
+  git -C src config commit.gpgsign false
+  git -C src config tag.gpgsign false
+  git -C src -c user.email=x@x -c user.name=x commit --allow-empty -qm c1
+  git init -q --bare "$dst"
+  git -C src remote add origin "$dst"
+  git -C src push -q origin main
+  remote_sha="$(git -C src rev-parse main)"
+  git -C src -c user.email=x@x -c user.name=x commit --allow-empty -qm c2
+  it "matches git: bare --force-with-lease on fast-forward, exits 0" && {
+    cd src && expect_parity effect -- push --force-with-lease origin main
   }
-  it "matches git behavior (--force-with-lease=refname)" && {
-    # TODO: expect_parity effect -- push --force-with-lease=main origin main
-    true
+)
+only_for_hash sha1-only && (sandbox
+  dst="$(pwd)/dst.git"
+  git init -q -b main src
+  git -C src config commit.gpgsign false
+  git -C src config tag.gpgsign false
+  git -C src -c user.email=x@x -c user.name=x commit --allow-empty -qm c1
+  git init -q --bare "$dst"
+  git -C src remote add origin "$dst"
+  git -C src push -q origin main
+  git -C src -c user.email=x@x -c user.name=x commit --allow-empty -qm c2
+  it "matches git: --force-with-lease=<refname> on fast-forward, exits 0" && {
+    cd src && expect_parity effect -- push --force-with-lease=main origin main
   }
-  it "matches git behavior (--force-with-lease=refname:expect)" && {
-    # TODO: expect_parity effect -- push --force-with-lease=main:<sha> origin main
-    true
+)
+only_for_hash sha1-only && (sandbox
+  dst="$(pwd)/dst.git"
+  git init -q -b main src
+  git -C src config commit.gpgsign false
+  git -C src config tag.gpgsign false
+  git -C src -c user.email=x@x -c user.name=x commit --allow-empty -qm c1
+  git init -q --bare "$dst"
+  git -C src remote add origin "$dst"
+  git -C src push -q origin main
+  remote_sha="$(git -C src rev-parse main)"
+  git -C src -c user.email=x@x -c user.name=x commit --allow-empty -qm c2
+  it "matches git: --force-with-lease=<refname>:<expect> on fast-forward, exits 0" && {
+    cd src && expect_parity effect -- push --force-with-lease="main:$remote_sha" origin main
   }
 )
 
