@@ -635,12 +635,13 @@ title "gix push -6"
 
 # --- hooks / signing / submodules ----------------------------------------
 
-# mode=effect
+# mode=effect — --no-verify bypasses the pre-push hook (executed right
+# before send-pack), but local refspec resolution runs long before.
+# Same refspec-first invariant as iter 30.
 title "gix push --no-verify"
 (small-repo-in-sandbox
-  it "matches git behavior" && {
-    # TODO: expect_parity effect -- push --no-verify origin main
-    true
+  it "matches git: --no-verify with unmatched src refspec exits 1" && {
+    expect_parity effect -- push --no-verify /tmp/parity-unused nonexistent-refspec
   }
 )
 
