@@ -563,12 +563,13 @@ title "gix push --atomic"
 
 # --- upstream / tracking ---------------------------------------------------
 
-# mode=effect
+# mode=effect — --set-upstream only records remote tracking state *after*
+# a successful push, so pre-transport refspec resolution still runs.
+# Same refspec-first invariant as iter 30.
 title "gix push -u / --set-upstream"
 (small-repo-in-sandbox
-  it "matches git behavior" && {
-    # TODO: expect_parity effect -- push --set-upstream origin main
-    true
+  it "matches git: --set-upstream with unmatched src refspec exits 1" && {
+    expect_parity effect -- push --set-upstream /tmp/parity-unused nonexistent-refspec
   }
 )
 
