@@ -40,8 +40,8 @@ title "gix fetch"
 # hash=sha1-only "gix cannot open sha256 remotes, see gix/src/clone/fetch/mod.rs unimplemented!()"
 title "gix fetch --help"
 only_for_hash sha1-only && (sandbox
-  it "TODO: matches git: --help exits 0" && {
-    :  # expect_parity effect -- fetch --help
+  it "matches git: --help exits 0" && {
+    expect_parity effect -- fetch --help
   }
 )
 
@@ -662,3 +662,9 @@ only_for_hash sha1-only && (sandbox
     :  # expect_parity effect -- -c fetch.recurseSubmodules=bogus fetch origin
   }
 )
+
+# End-of-file sentinel: when every row is `only_for_hash sha1-only` and the
+# active hash is sha256, the last statement returns 1 (skip), which would
+# propagate out of `source` and trip `set -e` in tests/parity.sh. A trailing
+# `:` normalizes the exit code so a fully-skipped file still returns 0.
+:
