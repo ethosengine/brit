@@ -115,6 +115,17 @@ pub(crate) mod function {
             (opts.mirror, "--mirror"),
         ])?;
 
+        // Mirrors `if (deleterefs && argc < 2) die()` at vendor/git/builtin/push.c
+        // line ~559. `argc < 2` in git counts the repo itself, so the check is
+        // "delete given but no refspecs provided" — exit 128 before resolving
+        // the remote.
+        if opts.delete && opts.ref_specs.is_empty() {
+            let mut stderr = std::io::stderr().lock();
+            writeln!(stderr, "fatal: --delete doesn't make sense without any refs")?;
+            drop(stderr);
+            std::process::exit(128);
+        }
+
         // Resolve the push target. `opts.repo` (`--repo=<repository>`) is the canonical
         // override; `opts.remote` holds the first positional `<repository>` from the CLI.
         // Fall back to the repo's configured default push remote when neither is set

@@ -62,6 +62,21 @@ title "gix push (conflicting ref-selection flags)"
   }
 )
 
+# mode=effect — mirrors `if (deleterefs && argc < 2) die()` at push.c line
+# ~559. --delete requires at least one refspec; if none, exit 128 before
+# remote resolution.
+title "gix push --delete (without any refs)"
+(sandbox
+  git init -q
+  git config commit.gpgsign false
+  git config tag.gpgsign false
+  git -c user.email=x@x -c user.name=x commit --allow-empty -qm init
+  git remote add origin /tmp/parity-unused
+  it "matches git: --delete with a remote but no refspecs" && {
+    expect_parity effect -- push --delete origin
+  }
+)
+
 # --- positional & repository selection -------------------------------------
 
 # mode=effect
