@@ -626,6 +626,21 @@ pub fn main() -> Result<()> {
         }
         #[cfg(feature = "gitoxide-core-blocking-client")]
         Subcommands::Fetch(platform) => {
+            // Parse-time die (cmd_fetch): `--recurse-submodules=<bogus>`
+            // fires inside parse_options via parse_fetch_recurse, meaning
+            // it beats all post-parse conflict checks. Replicate that
+            // ordering so the bogus-arg message wins over --negotiate-only
+            // / --porcelain conflicts when both are present.
+            if let Some(raw) = platform.recurse_submodules.as_deref() {
+                use crate::plumbing::options::fetch::{parse_recurse_submodules, RecurseSubmodules};
+                if matches!(parse_recurse_submodules(raw), RecurseSubmodules::Bogus) {
+                    use std::io::Write;
+                    let mut stderr = std::io::stderr().lock();
+                    let _ = writeln!(stderr, "fatal: bad recurse-submodules argument: {raw}");
+                    drop(stderr);
+                    std::process::exit(128);
+                }
+            }
             // Pre-transport validation, mirrors cmd_fetch in
             // vendor/git/builtin/fetch.c around the `if (all) { ... }` block:
             // refspec-present case beats the repository-present case, and
