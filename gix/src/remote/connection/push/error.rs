@@ -1,7 +1,21 @@
-/// Errors from [`super::Prepare::transmit`].
+/// Errors from [`super::Prepare::transmit`] and
+/// [`Connection::prepare_push`](crate::remote::Connection::prepare_push).
 #[derive(Debug, thiserror::Error)]
 #[allow(missing_docs)]
 pub enum Error {
+    // ── prepare_push (handshake) errors ───────────────────────────────────
+    #[error("failed to configure the transport before connecting to {url:?}")]
+    GatherTransportConfig {
+        url: crate::bstr::BString,
+        source: crate::config::transport::Error,
+    },
+    #[error("failed to configure the transport layer")]
+    ConfigureTransport(#[from] Box<dyn std::error::Error + Send + Sync + 'static>),
+    #[error(transparent)]
+    Handshake(#[from] gix_protocol::handshake::Error),
+    #[error(transparent)]
+    ConfigureCredentials(#[from] crate::config::credential_helpers::Error),
+    // ── transmit errors ───────────────────────────────────────────────────
     #[error("parse refspec")]
     ParseRefspec(#[from] gix_refspec::parse::Error),
     #[error("enumerate local refs")]
@@ -9,7 +23,7 @@ pub enum Error {
     #[error("initialize local-ref iterator")]
     ReferencesInit(#[from] crate::reference::iter::init::Error),
     #[error("resolve local ref to object id")]
-    Resolve(#[from] Box<dyn std::error::Error + Send + Sync + 'static>),
+    Resolve(#[source] Box<dyn std::error::Error + Send + Sync + 'static>),
     #[error("revision walk: {0}")]
     Walk(String),
     #[error("build pack entries: {0}")]

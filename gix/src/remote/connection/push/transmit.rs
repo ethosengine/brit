@@ -50,11 +50,7 @@ where
         let repo = self.connection.remote.repo;
         let hash_kind = repo.object_hash();
 
-        let local_refs: Vec<crate::Reference<'_>> = repo
-            .references()?
-            .all()?
-            .filter_map(Result::ok)
-            .collect();
+        let local_refs: Vec<crate::Reference<'_>> = repo.references()?.all()?.filter_map(Result::ok).collect();
 
         // ── Step 3: MatchGroup::match_push ────────────────────────────────────
         // Build `Item` from direct (non-symbolic) local refs only.
@@ -77,11 +73,7 @@ where
         let mappings = push_outcome.mappings;
 
         if mappings.is_empty() {
-            let spec = self
-                .refspecs
-                .into_iter()
-                .next()
-                .expect("non-empty by guard above");
+            let spec = self.refspecs.into_iter().next().expect("non-empty by guard above");
             return Err(Error::NoMatch { spec });
         }
 
@@ -130,9 +122,7 @@ where
                     let mut reference = repo
                         .find_reference(name.as_ref())
                         .map_err(|e| Error::Resolve(Box::new(e)))?;
-                    let resolved = reference
-                        .peel_to_id()
-                        .map_err(|e| Error::Resolve(Box::new(e)))?;
+                    let resolved = reference.peel_to_id().map_err(|e| Error::Resolve(Box::new(e)))?;
                     (BString::from(name.as_ref()), resolved.detach())
                 }
                 SourceRef::FullName(_empty) => {

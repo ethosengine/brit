@@ -42,10 +42,7 @@ where
         I: IntoIterator<Item = S>,
         S: AsRef<[u8]>,
     {
-        self.refspecs = specs
-            .into_iter()
-            .map(|s| BString::from(s.as_ref()))
-            .collect();
+        self.refspecs = specs.into_iter().map(|s| BString::from(s.as_ref())).collect();
         self
     }
 

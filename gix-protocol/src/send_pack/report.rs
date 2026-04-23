@@ -34,7 +34,8 @@ pub fn parse(input: &mut impl std::io::Read) -> Result<Report, Error> {
             let data = line.as_slice().ok_or(Error::UnexpectedEof)?;
             parse_unpack(data)?
         }
-        _ => return Err(Error::UnexpectedEof),
+        Some(Ok(Err(_)) | Err(_)) => return Err(Error::UnexpectedEof),
+        None => return Err(Error::UnexpectedEof),
     };
 
     let mut refs = Vec::new();
