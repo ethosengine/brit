@@ -602,6 +602,7 @@ pub fn main() -> Result<()> {
             verbose: _,
             quiet: _,
             force_progress: _,
+            no_checkout: _,
             bare,
             mirror,
             no_tags,

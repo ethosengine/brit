@@ -626,6 +626,14 @@ pub mod clone {
         #[clap(long = "progress", conflicts_with = "quiet")]
         pub force_progress: bool,
 
+        /// Do not checkout HEAD after the clone is complete.
+        ///
+        /// Parse-only: empty-upstream clones have no files to check out
+        /// regardless. When a row exercises a non-empty checkout, wire
+        /// this through to skip main_worktree in gitoxide-core's clone.
+        #[clap(long, short = 'n')]
+        pub no_checkout: bool,
+
         /// The clone will be bare and a working tree checkout won't be available.
         #[clap(long)]
         pub bare: bool,

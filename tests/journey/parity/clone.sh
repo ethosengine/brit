@@ -232,13 +232,22 @@ only_for_hash sha1-only && (sandbox
 # hash=sha1-only "gix cannot open sha256 remotes, see gix/src/clone/fetch/mod.rs unimplemented!()"
 title "gix clone -n / --no-checkout"
 only_for_hash sha1-only && (sandbox
+  git-init-hash-aware -q --bare src-repo.git
+  mkdir g-short g-long x-short x-long
+  for d in g-short g-long x-short x-long; do
+    (cd "$d" && ln -s ../src-repo.git .)
+  done
   it "matches git: -n exits 0" && {
-    # TODO: expect_parity effect -- clone -n upstream.git
-    true
+    (cd g-short && expect_run 0 git clone -n src-repo.git target)
+  }
+  it "matches gix: -n exits 0" && {
+    (cd x-short && expect_run 0 "$exe_plumbing" clone -n src-repo.git target)
   }
   it "matches git: --no-checkout exits 0" && {
-    # TODO: expect_parity effect -- clone --no-checkout upstream.git
-    true
+    (cd g-long && expect_run 0 git clone --no-checkout src-repo.git target)
+  }
+  it "matches gix: --no-checkout exits 0" && {
+    (cd x-long && expect_run 0 "$exe_plumbing" clone --no-checkout src-repo.git target)
   }
 )
 
