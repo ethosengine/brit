@@ -407,13 +407,22 @@ only_for_hash sha1-only && (sandbox
 # hash=sha1-only "gix cannot open sha256 remotes, see gix/src/clone/fetch/mod.rs unimplemented!()"
 title "gix clone -s / --shared"
 only_for_hash sha1-only && (sandbox
+  git-init-hash-aware -q --bare src-repo.git
+  mkdir g-short g-long x-short x-long
+  for d in g-short g-long x-short x-long; do
+    (cd "$d" && ln -s ../src-repo.git .)
+  done
   it "matches git: -s exits 0" && {
-    # TODO: expect_parity effect -- clone -s upstream.git
-    true
+    (cd g-short && expect_run 0 git clone -s src-repo.git target)
+  }
+  it "matches gix: -s exits 0" && {
+    (cd x-short && expect_run 0 "$exe_plumbing" clone -s src-repo.git target)
   }
   it "matches git: --shared exits 0" && {
-    # TODO: expect_parity effect -- clone --shared upstream.git
-    true
+    (cd g-long && expect_run 0 git clone --shared src-repo.git target)
+  }
+  it "matches gix: --shared exits 0" && {
+    (cd x-long && expect_run 0 "$exe_plumbing" clone --shared src-repo.git target)
   }
 )
 
@@ -422,13 +431,22 @@ only_for_hash sha1-only && (sandbox
 # hash=sha1-only "gix cannot open sha256 remotes, see gix/src/clone/fetch/mod.rs unimplemented!()"
 title "gix clone --reject-shallow / --no-reject-shallow"
 only_for_hash sha1-only && (sandbox
+  git-init-hash-aware -q --bare src-repo.git
+  mkdir g-rej g-no x-rej x-no
+  for d in g-rej g-no x-rej x-no; do
+    (cd "$d" && ln -s ../src-repo.git .)
+  done
   it "matches git: --reject-shallow on non-shallow upstream exits 0" && {
-    # TODO: expect_parity effect -- clone --reject-shallow upstream.git
-    true
+    (cd g-rej && expect_run 0 git clone --reject-shallow src-repo.git target)
+  }
+  it "matches gix: --reject-shallow exits 0" && {
+    (cd x-rej && expect_run 0 "$exe_plumbing" clone --reject-shallow src-repo.git target)
   }
   it "matches git: --no-reject-shallow exits 0" && {
-    # TODO: expect_parity effect -- clone --no-reject-shallow upstream.git
-    true
+    (cd g-no && expect_run 0 git clone --no-reject-shallow src-repo.git target)
+  }
+  it "matches gix: --no-reject-shallow exits 0" && {
+    (cd x-no && expect_run 0 "$exe_plumbing" clone --no-reject-shallow src-repo.git target)
   }
 )
 

@@ -680,6 +680,21 @@ pub mod clone {
         #[clap(long)]
         pub no_hardlinks: bool,
 
+        /// Setup the clone to share objects with the source repository via
+        /// objects/info/alternates. Parse-only — gix doesn't wire the
+        /// alternates file today, so the clone is a full copy regardless.
+        #[clap(long, short = 's')]
+        pub shared: bool,
+
+        /// Fail if the source repository is shallow. Parse-only — gix
+        /// accepts shallow upstreams without complaint today.
+        #[clap(long, overrides_with = "_no_reject_shallow")]
+        pub reject_shallow: bool,
+
+        /// Opposite of `--reject-shallow`. Parse-only.
+        #[clap(long = "no-reject-shallow", overrides_with = "reject_shallow")]
+        pub _no_reject_shallow: bool,
+
         #[clap(flatten)]
         pub shallow: ShallowOptions,
 
