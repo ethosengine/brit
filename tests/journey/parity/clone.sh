@@ -512,9 +512,17 @@ only_for_hash sha1-only && (sandbox
 # hash=sha1-only "gix cannot open sha256 remotes, see gix/src/clone/fetch/mod.rs unimplemented!()"
 title "gix clone --depth=<n>"
 only_for_hash sha1-only && (sandbox
-  it "matches git behavior" && {
-    # TODO: expect_parity effect -- clone --depth=1 upstream.git
-    true
+  # Non-bare source with one commit — gix's shallow clone of an
+  # empty-upstream refuses to match any refspec, so the happy-path
+  # needs an actual ref to match against.
+  git init -q src
+  (cd src && git config commit.gpgsign false && git -c user.email=x@x -c user.name=x commit --allow-empty -qm init) &>/dev/null
+  mkdir g-side x-side
+  it "matches git: --depth=1 exits 0" && {
+    (cd g-side && expect_run 0 git clone --depth=1 ../src target)
+  }
+  it "matches gix: --depth=1 exits 0" && {
+    (cd x-side && expect_run 0 "$exe_plumbing" clone --depth=1 ../src target)
   }
 )
 
@@ -523,14 +531,16 @@ only_for_hash sha1-only && (sandbox
 # hash=sha1-only "gix cannot open sha256 remotes, see gix/src/clone/fetch/mod.rs unimplemented!()"
 title "gix clone --depth=0 (non-positive)"
 only_for_hash sha1-only && (sandbox
-  it "matches git: --depth=0 dies 128" && {
-    # TODO: expect_parity effect -- clone --depth=0 upstream.git
-    true
-  }
-  it "matches git: --depth=-1 dies 128" && {
-    # TODO: expect_parity effect -- clone --depth=-1 upstream.git
-    true
-  }
+  # shortcoming: git dies 128 on --depth=0 / --depth=-1 with the
+  # explicit "depth 0 is not a positive number" message after
+  # parse_options (clone.c:1063). gix's Clap Platform types `depth`
+  # as `Option<NonZeroU32>`, which makes Clap reject `0` / negative
+  # values at parse-time with its generic invalid-value exit 2.
+  # Unifying the exit code requires a custom value_parser that
+  # prints the git-style fatal and exits 128, or a looser type
+  # (`Option<i32>`) plus a manual post-parse check in the dispatch
+  # arm. Deferred.
+  shortcoming "deferred: Clap's NonZeroU32 parser exits 2; git exits 128 with a fatal"
 )
 
 # mode=effect — `--shallow-since=<time>` creates a shallow clone with
@@ -538,10 +548,12 @@ only_for_hash sha1-only && (sandbox
 # hash=sha1-only "gix cannot open sha256 remotes, see gix/src/clone/fetch/mod.rs unimplemented!()"
 title "gix clone --shallow-since=<time>"
 only_for_hash sha1-only && (sandbox
-  it "matches git behavior" && {
-    # TODO: expect_parity effect -- clone --shallow-since=2020-01-01 upstream.git
-    true
-  }
+  # shortcoming: gix-protocol's shallow-since handling currently
+  # returns "Could not decode server reply" on common shapes of
+  # the shallow response after a deepen-since request, even when
+  # the remote has a commit within the cutoff. Deferred until
+  # gix-protocol's shallow reply decoder is aligned.
+  shortcoming "deferred: gix-protocol shallow-since decoder returns 'Could not decode server reply'"
 )
 
 # mode=effect — `--shallow-exclude=<ref>` creates a shallow clone excluding
@@ -549,10 +561,11 @@ only_for_hash sha1-only && (sandbox
 # hash=sha1-only "gix cannot open sha256 remotes, see gix/src/clone/fetch/mod.rs unimplemented!()"
 title "gix clone --shallow-exclude=<ref>"
 only_for_hash sha1-only && (sandbox
-  it "matches git behavior" && {
-    # TODO: expect_parity effect -- clone --shallow-exclude=refs/heads/main upstream.git
-    true
-  }
+  # shortcoming: mirrors the same gix-protocol gap documented in
+  # fetch.sh's --shallow-exclude row. gix-protocol's deepen-not
+  # opcode alignment is incomplete; gix errors "Could not decode
+  # server reply" post-request. Deferred.
+  shortcoming "deferred: gix-protocol deepen-not opcode alignment (same gap as fetch.sh --shallow-exclude)"
 )
 
 # mode=effect — `--single-branch` clones only the branch HEAD resolves to
@@ -561,13 +574,22 @@ only_for_hash sha1-only && (sandbox
 # hash=sha1-only "gix cannot open sha256 remotes, see gix/src/clone/fetch/mod.rs unimplemented!()"
 title "gix clone --single-branch / --no-single-branch"
 only_for_hash sha1-only && (sandbox
+  git-init-hash-aware -q --bare src-repo.git
+  mkdir g-sb g-nsb x-sb x-nsb
+  for d in g-sb g-nsb x-sb x-nsb; do
+    (cd "$d" && ln -s ../src-repo.git .)
+  done
   it "matches git: --single-branch exits 0" && {
-    # TODO: expect_parity effect -- clone --single-branch upstream.git
-    true
+    (cd g-sb && expect_run 0 git clone --single-branch src-repo.git target)
+  }
+  it "matches gix: --single-branch exits 0" && {
+    (cd x-sb && expect_run 0 "$exe_plumbing" clone --single-branch src-repo.git target)
   }
   it "matches git: --no-single-branch exits 0" && {
-    # TODO: expect_parity effect -- clone --no-single-branch upstream.git
-    true
+    (cd g-nsb && expect_run 0 git clone --no-single-branch src-repo.git target)
+  }
+  it "matches gix: --no-single-branch exits 0" && {
+    (cd x-nsb && expect_run 0 "$exe_plumbing" clone --no-single-branch src-repo.git target)
   }
 )
 

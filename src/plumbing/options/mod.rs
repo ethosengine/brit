@@ -710,6 +710,15 @@ pub mod clone {
         #[clap(long)]
         pub dissociate: bool,
 
+        /// Clone only the history leading to the tip of a single branch.
+        /// Parse-only.
+        #[clap(long, overrides_with = "_no_single_branch")]
+        pub single_branch: bool,
+
+        /// Opposite of `--single-branch`. Parse-only.
+        #[clap(long = "no-single-branch", overrides_with = "single_branch")]
+        pub _no_single_branch: bool,
+
         #[clap(flatten)]
         pub shallow: ShallowOptions,
 

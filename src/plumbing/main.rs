@@ -617,6 +617,8 @@ pub fn main() -> Result<()> {
             reference: _,
             reference_if_able: _,
             dissociate: _,
+            single_branch: _,
+            _no_single_branch: _,
             ref_name,
             branch,
             remote,
