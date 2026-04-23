@@ -390,9 +390,15 @@ only_for_hash sha1-only && (sandbox
 # hash=sha1-only "gix cannot open sha256 remotes, see gix/src/clone/fetch/mod.rs unimplemented!()"
 title "gix clone --no-hardlinks"
 only_for_hash sha1-only && (sandbox
-  it "matches git behavior" && {
-    # TODO: expect_parity effect -- clone --no-hardlinks upstream.git
-    true
+  git-init-hash-aware -q --bare src-repo.git
+  mkdir g-side x-side
+  (cd g-side && ln -s ../src-repo.git .)
+  (cd x-side && ln -s ../src-repo.git .)
+  it "matches git: --no-hardlinks exits 0" && {
+    (cd g-side && expect_run 0 git clone --no-hardlinks src-repo.git target)
+  }
+  it "matches gix: --no-hardlinks exits 0" && {
+    (cd x-side && expect_run 0 "$exe_plumbing" clone --no-hardlinks src-repo.git target)
   }
 )
 

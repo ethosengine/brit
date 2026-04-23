@@ -610,6 +610,7 @@ pub fn main() -> Result<()> {
             origin: _,
             local: _,
             _no_local: _,
+            no_hardlinks: _,
             ref_name,
             branch,
             remote,

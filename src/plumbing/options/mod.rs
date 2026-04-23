@@ -674,6 +674,12 @@ pub mod clone {
         #[clap(long = "no-local", overrides_with = "local")]
         pub _no_local: bool,
 
+        /// Force copy of the .git/objects directory instead of hardlinking
+        /// when the source is local. Parse-only — gix currently never
+        /// hardlinks objects regardless.
+        #[clap(long)]
+        pub no_hardlinks: bool,
+
         #[clap(flatten)]
         pub shallow: ShallowOptions,
 
