@@ -28,6 +28,21 @@
 # reconfiguration). Once that lands, rows become `dual`.
 # ──────────────────────────────────────────────────────────────────────────
 
+# Local helper: build a bare empty upstream + a non-bare clone whose
+# `origin` remote points at it, then cd into the clone. Used as the common
+# happy-path fixture for rows that just exercise exit-code parity against
+# an empty round-trip.
+function bare-empty-upstream-with-origin() {
+  git init -q --bare upstream.git
+  git init -q clone
+  (cd clone
+    git remote add origin "$(cd .. && pwd)/upstream.git"
+    git config commit.gpgsign false
+    git -c user.email=x@x -c user.name=x commit --allow-empty -qm init
+  ) &>/dev/null
+  cd clone
+}
+
 # hash=sha1-only "gix cannot open sha256 remotes, see gix/src/clone/fetch/mod.rs unimplemented!()"
 title "gix fetch"
 
@@ -655,18 +670,26 @@ only_for_hash sha1-only && (sandbox
 # hash=sha1-only "gix cannot open sha256 remotes, see gix/src/clone/fetch/mod.rs unimplemented!()"
 title "gix fetch --quiet / -q"
 only_for_hash sha1-only && (sandbox
-  it "TODO: matches git: --quiet suppresses the ref-status table" && {
-    :  # expect_parity effect -- fetch --quiet origin
+  bare-empty-upstream-with-origin
+  it "matches git: --quiet exit 0 against empty upstream" && {
+    expect_parity effect -- fetch --quiet origin
+  }
+  it "matches git: -q exit 0" && {
+    expect_parity effect -- fetch -q origin
   }
 )
 
 # mode=effect — --verbose / -v requests more output, including up-to-date
-# refs.
+# refs. Gix emits the same exit code; output diverges and is not asserted.
 # hash=sha1-only "gix cannot open sha256 remotes, see gix/src/clone/fetch/mod.rs unimplemented!()"
 title "gix fetch --verbose / -v"
 only_for_hash sha1-only && (sandbox
-  it "TODO: matches git: --verbose includes up-to-date rows" && {
-    :  # expect_parity effect -- fetch --verbose origin
+  bare-empty-upstream-with-origin
+  it "matches git: --verbose exit 0 against empty upstream" && {
+    expect_parity effect -- fetch --verbose origin
+  }
+  it "matches git: -v exit 0" && {
+    expect_parity effect -- fetch -v origin
   }
 )
 
@@ -674,8 +697,9 @@ only_for_hash sha1-only && (sandbox
 # hash=sha1-only "gix cannot open sha256 remotes, see gix/src/clone/fetch/mod.rs unimplemented!()"
 title "gix fetch --progress"
 only_for_hash sha1-only && (sandbox
-  it "TODO: matches git: --progress forces progress output" && {
-    :  # expect_parity effect -- fetch --progress origin
+  bare-empty-upstream-with-origin
+  it "matches git: --progress accepted, exit 0" && {
+    expect_parity effect -- fetch --progress origin
   }
 )
 
