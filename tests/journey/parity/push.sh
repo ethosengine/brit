@@ -215,6 +215,9 @@ title "gix push with push.followTags=<bogus>"
   it "matches git: -c push.useForceIfIncludes=bogus → 128" && {
     expect_parity effect -- -c push.useForceIfIncludes=bogus push origin main
   }
+  it "matches git: -c push.autoSetupRemote=bogus → 128" && {
+    expect_parity effect -- -c push.autoSetupRemote=bogus push origin main
+  }
 )
 
 # mode=effect — mirrors the push.default validator in
