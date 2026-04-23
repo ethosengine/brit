@@ -476,13 +476,23 @@ only_for_hash sha1-only && (sandbox
   }
 )
 
-# mode=effect — alias of --all
+# mode=effect — `--branches` is git's visible alias for `--all`
+# (see cmd_push options[] in vendor/git/builtin/push.c; both set
+# TRANSPORT_PUSH_ALL). Same semantics, same expected outcome.
 # hash=sha1-only "gix cannot open sha256 remotes, see gix/src/clone/fetch/mod.rs unimplemented!()"
 title "gix push --branches"
-only_for_hash sha1-only && (small-repo-in-sandbox
-  it "matches git behavior" && {
-    # TODO: expect_parity effect -- push --branches origin
-    true
+only_for_hash sha1-only && (sandbox
+  dst="$(pwd)/dst.git"
+  git init -q -b main src
+  git -C src config commit.gpgsign false
+  git -C src config tag.gpgsign false
+  git -C src -c user.email=x@x -c user.name=x commit --allow-empty -qm c1
+  git -C src branch dev
+  git -C src -c user.email=x@x -c user.name=x commit --allow-empty -qm c2
+  git init -q --bare "$dst"
+  git -C src remote add origin "$dst"
+  it "matches git: --branches (alias of --all), exits 0" && {
+    cd src && expect_parity effect -- push --branches origin
   }
 )
 
