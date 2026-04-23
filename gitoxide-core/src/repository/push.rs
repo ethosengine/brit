@@ -559,8 +559,18 @@ pub(crate) mod function {
             std::process::exit(128);
         };
 
+        // Translate flag-driven push modes into the equivalent refspec, mirroring
+        // git's `set_refspecs` + `MATCH_REFS_*` flag machinery. The pre-transport
+        // die-checks above already ensured these don't combine with user refspecs,
+        // so the branches below are mutually exclusive.
+        let effective_specs: Vec<gix::bstr::BString> = if opts.all {
+            vec!["refs/heads/*:refs/heads/*".into()]
+        } else {
+            opts.ref_specs.clone()
+        };
+
         // Perform the push.
-        let outcome = repo.push(remote_name, opts.ref_specs.iter())?;
+        let outcome = repo.push(remote_name, effective_specs.iter())?;
 
         // Print per-ref status to process stderr (unbuffered) so output reaches
         // the terminal even when the passed-in writer is buffered.

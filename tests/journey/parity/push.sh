@@ -29,6 +29,8 @@
 #   (3) push --repo=<name> — when no CLI refspecs are given, gix now
 #       falls back to the remote's configured `remote.<name>.push`
 #       refspecs (mirrors git's `match_push_refs`).
+#   (4) push --all — CLI glue translates to `refs/heads/*:refs/heads/*`
+#       (mirrors git's TRANSPORT_PUSH_ALL → MATCH_REFS_ALL flag path).
 #
 # send-pack substrate is online (gix-protocol send-pack + Repository::push
 # + gitoxide-core glue + gix CLI wiring). Remaining TODO rows below exercise
@@ -453,13 +455,24 @@ only_for_hash sha1-only && (sandbox
 
 # --- branch / ref selection ------------------------------------------------
 
-# mode=effect
+# mode=effect — `--all` sets TRANSPORT_PUSH_ALL in git; match_push_refs
+# then matches all local refs/heads/* against same-named remote refs,
+# including branches that don't yet exist on the remote. Equivalent
+# refspec: `refs/heads/*:refs/heads/*` (with creation semantics).
 # hash=sha1-only "gix cannot open sha256 remotes, see gix/src/clone/fetch/mod.rs unimplemented!()"
 title "gix push --all"
-only_for_hash sha1-only && (small-repo-in-sandbox
-  it "matches git behavior" && {
-    # TODO: expect_parity effect -- push --all origin
-    true
+only_for_hash sha1-only && (sandbox
+  dst="$(pwd)/dst.git"
+  git init -q -b main src
+  git -C src config commit.gpgsign false
+  git -C src config tag.gpgsign false
+  git -C src -c user.email=x@x -c user.name=x commit --allow-empty -qm c1
+  git -C src branch dev
+  git -C src -c user.email=x@x -c user.name=x commit --allow-empty -qm c2
+  git init -q --bare "$dst"
+  git -C src remote add origin "$dst"
+  it "matches git: --all pushes refs/heads/* to matching names, exits 0" && {
+    cd src && expect_parity effect -- push --all origin
   }
 )
 
