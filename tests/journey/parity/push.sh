@@ -227,6 +227,9 @@ title "gix push with push.followTags=<bogus>"
   it "matches git: -c color.push.reset=<notacolor> → 128" && {
     expect_parity effect -- -c color.push.reset=notacolor push origin main
   }
+  it "matches git: -c remote.origin.mirror=bogus → 128" && {
+    expect_parity effect -- -c remote.origin.mirror=bogus push origin main
+  }
 )
 
 # mode=effect — mirrors the push.default validator in
