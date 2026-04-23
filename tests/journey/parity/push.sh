@@ -434,12 +434,13 @@ title "gix push --tags"
   }
 )
 
-# mode=effect
+# mode=effect — --follow-tags adds reachable tags to the push after the
+# main refs but doesn't skip local src refspec matching. Same refspec-
+# first invariant as iter 30.
 title "gix push --follow-tags"
 (small-repo-in-sandbox
-  it "matches git behavior" && {
-    # TODO: expect_parity effect -- push --follow-tags origin main
-    true
+  it "matches git: --follow-tags with unmatched src refspec exits 1" && {
+    expect_parity effect -- push --follow-tags /tmp/parity-unused nonexistent-refspec
   }
 )
 
