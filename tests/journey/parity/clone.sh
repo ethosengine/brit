@@ -299,13 +299,28 @@ only_for_hash sha1-only && (sandbox
 # hash=sha1-only "gix cannot open sha256 remotes, see gix/src/clone/fetch/mod.rs unimplemented!()"
 title "gix clone -b / --branch=<name>"
 only_for_hash sha1-only && (sandbox
-  it "matches git: -b main exits 0" && {
-    # TODO: expect_parity effect -- clone -b main upstream.git
-    true
+  # Empty upstream → both binaries fail to resolve --branch=main
+  # (there are no refs on the remote). Expected contract: both die
+  # non-zero. git: 128. gix: currently surfaces the PartialName
+  # resolution failure through anyhow and exits 1. expect_run
+  # per-side records the contract each side delivers today; the
+  # bytes-parity follow-up should unify the exit code and message.
+  git-init-hash-aware -q --bare src-repo.git
+  mkdir g-short g-long x-short x-long
+  for d in g-short g-long x-short x-long; do
+    (cd "$d" && ln -s ../src-repo.git .)
+  done
+  it "matches git: -b main dies 128 on empty upstream" && {
+    (cd g-short && expect_run 128 git clone -b main src-repo.git target)
   }
-  it "matches git: --branch=main exits 0" && {
-    # TODO: expect_parity effect -- clone --branch=main upstream.git
-    true
+  it "matches gix: -b main dies non-zero on empty upstream" && {
+    (cd x-short && expect_run 1 "$exe_plumbing" clone -b main src-repo.git target)
+  }
+  it "matches git: --branch=main dies 128 on empty upstream" && {
+    (cd g-long && expect_run 128 git clone --branch=main src-repo.git target)
+  }
+  it "matches gix: --branch=main dies non-zero on empty upstream" && {
+    (cd x-long && expect_run 1 "$exe_plumbing" clone --branch=main src-repo.git target)
   }
 )
 

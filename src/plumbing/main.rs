@@ -609,11 +609,32 @@ pub fn main() -> Result<()> {
             sparse: _,
             origin: _,
             ref_name,
+            branch,
             remote,
             shallow,
             directory,
             extra_positionals,
         }) => {
+            // Mirrors cmd_clone: `-b/--branch=<name>` points HEAD at <name>.
+            // gix's PartialName-driven ref_name already does this; route
+            // --branch through it when --ref wasn't explicitly set. If the
+            // supplied value isn't a valid PartialName (rare — empty, or
+            // only ASCII whitespace), die 128 to mirror git's refusal of
+            // bogus branch names post-parse.
+            let ref_name = match (ref_name, branch) {
+                (Some(r), _) => Some(r),
+                (None, None) => None,
+                (None, Some(name)) => match gix::refs::PartialName::try_from(name.as_str()) {
+                    Ok(r) => Some(r),
+                    Err(err) => {
+                        use std::io::Write;
+                        let mut stderr = std::io::stderr().lock();
+                        let _ = writeln!(stderr, "fatal: invalid --branch value: {err}");
+                        drop(stderr);
+                        std::process::exit(128);
+                    }
+                },
+            };
             // Mirrors cmd_clone: `if (option_mirror) { option_bare = 1;
             // option_tags = 0; }`. Upgrade --mirror to --bare + --no-tags
             // here; actual `+refs/*:refs/*` refspec + `remote.<name>.mirror`

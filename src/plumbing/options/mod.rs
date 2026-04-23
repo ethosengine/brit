@@ -678,6 +678,16 @@ pub mod clone {
         #[clap(long = "ref", value_parser = crate::shared::AsPartialRefName, value_name = "REF_NAME")]
         pub ref_name: Option<gix::refs::PartialName>,
 
+        /// Point the newly created HEAD at <name> (a branch or tag) on the
+        /// remote, instead of the remote's own HEAD.
+        ///
+        /// Mapped onto `--ref` at dispatch time when `--ref` is not set,
+        /// so gix's existing PartialName-driven HEAD resolution fires
+        /// against `<name>`. Mirrors git's `-b/--branch=<name>` in
+        /// cmd_clone.
+        #[clap(long, short = 'b', value_name = "NAME")]
+        pub branch: Option<String>,
+
         /// The directory to initialize with the new repository and to which all data should be written.
         pub directory: Option<PathBuf>,
 
