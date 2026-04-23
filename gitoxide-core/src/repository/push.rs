@@ -607,7 +607,7 @@ pub(crate) mod function {
             // in transport.c (minus credential scrubbing, which remote.url does not yet).
             let display_url: gix::bstr::BString = remote
                 .url(gix::remote::Direction::Push)
-                .map(|u| u.to_bstring())
+                .map(gix::url::Url::to_bstring)
                 .unwrap_or_default();
             let specs_to_send: Vec<gix::bstr::BString> = if effective_specs.is_empty() {
                 remote
@@ -620,7 +620,7 @@ pub(crate) mod function {
             };
             let conn = remote.connect(gix::remote::Direction::Push)?;
             let prepare = conn.prepare_push(gix::progress::Discard)?;
-            let push_opt_bytes: Vec<&[u8]> = opts.push_options.iter().map(|s| s.as_bytes()).collect();
+            let push_opt_bytes: Vec<&[u8]> = opts.push_options.iter().map(String::as_bytes).collect();
             // Translate the CLI `Signed` enum to the `SignMode` Prepare expects.
             let sign_mode = match signed {
                 Some(super::Signed::Yes) => gix::remote::push::SignMode::Always,

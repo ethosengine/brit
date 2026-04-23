@@ -1,7 +1,7 @@
-/// API-shape test for `Repository::push` convenience method (Task 8.1).
-///
-/// Validates the thin wrapper over `Connection::prepare_push` + `transmit`
-/// using the same `file://` fixture as `tests/gix/remote/push.rs`.
+//! API-shape test for `Repository::push` convenience method (Task 8.1).
+//!
+//! Validates the thin wrapper over `Connection::prepare_push` + `transmit`
+//! using the same `file://` fixture as `tests/gix/remote/push.rs`.
 
 /// Smoke test: `Repository::push` performs a fast-forward push to a bare file remote.
 #[test]

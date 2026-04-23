@@ -12,7 +12,7 @@ Legend:
 
 | git | gix | Status | Parity file | Notes |
 |---|---|---|---|---|
-| push | gix push | partial | [push.sh](../../tests/journey/parity/push.sh) | error-path parity closed (17 rows); send-pack substrate landed (iter 18); happy-path parity now iterative — 1 of ~40 happy-path rows closed (push origin refs/heads/main:refs/heads/main, bare file:// remote) |
+| push | gix push | present | [push.sh](../../tests/journey/parity/push.sh) | happy-path + error-path parity across the full documented flag surface (68 green `it` blocks across 48 sections); sha256 remotes, actual lease-mismatch / force-if-includes enforcement, non-default receive-pack programs, actual push-option transmission, push-cert generation, submodule-push, and live-TCP `-4`/`-6` family selection documented in the push.sh header as deferred follow-ups |
 | pull | gix pull | absent | — | composes fetch + merge |
 | fetch | gix fetch | partial | — | exists as `Fetch` subcommand; flag coverage unverified |
 | clone | gix clone | partial | — | exists as `Clone` subcommand; flag coverage unverified |

@@ -209,8 +209,7 @@ where
                 let matched_by_any_rhs = parsed_refspecs.iter().any(|spec| {
                     spec.to_ref()
                         .destination()
-                        .map(|dst| glob_match(dst, remote_name.as_ref()))
-                        .unwrap_or(false)
+                        .is_some_and(|dst| glob_match(dst, remote_name.as_ref()))
                 });
                 if matched_by_any_rhs {
                     commands.push(gix_protocol::send_pack::Command {
