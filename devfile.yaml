@@ -24,7 +24,7 @@ components:
   - name: tools
     container:
       image: harbor.ethosengine.com/devspaces/rust-nix-dev:latest
-      memoryLimit: 6Gi
+      memoryLimit: 10Gi
       memoryRequest: 2Gi
       cpuLimit: '2'
       cpuRequest: '500m'
