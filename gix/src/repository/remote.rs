@@ -193,12 +193,28 @@ impl crate::Repository {
             Some(r) => r,
             None => self.remote_at(gix_url::parse(name_or_url)?)?,
         };
+
+        // Materialize CLI refspecs; fall back to the remote's configured push refspecs
+        // when the caller supplied none — mirrors git's `match_push_refs` which consults
+        // `remote->push_refspec` when no positional refspec is given.
+        let mut materialized: Vec<crate::bstr::BString> = refspecs
+            .into_iter()
+            .map(|s| crate::bstr::BString::from(s.as_ref()))
+            .collect();
+        if materialized.is_empty() {
+            materialized = remote
+                .refspecs(crate::remote::Direction::Push)
+                .iter()
+                .map(|spec| spec.to_ref().to_bstring())
+                .collect();
+        }
+
         let conn = remote.connect(crate::remote::Direction::Push).map_err(Error::Connect)?;
         let prepare = conn
             .prepare_push(gix_features::progress::Discard)
             .map_err(Error::Prepare)?;
         prepare
-            .with_refspecs(refspecs)
+            .with_refspecs(&materialized)
             .transmit(
                 gix_features::progress::Discard,
                 &std::sync::atomic::AtomicBool::new(false),

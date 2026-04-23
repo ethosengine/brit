@@ -26,6 +26,9 @@
 #   (2) push <url> <partial-refspec> — one-sided push spec (e.g. `main`)
 #       inherits its destination from the matched local ref; URL-as-repo
 #       falls back to anonymous remote (mirrors git's `remote_get_1`).
+#   (3) push --repo=<name> — when no CLI refspecs are given, gix now
+#       falls back to the remote's configured `remote.<name>.push`
+#       refspecs (mirrors git's `match_push_refs`).
 #
 # send-pack substrate is online (gix-protocol send-pack + Repository::push
 # + gitoxide-core glue + gix CLI wiring). Remaining TODO rows below exercise
@@ -428,13 +431,23 @@ only_for_hash sha1-only && (sandbox
   }
 )
 
-# mode=effect
+# mode=effect — git's cmd_push: `--repo=<x>` is only honored when no
+# positional <repository> is given (argc>0 overrides `repo`). With a
+# configured `remote.<name>.push` refspec, this drives a bare
+# `push --repo=<name>` end-to-end with no CLI refspecs.
 # hash=sha1-only "gix cannot open sha256 remotes, see gix/src/clone/fetch/mod.rs unimplemented!()"
 title "gix push --repo=<repository>"
-only_for_hash sha1-only && (small-repo-in-sandbox
-  it "matches git behavior" && {
-    # TODO: expect_parity effect -- push --repo=upstream.git
-    true
+only_for_hash sha1-only && (sandbox
+  dst="$(pwd)/dst.git"
+  git init -q -b main src
+  git -C src config commit.gpgsign false
+  git -C src config tag.gpgsign false
+  git -C src -c user.email=x@x -c user.name=x commit --allow-empty -qm "init"
+  git init -q --bare "$dst"
+  git -C src remote add upstream "$dst"
+  git -C src config remote.upstream.push refs/heads/main:refs/heads/main
+  it "matches git: --repo=<name> uses remote.<name>.push refspec, exits 0" && {
+    cd src && expect_parity effect -- push --repo=upstream
   }
 )
 
