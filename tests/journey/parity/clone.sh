@@ -600,13 +600,22 @@ only_for_hash sha1-only && (sandbox
 # hash=sha1-only "gix cannot open sha256 remotes, see gix/src/clone/fetch/mod.rs unimplemented!()"
 title "gix clone --tags / --no-tags"
 only_for_hash sha1-only && (sandbox
+  git-init-hash-aware -q --bare src-repo.git
+  mkdir g-tags g-notags x-tags x-notags
+  for d in g-tags g-notags x-tags x-notags; do
+    (cd "$d" && ln -s ../src-repo.git .)
+  done
   it "matches git: --tags exits 0" && {
-    # TODO: expect_parity effect -- clone --tags upstream.git
-    true
+    (cd g-tags && expect_run 0 git clone --tags src-repo.git target)
+  }
+  it "matches gix: --tags exits 0" && {
+    (cd x-tags && expect_run 0 "$exe_plumbing" clone --tags src-repo.git target)
   }
   it "matches git: --no-tags exits 0" && {
-    # TODO: expect_parity effect -- clone --no-tags upstream.git
-    true
+    (cd g-notags && expect_run 0 git clone --no-tags src-repo.git target)
+  }
+  it "matches gix: --no-tags exits 0" && {
+    (cd x-notags && expect_run 0 "$exe_plumbing" clone --no-tags src-repo.git target)
   }
 )
 
@@ -617,17 +626,28 @@ only_for_hash sha1-only && (sandbox
 # hash=sha1-only "gix cannot open sha256 remotes, see gix/src/clone/fetch/mod.rs unimplemented!()"
 title "gix clone --recurse-submodules / --recursive"
 only_for_hash sha1-only && (sandbox
+  git-init-hash-aware -q --bare src-repo.git
+  mkdir g-rs g-ry g-rp x-rs x-ry x-rp
+  for d in g-rs g-ry g-rp x-rs x-ry x-rp; do
+    (cd "$d" && ln -s ../src-repo.git .)
+  done
   it "matches git: --recurse-submodules exits 0" && {
-    # TODO: expect_parity effect -- clone --recurse-submodules upstream.git
-    true
+    (cd g-rs && expect_run 0 git clone --recurse-submodules src-repo.git target)
+  }
+  it "matches gix: --recurse-submodules exits 0" && {
+    (cd x-rs && expect_run 0 "$exe_plumbing" clone --recurse-submodules src-repo.git target)
   }
   it "matches git: --recursive exits 0" && {
-    # TODO: expect_parity effect -- clone --recursive upstream.git
-    true
+    (cd g-ry && expect_run 0 git clone --recursive src-repo.git target)
   }
-  it "matches git: --recurse-submodules=path exits 0" && {
-    # TODO: expect_parity effect -- clone --recurse-submodules=lib upstream.git
-    true
+  it "matches gix: --recursive exits 0" && {
+    (cd x-ry && expect_run 0 "$exe_plumbing" clone --recursive src-repo.git target)
+  }
+  it "matches git: --recurse-submodules=lib exits 0" && {
+    (cd g-rp && expect_run 0 git clone --recurse-submodules=lib src-repo.git target)
+  }
+  it "matches gix: --recurse-submodules=lib exits 0" && {
+    (cd x-rp && expect_run 0 "$exe_plumbing" clone --recurse-submodules=lib src-repo.git target)
   }
 )
 
@@ -636,13 +656,22 @@ only_for_hash sha1-only && (sandbox
 # hash=sha1-only "gix cannot open sha256 remotes, see gix/src/clone/fetch/mod.rs unimplemented!()"
 title "gix clone --shallow-submodules / --no-shallow-submodules"
 only_for_hash sha1-only && (sandbox
+  git-init-hash-aware -q --bare src-repo.git
+  mkdir g-ss g-nss x-ss x-nss
+  for d in g-ss g-nss x-ss x-nss; do
+    (cd "$d" && ln -s ../src-repo.git .)
+  done
   it "matches git: --shallow-submodules exits 0" && {
-    # TODO: expect_parity effect -- clone --shallow-submodules upstream.git
-    true
+    (cd g-ss && expect_run 0 git clone --shallow-submodules src-repo.git target)
+  }
+  it "matches gix: --shallow-submodules exits 0" && {
+    (cd x-ss && expect_run 0 "$exe_plumbing" clone --shallow-submodules src-repo.git target)
   }
   it "matches git: --no-shallow-submodules exits 0" && {
-    # TODO: expect_parity effect -- clone --no-shallow-submodules upstream.git
-    true
+    (cd g-nss && expect_run 0 git clone --no-shallow-submodules src-repo.git target)
+  }
+  it "matches gix: --no-shallow-submodules exits 0" && {
+    (cd x-nss && expect_run 0 "$exe_plumbing" clone --no-shallow-submodules src-repo.git target)
   }
 )
 
@@ -651,13 +680,22 @@ only_for_hash sha1-only && (sandbox
 # hash=sha1-only "gix cannot open sha256 remotes, see gix/src/clone/fetch/mod.rs unimplemented!()"
 title "gix clone --remote-submodules / --no-remote-submodules"
 only_for_hash sha1-only && (sandbox
+  git-init-hash-aware -q --bare src-repo.git
+  mkdir g-rs g-nrs x-rs x-nrs
+  for d in g-rs g-nrs x-rs x-nrs; do
+    (cd "$d" && ln -s ../src-repo.git .)
+  done
   it "matches git: --remote-submodules exits 0" && {
-    # TODO: expect_parity effect -- clone --remote-submodules upstream.git
-    true
+    (cd g-rs && expect_run 0 git clone --remote-submodules src-repo.git target)
+  }
+  it "matches gix: --remote-submodules exits 0" && {
+    (cd x-rs && expect_run 0 "$exe_plumbing" clone --remote-submodules src-repo.git target)
   }
   it "matches git: --no-remote-submodules exits 0" && {
-    # TODO: expect_parity effect -- clone --no-remote-submodules upstream.git
-    true
+    (cd g-nrs && expect_run 0 git clone --no-remote-submodules src-repo.git target)
+  }
+  it "matches gix: --no-remote-submodules exits 0" && {
+    (cd x-nrs && expect_run 0 "$exe_plumbing" clone --no-remote-submodules src-repo.git target)
   }
 )
 
@@ -666,9 +704,15 @@ only_for_hash sha1-only && (sandbox
 # hash=sha1-only "gix cannot open sha256 remotes, see gix/src/clone/fetch/mod.rs unimplemented!()"
 title "gix clone --also-filter-submodules"
 only_for_hash sha1-only && (sandbox
-  it "matches git behavior" && {
-    # TODO: expect_parity effect -- clone --filter=blob:none --recurse-submodules --also-filter-submodules upstream.git
-    true
+  git-init-hash-aware -q --bare src-repo.git
+  mkdir g-side x-side
+  (cd g-side && ln -s ../src-repo.git .)
+  (cd x-side && ln -s ../src-repo.git .)
+  it "matches git: --filter=blob:none --recurse-submodules --also-filter-submodules exits 0" && {
+    (cd g-side && expect_run 0 git clone --filter=blob:none --recurse-submodules --also-filter-submodules src-repo.git target)
+  }
+  it "matches gix: --filter=blob:none --recurse-submodules --also-filter-submodules exits 0" && {
+    (cd x-side && expect_run 0 "$exe_plumbing" clone --filter=blob:none --recurse-submodules --also-filter-submodules src-repo.git target)
   }
 )
 
@@ -810,9 +854,15 @@ only_for_hash sha1-only && (sandbox
 # hash=sha1-only "gix cannot open sha256 remotes, see gix/src/clone/fetch/mod.rs unimplemented!()"
 title "gix clone --filter=<spec>"
 only_for_hash sha1-only && (sandbox
-  it "matches git behavior" && {
-    # TODO: expect_parity effect -- clone --filter=blob:none upstream.git
-    true
+  git-init-hash-aware -q --bare src-repo.git
+  mkdir g-side x-side
+  (cd g-side && ln -s ../src-repo.git .)
+  (cd x-side && ln -s ../src-repo.git .)
+  it "matches git: --filter=blob:none exits 0 on empty upstream" && {
+    (cd g-side && expect_run 0 git clone --filter=blob:none src-repo.git target)
+  }
+  it "matches gix: --filter=blob:none exits 0 on empty upstream" && {
+    (cd x-side && expect_run 0 "$exe_plumbing" clone --filter=blob:none src-repo.git target)
   }
 )
 

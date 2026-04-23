@@ -648,6 +648,54 @@ pub mod clone {
         #[clap(long)]
         pub no_tags: bool,
 
+        /// Clone tags (the default). Accepted for CLI symmetry with
+        /// `--no-tags`; the flag cancels out a prior `--no-tags` on
+        /// the same line. Parse-only.
+        #[clap(long, overrides_with = "no_tags")]
+        pub tags: bool,
+
+        /// Initialize and clone submodules after the main clone.
+        /// Multi-valued. Parse-only — gix clone doesn't yet recurse
+        /// into submodules.
+        ///
+        /// `require_equals = true` mirrors git's parse_options PARSE_OPT_OPTARG
+        /// behavior for long flags: `--recurse-submodules` alone means "all"
+        /// (default ".") and `--recurse-submodules=<pathspec>` supplies an
+        /// explicit pathspec, but `--recurse-submodules <next>` treats `<next>`
+        /// as a positional, not as this flag's value.
+        #[clap(long = "recurse-submodules", value_name = "PATHSPEC", num_args = 0..=1, default_missing_value = ".", require_equals = true)]
+        pub recurse_submodules: Vec<String>,
+
+        /// Alias for `--recurse-submodules`. Parse-only.
+        #[clap(long = "recursive", value_name = "PATHSPEC", num_args = 0..=1, default_missing_value = ".", require_equals = true)]
+        pub recursive: Vec<String>,
+
+        /// Clone submodules shallowly (depth 1). Parse-only.
+        #[clap(long, overrides_with = "_no_shallow_submodules")]
+        pub shallow_submodules: bool,
+
+        /// Opposite of `--shallow-submodules`. Parse-only.
+        #[clap(long = "no-shallow-submodules", overrides_with = "shallow_submodules")]
+        pub _no_shallow_submodules: bool,
+
+        /// Clone submodules using their remote-tracking branch. Parse-only.
+        #[clap(long, overrides_with = "_no_remote_submodules")]
+        pub remote_submodules: bool,
+
+        /// Opposite of `--remote-submodules`. Parse-only.
+        #[clap(long = "no-remote-submodules", overrides_with = "remote_submodules")]
+        pub _no_remote_submodules: bool,
+
+        /// Apply the partial-clone filter to submodules too. Requires
+        /// `--filter` and `--recurse-submodules`. Parse-only.
+        #[clap(long)]
+        pub also_filter_submodules: bool,
+
+        /// Partial-clone filter spec (e.g., `blob:none`). Parse-only —
+        /// gix clone's promisor-remote pipeline is not yet wired.
+        #[clap(long, value_name = "SPEC")]
+        pub filter: Option<String>,
+
         /// Employ a sparse-checkout initialized to just the toplevel directory.
         ///
         /// Parse-only: empty-upstream clones have no toplevel anything to
