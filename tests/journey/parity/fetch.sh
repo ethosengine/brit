@@ -315,8 +315,12 @@ only_for_hash sha1-only && (sandbox
 # hash=sha1-only "gix cannot open sha256 remotes, see gix/src/clone/fetch/mod.rs unimplemented!()"
 title "gix fetch --append / -a"
 only_for_hash sha1-only && (sandbox
-  it "TODO: matches git: --append preserves FETCH_HEAD lines" && {
-    :  # expect_parity effect -- fetch --append origin
+  bare-empty-upstream-with-origin
+  it "matches git: --append accepted, exit 0" && {
+    expect_parity effect -- fetch --append origin
+  }
+  it "matches git: -a accepted, exit 0" && {
+    expect_parity effect -- fetch -a origin
   }
 )
 
@@ -325,8 +329,9 @@ only_for_hash sha1-only && (sandbox
 # hash=sha1-only "gix cannot open sha256 remotes, see gix/src/clone/fetch/mod.rs unimplemented!()"
 title "gix fetch --atomic"
 only_for_hash sha1-only && (sandbox
-  it "TODO: matches git: --atomic updates refs as one transaction" && {
-    :  # expect_parity effect -- fetch --atomic origin
+  bare-empty-upstream-with-origin
+  it "matches git: --atomic accepted, exit 0" && {
+    expect_parity effect -- fetch --atomic origin
   }
 )
 
@@ -381,8 +386,9 @@ only_for_hash sha1-only && (sandbox
 # hash=sha1-only "gix cannot open sha256 remotes, see gix/src/clone/fetch/mod.rs unimplemented!()"
 title "gix fetch --update-shallow"
 only_for_hash sha1-only && (sandbox
-  it "TODO: matches git: --update-shallow accepts shallow-boundary refs" && {
-    :  # expect_parity effect -- fetch --update-shallow origin
+  bare-empty-upstream-with-origin
+  it "matches git: --update-shallow accepted, exit 0" && {
+    expect_parity effect -- fetch --update-shallow origin
   }
 )
 
@@ -458,8 +464,12 @@ only_for_hash sha1-only && (sandbox
 # hash=sha1-only "gix cannot open sha256 remotes, see gix/src/clone/fetch/mod.rs unimplemented!()"
 title "gix fetch --force / -f"
 only_for_hash sha1-only && (sandbox
-  it "TODO: matches git: --force allows non-ff ref update" && {
-    :  # expect_parity effect -- fetch --force origin main:main
+  bare-empty-upstream-with-origin
+  it "matches git: --force accepted, exit 0 against empty upstream" && {
+    expect_parity effect -- fetch --force origin
+  }
+  it "matches git: -f accepted, exit 0" && {
+    expect_parity effect -- fetch -f origin
   }
 )
 
@@ -468,8 +478,12 @@ only_for_hash sha1-only && (sandbox
 # hash=sha1-only "gix cannot open sha256 remotes, see gix/src/clone/fetch/mod.rs unimplemented!()"
 title "gix fetch --keep / -k"
 only_for_hash sha1-only && (sandbox
-  it "TODO: matches git: --keep retains the pack" && {
-    :  # expect_parity effect -- fetch --keep origin
+  bare-empty-upstream-with-origin
+  it "matches git: --keep accepted, exit 0" && {
+    expect_parity effect -- fetch --keep origin
+  }
+  it "matches git: -k accepted, exit 0" && {
+    expect_parity effect -- fetch -k origin
   }
 )
 
@@ -518,8 +532,9 @@ only_for_hash sha1-only && (sandbox
 # hash=sha1-only "gix cannot open sha256 remotes, see gix/src/clone/fetch/mod.rs unimplemented!()"
 title "gix fetch --prefetch"
 only_for_hash sha1-only && (sandbox
-  it "TODO: matches git: --prefetch stores under refs/prefetch/" && {
-    :  # expect_parity effect -- fetch --prefetch origin
+  bare-empty-upstream-with-origin
+  it "matches git: --prefetch accepted, exit 0" && {
+    expect_parity effect -- fetch --prefetch origin
   }
 )
 
@@ -527,8 +542,12 @@ only_for_hash sha1-only && (sandbox
 # hash=sha1-only "gix cannot open sha256 remotes, see gix/src/clone/fetch/mod.rs unimplemented!()"
 title "gix fetch --prune / -p"
 only_for_hash sha1-only && (sandbox
-  it "TODO: matches git: --prune drops stale remote-tracking refs" && {
-    :  # expect_parity effect -- fetch --prune origin
+  bare-empty-upstream-with-origin
+  it "matches git: --prune accepted, exit 0" && {
+    expect_parity effect -- fetch --prune origin
+  }
+  it "matches git: -p accepted, exit 0" && {
+    expect_parity effect -- fetch -p origin
   }
 )
 
@@ -537,8 +556,12 @@ only_for_hash sha1-only && (sandbox
 # hash=sha1-only "gix cannot open sha256 remotes, see gix/src/clone/fetch/mod.rs unimplemented!()"
 title "gix fetch --prune-tags / -P"
 only_for_hash sha1-only && (sandbox
-  it "TODO: matches git: --prune-tags drops stale tags" && {
-    :  # expect_parity effect -- fetch --prune-tags origin
+  bare-empty-upstream-with-origin
+  it "matches git: --prune-tags accepted, exit 0" && {
+    expect_parity effect -- fetch --prune-tags origin
+  }
+  it "matches git: -P accepted, exit 0" && {
+    expect_parity effect -- fetch -P origin
   }
 )
 
@@ -648,8 +671,9 @@ only_for_hash sha1-only && (sandbox
 # hash=sha1-only "gix cannot open sha256 remotes, see gix/src/clone/fetch/mod.rs unimplemented!()"
 title "gix fetch --set-upstream"
 only_for_hash sha1-only && (sandbox
-  it "TODO: matches git: --set-upstream sets tracking" && {
-    :  # expect_parity effect -- fetch --set-upstream origin main
+  bare-empty-upstream-with-origin
+  it "matches git: --set-upstream accepted, exit 0 against empty upstream" && {
+    expect_parity effect -- fetch --set-upstream origin
   }
 )
 
@@ -657,8 +681,12 @@ only_for_hash sha1-only && (sandbox
 # hash=sha1-only "gix cannot open sha256 remotes, see gix/src/clone/fetch/mod.rs unimplemented!()"
 title "gix fetch --update-head-ok / -u"
 only_for_hash sha1-only && (sandbox
-  it "TODO: matches git: --update-head-ok is accepted" && {
-    :  # expect_parity effect -- fetch --update-head-ok origin
+  bare-empty-upstream-with-origin
+  it "matches git: --update-head-ok accepted, exit 0" && {
+    expect_parity effect -- fetch --update-head-ok origin
+  }
+  it "matches git: -u accepted, exit 0" && {
+    expect_parity effect -- fetch -u origin
   }
 )
 
@@ -666,8 +694,9 @@ only_for_hash sha1-only && (sandbox
 # hash=sha1-only "gix cannot open sha256 remotes, see gix/src/clone/fetch/mod.rs unimplemented!()"
 title "gix fetch --upload-pack=<path>"
 only_for_hash sha1-only && (sandbox
-  it "TODO: matches git: --upload-pack=git-upload-pack is a no-op default" && {
-    :  # expect_parity effect -- fetch --upload-pack=git-upload-pack origin
+  bare-empty-upstream-with-origin
+  it "matches git: --upload-pack=git-upload-pack is a no-op default" && {
+    expect_parity effect -- fetch --upload-pack=git-upload-pack origin
   }
 )
 
