@@ -599,6 +599,7 @@ pub fn main() -> Result<()> {
         #[cfg(feature = "gitoxide-core-blocking-client")]
         Subcommands::Clone(crate::plumbing::options::clone::Platform {
             handshake_info,
+            verbose: _,
             bare,
             no_tags,
             ref_name,

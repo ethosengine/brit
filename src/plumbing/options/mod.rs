@@ -603,6 +603,13 @@ pub mod clone {
         #[clap(long, short = 'H')]
         pub handshake_info: bool,
 
+        /// Run verbosely — does not affect progress status, only the banner/info lines.
+        ///
+        /// Parse-only: clone currently prints no banner regardless; the flag is
+        /// accepted for CLI compatibility with git's `OPT__VERBOSITY(-v)`.
+        #[clap(long, short = 'v')]
+        pub verbose: bool,
+
         /// The clone will be bare and a working tree checkout won't be available.
         #[clap(long)]
         pub bare: bool,
