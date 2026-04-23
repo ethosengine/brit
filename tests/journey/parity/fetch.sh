@@ -495,12 +495,16 @@ only_for_hash sha1-only && (sandbox
   }
 )
 
-# mode=bytes — --porcelain is machine-readable; exact byte parity required.
+# mode=effect — --porcelain is a bytes-mode row on the push side; on the
+# fetch side gix currently does not emit git's machine-readable per-ref
+# lines on stdout, so bytes-mode is still a follow-up. Exit-code parity
+# against an empty upstream is already in place (parse-only).
 # hash=sha1-only "gix cannot open sha256 remotes, see gix/src/clone/fetch/mod.rs unimplemented!()"
 title "gix fetch --porcelain"
 only_for_hash sha1-only && (sandbox
-  it "TODO: matches git: --porcelain output is byte-exact" && {
-    :  # expect_parity bytes -- fetch --porcelain origin
+  bare-empty-upstream-with-origin
+  it "matches git: --porcelain accepted, exit 0 (byte-exact output is a follow-up)" && {
+    expect_parity effect -- fetch --porcelain origin
   }
 )
 
