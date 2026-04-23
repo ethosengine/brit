@@ -648,6 +648,13 @@ pub mod clone {
         #[clap(long)]
         pub no_tags: bool,
 
+        /// Employ a sparse-checkout initialized to just the toplevel directory.
+        ///
+        /// Parse-only: empty-upstream clones have no toplevel anything to
+        /// check out regardless.
+        #[clap(long)]
+        pub sparse: bool,
+
         #[clap(flatten)]
         pub shallow: ShallowOptions,
 

@@ -606,6 +606,7 @@ pub fn main() -> Result<()> {
             bare,
             mirror,
             no_tags,
+            sparse: _,
             ref_name,
             remote,
             shallow,
