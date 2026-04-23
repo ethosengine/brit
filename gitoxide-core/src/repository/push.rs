@@ -518,31 +518,6 @@ pub(crate) mod function {
             }
         }
 
-        // --dry-run: print what would be pushed and exit without contacting the remote.
-        // Full dry-run through the send-pack pipeline is a later ralph iteration;
-        // for now we report the planned refspecs and bail cleanly so callers get exit 0.
-        if opts.dry_run {
-            let mut stderr = std::io::stderr().lock();
-            // Use explicit (raw name/URL) or fall back to the resolved remote name.
-            let display_remote = explicit.unwrap_or_else(|| {
-                found
-                    .as_ref()
-                    .and_then(|r| r.name())
-                    .map(|n| n.as_bstr().as_ref())
-                    .and_then(|b| std::str::from_utf8(b).ok())
-                    .unwrap_or("<remote>")
-            });
-            if opts.ref_specs.is_empty() {
-                writeln!(stderr, "dry-run: would push HEAD to {display_remote}")?;
-            } else {
-                for spec in &opts.ref_specs {
-                    writeln!(stderr, "dry-run: would push {spec} to {display_remote}")?;
-                }
-            }
-            drop(stderr);
-            return Ok(());
-        }
-
         // Determine the effective remote name or URL to pass to Repository::push.
         // `explicit` is the raw string from --repo=<repo> or the positional <repository>
         // argument; when neither was given we use the name of the already-resolved default.
@@ -599,8 +574,36 @@ pub(crate) mod function {
             }
         }
 
-        // Perform the push.
-        let outcome = repo.push(remote_name, effective_specs.iter())?;
+        // Perform the push via the explicit chain so we can thread `--dry-run`
+        // through `Prepare::with_dry_run`. Repository::push is the no-dry-run
+        // convenience; the doc comment there points callers here for finer
+        // control. URL fallback mirrors `Repository::push` (find_remote first,
+        // anonymous remote from a parsed URL as fallback), and an empty
+        // CLI-refspec list falls back to the remote's configured
+        // `remote.<name>.push` entries.
+        let outcome = {
+            use gix::bstr::ByteSlice;
+            let name: &gix::bstr::BStr = remote_name.as_bstr();
+            let remote = match repo.try_find_remote(name).and_then(Result::ok) {
+                Some(r) => r,
+                None => repo.remote_at(gix::url::parse(name)?)?,
+            };
+            let specs_to_send: Vec<gix::bstr::BString> = if effective_specs.is_empty() {
+                remote
+                    .refspecs(gix::remote::Direction::Push)
+                    .iter()
+                    .map(|spec| spec.to_ref().to_bstring())
+                    .collect()
+            } else {
+                effective_specs
+            };
+            let conn = remote.connect(gix::remote::Direction::Push)?;
+            let prepare = conn.prepare_push(gix::progress::Discard)?;
+            prepare
+                .with_refspecs(specs_to_send.iter())
+                .with_dry_run(opts.dry_run)
+                .transmit(gix::progress::Discard, &std::sync::atomic::AtomicBool::new(false))?
+        };
 
         // Print per-ref status to process stderr (unbuffered) so output reaches
         // the terminal even when the passed-in writer is buffered. A pure-delete

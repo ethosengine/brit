@@ -40,6 +40,13 @@
 #   (7) push --delete / -d — CLI glue rewrites each positional refspec
 #       `<ref>` into a delete-spec `:<ref>` (mirrors builtin/push.c).
 #       Per-ref output gains a `- [deleted]` line to match git.
+#   (8) push --dry-run / -n — full pipeline runs refspec validation
+#       (match_push errors when nothing matches) before short-circuiting
+#       the wire exchange via `Prepare::with_dry_run`. Exit code now
+#       matches git for the unmatched-refspec case.
+#   (9) push --progress / --no-progress — effect-mode parity only; both
+#       binaries suppress progress to piped stderr, so the exit-code
+#       contract is unchanged by the flag.
 #
 # send-pack substrate is online (gix-protocol send-pack + Repository::push
 # + gitoxide-core glue + gix CLI wiring). Remaining TODO rows below exercise
@@ -620,13 +627,24 @@ only_for_hash sha1-only && (small-repo-in-sandbox
   }
 )
 
-# mode=effect
+# mode=effect — `--progress` / `--no-progress` are mutually-overriding
+# (last-wins, like git's OPT_SET_INT pair). They tune transport progress
+# emission only; the refspec-resolution contract is unchanged. Non-TTY
+# stderr suppresses progress in both binaries, so effect-mode parity
+# under a piped stderr covers both flags from the exit-code contract
+# without needing a pty.
 # hash=sha1-only "gix cannot open sha256 remotes, see gix/src/clone/fetch/mod.rs unimplemented!()"
 title "gix push --progress / --no-progress"
-only_for_hash sha1-only && (small-repo-in-sandbox
-  it "matches git behavior" && {
-    # TODO: expect_parity effect -- push --no-progress origin main
-    true
+only_for_hash sha1-only && (sandbox
+  dst="$(pwd)/dst.git"
+  git init -q -b main src
+  git -C src config commit.gpgsign false
+  git -C src config tag.gpgsign false
+  git -C src -c user.email=x@x -c user.name=x commit --allow-empty -qm c1
+  git init -q --bare "$dst"
+  git -C src remote add origin "$dst"
+  it "matches git: --no-progress push main to bare remote, exits 0" && {
+    cd src && expect_parity effect -- push --no-progress origin main
   }
 )
 
