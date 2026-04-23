@@ -696,6 +696,29 @@ pub mod clone {
         #[clap(long, value_name = "SPEC")]
         pub filter: Option<String>,
 
+        /// Non-default upload-pack path for ssh transport. Parse-only —
+        /// gix's ssh transport doesn't negotiate the remote command yet.
+        #[clap(long = "upload-pack", short = 'u', value_name = "PATH")]
+        pub upload_pack: Option<OsString>,
+
+        /// Protocol v2 server option; multi-valued, order preserved.
+        /// Parse-only.
+        #[clap(long = "server-option", value_name = "OPTION")]
+        pub server_option: Vec<String>,
+
+        /// Restrict IP address family to IPv4. Parse-only (no-op on
+        /// file:// transport).
+        #[clap(long, short = '4', overrides_with = "ipv6")]
+        pub ipv4: bool,
+
+        /// Restrict IP address family to IPv6. Parse-only.
+        #[clap(long, short = '6', overrides_with = "ipv4")]
+        pub ipv6: bool,
+
+        /// Submodule-fetch parallelism. Parse-only (no submodule fetching yet).
+        #[clap(long, short = 'j', value_name = "N")]
+        pub jobs: Option<u32>,
+
         /// Employ a sparse-checkout initialized to just the toplevel directory.
         ///
         /// Parse-only: empty-upstream clones have no toplevel anything to

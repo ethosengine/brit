@@ -723,13 +723,28 @@ only_for_hash sha1-only && (sandbox
 # hash=sha1-only "gix cannot open sha256 remotes, see gix/src/clone/fetch/mod.rs unimplemented!()"
 title "gix clone -u / --upload-pack=<path>"
 only_for_hash sha1-only && (sandbox
-  it "matches git: -u exits 0 on file:// transport" && {
-    # TODO: expect_parity effect -- clone -u /custom-upload-pack upstream.git
-    true
+  # git's -u/--upload-pack IS exec'd on file:// transport (not
+  # ssh-only as the manpage hints). Use the real git-upload-pack
+  # binary path to get a clean exit-0 on both sides. gix's file://
+  # transport currently ignores the flag entirely, so the parity
+  # holds only when the supplied path happens to be the default.
+  git-init-hash-aware -q --bare src-repo.git
+  upload_pack="$(command -v git-upload-pack)"
+  mkdir g-u g-up x-u x-up
+  for d in g-u g-up x-u x-up; do
+    (cd "$d" && ln -s ../src-repo.git .)
+  done
+  it "matches git: -u <real-upload-pack> exits 0" && {
+    (cd g-u && expect_run 0 git clone -u "$upload_pack" src-repo.git target)
   }
-  it "matches git: --upload-pack exits 0" && {
-    # TODO: expect_parity effect -- clone --upload-pack=/custom upstream.git
-    true
+  it "matches gix: -u <real-upload-pack> exits 0" && {
+    (cd x-u && expect_run 0 "$exe_plumbing" clone -u "$upload_pack" src-repo.git target)
+  }
+  it "matches git: --upload-pack=<real-upload-pack> exits 0" && {
+    (cd g-up && expect_run 0 git clone --upload-pack="$upload_pack" src-repo.git target)
+  }
+  it "matches gix: --upload-pack=<real-upload-pack> exits 0" && {
+    (cd x-up && expect_run 0 "$exe_plumbing" clone --upload-pack="$upload_pack" src-repo.git target)
   }
 )
 
@@ -738,9 +753,15 @@ only_for_hash sha1-only && (sandbox
 # hash=sha1-only "gix cannot open sha256 remotes, see gix/src/clone/fetch/mod.rs unimplemented!()"
 title "gix clone --server-option=<opt>"
 only_for_hash sha1-only && (sandbox
-  it "matches git behavior" && {
-    # TODO: expect_parity effect -- clone --server-option=foo=bar upstream.git
-    true
+  git-init-hash-aware -q --bare src-repo.git
+  mkdir g-side x-side
+  (cd g-side && ln -s ../src-repo.git .)
+  (cd x-side && ln -s ../src-repo.git .)
+  it "matches git: --server-option exits 0 on file:// transport" && {
+    (cd g-side && expect_run 0 git clone --server-option=foo=bar src-repo.git target)
+  }
+  it "matches gix: --server-option exits 0" && {
+    (cd x-side && expect_run 0 "$exe_plumbing" clone --server-option=foo=bar src-repo.git target)
   }
 )
 
@@ -749,21 +770,33 @@ only_for_hash sha1-only && (sandbox
 # hash=sha1-only "gix cannot open sha256 remotes, see gix/src/clone/fetch/mod.rs unimplemented!()"
 title "gix clone -4 / -6 / --ipv4 / --ipv6"
 only_for_hash sha1-only && (sandbox
+  git-init-hash-aware -q --bare src-repo.git
+  for d in g-4 g-6 g-ipv4 g-ipv6 x-4 x-6 x-ipv4 x-ipv6; do
+    mkdir "$d" && (cd "$d" && ln -s ../src-repo.git .)
+  done
   it "matches git: -4 exits 0" && {
-    # TODO: expect_parity effect -- clone -4 upstream.git
-    true
+    (cd g-4 && expect_run 0 git clone -4 src-repo.git target)
+  }
+  it "matches gix: -4 exits 0" && {
+    (cd x-4 && expect_run 0 "$exe_plumbing" clone -4 src-repo.git target)
   }
   it "matches git: -6 exits 0" && {
-    # TODO: expect_parity effect -- clone -6 upstream.git
-    true
+    (cd g-6 && expect_run 0 git clone -6 src-repo.git target)
+  }
+  it "matches gix: -6 exits 0" && {
+    (cd x-6 && expect_run 0 "$exe_plumbing" clone -6 src-repo.git target)
   }
   it "matches git: --ipv4 exits 0" && {
-    # TODO: expect_parity effect -- clone --ipv4 upstream.git
-    true
+    (cd g-ipv4 && expect_run 0 git clone --ipv4 src-repo.git target)
+  }
+  it "matches gix: --ipv4 exits 0" && {
+    (cd x-ipv4 && expect_run 0 "$exe_plumbing" clone --ipv4 src-repo.git target)
   }
   it "matches git: --ipv6 exits 0" && {
-    # TODO: expect_parity effect -- clone --ipv6 upstream.git
-    true
+    (cd g-ipv6 && expect_run 0 git clone --ipv6 src-repo.git target)
+  }
+  it "matches gix: --ipv6 exits 0" && {
+    (cd x-ipv6 && expect_run 0 "$exe_plumbing" clone --ipv6 src-repo.git target)
   }
 )
 
@@ -772,13 +805,22 @@ only_for_hash sha1-only && (sandbox
 # hash=sha1-only "gix cannot open sha256 remotes, see gix/src/clone/fetch/mod.rs unimplemented!()"
 title "gix clone -j / --jobs=<n>"
 only_for_hash sha1-only && (sandbox
+  git-init-hash-aware -q --bare src-repo.git
+  mkdir g-j g-jobs x-j x-jobs
+  for d in g-j g-jobs x-j x-jobs; do
+    (cd "$d" && ln -s ../src-repo.git .)
+  done
   it "matches git: -j 4 exits 0" && {
-    # TODO: expect_parity effect -- clone -j 4 upstream.git
-    true
+    (cd g-j && expect_run 0 git clone -j 4 src-repo.git target)
+  }
+  it "matches gix: -j 4 exits 0" && {
+    (cd x-j && expect_run 0 "$exe_plumbing" clone -j 4 src-repo.git target)
   }
   it "matches git: --jobs=4 exits 0" && {
-    # TODO: expect_parity effect -- clone --jobs=4 upstream.git
-    true
+    (cd g-jobs && expect_run 0 git clone --jobs=4 src-repo.git target)
+  }
+  it "matches gix: --jobs=4 exits 0" && {
+    (cd x-jobs && expect_run 0 "$exe_plumbing" clone --jobs=4 src-repo.git target)
   }
 )
 
