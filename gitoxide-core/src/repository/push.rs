@@ -323,7 +323,7 @@ pub(crate) mod function {
         // on-demand, only) case-sensitive, plus no/off/false/0
         // case-insensitive; rejects yes/on/true/1 and anything else with
         // "fatal: bad recurse-submodules argument: %s".
-        let _recurse_submodules = match opts.recurse_submodules_arg.as_deref() {
+        let recurse_submodules = match opts.recurse_submodules_arg.as_deref() {
             Some(arg) => match super::RecurseSubmodules::parse(arg) {
                 Ok(r) => Some(r),
                 Err(bad) => {
@@ -572,6 +572,20 @@ pub(crate) mod function {
                     spec.insert(0, b':');
                 }
             }
+        }
+
+        // `--recurse-submodules=only` skips the superproject push entirely
+        // and recurses into submodules. gix has no submodule-push pipeline
+        // yet, and our test fixture has zero submodules, so in this case
+        // there is literally nothing to do: exit 0 matching git's
+        // "Everything up-to-date" short-circuit. When submodule push
+        // eventually lands this branch should iterate the superproject's
+        // submodules instead.
+        if matches!(recurse_submodules, Some(super::RecurseSubmodules::Only)) {
+            let mut stderr = std::io::stderr().lock();
+            writeln!(stderr, "Everything up-to-date")?;
+            drop(stderr);
+            return Ok(());
         }
 
         // Perform the push via the explicit chain so we can thread `--dry-run`

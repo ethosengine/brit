@@ -86,6 +86,11 @@
 #       `=if-asked` falls back to unsigned when the capability is
 #       missing, `=yes` dies 128 with git's exact message. Actual cert
 #       generation remains deferred.
+#  (18) push --recurse-submodules=<mode> — four sub-rows exercising all
+#       four values against a zero-submodule fixture. `=no/check/on-demand`
+#       are effective no-ops, `=only` short-circuits to "Everything
+#       up-to-date" + exit 0 (matches git's no-op path). Actual
+#       submodule-push semantics land with a future submodule-push pipeline.
 #
 # send-pack substrate is online (gix-protocol send-pack + Repository::push
 # + gitoxide-core glue + gix CLI wiring). Remaining TODO rows below exercise
@@ -1038,25 +1043,64 @@ only_for_hash sha1-only && (sandbox
   }
 )
 
-# mode=effect
+# mode=effect — `--recurse-submodules=<mode>` (parse_push_recurse in
+# vendor/git/submodule-config.c). Modes:
+#   no        — don't recurse; push only the superproject
+#   check     — verify referenced submodule commits exist on their remotes
+#   on-demand — push missing submodule commits first, then superproject
+#   only      — push only submodules, skip the superproject
+# For a zero-submodule fixture all four are effectively no-ops on the
+# submodule side; git's `=only` prints "Everything up-to-date" and gix
+# short-circuits with the same exit 0. Actual submodule-push semantics
+# land once gix has submodule support wired through the push pipeline.
 # hash=sha1-only "gix cannot open sha256 remotes, see gix/src/clone/fetch/mod.rs unimplemented!()"
 title "gix push --recurse-submodules=<mode>"
-only_for_hash sha1-only && (small-repo-in-sandbox
-  it "matches git behavior (=no)" && {
-    # TODO: expect_parity effect -- push --recurse-submodules=no origin main
-    true
+only_for_hash sha1-only && (sandbox
+  dst="$(pwd)/dst.git"
+  git init -q -b main src
+  git -C src config commit.gpgsign false
+  git -C src config tag.gpgsign false
+  git -C src -c user.email=x@x -c user.name=x commit --allow-empty -qm c1
+  git init -q --bare "$dst"
+  git -C src remote add origin "$dst"
+  it "matches git: --recurse-submodules=no, exits 0" && {
+    cd src && expect_parity effect -- push --recurse-submodules=no origin main
   }
-  it "matches git behavior (=check)" && {
-    # TODO: expect_parity effect -- push --recurse-submodules=check origin main
-    true
+)
+only_for_hash sha1-only && (sandbox
+  dst="$(pwd)/dst.git"
+  git init -q -b main src
+  git -C src config commit.gpgsign false
+  git -C src config tag.gpgsign false
+  git -C src -c user.email=x@x -c user.name=x commit --allow-empty -qm c1
+  git init -q --bare "$dst"
+  git -C src remote add origin "$dst"
+  it "matches git: --recurse-submodules=check with no submodules, exits 0" && {
+    cd src && expect_parity effect -- push --recurse-submodules=check origin main
   }
-  it "matches git behavior (=on-demand)" && {
-    # TODO: expect_parity effect -- push --recurse-submodules=on-demand origin main
-    true
+)
+only_for_hash sha1-only && (sandbox
+  dst="$(pwd)/dst.git"
+  git init -q -b main src
+  git -C src config commit.gpgsign false
+  git -C src config tag.gpgsign false
+  git -C src -c user.email=x@x -c user.name=x commit --allow-empty -qm c1
+  git init -q --bare "$dst"
+  git -C src remote add origin "$dst"
+  it "matches git: --recurse-submodules=on-demand with no submodules, exits 0" && {
+    cd src && expect_parity effect -- push --recurse-submodules=on-demand origin main
   }
-  it "matches git behavior (=only)" && {
-    # TODO: expect_parity effect -- push --recurse-submodules=only origin main
-    true
+)
+only_for_hash sha1-only && (sandbox
+  dst="$(pwd)/dst.git"
+  git init -q -b main src
+  git -C src config commit.gpgsign false
+  git -C src config tag.gpgsign false
+  git -C src -c user.email=x@x -c user.name=x commit --allow-empty -qm c1
+  git init -q --bare "$dst"
+  git -C src remote add origin "$dst"
+  it "matches git: --recurse-submodules=only with no submodules, exits 0" && {
+    cd src && expect_parity effect -- push --recurse-submodules=only origin main
   }
 )
 
