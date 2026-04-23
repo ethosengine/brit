@@ -563,7 +563,7 @@ pub(crate) mod function {
         // git's `set_refspecs` + `MATCH_REFS_*` flag machinery. The pre-transport
         // die-checks above already ensured these don't combine with user refspecs,
         // so the branches below are mutually exclusive.
-        let effective_specs: Vec<gix::bstr::BString> = if opts.all {
+        let mut effective_specs: Vec<gix::bstr::BString> = if opts.all {
             vec!["refs/heads/*:refs/heads/*".into()]
         } else if opts.mirror {
             // `--mirror` → MATCH_REFS_MIRROR | TRANSPORT_PUSH_FORCE; matches every
@@ -575,6 +575,14 @@ pub(crate) mod function {
         } else {
             opts.ref_specs.clone()
         };
+
+        // `--tags` in cmd_push literally appends `refs/tags/*:refs/tags/*` to
+        // the refspec list (see builtin/push.c). It stacks with any user-supplied
+        // refspecs; the pre-transport die-check above already rejects
+        // `--tags` combined with --delete/--all/--mirror.
+        if opts.tags {
+            effective_specs.push("refs/tags/*:refs/tags/*".into());
+        }
 
         // Perform the push.
         let outcome = repo.push(remote_name, effective_specs.iter())?;

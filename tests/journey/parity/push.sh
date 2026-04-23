@@ -35,6 +35,8 @@
 #   (5) push --mirror — CLI glue translates to `refs/*:refs/*` (mirrors
 #       TRANSPORT_PUSH_MIRROR). Remote-side prune is not yet wired; the
 #       initial-empty-remote case exercises heads+tags transmission only.
+#   (6) push --tags — CLI glue appends `refs/tags/*:refs/tags/*` to the
+#       refspec list (stacks with user refspecs, mirrors builtin/push.c).
 #
 # send-pack substrate is online (gix-protocol send-pack + Repository::push
 # + gitoxide-core glue + gix CLI wiring). Remaining TODO rows below exercise
@@ -523,13 +525,25 @@ only_for_hash sha1-only && (sandbox
   }
 )
 
-# mode=effect
+# mode=effect — `--tags` in cmd_push literally appends
+# `refs/tags/*:refs/tags/*` to the refspec list (builtin/push.c). Unlike
+# --all/--mirror this stacks with user-supplied refspecs; no match-flag
+# machinery. Fixture carries both an unannotated and an annotated tag so
+# the glob matches both kinds of tag refs.
 # hash=sha1-only "gix cannot open sha256 remotes, see gix/src/clone/fetch/mod.rs unimplemented!()"
 title "gix push --tags"
-only_for_hash sha1-only && (small-repo-in-sandbox
-  it "matches git behavior" && {
-    # TODO: expect_parity effect -- push --tags origin
-    true
+only_for_hash sha1-only && (sandbox
+  dst="$(pwd)/dst.git"
+  git init -q -b main src
+  git -C src config commit.gpgsign false
+  git -C src config tag.gpgsign false
+  git -C src -c user.email=x@x -c user.name=x commit --allow-empty -qm c1
+  git -C src tag v1
+  git -C src -c user.email=x@x -c user.name=x tag -m "v2 msg" v2
+  git init -q --bare "$dst"
+  git -C src remote add origin "$dst"
+  it "matches git: --tags pushes refs/tags/* to initial-empty remote, exits 0" && {
+    cd src && expect_parity effect -- push --tags origin
   }
 )
 
