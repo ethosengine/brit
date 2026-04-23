@@ -77,6 +77,21 @@ title "gix push --delete (without any refs)"
   }
 )
 
+# mode=effect — mirrors `if (argc >= 2) die("--all can't be combined
+# with refspecs")` at push.c ~573. Runs AFTER remote resolution: the
+# remote must exist, and refspecs must be non-empty.
+title "gix push --all (combined with refspecs)"
+(sandbox
+  git init -q
+  git config commit.gpgsign false
+  git config tag.gpgsign false
+  git -c user.email=x@x -c user.name=x commit --allow-empty -qm init
+  git remote add origin /tmp/parity-unused
+  it "matches git: --all with an explicit refspec" && {
+    expect_parity effect -- push --all origin main
+  }
+)
+
 # --- positional & repository selection -------------------------------------
 
 # mode=effect

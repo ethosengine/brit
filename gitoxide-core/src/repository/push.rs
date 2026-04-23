@@ -170,6 +170,20 @@ pub(crate) mod function {
             std::process::exit(128);
         }
 
+        // Mirrors the post-resolve die-checks in vendor/git/builtin/push.c
+        // after `set_refspecs(argv + 1, argc - 1, remote)`:
+        //     if (flags & TRANSPORT_PUSH_ALL)    { if (argc>=2) die(...) }
+        //     if (flags & TRANSPORT_PUSH_MIRROR) { if (argc>=2) die(...) }
+        // argc>=2 means "at least one refspec was given past the repo
+        // positional" — in our CLI, `opts.ref_specs` already holds exactly
+        // those refspecs.
+        if opts.all && !opts.ref_specs.is_empty() {
+            let mut stderr = std::io::stderr().lock();
+            writeln!(stderr, "fatal: --all can't be combined with refspecs")?;
+            drop(stderr);
+            std::process::exit(128);
+        }
+
         anyhow::bail!(
             "gix push is not yet implemented — parity rows are being closed flag-by-flag; \
              see tests/journey/parity/push.sh for the current surface"
