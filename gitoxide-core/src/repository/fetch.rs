@@ -80,7 +80,24 @@ pub(crate) mod function {
             std::process::exit(128);
         }
 
-        let mut remote = crate::repository::remote::by_name_or_url(&repo, remote.as_deref())?;
+        // cmd_fetch treats an empty `""` positional the same as no positional —
+        // `remote_get("")` returns NULL, falling through to the silent
+        // fetch_multiple(empty) path. Collapse Some("") to None up-front so
+        // the silent-exit branch below catches it.
+        let remote_explicit = remote.as_deref().filter(|s| !s.is_empty()).map(str::to_owned);
+        let remote_was_explicit = remote_explicit.is_some();
+        let mut remote = match repo.find_fetch_remote(remote_explicit.as_deref().map(Into::into)) {
+            Ok(r) => r,
+            Err(gix::remote::find::for_fetch::Error::ExactlyOneRemoteNotAvailable) if !remote_was_explicit => {
+                // cmd_fetch with no positional + no configured default remote
+                // falls through to `fetch_multiple(&list, ...)` with an empty
+                // list and returns 0. Match that silent exit-0 so
+                // `gix fetch` / `gix fetch ''` in a freshly-init'd repo
+                // doesn't spuriously diverge from git.
+                return Ok(());
+            }
+            Err(e) => return Err(e.into()),
+        };
         if !ref_specs.is_empty() {
             remote.replace_refspecs(ref_specs.iter(), gix::remote::Direction::Fetch)?;
             remote = remote.with_fetch_tags(gix::remote::fetch::Tags::None);

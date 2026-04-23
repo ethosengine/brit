@@ -53,18 +53,26 @@ only_for_hash sha1-only && (sandbox
 # hash=sha1-only "gix cannot open sha256 remotes, see gix/src/clone/fetch/mod.rs unimplemented!()"
 title "gix fetch (no configured remote)"
 only_for_hash sha1-only && (sandbox
-  it "TODO: matches git: bare 'fetch' in a repo with no remotes" && {
-    :  # expect_parity effect -- fetch
+  git init -q
+  git config commit.gpgsign false
+  git -c user.email=x@x -c user.name=x commit --allow-empty -qm init
+  it "matches git: bare 'fetch' in a repo with no remotes silently exits 0" && {
+    expect_parity effect -- fetch
   }
 )
 
-# mode=effect — mirrors `remote_get` returning NULL for an empty or invalid
-# repository name. Exit 128.
+# mode=effect — `remote_get("")` returns NULL, falling through to the same
+# silent fetch_multiple(empty) path as no-arg fetch. Both binaries exit 0,
+# no output. This is an empirical git behavior (arguably surprising), not
+# a documented error path.
 # hash=sha1-only "gix cannot open sha256 remotes, see gix/src/clone/fetch/mod.rs unimplemented!()"
-title "gix fetch '' (bad repository: empty name)"
+title "gix fetch '' (empty-string positional)"
 only_for_hash sha1-only && (sandbox
-  it "TODO: matches git: positional empty repository name" && {
-    :  # expect_parity effect -- fetch ''
+  git init -q
+  git config commit.gpgsign false
+  git -c user.email=x@x -c user.name=x commit --allow-empty -qm init
+  it "matches git: positional '' silently exits 0" && {
+    expect_parity effect -- fetch ''
   }
 )
 
