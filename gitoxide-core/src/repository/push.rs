@@ -187,12 +187,14 @@ pub(crate) mod function {
         // RECURSE_SUBMODULES_ON_DEMAND vs _OFF). Bad values hit the same
         // generic die path.
         die_on_bad_bool("submodule.recurse")?;
-        // remote.<name>.mirror is bool-parsed eagerly by git's config
-        // reader — ANY remote with an invalid value dies at config load,
-        // not just the resolved-push remote. Enumerate and check each.
+        // remote.<name>.<bool-key> entries are bool-parsed eagerly by git's
+        // config reader — ANY remote with an invalid value dies at config
+        // load, not just the resolved-push remote. Enumerate and check
+        // each known bool key per configured remote.
         for name in repo.remote_names() {
-            let key = format!("remote.{name}.mirror");
-            die_on_bad_bool(&key)?;
+            for bool_key in ["mirror", "prune", "skipDefaultUpdate", "skipFetchAll"] {
+                die_on_bad_bool(&format!("remote.{name}.{bool_key}"))?;
+            }
         }
 
         // color.push (and its slot-specific children color.push.{reset,error})

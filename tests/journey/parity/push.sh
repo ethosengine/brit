@@ -230,6 +230,15 @@ title "gix push with push.followTags=<bogus>"
   it "matches git: -c remote.origin.mirror=bogus → 128" && {
     expect_parity effect -- -c remote.origin.mirror=bogus push origin main
   }
+  it "matches git: -c remote.origin.prune=bogus → 128" && {
+    expect_parity effect -- -c remote.origin.prune=bogus push origin main
+  }
+  it "matches git: -c remote.origin.skipDefaultUpdate=bogus → 128" && {
+    expect_parity effect -- -c remote.origin.skipDefaultUpdate=bogus push origin main
+  }
+  it "matches git: -c remote.origin.skipFetchAll=bogus → 128" && {
+    expect_parity effect -- -c remote.origin.skipFetchAll=bogus push origin main
+  }
 )
 
 # mode=effect — mirrors the push.default validator in
