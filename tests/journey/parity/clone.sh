@@ -329,30 +329,28 @@ only_for_hash sha1-only && (sandbox
 # hash=sha1-only "gix cannot open sha256 remotes, see gix/src/clone/fetch/mod.rs unimplemented!()"
 title "gix clone --revision=<rev>"
 only_for_hash sha1-only && (sandbox
-  it "matches git behavior" && {
-    # TODO: expect_parity effect -- clone --revision=refs/heads/main upstream.git
-    true
-  }
+  # shortcoming: `--revision` is present in vendor/git/builtin/clone.c
+  # (line 964) but not in system git 2.47.3 — system git rejects it
+  # with "unknown option" exit 129. The parity harness runs against
+  # system git, so wiring --revision in gix today would create false
+  # divergence (gix accepts, system git rejects). Defer until the
+  # parity harness either bumps its git target or the flag lands in
+  # a system-git release.
+  shortcoming "deferred: --revision is vendor-only; system git 2.47 rejects it"
 )
 
 # mode=effect — `--revision` + `--branch` conflict → die 128.
 # hash=sha1-only "gix cannot open sha256 remotes, see gix/src/clone/fetch/mod.rs unimplemented!()"
 title "gix clone --revision=<rev> --branch=<name> (conflict)"
 only_for_hash sha1-only && (sandbox
-  it "matches git: conflict dies 128" && {
-    # TODO: expect_parity effect -- clone --revision=main --branch=main upstream.git
-    true
-  }
+  shortcoming "deferred: --revision is vendor-only; conflict row depends on it"
 )
 
 # mode=effect — `--revision` + `--mirror` conflict → die 128.
 # hash=sha1-only "gix cannot open sha256 remotes, see gix/src/clone/fetch/mod.rs unimplemented!()"
 title "gix clone --revision=<rev> --mirror (conflict)"
 only_for_hash sha1-only && (sandbox
-  it "matches git: conflict dies 128" && {
-    # TODO: expect_parity effect -- clone --revision=main --mirror upstream.git
-    true
-  }
+  shortcoming "deferred: --revision is vendor-only; conflict row depends on it"
 )
 
 # --- local-optimization flags ---------------------------------------------
