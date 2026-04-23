@@ -15,6 +15,9 @@ where
     pub(super) refspecs: Vec<BString>,
     /// When `true`, skip the actual wire exchange (useful for `--dry-run`).
     pub(super) dry_run: bool,
+    /// When `true`, delete remote refs matching a push spec's RHS that have no
+    /// local counterpart — git's MATCH_REFS_PRUNE (transport.c).
+    pub(super) prune: bool,
 }
 
 /// Builder
@@ -31,6 +34,7 @@ where
             connection,
             refspecs: Vec::new(),
             dry_run: false,
+            prune: false,
         }
     }
 
@@ -49,6 +53,13 @@ where
     /// When enabled, perform all steps (ref matching, pack enumeration) but skip the wire exchange.
     pub fn with_dry_run(mut self, dry: bool) -> Self {
         self.dry_run = dry;
+        self
+    }
+
+    /// When enabled, synthesize delete commands for remote refs that match a push
+    /// spec's RHS pattern but have no local counterpart (git's MATCH_REFS_PRUNE).
+    pub fn with_prune(mut self, prune: bool) -> Self {
+        self.prune = prune;
         self
     }
 }

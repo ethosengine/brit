@@ -151,6 +151,47 @@ where
             name_pairs.push((local_name, remote_name));
         }
 
+        // Prune: for each remote ref matching a spec's RHS pattern but with no
+        // local counterpart in the mapping set, synthesize a delete command.
+        // Mirrors MATCH_REFS_PRUNE in transport.c + the prune loop in
+        // match_push_refs (vendor/git/remote.c). Only glob-style specs drive
+        // pruning; a one-sided spec like `main` has no RHS pattern to match
+        // remote names against.
+        if self.prune {
+            fn glob_match(pattern: &crate::bstr::BStr, name: &crate::bstr::BStr) -> bool {
+                use crate::bstr::ByteSlice as _;
+                match pattern.find_byte(b'*') {
+                    None => pattern == name,
+                    Some(pos) => {
+                        let prefix = &pattern[..pos];
+                        let suffix = &pattern[pos + 1..];
+                        name.len() >= prefix.len() + suffix.len() && name.starts_with(prefix) && name.ends_with(suffix)
+                    }
+                }
+            }
+            let mapped: std::collections::HashSet<BString> =
+                name_pairs.iter().map(|(_, remote)| remote.clone()).collect();
+            for (remote_name, oid) in &remote_oid_by_name {
+                if mapped.contains(remote_name) {
+                    continue;
+                }
+                let matched_by_any_rhs = parsed_refspecs.iter().any(|spec| {
+                    spec.to_ref()
+                        .destination()
+                        .map(|dst| glob_match(dst, remote_name.as_ref()))
+                        .unwrap_or(false)
+                });
+                if matched_by_any_rhs {
+                    commands.push(gix_protocol::send_pack::Command {
+                        refname: remote_name.clone(),
+                        old_oid: *oid,
+                        new_oid: null_oid,
+                    });
+                    name_pairs.push((BString::default(), remote_name.clone()));
+                }
+            }
+        }
+
         if commands.is_empty() {
             return Err(Error::NoRefspecs);
         }

@@ -602,6 +602,7 @@ pub(crate) mod function {
             prepare
                 .with_refspecs(specs_to_send.iter())
                 .with_dry_run(opts.dry_run)
+                .with_prune(opts.prune)
                 .transmit(gix::progress::Discard, &std::sync::atomic::AtomicBool::new(false))?
         };
 

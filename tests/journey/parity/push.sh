@@ -47,6 +47,11 @@
 #   (9) push --progress / --no-progress — effect-mode parity only; both
 #       binaries suppress progress to piped stderr, so the exit-code
 #       contract is unchanged by the flag.
+#  (10) push --prune — Prepare gains `with_prune(bool)`; transmit walks
+#       the remote ref set and synthesizes delete commands for any
+#       remote ref matching a spec's RHS glob that has no local
+#       counterpart (mirrors MATCH_REFS_PRUNE in transport.c +
+#       match_push_refs in remote.c).
 #
 # send-pack substrate is online (gix-protocol send-pack + Repository::push
 # + gitoxide-core glue + gix CLI wiring). Remaining TODO rows below exercise
@@ -591,13 +596,27 @@ only_for_hash sha1-only && (sandbox
   }
 )
 
-# mode=effect
+# mode=effect — `--prune` in cmd_push sets TRANSPORT_PUSH_PRUNE →
+# MATCH_REFS_PRUNE. match_push_refs then walks the remote ref set and
+# synthesizes delete commands for any remote ref matching a spec's RHS
+# pattern that has no local counterpart. Fixture: remote already carries
+# `main` and `stale`; local only has `main`. `push --prune` should delete
+# `stale` from the remote.
 # hash=sha1-only "gix cannot open sha256 remotes, see gix/src/clone/fetch/mod.rs unimplemented!()"
 title "gix push --prune"
-only_for_hash sha1-only && (small-repo-in-sandbox
-  it "matches git behavior" && {
-    # TODO: expect_parity effect -- push --prune origin refs/heads/*:refs/heads/*
-    true
+only_for_hash sha1-only && (sandbox
+  dst="$(pwd)/dst.git"
+  git init -q -b main src
+  git -C src config commit.gpgsign false
+  git -C src config tag.gpgsign false
+  git -C src -c user.email=x@x -c user.name=x commit --allow-empty -qm c1
+  git -C src branch stale
+  git init -q --bare "$dst"
+  git -C src remote add origin "$dst"
+  git -C src push -q origin main stale
+  git -C src branch -D stale
+  it "matches git: --prune deletes remote refs with no local counterpart, exits 0" && {
+    cd src && expect_parity effect -- push --prune origin refs/heads/*:refs/heads/*
   }
 )
 
