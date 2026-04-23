@@ -103,8 +103,12 @@ only_for_hash sha1-only && (sandbox
 # hash=sha1-only "gix cannot open sha256 remotes, see gix/src/clone/fetch/mod.rs unimplemented!()"
 title "gix fetch --negotiate-only (without --negotiation-tip)"
 only_for_hash sha1-only && (sandbox
-  it "TODO: matches git: --negotiate-only without any tips" && {
-    :  # expect_parity effect -- fetch --negotiate-only origin
+  git init -q
+  git config commit.gpgsign false
+  git -c user.email=x@x -c user.name=x commit --allow-empty -qm init
+  git remote add origin /tmp/parity-unused
+  it "matches git: --negotiate-only without any tips" && {
+    expect_parity effect -- fetch --negotiate-only origin
   }
 )
 

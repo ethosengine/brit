@@ -643,6 +643,15 @@ pub fn main() -> Result<()> {
                     std::process::exit(128);
                 }
             }
+            // `if (negotiate_only && !negotiation_tip.nr)` in cmd_fetch. Pre-transport
+            // exit 128 with git's exact message (note the trailing '=*').
+            if platform.negotiate_only && platform.negotiation_tip.is_empty() {
+                use std::io::Write;
+                let mut stderr = std::io::stderr().lock();
+                let _ = writeln!(stderr, "fatal: --negotiate-only needs one or more --negotiation-tip=*");
+                drop(stderr);
+                std::process::exit(128);
+            }
             let shallow = crate::plumbing::options::fetch::resolve_shallow(&platform.shallow)?;
             // `--remote` (gix-native) overrides the git-compatible positional
             // `<repository>` when both are supplied, matching the pre-parity
