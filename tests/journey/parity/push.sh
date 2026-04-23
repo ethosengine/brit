@@ -195,6 +195,24 @@ title "gix push --force-with-lease=ref:<bogus-oid>"
   }
 )
 
+# mode=effect — mirrors the `push.recursesubmodules` arm of
+# git_push_config, which delegates to parse_push_recurse_submodules_arg
+# (same semantics as --recurse-submodules). Invalid values die 128 with
+# "fatal: bad push.recursesubmodules argument: <v>".
+title "gix push with push.recursesubmodules=<bogus>"
+(sandbox
+  git init -q
+  git checkout -b main
+  git config commit.gpgsign false
+  git config tag.gpgsign false
+  touch a && git add a
+  git -c user.email=x@x -c user.name=x commit -qm init
+  git remote add origin /tmp/parity-unused
+  it "matches git: -c push.recursesubmodules=bogus push → 128" && {
+    expect_parity effect -- -c push.recursesubmodules=bogus push origin main
+  }
+)
+
 # mode=effect — mirrors the `push.gpgsign` arm of git_push_config. The
 # config key accepts the same values as --signed (yes/true/on/1, no/false/
 # off/0, if-asked, case-insensitive via git_parse_maybe_bool). Invalid

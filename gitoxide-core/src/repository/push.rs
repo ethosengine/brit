@@ -154,6 +154,23 @@ pub(crate) mod function {
         P: gix::NestedProgress,
         P::SubProgress: 'static,
     {
+        // Validate push.recursesubmodules from config. Mirrors the
+        // `push.recursesubmodules` arm of git_push_config, which calls
+        // `parse_push_recurse_submodules_arg` — same semantics as the
+        // --recurse-submodules CLI parser, so we reuse RecurseSubmodules::parse.
+        // Invalid values die 128 with "fatal: bad push.recursesubmodules
+        // argument: <v>" (the config-key-namespaced variant of the
+        // --recurse-submodules error message).
+        if let Some(v) = repo.config_snapshot().string("push.recursesubmodules") {
+            let s = std::str::from_utf8(v.as_ref()).unwrap_or("");
+            if super::RecurseSubmodules::parse(s).is_err() {
+                let mut stderr = std::io::stderr().lock();
+                writeln!(stderr, "fatal: bad push.recursesubmodules argument: {s}")?;
+                drop(stderr);
+                std::process::exit(128);
+            }
+        }
+
         // Validate push.gpgsign from config. Mirrors the `push.gpgsign`
         // arm of git_push_config in vendor/git/builtin/push.c: accepts the
         // same value set as --signed (git_parse_maybe_bool ∪ {if-asked});
