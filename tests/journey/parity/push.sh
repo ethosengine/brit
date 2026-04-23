@@ -156,6 +156,26 @@ title "gix push --force-with-lease=ref:<bogus-oid>"
   }
 )
 
+# mode=effect — git's OPT_IPVERSION binds -4 and -6 to the same
+# transport_family variable, so the two flags silently override each
+# other instead of erroring like Clap's conflicts_with would. Test
+# both orders (-4 -6 and -6 -4) reach the same post-parse state and
+# exit identically.
+title "gix push -4 -6 / -6 -4 (no parse-time conflict)"
+(sandbox
+  git init -q
+  git config commit.gpgsign false
+  git config tag.gpgsign false
+  git -c user.email=x@x -c user.name=x commit --allow-empty -qm init
+  git remote add origin /tmp/parity-unused
+  it "matches git: -4 -6 doesn't error at parse time" && {
+    expect_parity effect -- push -4 -6 origin main
+  }
+  it "matches git: -6 -4 doesn't error at parse time" && {
+    expect_parity effect -- push -6 -4 origin main
+  }
+)
+
 # --- positional & repository selection -------------------------------------
 
 # mode=effect

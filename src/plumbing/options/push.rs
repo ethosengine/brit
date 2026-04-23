@@ -124,11 +124,17 @@ pub struct Platform {
     pub recurse_submodules: Option<String>,
 
     /// Force IPv4 connections to the remote.
-    #[clap(short = '4', long, conflicts_with = "ipv6")]
+    ///
+    /// Mutually overrides `-6`/`--ipv6` (last wins), matching git's
+    /// OPT_IPVERSION — both flags write to the same `transport_family`
+    /// variable, so `-4 -6` silently becomes IPv6 rather than erroring.
+    #[clap(short = '4', long, overrides_with = "ipv6")]
     pub ipv4: bool,
 
     /// Force IPv6 connections to the remote.
-    #[clap(short = '6', long, conflicts_with = "ipv4")]
+    ///
+    /// Mutually overrides `-4`/`--ipv4` (last wins) — see `-4`.
+    #[clap(short = '6', long, overrides_with = "ipv4")]
     pub ipv6: bool,
 
     /// Repository override (equivalent to the first positional `<repository>`).
