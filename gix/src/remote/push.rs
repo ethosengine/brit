@@ -1,5 +1,8 @@
 use crate::bstr::BString;
 
+#[cfg(feature = "blocking-network-client")]
+pub use super::connection::push::Error;
+
 /// Per-ref status from a completed push.
 #[derive(Debug, Clone)]
 pub struct RefStatus {

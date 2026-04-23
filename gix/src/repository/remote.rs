@@ -163,6 +163,42 @@ impl crate::Repository {
         self.try_find_remote_inner(name_or_url.into(), false)
     }
 
+    /// Connect to `remote_name` in the push direction, perform a `receive-pack` handshake,
+    /// apply `refspecs`, and transmit a pack.
+    ///
+    /// This is a convenience wrapper over
+    /// [`Remote::connect`] → [`Connection::prepare_push`] → [`Prepare::with_refspecs`] → [`Prepare::transmit`].
+    ///
+    /// For finer control (dry-run, custom progress, per-call options) use the lower-level chain directly.
+    ///
+    /// # Feature flag
+    ///
+    /// Only available when the `blocking-network-client` feature is active.
+    #[cfg(feature = "blocking-network-client")]
+    pub fn push<'a, I, S>(
+        &self,
+        remote_name: impl Into<&'a crate::bstr::BStr>,
+        refspecs: I,
+    ) -> Result<crate::remote::push::Outcome, crate::repository::push::Error>
+    where
+        I: IntoIterator<Item = S>,
+        S: AsRef<[u8]>,
+    {
+        use crate::repository::push::Error;
+        let remote = self.find_remote(remote_name).map_err(Error::FindRemote)?;
+        let conn = remote.connect(crate::remote::Direction::Push).map_err(Error::Connect)?;
+        let prepare = conn
+            .prepare_push(gix_features::progress::Discard)
+            .map_err(Error::Prepare)?;
+        prepare
+            .with_refspecs(refspecs)
+            .transmit(
+                gix_features::progress::Discard,
+                &std::sync::atomic::AtomicBool::new(false),
+            )
+            .map_err(Error::Transmit)
+    }
+
     fn try_find_remote_inner<'a>(
         &self,
         name_or_url: impl Into<&'a BStr>,
