@@ -295,8 +295,26 @@ only_for_hash sha1-only && (sandbox
 # hash=sha1-only "gix cannot open sha256 remotes, see gix/src/clone/fetch/mod.rs unimplemented!()"
 title "gix fetch <remote> <refspec>"
 only_for_hash sha1-only && (sandbox
-  it "TODO: matches git: fetch origin refs/heads/main:refs/remotes/origin/main" && {
-    :  # expect_parity effect -- fetch origin refs/heads/main:refs/remotes/origin/main
+  # Upstream with a real branch; clone has `origin` pointing at it.
+  git init -q --bare upstream.git
+  git clone -q upstream.git work &>/dev/null
+  (cd work
+    git config commit.gpgsign false
+    git -c user.email=x@x -c user.name=x commit --allow-empty -qm c1
+    git push -q origin master
+  )
+  git init -q clone
+  (cd clone
+    git remote add origin "$(cd .. && pwd)/upstream.git"
+    git config commit.gpgsign false
+    git -c user.email=x@x -c user.name=x commit --allow-empty -qm init
+  )
+  cd clone
+  it "matches git: fetch origin master (short refspec)" && {
+    expect_parity effect -- fetch origin master
+  }
+  it "matches git: fetch origin refs/heads/master:refs/remotes/origin/master (full refspec)" && {
+    expect_parity effect -- fetch origin refs/heads/master:refs/remotes/origin/master
   }
 )
 
@@ -340,8 +358,23 @@ only_for_hash sha1-only && (sandbox
 # hash=sha1-only "gix cannot open sha256 remotes, see gix/src/clone/fetch/mod.rs unimplemented!()"
 title "gix fetch --depth=<n>"
 only_for_hash sha1-only && (sandbox
-  it "TODO: matches git: --depth=1 yields a shallow clone" && {
-    :  # expect_parity effect -- fetch --depth=1 origin
+  # Upstream with a real branch so --depth has something to narrow.
+  git init -q --bare upstream.git
+  git clone -q upstream.git work &>/dev/null
+  (cd work
+    git config commit.gpgsign false
+    git -c user.email=x@x -c user.name=x commit --allow-empty -qm c1
+    git push -q origin master
+  )
+  git init -q clone
+  (cd clone
+    git remote add origin "$(cd .. && pwd)/upstream.git"
+    git config commit.gpgsign false
+    git -c user.email=x@x -c user.name=x commit --allow-empty -qm init
+  )
+  cd clone
+  it "matches git: --depth=1 accepted with a real refspec, exit 0" && {
+    expect_parity effect -- fetch --depth=1 origin master
   }
 )
 
@@ -349,8 +382,22 @@ only_for_hash sha1-only && (sandbox
 # hash=sha1-only "gix cannot open sha256 remotes, see gix/src/clone/fetch/mod.rs unimplemented!()"
 title "gix fetch --deepen=<n>"
 only_for_hash sha1-only && (sandbox
-  it "TODO: matches git: --deepen=1 extends a shallow clone" && {
-    :  # expect_parity effect -- fetch --deepen=1 origin
+  git init -q --bare upstream.git
+  git clone -q upstream.git work &>/dev/null
+  (cd work
+    git config commit.gpgsign false
+    git -c user.email=x@x -c user.name=x commit --allow-empty -qm c1
+    git push -q origin master
+  )
+  git init -q clone
+  (cd clone
+    git remote add origin "$(cd .. && pwd)/upstream.git"
+    git config commit.gpgsign false
+    git -c user.email=x@x -c user.name=x commit --allow-empty -qm init
+  )
+  cd clone
+  it "matches git: --deepen=1 accepted with a real refspec, exit 0" && {
+    expect_parity effect -- fetch --deepen=1 origin master
   }
 )
 
@@ -358,8 +405,22 @@ only_for_hash sha1-only && (sandbox
 # hash=sha1-only "gix cannot open sha256 remotes, see gix/src/clone/fetch/mod.rs unimplemented!()"
 title "gix fetch --shallow-since=<date>"
 only_for_hash sha1-only && (sandbox
-  it "TODO: matches git: --shallow-since=<date> narrows history" && {
-    :  # expect_parity effect -- fetch --shallow-since='2020-01-01' origin
+  git init -q --bare upstream.git
+  git clone -q upstream.git work &>/dev/null
+  (cd work
+    git config commit.gpgsign false
+    git -c user.email=x@x -c user.name=x commit --allow-empty -qm c1
+    git push -q origin master
+  )
+  git init -q clone
+  (cd clone
+    git remote add origin "$(cd .. && pwd)/upstream.git"
+    git config commit.gpgsign false
+    git -c user.email=x@x -c user.name=x commit --allow-empty -qm init
+  )
+  cd clone
+  it "matches git: --shallow-since=<date> accepted with a real refspec, exit 0" && {
+    expect_parity effect -- fetch --shallow-since=2020-01-01 origin master
   }
 )
 
