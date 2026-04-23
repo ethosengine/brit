@@ -514,12 +514,14 @@ title "gix push -q / --quiet"
 
 # --- force / safety --------------------------------------------------------
 
-# mode=effect
+# mode=effect — --force adjusts the update rule but doesn't skip local
+# refspec resolution. Same refspec-first invariant as --dry-run (iter 30):
+# a nonexistent src refspec exits 1 before transport regardless of
+# --force.
 title "gix push -f / --force"
 (small-repo-in-sandbox
-  it "matches git behavior" && {
-    # TODO: expect_parity effect -- push --force origin main
-    true
+  it "matches git: --force with unmatched src refspec exits 1" && {
+    expect_parity effect -- push --force /tmp/parity-unused nonexistent-refspec
   }
 )
 
