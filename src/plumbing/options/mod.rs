@@ -663,6 +663,17 @@ pub mod clone {
         #[clap(long, short = 'o', value_name = "NAME")]
         pub origin: Option<OsString>,
 
+        /// Use hard links / direct copy for the .git/objects dir when the
+        /// source is local. `--no-local` forces the regular Git transport
+        /// even for local paths. Parse-only (gix clone fetches via gix's
+        /// file:// transport regardless; the flag is currently a no-op).
+        #[clap(long, short = 'l', overrides_with = "_no_local")]
+        pub local: bool,
+
+        /// Opposite of `--local`. Parse-only (see `--local`).
+        #[clap(long = "no-local", overrides_with = "local")]
+        pub _no_local: bool,
+
         #[clap(flatten)]
         pub shallow: ShallowOptions,
 

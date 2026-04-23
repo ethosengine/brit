@@ -608,6 +608,8 @@ pub fn main() -> Result<()> {
             no_tags,
             sparse: _,
             origin: _,
+            local: _,
+            _no_local: _,
             ref_name,
             branch,
             remote,

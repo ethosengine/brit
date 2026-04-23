@@ -361,17 +361,27 @@ only_for_hash sha1-only && (sandbox
 # hash=sha1-only "gix cannot open sha256 remotes, see gix/src/clone/fetch/mod.rs unimplemented!()"
 title "gix clone -l / --local / --no-local"
 only_for_hash sha1-only && (sandbox
+  git-init-hash-aware -q --bare src-repo.git
+  for d in g-l g-local g-no x-l x-local x-no; do
+    mkdir "$d" && (cd "$d" && ln -s ../src-repo.git .)
+  done
   it "matches git: -l exits 0 on local path" && {
-    # TODO: expect_parity effect -- clone -l upstream.git
-    true
+    (cd g-l && expect_run 0 git clone -l src-repo.git target)
+  }
+  it "matches gix: -l exits 0 on local path" && {
+    (cd x-l && expect_run 0 "$exe_plumbing" clone -l src-repo.git target)
   }
   it "matches git: --local exits 0" && {
-    # TODO: expect_parity effect -- clone --local upstream.git
-    true
+    (cd g-local && expect_run 0 git clone --local src-repo.git target)
+  }
+  it "matches gix: --local exits 0" && {
+    (cd x-local && expect_run 0 "$exe_plumbing" clone --local src-repo.git target)
   }
   it "matches git: --no-local exits 0" && {
-    # TODO: expect_parity effect -- clone --no-local upstream.git
-    true
+    (cd g-no && expect_run 0 git clone --no-local src-repo.git target)
+  }
+  it "matches gix: --no-local exits 0" && {
+    (cd x-no && expect_run 0 "$exe_plumbing" clone --no-local src-repo.git target)
   }
 )
 
