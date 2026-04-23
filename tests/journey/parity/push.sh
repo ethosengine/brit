@@ -574,12 +574,15 @@ title "gix push -u / --set-upstream"
 
 # --- transport-level options ----------------------------------------------
 
-# mode=effect
+# mode=effect — --thin / --no-thin are packfile-generation knobs; neither
+# affects local refspec resolution. Same refspec-first invariant as iter 30.
 title "gix push --thin / --no-thin"
 (small-repo-in-sandbox
-  it "matches git behavior (--no-thin)" && {
-    # TODO: expect_parity effect -- push --no-thin origin main
-    true
+  it "matches git: --thin with unmatched src refspec exits 1" && {
+    expect_parity effect -- push --thin /tmp/parity-unused nonexistent-refspec
+  }
+  it "matches git: --no-thin with unmatched src refspec exits 1" && {
+    expect_parity effect -- push --no-thin /tmp/parity-unused nonexistent-refspec
   }
 )
 
