@@ -663,6 +663,25 @@ pub fn main() -> Result<()> {
                     }
                 }
             }
+            // cmd_fetch pre-transport: `if (porcelain) { switch (recurse_submodules_cli) ... }`.
+            // Same shape as the negotiate_only conflict above — boolean-false
+            // / unset values fall through (they are forced to OFF for
+            // porcelain dispatch), everything else dies 128.
+            if platform.porcelain {
+                if let Some(raw) = platform.recurse_submodules.as_deref() {
+                    use crate::plumbing::options::fetch::{parse_recurse_submodules, RecurseSubmodules};
+                    if !matches!(parse_recurse_submodules(raw), RecurseSubmodules::Off) {
+                        use std::io::Write;
+                        let mut stderr = std::io::stderr().lock();
+                        let _ = writeln!(
+                            stderr,
+                            "fatal: options '--porcelain' and '--recurse-submodules' cannot be used together"
+                        );
+                        drop(stderr);
+                        std::process::exit(128);
+                    }
+                }
+            }
             // `if (negotiate_only && !negotiation_tip.nr)` in cmd_fetch. Pre-transport
             // exit 128 with git's exact message (note the trailing '=*').
             if platform.negotiate_only && platform.negotiation_tip.is_empty() {
