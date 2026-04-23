@@ -67,6 +67,10 @@
 #  (13) push --force-if-includes — effect-mode only; in a fast-forward
 #       fixture the lease + includes checks trivially pass, so both
 #       binaries exit 0. Actual enforcement landed with lease-mismatch.
+#  (14) push --receive-pack / --exec — effect-mode only; when set to the
+#       default `git-receive-pack` both binaries exit 0 through the
+#       normal pipeline. Non-default receive-pack programs need a mock
+#       binary and a more elaborate fixture (deferred).
 #
 # send-pack substrate is online (gix-protocol send-pack + Repository::push
 # + gitoxide-core glue + gix CLI wiring). Remaining TODO rows below exercise
@@ -856,23 +860,43 @@ only_for_hash sha1-only && (small-repo-in-sandbox
   }
 )
 
-# mode=effect
+# mode=effect — `--receive-pack=<program>` names the binary the remote
+# should invoke (OPT_STRING in builtin/push.c, ultimately passed through
+# transport->smart_options->receivepack). When set to the default
+# `git-receive-pack` for a file:// transport, it's effectively a no-op
+# on both sides; both binaries follow the normal fast-forward pipeline
+# and exit 0. Exercising a non-default program requires shipping a
+# mock receive-pack binary alongside the test harness and is deferred.
 # hash=sha1-only "gix cannot open sha256 remotes, see gix/src/clone/fetch/mod.rs unimplemented!()"
 title "gix push --receive-pack=<program>"
-only_for_hash sha1-only && (small-repo-in-sandbox
-  it "matches git behavior" && {
-    # TODO: expect_parity effect -- push --receive-pack=git-receive-pack origin main
-    true
+only_for_hash sha1-only && (sandbox
+  dst="$(pwd)/dst.git"
+  git init -q -b main src
+  git -C src config commit.gpgsign false
+  git -C src config tag.gpgsign false
+  git -C src -c user.email=x@x -c user.name=x commit --allow-empty -qm c1
+  git init -q --bare "$dst"
+  git -C src remote add origin "$dst"
+  it "matches git: --receive-pack=git-receive-pack (default) exits 0" && {
+    cd src && expect_parity effect -- push --receive-pack=git-receive-pack origin main
   }
 )
 
-# mode=effect — alias of --receive-pack
+# mode=effect — `--exec` is git's visible alias for `--receive-pack`; same
+# OPT_STRING, same transport_set_option path. Clap exposes it via
+# `visible_alias = "exec"` so the dispatch is identical.
 # hash=sha1-only "gix cannot open sha256 remotes, see gix/src/clone/fetch/mod.rs unimplemented!()"
 title "gix push --exec=<program>"
-only_for_hash sha1-only && (small-repo-in-sandbox
-  it "matches git behavior" && {
-    # TODO: expect_parity effect -- push --exec=git-receive-pack origin main
-    true
+only_for_hash sha1-only && (sandbox
+  dst="$(pwd)/dst.git"
+  git init -q -b main src
+  git -C src config commit.gpgsign false
+  git -C src config tag.gpgsign false
+  git -C src -c user.email=x@x -c user.name=x commit --allow-empty -qm c1
+  git init -q --bare "$dst"
+  git -C src remote add origin "$dst"
+  it "matches git: --exec=git-receive-pack (alias of --receive-pack) exits 0" && {
+    cd src && expect_parity effect -- push --exec=git-receive-pack origin main
   }
 )
 
