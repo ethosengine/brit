@@ -584,14 +584,35 @@ pub(crate) mod function {
             effective_specs.push("refs/tags/*:refs/tags/*".into());
         }
 
+        // `--delete` in cmd_push rewrites every positional refspec into a
+        // delete-spec (`:<ref>`). The pre-transport die-check above already
+        // rejected `--delete` without any refs, so this loop sees at least one
+        // entry. Specs that already begin with `:` are passed through — git's
+        // own parse-refspec pipeline is tolerant of the double-colon form
+        // (treats it as "delete empty ref", which errors downstream), so we
+        // match rather than guard.
+        if opts.delete {
+            for spec in &mut effective_specs {
+                if !spec.starts_with(b":") {
+                    spec.insert(0, b':');
+                }
+            }
+        }
+
         // Perform the push.
         let outcome = repo.push(remote_name, effective_specs.iter())?;
 
         // Print per-ref status to process stderr (unbuffered) so output reaches
-        // the terminal even when the passed-in writer is buffered.
+        // the terminal even when the passed-in writer is buffered. A pure-delete
+        // command (empty local, new_oid=null) renders as `- [deleted]` to
+        // mirror git's own per-ref line; everything else is new/updated or
+        // rejected.
         let mut stderr = std::io::stderr().lock();
         for status in &outcome.status {
             match &status.result {
+                Ok(()) if status.local.is_empty() => {
+                    writeln!(stderr, " - [deleted]      {}", status.remote)?;
+                }
                 Ok(()) => {
                     writeln!(stderr, " * [new/updated]  {} -> {}", status.local, status.remote)?;
                 }

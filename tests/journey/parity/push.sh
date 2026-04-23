@@ -37,6 +37,9 @@
 #       initial-empty-remote case exercises heads+tags transmission only.
 #   (6) push --tags — CLI glue appends `refs/tags/*:refs/tags/*` to the
 #       refspec list (stacks with user refspecs, mirrors builtin/push.c).
+#   (7) push --delete / -d — CLI glue rewrites each positional refspec
+#       `<ref>` into a delete-spec `:<ref>` (mirrors builtin/push.c).
+#       Per-ref output gains a `- [deleted]` line to match git.
 #
 # send-pack substrate is online (gix-protocol send-pack + Repository::push
 # + gitoxide-core glue + gix CLI wiring). Remaining TODO rows below exercise
@@ -558,13 +561,26 @@ only_for_hash sha1-only && (small-repo-in-sandbox
   }
 )
 
-# mode=effect
+# mode=effect — `--delete` in cmd_push rewrites every positional refspec
+# into a delete-spec `:<ref>` before set_refspecs (builtin/push.c). Gix
+# performs the same transform in the CLI glue, so the user writes
+# `push --delete origin feature` and the send-pack pipeline sees a
+# delete command with old_oid=<current> and new_oid=null. Fixture primes
+# the remote with two branches so one can be deleted.
 # hash=sha1-only "gix cannot open sha256 remotes, see gix/src/clone/fetch/mod.rs unimplemented!()"
 title "gix push -d / --delete"
-only_for_hash sha1-only && (small-repo-in-sandbox
-  it "matches git behavior" && {
-    # TODO: expect_parity effect -- push --delete origin feature
-    true
+only_for_hash sha1-only && (sandbox
+  dst="$(pwd)/dst.git"
+  git init -q -b main src
+  git -C src config commit.gpgsign false
+  git -C src config tag.gpgsign false
+  git -C src -c user.email=x@x -c user.name=x commit --allow-empty -qm c1
+  git -C src branch feature
+  git init -q --bare "$dst"
+  git -C src remote add origin "$dst"
+  git -C src push -q origin main feature
+  it "matches git: --delete <ref> deletes the remote ref, exits 0" && {
+    cd src && expect_parity effect -- push --delete origin feature
   }
 )
 
