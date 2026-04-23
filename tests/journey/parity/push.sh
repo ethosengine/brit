@@ -77,6 +77,9 @@
 #       `Error::PushOptionsNotSupported` and the CLI glue dies 128 with
 #       git's exact two-line fatal message. Actual pkt-line transmission
 #       when the capability IS advertised is a follow-up.
+#  (16) push -4 / -6 — on file:// transport there is no socket so both
+#       flags are effective no-ops. Exit-code parity only; a live-TCP
+#       harness would be required to assert actual family selection.
 #
 # send-pack substrate is online (gix-protocol send-pack + Repository::push
 # + gitoxide-core glue + gix CLI wiring). Remaining TODO rows below exercise
@@ -928,23 +931,39 @@ only_for_hash sha1-only && (sandbox
   }
 )
 
-# mode=effect — IPv4 transport family
+# mode=effect — `-4` / `--ipv4` constrain outbound socket family when the
+# transport is TCP. For file:// there is no socket, so the flag is an
+# effective no-op and both binaries exit 0 through the normal pipeline.
+# Non-file transports need a live TCP test harness and are deferred.
 # hash=sha1-only "gix cannot open sha256 remotes, see gix/src/clone/fetch/mod.rs unimplemented!()"
 title "gix push -4"
-only_for_hash sha1-only && (small-repo-in-sandbox
-  it "matches git behavior" && {
-    # TODO: expect_parity effect -- push -4 origin main
-    true
+only_for_hash sha1-only && (sandbox
+  dst="$(pwd)/dst.git"
+  git init -q -b main src
+  git -C src config commit.gpgsign false
+  git -C src config tag.gpgsign false
+  git -C src -c user.email=x@x -c user.name=x commit --allow-empty -qm c1
+  git init -q --bare "$dst"
+  git -C src remote add origin "$dst"
+  it "matches git: -4 on file:// transport, exits 0" && {
+    cd src && expect_parity effect -- push -4 origin main
   }
 )
 
-# mode=effect — IPv6 transport family
+# mode=effect — `-6` / `--ipv6` is the IPv6 counterpart; same reasoning
+# as `-4` above.
 # hash=sha1-only "gix cannot open sha256 remotes, see gix/src/clone/fetch/mod.rs unimplemented!()"
 title "gix push -6"
-only_for_hash sha1-only && (small-repo-in-sandbox
-  it "matches git behavior" && {
-    # TODO: expect_parity effect -- push -6 origin main
-    true
+only_for_hash sha1-only && (sandbox
+  dst="$(pwd)/dst.git"
+  git init -q -b main src
+  git -C src config commit.gpgsign false
+  git -C src config tag.gpgsign false
+  git -C src -c user.email=x@x -c user.name=x commit --allow-empty -qm c1
+  git init -q --bare "$dst"
+  git -C src remote add origin "$dst"
+  it "matches git: -6 on file:// transport, exits 0" && {
+    cd src && expect_parity effect -- push -6 origin main
   }
 )
 
