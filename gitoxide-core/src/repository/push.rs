@@ -182,6 +182,11 @@ pub(crate) mod function {
         die_on_bad_bool("push.followTags")?;
         die_on_bad_bool("push.useForceIfIncludes")?;
         die_on_bad_bool("push.autoSetupRemote")?;
+        // submodule.recurse is consumed by cmd_push's `submodule.recurse`
+        // config arm via git_config_bool (mapping to
+        // RECURSE_SUBMODULES_ON_DEMAND vs _OFF). Bad values hit the same
+        // generic die path.
+        die_on_bad_bool("submodule.recurse")?;
 
         // Validate push.default from config. Mirrors the dispatch in
         // vendor/git/environment.c that resolves `push.default` to one of
