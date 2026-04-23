@@ -62,6 +62,62 @@ pub(crate) mod function {
             bail!("JSON output isn't yet supported for fetching.");
         }
 
+        // git's config reader validates boolean config values eagerly when
+        // cmd_fetch consults them, dying 128 with
+        //     fatal: bad boolean config value '<value>' for '<key-lowercase>'
+        // before any transport work. Enumerate the fetch-side boolean keys
+        // the C entry-point reads via git_config_bool.
+        let die_on_bad_bool = |key: &str| -> anyhow::Result<()> {
+            if let Some(v) = repo.config_snapshot().string(key) {
+                let is_valid = gix::config::Boolean::try_from(v.as_ref()).is_ok();
+                if !is_valid {
+                    use std::io::Write;
+                    let s = std::str::from_utf8(v.as_ref()).unwrap_or("");
+                    let mut stderr = std::io::stderr().lock();
+                    let _ = writeln!(
+                        stderr,
+                        "fatal: bad boolean config value '{s}' for '{}'",
+                        key.to_ascii_lowercase()
+                    );
+                    drop(stderr);
+                    std::process::exit(128);
+                }
+            }
+            Ok(())
+        };
+        die_on_bad_bool("fetch.prune")?;
+        die_on_bad_bool("fetch.pruneTags")?;
+        die_on_bad_bool("fetch.writeCommitGraph")?;
+        die_on_bad_bool("fetch.showForcedUpdates")?;
+
+        // fetch.recurseSubmodules is string-valued (yes/no/on-demand plus
+        // boolean aliases). git dies 128 on anything outside that set with
+        //     fatal: bad recurse-submodules argument: <value>
+        // Inline parser matches parse_fetch_recurse + git_parse_maybe_bool_text
+        // in vendor/git/ — mirrored in src/plumbing/options/fetch.rs for the
+        // CLI-side check; duplicated here for the config-side check because
+        // gitoxide-core cannot depend on the binary's options module.
+        if let Some(v) = repo.config_snapshot().string("fetch.recurseSubmodules") {
+            let s = std::str::from_utf8(v.as_ref()).unwrap_or("");
+            let lower = s.to_ascii_lowercase();
+            let ok = matches!(
+                lower.as_str(),
+                "no" | "false" | "off" | "0" | "yes" | "true" | "on" | "1" | "" | "on-demand"
+            );
+            if !ok {
+                // Note the different message shape for the config key vs.
+                // the CLI flag: git prints the config key itself ("bad
+                // fetch.recursesubmodules argument") rather than the
+                // generic "bad recurse-submodules argument" used for
+                // --recurse-submodules=<bogus>.
+                use std::io::Write;
+                let mut stderr = std::io::stderr().lock();
+                let _ = writeln!(stderr, "fatal: bad fetch.recursesubmodules argument: {s}");
+                drop(stderr);
+                std::process::exit(128);
+            }
+        }
+
         // cmd_fetch in vendor/git/builtin/fetch.c:
         //     if (unshallow) {
         //         if (depth) die ...     // already handled at CLI dispatch

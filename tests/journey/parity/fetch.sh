@@ -882,26 +882,31 @@ only_for_hash sha1-only && (sandbox
 # hash=sha1-only "gix cannot open sha256 remotes, see gix/src/clone/fetch/mod.rs unimplemented!()"
 title "gix fetch with fetch.<bool>=<bogus>"
 only_for_hash sha1-only && (sandbox
-  it "TODO: matches git: -c fetch.prune=bogus → 128" && {
-    :  # expect_parity effect -- -c fetch.prune=bogus fetch origin
+  bare-empty-upstream-with-origin
+  it "matches git: -c fetch.prune=bogus → 128" && {
+    expect_parity effect -- -c fetch.prune=bogus fetch origin
   }
-  it "TODO: matches git: -c fetch.pruneTags=bogus → 128" && {
-    :  # expect_parity effect -- -c fetch.pruneTags=bogus fetch origin
+  it "matches git: -c fetch.pruneTags=bogus → 128" && {
+    expect_parity effect -- -c fetch.pruneTags=bogus fetch origin
   }
-  it "TODO: matches git: -c fetch.writeCommitGraph=bogus → 128" && {
-    :  # expect_parity effect -- -c fetch.writeCommitGraph=bogus fetch origin
+  it "matches git: -c fetch.writeCommitGraph=bogus → 128" && {
+    expect_parity effect -- -c fetch.writeCommitGraph=bogus fetch origin
   }
-  it "TODO: matches git: -c fetch.showForcedUpdates=bogus → 128" && {
-    :  # expect_parity effect -- -c fetch.showForcedUpdates=bogus fetch origin
+  it "matches git: -c fetch.showForcedUpdates=bogus → 128" && {
+    expect_parity effect -- -c fetch.showForcedUpdates=bogus fetch origin
   }
 )
 
-# mode=effect — bad recurse-submodules config value.
+# mode=effect — bad recurse-submodules config value. Note the message
+# shape differs from the CLI flag ("bad fetch.recursesubmodules argument"
+# vs "bad recurse-submodules argument") — git prints the config key
+# verbatim for the config path.
 # hash=sha1-only "gix cannot open sha256 remotes, see gix/src/clone/fetch/mod.rs unimplemented!()"
 title "gix fetch with fetch.recurseSubmodules=<bogus>"
 only_for_hash sha1-only && (sandbox
-  it "TODO: matches git: -c fetch.recurseSubmodules=bogus → 128" && {
-    :  # expect_parity effect -- -c fetch.recurseSubmodules=bogus fetch origin
+  bare-empty-upstream-with-origin
+  it "matches git: -c fetch.recurseSubmodules=bogus → 128" && {
+    expect_parity effect -- -c fetch.recurseSubmodules=bogus fetch origin
   }
 )
 
