@@ -233,8 +233,19 @@ only_for_hash sha1-only && (sandbox
 # hash=sha1-only "gix cannot open sha256 remotes, see gix/src/clone/fetch/mod.rs unimplemented!()"
 title "gix fetch origin (named remote, bare file:// upstream)"
 only_for_hash sha1-only && (sandbox
-  it "TODO: matches git: fetch from named origin" && {
-    :  # expect_parity effect -- fetch origin
+  # Construct a bare empty upstream + a non-bare clone whose `origin` points
+  # at it. Fetching against the empty upstream is a trivial round-trip: both
+  # binaries exit 0 with no ref updates.
+  git init -q --bare upstream.git
+  git init -q clone
+  (cd clone
+    git remote add origin "$(cd .. && pwd)/upstream.git"
+    git config commit.gpgsign false
+    git -c user.email=x@x -c user.name=x commit --allow-empty -qm init
+  )
+  it "matches git: fetch from named origin (empty upstream, exit 0)" && {
+    cd clone
+    expect_parity effect -- fetch origin
   }
 )
 
