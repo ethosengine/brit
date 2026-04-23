@@ -697,8 +697,26 @@ only_for_hash sha1-only && (sandbox
 # hash=sha1-only "gix cannot open sha256 remotes, see gix/src/clone/fetch/mod.rs unimplemented!()"
 title "gix fetch --refmap=<spec>"
 only_for_hash sha1-only && (sandbox
-  it "TODO: matches git: --refmap=<spec> overrides the default refmap" && {
-    :  # expect_parity effect -- fetch --refmap=refs/heads/*:refs/heads/* origin main
+  # --refmap needs a real refspec AND a remote-tracking destination; mapping
+  # into refs/heads/* (the checked-out branch) would make git die 128 with
+  # 'refusing to fetch into branch'. Use the standard refs/remotes/origin/*
+  # destination for a clean round-trip.
+  git init -q --bare upstream.git
+  git clone -q upstream.git work &>/dev/null
+  (cd work
+    git config commit.gpgsign false
+    git -c user.email=x@x -c user.name=x commit --allow-empty -qm c1
+    git push -q origin master
+  )
+  git init -q clone
+  (cd clone
+    git remote add origin "$(cd .. && pwd)/upstream.git"
+    git config commit.gpgsign false
+    git -c user.email=x@x -c user.name=x commit --allow-empty -qm init
+  )
+  cd clone
+  it "matches git: --refmap=refs/heads/*:refs/remotes/origin/* + refspec, exit 0" && {
+    expect_parity effect -- fetch --refmap=refs/heads/*:refs/remotes/origin/* origin master
   }
 )
 
