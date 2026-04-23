@@ -718,11 +718,7 @@ pub fn main() -> Result<()> {
                 },
                 no_verify,
                 receive_pack,
-                signed: signed.map(|s| match s {
-                    opts::Signed::No => core::repository::push::Signed::No,
-                    opts::Signed::IfAsked => core::repository::push::Signed::IfAsked,
-                    opts::Signed::Yes => core::repository::push::Signed::Yes,
-                }),
+                signed_arg: signed,
                 push_options: push_option,
                 recurse_submodules: recurse_submodules.map(|r| match r {
                     opts::RecurseSubmodules::No => core::repository::push::RecurseSubmodules::No,

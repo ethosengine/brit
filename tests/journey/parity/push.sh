@@ -107,6 +107,21 @@ title "gix push --mirror (combined with refspecs)"
   }
 )
 
+# mode=effect — mirrors option_parse_push_signed in vendor/git/send-pack.c.
+# git accepts yes/no/true/false/on/off/1/0/if-asked (case-insensitive);
+# anything else dies 128 with `fatal: bad signed argument: <arg>`.
+title "gix push --signed=<bogus> (unknown signed argument)"
+(sandbox
+  git init -q
+  git config commit.gpgsign false
+  git config tag.gpgsign false
+  git -c user.email=x@x -c user.name=x commit --allow-empty -qm init
+  git remote add origin /tmp/parity-unused
+  it "matches git: --signed=bogus is rejected pre-transport" && {
+    expect_parity effect -- push --signed=bogus origin main
+  }
+)
+
 # --- positional & repository selection -------------------------------------
 
 # mode=effect

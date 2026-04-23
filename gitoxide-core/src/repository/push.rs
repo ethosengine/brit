@@ -31,7 +31,10 @@ pub struct Options {
     pub thin: Option<bool>,
     pub no_verify: bool,
     pub receive_pack: Option<std::ffi::OsString>,
-    pub signed: Option<Signed>,
+    /// Raw `--signed` argument as given on the CLI (`yes`/`no`/`true`/`false`/
+    /// `on`/`off`/`1`/`0`/`if-asked`, case-insensitive). Parsed at dispatch
+    /// with git-compatible error semantics; use `signed()` to decode.
+    pub signed_arg: Option<String>,
     pub push_options: Vec<String>,
     pub recurse_submodules: Option<RecurseSubmodules>,
     pub ipv4: bool,
@@ -46,6 +49,26 @@ pub enum Signed {
     No,
     IfAsked,
     Yes,
+}
+
+impl Signed {
+    /// Parse `--signed=<arg>` with the same value set `git_parse_maybe_bool`
+    /// + the `if-asked` literal accept (see `option_parse_push_signed` in
+    /// vendor/git/send-pack.c). All matching is case-insensitive.
+    ///
+    /// Returns `Err(arg)` for any value git would reject — the caller is
+    /// expected to print `fatal: bad signed argument: <arg>` and exit 128.
+    pub fn parse(arg: &str) -> Result<Self, &str> {
+        // git_parse_maybe_bool true-values. Empty string matches too (git
+        // treats it as `1` when an equals-form option is supplied with no
+        // value, e.g. `--signed=`), matching PARSE_OPT_OPTARG semantics.
+        match arg.to_ascii_lowercase().as_str() {
+            "yes" | "on" | "true" | "1" | "" => Ok(Signed::Yes),
+            "no" | "off" | "false" | "0" => Ok(Signed::No),
+            "if-asked" => Ok(Signed::IfAsked),
+            _ => Err(arg),
+        }
+    }
 }
 
 #[derive(Debug, Copy, Clone, PartialEq, Eq)]
@@ -103,6 +126,22 @@ pub(crate) mod function {
         P: gix::NestedProgress,
         P::SubProgress: 'static,
     {
+        // Parse --signed early, mirroring option_parse_push_signed in
+        // vendor/git/send-pack.c. Invalid values die 128 with the exact
+        // "fatal: bad signed argument: %s" text.
+        let _signed = match opts.signed_arg.as_deref() {
+            Some(arg) => match super::Signed::parse(arg) {
+                Ok(s) => Some(s),
+                Err(bad) => {
+                    let mut stderr = std::io::stderr().lock();
+                    writeln!(stderr, "fatal: bad signed argument: {bad}")?;
+                    drop(stderr);
+                    std::process::exit(128);
+                }
+            },
+            None => None,
+        };
+
         // Mirrors the `die_for_incompatible_opt4` call at the top of cmd_push
         // in vendor/git/builtin/push.c (after the repo_config + parse_options
         // block, right before the `tags → refs/tags/*` refspec append).

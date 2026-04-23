@@ -19,17 +19,6 @@ pub enum RecurseSubmodules {
     Only,
 }
 
-/// How to GPG-sign the push (mirrors git's `--signed`).
-#[derive(Debug, Copy, Clone, PartialEq, Eq, clap::ValueEnum)]
-pub enum Signed {
-    /// Do not sign the push.
-    No,
-    /// Sign only if the server requested it.
-    IfAsked,
-    /// Always sign the push.
-    Yes,
-}
-
 #[derive(Debug, clap::Parser)]
 pub struct Platform {
     /// Push all branches (equivalent to refspec `refs/heads/*`).
@@ -120,9 +109,16 @@ pub struct Platform {
     #[clap(long, visible_alias = "exec", value_name = "PROGRAM")]
     pub receive_pack: Option<OsString>,
 
-    /// GPG-sign the push (`no`, `if-asked`, or `yes`).
-    #[clap(long, value_name = "MODE", num_args = 0..=1, default_missing_value = "yes", value_enum)]
-    pub signed: Option<Signed>,
+    /// GPG-sign the push.
+    ///
+    /// Accepts the same value set as `git --signed`:
+    /// `yes`/`true`/`on`/`1` (always sign), `no`/`false`/`off`/`0` (never
+    /// sign), or `if-asked` (sign only when the server requests it). Invalid
+    /// values fail at dispatch with git's exact `fatal: bad signed argument`
+    /// message, not Clap's default enum-validation error, to match git's
+    /// exit code (128).
+    #[clap(long, value_name = "MODE", num_args = 0..=1, default_missing_value = "yes")]
+    pub signed: Option<String>,
 
     /// Transmit the given option to the receive-pack on the other side.
     #[clap(long, short = 'o', value_name = "OPTION")]
