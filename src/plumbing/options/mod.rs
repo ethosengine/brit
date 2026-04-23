@@ -655,6 +655,14 @@ pub mod clone {
         #[clap(long)]
         pub sparse: bool,
 
+        /// Use `<name>` in place of `origin` for the remote-tracking remote.
+        ///
+        /// Parse-only: gix clone uses `origin` unconditionally today.
+        /// Wiring deferred to a row that exercises the resulting
+        /// refs/remotes/<name>/ layout.
+        #[clap(long, short = 'o', value_name = "NAME")]
+        pub origin: Option<OsString>,
+
         #[clap(flatten)]
         pub shallow: ShallowOptions,
 

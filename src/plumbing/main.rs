@@ -607,6 +607,7 @@ pub fn main() -> Result<()> {
             mirror,
             no_tags,
             sparse: _,
+            origin: _,
             ref_name,
             remote,
             shallow,

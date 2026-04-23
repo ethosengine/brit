@@ -275,13 +275,22 @@ only_for_hash sha1-only && (sandbox
 # hash=sha1-only "gix cannot open sha256 remotes, see gix/src/clone/fetch/mod.rs unimplemented!()"
 title "gix clone -o / --origin=<name>"
 only_for_hash sha1-only && (sandbox
+  git-init-hash-aware -q --bare src-repo.git
+  mkdir g-short g-long x-short x-long
+  for d in g-short g-long x-short x-long; do
+    (cd "$d" && ln -s ../src-repo.git .)
+  done
   it "matches git: -o upstream exits 0" && {
-    # TODO: expect_parity effect -- clone -o upstream upstream.git
-    true
+    (cd g-short && expect_run 0 git clone -o upstream src-repo.git target)
+  }
+  it "matches gix: -o upstream exits 0" && {
+    (cd x-short && expect_run 0 "$exe_plumbing" clone -o upstream src-repo.git target)
   }
   it "matches git: --origin=upstream exits 0" && {
-    # TODO: expect_parity effect -- clone --origin=upstream upstream.git
-    true
+    (cd g-long && expect_run 0 git clone --origin=upstream src-repo.git target)
+  }
+  it "matches gix: --origin=upstream exits 0" && {
+    (cd x-long && expect_run 0 "$exe_plumbing" clone --origin=upstream src-repo.git target)
   }
 )
 
