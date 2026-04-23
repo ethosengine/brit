@@ -249,29 +249,41 @@ pub struct ShallowOptions {
     ///
     /// Accepted as a string (not a parsed number) so that `--depth=0` and
     /// negative values parse at the Clap layer and are rejected with git's
-    /// exact error at dispatch (exit 128), not Clap's (exit 2).
-    #[clap(long, help_heading = Some("SHALLOW"), value_name = "DEPTH", conflicts_with_all = ["shallow_since", "shallow_exclude", "deepen", "unshallow"])]
+    /// exact error at dispatch (exit 128), not Clap's (exit 2). Clap-level
+    /// `conflicts_with_all` is intentionally NOT set against `--deepen` /
+    /// `--unshallow` — those combinations must die 128 with git's exact
+    /// "options '--X' and '--Y' cannot be used together" message at the
+    /// dispatch layer, not with Clap's default exit 2.
+    #[clap(long, help_heading = Some("SHALLOW"), value_name = "DEPTH")]
     pub depth: Option<String>,
 
     /// Extend the current shallow boundary by the given number of commits.
     ///
     /// Accepted as a string so negative values parse at Clap and are
-    /// rejected with git's exact error at dispatch (exit 128).
-    #[clap(long, help_heading = Some("SHALLOW"), value_name = "DEPTH", conflicts_with_all = ["depth", "shallow_since", "shallow_exclude", "unshallow"])]
+    /// rejected with git's exact error at dispatch (exit 128). See the
+    /// `--depth` comment regarding Clap-level `conflicts_with_all`.
+    #[clap(long, help_heading = Some("SHALLOW"), value_name = "DEPTH")]
     pub deepen: Option<String>,
 
     /// Cut off all history past the given date. Can be combined with
     /// `--shallow-exclude`.
-    #[clap(long, help_heading = Some("SHALLOW"), value_parser = crate::shared::AsTime, value_name = "DATE", conflicts_with_all = ["depth", "deepen", "unshallow"])]
+    #[clap(long, help_heading = Some("SHALLOW"), value_parser = crate::shared::AsTime, value_name = "DATE")]
     pub shallow_since: Option<gix::date::Time>,
 
     /// Cut off all history past the given tag or ref.
-    #[clap(long, help_heading = Some("SHALLOW"), value_parser = crate::shared::AsPartialRefName, value_name = "REF_NAME", conflicts_with_all = ["depth", "deepen", "unshallow"])]
+    #[clap(long, help_heading = Some("SHALLOW"), value_parser = crate::shared::AsPartialRefName, value_name = "REF_NAME")]
     pub shallow_exclude: Vec<gix::refs::PartialName>,
 
     /// Remove the shallow boundary and fetch the entire history available
     /// on the remote.
-    #[clap(long, help_heading = Some("SHALLOW"), conflicts_with_all = ["shallow_since", "shallow_exclude", "depth", "deepen"])]
+    ///
+    /// Intentionally does not declare Clap `conflicts_with_all` against
+    /// `--depth` / `--deepen` — git validates `--depth --unshallow` at
+    /// runtime with a specific "options '--depth' and '--unshallow' cannot be
+    /// used together" message and exit 128; Clap's conflict machinery would
+    /// intercept with exit 2 before we got a chance to die-128 with the
+    /// matching text.
+    #[clap(long, help_heading = Some("SHALLOW"))]
     pub unshallow: bool,
 }
 
@@ -308,45 +320,82 @@ pub fn parse_recurse_submodules(value: &str) -> RecurseSubmodules {
     }
 }
 
-/// Resolve the [`ShallowOptions`] block into a [`Shallow`] semantic. Returns
-/// the parsed numeric depth / deepen values so callers can still die-128 on
-/// bad inputs with git's exact message before the protocol layer rejects
-/// them.
-pub fn resolve_shallow(opts: &ShallowOptions) -> anyhow::Result<Shallow> {
+/// Die-128 helper: write git's exact "fatal: <msg>" line to stderr and
+/// `process::exit(128)`. Matches the push-side die_for_incompatible_opts
+/// pattern in `gitoxide-core/src/repository/push.rs`.
+fn die128(msg: std::fmt::Arguments<'_>) -> ! {
+    use std::io::Write;
+    let mut stderr = std::io::stderr().lock();
+    let _ = writeln!(stderr, "fatal: {msg}");
+    drop(stderr);
+    std::process::exit(128);
+}
+
+/// Validate shallow-related flag combinations and resolve the block into a
+/// [`Shallow`] semantic.
+///
+/// Error paths that must die 128 with git's exact message (matching cmd_fetch
+/// in `vendor/git/builtin/fetch.c`):
+///
+/// * `--deepen=-N` (negative)    → `fatal: negative depth in --deepen is not supported`
+/// * `--deepen N --depth M`      → `fatal: options '--deepen' and '--depth' cannot be used together`
+/// * `--depth N --unshallow`     → `fatal: options '--depth' and '--unshallow' cannot be used together`
+/// * `--depth=0` / non-positive  → `fatal: depth <value> is not a positive number`
+///
+/// Combinations not validated by git (e.g. `--depth --shallow-since`) pass
+/// through silently to preserve parity with git's permissive behavior.
+pub fn resolve_shallow(opts: &ShallowOptions) -> Shallow {
     use std::num::NonZeroU32;
 
+    // cmd_fetch: `if (deepen_relative) { if (deepen_relative < 0) die ...; if (depth) die ...; }`
+    if let Some(deepen) = opts.deepen.as_deref() {
+        let parsed: i64 = deepen.parse().unwrap_or_else(|_| {
+            die128(format_args!("cannot parse --deepen value '{deepen}'"));
+        });
+        if parsed < 0 {
+            die128(format_args!("negative depth in --deepen is not supported"));
+        }
+        if opts.depth.is_some() {
+            die128(format_args!("options '--deepen' and '--depth' cannot be used together"));
+        }
+        // deepen overrides depth from git's perspective — git rewrites depth
+        // via `depth = xstrfmt("%d", deepen_relative)` and then proceeds.
+        // gix follows the same shape: return Shallow::Deepen so the protocol
+        // layer gets the right semantics.
+        let d = u32::try_from(parsed).unwrap_or(u32::MAX);
+        return Shallow::Deepen(d);
+    }
+    // cmd_fetch: `if (unshallow) { if (depth) die ...; else if (!is_repository_shallow) die ...; }`
+    if opts.unshallow {
+        if opts.depth.is_some() {
+            die128(format_args!(
+                "options '--depth' and '--unshallow' cannot be used together"
+            ));
+        }
+        // Non-shallow repository check lives one level up (needs repo
+        // access) — filed as a follow-up TODO row.
+        return Shallow::undo();
+    }
+    // cmd_fetch: `if (depth && atoi(depth) < 1) die ...`.
     if let Some(depth) = opts.depth.as_deref() {
         let parsed: i64 = depth
             .parse()
-            .map_err(|_| anyhow::anyhow!("depth {depth} is not a positive number"))?;
+            .unwrap_or_else(|_| die128(format_args!("depth {depth} is not a positive number")));
         if parsed < 1 {
-            anyhow::bail!("depth {depth} is not a positive number");
+            die128(format_args!("depth {depth} is not a positive number"));
         }
         let nz = NonZeroU32::new(u32::try_from(parsed).unwrap_or(u32::MAX))
-            .ok_or_else(|| anyhow::anyhow!("depth {depth} is not a positive number"))?;
-        return Ok(Shallow::DepthAtRemote(nz));
+            .unwrap_or_else(|| die128(format_args!("depth {depth} is not a positive number")));
+        return Shallow::DepthAtRemote(nz);
     }
     if !opts.shallow_exclude.is_empty() {
-        return Ok(Shallow::Exclude {
+        return Shallow::Exclude {
             remote_refs: opts.shallow_exclude.clone(),
             since_cutoff: opts.shallow_since,
-        });
+        };
     }
     if let Some(cutoff) = opts.shallow_since {
-        return Ok(Shallow::Since { cutoff });
+        return Shallow::Since { cutoff };
     }
-    if let Some(deepen) = opts.deepen.as_deref() {
-        let parsed: i64 = deepen
-            .parse()
-            .map_err(|_| anyhow::anyhow!("cannot parse --deepen value '{deepen}'"))?;
-        if parsed < 0 {
-            anyhow::bail!("negative depth in --deepen is not supported");
-        }
-        let d = u32::try_from(parsed).unwrap_or(u32::MAX);
-        return Ok(Shallow::Deepen(d));
-    }
-    if opts.unshallow {
-        return Ok(Shallow::undo());
-    }
-    Ok(Shallow::default())
+    Shallow::default()
 }

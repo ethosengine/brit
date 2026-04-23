@@ -154,8 +154,12 @@ only_for_hash sha1-only && (sandbox
 # hash=sha1-only "gix cannot open sha256 remotes, see gix/src/clone/fetch/mod.rs unimplemented!()"
 title "gix fetch --deepen N --depth M (conflict)"
 only_for_hash sha1-only && (sandbox
-  it "TODO: matches git: --deepen combined with --depth dies 128" && {
-    :  # expect_parity effect -- fetch --deepen 1 --depth 2 origin
+  git init -q
+  git config commit.gpgsign false
+  git -c user.email=x@x -c user.name=x commit --allow-empty -qm init
+  git remote add origin /tmp/parity-unused
+  it "matches git: --deepen combined with --depth dies 128" && {
+    expect_parity effect -- fetch --deepen=1 --depth=2 origin
   }
 )
 
@@ -164,8 +168,12 @@ only_for_hash sha1-only && (sandbox
 # hash=sha1-only "gix cannot open sha256 remotes, see gix/src/clone/fetch/mod.rs unimplemented!()"
 title "gix fetch --depth N --unshallow (conflict)"
 only_for_hash sha1-only && (sandbox
-  it "TODO: matches git: --depth combined with --unshallow dies 128" && {
-    :  # expect_parity effect -- fetch --depth 1 --unshallow origin
+  git init -q
+  git config commit.gpgsign false
+  git -c user.email=x@x -c user.name=x commit --allow-empty -qm init
+  git remote add origin /tmp/parity-unused
+  it "matches git: --depth combined with --unshallow dies 128" && {
+    expect_parity effect -- fetch --depth=1 --unshallow origin
   }
 )
 
@@ -183,8 +191,12 @@ only_for_hash sha1-only && (sandbox
 # hash=sha1-only "gix cannot open sha256 remotes, see gix/src/clone/fetch/mod.rs unimplemented!()"
 title "gix fetch --deepen=-1 (negative)"
 only_for_hash sha1-only && (sandbox
-  it "TODO: matches git: --deepen negative dies 128" && {
-    :  # expect_parity effect -- fetch --deepen=-1 origin
+  git init -q
+  git config commit.gpgsign false
+  git -c user.email=x@x -c user.name=x commit --allow-empty -qm init
+  git remote add origin /tmp/parity-unused
+  it "matches git: --deepen negative dies 128" && {
+    expect_parity effect -- fetch --deepen=-1 origin
   }
 )
 
@@ -193,8 +205,12 @@ only_for_hash sha1-only && (sandbox
 # hash=sha1-only "gix cannot open sha256 remotes, see gix/src/clone/fetch/mod.rs unimplemented!()"
 title "gix fetch --depth=0 (non-positive)"
 only_for_hash sha1-only && (sandbox
-  it "TODO: matches git: --depth=0 dies 128" && {
-    :  # expect_parity effect -- fetch --depth=0 origin
+  git init -q
+  git config commit.gpgsign false
+  git -c user.email=x@x -c user.name=x commit --allow-empty -qm init
+  git remote add origin /tmp/parity-unused
+  it "matches git: --depth=0 dies 128" && {
+    expect_parity effect -- fetch --depth=0 origin
   }
 )
 

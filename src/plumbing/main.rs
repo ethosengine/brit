@@ -691,7 +691,7 @@ pub fn main() -> Result<()> {
                 drop(stderr);
                 std::process::exit(128);
             }
-            let shallow = crate::plumbing::options::fetch::resolve_shallow(&platform.shallow)?;
+            let shallow = crate::plumbing::options::fetch::resolve_shallow(&platform.shallow);
             // `--remote` (gix-native) overrides the git-compatible positional
             // `<repository>` when both are supplied, matching the pre-parity
             // CLI contract.
