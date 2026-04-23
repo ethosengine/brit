@@ -76,6 +76,9 @@ title "gix push (conflicting ref-selection flags)"
   it "matches git: --all + --mirror + --tags (3-way)" && {
     expect_parity effect -- push --all --mirror --tags origin
   }
+  it "matches git: --all + --mirror + --tags + --delete (4-way)" && {
+    expect_parity effect -- push --all --mirror --tags --delete origin foo
+  }
 )
 
 # mode=effect — mirrors `if (deleterefs && argc < 2) die()` at push.c line
