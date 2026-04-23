@@ -457,9 +457,16 @@ only_for_hash sha1-only && (sandbox
 # hash=sha1-only "gix cannot open sha256 remotes, see gix/src/clone/fetch/mod.rs unimplemented!()"
 title "gix clone --reference=<repo>"
 only_for_hash sha1-only && (sandbox
-  it "matches git behavior" && {
-    # TODO: expect_parity effect -- clone --reference=reference.git upstream.git
-    true
+  git-init-hash-aware -q --bare src-repo.git
+  git-init-hash-aware -q --bare reference.git
+  mkdir g-side x-side
+  (cd g-side && ln -s ../src-repo.git . && ln -s ../reference.git .)
+  (cd x-side && ln -s ../src-repo.git . && ln -s ../reference.git .)
+  it "matches git: --reference with valid alternate exits 0" && {
+    (cd g-side && expect_run 0 git clone --reference=reference.git src-repo.git target)
+  }
+  it "matches gix: --reference exits 0 (flag parsed; alternates wiring TODO)" && {
+    (cd x-side && expect_run 0 "$exe_plumbing" clone --reference=reference.git src-repo.git target)
   }
 )
 
@@ -468,9 +475,15 @@ only_for_hash sha1-only && (sandbox
 # hash=sha1-only "gix cannot open sha256 remotes, see gix/src/clone/fetch/mod.rs unimplemented!()"
 title "gix clone --reference-if-able=<repo>"
 only_for_hash sha1-only && (sandbox
-  it "matches git: missing alternate warns then exits 0" && {
-    # TODO: expect_parity effect -- clone --reference-if-able=/nonexistent upstream.git
-    true
+  git-init-hash-aware -q --bare src-repo.git
+  mkdir g-side x-side
+  (cd g-side && ln -s ../src-repo.git .)
+  (cd x-side && ln -s ../src-repo.git .)
+  it "matches git: --reference-if-able on missing alternate warns then exits 0" && {
+    (cd g-side && expect_run 0 git clone --reference-if-able=/nonexistent-alt src-repo.git target)
+  }
+  it "matches gix: --reference-if-able on missing alternate exits 0" && {
+    (cd x-side && expect_run 0 "$exe_plumbing" clone --reference-if-able=/nonexistent-alt src-repo.git target)
   }
 )
 
@@ -479,9 +492,16 @@ only_for_hash sha1-only && (sandbox
 # hash=sha1-only "gix cannot open sha256 remotes, see gix/src/clone/fetch/mod.rs unimplemented!()"
 title "gix clone --dissociate --reference=<repo>"
 only_for_hash sha1-only && (sandbox
-  it "matches git behavior" && {
-    # TODO: expect_parity effect -- clone --dissociate --reference=reference.git upstream.git
-    true
+  git-init-hash-aware -q --bare src-repo.git
+  git-init-hash-aware -q --bare reference.git
+  mkdir g-side x-side
+  (cd g-side && ln -s ../src-repo.git . && ln -s ../reference.git .)
+  (cd x-side && ln -s ../src-repo.git . && ln -s ../reference.git .)
+  it "matches git: --dissociate + --reference exits 0" && {
+    (cd g-side && expect_run 0 git clone --dissociate --reference=reference.git src-repo.git target)
+  }
+  it "matches gix: --dissociate + --reference exits 0" && {
+    (cd x-side && expect_run 0 "$exe_plumbing" clone --dissociate --reference=reference.git src-repo.git target)
   }
 )
 

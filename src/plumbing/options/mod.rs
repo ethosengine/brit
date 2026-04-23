@@ -695,6 +695,21 @@ pub mod clone {
         #[clap(long = "no-reject-shallow", overrides_with = "reject_shallow")]
         pub _no_reject_shallow: bool,
 
+        /// Use <repo>/objects as an alternate. Multi-valued. Parse-only —
+        /// gix doesn't wire alternates today.
+        #[clap(long = "reference", value_name = "REPO")]
+        pub reference: Vec<PathBuf>,
+
+        /// Like --reference but warns rather than aborts on missing alternate.
+        /// Multi-valued. Parse-only.
+        #[clap(long = "reference-if-able", value_name = "REPO")]
+        pub reference_if_able: Vec<PathBuf>,
+
+        /// Borrow objects from --reference repos only for the clone, then
+        /// stop borrowing. Parse-only.
+        #[clap(long)]
+        pub dissociate: bool,
+
         #[clap(flatten)]
         pub shallow: ShallowOptions,
 
