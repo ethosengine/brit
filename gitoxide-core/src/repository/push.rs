@@ -154,6 +154,35 @@ pub(crate) mod function {
         P: gix::NestedProgress,
         P::SubProgress: 'static,
     {
+        // Validate push.default from config. Mirrors the dispatch in
+        // vendor/git/environment.c that resolves `push.default` to one of
+        // {nothing, matching, simple, upstream/tracking, current}. Invalid
+        // values die 128 with git's three-line
+        //     error: malformed value for push.default: <v>
+        //     error: must be one of nothing, matching, simple, upstream or current
+        //     fatal: unable to parse 'push.default' from command-line config
+        //
+        // We accept the same aliases gix::config::tree::Push::DEFAULT does
+        // (including `tracking` as a synonym for `upstream`).
+        if let Some(v) = repo.config_snapshot().string("push.default") {
+            let s = std::str::from_utf8(v.as_ref()).unwrap_or("");
+            let ok = matches!(
+                s,
+                "nothing" | "current" | "upstream" | "tracking" | "simple" | "matching"
+            );
+            if !ok {
+                let mut stderr = std::io::stderr().lock();
+                writeln!(stderr, "error: malformed value for push.default: {s}")?;
+                writeln!(
+                    stderr,
+                    "error: must be one of nothing, matching, simple, upstream or current"
+                )?;
+                writeln!(stderr, "fatal: unable to parse 'push.default' from command-line config")?;
+                drop(stderr);
+                std::process::exit(128);
+            }
+        }
+
         // Validate push.recursesubmodules from config. Mirrors the
         // `push.recursesubmodules` arm of git_push_config, which calls
         // `parse_push_recurse_submodules_arg` — same semantics as the

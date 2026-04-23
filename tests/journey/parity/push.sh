@@ -195,6 +195,23 @@ title "gix push --force-with-lease=ref:<bogus-oid>"
   }
 )
 
+# mode=effect — mirrors the push.default validator in
+# vendor/git/environment.c. Unknown values die 128 with git's three-line
+# error/error/fatal.
+title "gix push with push.default=<bogus>"
+(sandbox
+  git init -q
+  git checkout -b main
+  git config commit.gpgsign false
+  git config tag.gpgsign false
+  touch a && git add a
+  git -c user.email=x@x -c user.name=x commit -qm init
+  git remote add origin /tmp/parity-unused
+  it "matches git: -c push.default=bogus push → 128" && {
+    expect_parity effect -- -c push.default=bogus push origin main
+  }
+)
+
 # mode=effect — mirrors the `push.recursesubmodules` arm of
 # git_push_config, which delegates to parse_push_recurse_submodules_arg
 # (same semantics as --recurse-submodules). Invalid values die 128 with
