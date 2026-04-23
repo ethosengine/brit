@@ -185,7 +185,14 @@ impl crate::Repository {
         S: AsRef<[u8]>,
     {
         use crate::repository::push::Error;
-        let remote = self.find_remote(remote_name).map_err(Error::FindRemote)?;
+        let name_or_url = remote_name.into();
+        // Mirror `find_fetch_remote`: named remote first, anonymous URL-based remote as fallback.
+        // Matches git's `remote_get_1` which wraps any non-empty string that isn't a configured
+        // name as an on-the-fly URL remote (vendor/git/remote.c).
+        let remote = match self.try_find_remote(name_or_url).and_then(Result::ok) {
+            Some(r) => r,
+            None => self.remote_at(gix_url::parse(name_or_url)?)?,
+        };
         let conn = remote.connect(crate::remote::Direction::Push).map_err(Error::Connect)?;
         let prepare = conn
             .prepare_push(gix_features::progress::Discard)

@@ -20,9 +20,12 @@
 #   --force-with-lease=ref:<bogus-oid> (129), <nonexistent-path> fallthrough,
 #   -4/-6 overrides_with, --help (0), 3-way conflict (128), 4-way (128),
 #   --push-option=<\n> (128).
-# Happy-path rows closed (send-pack substrate landed, iter 18):
+# Happy-path rows closed (send-pack substrate landed, iter 18+):
 #   (1) push origin refs/heads/main:refs/heads/main (bare file:// remote,
 #       fast-forward / initial push) — exit 0 parity confirmed.
+#   (2) push <url> <partial-refspec> — one-sided push spec (e.g. `main`)
+#       inherits its destination from the matched local ref; URL-as-repo
+#       falls back to anonymous remote (mirrors git's `remote_get_1`).
 #
 # send-pack substrate is online (gix-protocol send-pack + Repository::push
 # + gitoxide-core glue + gix CLI wiring). Remaining TODO rows below exercise
@@ -387,13 +390,20 @@ only_for_hash sha1-only && (sandbox
 
 # --- positional & repository selection -------------------------------------
 
-# mode=effect
+# mode=effect — positional <repository> may be a URL (not a configured
+# remote name). Mirrors git's `remote_get_1` which wraps any non-empty
+# string as an anonymous URL-backed remote when it isn't a known name.
 # hash=sha1-only "gix cannot open sha256 remotes, see gix/src/clone/fetch/mod.rs unimplemented!()"
 title "gix push <repository>"
-only_for_hash sha1-only && (small-repo-in-sandbox
-  it "matches git behavior" && {
-    # TODO: bare-repo-with-remotes upstream.git; expect_parity effect -- push upstream.git main
-    true
+only_for_hash sha1-only && (sandbox
+  dst="$(pwd)/dst.git"
+  git init -q -b main src
+  git -C src config commit.gpgsign false
+  git -C src config tag.gpgsign false
+  git -C src -c user.email=x@x -c user.name=x commit --allow-empty -qm "init"
+  git init -q --bare "$dst"
+  it "matches git: push <url-as-repository> <refspec> exits 0" && {
+    cd src && expect_parity effect -- push "$dst" main
   }
 )
 

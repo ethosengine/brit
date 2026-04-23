@@ -111,11 +111,6 @@ where
         let mut name_pairs: Vec<(BString, BString)> = Vec::with_capacity(mappings.len());
 
         for mapping in &mappings {
-            let remote_name: BString = match &mapping.rhs {
-                Some(rhs) => rhs.as_ref().into(),
-                None => continue, // push spec without a destination — skip
-            };
-
             let (local_name, new_oid) = match &mapping.lhs {
                 SourceRef::FullName(name) if !name.is_empty() => {
                     // Resolve the local ref to its peeled object ID.
@@ -133,6 +128,17 @@ where
                     // Literal OID spec (e.g. `<sha>:refs/heads/main`).
                     (BString::from(id.to_string().as_bytes()), *id)
                 }
+            };
+
+            // One-sided push spec (e.g. `main`) inherits its destination from
+            // the matched local ref — mirrors git's `match_push_refs` which
+            // pushes to the same-named remote ref when no `:dst` is given.
+            // Skip delete-specs (empty lhs) that arrive here with rhs=None:
+            // a delete spec without a destination is nonsensical.
+            let remote_name: BString = match (&mapping.rhs, local_name.is_empty()) {
+                (Some(rhs), _) => rhs.as_ref().into(),
+                (None, false) => local_name.clone(),
+                (None, true) => continue,
             };
 
             let old_oid = remote_oid_by_name.get(&remote_name).copied().unwrap_or(null_oid);

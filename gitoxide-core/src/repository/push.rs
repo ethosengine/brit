@@ -560,9 +560,7 @@ pub(crate) mod function {
         };
 
         // Perform the push.
-        let outcome = repo
-            .push(remote_name, opts.ref_specs.iter())
-            .map_err(|e| anyhow::anyhow!("{e}"))?;
+        let outcome = repo.push(remote_name, opts.ref_specs.iter())?;
 
         // Print per-ref status to process stderr (unbuffered) so output reaches
         // the terminal even when the passed-in writer is buffered.

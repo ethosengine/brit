@@ -69,6 +69,10 @@ pub mod push {
     pub enum Error {
         #[error("find remote")]
         FindRemote(#[from] crate::remote::find::existing::Error),
+        #[error("parse remote URL")]
+        UrlParse(#[from] gix_url::parse::Error),
+        #[error("open anonymous remote from URL")]
+        RemoteInit(#[from] crate::remote::init::Error),
         #[error("connect to remote")]
         Connect(#[from] crate::remote::connect::Error),
         #[error("prepare push (handshake)")]
