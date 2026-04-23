@@ -29,8 +29,12 @@
 #   (3) push --repo=<name> — when no CLI refspecs are given, gix now
 #       falls back to the remote's configured `remote.<name>.push`
 #       refspecs (mirrors git's `match_push_refs`).
-#   (4) push --all — CLI glue translates to `refs/heads/*:refs/heads/*`
-#       (mirrors git's TRANSPORT_PUSH_ALL → MATCH_REFS_ALL flag path).
+#   (4) push --all / --branches — CLI glue translates to
+#       `refs/heads/*:refs/heads/*` (mirrors TRANSPORT_PUSH_ALL →
+#       MATCH_REFS_ALL).
+#   (5) push --mirror — CLI glue translates to `refs/*:refs/*` (mirrors
+#       TRANSPORT_PUSH_MIRROR). Remote-side prune is not yet wired; the
+#       initial-empty-remote case exercises heads+tags transmission only.
 #
 # send-pack substrate is online (gix-protocol send-pack + Repository::push
 # + gitoxide-core glue + gix CLI wiring). Remaining TODO rows below exercise
@@ -496,13 +500,26 @@ only_for_hash sha1-only && (sandbox
   }
 )
 
-# mode=effect
+# mode=effect — `--mirror` sets TRANSPORT_PUSH_MIRROR + TRANSPORT_PUSH_FORCE
+# in cmd_push; match_push_refs then matches all refs under refs/* (heads,
+# tags, remotes) to the same name on the remote. Equivalent refspec:
+# `refs/*:refs/*`. Remote-side prune (delete stale remote refs) requires
+# walking remote advertisements beyond the happy path and is deferred; this
+# initial-push fixture leaves the remote empty so prune is a no-op.
 # hash=sha1-only "gix cannot open sha256 remotes, see gix/src/clone/fetch/mod.rs unimplemented!()"
 title "gix push --mirror"
-only_for_hash sha1-only && (small-repo-in-sandbox
-  it "matches git behavior" && {
-    # TODO: expect_parity effect -- push --mirror origin
-    true
+only_for_hash sha1-only && (sandbox
+  dst="$(pwd)/dst.git"
+  git init -q -b main src
+  git -C src config commit.gpgsign false
+  git -C src config tag.gpgsign false
+  git -C src -c user.email=x@x -c user.name=x commit --allow-empty -qm c1
+  git -C src tag v1
+  git -C src branch dev
+  git init -q --bare "$dst"
+  git -C src remote add origin "$dst"
+  it "matches git: --mirror pushes refs/* (heads+tags) to initial-empty remote, exits 0" && {
+    cd src && expect_parity effect -- push --mirror origin
   }
 )
 

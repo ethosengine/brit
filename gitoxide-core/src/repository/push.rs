@@ -565,6 +565,13 @@ pub(crate) mod function {
         // so the branches below are mutually exclusive.
         let effective_specs: Vec<gix::bstr::BString> = if opts.all {
             vec!["refs/heads/*:refs/heads/*".into()]
+        } else if opts.mirror {
+            // `--mirror` → MATCH_REFS_MIRROR | TRANSPORT_PUSH_FORCE; matches every
+            // ref under refs/* (heads, tags, remotes, notes, …) to the same name
+            // on the remote. Remote-side prune semantics are not yet wired through
+            // the send-pack pipeline; they become a shortcoming only when the
+            // remote already has refs the local doesn't.
+            vec!["refs/*:refs/*".into()]
         } else {
             opts.ref_specs.clone()
         };
