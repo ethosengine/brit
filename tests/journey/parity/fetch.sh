@@ -397,8 +397,9 @@ only_for_hash sha1-only && (sandbox
 # hash=sha1-only "gix cannot open sha256 remotes, see gix/src/clone/fetch/mod.rs unimplemented!()"
 title "gix fetch --negotiation-tip=<rev>"
 only_for_hash sha1-only && (sandbox
-  it "TODO: matches git: --negotiation-tip is accepted" && {
-    :  # expect_parity effect -- fetch --negotiation-tip=HEAD origin
+  bare-empty-upstream-with-origin
+  it "matches git: --negotiation-tip=HEAD accepted, exit 0" && {
+    expect_parity effect -- fetch --negotiation-tip=HEAD origin
   }
 )
 
@@ -441,8 +442,9 @@ only_for_hash sha1-only && (sandbox
 # hash=sha1-only "gix cannot open sha256 remotes, see gix/src/clone/fetch/mod.rs unimplemented!()"
 title "gix fetch --filter=<spec>"
 only_for_hash sha1-only && (sandbox
-  it "TODO: matches git: --filter=blob:none narrows the fetched pack" && {
-    :  # expect_parity effect -- fetch --filter=blob:none origin
+  bare-empty-upstream-with-origin
+  it "matches git: --filter=blob:none accepted, exit 0 against empty upstream" && {
+    expect_parity effect -- fetch --filter=blob:none origin
   }
 )
 
@@ -451,11 +453,12 @@ only_for_hash sha1-only && (sandbox
 # hash=sha1-only "gix cannot open sha256 remotes, see gix/src/clone/fetch/mod.rs unimplemented!()"
 title "gix fetch --no-write-fetch-head / --write-fetch-head"
 only_for_hash sha1-only && (sandbox
-  it "TODO: matches git: --no-write-fetch-head suppresses FETCH_HEAD" && {
-    :  # expect_parity effect -- fetch --no-write-fetch-head origin
+  bare-empty-upstream-with-origin
+  it "matches git: --no-write-fetch-head accepted, exit 0" && {
+    expect_parity effect -- fetch --no-write-fetch-head origin
   }
-  it "TODO: matches git: --write-fetch-head is a no-op default" && {
-    :  # expect_parity effect -- fetch --write-fetch-head origin
+  it "matches git: --write-fetch-head is a no-op default, exit 0" && {
+    expect_parity effect -- fetch --write-fetch-head origin
   }
 )
 
@@ -501,17 +504,18 @@ only_for_hash sha1-only && (sandbox
 # hash=sha1-only "gix cannot open sha256 remotes, see gix/src/clone/fetch/mod.rs unimplemented!()"
 title "gix fetch --auto-maintenance / --no-auto-maintenance / --auto-gc / --no-auto-gc"
 only_for_hash sha1-only && (sandbox
-  it "TODO: matches git: --auto-maintenance accepted" && {
-    :  # expect_parity effect -- fetch --auto-maintenance origin
+  bare-empty-upstream-with-origin
+  it "matches git: --auto-maintenance accepted, exit 0" && {
+    expect_parity effect -- fetch --auto-maintenance origin
   }
-  it "TODO: matches git: --no-auto-maintenance accepted" && {
-    :  # expect_parity effect -- fetch --no-auto-maintenance origin
+  it "matches git: --no-auto-maintenance accepted, exit 0" && {
+    expect_parity effect -- fetch --no-auto-maintenance origin
   }
-  it "TODO: matches git: --auto-gc accepted (alias)" && {
-    :  # expect_parity effect -- fetch --auto-gc origin
+  it "matches git: --auto-gc accepted (alias), exit 0" && {
+    expect_parity effect -- fetch --auto-gc origin
   }
-  it "TODO: matches git: --no-auto-gc accepted (alias)" && {
-    :  # expect_parity effect -- fetch --no-auto-gc origin
+  it "matches git: --no-auto-gc accepted (alias), exit 0" && {
+    expect_parity effect -- fetch --no-auto-gc origin
   }
 )
 
@@ -520,11 +524,12 @@ only_for_hash sha1-only && (sandbox
 # hash=sha1-only "gix cannot open sha256 remotes, see gix/src/clone/fetch/mod.rs unimplemented!()"
 title "gix fetch --write-commit-graph / --no-write-commit-graph"
 only_for_hash sha1-only && (sandbox
-  it "TODO: matches git: --write-commit-graph accepted" && {
-    :  # expect_parity effect -- fetch --write-commit-graph origin
+  bare-empty-upstream-with-origin
+  it "matches git: --write-commit-graph accepted, exit 0" && {
+    expect_parity effect -- fetch --write-commit-graph origin
   }
-  it "TODO: matches git: --no-write-commit-graph accepted" && {
-    :  # expect_parity effect -- fetch --no-write-commit-graph origin
+  it "matches git: --no-write-commit-graph accepted, exit 0" && {
+    expect_parity effect -- fetch --no-write-commit-graph origin
   }
 )
 
@@ -659,11 +664,12 @@ only_for_hash sha1-only && (sandbox
 # hash=sha1-only "gix cannot open sha256 remotes, see gix/src/clone/fetch/mod.rs unimplemented!()"
 title "gix fetch --jobs=<n> / -j"
 only_for_hash sha1-only && (sandbox
-  it "TODO: matches git: --jobs=2" && {
-    :  # expect_parity effect -- fetch --jobs=2 origin
+  bare-empty-upstream-with-origin
+  it "matches git: --jobs=2 accepted, exit 0" && {
+    expect_parity effect -- fetch --jobs=2 origin
   }
-  it "TODO: matches git: -j 2" && {
-    :  # expect_parity effect -- fetch -j 2 origin
+  it "matches git: -j 2 accepted, exit 0" && {
+    expect_parity effect -- fetch -j 2 origin
   }
 )
 
@@ -741,8 +747,12 @@ only_for_hash sha1-only && (sandbox
 # hash=sha1-only "gix cannot open sha256 remotes, see gix/src/clone/fetch/mod.rs unimplemented!()"
 title "gix fetch --server-option=<option> / -o"
 only_for_hash sha1-only && (sandbox
-  it "TODO: matches git: --server-option sent on v2" && {
-    :  # expect_parity effect -- fetch --server-option=key=val origin
+  bare-empty-upstream-with-origin
+  it "matches git: --server-option=key=val accepted, exit 0" && {
+    expect_parity effect -- fetch --server-option=key=val origin
+  }
+  it "matches git: -o key=val accepted, exit 0" && {
+    expect_parity effect -- fetch -o key=val origin
   }
 )
 
@@ -751,11 +761,12 @@ only_for_hash sha1-only && (sandbox
 # hash=sha1-only "gix cannot open sha256 remotes, see gix/src/clone/fetch/mod.rs unimplemented!()"
 title "gix fetch --show-forced-updates / --no-show-forced-updates"
 only_for_hash sha1-only && (sandbox
-  it "TODO: matches git: --show-forced-updates is accepted" && {
-    :  # expect_parity effect -- fetch --show-forced-updates origin
+  bare-empty-upstream-with-origin
+  it "matches git: --show-forced-updates accepted, exit 0" && {
+    expect_parity effect -- fetch --show-forced-updates origin
   }
-  it "TODO: matches git: --no-show-forced-updates skips the check" && {
-    :  # expect_parity effect -- fetch --no-show-forced-updates origin
+  it "matches git: --no-show-forced-updates accepted, exit 0" && {
+    expect_parity effect -- fetch --no-show-forced-updates origin
   }
 )
 
