@@ -495,21 +495,22 @@ title "gix push --progress / --no-progress"
   }
 )
 
-# mode=effect — inherited from OPT__VERBOSITY
+# mode=effect — inherited from OPT__VERBOSITY. -v/-q tune stderr output
+# volume but don't alter local refspec matching. Same refspec-first
+# invariant as iter 30.
 title "gix push -v / --verbose"
 (small-repo-in-sandbox
-  it "matches git behavior" && {
-    # TODO: expect_parity effect -- push -v origin main
-    true
+  it "matches git: -v with unmatched src refspec exits 1" && {
+    expect_parity effect -- push -v /tmp/parity-unused nonexistent-refspec
   }
 )
 
-# mode=effect — inherited from OPT__VERBOSITY
+# mode=effect — inherited from OPT__VERBOSITY. Same invariant as -v;
+# -q tunes stderr output volume, not exit codes.
 title "gix push -q / --quiet"
 (small-repo-in-sandbox
-  it "matches git behavior" && {
-    # TODO: expect_parity effect -- push -q origin main
-    true
+  it "matches git: -q with unmatched src refspec exits 1" && {
+    expect_parity effect -- push -q /tmp/parity-unused nonexistent-refspec
   }
 )
 

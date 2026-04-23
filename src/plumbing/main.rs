@@ -671,6 +671,8 @@ pub fn main() -> Result<()> {
             atomic,
             prune,
             set_upstream,
+            verbose: _,
+            quiet: _,
             progress: push_progress,
             no_progress,
             thin,

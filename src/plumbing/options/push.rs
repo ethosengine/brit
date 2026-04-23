@@ -72,6 +72,19 @@ pub struct Platform {
     #[clap(long, short = 'u')]
     pub set_upstream: bool,
 
+    /// Produce more verbose output (inherited from git's OPT__VERBOSITY).
+    ///
+    /// Push-scoped, separate from the top-level `gix -v`. Currently parsed
+    /// but not consumed — the flag exists so `gix push -v` mirrors
+    /// `git push -v`'s exit contract at parse time; UX wiring arrives
+    /// with the happy-path send-pack.
+    #[clap(short = 'v', long)]
+    pub verbose: bool,
+
+    /// Suppress non-error output (inherited from git's OPT__VERBOSITY).
+    #[clap(short = 'q', long)]
+    pub quiet: bool,
+
     /// Force progress reporting.
     #[clap(long, overrides_with = "no_progress")]
     pub progress: bool,
