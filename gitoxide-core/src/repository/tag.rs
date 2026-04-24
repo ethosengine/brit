@@ -118,11 +118,10 @@ pub fn verify(
         anyhow::bail!("no tag names given");
     }
     let mut had_error = false;
-    let mut non_tag_object = false;
     for name in &names {
         let short_name = gix::path::os_str_into_bstr(name)?;
         let full_name = format!("refs/tags/{}", short_name.to_str_lossy());
-        let mut reference = match repo.find_reference(full_name.as_str()) {
+        let reference = match repo.find_reference(full_name.as_str()) {
             Ok(r) => r,
             Err(_) => {
                 writeln!(err, "error: tag '{}' not found.", short_name.to_str_lossy())?;
@@ -130,13 +129,12 @@ pub fn verify(
                 continue;
             }
         };
-        // Peel the ref to its immediate target: annotated tags
-        // resolve to a tag object; lightweight tags point at
-        // whatever non-tag object (usually commit).
-        let direct = reference.peel_to_id().ok();
-        let direct_id = match direct {
-            Some(id) => id.detach(),
-            None => {
+        // Immediate target (NOT peeled): for annotated tags this is
+        // the tag object oid; for lightweight tags it's the commit
+        // (or whatever non-tag object) the ref points at directly.
+        let direct_id = match reference.inner.target.clone() {
+            gix::refs::Target::Object(oid) => oid,
+            gix::refs::Target::Symbolic(_) => {
                 had_error = true;
                 continue;
             }
@@ -150,9 +148,9 @@ pub fn verify(
             }
         };
         if header.kind() != gix::object::Kind::Tag {
-            // Might actually be a lightweight tag — the ref's
-            // immediate target isn't a tag object. git dies 128
-            // here with a "non-tag object" message.
+            // Lightweight tag — direct target is not a tag object.
+            // git prints "error: <name>: cannot verify a non-tag
+            // object of type <T>." and exits 1.
             writeln!(
                 err,
                 "error: {}: cannot verify a non-tag object of type {}.",
@@ -160,7 +158,6 @@ pub fn verify(
                 header.kind()
             )?;
             had_error = true;
-            non_tag_object = true;
             continue;
         }
         let tag_object = match repo.find_object(direct_id) {
@@ -194,11 +191,6 @@ pub fn verify(
             "error: tag signature verification requires a signing backend (not yet implemented)"
         )?;
         had_error = true;
-    }
-    if non_tag_object {
-        _out.flush().ok();
-        err.flush().ok();
-        std::process::exit(128);
     }
     if had_error {
         _out.flush().ok();

@@ -451,18 +451,20 @@ only_for_hash sha1-only && (sandbox
 # hash=sha1-only
 title "gix tag -v (annotated unsigned)"
 only_for_hash sha1-only && (small-repo-in-sandbox
-  it "matches git behavior (TODO)" && {
-    : # TODO: expect_parity effect -- tag -v annotated
+  it "matches git behavior" && {
+    expect_parity effect -- tag -v annotated
   }
 )
 
-# mode=effect — `-v <lightweight>`: git dies 128 with
-# "error: <name>: cannot verify a non-tag object of type commit."
+# mode=effect — `-v <lightweight>`: git prints
+# `error: <name>: cannot verify a non-tag object of type commit.`
+# on stderr and exits 1. Matches the ref-filter.c path that refuses
+# to proceed when the resolved object isn't itself a tag.
 # hash=sha1-only
 title "gix tag -v (lightweight tag)"
 only_for_hash sha1-only && (small-repo-in-sandbox
-  it "matches git behavior (TODO)" && {
-    : # TODO: expect_parity effect -- tag -v unannotated
+  it "matches git behavior" && {
+    expect_parity effect -- tag -v unannotated
   }
 )
 
@@ -471,8 +473,8 @@ only_for_hash sha1-only && (small-repo-in-sandbox
 # hash=sha1-only
 title "gix tag -v (nonexistent)"
 only_for_hash sha1-only && (small-repo-in-sandbox
-  it "matches git behavior (TODO)" && {
-    : # TODO: expect_parity effect -- tag -v nonexistent
+  it "matches git behavior" && {
+    expect_parity effect -- tag -v nonexistent
   }
 )
 
