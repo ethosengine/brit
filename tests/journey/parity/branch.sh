@@ -294,11 +294,11 @@ only_for_hash sha1-only && (small-repo-in-sandbox
 # hash=sha1-only
 title "gix branch --column"
 only_for_hash sha1-only && (small-repo-in-sandbox
-  it "matches git behavior — --no-column (TODO)" && {
-    : # TODO: expect_parity bytes -- branch --no-column
+  it "matches git behavior — --no-column" && {
+    expect_parity bytes -- branch --no-column
   }
-  it "matches git behavior — --column=always (TODO)" && {
-    : # TODO: expect_parity bytes -- branch --column=always
+  it "matches git behavior — --column=always" && {
+    compat_effect "branch --column=always packing deferred" -- branch --column=always
   }
 )
 
