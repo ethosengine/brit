@@ -95,6 +95,9 @@ pub mod list {
         /// Do not emit a newline for rows where the `--format`
         /// expansion is empty. Git's `--omit-empty`.
         pub omit_empty: bool,
+        /// Case-insensitive sort and pattern match. Git's
+        /// `-i/--ignore-case`.
+        pub ignore_case: bool,
     }
 }
 
@@ -181,12 +184,19 @@ pub fn list(
     // Pattern filter: fnmatch(3)-style shell globs OR'd; empty =
     // match everything. Matches `for_each_fullref_in_pattern` in
     // vendor/git/refs.c called from builtin/branch.c's filter_refs.
+    // --ignore-case flips on wildmatch IGNORE_CASE and also drives the
+    // sort comparator below.
     let patterns = &options.patterns;
+    let wildmatch_mode = if options.ignore_case {
+        gix::glob::wildmatch::Mode::IGNORE_CASE
+    } else {
+        gix::glob::wildmatch::Mode::empty()
+    };
     let match_name = |name: &str| -> bool {
         patterns.is_empty()
             || patterns
                 .iter()
-                .any(|pat| gix::glob::wildmatch(pat.as_ref(), name.into(), gix::glob::wildmatch::Mode::empty()))
+                .any(|pat| gix::glob::wildmatch(pat.as_ref(), name.into(), wildmatch_mode))
     };
 
     // --contains / --no-contains filters: resolve each needle once
@@ -261,7 +271,11 @@ pub fn list(
             }
             kept.push(name);
         }
-        kept.sort();
+        if options.ignore_case {
+            kept.sort_by_key(|name| name.to_lowercase());
+        } else {
+            kept.sort();
+        }
         if sort_descending {
             kept.reverse();
         }
@@ -307,7 +321,11 @@ pub fn list(
             }
             kept.push(name);
         }
-        kept.sort();
+        if options.ignore_case {
+            kept.sort_by_key(|name| name.to_lowercase());
+        } else {
+            kept.sort();
+        }
         if sort_descending {
             kept.reverse();
         }

@@ -928,7 +928,7 @@ pub fn main() -> Result<()> {
                 no_column: _no_column,
                 color: _color,
                 no_color: _no_color,
-                ignore_case: _ignore_case,
+                ignore_case,
                 args,
             } = platform;
             use core::repository::branch::list;
@@ -974,6 +974,7 @@ pub fn main() -> Result<()> {
                     format_string,
                     sort,
                     omit_empty,
+                    ignore_case,
                 };
 
                 prepare_and_run(
