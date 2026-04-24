@@ -126,8 +126,9 @@ only_for_hash sha1-only && (small-repo-in-sandbox
 # mode=effect
 title "gix cat-file -e (existing object)"
 only_for_hash sha1-only && (small-repo-in-sandbox
-  # TODO — expect_parity effect -- cat-file -e HEAD
-  it "matches git behavior" && { :; }
+  it "matches git behavior" && {
+    expect_parity effect -- cat-file -e HEAD
+  }
 )
 
 # mode=effect — `-e <missing-sha>` (well-formed but unknown oid) exits

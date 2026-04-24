@@ -2023,15 +2023,30 @@ pub fn main() -> Result<()> {
                 },
             ),
         },
-        Subcommands::Cat { pretty: _, revspec } => prepare_and_run(
-            "cat",
-            trace,
-            verbose,
-            progress,
-            progress_keep_open,
-            None,
-            move |_progress, out, _err| core::repository::cat(repository(Mode::Lenient)?, &revspec, out),
-        ),
+        Subcommands::Cat {
+            pretty: _,
+            exists,
+            revspec,
+        } => {
+            if exists {
+                // `git cat-file -e` has no stdout, only an exit code: 0 if
+                // the object resolves & is present in the odb, 1 otherwise.
+                // Bypass prepare_and_run (which swallows non-zero exit codes
+                // into anyhow errors) and exit directly.
+                let repo = repository(Mode::Lenient)?;
+                let present = core::repository::cat_exists(repo, &revspec)?;
+                std::process::exit(if present { 0 } else { 1 });
+            }
+            prepare_and_run(
+                "cat",
+                trace,
+                verbose,
+                progress,
+                progress_keep_open,
+                None,
+                move |_progress, out, _err| core::repository::cat(repository(Mode::Lenient)?, &revspec, out),
+            )
+        }
         Subcommands::Commit(cmd) => match cmd {
             commit::Subcommands::Verify { rev_spec } => prepare_and_run(
                 "commit-verify",

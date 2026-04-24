@@ -157,6 +157,11 @@ pub enum Subcommands {
         /// commits, and tags, so the flag is a compat no-op.
         #[clap(short = 'p', long = "pretty")]
         pretty: bool,
+        /// Exit with zero status if `<object>` exists and is a valid object,
+        /// non-zero status (1) otherwise. Produces no stdout output on either
+        /// path. Mirrors `git cat-file -e`.
+        #[clap(short = 'e')]
+        exists: bool,
         /// The object to print to stdout.
         revspec: String,
     },
