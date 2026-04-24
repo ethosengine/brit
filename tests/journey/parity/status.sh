@@ -120,12 +120,14 @@ only_for_hash sha1-only && (small-repo-in-sandbox
 )
 
 # mode=effect — a new file staged to the index, not yet committed.
+# git prints a "Changes to be committed" section; gix prints `A  <path>`.
+# Both exit 0.
 # hash=sha1-only "gix cannot load sha256 repos: extensions.objectFormat=sha256 rejected (gix/src/config/tree/sections/extensions.rs)"
 title "gix status (staged new file)"
 only_for_hash sha1-only && (small-repo-in-sandbox
+  touch staged-file && git add staged-file
   it "matches git behavior" && {
-    # TODO: touch staged && git add staged; expect_parity effect -- status
-    true
+    expect_parity effect -- status
   }
 )
 
