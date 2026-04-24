@@ -164,13 +164,15 @@ only_for_hash sha1-only && (small-repo-in-sandbox
   }
 )
 
-# mode=bytes — `--short` long-form equivalent of `-s`.
+# mode=bytes — `--short` long-form equivalent of `-s`. Same Clap flag on
+# the gix side (single `short: bool` bound to both `-s` and `--short`).
 # hash=sha1-only "gix cannot load sha256 repos: extensions.objectFormat=sha256 rejected (gix/src/config/tree/sections/extensions.rs)"
 title "gix status --short"
 only_for_hash sha1-only && (small-repo-in-sandbox
+  echo staged-change >> a && git add a && echo worktree-change >> a
+  touch new-untracked
   it "matches git behavior" && {
-    # TODO: stage + modify mix; expect_parity bytes -- status --short
-    true
+    expect_parity bytes -- status --short
   }
 )
 
