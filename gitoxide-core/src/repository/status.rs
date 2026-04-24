@@ -26,10 +26,15 @@ pub enum Ignored {
     Matching,
 }
 
-#[derive(Copy, Clone)]
+#[derive(Copy, Clone, PartialEq, Eq)]
 pub enum Format {
     Simplified,
     PorcelainV2,
+    /// Byte-exact compatibility with `git status --short` — 2-char XY status
+    /// codes, `??` for untracked, `!!` for ignored, one line per path, path-
+    /// grouped so that the same path with both index and worktree changes is
+    /// emitted as a single line with combined XY.
+    Short,
 }
 
 pub struct Options {
@@ -63,8 +68,8 @@ pub fn show(
     if output_format != OutputFormat::Human {
         bail!("Only human format is supported right now");
     }
-    if !matches!(format, Format::Simplified) {
-        bail!("Only the simplified format is currently implemented");
+    if matches!(format, Format::PorcelainV2) {
+        bail!("Only the simplified and short formats are currently implemented");
     }
 
     let start = std::time::Instant::now();
@@ -114,81 +119,189 @@ pub fn show(
         })
         .into_iter(pathspecs)?;
 
-    for item in iter.by_ref() {
-        let item = item?;
-        match item {
-            status::Item::TreeIndex(change) => {
-                let (location, _, _, _) = change.fields();
-                let status = match change {
-                    gix::diff::index::Change::Addition { .. } => "A",
-                    gix::diff::index::Change::Deletion { .. } => "D",
-                    gix::diff::index::Change::Modification { .. } => "M",
-                    gix::diff::index::Change::Rewrite {
-                        ref source_location, ..
-                    } => {
-                        let source_location = gix::path::from_bstr(source_location.as_ref());
-                        let source_location = gix::path::relativize_with_prefix(&source_location, prefix);
-                        writeln!(
-                            out,
-                            "{status: >2}  {source_rela_path} → {dest_rela_path}",
-                            status = "R",
-                            source_rela_path = source_location.display(),
-                            dest_rela_path =
-                                gix::path::relativize_with_prefix(&gix::path::from_bstr(location), prefix).display(),
-                        )?;
-                        continue;
-                    }
-                };
-                writeln!(
-                    out,
-                    "{status: >2}  {rela_path}",
-                    rela_path = gix::path::relativize_with_prefix(&gix::path::from_bstr(location), prefix).display(),
-                )?;
-            }
-            status::Item::IndexWorktree(index_worktree::Item::Modification {
-                entry: _,
-                entry_index: _,
-                rela_path,
-                status,
-            }) => print_index_entry_status(&mut out, prefix, rela_path.as_ref(), status)?,
-            status::Item::IndexWorktree(index_worktree::Item::DirectoryContents {
-                entry,
-                collapsed_directory_status,
-            }) => {
-                if collapsed_directory_status.is_none() {
-                    writeln!(
-                        out,
-                        "{status: >3} {rela_path}{slash}",
-                        status = "?",
-                        rela_path =
-                            gix::path::relativize_with_prefix(&gix::path::from_bstr(entry.rela_path), prefix).display(),
-                        slash = if entry.disk_kind.unwrap_or(gix::dir::entry::Kind::File).is_dir() {
-                            "/"
-                        } else {
-                            ""
+    if format == Format::Short {
+        // git --short / -s: 2-char XY status, `??` for untracked, `!!` for
+        // ignored. Collect all items per-path (TreeIndex gives X, IndexWorktree
+        // gives Y); emit sorted tracked first, then renames, then untracked,
+        // then ignored. Mirrors the order of vendor/git/wt-status.c::
+        // wt_status_print_changes on -s output: changed tracked entries in
+        // commit-index order (we use sorted path order as a deterministic
+        // substitute), then untracked, then ignored.
+        use std::collections::BTreeMap;
+        let mut tracked: BTreeMap<BString, [u8; 2]> = BTreeMap::new();
+        let mut renames: Vec<(BString, BString, u8, u8)> = Vec::new();
+        let mut untracked: BTreeMap<BString, bool> = BTreeMap::new();
+        for item in iter.by_ref() {
+            let item = item?;
+            match item {
+                status::Item::TreeIndex(change) => {
+                    let (location, _, _, _) = change.fields();
+                    match change {
+                        gix::diff::index::Change::Addition { .. } => {
+                            let entry = tracked.entry(location.into()).or_insert([b' ', b' ']);
+                            entry[0] = b'A';
                         }
-                    )?;
+                        gix::diff::index::Change::Deletion { .. } => {
+                            let entry = tracked.entry(location.into()).or_insert([b' ', b' ']);
+                            entry[0] = b'D';
+                        }
+                        gix::diff::index::Change::Modification { .. } => {
+                            let entry = tracked.entry(location.into()).or_insert([b' ', b' ']);
+                            entry[0] = b'M';
+                        }
+                        gix::diff::index::Change::Rewrite {
+                            ref source_location, ..
+                        } => {
+                            renames.push((source_location.as_ref().to_owned(), location.into(), b'R', b' '));
+                        }
+                    }
+                }
+                status::Item::IndexWorktree(index_worktree::Item::Modification { rela_path, status, .. }) => {
+                    let y = match status {
+                        EntryStatus::Conflict { summary, entries: _ } => {
+                            // Conflicts use a 2-char combined XY; map directly.
+                            let [x, y] = conflict_to_xy(summary);
+                            let entry = tracked.entry(rela_path.clone()).or_insert([b' ', b' ']);
+                            entry[0] = x;
+                            entry[1] = y;
+                            continue;
+                        }
+                        EntryStatus::Change(change) => {
+                            // exec-bit-only mode change surfaces as `X` in gix;
+                            // git shows it as plain `M` in the Y column.
+                            let c = change_to_char(&change);
+                            if c == b'X' {
+                                b'M'
+                            } else {
+                                c
+                            }
+                        }
+                        EntryStatus::NeedsUpdate(_) => continue,
+                        EntryStatus::IntentToAdd => b'A',
+                    };
+                    let entry = tracked.entry(rela_path).or_insert([b' ', b' ']);
+                    entry[1] = y;
+                }
+                status::Item::IndexWorktree(index_worktree::Item::DirectoryContents {
+                    entry,
+                    collapsed_directory_status,
+                }) => {
+                    if collapsed_directory_status.is_none() {
+                        let is_dir = entry.disk_kind.unwrap_or(gix::dir::entry::Kind::File).is_dir();
+                        untracked.insert(entry.rela_path, is_dir);
+                    }
+                }
+                status::Item::IndexWorktree(index_worktree::Item::Rewrite {
+                    source,
+                    dirwalk_entry,
+                    copy: _,
+                    ..
+                }) => {
+                    renames.push((source.rela_path().into(), dirwalk_entry.rela_path, b'R', b' '));
                 }
             }
-            status::Item::IndexWorktree(index_worktree::Item::Rewrite {
-                source,
-                dirwalk_entry,
-                copy: _, // TODO: how to visualize copies?
-                ..
-            }) => {
-                // TODO: handle multi-status characters, there can also be modifications at the same time as determined by their ID and potentially diffstats.
-                writeln!(
-                    out,
-                    "{status: >3} {source_rela_path} → {dest_rela_path}",
-                    status = "R",
-                    source_rela_path =
-                        gix::path::relativize_with_prefix(&gix::path::from_bstr(source.rela_path()), prefix).display(),
-                    dest_rela_path = gix::path::relativize_with_prefix(
-                        &gix::path::from_bstr(dirwalk_entry.rela_path.as_bstr()),
-                        prefix
-                    )
-                    .display(),
-                )?;
+        }
+        for (path, [x, y]) in &tracked {
+            out.write_all(&[*x, *y, b' '])?;
+            out.write_all(path)?;
+            out.write_all(b"\n")?;
+        }
+        for (source, dest, x, y) in &renames {
+            out.write_all(&[*x, *y, b' '])?;
+            out.write_all(source)?;
+            out.write_all(b" -> ")?;
+            out.write_all(dest)?;
+            out.write_all(b"\n")?;
+        }
+        for (path, is_dir) in &untracked {
+            out.write_all(b"?? ")?;
+            out.write_all(path)?;
+            if *is_dir {
+                out.write_all(b"/")?;
+            }
+            out.write_all(b"\n")?;
+        }
+    } else {
+        for item in iter.by_ref() {
+            let item = item?;
+            match item {
+                status::Item::TreeIndex(change) => {
+                    let (location, _, _, _) = change.fields();
+                    let status = match change {
+                        gix::diff::index::Change::Addition { .. } => "A",
+                        gix::diff::index::Change::Deletion { .. } => "D",
+                        gix::diff::index::Change::Modification { .. } => "M",
+                        gix::diff::index::Change::Rewrite {
+                            ref source_location, ..
+                        } => {
+                            let source_location = gix::path::from_bstr(source_location.as_ref());
+                            let source_location = gix::path::relativize_with_prefix(&source_location, prefix);
+                            writeln!(
+                                out,
+                                "{status: >2}  {source_rela_path} → {dest_rela_path}",
+                                status = "R",
+                                source_rela_path = source_location.display(),
+                                dest_rela_path =
+                                    gix::path::relativize_with_prefix(&gix::path::from_bstr(location), prefix)
+                                        .display(),
+                            )?;
+                            continue;
+                        }
+                    };
+                    writeln!(
+                        out,
+                        "{status: >2}  {rela_path}",
+                        rela_path =
+                            gix::path::relativize_with_prefix(&gix::path::from_bstr(location), prefix).display(),
+                    )?;
+                }
+                status::Item::IndexWorktree(index_worktree::Item::Modification {
+                    entry: _,
+                    entry_index: _,
+                    rela_path,
+                    status,
+                }) => print_index_entry_status(&mut out, prefix, rela_path.as_ref(), status)?,
+                status::Item::IndexWorktree(index_worktree::Item::DirectoryContents {
+                    entry,
+                    collapsed_directory_status,
+                }) => {
+                    if collapsed_directory_status.is_none() {
+                        writeln!(
+                            out,
+                            "{status: >3} {rela_path}{slash}",
+                            status = "?",
+                            rela_path =
+                                gix::path::relativize_with_prefix(&gix::path::from_bstr(entry.rela_path), prefix)
+                                    .display(),
+                            slash = if entry.disk_kind.unwrap_or(gix::dir::entry::Kind::File).is_dir() {
+                                "/"
+                            } else {
+                                ""
+                            }
+                        )?;
+                    }
+                }
+                status::Item::IndexWorktree(index_worktree::Item::Rewrite {
+                    source,
+                    dirwalk_entry,
+                    copy: _, // TODO: how to visualize copies?
+                    ..
+                }) => {
+                    // TODO: handle multi-status characters, there can also be modifications at the same time as determined by their ID and potentially diffstats.
+                    writeln!(
+                        out,
+                        "{status: >3} {source_rela_path} → {dest_rela_path}",
+                        status = "R",
+                        source_rela_path =
+                            gix::path::relativize_with_prefix(&gix::path::from_bstr(source.rela_path()), prefix)
+                                .display(),
+                        dest_rela_path = gix::path::relativize_with_prefix(
+                            &gix::path::from_bstr(dirwalk_entry.rela_path.as_bstr()),
+                            prefix
+                        )
+                        .display(),
+                    )?;
+                }
             }
         }
     }
@@ -246,6 +359,11 @@ fn as_str(c: Conflict) -> &'static str {
         Conflict::BothAdded => "AA",
         Conflict::BothModified => "UU",
     }
+}
+
+fn conflict_to_xy(c: Conflict) -> [u8; 2] {
+    let bytes = as_str(c).as_bytes();
+    [bytes[0], bytes[1]]
 }
 
 fn change_to_char(change: &Change<(), gix::submodule::Status>) -> u8 {

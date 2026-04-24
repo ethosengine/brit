@@ -145,15 +145,22 @@ only_for_hash sha1-only && (small-repo-in-sandbox
 
 # --- short / long format -------------------------------------------------
 
-# mode=bytes — `-s` short format: one `XY <path>` line per entry. Scripts
-# parse this; byte-exact match required. gix has no `-s` flag yet (its
-# `-s` means `--statistics`). Row will fail on Clap parse first.
+# mode=bytes — `-s` short format: one `XY <path>` line per entry (2-char
+# status, single space, path). Scripts parse this; byte-exact match
+# required. Implementation: added `Format::Short` to gitoxide-core's
+# status emitter (path-grouped collection of TreeIndex X + IndexWorktree
+# Y, followed by untracked `?? ` and ignored `!! `). Clap: new `-s`/
+# `--short` bool on the Platform struct (conflicts with `--format`);
+# the old `-s` short alias for `--statistics` was dropped (statistics
+# stays under `--statistics` long form). Progress output on stderr is
+# suppressed for Short / PorcelainV2 formats so bytes-mode parity holds.
 # hash=sha1-only "gix cannot load sha256 repos: extensions.objectFormat=sha256 rejected (gix/src/config/tree/sections/extensions.rs)"
 title "gix status -s"
 only_for_hash sha1-only && (small-repo-in-sandbox
+  echo staged-change >> a && git add a && echo worktree-change >> a
+  touch new-untracked
   it "matches git behavior" && {
-    # TODO: stage + modify mix; expect_parity bytes -- status -s
-    true
+    expect_parity bytes -- status -s
   }
 )
 

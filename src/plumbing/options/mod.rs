@@ -299,6 +299,8 @@ pub mod status {
         Simplified,
         /// Output very similar to `git status --porcelain=2`.
         PorcelainV2,
+        /// Byte-exact compatibility with `git status -s` / `git status --short`.
+        Short,
     }
 
     #[derive(Debug, clap::Parser)]
@@ -307,6 +309,10 @@ pub mod status {
         /// The way status data is displayed.
         #[clap(long, short = 'f')]
         pub format: Option<Format>,
+        /// Give the output in the short format, matching `git status -s` byte-for-byte.
+        /// Equivalent to `--format=short`; conflicts with `--format`.
+        #[clap(short = 's', long = "short", conflicts_with = "format")]
+        pub short: bool,
         /// If enabled, show ignored files and directories.
         #[clap(long)]
         pub ignored: Option<Option<Ignored>>,
@@ -314,7 +320,7 @@ pub mod status {
         #[clap(long)]
         pub submodules: Option<Submodules>,
         /// Print additional statistics to help understanding performance.
-        #[clap(long, short = 's')]
+        #[clap(long)]
         pub statistics: bool,
         /// Don't write back a changed index, which forces this operation to always be idempotent.
         #[clap(long)]

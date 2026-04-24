@@ -422,58 +422,81 @@ pub fn main() -> Result<()> {
         Subcommands::Status(crate::plumbing::options::status::Platform {
             ignored,
             format: status_format,
+            short,
             statistics,
             submodules,
             no_write,
             pathspec,
             index_worktree_renames,
-        }) => prepare_and_run(
-            "status",
-            trace,
-            auto_verbose,
-            progress,
-            progress_keep_open,
-            None,
-            move |progress, out, err| {
-                use crate::plumbing::options::status::Submodules;
-                core::repository::status::show(
-                    repository(Mode::Lenient)?,
-                    pathspec,
-                    out,
-                    err,
-                    progress,
-                    core::repository::status::Options {
-                        format: match status_format.unwrap_or_default() {
-                            crate::plumbing::options::status::Format::Simplified => {
-                                core::repository::status::Format::Simplified
-                            }
-                            crate::plumbing::options::status::Format::PorcelainV2 => {
-                                core::repository::status::Format::PorcelainV2
-                            }
+        }) => {
+            // `-s`/`--short` is a convenience alias for --format=short (clap
+            // enforces conflict with --format so this is unambiguous).
+            let effective_format = if short {
+                crate::plumbing::options::status::Format::Short
+            } else {
+                status_format.unwrap_or_default()
+            };
+            // Short / PorcelainV2 outputs are byte-sensitive: progress lines
+            // emitted on stderr by prepare_and_run's verbose path break
+            // script parity. Git does not print progress on its short or
+            // porcelain outputs either.
+            let status_verbose = auto_verbose
+                && !matches!(
+                    effective_format,
+                    crate::plumbing::options::status::Format::Short
+                        | crate::plumbing::options::status::Format::PorcelainV2
+                );
+            prepare_and_run(
+                "status",
+                trace,
+                status_verbose,
+                progress,
+                progress_keep_open,
+                None,
+                move |progress, out, err| {
+                    use crate::plumbing::options::status::Submodules;
+                    core::repository::status::show(
+                        repository(Mode::Lenient)?,
+                        pathspec,
+                        out,
+                        err,
+                        progress,
+                        core::repository::status::Options {
+                            format: match effective_format {
+                                crate::plumbing::options::status::Format::Simplified => {
+                                    core::repository::status::Format::Simplified
+                                }
+                                crate::plumbing::options::status::Format::PorcelainV2 => {
+                                    core::repository::status::Format::PorcelainV2
+                                }
+                                crate::plumbing::options::status::Format::Short => {
+                                    core::repository::status::Format::Short
+                                }
+                            },
+                            ignored: ignored.map(|ignored| match ignored.unwrap_or_default() {
+                                crate::plumbing::options::status::Ignored::Matching => {
+                                    core::repository::status::Ignored::Matching
+                                }
+                                crate::plumbing::options::status::Ignored::Collapsed => {
+                                    core::repository::status::Ignored::Collapsed
+                                }
+                            }),
+                            output_format: format,
+                            statistics,
+                            thread_limit: thread_limit.or(cfg!(target_os = "macos").then_some(3)), // TODO: make this a configurable when in `gix`, this seems to be optimal on MacOS, linux scales though! MacOS also scales if reading a lot of files for refresh index
+                            allow_write: !no_write,
+                            index_worktree_renames: index_worktree_renames.map(|percentage| percentage.unwrap_or(0.5)),
+                            submodules: submodules.map(|submodules| match submodules {
+                                Submodules::All => core::repository::status::Submodules::All,
+                                Submodules::RefChange => core::repository::status::Submodules::RefChange,
+                                Submodules::Modifications => core::repository::status::Submodules::Modifications,
+                                Submodules::None => core::repository::status::Submodules::None,
+                            }),
                         },
-                        ignored: ignored.map(|ignored| match ignored.unwrap_or_default() {
-                            crate::plumbing::options::status::Ignored::Matching => {
-                                core::repository::status::Ignored::Matching
-                            }
-                            crate::plumbing::options::status::Ignored::Collapsed => {
-                                core::repository::status::Ignored::Collapsed
-                            }
-                        }),
-                        output_format: format,
-                        statistics,
-                        thread_limit: thread_limit.or(cfg!(target_os = "macos").then_some(3)), // TODO: make this a configurable when in `gix`, this seems to be optimal on MacOS, linux scales though! MacOS also scales if reading a lot of files for refresh index
-                        allow_write: !no_write,
-                        index_worktree_renames: index_worktree_renames.map(|percentage| percentage.unwrap_or(0.5)),
-                        submodules: submodules.map(|submodules| match submodules {
-                            Submodules::All => core::repository::status::Submodules::All,
-                            Submodules::RefChange => core::repository::status::Submodules::RefChange,
-                            Submodules::Modifications => core::repository::status::Submodules::Modifications,
-                            Submodules::None => core::repository::status::Submodules::None,
-                        }),
-                    },
-                )
-            },
-        ),
+                    )
+                },
+            )
+        }
         Subcommands::Submodule(platform) => match platform
             .cmds
             .unwrap_or(crate::plumbing::options::submodule::Subcommands::List { dirty_suffix: None })
