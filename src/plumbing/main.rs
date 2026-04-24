@@ -65,7 +65,29 @@ pub fn main() -> Result<()> {
     // PARSE_OPT_KEEP_UNKNOWN_OPT and then dies via die() (not usage_msg_opt)
     // when argc>1 — exit 128, not 129. Detect the intended subcommand from
     // argv so we can remap to the right exit code.
-    let args: Args = match Args::try_parse_from(gix::env::args_os()) {
+    // Parity with `git log -N` — a bare numeric short flag (e.g. `-3`) is a
+    // git-log shortcut for `--max-count=N` (vendor/git/revision.c
+    // handle_revision_opt's "`-[0-9]+`" branch). Clap has no native way to
+    // model a numeric short flag that dispatches to a specific option, so we
+    // rewrite the argv before try_parse_from: when the subcommand is `log`,
+    // any token matching `-\d+` becomes `--max-count=\d+`. Non-log commands
+    // see the original tokens and keep clap's normal UnknownArgument behavior.
+    let argv: Vec<std::ffi::OsString> = {
+        let raw: Vec<std::ffi::OsString> = gix::env::args_os().collect();
+        if detect_subcommand_from_argv().as_deref() == Some("log") {
+            raw.into_iter()
+                .map(|a| match a.to_str() {
+                    Some(s) if s.len() > 1 && s.starts_with('-') && s[1..].bytes().all(|b| b.is_ascii_digit()) => {
+                        format!("--max-count={}", &s[1..]).into()
+                    }
+                    _ => a,
+                })
+                .collect()
+        } else {
+            raw
+        }
+    };
+    let args: Args = match Args::try_parse_from(argv) {
         Ok(args) => args,
         Err(e) => {
             if e.kind() == clap::error::ErrorKind::UnknownArgument {
@@ -354,6 +376,8 @@ pub fn main() -> Result<()> {
             branches,
             tags,
             remotes,
+            max_count,
+            skip,
             revspec,
             pathspec,
         }) => prepare_and_run(
@@ -372,6 +396,8 @@ pub fn main() -> Result<()> {
                         branches,
                         tags,
                         remotes,
+                        max_count,
+                        skip,
                         revspec,
                         path: pathspec.into_iter().next(),
                     },

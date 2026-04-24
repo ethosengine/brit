@@ -715,6 +715,14 @@ pub mod log {
         #[clap(long)]
         pub remotes: bool,
 
+        /// Show only the first <n> commits matching the traversal.
+        #[clap(short = 'n', long, value_name = "n")]
+        pub max_count: Option<usize>,
+
+        /// Skip <n> commits before showing the rest of the traversal.
+        #[clap(long, value_name = "n")]
+        pub skip: Option<usize>,
+
         /// The revision (branch, commit, tag, range) to start walking from. Defaults to HEAD.
         #[clap(value_parser = crate::shared::AsBString)]
         pub revspec: Option<BString>,

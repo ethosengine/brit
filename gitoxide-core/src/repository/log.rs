@@ -9,6 +9,8 @@ pub struct Options {
     pub branches: bool,
     pub tags: bool,
     pub remotes: bool,
+    pub max_count: Option<usize>,
+    pub skip: Option<usize>,
     pub revspec: Option<BString>,
     pub path: Option<BString>,
 }
@@ -132,7 +134,17 @@ fn log_all(repo: gix::Repository, out: &mut dyn std::io::Write, opts: Options) -
 
     let topo = gix::traverse::commit::topo::Builder::from_iters(&repo.objects, tips, Some(ends)).build()?;
 
-    for info in topo {
+    // --skip=<n> drops the first n commits of the traversal; --max-count=<n>
+    // caps the output after the skip. Matches git's rev_list_info.max_count +
+    // rev_list_info.skip_count in vendor/git/revision.c::get_revision.
+    let mut iter: Box<dyn Iterator<Item = _>> = Box::new(topo);
+    if let Some(n) = opts.skip {
+        iter = Box::new(iter.skip(n));
+    }
+    if let Some(n) = opts.max_count {
+        iter = Box::new(iter.take(n));
+    }
+    for info in iter {
         let info = info?;
 
         write_info(&repo, &mut *out, &info)?;

@@ -259,38 +259,45 @@ only_for_hash sha1-only && (small-repo-in-sandbox
 
 # --- commit limiting ----------------------------------------------------
 
-# mode=effect — -n <count>: cap total commits printed. Wires straight
-# into the topo-walk iterator as .take(n).
+# mode=effect — -n <count>: cap total commits. Clap `-n`/`--max-count`
+# wires through Options::max_count into `.take(n)` on the topo iterator.
 # hash=sha1-only
 title "gix log -n <count>"
 only_for_hash sha1-only && (small-repo-in-sandbox
-  # TODO — expect_parity effect -- log -n 1
-  it "matches git behavior" && { :; }
+  it "matches git: caps output at n commits, exit 0" && {
+    expect_parity effect -- log -n 1
+  }
 )
 
 # mode=effect — --max-count=<n>: long form of -n.
 # hash=sha1-only
 title "gix log --max-count=<n>"
 only_for_hash sha1-only && (small-repo-in-sandbox
-  # TODO — expect_parity effect -- log --max-count=1
-  it "matches git behavior" && { :; }
+  it "matches git: caps output at n commits, exit 0" && {
+    expect_parity effect -- log --max-count=1
+  }
 )
 
-# mode=effect — -<number>: compact form (e.g. -3). Clap needs to accept
-# numeric short flags; revision.c handles this as a positional shortcut.
+# mode=effect — -<number>: git's revision.c::handle_revision_opt accepts
+# `-<digits>` as shorthand for `--max-count=<digits>`. Clap can't model a
+# numeric short flag directly, so src/plumbing/main.rs preprocesses argv
+# when the subcommand is `log`, rewriting `-3` → `--max-count=3`.
 # hash=sha1-only
 title "gix log -<number>"
 only_for_hash sha1-only && (small-repo-in-sandbox
-  # TODO — expect_parity effect -- log -2
-  it "matches git behavior" && { :; }
+  it "matches git: -<digits> aliases --max-count" && {
+    expect_parity effect -- log -2
+  }
 )
 
 # mode=effect — --skip=<n>: drop first n commits before printing.
+# Iterator adapter `.skip(n)` before any max-count take.
 # hash=sha1-only
 title "gix log --skip=<n>"
 only_for_hash sha1-only && (small-repo-in-sandbox
-  # TODO — expect_parity effect -- log --skip=1
-  it "matches git behavior" && { :; }
+  it "matches git: drops first n commits, exit 0" && {
+    expect_parity effect -- log --skip=1
+  }
 )
 
 # mode=effect — --since=<time>: limit to commits newer than <time>. Date
