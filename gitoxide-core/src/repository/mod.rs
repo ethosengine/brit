@@ -9,8 +9,8 @@ pub mod archive;
 pub mod branch;
 pub mod cat;
 pub use cat::function::{
-    batch_check as cat_batch_check, cat, cat_typed, exists as cat_exists, print_size as cat_size,
-    print_type as cat_type,
+    batch as cat_batch, batch_check as cat_batch_check, cat, cat_typed, exists as cat_exists, print_size as cat_size,
+    print_type as cat_type, BatchMode as CatBatchMode,
 };
 pub use cat::{Existence as CatExistence, PrintOutcome as CatPrintOutcome, TypedOutcome as CatTypedOutcome};
 pub mod blame;

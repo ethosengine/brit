@@ -164,44 +164,90 @@ pub(super) mod function {
         }
     }
 
-    /// `git cat-file --batch-check[=<format>]` — read object names from
-    /// `stdin`, emit one `<format>\n` line per input (default format is
-    /// `%(objectname) %(objecttype) %(objectsize)`). Missing objects emit
-    /// `<input> missing\n`.
+    /// Which batch mode to run — whether per-input output carries just the
+    /// info line (`--batch-check`) or info + `<contents>` (`--batch`).
+    #[derive(Clone, Copy)]
+    pub enum BatchMode {
+        /// `--batch-check[=<format>]` — one info line per input.
+        Info,
+        /// `--batch[=<format>]` — info line + `<contents>` + delimiter per input.
+        Contents,
+    }
+
+    /// `git cat-file --batch[=<fmt>]` / `--batch-check[=<fmt>]` — stdin-driven
+    /// loop. Per input line, resolve the object and emit a formatted info
+    /// line. Under `BatchMode::Contents`, an object body + trailing
+    /// delimiter follows.
     ///
     /// Mirrors `batch_objects` + `batch_one_object` in
-    /// vendor/git/builtin/cat-file.c with `BATCH_MODE_INFO`. Ambiguous
-    /// short-sha and follow-symlinks special statuses are deferred; only
-    /// the `missing` status fires in this iteration.
-    pub fn batch_check(
+    /// vendor/git/builtin/cat-file.c, collapsing `BATCH_MODE_CONTENTS` and
+    /// `BATCH_MODE_INFO` into one entrypoint. Per-input delimiters (`-z`
+    /// for input NUL, `-Z` for input+output NUL) are threaded via the
+    /// explicit `input_delim` / `output_delim` bytes — matching git's
+    /// batch_options.input_delim / output_delim fields.
+    ///
+    /// Deferred status paths: `ambiguous` (short-sha resolving to multiple
+    /// objects), `submodule` (gitlink tree entry), `dangling` / `loop` /
+    /// `notdir` (only reached under --follow-symlinks). Every non-resolvable
+    /// input currently collapses to `<input> missing`.
+    pub fn batch(
         repo: &gix::Repository,
+        mode: BatchMode,
         format: Option<&str>,
+        input_delim: u8,
+        output_delim: u8,
         mut stdin: impl BufRead,
         mut out: impl std::io::Write,
     ) -> anyhow::Result<()> {
         let format = format.unwrap_or(DEFAULT_BATCH_CHECK_FORMAT);
-        let mut line = String::new();
+        let mut line = Vec::new();
         loop {
             line.clear();
-            let n = stdin.read_line(&mut line)?;
+            let n = stdin.read_until(input_delim, &mut line)?;
             if n == 0 {
                 break;
             }
-            let input = line.trim_end_matches('\n').trim_end_matches('\r');
+            // Strip the trailing delimiter and any CR (git's
+            // strbuf_getdelim_strip_crlf trims both).
+            if line.last() == Some(&input_delim) {
+                line.pop();
+            }
+            if input_delim == b'\n' && line.last() == Some(&b'\r') {
+                line.pop();
+            }
+            let input = std::str::from_utf8(&line)?;
             let Some(id) = resolve_oid(repo, input) else {
-                writeln!(out, "{input} missing")?;
+                write!(out, "{input} missing")?;
+                out.write_all(std::slice::from_ref(&output_delim))?;
                 continue;
             };
             let Ok(header) = repo.find_header(id) else {
-                writeln!(out, "{input} missing")?;
+                write!(out, "{input} missing")?;
+                out.write_all(std::slice::from_ref(&output_delim))?;
                 continue;
             };
             let mut buf = Vec::with_capacity(format.len() + 64);
             expand_atoms(format, &id, header.kind(), header.size(), &mut buf);
             out.write_all(&buf)?;
-            out.write_all(b"\n")?;
+            out.write_all(std::slice::from_ref(&output_delim))?;
+            if matches!(mode, BatchMode::Contents) {
+                let object = repo.find_object(id)?;
+                out.write_all(&object.data)?;
+                out.write_all(std::slice::from_ref(&output_delim))?;
+            }
         }
         Ok(())
+    }
+
+    /// Thin wrapper kept for callers that pre-date the delimiter/mode
+    /// parameterization. New code should call `batch` directly.
+    pub fn batch_check(
+        repo: &gix::Repository,
+        format: Option<&str>,
+        stdin: impl BufRead,
+        out: impl std::io::Write,
+    ) -> anyhow::Result<()> {
+        batch(repo, BatchMode::Info, format, b'\n', b'\n', stdin, out)
     }
 
     pub fn cat(repo: gix::Repository, revspec: &str, out: impl std::io::Write) -> anyhow::Result<()> {

@@ -367,8 +367,11 @@ only_for_hash sha1-only && (small-repo-in-sandbox
 # hash=sha1-only
 title "gix cat-file --batch"
 only_for_hash sha1-only && (small-repo-in-sandbox
-  # TODO — expect_parity bytes -- cat-file --batch  (stdin fed via heredoc)
-  it "matches git behavior" && { :; }
+  echo blob-content > a && git add a && git commit -q -m "populate a"
+  it "matches git behavior" && {
+    PARITY_STDIN="HEAD:a
+" expect_parity bytes -- cat-file --batch
+  }
 )
 
 # mode=bytes — `--batch=<format>`: custom format string. Exercises
@@ -376,8 +379,11 @@ only_for_hash sha1-only && (small-repo-in-sandbox
 # hash=sha1-only
 title "gix cat-file --batch=<format>"
 only_for_hash sha1-only && (small-repo-in-sandbox
-  # TODO — expect_parity bytes -- cat-file --batch='%(objecttype) %(objectsize)'
-  it "matches git behavior" && { :; }
+  echo blob-content > a && git add a && git commit -q -m "populate a"
+  it "matches git behavior" && {
+    PARITY_STDIN="HEAD:a
+" expect_parity bytes -- cat-file "--batch=%(objecttype) %(objectsize)"
+  }
 )
 
 # mode=bytes — `--batch-check`: like --batch but without the <contents>
@@ -458,8 +464,9 @@ only_for_hash sha1-only && (small-repo-in-sandbox
 # mode=effect
 title "gix cat-file --buffer (without batch)"
 only_for_hash sha1-only && (small-repo-in-sandbox
-  # TODO — expect_parity effect -- cat-file --buffer
-  it "matches git behavior" && { :; }
+  it "matches git behavior" && {
+    expect_parity effect -- cat-file --buffer
+  }
 )
 
 # mode=effect — `--unordered`: with --batch-all-objects, visit objects
@@ -491,8 +498,9 @@ only_for_hash sha1-only && (small-repo-in-sandbox
 # mode=effect
 title "gix cat-file --follow-symlinks (without batch)"
 only_for_hash sha1-only && (small-repo-in-sandbox
-  # TODO — expect_parity effect -- cat-file --follow-symlinks
-  it "matches git behavior" && { :; }
+  it "matches git behavior" && {
+    expect_parity effect -- cat-file --follow-symlinks
+  }
 )
 
 # mode=bytes — `-Z`: NUL-delimits input AND output (replaces LF with NUL
@@ -501,8 +509,9 @@ only_for_hash sha1-only && (small-repo-in-sandbox
 # hash=sha1-only
 title "gix cat-file -Z (NUL in+out)"
 only_for_hash sha1-only && (small-repo-in-sandbox
-  # TODO — expect_parity bytes -- cat-file --batch-check -Z  (stdin: "HEAD\0HEAD:a\0")
-  it "matches git behavior" && { :; }
+  it "matches git behavior" && {
+    PARITY_STDIN=$'HEAD\0HEAD:a\0' expect_parity bytes -- cat-file --batch-check -Z
+  }
 )
 
 # mode=bytes — `-z`: NUL-delimits INPUT only (output remains LF).
@@ -510,8 +519,9 @@ only_for_hash sha1-only && (small-repo-in-sandbox
 # hash=sha1-only
 title "gix cat-file -z (NUL input only)"
 only_for_hash sha1-only && (small-repo-in-sandbox
-  # TODO — expect_parity bytes -- cat-file --batch-check -z  (stdin: "HEAD\0HEAD:a\0")
-  it "matches git behavior" && { :; }
+  it "matches git behavior" && {
+    PARITY_STDIN=$'HEAD\0HEAD:a\0' expect_parity bytes -- cat-file --batch-check -z
+  }
 )
 
 # mode=effect — `-Z` without batch mode: usage error 129.
@@ -519,8 +529,9 @@ only_for_hash sha1-only && (small-repo-in-sandbox
 # mode=effect
 title "gix cat-file -Z (without batch)"
 only_for_hash sha1-only && (small-repo-in-sandbox
-  # TODO — expect_parity effect -- cat-file -Z
-  it "matches git behavior" && { :; }
+  it "matches git behavior" && {
+    expect_parity effect -- cat-file -Z
+  }
 )
 
 # --- --filter (batch-only) ---------------------------------------------

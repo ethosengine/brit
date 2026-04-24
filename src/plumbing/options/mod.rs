@@ -218,6 +218,38 @@ pub enum Subcommands {
             require_equals = true,
         )]
         batch_check: Option<String>,
+        /// Read object names from stdin, emit `<oid> <type> <size> LF
+        /// <contents> LF` per input. Mirrors `git cat-file --batch`.
+        /// Same format-string grammar as --batch-check.
+        #[clap(
+            long,
+            value_name = "FORMAT",
+            num_args = 0..=1,
+            default_missing_value = "",
+            require_equals = true,
+        )]
+        batch: Option<String>,
+        /// Under `--batch*`, NUL-terminate both input and output.
+        /// Mirrors `git cat-file -Z` (recommended for scripting).
+        #[clap(short = 'Z')]
+        nul_terminated: bool,
+        /// Under `--batch*`, NUL-terminate input only (output stays LF).
+        /// Deprecated in favor of `-Z`. Mirrors `git cat-file -z`.
+        #[clap(short = 'z')]
+        nul_input: bool,
+        /// Under `--batch*`, use stdio buffering for output. Accepted for
+        /// compat; observable effect is batch timing, not content.
+        #[clap(long)]
+        buffer: bool,
+        /// Under `--batch*`, visit --batch-all-objects in pack-storage
+        /// order rather than hash-sorted.
+        #[clap(long)]
+        unordered: bool,
+        /// Under `--batch*`, follow in-tree symlinks when requesting
+        /// `<tree-ish>:<path>` inputs. Mirrors `git cat-file
+        /// --follow-symlinks`.
+        #[clap(long)]
+        follow_symlinks: bool,
         /// The object to print, optionally preceded by a type hint.
         ///
         /// Two positional shapes:

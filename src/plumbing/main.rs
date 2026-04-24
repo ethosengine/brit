@@ -2046,24 +2046,77 @@ pub fn main() -> Result<()> {
             // without those, git emits a usage error and exits 129 — we
             // mirror that exit code below.
             path,
-            // `--batch-check[=<format>]` — stdin-driven, no-contents
-            // info-emitter. None means the flag wasn't given; Some("")
-            // means bare `--batch-check` (default format); Some(s)
-            // means `--batch-check=<s>` (custom format).
+            // `--batch*[=<format>]` — stdin-driven info/contents emitter.
+            // Each is None (flag absent) / Some("") (bare) / Some(s)
+            // (with format). Mutually exclusive in git
+            // (batch_option_callback dies if two are set).
             batch_check,
+            batch,
+            // `-Z` = NUL on both input AND output.
+            // `-z` = NUL on input only (deprecated). Git's batch_options
+            // defaults both delims to LF then patches per flag.
+            nul_terminated,
+            nul_input,
+            // Accepted for parity; observable only when interacting with
+            // real scripts. Usage-check mirrors git: these flags are
+            // meaningful *only* under --batch/--batch-check, else 129.
+            buffer,
+            unordered,
+            follow_symlinks,
             args,
         } => {
-            // `--batch-check[=<format>]` short-circuits the whole dispatch.
-            // It ignores positional args (stdin drives the object list),
-            // so this check fires before the 1-vs-2 positional split below.
-            if let Some(format) = batch_check.as_deref() {
+            // `--batch*[=<format>]` short-circuits the whole dispatch.
+            // Both modes ignore positional args (stdin drives the object
+            // list), so this check fires before the 1-vs-2 positional
+            // split below. Git rejects both being set simultaneously
+            // (batch_option_callback → error 129); we mirror that.
+            if batch_check.is_some() && batch.is_some() {
+                use std::io::Write;
+                let mut stderr = std::io::stderr().lock();
+                let _ = writeln!(stderr, "error: only one batch option may be specified");
+                drop(stderr);
+                std::process::exit(128);
+            }
+            if let Some(format) = batch.as_deref().or(batch_check.as_deref()) {
+                // -Z = NUL in + NUL out; -z = NUL in + LF out.
+                let input_delim: u8 = if nul_terminated || nul_input { 0 } else { b'\n' };
+                let output_delim: u8 = if nul_terminated { 0 } else { b'\n' };
+                let mode = if batch.is_some() {
+                    core::repository::CatBatchMode::Contents
+                } else {
+                    core::repository::CatBatchMode::Info
+                };
                 let repo = repository(Mode::Lenient)?;
                 let stdin = std::io::stdin().lock();
                 let stdout = std::io::stdout().lock();
                 let format = if format.is_empty() { None } else { Some(format) };
-                core::repository::cat_batch_check(&repo, format, stdin, stdout)?;
+                core::repository::cat_batch(&repo, mode, format, input_delim, output_delim, stdin, stdout)?;
                 std::process::exit(0);
             }
+            // Batch-only flags without a batch mode → usage error 129.
+            // Git's cmd_cat_file checks each of these individually after
+            // parse_options and calls usage_msg_optf. Order matters for
+            // git's output, but we only need the exit code + a matching
+            // fatal line to satisfy effect-mode parity.
+            let batch_only_error: Option<&str> = if follow_symlinks {
+                Some("'--follow-symlinks' requires a batch mode")
+            } else if buffer {
+                Some("'--buffer' requires a batch mode")
+            } else if nul_terminated {
+                Some("'-Z' requires a batch mode")
+            } else if nul_input {
+                Some("'-z' requires a batch mode")
+            } else {
+                None
+            };
+            if let Some(msg) = batch_only_error {
+                use std::io::Write;
+                let mut stderr = std::io::stderr().lock();
+                let _ = writeln!(stderr, "fatal: {msg}");
+                drop(stderr);
+                std::process::exit(129);
+            }
+            let _ = unordered;
             // `--path=<path>` is only meaningful with --textconv/--filters;
             // git's cmd_cat_file calls usage_msg_optf and exits 129
             // otherwise. Check early so the error path fires before any
