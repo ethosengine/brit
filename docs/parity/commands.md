@@ -34,7 +34,7 @@ Deferred flag-level rows and compat-only rows live in [SHORTCOMINGS.md](SHORTCOM
 | switch | — | absent | — | — |
 | restore | — | absent | — | — |
 | branch | gix branch | partial | — | exists as `Branch` subcommand |
-| tag | gix tag | partial | — | exists as `Tag` subcommand |
+| tag | gix tag | partial | [tag.sh](../../tests/journey/parity/tag.sh) | scaffold only: 37 TODO rows across list/delete/verify/create modes; current gix surface is `Tag(tag::Platform)` → `Subcommands::List` (no flags). Every flag from `vendor/git/builtin/tag.c`'s `options[]` array (~25 entries, listing + creation groups) is represented as a placeholder `it` block; first closeable row is `--help` (already works — no wiring needed). |
 | stash | — | absent | — | — |
 | cherry-pick | — | absent | — | — |
 | revert | — | absent | — | — |
