@@ -51,9 +51,23 @@ pub fn display_object(
     Ok(())
 }
 
-pub(super) mod function {
-    use anyhow::Context;
+/// Outcome of `git cat-file -e <revspec>`. Dispatch translates each variant
+/// to an exit code (0, 1, 128) and — for `InvalidSpec` — to git's exact
+/// `fatal: Not a valid object name <spec>` stderr line.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Existence {
+    /// Spec resolved, object present in odb — `git cat-file -e` exit 0.
+    Present,
+    /// Spec resolved (or was a well-formed literal oid) but the object is
+    /// absent — `git cat-file -e` exit 1, no stderr.
+    Absent,
+    /// Spec did not resolve to any oid — `git cat-file -e` exit 128,
+    /// stderr `fatal: Not a valid object name <spec>`.
+    InvalidSpec,
+}
 
+pub(super) mod function {
+    use super::Existence;
     use crate::repository::revision::resolve::TreeMode;
 
     pub fn cat(repo: gix::Repository, revspec: &str, out: impl std::io::Write) -> anyhow::Result<()> {
@@ -61,17 +75,31 @@ pub(super) mod function {
         Ok(())
     }
 
-    /// `git cat-file -e <revspec>` — return `true` if the object referenced by
-    /// `revspec` exists in the odb (including alternates), `false` otherwise.
+    /// `git cat-file -e <revspec>` — report whether the object exists.
     ///
     /// Mirrors git's `case 'e'` branch in cat_one_file
-    /// (vendor/git/builtin/cat-file.c): after parsing the revspec to an oid,
-    /// `odb_has_object` is consulted with flags `ODB_HAS_OBJECT_RECHECK_PACKED
-    /// | ODB_HAS_OBJECT_FETCH_PROMISOR`. The caller translates the bool to
-    /// the exit code (0 present, 1 absent).
-    pub fn exists(repo: gix::Repository, revspec: &str) -> anyhow::Result<bool> {
-        let spec = repo.rev_parse(revspec)?;
-        let id = spec.single().context("rev-spec must resolve to a single object")?;
-        Ok(repo.has_object(id))
+    /// (vendor/git/builtin/cat-file.c) combined with the upstream
+    /// `get_oid_with_context` parse contract: a well-formed full-length
+    /// hex oid is accepted without an odb lookup, and `odb_has_object`
+    /// decides existence. Anything else goes through revspec resolution
+    /// and, if that fails, is reported as `InvalidSpec` so the caller
+    /// can emit git's `fatal: Not a valid object name <spec>` line and
+    /// exit 128.
+    pub fn exists(repo: &gix::Repository, revspec: &str) -> Existence {
+        if let Ok(id) = gix::hash::ObjectId::from_hex(revspec.as_bytes()) {
+            return if repo.has_object(id) {
+                Existence::Present
+            } else {
+                Existence::Absent
+            };
+        }
+        match repo.rev_parse(revspec) {
+            Ok(spec) => match spec.single() {
+                Some(id) if repo.has_object(id) => Existence::Present,
+                Some(_) => Existence::Absent,
+                None => Existence::InvalidSpec,
+            },
+            Err(_) => Existence::InvalidSpec,
+        }
     }
 }

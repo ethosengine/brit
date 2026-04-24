@@ -138,8 +138,12 @@ only_for_hash sha1-only && (small-repo-in-sandbox
 # mode=effect
 title "gix cat-file -e (missing object)"
 only_for_hash sha1-only && (small-repo-in-sandbox
-  # TODO — expect_parity effect -- cat-file -e 0000000000000000000000000000000000000000
-  it "matches git behavior" && { :; }
+  it "matches git behavior with a well-formed but absent oid" && {
+    expect_parity effect -- cat-file -e 0000000000000000000000000000000000000000
+  }
+  it "matches git behavior with an unresolvable ref name (exit 128)" && {
+    expect_parity effect -- cat-file -e nonexistent-ref
+  }
 )
 
 # mode=bytes — `-p <blob>` pretty-prints blob contents: raw bytes to

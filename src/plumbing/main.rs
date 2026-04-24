@@ -2029,13 +2029,27 @@ pub fn main() -> Result<()> {
             revspec,
         } => {
             if exists {
-                // `git cat-file -e` has no stdout, only an exit code: 0 if
-                // the object resolves & is present in the odb, 1 otherwise.
-                // Bypass prepare_and_run (which swallows non-zero exit codes
+                // `git cat-file -e` has no stdout; only an exit code plus
+                // an optional fatal stderr line:
+                //   0   — spec resolves, object present in odb
+                //   1   — spec resolves (or is a well-formed full-hex oid)
+                //         but the object is absent (silent)
+                //   128 — spec does not resolve at all; stderr gets git's
+                //         exact `fatal: Not a valid object name <spec>`
+                // Bypass prepare_and_run (which swallows non-zero exits
                 // into anyhow errors) and exit directly.
                 let repo = repository(Mode::Lenient)?;
-                let present = core::repository::cat_exists(repo, &revspec)?;
-                std::process::exit(if present { 0 } else { 1 });
+                match core::repository::cat_exists(&repo, &revspec) {
+                    core::repository::CatExistence::Present => std::process::exit(0),
+                    core::repository::CatExistence::Absent => std::process::exit(1),
+                    core::repository::CatExistence::InvalidSpec => {
+                        use std::io::Write;
+                        let mut stderr = std::io::stderr().lock();
+                        let _ = writeln!(stderr, "fatal: Not a valid object name {revspec}");
+                        drop(stderr);
+                        std::process::exit(128);
+                    }
+                }
             }
             prepare_and_run(
                 "cat",

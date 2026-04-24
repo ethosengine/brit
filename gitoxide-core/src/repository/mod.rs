@@ -9,6 +9,7 @@ pub mod archive;
 pub mod branch;
 pub mod cat;
 pub use cat::function::{cat, exists as cat_exists};
+pub use cat::Existence as CatExistence;
 pub mod blame;
 pub mod commit;
 pub mod config;
