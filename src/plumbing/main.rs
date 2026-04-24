@@ -2435,6 +2435,7 @@ pub fn main() -> Result<()> {
                 ignore_case,
                 column: _,
                 no_column: _,
+                color: _,
                 points_at,
                 contains,
                 no_contains,

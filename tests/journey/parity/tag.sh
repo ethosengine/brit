@@ -331,17 +331,17 @@ only_for_hash sha1-only && (small-repo-in-sandbox
 # hash=sha1-only
 title "gix tag --color"
 only_for_hash sha1-only && (small-repo-in-sandbox
-  it "matches git behavior with --color (TODO)" && {
-    : # TODO: expect_parity effect -- tag --color
+  it "matches git behavior with --color" && {
+    expect_parity effect -- tag --color
   }
-  it "matches git behavior with --color=never (TODO)" && {
-    : # TODO: expect_parity effect -- tag --color=never
+  it "matches git behavior with --color=never" && {
+    expect_parity effect -- tag --color=never
   }
-  it "matches git behavior with --color=always (TODO)" && {
-    : # TODO: expect_parity effect -- tag --color=always
+  it "matches git behavior with --color=always" && {
+    expect_parity effect -- tag --color=always
   }
-  it "matches git behavior with --color=auto (TODO)" && {
-    : # TODO: expect_parity effect -- tag --color=auto
+  it "matches git behavior with --color=auto" && {
+    expect_parity effect -- tag --color=auto
   }
 )
 

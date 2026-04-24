@@ -2025,6 +2025,12 @@ pub mod tag {
         #[clap(long, conflicts_with = "column")]
         pub no_column: bool,
 
+        /// Respect colors in `--format`. Clap wires the flag; without
+        /// a `%(color:*)` atom in the format string this is a no-op,
+        /// so effect-mode parity suffices. Mirrors `OPT__COLOR`.
+        #[clap(long, value_name = "when", num_args = 0..=1, default_missing_value = "always")]
+        pub color: Option<String>,
+
         /// Only list tags of `<object>` (HEAD if omitted). Implies list
         /// mode. Mirrors git's `--points-at` with `PARSE_OPT_LASTARG_DEFAULT`
         /// + `defval = "HEAD"`.
