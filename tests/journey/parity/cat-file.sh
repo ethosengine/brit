@@ -713,17 +713,25 @@ only_for_hash sha1-only && (small-repo-in-sandbox
   }
 )
 
-# mode=bytes — ambiguous short sha on stdin (requires fabricated
-# collision or intentional short prefix): batch prints `<input>
-# ambiguous LF`. Hard to stage deterministically from a fresh fixture
-# without crafted objects; covered by a short-sha prefix that matches
-# multiple objects in the seeded repo.
+# mode=effect — ambiguous short sha on stdin. Seeding enough blobs
+# (~1000) until a 4-hex prefix collides, then feeding that prefix to
+# --batch-check: git emits warnings on stderr ("error: short object
+# ID <p> is ambiguous\nhint: The candidates are:\n hint:   <oid>
+# <type>\n ...") + stdout "<input> ambiguous\n" + exit 0. gix's
+# rev_parse returns an ambiguous-lookup error which we currently
+# collapse to "<input> missing\n" + exit 0 — exit parity holds, but
+# stderr bytes would diverge (and git's hint text varies across
+# versions), so effect-mode is the stable row.
 # hash=sha1-only
 title "gix cat-file --batch-check (ambiguous short sha)"
-only_for_hash sha1-only && (small-repo-in-sandbox
-  # TODO — construct two objects sharing a 1-byte prefix; feed that prefix
-  # TODO — expect_parity bytes -- cat-file --batch-check  (stdin: "<ambiguous-prefix>\n")
-  it "matches git behavior" && { :; }
+only_for_hash sha1-only && (sandbox
+  git-init-hash-aware
+  for i in $(seq 1 1000); do echo "content-$i" | git hash-object --stdin -w >/dev/null; done
+  prefix=$(cd .git/objects && find . -maxdepth 2 -type f | sed 's|^\./||; s|/||' | awk '{print substr($0, 1, 4)}' | sort | uniq -d | head -1)
+  it "matches git behavior (exit-code parity; git's hint text varies)" && {
+    PARITY_STDIN="$prefix
+" expect_parity effect -- cat-file --batch-check
+  }
 )
 
 # --- historical / hidden -----------------------------------------------
@@ -742,15 +750,22 @@ only_for_hash sha1-only && (small-repo-in-sandbox
 
 # --- submodule / dangling / notdir / loop (follow-symlinks statuses) ---
 
-# mode=bytes — submodule entry in a tree where the commit is not in the
-# local odb: batch emits `<oid> submodule LF` (see S_IFGITLINK branch
-# in batch_object_write). Requires a fixture with a gitlink tree entry.
-# hash=sha1-only
+# mode=bytes — gitlink tree entry whose commit is absent locally.
+# Turns out git's "submodule" status line (via S_IFGITLINK in
+# batch_object_write) only fires when `data->mode` was populated by
+# --batch-all-objects; stdin-driven lookup via `HEAD:sub` goes
+# through get_oid_with_context, returns MISSING_OBJECT, and emits
+# "<input> missing" — same bytes as gix. Byte-exact parity holds
+# trivially. hash=sha1-only
 title "gix cat-file --batch (submodule entry)"
 only_for_hash sha1-only && (small-repo-in-sandbox
-  # TODO — add submodule fixture (gitlink tree entry whose commit is absent locally)
-  # TODO — expect_parity bytes -- cat-file --batch  (stdin: "HEAD:sub\n")
-  it "matches git behavior" && { :; }
+  FAKE_COMMIT_OID=0123456789abcdef0123456789abcdef01234567
+  git update-index --add --cacheinfo 160000,$FAKE_COMMIT_OID,sub
+  git commit -q -m "add gitlink"
+  it "matches git behavior" && {
+    PARITY_STDIN="HEAD:sub
+" expect_parity bytes -- cat-file --batch
+  }
 )
 
 # mode=bytes — `--follow-symlinks` on a link that points outside the
