@@ -36,13 +36,14 @@ title "gix status"
 # --- meta / help ---------------------------------------------------------
 
 # mode=effect — clap --help short-circuits before repo load, exits 0.
-# Message text diverges wildly from git's; only exit code is asserted.
+# git's --help delegates to `man git-status` (exit 0 when man is
+# available); gix returns clap's auto-generated help. Message text
+# diverges wildly; only the exit-code match is asserted.
 # hash=dual
 title "gix status --help"
 only_for_hash dual && (sandbox
   it "matches git behavior" && {
-    # TODO: expect_parity effect -- status --help
-    true
+    expect_parity effect -- status --help
   }
 )
 
