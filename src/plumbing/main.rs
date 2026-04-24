@@ -905,7 +905,7 @@ pub fn main() -> Result<()> {
                 copy_force: _copy_force,
                 show_current,
                 edit_description: _edit_description,
-                force: _force,
+                force,
                 verbose: _verbose,
                 quiet: _quiet,
                 set_upstream_to: _set_upstream_to,
@@ -941,6 +941,19 @@ pub fn main() -> Result<()> {
             // mode is wired; other modes go through here too with
             // flags silently ignored until their individual rows
             // implement them.
+            // Per builtin/branch.c cmd_branch, any list-implying
+            // filter (--contains, --no-contains, --merged, --no-merged,
+            // --points-at) forces list mode even with positional args.
+            // Bare --list also forces list. Otherwise positional args
+            // without a cmdmode mean create.
+            let list_forced = _list_flag
+                || contains.is_some()
+                || no_contains.is_some()
+                || merged.is_some()
+                || no_merged.is_some()
+                || points_at.is_some();
+            let is_create = !show_current && !list_forced && !args.is_empty();
+
             if show_current {
                 prepare_and_run(
                     "branch-show-current",
@@ -950,6 +963,26 @@ pub fn main() -> Result<()> {
                     progress_keep_open,
                     None,
                     move |_progress, out, _err| core::repository::branch::show_current(repository(Mode::Lenient)?, out),
+                )
+            } else if is_create {
+                let mut iter = args.into_iter();
+                let name_os = iter.next().expect("is_create ⇒ args.len() >= 1");
+                let start_point_os = iter.next();
+                let name = gix::path::os_str_into_bstr(&name_os)?.to_owned();
+                let start_point = match start_point_os {
+                    Some(s) => Some(gix::path::os_str_into_bstr(&s)?.to_owned()),
+                    None => None,
+                };
+                prepare_and_run(
+                    "branch-create",
+                    trace,
+                    verbose,
+                    progress,
+                    progress_keep_open,
+                    None,
+                    move |_progress, _out, _err| {
+                        core::repository::branch::create(repository(Mode::Lenient)?, name, start_point, force)
+                    },
                 )
             } else {
                 let kind = if all {

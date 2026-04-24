@@ -39,6 +39,48 @@ fn commit_contains(
     Ok(false)
 }
 
+/// `git branch <name> [<start-point>]`: create `refs/heads/<name>`
+/// pointing at the resolved `<start-point>` (or HEAD if absent).
+/// Without `--force`, the ref must not already exist. Matches the
+/// create path in builtin/branch.c's cmd_branch + create_branch.
+pub fn create(
+    repo: gix::Repository,
+    name: gix::bstr::BString,
+    start_point: Option<gix::bstr::BString>,
+    force: bool,
+) -> anyhow::Result<()> {
+    use gix::refs::transaction::{Change, LogChange, PreviousValue, RefEdit};
+
+    // Validate the refname: construct the FullName and let gix_validate
+    // reject bad names via TryFrom.
+    let target = match start_point {
+        Some(rev) => repo.rev_parse_single(AsRef::<gix::bstr::BStr>::as_ref(&rev))?.detach(),
+        None => repo.head_id()?.detach(),
+    };
+    let full_name: gix::refs::FullName = format!("refs/heads/{name}")
+        .try_into()
+        .map_err(|err| anyhow::anyhow!("invalid refname: {err:?}"))?;
+    let expected = if force {
+        PreviousValue::Any
+    } else {
+        PreviousValue::MustNotExist
+    };
+    let log = LogChange {
+        message: format!("branch: Created from {target}").into(),
+        ..Default::default()
+    };
+    repo.edit_reference(RefEdit {
+        change: Change::Update {
+            log,
+            expected,
+            new: gix::refs::Target::Object(target),
+        },
+        name: full_name,
+        deref: false,
+    })?;
+    Ok(())
+}
+
 /// `git branch --show-current`: print the current branch name alone,
 /// or nothing in detached `HEAD` state. Matches builtin/branch.c
 /// show_current behavior — no asterisk, no indent, no newline on
