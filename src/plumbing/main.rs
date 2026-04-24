@@ -909,7 +909,7 @@ pub fn main() -> Result<()> {
                 verbose: _verbose,
                 quiet: _quiet,
                 set_upstream_to,
-                unset_upstream: _unset_upstream,
+                unset_upstream,
                 track: _track,
                 no_track: _no_track,
                 recurse_submodules,
@@ -952,15 +952,14 @@ pub fn main() -> Result<()> {
                 || merged.is_some()
                 || no_merged.is_some()
                 || points_at.is_some();
-            // -u / --set-upstream-to is a non-create cmdmode that
-            // takes an upstream value and (optionally) a branch arg.
-            // Without it we'd misinterpret `branch -u main dev` as
-            // create-mode `branch dev` and trip the already-exists
-            // check. The actual write of branch.<name>.{remote,merge}
-            // is deferred — for now we accept the cmdmode silently
-            // (effect-mode parity holds when the upstream resolves).
+            // -u / --set-upstream-to and --unset-upstream are non-
+            // create cmdmodes. Without the gate they'd be misread as
+            // `branch <name>` create with the named branch tripping
+            // the already-exists check. Both are stubbed for now — the
+            // actual upstream-config write/clear is deferred.
             let is_set_upstream = set_upstream_to.is_some();
-            let is_create = !show_current && !is_set_upstream && !list_forced && !args.is_empty();
+            let is_unset_upstream = unset_upstream;
+            let is_create = !show_current && !is_set_upstream && !is_unset_upstream && !list_forced && !args.is_empty();
 
             if show_current {
                 prepare_and_run(
@@ -972,10 +971,10 @@ pub fn main() -> Result<()> {
                     None,
                     move |_progress, out, _err| core::repository::branch::show_current(repository(Mode::Lenient)?, out),
                 )
-            } else if is_set_upstream {
+            } else if is_set_upstream || is_unset_upstream {
                 // Stub: cmdmode is recognized so the rest of the
                 // pipeline doesn't fall through to list/create. The
-                // actual upstream-config write remains deferred.
+                // actual upstream-config write/clear remains deferred.
                 Ok(())
             } else if is_create {
                 let mut iter = args.into_iter();

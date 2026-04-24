@@ -513,9 +513,18 @@ only_for_hash sha1-only && (sandbox
 # '<name>' has no upstream information".
 # hash=sha1-only
 title "gix branch --unset-upstream"
-only_for_hash sha1-only && (small-repo-in-sandbox
-  it "matches git behavior (TODO)" && {
-    : # TODO: git branch --set-upstream-to=main dev >/dev/null 2>&1; expect_parity effect -- branch --unset-upstream dev
+only_for_hash sha1-only && (sandbox
+  function _branch-unset-fixture() {
+    git-init-hash-aware
+    git checkout -b main >/dev/null 2>&1
+    git config commit.gpgsign false
+    git -c user.email=t@t -c user.name=t commit -q --allow-empty -m c1
+    git branch dev
+    git branch --set-upstream-to=main dev >/dev/null 2>&1
+  }
+  it "matches git behavior" && {
+    expect_parity_reset _branch-unset-fixture effect -- branch --unset-upstream dev
+    echo 1>&2 "${YELLOW}   [compat] branch --unset-upstream config-clear deferred"
   }
 )
 
