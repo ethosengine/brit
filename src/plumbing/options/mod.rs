@@ -1212,6 +1212,109 @@ pub mod log {
         #[clap(long)]
         pub no_expand_tabs: bool,
 
+        // --- third steward-pass: remainder of the user-visible flag surface ---
+        /// Use POSIX basic regex for --grep and friends.
+        #[clap(long)]
+        pub basic_regexp: bool,
+        /// Use Perl-compatible regex for --grep and friends.
+        #[clap(short = 'P', long)]
+        pub perl_regexp: bool,
+        /// Exclude hidden refs when selecting heads.
+        #[clap(long, value_parser = crate::shared::AsBString, value_name = "section")]
+        pub exclude_hidden: Option<BString>,
+        /// Output commits suitable for feeding into `git bisect`.
+        #[clap(long)]
+        pub bisect: bool,
+        /// Shorthand for `--date=relative`.
+        #[clap(long)]
+        pub relative_date: bool,
+        /// Alias for --diff-merges=dd.
+        #[clap(long = "dd")]
+        pub dd: bool,
+        /// Suppress merge-commit diffs.
+        #[clap(long)]
+        pub no_diff_merges: bool,
+        /// In combined diffs, emit paths from each parent.
+        #[clap(long)]
+        pub combined_all_paths: bool,
+        /// Override the "+" marker for added lines.
+        #[clap(long, value_parser = crate::shared::AsBString, value_name = "char")]
+        pub output_indicator_new: Option<BString>,
+        /// Override the "-" marker for removed lines.
+        #[clap(long, value_parser = crate::shared::AsBString, value_name = "char")]
+        pub output_indicator_old: Option<BString>,
+        /// Override the " " marker for context lines.
+        #[clap(long, value_parser = crate::shared::AsBString, value_name = "char")]
+        pub output_indicator_context: Option<BString>,
+        /// Show tree objects in diff output.
+        #[clap(short = 't')]
+        pub show_tree_objects: bool,
+        /// Anchored-diff algorithm anchor text (may be repeated).
+        #[clap(long, value_parser = crate::shared::AsBString, value_name = "text")]
+        pub anchored: Vec<BString>,
+        /// Cumulative dirstat.
+        #[clap(long)]
+        pub cumulative: bool,
+        /// Dirstat counting by file instead of lines.
+        #[clap(long)]
+        pub dirstat_by_file: bool,
+        /// Disable --color-moved.
+        #[clap(long)]
+        pub no_color_moved: bool,
+        /// Whitespace-handling for moved-line coloring.
+        #[clap(long, value_parser = crate::shared::AsBString, value_name = "mode")]
+        pub color_moved_ws: Option<BString>,
+        /// Disable --color-moved-ws.
+        #[clap(long)]
+        pub no_color_moved_ws: bool,
+        /// Word-based diff coloring with optional regex.
+        #[clap(long, value_parser = crate::shared::AsBString, value_name = "regex", num_args = 0..=1, default_missing_value = "")]
+        pub color_words: Option<BString>,
+        /// Break rewrites into delete-then-create pairs.
+        #[clap(short = 'B', long = "break-rewrites", value_parser = crate::shared::AsBString, value_name = "n/m", num_args = 0..=1, default_missing_value = "")]
+        pub break_rewrites: Option<BString>,
+        /// Detect file copies (short `-C[<n>]`, long `--find-copies`).
+        #[clap(short = 'C', long = "find-copies", value_parser = crate::shared::AsBString, value_name = "n", num_args = 0..=1, default_missing_value = "")]
+        pub find_copies: Option<BString>,
+        /// Rename-detection exhaustive scan cap (`-l<num>`).
+        #[clap(short = 'l', value_name = "num")]
+        pub rename_detection_limit: Option<usize>,
+        /// Path-ordering file (short `-O<file>`, long `--orderfile`).
+        #[clap(short = 'O', long = "orderfile", value_parser = crate::shared::AsBString, value_name = "file")]
+        pub orderfile: Option<BString>,
+        /// Skip to first-matching path when emitting diffs.
+        #[clap(long, value_parser = crate::shared::AsBString, value_name = "path")]
+        pub skip_to: Option<BString>,
+        /// Rotate the diff output so <path> appears first.
+        #[clap(long, value_parser = crate::shared::AsBString, value_name = "path")]
+        pub rotate_to: Option<BString>,
+        /// Reverse the sense of old/new in diff output.
+        #[clap(short = 'R')]
+        pub reverse_diff: bool,
+        /// Submodule-diff rendering control (distinct from --submodule).
+        #[clap(long, value_parser = crate::shared::AsBString, value_name = "when", num_args = 0..=1, default_missing_value = "all")]
+        pub ignore_submodules: Option<BString>,
+        /// Emit diffs with the default `a/` and `b/` prefixes.
+        #[clap(long)]
+        pub default_prefix: bool,
+        /// Prepend <prefix> to every diff output line.
+        #[clap(long, value_parser = crate::shared::AsBString, value_name = "prefix")]
+        pub line_prefix: Option<BString>,
+        /// Treat intent-to-add paths as absent in the index.
+        #[clap(long)]
+        pub ita_invisible_in_index: bool,
+        /// Show notes by default.
+        #[clap(long)]
+        pub show_notes_by_default: bool,
+        /// Show notes from a specific notes-ref (deprecated alias of --notes).
+        #[clap(long, value_parser = crate::shared::AsBString, value_name = "ref", num_args = 0..=1, default_missing_value = "")]
+        pub show_notes: Option<BString>,
+        /// Show standard notes (deprecated alias).
+        #[clap(long)]
+        pub standard_notes: bool,
+        /// Suppress standard notes (deprecated alias).
+        #[clap(long)]
+        pub no_standard_notes: bool,
         /// Revision(s) to walk from. Multiple revspecs are accepted (git's
         /// rev-list grammar). Only the first is honored today; --not / multi-
         /// revspec composition is a later parity row.

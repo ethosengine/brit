@@ -197,4 +197,39 @@ Two row classes:
 | compat | `gix log --encoding=<enc>` | gix log --encoding=<enc> commit-message encoding conversion deferred — flag accepted | [log.sh:1876](../../tests/journey/parity/log.sh#L1876) |
 | compat | `gix log --expand-tabs[=<n>]` | gix log --expand-tabs[=<n>] tab-expansion deferred — flag accepted | [log.sh:1886](../../tests/journey/parity/log.sh#L1886) |
 | compat | `gix log --no-expand-tabs` | gix log --no-expand-tabs --expand-tabs negation deferred — flag accepted | [log.sh:1896](../../tests/journey/parity/log.sh#L1896) |
+| compat | `gix log --basic-regexp` | gix log --basic-regexp POSIX basic-regex mode for --grep deferred — flag accepted | [log.sh:1913](../../tests/journey/parity/log.sh#L1913) |
+| compat | `gix log -P / --perl-regexp` | gix log -P / --perl-regexp Perl-regex mode for --grep deferred — flag accepted | [log.sh:1923](../../tests/journey/parity/log.sh#L1923) |
+| compat | `gix log --exclude-hidden=<section>` | gix log --exclude-hidden=<section> hidden-refs filter deferred — flag accepted | [log.sh:1933](../../tests/journey/parity/log.sh#L1933) |
+| compat | `gix log --bisect` | gix log --bisect bisect-output emission deferred — flag accepted | [log.sh:1943](../../tests/journey/parity/log.sh#L1943) |
+| compat | `gix log --relative-date` | gix log --relative-date relative-date shorthand deferred (equivalent to --date=relative) — flag accepted | [log.sh:1953](../../tests/journey/parity/log.sh#L1953) |
+| compat | `gix log --dd` | gix log --dd --diff-merges=dd alias deferred — flag accepted | [log.sh:1963](../../tests/journey/parity/log.sh#L1963) |
+| compat | `gix log --no-diff-merges` | gix log --no-diff-merges --diff-merges suppression deferred — flag accepted | [log.sh:1973](../../tests/journey/parity/log.sh#L1973) |
+| compat | `gix log --combined-all-paths` | gix log --combined-all-paths combined-diff per-parent path emission deferred — flag accepted | [log.sh:1983](../../tests/journey/parity/log.sh#L1983) |
+| compat | `gix log --output-indicator-new=<char>` | gix log --output-indicator-new=<char> custom add-indicator character deferred — flag accepted | [log.sh:1993](../../tests/journey/parity/log.sh#L1993) |
+| compat | `gix log --output-indicator-old=<char>` | gix log --output-indicator-old=<char> custom remove-indicator character deferred — flag accepted | [log.sh:2003](../../tests/journey/parity/log.sh#L2003) |
+| compat | `gix log --output-indicator-context=<char>` | gix log --output-indicator-context=<char> custom context-indicator character deferred — flag accepted | [log.sh:2013](../../tests/journey/parity/log.sh#L2013) |
+| compat | `gix log -t (show tree objects)` | gix log -t (show tree objects) tree-object diff emission deferred — flag accepted | [log.sh:2023](../../tests/journey/parity/log.sh#L2023) |
+| compat | `gix log --anchored=<text>` | gix log --anchored=<text> anchored-diff algorithm deferred — flag accepted | [log.sh:2033](../../tests/journey/parity/log.sh#L2033) |
+| compat | `gix log --cumulative` | gix log --cumulative cumulative-dirstat emission deferred — flag accepted | [log.sh:2043](../../tests/journey/parity/log.sh#L2043) |
+| compat | `gix log --dirstat-by-file` | gix log --dirstat-by-file dirstat per-file counting mode deferred — flag accepted | [log.sh:2053](../../tests/journey/parity/log.sh#L2053) |
+| compat | `gix log --no-color-moved` | gix log --no-color-moved --color-moved negation deferred — flag accepted | [log.sh:2063](../../tests/journey/parity/log.sh#L2063) |
+| compat | `gix log --color-moved-ws=<mode>` | gix log --color-moved-ws=<mode> moved-line whitespace mode deferred — flag accepted | [log.sh:2073](../../tests/journey/parity/log.sh#L2073) |
+| compat | `gix log --no-color-moved-ws` | gix log --no-color-moved-ws --color-moved-ws negation deferred — flag accepted | [log.sh:2083](../../tests/journey/parity/log.sh#L2083) |
+| compat | `gix log --color-words` | gix log --color-words word-level coloring deferred — flag accepted | [log.sh:2093](../../tests/journey/parity/log.sh#L2093) |
+| compat | `gix log -B / --break-rewrites` | gix log -B / --break-rewrites break-rewrites detection deferred — flag accepted | [log.sh:2103](../../tests/journey/parity/log.sh#L2103) |
+| compat | `gix log -C / --find-copies` | gix log -C / --find-copies copy detection deferred — flag accepted | [log.sh:2113](../../tests/journey/parity/log.sh#L2113) |
+| compat | `gix log -l<num>` | gix log -l<num> rename-detection scan cap deferred — flag accepted | [log.sh:2123](../../tests/journey/parity/log.sh#L2123) |
+| compat | `gix log -O / --orderfile=<file>` | gix log -O / --orderfile=<file> path-ordering file deferred — flag accepted | [log.sh:2133](../../tests/journey/parity/log.sh#L2133) |
+| compat | `gix log --skip-to=<path>` | gix log --skip-to=<path> diff skip-to-path deferred — flag accepted | [log.sh:2143](../../tests/journey/parity/log.sh#L2143) |
+| compat | `gix log --rotate-to=<path>` | gix log --rotate-to=<path> diff rotate-to-path deferred — flag accepted | [log.sh:2153](../../tests/journey/parity/log.sh#L2153) |
+| compat | `gix log -R (reverse diff inputs)` | gix log -R (reverse diff inputs) old/new side swap deferred — flag accepted | [log.sh:2163](../../tests/journey/parity/log.sh#L2163) |
+| compat | `gix log --ignore-submodules[=<when>]` | gix log --ignore-submodules[=<when>] submodule-diff ignore mode deferred — flag accepted | [log.sh:2173](../../tests/journey/parity/log.sh#L2173) |
+| compat | `gix log --default-prefix` | gix log --default-prefix default-prefix restore deferred — flag accepted | [log.sh:2183](../../tests/journey/parity/log.sh#L2183) |
+| compat | `gix log --line-prefix=<prefix>` | gix log --line-prefix=<prefix> per-line prefix emission deferred — flag accepted | [log.sh:2193](../../tests/journey/parity/log.sh#L2193) |
+| compat | `gix log --ita-invisible-in-index` | gix log --ita-invisible-in-index intent-to-add invisibility deferred — flag accepted | [log.sh:2203](../../tests/journey/parity/log.sh#L2203) |
+| compat | `gix log --show-notes-by-default` | gix log --show-notes-by-default notes-by-default emission deferred — flag accepted | [log.sh:2219](../../tests/journey/parity/log.sh#L2219) |
+| compat | `gix log --show-notes` | gix log --show-notes deprecated --show-notes alias deferred — flag accepted | [log.sh:2229](../../tests/journey/parity/log.sh#L2229) |
+| compat | `gix log --standard-notes` | gix log --standard-notes deprecated --standard-notes alias deferred — flag accepted | [log.sh:2239](../../tests/journey/parity/log.sh#L2239) |
+| compat | `gix log --no-standard-notes` | gix log --no-standard-notes deprecated --no-standard-notes alias deferred — flag accepted | [log.sh:2249](../../tests/journey/parity/log.sh#L2249) |
+| compat | `gix log --no-use-mailmap` | gix log --no-use-mailmap --no-use-mailmap (alias of --no-mailmap) deferred — flag accepted | [log.sh:2259](../../tests/journey/parity/log.sh#L2259) |
 
