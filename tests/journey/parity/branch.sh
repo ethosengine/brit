@@ -269,8 +269,8 @@ only_for_hash sha1-only && (small-repo-in-sandbox
 # hash=sha1-only
 title "gix branch --format"
 only_for_hash sha1-only && (small-repo-in-sandbox
-  it "matches git behavior (TODO)" && {
-    : # TODO: expect_parity bytes -- branch --format='%(refname:short)'
+  it "matches git behavior" && {
+    expect_parity bytes -- branch --format='%(refname:short)'
   }
 )
 

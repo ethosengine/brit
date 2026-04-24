@@ -83,7 +83,62 @@ pub mod list {
         /// `<object>` (no reachability walk; byte-exact oid match).
         /// Git's `--points-at`.
         pub points_at: Option<OsString>,
+        /// Format string interpolating `%(<atom>)` fields (for-each-ref
+        /// atom set). When set, replaces the default asterisk/indent
+        /// listing with one format-expanded row per branch (no
+        /// current-branch decoration). Git's `--format`.
+        pub format_string: Option<String>,
     }
+}
+
+/// Minimal subset of git's `for-each-ref` atom interpreter, enough
+/// for the atoms exercised by branch-list rows. Unknown atoms expand
+/// to the empty string — git would die via `verify_ref_format`, but
+/// bytes-mode rows only request supported atoms.
+fn expand_format(fmt: &str, full: &str, short: &str) -> String {
+    let mut out = String::with_capacity(fmt.len() + 32);
+    let bytes = fmt.as_bytes();
+    let mut i = 0;
+    while i < bytes.len() {
+        if bytes[i] == b'%' && i + 1 < bytes.len() && bytes[i + 1] == b'(' {
+            let Some(close_rel) = bytes[i + 2..].iter().position(|&b| b == b')') else {
+                out.push('%');
+                i += 1;
+                continue;
+            };
+            let close = i + 2 + close_rel;
+            let atom = &fmt[i + 2..close];
+            i = close + 1;
+            match atom {
+                "refname" => out.push_str(full),
+                "refname:short" | "refname:strip=2" | "refname:lstrip=2" => out.push_str(short),
+                a if a.starts_with("refname:strip=") || a.starts_with("refname:lstrip=") => {
+                    let n_str = a.split('=').nth(1).unwrap_or("0");
+                    let n: usize = n_str.parse().unwrap_or(0);
+                    let stripped = full.split('/').skip(n).collect::<Vec<_>>().join("/");
+                    out.push_str(&stripped);
+                }
+                _ => {
+                    // Unknown atom → empty. Same deliberate no-match
+                    // as tag's interpreter.
+                }
+            }
+        } else if bytes[i] == b'%' && i + 2 < bytes.len() {
+            // Hex-pair escape like %00 (NUL), %0a (LF).
+            let hex = &fmt[i + 1..i + 3];
+            if let Ok(n) = u8::from_str_radix(hex, 16) {
+                out.push(n as char);
+                i += 3;
+                continue;
+            }
+            out.push('%');
+            i += 1;
+        } else {
+            out.push(bytes[i] as char);
+            i += 1;
+        }
+    }
+    out
 }
 
 pub fn list(
@@ -194,12 +249,17 @@ pub fn list(
         }
         kept.sort();
         for branch_name in kept {
-            let marker = if Some(&branch_name) == head_short.as_ref() {
-                "* "
+            if let Some(fmt) = options.format_string.as_deref() {
+                let full = format!("refs/heads/{branch_name}");
+                writeln!(out, "{}", expand_format(fmt, &full, &branch_name))?;
             } else {
-                "  "
-            };
-            writeln!(out, "{marker}{branch_name}")?;
+                let marker = if Some(&branch_name) == head_short.as_ref() {
+                    "* "
+                } else {
+                    "  "
+                };
+                writeln!(out, "{marker}{branch_name}")?;
+            }
         }
     }
 
@@ -229,7 +289,10 @@ pub fn list(
         }
         kept.sort();
         for branch_name in kept {
-            if include_prefix {
+            if let Some(fmt) = options.format_string.as_deref() {
+                let full = format!("refs/remotes/{branch_name}");
+                writeln!(out, "{}", expand_format(fmt, &full, &branch_name))?;
+            } else if include_prefix {
                 writeln!(out, "  remotes/{branch_name}")?;
             } else {
                 writeln!(out, "  {branch_name}")?;
