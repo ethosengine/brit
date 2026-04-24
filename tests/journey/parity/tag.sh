@@ -70,8 +70,8 @@ only_for_hash dual && (sandbox
 # hash=sha1-only
 title "gix tag --bogus-flag"
 only_for_hash sha1-only && (small-repo-in-sandbox
-  it "matches git behavior (TODO)" && {
-    : # TODO: expect_parity effect -- tag --bogus-flag
+  it "matches git behavior" && {
+    expect_parity effect -- tag --bogus-flag
   }
 )
 
