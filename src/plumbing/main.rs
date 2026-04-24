@@ -624,6 +624,7 @@ pub fn main() -> Result<()> {
             separate_git_dir,
             ref_format,
             config_overrides,
+            bundle_uri,
             sparse: _,
             origin: _,
             local: _,
@@ -711,6 +712,26 @@ pub fn main() -> Result<()> {
             // list being appended after init_db.
             let mut config = config;
             config.extend(config_overrides);
+            // Mirrors cmd_clone in vendor/git/builtin/clone.c:
+            //     if (bundle_uri && deepen)
+            //         die(_("options '%s' and '%s' cannot be used together"),
+            //             "--bundle-uri",
+            //             "--depth/--shallow-since/--shallow-exclude");
+            // Exit 128. `deepen` in git is set when any of --depth /
+            // --shallow-since / --shallow-exclude is present.
+            if bundle_uri.is_some()
+                && (shallow.depth.is_some() || shallow.shallow_since.is_some() || !shallow.shallow_exclude.is_empty())
+            {
+                use std::io::Write;
+                let mut stderr = std::io::stderr().lock();
+                let _ = writeln!(
+                    stderr,
+                    "fatal: options '--bundle-uri' and '--depth/--shallow-since/--shallow-exclude' cannot be used together"
+                );
+                drop(stderr);
+                std::process::exit(128);
+            }
+            let _ = bundle_uri;
             // Mirrors cmd_clone in vendor/git/builtin/clone.c:
             //     if (argc > 2)
             //         usage_msg_opt(_("Too many arguments."), ...);

@@ -739,6 +739,13 @@ pub mod clone {
         #[clap(long = "config", short = 'c', value_parser = crate::shared::AsBString, value_name = "KEY=VAL")]
         pub config_overrides: Vec<gix::bstr::BString>,
 
+        /// Bundle URI to fetch before the real fetch. Incompatible with
+        /// --depth / --shallow-since / --shallow-exclude. Parse-only —
+        /// gix doesn't consume bundle URIs today; missing-URI bundles
+        /// fall through to a regular clone (matching git's behavior).
+        #[clap(long = "bundle-uri", value_name = "URI")]
+        pub bundle_uri: Option<String>,
+
         /// Employ a sparse-checkout initialized to just the toplevel directory.
         ///
         /// Parse-only: empty-upstream clones have no toplevel anything to

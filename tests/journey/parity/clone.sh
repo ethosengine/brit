@@ -946,9 +946,18 @@ only_for_hash sha1-only && (sandbox
 # hash=sha1-only "gix cannot open sha256 remotes, see gix/src/clone/fetch/mod.rs unimplemented!()"
 title "gix clone --bundle-uri=<uri>"
 only_for_hash sha1-only && (sandbox
-  it "matches git behavior" && {
-    # TODO: expect_parity effect -- clone --bundle-uri=file:///tmp/bundle upstream.git
-    true
+  # Non-existent bundle URI → git falls through to a regular clone
+  # and exits 0. gix ignores --bundle-uri (parse-only) and does the
+  # regular clone regardless. Both exit 0.
+  git-init-hash-aware -q --bare src-repo.git
+  mkdir g-side x-side
+  (cd g-side && ln -s ../src-repo.git .)
+  (cd x-side && ln -s ../src-repo.git .)
+  it "matches git: --bundle-uri=<missing> falls through to regular clone" && {
+    (cd g-side && expect_run 0 git clone --bundle-uri=file:///tmp/missing-bundle src-repo.git target)
+  }
+  it "matches gix: --bundle-uri is accepted and ignored" && {
+    (cd x-side && expect_run 0 "$exe_plumbing" clone --bundle-uri=file:///tmp/missing-bundle src-repo.git target)
   }
 )
 
@@ -957,8 +966,8 @@ only_for_hash sha1-only && (sandbox
 # hash=sha1-only "gix cannot open sha256 remotes, see gix/src/clone/fetch/mod.rs unimplemented!()"
 title "gix clone --bundle-uri=<uri> --depth=<n> (conflict)"
 only_for_hash sha1-only && (sandbox
-  it "matches git: conflict dies 128" && {
-    # TODO: expect_parity effect -- clone --bundle-uri=file:///tmp/bundle --depth=1 upstream.git
-    true
+  git-init-hash-aware -q --bare src-repo.git
+  it "matches git: --bundle-uri + --depth dies 128" && {
+    expect_parity effect -- clone --bundle-uri=file:///tmp/x --depth=1 src-repo.git target-bundle-depth
   }
 )
