@@ -13,6 +13,10 @@ pub struct ListOptions {
     /// When true, pattern-match and sort are case-insensitive
     /// (`-i`/`--ignore-case`).
     pub ignore_case: bool,
+    /// When `Some`, only list tags that point (after peeling tag
+    /// chains) at the resolved object. Git's `--points-at <object>`;
+    /// `None` means "no filter".
+    pub points_at: Option<OsString>,
 }
 
 /// git-compat `tag` listing: one shortened refname per line, sorted
@@ -37,10 +41,28 @@ pub fn list(
 
     let platform = repo.references()?;
 
+    // Resolve --points-at once up front to an ObjectId. The filter
+    // then keeps tags whose peeled target equals this oid.
+    let points_at_oid: Option<gix::ObjectId> = match opts.points_at.as_deref() {
+        Some(rev) => {
+            let rev_bstr = gix::path::os_str_into_bstr(rev)?;
+            Some(repo.rev_parse_single(rev_bstr)?.detach())
+        }
+        None => None,
+    };
+
     let mut names: Vec<BString> = platform
         .tags()?
         .flatten()
-        .map(|reference| reference.name().shorten().to_owned())
+        .filter_map(|mut reference| {
+            if let Some(target_oid) = points_at_oid {
+                let peeled = reference.peel_to_id().ok()?;
+                if peeled.detach() != target_oid {
+                    return None;
+                }
+            }
+            Some(reference.name().shorten().to_owned())
+        })
         .collect();
 
     if opts.ignore_case {

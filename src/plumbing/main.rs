@@ -2433,6 +2433,7 @@ pub fn main() -> Result<()> {
             let tag::Platform {
                 list: _,
                 ignore_case,
+                points_at,
                 patterns,
             } = platform;
             prepare_and_run(
@@ -2447,7 +2448,11 @@ pub fn main() -> Result<()> {
                         repository(Mode::Lenient)?,
                         out,
                         format,
-                        core::repository::tag::ListOptions { patterns, ignore_case },
+                        core::repository::tag::ListOptions {
+                            patterns,
+                            ignore_case,
+                            points_at,
+                        },
                     )
                 },
             )

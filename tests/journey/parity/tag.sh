@@ -209,11 +209,20 @@ only_for_hash sha1-only && (small-repo-in-sandbox
 # hash=sha1-only
 title "gix tag --points-at"
 only_for_hash sha1-only && (small-repo-in-sandbox
-  it "matches git behavior with --points-at HEAD (TODO)" && {
-    : # TODO: expect_parity bytes -- tag --points-at HEAD
+  # small-repo-in-sandbox puts `unannotated` on HEAD~~ (first commit)
+  # and `annotated` on HEAD~ (second commit). HEAD itself (third) has
+  # no tag, so --points-at HEAD lists nothing.
+  it "matches git behavior with --points-at HEAD~" && {
+    expect_parity bytes -- tag --points-at HEAD~
   }
-  it "matches git behavior with --points-at (no arg, defaults to HEAD) (TODO)" && {
-    : # TODO: expect_parity bytes -- tag --points-at
+  it "matches git behavior with --points-at HEAD~~" && {
+    expect_parity bytes -- tag --points-at HEAD~~
+  }
+  it "matches git behavior with --points-at HEAD (no tags)" && {
+    expect_parity bytes -- tag --points-at HEAD
+  }
+  it "matches git behavior with --points-at (no arg, defaults to HEAD)" && {
+    expect_parity bytes -- tag --points-at
   }
 )
 

@@ -2015,6 +2015,12 @@ pub mod tag {
         #[clap(short = 'i', long)]
         pub ignore_case: bool,
 
+        /// Only list tags of `<object>` (HEAD if omitted). Implies list
+        /// mode. Mirrors git's `--points-at` with `PARSE_OPT_LASTARG_DEFAULT`
+        /// + `defval = "HEAD"`.
+        #[clap(long, value_name = "object", num_args = 0..=1, default_missing_value = "HEAD")]
+        pub points_at: Option<std::ffi::OsString>,
+
         /// Shell glob patterns to filter listed tags (fnmatch(3), OR'd).
         /// Only meaningful in list mode. Matches git-tag(1)'s
         /// `[<pattern>...]` positional after `-l`.
