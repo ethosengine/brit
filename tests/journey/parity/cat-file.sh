@@ -559,7 +559,8 @@ only_for_hash sha1-only && (small-repo-in-sandbox
 # row, so exit-code parity holds; stderr text diverges (clap's
 # "unexpected argument" vs git's "takes no value") and is expected.
 # Rows flip to bytes-mode when the test-environment git grows the
-# --filter= subparser. hash=sha1-only
+# --filter= subparser.
+# hash=sha1-only
 title "gix cat-file --filter=blob:none"
 only_for_hash sha1-only && (small-repo-in-sandbox
   it "matches git behavior (both binaries exit 129)" && {
@@ -607,7 +608,8 @@ only_for_hash sha1-only && (small-repo-in-sandbox
 
 # mode=effect — `--no-filter`: system git 2.47.3 does not accept
 # `--no-filter` at all (exits 129 "unknown option 'no-filter'"),
-# gix exits 129 via clap. Exit-code parity holds. hash=sha1-only
+# gix exits 129 via clap. Exit-code parity holds.
+# hash=sha1-only
 title "gix cat-file --no-filter"
 only_for_hash sha1-only && (small-repo-in-sandbox
   it "matches git behavior" && {
@@ -756,7 +758,8 @@ only_for_hash sha1-only && (small-repo-in-sandbox
 # --batch-all-objects; stdin-driven lookup via `HEAD:sub` goes
 # through get_oid_with_context, returns MISSING_OBJECT, and emits
 # "<input> missing" — same bytes as gix. Byte-exact parity holds
-# trivially. hash=sha1-only
+# trivially.
+# hash=sha1-only
 title "gix cat-file --batch (submodule entry)"
 only_for_hash sha1-only && (small-repo-in-sandbox
   FAKE_COMMIT_OID=0123456789abcdef0123456789abcdef01234567
