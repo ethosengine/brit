@@ -403,6 +403,16 @@ pub mod status {
         /// `--porcelain=v1` (i.e. Format::Short) if no other format is given.
         #[clap(short = 'z', action = clap::ArgAction::SetTrue)]
         pub null_terminator: bool,
+        /// Display untracked files in columns (git's `--column[=<opts>]`).
+        /// Accepted for compat; column formatting is not yet implemented —
+        /// under effect mode this is a no-op that yields exit-code parity.
+        #[clap(long = "column", value_name = "OPTIONS", num_args = 0..=1,
+               default_missing_value = "always")]
+        pub column: Option<String>,
+        /// Disable column display (git's `--no-column`). Accepted for compat.
+        #[clap(long = "no-column", action = clap::ArgAction::SetTrue,
+               conflicts_with = "column")]
+        pub no_column: bool,
         /// If enabled, show ignored files and directories.
         #[clap(long)]
         pub ignored: Option<Option<Ignored>>,

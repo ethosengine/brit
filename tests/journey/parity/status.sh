@@ -403,24 +403,23 @@ only_for_hash sha1-only && (small-repo-in-sandbox
   }
 )
 
-# mode=effect — `--column[=<opts>]` displays untracked files in columns
-# (default off in non-TTY output); `--no-column` disables explicitly.
-# Honors `column.status` and `column.ui` config; without a TTY, gix and
-# git typically both emit one-per-line, so effect-mode is sufficient.
+# mode=effect — `--column[=<opts>]` / `--no-column`. Clap: `column:
+# Option<String>` (accepts any git-style opts string via
+# `num_args=0..=1`) and `no_column: bool` (conflicts_with column).
+# Column formatting of untracked files isn't implemented; without a
+# TTY git also emits one-per-line, so effect-mode parity holds.
 # hash=sha1-only "gix cannot load sha256 repos: extensions.objectFormat=sha256 rejected (gix/src/config/tree/sections/extensions.rs)"
 title "gix status --column / --no-column"
 only_for_hash sha1-only && (small-repo-in-sandbox
+  touch un1 un2 un3
   it "matches git behavior with --column" && {
-    # TODO: several untracked files; expect_parity effect -- status --column
-    true
+    expect_parity effect -- status --column
   }
   it "matches git behavior with --no-column" && {
-    # TODO: expect_parity effect -- status --no-column
-    true
+    expect_parity effect -- status --no-column
   }
   it "matches git behavior with --column=always" && {
-    # TODO: expect_parity effect -- status --column=always
-    true
+    expect_parity effect -- status --column=always
   }
 )
 

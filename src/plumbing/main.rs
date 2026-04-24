@@ -431,6 +431,8 @@ pub fn main() -> Result<()> {
             untracked_files,
             ignore_submodules,
             null_terminator,
+            column,
+            no_column,
             statistics,
             submodules,
             no_write,
@@ -442,6 +444,11 @@ pub fn main() -> Result<()> {
             // route into gix's submodule-ignore machinery (via the
             // existing `submodules` threading just below).
             let _ = ignore_submodules;
+            // `--column` / `--no-column` accepted for compat. Column
+            // formatting of untracked files is not implemented; without
+            // a TTY both git and gix emit one-per-line, so effect-mode
+            // parity holds.
+            let _ = (column, no_column);
             // `-u<mode>` / `--untracked-files[=<mode>]` accepted for compat.
             // Wiring to gix-status's dirwalk emit-untracked flag is deferred
             // — the flag currently alters test-fixture text output but not
