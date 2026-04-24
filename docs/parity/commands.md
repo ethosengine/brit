@@ -23,7 +23,7 @@ Deferred flag-level rows and compat-only rows live in [SHORTCOMINGS.md](SHORTCOM
 | reset | — | absent | — | — |
 | commit | — | partial | — | `Commit` subcommand exists; hook support missing |
 | status | gix status | present | [status.sh](../../tests/journey/parity/status.sh) | 51 green `it` blocks across 26 sections (short/long, branch/show-stash, porcelain=v1/v2, verbosity, untracked-files modes, ignore-submodules modes, ignored modes, -z, column, ahead-behind, renames, find-renames, pathspec). Rows flip to `sha1-only` because gix-config rejects `extensions.objectFormat=sha256` (`gix/src/config/tree/sections/extensions.rs`). Deferrals (compat-accept rows: effect-mode parity holds, byte-output pending): `--show-stash`, `-v/--verbose`, `--ignore-submodules=<mode>`, `--column/--no-column`, `--ahead-behind/--no-ahead-behind`, `--renames/--no-renames`, `--find-renames[=<n>]`, porcelain=v2 headers for branch/stash/detached-HEAD/initial-repo — documented as prose in `tests/journey/parity/status.sh` headers; ledger retrofit via `compat_effect` markers pending. |
-| log | gix log | partial | — | exists; flag coverage unverified |
+| log | gix log | partial | [log.sh](../../tests/journey/parity/log.sh) | 97 TODO `it` blocks across 97 sections; scaffold only. gix's Clap surface today is `[PATHSPEC]` — closing each row typically widens `src/plumbing/options/mod.rs::log::Platform`, `gitoxide_core::repository::log::log`, and the log implementation. Rows are `sha1-only` because gix-config rejects `extensions.objectFormat=sha256` (`gix/src/config/tree/sections/extensions.rs`). |
 | diff | gix diff | partial | — | exists; flag coverage unverified |
 | show | — | absent | — | — |
 | blame | — | partial | — | `Blame` subcommand exists (plumbing) |
