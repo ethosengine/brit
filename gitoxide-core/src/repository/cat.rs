@@ -148,6 +148,33 @@ pub(super) mod function {
         }
     }
 
+    /// `git cat-file -s <revspec>` — write the object's size in bytes
+    /// (decimal, followed by a newline).
+    ///
+    /// Mirrors `case 's'` in cat_one_file (vendor/git/builtin/cat-file.c):
+    /// `odb_read_object_info_extended` → `printf("%"PRIuMAX"\n", size)`.
+    /// Same two failure paths as -t: invalid spec / missing object.
+    ///
+    /// Note: git's `--use-mailmap -s` rewrites the size to reflect the
+    /// mailmap-replaced identities. That path is deferred to the
+    /// --use-mailmap iteration.
+    pub fn print_size(
+        repo: &gix::Repository,
+        revspec: &str,
+        mut out: impl std::io::Write,
+    ) -> anyhow::Result<PrintOutcome> {
+        let Some(id) = resolve_oid(repo, revspec) else {
+            return Ok(PrintOutcome::InvalidSpec);
+        };
+        match repo.find_header(id) {
+            Ok(header) => {
+                writeln!(out, "{}", header.size())?;
+                Ok(PrintOutcome::Ok)
+            }
+            Err(_) => Ok(PrintOutcome::MissingObject),
+        }
+    }
+
     /// `git cat-file -e <revspec>` — report whether the object exists.
     ///
     /// Mirrors git's `case 'e'` branch in cat_one_file

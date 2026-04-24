@@ -2027,6 +2027,7 @@ pub fn main() -> Result<()> {
             pretty: _,
             exists,
             print_type,
+            print_size,
             revspec,
         } => {
             if exists {
@@ -2052,20 +2053,26 @@ pub fn main() -> Result<()> {
                     }
                 }
             }
-            if print_type {
+            if print_type || print_size {
                 // `git cat-file -t` prints the object type name (blob /
-                // tree / commit / tag) + LF on stdout. Two failure paths:
+                // tree / commit / tag) + LF on stdout; `-s` prints the
+                // object size in bytes + LF. Both share two failure paths:
                 //   InvalidSpec    → `fatal: Not a valid object name <spec>`
                 //                    (same as -e)
                 //   MissingObject  → `fatal: git cat-file: could not get
                 //                    object info` (literal full-hex oid
                 //                    accepted by get_oid_with_context but
-                //                    odb has no such object — case 't'
-                //                    in cat_one_file dies here)
+                //                    odb has no such object — case 't' /
+                //                    case 's' in cat_one_file die here)
                 // Both exit 128.
                 let repo = repository(Mode::Lenient)?;
                 let stdout = std::io::stdout().lock();
-                match core::repository::cat_type(&repo, &revspec, stdout)? {
+                let outcome = if print_type {
+                    core::repository::cat_type(&repo, &revspec, stdout)?
+                } else {
+                    core::repository::cat_size(&repo, &revspec, stdout)?
+                };
+                match outcome {
                     core::repository::CatPrintOutcome::Ok => std::process::exit(0),
                     core::repository::CatPrintOutcome::InvalidSpec => {
                         use std::io::Write;

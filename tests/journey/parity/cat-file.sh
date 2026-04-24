@@ -215,10 +215,12 @@ only_for_hash sha1-only && (small-repo-in-sandbox
 # hash=sha1-only
 title "gix cat-file -s"
 only_for_hash sha1-only && (small-repo-in-sandbox
-  # TODO — expect_parity bytes -- cat-file -s HEAD
-  it "matches git behavior on a commit" && { :; }
-  # TODO — expect_parity bytes -- cat-file -s HEAD:a
-  it "matches git behavior on a blob" && { :; }
+  it "matches git behavior on a commit" && {
+    expect_parity bytes -- cat-file -s HEAD
+  }
+  it "matches git behavior on a blob" && {
+    expect_parity bytes -- cat-file -s HEAD:a
+  }
 )
 
 # mode=bytes — positional `<type> <object>` form: raw object bytes

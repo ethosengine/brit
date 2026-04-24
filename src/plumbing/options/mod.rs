@@ -166,6 +166,10 @@ pub enum Subcommands {
         /// followed by a newline. Mirrors `git cat-file -t`.
         #[clap(short = 't')]
         print_type: bool,
+        /// Print the object's size in bytes followed by a newline.
+        /// Mirrors `git cat-file -s`.
+        #[clap(short = 's')]
+        print_size: bool,
         /// The object to print to stdout.
         revspec: String,
     },

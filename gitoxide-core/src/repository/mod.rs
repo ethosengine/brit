@@ -8,7 +8,7 @@ use gix::bstr::BString;
 pub mod archive;
 pub mod branch;
 pub mod cat;
-pub use cat::function::{cat, exists as cat_exists, print_type as cat_type};
+pub use cat::function::{cat, exists as cat_exists, print_size as cat_size, print_type as cat_type};
 pub use cat::{Existence as CatExistence, PrintOutcome as CatPrintOutcome};
 pub mod blame;
 pub mod commit;
