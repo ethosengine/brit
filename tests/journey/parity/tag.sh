@@ -56,8 +56,8 @@ title "gix tag"
 # hash=dual
 title "gix tag --help"
 only_for_hash dual && (sandbox
-  it "matches git behavior (TODO)" && {
-    : # TODO: expect_parity effect -- tag --help
+  it "matches git behavior" && {
+    expect_parity effect -- tag --help
   }
 )
 
