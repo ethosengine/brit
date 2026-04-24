@@ -2433,6 +2433,8 @@ pub fn main() -> Result<()> {
             let tag::Platform {
                 list: _,
                 ignore_case,
+                column: _,
+                no_column: _,
                 points_at,
                 contains,
                 no_contains,

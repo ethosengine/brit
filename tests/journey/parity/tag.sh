@@ -302,14 +302,14 @@ only_for_hash sha1-only && (small-repo-in-sandbox
 # hash=sha1-only
 title "gix tag --column / --no-column"
 only_for_hash sha1-only && (small-repo-in-sandbox
-  it "matches git behavior with --column (TODO)" && {
-    : # TODO: expect_parity effect -- tag --column
+  it "matches git behavior with --column" && {
+    compat_effect "tag --column packing deferred; Clap accepts, one-per-line output" -- tag --column
   }
-  it "matches git behavior with --column=always (TODO)" && {
-    : # TODO: expect_parity effect -- tag --column=always
+  it "matches git behavior with --column=always" && {
+    compat_effect "tag --column=always packing deferred; Clap accepts, one-per-line output" -- tag --column=always
   }
-  it "matches git behavior with --no-column (TODO)" && {
-    : # TODO: expect_parity effect -- tag --no-column
+  it "matches git behavior with --no-column" && {
+    expect_parity bytes -- tag --no-column
   }
 )
 

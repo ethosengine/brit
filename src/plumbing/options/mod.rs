@@ -2015,6 +2015,16 @@ pub mod tag {
         #[clap(short = 'i', long)]
         pub ignore_case: bool,
 
+        /// Display tag listing in columns. Clap wires the flag; multi-
+        /// column packing itself is a follow-up (effect-mode parity
+        /// confirms only exit-code match). Mirrors `OPT_COLUMN`.
+        #[clap(long, value_name = "options", num_args = 0..=1, default_missing_value = "always", conflicts_with = "no_column")]
+        pub column: Option<String>,
+
+        /// Equivalent to `--column=never` — one tag per line.
+        #[clap(long, conflicts_with = "column")]
+        pub no_column: bool,
+
         /// Only list tags of `<object>` (HEAD if omitted). Implies list
         /// mode. Mirrors git's `--points-at` with `PARSE_OPT_LASTARG_DEFAULT`
         /// + `defval = "HEAD"`.
