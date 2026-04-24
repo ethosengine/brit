@@ -113,11 +113,11 @@ only_for_hash sha1-only && (small-repo-in-sandbox
 # hash=sha1-only
 title "gix branch --list"
 only_for_hash sha1-only && (small-repo-in-sandbox
-  it "matches git behavior — no pattern (TODO)" && {
-    : # TODO: expect_parity bytes -- branch --list
+  it "matches git behavior — no pattern" && {
+    expect_parity bytes -- branch --list
   }
-  it "matches git behavior — with pattern (TODO)" && {
-    : # TODO: expect_parity bytes -- branch --list 'd*'
+  it "matches git behavior — with pattern" && {
+    expect_parity bytes -- branch --list 'd*'
   }
 )
 

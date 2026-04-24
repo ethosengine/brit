@@ -1,6 +1,8 @@
 use crate::OutputFormat;
 
 pub mod list {
+    use gix::bstr::BString;
+
     pub enum Kind {
         Local,
         Remote,
@@ -9,6 +11,9 @@ pub mod list {
 
     pub struct Options {
         pub kind: Kind,
+        /// Shell-glob patterns (fnmatch(3), OR'd). Empty = match
+        /// everything. Matches `git branch [<pattern>...]`.
+        pub patterns: Vec<BString>,
     }
 }
 
@@ -35,11 +40,23 @@ pub fn list(
     // print_ref_list() which compares refs against head_ref.
     let head_short = repo.head_name()?.map(|name| name.shorten().to_string());
 
+    // Pattern filter: fnmatch(3)-style shell globs OR'd; empty =
+    // match everything. Matches `for_each_fullref_in_pattern` in
+    // vendor/git/refs.c called from builtin/branch.c's filter_refs.
+    let patterns = &options.patterns;
+    let match_name = |name: &str| -> bool {
+        patterns.is_empty()
+            || patterns
+                .iter()
+                .any(|pat| gix::glob::wildmatch(pat.as_ref(), name.into(), gix::glob::wildmatch::Mode::empty()))
+    };
+
     if show_local {
         let mut branch_names: Vec<String> = platform
             .local_branches()?
             .flatten()
             .map(|branch| branch.name().shorten().to_string())
+            .filter(|name| match_name(name))
             .collect();
 
         branch_names.sort();
@@ -59,6 +76,7 @@ pub fn list(
             .remote_branches()?
             .flatten()
             .map(|branch| branch.name().shorten().to_string())
+            .filter(|name| match_name(name))
             .collect();
 
         branch_names.sort();

@@ -929,9 +929,10 @@ pub fn main() -> Result<()> {
                 color: _color,
                 no_color: _no_color,
                 ignore_case: _ignore_case,
-                args: _args,
+                args,
             } = platform;
             use core::repository::branch::list;
+            use gix::bstr::BString;
 
             // Default cmdmode is list; builtin/branch.c cmd_branch
             // picks list when no -d/-D/-m/-M/-c/-C/--show-current/
@@ -947,7 +948,11 @@ pub fn main() -> Result<()> {
             } else {
                 list::Kind::Local
             };
-            let options = list::Options { kind };
+            let patterns: Vec<BString> = args
+                .iter()
+                .map(|os| gix::path::os_str_into_bstr(os).map(std::borrow::ToOwned::to_owned))
+                .collect::<Result<_, _>>()?;
+            let options = list::Options { kind, patterns };
 
             prepare_and_run(
                 "branch-list",
