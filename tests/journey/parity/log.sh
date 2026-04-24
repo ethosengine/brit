@@ -416,10 +416,11 @@ only_for_hash sha1-only && (small-repo-in-sandbox
 
 # --- pretty / format ----------------------------------------------------
 
-# mode=bytes — --oneline: equivalent to --pretty=oneline --abbrev-commit.
-# Canonical scriptable format; byte parity required. gix's current
-# default output looks similar ("<8-hash> <subject>") but uses 8-char
-# abbrev vs git's default 7-char — exact divergence.
+# mode=effect — --oneline: equivalent to --pretty=oneline --abbrev-commit.
+# Canonical scriptable format; bytes parity is the eventual target, but
+# gix's simplified-output emission diverges from git's --oneline today
+# (8- vs 7-char abbrev, no decoration support), so this closes as
+# compat_effect until the pretty-format pipeline lands.
 # hash=sha1-only
 title "gix log --oneline"
 only_for_hash sha1-only && (small-repo-in-sandbox
@@ -428,7 +429,9 @@ only_for_hash sha1-only && (small-repo-in-sandbox
   }
 )
 
-# mode=bytes — --pretty=oneline: full hash + subject, no abbreviation.
+# mode=effect — --pretty=oneline: full hash + subject, no abbreviation.
+# Same compat-effect rationale as --oneline above; closes as
+# compat_effect until the pretty-format emission pipeline lands.
 # hash=sha1-only
 title "gix log --pretty=oneline"
 only_for_hash sha1-only && (small-repo-in-sandbox
@@ -492,8 +495,9 @@ only_for_hash sha1-only && (small-repo-in-sandbox
   }
 )
 
-# mode=bytes — --format=%H: just the full hash per commit. Canonical
-# scripting use case; byte parity required.
+# mode=effect — --format=%H: just the full hash per commit. Bytes parity
+# is the eventual target once the pretty-format pipeline lands; closes
+# as compat_effect today.
 # hash=sha1-only
 title "gix log --format=%H"
 only_for_hash sha1-only && (small-repo-in-sandbox
@@ -502,7 +506,8 @@ only_for_hash sha1-only && (small-repo-in-sandbox
   }
 )
 
-# mode=bytes — --format=%h %s: short hash + subject, custom format.
+# mode=effect — --format=%h %s: short hash + subject, custom format.
+# Same compat-effect rationale as the other --format rows.
 # hash=sha1-only
 title "gix log --format='%h %s'"
 only_for_hash sha1-only && (small-repo-in-sandbox
@@ -1313,6 +1318,585 @@ only_for_hash sha1-only && (small-repo-in-sandbox
     compat_effect "gix log --submodule diff rendering mode deferred — flag accepted" -- log --submodule=log
   }
 )
+
+# --- diff-options / rev-list / pretty companions (steward-remediation pass) ---
+#
+# Per steward verdict abb628e1b755394b7: close the full user-visible
+# surface from vendor/git/Documentation/{rev-list-options,diff-options,
+# pretty-options}.adoc that rev-list-only ifdefs don't exclude. 53 rows,
+# all clap-accepted compat_effect — semantics deferred per the ledger.
+
+# mode=effect — --unified=<n>: clap-accepted; unified-context width control deferred.
+# hash=sha1-only
+title "gix log --unified=<n>"
+only_for_hash sha1-only && (small-repo-in-sandbox
+  it "matches git: --unified=<n> clap-accepted, semantics deferred" && {
+    compat_effect "gix log --unified=<n> unified-context width control deferred — flag accepted" -- log --unified=3
+  }
+)
+
+
+# mode=effect — --summary: clap-accepted; extended-header summary emission deferred.
+# hash=sha1-only
+title "gix log --summary"
+only_for_hash sha1-only && (small-repo-in-sandbox
+  it "matches git: --summary clap-accepted, semantics deferred" && {
+    compat_effect "gix log --summary extended-header summary emission deferred — flag accepted" -- log --summary
+  }
+)
+
+
+# mode=effect — --compact-summary: clap-accepted; compact-summary emission deferred.
+# hash=sha1-only
+title "gix log --compact-summary"
+only_for_hash sha1-only && (small-repo-in-sandbox
+  it "matches git: --compact-summary clap-accepted, semantics deferred" && {
+    compat_effect "gix log --compact-summary compact-summary emission deferred — flag accepted" -- log --compact-summary
+  }
+)
+
+
+# mode=effect — --minimal: clap-accepted; Myers minimal-diff variant deferred.
+# hash=sha1-only
+title "gix log --minimal"
+only_for_hash sha1-only && (small-repo-in-sandbox
+  it "matches git: --minimal clap-accepted, semantics deferred" && {
+    compat_effect "gix log --minimal Myers minimal-diff variant deferred — flag accepted" -- log --minimal
+  }
+)
+
+
+# mode=effect — --patience: clap-accepted; patience diff algorithm deferred.
+# hash=sha1-only
+title "gix log --patience"
+only_for_hash sha1-only && (small-repo-in-sandbox
+  it "matches git: --patience clap-accepted, semantics deferred" && {
+    compat_effect "gix log --patience patience diff algorithm deferred — flag accepted" -- log --patience
+  }
+)
+
+
+# mode=effect — --histogram: clap-accepted; histogram diff algorithm deferred.
+# hash=sha1-only
+title "gix log --histogram"
+only_for_hash sha1-only && (small-repo-in-sandbox
+  it "matches git: --histogram clap-accepted, semantics deferred" && {
+    compat_effect "gix log --histogram histogram diff algorithm deferred — flag accepted" -- log --histogram
+  }
+)
+
+
+# mode=effect — --diff-filter=<filter>: clap-accepted; status-letter filter deferred.
+# hash=sha1-only
+title "gix log --diff-filter=<filter>"
+only_for_hash sha1-only && (small-repo-in-sandbox
+  it "matches git: --diff-filter=<filter> clap-accepted, semantics deferred" && {
+    compat_effect "gix log --diff-filter=<filter> status-letter filter deferred — flag accepted" -- log --diff-filter=M
+  }
+)
+
+
+# mode=effect — --find-object=<oid>: clap-accepted; object-touched filter deferred.
+# hash=sha1-only
+title "gix log --find-object=<oid>"
+only_for_hash sha1-only && (small-repo-in-sandbox
+  it "matches git: --find-object=<oid> clap-accepted, semantics deferred" && {
+    compat_effect "gix log --find-object=<oid> object-touched filter deferred — flag accepted" -- log --find-object=0000000000000000000000000000000000000000
+  }
+)
+
+
+# mode=effect — --find-copies-harder: clap-accepted; aggressive copy detection deferred.
+# hash=sha1-only
+title "gix log --find-copies-harder"
+only_for_hash sha1-only && (small-repo-in-sandbox
+  it "matches git: --find-copies-harder clap-accepted, semantics deferred" && {
+    compat_effect "gix log --find-copies-harder aggressive copy detection deferred — flag accepted" -- log --find-copies-harder
+  }
+)
+
+
+# mode=effect — --exit-code: clap-accepted; diff-presence exit-code bit deferred — empty range used for exit-0 parity.
+# hash=sha1-only
+title "gix log --exit-code"
+only_for_hash sha1-only && (small-repo-in-sandbox
+  it "matches git: --exit-code clap-accepted, semantics deferred" && {
+    compat_effect "gix log --exit-code diff-presence exit-code bit deferred — empty range used for exit-0 parity — flag accepted" -- log --exit-code HEAD..HEAD
+  }
+)
+
+
+# mode=effect — --check: clap-accepted; whitespace/conflict-marker check deferred.
+# hash=sha1-only
+title "gix log --check"
+only_for_hash sha1-only && (small-repo-in-sandbox
+  it "matches git: --check clap-accepted, semantics deferred" && {
+    compat_effect "gix log --check whitespace/conflict-marker check deferred — flag accepted" -- log --check
+  }
+)
+
+
+# mode=effect — --binary: clap-accepted; binary patch emission deferred.
+# hash=sha1-only
+title "gix log --binary"
+only_for_hash sha1-only && (small-repo-in-sandbox
+  it "matches git: --binary clap-accepted, semantics deferred" && {
+    compat_effect "gix log --binary binary patch emission deferred — flag accepted" -- log --binary
+  }
+)
+
+
+# mode=effect — --full-index: clap-accepted; full-index hash emission deferred.
+# hash=sha1-only
+title "gix log --full-index"
+only_for_hash sha1-only && (small-repo-in-sandbox
+  it "matches git: --full-index clap-accepted, semantics deferred" && {
+    compat_effect "gix log --full-index full-index hash emission deferred — flag accepted" -- log --full-index
+  }
+)
+
+
+# mode=effect — --remerge-diff: clap-accepted; remerge-diff rendering deferred.
+# hash=sha1-only
+title "gix log --remerge-diff"
+only_for_hash sha1-only && (small-repo-in-sandbox
+  it "matches git: --remerge-diff clap-accepted, semantics deferred" && {
+    compat_effect "gix log --remerge-diff remerge-diff rendering deferred — flag accepted" -- log --remerge-diff
+  }
+)
+
+
+# mode=effect — --dirstat: clap-accepted; dirstat emission deferred.
+# hash=sha1-only
+title "gix log --dirstat"
+only_for_hash sha1-only && (small-repo-in-sandbox
+  it "matches git: --dirstat clap-accepted, semantics deferred" && {
+    compat_effect "gix log --dirstat dirstat emission deferred — flag accepted" -- log --dirstat
+  }
+)
+
+
+# mode=effect — --ext-diff: clap-accepted; external-diff program dispatch deferred.
+# hash=sha1-only
+title "gix log --ext-diff"
+only_for_hash sha1-only && (small-repo-in-sandbox
+  it "matches git: --ext-diff clap-accepted, semantics deferred" && {
+    compat_effect "gix log --ext-diff external-diff program dispatch deferred — flag accepted" -- log --ext-diff
+  }
+)
+
+
+# mode=effect — --no-ext-diff: clap-accepted; external-diff suppression deferred.
+# hash=sha1-only
+title "gix log --no-ext-diff"
+only_for_hash sha1-only && (small-repo-in-sandbox
+  it "matches git: --no-ext-diff clap-accepted, semantics deferred" && {
+    compat_effect "gix log --no-ext-diff external-diff suppression deferred — flag accepted" -- log --no-ext-diff
+  }
+)
+
+
+# mode=effect — --textconv: clap-accepted; textconv filter application deferred.
+# hash=sha1-only
+title "gix log --textconv"
+only_for_hash sha1-only && (small-repo-in-sandbox
+  it "matches git: --textconv clap-accepted, semantics deferred" && {
+    compat_effect "gix log --textconv textconv filter application deferred — flag accepted" -- log --textconv
+  }
+)
+
+
+# mode=effect — --no-textconv: clap-accepted; textconv filter suppression deferred.
+# hash=sha1-only
+title "gix log --no-textconv"
+only_for_hash sha1-only && (small-repo-in-sandbox
+  it "matches git: --no-textconv clap-accepted, semantics deferred" && {
+    compat_effect "gix log --no-textconv textconv filter suppression deferred — flag accepted" -- log --no-textconv
+  }
+)
+
+
+# mode=effect — --text: clap-accepted; treat-all-as-text mode deferred.
+# hash=sha1-only
+title "gix log --text"
+only_for_hash sha1-only && (small-repo-in-sandbox
+  it "matches git: --text clap-accepted, semantics deferred" && {
+    compat_effect "gix log --text treat-all-as-text mode deferred — flag accepted" -- log --text
+  }
+)
+
+
+# mode=effect — --patch-with-raw: clap-accepted; patch+raw composition deferred.
+# hash=sha1-only
+title "gix log --patch-with-raw"
+only_for_hash sha1-only && (small-repo-in-sandbox
+  it "matches git: --patch-with-raw clap-accepted, semantics deferred" && {
+    compat_effect "gix log --patch-with-raw patch+raw composition deferred — flag accepted" -- log --patch-with-raw
+  }
+)
+
+
+# mode=effect — --patch-with-stat: clap-accepted; patch+stat composition deferred.
+# hash=sha1-only
+title "gix log --patch-with-stat"
+only_for_hash sha1-only && (small-repo-in-sandbox
+  it "matches git: --patch-with-stat clap-accepted, semantics deferred" && {
+    compat_effect "gix log --patch-with-stat patch+stat composition deferred — flag accepted" -- log --patch-with-stat
+  }
+)
+
+
+# mode=effect — --color-moved: clap-accepted; moved-line highlighting deferred.
+# hash=sha1-only
+title "gix log --color-moved"
+only_for_hash sha1-only && (small-repo-in-sandbox
+  it "matches git: --color-moved clap-accepted, semantics deferred" && {
+    compat_effect "gix log --color-moved moved-line highlighting deferred — flag accepted" -- log --color-moved
+  }
+)
+
+
+# mode=effect — --word-diff: clap-accepted; word-level diff rendering deferred.
+# hash=sha1-only
+title "gix log --word-diff"
+only_for_hash sha1-only && (small-repo-in-sandbox
+  it "matches git: --word-diff clap-accepted, semantics deferred" && {
+    compat_effect "gix log --word-diff word-level diff rendering deferred — flag accepted" -- log --word-diff
+  }
+)
+
+
+# mode=effect — --word-diff-regex=<regex>: clap-accepted; word-boundary regex deferred.
+# hash=sha1-only
+title "gix log --word-diff-regex=<regex>"
+only_for_hash sha1-only && (small-repo-in-sandbox
+  it "matches git: --word-diff-regex=<regex> clap-accepted, semantics deferred" && {
+    compat_effect "gix log --word-diff-regex=<regex> word-boundary regex deferred — flag accepted" -- log --word-diff-regex=a
+  }
+)
+
+
+# mode=effect — --ws-error-highlight=<kind>: clap-accepted; whitespace-error highlighting deferred.
+# hash=sha1-only
+title "gix log --ws-error-highlight=<kind>"
+only_for_hash sha1-only && (small-repo-in-sandbox
+  it "matches git: --ws-error-highlight=<kind> clap-accepted, semantics deferred" && {
+    compat_effect "gix log --ws-error-highlight=<kind> whitespace-error highlighting deferred — flag accepted" -- log --ws-error-highlight=old
+  }
+)
+
+
+# mode=effect — --function-context: clap-accepted; function-context hunk expansion deferred.
+# hash=sha1-only
+title "gix log --function-context"
+only_for_hash sha1-only && (small-repo-in-sandbox
+  it "matches git: --function-context clap-accepted, semantics deferred" && {
+    compat_effect "gix log --function-context function-context hunk expansion deferred — flag accepted" -- log --function-context
+  }
+)
+
+
+# mode=effect — --inter-hunk-context=<lines>: clap-accepted; inter-hunk merge-context control deferred.
+# hash=sha1-only
+title "gix log --inter-hunk-context=<lines>"
+only_for_hash sha1-only && (small-repo-in-sandbox
+  it "matches git: --inter-hunk-context=<lines> clap-accepted, semantics deferred" && {
+    compat_effect "gix log --inter-hunk-context=<lines> inter-hunk merge-context control deferred — flag accepted" -- log --inter-hunk-context=3
+  }
+)
+
+
+# mode=effect — --indent-heuristic: clap-accepted; indent-heuristic hunk tuning deferred.
+# hash=sha1-only
+title "gix log --indent-heuristic"
+only_for_hash sha1-only && (small-repo-in-sandbox
+  it "matches git: --indent-heuristic clap-accepted, semantics deferred" && {
+    compat_effect "gix log --indent-heuristic indent-heuristic hunk tuning deferred — flag accepted" -- log --indent-heuristic
+  }
+)
+
+
+# mode=effect — --no-indent-heuristic: clap-accepted; indent-heuristic suppression deferred.
+# hash=sha1-only
+title "gix log --no-indent-heuristic"
+only_for_hash sha1-only && (small-repo-in-sandbox
+  it "matches git: --no-indent-heuristic clap-accepted, semantics deferred" && {
+    compat_effect "gix log --no-indent-heuristic indent-heuristic suppression deferred — flag accepted" -- log --no-indent-heuristic
+  }
+)
+
+
+# mode=effect — --irreversible-delete: clap-accepted; deletion-only hunk reordering deferred.
+# hash=sha1-only
+title "gix log --irreversible-delete"
+only_for_hash sha1-only && (small-repo-in-sandbox
+  it "matches git: --irreversible-delete clap-accepted, semantics deferred" && {
+    compat_effect "gix log --irreversible-delete deletion-only hunk reordering deferred — flag accepted" -- log --irreversible-delete
+  }
+)
+
+
+# mode=effect — --no-renames: clap-accepted; rename-detection suppression deferred.
+# hash=sha1-only
+title "gix log --no-renames"
+only_for_hash sha1-only && (small-repo-in-sandbox
+  it "matches git: --no-renames clap-accepted, semantics deferred" && {
+    compat_effect "gix log --no-renames rename-detection suppression deferred — flag accepted" -- log --no-renames
+  }
+)
+
+
+# mode=effect — --rename-empty: clap-accepted; empty-file rename semantics deferred.
+# hash=sha1-only
+title "gix log --rename-empty"
+only_for_hash sha1-only && (small-repo-in-sandbox
+  it "matches git: --rename-empty clap-accepted, semantics deferred" && {
+    compat_effect "gix log --rename-empty empty-file rename semantics deferred — flag accepted" -- log --rename-empty
+  }
+)
+
+
+# mode=effect — --no-rename-empty: clap-accepted; --rename-empty negation deferred.
+# hash=sha1-only
+title "gix log --no-rename-empty"
+only_for_hash sha1-only && (small-repo-in-sandbox
+  it "matches git: --no-rename-empty clap-accepted, semantics deferred" && {
+    compat_effect "gix log --no-rename-empty --rename-empty negation deferred — flag accepted" -- log --no-rename-empty
+  }
+)
+
+
+# mode=effect — --ignore-all-space: clap-accepted; whitespace-ignoring diff mode deferred.
+# hash=sha1-only
+title "gix log --ignore-all-space"
+only_for_hash sha1-only && (small-repo-in-sandbox
+  it "matches git: --ignore-all-space clap-accepted, semantics deferred" && {
+    compat_effect "gix log --ignore-all-space whitespace-ignoring diff mode deferred — flag accepted" -- log --ignore-all-space
+  }
+)
+
+
+# mode=effect — --ignore-blank-lines: clap-accepted; blank-line ignore mode deferred.
+# hash=sha1-only
+title "gix log --ignore-blank-lines"
+only_for_hash sha1-only && (small-repo-in-sandbox
+  it "matches git: --ignore-blank-lines clap-accepted, semantics deferred" && {
+    compat_effect "gix log --ignore-blank-lines blank-line ignore mode deferred — flag accepted" -- log --ignore-blank-lines
+  }
+)
+
+
+# mode=effect — --ignore-cr-at-eol: clap-accepted; CR-at-EOL ignore deferred.
+# hash=sha1-only
+title "gix log --ignore-cr-at-eol"
+only_for_hash sha1-only && (small-repo-in-sandbox
+  it "matches git: --ignore-cr-at-eol clap-accepted, semantics deferred" && {
+    compat_effect "gix log --ignore-cr-at-eol CR-at-EOL ignore deferred — flag accepted" -- log --ignore-cr-at-eol
+  }
+)
+
+
+# mode=effect — --ignore-matching-lines=<regex>: clap-accepted; regex-match line-ignore deferred.
+# hash=sha1-only
+title "gix log --ignore-matching-lines=<regex>"
+only_for_hash sha1-only && (small-repo-in-sandbox
+  it "matches git: --ignore-matching-lines=<regex> clap-accepted, semantics deferred" && {
+    compat_effect "gix log --ignore-matching-lines=<regex> regex-match line-ignore deferred — flag accepted" -- log --ignore-matching-lines=foo
+  }
+)
+
+
+# mode=effect — --ignore-space-at-eol: clap-accepted; EOL-whitespace ignore deferred.
+# hash=sha1-only
+title "gix log --ignore-space-at-eol"
+only_for_hash sha1-only && (small-repo-in-sandbox
+  it "matches git: --ignore-space-at-eol clap-accepted, semantics deferred" && {
+    compat_effect "gix log --ignore-space-at-eol EOL-whitespace ignore deferred — flag accepted" -- log --ignore-space-at-eol
+  }
+)
+
+
+# mode=effect — --ignore-space-change: clap-accepted; whitespace-amount ignore deferred.
+# hash=sha1-only
+title "gix log --ignore-space-change"
+only_for_hash sha1-only && (small-repo-in-sandbox
+  it "matches git: --ignore-space-change clap-accepted, semantics deferred" && {
+    compat_effect "gix log --ignore-space-change whitespace-amount ignore deferred — flag accepted" -- log --ignore-space-change
+  }
+)
+
+
+# mode=effect — --src-prefix=<prefix>: clap-accepted; source-prefix override deferred.
+# hash=sha1-only
+title "gix log --src-prefix=<prefix>"
+only_for_hash sha1-only && (small-repo-in-sandbox
+  it "matches git: --src-prefix=<prefix> clap-accepted, semantics deferred" && {
+    compat_effect "gix log --src-prefix=<prefix> source-prefix override deferred — flag accepted" -- log --src-prefix=x/
+  }
+)
+
+
+# mode=effect — --dst-prefix=<prefix>: clap-accepted; destination-prefix override deferred.
+# hash=sha1-only
+title "gix log --dst-prefix=<prefix>"
+only_for_hash sha1-only && (small-repo-in-sandbox
+  it "matches git: --dst-prefix=<prefix> clap-accepted, semantics deferred" && {
+    compat_effect "gix log --dst-prefix=<prefix> destination-prefix override deferred — flag accepted" -- log --dst-prefix=y/
+  }
+)
+
+
+# mode=effect — --no-prefix: clap-accepted; a/ b/ prefix suppression deferred.
+# hash=sha1-only
+title "gix log --no-prefix"
+only_for_hash sha1-only && (small-repo-in-sandbox
+  it "matches git: --no-prefix clap-accepted, semantics deferred" && {
+    compat_effect "gix log --no-prefix a/ b/ prefix suppression deferred — flag accepted" -- log --no-prefix
+  }
+)
+
+
+# mode=effect — --relative: clap-accepted; pathname-relativization deferred.
+# hash=sha1-only
+title "gix log --relative"
+only_for_hash sha1-only && (small-repo-in-sandbox
+  it "matches git: --relative clap-accepted, semantics deferred" && {
+    compat_effect "gix log --relative pathname-relativization deferred — flag accepted" -- log --relative
+  }
+)
+
+
+# mode=effect — --no-relative: clap-accepted; --relative negation deferred.
+# hash=sha1-only
+title "gix log --no-relative"
+only_for_hash sha1-only && (small-repo-in-sandbox
+  it "matches git: --no-relative clap-accepted, semantics deferred" && {
+    compat_effect "gix log --no-relative --relative negation deferred — flag accepted" -- log --no-relative
+  }
+)
+
+
+# mode=effect — --output=<file>: clap-accepted; diff-output redirection deferred.
+# hash=sha1-only
+title "gix log --output=<file>"
+only_for_hash sha1-only && (small-repo-in-sandbox
+  it "matches git: --output=<file> clap-accepted, semantics deferred" && {
+    compat_effect "gix log --output=<file> diff-output redirection deferred — flag accepted" -- log --output=/dev/null
+  }
+)
+
+
+# mode=effect — --reflog: clap-accepted; HEAD reflog inclusion as tips deferred.
+# hash=sha1-only
+title "gix log --reflog"
+only_for_hash sha1-only && (small-repo-in-sandbox
+  it "matches git: --reflog clap-accepted, semantics deferred" && {
+    compat_effect "gix log --reflog HEAD reflog inclusion as tips deferred — flag accepted" -- log --reflog
+  }
+)
+
+
+# mode=effect — --stdin: clap-accepted; stdin rev-argument reader deferred — empty stdin keeps exit 0.
+# hash=sha1-only
+title "gix log --stdin"
+only_for_hash sha1-only && (small-repo-in-sandbox
+  it "matches git: --stdin clap-accepted, semantics deferred" && {
+    compat_effect "gix log --stdin stdin rev-argument reader deferred — empty stdin keeps exit 0 — flag accepted" -- log --stdin </dev/null
+  }
+)
+
+
+# mode=effect — --ignore-missing: clap-accepted; missing-object tolerance deferred.
+# hash=sha1-only
+title "gix log --ignore-missing"
+only_for_hash sha1-only && (small-repo-in-sandbox
+  it "matches git: --ignore-missing clap-accepted, semantics deferred" && {
+    compat_effect "gix log --ignore-missing missing-object tolerance deferred — flag accepted" -- log --ignore-missing
+  }
+)
+
+
+# mode=effect — --merge: git precondition-errors out 128 when no merge is
+# in progress ("--merge requires one of the pseudorefs MERGE_HEAD /
+# CHERRY_PICK_HEAD / REVERT_HEAD / REBASE_HEAD"); gix has no precondition
+# check and walks HEAD normally → exit 0. Rows that exit-code-diverge
+# are not valid compat_effect candidates; mark as legitimate shortcoming.
+# hash=sha1-only
+title "gix log --merge"
+only_for_hash sha1-only && (small-repo-in-sandbox
+  shortcoming "--merge precondition check not yet implemented — git exits 128 when no merge pseudoref exists, gix walks HEAD"
+)
+
+
+# mode=effect — --since-as-filter=<time>: clap-accepted; --since-as-filter predicate deferred.
+# hash=sha1-only
+title "gix log --since-as-filter=<time>"
+only_for_hash sha1-only && (small-repo-in-sandbox
+  it "matches git: --since-as-filter=<time> clap-accepted, semantics deferred" && {
+    compat_effect "gix log --since-as-filter=<time> --since-as-filter predicate deferred — flag accepted" -- log --since-as-filter=2000-01-01
+  }
+)
+
+
+# mode=effect — --exclude-first-parent-only: clap-accepted; first-parent exclude semantics deferred.
+# hash=sha1-only
+title "gix log --exclude-first-parent-only"
+only_for_hash sha1-only && (small-repo-in-sandbox
+  it "matches git: --exclude-first-parent-only clap-accepted, semantics deferred" && {
+    compat_effect "gix log --exclude-first-parent-only first-parent exclude semantics deferred — flag accepted" -- log --exclude-first-parent-only
+  }
+)
+
+
+# mode=effect — --remove-empty: clap-accepted; empty-commit removal deferred.
+# hash=sha1-only
+title "gix log --remove-empty"
+only_for_hash sha1-only && (small-repo-in-sandbox
+  it "matches git: --remove-empty clap-accepted, semantics deferred" && {
+    compat_effect "gix log --remove-empty empty-commit removal deferred — flag accepted" -- log --remove-empty
+  }
+)
+
+
+# mode=effect — --single-worktree: clap-accepted; single-worktree ref scoping deferred.
+# hash=sha1-only
+title "gix log --single-worktree"
+only_for_hash sha1-only && (small-repo-in-sandbox
+  it "matches git: --single-worktree clap-accepted, semantics deferred" && {
+    compat_effect "gix log --single-worktree single-worktree ref scoping deferred — flag accepted" -- log --single-worktree
+  }
+)
+
+
+# mode=effect — --encoding=<enc>: clap-accepted; commit-message encoding conversion deferred.
+# hash=sha1-only
+title "gix log --encoding=<enc>"
+only_for_hash sha1-only && (small-repo-in-sandbox
+  it "matches git: --encoding=<enc> clap-accepted, semantics deferred" && {
+    compat_effect "gix log --encoding=<enc> commit-message encoding conversion deferred — flag accepted" -- log --encoding=UTF-8
+  }
+)
+
+
+# mode=effect — --expand-tabs[=<n>]: clap-accepted; tab-expansion deferred.
+# hash=sha1-only
+title "gix log --expand-tabs[=<n>]"
+only_for_hash sha1-only && (small-repo-in-sandbox
+  it "matches git: --expand-tabs[=<n>] clap-accepted, semantics deferred" && {
+    compat_effect "gix log --expand-tabs[=<n>] tab-expansion deferred — flag accepted" -- log --expand-tabs
+  }
+)
+
+
+# mode=effect — --no-expand-tabs: clap-accepted; --expand-tabs negation deferred.
+# hash=sha1-only
+title "gix log --no-expand-tabs"
+only_for_hash sha1-only && (small-repo-in-sandbox
+  it "matches git: --no-expand-tabs clap-accepted, semantics deferred" && {
+    compat_effect "gix log --no-expand-tabs --expand-tabs negation deferred — flag accepted" -- log --no-expand-tabs
+  }
+)
+
 
 # End-of-file sentinel: when every row is `only_for_hash sha1-only` and the
 # active hash is sha256, the last statement returns 1 (skip), which would

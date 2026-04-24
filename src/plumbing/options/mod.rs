@@ -1035,6 +1035,183 @@ pub mod log {
         #[clap(long, value_parser = crate::shared::AsBString, value_name = "mode")]
         pub submodule: Option<BString>,
 
+        // --- diff-options surface (rev-list + log share this whole block) ---
+        /// Unified-context width (long form of -U<n>).
+        #[clap(long, value_name = "n")]
+        pub unified: Option<usize>,
+        /// Print a condensed summary of extended header information.
+        #[clap(long)]
+        pub summary: bool,
+        /// Compact summary (--summary + per-commit compacting).
+        #[clap(long)]
+        pub compact_summary: bool,
+        /// Alias for the Myers diff algorithm's minimal-diff variant.
+        #[clap(long)]
+        pub minimal: bool,
+        /// Use the "patience diff" algorithm.
+        #[clap(long)]
+        pub patience: bool,
+        /// Use the "histogram diff" algorithm.
+        #[clap(long)]
+        pub histogram: bool,
+        /// Filter diff output by status letters.
+        #[clap(long, value_parser = crate::shared::AsBString, value_name = "filter")]
+        pub diff_filter: Option<BString>,
+        /// Filter commits that change an object matching <oid>.
+        #[clap(long, value_parser = crate::shared::AsBString, value_name = "oid")]
+        pub find_object: Option<BString>,
+        /// Try harder to detect copies.
+        #[clap(long)]
+        pub find_copies_harder: bool,
+        /// Exit with 0 if no changes, 1 if changes.
+        #[clap(long)]
+        pub exit_code: bool,
+        /// Complain about whitespace / conflict markers introduced.
+        #[clap(long)]
+        pub check: bool,
+        /// Emit binary patches.
+        #[clap(long)]
+        pub binary: bool,
+        /// Emit full index hashes in diff output.
+        #[clap(long)]
+        pub full_index: bool,
+        /// For merges, re-merge and show the diff against the recorded merge.
+        #[clap(long)]
+        pub remerge_diff: bool,
+        /// Dirstat rendering mode.
+        #[clap(long, value_parser = crate::shared::AsBString, value_name = "mode", num_args = 0..=1, default_missing_value = "")]
+        pub dirstat: Option<BString>,
+        /// Use a configured external diff program.
+        #[clap(long)]
+        pub ext_diff: bool,
+        /// Do not use a configured external diff program.
+        #[clap(long)]
+        pub no_ext_diff: bool,
+        /// Apply textconv filters before diffing.
+        #[clap(long)]
+        pub textconv: bool,
+        /// Do not apply textconv filters.
+        #[clap(long)]
+        pub no_textconv: bool,
+        /// Treat all files as text.
+        #[clap(long)]
+        pub text: bool,
+        /// Emit patch alongside --raw.
+        #[clap(long)]
+        pub patch_with_raw: bool,
+        /// Emit patch alongside --stat.
+        #[clap(long)]
+        pub patch_with_stat: bool,
+        /// Highlight moved lines within diffs.
+        #[clap(long, value_parser = crate::shared::AsBString, value_name = "mode", num_args = 0..=1, default_missing_value = "default")]
+        pub color_moved: Option<BString>,
+        /// Emit word-level diff.
+        #[clap(long, value_parser = crate::shared::AsBString, value_name = "mode", num_args = 0..=1, default_missing_value = "plain")]
+        pub word_diff: Option<BString>,
+        /// Regex defining word boundaries for --word-diff.
+        #[clap(long, value_parser = crate::shared::AsBString, value_name = "regex")]
+        pub word_diff_regex: Option<BString>,
+        /// Emit whitespace-error highlights.
+        #[clap(long, value_parser = crate::shared::AsBString, value_name = "kind")]
+        pub ws_error_highlight: Option<BString>,
+        /// Include enclosing function in each hunk.
+        #[clap(long = "function-context", short = 'W')]
+        pub function_context: bool,
+        /// Minimum lines between merged hunks.
+        #[clap(long, value_name = "lines")]
+        pub inter_hunk_context: Option<usize>,
+        /// Enable indent-heuristic for hunk boundaries.
+        #[clap(long)]
+        pub indent_heuristic: bool,
+        /// Disable indent-heuristic.
+        #[clap(long)]
+        pub no_indent_heuristic: bool,
+        /// Drop deletion-only hunks in repeatable order.
+        #[clap(long)]
+        pub irreversible_delete: bool,
+        /// Disable rename detection.
+        #[clap(long)]
+        pub no_renames: bool,
+        /// Treat empty files as the empty-content sentinel for rename detection.
+        #[clap(long)]
+        pub rename_empty: bool,
+        /// Disable --rename-empty.
+        #[clap(long)]
+        pub no_rename_empty: bool,
+        /// Ignore any line containing only whitespace.
+        #[clap(long)]
+        pub ignore_all_space: bool,
+        /// Ignore changes whose lines are blank.
+        #[clap(long)]
+        pub ignore_blank_lines: bool,
+        /// Ignore CR at end of line.
+        #[clap(long)]
+        pub ignore_cr_at_eol: bool,
+        /// Ignore lines matching the regex.
+        #[clap(long, value_parser = crate::shared::AsBString, value_name = "regex")]
+        pub ignore_matching_lines: Option<BString>,
+        /// Ignore whitespace at end of line.
+        #[clap(long)]
+        pub ignore_space_at_eol: bool,
+        /// Ignore amount of whitespace (but not presence).
+        #[clap(long)]
+        pub ignore_space_change: bool,
+        /// Prefix for source side of diff.
+        #[clap(long, value_parser = crate::shared::AsBString, value_name = "prefix")]
+        pub src_prefix: Option<BString>,
+        /// Prefix for destination side of diff.
+        #[clap(long, value_parser = crate::shared::AsBString, value_name = "prefix")]
+        pub dst_prefix: Option<BString>,
+        /// Suppress a/ and b/ prefixes in diff output.
+        #[clap(long)]
+        pub no_prefix: bool,
+        /// Make pathnames relative to <dir>.
+        #[clap(long, value_parser = crate::shared::AsBString, value_name = "path", num_args = 0..=1, default_missing_value = "")]
+        pub relative: Option<BString>,
+        /// Disable --relative.
+        #[clap(long)]
+        pub no_relative: bool,
+        /// Direct diff output to <file>.
+        #[clap(long, value_parser = crate::shared::AsBString, value_name = "file")]
+        pub output: Option<BString>,
+
+        // --- rev-list companions applicable to log ---
+        /// Include HEAD's reflog entries as extra tips.
+        #[clap(long)]
+        pub reflog: bool,
+        /// Read additional arguments from stdin.
+        #[clap(long)]
+        pub stdin: bool,
+        /// Tolerate missing object references during the walk.
+        #[clap(long)]
+        pub ignore_missing: bool,
+        /// Show commits touching files with unmerged state.
+        #[clap(long)]
+        pub merge: bool,
+        /// Filter --since as a predicate (not a traversal boundary).
+        #[clap(long, value_parser = crate::shared::AsBString, value_name = "time")]
+        pub since_as_filter: Option<BString>,
+        /// Like --first-parent but only for the exclude list.
+        #[clap(long)]
+        pub exclude_first_parent_only: bool,
+        /// Drop empty commits from the walk.
+        #[clap(long)]
+        pub remove_empty: bool,
+        /// Only include refs from the current worktree.
+        #[clap(long)]
+        pub single_worktree: bool,
+
+        // --- pretty companions ---
+        /// Decoding for commit encoding.
+        #[clap(long, value_parser = crate::shared::AsBString, value_name = "encoding")]
+        pub encoding: Option<BString>,
+        /// Expand tabs in commit messages before rendering.
+        #[clap(long, value_name = "n", num_args = 0..=1, default_missing_value = "8")]
+        pub expand_tabs: Option<usize>,
+        /// Disable --expand-tabs.
+        #[clap(long)]
+        pub no_expand_tabs: bool,
+
         /// Revision(s) to walk from. Multiple revspecs are accepted (git's
         /// rev-list grammar). Only the first is honored today; --not / multi-
         /// revspec composition is a later parity row.
