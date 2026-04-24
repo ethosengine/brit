@@ -2067,6 +2067,7 @@ pub fn main() -> Result<()> {
             buffer,
             unordered,
             follow_symlinks,
+            batch_all_objects,
             args,
         } => {
             // Mutual-exclusion among the `-e`/`-p`/`-t`/`-s` cmdmode
@@ -2134,11 +2135,24 @@ pub fn main() -> Result<()> {
                     core::repository::CatBatchMode::Info
                 };
                 let repo = repository(Mode::Lenient)?;
-                let stdin = std::io::stdin().lock();
                 let stdout = std::io::stdout().lock();
                 let format = if format.is_empty() { None } else { Some(format) };
-                core::repository::cat_batch(&repo, mode, format, input_delim, output_delim, stdin, stdout)?;
+                if batch_all_objects {
+                    // --batch-all-objects ignores stdin; enumerate odb.
+                    core::repository::cat_batch_all_objects(&repo, mode, format, unordered, output_delim, stdout)?;
+                } else {
+                    let stdin = std::io::stdin().lock();
+                    core::repository::cat_batch(&repo, mode, format, input_delim, output_delim, stdin, stdout)?;
+                }
                 std::process::exit(0);
+            }
+            // --batch-all-objects without a batch mode → 129.
+            if batch_all_objects {
+                use std::io::Write;
+                let mut stderr = std::io::stderr().lock();
+                let _ = writeln!(stderr, "fatal: '--batch-all-objects' requires a batch mode");
+                drop(stderr);
+                std::process::exit(129);
             }
             // Batch-only flags without a batch mode → usage error 129.
             // Git's cmd_cat_file checks each of these individually after
@@ -2149,6 +2163,8 @@ pub fn main() -> Result<()> {
                 Some("'--follow-symlinks' requires a batch mode")
             } else if buffer {
                 Some("'--buffer' requires a batch mode")
+            } else if unordered {
+                Some("'--unordered' requires a batch mode")
             } else if nul_terminated {
                 Some("'-Z' requires a batch mode")
             } else if nul_input {
@@ -2163,7 +2179,6 @@ pub fn main() -> Result<()> {
                 drop(stderr);
                 std::process::exit(129);
             }
-            let _ = unordered;
             // `--path=<path>` is only meaningful with --textconv/--filters;
             // git's cmd_cat_file calls usage_msg_optf and exits 129
             // otherwise. Check early so the error path fires before any

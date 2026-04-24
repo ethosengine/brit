@@ -250,6 +250,52 @@ pub(super) mod function {
         batch(repo, BatchMode::Info, format, b'\n', b'\n', stdin, out)
     }
 
+    /// `git cat-file --batch[-check] --batch-all-objects` — enumerate every
+    /// object in the odb (loose + packed + alternates) and emit the info
+    /// (and optionally contents) for each. stdin is ignored.
+    ///
+    /// Ordering: by default git sorts by hash; gix's `.iter()` already yields
+    /// "pack-lexicographical then loose-lexicographical", which for a
+    /// repo with only loose objects (most fixture cases) is already
+    /// hash-sorted. We additionally collect-sort-dedupe to match git's
+    /// contract on mixed-storage repos. Under `unordered=true` we skip
+    /// the sort+dedupe — effect-mode rows accept whatever order the
+    /// backend yields.
+    pub fn batch_all_objects(
+        repo: &gix::Repository,
+        mode: BatchMode,
+        format: Option<&str>,
+        unordered: bool,
+        output_delim: u8,
+        mut out: impl std::io::Write,
+    ) -> anyhow::Result<()> {
+        let format = format.unwrap_or(DEFAULT_BATCH_CHECK_FORMAT);
+        let iter = repo.objects.iter()?;
+        let ids: Vec<gix::hash::ObjectId> = if unordered {
+            iter.filter_map(Result::ok).collect()
+        } else {
+            let mut v: Vec<_> = iter.filter_map(Result::ok).collect();
+            v.sort();
+            v.dedup();
+            v
+        };
+        for id in ids {
+            let Ok(header) = repo.find_header(id) else {
+                continue;
+            };
+            let mut buf = Vec::with_capacity(format.len() + 64);
+            expand_atoms(format, &id, header.kind(), header.size(), &mut buf);
+            out.write_all(&buf)?;
+            out.write_all(std::slice::from_ref(&output_delim))?;
+            if matches!(mode, BatchMode::Contents) {
+                let object = repo.find_object(id)?;
+                out.write_all(&object.data)?;
+                out.write_all(std::slice::from_ref(&output_delim))?;
+            }
+        }
+        Ok(())
+    }
+
     pub fn cat(repo: gix::Repository, revspec: &str, out: impl std::io::Write) -> anyhow::Result<()> {
         super::display_object(&repo, repo.rev_parse(revspec)?, TreeMode::Pretty, None, out)?;
         Ok(())

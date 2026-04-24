@@ -433,8 +433,9 @@ only_for_hash sha1-only && (small-repo-in-sandbox
 # hash=sha1-only
 title "gix cat-file --batch-all-objects"
 only_for_hash sha1-only && (small-repo-in-sandbox
-  # TODO — expect_parity bytes -- cat-file --batch-all-objects --batch-check
-  it "matches git behavior (sorted hash order)" && { :; }
+  it "matches git behavior (sorted hash order)" && {
+    expect_parity bytes -- cat-file --batch-all-objects --batch-check
+  }
 )
 
 # mode=effect — `--batch-all-objects` without `--batch[-check]` is a
@@ -443,8 +444,9 @@ only_for_hash sha1-only && (small-repo-in-sandbox
 # mode=effect
 title "gix cat-file --batch-all-objects (without batch)"
 only_for_hash sha1-only && (small-repo-in-sandbox
-  # TODO — expect_parity effect -- cat-file --batch-all-objects
-  it "matches git behavior" && { :; }
+  it "matches git behavior" && {
+    expect_parity effect -- cat-file --batch-all-objects
+  }
 )
 
 # mode=effect — `--buffer`: toggles stdio buffering on batch output.
@@ -455,8 +457,10 @@ only_for_hash sha1-only && (small-repo-in-sandbox
 # mode=effect
 title "gix cat-file --buffer"
 only_for_hash sha1-only && (small-repo-in-sandbox
-  # TODO — expect_parity effect -- cat-file --buffer --batch-check
-  it "matches git behavior with --buffer --batch-check" && { :; }
+  it "matches git behavior with --buffer --batch-check" && {
+    PARITY_STDIN="HEAD
+" expect_parity bytes -- cat-file --buffer --batch-check
+  }
 )
 
 # mode=effect — `--buffer` without batch: usage error 129.
@@ -477,8 +481,9 @@ only_for_hash sha1-only && (small-repo-in-sandbox
 # mode=effect
 title "gix cat-file --unordered"
 only_for_hash sha1-only && (small-repo-in-sandbox
-  # TODO — expect_parity effect -- cat-file --batch-all-objects --batch-check --unordered
-  it "matches git behavior" && { :; }
+  it "matches git behavior" && {
+    expect_parity effect -- cat-file --batch-all-objects --batch-check --unordered
+  }
 )
 
 # mode=bytes — `--follow-symlinks`: with --batch/--batch-check, resolve

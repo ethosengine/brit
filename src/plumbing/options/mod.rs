@@ -250,6 +250,11 @@ pub enum Subcommands {
         /// order rather than hash-sorted.
         #[clap(long)]
         unordered: bool,
+        /// Under `--batch[-check]`, ignore stdin and iterate every object
+        /// in the odb (including alternates). Mirrors git's
+        /// `--batch-all-objects`.
+        #[clap(long)]
+        batch_all_objects: bool,
         /// Under `--batch*`, follow in-tree symlinks when requesting
         /// `<tree-ish>:<path>` inputs. Mirrors `git cat-file
         /// --follow-symlinks`.
