@@ -30,6 +30,11 @@ pub fn list(
         list::Kind::All => (true, true),
     };
 
+    // Current-branch marker. None when HEAD is detached or unborn; in
+    // both cases no local row is decorated with `*`. Matches git's
+    // print_ref_list() which compares refs against head_ref.
+    let head_short = repo.head_name()?.map(|name| name.shorten().to_string());
+
     if show_local {
         let mut branch_names: Vec<String> = platform
             .local_branches()?
@@ -40,7 +45,12 @@ pub fn list(
         branch_names.sort();
 
         for branch_name in branch_names {
-            writeln!(out, "{branch_name}")?;
+            let marker = if Some(&branch_name) == head_short.as_ref() {
+                "* "
+            } else {
+                "  "
+            };
+            writeln!(out, "{marker}{branch_name}")?;
         }
     }
 
@@ -54,7 +64,7 @@ pub fn list(
         branch_names.sort();
 
         for branch_name in branch_names {
-            writeln!(out, "{branch_name}")?;
+            writeln!(out, "  {branch_name}")?;
         }
     }
 

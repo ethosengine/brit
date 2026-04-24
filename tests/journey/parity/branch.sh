@@ -103,8 +103,8 @@ only_for_hash dual && (sandbox
 # hash=sha1-only
 title "gix branch (bare list)"
 only_for_hash sha1-only && (small-repo-in-sandbox
-  it "matches git behavior (TODO)" && {
-    : # TODO: expect_parity bytes -- branch
+  it "matches git behavior" && {
+    expect_parity bytes -- branch
   }
 )
 
