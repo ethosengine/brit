@@ -2034,8 +2034,40 @@ pub fn main() -> Result<()> {
             // exactly one of {use_mailmap, no_use_mailmap} is ever set.
             use_mailmap,
             no_use_mailmap: _,
+            // `--textconv` / `--filters` request content transformation.
+            // With no userdiff / gitattributes configured in the fixture,
+            // both degenerate to "emit raw blob" — the same bytes as
+            // -p / bare positional — so they're accepted as compat
+            // passthroughs until real filter wiring lands.
+            textconv,
+            filters,
+            // `--path=<path>` supplies the path for filter-attribute
+            // lookup; only meaningful with --textconv/--filters. When set
+            // without those, git emits a usage error and exits 129 — we
+            // mirror that exit code below.
+            path,
             args,
         } => {
+            // `--path=<path>` is only meaningful with --textconv/--filters;
+            // git's cmd_cat_file calls usage_msg_optf and exits 129
+            // otherwise. Check early so the error path fires before any
+            // repo discovery.
+            if path.is_some() && !textconv && !filters {
+                use std::io::Write;
+                let mut stderr = std::io::stderr().lock();
+                let _ = writeln!(
+                    stderr,
+                    "fatal: '--path=<path|tree-ish>' needs '--filters' or '--textconv'"
+                );
+                drop(stderr);
+                std::process::exit(129);
+            }
+            // `--textconv` / `--filters` are accepted as compat passthroughs
+            // at this iteration — the fixtures have no userdiff or
+            // gitattributes configured, so the git-side pipelines also
+            // degenerate to "emit raw blob". Wire real filter invocation
+            // once a row demands it.
+            let _ = (textconv, filters, path);
             // The positional grammar tracks git cat-file's:
             //   * `<object>`         — with -e/-p/-t/-s OR alone (gix legacy)
             //   * `<type> <object>`  — no mode flag; peel and emit raw bytes

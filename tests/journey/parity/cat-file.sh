@@ -307,8 +307,10 @@ only_for_hash sha1-only && (small-repo-in-sandbox
 # hash=sha1-only
 title "gix cat-file --textconv"
 only_for_hash sha1-only && (small-repo-in-sandbox
-  # TODO — expect_parity bytes -- cat-file --textconv HEAD:a
-  it "matches git behavior" && { :; }
+  echo blob-content > a && git add a && git commit -q -m "populate a"
+  it "matches git behavior" && {
+    expect_parity bytes -- cat-file --textconv HEAD:a
+  }
 )
 
 # mode=bytes — `--filters <rev:path>`: runs smudge filters / EOL
@@ -317,8 +319,10 @@ only_for_hash sha1-only && (small-repo-in-sandbox
 # hash=sha1-only
 title "gix cat-file --filters"
 only_for_hash sha1-only && (small-repo-in-sandbox
-  # TODO — expect_parity bytes -- cat-file --filters HEAD:a
-  it "matches git behavior" && { :; }
+  echo blob-content > a && git add a && git commit -q -m "populate a"
+  it "matches git behavior" && {
+    expect_parity bytes -- cat-file --filters HEAD:a
+  }
 )
 
 # mode=bytes — `--path=<path> --textconv <rev>`: alternative spelling
@@ -327,8 +331,10 @@ only_for_hash sha1-only && (small-repo-in-sandbox
 # hash=sha1-only
 title "gix cat-file --path=<path> --textconv"
 only_for_hash sha1-only && (small-repo-in-sandbox
-  # TODO — expect_parity bytes -- cat-file --path=a --textconv HEAD:a
-  it "matches git behavior" && { :; }
+  echo blob-content > a && git add a && git commit -q -m "populate a"
+  it "matches git behavior" && {
+    expect_parity bytes -- cat-file --path=a --textconv HEAD:a
+  }
 )
 
 # mode=bytes — `--path=<path> --filters <rev>`: same as `--path=<path>
@@ -336,8 +342,10 @@ only_for_hash sha1-only && (small-repo-in-sandbox
 # hash=sha1-only
 title "gix cat-file --path=<path> --filters"
 only_for_hash sha1-only && (small-repo-in-sandbox
-  # TODO — expect_parity bytes -- cat-file --path=a --filters HEAD:a
-  it "matches git behavior" && { :; }
+  echo blob-content > a && git add a && git commit -q -m "populate a"
+  it "matches git behavior" && {
+    expect_parity bytes -- cat-file --path=a --filters HEAD:a
+  }
 )
 
 # mode=effect — `--path=<path>` without `--textconv`/`--filters` is a
@@ -347,8 +355,9 @@ only_for_hash sha1-only && (small-repo-in-sandbox
 # mode=effect
 title "gix cat-file --path=<path> (without --textconv/--filters)"
 only_for_hash sha1-only && (small-repo-in-sandbox
-  # TODO — expect_parity effect -- cat-file --path=a HEAD:a
-  it "matches git behavior" && { :; }
+  it "matches git behavior" && {
+    expect_parity effect -- cat-file --path=a HEAD:a
+  }
 )
 
 # --- batch family ------------------------------------------------------

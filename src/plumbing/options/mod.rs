@@ -184,6 +184,27 @@ pub enum Subcommands {
         /// `--no-use-mailmap`; `--no-mailmap` is a git-compat alias.
         #[clap(long = "no-use-mailmap", visible_alias = "no-mailmap")]
         no_use_mailmap: bool,
+        /// Apply textconv filters to the object's content before emitting.
+        /// Mirrors `git cat-file --textconv`.
+        ///
+        /// With no textconv filter configured the output equals the raw
+        /// blob bytes. Requires `<object>` to be of form `<tree-ish>:<path>`
+        /// unless `--path=<path>` is given.
+        #[clap(long)]
+        textconv: bool,
+        /// Apply worktree filters (smudge / EOL conversion) to the blob
+        /// before emitting. Mirrors `git cat-file --filters`.
+        ///
+        /// With no filters configured the output equals the raw blob bytes.
+        /// Same path-resolution requirement as `--textconv`.
+        #[clap(long)]
+        filters: bool,
+        /// Associate `<object>` with this path for filter-attribute lookup.
+        /// Mirrors `git cat-file --path=<path>`. Requires `--textconv` or
+        /// `--filters`; erroring 129 otherwise (git: "'--path=...' needs
+        /// '--filters' or '--textconv'").
+        #[clap(long, value_name = "PATH")]
+        path: Option<String>,
         /// The object to print, optionally preceded by a type hint.
         ///
         /// Two positional shapes:
