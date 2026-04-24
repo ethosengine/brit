@@ -4,10 +4,9 @@
 #
 # One `title` + `it` block per flag derived from
 # vendor/git/Documentation/git-status.adoc and vendor/git/wt-status.c
-# (wt_status_print and porcelain variants). Every `it` body starts as a
-# TODO: placeholder — iteration N of the parity loop picks the next
-# TODO, converts it to a real `expect_parity` assertion, and removes the
-# TODO marker.
+# (wt_status_print and porcelain variants). Flag rows were closed
+# iteration-by-iteration via the parity loop; matrix row was promoted
+# to `present` at commit f72ff4a56 after `@gix-steward` PASS verdict.
 #
 # Verdict modes (comment above each block):
 #   bytes  — scriptable output consumed by tooling (--porcelain, -z,
