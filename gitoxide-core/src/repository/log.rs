@@ -12,7 +12,18 @@ pub fn log(mut repo: gix::Repository, out: &mut dyn std::io::Write, path: Option
 }
 
 fn log_all(repo: gix::Repository, out: &mut dyn std::io::Write) -> Result<(), anyhow::Error> {
-    let head = repo.head()?.peel_to_commit()?;
+    let mut head = repo.head()?;
+    // Parity with git: unborn HEAD (fresh `git init`, no commits) dies 128
+    // with "fatal: your current branch '<short>' does not have any commits yet"
+    // (vendor/git/builtin/log.c → cmd_log_walk → revision.c::die).
+    if let gix::head::Kind::Unborn(name) = &head.kind {
+        eprintln!(
+            "fatal: your current branch '{}' does not have any commits yet",
+            name.shorten()
+        );
+        std::process::exit(128);
+    }
+    let head = head.peel_to_commit()?;
     let topo = gix::traverse::commit::topo::Builder::from_iters(&repo.objects, [head.id], None::<Vec<gix::ObjectId>>)
         .build()?;
 
