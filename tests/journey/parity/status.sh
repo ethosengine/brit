@@ -68,15 +68,17 @@ only_for_hash sha1-only && (small-repo-in-sandbox
 )
 
 # mode=effect — `git status` outside any repo dies 128 with
-# "fatal: not a git repository"; gix currently exits 1 with an anyhow
-# trace. Divergence to close (either map gix exit to 128 or accept
-# under effect mode).
+# "fatal: not a git repository (or any of the parent directories): .git".
+# gix originally exited 1 with an anyhow trace through NoGitRepository;
+# src/plumbing/main.rs's repository() closure now intercepts the
+# gix_discover::upwards::Error::NoGitRepository* variants, writes git's
+# exact wording, and exits 128. Scoped to plumbing commands that require
+# a repo — env/clone are unaffected.
 # hash=dual
 title "gix status (outside a repository)"
 only_for_hash dual && (sandbox
   it "matches git behavior" && {
-    # TODO: expect_parity effect -- status
-    true
+    expect_parity effect -- status
   }
 )
 

@@ -121,12 +121,35 @@ pub fn main() -> Result<()> {
             };
             mapping.full.modify(to_match_settings);
             mapping.reduced.modify(to_match_settings);
-            let mut repo = gix::ThreadSafeRepository::discover_with_environment_overrides_opts(
+            // Parity with git: die 128 with git's exact "not a git repository"
+            // wording when discovery walks past the filesystem root without
+            // finding a .git. gix's anyhow bubbling would otherwise exit 1 with
+            // a stack trace (see gix-discover/src/upwards/types.rs
+            // NoGitRepository*). Intercepting here keeps the behavior scoped to
+            // plumbing commands that require a repo; `env`, `clone`, and other
+            // commands that don't call this closure remain unaffected.
+            let mut repo = match gix::ThreadSafeRepository::discover_with_environment_overrides_opts(
                 repository,
                 Default::default(),
                 mapping,
-            )
-            .map(gix::Repository::from)?;
+            ) {
+                Ok(r) => gix::Repository::from(r),
+                Err(gix::discover::Error::Discover(
+                    gix::discover::upwards::Error::NoGitRepository { .. }
+                    | gix::discover::upwards::Error::NoGitRepositoryWithinCeiling { .. }
+                    | gix::discover::upwards::Error::NoGitRepositoryWithinFs { .. },
+                )) => {
+                    use std::io::Write;
+                    let mut stderr = std::io::stderr().lock();
+                    let _ = writeln!(
+                        stderr,
+                        "fatal: not a git repository (or any of the parent directories): .git"
+                    );
+                    drop(stderr);
+                    std::process::exit(128);
+                }
+                Err(e) => return Err(e.into()),
+            };
             if !config.is_empty() {
                 repo.config_snapshot_mut()
                     .append_config(config.iter(), gix::config::Source::Cli)
