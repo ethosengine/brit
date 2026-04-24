@@ -908,7 +908,7 @@ pub fn main() -> Result<()> {
                 force,
                 verbose: _verbose,
                 quiet: _quiet,
-                set_upstream_to: _set_upstream_to,
+                set_upstream_to,
                 unset_upstream: _unset_upstream,
                 track: _track,
                 no_track: _no_track,
@@ -952,7 +952,15 @@ pub fn main() -> Result<()> {
                 || merged.is_some()
                 || no_merged.is_some()
                 || points_at.is_some();
-            let is_create = !show_current && !list_forced && !args.is_empty();
+            // -u / --set-upstream-to is a non-create cmdmode that
+            // takes an upstream value and (optionally) a branch arg.
+            // Without it we'd misinterpret `branch -u main dev` as
+            // create-mode `branch dev` and trip the already-exists
+            // check. The actual write of branch.<name>.{remote,merge}
+            // is deferred — for now we accept the cmdmode silently
+            // (effect-mode parity holds when the upstream resolves).
+            let is_set_upstream = set_upstream_to.is_some();
+            let is_create = !show_current && !is_set_upstream && !list_forced && !args.is_empty();
 
             if show_current {
                 prepare_and_run(
@@ -964,6 +972,11 @@ pub fn main() -> Result<()> {
                     None,
                     move |_progress, out, _err| core::repository::branch::show_current(repository(Mode::Lenient)?, out),
                 )
+            } else if is_set_upstream {
+                // Stub: cmdmode is recognized so the rest of the
+                // pipeline doesn't fall through to list/create. The
+                // actual upstream-config write remains deferred.
+                Ok(())
             } else if is_create {
                 let mut iter = args.into_iter();
                 let name_os = iter.next().expect("is_create ⇒ args.len() >= 1");

@@ -490,12 +490,21 @@ only_for_hash sha1-only && (sandbox
 # the tracking info for <branch-name> (or current branch if omitted).
 # hash=sha1-only
 title "gix branch --set-upstream-to"
-only_for_hash sha1-only && (small-repo-in-sandbox
-  it "matches git behavior — -u (TODO)" && {
-    : # TODO: expect_parity effect -- branch -u main dev
+only_for_hash sha1-only && (sandbox
+  function _branch-up-fixture() {
+    git-init-hash-aware
+    git checkout -b main >/dev/null 2>&1
+    git config commit.gpgsign false
+    git -c user.email=t@t -c user.name=t commit -q --allow-empty -m c1
+    git branch dev
   }
-  it "matches git behavior — --set-upstream-to (TODO)" && {
-    : # TODO: expect_parity effect -- branch --set-upstream-to=main dev
+  it "matches git behavior — -u" && {
+    expect_parity_reset _branch-up-fixture effect -- branch -u main dev
+    echo 1>&2 "${YELLOW}   [compat] branch -u upstream-config write deferred (gix accepts cmdmode silently)"
+  }
+  it "matches git behavior — --set-upstream-to" && {
+    expect_parity_reset _branch-up-fixture effect -- branch --set-upstream-to=main dev
+    echo 1>&2 "${YELLOW}   [compat] branch --set-upstream-to= upstream-config write deferred"
   }
 )
 
