@@ -53,8 +53,9 @@ title "gix log"
 # hash=dual
 title "gix log --help"
 only_for_hash dual && (sandbox
-  # TODO — expect_parity effect -- log --help
-  it "matches git behavior" && { :; }
+  it "matches git: --help exits 0" && {
+    expect_parity effect -- log --help
+  }
 )
 
 # --- argument-parsing error paths --------------------------------------
