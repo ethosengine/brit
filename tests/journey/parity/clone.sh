@@ -299,29 +299,17 @@ only_for_hash sha1-only && (sandbox
 # hash=sha1-only "gix cannot open sha256 remotes, see gix/src/clone/fetch/mod.rs unimplemented!()"
 title "gix clone -b / --branch=<name>"
 only_for_hash sha1-only && (sandbox
-  # Empty upstream → both binaries fail to resolve --branch=main
-  # (there are no refs on the remote). Expected contract: both die
-  # non-zero. git: 128. gix: currently surfaces the PartialName
-  # resolution failure through anyhow and exits 1. expect_run
-  # per-side records the contract each side delivers today; the
-  # bytes-parity follow-up should unify the exit code and message.
-  git-init-hash-aware -q --bare src-repo.git
-  mkdir g-short g-long x-short x-long
-  for d in g-short g-long x-short x-long; do
-    (cd "$d" && ln -s ../src-repo.git .)
-  done
-  it "matches git: -b main dies 128 on empty upstream" && {
-    (cd g-short && expect_run 128 git clone -b main src-repo.git target)
-  }
-  it "matches gix: -b main dies non-zero on empty upstream" && {
-    (cd x-short && expect_run 1 "$exe_plumbing" clone -b main src-repo.git target)
-  }
-  it "matches git: --branch=main dies 128 on empty upstream" && {
-    (cd g-long && expect_run 128 git clone --branch=main src-repo.git target)
-  }
-  it "matches gix: --branch=main dies non-zero on empty upstream" && {
-    (cd x-long && expect_run 1 "$exe_plumbing" clone --branch=main src-repo.git target)
-  }
+  # shortcoming: Clap field + dispatch-arm routing to ref_name is
+  # wired (invalid PartialName → 128 via src/plumbing/main.rs),
+  # but the "remote branch not found" resolution error that fires
+  # against an empty upstream surfaces through anyhow as exit 1
+  # instead of git's exit 128. Unifying requires a targeted 128
+  # wrapper in the dispatch arm around the gix::clone::Fetch
+  # error path (specifically the "None of the refspecs matched"
+  # kind) so `gix clone -b main <empty-remote>` dies 128 with
+  # git's `fatal: Remote branch %s not found in upstream %s`
+  # message. Deferred pending error-kind mapping.
+  shortcoming "deferred: gix::clone::Fetch ref-not-found error maps to exit 1; git exits 128"
 )
 
 # mode=effect — `--revision=<rev>` detaches HEAD at <rev>; no local branch
@@ -457,17 +445,16 @@ only_for_hash sha1-only && (sandbox
 # hash=sha1-only "gix cannot open sha256 remotes, see gix/src/clone/fetch/mod.rs unimplemented!()"
 title "gix clone --reference=<repo>"
 only_for_hash sha1-only && (sandbox
-  git-init-hash-aware -q --bare src-repo.git
-  git-init-hash-aware -q --bare reference.git
-  mkdir g-side x-side
-  (cd g-side && ln -s ../src-repo.git . && ln -s ../reference.git .)
-  (cd x-side && ln -s ../src-repo.git . && ln -s ../reference.git .)
-  it "matches git: --reference with valid alternate exits 0" && {
-    (cd g-side && expect_run 0 git clone --reference=reference.git src-repo.git target)
-  }
-  it "matches gix: --reference exits 0 (flag parsed; alternates wiring TODO)" && {
-    (cd x-side && expect_run 0 "$exe_plumbing" clone --reference=reference.git src-repo.git target)
-  }
+  # shortcoming: git writes <dst>/.git/objects/info/alternates
+  # pointing at <repo>/objects when --reference is given, so the
+  # clone shares object storage with the reference repo. gix
+  # accepts --reference at the Clap level but doesn't write the
+  # alternates file today — both binaries exit 0 on an empty
+  # upstream, but the on-disk state diverges (git has alternates,
+  # gix has a full copy). Parity-as-exit-code here would be
+  # misleading without the alternates wiring; defer until
+  # gix-odb/alternates ingestion lands.
+  shortcoming "deferred: gix doesn't write objects/info/alternates; --reference is parse-only"
 )
 
 # mode=effect — `--reference-if-able=<repo>` is `--reference` but with a
@@ -475,16 +462,12 @@ only_for_hash sha1-only && (sandbox
 # hash=sha1-only "gix cannot open sha256 remotes, see gix/src/clone/fetch/mod.rs unimplemented!()"
 title "gix clone --reference-if-able=<repo>"
 only_for_hash sha1-only && (sandbox
-  git-init-hash-aware -q --bare src-repo.git
-  mkdir g-side x-side
-  (cd g-side && ln -s ../src-repo.git .)
-  (cd x-side && ln -s ../src-repo.git .)
-  it "matches git: --reference-if-able on missing alternate warns then exits 0" && {
-    (cd g-side && expect_run 0 git clone --reference-if-able=/nonexistent-alt src-repo.git target)
-  }
-  it "matches gix: --reference-if-able on missing alternate exits 0" && {
-    (cd x-side && expect_run 0 "$exe_plumbing" clone --reference-if-able=/nonexistent-alt src-repo.git target)
-  }
+  # shortcoming: same gap as --reference — gix accepts the flag
+  # at the Clap level but does not attempt alternates resolution,
+  # so the "warn-if-missing" semantics that --reference-if-able
+  # adds to --reference can't be meaningfully tested for parity
+  # until alternates are wired.
+  shortcoming "deferred: parent --reference is not yet wired; --reference-if-able inherits the deferral"
 )
 
 # mode=effect — `--dissociate` copies borrowed objects locally after the
@@ -492,17 +475,11 @@ only_for_hash sha1-only && (sandbox
 # hash=sha1-only "gix cannot open sha256 remotes, see gix/src/clone/fetch/mod.rs unimplemented!()"
 title "gix clone --dissociate --reference=<repo>"
 only_for_hash sha1-only && (sandbox
-  git-init-hash-aware -q --bare src-repo.git
-  git-init-hash-aware -q --bare reference.git
-  mkdir g-side x-side
-  (cd g-side && ln -s ../src-repo.git . && ln -s ../reference.git .)
-  (cd x-side && ln -s ../src-repo.git . && ln -s ../reference.git .)
-  it "matches git: --dissociate + --reference exits 0" && {
-    (cd g-side && expect_run 0 git clone --dissociate --reference=reference.git src-repo.git target)
-  }
-  it "matches gix: --dissociate + --reference exits 0" && {
-    (cd x-side && expect_run 0 "$exe_plumbing" clone --dissociate --reference=reference.git src-repo.git target)
-  }
+  # shortcoming: --dissociate is a post-processing step on
+  # --reference's alternates (copy borrowed objects locally,
+  # then drop the alternate). Inherits the --reference deferral;
+  # there's nothing meaningful to exercise without alternates.
+  shortcoming "deferred: depends on --reference alternates wiring"
 )
 
 # --- shallow clone --------------------------------------------------------
