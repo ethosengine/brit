@@ -272,6 +272,53 @@ pub fn copy(
     Ok(0)
 }
 
+/// `git branch -d/-D [-r] <name>...`: delete each named branch. Each
+/// missing name prints "error: branch '<name>' not found." and
+/// contributes to a non-zero final exit. Successfully deleted
+/// branches print
+///   "Deleted branch <name> (was <abbrev-sha>)."
+/// to stdout. Without `-D`, git also enforces a merged-into-upstream
+/// check before deleting; that check is currently deferred (gix
+/// behaves as if -D were always passed when -d is given). With `-r`,
+/// the prefix becomes `refs/remotes/` instead of `refs/heads/`.
+pub fn delete(
+    repo: gix::Repository,
+    names: Vec<gix::bstr::BString>,
+    remotes: bool,
+    out: &mut dyn std::io::Write,
+    err: &mut dyn std::io::Write,
+) -> anyhow::Result<i32> {
+    use gix::refs::transaction::{Change, PreviousValue, RefEdit, RefLog};
+
+    let prefix = if remotes { "refs/remotes/" } else { "refs/heads/" };
+    let label = if remotes { "remote-tracking branch" } else { "branch" };
+    let mut errors = 0i32;
+    for name in names {
+        let full = format!("{prefix}{name}");
+        let Some(reference) = repo.try_find_reference(full.as_str())? else {
+            writeln!(err, "error: {label} '{name}' not found")?;
+            errors += 1;
+            continue;
+        };
+        let target_oid = reference.clone().into_fully_peeled_id()?.detach();
+        let abbrev: String = target_oid.to_string().chars().take(7).collect();
+        let full_name: gix::refs::FullName = full
+            .clone()
+            .try_into()
+            .map_err(|err| anyhow::anyhow!("invalid refname: {err:?}"))?;
+        repo.edit_reference(RefEdit {
+            change: Change::Delete {
+                expected: PreviousValue::Any,
+                log: RefLog::AndReference,
+            },
+            name: full_name,
+            deref: false,
+        })?;
+        writeln!(out, "Deleted {label} {name} (was {abbrev}).")?;
+    }
+    Ok(if errors > 0 { 1 } else { 0 })
+}
+
 /// `git branch --show-current`: print the current branch name alone,
 /// or nothing in detached `HEAD` state. Matches builtin/branch.c
 /// show_current behavior — no asterisk, no indent, no newline on

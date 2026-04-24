@@ -897,8 +897,8 @@ pub fn main() -> Result<()> {
                 list: _list_flag,
                 remotes,
                 all,
-                delete: _delete,
-                delete_force: _delete_force,
+                delete,
+                delete_force,
                 move_,
                 move_force,
                 copy,
@@ -964,12 +964,14 @@ pub fn main() -> Result<()> {
             let rename_force = move_force || force;
             let is_copy = copy || copy_force;
             let copy_force_eff = copy_force || force;
+            let is_delete = delete || delete_force;
             let is_create = !show_current
                 && !is_set_upstream
                 && !is_unset_upstream
                 && !is_edit_description
                 && !is_rename
                 && !is_copy
+                && !is_delete
                 && !list_forced
                 && !args.is_empty();
 
@@ -1058,6 +1060,27 @@ pub fn main() -> Result<()> {
                     move |_progress, _out, err| {
                         let code =
                             core::repository::branch::copy(repository(Mode::Lenient)?, old, new, copy_force_eff, err)?;
+                        if code != 0 {
+                            std::process::exit(code);
+                        }
+                        Ok(())
+                    },
+                )
+            } else if is_delete {
+                let names: Vec<gix::bstr::BString> = args
+                    .iter()
+                    .map(|os| gix::path::os_str_into_bstr(os).map(std::borrow::ToOwned::to_owned))
+                    .collect::<Result<_, _>>()?;
+                prepare_and_run(
+                    "branch-delete",
+                    trace,
+                    verbose,
+                    progress,
+                    progress_keep_open,
+                    None,
+                    move |_progress, out, err| {
+                        let code =
+                            core::repository::branch::delete(repository(Mode::Lenient)?, names, remotes, out, err)?;
                         if code != 0 {
                             std::process::exit(code);
                         }

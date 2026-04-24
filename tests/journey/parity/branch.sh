@@ -593,15 +593,22 @@ only_for_hash sha1-only && (sandbox
 # deletes unconditionally (even unmerged). Multiple names allowed.
 # hash=sha1-only
 title "gix branch --delete"
-only_for_hash sha1-only && (small-repo-in-sandbox
-  it "matches git behavior — single (TODO)" && {
-    : # TODO: expect_parity effect -- branch -d dev
+only_for_hash sha1-only && (sandbox
+  function _branch-delete-fixture() {
+    git-init-hash-aware
+    git checkout -b main >/dev/null 2>&1
+    git config commit.gpgsign false
+    git -c user.email=t@t -c user.name=t commit -q --allow-empty -m c1
+    git branch dev
   }
-  it "matches git behavior — -D force (TODO)" && {
-    : # TODO: expect_parity effect -- branch -D dev
+  it "matches git behavior — single" && {
+    expect_parity_reset _branch-delete-fixture bytes -- branch -d dev
   }
-  it "matches git behavior — non-existent (TODO)" && {
-    : # TODO: expect_parity bytes -- branch -d nosuch
+  it "matches git behavior — -D force" && {
+    expect_parity_reset _branch-delete-fixture bytes -- branch -D dev
+  }
+  it "matches git behavior — non-existent" && {
+    expect_parity_reset _branch-delete-fixture bytes -- branch -d nosuch
   }
 )
 
