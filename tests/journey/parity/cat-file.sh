@@ -152,8 +152,10 @@ only_for_hash sha1-only && (small-repo-in-sandbox
 # hash=sha1-only
 title "gix cat-file -p (blob)"
 only_for_hash sha1-only && (small-repo-in-sandbox
-  # TODO — expect_parity bytes -- cat-file -p HEAD:a
-  it "matches git behavior" && { :; }
+  echo blob-content > a && git add a && git commit -q -m "populate a"
+  it "matches git behavior" && {
+    expect_parity bytes -- cat-file -p HEAD:a
+  }
 )
 
 # mode=bytes — `-p <tree>` pretty-prints tree entries. git's format is
