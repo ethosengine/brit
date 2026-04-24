@@ -191,19 +191,23 @@ only_for_hash sha1-only && (small-repo-in-sandbox
 
 # --- branch / stash metadata --------------------------------------------
 
-# mode=bytes — `-b`/`--branch` prepends a branch/tracking-info header
-# (format defined in git-status.adoc "Branch Headers" for porcelain=v2,
-# or `## <branch>...<upstream>` for the short format).
+# mode=bytes — `-b`/`--branch` prepends a `## <branch>` header to the
+# short-format output. (Long format already shows `On branch <branch>`
+# so -b alone is a no-op there.) The scaffold exercises -b combined
+# with -s to isolate the header emission. Upstream-tracking lines
+# (`## br...origin/br [ahead N]`) and detached-HEAD / initial-repo
+# variants are deferred; current emission covers `## <branch>` and
+# `## HEAD (no branch)` only.
 # hash=sha1-only "gix cannot load sha256 repos: extensions.objectFormat=sha256 rejected (gix/src/config/tree/sections/extensions.rs)"
 title "gix status -b / --branch"
 only_for_hash sha1-only && (small-repo-in-sandbox
-  it "matches git behavior with -b" && {
-    # TODO: expect_parity bytes -- status -b
-    true
+  echo staged-change >> a && git add a && echo worktree-change >> a
+  touch new-untracked
+  it "matches git behavior with -b -s" && {
+    expect_parity bytes -- status -b -s
   }
-  it "matches git behavior with --branch" && {
-    # TODO: expect_parity bytes -- status --branch
-    true
+  it "matches git behavior with --branch -s" && {
+    expect_parity bytes -- status --branch -s
   }
 )
 

@@ -318,6 +318,11 @@ pub mod status {
         /// and `--format` just like in git.
         #[clap(long = "long", conflicts_with_all = ["short", "format"])]
         pub long: bool,
+        /// Show the branch and tracking info even in short-format — equivalent
+        /// to git's `-b` / `--branch`. Has no effect on the long format
+        /// (which always shows the branch).
+        #[clap(short = 'b', long = "branch")]
+        pub branch: bool,
         /// If enabled, show ignored files and directories.
         #[clap(long)]
         pub ignored: Option<Option<Ignored>>,

@@ -44,6 +44,10 @@ pub struct Options {
     pub submodules: Option<Submodules>,
     pub thread_limit: Option<usize>,
     pub statistics: bool,
+    /// Show the branch header (`## <branch>`) in short / porcelain formats.
+    /// Mirrors git's `-b` / `--branch`. Ignored for the default (long)
+    /// format, which always shows the branch.
+    pub branch: bool,
     pub allow_write: bool,
     pub index_worktree_renames: Option<f32>,
 }
@@ -62,6 +66,7 @@ pub fn show(
         thread_limit,
         allow_write,
         statistics,
+        branch,
         index_worktree_renames,
     }: Options,
 ) -> anyhow::Result<()> {
@@ -127,6 +132,24 @@ pub fn show(
         // wt_status_print_changes on -s output: changed tracked entries in
         // commit-index order (we use sorted path order as a deterministic
         // substitute), then untracked, then ignored.
+        if branch {
+            // `-b` / `--branch` — prepend a `## <branch>` header. Git also
+            // covers detached-HEAD (`## HEAD (no branch)`) and initial-repo
+            // (`## No commits yet on <branch>`) cases; those are not yet
+            // handled — they surface as shortcomings when their row lands.
+            // Upstream-tracking lines (`## br...origin/br [ahead N]`) are
+            // also TODO.
+            match repo.head_name()? {
+                Some(name) => {
+                    out.write_all(b"## ")?;
+                    out.write_all(name.shorten().as_ref())?;
+                    out.write_all(b"\n")?;
+                }
+                None => {
+                    out.write_all(b"## HEAD (no branch)\n")?;
+                }
+            }
+        }
         use std::collections::BTreeMap;
         let mut tracked: BTreeMap<BString, [u8; 2]> = BTreeMap::new();
         let mut renames: Vec<(BString, BString, u8, u8)> = Vec::new();

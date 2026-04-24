@@ -424,6 +424,7 @@ pub fn main() -> Result<()> {
             format: status_format,
             short,
             long,
+            branch,
             statistics,
             submodules,
             no_write,
@@ -488,6 +489,7 @@ pub fn main() -> Result<()> {
                             }),
                             output_format: format,
                             statistics,
+                            branch,
                             thread_limit: thread_limit.or(cfg!(target_os = "macos").then_some(3)), // TODO: make this a configurable when in `gix`, this seems to be optimal on MacOS, linux scales though! MacOS also scales if reading a lot of files for refresh index
                             allow_write: !no_write,
                             index_worktree_renames: index_worktree_renames.map(|percentage| percentage.unwrap_or(0.5)),
