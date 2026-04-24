@@ -55,7 +55,21 @@ pub mod async_util {
 }
 
 pub fn main() -> Result<()> {
-    let args: Args = Args::parse_from(gix::env::args_os());
+    // Parity with git's usage_msg_opt: unknown flags exit 129 (PARSE_OPT_HELP
+    // path in vendor/git/parse-options.c), not clap's default 2. Intercept at
+    // the top-level parse and remap only UnknownArgument; other clap errors
+    // keep their default exit code (0 for --help / --version display, 2 for
+    // value-validation / conflict / missing-required).
+    let args: Args = match Args::try_parse_from(gix::env::args_os()) {
+        Ok(args) => args,
+        Err(e) => {
+            if e.kind() == clap::error::ErrorKind::UnknownArgument {
+                let _ = e.print();
+                std::process::exit(129);
+            }
+            e.exit();
+        }
+    };
     let thread_limit = args.threads;
     let verbose = args.verbose;
     let format = args.format;

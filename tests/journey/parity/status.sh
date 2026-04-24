@@ -49,15 +49,21 @@ only_for_hash dual && (sandbox
 
 # --- argument-parsing error paths ---------------------------------------
 
-# mode=effect — unknown flag: git exits 129 (usage_msg_opt); gix/clap
-# exits 2 by default. Expected divergence to either accept (effect mode
-# accepts exit-code match only) or reconcile by adjusting gix clap error.
-# hash=dual
+# mode=effect — unknown flag: git exits 129 (usage_msg_opt in
+# vendor/git/parse-options.c::PARSE_OPT_HELP). gix originally exited 2
+# (clap default for ErrorKind::UnknownArgument); src/plumbing/main.rs
+# intercepts try_parse_from and remaps UnknownArgument → exit 129 to
+# restore parity. Other clap errors (ValueValidation, DisplayHelp,
+# DisplayVersion) keep their default codes. Tested inside a repo: git
+# outside a repo dies 128 before reaching arg-parse, while clap in gix
+# always runs first — so the exercise must live in a small-repo fixture
+# to isolate the arg-parse error path. That pushes this row to
+# sha1-only (gix-config rejects sha256 on any repo open).
+# hash=sha1-only "gix cannot load sha256 repos: extensions.objectFormat=sha256 rejected (gix/src/config/tree/sections/extensions.rs)"
 title "gix status --bogus-flag"
-only_for_hash dual && (sandbox
+only_for_hash sha1-only && (small-repo-in-sandbox
   it "matches git behavior" && {
-    # TODO: expect_parity effect -- status --bogus-flag
-    true
+    expect_parity effect -- status --bogus-flag
   }
 )
 
