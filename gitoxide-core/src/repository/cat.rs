@@ -346,6 +346,83 @@ pub(super) mod function {
         batch(repo, BatchMode::Info, format, b'\n', b'\n', stdin, out)
     }
 
+    /// `git cat-file --batch-command[=<format>]` — read per-line commands
+    /// from stdin and dispatch each to the --batch / --batch-check paths.
+    /// Supported commands (per vendor/git/builtin/cat-file.c `commands[]`):
+    ///   `contents <obj>` — like --batch (info line + contents).
+    ///   `info <obj>`     — like --batch-check (info line only).
+    ///   `flush`          — flush pending output (only useful with --buffer).
+    /// Unknown commands die 128 with git's `fatal: unknown command: '<cmd>'`.
+    pub fn batch_command(
+        repo: &gix::Repository,
+        format: Option<&str>,
+        input_delim: u8,
+        output_delim: u8,
+        mut stdin: impl BufRead,
+        mut out: impl std::io::Write,
+    ) -> anyhow::Result<()> {
+        let format = format.unwrap_or(DEFAULT_BATCH_CHECK_FORMAT);
+        let need_disk = format.contains("%(objectsize:disk)");
+        let mut line = Vec::new();
+        loop {
+            line.clear();
+            let n = stdin.read_until(input_delim, &mut line)?;
+            if n == 0 {
+                break;
+            }
+            if line.last() == Some(&input_delim) {
+                line.pop();
+            }
+            if input_delim == b'\n' && line.last() == Some(&b'\r') {
+                line.pop();
+            }
+            let raw = std::str::from_utf8(&line)?;
+            // Split at first space: command + arg.
+            let (cmd, arg) = match raw.find(' ') {
+                Some(i) => (&raw[..i], raw[i + 1..].trim_start_matches(' ')),
+                None => (raw, ""),
+            };
+            match cmd {
+                "info" | "contents" => {
+                    let Some(id) = resolve_oid(repo, arg) else {
+                        write!(out, "{arg} missing")?;
+                        out.write_all(std::slice::from_ref(&output_delim))?;
+                        continue;
+                    };
+                    let Ok(header) = repo.find_header(id) else {
+                        write!(out, "{arg} missing")?;
+                        out.write_all(std::slice::from_ref(&output_delim))?;
+                        continue;
+                    };
+                    let disk_size = if need_disk { loose_disk_size(repo, &id) } else { 0 };
+                    let data = AtomData {
+                        oid: &id,
+                        kind: header.kind(),
+                        size: header.size(),
+                        disk_size,
+                        rest: "",
+                    };
+                    let mut buf = Vec::with_capacity(format.len() + 64);
+                    if let Err(msg) = expand_atoms(format, &data, &mut buf) {
+                        anyhow::bail!("{msg}");
+                    }
+                    out.write_all(&buf)?;
+                    out.write_all(std::slice::from_ref(&output_delim))?;
+                    if cmd == "contents" {
+                        let object = repo.find_object(id)?;
+                        out.write_all(&object.data)?;
+                        out.write_all(std::slice::from_ref(&output_delim))?;
+                    }
+                }
+                "flush" => {
+                    out.flush()?;
+                }
+                _ => anyhow::bail!("unknown command: '{cmd}'"),
+            }
+        }
+        Ok(())
+    }
+
     /// `git cat-file --batch[-check] --batch-all-objects` — enumerate every
     /// object in the odb (loose + packed + alternates) and emit the info
     /// (and optionally contents) for each. stdin is ignored.

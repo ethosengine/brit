@@ -234,6 +234,16 @@ pub enum Subcommands {
             require_equals = true,
         )]
         batch: Option<String>,
+        /// Read `info <obj>` / `contents <obj>` / `flush` commands from
+        /// stdin. Mirrors `git cat-file --batch-command`.
+        #[clap(
+            long,
+            value_name = "FORMAT",
+            num_args = 0..=1,
+            default_missing_value = "",
+            require_equals = true,
+        )]
+        batch_command: Option<String>,
         /// Under `--batch*`, NUL-terminate both input and output.
         /// Mirrors `git cat-file -Z` (recommended for scripting).
         #[clap(short = 'Z')]

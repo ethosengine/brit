@@ -9,8 +9,9 @@ pub mod archive;
 pub mod branch;
 pub mod cat;
 pub use cat::function::{
-    batch as cat_batch, batch_all_objects as cat_batch_all_objects, batch_check as cat_batch_check, cat, cat_typed,
-    exists as cat_exists, first_unknown_atom as cat_first_unknown_atom, print_size as cat_size, print_type as cat_type,
+    batch as cat_batch, batch_all_objects as cat_batch_all_objects, batch_check as cat_batch_check,
+    batch_command as cat_batch_command, cat, cat_typed, exists as cat_exists,
+    first_unknown_atom as cat_first_unknown_atom, print_size as cat_size, print_type as cat_type,
     BatchMode as CatBatchMode,
 };
 pub use cat::{Existence as CatExistence, PrintOutcome as CatPrintOutcome, TypedOutcome as CatTypedOutcome};

@@ -2056,6 +2056,7 @@ pub fn main() -> Result<()> {
             // (batch_option_callback dies if two are set).
             batch_check,
             batch,
+            batch_command,
             // `-Z` = NUL on both input AND output.
             // `-z` = NUL on input only (deprecated). Git's batch_options
             // defaults both delims to LF then patches per flag.
@@ -2096,7 +2097,7 @@ pub fn main() -> Result<()> {
             // check (exit 129). --textconv / --filters are *allowed* with
             // batch, so they're excluded from this test.
             let any_query_mode = exists || pretty || print_type || print_size;
-            let any_batch = batch.is_some() || batch_check.is_some();
+            let any_batch = batch.is_some() || batch_check.is_some() || batch_command.is_some();
             if any_query_mode && any_batch {
                 let flag = if exists {
                     "-e"
@@ -2118,12 +2119,37 @@ pub fn main() -> Result<()> {
             // list), so this check fires before the 1-vs-2 positional
             // split below. Git rejects both being set simultaneously
             // (batch_option_callback → error 129); we mirror that.
-            if batch_check.is_some() && batch.is_some() {
-                use std::io::Write;
-                let mut stderr = std::io::stderr().lock();
-                let _ = writeln!(stderr, "error: only one batch option may be specified");
-                drop(stderr);
-                std::process::exit(129);
+            // Git's batch_option_callback rejects any two of --batch /
+            // --batch-check / --batch-command at once with `error: only
+            // one batch option may be specified` (exit 129).
+            {
+                let set = [batch.is_some(), batch_check.is_some(), batch_command.is_some()];
+                if set.iter().filter(|b| **b).count() > 1 {
+                    use std::io::Write;
+                    let mut stderr = std::io::stderr().lock();
+                    let _ = writeln!(stderr, "error: only one batch option may be specified");
+                    drop(stderr);
+                    std::process::exit(129);
+                }
+            }
+            if let Some(format) = batch_command.as_deref() {
+                if !format.is_empty() {
+                    if let Some(bad) = core::repository::cat_first_unknown_atom(format) {
+                        use std::io::Write;
+                        let mut stderr = std::io::stderr().lock();
+                        let _ = writeln!(stderr, "fatal: bad cat-file format: %({bad})");
+                        drop(stderr);
+                        std::process::exit(128);
+                    }
+                }
+                let input_delim: u8 = if nul_terminated || nul_input { 0 } else { b'\n' };
+                let output_delim: u8 = if nul_terminated { 0 } else { b'\n' };
+                let repo = repository(Mode::Lenient)?;
+                let stdin = std::io::stdin().lock();
+                let stdout = std::io::stdout().lock();
+                let format = if format.is_empty() { None } else { Some(format) };
+                core::repository::cat_batch_command(&repo, format, input_delim, output_delim, stdin, stdout)?;
+                std::process::exit(0);
             }
             if let Some(format) = batch.as_deref().or(batch_check.as_deref()) {
                 // Validate format atoms before starting any loop. git's

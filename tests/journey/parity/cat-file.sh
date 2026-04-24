@@ -413,8 +413,12 @@ only_for_hash sha1-only && (small-repo-in-sandbox
 # hash=sha1-only
 title "gix cat-file --batch-command"
 only_for_hash sha1-only && (small-repo-in-sandbox
-  # TODO — expect_parity bytes -- cat-file --batch-command  (stdin: "info HEAD\ncontents HEAD:a\n")
-  it "matches git behavior" && { :; }
+  echo blob-content > a && git add a && git commit -q -m "populate a"
+  it "matches git behavior" && {
+    PARITY_STDIN="info HEAD
+contents HEAD:a
+" expect_parity bytes -- cat-file --batch-command
+  }
 )
 
 # mode=bytes — `--batch-command=<format>`: custom format applied to each
@@ -422,8 +426,10 @@ only_for_hash sha1-only && (small-repo-in-sandbox
 # hash=sha1-only
 title "gix cat-file --batch-command=<format>"
 only_for_hash sha1-only && (small-repo-in-sandbox
-  # TODO — expect_parity bytes -- cat-file --batch-command='%(objecttype)'
-  it "matches git behavior" && { :; }
+  it "matches git behavior" && {
+    PARITY_STDIN="info HEAD
+" expect_parity bytes -- cat-file "--batch-command=%(objecttype)"
+  }
 )
 
 # mode=bytes — `--batch-all-objects`: ignore stdin, iterate every object
