@@ -973,6 +973,21 @@ pub fn main() -> Result<()> {
                     Some(s) => Some(gix::path::os_str_into_bstr(&s)?.to_owned()),
                     None => None,
                 };
+                // Pre-validate the refname to match git's byte-exact
+                // "fatal: '<name>' is not a valid branch name" + 128
+                // exit, instead of letting the gix-ref edit emit an
+                // anyhow backtrace via prepare_and_run.
+                if gix::validate::reference::name_partial(name.as_ref()).is_err() {
+                    use std::io::Write;
+                    let mut stderr = std::io::stderr().lock();
+                    let _ = writeln!(stderr, "fatal: '{name}' is not a valid branch name");
+                    let _ = writeln!(stderr, "hint: See `man git check-ref-format`");
+                    let _ = writeln!(
+                        stderr,
+                        "hint: Disable this message with \"git config advice.refSyntax false\""
+                    );
+                    std::process::exit(128);
+                }
                 prepare_and_run(
                     "branch-create",
                     trace,
