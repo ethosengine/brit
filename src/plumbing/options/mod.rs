@@ -303,6 +303,15 @@ pub mod status {
         Short,
     }
 
+    /// Version argument for `--porcelain[=<version>]`. Defaults to V1 to
+    /// match git's behavior when `--porcelain` is given without a version.
+    #[derive(Default, Debug, Copy, Clone, PartialEq, Eq, clap::ValueEnum)]
+    pub enum PorcelainVersion {
+        #[default]
+        V1,
+        V2,
+    }
+
     #[derive(Debug, clap::Parser)]
     #[command(about = "Compute repository status similar to `git status`")]
     pub struct Platform {
@@ -329,6 +338,15 @@ pub mod status {
         /// refs/stash), so this flag is currently a no-op under effect mode.
         #[clap(long = "show-stash")]
         pub show_stash: bool,
+        /// Give the output in an easy-to-parse format for scripts. Defaults
+        /// to v1 when given without a value. Maps to `--format=short` for
+        /// v1 (byte-identical for our supported fixtures) and `--format=
+        /// porcelain-v2` for v2. Conflicts with `--short` and `--format`,
+        /// matching git.
+        #[clap(long = "porcelain", value_name = "VERSION", num_args = 0..=1,
+               default_missing_value = "v1",
+               conflicts_with_all = ["short", "format"])]
+        pub porcelain: Option<PorcelainVersion>,
         /// If enabled, show ignored files and directories.
         #[clap(long)]
         pub ignored: Option<Option<Ignored>>,

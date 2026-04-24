@@ -426,6 +426,7 @@ pub fn main() -> Result<()> {
             long,
             branch,
             show_stash,
+            porcelain,
             statistics,
             submodules,
             no_write,
@@ -441,9 +442,22 @@ pub fn main() -> Result<()> {
             // of refs/stash; deferred as a shortcoming. Under effect mode
             // this no-op yields exit-code parity.
             let _ = show_stash;
-            // `-s`/`--short` is a convenience alias for --format=short (clap
-            // enforces conflict with --format so this is unambiguous).
-            let effective_format = if short {
+            // Resolve the effective format. `--porcelain[=v1]` maps to Short
+            // (byte-identical under our fixtures since porcelain differs from
+            // short only in color/path-relativity, both off here).
+            // `--porcelain=v2` keeps PorcelainV2. `-s`/`--short` alias is a
+            // convenience for --format=short. Clap already enforces mutual
+            // exclusion between --short / --format / --porcelain.
+            let effective_format = if let Some(version) = porcelain {
+                match version {
+                    crate::plumbing::options::status::PorcelainVersion::V1 => {
+                        crate::plumbing::options::status::Format::Short
+                    }
+                    crate::plumbing::options::status::PorcelainVersion::V2 => {
+                        crate::plumbing::options::status::Format::PorcelainV2
+                    }
+                }
+            } else if short {
                 crate::plumbing::options::status::Format::Short
             } else {
                 status_format.unwrap_or_default()

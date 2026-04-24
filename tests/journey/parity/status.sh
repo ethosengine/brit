@@ -227,14 +227,18 @@ only_for_hash sha1-only && (small-repo-in-sandbox
 
 # --- porcelain format ---------------------------------------------------
 
-# mode=bytes — `--porcelain` (default version = v1). Stable across git
-# versions; scripts grep the byte-exact format.
+# mode=bytes — `--porcelain` (default version = v1) maps internally to
+# `Format::Short` since the two formats differ only in color / path-
+# relativity, both off in the fixture. Clap: `porcelain:
+# Option<PorcelainVersion>` with `num_args=0..=1` and
+# `default_missing_value="v1"`.
 # hash=sha1-only "gix cannot load sha256 repos: extensions.objectFormat=sha256 rejected (gix/src/config/tree/sections/extensions.rs)"
 title "gix status --porcelain"
 only_for_hash sha1-only && (small-repo-in-sandbox
+  echo staged-change >> a && git add a && echo worktree-change >> a
+  touch new-untracked
   it "matches git behavior" && {
-    # TODO: stage + untracked mix; expect_parity bytes -- status --porcelain
-    true
+    expect_parity bytes -- status --porcelain
   }
 )
 
