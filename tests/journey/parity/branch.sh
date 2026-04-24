@@ -533,8 +533,9 @@ only_for_hash sha1-only && (sandbox
 # hash=sha1-only
 title "gix branch --edit-description"
 only_for_hash sha1-only && (small-repo-in-sandbox
-  it "matches git behavior (TODO)" && {
-    : # TODO: EDITOR=true expect_parity effect -- branch --edit-description
+  it "matches git behavior" && {
+    EDITOR=true expect_parity effect -- branch --edit-description
+    echo 1>&2 "${YELLOW}   [compat] branch --edit-description EDITOR-spawn deferred"
   }
 )
 

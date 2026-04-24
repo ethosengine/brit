@@ -904,7 +904,7 @@ pub fn main() -> Result<()> {
                 copy: _copy,
                 copy_force: _copy_force,
                 show_current,
-                edit_description: _edit_description,
+                edit_description,
                 force,
                 verbose: _verbose,
                 quiet: _quiet,
@@ -959,7 +959,13 @@ pub fn main() -> Result<()> {
             // actual upstream-config write/clear is deferred.
             let is_set_upstream = set_upstream_to.is_some();
             let is_unset_upstream = unset_upstream;
-            let is_create = !show_current && !is_set_upstream && !is_unset_upstream && !list_forced && !args.is_empty();
+            let is_edit_description = edit_description;
+            let is_create = !show_current
+                && !is_set_upstream
+                && !is_unset_upstream
+                && !is_edit_description
+                && !list_forced
+                && !args.is_empty();
 
             if show_current {
                 prepare_and_run(
@@ -971,10 +977,12 @@ pub fn main() -> Result<()> {
                     None,
                     move |_progress, out, _err| core::repository::branch::show_current(repository(Mode::Lenient)?, out),
                 )
-            } else if is_set_upstream || is_unset_upstream {
+            } else if is_set_upstream || is_unset_upstream || is_edit_description {
                 // Stub: cmdmode is recognized so the rest of the
                 // pipeline doesn't fall through to list/create. The
-                // actual upstream-config write/clear remains deferred.
+                // actual upstream-config write/clear and the
+                // EDITOR-spawn for branch.<name>.description remain
+                // deferred.
                 Ok(())
             } else if is_create {
                 let mut iter = args.into_iter();
