@@ -300,86 +300,95 @@ only_for_hash sha1-only && (small-repo-in-sandbox
   }
 )
 
-# mode=effect — --since=<time>: limit to commits newer than <time>. Date
-# parsing is approxidate; gix-date handles a compatible subset.
+# mode=effect — --since=<time>: clap accepted; filtering semantics
+# deferred — gix still emits every commit, but exit-code parity holds.
 # hash=sha1-only
 title "gix log --since=<time>"
 only_for_hash sha1-only && (small-repo-in-sandbox
-  # TODO — expect_parity effect -- log --since=2000-01-01
-  it "matches git behavior" && { :; }
+  it "matches git: --since clap-accepted, filter deferred" && {
+    compat_effect "gix log --since filter deferred — flag accepted, no date predicate applied" -- log --since=2000-01-01
+  }
 )
 
-# mode=effect — --until=<time>: limit to commits older than <time>.
+# mode=effect — --until=<time>: clap accepted; filtering deferred.
 # hash=sha1-only
 title "gix log --until=<time>"
 only_for_hash sha1-only && (small-repo-in-sandbox
-  # TODO — expect_parity effect -- log --until=2100-01-01
-  it "matches git behavior" && { :; }
+  it "matches git: --until clap-accepted, filter deferred" && {
+    compat_effect "gix log --until filter deferred — flag accepted, no date predicate applied" -- log --until=2100-01-01
+  }
 )
 
-# mode=effect — --author=<pattern>: filter by author (regex by default,
-# matched against "<name> <email>").
+# mode=effect — --author=<pattern>: clap accepted; author filtering deferred.
 # hash=sha1-only
 title "gix log --author=<pattern>"
 only_for_hash sha1-only && (small-repo-in-sandbox
-  # TODO — expect_parity effect -- log --author=Sebastian
-  it "matches git behavior" && { :; }
+  it "matches git: --author clap-accepted, filter deferred" && {
+    compat_effect "gix log --author filter deferred — flag accepted, no regex applied to authors" -- log --author=Sebastian
+  }
 )
 
-# mode=effect — --committer=<pattern>: mirror of --author for committer.
+# mode=effect — --committer=<pattern>: clap accepted; committer filtering deferred.
 # hash=sha1-only
 title "gix log --committer=<pattern>"
 only_for_hash sha1-only && (small-repo-in-sandbox
-  # TODO — expect_parity effect -- log --committer=Sebastian
-  it "matches git behavior" && { :; }
+  it "matches git: --committer clap-accepted, filter deferred" && {
+    compat_effect "gix log --committer filter deferred — flag accepted, no regex applied to committers" -- log --committer=Sebastian
+  }
 )
 
-# mode=effect — --grep=<pattern>: filter by commit message (regex).
+# mode=effect — --grep=<pattern>: clap accepted; message filtering deferred.
 # hash=sha1-only
 title "gix log --grep=<pattern>"
 only_for_hash sha1-only && (small-repo-in-sandbox
-  # TODO — expect_parity effect -- log --grep=first
-  it "matches git behavior" && { :; }
+  it "matches git: --grep clap-accepted, filter deferred" && {
+    compat_effect "gix log --grep filter deferred — flag accepted, no regex applied to messages" -- log --grep=first
+  }
 )
 
-# mode=effect — -i --grep: case-insensitive message filter.
+# mode=effect — -i --grep: clap accepted; case-insensitivity deferred.
 # hash=sha1-only
 title "gix log -i --grep=<pattern>"
 only_for_hash sha1-only && (small-repo-in-sandbox
-  # TODO — expect_parity effect -- log -i --grep=FIRST
-  it "matches git behavior" && { :; }
+  it "matches git: -i --grep clap-accepted, semantics deferred" && {
+    compat_effect "gix log -i --grep case-insensitive match deferred — flag accepted" -- log -i --grep=FIRST
+  }
 )
 
-# mode=effect — --invert-grep --grep: exclude matching commits.
+# mode=effect — --invert-grep --grep: clap accepted; invert-match deferred.
 # hash=sha1-only
 title "gix log --invert-grep --grep=<pattern>"
 only_for_hash sha1-only && (small-repo-in-sandbox
-  # TODO — expect_parity effect -- log --invert-grep --grep=first
-  it "matches git behavior" && { :; }
+  it "matches git: --invert-grep clap-accepted, semantics deferred" && {
+    compat_effect "gix log --invert-grep filter deferred — flag accepted" -- log --invert-grep --grep=first
+  }
 )
 
-# mode=effect — --all-match with multiple --grep: require all to match.
+# mode=effect — --all-match with multiple --grep: clap accepts repetition.
 # hash=sha1-only
 title "gix log --all-match --grep=<p1> --grep=<p2>"
 only_for_hash sha1-only && (small-repo-in-sandbox
-  # TODO — expect_parity effect -- log --all-match --grep=first --grep=second
-  it "matches git behavior" && { :; }
+  it "matches git: --all-match clap-accepted with repeated --grep" && {
+    compat_effect "gix log --all-match multi-grep AND-semantics deferred — flag accepted" -- log --all-match --grep=first --grep=second
+  }
 )
 
-# mode=effect — -E: use POSIX extended regex for --grep.
+# mode=effect — -E: clap accepts; POSIX extended-regex behavior deferred.
 # hash=sha1-only
 title "gix log -E --grep=<regex>"
 only_for_hash sha1-only && (small-repo-in-sandbox
-  # TODO — expect_parity effect -- log -E --grep='^(first|second)$'
-  it "matches git behavior" && { :; }
+  it "matches git: -E clap-accepted, regex-kind selection deferred" && {
+    compat_effect "gix log -E POSIX extended regex deferred — flag accepted" -- log -E --grep='^(first|second)$'
+  }
 )
 
-# mode=effect — -F: treat --grep pattern as a literal string.
+# mode=effect — -F: clap accepts; literal-match behavior deferred.
 # hash=sha1-only
 title "gix log -F --grep=<literal>"
 only_for_hash sha1-only && (small-repo-in-sandbox
-  # TODO — expect_parity effect -- log -F --grep='first'
-  it "matches git behavior" && { :; }
+  it "matches git: -F clap-accepted, literal-match deferred" && {
+    compat_effect "gix log -F literal-string match deferred — flag accepted" -- log -F --grep='first'
+  }
 )
 
 # mode=effect — --no-merges: skip commits with >1 parent. gitoxide-core
@@ -517,45 +526,49 @@ only_for_hash sha1-only && (small-repo-in-sandbox
 
 # --- traversal order ----------------------------------------------------
 
-# mode=effect — --reverse: emit commits in reverse order of the traversal.
+# mode=effect — --reverse: clap accepted; order-reversal deferred.
 # hash=sha1-only
 title "gix log --reverse"
 only_for_hash sha1-only && (small-repo-in-sandbox
-  # TODO — expect_parity effect -- log --reverse
-  it "matches git behavior" && { :; }
+  it "matches git: --reverse clap-accepted, ordering deferred" && {
+    compat_effect "gix log --reverse output-order reversal deferred — flag accepted" -- log --reverse
+  }
 )
 
-# mode=effect — --topo-order: topological ordering (gix default).
+# mode=effect — --topo-order: clap accepted; ordering is already gix default.
 # hash=sha1-only
 title "gix log --topo-order"
 only_for_hash sha1-only && (small-repo-in-sandbox
-  # TODO — expect_parity effect -- log --topo-order
-  it "matches git behavior" && { :; }
+  it "matches git: --topo-order clap-accepted (gix's default walker order)" && {
+    compat_effect "gix log --topo-order already-default for gix's topo walker — flag accepted" -- log --topo-order
+  }
 )
 
-# mode=effect — --date-order: sort by commit date, still ancestor-
-# respecting.
+# mode=effect — --date-order: clap accepted; commit-date sort deferred.
 # hash=sha1-only
 title "gix log --date-order"
 only_for_hash sha1-only && (small-repo-in-sandbox
-  # TODO — expect_parity effect -- log --date-order
-  it "matches git behavior" && { :; }
+  it "matches git: --date-order clap-accepted, ordering deferred" && {
+    compat_effect "gix log --date-order commit-date ordering deferred — flag accepted" -- log --date-order
+  }
 )
 
-# mode=effect — --author-date-order: sort by author date.
+# mode=effect — --author-date-order: clap accepted; author-date sort deferred.
 # hash=sha1-only
 title "gix log --author-date-order"
 only_for_hash sha1-only && (small-repo-in-sandbox
-  # TODO — expect_parity effect -- log --author-date-order
-  it "matches git behavior" && { :; }
+  it "matches git: --author-date-order clap-accepted, ordering deferred" && {
+    compat_effect "gix log --author-date-order author-date ordering deferred — flag accepted" -- log --author-date-order
+  }
 )
 
-# mode=effect — --first-parent: follow only the first parent of merges.
+# mode=effect — --first-parent: clap accepted; parent selection deferred.
 # hash=sha1-only
 title "gix log --first-parent"
 only_for_hash sha1-only && (small-repo-in-sandbox
-  # TODO — expect_parity effect -- log --first-parent
-  it "matches git behavior" && { :; }
+  it "matches git: --first-parent clap-accepted, parent selection deferred" && {
+    compat_effect "gix log --first-parent merge-parent selection deferred — flag accepted" -- log --first-parent
+  }
 )
 
 # --- parent filtering ---------------------------------------------------

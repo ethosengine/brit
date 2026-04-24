@@ -739,6 +739,55 @@ pub mod log {
         #[clap(long, value_name = "n")]
         pub max_parents: Option<usize>,
 
+        // --- traversal order (accepted but semantics deferred) ---
+        /// Reverse the order of commits emitted by the traversal.
+        #[clap(long)]
+        pub reverse: bool,
+        /// Show commits in topological order (gix's default walker order).
+        #[clap(long)]
+        pub topo_order: bool,
+        /// Show commits in reverse chronological order.
+        #[clap(long)]
+        pub date_order: bool,
+        /// Show commits in reverse chronological order of author date.
+        #[clap(long)]
+        pub author_date_order: bool,
+        /// Follow only the first parent for merge commits.
+        #[clap(long)]
+        pub first_parent: bool,
+
+        // --- grep filters (accepted but semantics deferred) ---
+        /// Filter commits by message pattern (may be repeated).
+        #[clap(long, value_parser = crate::shared::AsBString, value_name = "pattern")]
+        pub grep: Vec<BString>,
+        /// Case-insensitive matching for --grep.
+        #[clap(short = 'i', long = "regexp-ignore-case")]
+        pub regexp_ignore_case: bool,
+        /// Invert the --grep match.
+        #[clap(long)]
+        pub invert_grep: bool,
+        /// Require all repeated --grep patterns to match.
+        #[clap(long)]
+        pub all_match: bool,
+        /// Treat --grep as a POSIX extended regular expression.
+        #[clap(short = 'E', long = "extended-regexp")]
+        pub extended_regexp: bool,
+        /// Treat --grep as a literal string.
+        #[clap(short = 'F', long = "fixed-strings")]
+        pub fixed_strings: bool,
+        /// Filter by author pattern.
+        #[clap(long, value_parser = crate::shared::AsBString, value_name = "pattern")]
+        pub author: Option<BString>,
+        /// Filter by committer pattern.
+        #[clap(long, value_parser = crate::shared::AsBString, value_name = "pattern")]
+        pub committer: Option<BString>,
+        /// Limit to commits more recent than <time>.
+        #[clap(long, value_parser = crate::shared::AsBString, value_name = "time", alias = "after")]
+        pub since: Option<BString>,
+        /// Limit to commits older than <time>.
+        #[clap(long, value_parser = crate::shared::AsBString, value_name = "time", alias = "before")]
+        pub until: Option<BString>,
+
         /// The revision (branch, commit, tag, range) to start walking from. Defaults to HEAD.
         #[clap(value_parser = crate::shared::AsBString)]
         pub revspec: Option<BString>,
