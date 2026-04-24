@@ -144,14 +144,14 @@ only_for_hash sha1-only && (small-repo-in-sandbox
 title "gix tag -l <pattern>"
 only_for_hash sha1-only && (small-repo-in-sandbox
   git tag v1.0 && git tag v2.0 && git tag other
-  it "matches git behavior with -l 'v*' (TODO)" && {
-    : # TODO: expect_parity bytes -- tag -l 'v*'
+  it "matches git behavior with -l 'v*'" && {
+    expect_parity bytes -- tag -l 'v*'
   }
-  it "matches git behavior with multiple patterns (TODO)" && {
-    : # TODO: expect_parity bytes -- tag -l 'v1.*' 'other'
+  it "matches git behavior with multiple patterns" && {
+    expect_parity bytes -- tag -l 'v1.*' 'other'
   }
-  it "matches git behavior with non-matching pattern (TODO)" && {
-    : # TODO: expect_parity bytes -- tag -l 'nope-*'
+  it "matches git behavior with non-matching pattern" && {
+    expect_parity bytes -- tag -l 'nope-*'
   }
 )
 

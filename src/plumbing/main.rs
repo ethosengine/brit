@@ -2429,17 +2429,20 @@ pub fn main() -> Result<()> {
                 },
             ),
         },
-        Subcommands::Tag(platform) => match platform.cmds {
-            Some(tag::Subcommands::List) | None => prepare_and_run(
+        Subcommands::Tag(platform) => {
+            let tag::Platform { list: _, patterns } = platform;
+            prepare_and_run(
                 "tag-list",
                 trace,
                 verbose,
                 progress,
                 progress_keep_open,
                 None,
-                move |_progress, out, _err| core::repository::tag::list(repository(Mode::Lenient)?, out, format),
-            ),
-        },
+                move |_progress, out, _err| {
+                    core::repository::tag::list(repository(Mode::Lenient)?, out, format, patterns)
+                },
+            )
+        }
         Subcommands::Tree(cmd) => match cmd {
             tree::Subcommands::Entries {
                 treeish,

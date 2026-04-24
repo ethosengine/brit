@@ -2010,14 +2010,10 @@ pub mod tag {
         #[clap(short = 'l', long = "list")]
         pub list: bool,
 
-        #[clap(subcommand)]
-        pub cmds: Option<Subcommands>,
-    }
-
-    #[derive(Debug, clap::Subcommand)]
-    pub enum Subcommands {
-        /// List all tags.
-        List,
+        /// Shell glob patterns to filter listed tags (fnmatch(3), OR'd).
+        /// Only meaningful in list mode. Matches git-tag(1)'s
+        /// `[<pattern>...]` positional after `-l`.
+        pub patterns: Vec<std::ffi::OsString>,
     }
 }
 
