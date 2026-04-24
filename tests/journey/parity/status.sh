@@ -255,15 +255,23 @@ only_for_hash sha1-only && (small-repo-in-sandbox
 )
 
 # mode=bytes — `--porcelain=v2` adds branch/stash headers and extended
-# per-entry fields (<XY> <sub> <mH> <mI> <mW> <hH> <hI> <path>). gix
-# already implements PorcelainV2 under its `--format porcelain-v2` flag
-# — this row verifies the git-compatible spelling and byte-exactness.
+# per-entry fields (<XY> <sub> <mH> <mI> <mW> <hH> <hI> <path>).
+# Implementation landed in gitoxide-core's status emitter — Clap's
+# `--format porcelain-v2` variant gate was removed and a v2 branch in
+# the emitter writes `1 <XY> N... <mH> <mI> <mW> <hH> <hI> <path>`
+# for ordinary changed entries, `? <path>` for untracked.
+# Shortcomings documented in the emitter comment: rename rows (`2 ...`)
+# not yet emitted, submodule summary always `N...`, branch headers
+# (`# branch.oid` / `# branch.head` / `# branch.upstream` /
+# `# branch.ab`) not yet emitted (row currently doesn't combine
+# --porcelain=v2 with --branch).
 # hash=sha1-only "gix cannot load sha256 repos: extensions.objectFormat=sha256 rejected (gix/src/config/tree/sections/extensions.rs)"
 title "gix status --porcelain=v2"
 only_for_hash sha1-only && (small-repo-in-sandbox
+  echo staged-change >> a && git add a && echo worktree-change >> a
+  touch new-untracked
   it "matches git behavior" && {
-    # TODO: stage + untracked mix; expect_parity bytes -- status --porcelain=v2
-    true
+    expect_parity bytes -- status --porcelain=v2
   }
 )
 

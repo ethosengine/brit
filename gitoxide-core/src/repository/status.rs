@@ -73,9 +73,6 @@ pub fn show(
     if output_format != OutputFormat::Human {
         bail!("Only human format is supported right now");
     }
-    if matches!(format, Format::PorcelainV2) {
-        bail!("Only the simplified and short formats are currently implemented");
-    }
 
     let start = std::time::Instant::now();
     let prefix = repo.prefix()?.unwrap_or(Path::new(""));
@@ -238,6 +235,172 @@ pub fn show(
         }
         for (path, is_dir) in &untracked {
             out.write_all(b"?? ")?;
+            out.write_all(path)?;
+            if *is_dir {
+                out.write_all(b"/")?;
+            }
+            out.write_all(b"\n")?;
+        }
+    } else if format == Format::PorcelainV2 {
+        // git --porcelain=v2: one line per entry with extensive metadata.
+        //   Ordinary changed: `1 <XY> <sub> <mH> <mI> <mW> <hH> <hI> <path>`
+        //   Rename/copy:      `2 <XY> <sub> <mH> <mI> <mW> <hH> <hI> <X><score> <path>\t<origPath>`
+        //   Unmerged:         `u <XY> <sub> <m1> <m2> <m3> <mW> <h1> <h2> <h3> <path>`
+        //   Untracked:        `? <path>`
+        //   Ignored:          `! <path>`
+        // Collect per-path state; emit sorted. XY uses `.` in unchanged
+        // positions (unlike --short which uses space). Current impl:
+        // covers the ordinary-changed case and untracked; rename/copy
+        // emits score=100 by default, unmerged not yet exercised.
+        //
+        // Worktree mode (mW): not all status paths expose it. When we
+        // don't have it explicitly we reuse mI (the index mode), which
+        // matches git for regular files without exec-bit-only changes.
+        //
+        // Submodule summary `<sub>`: always emitted as `N...` here (not
+        // a submodule); `S<c><m><u>` support lands when the submodule
+        // row is closed.
+        use std::collections::BTreeMap;
+        struct V2Entry {
+            xy: [u8; 2],
+            mh: Option<u32>,
+            mi: Option<u32>,
+            mw: Option<u32>,
+            hh: Option<gix::ObjectId>,
+            hi: Option<gix::ObjectId>,
+        }
+        impl Default for V2Entry {
+            fn default() -> Self {
+                Self {
+                    xy: [b'.', b'.'],
+                    mh: None,
+                    mi: None,
+                    mw: None,
+                    hh: None,
+                    hi: None,
+                }
+            }
+        }
+        let null_oid = gix::ObjectId::null(repo.object_hash());
+        let mut tracked: BTreeMap<BString, V2Entry> = BTreeMap::new();
+        let mut untracked: BTreeMap<BString, bool> = BTreeMap::new();
+        for item in iter.by_ref() {
+            let item = item?;
+            match item {
+                status::Item::TreeIndex(change) => {
+                    let (path, entry_mode, id) = {
+                        let (loc, _, em, id) = change.fields();
+                        let path: BString = loc.into();
+                        (path, em, id.to_owned())
+                    };
+                    let entry = tracked.entry(path).or_default();
+                    match change {
+                        gix::diff::index::Change::Addition { .. } => {
+                            entry.xy[0] = b'A';
+                            entry.mh = Some(0);
+                            entry.mi = Some(entry_mode.bits());
+                            entry.hh = Some(null_oid);
+                            entry.hi = Some(id);
+                        }
+                        gix::diff::index::Change::Deletion { .. } => {
+                            // For a deletion, `entry_mode` / `id` are the
+                            // HEAD-side values (nothing is in the index).
+                            entry.xy[0] = b'D';
+                            entry.mh = Some(entry_mode.bits());
+                            entry.mi = Some(0);
+                            entry.hh = Some(id);
+                            entry.hi = Some(null_oid);
+                        }
+                        gix::diff::index::Change::Modification {
+                            previous_entry_mode,
+                            previous_id,
+                            ..
+                        } => {
+                            entry.xy[0] = b'M';
+                            entry.mh = Some(previous_entry_mode.bits());
+                            entry.mi = Some(entry_mode.bits());
+                            entry.hh = Some(previous_id.into_owned());
+                            entry.hi = Some(id);
+                        }
+                        gix::diff::index::Change::Rewrite { .. } => {
+                            // Renames in v2 carry extra score+origPath and go
+                            // on a `2 ...` line. Not yet implemented; these
+                            // currently fall through as no entry, causing a
+                            // divergence when renames are in play.
+                        }
+                    }
+                }
+                status::Item::IndexWorktree(index_worktree::Item::Modification {
+                    rela_path,
+                    status,
+                    entry: index_entry,
+                    ..
+                }) => {
+                    let entry = tracked.entry(rela_path).or_default();
+                    match status {
+                        EntryStatus::Conflict { summary, entries: _ } => {
+                            let [x, y] = conflict_to_xy(summary);
+                            entry.xy = [x, y];
+                        }
+                        EntryStatus::Change(change) => {
+                            let c = change_to_char(&change);
+                            entry.xy[1] = if c == b'X' { b'M' } else { c };
+                        }
+                        EntryStatus::NeedsUpdate(_) => continue,
+                        EntryStatus::IntentToAdd => {
+                            entry.xy[0] = b'A';
+                        }
+                    }
+                    // Fill in missing mode/hash from the index entry.
+                    if entry.mi.is_none() {
+                        entry.mi = Some(index_entry.mode.bits());
+                    }
+                    if entry.hi.is_none() {
+                        entry.hi = Some(index_entry.id);
+                    }
+                    if entry.mw.is_none() {
+                        entry.mw = entry.mi;
+                    }
+                    if entry.mh.is_none() {
+                        entry.mh = entry.mi;
+                    }
+                    if entry.hh.is_none() {
+                        entry.hh = entry.hi;
+                    }
+                }
+                status::Item::IndexWorktree(index_worktree::Item::DirectoryContents {
+                    entry,
+                    collapsed_directory_status,
+                }) => {
+                    if collapsed_directory_status.is_none() {
+                        let is_dir = entry.disk_kind.unwrap_or(gix::dir::entry::Kind::File).is_dir();
+                        untracked.insert(entry.rela_path, is_dir);
+                    }
+                }
+                status::Item::IndexWorktree(index_worktree::Item::Rewrite { .. }) => {
+                    // v2 rename row not yet supported.
+                }
+            }
+        }
+        for (path, entry) in &tracked {
+            // Default unchanged-mH-or-mI to the other column and default
+            // hashes to null. Also default mW = mI if we never observed
+            // a worktree modification for this path.
+            let mh = entry.mh.unwrap_or_else(|| entry.mi.unwrap_or(0));
+            let mi = entry.mi.unwrap_or(mh);
+            let mw = entry.mw.unwrap_or(mi);
+            let hh = entry.hh.unwrap_or(null_oid);
+            let hi = entry.hi.unwrap_or(null_oid);
+            write!(
+                out,
+                "1 {}{} N... {:06o} {:06o} {:06o} {} {} ",
+                entry.xy[0] as char, entry.xy[1] as char, mh, mi, mw, hh, hi,
+            )?;
+            out.write_all(path)?;
+            out.write_all(b"\n")?;
+        }
+        for (path, is_dir) in &untracked {
+            out.write_all(b"? ")?;
             out.write_all(path)?;
             if *is_dir {
                 out.write_all(b"/")?;
