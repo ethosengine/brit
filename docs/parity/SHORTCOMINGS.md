@@ -233,3 +233,14 @@ Two row classes:
 | compat | `gix log --no-standard-notes` | gix log --no-standard-notes deprecated --no-standard-notes alias deferred — flag accepted | [log.sh:2249](../../tests/journey/parity/log.sh#L2249) |
 | compat | `gix log --no-use-mailmap` | gix log --no-use-mailmap --no-use-mailmap (alias of --no-mailmap) deferred — flag accepted | [log.sh:2259](../../tests/journey/parity/log.sh#L2259) |
 
+## tag
+
+| Class | Section | Reason | Source |
+|---|---|---|---|
+| compat | `gix tag --sort` | tag --sort=<key> interpreter deferred (key-based sort, descending/version) | [tag.sh:270](../../tests/journey/parity/tag.sh#L270) |
+| compat | `gix tag --sort` | tag --sort=<key> interpreter deferred (key-based sort, descending/version) | [tag.sh:273](../../tests/journey/parity/tag.sh#L273) |
+| compat | `gix tag --sort` | tag --sort=<key> interpreter deferred (key-based sort, descending/version) | [tag.sh:276](../../tests/journey/parity/tag.sh#L276) |
+| compat | `gix tag --column / --no-column` | tag --column packing deferred; Clap accepts, one-per-line output | [tag.sh:306](../../tests/journey/parity/tag.sh#L306) |
+| compat | `gix tag --column / --no-column` | tag --column=always packing deferred; Clap accepts, one-per-line output | [tag.sh:309](../../tests/journey/parity/tag.sh#L309) |
+| deferred | `gix tag -F / --file` | tag -F - stdin row blocked on expect_parity_reset PARITY_STDIN plumbing | [tag.sh:662](../../tests/journey/parity/tag.sh#L662) |
+
