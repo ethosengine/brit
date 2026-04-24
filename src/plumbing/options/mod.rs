@@ -473,8 +473,11 @@ pub mod branch {
         /// Set up tracking info on a newly created branch. With no
         /// value, defaults to `direct` (use the start-point's branch
         /// as upstream); `inherit` copies the start-point's upstream.
+        /// `require_equals` mirrors git's PARSE_OPT_OPTARG: the value
+        /// form is `--track=direct`, never `--track direct` (which
+        /// would consume the next positional).
         /// Mirrors `OPT_CALLBACK_F('t', "track", ..., PARSE_OPT_OPTARG)`.
-        #[clap(short = 't', long = "track", value_name = "mode", num_args = 0..=1, default_missing_value = "direct")]
+        #[clap(short = 't', long = "track", value_name = "mode", num_args = 0..=1, default_missing_value = "direct", require_equals = true)]
         pub track: Option<String>,
 
         /// Do not set up tracking, even if `branch.autoSetupMerge` is

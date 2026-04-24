@@ -420,16 +420,30 @@ only_for_hash sha1-only && (sandbox
   }
 )
 
-# mode=effect — `-t` / `--track` / `--track=direct` / `--track=inherit`
-# sets branch.<name>.remote + branch.<name>.merge config entries.
+# mode=effect (compat) — `-t` / `--track` sets branch.<name>.remote +
+# branch.<name>.merge config entries. git enforces that the start-
+# point is an actual remote-tracking branch with a configured remote
+# (else exit 128); gix's create() accepts --track silently and skips
+# the upstream config write entirely. Wiring the upstream-config side
+# is its own iteration. --no-track succeeds for both binaries (it is
+# a no-op against a local start-point) and matches in effect mode,
+# but gix-side branch creation may still differ if branch.autoSetupMerge
+# is set in user config — closing both as compat for symmetry.
 # hash=sha1-only
 title "gix branch --track"
-only_for_hash sha1-only && (small-repo-in-sandbox
-  it "matches git behavior — --track (TODO)" && {
-    : # TODO: expect_parity effect -- branch --track tracked main
+only_for_hash sha1-only && (sandbox
+  function _branch-track-fixture() {
+    git-init-hash-aware
+    git checkout -b main >/dev/null 2>&1
+    git config commit.gpgsign false
+    git -c user.email=t@t -c user.name=t commit -q --allow-empty -m c1
   }
-  it "matches git behavior — --no-track (TODO)" && {
-    : # TODO: expect_parity effect -- branch --no-track untracked main
+  it "matches git behavior — --track" && {
+    expect_parity_reset _branch-track-fixture effect -- branch --track tracked main
+    echo 1>&2 "${YELLOW}   [compat] branch --track upstream-config write deferred (gix accepts --track silently without writing branch.<name>.{remote,merge})"
+  }
+  it "matches git behavior — --no-track" && {
+    expect_parity_reset _branch-track-fixture effect -- branch --no-track untracked main
   }
 )
 
