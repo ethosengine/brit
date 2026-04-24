@@ -454,13 +454,12 @@ only_for_hash sha1-only && (small-repo-in-sandbox
 # hash=sha1-only "gix cannot load sha256 repos: extensions.objectFormat=sha256 rejected (gix/src/config/tree/sections/extensions.rs)"
 title "gix status --renames / --no-renames"
 only_for_hash sha1-only && (small-repo-in-sandbox
+  git mv a renamed-a
   it "matches git behavior with --renames" && {
-    # TODO: git mv a renamed-a; expect_parity effect -- status --renames
-    true
+    expect_parity effect -- status --renames
   }
   it "matches git behavior with --no-renames" && {
-    # TODO: same fixture; expect_parity effect -- status --no-renames
-    true
+    expect_parity effect -- status --no-renames
   }
 )
 
@@ -471,13 +470,12 @@ only_for_hash sha1-only && (small-repo-in-sandbox
 # hash=sha1-only "gix cannot load sha256 repos: extensions.objectFormat=sha256 rejected (gix/src/config/tree/sections/extensions.rs)"
 title "gix status --find-renames[=<n>]"
 only_for_hash sha1-only && (small-repo-in-sandbox
+  git mv a renamed-a
   it "matches git behavior with bare --find-renames" && {
-    # TODO: git mv a renamed-a; expect_parity effect -- status --find-renames
-    true
+    expect_parity effect -- status --find-renames
   }
   it "matches git behavior with --find-renames=50" && {
-    # TODO: same fixture; expect_parity effect -- status --find-renames=50
-    true
+    expect_parity effect -- status --find-renames=50
   }
 )
 

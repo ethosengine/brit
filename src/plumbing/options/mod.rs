@@ -423,6 +423,23 @@ pub mod status {
         #[clap(long = "no-ahead-behind", action = clap::ArgAction::SetTrue,
                conflicts_with = "ahead_behind")]
         pub no_ahead_behind: bool,
+        /// Turn on rename detection (git's `--renames`). Accepted for compat;
+        /// the existing `--index-worktree-renames` flag covers gix-native
+        /// wiring. Under effect mode this is a no-op.
+        #[clap(long = "renames", action = clap::ArgAction::SetTrue)]
+        pub renames: bool,
+        /// Turn off rename detection (git's `--no-renames`). Accepted for
+        /// compat; conflicts with `--renames` and `--find-renames`.
+        #[clap(long = "no-renames", action = clap::ArgAction::SetTrue,
+               conflicts_with_all = ["renames", "find_renames"])]
+        pub no_renames: bool,
+        /// Turn on rename detection with an optional similarity threshold
+        /// (git's `--find-renames[=<n>]`). Accepted for compat; conflicts
+        /// with `--no-renames`.
+        #[clap(long = "find-renames", value_name = "N",
+               num_args = 0..=1, default_missing_value = "50",
+               conflicts_with = "no_renames")]
+        pub find_renames: Option<String>,
         /// If enabled, show ignored files and directories.
         #[clap(long)]
         pub ignored: Option<Option<Ignored>>,

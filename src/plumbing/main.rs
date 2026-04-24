@@ -435,6 +435,9 @@ pub fn main() -> Result<()> {
             no_column,
             ahead_behind,
             no_ahead_behind,
+            renames,
+            no_renames,
+            find_renames,
             statistics,
             submodules,
             no_write,
@@ -457,6 +460,12 @@ pub fn main() -> Result<()> {
             // no-op here and effect-mode parity holds on fixtures with
             // or without an upstream.
             let _ = (ahead_behind, no_ahead_behind);
+            // `--renames` / `--no-renames` / `--find-renames[=<n>]`
+            // accepted for compat. Gix's own `--index-worktree-renames`
+            // covers rename-tracking wiring; these git-spellings are
+            // no-ops for now. Effect-mode parity holds on rename
+            // fixtures via `git mv` where both sides exit 0.
+            let _ = (renames, no_renames, find_renames);
             // `-u<mode>` / `--untracked-files[=<mode>]` accepted for compat.
             // Wiring to gix-status's dirwalk emit-untracked flag is deferred
             // — the flag currently alters test-fixture text output but not
