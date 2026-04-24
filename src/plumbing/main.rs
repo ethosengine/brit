@@ -2431,9 +2431,10 @@ pub fn main() -> Result<()> {
         },
         Subcommands::Tag(platform) => {
             let tag::Platform {
-                list: _,
+                list,
                 delete,
                 verify,
+                force,
                 ignore_case,
                 column: _,
                 no_column: _,
@@ -2446,7 +2447,30 @@ pub fn main() -> Result<()> {
                 no_merged,
                 patterns,
             } = platform;
-            if delete {
+            // git's cmdmode resolution (builtin/tag.c:559-566): if no
+            // explicit -l/-d/-v and any list-filter flag is set, force
+            // list mode. With argc > 0 and no filters → create mode.
+            let has_list_filters = list
+                || ignore_case
+                || points_at.is_some()
+                || contains.is_some()
+                || no_contains.is_some()
+                || merged.is_some()
+                || no_merged.is_some();
+            let is_create_mode = !delete && !verify && !has_list_filters && !patterns.is_empty();
+            if is_create_mode {
+                prepare_and_run(
+                    "tag-create-lightweight",
+                    trace,
+                    verbose,
+                    progress,
+                    progress_keep_open,
+                    None,
+                    move |_progress, out, err| {
+                        core::repository::tag::create_lightweight(repository(Mode::Lenient)?, patterns, force, out, err)
+                    },
+                )
+            } else if delete {
                 prepare_and_run(
                     "tag-delete",
                     trace,

@@ -485,9 +485,16 @@ only_for_hash sha1-only && (small-repo-in-sandbox
 # refs/tags/<name> written. Exit 0.
 # hash=sha1-only
 title "gix tag <name> (lightweight)"
-only_for_hash sha1-only && (small-repo-in-sandbox
-  it "matches git behavior (TODO)" && {
-    : # TODO: expect_parity effect -- tag newtag
+only_for_hash sha1-only && (sandbox
+  function _tag-parity-fixture() {
+    git-init-hash-aware
+    git checkout -b main
+    git config commit.gpgsign false
+    git config tag.gpgsign false
+    git commit -q --allow-empty -m "seed"
+  }
+  it "matches git behavior" && {
+    expect_parity_reset _tag-parity-fixture effect -- tag newtag
   }
 )
 
@@ -495,9 +502,17 @@ only_for_hash sha1-only && (small-repo-in-sandbox
 # at `<commit>` (resolved as revspec, defaults to HEAD when absent).
 # hash=sha1-only
 title "gix tag <name> <commit>"
-only_for_hash sha1-only && (small-repo-in-sandbox
-  it "matches git behavior with HEAD~ (TODO)" && {
-    : # TODO: expect_parity effect -- tag newtag HEAD~
+only_for_hash sha1-only && (sandbox
+  function _two-commit-fixture() {
+    git-init-hash-aware
+    git checkout -b main
+    git config commit.gpgsign false
+    git config tag.gpgsign false
+    git commit -q --allow-empty -m "c1"
+    git commit -q --allow-empty -m "c2"
+  }
+  it "matches git behavior with HEAD~" && {
+    expect_parity_reset _two-commit-fixture effect -- tag newtag HEAD~
   }
 )
 
@@ -507,8 +522,8 @@ only_for_hash sha1-only && (small-repo-in-sandbox
 # hash=sha1-only
 title "gix tag <name> (already exists)"
 only_for_hash sha1-only && (small-repo-in-sandbox
-  it "matches git behavior (TODO)" && {
-    : # TODO: expect_parity effect -- tag unannotated
+  it "matches git behavior" && {
+    expect_parity bytes -- tag unannotated
   }
 )
 
@@ -516,12 +531,21 @@ only_for_hash sha1-only && (small-repo-in-sandbox
 # tag without error.
 # hash=sha1-only
 title "gix tag -f / --force"
-only_for_hash sha1-only && (small-repo-in-sandbox
-  it "matches git behavior with -f replacing existing (TODO)" && {
-    : # TODO: expect_parity effect -- tag -f unannotated HEAD~
+only_for_hash sha1-only && (sandbox
+  function _tag-exists-fixture() {
+    git-init-hash-aware
+    git checkout -b main
+    git config commit.gpgsign false
+    git config tag.gpgsign false
+    git commit -q --allow-empty -m "c1"
+    git commit -q --allow-empty -m "c2"
+    git tag unannotated HEAD
   }
-  it "matches git behavior with --force replacing existing (TODO)" && {
-    : # TODO: expect_parity effect -- tag --force unannotated HEAD~
+  it "matches git behavior with -f replacing existing" && {
+    expect_parity_reset _tag-exists-fixture effect -- tag -f unannotated HEAD~
+  }
+  it "matches git behavior with --force replacing existing" && {
+    expect_parity_reset _tag-exists-fixture effect -- tag --force unannotated HEAD~
   }
 )
 
@@ -532,11 +556,11 @@ only_for_hash sha1-only && (small-repo-in-sandbox
 # hash=sha1-only
 title "gix tag <invalid-name>"
 only_for_hash sha1-only && (small-repo-in-sandbox
-  it "matches git behavior with bad..name (TODO)" && {
-    : # TODO: expect_parity effect -- tag 'bad..name'
+  it "matches git behavior with bad..name" && {
+    expect_parity bytes -- tag 'bad..name'
   }
-  it "matches git behavior with ends-in-.lock (TODO)" && {
-    : # TODO: expect_parity effect -- tag 'foo.lock'
+  it "matches git behavior with ends-in-.lock" && {
+    expect_parity bytes -- tag 'foo.lock'
   }
 )
 

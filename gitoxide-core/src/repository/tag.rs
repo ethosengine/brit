@@ -34,6 +34,83 @@ pub struct ListOptions {
     pub no_merged: Option<OsString>,
 }
 
+/// `git tag <tagname> [<commit>]` (lightweight tag creation).
+///
+/// Writes `refs/tags/<tagname>` pointing directly at the resolved
+/// commit (defaults to HEAD when absent). With `force = false`, an
+/// existing tag at the name triggers
+/// `fatal: tag '<name>' already exists` + exit 128. With `force = true`
+/// the existing tag is replaced. Invalid tag names (as defined by
+/// `check_refname_format`) trigger
+/// `fatal: '<name>' is not a valid tag name.` + exit 128.
+pub fn create_lightweight(
+    repo: gix::Repository,
+    positionals: Vec<OsString>,
+    force: bool,
+    _out: &mut dyn std::io::Write,
+    err: &mut dyn std::io::Write,
+) -> anyhow::Result<()> {
+    use gix::refs::{transaction::PreviousValue, FullName};
+
+    if positionals.is_empty() {
+        writeln!(err, "error: tag name required")?;
+        err.flush().ok();
+        std::process::exit(129);
+    }
+    if positionals.len() > 2 {
+        writeln!(err, "error: too many positional arguments for tag creation")?;
+        err.flush().ok();
+        std::process::exit(129);
+    }
+
+    let name_os = &positionals[0];
+    let short_name = gix::path::os_str_into_bstr(name_os)?;
+    let full_name_str = format!("refs/tags/{}", short_name.to_str_lossy());
+    // Validate via FullName::try_from — mirrors check_refname_format.
+    let full_name: FullName = match FullName::try_from(full_name_str.as_str()) {
+        Ok(n) => n,
+        Err(_) => {
+            writeln!(err, "fatal: '{}' is not a valid tag name.", short_name.to_str_lossy())?;
+            err.flush().ok();
+            std::process::exit(128);
+        }
+    };
+
+    // Reject if existing and !force.
+    if !force && repo.find_reference(full_name.as_ref()).is_ok() {
+        writeln!(err, "fatal: tag '{}' already exists", short_name.to_str_lossy())?;
+        err.flush().ok();
+        std::process::exit(128);
+    }
+
+    let commit_spec = positionals.get(1).map(|s| s.as_os_str());
+    let target_oid = match commit_spec {
+        Some(spec) => {
+            let spec_bstr = gix::path::os_str_into_bstr(spec)?;
+            repo.rev_parse_single(spec_bstr)?.detach()
+        }
+        None => repo.head()?.into_peeled_id()?.detach(),
+    };
+
+    let previous = if force {
+        PreviousValue::Any
+    } else {
+        PreviousValue::MustNotExist
+    };
+
+    if let Err(error) = repo.reference(full_name, target_oid, previous, "tag (lightweight)") {
+        writeln!(
+            err,
+            "fatal: could not create tag '{}': {}",
+            short_name.to_str_lossy(),
+            error
+        )?;
+        err.flush().ok();
+        std::process::exit(128);
+    }
+    Ok(())
+}
+
 /// `git tag -d <name>...` in effect mode: for each name, try to
 /// remove `refs/tags/<name>`. Missing names emit the exact git error
 /// phrasing on stderr and contribute to a final non-zero exit; the

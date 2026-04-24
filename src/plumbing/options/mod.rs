@@ -2022,6 +2022,11 @@ pub mod tag {
         #[clap(short = 'v', long = "verify", conflicts_with_all = ["list", "delete"])]
         pub verify: bool,
 
+        /// Replace an existing tag with the given name instead of
+        /// failing. Mirrors `OPT__FORCE`.
+        #[clap(short = 'f', long = "force")]
+        pub force: bool,
+
         /// Sorting and filtering tags are case insensitive. Maps to
         /// git's `OPT_BOOL('i', "ignore-case", ...)`.
         #[clap(short = 'i', long)]
