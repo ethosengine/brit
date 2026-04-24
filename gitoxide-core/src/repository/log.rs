@@ -17,9 +17,36 @@ pub fn log(
 }
 
 fn log_all(repo: gix::Repository, out: &mut dyn std::io::Write, revspec: Option<BString>) -> Result<(), anyhow::Error> {
-    let start_id = match revspec {
-        Some(spec) => match repo.rev_parse_single(spec.as_bstr()) {
-            Ok(id) => id.detach(),
+    let (tips, ends): (Vec<gix::ObjectId>, Vec<gix::ObjectId>) = match revspec {
+        Some(spec) => match repo.rev_parse(spec.as_bstr()) {
+            Ok(parsed) => match parsed.detach() {
+                gix::revision::plumbing::Spec::Include(id) | gix::revision::plumbing::Spec::ExcludeParents(id) => {
+                    (vec![id], Vec::new())
+                }
+                gix::revision::plumbing::Spec::Exclude(_) => {
+                    // A bare `^rev` with no included side: git's setup_revisions
+                    // emits "fatal: empty revision range" (vendor/git/revision.c
+                    // ::prepare_revision_walk). For now return an empty walk;
+                    // a later TODO row closes the exact-wording parity.
+                    (Vec::new(), Vec::new())
+                }
+                gix::revision::plumbing::Spec::Range { from, to } => (vec![to], vec![from]),
+                gix::revision::plumbing::Spec::Merge { theirs, ours } => {
+                    // Symmetric difference (`theirs...ours`): include commits
+                    // reachable from either side but not from their merge-base.
+                    let base = repo
+                        .merge_base(theirs, ours)
+                        .map(gix::Id::detach)
+                        .map_err(|e| anyhow::anyhow!("failed to resolve merge-base for '{spec}': {e}"))?;
+                    (vec![theirs, ours], vec![base])
+                }
+                gix::revision::plumbing::Spec::IncludeOnlyParents(id) => {
+                    // `id^@`: start from the parents of id, not id itself.
+                    let commit = repo.find_commit(id)?;
+                    let parents: Vec<_> = commit.parent_ids().map(gix::Id::detach).collect();
+                    (parents, Vec::new())
+                }
+            },
             Err(_) => {
                 // Parity with git's setup_revisions: unknown revision/path dies 128
                 // (vendor/git/revision.c::handle_revision_arg → die). Wording is
@@ -44,11 +71,10 @@ fn log_all(repo: gix::Repository, out: &mut dyn std::io::Write, revspec: Option<
                 );
                 std::process::exit(128);
             }
-            head.peel_to_commit()?.id
+            (vec![head.peel_to_commit()?.id], Vec::new())
         }
     };
-    let topo = gix::traverse::commit::topo::Builder::from_iters(&repo.objects, [start_id], None::<Vec<gix::ObjectId>>)
-        .build()?;
+    let topo = gix::traverse::commit::topo::Builder::from_iters(&repo.objects, tips, Some(ends)).build()?;
 
     for info in topo {
         let info = info?;

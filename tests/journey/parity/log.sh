@@ -154,22 +154,27 @@ only_for_hash sha1-only && (small-repo-in-sandbox
 # --- range syntax -------------------------------------------------------
 
 # mode=effect — two-dot range A..B: commits reachable from B but not A.
-# gix must grow revspec parsing with RangeSpec; gix-revision already has
-# the plumbing. Exit 0, output empty if range is empty.
+# gix::revision::plumbing::Spec::Range { from, to } maps to
+# topo Builder::from_iters(db, [to], Some([from])). Exit 0; output
+# format still diverges (gix 8-hash, git 7-hash).
 # hash=sha1-only
 title "gix log A..B"
 only_for_hash sha1-only && (small-repo-in-sandbox
-  # TODO — expect_parity effect -- log dev..main
-  it "matches git behavior" && { :; }
+  it "matches git: range resolves, both exit 0" && {
+    expect_parity effect -- log dev..main
+  }
 )
 
-# mode=effect — three-dot range A...B: symmetric difference. Same
-# infrastructure as A..B; different traversal semantics.
+# mode=effect — three-dot range A...B: symmetric difference. Maps to
+# gix_revision::Spec::Merge { theirs, ours }; log computes the merge-base
+# via repo.merge_base() and feeds [theirs, ours] as tips with base as
+# the end-point, giving git's symmetric-difference traversal.
 # hash=sha1-only
 title "gix log A...B"
 only_for_hash sha1-only && (small-repo-in-sandbox
-  # TODO — expect_parity effect -- log dev...main
-  it "matches git behavior" && { :; }
+  it "matches git: symmetric diff resolves, both exit 0" && {
+    expect_parity effect -- log dev...main
+  }
 )
 
 # mode=effect — --all: traverse every ref. gix-revision already exposes
