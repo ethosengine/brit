@@ -96,12 +96,14 @@ only_for_hash sha1-only && (small-repo-in-sandbox
 )
 
 # mode=effect — a tracked file modified in the worktree but not staged.
+# git prints a long-form "Changes not staged for commit" section;
+# gix prints a simplified short-format line (`  M a`). Both exit 0.
 # hash=sha1-only "gix cannot load sha256 repos: extensions.objectFormat=sha256 rejected (gix/src/config/tree/sections/extensions.rs)"
 title "gix status (modified tracked file)"
 only_for_hash sha1-only && (small-repo-in-sandbox
+  echo modified >> a
   it "matches git behavior" && {
-    # TODO: modify tracked file a; expect_parity effect -- status
-    true
+    expect_parity effect -- status
   }
 )
 
