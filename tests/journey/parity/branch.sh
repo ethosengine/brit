@@ -237,8 +237,9 @@ only_for_hash sha1-only && (small-repo-in-sandbox
 # hash=sha1-only
 title "gix branch --merged"
 only_for_hash sha1-only && (small-repo-in-sandbox
-  it "matches git behavior (TODO)" && {
-    : # TODO: expect_parity bytes -- branch --merged
+  git branch -f older HEAD~1 >/dev/null 2>&1
+  it "matches git behavior" && {
+    expect_parity bytes -- branch --merged
   }
 )
 

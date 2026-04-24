@@ -918,7 +918,7 @@ pub fn main() -> Result<()> {
                 no_abbrev: _no_abbrev,
                 contains,
                 no_contains,
-                merged: _merged,
+                merged,
                 no_merged: _no_merged,
                 points_at: _points_at,
                 format_string: _format_string,
@@ -968,6 +968,7 @@ pub fn main() -> Result<()> {
                     patterns,
                     contains,
                     no_contains,
+                    merged,
                 };
 
                 prepare_and_run(

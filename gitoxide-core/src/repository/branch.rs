@@ -1,6 +1,23 @@
+use std::collections::HashSet;
+
 use gix::prelude::ObjectIdExt;
 
 use crate::OutputFormat;
+
+/// Compute the ancestor set of `rev` (inclusive — the rev itself is
+/// in the set). Used by `--merged` / `--no-merged` to test whether a
+/// branch tip is reachable from the needle commit.
+fn ancestors_of(repo: &gix::Repository, rev: &std::ffi::OsStr) -> anyhow::Result<HashSet<gix::ObjectId>> {
+    let rev_bstr = gix::path::os_str_into_bstr(rev)?;
+    let oid = repo.rev_parse_single(rev_bstr)?.detach();
+    let mut set = HashSet::new();
+    set.insert(oid);
+    for res in oid.attach(repo).ancestors().all()? {
+        let info = res?;
+        set.insert(info.id);
+    }
+    Ok(set)
+}
 
 /// Return `true` iff `haystack_commit` has `needle` anywhere in its
 /// ancestry (walking parents). Inclusive — a commit contains itself.
@@ -56,6 +73,9 @@ pub mod list {
         /// If set, only list branches whose tip does NOT have `<commit>`
         /// in its ancestry. Git's `--no-contains`.
         pub no_contains: Option<OsString>,
+        /// If set, only list branches whose tip is reachable from
+        /// `<commit>` (i.e., merged into it). Git's `--merged`.
+        pub merged: Option<OsString>,
     }
 }
 
@@ -102,6 +122,8 @@ pub fn list(
     };
     let contains_oid: Option<gix::ObjectId> = options.contains.as_deref().map(resolve).transpose()?;
     let no_contains_oid: Option<gix::ObjectId> = options.no_contains.as_deref().map(resolve).transpose()?;
+    let merged_set: Option<HashSet<gix::ObjectId>> =
+        options.merged.as_deref().map(|r| ancestors_of(&repo, r)).transpose()?;
 
     let tip_of = |reference: &gix::Reference<'_>| -> anyhow::Result<gix::ObjectId> {
         Ok(reference.clone().into_fully_peeled_id()?.detach())
@@ -118,10 +140,15 @@ pub fn list(
                 return Ok(false);
             }
         }
+        if let Some(set) = merged_set.as_ref() {
+            if !set.contains(&tip) {
+                return Ok(false);
+            }
+        }
         Ok(true)
     };
 
-    let needs_ancestry_walk = contains_oid.is_some() || no_contains_oid.is_some();
+    let needs_ancestry_walk = contains_oid.is_some() || no_contains_oid.is_some() || merged_set.is_some();
 
     if show_local {
         let mut kept: Vec<String> = Vec::new();
