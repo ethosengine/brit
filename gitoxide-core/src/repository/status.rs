@@ -48,6 +48,9 @@ pub struct Options {
     /// Mirrors git's `-b` / `--branch`. Ignored for the default (long)
     /// format, which always shows the branch.
     pub branch: bool,
+    /// Terminate entries with NUL instead of LF. Mirrors `git status -z`;
+    /// only honored for the short / porcelain formats.
+    pub null_terminator: bool,
     pub allow_write: bool,
     pub index_worktree_renames: Option<f32>,
 }
@@ -67,6 +70,7 @@ pub fn show(
         allow_write,
         statistics,
         branch,
+        null_terminator,
         index_worktree_renames,
     }: Options,
 ) -> anyhow::Result<()> {
@@ -129,6 +133,12 @@ pub fn show(
         // wt_status_print_changes on -s output: changed tracked entries in
         // commit-index order (we use sorted path order as a deterministic
         // substitute), then untracked, then ignored.
+        //
+        // `-z` toggles terminator `\n` -> `\0`. git also drops the ` -> `
+        // rename separator in favor of `<dest>\0<source>\0` and suppresses
+        // path quoting (gix never quotes here, so that half is already in
+        // sync).
+        let terminator: u8 = if null_terminator { 0 } else { b'\n' };
         if branch {
             // `-b` / `--branch` — prepend a `## <branch>` header. Git also
             // covers detached-HEAD (`## HEAD (no branch)`) and initial-repo
@@ -140,10 +150,11 @@ pub fn show(
                 Some(name) => {
                     out.write_all(b"## ")?;
                     out.write_all(name.shorten().as_ref())?;
-                    out.write_all(b"\n")?;
+                    out.write_all(&[terminator])?;
                 }
                 None => {
-                    out.write_all(b"## HEAD (no branch)\n")?;
+                    out.write_all(b"## HEAD (no branch)")?;
+                    out.write_all(&[terminator])?;
                 }
             }
         }
@@ -224,14 +235,22 @@ pub fn show(
         for (path, [x, y]) in &tracked {
             out.write_all(&[*x, *y, b' '])?;
             out.write_all(path)?;
-            out.write_all(b"\n")?;
+            out.write_all(&[terminator])?;
         }
         for (source, dest, x, y) in &renames {
             out.write_all(&[*x, *y, b' '])?;
-            out.write_all(source)?;
-            out.write_all(b" -> ")?;
-            out.write_all(dest)?;
-            out.write_all(b"\n")?;
+            if null_terminator {
+                // `-z` order reversal: `<dest>\0<source>\0` per git docs.
+                out.write_all(dest)?;
+                out.write_all(&[terminator])?;
+                out.write_all(source)?;
+                out.write_all(&[terminator])?;
+            } else {
+                out.write_all(source)?;
+                out.write_all(b" -> ")?;
+                out.write_all(dest)?;
+                out.write_all(&[terminator])?;
+            }
         }
         for (path, is_dir) in &untracked {
             out.write_all(b"?? ")?;
@@ -239,7 +258,7 @@ pub fn show(
             if *is_dir {
                 out.write_all(b"/")?;
             }
-            out.write_all(b"\n")?;
+            out.write_all(&[terminator])?;
         }
     } else if format == Format::PorcelainV2 {
         // git --porcelain=v2: one line per entry with extensive metadata.

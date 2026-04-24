@@ -399,6 +399,10 @@ pub mod status {
                value_name = "WHEN", num_args = 0..=1,
                default_missing_value = "all")]
         pub ignore_submodules: Option<IgnoreSubmodulesMode>,
+        /// Terminate entries with NUL, instead of LF. Implies
+        /// `--porcelain=v1` (i.e. Format::Short) if no other format is given.
+        #[clap(short = 'z', action = clap::ArgAction::SetTrue)]
+        pub null_terminator: bool,
         /// If enabled, show ignored files and directories.
         #[clap(long)]
         pub ignored: Option<Option<Ignored>>,

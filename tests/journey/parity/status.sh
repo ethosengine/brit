@@ -390,14 +390,16 @@ only_for_hash sha1-only && (small-repo-in-sandbox
 # --- NUL-separated / column output --------------------------------------
 
 # mode=bytes — `-z` terminates entries with NUL; implies `--porcelain=v1`
-# if no other format is given. Scripts depend on exact NUL-separation and
-# the field-order reversal for rename entries.
+# (Format::Short) if no other format is given. Rename entries under `-z`
+# use reversed `<dest>\0<source>\0` order per git docs; our emitter
+# honors that. Scripts depend on byte-exact NUL separation.
 # hash=sha1-only "gix cannot load sha256 repos: extensions.objectFormat=sha256 rejected (gix/src/config/tree/sections/extensions.rs)"
 title "gix status -z"
 only_for_hash sha1-only && (small-repo-in-sandbox
+  echo staged-change >> a && git add a && echo worktree-change >> a
+  touch new-untracked
   it "matches git behavior" && {
-    # TODO: stage + untracked mix; expect_parity bytes -- status -z
-    true
+    expect_parity bytes -- status -z
   }
 )
 

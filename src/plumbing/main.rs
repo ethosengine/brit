@@ -430,6 +430,7 @@ pub fn main() -> Result<()> {
             verbose: status_verbose_count,
             untracked_files,
             ignore_submodules,
+            null_terminator,
             statistics,
             submodules,
             no_write,
@@ -464,7 +465,9 @@ pub fn main() -> Result<()> {
             // short only in color/path-relativity, both off here).
             // `--porcelain=v2` keeps PorcelainV2. `-s`/`--short` alias is a
             // convenience for --format=short. Clap already enforces mutual
-            // exclusion between --short / --format / --porcelain.
+            // exclusion between --short / --format / --porcelain. `-z`
+            // implies `--porcelain=v1` (Short) when no other format has
+            // been picked, matching git's documented behavior.
             let effective_format = if let Some(version) = porcelain {
                 match version {
                     crate::plumbing::options::status::PorcelainVersion::V1 => {
@@ -474,7 +477,7 @@ pub fn main() -> Result<()> {
                         crate::plumbing::options::status::Format::PorcelainV2
                     }
                 }
-            } else if short {
+            } else if short || (null_terminator && status_format.is_none()) {
                 crate::plumbing::options::status::Format::Short
             } else {
                 status_format.unwrap_or_default()
@@ -533,6 +536,7 @@ pub fn main() -> Result<()> {
                             output_format: format,
                             statistics,
                             branch,
+                            null_terminator,
                             thread_limit: thread_limit.or(cfg!(target_os = "macos").then_some(3)), // TODO: make this a configurable when in `gix`, this seems to be optimal on MacOS, linux scales though! MacOS also scales if reading a lot of files for refresh index
                             allow_write: !no_write,
                             index_worktree_renames: index_worktree_renames.map(|percentage| percentage.unwrap_or(0.5)),
