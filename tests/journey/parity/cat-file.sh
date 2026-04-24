@@ -84,8 +84,9 @@ only_for_hash dual && (sandbox
 # mode=effect
 title "gix cat-file --bogus-flag"
 only_for_hash sha1-only && (small-repo-in-sandbox
-  # TODO — expect_parity effect -- cat-file --bogus-flag
-  it "matches git behavior" && { :; }
+  it "matches git behavior" && {
+    expect_parity effect -- cat-file --bogus-flag
+  }
 )
 
 # mode=effect — `git cat-file` outside any repo dies 128 with
