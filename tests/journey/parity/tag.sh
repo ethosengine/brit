@@ -75,16 +75,18 @@ only_for_hash sha1-only && (small-repo-in-sandbox
   }
 )
 
-# mode=effect — `git tag` outside any repo dies 128 with
+# mode=bytes — `git tag` outside any repo dies 128 with
 # "fatal: not a git repository (or any of the parent directories): .git".
 # gix's plumbing repository() closure remaps the
 # gix_discover::upwards::Error::NoGitRepository* variants to git's exact
-# wording + exit 128.
+# wording + exit 128. Byte-exact match confirmed: the one-line error
+# matches character-for-character (see src/plumbing/main.rs handler).
 # hash=dual
+# mode=bytes
 title "gix tag (outside a repository)"
 only_for_hash dual && (sandbox
-  it "matches git behavior (TODO)" && {
-    : # TODO: expect_parity effect -- tag
+  it "matches git behavior" && {
+    expect_parity bytes -- tag
   }
 )
 
