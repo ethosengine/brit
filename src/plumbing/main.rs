@@ -912,7 +912,7 @@ pub fn main() -> Result<()> {
                 unset_upstream: _unset_upstream,
                 track: _track,
                 no_track: _no_track,
-                recurse_submodules: _recurse_submodules,
+                recurse_submodules,
                 create_reflog: _create_reflog,
                 abbrev: _abbrev,
                 no_abbrev: _no_abbrev,
@@ -1001,6 +1001,7 @@ pub fn main() -> Result<()> {
                             name,
                             start_point,
                             force,
+                            recurse_submodules,
                             err,
                         )?;
                         if code != 0 {

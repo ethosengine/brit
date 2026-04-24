@@ -48,9 +48,28 @@ pub fn create(
     name: gix::bstr::BString,
     start_point: Option<gix::bstr::BString>,
     force: bool,
+    recurse_submodules: bool,
     err: &mut dyn std::io::Write,
 ) -> anyhow::Result<i32> {
     use gix::refs::transaction::{Change, LogChange, PreviousValue, RefEdit};
+
+    // git rejects --recurse-submodules unless
+    // submodule.propagateBranches=true is configured (the option is
+    // experimental; without the gate-config it dies 128 with the
+    // exact stanza below).
+    if recurse_submodules {
+        let propagate = repo
+            .config_snapshot()
+            .boolean("submodule.propagateBranches")
+            .unwrap_or(false);
+        if !propagate {
+            writeln!(
+                err,
+                "fatal: branch with --recurse-submodules can only be used if submodule.propagateBranches is enabled"
+            )?;
+            return Ok(128);
+        }
+    }
 
     let full = format!("refs/heads/{name}");
     // Already-exists pre-check: gix-ref's MustNotExist treats

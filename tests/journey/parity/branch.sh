@@ -447,13 +447,24 @@ only_for_hash sha1-only && (sandbox
   }
 )
 
-# mode=effect — `--recurse-submodules` is experimental; on a repo with
-# no submodules and submodule.propagateBranches unset it is a no-op.
+# mode=bytes — `--recurse-submodules` is experimental and gated on
+# `submodule.propagateBranches=true`. With the gate unset both
+# binaries die 128 with the exact stanza
+# "fatal: branch with --recurse-submodules can only be used if
+# submodule.propagateBranches is enabled". The actual cross-submodule
+# branch propagation behavior (when the gate IS set) remains
+# unimplemented in gix — only the gate-error path is closed here.
 # hash=sha1-only
 title "gix branch --recurse-submodules"
-only_for_hash sha1-only && (small-repo-in-sandbox
-  it "matches git behavior (TODO)" && {
-    : # TODO: expect_parity effect -- branch --recurse-submodules subrecursebr
+only_for_hash sha1-only && (sandbox
+  function _branch-rs-fixture() {
+    git-init-hash-aware
+    git checkout -b main >/dev/null 2>&1
+    git config commit.gpgsign false
+    git -c user.email=t@t -c user.name=t commit -q --allow-empty -m c1
+  }
+  it "matches git behavior" && {
+    expect_parity_reset _branch-rs-fixture bytes -- branch --recurse-submodules subrecursebr
   }
 )
 
