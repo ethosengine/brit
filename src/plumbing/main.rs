@@ -2433,7 +2433,7 @@ pub fn main() -> Result<()> {
             Some(tag::Subcommands::List) | None => prepare_and_run(
                 "tag-list",
                 trace,
-                auto_verbose,
+                verbose,
                 progress,
                 progress_keep_open,
                 None,

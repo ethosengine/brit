@@ -94,27 +94,30 @@ only_for_hash dual && (sandbox
 
 # mode=bytes — bare `git tag` with tags present prints each tag on its
 # own line, sorted lexicographically by refname (`%(refname:lstrip=2)`
-# is the default format; see cmd_tag list_tags fallback). gix currently
-# emits extra annotation decoration (e.g. "v2 [tag name: *]") via
-# core::repository::tag::list — that format diverges and this row will
-# fail byte-exact until list::run is split into git-compat mode.
+# is the default format; see cmd_tag list_tags fallback).
+# gitoxide-core/src/repository/tag.rs::list was rewritten to emit this
+# format; the `Version`-struct numeric sort and `[tag name: *]`
+# decoration from Sebastian's original listing are gone. Progress
+# rendering was also silenced for this arm (src/plumbing/main.rs tag
+# arm uses `verbose` instead of `auto_verbose`) so stderr doesn't bleed
+# `\x1b[2K\r` spinner frames into the merged-stream comparison.
 # hash=sha1-only
 title "gix tag (no args, tags present)"
 only_for_hash sha1-only && (small-repo-in-sandbox
-  it "matches git behavior (TODO)" && {
-    : # TODO: expect_parity bytes -- tag
+  it "matches git behavior" && {
+    expect_parity bytes -- tag
   }
 )
 
 # mode=bytes — bare `git tag` in a repo with no tags prints nothing,
-# exits 0. gix's current list implementation should match trivially.
+# exits 0.
 # hash=sha1-only
 title "gix tag (no args, no tags)"
 only_for_hash sha1-only && (sandbox
   git init -q
   git -c commit.gpgsign=false commit -q --allow-empty -m "seed"
-  it "matches git behavior (TODO)" && {
-    : # TODO: expect_parity bytes -- tag
+  it "matches git behavior" && {
+    expect_parity bytes -- tag
   }
 )
 
