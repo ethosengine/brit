@@ -1,5 +1,17 @@
 use crate::OutputFormat;
 
+/// `git branch --show-current`: print the current branch name alone,
+/// or nothing in detached `HEAD` state. Matches builtin/branch.c
+/// show_current behavior — no asterisk, no indent, no newline on
+/// detached. Mirrors repo.head_name(): `None` when detached / unborn
+/// → no output; `Some` → shortened name followed by `\n`.
+pub fn show_current(repo: gix::Repository, out: &mut dyn std::io::Write) -> anyhow::Result<()> {
+    if let Some(name) = repo.head_name()? {
+        writeln!(out, "{}", name.shorten())?;
+    }
+    Ok(())
+}
+
 pub mod list {
     use gix::bstr::BString;
 

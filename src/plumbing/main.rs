@@ -903,7 +903,7 @@ pub fn main() -> Result<()> {
                 move_force: _move_force,
                 copy: _copy,
                 copy_force: _copy_force,
-                show_current: _show_current,
+                show_current,
                 edit_description: _edit_description,
                 force: _force,
                 verbose: _verbose,
@@ -941,30 +941,42 @@ pub fn main() -> Result<()> {
             // mode is wired; other modes go through here too with
             // flags silently ignored until their individual rows
             // implement them.
-            let kind = if all {
-                list::Kind::All
-            } else if remotes {
-                list::Kind::Remote
+            if show_current {
+                prepare_and_run(
+                    "branch-show-current",
+                    trace,
+                    verbose,
+                    progress,
+                    progress_keep_open,
+                    None,
+                    move |_progress, out, _err| core::repository::branch::show_current(repository(Mode::Lenient)?, out),
+                )
             } else {
-                list::Kind::Local
-            };
-            let patterns: Vec<BString> = args
-                .iter()
-                .map(|os| gix::path::os_str_into_bstr(os).map(std::borrow::ToOwned::to_owned))
-                .collect::<Result<_, _>>()?;
-            let options = list::Options { kind, patterns };
+                let kind = if all {
+                    list::Kind::All
+                } else if remotes {
+                    list::Kind::Remote
+                } else {
+                    list::Kind::Local
+                };
+                let patterns: Vec<BString> = args
+                    .iter()
+                    .map(|os| gix::path::os_str_into_bstr(os).map(std::borrow::ToOwned::to_owned))
+                    .collect::<Result<_, _>>()?;
+                let options = list::Options { kind, patterns };
 
-            prepare_and_run(
-                "branch-list",
-                trace,
-                verbose,
-                progress,
-                progress_keep_open,
-                None,
-                move |_progress, out, _err| {
-                    core::repository::branch::list(repository(Mode::Lenient)?, out, format, options)
-                },
-            )
+                prepare_and_run(
+                    "branch-list",
+                    trace,
+                    verbose,
+                    progress,
+                    progress_keep_open,
+                    None,
+                    move |_progress, out, _err| {
+                        core::repository::branch::list(repository(Mode::Lenient)?, out, format, options)
+                    },
+                )
+            }
         }
         #[cfg(feature = "gitoxide-core-tools-corpus")]
         Subcommands::Corpus(crate::plumbing::options::corpus::Platform { db, path, cmd }) => {

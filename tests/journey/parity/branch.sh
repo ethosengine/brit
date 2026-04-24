@@ -151,11 +151,12 @@ only_for_hash sha1-only && (small-repo-in-sandbox
 # hash=sha1-only
 title "gix branch --show-current"
 only_for_hash sha1-only && (small-repo-in-sandbox
-  it "matches git behavior — on a branch (TODO)" && {
-    : # TODO: expect_parity bytes -- branch --show-current
+  it "matches git behavior — on a branch" && {
+    expect_parity bytes -- branch --show-current
   }
-  it "matches git behavior — detached HEAD (TODO)" && {
-    : # TODO: git checkout --detach HEAD >/dev/null 2>&1; expect_parity bytes -- branch --show-current
+  it "matches git behavior — detached HEAD" && {
+    git checkout --detach HEAD >/dev/null 2>&1
+    expect_parity bytes -- branch --show-current
   }
 )
 
