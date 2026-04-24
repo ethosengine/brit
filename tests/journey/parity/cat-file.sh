@@ -294,8 +294,9 @@ title "gix cat-file --use-mailmap -s (with .mailmap)"
 only_for_hash sha1-only && (small-repo-in-sandbox
   printf 'Mapped Name <mapped@example.com> Sebastian Thiel <git@example.com>\n' > .mailmap
   git add .mailmap && git commit -q -m "add mailmap"
-  # TODO — expect_parity bytes -- cat-file --use-mailmap -s HEAD
-  it "matches git behavior" && { :; }
+  it "matches git behavior" && {
+    expect_parity bytes -- cat-file --use-mailmap -s HEAD
+  }
 )
 
 # --- textconv / filters ------------------------------------------------

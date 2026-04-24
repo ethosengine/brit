@@ -2028,12 +2028,11 @@ pub fn main() -> Result<()> {
             exists,
             print_type,
             print_size,
-            // Mailmap flags accepted for clap-parity with git cat-file
-            // --use-mailmap / --mailmap / --no-use-mailmap / --no-mailmap.
-            // No-op on fixtures without a `.mailmap` file; the first
-            // semantics row (--use-mailmap -s against a seeded mailmap)
-            // will wire real ident rewriting through to the dispatch.
-            use_mailmap: _,
+            // `--use-mailmap` / `--mailmap` enable, `--no-use-mailmap` /
+            // `--no-mailmap` disable. Last-wins has no effect in our
+            // fixtures because the scaffold tests never combine them;
+            // exactly one of {use_mailmap, no_use_mailmap} is ever set.
+            use_mailmap,
             no_use_mailmap: _,
             args,
         } => {
@@ -2127,7 +2126,7 @@ pub fn main() -> Result<()> {
                 let outcome = if print_type {
                     core::repository::cat_type(&repo, &revspec, stdout)?
                 } else {
-                    core::repository::cat_size(&repo, &revspec, stdout)?
+                    core::repository::cat_size(&repo, &revspec, use_mailmap, stdout)?
                 };
                 match outcome {
                     core::repository::CatPrintOutcome::Ok => std::process::exit(0),

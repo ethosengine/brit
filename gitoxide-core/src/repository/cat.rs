@@ -208,24 +208,68 @@ pub(super) mod function {
     /// `odb_read_object_info_extended` → `printf("%"PRIuMAX"\n", size)`.
     /// Same two failure paths as -t: invalid spec / missing object.
     ///
-    /// Note: git's `--use-mailmap -s` rewrites the size to reflect the
-    /// mailmap-replaced identities. That path is deferred to the
-    /// --use-mailmap iteration.
+    /// When `use_mailmap` is set and the object is a commit or tag, the
+    /// size is recomputed after applying `.mailmap` ident rewrites to
+    /// the author/committer/tagger headers — matching git's
+    /// `replace_idents_using_mailmap` path. Blobs and trees are
+    /// unaffected (git's mailmap only touches headers).
     pub fn print_size(
         repo: &gix::Repository,
         revspec: &str,
+        use_mailmap: bool,
         mut out: impl std::io::Write,
     ) -> anyhow::Result<PrintOutcome> {
         let Some(id) = resolve_oid(repo, revspec) else {
             return Ok(PrintOutcome::InvalidSpec);
         };
-        match repo.find_header(id) {
-            Ok(header) => {
-                writeln!(out, "{}", header.size())?;
-                Ok(PrintOutcome::Ok)
-            }
-            Err(_) => Ok(PrintOutcome::MissingObject),
+
+        // Fast path: no mailmap → header-only lookup (cheaper, no full
+        // object read).
+        if !use_mailmap {
+            return match repo.find_header(id) {
+                Ok(header) => {
+                    writeln!(out, "{}", header.size())?;
+                    Ok(PrintOutcome::Ok)
+                }
+                Err(_) => Ok(PrintOutcome::MissingObject),
+            };
         }
+
+        // Mailmap path: commits / tags get their author/committer/tagger
+        // idents rewritten, so the size can shrink or grow. Read full
+        // bytes, re-encode after rewrite, measure.
+        let Ok(object) = repo.find_object(id) else {
+            return Ok(PrintOutcome::MissingObject);
+        };
+        let size = match object.kind {
+            gix::object::Kind::Commit => {
+                let snapshot = repo.open_mailmap();
+                let commit_ref = gix::objs::CommitRef::from_bytes(&object.data)?;
+                let mut commit = gix::objs::Commit::try_from(commit_ref)?;
+                let mut buf = gix::date::parse::TimeBuf::default();
+                commit.author = snapshot.resolve_cow(commit.author.to_ref(&mut buf)).into();
+                let mut buf = gix::date::parse::TimeBuf::default();
+                commit.committer = snapshot.resolve_cow(commit.committer.to_ref(&mut buf)).into();
+                let mut encoded = Vec::with_capacity(object.data.len());
+                gix::objs::WriteTo::write_to(&commit, &mut encoded)?;
+                encoded.len() as u64
+            }
+            gix::object::Kind::Tag => {
+                let snapshot = repo.open_mailmap();
+                let tag_ref = gix::objs::TagRef::from_bytes(&object.data)?;
+                let mut tag = gix::objs::Tag::try_from(tag_ref)?;
+                if let Some(tagger) = tag.tagger.take() {
+                    let mut buf = gix::date::parse::TimeBuf::default();
+                    tag.tagger = Some(snapshot.resolve_cow(tagger.to_ref(&mut buf)).into());
+                }
+                let mut encoded = Vec::with_capacity(object.data.len());
+                gix::objs::WriteTo::write_to(&tag, &mut encoded)?;
+                encoded.len() as u64
+            }
+            _ => object.data.len() as u64,
+        };
+        writeln!(out, "{size}")?;
+        Ok(PrintOutcome::Ok)
     }
 
     /// `git cat-file -e <revspec>` — report whether the object exists.
