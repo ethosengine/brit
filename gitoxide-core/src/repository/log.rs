@@ -11,6 +11,10 @@ pub struct Options {
     pub remotes: bool,
     pub max_count: Option<usize>,
     pub skip: Option<usize>,
+    pub no_merges: bool,
+    pub merges: bool,
+    pub min_parents: Option<usize>,
+    pub max_parents: Option<usize>,
     pub revspec: Option<BString>,
     pub path: Option<BString>,
 }
@@ -134,10 +138,38 @@ fn log_all(repo: gix::Repository, out: &mut dyn std::io::Write, opts: Options) -
 
     let topo = gix::traverse::commit::topo::Builder::from_iters(&repo.objects, tips, Some(ends)).build()?;
 
-    // --skip=<n> drops the first n commits of the traversal; --max-count=<n>
-    // caps the output after the skip. Matches git's rev_list_info.max_count +
+    // Parent-count filter family: --no-merges / --merges / --min-parents /
+    // --max-parents. git's vendor/git/revision.c sets rev->min_parents and
+    // rev->max_parents (where --merges = min=2, --no-merges = max=1) and
+    // commit_rewrite_parents skips mismatching commits. Equivalent predicate
+    // on the Info stream here.
+    let min_parents = if opts.merges { Some(2) } else { opts.min_parents };
+    let max_parents = if opts.no_merges { Some(1) } else { opts.max_parents };
+    let parent_filter = move |info: &Result<gix::traverse::commit::Info, _>| -> bool {
+        let Ok(info) = info else {
+            return true; // surface walker errors unfiltered
+        };
+        if min_parents.is_none() && max_parents.is_none() {
+            return true;
+        }
+        let count = info.parent_ids.len();
+        if let Some(n) = min_parents {
+            if count < n {
+                return false;
+            }
+        }
+        if let Some(n) = max_parents {
+            if count > n {
+                return false;
+            }
+        }
+        true
+    };
+
+    // --skip=<n> drops the first n commits AFTER filtering; --max-count=<n>
+    // caps the output after that. Matches git's rev_list_info.max_count +
     // rev_list_info.skip_count in vendor/git/revision.c::get_revision.
-    let mut iter: Box<dyn Iterator<Item = _>> = Box::new(topo);
+    let mut iter: Box<dyn Iterator<Item = _>> = Box::new(topo.filter(parent_filter));
     if let Some(n) = opts.skip {
         iter = Box::new(iter.skip(n));
     }

@@ -723,6 +723,22 @@ pub mod log {
         #[clap(long, value_name = "n")]
         pub skip: Option<usize>,
 
+        /// Skip merge commits (commits with more than one parent).
+        #[clap(long, conflicts_with = "merges")]
+        pub no_merges: bool,
+
+        /// Show only merge commits.
+        #[clap(long)]
+        pub merges: bool,
+
+        /// Require commits to have at least <n> parents.
+        #[clap(long, value_name = "n")]
+        pub min_parents: Option<usize>,
+
+        /// Require commits to have at most <n> parents.
+        #[clap(long, value_name = "n")]
+        pub max_parents: Option<usize>,
+
         /// The revision (branch, commit, tag, range) to start walking from. Defaults to HEAD.
         #[clap(value_parser = crate::shared::AsBString)]
         pub revspec: Option<BString>,

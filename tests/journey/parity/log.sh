@@ -382,20 +382,23 @@ only_for_hash sha1-only && (small-repo-in-sandbox
   it "matches git behavior" && { :; }
 )
 
-# mode=effect — --no-merges: skip merge commits (nparents > 1).
+# mode=effect — --no-merges: skip commits with >1 parent. gitoxide-core
+# sets max_parents=1 and filters the topo Info stream.
 # hash=sha1-only
 title "gix log --no-merges"
 only_for_hash sha1-only && (small-repo-in-sandbox
-  # TODO — expect_parity effect -- log --no-merges
-  it "matches git behavior" && { :; }
+  it "matches git: exits 0 excluding merge commits" && {
+    expect_parity effect -- log --no-merges
+  }
 )
 
-# mode=effect — --merges: only merge commits.
+# mode=effect — --merges: only commits with ≥2 parents. min_parents=2.
 # hash=sha1-only
 title "gix log --merges"
 only_for_hash sha1-only && (small-repo-in-sandbox
-  # TODO — expect_parity effect -- log --merges
-  it "matches git behavior" && { :; }
+  it "matches git: exits 0 keeping only merge commits" && {
+    expect_parity effect -- log --merges
+  }
 )
 
 # --- pretty / format ----------------------------------------------------
@@ -558,19 +561,23 @@ only_for_hash sha1-only && (small-repo-in-sandbox
 # --- parent filtering ---------------------------------------------------
 
 # mode=effect — --min-parents=<n>: require at least n parents.
+# Options::min_parents, filtered on info.parent_ids.len().
 # hash=sha1-only
 title "gix log --min-parents=<n>"
 only_for_hash sha1-only && (small-repo-in-sandbox
-  # TODO — expect_parity effect -- log --min-parents=2
-  it "matches git behavior" && { :; }
+  it "matches git: exits 0 filtering by parent count" && {
+    expect_parity effect -- log --min-parents=2
+  }
 )
 
 # mode=effect — --max-parents=<n>: require at most n parents (0 = roots).
+# Options::max_parents, filtered on info.parent_ids.len().
 # hash=sha1-only
 title "gix log --max-parents=<n>"
 only_for_hash sha1-only && (small-repo-in-sandbox
-  # TODO — expect_parity effect -- log --max-parents=0
-  it "matches git behavior" && { :; }
+  it "matches git: exits 0 with roots only at n=0" && {
+    expect_parity effect -- log --max-parents=0
+  }
 )
 
 # --- decoration ---------------------------------------------------------
