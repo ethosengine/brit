@@ -53,6 +53,9 @@ pub mod list {
         /// If set, only list branches whose tip has `<commit>` in its
         /// ancestry (inclusive). Git's `--contains`.
         pub contains: Option<OsString>,
+        /// If set, only list branches whose tip does NOT have `<commit>`
+        /// in its ancestry. Git's `--no-contains`.
+        pub no_contains: Option<OsString>,
     }
 }
 
@@ -90,23 +93,35 @@ pub fn list(
                 .any(|pat| gix::glob::wildmatch(pat.as_ref(), name.into(), gix::glob::wildmatch::Mode::empty()))
     };
 
-    // --contains filter: resolve the needle once up-front so each
-    // branch's ancestor walk compares against the same ObjectId.
-    let contains_oid: Option<gix::ObjectId> = match options.contains.as_deref() {
-        Some(rev) => {
-            let rev_bstr = gix::path::os_str_into_bstr(rev)?;
-            Some(repo.rev_parse_single(rev_bstr)?.detach())
-        }
-        None => None,
+    // --contains / --no-contains filters: resolve each needle once
+    // up-front so every branch's ancestor walk compares against the
+    // same ObjectId.
+    let resolve = |rev: &std::ffi::OsStr| -> anyhow::Result<gix::ObjectId> {
+        let rev_bstr = gix::path::os_str_into_bstr(rev)?;
+        Ok(repo.rev_parse_single(rev_bstr)?.detach())
     };
+    let contains_oid: Option<gix::ObjectId> = options.contains.as_deref().map(resolve).transpose()?;
+    let no_contains_oid: Option<gix::ObjectId> = options.no_contains.as_deref().map(resolve).transpose()?;
 
     let tip_of = |reference: &gix::Reference<'_>| -> anyhow::Result<gix::ObjectId> {
         Ok(reference.clone().into_fully_peeled_id()?.detach())
     };
 
-    let contains_keep = |tip: gix::ObjectId| -> anyhow::Result<bool> {
-        contains_oid.map_or(Ok(true), |needle| commit_contains(&repo, tip, needle))
+    let ancestry_keep = |tip: gix::ObjectId| -> anyhow::Result<bool> {
+        if let Some(needle) = contains_oid {
+            if !commit_contains(&repo, tip, needle)? {
+                return Ok(false);
+            }
+        }
+        if let Some(needle) = no_contains_oid {
+            if commit_contains(&repo, tip, needle)? {
+                return Ok(false);
+            }
+        }
+        Ok(true)
     };
+
+    let needs_ancestry_walk = contains_oid.is_some() || no_contains_oid.is_some();
 
     if show_local {
         let mut kept: Vec<String> = Vec::new();
@@ -115,9 +130,9 @@ pub fn list(
             if !match_name(&name) {
                 continue;
             }
-            if contains_oid.is_some() {
+            if needs_ancestry_walk {
                 let tip = tip_of(&reference)?;
-                if !contains_keep(tip)? {
+                if !ancestry_keep(tip)? {
                     continue;
                 }
             }
@@ -150,9 +165,9 @@ pub fn list(
             if !match_name(&name) {
                 continue;
             }
-            if contains_oid.is_some() {
+            if needs_ancestry_walk {
                 let tip = tip_of(&reference)?;
-                if !contains_keep(tip)? {
+                if !ancestry_keep(tip)? {
                     continue;
                 }
             }
