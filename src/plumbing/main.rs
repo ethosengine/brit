@@ -2432,6 +2432,8 @@ pub fn main() -> Result<()> {
         Subcommands::Tag(platform) => {
             let tag::Platform {
                 list: _,
+                delete,
+                verify,
                 ignore_case,
                 column: _,
                 no_column: _,
@@ -2444,30 +2446,56 @@ pub fn main() -> Result<()> {
                 no_merged,
                 patterns,
             } = platform;
-            prepare_and_run(
-                "tag-list",
-                trace,
-                verbose,
-                progress,
-                progress_keep_open,
-                None,
-                move |_progress, out, _err| {
-                    core::repository::tag::list(
-                        repository(Mode::Lenient)?,
-                        out,
-                        format,
-                        core::repository::tag::ListOptions {
-                            patterns,
-                            ignore_case,
-                            points_at,
-                            contains,
-                            no_contains,
-                            merged,
-                            no_merged,
-                        },
-                    )
-                },
-            )
+            if delete {
+                prepare_and_run(
+                    "tag-delete",
+                    trace,
+                    verbose,
+                    progress,
+                    progress_keep_open,
+                    None,
+                    move |_progress, out, err| {
+                        core::repository::tag::delete(repository(Mode::Lenient)?, patterns, out, err)
+                    },
+                )
+            } else if verify {
+                prepare_and_run(
+                    "tag-verify",
+                    trace,
+                    verbose,
+                    progress,
+                    progress_keep_open,
+                    None,
+                    move |_progress, out, err| {
+                        core::repository::tag::verify(repository(Mode::Lenient)?, patterns, out, err)
+                    },
+                )
+            } else {
+                prepare_and_run(
+                    "tag-list",
+                    trace,
+                    verbose,
+                    progress,
+                    progress_keep_open,
+                    None,
+                    move |_progress, out, _err| {
+                        core::repository::tag::list(
+                            repository(Mode::Lenient)?,
+                            out,
+                            format,
+                            core::repository::tag::ListOptions {
+                                patterns,
+                                ignore_case,
+                                points_at,
+                                contains,
+                                no_contains,
+                                merged,
+                                no_merged,
+                            },
+                        )
+                    },
+                )
+            }
         }
         Subcommands::Tree(cmd) => match cmd {
             tree::Subcommands::Entries {

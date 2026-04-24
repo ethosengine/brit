@@ -2010,6 +2010,18 @@ pub mod tag {
         #[clap(short = 'l', long = "list")]
         pub list: bool,
 
+        /// Delete existing tags with the given names. Each name
+        /// becomes a `refs/tags/<name>` deletion; missing names print
+        /// `error: tag '<name>' not found.` and contribute to a final
+        /// non-zero exit. Mirrors `OPT_CMDMODE('d', "delete", ...)`.
+        #[clap(short = 'd', long = "delete", conflicts_with_all = ["list", "verify"])]
+        pub delete: bool,
+
+        /// Verify the signature of the given annotated tags. Mirrors
+        /// `OPT_CMDMODE('v', "verify", ...)`.
+        #[clap(short = 'v', long = "verify", conflicts_with_all = ["list", "delete"])]
+        pub verify: bool,
+
         /// Sorting and filtering tags are case insensitive. Maps to
         /// git's `OPT_BOOL('i', "ignore-case", ...)`.
         #[clap(short = 'i', long)]

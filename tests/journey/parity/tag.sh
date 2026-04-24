@@ -370,12 +370,34 @@ only_for_hash sha1-only && (small-repo-in-sandbox
 # parity of the "was <sha>" line is a later upgrade (sha dependency).
 # hash=sha1-only
 title "gix tag -d (existing tag)"
-only_for_hash sha1-only && (small-repo-in-sandbox
-  it "matches git behavior with -d unannotated (TODO)" && {
-    : # TODO: expect_parity effect -- tag -d unannotated
+only_for_hash sha1-only && (sandbox
+  # Defined inside the subshell so it's not picked up by other files.
+  # expect_parity_reset needs a setup fn that initializes a repo
+  # in-place (no pushd), since it provides its own per-binary workdir.
+  # small-repo-in-sandbox uses `sandbox` internally, which double-
+  # nests and leaves the repo in a tempdir expect_parity_reset's git
+  # call never cds into → both sides then hit "not a git repository"
+  # and a bogus parity green emerges. This function mirrors
+  # small-repo-in-sandbox's seed but without the pushd.
+  function _tag-parity-fixture() {
+    git-init-hash-aware
+    git checkout -b main
+    git config commit.gpgsign false
+    git config tag.gpgsign false
+    touch a
+    git add a
+    git commit -m "first"
+    git tag unannotated
+    touch b
+    git add b
+    git commit -m "second"
+    git tag annotated -m "tag message"
   }
-  it "matches git behavior with --delete unannotated (TODO)" && {
-    : # TODO: expect_parity effect -- tag --delete unannotated
+  it "matches git behavior with -d unannotated" && {
+    expect_parity_reset _tag-parity-fixture effect -- tag -d unannotated
+  }
+  it "matches git behavior with --delete unannotated" && {
+    expect_parity_reset _tag-parity-fixture effect -- tag --delete unannotated
   }
 )
 
@@ -385,8 +407,8 @@ only_for_hash sha1-only && (small-repo-in-sandbox
 # hash=sha1-only
 title "gix tag -d (nonexistent tag)"
 only_for_hash sha1-only && (small-repo-in-sandbox
-  it "matches git behavior (TODO)" && {
-    : # TODO: expect_parity effect -- tag -d nonexistent
+  it "matches git behavior" && {
+    expect_parity effect -- tag -d nonexistent
   }
 )
 
@@ -395,12 +417,26 @@ only_for_hash sha1-only && (small-repo-in-sandbox
 # exits with 1 if any failed, 0 if all succeeded.
 # hash=sha1-only
 title "gix tag -d (multiple)"
-only_for_hash sha1-only && (small-repo-in-sandbox
-  it "matches git behavior with multiple existing tags (TODO)" && {
-    : # TODO: expect_parity effect -- tag -d unannotated annotated
+only_for_hash sha1-only && (sandbox
+  function _tag-parity-fixture() {
+    git-init-hash-aware
+    git checkout -b main
+    git config commit.gpgsign false
+    git config tag.gpgsign false
+    touch a
+    git add a
+    git commit -m "first"
+    git tag unannotated
+    touch b
+    git add b
+    git commit -m "second"
+    git tag annotated -m "tag message"
   }
-  it "matches git behavior with mix of existing + nonexistent (TODO)" && {
-    : # TODO: expect_parity effect -- tag -d unannotated nonexistent
+  it "matches git behavior with multiple existing tags" && {
+    expect_parity_reset _tag-parity-fixture effect -- tag -d unannotated annotated
+  }
+  it "matches git behavior with mix of existing + nonexistent" && {
+    expect_parity_reset _tag-parity-fixture effect -- tag -d unannotated nonexistent
   }
 )
 

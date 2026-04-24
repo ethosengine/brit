@@ -34,6 +34,180 @@ pub struct ListOptions {
     pub no_merged: Option<OsString>,
 }
 
+/// `git tag -d <name>...` in effect mode: for each name, try to
+/// remove `refs/tags/<name>`. Missing names emit the exact git error
+/// phrasing on stderr and contribute to a final non-zero exit; the
+/// "Deleted tag ..." success line is emitted on stdout for parity
+/// with git (callers of `expect_parity effect` don't compare bytes).
+///
+/// On any failure the function flushes its streams and calls
+/// `std::process::exit(1)` — matches the direct `exit(1)` pattern
+/// used for in-process error paths elsewhere in the gix plumbing
+/// (e.g. cat-file's -e missing-object), avoiding an anyhow
+/// backtrace from escaping through `prepare_and_run`.
+pub fn delete(
+    repo: gix::Repository,
+    names: Vec<OsString>,
+    out: &mut dyn std::io::Write,
+    err: &mut dyn std::io::Write,
+) -> anyhow::Result<()> {
+    if names.is_empty() {
+        writeln!(err, "error: tag name required to delete a tag")?;
+        out.flush().ok();
+        err.flush().ok();
+        std::process::exit(129);
+    }
+    let mut had_error = false;
+    for name in &names {
+        let short_name = gix::path::os_str_into_bstr(name)?;
+        let full_name = format!("refs/tags/{}", short_name.to_str_lossy());
+        let reference = match repo.find_reference(full_name.as_str()) {
+            Ok(r) => r,
+            Err(_) => {
+                writeln!(err, "error: tag '{}' not found.", short_name.to_str_lossy())?;
+                had_error = true;
+                continue;
+            }
+        };
+        let target_short = match reference.inner.target.clone() {
+            gix::refs::Target::Object(oid) => oid.attach(&repo).shorten().map(|s| s.to_string()).unwrap_or_default(),
+            gix::refs::Target::Symbolic(_) => String::new(),
+        };
+        if let Err(error) = reference.delete() {
+            writeln!(
+                err,
+                "error: could not delete tag '{}': {}",
+                short_name.to_str_lossy(),
+                error
+            )?;
+            had_error = true;
+            continue;
+        }
+        writeln!(
+            out,
+            "Deleted tag '{}' (was {})",
+            short_name.to_str_lossy(),
+            target_short
+        )?;
+    }
+    if had_error {
+        out.flush().ok();
+        err.flush().ok();
+        std::process::exit(1);
+    }
+    Ok(())
+}
+
+/// `git tag -v <name>...` in effect mode: for each name, locate the
+/// `refs/tags/<name>` ref and inspect the tagged object. Lightweight
+/// refs (target points directly at a non-tag) → die 128 with
+/// `error: <name>: cannot verify a non-tag object of type <T>.`.
+/// Annotated tags without an embedded `-----BEGIN PGP SIGNATURE-----`
+/// block → die 1 with `error: no signature found`. Actual GPG
+/// signature verification requires a signing backend and is tracked
+/// as a shortcoming; this implementation only covers the two error
+/// paths that don't depend on a signer.
+pub fn verify(
+    repo: gix::Repository,
+    names: Vec<OsString>,
+    _out: &mut dyn std::io::Write,
+    err: &mut dyn std::io::Write,
+) -> anyhow::Result<()> {
+    if names.is_empty() {
+        writeln!(err, "error: tag name required to verify a tag")?;
+        anyhow::bail!("no tag names given");
+    }
+    let mut had_error = false;
+    let mut non_tag_object = false;
+    for name in &names {
+        let short_name = gix::path::os_str_into_bstr(name)?;
+        let full_name = format!("refs/tags/{}", short_name.to_str_lossy());
+        let mut reference = match repo.find_reference(full_name.as_str()) {
+            Ok(r) => r,
+            Err(_) => {
+                writeln!(err, "error: tag '{}' not found.", short_name.to_str_lossy())?;
+                had_error = true;
+                continue;
+            }
+        };
+        // Peel the ref to its immediate target: annotated tags
+        // resolve to a tag object; lightweight tags point at
+        // whatever non-tag object (usually commit).
+        let direct = reference.peel_to_id().ok();
+        let direct_id = match direct {
+            Some(id) => id.detach(),
+            None => {
+                had_error = true;
+                continue;
+            }
+        };
+        let header = match repo.find_header(direct_id) {
+            Ok(h) => h,
+            Err(error) => {
+                writeln!(err, "error: cannot read tag '{}': {}", short_name.to_str_lossy(), error)?;
+                had_error = true;
+                continue;
+            }
+        };
+        if header.kind() != gix::object::Kind::Tag {
+            // Might actually be a lightweight tag — the ref's
+            // immediate target isn't a tag object. git dies 128
+            // here with a "non-tag object" message.
+            writeln!(
+                err,
+                "error: {}: cannot verify a non-tag object of type {}.",
+                short_name.to_str_lossy(),
+                header.kind()
+            )?;
+            had_error = true;
+            non_tag_object = true;
+            continue;
+        }
+        let tag_object = match repo.find_object(direct_id) {
+            Ok(obj) => obj,
+            Err(error) => {
+                writeln!(err, "error: cannot read tag '{}': {}", short_name.to_str_lossy(), error)?;
+                had_error = true;
+                continue;
+            }
+        };
+        let decoded = match tag_object.try_to_tag_ref() {
+            Ok(d) => d,
+            Err(error) => {
+                writeln!(
+                    err,
+                    "error: cannot decode tag '{}': {}",
+                    short_name.to_str_lossy(),
+                    error
+                )?;
+                had_error = true;
+                continue;
+            }
+        };
+        if decoded.pgp_signature.is_none() {
+            writeln!(err, "error: no signature found")?;
+            had_error = true;
+            continue;
+        }
+        writeln!(
+            err,
+            "error: tag signature verification requires a signing backend (not yet implemented)"
+        )?;
+        had_error = true;
+    }
+    if non_tag_object {
+        _out.flush().ok();
+        err.flush().ok();
+        std::process::exit(128);
+    }
+    if had_error {
+        _out.flush().ok();
+        err.flush().ok();
+        std::process::exit(1);
+    }
+    Ok(())
+}
+
 /// Return `true` iff `haystack_commit` has `needle` anywhere in its
 /// ancestry (walking parents). Inclusive — a commit contains itself.
 fn commit_contains(
