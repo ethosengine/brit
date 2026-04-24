@@ -191,16 +191,18 @@ only_for_hash sha1-only && (small-repo-in-sandbox
   }
 )
 
-# mode=bytes — `--abbrev=<n>` / `--no-abbrev` controls the SHA width
-# in verbose listing. Defaults to 7; --no-abbrev prints full 40-hex.
+# mode=effect (compat) — `--abbrev=<n>` / `--no-abbrev` control the
+# SHA width in verbose listing. Bytes parity depends on the -v
+# renderer, which is itself compat-deferred (see --verbose rows);
+# exit-code parity holds because clap accepts both flags.
 # hash=sha1-only
 title "gix branch --abbrev"
 only_for_hash sha1-only && (small-repo-in-sandbox
-  it "matches git behavior — --abbrev=12 (TODO)" && {
-    : # TODO: expect_parity bytes -- branch -v --abbrev=12
+  it "matches git behavior — --abbrev=12" && {
+    compat_effect "branch -v --abbrev=<n> bytes parity follows -v renderer" -- branch -v --abbrev=12
   }
-  it "matches git behavior — --no-abbrev (TODO)" && {
-    : # TODO: expect_parity bytes -- branch -v --no-abbrev
+  it "matches git behavior — --no-abbrev" && {
+    compat_effect "branch -v --no-abbrev bytes parity follows -v renderer" -- branch -v --no-abbrev
   }
 )
 

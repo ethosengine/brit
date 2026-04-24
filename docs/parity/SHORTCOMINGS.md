@@ -13,6 +13,8 @@ Two row classes:
 |---|---|---|---|
 | compat | `gix branch --verbose` | branch -v column-aligned sha+subject rendering deferred | [branch.sh:175](../../tests/journey/parity/branch.sh#L175) |
 | compat | `gix branch --verbose` | branch -vv upstream tracking rendering deferred | [branch.sh:178](../../tests/journey/parity/branch.sh#L178) |
+| compat | `gix branch --abbrev` | branch -v --abbrev=<n> bytes parity follows -v renderer | [branch.sh:202](../../tests/journey/parity/branch.sh#L202) |
+| compat | `gix branch --abbrev` | branch -v --no-abbrev bytes parity follows -v renderer | [branch.sh:205](../../tests/journey/parity/branch.sh#L205) |
 
 ## clone
 
