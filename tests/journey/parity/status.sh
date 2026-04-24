@@ -482,17 +482,19 @@ only_for_hash sha1-only && (small-repo-in-sandbox
 # --- pathspec -----------------------------------------------------------
 
 # mode=effect — a positional pathspec narrows status output to matching
-# paths only. Exercised as positional arg and as explicit `-- <pathspec>`.
+# paths only. gix accepts pathspec as a `Vec<BString>` positional so
+# no Clap change needed; both positional and `-- <pathspec>` variants
+# exit 0 on the fixture.
 # hash=sha1-only "gix cannot load sha256 repos: extensions.objectFormat=sha256 rejected (gix/src/config/tree/sections/extensions.rs)"
 title "gix status <pathspec>"
 only_for_hash sha1-only && (small-repo-in-sandbox
+  echo modified >> a
+  touch other-untracked
   it "matches git behavior with positional pathspec" && {
-    # TODO: modify a + untracked b; expect_parity effect -- status a
-    true
+    expect_parity effect -- status a
   }
   it "matches git behavior with -- <pathspec>" && {
-    # TODO: same fixture; expect_parity effect -- status -- a
-    true
+    expect_parity effect -- status -- a
   }
 )
 
