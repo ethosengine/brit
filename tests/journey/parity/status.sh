@@ -132,13 +132,14 @@ only_for_hash sha1-only && (small-repo-in-sandbox
 )
 
 # mode=effect — a tracked file modified in the worktree AND staged (two
-# distinct XY states for the same path).
+# distinct XY states for the same path: M in index, M in worktree).
+# Both exit 0.
 # hash=sha1-only "gix cannot load sha256 repos: extensions.objectFormat=sha256 rejected (gix/src/config/tree/sections/extensions.rs)"
 title "gix status (modified + staged same path)"
 only_for_hash sha1-only && (small-repo-in-sandbox
+  echo staged-change >> a && git add a && echo worktree-change >> a
   it "matches git behavior" && {
-    # TODO: echo x >> a && git add a && echo y >> a; expect_parity effect -- status
-    true
+    expect_parity effect -- status
   }
 )
 
