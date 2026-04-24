@@ -175,8 +175,9 @@ only_for_hash sha1-only && (small-repo-in-sandbox
 # hash=sha1-only
 title "gix cat-file -p (commit)"
 only_for_hash sha1-only && (small-repo-in-sandbox
-  # TODO — expect_parity bytes -- cat-file -p HEAD
-  it "matches git behavior" && { :; }
+  it "matches git behavior" && {
+    expect_parity bytes -- cat-file -p HEAD
+  }
 )
 
 # mode=bytes — `-p <tag>` pretty-prints annotated-tag header + message.
@@ -185,8 +186,9 @@ only_for_hash sha1-only && (small-repo-in-sandbox
 # hash=sha1-only
 title "gix cat-file -p (annotated tag)"
 only_for_hash sha1-only && (small-repo-in-sandbox
-  # TODO — expect_parity bytes -- cat-file -p annotated
-  it "matches git behavior" && { :; }
+  it "matches git behavior" && {
+    expect_parity bytes -- cat-file -p annotated
+  }
 )
 
 # mode=bytes — `-t <obj>` prints the object's type name: "blob", "tree",
