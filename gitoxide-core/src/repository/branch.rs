@@ -184,6 +184,94 @@ pub fn rename(
     Ok(0)
 }
 
+/// `git branch -c/-C [<old>] <new>`: copy `refs/heads/<old>` to a new
+/// `refs/heads/<new>` ref pointing at the same target. `<old>`
+/// defaults to the current branch (HEAD) when only one positional is
+/// given. Without `--force` / `-C`, fails if `<new>` already exists.
+/// Mirrors the copy path in builtin/branch.c's copy_branch helper.
+/// The reflog + config-section duplication git's copy does (clones
+/// `branch.<old>.*` config keys to `branch.<new>.*` and copies the
+/// reflog file) is deferred — this implementation only writes the
+/// new ref.
+pub fn copy(
+    repo: gix::Repository,
+    old: Option<gix::bstr::BString>,
+    new: gix::bstr::BString,
+    force: bool,
+    err: &mut dyn std::io::Write,
+) -> anyhow::Result<i32> {
+    use gix::refs::transaction::{Change, LogChange, PreviousValue, RefEdit};
+
+    let new_full = format!("refs/heads/{new}");
+    let old_short = match old {
+        Some(s) => s,
+        None => match repo.head_name()? {
+            Some(name) => name.shorten().to_owned(),
+            None => {
+                writeln!(err, "fatal: HEAD is detached; cannot copy without an explicit <old>")?;
+                return Ok(128);
+            }
+        },
+    };
+    let old_full = format!("refs/heads/{old_short}");
+
+    if !force && repo.try_find_reference(new_full.as_str())?.is_some() {
+        writeln!(err, "fatal: a branch named '{new}' already exists")?;
+        return Ok(128);
+    }
+    // Refuse to force-update the branch that is checked out in this
+    // worktree (or any linked worktree). Matches git's
+    // "cannot force update the branch '<name>' used by worktree at
+    // '<path>'" + 128 stanza in builtin/branch.c.
+    if force {
+        if let Some(head_short_name) = repo.head_name()? {
+            let head_short_bytes: &[u8] = head_short_name.shorten().as_ref();
+            let new_bytes: &[u8] = new.as_ref();
+            if head_short_bytes == new_bytes {
+                let path = match repo.workdir() {
+                    Some(p) => gix::path::realpath(p)
+                        .unwrap_or_else(|_| p.to_path_buf())
+                        .display()
+                        .to_string(),
+                    None => String::new(),
+                };
+                writeln!(
+                    err,
+                    "fatal: cannot force update the branch '{new}' used by worktree at '{path}'"
+                )?;
+                return Ok(128);
+            }
+        }
+    }
+    let Some(old_ref) = repo.try_find_reference(old_full.as_str())? else {
+        writeln!(err, "error: refname {old_short} not found")?;
+        return Ok(1);
+    };
+    let target_oid = old_ref.clone().into_fully_peeled_id()?.detach();
+
+    let new_full_name: gix::refs::FullName = new_full
+        .try_into()
+        .map_err(|err| anyhow::anyhow!("invalid refname: {err:?}"))?;
+    let log = LogChange {
+        message: format!("Branch: copied {old_short} to {new}").into(),
+        ..Default::default()
+    };
+    repo.edit_reference(RefEdit {
+        change: Change::Update {
+            log,
+            expected: if force {
+                PreviousValue::Any
+            } else {
+                PreviousValue::MustNotExist
+            },
+            new: gix::refs::Target::Object(target_oid),
+        },
+        name: new_full_name,
+        deref: false,
+    })?;
+    Ok(0)
+}
+
 /// `git branch --show-current`: print the current branch name alone,
 /// or nothing in detached `HEAD` state. Matches builtin/branch.c
 /// show_current behavior — no asterisk, no indent, no newline on

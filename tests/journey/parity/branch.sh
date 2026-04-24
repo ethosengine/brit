@@ -571,12 +571,19 @@ only_for_hash sha1-only && (sandbox
 # config and reflog. `-C` forces.
 # hash=sha1-only
 title "gix branch --copy"
-only_for_hash sha1-only && (small-repo-in-sandbox
-  it "matches git behavior (TODO)" && {
-    : # TODO: expect_parity effect -- branch -c dev devcopy
+only_for_hash sha1-only && (sandbox
+  function _branch-copy-fixture() {
+    git-init-hash-aware
+    git checkout -b main >/dev/null 2>&1
+    git config commit.gpgsign false
+    git -c user.email=t@t -c user.name=t commit -q --allow-empty -m c1
+    git branch dev
   }
-  it "matches git behavior — -C force (TODO)" && {
-    : # TODO: expect_parity effect -- branch -C dev main
+  it "matches git behavior" && {
+    expect_parity_reset _branch-copy-fixture effect -- branch -c dev devcopy
+  }
+  it "matches git behavior — -C force" && {
+    expect_parity_reset _branch-copy-fixture effect -- branch -C dev main
   }
 )
 

@@ -901,8 +901,8 @@ pub fn main() -> Result<()> {
                 delete_force: _delete_force,
                 move_,
                 move_force,
-                copy: _copy,
-                copy_force: _copy_force,
+                copy,
+                copy_force,
                 show_current,
                 edit_description,
                 force,
@@ -962,11 +962,14 @@ pub fn main() -> Result<()> {
             let is_edit_description = edit_description;
             let is_rename = move_ || move_force;
             let rename_force = move_force || force;
+            let is_copy = copy || copy_force;
+            let copy_force_eff = copy_force || force;
             let is_create = !show_current
                 && !is_set_upstream
                 && !is_unset_upstream
                 && !is_edit_description
                 && !is_rename
+                && !is_copy
                 && !list_forced
                 && !args.is_empty();
 
@@ -1018,6 +1021,43 @@ pub fn main() -> Result<()> {
                     move |_progress, _out, err| {
                         let code =
                             core::repository::branch::rename(repository(Mode::Lenient)?, old, new, rename_force, err)?;
+                        if code != 0 {
+                            std::process::exit(code);
+                        }
+                        Ok(())
+                    },
+                )
+            } else if is_copy {
+                // git copy forms:
+                //   -c <new>           — copy current branch to <new>
+                //   -c <old> <new>     — copy <old> to <new>
+                //   -C ...             — same, but force-overwrite <new>
+                let mut iter = args.into_iter();
+                let (old_arg, new_arg) = match (iter.next(), iter.next()) {
+                    (Some(a), Some(b)) => (Some(a), b),
+                    (Some(a), None) => (None, a),
+                    _ => {
+                        use std::io::Write;
+                        let mut stderr = std::io::stderr().lock();
+                        let _ = writeln!(stderr, "fatal: branch -c/-C needs at least <newname>");
+                        std::process::exit(128);
+                    }
+                };
+                let old = match old_arg {
+                    Some(s) => Some(gix::path::os_str_into_bstr(&s)?.to_owned()),
+                    None => None,
+                };
+                let new = gix::path::os_str_into_bstr(&new_arg)?.to_owned();
+                prepare_and_run(
+                    "branch-copy",
+                    trace,
+                    verbose,
+                    progress,
+                    progress_keep_open,
+                    None,
+                    move |_progress, _out, err| {
+                        let code =
+                            core::repository::branch::copy(repository(Mode::Lenient)?, old, new, copy_force_eff, err)?;
                         if code != 0 {
                             std::process::exit(code);
                         }
