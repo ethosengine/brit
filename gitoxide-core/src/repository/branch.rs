@@ -3,6 +3,7 @@ use crate::OutputFormat;
 pub mod list {
     pub enum Kind {
         Local,
+        Remote,
         All,
     }
 
@@ -25,6 +26,7 @@ pub fn list(
 
     let (show_local, show_remotes) = match options.kind {
         list::Kind::Local => (true, false),
+        list::Kind::Remote => (false, true),
         list::Kind::All => (true, true),
     };
 

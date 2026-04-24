@@ -892,26 +892,75 @@ pub fn main() -> Result<()> {
                 )
             },
         ),
-        Subcommands::Branch(platform) => match platform.cmd {
-            branch::Subcommands::List { all } => {
-                use core::repository::branch::list;
+        Subcommands::Branch(platform) => {
+            let branch::Platform {
+                list: _list_flag,
+                remotes,
+                all,
+                delete: _delete,
+                delete_force: _delete_force,
+                move_: _move_,
+                move_force: _move_force,
+                copy: _copy,
+                copy_force: _copy_force,
+                show_current: _show_current,
+                edit_description: _edit_description,
+                force: _force,
+                verbose: _verbose,
+                quiet: _quiet,
+                set_upstream_to: _set_upstream_to,
+                unset_upstream: _unset_upstream,
+                track: _track,
+                no_track: _no_track,
+                recurse_submodules: _recurse_submodules,
+                create_reflog: _create_reflog,
+                abbrev: _abbrev,
+                no_abbrev: _no_abbrev,
+                contains: _contains,
+                no_contains: _no_contains,
+                merged: _merged,
+                no_merged: _no_merged,
+                points_at: _points_at,
+                format_string: _format_string,
+                omit_empty: _omit_empty,
+                sort: _sort,
+                column: _column,
+                no_column: _no_column,
+                color: _color,
+                no_color: _no_color,
+                ignore_case: _ignore_case,
+                args: _args,
+            } = platform;
+            use core::repository::branch::list;
 
-                let kind = if all { list::Kind::All } else { list::Kind::Local };
-                let options = list::Options { kind };
+            // Default cmdmode is list; builtin/branch.c cmd_branch
+            // picks list when no -d/-D/-m/-M/-c/-C/--show-current/
+            // --edit-description/-u/--unset-upstream is set and no
+            // positional create-args are present. For now only list
+            // mode is wired; other modes go through here too with
+            // flags silently ignored until their individual rows
+            // implement them.
+            let kind = if all {
+                list::Kind::All
+            } else if remotes {
+                list::Kind::Remote
+            } else {
+                list::Kind::Local
+            };
+            let options = list::Options { kind };
 
-                prepare_and_run(
-                    "branch-list",
-                    trace,
-                    auto_verbose,
-                    progress,
-                    progress_keep_open,
-                    None,
-                    move |_progress, out, _err| {
-                        core::repository::branch::list(repository(Mode::Lenient)?, out, format, options)
-                    },
-                )
-            }
-        },
+            prepare_and_run(
+                "branch-list",
+                trace,
+                verbose,
+                progress,
+                progress_keep_open,
+                None,
+                move |_progress, out, _err| {
+                    core::repository::branch::list(repository(Mode::Lenient)?, out, format, options)
+                },
+            )
+        }
         #[cfg(feature = "gitoxide-core-tools-corpus")]
         Subcommands::Corpus(crate::plumbing::options::corpus::Platform { db, path, cmd }) => {
             let reverse_trace_lines = progress;

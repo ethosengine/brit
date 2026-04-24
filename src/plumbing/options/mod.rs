@@ -376,20 +376,204 @@ pub mod archive {
 }
 
 pub mod branch {
+    /// Flag-bearing top-level surface for `gix branch`, mirroring git's
+    /// cmdmode (`-l`/`-d`/`-D`/`-m`/`-M`/`-c`/`-C`/`--show-current`/
+    /// `--edit-description`) + modifier flags. Resolution matches
+    /// `vendor/git/builtin/branch.c` cmd_branch: when no cmdmode is
+    /// given, list mode is the default; non-option args without a
+    /// cmdmode trigger create mode.
     #[derive(Debug, clap::Parser)]
     pub struct Platform {
-        #[clap(subcommand)]
-        pub cmd: Subcommands,
-    }
+        /// List branches. Also the default when no cmdmode is given.
+        /// Mirrors `OPT_BOOL('l', "list", ...)` in builtin/branch.c.
+        #[clap(short = 'l', long = "list")]
+        pub list: bool,
 
-    #[derive(Debug, clap::Subcommand)]
-    pub enum Subcommands {
-        /// List branches.
-        List {
-            /// List remote-tracking as well as local branches.
-            #[clap(long, short = 'a')]
-            all: bool,
-        },
+        /// List (or with `-d`, delete) remote-tracking branches.
+        /// Mirrors `OPT_SET_INT_F('r', "remotes", &filter.kind,
+        /// REF_REMOTE_BRANCH, ...)`.
+        #[clap(short = 'r', long = "remotes")]
+        pub remotes: bool,
+
+        /// List both local and remote-tracking branches.
+        /// Mirrors `OPT_SET_INT_F('a', "all", &filter.kind,
+        /// REF_REMOTE_BRANCH | REF_LOCAL_BRANCH, ...)`.
+        #[clap(short = 'a', long = "all")]
+        pub all: bool,
+
+        /// Delete fully-merged branches. Mirrors
+        /// `OPT_BIT('d', "delete", &delete, ..., 1)`.
+        #[clap(short = 'd', long = "delete")]
+        pub delete: bool,
+
+        /// Delete branches even if not merged. Shortcut for
+        /// `--delete --force`. Mirrors
+        /// `OPT_BIT('D', NULL, &delete, ..., 2)`.
+        #[clap(short = 'D')]
+        pub delete_force: bool,
+
+        /// Move/rename a branch together with its config and reflog.
+        /// Mirrors `OPT_BIT('m', "move", &rename, ..., 1)`.
+        #[clap(short = 'm', long = "move")]
+        pub move_: bool,
+
+        /// Move/rename a branch even if target exists. Shortcut for
+        /// `--move --force`. Mirrors
+        /// `OPT_BIT('M', NULL, &rename, ..., 2)`.
+        #[clap(short = 'M')]
+        pub move_force: bool,
+
+        /// Copy a branch together with its config and reflog. Mirrors
+        /// `OPT_BIT('c', "copy", &copy, ..., 1)`.
+        #[clap(short = 'c', long = "copy")]
+        pub copy: bool,
+
+        /// Copy a branch even if target exists. Shortcut for
+        /// `--copy --force`. Mirrors `OPT_BIT('C', NULL, &copy, ..., 2)`.
+        #[clap(short = 'C')]
+        pub copy_force: bool,
+
+        /// Print the name of the current branch (empty on detached HEAD).
+        /// Mirrors `OPT_BOOL(0, "show-current", ...)`.
+        #[clap(long = "show-current")]
+        pub show_current: bool,
+
+        /// Open EDITOR to edit the branch description.
+        /// Mirrors `OPT_BOOL(0, "edit-description", ...)`.
+        #[clap(long = "edit-description")]
+        pub edit_description: bool,
+
+        /// Force creation/move/rename/deletion, reset of an existing
+        /// branch, etc. Mirrors `OPT__FORCE`.
+        #[clap(short = 'f', long = "force")]
+        pub force: bool,
+
+        /// Verbose listing (sha + subject + upstream on `-vv`).
+        /// Mirrors `OPT__VERBOSE` (count-style).
+        #[clap(short = 'v', long = "verbose", action = clap::ArgAction::Count)]
+        pub verbose: u8,
+
+        /// Suppress informational messages. Mirrors `OPT__QUIET`.
+        #[clap(short = 'q', long = "quiet")]
+        pub quiet: bool,
+
+        /// Set upstream tracking (`branch.<name>.remote` +
+        /// `branch.<name>.merge`). With no argument (bare `-u`), this
+        /// is parsed positionally so gix can accept both
+        /// `-u <upstream>` and `--set-upstream-to=<upstream>`. Mirrors
+        /// `OPT_STRING('u', "set-upstream-to", ...)`.
+        #[clap(short = 'u', long = "set-upstream-to", value_name = "upstream")]
+        pub set_upstream_to: Option<String>,
+
+        /// Remove upstream information. Mirrors
+        /// `OPT_BOOL(0, "unset-upstream", ...)`.
+        #[clap(long = "unset-upstream")]
+        pub unset_upstream: bool,
+
+        /// Set up tracking info on a newly created branch. With no
+        /// value, defaults to `direct` (use the start-point's branch
+        /// as upstream); `inherit` copies the start-point's upstream.
+        /// Mirrors `OPT_CALLBACK_F('t', "track", ..., PARSE_OPT_OPTARG)`.
+        #[clap(short = 't', long = "track", value_name = "mode", num_args = 0..=1, default_missing_value = "direct")]
+        pub track: Option<String>,
+
+        /// Do not set up tracking, even if `branch.autoSetupMerge` is
+        /// enabled. Mirrors git's `--no-track`.
+        #[clap(long = "no-track")]
+        pub no_track: bool,
+
+        /// Experimental: recurse into submodules on branch creation if
+        /// `submodule.propagateBranches` is set. Mirrors
+        /// `OPT_BOOL(0, "recurse-submodules", ...)`.
+        #[clap(long = "recurse-submodules")]
+        pub recurse_submodules: bool,
+
+        /// Force reflog creation for the branch. Mirrors
+        /// `OPT_BOOL(0, "create-reflog", ...)`.
+        #[clap(long = "create-reflog")]
+        pub create_reflog: bool,
+
+        /// Abbrev length for SHAs in `-v` listings. Defaults to 7.
+        /// Mirrors `OPT__ABBREV`.
+        #[clap(long = "abbrev", value_name = "n")]
+        pub abbrev: Option<usize>,
+
+        /// Print full SHAs (overrides `--abbrev`). Mirrors git's
+        /// `--no-abbrev` which sets abbrev=0 in parse_opt_abbrev_cb.
+        #[clap(long = "no-abbrev")]
+        pub no_abbrev: bool,
+
+        /// List only branches containing `<commit>` (HEAD if omitted).
+        /// Implies list mode. Mirrors `OPT_CONTAINS`.
+        #[clap(long = "contains", value_name = "commit", num_args = 0..=1, default_missing_value = "HEAD")]
+        pub contains: Option<std::ffi::OsString>,
+
+        /// List only branches NOT containing `<commit>` (HEAD if
+        /// omitted). Implies list mode. Mirrors `OPT_NO_CONTAINS`.
+        #[clap(long = "no-contains", value_name = "commit", num_args = 0..=1, default_missing_value = "HEAD")]
+        pub no_contains: Option<std::ffi::OsString>,
+
+        /// List only branches whose tips are reachable from `<commit>`
+        /// (HEAD if omitted). Implies list mode. Mirrors `OPT_MERGED`.
+        #[clap(long = "merged", value_name = "commit", num_args = 0..=1, default_missing_value = "HEAD")]
+        pub merged: Option<std::ffi::OsString>,
+
+        /// List only branches whose tips are NOT reachable from
+        /// `<commit>` (HEAD if omitted). Implies list mode. Mirrors
+        /// `OPT_NO_MERGED`.
+        #[clap(long = "no-merged", value_name = "commit", num_args = 0..=1, default_missing_value = "HEAD")]
+        pub no_merged: Option<std::ffi::OsString>,
+
+        /// List only branches whose ref directly points at `<object>`.
+        /// Implies list mode. Mirrors `OPT_CALLBACK(0, "points-at", ...)`.
+        #[clap(long = "points-at", value_name = "object")]
+        pub points_at: Option<std::ffi::OsString>,
+
+        /// Format string interpolating `%(<atom>)` fields, same atom
+        /// set as `for-each-ref`. Mirrors
+        /// `OPT_STRING(0, "format", ...)`.
+        #[clap(long = "format", value_name = "format")]
+        pub format_string: Option<String>,
+
+        /// Skip rows whose `--format` expansion is empty. Mirrors
+        /// `OPT_BOOL(0, "omit-empty", ...)`.
+        #[clap(long = "omit-empty")]
+        pub omit_empty: bool,
+
+        /// Sort key (for-each-ref syntax). Prefix `-` for descending.
+        /// Multiple uses accumulate; last key wins as primary. Mirrors
+        /// `OPT_REF_SORT`.
+        #[clap(long = "sort", value_name = "key", action = clap::ArgAction::Append)]
+        pub sort: Vec<String>,
+
+        /// Pack rows into columns. With no arg equivalent to
+        /// `--column=always`. Mirrors `OPT_COLUMN`.
+        #[clap(long = "column", value_name = "options", num_args = 0..=1, default_missing_value = "always", conflicts_with = "no_column")]
+        pub column: Option<String>,
+
+        /// Disable column packing (`--column=never`). Mirrors git's
+        /// `--no-column`.
+        #[clap(long = "no-column", conflicts_with = "column")]
+        pub no_column: bool,
+
+        /// Highlight current/local/remote-tracking branches.
+        /// Mirrors `OPT__COLOR`.
+        #[clap(long = "color", value_name = "when", num_args = 0..=1, default_missing_value = "always", conflicts_with = "no_color")]
+        pub color: Option<String>,
+
+        /// Turn off branch coloring (`--color=never`).
+        #[clap(long = "no-color", conflicts_with = "color")]
+        pub no_color: bool,
+
+        /// Case-insensitive sort/filter. Mirrors
+        /// `OPT_BOOL('i', "ignore-case", ...)`.
+        #[clap(short = 'i', long = "ignore-case")]
+        pub ignore_case: bool,
+
+        /// Positional args: branch names, patterns, start-points, or
+        /// old/new name pairs for move/copy. git's cmd_branch reads
+        /// these via argc after parse_options.
+        pub args: Vec<std::ffi::OsString>,
     }
 }
 
