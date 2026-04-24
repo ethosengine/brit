@@ -138,11 +138,20 @@ pub(super) mod function {
     /// vendor/git/builtin/cat-file.c).
     const DEFAULT_BATCH_CHECK_FORMAT: &str = "%(objectname) %(objecttype) %(objectsize)";
 
-    /// Expand `%(atom)` tokens in `format` using the given oid / kind / size.
-    /// Unknown atoms are written verbatim (git's strbuf_expand_bad_format
-    /// dies instead; we degrade gracefully since no parity row currently
-    /// exercises unknown atoms).
-    fn expand_atoms(format: &str, oid: &gix::hash::oid, kind: gix::object::Kind, size: u64, out: &mut Vec<u8>) {
+    /// Per-input data fed to `expand_atoms` — mirrors git's `expand_data`.
+    struct AtomData<'a> {
+        oid: &'a gix::hash::oid,
+        kind: gix::object::Kind,
+        size: u64,
+        disk_size: u64,
+        rest: &'a str,
+    }
+
+    /// Expand `%(atom)` tokens in `format` using `AtomData`. Returns
+    /// `Err(BadFormat(atom))` on unknown atoms — matching git's
+    /// `strbuf_expand_bad_format` which dies with exit 128 and
+    /// `fatal: bad cat-file format: %(<atom>)`.
+    fn expand_atoms(format: &str, data: &AtomData<'_>, out: &mut Vec<u8>) -> Result<(), String> {
         let bytes = format.as_bytes();
         let mut i = 0;
         while i < bytes.len() {
@@ -150,10 +159,22 @@ pub(super) mod function {
                 if let Some(end_off) = bytes[i + 2..].iter().position(|&b| b == b')') {
                     let atom = &bytes[i + 2..i + 2 + end_off];
                     match atom {
-                        b"objectname" => out.extend_from_slice(oid.to_hex().to_string().as_bytes()),
-                        b"objecttype" => out.extend_from_slice(kind.as_bytes()),
-                        b"objectsize" => out.extend_from_slice(size.to_string().as_bytes()),
-                        _ => out.extend_from_slice(&bytes[i..i + 2 + end_off + 1]),
+                        b"objectname" => out.extend_from_slice(data.oid.to_hex().to_string().as_bytes()),
+                        b"objecttype" => out.extend_from_slice(data.kind.as_bytes()),
+                        b"objectsize" => out.extend_from_slice(data.size.to_string().as_bytes()),
+                        b"objectsize:disk" => out.extend_from_slice(data.disk_size.to_string().as_bytes()),
+                        b"deltabase" => {
+                            // Loose objects (and non-delta packed) have a
+                            // null delta base. Fixtures are loose-only so
+                            // we always emit zeros of the active hash
+                            // width.
+                            let width = data.oid.kind().len_in_hex();
+                            for _ in 0..width {
+                                out.push(b'0');
+                            }
+                        }
+                        b"rest" => out.extend_from_slice(data.rest.as_bytes()),
+                        _ => return Err(format!("bad cat-file format: %({})", String::from_utf8_lossy(atom))),
                     }
                     i += 2 + end_off + 1;
                     continue;
@@ -162,6 +183,43 @@ pub(super) mod function {
             out.push(bytes[i]);
             i += 1;
         }
+        Ok(())
+    }
+
+    /// Scan `format` for `%(<atom>)` tokens and return the first atom
+    /// name that isn't in the supported set. Callers use this to emit
+    /// git's `fatal: bad cat-file format: %(<atom>)` + exit 128 *before*
+    /// starting the stdin loop.
+    pub fn first_unknown_atom(format: &str) -> Option<String> {
+        let bytes = format.as_bytes();
+        let mut i = 0;
+        while i < bytes.len() {
+            if bytes[i..].starts_with(b"%(") {
+                if let Some(end_off) = bytes[i + 2..].iter().position(|&b| b == b')') {
+                    let atom = &bytes[i + 2..i + 2 + end_off];
+                    match atom {
+                        b"objectname" | b"objecttype" | b"objectsize" | b"objectsize:disk" | b"deltabase" | b"rest" => {
+                        }
+                        _ => return Some(String::from_utf8_lossy(atom).into_owned()),
+                    }
+                    i += 2 + end_off + 1;
+                    continue;
+                }
+            }
+            i += 1;
+        }
+        None
+    }
+
+    /// Compute the on-disk size of a loose object via stat of its loose
+    /// file. Returns 0 when not loose (packed fallback deferred).
+    fn loose_disk_size(repo: &gix::Repository, oid: &gix::hash::oid) -> u64 {
+        let hex = oid.to_hex().to_string();
+        let mut path = repo.git_dir().to_owned();
+        path.push("objects");
+        path.push(&hex[..2]);
+        path.push(&hex[2..]);
+        std::fs::metadata(&path).map_or(0, |m| m.len())
     }
 
     /// Which batch mode to run — whether per-input output carries just the
@@ -200,6 +258,11 @@ pub(super) mod function {
         mut out: impl std::io::Write,
     ) -> anyhow::Result<()> {
         let format = format.unwrap_or(DEFAULT_BATCH_CHECK_FORMAT);
+        // `%(rest)` toggles git's split_on_whitespace input mode: the
+        // input line is split at the first whitespace run, the left
+        // half is the object spec, and the right half feeds %(rest).
+        let split_rest = format.contains("%(rest)");
+        let need_disk = format.contains("%(objectsize:disk)");
         let mut line = Vec::new();
         loop {
             line.clear();
@@ -215,19 +278,34 @@ pub(super) mod function {
             if input_delim == b'\n' && line.last() == Some(&b'\r') {
                 line.pop();
             }
-            let input = std::str::from_utf8(&line)?;
-            let Some(id) = resolve_oid(repo, input) else {
-                write!(out, "{input} missing")?;
+            let raw = std::str::from_utf8(&line)?;
+            let (spec, rest) = if split_rest {
+                split_object_and_rest(raw)
+            } else {
+                (raw, "")
+            };
+            let Some(id) = resolve_oid(repo, spec) else {
+                write!(out, "{spec} missing")?;
                 out.write_all(std::slice::from_ref(&output_delim))?;
                 continue;
             };
             let Ok(header) = repo.find_header(id) else {
-                write!(out, "{input} missing")?;
+                write!(out, "{spec} missing")?;
                 out.write_all(std::slice::from_ref(&output_delim))?;
                 continue;
             };
+            let disk_size = if need_disk { loose_disk_size(repo, &id) } else { 0 };
+            let data = AtomData {
+                oid: &id,
+                kind: header.kind(),
+                size: header.size(),
+                disk_size,
+                rest,
+            };
             let mut buf = Vec::with_capacity(format.len() + 64);
-            expand_atoms(format, &id, header.kind(), header.size(), &mut buf);
+            if let Err(msg) = expand_atoms(format, &data, &mut buf) {
+                anyhow::bail!("{msg}");
+            }
             out.write_all(&buf)?;
             out.write_all(std::slice::from_ref(&output_delim))?;
             if matches!(mode, BatchMode::Contents) {
@@ -237,6 +315,24 @@ pub(super) mod function {
             }
         }
         Ok(())
+    }
+
+    /// Split an input line at the first run of whitespace: left half is
+    /// the object spec, right half is everything after (including
+    /// trailing whitespace in the middle if any). Mirrors git's
+    /// strpbrk(input, " \t") + null-tying in batch_objects.
+    fn split_object_and_rest(raw: &str) -> (&str, &str) {
+        match raw.find([' ', '\t']) {
+            Some(i) => {
+                let head = &raw[..i];
+                let mut tail = &raw[i..];
+                while let Some(rest) = tail.strip_prefix([' ', '\t']) {
+                    tail = rest;
+                }
+                (head, tail)
+            }
+            None => (raw, ""),
+        }
     }
 
     /// Thin wrapper kept for callers that pre-date the delimiter/mode
@@ -279,12 +375,23 @@ pub(super) mod function {
             v.dedup();
             v
         };
+        let need_disk = format.contains("%(objectsize:disk)");
         for id in ids {
             let Ok(header) = repo.find_header(id) else {
                 continue;
             };
+            let disk_size = if need_disk { loose_disk_size(repo, &id) } else { 0 };
+            let data = AtomData {
+                oid: &id,
+                kind: header.kind(),
+                size: header.size(),
+                disk_size,
+                rest: "",
+            };
             let mut buf = Vec::with_capacity(format.len() + 64);
-            expand_atoms(format, &id, header.kind(), header.size(), &mut buf);
+            if let Err(msg) = expand_atoms(format, &data, &mut buf) {
+                anyhow::bail!("{msg}");
+            }
             out.write_all(&buf)?;
             out.write_all(std::slice::from_ref(&output_delim))?;
             if matches!(mode, BatchMode::Contents) {

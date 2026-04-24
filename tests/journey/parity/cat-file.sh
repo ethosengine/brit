@@ -645,8 +645,10 @@ only_for_hash sha1-only && (small-repo-in-sandbox
 # hash=sha1-only
 title "gix cat-file --batch-check='%(objectsize:disk)'"
 only_for_hash sha1-only && (small-repo-in-sandbox
-  # TODO — expect_parity bytes -- cat-file --batch-check='%(objectsize:disk)'  (stdin: "HEAD\n")
-  it "matches git behavior" && { :; }
+  it "matches git behavior" && {
+    PARITY_STDIN="HEAD
+" expect_parity bytes -- cat-file "--batch-check=%(objectsize:disk)"
+  }
 )
 
 # mode=bytes — `%(deltabase)`: full-length hex oid of delta base, or
@@ -655,8 +657,10 @@ only_for_hash sha1-only && (small-repo-in-sandbox
 # hash=sha1-only
 title "gix cat-file --batch-check='%(deltabase)'"
 only_for_hash sha1-only && (small-repo-in-sandbox
-  # TODO — expect_parity bytes -- cat-file --batch-check='%(deltabase)'  (stdin: "HEAD\n")
-  it "matches git behavior" && { :; }
+  it "matches git behavior" && {
+    PARITY_STDIN="HEAD
+" expect_parity bytes -- cat-file "--batch-check=%(deltabase)"
+  }
 )
 
 # mode=bytes — `%(rest)`: splits input on first whitespace; characters
@@ -665,18 +669,26 @@ only_for_hash sha1-only && (small-repo-in-sandbox
 # hash=sha1-only
 title "gix cat-file --batch-check='%(rest)'"
 only_for_hash sha1-only && (small-repo-in-sandbox
-  # TODO — expect_parity bytes -- cat-file --batch-check='%(objectname) %(rest)'  (stdin: "HEAD extra stuff\n")
-  it "matches git behavior" && { :; }
+  it "matches git behavior" && {
+    PARITY_STDIN="HEAD extra stuff
+" expect_parity bytes -- cat-file "--batch-check=%(objectname) %(rest)"
+  }
 )
 
-# mode=bytes — `%(objectmode)`: 6-digit octal mode when object came
-# from a tree/index entry that has mode info, else empty string. In
-# non-tree contexts expand to "".
+# mode=bytes — %(objectmode) is rejected by system git 2.47.3 with
+# `fatal: bad cat-file format: %(objectmode)` + exit 128. gix matches
+# bit-for-bit: its expand_atoms pre-flight check in the dispatch emits
+# the identical fatal wording before the stdin loop starts, so
+# byte-exact stderr parity holds. When the test-env git picks up the
+# %(objectmode) atom (newer upstream), both binaries will succeed and
+# the row stays bytes-mode unchanged.
 # hash=sha1-only
 title "gix cat-file --batch-check='%(objectmode)'"
 only_for_hash sha1-only && (small-repo-in-sandbox
-  # TODO — expect_parity bytes -- cat-file --batch-check='%(objectmode) %(objectname)'  (stdin: "HEAD:a\n")
-  it "matches git behavior" && { :; }
+  it "matches git behavior" && {
+    PARITY_STDIN="HEAD:a
+" expect_parity bytes -- cat-file "--batch-check=%(objectmode) %(objectname)"
+  }
 )
 
 # --- batch input error paths -------------------------------------------

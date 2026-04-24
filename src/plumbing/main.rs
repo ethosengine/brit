@@ -2126,6 +2126,21 @@ pub fn main() -> Result<()> {
                 std::process::exit(129);
             }
             if let Some(format) = batch.as_deref().or(batch_check.as_deref()) {
+                // Validate format atoms before starting any loop. git's
+                // strbuf_expand_bad_format dies with exit 128 and
+                // `fatal: bad cat-file format: %(<atom>)` at the
+                // mark_query pre-pass in batch_objects; we mirror that
+                // with an up-front scan so stdin/stdout aren't touched
+                // on malformed input.
+                if !format.is_empty() {
+                    if let Some(bad) = core::repository::cat_first_unknown_atom(format) {
+                        use std::io::Write;
+                        let mut stderr = std::io::stderr().lock();
+                        let _ = writeln!(stderr, "fatal: bad cat-file format: %({bad})");
+                        drop(stderr);
+                        std::process::exit(128);
+                    }
+                }
                 // -Z = NUL in + NUL out; -z = NUL in + LF out.
                 let input_delim: u8 = if nul_terminated || nul_input { 0 } else { b'\n' };
                 let output_delim: u8 = if nul_terminated { 0 } else { b'\n' };
