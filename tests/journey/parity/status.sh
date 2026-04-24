@@ -338,31 +338,26 @@ only_for_hash sha1-only && (small-repo-in-sandbox
 # --- submodule handling -------------------------------------------------
 
 # mode=effect — `--ignore-submodules[=<when>]` (none/untracked/dirty/all,
-# default=all when flag is bare). This fixture has no submodules so the
-# row exercises the CLI parse path only; submodule-state variations are
-# out of scope until a submodule fixture helper exists.
+# default=all when flag is bare). Clap: `IgnoreSubmodulesMode` ValueEnum
+# and `ignore_submodules: Option<IgnoreSubmodulesMode>` on the Platform.
+# This fixture has no submodules so only the CLI parse path is exercised.
 # hash=sha1-only "gix cannot load sha256 repos: extensions.objectFormat=sha256 rejected (gix/src/config/tree/sections/extensions.rs)"
 title "gix status --ignore-submodules[=<when>]"
 only_for_hash sha1-only && (small-repo-in-sandbox
   it "matches git behavior with bare --ignore-submodules (all)" && {
-    # TODO: expect_parity effect -- status --ignore-submodules
-    true
+    expect_parity effect -- status --ignore-submodules
   }
   it "matches git behavior with --ignore-submodules=none" && {
-    # TODO: expect_parity effect -- status --ignore-submodules=none
-    true
+    expect_parity effect -- status --ignore-submodules=none
   }
   it "matches git behavior with --ignore-submodules=untracked" && {
-    # TODO: expect_parity effect -- status --ignore-submodules=untracked
-    true
+    expect_parity effect -- status --ignore-submodules=untracked
   }
   it "matches git behavior with --ignore-submodules=dirty" && {
-    # TODO: expect_parity effect -- status --ignore-submodules=dirty
-    true
+    expect_parity effect -- status --ignore-submodules=dirty
   }
   it "matches git behavior with --ignore-submodules=all" && {
-    # TODO: expect_parity effect -- status --ignore-submodules=all
-    true
+    expect_parity effect -- status --ignore-submodules=all
   }
 )
 

@@ -429,12 +429,18 @@ pub fn main() -> Result<()> {
             porcelain,
             verbose: status_verbose_count,
             untracked_files,
+            ignore_submodules,
             statistics,
             submodules,
             no_write,
             pathspec,
             index_worktree_renames,
         }) => {
+            // `--ignore-submodules[=<when>]` accepted for compat. Effect-
+            // mode no-op; when a submodule fixture lands this flag will
+            // route into gix's submodule-ignore machinery (via the
+            // existing `submodules` threading just below).
+            let _ = ignore_submodules;
             // `-u<mode>` / `--untracked-files[=<mode>]` accepted for compat.
             // Wiring to gix-status's dirwalk emit-untracked flag is deferred
             // — the flag currently alters test-fixture text output but not

@@ -322,6 +322,18 @@ pub mod status {
         All,
     }
 
+    /// Mode argument for `--ignore-submodules[=<when>]`. Defaults to All
+    /// (the git default when flag is bare). Modes map to gix's submodule-
+    /// ignore semantics (gix::submodule::config::Ignore).
+    #[derive(Default, Debug, Copy, Clone, PartialEq, Eq, clap::ValueEnum)]
+    pub enum IgnoreSubmodulesMode {
+        None,
+        Untracked,
+        Dirty,
+        #[default]
+        All,
+    }
+
     #[derive(Debug, clap::Parser)]
     #[command(about = "Compute repository status similar to `git status`")]
     pub struct Platform {
@@ -371,6 +383,16 @@ pub mod status {
                value_name = "MODE", num_args = 0..=1,
                default_missing_value = "all")]
         pub untracked_files: Option<UntrackedMode>,
+        /// Ignore changes to submodules when looking for changes. Accepted
+        /// for compat with `git status --ignore-submodules[=<when>]`; the
+        /// existing `--submodules` flag already covers most of the range
+        /// in gix-native spelling. Under effect mode this is a no-op that
+        /// yields exit-code parity — submodule-visibility wiring is
+        /// deferred to a submodule-fixture iteration.
+        #[clap(long = "ignore-submodules",
+               value_name = "WHEN", num_args = 0..=1,
+               default_missing_value = "all")]
+        pub ignore_submodules: Option<IgnoreSubmodulesMode>,
         /// If enabled, show ignored files and directories.
         #[clap(long)]
         pub ignored: Option<Option<Ignored>>,
