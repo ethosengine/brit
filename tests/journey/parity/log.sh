@@ -95,20 +95,22 @@ only_for_hash dual && (sandbox
 # hash=sha1-only
 title "gix log (default, populated repo)"
 only_for_hash sha1-only && (small-repo-in-sandbox
-  # TODO — expect_parity effect -- log
-  it "matches git behavior" && { :; }
+  it "matches git: both exit 0, output format diverges" && {
+    expect_parity effect -- log
+  }
 )
 
-# mode=effect — empty repo (HEAD points at unborn branch). git exits 128
-# with "fatal: your current branch 'main' does not have any commits yet".
-# gix today bails from repo.head()?.peel_to_commit()? with its own
-# wording; exit code divergence expected until remapped.
+# mode=bytes — empty repo (HEAD points at unborn branch). git dies 128
+# with "fatal: your current branch '<short>' does not have any commits yet".
+# gitoxide-core/src/repository/log.rs now detects gix::head::Kind::Unborn
+# before peel_to_commit, emits git's exact wording, and std::process::exit(128).
 # hash=sha1-only
 title "gix log (empty repo, unborn HEAD)"
 only_for_hash sha1-only && (sandbox
   git-init-hash-aware
-  # TODO — expect_parity effect -- log
-  it "matches git behavior" && { :; }
+  it "matches git: byte-exact unborn wording + exit 128" && {
+    expect_parity bytes -- log
+  }
 )
 
 # mode=effect — log from a named branch tip. git walks ancestors of
