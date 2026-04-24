@@ -49,7 +49,7 @@ Deferred flag-level rows and compat-only rows live in [SHORTCOMINGS.md](SHORTCOM
 
 | git | gix | Status | Parity file | Notes |
 |---|---|---|---|---|
-| cat-file | gix cat | partial | — | — |
+| cat-file | gix cat | partial | [cat-file.sh](../../tests/journey/parity/cat-file.sh) | Scaffold — TODO rows across query modes (-e/-p/-t/-s), `<type> <object>` positional, mailmap, textconv/filters, batch family (--batch/--batch-check/--batch-command + --batch-all-objects/--buffer/--unordered/--follow-symlinks/-Z/-z), --filter=* (blob:none, blob:limit, object:type), format atoms (%objectname, %objecttype, %objectsize, %objectsize:disk, %deltabase, %rest, %objectmode), historical --allow-unknown-type, and combined-mode usage errors. First closable row (--help) also needs `visible_alias = "cat-file"` on the Cat subcommand to route `gix cat-file` → `gix cat`. |
 | rev-parse | gix revision | partial | — | — |
 | ls-files | — | absent | — | — |
 | ls-tree | gix tree | partial | — | — |
