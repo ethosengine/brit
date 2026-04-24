@@ -84,15 +84,14 @@ only_for_hash dual && (sandbox
 
 # --- happy paths ---------------------------------------------------------
 
-# mode=effect — baseline vanilla status in a clean repo, no flags. Output
-# text diverges ("nothing to commit" vs. gix's simplified listing), so
-# effect mode (exit-code parity only).
+# mode=effect — baseline vanilla status in a clean repo, no flags.
+# git prints "On branch <br>\nnothing to commit, working tree clean";
+# gix prints nothing. Both exit 0. Effect mode (exit-code parity only).
 # hash=sha1-only "gix cannot load sha256 repos: extensions.objectFormat=sha256 rejected (gix/src/config/tree/sections/extensions.rs)"
 title "gix status (clean working tree)"
 only_for_hash sha1-only && (small-repo-in-sandbox
   it "matches git behavior" && {
-    # TODO: expect_parity effect -- status
-    true
+    expect_parity effect -- status
   }
 )
 
