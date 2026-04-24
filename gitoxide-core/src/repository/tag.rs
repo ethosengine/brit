@@ -20,12 +20,36 @@ pub struct ListOptions {
     /// chains) at the resolved object. Git's `--points-at <object>`;
     /// `None` means "no filter".
     pub points_at: Option<OsString>,
+    /// When `Some`, only keep tags whose tagged commit has the
+    /// resolved commit in its ancestry. Git's `--contains <commit>`.
+    pub contains: Option<OsString>,
+    /// When `Some`, only keep tags whose tagged commit does NOT have
+    /// the resolved commit in its ancestry. Git's `--no-contains`.
+    pub no_contains: Option<OsString>,
     /// When `Some`, only keep tags whose tagged commit is reachable
     /// from the resolved commit. Git's `--merged <commit>`.
     pub merged: Option<OsString>,
     /// When `Some`, only keep tags whose tagged commit is NOT
     /// reachable from the resolved commit. Git's `--no-merged <commit>`.
     pub no_merged: Option<OsString>,
+}
+
+/// Return `true` iff `haystack_commit` has `needle` anywhere in its
+/// ancestry (walking parents). Inclusive — a commit contains itself.
+fn commit_contains(
+    repo: &gix::Repository,
+    haystack_commit: gix::ObjectId,
+    needle: gix::ObjectId,
+) -> anyhow::Result<bool> {
+    if haystack_commit == needle {
+        return Ok(true);
+    }
+    for res in haystack_commit.attach(repo).ancestors().all()? {
+        if res?.id == needle {
+            return Ok(true);
+        }
+    }
+    Ok(false)
 }
 
 fn ancestors_of(repo: &gix::Repository, rev: &OsString) -> anyhow::Result<HashSet<gix::ObjectId>> {
@@ -82,11 +106,29 @@ pub fn list(
         .map(|rev| ancestors_of(&repo, rev))
         .transpose()?;
 
+    // --contains / --no-contains resolve once; the per-tag walk runs
+    // inside the filter_map below (each tag_commit gets its own
+    // ancestry walk until the needle is found or exhausted).
+    let contains_oid: Option<gix::ObjectId> = match opts.contains.as_deref() {
+        Some(rev) => Some(repo.rev_parse_single(gix::path::os_str_into_bstr(rev)?)?.detach()),
+        None => None,
+    };
+    let no_contains_oid: Option<gix::ObjectId> = match opts.no_contains.as_deref() {
+        Some(rev) => Some(repo.rev_parse_single(gix::path::os_str_into_bstr(rev)?)?.detach()),
+        None => None,
+    };
+
+    let need_peel = points_at_oid.is_some()
+        || merged_set.is_some()
+        || no_merged_set.is_some()
+        || contains_oid.is_some()
+        || no_contains_oid.is_some();
+
     let mut names: Vec<BString> = platform
         .tags()?
         .flatten()
         .filter_map(|mut reference| {
-            let peeled = if points_at_oid.is_some() || merged_set.is_some() || no_merged_set.is_some() {
+            let peeled = if need_peel {
                 Some(reference.peel_to_id().ok()?.detach())
             } else {
                 None
@@ -104,6 +146,16 @@ pub fn list(
             }
             if let (Some(set), Some(peeled)) = (no_merged_set.as_ref(), peeled) {
                 if set.contains(&peeled) {
+                    return None;
+                }
+            }
+            if let (Some(needle), Some(peeled)) = (contains_oid, peeled) {
+                if !commit_contains(&repo, peeled, needle).ok()? {
+                    return None;
+                }
+            }
+            if let (Some(needle), Some(peeled)) = (no_contains_oid, peeled) {
+                if commit_contains(&repo, peeled, needle).ok()? {
                     return None;
                 }
             }

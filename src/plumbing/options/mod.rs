@@ -2021,6 +2021,16 @@ pub mod tag {
         #[clap(long, value_name = "object", num_args = 0..=1, default_missing_value = "HEAD")]
         pub points_at: Option<std::ffi::OsString>,
 
+        /// Only list tags that contain `<commit>` in their ancestry
+        /// (HEAD if omitted). Mirrors `OPT_CONTAINS`.
+        #[clap(long, value_name = "commit", num_args = 0..=1, default_missing_value = "HEAD")]
+        pub contains: Option<std::ffi::OsString>,
+
+        /// Only list tags that do NOT contain `<commit>` in their
+        /// ancestry (HEAD if omitted). Mirrors `OPT_NO_CONTAINS`.
+        #[clap(long, value_name = "commit", num_args = 0..=1, default_missing_value = "HEAD")]
+        pub no_contains: Option<std::ffi::OsString>,
+
         /// Only list tags whose tagged commit is reachable from `<commit>`
         /// (HEAD if omitted). Mirrors `OPT_MERGED`.
         #[clap(long, value_name = "commit", num_args = 0..=1, default_missing_value = "HEAD")]

@@ -161,11 +161,14 @@ only_for_hash sha1-only && (small-repo-in-sandbox
 # hash=sha1-only
 title "gix tag --contains"
 only_for_hash sha1-only && (small-repo-in-sandbox
-  it "matches git behavior with --contains HEAD (TODO)" && {
-    : # TODO: expect_parity bytes -- tag --contains HEAD
+  it "matches git behavior with --contains HEAD" && {
+    expect_parity bytes -- tag --contains HEAD
   }
-  it "matches git behavior with --contains (no arg, defaults to HEAD) (TODO)" && {
-    : # TODO: expect_parity bytes -- tag --contains
+  it "matches git behavior with --contains HEAD~" && {
+    expect_parity bytes -- tag --contains HEAD~
+  }
+  it "matches git behavior with --contains (no arg, defaults to HEAD)" && {
+    expect_parity bytes -- tag --contains
   }
 )
 
@@ -174,8 +177,11 @@ only_for_hash sha1-only && (small-repo-in-sandbox
 # hash=sha1-only
 title "gix tag --no-contains"
 only_for_hash sha1-only && (small-repo-in-sandbox
-  it "matches git behavior with --no-contains HEAD (TODO)" && {
-    : # TODO: expect_parity bytes -- tag --no-contains HEAD
+  it "matches git behavior with --no-contains HEAD" && {
+    expect_parity bytes -- tag --no-contains HEAD
+  }
+  it "matches git behavior with --no-contains HEAD~" && {
+    expect_parity bytes -- tag --no-contains HEAD~
   }
 )
 
