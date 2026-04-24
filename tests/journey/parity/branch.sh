@@ -64,8 +64,8 @@ title "gix branch"
 # hash=dual
 title "gix branch --help"
 only_for_hash dual && (sandbox
-  it "matches git behavior (TODO)" && {
-    : # TODO: expect_parity effect -- branch --help
+  it "matches git behavior" && {
+    expect_parity effect -- branch --help
   }
 )
 
