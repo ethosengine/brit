@@ -931,6 +931,110 @@ pub mod log {
         #[clap(short = 'L', value_parser = crate::shared::AsBString, value_name = "range:file")]
         pub line_range: Vec<BString>,
 
+        // --- pickaxe (accepted but semantics deferred) ---
+        /// Show only commits that add or remove a line matching <regex>.
+        #[clap(short = 'G', value_parser = crate::shared::AsBString, value_name = "regex")]
+        pub pickaxe_regex_g: Option<BString>,
+        /// Show only commits whose diff changes the occurrence count of <string>.
+        #[clap(short = 'S', value_parser = crate::shared::AsBString, value_name = "string")]
+        pub pickaxe_string_s: Option<BString>,
+        /// Treat -S <string> as a regex (implied by -G).
+        #[clap(long)]
+        pub pickaxe_regex: bool,
+        /// Include merge commits when pickaxe-matching.
+        #[clap(long)]
+        pub pickaxe_all: bool,
+
+        // --- cherry / left-right family (accepted but semantics deferred) ---
+        /// Show only commits that are cherry-pickable (equivalence class).
+        #[clap(long)]
+        pub cherry: bool,
+        /// Mark commits on left and right sides of a symmetric range.
+        #[clap(long)]
+        pub cherry_mark: bool,
+        /// Like --cherry-mark, but omit commits equivalent to their mirror.
+        #[clap(long)]
+        pub cherry_pick: bool,
+        /// Show only commits reachable from the left side of A...B.
+        #[clap(long)]
+        pub left_only: bool,
+        /// Show only commits reachable from the right side of A...B.
+        #[clap(long)]
+        pub right_only: bool,
+        /// Mark which side of a symmetric range each commit is reachable from.
+        #[clap(long)]
+        pub left_right: bool,
+
+        // --- reflog walk ---
+        /// Walk reflog entries rather than commit ancestry.
+        #[clap(short = 'g', long = "walk-reflogs")]
+        pub walk_reflogs: bool,
+        /// Limit commits by reflog message regex (requires --walk-reflogs).
+        #[clap(long, value_parser = crate::shared::AsBString, value_name = "pattern")]
+        pub grep_reflog: Option<BString>,
+
+        // --- history simplification ---
+        /// Simplify history, showing only decoration-carrying commits.
+        #[clap(long)]
+        pub simplify_by_decoration: bool,
+        /// Simplify merges to only the "interesting" ones.
+        #[clap(long)]
+        pub simplify_merges: bool,
+        /// Show full history (no parent rewriting).
+        #[clap(long)]
+        pub full_history: bool,
+        /// Alias for --full-history.
+        #[clap(long)]
+        pub dense: bool,
+        /// Alias for --simplify-by-decoration — sparse history.
+        #[clap(long)]
+        pub sparse: bool,
+        /// Don't walk ancestors — emit only the given revisions.
+        #[clap(long)]
+        pub no_walk: bool,
+        /// Re-enable walking after a prior --no-walk.
+        #[clap(long)]
+        pub do_walk: bool,
+        /// Emit commits in the order encountered (not topo-sorted).
+        #[clap(long)]
+        pub in_commit_order: bool,
+
+        // --- extra ref-selection companions ---
+        /// Exclude refs matching <pattern> from --all/--branches/--tags/--remotes.
+        #[clap(long, value_parser = crate::shared::AsBString, value_name = "pattern")]
+        pub exclude: Vec<BString>,
+        /// Include refs matching <pattern> (glob).
+        #[clap(long, value_parser = crate::shared::AsBString, value_name = "pattern")]
+        pub glob: Vec<BString>,
+        /// Include refs from alternate object stores.
+        #[clap(long)]
+        pub alternate_refs: bool,
+
+        // --- parents / children / misc display ---
+        /// Print the parent(s) on each commit line.
+        #[clap(long)]
+        pub parents: bool,
+        /// Print the children of each commit.
+        #[clap(long)]
+        pub children: bool,
+        /// Show merge commits only if they rejoin the main branch.
+        #[clap(long)]
+        pub show_pulls: bool,
+        /// Emit separator marks between linear history segments.
+        #[clap(long)]
+        pub show_linear_break: bool,
+        /// NUL-terminate output records instead of newlines.
+        #[clap(short = 'z')]
+        pub z: bool,
+        /// Print only the commit count instead of the walk.
+        #[clap(long)]
+        pub count: bool,
+
+        // --- submodule diff control ---
+        /// Submodule diff rendering mode.
+        #[clap(long, value_parser = crate::shared::AsBString, value_name = "mode")]
+        pub submodule: Option<BString>,
+
         /// Revision(s) to walk from. Multiple revspecs are accepted (git's
         /// rev-list grammar). Only the first is honored today; --not / multi-
         /// revspec composition is a later parity row.

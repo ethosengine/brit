@@ -110,4 +110,34 @@ Two row classes:
 | compat | `gix log --no-color` | gix log --no-color color-suppression deferred (never emitted colors anyway) — clap accepted | [log.sh:1009](../../tests/journey/parity/log.sh#L1009) |
 | compat | `gix log --boundary` | gix log --boundary + --not boundary-marker emission deferred — clap accepted | [log.sh:1020](../../tests/journey/parity/log.sh#L1020) |
 | compat | `gix log --ancestry-path` | gix log --ancestry-path ancestry filter deferred — clap accepted | [log.sh:1029](../../tests/journey/parity/log.sh#L1029) |
+| compat | `gix log -G<regex>` | gix log -G pickaxe line-add/remove regex deferred — flag accepted | [log.sh:1040](../../tests/journey/parity/log.sh#L1040) |
+| compat | `gix log -S<string>` | gix log -S pickaxe occurrence-count deferred — flag accepted | [log.sh:1049](../../tests/journey/parity/log.sh#L1049) |
+| compat | `gix log --pickaxe-regex` | gix log --pickaxe-regex -S-as-regex mode deferred — flag accepted | [log.sh:1058](../../tests/journey/parity/log.sh#L1058) |
+| compat | `gix log --pickaxe-all` | gix log --pickaxe-all merge-inclusion in pickaxe deferred — flag accepted | [log.sh:1067](../../tests/journey/parity/log.sh#L1067) |
+| compat | `gix log --cherry` | gix log --cherry patch-equivalence detection deferred — flag accepted | [log.sh:1078](../../tests/journey/parity/log.sh#L1078) |
+| compat | `gix log --cherry-mark` | gix log --cherry-mark equivalence-class annotation deferred — flag accepted | [log.sh:1087](../../tests/journey/parity/log.sh#L1087) |
+| compat | `gix log --cherry-pick` | gix log --cherry-pick equivalence-class filter deferred — flag accepted | [log.sh:1096](../../tests/journey/parity/log.sh#L1096) |
+| compat | `gix log --left-only` | gix log --left-only symmetric-diff side filter deferred — flag accepted | [log.sh:1105](../../tests/journey/parity/log.sh#L1105) |
+| compat | `gix log --right-only` | gix log --right-only symmetric-diff side filter deferred — flag accepted | [log.sh:1114](../../tests/journey/parity/log.sh#L1114) |
+| compat | `gix log --left-right` | gix log --left-right symmetric-diff side annotation deferred — flag accepted | [log.sh:1123](../../tests/journey/parity/log.sh#L1123) |
+| compat | `gix log -g / --walk-reflogs` | gix log --walk-reflogs reflog traversal mode deferred — flag accepted | [log.sh:1134](../../tests/journey/parity/log.sh#L1134) |
+| compat | `gix log --grep-reflog=<pattern>` | gix log --grep-reflog reflog message filter deferred — flag accepted | [log.sh:1143](../../tests/journey/parity/log.sh#L1143) |
+| compat | `gix log --simplify-by-decoration` | gix log --simplify-by-decoration history simplification deferred — flag accepted | [log.sh:1154](../../tests/journey/parity/log.sh#L1154) |
+| compat | `gix log --simplify-merges` | gix log --simplify-merges merge-simplification deferred — flag accepted | [log.sh:1163](../../tests/journey/parity/log.sh#L1163) |
+| compat | `gix log --full-history` | gix log --full-history disables history simplification — flag accepted, simplification never applied in gix | [log.sh:1172](../../tests/journey/parity/log.sh#L1172) |
+| compat | `gix log --dense` | gix log --dense alias for --full-history — flag accepted | [log.sh:1181](../../tests/journey/parity/log.sh#L1181) |
+| compat | `gix log --sparse` | gix log --sparse sparse-history mode deferred — flag accepted | [log.sh:1190](../../tests/journey/parity/log.sh#L1190) |
+| compat | `gix log --no-walk` | gix log --no-walk traversal suppression deferred — flag accepted | [log.sh:1199](../../tests/journey/parity/log.sh#L1199) |
+| compat | `gix log --do-walk` | gix log --do-walk --no-walk override deferred — flag accepted | [log.sh:1208](../../tests/journey/parity/log.sh#L1208) |
+| compat | `gix log --in-commit-order` | gix log --in-commit-order emission-order override deferred — flag accepted | [log.sh:1217](../../tests/journey/parity/log.sh#L1217) |
+| compat | `gix log --exclude=<pattern>` | gix log --exclude ref-category exclusion deferred — flag accepted | [log.sh:1228](../../tests/journey/parity/log.sh#L1228) |
+| compat | `gix log --glob=<pattern>` | gix log --glob glob ref-selection deferred — flag accepted | [log.sh:1237](../../tests/journey/parity/log.sh#L1237) |
+| compat | `gix log --alternate-refs` | gix log --alternate-refs alternates traversal deferred — flag accepted | [log.sh:1246](../../tests/journey/parity/log.sh#L1246) |
+| compat | `gix log --parents` | gix log --parents parent-id emission deferred — flag accepted | [log.sh:1257](../../tests/journey/parity/log.sh#L1257) |
+| compat | `gix log --children` | gix log --children child-id emission deferred — flag accepted | [log.sh:1266](../../tests/journey/parity/log.sh#L1266) |
+| compat | `gix log --show-pulls` | gix log --show-pulls merge rejoin detection deferred — flag accepted | [log.sh:1275](../../tests/journey/parity/log.sh#L1275) |
+| compat | `gix log --show-linear-break` | gix log --show-linear-break linear-break marker deferred — flag accepted | [log.sh:1284](../../tests/journey/parity/log.sh#L1284) |
+| compat | `gix log -z` | gix log -z NUL-terminator emission deferred — flag accepted | [log.sh:1293](../../tests/journey/parity/log.sh#L1293) |
+| compat | `gix log --count` | gix log --count count-only suppression deferred — flag accepted | [log.sh:1302](../../tests/journey/parity/log.sh#L1302) |
+| compat | `gix log --submodule=<mode>` | gix log --submodule diff rendering mode deferred — flag accepted | [log.sh:1313](../../tests/journey/parity/log.sh#L1313) |
 

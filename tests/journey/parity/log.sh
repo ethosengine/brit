@@ -1030,6 +1030,290 @@ only_for_hash sha1-only && (small-repo-in-sandbox
   }
 )
 
+# --- pickaxe family ---------------------------------------------------
+
+# mode=effect — -G<regex>: show commits that add/remove a matching line.
+# hash=sha1-only
+title "gix log -G<regex>"
+only_for_hash sha1-only && (small-repo-in-sandbox
+  it "matches git: -G<regex> clap-accepted, pickaxe semantics deferred" && {
+    compat_effect "gix log -G pickaxe line-add/remove regex deferred — flag accepted" -- log -G foo
+  }
+)
+
+# mode=effect — -S<string>: show commits that change the occurrence count.
+# hash=sha1-only
+title "gix log -S<string>"
+only_for_hash sha1-only && (small-repo-in-sandbox
+  it "matches git: -S<string> clap-accepted, pickaxe semantics deferred" && {
+    compat_effect "gix log -S pickaxe occurrence-count deferred — flag accepted" -- log -S foo
+  }
+)
+
+# mode=effect — --pickaxe-regex: treat -S as regex (implied by -G).
+# hash=sha1-only
+title "gix log --pickaxe-regex"
+only_for_hash sha1-only && (small-repo-in-sandbox
+  it "matches git: --pickaxe-regex clap-accepted, regex mode deferred" && {
+    compat_effect "gix log --pickaxe-regex -S-as-regex mode deferred — flag accepted" -- log --pickaxe-regex -S foo
+  }
+)
+
+# mode=effect — --pickaxe-all: include merge commits in pickaxe-match.
+# hash=sha1-only
+title "gix log --pickaxe-all"
+only_for_hash sha1-only && (small-repo-in-sandbox
+  it "matches git: --pickaxe-all clap-accepted, merge-inclusion deferred" && {
+    compat_effect "gix log --pickaxe-all merge-inclusion in pickaxe deferred — flag accepted" -- log --pickaxe-all -S foo
+  }
+)
+
+# --- cherry / left-right family ---------------------------------------
+
+# mode=effect — --cherry: shorthand for --right-only --cherry-mark --no-merges.
+# hash=sha1-only
+title "gix log --cherry"
+only_for_hash sha1-only && (small-repo-in-sandbox
+  it "matches git: --cherry clap-accepted, equivalence-class detection deferred" && {
+    compat_effect "gix log --cherry patch-equivalence detection deferred — flag accepted" -- log --cherry
+  }
+)
+
+# mode=effect — --cherry-mark: annotate commits with = or +.
+# hash=sha1-only
+title "gix log --cherry-mark"
+only_for_hash sha1-only && (small-repo-in-sandbox
+  it "matches git: --cherry-mark clap-accepted, equivalence marks deferred" && {
+    compat_effect "gix log --cherry-mark equivalence-class annotation deferred — flag accepted" -- log --cherry-mark dev...main
+  }
+)
+
+# mode=effect — --cherry-pick: omit equivalent commits in symmetric diff.
+# hash=sha1-only
+title "gix log --cherry-pick"
+only_for_hash sha1-only && (small-repo-in-sandbox
+  it "matches git: --cherry-pick clap-accepted, equivalence-filter deferred" && {
+    compat_effect "gix log --cherry-pick equivalence-class filter deferred — flag accepted" -- log --cherry-pick dev...main
+  }
+)
+
+# mode=effect — --left-only: filter left side of A...B.
+# hash=sha1-only
+title "gix log --left-only"
+only_for_hash sha1-only && (small-repo-in-sandbox
+  it "matches git: --left-only clap-accepted, side filter deferred" && {
+    compat_effect "gix log --left-only symmetric-diff side filter deferred — flag accepted" -- log --left-only dev...main
+  }
+)
+
+# mode=effect — --right-only: filter right side of A...B.
+# hash=sha1-only
+title "gix log --right-only"
+only_for_hash sha1-only && (small-repo-in-sandbox
+  it "matches git: --right-only clap-accepted, side filter deferred" && {
+    compat_effect "gix log --right-only symmetric-diff side filter deferred — flag accepted" -- log --right-only dev...main
+  }
+)
+
+# mode=effect — --left-right: annotate each commit with < or > side.
+# hash=sha1-only
+title "gix log --left-right"
+only_for_hash sha1-only && (small-repo-in-sandbox
+  it "matches git: --left-right clap-accepted, side annotation deferred" && {
+    compat_effect "gix log --left-right symmetric-diff side annotation deferred — flag accepted" -- log --left-right dev...main
+  }
+)
+
+# --- reflog walk ------------------------------------------------------
+
+# mode=effect — -g / --walk-reflogs: walk reflog entries instead of ancestry.
+# hash=sha1-only
+title "gix log -g / --walk-reflogs"
+only_for_hash sha1-only && (small-repo-in-sandbox
+  it "matches git: -g/--walk-reflogs clap-accepted, reflog traversal deferred" && {
+    compat_effect "gix log --walk-reflogs reflog traversal mode deferred — flag accepted" -- log --walk-reflogs
+  }
+)
+
+# mode=effect — --grep-reflog: filter reflog entries by regex.
+# hash=sha1-only
+title "gix log --grep-reflog=<pattern>"
+only_for_hash sha1-only && (small-repo-in-sandbox
+  it "matches git: --grep-reflog clap-accepted, reflog filter deferred" && {
+    compat_effect "gix log --grep-reflog reflog message filter deferred — flag accepted" -- log --walk-reflogs --grep-reflog=.
+  }
+)
+
+# --- history simplification -------------------------------------------
+
+# mode=effect — --simplify-by-decoration: keep only decoration-carrying commits.
+# hash=sha1-only
+title "gix log --simplify-by-decoration"
+only_for_hash sha1-only && (small-repo-in-sandbox
+  it "matches git: --simplify-by-decoration clap-accepted, simplification deferred" && {
+    compat_effect "gix log --simplify-by-decoration history simplification deferred — flag accepted" -- log --simplify-by-decoration
+  }
+)
+
+# mode=effect — --simplify-merges: drop uninteresting merge commits.
+# hash=sha1-only
+title "gix log --simplify-merges"
+only_for_hash sha1-only && (small-repo-in-sandbox
+  it "matches git: --simplify-merges clap-accepted, simplification deferred" && {
+    compat_effect "gix log --simplify-merges merge-simplification deferred — flag accepted" -- log --simplify-merges
+  }
+)
+
+# mode=effect — --full-history: disable history simplification.
+# hash=sha1-only
+title "gix log --full-history"
+only_for_hash sha1-only && (small-repo-in-sandbox
+  it "matches git: --full-history clap-accepted, simplification control deferred" && {
+    compat_effect "gix log --full-history disables history simplification — flag accepted, simplification never applied in gix" -- log --full-history
+  }
+)
+
+# mode=effect — --dense: alias for --full-history.
+# hash=sha1-only
+title "gix log --dense"
+only_for_hash sha1-only && (small-repo-in-sandbox
+  it "matches git: --dense clap-accepted, simplification control deferred" && {
+    compat_effect "gix log --dense alias for --full-history — flag accepted" -- log --dense
+  }
+)
+
+# mode=effect — --sparse: opposite of --dense.
+# hash=sha1-only
+title "gix log --sparse"
+only_for_hash sha1-only && (small-repo-in-sandbox
+  it "matches git: --sparse clap-accepted, simplification control deferred" && {
+    compat_effect "gix log --sparse sparse-history mode deferred — flag accepted" -- log --sparse
+  }
+)
+
+# mode=effect — --no-walk: don't traverse ancestors of given revisions.
+# hash=sha1-only
+title "gix log --no-walk"
+only_for_hash sha1-only && (small-repo-in-sandbox
+  it "matches git: --no-walk clap-accepted, single-commit mode deferred" && {
+    compat_effect "gix log --no-walk traversal suppression deferred — flag accepted" -- log --no-walk main
+  }
+)
+
+# mode=effect — --do-walk: override a previous --no-walk.
+# hash=sha1-only
+title "gix log --do-walk"
+only_for_hash sha1-only && (small-repo-in-sandbox
+  it "matches git: --do-walk clap-accepted, --no-walk override deferred" && {
+    compat_effect "gix log --do-walk --no-walk override deferred — flag accepted" -- log --do-walk main
+  }
+)
+
+# mode=effect — --in-commit-order: emit in encounter order.
+# hash=sha1-only
+title "gix log --in-commit-order"
+only_for_hash sha1-only && (small-repo-in-sandbox
+  it "matches git: --in-commit-order clap-accepted, ordering deferred" && {
+    compat_effect "gix log --in-commit-order emission-order override deferred — flag accepted" -- log --in-commit-order
+  }
+)
+
+# --- extra ref-selection ----------------------------------------------
+
+# mode=effect — --exclude=<pattern>: exclude refs from subsequent --all etc.
+# hash=sha1-only
+title "gix log --exclude=<pattern>"
+only_for_hash sha1-only && (small-repo-in-sandbox
+  it "matches git: --exclude clap-accepted, ref-category filter deferred" && {
+    compat_effect "gix log --exclude ref-category exclusion deferred — flag accepted" -- log --exclude=refs/heads/dev --all
+  }
+)
+
+# mode=effect — --glob=<pattern>: include refs matching glob.
+# hash=sha1-only
+title "gix log --glob=<pattern>"
+only_for_hash sha1-only && (small-repo-in-sandbox
+  it "matches git: --glob clap-accepted, glob-based ref selection deferred" && {
+    compat_effect "gix log --glob glob ref-selection deferred — flag accepted" -- log --glob=refs/heads/*
+  }
+)
+
+# mode=effect — --alternate-refs: include refs from alternate object stores.
+# hash=sha1-only
+title "gix log --alternate-refs"
+only_for_hash sha1-only && (small-repo-in-sandbox
+  it "matches git: --alternate-refs clap-accepted, alternates deferred" && {
+    compat_effect "gix log --alternate-refs alternates traversal deferred — flag accepted" -- log --alternate-refs
+  }
+)
+
+# --- parents / children / display -------------------------------------
+
+# mode=effect — --parents: print each commit's parents inline.
+# hash=sha1-only
+title "gix log --parents"
+only_for_hash sha1-only && (small-repo-in-sandbox
+  it "matches git: --parents clap-accepted, parent emission deferred" && {
+    compat_effect "gix log --parents parent-id emission deferred — flag accepted" -- log --parents
+  }
+)
+
+# mode=effect — --children: print each commit's children inline.
+# hash=sha1-only
+title "gix log --children"
+only_for_hash sha1-only && (small-repo-in-sandbox
+  it "matches git: --children clap-accepted, child emission deferred" && {
+    compat_effect "gix log --children child-id emission deferred — flag accepted" -- log --children
+  }
+)
+
+# mode=effect — --show-pulls: surface rejoined merges.
+# hash=sha1-only
+title "gix log --show-pulls"
+only_for_hash sha1-only && (small-repo-in-sandbox
+  it "matches git: --show-pulls clap-accepted, pull-rejoin surfacing deferred" && {
+    compat_effect "gix log --show-pulls merge rejoin detection deferred — flag accepted" -- log --show-pulls
+  }
+)
+
+# mode=effect — --show-linear-break: emit separator on linear-break boundaries.
+# hash=sha1-only
+title "gix log --show-linear-break"
+only_for_hash sha1-only && (small-repo-in-sandbox
+  it "matches git: --show-linear-break clap-accepted, break-marker deferred" && {
+    compat_effect "gix log --show-linear-break linear-break marker deferred — flag accepted" -- log --show-linear-break
+  }
+)
+
+# mode=effect — -z: NUL-terminated output records.
+# hash=sha1-only
+title "gix log -z"
+only_for_hash sha1-only && (small-repo-in-sandbox
+  it "matches git: -z clap-accepted, NUL-termination deferred" && {
+    compat_effect "gix log -z NUL-terminator emission deferred — flag accepted" -- log -z
+  }
+)
+
+# mode=effect — --count: commits matching count, suppress output.
+# hash=sha1-only
+title "gix log --count"
+only_for_hash sha1-only && (small-repo-in-sandbox
+  it "matches git: --count clap-accepted, count-only mode deferred" && {
+    compat_effect "gix log --count count-only suppression deferred — flag accepted" -- log --count
+  }
+)
+
+# --- submodule diff control -------------------------------------------
+
+# mode=effect — --submodule=<mode>: diff rendering mode for submodules.
+# hash=sha1-only
+title "gix log --submodule=<mode>"
+only_for_hash sha1-only && (small-repo-in-sandbox
+  it "matches git: --submodule clap-accepted, submodule diff mode deferred" && {
+    compat_effect "gix log --submodule diff rendering mode deferred — flag accepted" -- log --submodule=log
+  }
+)
+
 # End-of-file sentinel: when every row is `only_for_hash sha1-only` and the
 # active hash is sha256, the last statement returns 1 (skip), which would
 # propagate out of `source` and trip `set -e` in tests/parity.sh. A trailing
