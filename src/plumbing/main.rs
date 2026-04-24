@@ -60,12 +60,21 @@ pub fn main() -> Result<()> {
     // the top-level parse and remap only UnknownArgument; other clap errors
     // keep their default exit code (0 for --help / --version display, 2 for
     // value-validation / conflict / missing-required).
+    //
+    // `git log` is an outlier: it calls parse_options with
+    // PARSE_OPT_KEEP_UNKNOWN_OPT and then dies via die() (not usage_msg_opt)
+    // when argc>1 — exit 128, not 129. Detect the intended subcommand from
+    // argv so we can remap to the right exit code.
     let args: Args = match Args::try_parse_from(gix::env::args_os()) {
         Ok(args) => args,
         Err(e) => {
             if e.kind() == clap::error::ErrorKind::UnknownArgument {
                 let _ = e.print();
-                std::process::exit(129);
+                let exit_code = match detect_subcommand_from_argv().as_deref() {
+                    Some("log") => 128,
+                    _ => 129,
+                };
+                std::process::exit(exit_code);
             }
             e.exit();
         }
@@ -2175,6 +2184,40 @@ pub fn main() -> Result<()> {
         }
     }?;
     Ok(())
+}
+
+/// Walk `args_os()` looking for the first positional — the subcommand name.
+/// Used by the UnknownArgument remap to apply command-specific exit codes
+/// (e.g. `log` dies via die() → 128, rest use usage_msg_opt → 129). Must
+/// stay in sync with the top-level `Args` struct in `options/mod.rs`:
+/// every global option that takes a value is listed here so the scan
+/// skips its value token.
+fn detect_subcommand_from_argv() -> Option<String> {
+    // Long options taking a value on the top-level Args.
+    const VALUE_FLAGS_LONG: &[&str] = &["--repository", "--config", "--threads", "--format", "--object-hash"];
+    // Short options taking a value on the top-level Args.
+    const VALUE_FLAGS_SHORT: &[&str] = &["-r", "-c", "-t", "-f"];
+
+    let mut iter = gix::env::args_os().skip(1);
+    while let Some(arg) = iter.next() {
+        let s = arg.to_string_lossy();
+        // `--flag=value` forms carry their value inline — always a flag, skip.
+        if s.starts_with("--") && s.contains('=') {
+            continue;
+        }
+        // `--flag value` / `-f value` forms: consume the next token as the value.
+        if VALUE_FLAGS_LONG.contains(&s.as_ref()) || VALUE_FLAGS_SHORT.contains(&s.as_ref()) {
+            let _ = iter.next();
+            continue;
+        }
+        // Any other flag-looking token: skip.
+        if s.starts_with('-') {
+            continue;
+        }
+        // First positional — the subcommand name.
+        return Some(s.into_owned());
+    }
+    None
 }
 
 fn stdin_or_bail() -> Result<std::io::BufReader<std::io::Stdin>> {

@@ -60,15 +60,17 @@ only_for_hash dual && (sandbox
 
 # --- argument-parsing error paths --------------------------------------
 
-# mode=effect — unknown flag: git exits 129. gix's Clap layer exits 129
-# via the UnknownArgument remap in src/plumbing/main.rs (same wiring
-# used by status.sh). Tested inside a repo so the arg-parse path runs
-# after repo setup; an outside-repo run dies 128 before arg-parse.
+# mode=effect — unknown flag: git log specifically calls parse_options
+# with PARSE_OPT_KEEP_UNKNOWN_OPT (vendor/git/builtin/log.c:307) and then
+# die()s on argc>1 at line 316 — exit 128, not the usual 129 that
+# usage_msg_opt would emit. src/plumbing/main.rs::detect_subcommand_from_argv
+# recognizes `log` specifically and remaps UnknownArgument to 128 for it.
 # hash=sha1-only
 title "gix log --bogus-flag"
 only_for_hash sha1-only && (small-repo-in-sandbox
-  # TODO — expect_parity effect -- log --bogus-flag
-  it "matches git behavior" && { :; }
+  it "matches git: --bogus-flag dies 128 (log-specific)" && {
+    expect_parity effect -- log --bogus-flag
+  }
 )
 
 # mode=effect — `git log` outside any repo dies 128 with
