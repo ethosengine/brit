@@ -1,0 +1,510 @@
+# Must be sourced into tests/parity.sh or tests/journey.sh — see tests/parity.sh.
+#
+# Parity scaffold for `git branch` ↔ `gix branch`.
+#
+# One `title` + `it` block per flag derived from
+# vendor/git/Documentation/git-branch.adoc (OPTIONS section) and
+# vendor/git/builtin/branch.c (cmd_branch options[] array, lines ~730-780)
+# plus the seven synopsis forms (list, create, set-upstream-to,
+# unset-upstream, move, copy, delete, edit-description).
+#
+# Verdict modes (comment above each block):
+#   bytes  — scriptable output consumed by tooling: list-mode output
+#            (plain list, patterns, --format, --sort, --column,
+#            --show-current), --points-at, --contains, --merged.
+#            Most list-mode rows want byte parity.
+#   effect — UX-level parity (exit-code match + optional prose check).
+#            Used for usage/error paths, help, create-mode (where the
+#            observable effect is a ref written to refs/heads/ rather
+#            than stdout bytes), delete-mode, and rename/copy paths.
+#
+# Coverage on gix's current Clap surface (src/plumbing/options/mod.rs,
+# `pub mod branch`):
+#   Subcommands::Branch(branch::Platform) with only `Subcommands::List { all }`.
+# There is no top-level flag-only form, no `-r/--remotes` toggle, no
+# delete/move/copy/create/set-upstream/unset-upstream/show-current path,
+# and no `--format`/`--sort`/`--column` plumbing. Every row below (other
+# than bare `gix branch list`, which is already wired through
+# gitoxide_core::repository::branch::list) will fail its first parity
+# attempt by tripping Clap's UnknownArgument / unknown-subcommand path.
+#
+# Closing a row generally requires:
+#   (1) restructure the `Branch(Platform)` surface from a nested-Subcommand
+#       shape to a flag-bearing top-level struct that mirrors git's
+#       cmdmode ('l'/'d'/'D'/'m'/'M'/'c'/'C'/'u'/'unset-upstream'/
+#       'show-current'/'edit-description') + modifier flags,
+#   (2) wire the flag to gitoxide_core::repository::branch in new
+#       subroutines (create/delete/rename/copy/set-upstream/
+#       unset-upstream/show-current), using gix_ref / gix::refs::transaction
+#       for the mutation path and gix_revision / gix_traverse for the
+#       reachability filters (--contains / --merged),
+#   (3) translate C-side invariants — filter.with_commit / filter.no_commit
+#       reachability, OPT_REF_SORT semantics, for-each-ref %(fieldname)
+#       atom set, asterisk/highlight for the current branch — to Rust.
+#
+# Hash coverage: every row that opens a repository is `sha1-only` because
+# gix-config rejects `extensions.objectFormat=sha256`
+# (gix/src/config/tree/sections/extensions.rs try_into_object_format,
+# sha1-only validator). Rows that short-circuit before repo load
+# (--help, outside-of-repo, unknown-flag-pre-repo) are `dual`. Rows
+# flip to `dual` once that validator accepts sha256.
+#
+# parity-defaults:
+#   hash=sha1-only "gix cannot load sha256 repos: extensions.objectFormat=sha256 rejected (gix/src/config/tree/sections/extensions.rs)"
+#   mode=effect
+
+title "gix branch"
+
+# --- meta / help --------------------------------------------------------
+
+# mode=effect — clap --help short-circuits before repo load, exits 0.
+# git's --help delegates to `man git-branch`; gix returns clap's auto-
+# generated help. Message text diverges wildly; only the exit-code
+# match is asserted.
+# hash=dual
+title "gix branch --help"
+only_for_hash dual && (sandbox
+  it "matches git behavior (TODO)" && {
+    : # TODO: expect_parity effect -- branch --help
+  }
+)
+
+# --- argument-parsing error paths --------------------------------------
+
+# mode=effect — unknown flag: git exits 129 (usage_msg_opt in
+# vendor/git/parse-options.c). gix's Clap layer maps UnknownArgument to
+# 129 via src/plumbing/main.rs. Tested inside a repo so the arg-parse
+# path runs after repo setup.
+# hash=sha1-only
+title "gix branch --bogus-flag"
+only_for_hash sha1-only && (small-repo-in-sandbox
+  it "matches git behavior (TODO)" && {
+    : # TODO: expect_parity effect -- branch --bogus-flag
+  }
+)
+
+# mode=bytes — `git branch` outside any repo dies 128 with the standard
+# "fatal: not a git repository" stanza. gix's plumbing repository()
+# closure maps the RepositoryOpen error to the same exit-code.
+# hash=dual
+title "gix branch (outside a repository)"
+only_for_hash dual && (sandbox
+  it "matches git behavior (TODO)" && {
+    : # TODO: expect_parity bytes -- branch
+  }
+)
+
+# --- list mode (default + -l/--list) -----------------------------------
+
+# mode=bytes — no args, no flags: list local branches in sort-by-refname
+# order, with current-branch asterisk prefix and two-space indent on
+# non-current rows. vendor/git/builtin/branch.c print_ref_list() writes
+# "  <name>\n" for non-current and "* <name>\n" for current.
+# hash=sha1-only
+title "gix branch (bare list)"
+only_for_hash sha1-only && (small-repo-in-sandbox
+  it "matches git behavior (TODO)" && {
+    : # TODO: expect_parity bytes -- branch
+  }
+)
+
+# mode=bytes — `-l` / `--list` with no pattern is equivalent to bare
+# listing; with a pattern it filters via fnmatch(3).
+# hash=sha1-only
+title "gix branch --list"
+only_for_hash sha1-only && (small-repo-in-sandbox
+  it "matches git behavior — no pattern (TODO)" && {
+    : # TODO: expect_parity bytes -- branch --list
+  }
+  it "matches git behavior — with pattern (TODO)" && {
+    : # TODO: expect_parity bytes -- branch --list 'd*'
+  }
+)
+
+# mode=bytes — `-r` / `--remotes` lists remote-tracking branches only.
+# Requires a repo with at least one remote-tracking ref.
+# hash=sha1-only
+title "gix branch --remotes"
+only_for_hash sha1-only && (small-repo-in-sandbox
+  it "matches git behavior (TODO)" && {
+    : # TODO: expect_parity bytes -- branch --remotes
+  }
+)
+
+# mode=bytes — `-a` / `--all` lists local + remote-tracking. Already
+# wired in gix via `Subcommands::List { all: true }`; the bytes-level
+# row-order / asterisk match may still diverge.
+# hash=sha1-only
+title "gix branch --all"
+only_for_hash sha1-only && (small-repo-in-sandbox
+  it "matches git behavior (TODO)" && {
+    : # TODO: expect_parity bytes -- branch --all
+  }
+)
+
+# mode=bytes — `--show-current` prints the current branch name alone,
+# or nothing in detached HEAD. Two rows: on-branch, and detached.
+# hash=sha1-only
+title "gix branch --show-current"
+only_for_hash sha1-only && (small-repo-in-sandbox
+  it "matches git behavior — on a branch (TODO)" && {
+    : # TODO: expect_parity bytes -- branch --show-current
+  }
+  it "matches git behavior — detached HEAD (TODO)" && {
+    : # TODO: git checkout --detach HEAD >/dev/null 2>&1; expect_parity bytes -- branch --show-current
+  }
+)
+
+# --- list-mode modifiers -----------------------------------------------
+
+# mode=bytes — `-v` / `--verbose` adds "<abbrev-sha>  <subject>" after
+# each branch name, column-aligned. `-vv` adds upstream tracking info.
+# git prints "[ahead N]" / "[behind N]" / "[gone]" from upstream state.
+# hash=sha1-only
+title "gix branch --verbose"
+only_for_hash sha1-only && (small-repo-in-sandbox
+  it "matches git behavior (TODO)" && {
+    : # TODO: expect_parity bytes -- branch --verbose
+  }
+  it "matches git behavior — -vv (TODO)" && {
+    : # TODO: expect_parity bytes -- branch -vv
+  }
+)
+
+# mode=effect — `-q` / `--quiet` is a creation/deletion modifier that
+# suppresses informational messages. Tested against `git branch newbr`
+# where git normally prints no message anyway; the effect shows when
+# combined with -d.
+# hash=sha1-only
+title "gix branch --quiet"
+only_for_hash sha1-only && (small-repo-in-sandbox
+  it "matches git behavior (TODO)" && {
+    : # TODO: expect_parity effect -- branch --quiet newquiet
+  }
+)
+
+# mode=bytes — `--abbrev=<n>` / `--no-abbrev` controls the SHA width
+# in verbose listing. Defaults to 7; --no-abbrev prints full 40-hex.
+# hash=sha1-only
+title "gix branch --abbrev"
+only_for_hash sha1-only && (small-repo-in-sandbox
+  it "matches git behavior — --abbrev=12 (TODO)" && {
+    : # TODO: expect_parity bytes -- branch -v --abbrev=12
+  }
+  it "matches git behavior — --no-abbrev (TODO)" && {
+    : # TODO: expect_parity bytes -- branch -v --no-abbrev
+  }
+)
+
+# --- list-mode filters -------------------------------------------------
+
+# mode=bytes — `--contains [<commit>]` lists only branches whose tip is
+# a descendant of <commit>. Defaults to HEAD.
+# hash=sha1-only
+title "gix branch --contains"
+only_for_hash sha1-only && (small-repo-in-sandbox
+  it "matches git behavior — HEAD default (TODO)" && {
+    : # TODO: expect_parity bytes -- branch --contains
+  }
+  it "matches git behavior — explicit commit (TODO)" && {
+    : # TODO: expect_parity bytes -- branch --contains HEAD
+  }
+)
+
+# mode=bytes — `--no-contains [<commit>]` is the inverse of --contains.
+# hash=sha1-only
+title "gix branch --no-contains"
+only_for_hash sha1-only && (small-repo-in-sandbox
+  it "matches git behavior (TODO)" && {
+    : # TODO: expect_parity bytes -- branch --no-contains HEAD
+  }
+)
+
+# mode=bytes — `--merged [<commit>]` lists only branches whose tip is
+# reachable from <commit>. Defaults to HEAD.
+# hash=sha1-only
+title "gix branch --merged"
+only_for_hash sha1-only && (small-repo-in-sandbox
+  it "matches git behavior (TODO)" && {
+    : # TODO: expect_parity bytes -- branch --merged
+  }
+)
+
+# mode=bytes — `--no-merged [<commit>]` is the inverse of --merged.
+# hash=sha1-only
+title "gix branch --no-merged"
+only_for_hash sha1-only && (small-repo-in-sandbox
+  it "matches git behavior (TODO)" && {
+    : # TODO: expect_parity bytes -- branch --no-merged
+  }
+)
+
+# mode=bytes — `--points-at <object>` lists only branches whose ref
+# directly points at <object> (no reachability walk).
+# hash=sha1-only
+title "gix branch --points-at"
+only_for_hash sha1-only && (small-repo-in-sandbox
+  it "matches git behavior (TODO)" && {
+    : # TODO: expect_parity bytes -- branch --points-at HEAD
+  }
+)
+
+# mode=bytes — `--format=<fmt>` reuses git's for-each-ref atom set.
+# Minimal smoke test: %(refname:short).
+# hash=sha1-only
+title "gix branch --format"
+only_for_hash sha1-only && (small-repo-in-sandbox
+  it "matches git behavior (TODO)" && {
+    : # TODO: expect_parity bytes -- branch --format='%(refname:short)'
+  }
+)
+
+# mode=bytes — `--sort=<key>` accepts for-each-ref sort keys; defaults
+# to refname (with detached-HEAD first, then locals, then remotes).
+# Multi-key and `-<key>` descending are also valid.
+# hash=sha1-only
+title "gix branch --sort"
+only_for_hash sha1-only && (small-repo-in-sandbox
+  it "matches git behavior — refname (TODO)" && {
+    : # TODO: expect_parity bytes -- branch --sort=refname
+  }
+  it "matches git behavior — descending (TODO)" && {
+    : # TODO: expect_parity bytes -- branch --sort=-refname
+  }
+)
+
+# mode=bytes — `--column[=<opts>]` / `--no-column` — pack rows into
+# columns; `--column` alone means "always", `--no-column` means
+# "never".
+# hash=sha1-only
+title "gix branch --column"
+only_for_hash sha1-only && (small-repo-in-sandbox
+  it "matches git behavior — --no-column (TODO)" && {
+    : # TODO: expect_parity bytes -- branch --no-column
+  }
+  it "matches git behavior — --column=always (TODO)" && {
+    : # TODO: expect_parity bytes -- branch --column=always
+  }
+)
+
+# mode=bytes — `--color[=<when>]` / `--no-color`. With --color=never
+# output must have no ANSI escapes.
+# hash=sha1-only
+title "gix branch --color"
+only_for_hash sha1-only && (small-repo-in-sandbox
+  it "matches git behavior — --color=never (TODO)" && {
+    : # TODO: expect_parity bytes -- branch --color=never
+  }
+  it "matches git behavior — --no-color (TODO)" && {
+    : # TODO: expect_parity bytes -- branch --no-color
+  }
+)
+
+# mode=bytes — `--omit-empty` skips output rows where the --format
+# expansion is empty. Only meaningful with --format.
+# hash=sha1-only
+title "gix branch --omit-empty"
+only_for_hash sha1-only && (small-repo-in-sandbox
+  it "matches git behavior (TODO)" && {
+    : # TODO: expect_parity bytes -- branch --omit-empty --format=''
+  }
+)
+
+# mode=bytes — `-i` / `--ignore-case` affects sort and filter (pattern
+# matching) case-sensitivity.
+# hash=sha1-only
+title "gix branch --ignore-case"
+only_for_hash sha1-only && (small-repo-in-sandbox
+  it "matches git behavior (TODO)" && {
+    : # TODO: expect_parity bytes -- branch --list --ignore-case 'D*'
+  }
+)
+
+# --- create mode -------------------------------------------------------
+
+# mode=effect — `git branch <name>` creates refs/heads/<name> pointing
+# at HEAD. Observable effect: ref written, stdout empty, exit 0.
+# hash=sha1-only
+title "gix branch <name>"
+only_for_hash sha1-only && (small-repo-in-sandbox
+  it "matches git behavior (TODO)" && {
+    : # TODO: expect_parity effect -- branch newbr
+  }
+)
+
+# mode=effect — `git branch <name> <start-point>` creates the branch
+# pointing at <start-point> (commit id, ref, tag).
+# hash=sha1-only
+title "gix branch <name> <start-point>"
+only_for_hash sha1-only && (small-repo-in-sandbox
+  it "matches git behavior (TODO)" && {
+    : # TODO: expect_parity effect -- branch startpointbr HEAD~1
+  }
+)
+
+# mode=bytes — invalid ref-name: git prints
+# "fatal: '<name>' is not a valid branch name." and exits 128.
+# check-ref-format enforces refname grammar.
+# hash=sha1-only
+title "gix branch <invalid-name>"
+only_for_hash sha1-only && (small-repo-in-sandbox
+  it "matches git behavior (TODO)" && {
+    : # TODO: expect_parity bytes -- branch '.bad'
+  }
+)
+
+# mode=bytes — creating a branch that already exists: git prints
+# "fatal: A branch named '<name>' already exists." and exits 128.
+# hash=sha1-only
+title "gix branch <existing-name>"
+only_for_hash sha1-only && (small-repo-in-sandbox
+  it "matches git behavior (TODO)" && {
+    : # TODO: expect_parity bytes -- branch dev
+  }
+)
+
+# mode=effect — `-f` / `--force` resets an existing branch to
+# <start-point>. With a fresh name it behaves like a plain create.
+# hash=sha1-only
+title "gix branch --force"
+only_for_hash sha1-only && (small-repo-in-sandbox
+  it "matches git behavior — reset existing (TODO)" && {
+    : # TODO: expect_parity effect -- branch --force dev HEAD~1
+  }
+)
+
+# mode=effect — `-t` / `--track` / `--track=direct` / `--track=inherit`
+# sets branch.<name>.remote + branch.<name>.merge config entries.
+# hash=sha1-only
+title "gix branch --track"
+only_for_hash sha1-only && (small-repo-in-sandbox
+  it "matches git behavior — --track (TODO)" && {
+    : # TODO: expect_parity effect -- branch --track tracked main
+  }
+  it "matches git behavior — --no-track (TODO)" && {
+    : # TODO: expect_parity effect -- branch --no-track untracked main
+  }
+)
+
+# mode=effect — `--recurse-submodules` is experimental; on a repo with
+# no submodules and submodule.propagateBranches unset it is a no-op.
+# hash=sha1-only
+title "gix branch --recurse-submodules"
+only_for_hash sha1-only && (small-repo-in-sandbox
+  it "matches git behavior (TODO)" && {
+    : # TODO: expect_parity effect -- branch --recurse-submodules subrecursebr
+  }
+)
+
+# mode=effect — `--create-reflog` forces reflog creation on the new
+# branch. The effect is reflog presence at .git/logs/refs/heads/<name>.
+# hash=sha1-only
+title "gix branch --create-reflog"
+only_for_hash sha1-only && (small-repo-in-sandbox
+  it "matches git behavior (TODO)" && {
+    : # TODO: expect_parity effect -- branch --create-reflog reflogbr
+  }
+)
+
+# --- upstream-tracking mode -------------------------------------------
+
+# mode=effect — `-u <upstream>` / `--set-upstream-to=<upstream>` sets
+# the tracking info for <branch-name> (or current branch if omitted).
+# hash=sha1-only
+title "gix branch --set-upstream-to"
+only_for_hash sha1-only && (small-repo-in-sandbox
+  it "matches git behavior — -u (TODO)" && {
+    : # TODO: expect_parity effect -- branch -u main dev
+  }
+  it "matches git behavior — --set-upstream-to (TODO)" && {
+    : # TODO: expect_parity effect -- branch --set-upstream-to=main dev
+  }
+)
+
+# mode=effect — `--unset-upstream` removes tracking info. Errors if
+# the branch has no upstream set: exit 128, stderr "fatal: Branch
+# '<name>' has no upstream information".
+# hash=sha1-only
+title "gix branch --unset-upstream"
+only_for_hash sha1-only && (small-repo-in-sandbox
+  it "matches git behavior (TODO)" && {
+    : # TODO: git branch --set-upstream-to=main dev >/dev/null 2>&1; expect_parity effect -- branch --unset-upstream dev
+  }
+)
+
+# mode=effect — `--edit-description` opens EDITOR to edit
+# branch.<name>.description. Under EDITOR=true the edit is a no-op.
+# hash=sha1-only
+title "gix branch --edit-description"
+only_for_hash sha1-only && (small-repo-in-sandbox
+  it "matches git behavior (TODO)" && {
+    : # TODO: EDITOR=true expect_parity effect -- branch --edit-description
+  }
+)
+
+# --- move / rename mode -----------------------------------------------
+
+# mode=effect — `-m <new>` renames current branch to <new>.
+# `-m <old> <new>` renames <old> to <new>. Fails 128 if <new> exists.
+# `-M` forces.
+# hash=sha1-only
+title "gix branch --move"
+only_for_hash sha1-only && (small-repo-in-sandbox
+  it "matches git behavior — rename current (TODO)" && {
+    : # TODO: expect_parity effect -- branch -m renamed
+  }
+  it "matches git behavior — rename old to new (TODO)" && {
+    : # TODO: expect_parity effect -- branch -m dev devv
+  }
+  it "matches git behavior — -M force (TODO)" && {
+    : # TODO: expect_parity effect -- branch -M main dev
+  }
+)
+
+# --- copy mode --------------------------------------------------------
+
+# mode=effect — `-c <old> <new>` copies <old> to <new> with its
+# config and reflog. `-C` forces.
+# hash=sha1-only
+title "gix branch --copy"
+only_for_hash sha1-only && (small-repo-in-sandbox
+  it "matches git behavior (TODO)" && {
+    : # TODO: expect_parity effect -- branch -c dev devcopy
+  }
+  it "matches git behavior — -C force (TODO)" && {
+    : # TODO: expect_parity effect -- branch -C dev main
+  }
+)
+
+# --- delete mode ------------------------------------------------------
+
+# mode=effect — `-d <name>` deletes a fully-merged branch. `-D`
+# deletes unconditionally (even unmerged). Multiple names allowed.
+# hash=sha1-only
+title "gix branch --delete"
+only_for_hash sha1-only && (small-repo-in-sandbox
+  it "matches git behavior — single (TODO)" && {
+    : # TODO: expect_parity effect -- branch -d dev
+  }
+  it "matches git behavior — -D force (TODO)" && {
+    : # TODO: expect_parity effect -- branch -D dev
+  }
+  it "matches git behavior — non-existent (TODO)" && {
+    : # TODO: expect_parity bytes -- branch -d nosuch
+  }
+)
+
+# mode=effect — `-r -d` deletes remote-tracking branches.
+# hash=sha1-only
+title "gix branch --remotes --delete"
+only_for_hash sha1-only && (small-repo-in-sandbox
+  it "matches git behavior (TODO)" && {
+    : # TODO: expect_parity effect -- branch -r -d origin/nosuch
+  }
+)
+
+# End-of-file sentinel: when every row is `only_for_hash sha1-only` and the
+# active hash is sha256, the last statement returns 1 (skip), which would
+# propagate out of `source` and trip `set -e` in tests/parity.sh. A trailing
+# `:` normalizes the exit code so a fully-skipped file still returns 0.
+:
