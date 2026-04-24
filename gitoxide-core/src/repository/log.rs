@@ -1,30 +1,53 @@
 use anyhow::bail;
 use gix::bstr::{BString, ByteSlice};
 
-pub fn log(mut repo: gix::Repository, out: &mut dyn std::io::Write, path: Option<BString>) -> anyhow::Result<()> {
+pub fn log(
+    mut repo: gix::Repository,
+    out: &mut dyn std::io::Write,
+    revspec: Option<BString>,
+    path: Option<BString>,
+) -> anyhow::Result<()> {
     repo.object_cache_size_if_unset(repo.compute_object_cache_size_for_tree_diffs(&**repo.index_or_empty()?));
 
     if let Some(path) = path {
         log_file(repo, out, path)
     } else {
-        log_all(repo, out)
+        log_all(repo, out, revspec)
     }
 }
 
-fn log_all(repo: gix::Repository, out: &mut dyn std::io::Write) -> Result<(), anyhow::Error> {
-    let mut head = repo.head()?;
-    // Parity with git: unborn HEAD (fresh `git init`, no commits) dies 128
-    // with "fatal: your current branch '<short>' does not have any commits yet"
-    // (vendor/git/builtin/log.c → cmd_log_walk → revision.c::die).
-    if let gix::head::Kind::Unborn(name) = &head.kind {
-        eprintln!(
-            "fatal: your current branch '{}' does not have any commits yet",
-            name.shorten()
-        );
-        std::process::exit(128);
-    }
-    let head = head.peel_to_commit()?;
-    let topo = gix::traverse::commit::topo::Builder::from_iters(&repo.objects, [head.id], None::<Vec<gix::ObjectId>>)
+fn log_all(repo: gix::Repository, out: &mut dyn std::io::Write, revspec: Option<BString>) -> Result<(), anyhow::Error> {
+    let start_id = match revspec {
+        Some(spec) => match repo.rev_parse_single(spec.as_bstr()) {
+            Ok(id) => id.detach(),
+            Err(_) => {
+                // Parity with git's setup_revisions: unknown revision/path dies 128
+                // (vendor/git/revision.c::handle_revision_arg → die). Wording is
+                // git's exact 3-line stanza.
+                eprintln!(
+                    "fatal: ambiguous argument '{spec}': unknown revision or path not in the working tree.\n\
+                     Use '--' to separate paths from revisions, like this:\n\
+                     'git <command> [<revision>...] -- [<file>...]'"
+                );
+                std::process::exit(128);
+            }
+        },
+        None => {
+            let mut head = repo.head()?;
+            // Parity with git: unborn HEAD (fresh `git init`, no commits) dies 128
+            // with "fatal: your current branch '<short>' does not have any commits yet"
+            // (vendor/git/builtin/log.c → cmd_log_walk → revision.c::die).
+            if let gix::head::Kind::Unborn(name) = &head.kind {
+                eprintln!(
+                    "fatal: your current branch '{}' does not have any commits yet",
+                    name.shorten()
+                );
+                std::process::exit(128);
+            }
+            head.peel_to_commit()?.id
+        }
+    };
+    let topo = gix::traverse::commit::topo::Builder::from_iters(&repo.objects, [start_id], None::<Vec<gix::ObjectId>>)
         .build()?;
 
     for info in topo {

@@ -699,9 +699,13 @@ pub mod log {
     /// List all commits in a repository, optionally limited to those that change a given path.
     #[derive(Debug, clap::Parser)]
     pub struct Platform {
-        /// The git path specification to show a log for.
+        /// The revision (branch, commit, tag, range) to start walking from. Defaults to HEAD.
         #[clap(value_parser = crate::shared::AsBString)]
-        pub pathspec: Option<BString>,
+        pub revspec: Option<BString>,
+
+        /// The path specification(s) to limit commits to. Must follow a `--` separator.
+        #[clap(value_parser = crate::shared::AsBString, last = true, num_args = 0..)]
+        pub pathspec: Vec<BString>,
     }
 }
 

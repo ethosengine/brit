@@ -113,35 +113,42 @@ only_for_hash sha1-only && (sandbox
   }
 )
 
-# mode=effect — log from a named branch tip. git walks ancestors of
-# <branch>; gix walks head's ancestors regardless of arg (arg is treated
-# as pathspec by current Clap surface). Expect UnknownArgument-style
-# failure until revspec argument is introduced.
+# mode=effect — log from a named branch tip. gix log's Clap surface grew
+# an optional `revspec` positional; gitoxide-core::log now parses it via
+# repo.rev_parse_single() and feeds the resolved id into the topo walker.
+# Exit 0 both sides; output format still diverges (gix 8-hash + subject
+# vs git medium pretty), so effect mode only.
 # hash=sha1-only
 title "gix log <ref>"
 only_for_hash sha1-only && (small-repo-in-sandbox
-  # TODO — expect_parity effect -- log main
-  it "matches git behavior" && { :; }
+  it "matches git: rev resolves, both exit 0" && {
+    expect_parity effect -- log main
+  }
 )
 
-# mode=effect — log from a specific commit sha. Same wiring gap as <ref>;
-# current gix mis-parses the sha as a pathspec.
+# mode=effect — log from a specific committish (HEAD~1). Same revspec
+# plumbing path as <ref>; rev_parse_single handles the ancestor notation.
 # hash=sha1-only
 title "gix log <sha>"
 only_for_hash sha1-only && (small-repo-in-sandbox
-  # TODO — expect_parity effect -- log HEAD~1
-  it "matches git behavior" && { :; }
+  it "matches git: committish resolves, both exit 0" && {
+    expect_parity effect -- log HEAD~1
+  }
 )
 
-# mode=effect — unknown revision: git exits 128 with
-# "fatal: ambiguous argument '<rev>': unknown revision or path not in the
-# working tree". gix's current pathspec-only surface returns success with
-# empty output. Row closes once revspec is wired + error mapped.
+# mode=bytes — unknown revision: git's setup_revisions dies 128 with a
+# three-line "fatal: ambiguous argument '<spec>': unknown revision or path
+# not in the working tree.\nUse '--' to separate paths from revisions,
+# like this:\n'git <command> [<revision>...] -- [<file>...]'".
+# gitoxide-core::log's revspec match emits that exact stanza (including
+# the literal `git <command>` wording, verbatim from git's own hint) and
+# std::process::exit(128) before reaching the walker.
 # hash=sha1-only
 title "gix log <unknown-ref>"
 only_for_hash sha1-only && (small-repo-in-sandbox
-  # TODO — expect_parity effect -- log no-such-ref
-  it "matches git behavior" && { :; }
+  it "matches git: byte-exact 3-line error + exit 128" && {
+    expect_parity bytes -- log no-such-ref
+  }
 )
 
 # --- range syntax -------------------------------------------------------
