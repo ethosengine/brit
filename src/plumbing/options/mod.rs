@@ -2010,6 +2010,11 @@ pub mod tag {
         #[clap(short = 'l', long = "list")]
         pub list: bool,
 
+        /// Sorting and filtering tags are case insensitive. Maps to
+        /// git's `OPT_BOOL('i', "ignore-case", ...)`.
+        #[clap(short = 'i', long)]
+        pub ignore_case: bool,
+
         /// Shell glob patterns to filter listed tags (fnmatch(3), OR'd).
         /// Only meaningful in list mode. Matches git-tag(1)'s
         /// `[<pattern>...]` positional after `-l`.

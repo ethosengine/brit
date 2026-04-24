@@ -2430,7 +2430,11 @@ pub fn main() -> Result<()> {
             ),
         },
         Subcommands::Tag(platform) => {
-            let tag::Platform { list: _, patterns } = platform;
+            let tag::Platform {
+                list: _,
+                ignore_case,
+                patterns,
+            } = platform;
             prepare_and_run(
                 "tag-list",
                 trace,
@@ -2439,7 +2443,12 @@ pub fn main() -> Result<()> {
                 progress_keep_open,
                 None,
                 move |_progress, out, _err| {
-                    core::repository::tag::list(repository(Mode::Lenient)?, out, format, patterns)
+                    core::repository::tag::list(
+                        repository(Mode::Lenient)?,
+                        out,
+                        format,
+                        core::repository::tag::ListOptions { patterns, ignore_case },
+                    )
                 },
             )
         }

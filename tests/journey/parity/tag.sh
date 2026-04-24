@@ -330,11 +330,14 @@ only_for_hash sha1-only && (small-repo-in-sandbox
 title "gix tag -i / --ignore-case"
 only_for_hash sha1-only && (small-repo-in-sandbox
   git tag Alpha && git tag beta && git tag GAMMA
-  it "matches git behavior with -i -l 'a*' (TODO)" && {
-    : # TODO: expect_parity bytes -- tag -i -l 'a*'
+  it "matches git behavior with -i -l 'a*'" && {
+    expect_parity bytes -- tag -i -l 'a*'
   }
-  it "matches git behavior with --ignore-case --sort=refname (TODO)" && {
-    : # TODO: expect_parity bytes -- tag --ignore-case --sort=refname
+  it "matches git behavior with --ignore-case -l 'a*'" && {
+    expect_parity bytes -- tag --ignore-case -l 'a*'
+  }
+  it "matches git behavior with --ignore-case folding refname sort" && {
+    expect_parity bytes -- tag --ignore-case
   }
 )
 
