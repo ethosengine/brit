@@ -899,8 +899,8 @@ pub fn main() -> Result<()> {
                 all,
                 delete: _delete,
                 delete_force: _delete_force,
-                move_: _move_,
-                move_force: _move_force,
+                move_,
+                move_force,
                 copy: _copy,
                 copy_force: _copy_force,
                 show_current,
@@ -960,10 +960,13 @@ pub fn main() -> Result<()> {
             let is_set_upstream = set_upstream_to.is_some();
             let is_unset_upstream = unset_upstream;
             let is_edit_description = edit_description;
+            let is_rename = move_ || move_force;
+            let rename_force = move_force || force;
             let is_create = !show_current
                 && !is_set_upstream
                 && !is_unset_upstream
                 && !is_edit_description
+                && !is_rename
                 && !list_forced
                 && !args.is_empty();
 
@@ -984,6 +987,43 @@ pub fn main() -> Result<()> {
                 // EDITOR-spawn for branch.<name>.description remain
                 // deferred.
                 Ok(())
+            } else if is_rename {
+                // git rename forms:
+                //   -m <new>           — rename current branch to <new>
+                //   -m <old> <new>     — rename <old> to <new>
+                //   -M ...             — same, but force-overwrite <new>
+                let mut iter = args.into_iter();
+                let (old_arg, new_arg) = match (iter.next(), iter.next()) {
+                    (Some(a), Some(b)) => (Some(a), b),
+                    (Some(a), None) => (None, a),
+                    _ => {
+                        use std::io::Write;
+                        let mut stderr = std::io::stderr().lock();
+                        let _ = writeln!(stderr, "fatal: branch -m/-M needs at least <newname>");
+                        std::process::exit(128);
+                    }
+                };
+                let old = match old_arg {
+                    Some(s) => Some(gix::path::os_str_into_bstr(&s)?.to_owned()),
+                    None => None,
+                };
+                let new = gix::path::os_str_into_bstr(&new_arg)?.to_owned();
+                prepare_and_run(
+                    "branch-rename",
+                    trace,
+                    verbose,
+                    progress,
+                    progress_keep_open,
+                    None,
+                    move |_progress, _out, err| {
+                        let code =
+                            core::repository::branch::rename(repository(Mode::Lenient)?, old, new, rename_force, err)?;
+                        if code != 0 {
+                            std::process::exit(code);
+                        }
+                        Ok(())
+                    },
+                )
             } else if is_create {
                 let mut iter = args.into_iter();
                 let name_os = iter.next().expect("is_create ⇒ args.len() >= 1");

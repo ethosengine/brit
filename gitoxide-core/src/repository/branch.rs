@@ -109,6 +109,81 @@ pub fn create(
     Ok(0)
 }
 
+/// `git branch -m/-M [<old>] <new>`: rename `refs/heads/<old>` to
+/// `refs/heads/<new>`, preserving its target. With one positional, old
+/// = current branch (HEAD). Without --force, fails if <new> already
+/// exists. Matches the rename path in builtin/branch.c's
+/// rename_branch helper. The reflog is renamed alongside as a
+/// follow-up gix-ref refinement; this implementation only moves the
+/// ref pointer and leaves reflog files in place.
+pub fn rename(
+    repo: gix::Repository,
+    old: Option<gix::bstr::BString>,
+    new: gix::bstr::BString,
+    force: bool,
+    err: &mut dyn std::io::Write,
+) -> anyhow::Result<i32> {
+    use gix::refs::transaction::{Change, LogChange, PreviousValue, RefEdit};
+
+    let new_full = format!("refs/heads/{new}");
+    let old_short = match old {
+        Some(s) => s,
+        None => match repo.head_name()? {
+            Some(name) => name.shorten().to_owned(),
+            None => {
+                writeln!(err, "fatal: HEAD is detached; cannot rename without an explicit <old>")?;
+                return Ok(128);
+            }
+        },
+    };
+    let old_full = format!("refs/heads/{old_short}");
+
+    if !force && repo.try_find_reference(new_full.as_str())?.is_some() {
+        writeln!(err, "fatal: a branch named '{new}' already exists")?;
+        return Ok(128);
+    }
+    let Some(old_ref) = repo.try_find_reference(old_full.as_str())? else {
+        writeln!(err, "error: refname {old_short} not found")?;
+        return Ok(1);
+    };
+    let target_oid = old_ref.clone().into_fully_peeled_id()?.detach();
+
+    let new_full_name: gix::refs::FullName = new_full
+        .try_into()
+        .map_err(|err| anyhow::anyhow!("invalid refname: {err:?}"))?;
+    let old_full_name: gix::refs::FullName = old_full
+        .try_into()
+        .map_err(|err| anyhow::anyhow!("invalid refname: {err:?}"))?;
+    let new_log = LogChange {
+        message: format!("Branch: renamed {old_short} to {new}").into(),
+        ..Default::default()
+    };
+    repo.edit_references([
+        RefEdit {
+            change: Change::Update {
+                log: new_log,
+                expected: if force {
+                    PreviousValue::Any
+                } else {
+                    PreviousValue::MustNotExist
+                },
+                new: gix::refs::Target::Object(target_oid),
+            },
+            name: new_full_name,
+            deref: false,
+        },
+        RefEdit {
+            change: Change::Delete {
+                expected: PreviousValue::Any,
+                log: gix::refs::transaction::RefLog::AndReference,
+            },
+            name: old_full_name,
+            deref: false,
+        },
+    ])?;
+    Ok(0)
+}
+
 /// `git branch --show-current`: print the current branch name alone,
 /// or nothing in detached `HEAD` state. Matches builtin/branch.c
 /// show_current behavior — no asterisk, no indent, no newline on

@@ -546,15 +546,22 @@ only_for_hash sha1-only && (small-repo-in-sandbox
 # `-M` forces.
 # hash=sha1-only
 title "gix branch --move"
-only_for_hash sha1-only && (small-repo-in-sandbox
-  it "matches git behavior — rename current (TODO)" && {
-    : # TODO: expect_parity effect -- branch -m renamed
+only_for_hash sha1-only && (sandbox
+  function _branch-move-fixture() {
+    git-init-hash-aware
+    git checkout -b main >/dev/null 2>&1
+    git config commit.gpgsign false
+    git -c user.email=t@t -c user.name=t commit -q --allow-empty -m c1
+    git branch dev
   }
-  it "matches git behavior — rename old to new (TODO)" && {
-    : # TODO: expect_parity effect -- branch -m dev devv
+  it "matches git behavior — rename current" && {
+    expect_parity_reset _branch-move-fixture effect -- branch -m renamed
   }
-  it "matches git behavior — -M force (TODO)" && {
-    : # TODO: expect_parity effect -- branch -M main dev
+  it "matches git behavior — rename old to new" && {
+    expect_parity_reset _branch-move-fixture effect -- branch -m dev devv
+  }
+  it "matches git behavior — -M force" && {
+    expect_parity_reset _branch-move-fixture effect -- branch -M main dev
   }
 )
 
