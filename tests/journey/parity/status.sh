@@ -108,12 +108,14 @@ only_for_hash sha1-only && (small-repo-in-sandbox
 )
 
 # mode=effect — a new untracked file present in the worktree.
+# Both exit 0; output wording diverges (git "Untracked files:" section
+# vs gix's `? new-untracked` short line).
 # hash=sha1-only "gix cannot load sha256 repos: extensions.objectFormat=sha256 rejected (gix/src/config/tree/sections/extensions.rs)"
 title "gix status (untracked file)"
 only_for_hash sha1-only && (small-repo-in-sandbox
+  touch new-untracked
   it "matches git behavior" && {
-    # TODO: touch untracked; expect_parity effect -- status
-    true
+    expect_parity effect -- status
   }
 )
 
