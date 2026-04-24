@@ -307,11 +307,11 @@ only_for_hash sha1-only && (small-repo-in-sandbox
 # hash=sha1-only
 title "gix branch --color"
 only_for_hash sha1-only && (small-repo-in-sandbox
-  it "matches git behavior — --color=never (TODO)" && {
-    : # TODO: expect_parity bytes -- branch --color=never
+  it "matches git behavior — --color=never" && {
+    expect_parity bytes -- branch --color=never
   }
-  it "matches git behavior — --no-color (TODO)" && {
-    : # TODO: expect_parity bytes -- branch --no-color
+  it "matches git behavior — --no-color" && {
+    expect_parity bytes -- branch --no-color
   }
 )
 
