@@ -92,6 +92,9 @@ pub mod list {
         /// as primary; a leading `-` reverses direction. Git's
         /// `--sort=<key>` (repeatable).
         pub sort: Vec<String>,
+        /// Do not emit a newline for rows where the `--format`
+        /// expansion is empty. Git's `--omit-empty`.
+        pub omit_empty: bool,
     }
 }
 
@@ -265,7 +268,10 @@ pub fn list(
         for branch_name in kept {
             if let Some(fmt) = options.format_string.as_deref() {
                 let full = format!("refs/heads/{branch_name}");
-                writeln!(out, "{}", expand_format(fmt, &full, &branch_name))?;
+                let line = expand_format(fmt, &full, &branch_name);
+                if !(options.omit_empty && line.is_empty()) {
+                    writeln!(out, "{line}")?;
+                }
             } else {
                 let marker = if Some(&branch_name) == head_short.as_ref() {
                     "* "
@@ -308,7 +314,10 @@ pub fn list(
         for branch_name in kept {
             if let Some(fmt) = options.format_string.as_deref() {
                 let full = format!("refs/remotes/{branch_name}");
-                writeln!(out, "{}", expand_format(fmt, &full, &branch_name))?;
+                let line = expand_format(fmt, &full, &branch_name);
+                if !(options.omit_empty && line.is_empty()) {
+                    writeln!(out, "{line}")?;
+                }
             } else if include_prefix {
                 writeln!(out, "  remotes/{branch_name}")?;
             } else {

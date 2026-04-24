@@ -922,7 +922,7 @@ pub fn main() -> Result<()> {
                 no_merged,
                 points_at,
                 format_string,
-                omit_empty: _omit_empty,
+                omit_empty,
                 sort,
                 column: _column,
                 no_column: _no_column,
@@ -973,6 +973,7 @@ pub fn main() -> Result<()> {
                     points_at,
                     format_string,
                     sort,
+                    omit_empty,
                 };
 
                 prepare_and_run(
