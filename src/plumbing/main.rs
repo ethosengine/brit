@@ -433,6 +433,8 @@ pub fn main() -> Result<()> {
             null_terminator,
             column,
             no_column,
+            ahead_behind,
+            no_ahead_behind,
             statistics,
             submodules,
             no_write,
@@ -449,6 +451,12 @@ pub fn main() -> Result<()> {
             // a TTY both git and gix emit one-per-line, so effect-mode
             // parity holds.
             let _ = (column, no_column);
+            // `--ahead-behind` / `--no-ahead-behind` accepted for compat.
+            // Ahead/behind counts against a configured upstream live in
+            // the long-format branch header on both sides; the flag is a
+            // no-op here and effect-mode parity holds on fixtures with
+            // or without an upstream.
+            let _ = (ahead_behind, no_ahead_behind);
             // `-u<mode>` / `--untracked-files[=<mode>]` accepted for compat.
             // Wiring to gix-status's dirwalk emit-untracked flag is deferred
             // — the flag currently alters test-fixture text output but not

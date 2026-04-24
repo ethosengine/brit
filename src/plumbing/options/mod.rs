@@ -413,6 +413,16 @@ pub mod status {
         #[clap(long = "no-column", action = clap::ArgAction::SetTrue,
                conflicts_with = "column")]
         pub no_column: bool,
+        /// Display detailed ahead/behind counts for the branch relative to
+        /// its upstream. Accepted for compat; the header rendering already
+        /// happens in gix's long format when an upstream is configured, so
+        /// this is a no-op under effect mode.
+        #[clap(long = "ahead-behind", action = clap::ArgAction::SetTrue)]
+        pub ahead_behind: bool,
+        /// Do not display ahead/behind counts. Accepted for compat.
+        #[clap(long = "no-ahead-behind", action = clap::ArgAction::SetTrue,
+               conflicts_with = "ahead_behind")]
+        pub no_ahead_behind: bool,
         /// If enabled, show ignored files and directories.
         #[clap(long)]
         pub ignored: Option<Option<Ignored>>,

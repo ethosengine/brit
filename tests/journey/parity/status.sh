@@ -426,19 +426,23 @@ only_for_hash sha1-only && (small-repo-in-sandbox
 # --- ahead-behind -------------------------------------------------------
 
 # mode=effect — `--ahead-behind` (default) / `--no-ahead-behind` toggle
-# upstream divergence counts in both the long and porcelain=v2 output.
-# Requires an upstream branch pointing at a diverged commit.
+# upstream divergence counts. Clap: both as bool flags with mutual
+# `conflicts_with`. Effect-mode no-op in dispatch — gix's long-format
+# header already shows ahead/behind when an upstream is configured;
+# exit-code parity holds on a fixture with a fabricated upstream.
 # hash=sha1-only "gix cannot load sha256 repos: extensions.objectFormat=sha256 rejected (gix/src/config/tree/sections/extensions.rs)"
 title "gix status --ahead-behind / --no-ahead-behind"
 only_for_hash sha1-only && (small-repo-in-sandbox
+  git-init-hash-aware -q --bare ../up.git
+  git remote add origin ../up.git
+  git push -q origin main 2>/dev/null
+  git branch --set-upstream-to=origin/main main 2>/dev/null
+  echo ahead >> a && git commit -qam "ahead"
   it "matches git behavior with --ahead-behind" && {
-    # TODO: fabricate upstream (bare clone + remote add + upstream-set);
-    #       commit ahead; expect_parity effect -- status --ahead-behind
-    true
+    expect_parity effect -- status --ahead-behind
   }
   it "matches git behavior with --no-ahead-behind" && {
-    # TODO: same upstream setup; expect_parity effect -- status --no-ahead-behind
-    true
+    expect_parity effect -- status --no-ahead-behind
   }
 )
 
