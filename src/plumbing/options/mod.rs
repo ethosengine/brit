@@ -2027,6 +2027,60 @@ pub mod tag {
         #[clap(short = 'f', long = "force")]
         pub force: bool,
 
+        /// Make an unsigned, annotated tag object.
+        /// Mirrors `OPT_BOOL('a', "annotate", ...)`.
+        #[clap(short = 'a', long = "annotate")]
+        pub annotate: bool,
+
+        /// Tag message. When multiple `-m` options are given, values
+        /// are concatenated as separate paragraphs.
+        /// Mirrors `OPT_CALLBACK_F('m', "message", ..., parse_msg_arg)`.
+        #[clap(short = 'm', long = "message", value_name = "msg", action = clap::ArgAction::Append)]
+        pub message: Vec<String>,
+
+        /// Read message from file. Use `-` for stdin.
+        /// Mirrors `OPT_FILENAME('F', "file", ...)`.
+        #[clap(short = 'F', long = "file", value_name = "file")]
+        pub file: Option<std::path::PathBuf>,
+
+        /// Force edit of tag message. Mirrors `OPT_BOOL('e', "edit", ...)`.
+        #[clap(short = 'e', long = "edit")]
+        pub edit: bool,
+
+        /// Append a `<token>[=<value>]` trailer to the tag message.
+        /// Multiple uses accumulate. Mirrors `OPT_STRVEC(0, "trailer", ...)`.
+        #[clap(long = "trailer", value_name = "tok[=val]", action = clap::ArgAction::Append)]
+        pub trailer: Vec<String>,
+
+        /// Message cleanup mode: `verbatim` / `whitespace` / `strip`
+        /// (default `strip`). Mirrors `OPT_CLEANUP`.
+        #[clap(long = "cleanup", value_name = "mode")]
+        pub cleanup: Option<String>,
+
+        /// Create a reflog for the tag. Mirrors
+        /// `OPT_BOOL(0, "create-reflog", ...)`.
+        #[clap(long = "create-reflog", overrides_with = "no_create_reflog")]
+        pub create_reflog: bool,
+
+        /// Override an earlier `--create-reflog`. Mirrors git's
+        /// negation pair.
+        #[clap(long = "no-create-reflog", overrides_with = "create_reflog")]
+        pub no_create_reflog: bool,
+
+        /// Create a GPG-signed annotated tag. Mirrors
+        /// `OPT_BOOL('s', "sign", ...)`.
+        #[clap(short = 's', long = "sign", conflicts_with = "no_sign")]
+        pub sign: bool,
+
+        /// Override `tag.gpgSign` = true. Mirrors git's `--no-sign`.
+        #[clap(long = "no-sign", conflicts_with = "sign")]
+        pub no_sign: bool,
+
+        /// Sign using the given key id. Mirrors
+        /// `OPT_STRING('u', "local-user", ..., "key-id")`.
+        #[clap(short = 'u', long = "local-user", value_name = "key-id")]
+        pub local_user: Option<String>,
+
         /// Sorting and filtering tags are case insensitive. Maps to
         /// git's `OPT_BOOL('i', "ignore-case", ...)`.
         #[clap(short = 'i', long)]

@@ -570,18 +570,32 @@ only_for_hash sha1-only && (small-repo-in-sandbox
 # object in the object database + ref. No stdout on success.
 # hash=sha1-only
 title "gix tag -a -m"
-only_for_hash sha1-only && (small-repo-in-sandbox
-  it "matches git behavior (TODO)" && {
-    : # TODO: expect_parity effect -- tag -a -m "annotated" anno1
+only_for_hash sha1-only && (sandbox
+  function _anno-fixture() {
+    git-init-hash-aware
+    git checkout -b main
+    git config commit.gpgsign false
+    git config tag.gpgsign false
+    git commit -q --allow-empty -m "seed"
+  }
+  it "matches git behavior" && {
+    expect_parity_reset _anno-fixture effect -- tag -a -m "annotated" anno1
   }
 )
 
 # mode=effect — `--annotate --message=<msg>` canonical long forms.
 # hash=sha1-only
 title "gix tag --annotate --message"
-only_for_hash sha1-only && (small-repo-in-sandbox
-  it "matches git behavior (TODO)" && {
-    : # TODO: expect_parity effect -- tag --annotate --message=annotated anno1
+only_for_hash sha1-only && (sandbox
+  function _anno-fixture() {
+    git-init-hash-aware
+    git checkout -b main
+    git config commit.gpgsign false
+    git config tag.gpgsign false
+    git commit -q --allow-empty -m "seed"
+  }
+  it "matches git behavior" && {
+    expect_parity_reset _anno-fixture effect -- tag --annotate --message=annotated anno1
   }
 )
 
@@ -590,9 +604,16 @@ only_for_hash sha1-only && (small-repo-in-sandbox
 # annotated outcome.
 # hash=sha1-only
 title "gix tag -m (implies -a)"
-only_for_hash sha1-only && (small-repo-in-sandbox
-  it "matches git behavior (TODO)" && {
-    : # TODO: expect_parity effect -- tag -m "implied-annotate" anno1
+only_for_hash sha1-only && (sandbox
+  function _anno-fixture() {
+    git-init-hash-aware
+    git checkout -b main
+    git config commit.gpgsign false
+    git config tag.gpgsign false
+    git commit -q --allow-empty -m "seed"
+  }
+  it "matches git behavior" && {
+    expect_parity_reset _anno-fixture effect -- tag -m "implied-annotate" anno1
   }
 )
 
@@ -601,9 +622,16 @@ only_for_hash sha1-only && (small-repo-in-sandbox
 # their values are concatenated as separate paragraphs."
 # hash=sha1-only
 title "gix tag -m -m (multiple messages)"
-only_for_hash sha1-only && (small-repo-in-sandbox
-  it "matches git behavior (TODO)" && {
-    : # TODO: expect_parity effect -- tag -m "first para" -m "second para" anno1
+only_for_hash sha1-only && (sandbox
+  function _anno-fixture() {
+    git-init-hash-aware
+    git checkout -b main
+    git config commit.gpgsign false
+    git config tag.gpgsign false
+    git commit -q --allow-empty -m "seed"
+  }
+  it "matches git behavior" && {
+    expect_parity_reset _anno-fixture effect -- tag -m "first para" -m "second para" anno1
   }
 )
 
@@ -611,16 +639,27 @@ only_for_hash sha1-only && (small-repo-in-sandbox
 # from stdin.
 # hash=sha1-only
 title "gix tag -F / --file"
-only_for_hash sha1-only && (small-repo-in-sandbox
-  printf 'line one\nline two\n' > msg.txt
-  it "matches git behavior with -F file (TODO)" && {
-    : # TODO: expect_parity effect -- tag -F msg.txt anno1
+only_for_hash sha1-only && (sandbox
+  function _anno-fixture() {
+    git-init-hash-aware
+    git checkout -b main
+    git config commit.gpgsign false
+    git config tag.gpgsign false
+    git commit -q --allow-empty -m "seed"
+    printf 'line one\nline two\n' > msg.txt
   }
-  it "matches git behavior with --file=file (TODO)" && {
-    : # TODO: expect_parity effect -- tag --file=msg.txt anno1
+  it "matches git behavior with -F file" && {
+    expect_parity_reset _anno-fixture effect -- tag -F msg.txt anno1
   }
-  it "matches git behavior with -F - (stdin) (TODO)" && {
-    : # TODO: PARITY_STDIN='from stdin' expect_parity effect -- tag -F - anno1
+  it "matches git behavior with --file=file" && {
+    expect_parity_reset _anno-fixture effect -- tag --file=msg.txt anno1
+  }
+  # `-F -` (stdin-sourced message) row is deferred: expect_parity_reset
+  # does not forward $PARITY_STDIN to its setup/run pair, so both
+  # binaries would read EOF instead of the expected body. Closable by
+  # extending expect_parity_reset to plumb stdin through to git/gix.
+  it "matches git behavior with -F - (stdin) [deferred]" && {
+    shortcoming "tag -F - stdin row blocked on expect_parity_reset PARITY_STDIN plumbing"
   }
 )
 
@@ -630,18 +669,25 @@ only_for_hash sha1-only && (small-repo-in-sandbox
 # trailing blank lines; `strip` also removes `#`-prefixed comments.
 # hash=sha1-only
 title "gix tag --cleanup"
-only_for_hash sha1-only && (small-repo-in-sandbox
-  it "matches git behavior with --cleanup=verbatim (TODO)" && {
-    : # TODO: expect_parity effect -- tag --cleanup=verbatim -m "msg" anno1
+only_for_hash sha1-only && (sandbox
+  function _anno-fixture() {
+    git-init-hash-aware
+    git checkout -b main
+    git config commit.gpgsign false
+    git config tag.gpgsign false
+    git commit -q --allow-empty -m "seed"
   }
-  it "matches git behavior with --cleanup=whitespace (TODO)" && {
-    : # TODO: expect_parity effect -- tag --cleanup=whitespace -m "msg" anno1
+  it "matches git behavior with --cleanup=verbatim" && {
+    expect_parity_reset _anno-fixture effect -- tag --cleanup=verbatim -m "msg" anno1
   }
-  it "matches git behavior with --cleanup=strip (TODO)" && {
-    : # TODO: expect_parity effect -- tag --cleanup=strip -m "msg" anno1
+  it "matches git behavior with --cleanup=whitespace" && {
+    expect_parity_reset _anno-fixture effect -- tag --cleanup=whitespace -m "msg" anno1
   }
-  it "matches git behavior with --cleanup=bogus (TODO)" && {
-    : # TODO: expect_parity effect -- tag --cleanup=bogus -m "msg" anno1
+  it "matches git behavior with --cleanup=strip" && {
+    expect_parity_reset _anno-fixture effect -- tag --cleanup=strip -m "msg" anno1
+  }
+  it "matches git behavior with --cleanup=bogus" && {
+    expect_parity effect -- tag --cleanup=bogus -m "msg" anno1
   }
 )
 
@@ -651,9 +697,17 @@ only_for_hash sha1-only && (small-repo-in-sandbox
 # unchanged — same outcome as without -e in that case.
 # hash=sha1-only
 title "gix tag -e / --edit"
-only_for_hash sha1-only && (small-repo-in-sandbox
-  it "matches git behavior with GIT_EDITOR=true -e -m (TODO)" && {
-    : # TODO: GIT_EDITOR=true expect_parity effect -- tag -e -m "msg" anno1
+only_for_hash sha1-only && (sandbox
+  function _anno-fixture() {
+    git-init-hash-aware
+    git checkout -b main
+    git config commit.gpgsign false
+    git config tag.gpgsign false
+    git commit -q --allow-empty -m "seed"
+  }
+  export GIT_EDITOR=true
+  it "matches git behavior with GIT_EDITOR=true -e -m" && {
+    expect_parity_reset _anno-fixture effect -- tag -e -m "msg" anno1
   }
 )
 
@@ -663,12 +717,19 @@ only_for_hash sha1-only && (small-repo-in-sandbox
 # common form.
 # hash=sha1-only
 title "gix tag --trailer"
-only_for_hash sha1-only && (small-repo-in-sandbox
-  it "matches git behavior with --trailer 'Key: val' (TODO)" && {
-    : # TODO: expect_parity effect -- tag -m "body" --trailer "Key: val" anno1
+only_for_hash sha1-only && (sandbox
+  function _anno-fixture() {
+    git-init-hash-aware
+    git checkout -b main
+    git config commit.gpgsign false
+    git config tag.gpgsign false
+    git commit -q --allow-empty -m "seed"
   }
-  it "matches git behavior with multiple --trailer (TODO)" && {
-    : # TODO: expect_parity effect -- tag -m "body" --trailer "K1: v1" --trailer "K2: v2" anno1
+  it "matches git behavior with --trailer 'Key: val'" && {
+    expect_parity_reset _anno-fixture effect -- tag -m "body" --trailer "Key: val" anno1
+  }
+  it "matches git behavior with multiple --trailer" && {
+    expect_parity_reset _anno-fixture effect -- tag -m "body" --trailer "K1: v1" --trailer "K2: v2" anno1
   }
 )
 
@@ -678,12 +739,19 @@ only_for_hash sha1-only && (small-repo-in-sandbox
 # Side-effect observable via the presence of `.git/logs/refs/tags/<name>`.
 # hash=sha1-only
 title "gix tag --create-reflog"
-only_for_hash sha1-only && (small-repo-in-sandbox
-  it "matches git behavior with --create-reflog (TODO)" && {
-    : # TODO: expect_parity effect -- tag --create-reflog newtag
+only_for_hash sha1-only && (sandbox
+  function _anno-fixture() {
+    git-init-hash-aware
+    git checkout -b main
+    git config commit.gpgsign false
+    git config tag.gpgsign false
+    git commit -q --allow-empty -m "seed"
   }
-  it "matches git behavior with --no-create-reflog (TODO)" && {
-    : # TODO: expect_parity effect -- tag --no-create-reflog newtag
+  it "matches git behavior with --create-reflog" && {
+    expect_parity_reset _anno-fixture effect -- tag --create-reflog newtag
+  }
+  it "matches git behavior with --no-create-reflog" && {
+    expect_parity_reset _anno-fixture effect -- tag --no-create-reflog newtag
   }
 )
 
@@ -697,9 +765,17 @@ only_for_hash sha1-only && (small-repo-in-sandbox
 # shortcoming once the -s row closes on the error path.
 # hash=sha1-only
 title "gix tag -s (no signing backend)"
-only_for_hash sha1-only && (small-repo-in-sandbox
-  it "matches git behavior without configured signer (TODO)" && {
-    : # TODO: GNUPGHOME=/nonexistent expect_parity effect -- tag -s -m "signed" anno1
+only_for_hash sha1-only && (sandbox
+  function _anno-fixture() {
+    git-init-hash-aware
+    git checkout -b main
+    git config commit.gpgsign false
+    git config tag.gpgsign false
+    git commit -q --allow-empty -m "seed"
+  }
+  export GNUPGHOME=/nonexistent
+  it "matches git behavior without configured signer" && {
+    expect_parity_reset _anno-fixture effect -- tag -s -m "signed" anno1
   }
 )
 
@@ -708,12 +784,20 @@ only_for_hash sha1-only && (small-repo-in-sandbox
 # the no-backend error path.
 # hash=sha1-only
 title "gix tag -u / --local-user"
-only_for_hash sha1-only && (small-repo-in-sandbox
-  it "matches git behavior with -u <keyid> no backend (TODO)" && {
-    : # TODO: GNUPGHOME=/nonexistent expect_parity effect -- tag -u deadbeef -m "signed" anno1
+only_for_hash sha1-only && (sandbox
+  function _anno-fixture() {
+    git-init-hash-aware
+    git checkout -b main
+    git config commit.gpgsign false
+    git config tag.gpgsign false
+    git commit -q --allow-empty -m "seed"
   }
-  it "matches git behavior with --local-user=<keyid> no backend (TODO)" && {
-    : # TODO: GNUPGHOME=/nonexistent expect_parity effect -- tag --local-user=deadbeef -m "signed" anno1
+  export GNUPGHOME=/nonexistent
+  it "matches git behavior with -u <keyid> no backend" && {
+    expect_parity_reset _anno-fixture effect -- tag -u deadbeef -m "signed" anno1
+  }
+  it "matches git behavior with --local-user=<keyid> no backend" && {
+    expect_parity_reset _anno-fixture effect -- tag --local-user=deadbeef -m "signed" anno1
   }
 )
 
@@ -722,9 +806,15 @@ only_for_hash sha1-only && (small-repo-in-sandbox
 # normally sign; `--no-sign` forces an unsigned annotated tag.
 # hash=sha1-only
 title "gix tag --no-sign"
-only_for_hash sha1-only && (small-repo-in-sandbox
-  git config tag.gpgSign true
-  it "matches git behavior (TODO)" && {
-    : # TODO: expect_parity effect -- tag --no-sign -m "msg" anno1
+only_for_hash sha1-only && (sandbox
+  function _anno-fixture-with-gpgsign() {
+    git-init-hash-aware
+    git checkout -b main
+    git config commit.gpgsign false
+    git config tag.gpgSign true
+    git commit -q --allow-empty -m "seed"
+  }
+  it "matches git behavior" && {
+    expect_parity_reset _anno-fixture-with-gpgsign effect -- tag --no-sign -m "msg" anno1
   }
 )

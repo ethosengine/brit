@@ -2435,6 +2435,17 @@ pub fn main() -> Result<()> {
                 delete,
                 verify,
                 force,
+                annotate,
+                message,
+                file,
+                edit,
+                trailer,
+                cleanup,
+                create_reflog,
+                no_create_reflog: _,
+                sign,
+                no_sign,
+                local_user,
                 ignore_case,
                 column: _,
                 no_column: _,
@@ -2457,8 +2468,46 @@ pub fn main() -> Result<()> {
                 || no_contains.is_some()
                 || merged.is_some()
                 || no_merged.is_some();
+            // Annotated-mode triggers (builtin/tag.c create_tag_object
+            // logic): any of -a, -s, -u, -m, -F, --trailer implies
+            // annotated create.
+            let has_annotated_trigger = annotate
+                || sign
+                || local_user.is_some()
+                || !message.is_empty()
+                || file.is_some()
+                || !trailer.is_empty();
             let is_create_mode = !delete && !verify && !has_list_filters && !patterns.is_empty();
-            if is_create_mode {
+            if is_create_mode && has_annotated_trigger {
+                prepare_and_run(
+                    "tag-create-annotated",
+                    trace,
+                    verbose,
+                    progress,
+                    progress_keep_open,
+                    None,
+                    move |_progress, out, err| {
+                        core::repository::tag::create_annotated(
+                            repository(Mode::Lenient)?,
+                            patterns,
+                            core::repository::tag::AnnotatedOptions {
+                                force,
+                                message,
+                                file,
+                                edit,
+                                trailer,
+                                cleanup,
+                                create_reflog,
+                                sign,
+                                no_sign,
+                                local_user,
+                            },
+                            out,
+                            err,
+                        )
+                    },
+                )
+            } else if is_create_mode {
                 prepare_and_run(
                     "tag-create-lightweight",
                     trace,
