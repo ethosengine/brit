@@ -205,6 +205,19 @@ pub enum Subcommands {
         /// '--filters' or '--textconv'").
         #[clap(long, value_name = "PATH")]
         path: Option<String>,
+        /// Read object names from stdin and emit `<oid> <type> <size> LF`
+        /// per input line (no contents). Mirrors `git cat-file
+        /// --batch-check`. An optional `=<format>` argument overrides the
+        /// default format — supported atoms today: `%(objectname)`,
+        /// `%(objecttype)`, `%(objectsize)`.
+        #[clap(
+            long,
+            value_name = "FORMAT",
+            num_args = 0..=1,
+            default_missing_value = "",
+            require_equals = true,
+        )]
+        batch_check: Option<String>,
         /// The object to print, optionally preceded by a type hint.
         ///
         /// Two positional shapes:

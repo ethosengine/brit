@@ -385,16 +385,20 @@ only_for_hash sha1-only && (small-repo-in-sandbox
 # hash=sha1-only
 title "gix cat-file --batch-check"
 only_for_hash sha1-only && (small-repo-in-sandbox
-  # TODO — expect_parity bytes -- cat-file --batch-check
-  it "matches git behavior" && { :; }
+  it "matches git behavior (default format)" && {
+    PARITY_STDIN="HEAD
+" expect_parity bytes -- cat-file --batch-check
+  }
 )
 
 # mode=bytes — `--batch-check=<format>`: custom format, no contents.
 # hash=sha1-only
 title "gix cat-file --batch-check=<format>"
 only_for_hash sha1-only && (small-repo-in-sandbox
-  # TODO — expect_parity bytes -- cat-file --batch-check='%(objectname) %(objecttype)'
-  it "matches git behavior" && { :; }
+  it "matches git behavior with %(objectname) %(objecttype)" && {
+    PARITY_STDIN="HEAD
+" expect_parity bytes -- cat-file "--batch-check=%(objectname) %(objecttype)"
+  }
 )
 
 # mode=bytes — `--batch-command`: reads `contents <obj>` / `info <obj>` /
@@ -578,24 +582,30 @@ only_for_hash sha1-only && (small-repo-in-sandbox
 # hash=sha1-only
 title "gix cat-file --batch-check='%(objectname)'"
 only_for_hash sha1-only && (small-repo-in-sandbox
-  # TODO — expect_parity bytes -- cat-file --batch-check='%(objectname)'  (stdin: "HEAD\n")
-  it "matches git behavior" && { :; }
+  it "matches git behavior" && {
+    PARITY_STDIN="HEAD
+" expect_parity bytes -- cat-file "--batch-check=%(objectname)"
+  }
 )
 
 # mode=bytes — `%(objecttype)`: type name.
 # hash=sha1-only
 title "gix cat-file --batch-check='%(objecttype)'"
 only_for_hash sha1-only && (small-repo-in-sandbox
-  # TODO — expect_parity bytes -- cat-file --batch-check='%(objecttype)'  (stdin: "HEAD\n")
-  it "matches git behavior" && { :; }
+  it "matches git behavior" && {
+    PARITY_STDIN="HEAD
+" expect_parity bytes -- cat-file "--batch-check=%(objecttype)"
+  }
 )
 
 # mode=bytes — `%(objectsize)`: size in bytes.
 # hash=sha1-only
 title "gix cat-file --batch-check='%(objectsize)'"
 only_for_hash sha1-only && (small-repo-in-sandbox
-  # TODO — expect_parity bytes -- cat-file --batch-check='%(objectsize)'  (stdin: "HEAD\n")
-  it "matches git behavior" && { :; }
+  it "matches git behavior" && {
+    PARITY_STDIN="HEAD
+" expect_parity bytes -- cat-file "--batch-check=%(objectsize)"
+  }
 )
 
 # mode=bytes — `%(objectsize:disk)`: on-disk size (packed or loose). Per
@@ -646,8 +656,10 @@ only_for_hash sha1-only && (small-repo-in-sandbox
 # hash=sha1-only
 title "gix cat-file --batch-check (missing object on stdin)"
 only_for_hash sha1-only && (small-repo-in-sandbox
-  # TODO — expect_parity bytes -- cat-file --batch-check  (stdin: "notanoid\n")
-  it "matches git behavior" && { :; }
+  it "matches git behavior" && {
+    PARITY_STDIN="notanoid
+" expect_parity bytes -- cat-file --batch-check
+  }
 )
 
 # mode=bytes — ambiguous short sha on stdin (requires fabricated

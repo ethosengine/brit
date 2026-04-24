@@ -129,8 +129,80 @@ fn resolve_oid(repo: &gix::Repository, revspec: &str) -> Option<gix::hash::Objec
 }
 
 pub(super) mod function {
+    use std::io::BufRead;
+
     use super::{resolve_oid, Existence, PrintOutcome, TypedOutcome};
     use crate::repository::revision::resolve::TreeMode;
+
+    /// Default `--batch-check` format (per `DEFAULT_FORMAT` in
+    /// vendor/git/builtin/cat-file.c).
+    const DEFAULT_BATCH_CHECK_FORMAT: &str = "%(objectname) %(objecttype) %(objectsize)";
+
+    /// Expand `%(atom)` tokens in `format` using the given oid / kind / size.
+    /// Unknown atoms are written verbatim (git's strbuf_expand_bad_format
+    /// dies instead; we degrade gracefully since no parity row currently
+    /// exercises unknown atoms).
+    fn expand_atoms(format: &str, oid: &gix::hash::oid, kind: gix::object::Kind, size: u64, out: &mut Vec<u8>) {
+        let bytes = format.as_bytes();
+        let mut i = 0;
+        while i < bytes.len() {
+            if bytes[i..].starts_with(b"%(") {
+                if let Some(end_off) = bytes[i + 2..].iter().position(|&b| b == b')') {
+                    let atom = &bytes[i + 2..i + 2 + end_off];
+                    match atom {
+                        b"objectname" => out.extend_from_slice(oid.to_hex().to_string().as_bytes()),
+                        b"objecttype" => out.extend_from_slice(kind.as_bytes()),
+                        b"objectsize" => out.extend_from_slice(size.to_string().as_bytes()),
+                        _ => out.extend_from_slice(&bytes[i..i + 2 + end_off + 1]),
+                    }
+                    i += 2 + end_off + 1;
+                    continue;
+                }
+            }
+            out.push(bytes[i]);
+            i += 1;
+        }
+    }
+
+    /// `git cat-file --batch-check[=<format>]` — read object names from
+    /// `stdin`, emit one `<format>\n` line per input (default format is
+    /// `%(objectname) %(objecttype) %(objectsize)`). Missing objects emit
+    /// `<input> missing\n`.
+    ///
+    /// Mirrors `batch_objects` + `batch_one_object` in
+    /// vendor/git/builtin/cat-file.c with `BATCH_MODE_INFO`. Ambiguous
+    /// short-sha and follow-symlinks special statuses are deferred; only
+    /// the `missing` status fires in this iteration.
+    pub fn batch_check(
+        repo: &gix::Repository,
+        format: Option<&str>,
+        mut stdin: impl BufRead,
+        mut out: impl std::io::Write,
+    ) -> anyhow::Result<()> {
+        let format = format.unwrap_or(DEFAULT_BATCH_CHECK_FORMAT);
+        let mut line = String::new();
+        loop {
+            line.clear();
+            let n = stdin.read_line(&mut line)?;
+            if n == 0 {
+                break;
+            }
+            let input = line.trim_end_matches('\n').trim_end_matches('\r');
+            let Some(id) = resolve_oid(repo, input) else {
+                writeln!(out, "{input} missing")?;
+                continue;
+            };
+            let Ok(header) = repo.find_header(id) else {
+                writeln!(out, "{input} missing")?;
+                continue;
+            };
+            let mut buf = Vec::with_capacity(format.len() + 64);
+            expand_atoms(format, &id, header.kind(), header.size(), &mut buf);
+            out.write_all(&buf)?;
+            out.write_all(b"\n")?;
+        }
+        Ok(())
+    }
 
     pub fn cat(repo: gix::Repository, revspec: &str, out: impl std::io::Write) -> anyhow::Result<()> {
         super::display_object(&repo, repo.rev_parse(revspec)?, TreeMode::Pretty, None, out)?;

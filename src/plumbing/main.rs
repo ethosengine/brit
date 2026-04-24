@@ -2046,8 +2046,24 @@ pub fn main() -> Result<()> {
             // without those, git emits a usage error and exits 129 — we
             // mirror that exit code below.
             path,
+            // `--batch-check[=<format>]` — stdin-driven, no-contents
+            // info-emitter. None means the flag wasn't given; Some("")
+            // means bare `--batch-check` (default format); Some(s)
+            // means `--batch-check=<s>` (custom format).
+            batch_check,
             args,
         } => {
+            // `--batch-check[=<format>]` short-circuits the whole dispatch.
+            // It ignores positional args (stdin drives the object list),
+            // so this check fires before the 1-vs-2 positional split below.
+            if let Some(format) = batch_check.as_deref() {
+                let repo = repository(Mode::Lenient)?;
+                let stdin = std::io::stdin().lock();
+                let stdout = std::io::stdout().lock();
+                let format = if format.is_empty() { None } else { Some(format) };
+                core::repository::cat_batch_check(&repo, format, stdin, stdout)?;
+                std::process::exit(0);
+            }
             // `--path=<path>` is only meaningful with --textconv/--filters;
             // git's cmd_cat_file calls usage_msg_optf and exits 129
             // otherwise. Check early so the error path fires before any

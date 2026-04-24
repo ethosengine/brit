@@ -140,9 +140,18 @@ function expect_parity() {
   # subshell aborts the enclosing block before we capture the exit code. Toggle
   # errexit off for the duration of the comparison — the same pattern
   # `expect_run` uses in tests/utilities.sh.
+  #
+  # Optional stdin: when $PARITY_STDIN is set, feed its value to both binaries
+  # (as identical stdin streams). Used by cat-file's --batch / --batch-check
+  # rows where stdin drives the object list.
   set +e
-  git_out="$(git "$@" 2>&1)"; git_exit=$?
-  gix_out="$("$exe_plumbing" "$@" 2>&1)"; gix_exit=$?
+  if [[ -n "${PARITY_STDIN:-}" ]]; then
+    git_out="$(printf '%s' "$PARITY_STDIN" | git "$@" 2>&1)"; git_exit=$?
+    gix_out="$(printf '%s' "$PARITY_STDIN" | "$exe_plumbing" "$@" 2>&1)"; gix_exit=$?
+  else
+    git_out="$(git "$@" 2>&1)"; git_exit=$?
+    gix_out="$("$exe_plumbing" "$@" 2>&1)"; gix_exit=$?
+  fi
   set -e
 
   export PARITY_GIT_OUT="$git_out" PARITY_GIT_EXIT="$git_exit"
