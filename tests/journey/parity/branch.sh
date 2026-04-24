@@ -280,11 +280,11 @@ only_for_hash sha1-only && (small-repo-in-sandbox
 # hash=sha1-only
 title "gix branch --sort"
 only_for_hash sha1-only && (small-repo-in-sandbox
-  it "matches git behavior — refname (TODO)" && {
-    : # TODO: expect_parity bytes -- branch --sort=refname
+  it "matches git behavior — refname" && {
+    expect_parity bytes -- branch --sort=refname
   }
-  it "matches git behavior — descending (TODO)" && {
-    : # TODO: expect_parity bytes -- branch --sort=-refname
+  it "matches git behavior — descending" && {
+    expect_parity bytes -- branch --sort=-refname
   }
 )
 

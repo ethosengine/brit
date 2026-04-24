@@ -88,6 +88,10 @@ pub mod list {
         /// listing with one format-expanded row per branch (no
         /// current-branch decoration). Git's `--format`.
         pub format_string: Option<String>,
+        /// Sort keys (for-each-ref syntax). Later keys take precedence
+        /// as primary; a leading `-` reverses direction. Git's
+        /// `--sort=<key>` (repeatable).
+        pub sort: Vec<String>,
     }
 }
 
@@ -163,6 +167,13 @@ pub fn list(
     // both cases no local row is decorated with `*`. Matches git's
     // print_ref_list() which compares refs against head_ref.
     let head_short = repo.head_name()?.map(|name| name.shorten().to_string());
+
+    // Resolve the primary sort key. git's OPT_REF_SORT accumulates
+    // keys; the last one wins as primary. A leading `-` reverses.
+    // For this iteration only `refname` is recognized — other keys
+    // (committerdate, authordate, etc.) fall back to refname order
+    // since the list is already refname-sorted to begin with.
+    let sort_descending = options.sort.last().is_some_and(|k| k.starts_with('-'));
 
     // Pattern filter: fnmatch(3)-style shell globs OR'd; empty =
     // match everything. Matches `for_each_fullref_in_pattern` in
@@ -248,6 +259,9 @@ pub fn list(
             kept.push(name);
         }
         kept.sort();
+        if sort_descending {
+            kept.reverse();
+        }
         for branch_name in kept {
             if let Some(fmt) = options.format_string.as_deref() {
                 let full = format!("refs/heads/{branch_name}");
@@ -288,6 +302,9 @@ pub fn list(
             kept.push(name);
         }
         kept.sort();
+        if sort_descending {
+            kept.reverse();
+        }
         for branch_name in kept {
             if let Some(fmt) = options.format_string.as_deref() {
                 let full = format!("refs/remotes/{branch_name}");

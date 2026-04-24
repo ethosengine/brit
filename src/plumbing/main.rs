@@ -923,7 +923,7 @@ pub fn main() -> Result<()> {
                 points_at,
                 format_string,
                 omit_empty: _omit_empty,
-                sort: _sort,
+                sort,
                 column: _column,
                 no_column: _no_column,
                 color: _color,
@@ -972,6 +972,7 @@ pub fn main() -> Result<()> {
                     no_merged,
                     points_at,
                     format_string,
+                    sort,
                 };
 
                 prepare_and_run(
