@@ -72,6 +72,15 @@ pub fn list(
     }
 
     if show_remotes {
+        // When --all pairs locals + remotes, git disambiguates the
+        // remote rows with a `remotes/` prefix (see
+        // vendor/git/builtin/branch.c: REF_REMOTE_BRANCH vs
+        // REF_LOCAL_BRANCH filter.kind → ref_array_item's refname is
+        // used verbatim after `refs/` strip, so `refs/remotes/x` =>
+        // `remotes/x`). With --remotes alone git instead prints the
+        // shortened form `origin/main` because there is no ambiguity
+        // against locals.
+        let include_prefix = show_local;
         let mut branch_names: Vec<String> = platform
             .remote_branches()?
             .flatten()
@@ -82,7 +91,11 @@ pub fn list(
         branch_names.sort();
 
         for branch_name in branch_names {
-            writeln!(out, "  {branch_name}")?;
+            if include_prefix {
+                writeln!(out, "  remotes/{branch_name}")?;
+            } else {
+                writeln!(out, "  {branch_name}")?;
+            }
         }
     }
 
