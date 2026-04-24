@@ -83,7 +83,7 @@ pub fn create_lightweight(
         std::process::exit(128);
     }
 
-    let commit_spec = positionals.get(1).map(|s| s.as_os_str());
+    let commit_spec = positionals.get(1).map(OsString::as_os_str);
     let target_oid = match commit_spec {
         Some(spec) => {
             let spec_bstr = gix::path::os_str_into_bstr(spec)?;
