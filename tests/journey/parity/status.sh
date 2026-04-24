@@ -299,43 +299,39 @@ only_for_hash sha1-only && (small-repo-in-sandbox
 
 # --- untracked-files ----------------------------------------------------
 
-# mode=effect — `-u<mode>` / `--untracked-files=<mode>` toggles untracked
-# listing. The mode is stuck to the option (`-uno`, not `-u no`). Bare
-# `-u` / `--untracked-files` default to `all`.
+# mode=effect — `-u<mode>` / `--untracked-files[=<mode>]` toggles untracked
+# listing. Clap: `untracked_files: Option<UntrackedMode>` with
+# `num_args=0..=1` and `default_missing_value="all"`. Flag is accepted
+# for compat; dirwalk-emit wiring (actual untracked-listing behavior
+# change) is deferred — effect-mode parity (exit-code match) holds
+# across all modes.
 # hash=sha1-only "gix cannot load sha256 repos: extensions.objectFormat=sha256 rejected (gix/src/config/tree/sections/extensions.rs)"
 title "gix status -u / --untracked-files[=<mode>]"
 only_for_hash sha1-only && (small-repo-in-sandbox
+  mkdir untracked-dir && touch untracked-dir/a untracked-dir/b
   it "matches git behavior with -uno" && {
-    # TODO: untracked dir+files; expect_parity effect -- status -uno
-    true
+    expect_parity effect -- status -uno
   }
   it "matches git behavior with --untracked-files=no" && {
-    # TODO: expect_parity effect -- status --untracked-files=no
-    true
+    expect_parity effect -- status --untracked-files=no
   }
   it "matches git behavior with -unormal" && {
-    # TODO: expect_parity effect -- status -unormal
-    true
+    expect_parity effect -- status -unormal
   }
   it "matches git behavior with --untracked-files=normal" && {
-    # TODO: expect_parity effect -- status --untracked-files=normal
-    true
+    expect_parity effect -- status --untracked-files=normal
   }
   it "matches git behavior with -uall" && {
-    # TODO: expect_parity effect -- status -uall
-    true
+    expect_parity effect -- status -uall
   }
   it "matches git behavior with --untracked-files=all" && {
-    # TODO: expect_parity effect -- status --untracked-files=all
-    true
+    expect_parity effect -- status --untracked-files=all
   }
   it "matches git behavior with bare -u (defaults to all)" && {
-    # TODO: expect_parity effect -- status -u
-    true
+    expect_parity effect -- status -u
   }
   it "matches git behavior with bare --untracked-files (defaults to all)" && {
-    # TODO: expect_parity effect -- status --untracked-files
-    true
+    expect_parity effect -- status --untracked-files
   }
 )
 

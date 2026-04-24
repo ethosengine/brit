@@ -312,6 +312,16 @@ pub mod status {
         V2,
     }
 
+    /// Mode argument for `-u<mode>` / `--untracked-files[=<mode>]`.
+    /// Defaults to All (the git default when `-u` is bare).
+    #[derive(Default, Debug, Copy, Clone, PartialEq, Eq, clap::ValueEnum)]
+    pub enum UntrackedMode {
+        No,
+        Normal,
+        #[default]
+        All,
+    }
+
     #[derive(Debug, clap::Parser)]
     #[command(about = "Compute repository status similar to `git status`")]
     pub struct Platform {
@@ -354,6 +364,13 @@ pub mod status {
         /// exit-code parity.
         #[clap(short = 'v', long = "verbose", action = clap::ArgAction::Count)]
         pub verbose: u8,
+        /// Show untracked files. The mode must be stuck to the option
+        /// (`-uno`, never `-u no`). Bare `-u` / `--untracked-files`
+        /// default to `all` — matching git.
+        #[clap(short = 'u', long = "untracked-files",
+               value_name = "MODE", num_args = 0..=1,
+               default_missing_value = "all")]
+        pub untracked_files: Option<UntrackedMode>,
         /// If enabled, show ignored files and directories.
         #[clap(long)]
         pub ignored: Option<Option<Ignored>>,

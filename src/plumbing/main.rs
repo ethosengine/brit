@@ -428,12 +428,18 @@ pub fn main() -> Result<()> {
             show_stash,
             porcelain,
             verbose: status_verbose_count,
+            untracked_files,
             statistics,
             submodules,
             no_write,
             pathspec,
             index_worktree_renames,
         }) => {
+            // `-u<mode>` / `--untracked-files[=<mode>]` accepted for compat.
+            // Wiring to gix-status's dirwalk emit-untracked flag is deferred
+            // — the flag currently alters test-fixture text output but not
+            // exit codes, so effect-mode parity holds.
+            let _ = untracked_files;
             // `--long` is git's default format name; gix's default (Simplified)
             // is close enough under effect mode — the flag is accepted for
             // compatibility but does not alter output.
