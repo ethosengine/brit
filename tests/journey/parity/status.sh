@@ -278,21 +278,22 @@ only_for_hash sha1-only && (small-repo-in-sandbox
 # --- verbosity -----------------------------------------------------------
 
 # mode=effect — `-v` / `--verbose` appends a `diff --cached`-style section
-# for staged changes. `-vv` additionally appends an unstaged-diff section.
+# for staged changes; `-vv` additionally appends an unstaged-diff section.
+# gix accepts the flag as a u8 counter (clap ArgAction::Count) for compat;
+# diff emission is deferred. Effect-mode parity (exit-code match) passes.
 # hash=sha1-only "gix cannot load sha256 repos: extensions.objectFormat=sha256 rejected (gix/src/config/tree/sections/extensions.rs)"
 title "gix status -v / --verbose"
 only_for_hash sha1-only && (small-repo-in-sandbox
+  echo staged-change >> a && git add a
   it "matches git behavior with -v" && {
-    # TODO: stage a change; expect_parity effect -- status -v
-    true
+    expect_parity effect -- status -v
   }
   it "matches git behavior with --verbose" && {
-    # TODO: expect_parity effect -- status --verbose
-    true
+    expect_parity effect -- status --verbose
   }
   it "matches git behavior with -vv" && {
-    # TODO: stage + worktree changes; expect_parity effect -- status -vv
-    true
+    echo worktree-change >> a
+    expect_parity effect -- status -vv
   }
 )
 

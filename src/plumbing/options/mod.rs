@@ -347,6 +347,13 @@ pub mod status {
                default_missing_value = "v1",
                conflicts_with_all = ["short", "format"])]
         pub porcelain: Option<PorcelainVersion>,
+        /// Show the textual changes staged to be committed (-v) or also the
+        /// worktree-vs-index diff (-vv). Accepted for compat with
+        /// `git status -v`/`-vv`; diff emission is not yet implemented,
+        /// so under effect mode this is currently a no-op that yields
+        /// exit-code parity.
+        #[clap(short = 'v', long = "verbose", action = clap::ArgAction::Count)]
+        pub verbose: u8,
         /// If enabled, show ignored files and directories.
         #[clap(long)]
         pub ignored: Option<Option<Ignored>>,

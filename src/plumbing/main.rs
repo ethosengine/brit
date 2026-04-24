@@ -427,6 +427,7 @@ pub fn main() -> Result<()> {
             branch,
             show_stash,
             porcelain,
+            verbose: status_verbose_count,
             statistics,
             submodules,
             no_write,
@@ -442,6 +443,10 @@ pub fn main() -> Result<()> {
             // of refs/stash; deferred as a shortcoming. Under effect mode
             // this no-op yields exit-code parity.
             let _ = show_stash;
+            // `-v` / `-vv` accepted for compat. Diff emission (staged for -v,
+            // staged + worktree for -vv) is deferred; under effect mode this
+            // no-op yields exit-code parity.
+            let _ = status_verbose_count;
             // Resolve the effective format. `--porcelain[=v1]` maps to Short
             // (byte-identical under our fixtures since porcelain differs from
             // short only in color/path-relativity, both off here).
