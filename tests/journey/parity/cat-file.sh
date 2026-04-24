@@ -695,8 +695,9 @@ only_for_hash sha1-only && (small-repo-in-sandbox
 # mode=effect
 title "gix cat-file --allow-unknown-type"
 only_for_hash sha1-only && (small-repo-in-sandbox
-  # TODO — expect_parity effect -- cat-file --allow-unknown-type -t HEAD
-  it "matches git behavior" && { :; }
+  it "matches git behavior" && {
+    expect_parity effect -- cat-file --allow-unknown-type -t HEAD
+  }
 )
 
 # --- submodule / dangling / notdir / loop (follow-symlinks statuses) ---
@@ -741,8 +742,9 @@ only_for_hash sha1-only && (small-repo-in-sandbox
 # mode=effect
 title "gix cat-file -e -p (mutually exclusive modes)"
 only_for_hash sha1-only && (small-repo-in-sandbox
-  # TODO — expect_parity effect -- cat-file -e -p HEAD
-  it "matches git behavior" && { :; }
+  it "matches git behavior" && {
+    expect_parity effect -- cat-file -e -p HEAD
+  }
 )
 
 # mode=effect — mode flag combined with batch (e.g. `-p --batch`): git
@@ -751,8 +753,9 @@ only_for_hash sha1-only && (small-repo-in-sandbox
 # mode=effect
 title "gix cat-file -p --batch (mode + batch)"
 only_for_hash sha1-only && (small-repo-in-sandbox
-  # TODO — expect_parity effect -- cat-file -p --batch
-  it "matches git behavior" && { :; }
+  it "matches git behavior" && {
+    expect_parity effect -- cat-file -p --batch
+  }
 )
 
 # mode=effect — two batch modes at once (e.g. `--batch --batch-check`):
@@ -762,8 +765,9 @@ only_for_hash sha1-only && (small-repo-in-sandbox
 # mode=effect
 title "gix cat-file --batch --batch-check (conflicting batches)"
 only_for_hash sha1-only && (small-repo-in-sandbox
-  # TODO — expect_parity effect -- cat-file --batch --batch-check
-  it "matches git behavior" && { :; }
+  it "matches git behavior" && {
+    expect_parity effect -- cat-file --batch --batch-check
+  }
 )
 
 # End-of-file sentinel: when every row is `only_for_hash sha1-only` and the

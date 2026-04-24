@@ -2024,10 +2024,14 @@ pub fn main() -> Result<()> {
             ),
         },
         Subcommands::Cat {
-            pretty: _,
+            pretty,
             exists,
             print_type,
             print_size,
+            // `--allow-unknown-type` is a documented no-op (per the
+            // OPT_HIDDEN_BOOL help text in git's options[] array).
+            // Accept and drop.
+            allow_unknown_type: _,
             // `--use-mailmap` / `--mailmap` enable, `--no-use-mailmap` /
             // `--no-mailmap` disable. Last-wins has no effect in our
             // fixtures because the scaffold tests never combine them;
@@ -2065,6 +2069,49 @@ pub fn main() -> Result<()> {
             follow_symlinks,
             args,
         } => {
+            // Mutual-exclusion among the `-e`/`-p`/`-t`/`-s` cmdmode
+            // flags. git's OPT_CMDMODE auto-rejects two being set with
+            // "error: options '-x' and '-y' cannot be used together"
+            // and exits 129. Only the exit code is asserted; message
+            // format diverges.
+            {
+                let set: [(&str, bool); 4] = [("-e", exists), ("-p", pretty), ("-t", print_type), ("-s", print_size)];
+                let count = set.iter().filter(|(_, v)| *v).count();
+                if count > 1 {
+                    let active: Vec<&str> = set.iter().filter(|(_, v)| *v).map(|(n, _)| *n).collect();
+                    use std::io::Write;
+                    let mut stderr = std::io::stderr().lock();
+                    let _ = writeln!(
+                        stderr,
+                        "error: options '{}' and '{}' cannot be used together",
+                        active[0], active[1]
+                    );
+                    drop(stderr);
+                    std::process::exit(129);
+                }
+            }
+            // Query mode (-e/-p/-t/-s) + batch mode is also rejected by
+            // git's usage_msg_optf "'-%c' is incompatible with batch mode"
+            // check (exit 129). --textconv / --filters are *allowed* with
+            // batch, so they're excluded from this test.
+            let any_query_mode = exists || pretty || print_type || print_size;
+            let any_batch = batch.is_some() || batch_check.is_some();
+            if any_query_mode && any_batch {
+                let flag = if exists {
+                    "-e"
+                } else if pretty {
+                    "-p"
+                } else if print_type {
+                    "-t"
+                } else {
+                    "-s"
+                };
+                use std::io::Write;
+                let mut stderr = std::io::stderr().lock();
+                let _ = writeln!(stderr, "fatal: '{flag}' is incompatible with batch mode");
+                drop(stderr);
+                std::process::exit(129);
+            }
             // `--batch*[=<format>]` short-circuits the whole dispatch.
             // Both modes ignore positional args (stdin drives the object
             // list), so this check fires before the 1-vs-2 positional
@@ -2075,7 +2122,7 @@ pub fn main() -> Result<()> {
                 let mut stderr = std::io::stderr().lock();
                 let _ = writeln!(stderr, "error: only one batch option may be specified");
                 drop(stderr);
-                std::process::exit(128);
+                std::process::exit(129);
             }
             if let Some(format) = batch.as_deref().or(batch_check.as_deref()) {
                 // -Z = NUL in + NUL out; -z = NUL in + LF out.

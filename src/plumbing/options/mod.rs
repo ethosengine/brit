@@ -184,6 +184,11 @@ pub enum Subcommands {
         /// `--no-use-mailmap`; `--no-mailmap` is a git-compat alias.
         #[clap(long = "no-use-mailmap", visible_alias = "no-mailmap")]
         no_use_mailmap: bool,
+        /// Historical option retained for compat with scripts that pass
+        /// it. git's OPT_HIDDEN_BOOL marks this as a no-op ("historical
+        /// option -- no-op"). Accepted and ignored.
+        #[clap(long = "allow-unknown-type")]
+        allow_unknown_type: bool,
         /// Apply textconv filters to the object's content before emitting.
         /// Mirrors `git cat-file --textconv`.
         ///
