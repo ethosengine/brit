@@ -2026,6 +2026,7 @@ pub fn main() -> Result<()> {
         Subcommands::Cat {
             pretty: _,
             exists,
+            print_type,
             revspec,
         } => {
             if exists {
@@ -2046,6 +2047,37 @@ pub fn main() -> Result<()> {
                         use std::io::Write;
                         let mut stderr = std::io::stderr().lock();
                         let _ = writeln!(stderr, "fatal: Not a valid object name {revspec}");
+                        drop(stderr);
+                        std::process::exit(128);
+                    }
+                }
+            }
+            if print_type {
+                // `git cat-file -t` prints the object type name (blob /
+                // tree / commit / tag) + LF on stdout. Two failure paths:
+                //   InvalidSpec    → `fatal: Not a valid object name <spec>`
+                //                    (same as -e)
+                //   MissingObject  → `fatal: git cat-file: could not get
+                //                    object info` (literal full-hex oid
+                //                    accepted by get_oid_with_context but
+                //                    odb has no such object — case 't'
+                //                    in cat_one_file dies here)
+                // Both exit 128.
+                let repo = repository(Mode::Lenient)?;
+                let stdout = std::io::stdout().lock();
+                match core::repository::cat_type(&repo, &revspec, stdout)? {
+                    core::repository::CatPrintOutcome::Ok => std::process::exit(0),
+                    core::repository::CatPrintOutcome::InvalidSpec => {
+                        use std::io::Write;
+                        let mut stderr = std::io::stderr().lock();
+                        let _ = writeln!(stderr, "fatal: Not a valid object name {revspec}");
+                        drop(stderr);
+                        std::process::exit(128);
+                    }
+                    core::repository::CatPrintOutcome::MissingObject => {
+                        use std::io::Write;
+                        let mut stderr = std::io::stderr().lock();
+                        let _ = writeln!(stderr, "fatal: git cat-file: could not get object info");
                         drop(stderr);
                         std::process::exit(128);
                     }

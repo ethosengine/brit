@@ -162,6 +162,10 @@ pub enum Subcommands {
         /// path. Mirrors `git cat-file -e`.
         #[clap(short = 'e')]
         exists: bool,
+        /// Print the object's type name (`blob`, `tree`, `commit`, or `tag`)
+        /// followed by a newline. Mirrors `git cat-file -t`.
+        #[clap(short = 't')]
+        print_type: bool,
         /// The object to print to stdout.
         revspec: String,
     },

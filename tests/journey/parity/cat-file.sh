@@ -196,14 +196,18 @@ only_for_hash sha1-only && (small-repo-in-sandbox
 # hash=sha1-only
 title "gix cat-file -t"
 only_for_hash sha1-only && (small-repo-in-sandbox
-  # TODO — expect_parity bytes -- cat-file -t HEAD
-  it "matches git behavior on a commit (type = commit)" && { :; }
-  # TODO — expect_parity bytes -- cat-file -t HEAD^{tree}
-  it "matches git behavior on a tree (type = tree)" && { :; }
-  # TODO — expect_parity bytes -- cat-file -t HEAD:a
-  it "matches git behavior on a blob (type = blob)" && { :; }
-  # TODO — expect_parity bytes -- cat-file -t annotated
-  it "matches git behavior on an annotated tag (type = tag)" && { :; }
+  it "matches git behavior on a commit (type = commit)" && {
+    expect_parity bytes -- cat-file -t HEAD
+  }
+  it "matches git behavior on a tree (type = tree)" && {
+    expect_parity bytes -- cat-file -t HEAD^{tree}
+  }
+  it "matches git behavior on a blob (type = blob)" && {
+    expect_parity bytes -- cat-file -t HEAD:a
+  }
+  it "matches git behavior on an annotated tag (type = tag)" && {
+    expect_parity bytes -- cat-file -t annotated
+  }
 )
 
 # mode=bytes — `-s <obj>` prints the object's size in bytes (decimal,

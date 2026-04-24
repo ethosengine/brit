@@ -87,13 +87,65 @@ pub enum Existence {
     InvalidSpec,
 }
 
+/// Outcome of the `-t` / `-s` / `-p` (non-existence) query modes. Dispatch
+/// maps variants to exit codes + git's exact fatal wording:
+///   * `Ok`              → exit 0, content already written to stdout
+///   * `InvalidSpec`     → exit 128, stderr `fatal: Not a valid object name <spec>`
+///   * `MissingObject`   → exit 128, stderr `fatal: git cat-file: could not get object info`
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum PrintOutcome {
+    Ok,
+    InvalidSpec,
+    MissingObject,
+}
+
+/// Mirror git's `get_oid_with_context(..., GET_OID_HASH_ANY, ...)` contract:
+/// accept a full-length hex oid as a literal identifier *without* requiring
+/// the object to be present, and fall back to full revspec resolution for
+/// everything else. Returns `None` when the spec is neither — dispatch
+/// reports that as `InvalidSpec`.
+fn resolve_oid(repo: &gix::Repository, revspec: &str) -> Option<gix::hash::ObjectId> {
+    if let Ok(id) = gix::hash::ObjectId::from_hex(revspec.as_bytes()) {
+        return Some(id);
+    }
+    repo.rev_parse(revspec).ok()?.single().map(gix::Id::detach)
+}
+
 pub(super) mod function {
-    use super::Existence;
+    use super::{resolve_oid, Existence, PrintOutcome};
     use crate::repository::revision::resolve::TreeMode;
 
     pub fn cat(repo: gix::Repository, revspec: &str, out: impl std::io::Write) -> anyhow::Result<()> {
         super::display_object(&repo, repo.rev_parse(revspec)?, TreeMode::Pretty, None, out)?;
         Ok(())
+    }
+
+    /// `git cat-file -t <revspec>` — write the object's type name
+    /// (one of `blob`, `tree`, `commit`, `tag`) followed by a newline.
+    ///
+    /// Mirrors `case 't'` in cat_one_file (vendor/git/builtin/cat-file.c):
+    /// `odb_read_object_info_extended` → `type_name(type)` →
+    /// `printf("%s\n", ...)`. Two failure paths:
+    ///   * spec does not resolve (and is not a literal full-hex oid)
+    ///     → `InvalidSpec` → fatal `Not a valid object name <spec>`
+    ///   * spec resolved / literal oid accepted, but odb has no such
+    ///     object → `MissingObject` → fatal `git cat-file: could not
+    ///     get object info`
+    pub fn print_type(
+        repo: &gix::Repository,
+        revspec: &str,
+        mut out: impl std::io::Write,
+    ) -> anyhow::Result<PrintOutcome> {
+        let Some(id) = resolve_oid(repo, revspec) else {
+            return Ok(PrintOutcome::InvalidSpec);
+        };
+        match repo.find_header(id) {
+            Ok(header) => {
+                writeln!(out, "{}", header.kind())?;
+                Ok(PrintOutcome::Ok)
+            }
+            Err(_) => Ok(PrintOutcome::MissingObject),
+        }
     }
 
     /// `git cat-file -e <revspec>` — report whether the object exists.
@@ -107,20 +159,10 @@ pub(super) mod function {
     /// can emit git's `fatal: Not a valid object name <spec>` line and
     /// exit 128.
     pub fn exists(repo: &gix::Repository, revspec: &str) -> Existence {
-        if let Ok(id) = gix::hash::ObjectId::from_hex(revspec.as_bytes()) {
-            return if repo.has_object(id) {
-                Existence::Present
-            } else {
-                Existence::Absent
-            };
-        }
-        match repo.rev_parse(revspec) {
-            Ok(spec) => match spec.single() {
-                Some(id) if repo.has_object(id) => Existence::Present,
-                Some(_) => Existence::Absent,
-                None => Existence::InvalidSpec,
-            },
-            Err(_) => Existence::InvalidSpec,
+        match resolve_oid(repo, revspec) {
+            Some(id) if repo.has_object(id) => Existence::Present,
+            Some(_) => Existence::Absent,
+            None => Existence::InvalidSpec,
         }
     }
 }
