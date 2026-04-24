@@ -916,7 +916,7 @@ pub fn main() -> Result<()> {
                 create_reflog: _create_reflog,
                 abbrev: _abbrev,
                 no_abbrev: _no_abbrev,
-                contains: _contains,
+                contains,
                 no_contains: _no_contains,
                 merged: _merged,
                 no_merged: _no_merged,
@@ -963,7 +963,11 @@ pub fn main() -> Result<()> {
                     .iter()
                     .map(|os| gix::path::os_str_into_bstr(os).map(std::borrow::ToOwned::to_owned))
                     .collect::<Result<_, _>>()?;
-                let options = list::Options { kind, patterns };
+                let options = list::Options {
+                    kind,
+                    patterns,
+                    contains,
+                };
 
                 prepare_and_run(
                     "branch-list",

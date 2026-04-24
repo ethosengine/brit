@@ -1,4 +1,26 @@
+use gix::prelude::ObjectIdExt;
+
 use crate::OutputFormat;
+
+/// Return `true` iff `haystack_commit` has `needle` anywhere in its
+/// ancestry (walking parents). Inclusive — a commit contains itself.
+/// Mirrors git's `commit_contains` semantic used for branch/tag
+/// `--contains` filtering.
+fn commit_contains(
+    repo: &gix::Repository,
+    haystack_commit: gix::ObjectId,
+    needle: gix::ObjectId,
+) -> anyhow::Result<bool> {
+    if haystack_commit == needle {
+        return Ok(true);
+    }
+    for res in haystack_commit.attach(repo).ancestors().all()? {
+        if res?.id == needle {
+            return Ok(true);
+        }
+    }
+    Ok(false)
+}
 
 /// `git branch --show-current`: print the current branch name alone,
 /// or nothing in detached `HEAD` state. Matches builtin/branch.c
@@ -13,6 +35,8 @@ pub fn show_current(repo: gix::Repository, out: &mut dyn std::io::Write) -> anyh
 }
 
 pub mod list {
+    use std::ffi::OsString;
+
     use gix::bstr::BString;
 
     pub enum Kind {
@@ -26,6 +50,9 @@ pub mod list {
         /// Shell-glob patterns (fnmatch(3), OR'd). Empty = match
         /// everything. Matches `git branch [<pattern>...]`.
         pub patterns: Vec<BString>,
+        /// If set, only list branches whose tip has `<commit>` in its
+        /// ancestry (inclusive). Git's `--contains`.
+        pub contains: Option<OsString>,
     }
 }
 
@@ -63,17 +90,41 @@ pub fn list(
                 .any(|pat| gix::glob::wildmatch(pat.as_ref(), name.into(), gix::glob::wildmatch::Mode::empty()))
     };
 
+    // --contains filter: resolve the needle once up-front so each
+    // branch's ancestor walk compares against the same ObjectId.
+    let contains_oid: Option<gix::ObjectId> = match options.contains.as_deref() {
+        Some(rev) => {
+            let rev_bstr = gix::path::os_str_into_bstr(rev)?;
+            Some(repo.rev_parse_single(rev_bstr)?.detach())
+        }
+        None => None,
+    };
+
+    let tip_of = |reference: &gix::Reference<'_>| -> anyhow::Result<gix::ObjectId> {
+        Ok(reference.clone().into_fully_peeled_id()?.detach())
+    };
+
+    let contains_keep = |tip: gix::ObjectId| -> anyhow::Result<bool> {
+        contains_oid.map_or(Ok(true), |needle| commit_contains(&repo, tip, needle))
+    };
+
     if show_local {
-        let mut branch_names: Vec<String> = platform
-            .local_branches()?
-            .flatten()
-            .map(|branch| branch.name().shorten().to_string())
-            .filter(|name| match_name(name))
-            .collect();
-
-        branch_names.sort();
-
-        for branch_name in branch_names {
+        let mut kept: Vec<String> = Vec::new();
+        for reference in platform.local_branches()?.flatten() {
+            let name = reference.name().shorten().to_string();
+            if !match_name(&name) {
+                continue;
+            }
+            if contains_oid.is_some() {
+                let tip = tip_of(&reference)?;
+                if !contains_keep(tip)? {
+                    continue;
+                }
+            }
+            kept.push(name);
+        }
+        kept.sort();
+        for branch_name in kept {
             let marker = if Some(&branch_name) == head_short.as_ref() {
                 "* "
             } else {
@@ -93,16 +144,22 @@ pub fn list(
         // shortened form `origin/main` because there is no ambiguity
         // against locals.
         let include_prefix = show_local;
-        let mut branch_names: Vec<String> = platform
-            .remote_branches()?
-            .flatten()
-            .map(|branch| branch.name().shorten().to_string())
-            .filter(|name| match_name(name))
-            .collect();
-
-        branch_names.sort();
-
-        for branch_name in branch_names {
+        let mut kept: Vec<String> = Vec::new();
+        for reference in platform.remote_branches()?.flatten() {
+            let name = reference.name().shorten().to_string();
+            if !match_name(&name) {
+                continue;
+            }
+            if contains_oid.is_some() {
+                let tip = tip_of(&reference)?;
+                if !contains_keep(tip)? {
+                    continue;
+                }
+            }
+            kept.push(name);
+        }
+        kept.sort();
+        for branch_name in kept {
             if include_prefix {
                 writeln!(out, "  remotes/{branch_name}")?;
             } else {

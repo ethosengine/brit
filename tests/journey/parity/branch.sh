@@ -213,11 +213,12 @@ only_for_hash sha1-only && (small-repo-in-sandbox
 # hash=sha1-only
 title "gix branch --contains"
 only_for_hash sha1-only && (small-repo-in-sandbox
-  it "matches git behavior — HEAD default (TODO)" && {
-    : # TODO: expect_parity bytes -- branch --contains
+  git branch -f older HEAD~1 >/dev/null 2>&1
+  it "matches git behavior — HEAD default" && {
+    expect_parity bytes -- branch --contains
   }
-  it "matches git behavior — explicit commit (TODO)" && {
-    : # TODO: expect_parity bytes -- branch --contains HEAD
+  it "matches git behavior — explicit commit" && {
+    expect_parity bytes -- branch --contains HEAD
   }
 )
 
