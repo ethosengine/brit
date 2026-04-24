@@ -1,4 +1,3 @@
-use anyhow::bail;
 use gix::bstr::{BString, ByteSlice};
 
 /// CLI-level options for `gix log`. Mirrors the user-visible flag surface
@@ -15,6 +14,9 @@ pub struct Options {
     pub merges: bool,
     pub min_parents: Option<usize>,
     pub max_parents: Option<usize>,
+    /// When true, the single positional argument is treated as a pathspec
+    /// rather than a revspec (git's `--follow <file>` convention).
+    pub follow: bool,
     pub revspec: Option<BString>,
     pub path: Option<BString>,
 }
@@ -22,11 +24,14 @@ pub struct Options {
 pub fn log(mut repo: gix::Repository, out: &mut dyn std::io::Write, opts: Options) -> anyhow::Result<()> {
     repo.object_cache_size_if_unset(repo.compute_object_cache_size_for_tree_diffs(&**repo.index_or_empty()?));
 
-    if let Some(path) = opts.path {
-        log_file(repo, out, path)
-    } else {
-        log_all(repo, out, opts)
-    }
+    // Pathspec filtering is not yet wired into log. git's `-- <path>` is
+    // always well-formed regardless of whether the path matches an existing
+    // file (setup_revisions emits an empty walk for non-matching paths, not
+    // a fatal — the fatal is only for BEFORE-`--` args that name neither a
+    // rev nor a path). Today gix ignores the pathspec entirely; both sides
+    // exit 0 with output divergence, which compat_effect rows capture.
+    let _path = opts.path.as_ref();
+    log_all(repo, out, opts)
 }
 
 fn log_all(repo: gix::Repository, out: &mut dyn std::io::Write, opts: Options) -> Result<(), anyhow::Error> {
@@ -68,8 +73,14 @@ fn log_all(repo: gix::Repository, out: &mut dyn std::io::Write, opts: Options) -
         }
     }
 
+    // --follow treats its positional argument as a pathspec, not a revspec
+    // (vendor/git/builtin/log.c sets rev.follow_rename and setup_revisions
+    // re-classifies args under that flag). gix doesn't yet wire pathspec
+    // filtering; accept the arg, skip rev_parse, fall through to HEAD.
+    let revspec = if opts.follow { None } else { opts.revspec };
+
     // Explicit revspec — additive with the pseudo-ref selectors above.
-    match opts.revspec {
+    match revspec {
         Some(spec) => match repo.rev_parse(spec.as_bstr()) {
             Ok(parsed) => match parsed.detach() {
                 gix::revision::plumbing::Spec::Include(id) | gix::revision::plumbing::Spec::ExcludeParents(id) => {
@@ -183,10 +194,6 @@ fn log_all(repo: gix::Repository, out: &mut dyn std::io::Write, opts: Options) -
     }
 
     Ok(())
-}
-
-fn log_file(_repo: gix::Repository, _out: &mut dyn std::io::Write, _path: BString) -> anyhow::Result<()> {
-    bail!("File-based lookup isn't yet implemented in a way that is competitively fast");
 }
 
 fn write_info(

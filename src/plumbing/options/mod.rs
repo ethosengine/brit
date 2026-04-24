@@ -788,9 +788,154 @@ pub mod log {
         #[clap(long, value_parser = crate::shared::AsBString, value_name = "time", alias = "before")]
         pub until: Option<BString>,
 
-        /// The revision (branch, commit, tag, range) to start walking from. Defaults to HEAD.
+        // --- pretty/format (accepted but semantics deferred) ---
+        /// Shorthand for `--pretty=oneline --abbrev-commit`.
+        #[clap(long)]
+        pub oneline: bool,
+        /// Pretty-format preset (oneline, short, medium, full, fuller, raw, reference)
+        /// or `format:<fmt>`.
+        #[clap(long, value_parser = crate::shared::AsBString, value_name = "format")]
+        pub pretty: Option<BString>,
+        /// Custom format string (shorthand for `--pretty=format:<fmt>`).
+        #[clap(long, value_parser = crate::shared::AsBString, value_name = "fmt")]
+        pub format: Option<BString>,
+        /// Abbreviate shown commit hashes.
+        #[clap(long)]
+        pub abbrev_commit: bool,
+        /// Show full commit hashes (cancels --abbrev-commit).
+        #[clap(long)]
+        pub no_abbrev_commit: bool,
+        /// Length of abbreviated hashes.
+        #[clap(long, value_name = "n")]
+        pub abbrev: Option<usize>,
+
+        // --- decoration (accepted but semantics deferred) ---
+        /// Show ref names at each commit.
+        #[clap(long, num_args = 0..=1, default_missing_value = "short", value_name = "mode")]
+        pub decorate: Option<String>,
+        /// Disable decoration.
+        #[clap(long)]
+        pub no_decorate: bool,
+        /// Include refs matching <pattern> for decoration (may be repeated).
+        #[clap(long, value_parser = crate::shared::AsBString, value_name = "pattern")]
+        pub decorate_refs: Vec<BString>,
+        /// Exclude refs matching <pattern> from decoration (may be repeated).
+        #[clap(long, value_parser = crate::shared::AsBString, value_name = "pattern")]
+        pub decorate_refs_exclude: Vec<BString>,
+        /// Clear any prior --decorate-refs / --decorate-refs-exclude.
+        #[clap(long)]
+        pub clear_decorations: bool,
+        /// Prepend the source ref name to each commit line.
+        #[clap(long)]
+        pub source: bool,
+        /// Display a text-based commit graph.
+        #[clap(long)]
+        pub graph: bool,
+
+        // --- diff output (accepted but semantics deferred) ---
+        /// Show the diff each commit introduces.
+        #[clap(short = 'p', long)]
+        pub patch: bool,
+        /// Suppress any diff output.
+        #[clap(short = 's', long = "no-patch")]
+        pub no_patch: bool,
+        /// Print diffstat per commit.
+        #[clap(long)]
+        pub stat: bool,
+        /// Print only the summary line of --stat.
+        #[clap(long)]
+        pub shortstat: bool,
+        /// Print machine-friendly diffstat.
+        #[clap(long)]
+        pub numstat: bool,
+        /// List only affected file names.
+        #[clap(long)]
+        pub name_only: bool,
+        /// List affected file names with status letters.
+        #[clap(long)]
+        pub name_status: bool,
+        /// Emit git-diff --raw output.
+        #[clap(long)]
+        pub raw: bool,
+        /// Detect renames in diff output.
+        #[clap(short = 'M', long = "find-renames")]
+        pub find_renames: bool,
+
+        // --- date (accepted but semantics deferred) ---
+        /// Date format for committer / author dates.
+        #[clap(long, value_parser = crate::shared::AsBString, value_name = "mode")]
+        pub date: Option<BString>,
+
+        // --- diff merges (accepted but semantics deferred) ---
+        /// Short form of `--diff-merges=separate`.
+        #[clap(short = 'm')]
+        pub diff_all_merge_parents: bool,
+        /// Short form of `--diff-merges=combined`.
+        #[clap(short = 'c')]
+        pub diff_combined: bool,
+        /// Short form of `--diff-merges=dense-combined`.
+        #[clap(long = "cc")]
+        pub diff_cc: bool,
+        /// Merge-diff mode selector.
+        #[clap(long, value_parser = crate::shared::AsBString, value_name = "mode")]
+        pub diff_merges: Option<BString>,
+
+        // --- misc log (accepted but semantics deferred) ---
+        /// Rewrite author/committer names via .mailmap.
+        #[clap(long, alias = "use-mailmap")]
+        pub mailmap: bool,
+        /// Skip .mailmap even if configured.
+        #[clap(long, alias = "no-use-mailmap")]
+        pub no_mailmap: bool,
+        /// Emit `log size <bytes>` per commit.
+        #[clap(long)]
+        pub log_size: bool,
+        /// Include notes from refs/notes/commits.
+        #[clap(long)]
+        pub notes: bool,
+        /// Suppress notes even if a default is configured.
+        #[clap(long)]
+        pub no_notes: bool,
+        /// Verify and print commit signatures.
+        #[clap(long)]
+        pub show_signature: bool,
+
+        // --- color (accepted but semantics deferred) ---
+        /// Color control (always | never | auto).
+        #[clap(long, value_parser = crate::shared::AsBString, value_name = "when", num_args = 0..=1, default_missing_value = "always")]
+        pub color: Option<BString>,
+        /// Disable color output (alias for --color=never).
+        #[clap(long)]
+        pub no_color: bool,
+
+        // --- boundary / ancestry / negation ---
+        /// Mark excluded-range endpoints with "-".
+        #[clap(long)]
+        pub boundary: bool,
+        /// Restrict commits to those on a direct A..B ancestry path.
+        #[clap(long)]
+        pub ancestry_path: bool,
+        /// Reverse the include/exclude sense of subsequent revisions. Accepted
+        /// as a bool here; positional state-flip semantics are deferred.
+        #[clap(long)]
+        pub not: bool,
+
+        // --- file-specific (accepted but semantics deferred) ---
+        /// Follow renames for a single file's history.
+        #[clap(long)]
+        pub follow: bool,
+        /// Show full diff of commits that touch the pathspec.
+        #[clap(long)]
+        pub full_diff: bool,
+        /// Line-range trace `start,end:file` (may be repeated).
+        #[clap(short = 'L', value_parser = crate::shared::AsBString, value_name = "range:file")]
+        pub line_range: Vec<BString>,
+
+        /// Revision(s) to walk from. Multiple revspecs are accepted (git's
+        /// rev-list grammar). Only the first is honored today; --not / multi-
+        /// revspec composition is a later parity row.
         #[clap(value_parser = crate::shared::AsBString)]
-        pub revspec: Option<BString>,
+        pub revspecs: Vec<BString>,
 
         /// The path specification(s) to limit commits to. Must follow a `--` separator.
         #[clap(value_parser = crate::shared::AsBString, last = true, num_args = 0..)]

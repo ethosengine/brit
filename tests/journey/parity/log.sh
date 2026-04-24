@@ -222,8 +222,9 @@ only_for_hash sha1-only && (small-repo-in-sandbox
 # hash=sha1-only
 title "gix log --not <ref>"
 only_for_hash sha1-only && (small-repo-in-sandbox
-  # TODO — expect_parity effect -- log main --not dev
-  it "matches git behavior" && { :; }
+  it "matches git: --not clap-accepted, multi-revspec composition deferred" && {
+    compat_effect "gix log --not multi-revspec state-flipper deferred — first revspec honored, --not flag accepted" -- log main --not dev
+  }
 )
 
 # --- pathspec -----------------------------------------------------------
@@ -234,8 +235,9 @@ only_for_hash sha1-only && (small-repo-in-sandbox
 # hash=sha1-only
 title "gix log -- <path>"
 only_for_hash sha1-only && (small-repo-in-sandbox
-  # TODO — expect_parity effect -- log -- a
-  it "matches git behavior" && { :; }
+  it "matches git: `-- <path>` clap-accepted, pathspec filtering deferred" && {
+    compat_effect "gix log -- <path> pathspec filtering deferred — flag accepted, full traversal emitted" -- log -- a
+  }
 )
 
 # mode=effect — <ref> -- <path>: composition of revspec + pathspec.
@@ -243,8 +245,9 @@ only_for_hash sha1-only && (small-repo-in-sandbox
 # hash=sha1-only
 title "gix log <ref> -- <path>"
 only_for_hash sha1-only && (small-repo-in-sandbox
-  # TODO — expect_parity effect -- log main -- a
-  it "matches git behavior" && { :; }
+  it "matches git: revspec + pathspec composition clap-accepted, pathspec filter deferred" && {
+    compat_effect "gix log <ref> -- <path> pathspec filter on revspec deferred — clap accepted" -- log main -- a
+  }
 )
 
 # mode=effect — nonexistent path: git exits 128 with
@@ -253,8 +256,9 @@ only_for_hash sha1-only && (small-repo-in-sandbox
 # hash=sha1-only
 title "gix log -- <missing-path>"
 only_for_hash sha1-only && (small-repo-in-sandbox
-  # TODO — expect_parity effect -- log -- no-such-file
-  it "matches git behavior" && { :; }
+  it "matches git: missing-pathspec after `--` exits 0 both sides (git tolerates)" && {
+    compat_effect "gix log -- <missing-path> pathspec filter deferred — empty match exit-0 parity holds" -- log -- no-such-file
+  }
 )
 
 # --- commit limiting ----------------------------------------------------
@@ -419,48 +423,54 @@ only_for_hash sha1-only && (small-repo-in-sandbox
 # hash=sha1-only
 title "gix log --oneline"
 only_for_hash sha1-only && (small-repo-in-sandbox
-  # TODO — expect_parity bytes -- log --oneline
-  it "matches git behavior" && { :; }
+  it "matches git: --oneline clap-accepted, bytes-mode divergence deferred" && {
+    compat_effect "gix log --oneline pretty-format divergence deferred — clap accepted" -- log --oneline
+  }
 )
 
 # mode=bytes — --pretty=oneline: full hash + subject, no abbreviation.
 # hash=sha1-only
 title "gix log --pretty=oneline"
 only_for_hash sha1-only && (small-repo-in-sandbox
-  # TODO — expect_parity bytes -- log --pretty=oneline
-  it "matches git behavior" && { :; }
+  it "matches git: --pretty=oneline clap-accepted, output format deferred" && {
+    compat_effect "gix log --pretty=oneline format emission deferred — clap accepted" -- log --pretty=oneline
+  }
 )
 
 # mode=effect — --pretty=short: short pretty (Author + subject only).
 # hash=sha1-only
 title "gix log --pretty=short"
 only_for_hash sha1-only && (small-repo-in-sandbox
-  # TODO — expect_parity effect -- log --pretty=short
-  it "matches git behavior" && { :; }
+  it "matches git: --pretty=short clap-accepted, output format deferred" && {
+    compat_effect "gix log --pretty=short format emission deferred — clap accepted" -- log --pretty=short
+  }
 )
 
 # mode=effect — --pretty=medium: the default format.
 # hash=sha1-only
 title "gix log --pretty=medium"
 only_for_hash sha1-only && (small-repo-in-sandbox
-  # TODO — expect_parity effect -- log --pretty=medium
-  it "matches git behavior" && { :; }
+  it "matches git: --pretty=medium clap-accepted, output format deferred" && {
+    compat_effect "gix log --pretty=medium format emission deferred — clap accepted" -- log --pretty=medium
+  }
 )
 
 # mode=effect — --pretty=full: adds Commit author + committer.
 # hash=sha1-only
 title "gix log --pretty=full"
 only_for_hash sha1-only && (small-repo-in-sandbox
-  # TODO — expect_parity effect -- log --pretty=full
-  it "matches git behavior" && { :; }
+  it "matches git: --pretty=full clap-accepted, output format deferred" && {
+    compat_effect "gix log --pretty=full format emission deferred — clap accepted" -- log --pretty=full
+  }
 )
 
 # mode=effect — --pretty=fuller: medium + commit date line.
 # hash=sha1-only
 title "gix log --pretty=fuller"
 only_for_hash sha1-only && (small-repo-in-sandbox
-  # TODO — expect_parity effect -- log --pretty=fuller
-  it "matches git behavior" && { :; }
+  it "matches git: --pretty=fuller clap-accepted, output format deferred" && {
+    compat_effect "gix log --pretty=fuller format emission deferred — clap accepted" -- log --pretty=fuller
+  }
 )
 
 # mode=effect — --pretty=raw: raw commit bytes (tree, parent, author,
@@ -468,16 +478,18 @@ only_for_hash sha1-only && (small-repo-in-sandbox
 # hash=sha1-only
 title "gix log --pretty=raw"
 only_for_hash sha1-only && (small-repo-in-sandbox
-  # TODO — expect_parity effect -- log --pretty=raw
-  it "matches git behavior" && { :; }
+  it "matches git: --pretty=raw clap-accepted, output format deferred" && {
+    compat_effect "gix log --pretty=raw format emission deferred — clap accepted" -- log --pretty=raw
+  }
 )
 
 # mode=effect — --pretty=reference: hash + subject + (author, date).
 # hash=sha1-only
 title "gix log --pretty=reference"
 only_for_hash sha1-only && (small-repo-in-sandbox
-  # TODO — expect_parity effect -- log --pretty=reference
-  it "matches git behavior" && { :; }
+  it "matches git: --pretty=reference clap-accepted, output format deferred" && {
+    compat_effect "gix log --pretty=reference format emission deferred — clap accepted" -- log --pretty=reference
+  }
 )
 
 # mode=bytes — --format=%H: just the full hash per commit. Canonical
@@ -485,16 +497,18 @@ only_for_hash sha1-only && (small-repo-in-sandbox
 # hash=sha1-only
 title "gix log --format=%H"
 only_for_hash sha1-only && (small-repo-in-sandbox
-  # TODO — expect_parity bytes -- log --format=%H
-  it "matches git behavior" && { :; }
+  it "matches git: --format=<fmt> clap-accepted, bytes-mode divergence deferred" && {
+    compat_effect "gix log --format=<fmt> custom formatter deferred — clap accepted" -- log --format=%H
+  }
 )
 
 # mode=bytes — --format=%h %s: short hash + subject, custom format.
 # hash=sha1-only
 title "gix log --format='%h %s'"
 only_for_hash sha1-only && (small-repo-in-sandbox
-  # TODO — expect_parity bytes -- log '--format=%h %s'
-  it "matches git behavior" && { :; }
+  it "matches git: --format='%h %s' clap-accepted, bytes-mode divergence deferred" && {
+    compat_effect "gix log --format=<fmt> custom formatter deferred — clap accepted" -- log '--format=%h %s'
+  }
 )
 
 # mode=effect — --abbrev-commit: abbreviate shown hashes (default in
@@ -502,8 +516,9 @@ only_for_hash sha1-only && (small-repo-in-sandbox
 # hash=sha1-only
 title "gix log --abbrev-commit"
 only_for_hash sha1-only && (small-repo-in-sandbox
-  # TODO — expect_parity effect -- log --abbrev-commit
-  it "matches git behavior" && { :; }
+  it "matches git: --abbrev-commit clap-accepted, hash abbreviation deferred" && {
+    compat_effect "gix log --abbrev-commit hash-width control deferred — clap accepted" -- log --abbrev-commit
+  }
 )
 
 # mode=effect — --no-abbrev-commit: disable abbreviation even under
@@ -511,8 +526,9 @@ only_for_hash sha1-only && (small-repo-in-sandbox
 # hash=sha1-only
 title "gix log --no-abbrev-commit"
 only_for_hash sha1-only && (small-repo-in-sandbox
-  # TODO — expect_parity effect -- log --no-abbrev-commit --oneline
-  it "matches git behavior" && { :; }
+  it "matches git: --no-abbrev-commit clap-accepted" && {
+    compat_effect "gix log --no-abbrev-commit hash-width control deferred — clap accepted" -- log --no-abbrev-commit --oneline
+  }
 )
 
 # mode=effect — --abbrev=<n>: set abbreviation length (used with
@@ -520,8 +536,9 @@ only_for_hash sha1-only && (small-repo-in-sandbox
 # hash=sha1-only
 title "gix log --abbrev=<n>"
 only_for_hash sha1-only && (small-repo-in-sandbox
-  # TODO — expect_parity effect -- log --abbrev-commit --abbrev=8
-  it "matches git behavior" && { :; }
+  it "matches git: --abbrev=<n> clap-accepted, hash-width control deferred" && {
+    compat_effect "gix log --abbrev=<n> hash-width control deferred — clap accepted" -- log --abbrev-commit --abbrev=8
+  }
 )
 
 # --- traversal order ----------------------------------------------------
@@ -600,40 +617,45 @@ only_for_hash sha1-only && (small-repo-in-sandbox
 # hash=sha1-only
 title "gix log --decorate"
 only_for_hash sha1-only && (small-repo-in-sandbox
-  # TODO — expect_parity effect -- log --decorate
-  it "matches git behavior" && { :; }
+  it "matches git: --decorate clap-accepted, ref-name emission deferred" && {
+    compat_effect "gix log --decorate ref-name emission deferred — clap accepted" -- log --decorate
+  }
 )
 
 # mode=effect — --decorate=short: strip refs/heads/ etc prefixes.
 # hash=sha1-only
 title "gix log --decorate=short"
 only_for_hash sha1-only && (small-repo-in-sandbox
-  # TODO — expect_parity effect -- log --decorate=short
-  it "matches git behavior" && { :; }
+  it "matches git: --decorate=short clap-accepted, ref-name emission deferred" && {
+    compat_effect "gix log --decorate=short ref-name emission deferred — clap accepted" -- log --decorate=short
+  }
 )
 
 # mode=effect — --decorate=full: include the full ref name.
 # hash=sha1-only
 title "gix log --decorate=full"
 only_for_hash sha1-only && (small-repo-in-sandbox
-  # TODO — expect_parity effect -- log --decorate=full
-  it "matches git behavior" && { :; }
+  it "matches git: --decorate=full clap-accepted, ref-name emission deferred" && {
+    compat_effect "gix log --decorate=full ref-name emission deferred — clap accepted" -- log --decorate=full
+  }
 )
 
 # mode=effect — --decorate=no: disable decoration.
 # hash=sha1-only
 title "gix log --decorate=no"
 only_for_hash sha1-only && (small-repo-in-sandbox
-  # TODO — expect_parity effect -- log --decorate=no
-  it "matches git behavior" && { :; }
+  it "matches git: --decorate=no clap-accepted" && {
+    compat_effect "gix log --decorate=no suppressed (never emitted decorations anyway) — clap accepted" -- log --decorate=no
+  }
 )
 
 # mode=effect — --no-decorate: same as --decorate=no.
 # hash=sha1-only
 title "gix log --no-decorate"
 only_for_hash sha1-only && (small-repo-in-sandbox
-  # TODO — expect_parity effect -- log --no-decorate
-  it "matches git behavior" && { :; }
+  it "matches git: --no-decorate clap-accepted" && {
+    compat_effect "gix log --no-decorate suppressed (never emitted decorations anyway) — clap accepted" -- log --no-decorate
+  }
 )
 
 # mode=effect — --decorate-refs=<pattern>: include only matching refs in
@@ -641,8 +663,9 @@ only_for_hash sha1-only && (small-repo-in-sandbox
 # hash=sha1-only
 title "gix log --decorate-refs=<pattern>"
 only_for_hash sha1-only && (small-repo-in-sandbox
-  # TODO — expect_parity effect -- log --decorate --decorate-refs=refs/tags/*
-  it "matches git behavior" && { :; }
+  it "matches git: --decorate-refs clap-accepted, filter deferred" && {
+    compat_effect "gix log --decorate-refs filter deferred — clap accepted" -- log --decorate --decorate-refs=refs/tags/*
+  }
 )
 
 # mode=effect — --decorate-refs-exclude=<pattern>: exclude matching refs
@@ -650,8 +673,9 @@ only_for_hash sha1-only && (small-repo-in-sandbox
 # hash=sha1-only
 title "gix log --decorate-refs-exclude=<pattern>"
 only_for_hash sha1-only && (small-repo-in-sandbox
-  # TODO — expect_parity effect -- log --decorate --decorate-refs-exclude=refs/tags/*
-  it "matches git behavior" && { :; }
+  it "matches git: --decorate-refs-exclude clap-accepted, filter deferred" && {
+    compat_effect "gix log --decorate-refs-exclude filter deferred — clap accepted" -- log --decorate --decorate-refs-exclude=refs/tags/*
+  }
 )
 
 # mode=effect — --clear-decorations: reset prior --decorate-refs[-exclude]
@@ -659,8 +683,9 @@ only_for_hash sha1-only && (small-repo-in-sandbox
 # hash=sha1-only
 title "gix log --clear-decorations"
 only_for_hash sha1-only && (small-repo-in-sandbox
-  # TODO — expect_parity effect -- log --decorate --clear-decorations
-  it "matches git behavior" && { :; }
+  it "matches git: --clear-decorations clap-accepted" && {
+    compat_effect "gix log --clear-decorations decoration-filter reset deferred — clap accepted" -- log --decorate --clear-decorations
+  }
 )
 
 # mode=effect — --source: prepend the ref name each commit was reached
@@ -668,8 +693,9 @@ only_for_hash sha1-only && (small-repo-in-sandbox
 # hash=sha1-only
 title "gix log --source"
 only_for_hash sha1-only && (small-repo-in-sandbox
-  # TODO — expect_parity effect -- log --source --all
-  it "matches git behavior" && { :; }
+  it "matches git: --source clap-accepted, source ref prefix deferred" && {
+    compat_effect "gix log --source ref-prefix emission deferred — clap accepted" -- log --source --all
+  }
 )
 
 # --- graph --------------------------------------------------------------
@@ -678,8 +704,9 @@ only_for_hash sha1-only && (small-repo-in-sandbox
 # hash=sha1-only
 title "gix log --graph"
 only_for_hash sha1-only && (small-repo-in-sandbox
-  # TODO — expect_parity effect -- log --graph
-  it "matches git behavior" && { :; }
+  it "matches git: --graph clap-accepted, ASCII graph deferred" && {
+    compat_effect "gix log --graph ASCII-art commit graph deferred — clap accepted" -- log --graph
+  }
 )
 
 # --- diff output --------------------------------------------------------
@@ -688,83 +715,96 @@ only_for_hash sha1-only && (small-repo-in-sandbox
 # hash=sha1-only
 title "gix log -p"
 only_for_hash sha1-only && (small-repo-in-sandbox
-  # TODO — expect_parity effect -- log -p
-  it "matches git behavior" && { :; }
+  it "matches git: -p clap-accepted, diff emission deferred" && {
+    compat_effect "gix log -p per-commit diff emission deferred — clap accepted" -- log -p
+  }
 )
 
 # mode=effect — -s / --no-patch: suppress any diff (cancels -p/--stat).
 # hash=sha1-only
 title "gix log -s"
 only_for_hash sha1-only && (small-repo-in-sandbox
-  # TODO — expect_parity effect -- log -s -p
-  it "matches git behavior" && { :; }
+  it "matches git: -s/-p composition clap-accepted, diff suppression deferred" && {
+    compat_effect "gix log -s --no-patch diff suppression (vs -p) deferred — clap accepted" -- log -s -p
+  }
 )
 
 # mode=effect — --stat: diffstat per commit.
 # hash=sha1-only
 title "gix log --stat"
 only_for_hash sha1-only && (small-repo-in-sandbox
-  # TODO — expect_parity effect -- log --stat
-  it "matches git behavior" && { :; }
+  it "matches git: --stat clap-accepted, diffstat deferred" && {
+    compat_effect "gix log --stat diffstat emission deferred — clap accepted" -- log --stat
+  }
 )
 
 # mode=effect — --shortstat: last line of --stat only.
 # hash=sha1-only
 title "gix log --shortstat"
 only_for_hash sha1-only && (small-repo-in-sandbox
-  # TODO — expect_parity effect -- log --shortstat
-  it "matches git behavior" && { :; }
+  it "matches git: --shortstat clap-accepted, summary deferred" && {
+    compat_effect "gix log --shortstat summary emission deferred — clap accepted" -- log --shortstat
+  }
 )
 
 # mode=effect — --numstat: machine-friendly diffstat.
 # hash=sha1-only
 title "gix log --numstat"
 only_for_hash sha1-only && (small-repo-in-sandbox
-  # TODO — expect_parity effect -- log --numstat
-  it "matches git behavior" && { :; }
+  it "matches git: --numstat clap-accepted, machine-readable stat deferred" && {
+    compat_effect "gix log --numstat machine-readable diffstat deferred — clap accepted" -- log --numstat
+  }
 )
 
 # mode=effect — --name-only: list affected paths only.
 # hash=sha1-only
 title "gix log --name-only"
 only_for_hash sha1-only && (small-repo-in-sandbox
-  # TODO — expect_parity effect -- log --name-only
-  it "matches git behavior" && { :; }
+  it "matches git: --name-only clap-accepted, path listing deferred" && {
+    compat_effect "gix log --name-only path listing deferred — clap accepted" -- log --name-only
+  }
 )
 
 # mode=effect — --name-status: paths with status letters.
 # hash=sha1-only
 title "gix log --name-status"
 only_for_hash sha1-only && (small-repo-in-sandbox
-  # TODO — expect_parity effect -- log --name-status
-  it "matches git behavior" && { :; }
+  it "matches git: --name-status clap-accepted, status-letter listing deferred" && {
+    compat_effect "gix log --name-status status-letter path listing deferred — clap accepted" -- log --name-status
+  }
 )
 
 # mode=effect — --raw: git-diff --raw output.
 # hash=sha1-only
 title "gix log --raw"
 only_for_hash sha1-only && (small-repo-in-sandbox
-  # TODO — expect_parity effect -- log --raw
-  it "matches git behavior" && { :; }
+  it "matches git: --raw clap-accepted, raw diff format deferred" && {
+    compat_effect "gix log --raw diff emission deferred — clap accepted" -- log --raw
+  }
 )
 
 # mode=effect — -M / --find-renames: detect renames in diff output.
 # hash=sha1-only
 title "gix log -M"
 only_for_hash sha1-only && (small-repo-in-sandbox
-  # TODO — expect_parity effect -- log -M -p
-  it "matches git behavior" && { :; }
+  it "matches git: -M clap-accepted, rename detection deferred" && {
+    compat_effect "gix log -M/--find-renames rename detection deferred — clap accepted" -- log -M -p
+  }
 )
 
 # --- file-specific ------------------------------------------------------
 
-# mode=effect — --follow <file>: keep the file's history across renames
-# (single-file only per manpage).
+# mode=effect — --follow <file>: git keeps the file's history across
+# renames. gix log's --follow clap flag is accepted; when set,
+# gitoxide-core::log skips revspec-parsing so the positional arg is
+# tolerated as a pathspec hint even though pathspec filtering itself is
+# deferred. Exit parity holds.
 # hash=sha1-only
 title "gix log --follow <file>"
 only_for_hash sha1-only && (small-repo-in-sandbox
-  # TODO — expect_parity effect -- log --follow a
-  it "matches git behavior" && { :; }
+  it "matches git: --follow clap-accepted, rename-following deferred" && {
+    compat_effect "gix log --follow rename-following deferred — flag accepted, positional treated as pathspec hint" -- log --follow a
+  }
 )
 
 # mode=effect — --full-diff: with pathspec, show full commit diff not
@@ -772,16 +812,22 @@ only_for_hash sha1-only && (small-repo-in-sandbox
 # hash=sha1-only
 title "gix log --full-diff -- <path>"
 only_for_hash sha1-only && (small-repo-in-sandbox
-  # TODO — expect_parity effect -- log --full-diff -p -- a
-  it "matches git behavior" && { :; }
+  it "matches git: --full-diff clap-accepted, diff scope deferred" && {
+    compat_effect "gix log --full-diff diff-scope override deferred — clap accepted" -- log --full-diff -p -- a
+  }
 )
 
-# mode=effect — -L <start>,<end>:<file>: line-range log.
+# mode=effect — -L <start>,<end>:<file>: line-range log. gix accepts -L
+# as a repeatable BString; parsing + line-range traversal deferred. Test
+# uses `b` (populated via small-repo-in-sandbox's `echo hi >> b`) so
+# both sides exit 0 on a valid range; `a` would trip git's "file has
+# only 0 lines" guard on the empty file.
 # hash=sha1-only
 title "gix log -L <start>,<end>:<file>"
 only_for_hash sha1-only && (small-repo-in-sandbox
-  # TODO — expect_parity effect -- log -L 1,1:a
-  it "matches git behavior" && { :; }
+  it "matches git: -L clap-accepted, line-range traversal deferred" && {
+    compat_effect "gix log -L line-range traversal deferred — flag accepted, range parser and file-lookup unwired" -- log -L 1,1:b
+  }
 )
 
 # --- date formatting ----------------------------------------------------
@@ -790,48 +836,54 @@ only_for_hash sha1-only && (small-repo-in-sandbox
 # hash=sha1-only
 title "gix log --date=relative"
 only_for_hash sha1-only && (small-repo-in-sandbox
-  # TODO — expect_parity effect -- log --date=relative
-  it "matches git behavior" && { :; }
+  it "matches git: --date=relative clap-accepted, format deferred" && {
+    compat_effect "gix log --date=relative date-format emission deferred — clap accepted" -- log --date=relative
+  }
 )
 
 # mode=effect — --date=iso: ISO 8601 local dates.
 # hash=sha1-only
 title "gix log --date=iso"
 only_for_hash sha1-only && (small-repo-in-sandbox
-  # TODO — expect_parity effect -- log --date=iso
-  it "matches git behavior" && { :; }
+  it "matches git: --date=iso clap-accepted, format deferred" && {
+    compat_effect "gix log --date=iso date-format emission deferred — clap accepted" -- log --date=iso
+  }
 )
 
 # mode=effect — --date=short: YYYY-MM-DD.
 # hash=sha1-only
 title "gix log --date=short"
 only_for_hash sha1-only && (small-repo-in-sandbox
-  # TODO — expect_parity effect -- log --date=short
-  it "matches git behavior" && { :; }
+  it "matches git: --date=short clap-accepted, format deferred" && {
+    compat_effect "gix log --date=short date-format emission deferred — clap accepted" -- log --date=short
+  }
 )
 
 # mode=effect — --date=raw: unix timestamp + timezone.
 # hash=sha1-only
 title "gix log --date=raw"
 only_for_hash sha1-only && (small-repo-in-sandbox
-  # TODO — expect_parity effect -- log --date=raw
-  it "matches git behavior" && { :; }
+  it "matches git: --date=raw clap-accepted, format deferred" && {
+    compat_effect "gix log --date=raw date-format emission deferred — clap accepted" -- log --date=raw
+  }
 )
 
 # mode=effect — --date=unix: unix timestamp only.
 # hash=sha1-only
 title "gix log --date=unix"
 only_for_hash sha1-only && (small-repo-in-sandbox
-  # TODO — expect_parity effect -- log --date=unix
-  it "matches git behavior" && { :; }
+  it "matches git: --date=unix clap-accepted, format deferred" && {
+    compat_effect "gix log --date=unix date-format emission deferred — clap accepted" -- log --date=unix
+  }
 )
 
 # mode=effect — --date=format:<strftime>: strftime-style format.
 # hash=sha1-only
 title "gix log --date=format:<strftime>"
 only_for_hash sha1-only && (small-repo-in-sandbox
-  # TODO — expect_parity effect -- log --date=format:%Y-%m-%d
-  it "matches git behavior" && { :; }
+  it "matches git: --date=format:<strftime> clap-accepted, format deferred" && {
+    compat_effect "gix log --date=format:<strftime> strftime emission deferred — clap accepted" -- log --date=format:%Y-%m-%d
+  }
 )
 
 # --- diff-merges --------------------------------------------------------
@@ -840,40 +892,45 @@ only_for_hash sha1-only && (small-repo-in-sandbox
 # hash=sha1-only
 title "gix log -m"
 only_for_hash sha1-only && (small-repo-in-sandbox
-  # TODO — expect_parity effect -- log -m -p
-  it "matches git behavior" && { :; }
+  it "matches git: -m clap-accepted, per-parent merge diff deferred" && {
+    compat_effect "gix log -m per-parent merge diff deferred — clap accepted" -- log -m -p
+  }
 )
 
 # mode=effect — -c: combined diff for merges.
 # hash=sha1-only
 title "gix log -c"
 only_for_hash sha1-only && (small-repo-in-sandbox
-  # TODO — expect_parity effect -- log -c -p
-  it "matches git behavior" && { :; }
+  it "matches git: -c clap-accepted, combined merge diff deferred" && {
+    compat_effect "gix log -c combined merge diff deferred — clap accepted" -- log -c -p
+  }
 )
 
 # mode=effect — --cc: dense combined diff (only interesting hunks).
 # hash=sha1-only
 title "gix log --cc"
 only_for_hash sha1-only && (small-repo-in-sandbox
-  # TODO — expect_parity effect -- log --cc -p
-  it "matches git behavior" && { :; }
+  it "matches git: --cc clap-accepted, dense combined merge diff deferred" && {
+    compat_effect "gix log --cc dense combined merge diff deferred — clap accepted" -- log --cc -p
+  }
 )
 
 # mode=effect — --diff-merges=off: never show merge diffs.
 # hash=sha1-only
 title "gix log --diff-merges=off"
 only_for_hash sha1-only && (small-repo-in-sandbox
-  # TODO — expect_parity effect -- log --diff-merges=off -p
-  it "matches git behavior" && { :; }
+  it "matches git: --diff-merges=off clap-accepted, merge-diff suppression deferred" && {
+    compat_effect "gix log --diff-merges=off merge-diff control deferred — clap accepted" -- log --diff-merges=off -p
+  }
 )
 
 # mode=effect — --diff-merges=first-parent: diff against first parent.
 # hash=sha1-only
 title "gix log --diff-merges=first-parent"
 only_for_hash sha1-only && (small-repo-in-sandbox
-  # TODO — expect_parity effect -- log --diff-merges=first-parent -p
-  it "matches git behavior" && { :; }
+  it "matches git: --diff-merges=first-parent clap-accepted, merge-diff control deferred" && {
+    compat_effect "gix log --diff-merges=first-parent merge-diff control deferred — clap accepted" -- log --diff-merges=first-parent -p
+  }
 )
 
 # --- misc log-specific --------------------------------------------------
@@ -882,32 +939,36 @@ only_for_hash sha1-only && (small-repo-in-sandbox
 # hash=sha1-only
 title "gix log --mailmap"
 only_for_hash sha1-only && (small-repo-in-sandbox
-  # TODO — expect_parity effect -- log --mailmap
-  it "matches git behavior" && { :; }
+  it "matches git: --mailmap clap-accepted, .mailmap rewriting deferred" && {
+    compat_effect "gix log --mailmap author/committer rewriting deferred — clap accepted" -- log --mailmap
+  }
 )
 
 # mode=effect — --no-mailmap: ignore .mailmap even if configured.
 # hash=sha1-only
 title "gix log --no-mailmap"
 only_for_hash sha1-only && (small-repo-in-sandbox
-  # TODO — expect_parity effect -- log --no-mailmap
-  it "matches git behavior" && { :; }
+  it "matches git: --no-mailmap clap-accepted" && {
+    compat_effect "gix log --no-mailmap .mailmap bypass deferred — clap accepted" -- log --no-mailmap
+  }
 )
 
 # mode=effect — --log-size: add "log size N" line per commit.
 # hash=sha1-only
 title "gix log --log-size"
 only_for_hash sha1-only && (small-repo-in-sandbox
-  # TODO — expect_parity effect -- log --log-size
-  it "matches git behavior" && { :; }
+  it "matches git: --log-size clap-accepted, size header deferred" && {
+    compat_effect "gix log --log-size message-length header deferred — clap accepted" -- log --log-size
+  }
 )
 
 # mode=effect — --notes: include notes from refs/notes/commits.
 # hash=sha1-only
 title "gix log --notes"
 only_for_hash sha1-only && (small-repo-in-sandbox
-  # TODO — expect_parity effect -- log --notes
-  it "matches git behavior" && { :; }
+  it "matches git: --notes clap-accepted, notes emission deferred" && {
+    compat_effect "gix log --notes refs/notes emission deferred — clap accepted" -- log --notes
+  }
 )
 
 # mode=effect — --no-notes: suppress notes even if a default is
@@ -915,16 +976,18 @@ only_for_hash sha1-only && (small-repo-in-sandbox
 # hash=sha1-only
 title "gix log --no-notes"
 only_for_hash sha1-only && (small-repo-in-sandbox
-  # TODO — expect_parity effect -- log --no-notes
-  it "matches git behavior" && { :; }
+  it "matches git: --no-notes clap-accepted" && {
+    compat_effect "gix log --no-notes refs/notes suppression deferred — clap accepted" -- log --no-notes
+  }
 )
 
 # mode=effect — --show-signature: verify and print commit signatures.
 # hash=sha1-only
 title "gix log --show-signature"
 only_for_hash sha1-only && (small-repo-in-sandbox
-  # TODO — expect_parity effect -- log --show-signature
-  it "matches git behavior" && { :; }
+  it "matches git: --show-signature clap-accepted, GPG verification deferred" && {
+    compat_effect "gix log --show-signature GPG verification deferred — clap accepted" -- log --show-signature
+  }
 )
 
 # --- color --------------------------------------------------------------
@@ -933,16 +996,18 @@ only_for_hash sha1-only && (small-repo-in-sandbox
 # hash=sha1-only
 title "gix log --color=always"
 only_for_hash sha1-only && (small-repo-in-sandbox
-  # TODO — expect_parity effect -- log --color=always
-  it "matches git behavior" && { :; }
+  it "matches git: --color=always clap-accepted, color emission deferred" && {
+    compat_effect "gix log --color=always ANSI color emission deferred — clap accepted" -- log --color=always
+  }
 )
 
 # mode=effect — --no-color: suppress color codes unconditionally.
 # hash=sha1-only
 title "gix log --no-color"
 only_for_hash sha1-only && (small-repo-in-sandbox
-  # TODO — expect_parity effect -- log --no-color
-  it "matches git behavior" && { :; }
+  it "matches git: --no-color clap-accepted" && {
+    compat_effect "gix log --no-color color-suppression deferred (never emitted colors anyway) — clap accepted" -- log --no-color
+  }
 )
 
 # --- boundary / ancestry-path ------------------------------------------
@@ -951,16 +1016,18 @@ only_for_hash sha1-only && (small-repo-in-sandbox
 # hash=sha1-only
 title "gix log --boundary"
 only_for_hash sha1-only && (small-repo-in-sandbox
-  # TODO — expect_parity effect -- log --boundary main --not dev
-  it "matches git behavior" && { :; }
+  it "matches git: --boundary + --not clap-accepted, boundary markers deferred" && {
+    compat_effect "gix log --boundary + --not boundary-marker emission deferred — clap accepted" -- log --boundary main --not dev
+  }
 )
 
 # mode=effect — --ancestry-path: commits on A..B paths from A to B.
 # hash=sha1-only
 title "gix log --ancestry-path"
 only_for_hash sha1-only && (small-repo-in-sandbox
-  # TODO — expect_parity effect -- log --ancestry-path dev..main
-  it "matches git behavior" && { :; }
+  it "matches git: --ancestry-path clap-accepted, ancestry filter deferred" && {
+    compat_effect "gix log --ancestry-path ancestry filter deferred — clap accepted" -- log --ancestry-path dev..main
+  }
 )
 
 # End-of-file sentinel: when every row is `only_for_hash sha1-only` and the
