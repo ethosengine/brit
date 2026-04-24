@@ -79,6 +79,10 @@ pub mod list {
         /// If set, only list branches whose tip is NOT reachable from
         /// `<commit>`. Git's `--no-merged`.
         pub no_merged: Option<OsString>,
+        /// If set, only list branches whose ref directly points at
+        /// `<object>` (no reachability walk; byte-exact oid match).
+        /// Git's `--points-at`.
+        pub points_at: Option<OsString>,
     }
 }
 
@@ -125,6 +129,7 @@ pub fn list(
     };
     let contains_oid: Option<gix::ObjectId> = options.contains.as_deref().map(resolve).transpose()?;
     let no_contains_oid: Option<gix::ObjectId> = options.no_contains.as_deref().map(resolve).transpose()?;
+    let points_at_oid: Option<gix::ObjectId> = options.points_at.as_deref().map(resolve).transpose()?;
     let merged_set: Option<HashSet<gix::ObjectId>> =
         options.merged.as_deref().map(|r| ancestors_of(&repo, r)).transpose()?;
     let no_merged_set: Option<HashSet<gix::ObjectId>> = options
@@ -158,11 +163,19 @@ pub fn list(
                 return Ok(false);
             }
         }
+        if let Some(needle) = points_at_oid {
+            if tip != needle {
+                return Ok(false);
+            }
+        }
         Ok(true)
     };
 
-    let needs_ancestry_walk =
-        contains_oid.is_some() || no_contains_oid.is_some() || merged_set.is_some() || no_merged_set.is_some();
+    let needs_ancestry_walk = contains_oid.is_some()
+        || no_contains_oid.is_some()
+        || merged_set.is_some()
+        || no_merged_set.is_some()
+        || points_at_oid.is_some();
 
     if show_local {
         let mut kept: Vec<String> = Vec::new();
