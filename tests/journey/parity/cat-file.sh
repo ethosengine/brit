@@ -69,8 +69,9 @@ title "gix cat-file"
 # mode=effect
 title "gix cat-file --help"
 only_for_hash dual && (sandbox
-  # TODO — expect_parity effect -- cat-file --help
-  it "matches git behavior" && { :; }
+  it "matches git behavior" && {
+    expect_parity effect -- cat-file --help
+  }
 )
 
 # --- argument-parsing error paths --------------------------------------

@@ -145,6 +145,10 @@ pub enum Subcommands {
     #[clap(alias = "submodules")]
     Submodule(submodule::Platform),
     /// Show whatever object is at the given spec.
+    ///
+    /// Visible-aliased to `cat-file` for parity with `git cat-file`; the
+    /// canonical gix spelling remains `cat`.
+    #[clap(visible_alias = "cat-file")]
     Cat {
         /// The object to print to stdout.
         revspec: String,
