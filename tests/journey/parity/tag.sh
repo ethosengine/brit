@@ -818,3 +818,9 @@ only_for_hash sha1-only && (sandbox
     expect_parity_reset _anno-fixture-with-gpgsign effect -- tag --no-sign -m "msg" anno1
   }
 )
+
+# End-of-file sentinel: when every row is `only_for_hash sha1-only` and the
+# active hash is sha256, the last statement returns 1 (skip), which would
+# propagate out of `source` and trip `set -e` in tests/parity.sh. A trailing
+# `:` normalizes the exit code so a fully-skipped file still returns 0.
+:
