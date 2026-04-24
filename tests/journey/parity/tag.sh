@@ -129,11 +129,11 @@ only_for_hash sha1-only && (sandbox
 # hash=sha1-only
 title "gix tag -l / --list"
 only_for_hash sha1-only && (small-repo-in-sandbox
-  it "matches git behavior with -l (TODO)" && {
-    : # TODO: expect_parity bytes -- tag -l
+  it "matches git behavior with -l" && {
+    expect_parity bytes -- tag -l
   }
-  it "matches git behavior with --list (TODO)" && {
-    : # TODO: expect_parity bytes -- tag --list
+  it "matches git behavior with --list" && {
+    expect_parity bytes -- tag --list
   }
 )
 

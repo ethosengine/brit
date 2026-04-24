@@ -2002,6 +2002,14 @@ pub mod commit {
 pub mod tag {
     #[derive(Debug, clap::Parser)]
     pub struct Platform {
+        /// List all tags (git-compat alias). Listing is also the default
+        /// behavior when no create / delete / verify mode is given, so
+        /// this flag is observable only as a mode indicator. Maps to
+        /// git's `OPT_CMDMODE('l', "list", ..., 'l')` in
+        /// vendor/git/builtin/tag.c.
+        #[clap(short = 'l', long = "list")]
+        pub list: bool,
+
         #[clap(subcommand)]
         pub cmds: Option<Subcommands>,
     }
