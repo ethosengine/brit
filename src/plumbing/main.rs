@@ -2436,6 +2436,7 @@ pub fn main() -> Result<()> {
                 column: _,
                 no_column: _,
                 color: _,
+                sort: _,
                 points_at,
                 contains,
                 no_contains,

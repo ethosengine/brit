@@ -2031,6 +2031,15 @@ pub mod tag {
         #[clap(long, value_name = "when", num_args = 0..=1, default_missing_value = "always")]
         pub color: Option<String>,
 
+        /// Sort by for-each-ref key; prefix `-` for descending. Multiple
+        /// uses make later keys take precedence. Clap-wired here; the
+        /// sort key interpreter is a follow-up — current output uses
+        /// the default alphabetical refname order, which matches git's
+        /// behavior when `--sort=refname` is given explicitly.
+        /// Mirrors `OPT_REF_SORT`.
+        #[clap(long, value_name = "key")]
+        pub sort: Vec<String>,
+
         /// Only list tags of `<object>` (HEAD if omitted). Implies list
         /// mode. Mirrors git's `--points-at` with `PARSE_OPT_LASTARG_DEFAULT`
         /// + `defval = "HEAD"`.

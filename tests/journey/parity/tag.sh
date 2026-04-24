@@ -263,17 +263,17 @@ only_for_hash sha1-only && (small-repo-in-sandbox
 title "gix tag --sort"
 only_for_hash sha1-only && (small-repo-in-sandbox
   git tag v1.10 && git tag v1.2 && git tag v1.9
-  it "matches git behavior with --sort=refname (TODO)" && {
-    : # TODO: expect_parity bytes -- tag --sort=refname
+  it "matches git behavior with --sort=refname (default order)" && {
+    expect_parity bytes -- tag --sort=refname
   }
-  it "matches git behavior with --sort=-refname (descending) (TODO)" && {
-    : # TODO: expect_parity bytes -- tag --sort=-refname
+  it "matches git behavior with --sort=-refname (descending)" && {
+    compat_effect "tag --sort=<key> interpreter deferred (key-based sort, descending/version)" -- tag --sort=-refname
   }
-  it "matches git behavior with --sort=version:refname (TODO)" && {
-    : # TODO: expect_parity bytes -- tag --sort=version:refname
+  it "matches git behavior with --sort=version:refname" && {
+    compat_effect "tag --sort=<key> interpreter deferred (key-based sort, descending/version)" -- tag --sort=version:refname
   }
-  it "matches git behavior with --sort=v:refname (alias) (TODO)" && {
-    : # TODO: expect_parity bytes -- tag --sort=v:refname
+  it "matches git behavior with --sort=v:refname (alias)" && {
+    compat_effect "tag --sort=<key> interpreter deferred (key-based sort, descending/version)" -- tag --sort=v:refname
   }
 )
 
