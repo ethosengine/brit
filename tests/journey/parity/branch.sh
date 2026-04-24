@@ -472,9 +472,15 @@ only_for_hash sha1-only && (sandbox
 # branch. The effect is reflog presence at .git/logs/refs/heads/<name>.
 # hash=sha1-only
 title "gix branch --create-reflog"
-only_for_hash sha1-only && (small-repo-in-sandbox
-  it "matches git behavior (TODO)" && {
-    : # TODO: expect_parity effect -- branch --create-reflog reflogbr
+only_for_hash sha1-only && (sandbox
+  function _branch-cl-fixture() {
+    git-init-hash-aware
+    git checkout -b main >/dev/null 2>&1
+    git config commit.gpgsign false
+    git -c user.email=t@t -c user.name=t commit -q --allow-empty -m c1
+  }
+  it "matches git behavior" && {
+    expect_parity_reset _branch-cl-fixture effect -- branch --create-reflog reflogbr
   }
 )
 
