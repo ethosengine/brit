@@ -7,6 +7,13 @@ Two row classes:
 - **deferred** — `shortcoming "<reason>"`: row closed as a legitimate deferral; reason describes the gap.
 - **compat** — `compat_effect "<reason>"`: row green at effect mode (exit-code parity); byte-output parity is a known follow-up.
 
+## branch
+
+| Class | Section | Reason | Source |
+|---|---|---|---|
+| compat | `gix branch --verbose` | branch -v column-aligned sha+subject rendering deferred | [branch.sh:175](../../tests/journey/parity/branch.sh#L175) |
+| compat | `gix branch --verbose` | branch -vv upstream tracking rendering deferred | [branch.sh:178](../../tests/journey/parity/branch.sh#L178) |
+
 ## clone
 
 | Class | Section | Reason | Source |

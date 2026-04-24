@@ -162,17 +162,20 @@ only_for_hash sha1-only && (small-repo-in-sandbox
 
 # --- list-mode modifiers -----------------------------------------------
 
-# mode=bytes — `-v` / `--verbose` adds "<abbrev-sha>  <subject>" after
-# each branch name, column-aligned. `-vv` adds upstream tracking info.
-# git prints "[ahead N]" / "[behind N]" / "[gone]" from upstream state.
+# mode=effect (compat) — `-v` / `--verbose` adds "<abbrev-sha>  <subject>"
+# after each branch name, column-aligned to the widest name. `-vv` adds
+# "[<remote>/<branch>: ahead N, behind N]" upstream tracking info.
+# Exit-code parity holds (flag accepted via Platform.verbose count);
+# bytes-mode verbose rendering (column alignment, --abbrev cooperation,
+# subject extraction, upstream tracking) is deferred.
 # hash=sha1-only
 title "gix branch --verbose"
 only_for_hash sha1-only && (small-repo-in-sandbox
-  it "matches git behavior (TODO)" && {
-    : # TODO: expect_parity bytes -- branch --verbose
+  it "matches git behavior" && {
+    compat_effect "branch -v column-aligned sha+subject rendering deferred" -- branch --verbose
   }
-  it "matches git behavior — -vv (TODO)" && {
-    : # TODO: expect_parity bytes -- branch -vv
+  it "matches git behavior — -vv" && {
+    compat_effect "branch -vv upstream tracking rendering deferred" -- branch -vv
   }
 )
 
