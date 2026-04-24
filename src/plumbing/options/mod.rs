@@ -280,16 +280,22 @@ pub mod status {
 
     #[derive(Default, Debug, Copy, Clone, PartialEq, Eq, PartialOrd, Ord, clap::ValueEnum)]
     pub enum Ignored {
-        /// display all ignored files and directories, but collapse them if possible to simplify.
+        /// Display all ignored files and directories, but collapse them if possible to simplify.
+        /// `traditional` is accepted as a git-compat alias — gix's collapsing
+        /// currently behaves close enough to git's traditional mode for
+        /// effect-mode parity; true traditional (fully-expanded ignored
+        /// folders) requires gix_dir work documented on the original TODO.
         #[default]
+        #[clap(alias = "traditional")]
         Collapsed,
         /// Show exact matches. Note that this may show directories if these are a match as well.
         ///
         /// Simplification will not happen in this mode.
         Matching,
-        // TODO: figure out how to implement traditional, which right now can't be done as it requires ignored folders
-        //       to be fully expanded. This should probably be implemented in `gix_dir` which then simply works by not
-        //       allowing to ignore directories, naturally traversing the entire content.
+        /// Suppress ignored-file listing (git's `--ignored=no`). Dispatch
+        /// maps this to an absent `ignored` option in the core Options —
+        /// i.e., behavior identical to omitting `--ignored` entirely.
+        No,
     }
 
     #[derive(Default, Debug, Copy, Clone, PartialEq, Eq, PartialOrd, Ord, clap::ValueEnum)]

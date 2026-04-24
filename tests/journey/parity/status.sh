@@ -364,28 +364,26 @@ only_for_hash sha1-only && (small-repo-in-sandbox
 # --- ignored ------------------------------------------------------------
 
 # mode=effect — `--ignored[=<mode>]` (traditional/no/matching, default=
-# traditional when flag is bare). gix has `--ignored [collapsed|matching]`
-# which does not map 1:1 to git's spelling — row will surface a
-# Clap-surface gap (`traditional` missing, `no` missing, and gix's
-# `collapsed` has no git equivalent).
+# traditional when flag is bare). Clap's `Ignored` ValueEnum gained
+# `traditional` as an alias for `Collapsed`, and a new `No` variant
+# that dispatch maps to `None` in core Options (matches git's
+# `--ignored=no` = "don't list ignored"). Effect-mode parity across
+# all four variants.
 # hash=sha1-only "gix cannot load sha256 repos: extensions.objectFormat=sha256 rejected (gix/src/config/tree/sections/extensions.rs)"
 title "gix status --ignored[=<mode>]"
 only_for_hash sha1-only && (small-repo-in-sandbox
+  echo ignoreme > .gitignore && touch ignoreme
   it "matches git behavior with bare --ignored (traditional)" && {
-    # TODO: .gitignore + matching file; expect_parity effect -- status --ignored
-    true
+    expect_parity effect -- status --ignored
   }
   it "matches git behavior with --ignored=traditional" && {
-    # TODO: expect_parity effect -- status --ignored=traditional
-    true
+    expect_parity effect -- status --ignored=traditional
   }
   it "matches git behavior with --ignored=no" && {
-    # TODO: expect_parity effect -- status --ignored=no
-    true
+    expect_parity effect -- status --ignored=no
   }
   it "matches git behavior with --ignored=matching" && {
-    # TODO: expect_parity effect -- status --ignored=matching
-    true
+    expect_parity effect -- status --ignored=matching
   }
 )
 

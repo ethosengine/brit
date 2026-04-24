@@ -516,12 +516,18 @@ pub fn main() -> Result<()> {
                                     core::repository::status::Format::Short
                                 }
                             },
-                            ignored: ignored.map(|ignored| match ignored.unwrap_or_default() {
-                                crate::plumbing::options::status::Ignored::Matching => {
-                                    core::repository::status::Ignored::Matching
-                                }
-                                crate::plumbing::options::status::Ignored::Collapsed => {
-                                    core::repository::status::Ignored::Collapsed
+                            ignored: ignored.and_then(|ignored| {
+                                match ignored.unwrap_or_default() {
+                                    crate::plumbing::options::status::Ignored::Matching => {
+                                        Some(core::repository::status::Ignored::Matching)
+                                    }
+                                    crate::plumbing::options::status::Ignored::Collapsed => {
+                                        Some(core::repository::status::Ignored::Collapsed)
+                                    }
+                                    // git's `--ignored=no` → suppress ignored
+                                    // listing; propagate as `None` so core
+                                    // doesn't enable the dirwalk emit.
+                                    crate::plumbing::options::status::Ignored::No => None,
                                 }
                             }),
                             output_format: format,
