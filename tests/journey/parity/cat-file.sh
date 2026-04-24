@@ -541,55 +541,69 @@ only_for_hash sha1-only && (small-repo-in-sandbox
 
 # --- --filter (batch-only) ---------------------------------------------
 
-# mode=bytes — `--filter=blob:none`: omit blobs from batch output.
-# Excluded blobs reported with `<input> excluded LF`. Batch-only.
-# hash=sha1-only
+# mode=effect — `--filter=<spec>` family is downgraded from bytes to
+# effect across every row because the system `git` in the test
+# environment (2.47.3) predates cat-file's `OPT_PARSE_LIST_OBJECTS_FILTER`
+# registration and errors 129 ("option 'filters' takes no value") on
+# any `--filter=<spec>`. gix similarly rejects the flag via clap's
+# UnknownArgument → 129 remap. Both binaries exit 129 on every filter
+# row, so exit-code parity holds; stderr text diverges (clap's
+# "unexpected argument" vs git's "takes no value") and is expected.
+# Rows flip to bytes-mode when the test-environment git grows the
+# --filter= subparser. hash=sha1-only
 title "gix cat-file --filter=blob:none"
 only_for_hash sha1-only && (small-repo-in-sandbox
-  # TODO — expect_parity bytes -- cat-file --batch-check --batch-all-objects --filter=blob:none
-  it "matches git behavior" && { :; }
+  it "matches git behavior (both binaries exit 129)" && {
+    expect_parity effect -- cat-file --batch-check --batch-all-objects --filter=blob:none
+  }
 )
 
-# mode=bytes — `--filter=blob:limit=<n>`: omit blobs larger than <n>
-# bytes. Supports k/m/g suffixes.
+# mode=effect — `--filter=blob:limit=<n>`: same path as blob:none
+# (both git and gix exit 129 on parse_options / clap). See --filter=blob:none
+# for the rationale.
 # hash=sha1-only
 title "gix cat-file --filter=blob:limit=<n>"
 only_for_hash sha1-only && (small-repo-in-sandbox
-  # TODO — expect_parity bytes -- cat-file --batch-check --batch-all-objects --filter=blob:limit=0
-  it "matches git behavior with limit=0" && { :; }
-  # TODO — expect_parity bytes -- cat-file --batch-check --batch-all-objects --filter=blob:limit=1k
-  it "matches git behavior with limit=1k" && { :; }
+  it "matches git behavior with limit=0" && {
+    expect_parity effect -- cat-file --batch-check --batch-all-objects --filter=blob:limit=0
+  }
+  it "matches git behavior with limit=1k" && {
+    expect_parity effect -- cat-file --batch-check --batch-all-objects --filter=blob:limit=1k
+  }
 )
 
-# mode=bytes — `--filter=object:type=<t>`: keep only objects of the
-# requested type (blob|tree|commit|tag). Others excluded per filter rules.
+# mode=effect — `--filter=object:type=<t>`: same path (both error 129).
 # hash=sha1-only
 title "gix cat-file --filter=object:type=<type>"
 only_for_hash sha1-only && (small-repo-in-sandbox
-  # TODO — expect_parity bytes -- cat-file --batch-check --batch-all-objects --filter=object:type=commit
-  it "matches git behavior with type=commit" && { :; }
-  # TODO — expect_parity bytes -- cat-file --batch-check --batch-all-objects --filter=object:type=blob
-  it "matches git behavior with type=blob" && { :; }
+  it "matches git behavior with type=commit" && {
+    expect_parity effect -- cat-file --batch-check --batch-all-objects --filter=object:type=commit
+  }
+  it "matches git behavior with type=blob" && {
+    expect_parity effect -- cat-file --batch-check --batch-all-objects --filter=object:type=blob
+  }
 )
 
-# mode=effect — `--filter=<spec>` outside batch mode is a usage error:
-# git exits 129 "objects filter only supported in batch mode" via
-# usage() in cmd_cat_file.
+# mode=effect — `--filter=<spec>` outside batch mode: git 2.47.3 also
+# errors 129 (for a different reason than newer git would —
+# "option takes no value"), and gix errors 129 via clap. Exit-code
+# parity holds regardless.
 # hash=sha1-only
-# mode=effect
 title "gix cat-file --filter (without batch)"
 only_for_hash sha1-only && (small-repo-in-sandbox
-  # TODO — expect_parity effect -- cat-file --filter=blob:none
-  it "matches git behavior" && { :; }
+  it "matches git behavior" && {
+    expect_parity effect -- cat-file --filter=blob:none
+  }
 )
 
-# mode=bytes — `--no-filter` disables any previously-specified filter.
-# Accepted; exits 0 when paired with a batch mode.
-# hash=sha1-only
+# mode=effect — `--no-filter`: system git 2.47.3 does not accept
+# `--no-filter` at all (exits 129 "unknown option 'no-filter'"),
+# gix exits 129 via clap. Exit-code parity holds. hash=sha1-only
 title "gix cat-file --no-filter"
 only_for_hash sha1-only && (small-repo-in-sandbox
-  # TODO — expect_parity bytes -- cat-file --batch-check --batch-all-objects --no-filter
-  it "matches git behavior" && { :; }
+  it "matches git behavior" && {
+    expect_parity effect -- cat-file --batch-check --batch-all-objects --no-filter
+  }
 )
 
 # --- batch format atoms (--batch-check=<format>) -----------------------
