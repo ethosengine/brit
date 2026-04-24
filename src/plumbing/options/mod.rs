@@ -699,6 +699,22 @@ pub mod log {
     /// List all commits in a repository, optionally limited to those that change a given path.
     #[derive(Debug, clap::Parser)]
     pub struct Platform {
+        /// Walk all refs under `refs/` (plus HEAD) as if they were listed as revisions.
+        #[clap(long)]
+        pub all: bool,
+
+        /// Walk every ref under `refs/heads/` as if listed as revisions.
+        #[clap(long)]
+        pub branches: bool,
+
+        /// Walk every ref under `refs/tags/` as if listed as revisions.
+        #[clap(long)]
+        pub tags: bool,
+
+        /// Walk every ref under `refs/remotes/` as if listed as revisions.
+        #[clap(long)]
+        pub remotes: bool,
+
         /// The revision (branch, commit, tag, range) to start walking from. Defaults to HEAD.
         #[clap(value_parser = crate::shared::AsBString)]
         pub revspec: Option<BString>,

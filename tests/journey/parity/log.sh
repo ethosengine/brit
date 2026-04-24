@@ -177,37 +177,44 @@ only_for_hash sha1-only && (small-repo-in-sandbox
   }
 )
 
-# mode=effect — --all: traverse every ref. gix-revision already exposes
-# Walk::all_references(); plumbing is ready.
+# mode=effect — --all: traverse every ref under refs/. gitoxide-core::log
+# enables want_branches + want_tags + want_remotes and collects tips from
+# each ref iterator. Order + output format still diverge (effect only).
 # hash=sha1-only
 title "gix log --all"
 only_for_hash sha1-only && (small-repo-in-sandbox
-  # TODO — expect_parity effect -- log --all
-  it "matches git behavior" && { :; }
+  it "matches git: exits 0 with tips from every ref" && {
+    expect_parity effect -- log --all
+  }
 )
 
-# mode=effect — --branches: include only refs/heads/*.
+# mode=effect — --branches: only refs/heads/*. Uses Platform::local_branches().
 # hash=sha1-only
 title "gix log --branches"
 only_for_hash sha1-only && (small-repo-in-sandbox
-  # TODO — expect_parity effect -- log --branches
-  it "matches git behavior" && { :; }
+  it "matches git: exits 0 walking every local branch" && {
+    expect_parity effect -- log --branches
+  }
 )
 
-# mode=effect — --tags: include only refs/tags/*.
+# mode=effect — --tags: only refs/tags/*. Uses Platform::tags(). Empty
+# output when the repo has no tags — both sides emit nothing + exit 0.
 # hash=sha1-only
 title "gix log --tags"
 only_for_hash sha1-only && (small-repo-in-sandbox
-  # TODO — expect_parity effect -- log --tags
-  it "matches git behavior" && { :; }
+  it "matches git: exits 0 walking every tag" && {
+    expect_parity effect -- log --tags
+  }
 )
 
-# mode=effect — --remotes: include only refs/remotes/*.
+# mode=effect — --remotes: only refs/remotes/*. Uses Platform::remote_branches().
+# Empty output in a fresh fixture with no remotes — both sides exit 0.
 # hash=sha1-only
 title "gix log --remotes"
 only_for_hash sha1-only && (small-repo-in-sandbox
-  # TODO — expect_parity effect -- log --remotes
-  it "matches git behavior" && { :; }
+  it "matches git: exits 0 walking every remote-tracking branch" && {
+    expect_parity effect -- log --remotes
+  }
 )
 
 # mode=effect — --not <ref>: invert traversal starting from the next

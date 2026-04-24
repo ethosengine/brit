@@ -349,7 +349,14 @@ pub fn main() -> Result<()> {
                 },
             ),
         },
-        Subcommands::Log(crate::plumbing::options::log::Platform { revspec, pathspec }) => prepare_and_run(
+        Subcommands::Log(crate::plumbing::options::log::Platform {
+            all,
+            branches,
+            tags,
+            remotes,
+            revspec,
+            pathspec,
+        }) => prepare_and_run(
             "log",
             trace,
             verbose,
@@ -357,7 +364,18 @@ pub fn main() -> Result<()> {
             progress_keep_open,
             None,
             move |_progress, out, _err| {
-                core::repository::log::log(repository(Mode::Lenient)?, out, revspec, pathspec.into_iter().next())
+                core::repository::log::log(
+                    repository(Mode::Lenient)?,
+                    out,
+                    core::repository::log::Options {
+                        all,
+                        branches,
+                        tags,
+                        remotes,
+                        revspec,
+                        path: pathspec.into_iter().next(),
+                    },
+                )
             },
         ),
         Subcommands::Worktree(crate::plumbing::options::worktree::Platform { cmd }) => match cmd {
