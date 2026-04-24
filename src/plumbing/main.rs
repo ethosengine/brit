@@ -425,6 +425,7 @@ pub fn main() -> Result<()> {
             short,
             long,
             branch,
+            show_stash,
             statistics,
             submodules,
             no_write,
@@ -435,6 +436,11 @@ pub fn main() -> Result<()> {
             // is close enough under effect mode — the flag is accepted for
             // compatibility but does not alter output.
             let _ = long;
+            // `--show-stash` accepted for compat. Stash-count line (git's
+            // "Your stash currently has N entries") requires reflog traversal
+            // of refs/stash; deferred as a shortcoming. Under effect mode
+            // this no-op yields exit-code parity.
+            let _ = show_stash;
             // `-s`/`--short` is a convenience alias for --format=short (clap
             // enforces conflict with --format so this is unambiguous).
             let effective_format = if short {

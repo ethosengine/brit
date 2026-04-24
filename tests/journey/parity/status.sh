@@ -211,15 +211,17 @@ only_for_hash sha1-only && (small-repo-in-sandbox
   }
 )
 
-# mode=effect — `--show-stash` prints `# stash <N>` if N > 0 (porcelain=v2)
-# or a "Your stash currently has N entries" line (long format). Requires
-# a populated stash to exercise.
+# mode=effect — `--show-stash` prints git's "Your stash currently has
+# N entries" line (long format) or a `# stash <N>` header (porcelain=v2).
+# gix accepts the flag as a no-op for effect-mode parity; full stash-
+# count emission would require reflog traversal of refs/stash and is
+# deferred. Exit-code match is asserted; text divergence expected.
 # hash=sha1-only "gix cannot load sha256 repos: extensions.objectFormat=sha256 rejected (gix/src/config/tree/sections/extensions.rs)"
 title "gix status --show-stash"
 only_for_hash sha1-only && (small-repo-in-sandbox
+  echo stash-me >> a && git stash push -q -m "parity-test"
   it "matches git behavior" && {
-    # TODO: populate a stash entry; expect_parity effect -- status --show-stash
-    true
+    expect_parity effect -- status --show-stash
   }
 )
 

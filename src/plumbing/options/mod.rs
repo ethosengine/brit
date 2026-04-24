@@ -323,6 +323,12 @@ pub mod status {
         /// (which always shows the branch).
         #[clap(short = 'b', long = "branch")]
         pub branch: bool,
+        /// Show the number of entries currently stashed away. Accepted for
+        /// compatibility with `git status --show-stash`; stash-count emission
+        /// is not yet implemented (would require reflog traversal of
+        /// refs/stash), so this flag is currently a no-op under effect mode.
+        #[clap(long = "show-stash")]
+        pub show_stash: bool,
         /// If enabled, show ignored files and directories.
         #[clap(long)]
         pub ignored: Option<Option<Ignored>>,
