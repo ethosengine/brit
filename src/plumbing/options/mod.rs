@@ -170,6 +170,20 @@ pub enum Subcommands {
         /// Mirrors `git cat-file -s`.
         #[clap(short = 's')]
         print_size: bool,
+        /// Use the mailmap file to rewrite author/committer/tagger idents
+        /// in `-p` / `-s` output for commits and tags. Canonical spelling
+        /// `--use-mailmap`; `--mailmap` is a git-compat alias.
+        ///
+        /// Accepted for parity. On fixtures without a `.mailmap` file
+        /// the flag is semantically a no-op; actual ident rewriting is
+        /// wired up when the first real-mailmap row (`--use-mailmap -s`
+        /// against a seeded `.mailmap`) lands.
+        #[clap(long = "use-mailmap", visible_alias = "mailmap")]
+        use_mailmap: bool,
+        /// Disable mailmap ident rewriting. Canonical spelling
+        /// `--no-use-mailmap`; `--no-mailmap` is a git-compat alias.
+        #[clap(long = "no-use-mailmap", visible_alias = "no-mailmap")]
+        no_use_mailmap: bool,
         /// The object to print, optionally preceded by a type hint.
         ///
         /// Two positional shapes:

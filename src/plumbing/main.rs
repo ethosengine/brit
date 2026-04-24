@@ -2028,6 +2028,13 @@ pub fn main() -> Result<()> {
             exists,
             print_type,
             print_size,
+            // Mailmap flags accepted for clap-parity with git cat-file
+            // --use-mailmap / --mailmap / --no-use-mailmap / --no-mailmap.
+            // No-op on fixtures without a `.mailmap` file; the first
+            // semantics row (--use-mailmap -s against a seeded mailmap)
+            // will wire real ident rewriting through to the dispatch.
+            use_mailmap: _,
+            no_use_mailmap: _,
             args,
         } => {
             // The positional grammar tracks git cat-file's:

@@ -263,10 +263,12 @@ only_for_hash sha1-only && (small-repo-in-sandbox
 # mode=effect
 title "gix cat-file --mailmap / --no-mailmap"
 only_for_hash sha1-only && (small-repo-in-sandbox
-  # TODO — expect_parity effect -- cat-file --mailmap -p HEAD
-  it "matches git behavior with --mailmap -p HEAD" && { :; }
-  # TODO — expect_parity effect -- cat-file --no-mailmap -p HEAD
-  it "matches git behavior with --no-mailmap -p HEAD" && { :; }
+  it "matches git behavior with --mailmap -p HEAD" && {
+    expect_parity effect -- cat-file --mailmap -p HEAD
+  }
+  it "matches git behavior with --no-mailmap -p HEAD" && {
+    expect_parity effect -- cat-file --no-mailmap -p HEAD
+  }
 )
 
 # mode=effect — `--use-mailmap` / `--no-use-mailmap` (canonical spelling).
@@ -276,10 +278,12 @@ only_for_hash sha1-only && (small-repo-in-sandbox
 # mode=effect
 title "gix cat-file --use-mailmap / --no-use-mailmap"
 only_for_hash sha1-only && (small-repo-in-sandbox
-  # TODO — expect_parity effect -- cat-file --use-mailmap -p HEAD
-  it "matches git behavior with --use-mailmap -p HEAD" && { :; }
-  # TODO — expect_parity effect -- cat-file --no-use-mailmap -p HEAD
-  it "matches git behavior with --no-use-mailmap -p HEAD" && { :; }
+  it "matches git behavior with --use-mailmap -p HEAD" && {
+    expect_parity effect -- cat-file --use-mailmap -p HEAD
+  }
+  it "matches git behavior with --no-use-mailmap -p HEAD" && {
+    expect_parity effect -- cat-file --no-use-mailmap -p HEAD
+  }
 )
 
 # mode=bytes — `--use-mailmap -s` with an actual .mailmap file present:
