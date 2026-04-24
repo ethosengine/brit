@@ -352,8 +352,8 @@ only_for_hash sha1-only && (small-repo-in-sandbox
 # hash=sha1-only
 title "gix branch <name> <start-point>"
 only_for_hash sha1-only && (small-repo-in-sandbox
-  it "matches git behavior (TODO)" && {
-    : # TODO: expect_parity effect -- branch startpointbr HEAD~1
+  it "matches git behavior" && {
+    expect_parity effect -- branch startpointbr HEAD~1
   }
 )
 
