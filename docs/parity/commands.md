@@ -20,7 +20,7 @@ Legend:
 | rebase | — | absent | — | stub crate `gix-rebase` exists |
 | reset | — | absent | — | — |
 | commit | — | partial | — | `Commit` subcommand exists; hook support missing |
-| status | gix status | partial | — | exists; flag coverage unverified |
+| status | gix status | partial | [status.sh](../../tests/journey/parity/status.sh) | scaffolded — 26 flag-scoped title sections covering the full documented surface (short/long, branch/show-stash, porcelain=v1/v2, verbosity, untracked-files modes, ignore-submodules modes, ignored modes, -z, column, ahead-behind, renames, find-renames, pathspec). Rows flip to `sha1-only` because gix-config rejects `extensions.objectFormat=sha256` (gix/src/config/tree/sections/extensions.rs) |
 | log | gix log | partial | — | exists; flag coverage unverified |
 | diff | gix diff | partial | — | exists; flag coverage unverified |
 | show | — | absent | — | — |
