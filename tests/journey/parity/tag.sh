@@ -245,14 +245,14 @@ only_for_hash sha1-only && (small-repo-in-sandbox
 # hash=sha1-only
 title "gix tag -n"
 only_for_hash sha1-only && (small-repo-in-sandbox
-  it "matches git behavior with -n (TODO)" && {
-    : # TODO: expect_parity bytes -- tag -n
+  it "matches git behavior with -n" && {
+    expect_parity bytes -- tag -n
   }
-  it "matches git behavior with -n1 (TODO)" && {
-    : # TODO: expect_parity bytes -- tag -n1
+  it "matches git behavior with -n1" && {
+    expect_parity bytes -- tag -n1
   }
-  it "matches git behavior with -n5 (TODO)" && {
-    : # TODO: expect_parity bytes -- tag -n5
+  it "matches git behavior with -n5" && {
+    expect_parity bytes -- tag -n5
   }
 )
 
@@ -283,14 +283,14 @@ only_for_hash sha1-only && (small-repo-in-sandbox
 # hash=sha1-only
 title "gix tag --format"
 only_for_hash sha1-only && (small-repo-in-sandbox
-  it "matches git behavior with --format='%(refname)' (TODO)" && {
-    : # TODO: expect_parity bytes -- tag --format=%(refname)
+  it "matches git behavior with --format='%(refname)'" && {
+    expect_parity bytes -- tag --format=%\(refname\)
   }
-  it "matches git behavior with --format='%(refname:short)' (TODO)" && {
-    : # TODO: expect_parity bytes -- tag --format=%(refname:short)
+  it "matches git behavior with --format='%(refname:short)'" && {
+    expect_parity bytes -- tag --format=%\(refname:short\)
   }
-  it "matches git behavior with --format='%(objectname) %(refname:strip=2)' (TODO)" && {
-    : # TODO: expect_parity bytes -- tag '--format=%(objectname) %(refname:strip=2)'
+  it "matches git behavior with --format='%(objectname) %(refname:strip=2)'" && {
+    expect_parity bytes -- tag '--format=%(objectname) %(refname:strip=2)'
   }
 )
 
@@ -319,8 +319,8 @@ only_for_hash sha1-only && (small-repo-in-sandbox
 # hash=sha1-only
 title "gix tag --omit-empty"
 only_for_hash sha1-only && (small-repo-in-sandbox
-  it "matches git behavior with --omit-empty + empty-format (TODO)" && {
-    : # TODO: expect_parity bytes -- tag --omit-empty --format=
+  it "matches git behavior with --omit-empty + empty-format" && {
+    expect_parity bytes -- tag --omit-empty --format=
   }
 )
 

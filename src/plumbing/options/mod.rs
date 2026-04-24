@@ -2111,6 +2111,25 @@ pub mod tag {
         #[clap(long, value_name = "key")]
         pub sort: Vec<String>,
 
+        /// Format string interpolating `%(<atom>)` fields. Defaults to
+        /// `%(refname:strip=2)` (plain tag name). Mirrors
+        /// `OPT_STRING("format", ...)`; supports a narrow subset of
+        /// for-each-ref atoms — see `tag::list` implementation.
+        #[clap(long = "format", value_name = "format")]
+        pub format_string: Option<String>,
+
+        /// Do not output a newline after formatted refs where the
+        /// format expands to the empty string. Mirrors
+        /// `OPT_BOOL(0, "omit-empty", ...)`.
+        #[clap(long)]
+        pub omit_empty: bool,
+
+        /// Print the first `<num>` lines of each tag's annotation (or
+        /// commit message for lightweight tags). Implies list mode.
+        /// Mirrors git's integer flag `-n[<num>]`.
+        #[clap(short = 'n', num_args = 0..=1, default_missing_value = "1", value_name = "num")]
+        pub annotation_lines: Option<usize>,
+
         /// Only list tags of `<object>` (HEAD if omitted). Implies list
         /// mode. Mirrors git's `--points-at` with `PARSE_OPT_LASTARG_DEFAULT`
         /// + `defval = "HEAD"`.
