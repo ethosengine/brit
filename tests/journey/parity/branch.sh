@@ -406,9 +406,17 @@ only_for_hash sha1-only && (small-repo-in-sandbox
 # <start-point>. With a fresh name it behaves like a plain create.
 # hash=sha1-only
 title "gix branch --force"
-only_for_hash sha1-only && (small-repo-in-sandbox
-  it "matches git behavior — reset existing (TODO)" && {
-    : # TODO: expect_parity effect -- branch --force dev HEAD~1
+only_for_hash sha1-only && (sandbox
+  function _branch-parity-fixture() {
+    git-init-hash-aware
+    git checkout -b main >/dev/null 2>&1
+    git config commit.gpgsign false
+    git -c user.email=t@t -c user.name=t commit -q --allow-empty -m c1
+    git -c user.email=t@t -c user.name=t commit -q --allow-empty -m c2
+    git branch dev
+  }
+  it "matches git behavior — reset existing" && {
+    expect_parity_reset _branch-parity-fixture effect -- branch --force dev HEAD~1
   }
 )
 
