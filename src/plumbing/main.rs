@@ -995,8 +995,18 @@ pub fn main() -> Result<()> {
                     progress,
                     progress_keep_open,
                     None,
-                    move |_progress, _out, _err| {
-                        core::repository::branch::create(repository(Mode::Lenient)?, name, start_point, force)
+                    move |_progress, _out, err| {
+                        let code = core::repository::branch::create(
+                            repository(Mode::Lenient)?,
+                            name,
+                            start_point,
+                            force,
+                            err,
+                        )?;
+                        if code != 0 {
+                            std::process::exit(code);
+                        }
+                        Ok(())
                     },
                 )
             } else {

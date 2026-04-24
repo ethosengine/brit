@@ -185,9 +185,17 @@ only_for_hash sha1-only && (small-repo-in-sandbox
 # combined with -d.
 # hash=sha1-only
 title "gix branch --quiet"
-only_for_hash sha1-only && (small-repo-in-sandbox
+only_for_hash sha1-only && (sandbox
+  function _branch-parity-fixture() {
+    git-init-hash-aware
+    git checkout -b main >/dev/null 2>&1
+    git config commit.gpgsign false
+    git -c user.email=t@t -c user.name=t commit -q --allow-empty -m c1
+    git -c user.email=t@t -c user.name=t commit -q --allow-empty -m c2
+    git branch dev
+  }
   it "matches git behavior" && {
-    expect_parity effect -- branch --quiet newquiet
+    expect_parity_reset _branch-parity-fixture effect -- branch --quiet newquiet
   }
 )
 
@@ -341,9 +349,17 @@ only_for_hash sha1-only && (small-repo-in-sandbox
 # at HEAD. Observable effect: ref written, stdout empty, exit 0.
 # hash=sha1-only
 title "gix branch <name>"
-only_for_hash sha1-only && (small-repo-in-sandbox
+only_for_hash sha1-only && (sandbox
+  function _branch-parity-fixture() {
+    git-init-hash-aware
+    git checkout -b main >/dev/null 2>&1
+    git config commit.gpgsign false
+    git -c user.email=t@t -c user.name=t commit -q --allow-empty -m c1
+    git -c user.email=t@t -c user.name=t commit -q --allow-empty -m c2
+    git branch dev
+  }
   it "matches git behavior" && {
-    expect_parity effect -- branch newbr
+    expect_parity_reset _branch-parity-fixture effect -- branch newbr
   }
 )
 
@@ -351,9 +367,17 @@ only_for_hash sha1-only && (small-repo-in-sandbox
 # pointing at <start-point> (commit id, ref, tag).
 # hash=sha1-only
 title "gix branch <name> <start-point>"
-only_for_hash sha1-only && (small-repo-in-sandbox
+only_for_hash sha1-only && (sandbox
+  function _branch-parity-fixture() {
+    git-init-hash-aware
+    git checkout -b main >/dev/null 2>&1
+    git config commit.gpgsign false
+    git -c user.email=t@t -c user.name=t commit -q --allow-empty -m c1
+    git -c user.email=t@t -c user.name=t commit -q --allow-empty -m c2
+    git branch dev
+  }
   it "matches git behavior" && {
-    expect_parity effect -- branch startpointbr HEAD~1
+    expect_parity_reset _branch-parity-fixture effect -- branch startpointbr HEAD~1
   }
 )
 
@@ -373,8 +397,8 @@ only_for_hash sha1-only && (small-repo-in-sandbox
 # hash=sha1-only
 title "gix branch <existing-name>"
 only_for_hash sha1-only && (small-repo-in-sandbox
-  it "matches git behavior (TODO)" && {
-    : # TODO: expect_parity bytes -- branch dev
+  it "matches git behavior" && {
+    expect_parity bytes -- branch dev
   }
 )
 

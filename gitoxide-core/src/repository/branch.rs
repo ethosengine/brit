@@ -48,16 +48,25 @@ pub fn create(
     name: gix::bstr::BString,
     start_point: Option<gix::bstr::BString>,
     force: bool,
-) -> anyhow::Result<()> {
+    err: &mut dyn std::io::Write,
+) -> anyhow::Result<i32> {
     use gix::refs::transaction::{Change, LogChange, PreviousValue, RefEdit};
 
-    // Validate the refname: construct the FullName and let gix_validate
-    // reject bad names via TryFrom.
+    let full = format!("refs/heads/{name}");
+    // Already-exists pre-check: gix-ref's MustNotExist treats
+    // same-target updates as a silent no-op, so we have to detect the
+    // existing ref ourselves to match git's
+    // "fatal: a branch named '<name>' already exists" + exit 128.
+    // --force bypasses the check.
+    if !force && repo.try_find_reference(full.as_str())?.is_some() {
+        writeln!(err, "fatal: a branch named '{name}' already exists")?;
+        return Ok(128);
+    }
     let target = match start_point {
         Some(rev) => repo.rev_parse_single(AsRef::<gix::bstr::BStr>::as_ref(&rev))?.detach(),
         None => repo.head_id()?.detach(),
     };
-    let full_name: gix::refs::FullName = format!("refs/heads/{name}")
+    let full_name: gix::refs::FullName = full
         .try_into()
         .map_err(|err| anyhow::anyhow!("invalid refname: {err:?}"))?;
     let expected = if force {
@@ -78,7 +87,7 @@ pub fn create(
         name: full_name,
         deref: false,
     })?;
-    Ok(())
+    Ok(0)
 }
 
 /// `git branch --show-current`: print the current branch name alone,
