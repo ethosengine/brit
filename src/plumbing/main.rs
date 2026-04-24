@@ -2183,7 +2183,16 @@ pub fn main() -> Result<()> {
                     core::repository::cat_batch_all_objects(&repo, mode, format, unordered, output_delim, stdout)?;
                 } else {
                     let stdin = std::io::stdin().lock();
-                    core::repository::cat_batch(&repo, mode, format, input_delim, output_delim, stdin, stdout)?;
+                    core::repository::cat_batch(
+                        &repo,
+                        mode,
+                        format,
+                        follow_symlinks,
+                        input_delim,
+                        output_delim,
+                        stdin,
+                        stdout,
+                    )?;
                 }
                 std::process::exit(0);
             }

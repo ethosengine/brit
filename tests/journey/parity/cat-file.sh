@@ -499,9 +499,12 @@ only_for_hash sha1-only && (small-repo-in-sandbox
 # hash=sha1-only
 title "gix cat-file --follow-symlinks"
 only_for_hash sha1-only && (small-repo-in-sandbox
+  echo blob-content > a && git add a && git commit -q -m "populate a"
   ln -s a link-to-a && git add link-to-a && git commit -q -m "add symlink"
-  # TODO — expect_parity bytes -- cat-file --batch --follow-symlinks  (stdin: "HEAD:link-to-a\n")
-  it "matches git behavior" && { :; }
+  it "matches git behavior" && {
+    PARITY_STDIN="HEAD:link-to-a
+" expect_parity bytes -- cat-file --batch --follow-symlinks
+  }
 )
 
 # mode=effect — `--follow-symlinks` without batch: usage error 129.
@@ -757,8 +760,10 @@ only_for_hash sha1-only && (small-repo-in-sandbox
 title "gix cat-file --batch --follow-symlinks (link outside tree)"
 only_for_hash sha1-only && (small-repo-in-sandbox
   ln -s /etc/passwd alink && git add alink && git commit -q -m "alink"
-  # TODO — expect_parity bytes -- cat-file --batch --follow-symlinks  (stdin: "HEAD:alink\n")
-  it "matches git behavior" && { :; }
+  it "matches git behavior" && {
+    PARITY_STDIN="HEAD:alink
+" expect_parity bytes -- cat-file --batch --follow-symlinks
+  }
 )
 
 # mode=bytes — `--follow-symlinks` on a broken symlink (dangling):
@@ -767,8 +772,10 @@ only_for_hash sha1-only && (small-repo-in-sandbox
 title "gix cat-file --batch --follow-symlinks (dangling)"
 only_for_hash sha1-only && (small-repo-in-sandbox
   ln -s missing-target dlink && git add dlink && git commit -q -m "dlink"
-  # TODO — expect_parity bytes -- cat-file --batch --follow-symlinks  (stdin: "HEAD:dlink\n")
-  it "matches git behavior" && { :; }
+  it "matches git behavior" && {
+    PARITY_STDIN="HEAD:dlink
+" expect_parity bytes -- cat-file --batch --follow-symlinks
+  }
 )
 
 # --- combined flags ----------------------------------------------------
