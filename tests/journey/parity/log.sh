@@ -81,8 +81,9 @@ only_for_hash sha1-only && (small-repo-in-sandbox
 # hash=dual
 title "gix log (outside a repository)"
 only_for_hash dual && (sandbox
-  # TODO — expect_parity effect -- log
-  it "matches git behavior" && { :; }
+  it "matches git: dies 128 with the exact NoGitRepository wording" && {
+    expect_parity effect -- log
+  }
 )
 
 # --- basic traversal ----------------------------------------------------
