@@ -919,7 +919,7 @@ pub fn main() -> Result<()> {
                 contains,
                 no_contains,
                 merged,
-                no_merged: _no_merged,
+                no_merged,
                 points_at: _points_at,
                 format_string: _format_string,
                 omit_empty: _omit_empty,
@@ -969,6 +969,7 @@ pub fn main() -> Result<()> {
                     contains,
                     no_contains,
                     merged,
+                    no_merged,
                 };
 
                 prepare_and_run(
