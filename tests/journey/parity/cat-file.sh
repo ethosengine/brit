@@ -164,8 +164,10 @@ only_for_hash sha1-only && (small-repo-in-sandbox
 # hash=sha1-only
 title "gix cat-file -p (tree)"
 only_for_hash sha1-only && (small-repo-in-sandbox
-  # TODO — expect_parity bytes -- cat-file -p HEAD^{tree}
-  it "matches git behavior" && { :; }
+  mkdir sub && echo nested > sub/c && git add sub && git commit -q -m "add subtree"
+  it "matches git behavior (root tree with blob + subtree entries)" && {
+    expect_parity bytes -- cat-file -p HEAD^{tree}
+  }
 )
 
 # mode=bytes — `-p <commit>` pretty-prints commit header + message

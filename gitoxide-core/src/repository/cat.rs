@@ -14,8 +14,29 @@ pub fn display_object(
     let header = id.header()?;
     match header.kind() {
         gix::object::Kind::Tree if matches!(tree_mode, TreeMode::Pretty) => {
+            // Match `git cat-file -p <tree>` (which delegates to `git ls-tree
+            // <tree>` in cat-file.c case 'p' OBJ_TREE): one line per entry,
+            //   `<mode:06o> SP <type> SP <full-hex-oid> TAB <name> LF`
+            // where `<type>` is `blob` for regular + executable blobs AND
+            // symlinks (the *object* type), `tree` for subtrees, `commit`
+            // for submodules (gitlinks). gix's EntryKind::as_str emits
+            // "exe"/"link" for executable-blob/symlink which git never
+            // uses — it only shows the *object* type here, not the mode
+            // classification.
             for entry in id.object()?.into_tree().iter() {
-                writeln!(out, "{}", entry?)?;
+                let entry = entry?;
+                let type_name = match entry.mode().kind() {
+                    gix::object::tree::EntryKind::Tree => "tree",
+                    gix::object::tree::EntryKind::Commit => "commit",
+                    _ => "blob",
+                };
+                writeln!(
+                    out,
+                    "{mode:06o} {type_name} {oid}\t{name}",
+                    mode = entry.mode().value(),
+                    oid = entry.oid().to_hex(),
+                    name = entry.filename(),
+                )?;
             }
         }
         gix::object::Kind::Blob if cache.is_some() && spec.path_and_mode().is_some() => {
