@@ -176,14 +176,16 @@ only_for_hash sha1-only && (small-repo-in-sandbox
   }
 )
 
-# mode=effect — `--long` is the default; explicit flag should match
-# bare `git status`. Output text diverges so effect only.
+# mode=effect — `--long` is git's default format; gix accepts it as a
+# compat no-op that yields the Simplified output. Added `long: bool`
+# on the Clap Platform with `conflicts_with_all = ["short", "format"]`
+# to mirror git's rejection of `--long --short` / `--long --porcelain`.
 # hash=sha1-only "gix cannot load sha256 repos: extensions.objectFormat=sha256 rejected (gix/src/config/tree/sections/extensions.rs)"
 title "gix status --long"
 only_for_hash sha1-only && (small-repo-in-sandbox
+  echo staged-change >> a && git add a && echo worktree-change >> a
   it "matches git behavior" && {
-    # TODO: stage + modify mix; expect_parity effect -- status --long
-    true
+    expect_parity effect -- status --long
   }
 )
 

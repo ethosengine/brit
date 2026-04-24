@@ -313,6 +313,11 @@ pub mod status {
         /// Equivalent to `--format=short`; conflicts with `--format`.
         #[clap(short = 's', long = "short", conflicts_with = "format")]
         pub short: bool,
+        /// Give the output in the long-format (the default). Accepted for
+        /// compatibility with `git status --long`; conflicts with `--short`
+        /// and `--format` just like in git.
+        #[clap(long = "long", conflicts_with_all = ["short", "format"])]
+        pub long: bool,
         /// If enabled, show ignored files and directories.
         #[clap(long)]
         pub ignored: Option<Option<Ignored>>,

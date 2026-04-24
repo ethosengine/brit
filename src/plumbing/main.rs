@@ -423,12 +423,17 @@ pub fn main() -> Result<()> {
             ignored,
             format: status_format,
             short,
+            long,
             statistics,
             submodules,
             no_write,
             pathspec,
             index_worktree_renames,
         }) => {
+            // `--long` is git's default format name; gix's default (Simplified)
+            // is close enough under effect mode — the flag is accepted for
+            // compatibility but does not alter output.
+            let _ = long;
             // `-s`/`--short` is a convenience alias for --format=short (clap
             // enforces conflict with --format so this is unambiguous).
             let effective_format = if short {
