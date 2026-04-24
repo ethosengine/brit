@@ -150,6 +150,13 @@ pub enum Subcommands {
     /// canonical gix spelling remains `cat`.
     #[clap(visible_alias = "cat-file")]
     Cat {
+        /// Pretty-print `<object>` content (the default for `gix cat`).
+        ///
+        /// Accepted for `git cat-file -p` parity. `gix cat` already emits
+        /// a type-appropriate pretty representation for trees, blobs,
+        /// commits, and tags, so the flag is a compat no-op.
+        #[clap(short = 'p', long = "pretty")]
+        pretty: bool,
         /// The object to print to stdout.
         revspec: String,
     },

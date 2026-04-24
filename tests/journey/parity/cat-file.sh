@@ -98,8 +98,9 @@ only_for_hash sha1-only && (small-repo-in-sandbox
 # mode=effect
 title "gix cat-file (outside a repository)"
 only_for_hash dual && (sandbox
-  # TODO — expect_parity effect -- cat-file -p HEAD
-  it "matches git behavior" && { :; }
+  it "matches git behavior" && {
+    expect_parity effect -- cat-file -p HEAD
+  }
 )
 
 # mode=effect — bare `git cat-file` with no args and no mode flag prints

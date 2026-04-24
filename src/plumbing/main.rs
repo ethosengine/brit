@@ -2019,7 +2019,7 @@ pub fn main() -> Result<()> {
                 },
             ),
         },
-        Subcommands::Cat { revspec } => prepare_and_run(
+        Subcommands::Cat { pretty: _, revspec } => prepare_and_run(
             "cat",
             trace,
             verbose,
