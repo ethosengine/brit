@@ -2021,6 +2021,16 @@ pub mod tag {
         #[clap(long, value_name = "object", num_args = 0..=1, default_missing_value = "HEAD")]
         pub points_at: Option<std::ffi::OsString>,
 
+        /// Only list tags whose tagged commit is reachable from `<commit>`
+        /// (HEAD if omitted). Mirrors `OPT_MERGED`.
+        #[clap(long, value_name = "commit", num_args = 0..=1, default_missing_value = "HEAD")]
+        pub merged: Option<std::ffi::OsString>,
+
+        /// Only list tags whose tagged commit is NOT reachable from
+        /// `<commit>` (HEAD if omitted). Mirrors `OPT_NO_MERGED`.
+        #[clap(long, value_name = "commit", num_args = 0..=1, default_missing_value = "HEAD")]
+        pub no_merged: Option<std::ffi::OsString>,
+
         /// Shell glob patterns to filter listed tags (fnmatch(3), OR'd).
         /// Only meaningful in list mode. Matches git-tag(1)'s
         /// `[<pattern>...]` positional after `-l`.

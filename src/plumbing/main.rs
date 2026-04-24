@@ -2434,6 +2434,8 @@ pub fn main() -> Result<()> {
                 list: _,
                 ignore_case,
                 points_at,
+                merged,
+                no_merged,
                 patterns,
             } = platform;
             prepare_and_run(
@@ -2452,6 +2454,8 @@ pub fn main() -> Result<()> {
                             patterns,
                             ignore_case,
                             points_at,
+                            merged,
+                            no_merged,
                         },
                     )
                 },

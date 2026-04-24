@@ -184,11 +184,14 @@ only_for_hash sha1-only && (small-repo-in-sandbox
 # hash=sha1-only
 title "gix tag --merged"
 only_for_hash sha1-only && (small-repo-in-sandbox
-  it "matches git behavior with --merged HEAD (TODO)" && {
-    : # TODO: expect_parity bytes -- tag --merged HEAD
+  it "matches git behavior with --merged HEAD" && {
+    expect_parity bytes -- tag --merged HEAD
   }
-  it "matches git behavior with --merged (no arg) (TODO)" && {
-    : # TODO: expect_parity bytes -- tag --merged
+  it "matches git behavior with --merged HEAD~" && {
+    expect_parity bytes -- tag --merged HEAD~
+  }
+  it "matches git behavior with --merged (no arg)" && {
+    expect_parity bytes -- tag --merged
   }
 )
 
@@ -197,8 +200,11 @@ only_for_hash sha1-only && (small-repo-in-sandbox
 # hash=sha1-only
 title "gix tag --no-merged"
 only_for_hash sha1-only && (small-repo-in-sandbox
-  it "matches git behavior with --no-merged HEAD (TODO)" && {
-    : # TODO: expect_parity bytes -- tag --no-merged HEAD
+  it "matches git behavior with --no-merged HEAD" && {
+    expect_parity bytes -- tag --no-merged HEAD
+  }
+  it "matches git behavior with --no-merged HEAD~" && {
+    expect_parity bytes -- tag --no-merged HEAD~
   }
 )
 

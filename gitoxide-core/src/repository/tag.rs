@@ -1,6 +1,9 @@
-use std::ffi::OsString;
+use std::{collections::HashSet, ffi::OsString};
 
-use gix::bstr::{BString, ByteSlice};
+use gix::{
+    bstr::{BString, ByteSlice},
+    prelude::ObjectIdExt,
+};
 
 use crate::OutputFormat;
 
@@ -17,6 +20,24 @@ pub struct ListOptions {
     /// chains) at the resolved object. Git's `--points-at <object>`;
     /// `None` means "no filter".
     pub points_at: Option<OsString>,
+    /// When `Some`, only keep tags whose tagged commit is reachable
+    /// from the resolved commit. Git's `--merged <commit>`.
+    pub merged: Option<OsString>,
+    /// When `Some`, only keep tags whose tagged commit is NOT
+    /// reachable from the resolved commit. Git's `--no-merged <commit>`.
+    pub no_merged: Option<OsString>,
+}
+
+fn ancestors_of(repo: &gix::Repository, rev: &OsString) -> anyhow::Result<HashSet<gix::ObjectId>> {
+    let rev_bstr = gix::path::os_str_into_bstr(rev)?;
+    let oid = repo.rev_parse_single(rev_bstr)?.detach();
+    let mut set = HashSet::new();
+    set.insert(oid);
+    for res in oid.attach(repo).ancestors().all()? {
+        let info = res?;
+        set.insert(info.id);
+    }
+    Ok(set)
 }
 
 /// git-compat `tag` listing: one shortened refname per line, sorted
@@ -51,16 +72,42 @@ pub fn list(
         None => None,
     };
 
+    // Precompute ancestor sets for --merged / --no-merged. Each is the
+    // closure-of-ancestors of the resolved commit, including the commit
+    // itself. A tag is kept iff its peeled commit is/is not in the set.
+    let merged_set = opts.merged.as_ref().map(|rev| ancestors_of(&repo, rev)).transpose()?;
+    let no_merged_set = opts
+        .no_merged
+        .as_ref()
+        .map(|rev| ancestors_of(&repo, rev))
+        .transpose()?;
+
     let mut names: Vec<BString> = platform
         .tags()?
         .flatten()
         .filter_map(|mut reference| {
-            if let Some(target_oid) = points_at_oid {
-                let peeled = reference.peel_to_id().ok()?;
-                if peeled.detach() != target_oid {
+            let peeled = if points_at_oid.is_some() || merged_set.is_some() || no_merged_set.is_some() {
+                Some(reference.peel_to_id().ok()?.detach())
+            } else {
+                None
+            };
+
+            if let (Some(target_oid), Some(peeled)) = (points_at_oid, peeled) {
+                if peeled != target_oid {
                     return None;
                 }
             }
+            if let (Some(set), Some(peeled)) = (merged_set.as_ref(), peeled) {
+                if !set.contains(&peeled) {
+                    return None;
+                }
+            }
+            if let (Some(set), Some(peeled)) = (no_merged_set.as_ref(), peeled) {
+                if set.contains(&peeled) {
+                    return None;
+                }
+            }
+
             Some(reference.name().shorten().to_owned())
         })
         .collect();
