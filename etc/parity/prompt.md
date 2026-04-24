@@ -171,12 +171,44 @@ Invoke subagents via the **Agent tool** with `subagent_type="gix-runner"` or `su
 When `tests/journey/parity/$CMD.sh` has no remaining TODO blocks and every `it` passes:
 
 0. Regenerate the ledger: `bash etc/parity/shortcomings.sh`. If diff is non-empty, commit as `parity: regenerate SHORTCOMINGS.md for git $CMD`.
-1. Invoke `@gix-steward`: "verify completion promise for git $CMD"
+
+### Pre-Steward self-check (required before invoking completion gate)
+
+Steward is **opus**; you are **sonnet**. Steward is expensive and its judgment is valuable — do not spend it on a call you could have rejected yourself. Before invoking `@gix-steward` for completion verification, produce the attestation block below in your own output and pass it to Steward in the invocation prompt. If you cannot truthfully answer "yes" to every line, do **not** invoke Steward — keep iterating, or invoke Steward only for moments #2 (tie-break) or #3 (deferral).
+
+```
+PRE-STEWARD SELF-CHECK for git $CMD
+- [ ] Every flag in `vendor/git/Documentation/git-$CMD.txt` has a section in `tests/journey/parity/$CMD.sh`. Flag count: <N>. Section count: <N>. (Must match.)
+- [ ] Zero `TODO` / `FIXME` markers in `tests/journey/parity/$CMD.sh`. Verified via `grep -nE "TODO|FIXME" tests/journey/parity/$CMD.sh` = empty.
+- [ ] `bash tests/parity.sh tests/journey/parity/$CMD.sh` exited 0 on my last run. Exit=<0>. Run at <commit-sha>.
+- [ ] `cargo fmt --check` clean; `cargo clippy -p <touched-crates> --all-targets -- -D warnings -A unknown-lints --no-deps` clean.
+- [ ] `bash etc/parity/shortcomings.sh --check` exits 0 (ledger current).
+- [ ] `docs/parity/commands.md` row for $CMD is already updated to `present` in my staged diff (or I am prepared to commit both in the same completion commit).
+- [ ] I can name the 2-3 rows most likely to get rejected and why. They are: <row1 — reason>, <row2 — reason>, ...
+```
+
+If any line is "no", the right next action is **not** "call Steward and see" — it is "close the gap, then self-check again." Steward invoked prematurely will cheap-reject on pre-flight and the iteration is wasted.
+
+### Invocation
+
+1. Invoke `@gix-steward` with the full self-check block above embedded in the prompt: `"verify completion promise for git $CMD — attestation: <paste the 7-line block above>"`.
 2. Wait for verdict. If `STEWARD VERDICT: PASS`:
-   - Update `docs/parity/commands.md`: set status to `present`
-   - Commit: `parity: close git $CMD (steward verified)`
-   - Emit: `<promise>PARITY-git-$CMD</promise>` — this is the exact string the ralph-loop plugin matches
-3. If `STEWARD VERDICT: REJECT`: address the specific rows the steward flagged and continue iterating.
+   - Update `docs/parity/commands.md`: set status to `present` (if not already).
+   - Commit: `parity: close git $CMD (steward verified)`.
+   - Emit: `<promise>PARITY-git-$CMD</promise>` — this is the exact string the ralph-loop plugin matches.
+   - Read the `CROSS-CUTTING-NOTE:` line on the PASS verdict. If it is non-empty, consider whether the pattern warrants calling moment #4 (direction check) before starting the next command — the architect owns this decision, not the steward.
+3. If `STEWARD VERDICT: REJECT`: address the specific rows flagged and continue iterating. If `REASON: pre-flight — not ready for completion gate`, the issue is caller discipline, not the rows — fix the attestation, do not re-invoke Steward until you can truthfully sign all 7 lines.
+
+### Steward invocation bar (applies to all four moments)
+
+Do not invoke `@gix-steward` flippantly. Steward is opus and its budget is real. The bar per moment:
+
+- **Moment #1 (completion gate)** — only after every line of the pre-Steward self-check is truthfully "yes." "Let's see what Steward thinks" is **not** a valid reason to invoke.
+- **Moment #2 (tie-break)** — only after you have articulated **both** designs in writing and cannot choose from reading `vendor/git/`, `DEVELOPMENT.md`, and sibling-crate precedent. "Which would Steward prefer" is not a valid reason; "I have A and B stated, both compile, both have test coverage, and neither resolves from the reference material" is.
+- **Moment #3 (deferral adjudication)** — only after **three** genuine distinct attempts on the same row, each committed, each with a different approach. Not three re-runs of the same approach.
+- **Moment #4 (direction check)** — only when you can articulate the suspected pattern in one sentence with evidence across at least 3 prior iterations. Vague "we might be stuck" does not qualify; Steward will refuse and ask for the sentence.
+
+If none of the four bars is cleared, the right action is to keep iterating at the architect level.
 
 ## Escape hatches
 
