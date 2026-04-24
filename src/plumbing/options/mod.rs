@@ -170,8 +170,17 @@ pub enum Subcommands {
         /// Mirrors `git cat-file -s`.
         #[clap(short = 's')]
         print_size: bool,
-        /// The object to print to stdout.
-        revspec: String,
+        /// The object to print, optionally preceded by a type hint.
+        ///
+        /// Two positional shapes:
+        ///
+        /// * `<object>` — with a mode flag (-e / -p / -t / -s) OR alone
+        ///   (legacy `gix cat` default to pretty-print).
+        /// * `<type> <object>` — no mode flag; assert `<object>` peels to
+        ///   `<type>` (`blob`/`tree`/`commit`/`tag`) and emit raw bytes
+        ///   (mirrors `git cat-file <type> <object>`).
+        #[clap(num_args = 1..=2, value_name = "[TYPE] OBJECT")]
+        args: Vec<String>,
     },
     /// Check for changes in the repository, treating this as an error.
     IsClean,

@@ -2028,8 +2028,58 @@ pub fn main() -> Result<()> {
             exists,
             print_type,
             print_size,
-            revspec,
+            args,
         } => {
+            // The positional grammar tracks git cat-file's:
+            //   * `<object>`         — with -e/-p/-t/-s OR alone (gix legacy)
+            //   * `<type> <object>`  — no mode flag; peel and emit raw bytes
+            // Clap already constrains num_args to 1..=2.
+            let mode_flag = exists || print_type || print_size;
+            let (type_hint, revspec): (Option<String>, String) = match args.as_slice() {
+                [only] => (None, only.clone()),
+                [first, second] if !mode_flag => (Some(first.clone()), second.clone()),
+                _ => {
+                    // Mode flag + 2 positionals. git's case 'e'/'p'/'t'/'s'
+                    // `usage_msg_opt(_("<object> required"), ...)` → exit 129.
+                    use std::io::Write;
+                    let mut stderr = std::io::stderr().lock();
+                    let _ = writeln!(stderr, "fatal: too many arguments");
+                    drop(stderr);
+                    std::process::exit(129);
+                }
+            };
+            if let Some(type_str) = type_hint {
+                // `git cat-file <type> <object>` — no mode flag allowed; bytes
+                // path resolved via peel_to_kind. Four outcomes, each with
+                // git's exact fatal wording on stderr + exit 128.
+                let repo = repository(Mode::Lenient)?;
+                let stdout = std::io::stdout().lock();
+                let outcome = core::repository::cat_typed(&repo, &type_str, &revspec, stdout)?;
+                match outcome {
+                    core::repository::CatTypedOutcome::Ok => std::process::exit(0),
+                    core::repository::CatTypedOutcome::InvalidType => {
+                        use std::io::Write;
+                        let mut stderr = std::io::stderr().lock();
+                        let _ = writeln!(stderr, "fatal: invalid object type \"{type_str}\"");
+                        drop(stderr);
+                        std::process::exit(128);
+                    }
+                    core::repository::CatTypedOutcome::InvalidSpec => {
+                        use std::io::Write;
+                        let mut stderr = std::io::stderr().lock();
+                        let _ = writeln!(stderr, "fatal: Not a valid object name {revspec}");
+                        drop(stderr);
+                        std::process::exit(128);
+                    }
+                    core::repository::CatTypedOutcome::BadFile => {
+                        use std::io::Write;
+                        let mut stderr = std::io::stderr().lock();
+                        let _ = writeln!(stderr, "fatal: git cat-file {revspec}: bad file");
+                        drop(stderr);
+                        std::process::exit(128);
+                    }
+                }
+            }
             if exists {
                 // `git cat-file -e` has no stdout; only an exit code plus
                 // an optional fatal stderr line:

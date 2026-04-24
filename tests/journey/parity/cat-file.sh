@@ -230,12 +230,15 @@ only_for_hash sha1-only && (small-repo-in-sandbox
 # hash=sha1-only
 title "gix cat-file <type> <object>"
 only_for_hash sha1-only && (small-repo-in-sandbox
-  # TODO — expect_parity bytes -- cat-file blob HEAD:a
-  it "matches git behavior: blob <obj>" && { :; }
-  # TODO — expect_parity bytes -- cat-file commit HEAD
-  it "matches git behavior: commit <obj>" && { :; }
-  # TODO — expect_parity bytes -- cat-file tree HEAD^{tree}
-  it "matches git behavior: tree <obj>" && { :; }
+  it "matches git behavior: blob <obj>" && {
+    expect_parity bytes -- cat-file blob HEAD:a
+  }
+  it "matches git behavior: commit <obj>" && {
+    expect_parity bytes -- cat-file commit HEAD
+  }
+  it "matches git behavior: tree <obj>" && {
+    expect_parity bytes -- cat-file tree HEAD^{tree}
+  }
 )
 
 # mode=effect — positional `<type> <object>` with a type mismatch (e.g.
@@ -245,8 +248,9 @@ only_for_hash sha1-only && (small-repo-in-sandbox
 # mode=effect
 title "gix cat-file <type> <object> (type mismatch)"
 only_for_hash sha1-only && (small-repo-in-sandbox
-  # TODO — expect_parity effect -- cat-file blob HEAD
-  it "matches git behavior" && { :; }
+  it "matches git behavior" && {
+    expect_parity effect -- cat-file blob HEAD
+  }
 )
 
 # --- mailmap ------------------------------------------------------------

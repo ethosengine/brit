@@ -99,6 +99,23 @@ pub enum PrintOutcome {
     MissingObject,
 }
 
+/// Outcome of the positional `<type> <object>` form. Dispatch maps variants:
+///
+/// * `Ok` — exit 0, raw object bytes written to stdout.
+/// * `InvalidType` — exit 128, stderr `fatal: invalid object type "<type>"`.
+/// * `InvalidSpec` — exit 128, stderr `fatal: Not a valid object name <spec>`.
+/// * `BadFile` — exit 128, stderr `fatal: git cat-file <spec>: bad file`.
+///   Fires when the object is absent from the odb OR present but can't
+///   peel to the requested type — git's case 0 collapses both to the same
+///   `die("git cat-file %s: bad file", obj_name)` wording.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum TypedOutcome {
+    Ok,
+    InvalidType,
+    InvalidSpec,
+    BadFile,
+}
+
 /// Mirror git's `get_oid_with_context(..., GET_OID_HASH_ANY, ...)` contract:
 /// accept a full-length hex oid as a literal identifier *without* requiring
 /// the object to be present, and fall back to full revspec resolution for
@@ -112,7 +129,7 @@ fn resolve_oid(repo: &gix::Repository, revspec: &str) -> Option<gix::hash::Objec
 }
 
 pub(super) mod function {
-    use super::{resolve_oid, Existence, PrintOutcome};
+    use super::{resolve_oid, Existence, PrintOutcome, TypedOutcome};
     use crate::repository::revision::resolve::TreeMode;
 
     pub fn cat(repo: gix::Repository, revspec: &str, out: impl std::io::Write) -> anyhow::Result<()> {
@@ -146,6 +163,42 @@ pub(super) mod function {
             }
             Err(_) => Ok(PrintOutcome::MissingObject),
         }
+    }
+
+    /// `git cat-file <type> <revspec>` — assert the object at `revspec`
+    /// can be peeled to `<type>` (blob/tree/commit/tag), then write its
+    /// raw bytes (uncompressed, the canonical loose-object body).
+    ///
+    /// Tree output here is **binary** (sequence of `<mode> SP <name> NUL
+    /// <20-byte-oid>`), not the pretty `ls-tree` format produced by -p.
+    /// Commit / tag / blob outputs are identical to -p because their
+    /// "raw" and "pretty" forms coincide.
+    ///
+    /// Mirrors `case 0` in cat_one_file (vendor/git/builtin/cat-file.c):
+    /// `odb_read_object_peeled` with the caller-supplied type hint. Tags
+    /// deref to their targets, commits deref to their trees — so
+    /// `cat-file tree <commit>` and `cat-file commit <tag>` succeed even
+    /// though the stored type differs from the requested one.
+    pub fn cat_typed(
+        repo: &gix::Repository,
+        type_str: &str,
+        revspec: &str,
+        mut out: impl std::io::Write,
+    ) -> anyhow::Result<TypedOutcome> {
+        let Ok(kind) = gix::object::Kind::from_bytes(type_str.as_bytes()) else {
+            return Ok(TypedOutcome::InvalidType);
+        };
+        let Some(id) = resolve_oid(repo, revspec) else {
+            return Ok(TypedOutcome::InvalidSpec);
+        };
+        let Ok(object) = repo.find_object(id) else {
+            return Ok(TypedOutcome::BadFile);
+        };
+        let Ok(peeled) = object.peel_to_kind(kind) else {
+            return Ok(TypedOutcome::BadFile);
+        };
+        out.write_all(&peeled.data)?;
+        Ok(TypedOutcome::Ok)
     }
 
     /// `git cat-file -s <revspec>` — write the object's size in bytes
