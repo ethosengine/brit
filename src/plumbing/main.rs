@@ -55,11 +55,12 @@ pub mod async_util {
 }
 
 pub fn main() -> Result<()> {
-    // Parity with git's usage_msg_opt: unknown flags exit 129 (PARSE_OPT_HELP
-    // path in vendor/git/parse-options.c), not clap's default 2. Intercept at
-    // the top-level parse and remap only UnknownArgument; other clap errors
-    // keep their default exit code (0 for --help / --version display, 2 for
-    // value-validation / conflict / missing-required).
+    // Parity with git's usage_msg_opt: unknown flags AND missing-required
+    // positionals exit 129 (PARSE_OPT_HELP path in vendor/git/parse-options.c),
+    // not clap's default 2. Intercept at the top-level parse and remap both
+    // UnknownArgument and MissingRequiredArgument; other clap errors keep
+    // their default exit code (0 for --help / --version display, 2 for
+    // value-validation / conflict errors).
     //
     // `git log` is an outlier: it calls parse_options with
     // PARSE_OPT_KEEP_UNKNOWN_OPT and then dies via die() (not usage_msg_opt)
@@ -90,10 +91,13 @@ pub fn main() -> Result<()> {
     let args: Args = match Args::try_parse_from(argv) {
         Ok(args) => args,
         Err(e) => {
-            if e.kind() == clap::error::ErrorKind::UnknownArgument {
+            if matches!(
+                e.kind(),
+                clap::error::ErrorKind::UnknownArgument | clap::error::ErrorKind::MissingRequiredArgument
+            ) {
                 let _ = e.print();
                 let exit_code = match detect_subcommand_from_argv().as_deref() {
-                    Some("log") => 128,
+                    Some("log") if e.kind() == clap::error::ErrorKind::UnknownArgument => 128,
                     _ => 129,
                 };
                 std::process::exit(exit_code);

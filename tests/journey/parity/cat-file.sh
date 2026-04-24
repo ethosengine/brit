@@ -110,8 +110,9 @@ only_for_hash dual && (sandbox
 # mode=effect
 title "gix cat-file (no arguments)"
 only_for_hash sha1-only && (small-repo-in-sandbox
-  # TODO — expect_parity effect -- cat-file
-  it "matches git behavior" && { :; }
+  it "matches git behavior" && {
+    expect_parity effect -- cat-file
+  }
 )
 
 # --- query modes: -e/-p/-t/-s + <type> <object> -----------------------
