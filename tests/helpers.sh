@@ -172,3 +172,104 @@ function expect_parity() {
   echo 1>&2 "${GREEN} - OK ($mode parity, hash=$active_hash, exit=$git_exit)"
   return 0
 }
+
+# expect_parity_reset — like expect_parity, but invokes <setup-fn> in a
+# fresh per-binary workdir before each binary runs. Use for stateful ops
+# whose side-effects on the fixture would poison the second binary's run
+# (classic case: `fetch --unshallow`, which mutates .git/shallow).
+#
+# Usage: expect_parity_reset <setup-fn> <effect|bytes> [--] <shared-args...>
+#
+# The setup-fn is invoked in each per-binary workdir with cwd already
+# inside it. It should materialize whatever fixture the assertion needs
+# (e.g. `git init`, seed commits, clone from a sibling bare upstream).
+# The same $exe_plumbing binary contract as expect_parity applies.
+function expect_parity_reset() {
+  local setup="${1:?expect_parity_reset: need <setup-fn> name}"
+  local mode="${2:?expect_parity_reset: need mode (effect|bytes)}"
+  shift 2
+  [[ "${1:-}" == "--" ]] && shift
+
+  if ! declare -F "$setup" >/dev/null; then
+    echo 1>&2 "${RED}expect_parity_reset: setup-fn '$setup' is not a defined function"
+    return 2
+  fi
+
+  local root git_wd gix_wd
+  root="$(mktemp -d -t parity-reset.XXXXXX)"
+  git_wd="$root/git"
+  gix_wd="$root/gix"
+  mkdir -p "$git_wd" "$gix_wd"
+
+  local git_out git_exit gix_out gix_exit
+  local _saved_errexit=0; [[ "$-" == *e* ]] && _saved_errexit=1
+  set +e
+  ( cd "$git_wd" && "$setup" >/dev/null 2>&1 )
+  git_out="$(cd "$git_wd" && git "$@" 2>&1)"; git_exit=$?
+
+  ( cd "$gix_wd" && "$setup" >/dev/null 2>&1 )
+  gix_out="$(cd "$gix_wd" && "$exe_plumbing" "$@" 2>&1)"; gix_exit=$?
+  [[ "$_saved_errexit" == "1" ]] && set -e || true
+
+  rm -rf "$root"
+
+  export PARITY_GIT_OUT="$git_out" PARITY_GIT_EXIT="$git_exit"
+  export PARITY_GIX_OUT="$gix_out" PARITY_GIX_EXIT="$gix_exit"
+
+  if [[ "$mode" != "effect" && "$mode" != "bytes" ]]; then
+    echo 1>&2 "${RED}expect_parity_reset: unknown mode '$mode' (want effect|bytes)"
+    return 2
+  fi
+
+  if [[ "$git_exit" != "$gix_exit" ]]; then
+    echo 1>&2 "${RED} - FAIL (exit-code divergence: git=$git_exit gix=$gix_exit)"
+    echo 1>&2 "${WHITE}\$ (reset=$setup) $*"
+    echo 1>&2 "--- git ---"; echo 1>&2 "$git_out"
+    echo 1>&2 "--- gix ---"; echo 1>&2 "$gix_out"
+    return 1
+  fi
+
+  if [[ "$mode" == "bytes" && "$git_out" != "$gix_out" ]]; then
+    echo 1>&2 "${RED} - FAIL (byte-level output divergence, exit=$git_exit)"
+    echo 1>&2 "${WHITE}\$ (reset=$setup) $*"
+    diff <(echo "$git_out") <(echo "$gix_out") 1>&2 || true
+    return 1
+  fi
+
+  local active_hash="${GIX_TEST_FIXTURE_HASH:-sha1}"
+  echo 1>&2 "${GREEN} - OK ($mode parity via reset=$setup, hash=$active_hash, exit=$git_exit)"
+  return 0
+}
+
+# compat_effect — canonical marker for "Clap wires the flag, byte-output
+# semantics deferred." Runs `expect_parity effect` under the hood and
+# additionally emits a grep-able `[compat] <reason>` line on stderr
+# when the row is green, so the shortcomings ledger generator
+# (etc/parity/shortcomings.sh) can surface it.
+#
+# Usage: compat_effect "<reason>" [--] <shared-args...>
+#
+# The reason must be a single-line human-readable phrase describing the
+# deferred semantic gap (e.g. "diff emission deferred under -v"). It is
+# NOT a snippet of documentation — keep it to one sentence.
+function compat_effect() {
+  local reason="${1:?compat_effect: need <reason> string}"
+  shift
+  [[ "${1:-}" == "--" ]] && shift
+
+  # expect_parity unconditionally re-enables set -e before returning
+  # (same bug as expect_parity_reset had before Task 1's fix). Call it
+  # in a subshell so its set -e toggle cannot leak back into our errexit
+  # state and abort the caller before they can capture $?.
+  local _saved_errexit=0; [[ "$-" == *e* ]] && _saved_errexit=1
+  set +e
+  ( expect_parity effect -- "$@" )
+  local rc=$?
+  if [[ "$_saved_errexit" == "1" ]]; then set -e; else set +e; fi
+
+  if [[ "$rc" != "0" ]]; then
+    return "$rc"
+  fi
+  echo 1>&2 "${YELLOW}   [compat] $reason"
+  return 0
+}

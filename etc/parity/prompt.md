@@ -37,8 +37,8 @@ You are the **gix-architect** agent (see `.claude/agents/gix-architect.md`), clo
 3. Create `tests/journey/parity/$CMD.sh` following the style of `tests/journey/gix.sh`:
    - `title "gix $CMD"` at top
    - One section per flag: `title "gix $CMD --<flag>"` + a `TODO` `it "..."` block placeholder inside a sandbox, wrapped with `only_for_hash` guard
-   - **Every section preceded by TWO comment lines:** `# mode=<effect|bytes>` AND `# hash=<dual|sha1-only "<reason>">`
-   - Default hash coverage is `dual`. Use `sha1-only` **only** when the flag cannot meaningfully exercise sha256 — e.g., if `gix $CMD` cannot yet open sha256 remotes at all, all rows are `sha1-only "gix cannot open sha256 remotes, see gix/src/clone/fetch/mod.rs unimplemented!()"` until that's fixed
+   - **First, add a file-level `# parity-defaults:` block** stating the default `mode` and `hash` for the file (see "Harness primitives" below). Then, per-section `# mode=` / `# hash=` comments are only required when the section overrides the default. `sha1-only` reasons are stated once in the defaults block, not per-row.
+   - Default hash coverage is `dual`. Use `sha1-only` **only** when the flag cannot meaningfully exercise sha256 — e.g., if `gix $CMD` cannot yet open sha256 remotes at all, the file-level default is `hash=sha1-only "gix cannot open sha256 remotes, see gix/src/clone/fetch/mod.rs unimplemented!()"` until that's fixed
    - Do **not** yet write real assertions — placeholders only
 4. If `gix $CMD` does not exist in `src/plumbing/options/mod.rs`:
    - Add `$Cmd(push::Platform)` variant (or equivalent) to `Subcommands` enum
@@ -81,6 +81,62 @@ You are the **gix-architect** agent (see `.claude/agents/gix-architect.md`), clo
 8. **Commit.** `parity: git $CMD --<flag> (<mode> mode)`. One commit per closed row.
 9. **If red after 3 attempts:** invoke `@gix-steward` (see `.claude/agents/gix-steward.md`) for deferral adjudication. Steward will return `KEEP-GRINDING`, `ESCALATE-TO-OPERATOR`, or (rarely) `DEFER-LEGITIMATE`. Obey.
 
+## Harness primitives (reach for these; do not re-invent)
+
+Four helpers + one convention live in `tests/helpers.sh` and `etc/parity/`. Use them — don't roll a new per-command workaround.
+
+### `expect_parity` — default for idempotent flags
+
+Runs git and gix back-to-back in the current `$PWD`. Use for flags whose execution doesn't mutate the fixture (read-only parse, status output, error-path assertions, `--help`).
+
+### `expect_parity_reset <setup-fn>` — stateful-fixture ops
+
+Runs `<setup-fn>` in its own per-binary workdir before each of the two binaries. Use when the flag mutates the fixture and back-to-back runs would let the second binary see post-first-run state. Canonical case: `fetch --unshallow` (the C path checks `.git/shallow`; once git's run promotes the repo to complete, gix sees no-shallow and diverges).
+
+````bash
+function _shallow-clone-from-bare-upstream() {
+  git init -q --bare ../upstream.git >/dev/null 2>&1 || :
+  git clone -q --depth=1 "$(cd .. && pwd)/upstream.git" . 2>/dev/null
+}
+expect_parity_reset _shallow-clone-from-bare-upstream effect -- fetch --unshallow origin
+````
+
+### `compat_effect "<reason>" --` — clap-wired, semantics-deferred
+
+Thin wrapper over `expect_parity effect` that additionally emits `[compat] <reason>` on stderr. Use when the flag is accepted by gix's Clap layer and exit-code parity holds, but bytes-mode divergence is a known follow-up you're intentionally deferring this iteration. The `<reason>` is surfaced by `etc/parity/shortcomings.sh` as a compat-class ledger row — make it a single grep-able sentence, not prose.
+
+````bash
+it "matches git behavior with -v" && {
+  compat_effect "diff emission under -v deferred" -- status -v
+}
+````
+
+Do **not** use `compat_effect` for rows where bytes parity is actually achievable this iteration — close them with `expect_parity bytes` instead. Do **not** use it for rows where exit codes diverge — those are true failures, not compat deferrals.
+
+### `# parity-defaults:` file-level header — de-duplicate sha1-only reasons
+
+Every parity file today starts with a single file-level reason for why its rows are `sha1-only` (e.g. `"gix cannot open sha256 remotes, see gix/src/clone/fetch/mod.rs unimplemented!()"` for fetch/push/clone, `"gix cannot load sha256 repos: extensions.objectFormat=sha256 rejected (gix/src/config/tree/sections/extensions.rs)"` for status). Stating that reason once in a top-of-file block is enough; per-row `# hash=sha1-only` comments can then omit the string.
+
+````bash
+# parity-defaults:
+#   hash=sha1-only "gix cannot open sha256 remotes, see gix/src/clone/fetch/mod.rs unimplemented!()"
+#   mode=effect
+````
+
+Per-row `# hash=` / `# mode=` lines only need to appear when they **override** the file default. Rows that diverge (e.g. a `bytes`-mode row in an otherwise `effect` file) still annotate explicitly. A fully-dual file (rare today, expected for `log` once `gix log` grows sha256) sets `hash=dual` in the defaults.
+
+### `shortcoming "<reason>"` + shortcomings generator — canonical ledger
+
+When you legitimately defer a row (operator-approved or steward-verdict `DEFER-LEGITIMATE`), close it with `shortcoming "<reason>"` as the body of the `only_for_hash` block. Then regenerate the ledger:
+
+````bash
+bash etc/parity/shortcomings.sh
+````
+
+Commit the updated `docs/parity/SHORTCOMINGS.md` in the same commit as the deferred row. The matrix at `docs/parity/commands.md` cross-links to the ledger — do not duplicate deferral prose there.
+
+Completion gate (`@gix-steward` verification) runs `bash etc/parity/shortcomings.sh --check`. A stale ledger is a steward-reject.
+
 ## Rules (gix-brit fire-at-will discipline)
 
 - Speed over polish. Cross-crate commits fine. Never `.unwrap()`; `.expect("why")` with a genuine reason is the default.
@@ -88,7 +144,7 @@ You are the **gix-architect** agent (see `.claude/agents/gix-architect.md`), clo
 - **Never touch `gix-main`** — upstream handoff is human-gated, not loop-automated.
 - **Never treat `SHORTCOMINGS.md` as a deferral whitelist** — most entries there are closeable. Defer only for hard system constraints (e.g., 32-bit address space) or explicit operator approval.
 - **Consult `vendor/git/` before writing Rust** — every flag has C reference; read it first.
-- **Every `title` section has two comment lines above it**: `# mode=<effect|bytes>` and `# hash=<dual|sha1-only "<reason>">`. No unannotated sections. `sha1-only` requires a concrete reason, not a placeholder.
+- **Every file starts with a `# parity-defaults:` block** and every `title` section that overrides the defaults annotates with `# mode=` / `# hash=`. No section silently diverges from the file default without a comment. `sha1-only` reasons are stated once in the defaults block; per-row repeats are redundant.
 - **Wrap each section's body with `only_for_hash <coverage> && ( ... )`** so rows skip correctly when `tests/parity.sh` runs under the non-matching hash. The guard is cheap and the skip message is informative.
 - **Never modify `vendor/git/` or change its submodule pointer.** It's the reference implementation; bumping it mid-pilot changes the target mid-iteration. Out of scope.
 
@@ -107,13 +163,14 @@ Invoke subagents via the **Agent tool** with `subagent_type="gix-runner"` or `su
   ```
   Agent(subagent_type="gix-steward",
         description="verify parity promise for git $CMD",
-        prompt="Verify the completion promise for git $CMD. Parity test: tests/journey/parity/$CMD.sh. Matrix row: docs/parity/commands.md. Return PASS or REJECT with evidence.")
+        prompt="Verify the completion promise for git $CMD. Parity test: tests/journey/parity/$CMD.sh. Matrix row: docs/parity/commands.md. Run `bash etc/parity/shortcomings.sh --check` as part of verification. Return PASS or REJECT with evidence.")
   ```
 
 ## Completion
 
 When `tests/journey/parity/$CMD.sh` has no remaining TODO blocks and every `it` passes:
 
+0. Regenerate the ledger: `bash etc/parity/shortcomings.sh`. If diff is non-empty, commit as `parity: regenerate SHORTCOMINGS.md for git $CMD`.
 1. Invoke `@gix-steward`: "verify completion promise for git $CMD"
 2. Wait for verdict. If `STEWARD VERDICT: PASS`:
    - Update `docs/parity/commands.md`: set status to `present`
