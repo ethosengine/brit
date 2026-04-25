@@ -61,8 +61,9 @@ title "gix diff"
 # hash=dual
 title "gix diff --help"
 only_for_hash dual && (sandbox
-  # TODO — expect_parity effect -- diff --help
-  it "matches git behavior" && { :; }
+  it "matches git behavior" && {
+    expect_parity effect -- diff --help
+  }
 )
 
 # mode=effect — unknown flag: git exits 129 (usage_msg_opt). gix's Clap
