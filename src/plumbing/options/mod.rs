@@ -298,6 +298,8 @@ pub enum Subcommands {
     Merge(merge::Platform),
     /// Reapply commits on top of another base tip.
     Rebase(rebase::Platform),
+    /// Reset current HEAD to the specified state.
+    Reset(reset::Platform),
     /// Print paths relevant to the Git installation.
     Env,
     Diff(diff::Platform),
@@ -3462,5 +3464,7 @@ pub mod pull;
 pub mod fetch;
 
 pub mod rebase;
+
+pub mod reset;
 
 pub mod show;

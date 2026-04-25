@@ -736,6 +736,47 @@ pub fn main() -> Result<()> {
                 )
             },
         ),
+        Subcommands::Reset(crate::plumbing::options::reset::Platform {
+            args: reset_args,
+            paths: reset_paths,
+            mixed: reset_mixed,
+            soft: reset_soft,
+            hard: reset_hard,
+            merge: reset_merge,
+            keep: reset_keep,
+            patch: reset_patch,
+            intent_to_add: reset_intent_to_add,
+            pathspec_from_file: reset_pathspec_from_file,
+            pathspec_file_nul: reset_pathspec_file_nul,
+            ..
+        }) => prepare_and_run(
+            "reset",
+            trace,
+            verbose,
+            progress,
+            progress_keep_open,
+            None,
+            move |_progress, out, err| {
+                core::repository::reset::porcelain(
+                    repository(Mode::Lenient)?,
+                    out,
+                    err,
+                    reset_args,
+                    reset_paths,
+                    core::repository::reset::Options {
+                        soft: reset_soft,
+                        mixed: reset_mixed,
+                        hard: reset_hard,
+                        merge: reset_merge,
+                        keep: reset_keep,
+                        patch: reset_patch,
+                        intent_to_add: reset_intent_to_add,
+                        pathspec_from_file: reset_pathspec_from_file,
+                        pathspec_file_nul: reset_pathspec_file_nul,
+                    },
+                )
+            },
+        ),
         Subcommands::Worktree(crate::plumbing::options::worktree::Platform { cmd }) => match cmd {
             crate::plumbing::options::worktree::SubCommands::List => prepare_and_run(
                 "worktree-list",

@@ -55,6 +55,8 @@ pub mod merge;
 pub mod odb;
 pub mod rebase;
 pub mod remote;
+pub mod reset;
+
 pub mod revision;
 pub mod show;
 pub mod status;
