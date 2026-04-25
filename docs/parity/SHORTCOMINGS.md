@@ -530,46 +530,38 @@ Two row classes:
 
 | Class | Section | Reason | Source |
 |---|---|---|---|
-| compat | `gix reset (default mixed, no args)` | deferred until reset driver lands | [reset.sh:137](../../tests/journey/parity/reset.sh#L137) |
-| compat | `gix reset HEAD` | deferred until reset driver lands | [reset.sh:146](../../tests/journey/parity/reset.sh#L146) |
-| compat | `gix reset HEAD~1` | deferred until reset driver lands | [reset.sh:155](../../tests/journey/parity/reset.sh#L155) |
-| compat | `gix reset (unborn HEAD)` | deferred until reset driver lands | [reset.sh:168](../../tests/journey/parity/reset.sh#L168) |
-| compat | `gix reset <bad-revspec>` | deferred until reset driver lands | [reset.sh:181](../../tests/journey/parity/reset.sh#L181) |
-| compat | `gix reset --mixed HEAD~1` | deferred until reset driver lands | [reset.sh:192](../../tests/journey/parity/reset.sh#L192) |
-| compat | `gix reset --soft HEAD~1` | deferred until reset driver lands | [reset.sh:203](../../tests/journey/parity/reset.sh#L203) |
-| compat | `gix reset --hard HEAD~1` | deferred until reset driver lands | [reset.sh:216](../../tests/journey/parity/reset.sh#L216) |
-| compat | `gix reset --merge HEAD~1` | deferred until reset driver lands | [reset.sh:228](../../tests/journey/parity/reset.sh#L228) |
-| compat | `gix reset --keep HEAD~1` | deferred until reset driver lands | [reset.sh:239](../../tests/journey/parity/reset.sh#L239) |
-| compat | `gix reset --soft --hard HEAD~1` | deferred until reset driver lands | [reset.sh:254](../../tests/journey/parity/reset.sh#L254) |
-| compat | `gix reset --soft -- a` | deferred until reset driver lands | [reset.sh:265](../../tests/journey/parity/reset.sh#L265) |
-| compat | `gix reset --mixed -- a` | deferred until reset driver lands | [reset.sh:278](../../tests/journey/parity/reset.sh#L278) |
-| compat | `gix reset -q HEAD~1` | deferred until reset driver lands | [reset.sh:290](../../tests/journey/parity/reset.sh#L290) |
-| compat | `gix reset --quiet HEAD~1` | deferred until reset driver lands | [reset.sh:299](../../tests/journey/parity/reset.sh#L299) |
-| compat | `gix reset --refresh HEAD` | deferred until reset driver lands | [reset.sh:311](../../tests/journey/parity/reset.sh#L311) |
-| compat | `gix reset --no-refresh HEAD` | deferred until reset driver lands | [reset.sh:322](../../tests/journey/parity/reset.sh#L322) |
-| compat | `gix reset --recurse-submodules HEAD` | deferred until reset driver lands | [reset.sh:335](../../tests/journey/parity/reset.sh#L335) |
-| compat | `gix reset --recurse-submodules=yes HEAD` | deferred until reset driver lands | [reset.sh:347](../../tests/journey/parity/reset.sh#L347) |
-| compat | `gix reset --no-recurse-submodules HEAD` | deferred until reset driver lands | [reset.sh:356](../../tests/journey/parity/reset.sh#L356) |
-| compat | `gix reset --patch` | deferred until reset driver lands | [reset.sh:370](../../tests/journey/parity/reset.sh#L370) |
-| compat | `gix reset -p` | deferred until reset driver lands | [reset.sh:379](../../tests/journey/parity/reset.sh#L379) |
-| deferred | `gix reset --auto-advance --patch` | system git 2.47.3 lacks --auto-advance; vendor/git v2.54.0 has it | [reset.sh:392](../../tests/journey/parity/reset.sh#L392) |
-| deferred | `gix reset --no-auto-advance --patch` | system git 2.47.3 lacks --auto-advance; vendor/git v2.54.0 has it | [reset.sh:404](../../tests/journey/parity/reset.sh#L404) |
-| deferred | `gix reset --unified=3 --patch` | system git 2.47.3 lacks --unified for reset; vendor/git v2.54.0 has it | [reset.sh:415](../../tests/journey/parity/reset.sh#L415) |
-| deferred | `gix reset -U 5 --patch` | system git 2.47.3 lacks -U for reset; vendor/git v2.54.0 has it | [reset.sh:424](../../tests/journey/parity/reset.sh#L424) |
-| deferred | `gix reset --inter-hunk-context=2 --patch` | system git 2.47.3 lacks --inter-hunk-context for reset; vendor/git v2.54.0 has it | [reset.sh:435](../../tests/journey/parity/reset.sh#L435) |
-| compat | `gix reset -N` | deferred until reset driver lands | [reset.sh:448](../../tests/journey/parity/reset.sh#L448) |
-| compat | `gix reset --intent-to-add` | deferred until reset driver lands | [reset.sh:457](../../tests/journey/parity/reset.sh#L457) |
-| compat | `gix reset --pathspec-from-file=spec.txt` | deferred until reset driver lands | [reset.sh:471](../../tests/journey/parity/reset.sh#L471) |
-| compat | `gix reset --pathspec-from-file=spec.txt --pathspec-file-nul` | deferred until reset driver lands | [reset.sh:483](../../tests/journey/parity/reset.sh#L483) |
-| compat | `gix reset --pathspec-file-nul` | deferred until reset driver lands | [reset.sh:493](../../tests/journey/parity/reset.sh#L493) |
-| compat | `gix reset HEAD -- a` | deferred until reset driver lands | [reset.sh:506](../../tests/journey/parity/reset.sh#L506) |
-| compat | `gix reset HEAD a` | deferred until reset driver lands | [reset.sh:518](../../tests/journey/parity/reset.sh#L518) |
-| compat | `gix reset -- a` | deferred until reset driver lands | [reset.sh:527](../../tests/journey/parity/reset.sh#L527) |
-| compat | `gix reset (in bare repo)` | deferred until reset driver lands | [reset.sh:542](../../tests/journey/parity/reset.sh#L542) |
-| compat | `gix reset -N --hard` | deferred until reset driver lands | [reset.sh:552](../../tests/journey/parity/reset.sh#L552) |
-| compat | `gix reset --patch --hard` | deferred until reset driver lands | [reset.sh:563](../../tests/journey/parity/reset.sh#L563) |
-| compat | `gix reset --patch --pathspec-from-file=spec.txt` | deferred until reset driver lands | [reset.sh:575](../../tests/journey/parity/reset.sh#L575) |
-| compat | `gix reset --pathspec-from-file=spec.txt -- a` | deferred until reset driver lands | [reset.sh:587](../../tests/journey/parity/reset.sh#L587) |
+| compat | `gix reset (default mixed, no args)` | deferred until reset driver lands | [reset.sh:133](../../tests/journey/parity/reset.sh#L133) |
+| compat | `gix reset HEAD` | deferred until reset driver lands | [reset.sh:142](../../tests/journey/parity/reset.sh#L142) |
+| compat | `gix reset HEAD~1` | deferred until reset driver lands | [reset.sh:151](../../tests/journey/parity/reset.sh#L151) |
+| compat | `gix reset (unborn HEAD)` | deferred until reset driver lands | [reset.sh:164](../../tests/journey/parity/reset.sh#L164) |
+| compat | `gix reset --mixed HEAD~1` | deferred until reset driver lands | [reset.sh:189](../../tests/journey/parity/reset.sh#L189) |
+| compat | `gix reset --soft HEAD~1` | deferred until reset driver lands | [reset.sh:200](../../tests/journey/parity/reset.sh#L200) |
+| compat | `gix reset --hard HEAD~1` | deferred until reset driver lands | [reset.sh:213](../../tests/journey/parity/reset.sh#L213) |
+| compat | `gix reset --merge HEAD~1` | deferred until reset driver lands | [reset.sh:225](../../tests/journey/parity/reset.sh#L225) |
+| compat | `gix reset --keep HEAD~1` | deferred until reset driver lands | [reset.sh:236](../../tests/journey/parity/reset.sh#L236) |
+| compat | `gix reset --soft --hard HEAD~1` | deferred until reset driver lands | [reset.sh:251](../../tests/journey/parity/reset.sh#L251) |
+| compat | `gix reset --mixed -- a` | deferred until reset driver lands | [reset.sh:275](../../tests/journey/parity/reset.sh#L275) |
+| compat | `gix reset -q HEAD~1` | deferred until reset driver lands | [reset.sh:287](../../tests/journey/parity/reset.sh#L287) |
+| compat | `gix reset --quiet HEAD~1` | deferred until reset driver lands | [reset.sh:296](../../tests/journey/parity/reset.sh#L296) |
+| compat | `gix reset --refresh HEAD` | deferred until reset driver lands | [reset.sh:308](../../tests/journey/parity/reset.sh#L308) |
+| compat | `gix reset --no-refresh HEAD` | deferred until reset driver lands | [reset.sh:319](../../tests/journey/parity/reset.sh#L319) |
+| compat | `gix reset --recurse-submodules HEAD` | deferred until reset driver lands | [reset.sh:332](../../tests/journey/parity/reset.sh#L332) |
+| compat | `gix reset --recurse-submodules=yes HEAD` | deferred until reset driver lands | [reset.sh:344](../../tests/journey/parity/reset.sh#L344) |
+| compat | `gix reset --no-recurse-submodules HEAD` | deferred until reset driver lands | [reset.sh:353](../../tests/journey/parity/reset.sh#L353) |
+| compat | `gix reset --patch` | deferred until reset driver lands | [reset.sh:367](../../tests/journey/parity/reset.sh#L367) |
+| compat | `gix reset -p` | deferred until reset driver lands | [reset.sh:376](../../tests/journey/parity/reset.sh#L376) |
+| deferred | `gix reset --auto-advance --patch` | system git 2.47.3 lacks --auto-advance; vendor/git v2.54.0 has it | [reset.sh:389](../../tests/journey/parity/reset.sh#L389) |
+| deferred | `gix reset --no-auto-advance --patch` | system git 2.47.3 lacks --auto-advance; vendor/git v2.54.0 has it | [reset.sh:401](../../tests/journey/parity/reset.sh#L401) |
+| deferred | `gix reset --unified=3 --patch` | system git 2.47.3 lacks --unified for reset; vendor/git v2.54.0 has it | [reset.sh:412](../../tests/journey/parity/reset.sh#L412) |
+| deferred | `gix reset -U 5 --patch` | system git 2.47.3 lacks -U for reset; vendor/git v2.54.0 has it | [reset.sh:421](../../tests/journey/parity/reset.sh#L421) |
+| deferred | `gix reset --inter-hunk-context=2 --patch` | system git 2.47.3 lacks --inter-hunk-context for reset; vendor/git v2.54.0 has it | [reset.sh:432](../../tests/journey/parity/reset.sh#L432) |
+| compat | `gix reset -N` | deferred until reset driver lands | [reset.sh:445](../../tests/journey/parity/reset.sh#L445) |
+| compat | `gix reset --intent-to-add` | deferred until reset driver lands | [reset.sh:454](../../tests/journey/parity/reset.sh#L454) |
+| compat | `gix reset --pathspec-from-file=spec.txt` | deferred until reset driver lands | [reset.sh:468](../../tests/journey/parity/reset.sh#L468) |
+| compat | `gix reset --pathspec-from-file=spec.txt --pathspec-file-nul` | deferred until reset driver lands | [reset.sh:480](../../tests/journey/parity/reset.sh#L480) |
+| compat | `gix reset HEAD -- a` | deferred until reset driver lands | [reset.sh:504](../../tests/journey/parity/reset.sh#L504) |
+| compat | `gix reset HEAD a` | deferred until reset driver lands | [reset.sh:516](../../tests/journey/parity/reset.sh#L516) |
+| compat | `gix reset -- a` | deferred until reset driver lands | [reset.sh:525](../../tests/journey/parity/reset.sh#L525) |
 
 ## show
 

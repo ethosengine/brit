@@ -20,17 +20,13 @@
 #   git reset [-q] [--pathspec-from-file=<file> [--pathspec-file-nul]] [<tree-ish>]
 #   git reset --patch [<tree-ish>] [--] [<pathspec>...]
 #
-# Every `it` body starts as a TODO placeholder — iteration N of the
-# ralph loop picks the next TODO, converts it to a real `expect_parity`
-# (or `compat_effect`) assertion, and removes the TODO marker.
-#
 # Verdict modes (comment above each block):
 #   bytes  — scriptable output: precondition error stanzas around
 #            mode mutual-exclusion, --mixed-in-bare-repo, non-mixed +
-#            paths, -N-without-mixed, and --pathspec-file-nul-without-
-#            --pathspec-from-file. Reach for these once the
-#            corresponding gates are wired in
-#            gitoxide-core/src/repository/reset.rs::porcelain.
+#            paths, -N-without-mixed, --pathspec-file-nul-without-
+#            --pathspec-from-file, the bad-revspec stanza, and the
+#            outside-of-repo "fatal: not a git repository..." stanza.
+#            Wired in gitoxide-core/src/repository/reset.rs::porcelain.
 #   effect — UX-level parity (exit-code match). Default for the
 #            human-rendered flags whose semantics are not yet
 #            implemented in gix's reset entry point. Most rows close
@@ -94,7 +90,7 @@ title "gix reset"
 # hash=dual
 title "gix reset --help"
 only_for_hash dual && (sandbox
-  it "TODO matches git behavior" && {
+  it "matches git behavior" && {
     expect_parity effect -- reset --help
   }
 )
@@ -107,20 +103,20 @@ only_for_hash dual && (sandbox
 # hash=sha1-only
 title "gix reset --bogus-flag"
 only_for_hash sha1-only && (small-repo-in-sandbox
-  it "TODO matches git behavior" && {
+  it "matches git behavior" && {
     expect_parity effect -- reset --bogus-flag
   }
 )
 
-# mode=effect — outside any repo: git dies 128 with "fatal: not a git
+# mode=bytes — outside any repo: git dies 128 with "fatal: not a git
 # repository (or any of the parent directories): .git". gix's plumbing
 # repository() closure already remaps gix_discover::upwards::Error::
 # NoGitRepository* variants to git's exact wording + exit 128.
 # hash=dual
 title "gix reset (outside a repository)"
 only_for_hash dual && (sandbox
-  it "TODO matches git behavior" && {
-    expect_parity effect -- reset
+  it "matches git behavior" && {
+    expect_parity bytes -- reset
   }
 )
 
@@ -133,7 +129,7 @@ only_for_hash dual && (sandbox
 # hash=sha1-only
 title "gix reset (default mixed, no args)"
 only_for_hash sha1-only && (small-repo-in-sandbox
-  it "TODO matches git behavior" && {
+  it "matches git behavior" && {
     compat_effect "deferred until reset driver lands" -- reset
   }
 )
@@ -142,7 +138,7 @@ only_for_hash sha1-only && (small-repo-in-sandbox
 # hash=sha1-only
 title "gix reset HEAD"
 only_for_hash sha1-only && (small-repo-in-sandbox
-  it "TODO matches git behavior" && {
+  it "matches git behavior" && {
     compat_effect "deferred until reset driver lands" -- reset HEAD
   }
 )
@@ -151,7 +147,7 @@ only_for_hash sha1-only && (small-repo-in-sandbox
 # hash=sha1-only
 title "gix reset HEAD~1"
 only_for_hash sha1-only && (small-repo-in-sandbox
-  it "TODO matches git behavior" && {
+  it "matches git behavior" && {
     compat_effect "deferred until reset driver lands" -- reset HEAD~1
   }
 )
@@ -164,21 +160,22 @@ only_for_hash sha1-only && (small-repo-in-sandbox
 title "gix reset (unborn HEAD)"
 only_for_hash sha1-only && (sandbox
   git-init-hash-aware
-  it "TODO matches git behavior" && {
+  it "matches git behavior" && {
     compat_effect "deferred until reset driver lands" -- reset
   }
 )
 
-# mode=effect — `git reset <bad-revspec>` dies 128 with
-# "fatal: Failed to resolve '<rev>' as a valid revision." (per
-# vendor/git/builtin/reset.c:413). gix's placeholder accepts the
-# string and exits 0; exit-code parity is deferred until the bad-
-# revspec gate is wired alongside the reset driver.
+# mode=bytes — `git reset <bad-revspec>` dies 128 via
+# vendor/git/builtin/reset.c:247 `parse_args` →
+# `verify_filename` → `die_for_pseudoref` with the verbatim 3-line
+# "ambiguous argument" stanza. gix's placeholder mirrors the stanza
+# byte-exactly (gitoxide-core/src/repository/reset.rs::porcelain
+# bad-revspec gate).
 # hash=sha1-only
 title "gix reset <bad-revspec>"
 only_for_hash sha1-only && (small-repo-in-sandbox
-  it "TODO matches git behavior" && {
-    compat_effect "deferred until reset driver lands" -- reset no-such-rev
+  it "matches git behavior" && {
+    expect_parity bytes -- reset no-such-rev
   }
 )
 
@@ -188,7 +185,7 @@ only_for_hash sha1-only && (small-repo-in-sandbox
 # hash=sha1-only
 title "gix reset --mixed HEAD~1"
 only_for_hash sha1-only && (small-repo-in-sandbox
-  it "TODO matches git behavior" && {
+  it "matches git behavior" && {
     compat_effect "deferred until reset driver lands" -- reset --mixed HEAD~1
   }
 )
@@ -199,7 +196,7 @@ only_for_hash sha1-only && (small-repo-in-sandbox
 # hash=sha1-only
 title "gix reset --soft HEAD~1"
 only_for_hash sha1-only && (small-repo-in-sandbox
-  it "TODO matches git behavior" && {
+  it "matches git behavior" && {
     compat_effect "deferred until reset driver lands" -- reset --soft HEAD~1
   }
 )
@@ -212,7 +209,7 @@ only_for_hash sha1-only && (small-repo-in-sandbox
 # hash=sha1-only
 title "gix reset --hard HEAD~1"
 only_for_hash sha1-only && (small-repo-in-sandbox
-  it "TODO matches git behavior" && {
+  it "matches git behavior" && {
     compat_effect "deferred until reset driver lands" -- reset --hard HEAD~1
   }
 )
@@ -224,7 +221,7 @@ only_for_hash sha1-only && (small-repo-in-sandbox
 # hash=sha1-only
 title "gix reset --merge HEAD~1"
 only_for_hash sha1-only && (small-repo-in-sandbox
-  it "TODO matches git behavior" && {
+  it "matches git behavior" && {
     compat_effect "deferred until reset driver lands" -- reset --merge HEAD~1
   }
 )
@@ -235,7 +232,7 @@ only_for_hash sha1-only && (small-repo-in-sandbox
 # hash=sha1-only
 title "gix reset --keep HEAD~1"
 only_for_hash sha1-only && (small-repo-in-sandbox
-  it "TODO matches git behavior" && {
+  it "matches git behavior" && {
     compat_effect "deferred until reset driver lands" -- reset --keep HEAD~1
   }
 )
@@ -250,19 +247,19 @@ only_for_hash sha1-only && (small-repo-in-sandbox
 # hash=sha1-only
 title "gix reset --soft --hard HEAD~1"
 only_for_hash sha1-only && (small-repo-in-sandbox
-  it "TODO matches git behavior" && {
+  it "matches git behavior" && {
     compat_effect "deferred until reset driver lands" -- reset --soft --hard HEAD~1
   }
 )
 
-# mode=effect — `--soft` + paths errors at
+# mode=bytes — `--soft` + paths errors at
 # vendor/git/builtin/reset.c:458 ("Cannot do <mode> reset with paths.").
-# gix's placeholder skips the gate; exit-code parity is deferred.
+# gix's placeholder mirrors the verbatim wording.
 # hash=sha1-only
 title "gix reset --soft -- a"
 only_for_hash sha1-only && (small-repo-in-sandbox
-  it "TODO matches git behavior" && {
-    compat_effect "deferred until reset driver lands" -- reset --soft -- a
+  it "matches git behavior" && {
+    expect_parity bytes -- reset --soft -- a
   }
 )
 
@@ -274,7 +271,7 @@ only_for_hash sha1-only && (small-repo-in-sandbox
 # hash=sha1-only
 title "gix reset --mixed -- a"
 only_for_hash sha1-only && (small-repo-in-sandbox
-  it "TODO matches git behavior" && {
+  it "matches git behavior" && {
     compat_effect "deferred until reset driver lands" -- reset --mixed -- a
   }
 )
@@ -286,7 +283,7 @@ only_for_hash sha1-only && (small-repo-in-sandbox
 # hash=sha1-only
 title "gix reset -q HEAD~1"
 only_for_hash sha1-only && (small-repo-in-sandbox
-  it "TODO matches git behavior" && {
+  it "matches git behavior" && {
     compat_effect "deferred until reset driver lands" -- reset -q HEAD~1
   }
 )
@@ -295,7 +292,7 @@ only_for_hash sha1-only && (small-repo-in-sandbox
 # hash=sha1-only
 title "gix reset --quiet HEAD~1"
 only_for_hash sha1-only && (small-repo-in-sandbox
-  it "TODO matches git behavior" && {
+  it "matches git behavior" && {
     compat_effect "deferred until reset driver lands" -- reset --quiet HEAD~1
   }
 )
@@ -307,7 +304,7 @@ only_for_hash sha1-only && (small-repo-in-sandbox
 # hash=sha1-only
 title "gix reset --refresh HEAD"
 only_for_hash sha1-only && (small-repo-in-sandbox
-  it "TODO matches git behavior" && {
+  it "matches git behavior" && {
     compat_effect "deferred until reset driver lands" -- reset --refresh HEAD
   }
 )
@@ -318,7 +315,7 @@ only_for_hash sha1-only && (small-repo-in-sandbox
 # hash=sha1-only
 title "gix reset --no-refresh HEAD"
 only_for_hash sha1-only && (small-repo-in-sandbox
-  it "TODO matches git behavior" && {
+  it "matches git behavior" && {
     compat_effect "deferred until reset driver lands" -- reset --no-refresh HEAD
   }
 )
@@ -331,7 +328,7 @@ only_for_hash sha1-only && (small-repo-in-sandbox
 # hash=sha1-only
 title "gix reset --recurse-submodules HEAD"
 only_for_hash sha1-only && (small-repo-in-sandbox
-  it "TODO matches git behavior" && {
+  it "matches git behavior" && {
     compat_effect "deferred until reset driver lands" -- reset --recurse-submodules HEAD
   }
 )
@@ -343,7 +340,7 @@ only_for_hash sha1-only && (small-repo-in-sandbox
 # hash=sha1-only
 title "gix reset --recurse-submodules=yes HEAD"
 only_for_hash sha1-only && (small-repo-in-sandbox
-  it "TODO matches git behavior" && {
+  it "matches git behavior" && {
     compat_effect "deferred until reset driver lands" -- reset --recurse-submodules=yes HEAD
   }
 )
@@ -352,7 +349,7 @@ only_for_hash sha1-only && (small-repo-in-sandbox
 # hash=sha1-only
 title "gix reset --no-recurse-submodules HEAD"
 only_for_hash sha1-only && (small-repo-in-sandbox
-  it "TODO matches git behavior" && {
+  it "matches git behavior" && {
     compat_effect "deferred until reset driver lands" -- reset --no-recurse-submodules HEAD
   }
 )
@@ -366,7 +363,7 @@ only_for_hash sha1-only && (small-repo-in-sandbox
 # hash=sha1-only
 title "gix reset --patch"
 only_for_hash sha1-only && (small-repo-in-sandbox
-  it "TODO matches git behavior" && {
+  it "matches git behavior" && {
     compat_effect "deferred until reset driver lands" -- reset --patch
   }
 )
@@ -375,7 +372,7 @@ only_for_hash sha1-only && (small-repo-in-sandbox
 # hash=sha1-only
 title "gix reset -p"
 only_for_hash sha1-only && (small-repo-in-sandbox
-  it "TODO matches git behavior" && {
+  it "matches git behavior" && {
     compat_effect "deferred until reset driver lands" -- reset -p
   }
 )
@@ -388,7 +385,7 @@ only_for_hash sha1-only && (small-repo-in-sandbox
 # hash=sha1-only
 title "gix reset --auto-advance --patch"
 only_for_hash sha1-only && (small-repo-in-sandbox
-  it "TODO matches git behavior" && {
+  it "matches git behavior" && {
     shortcoming "system git 2.47.3 lacks --auto-advance; vendor/git v2.54.0 has it"
   }
 )
@@ -400,7 +397,7 @@ only_for_hash sha1-only && (small-repo-in-sandbox
 # hash=sha1-only
 title "gix reset --no-auto-advance --patch"
 only_for_hash sha1-only && (small-repo-in-sandbox
-  it "TODO matches git behavior" && {
+  it "matches git behavior" && {
     shortcoming "system git 2.47.3 lacks --auto-advance; vendor/git v2.54.0 has it"
   }
 )
@@ -411,7 +408,7 @@ only_for_hash sha1-only && (small-repo-in-sandbox
 # hash=sha1-only
 title "gix reset --unified=3 --patch"
 only_for_hash sha1-only && (small-repo-in-sandbox
-  it "TODO matches git behavior" && {
+  it "matches git behavior" && {
     shortcoming "system git 2.47.3 lacks --unified for reset; vendor/git v2.54.0 has it"
   }
 )
@@ -420,7 +417,7 @@ only_for_hash sha1-only && (small-repo-in-sandbox
 # hash=sha1-only
 title "gix reset -U 5 --patch"
 only_for_hash sha1-only && (small-repo-in-sandbox
-  it "TODO matches git behavior" && {
+  it "matches git behavior" && {
     shortcoming "system git 2.47.3 lacks -U for reset; vendor/git v2.54.0 has it"
   }
 )
@@ -431,7 +428,7 @@ only_for_hash sha1-only && (small-repo-in-sandbox
 # hash=sha1-only
 title "gix reset --inter-hunk-context=2 --patch"
 only_for_hash sha1-only && (small-repo-in-sandbox
-  it "TODO matches git behavior" && {
+  it "matches git behavior" && {
     shortcoming "system git 2.47.3 lacks --inter-hunk-context for reset; vendor/git v2.54.0 has it"
   }
 )
@@ -444,7 +441,7 @@ only_for_hash sha1-only && (small-repo-in-sandbox
 # hash=sha1-only
 title "gix reset -N"
 only_for_hash sha1-only && (small-repo-in-sandbox
-  it "TODO matches git behavior" && {
+  it "matches git behavior" && {
     compat_effect "deferred until reset driver lands" -- reset -N
   }
 )
@@ -453,7 +450,7 @@ only_for_hash sha1-only && (small-repo-in-sandbox
 # hash=sha1-only
 title "gix reset --intent-to-add"
 only_for_hash sha1-only && (small-repo-in-sandbox
-  it "TODO matches git behavior" && {
+  it "matches git behavior" && {
     compat_effect "deferred until reset driver lands" -- reset --intent-to-add
   }
 )
@@ -467,7 +464,7 @@ only_for_hash sha1-only && (small-repo-in-sandbox
 title "gix reset --pathspec-from-file=spec.txt"
 only_for_hash sha1-only && (small-repo-in-sandbox
   echo a > spec.txt
-  it "TODO matches git behavior" && {
+  it "matches git behavior" && {
     compat_effect "deferred until reset driver lands" -- reset --pathspec-from-file=spec.txt
   }
 )
@@ -479,18 +476,19 @@ only_for_hash sha1-only && (small-repo-in-sandbox
 title "gix reset --pathspec-from-file=spec.txt --pathspec-file-nul"
 only_for_hash sha1-only && (small-repo-in-sandbox
   printf 'a\0' > spec.txt
-  it "TODO matches git behavior" && {
+  it "matches git behavior" && {
     compat_effect "deferred until reset driver lands" -- reset --pathspec-from-file=spec.txt --pathspec-file-nul
   }
 )
 
-# mode=effect — `--pathspec-file-nul` without `--pathspec-from-file`
-# is an error (vendor/git/builtin/reset.c:401..403).
+# mode=bytes — `--pathspec-file-nul` without `--pathspec-from-file`
+# is an error (vendor/git/builtin/reset.c:401..403). gix's placeholder
+# mirrors the verbatim wording.
 # hash=sha1-only
 title "gix reset --pathspec-file-nul"
 only_for_hash sha1-only && (small-repo-in-sandbox
-  it "TODO matches git behavior" && {
-    compat_effect "deferred until reset driver lands" -- reset --pathspec-file-nul
+  it "matches git behavior" && {
+    expect_parity bytes -- reset --pathspec-file-nul
   }
 )
 
@@ -502,7 +500,7 @@ only_for_hash sha1-only && (small-repo-in-sandbox
 # hash=sha1-only
 title "gix reset HEAD -- a"
 only_for_hash sha1-only && (small-repo-in-sandbox
-  it "TODO matches git behavior" && {
+  it "matches git behavior" && {
     compat_effect "deferred until reset driver lands" -- reset HEAD -- a
   }
 )
@@ -514,7 +512,7 @@ only_for_hash sha1-only && (small-repo-in-sandbox
 # hash=sha1-only
 title "gix reset HEAD a"
 only_for_hash sha1-only && (small-repo-in-sandbox
-  it "TODO matches git behavior" && {
+  it "matches git behavior" && {
     compat_effect "deferred until reset driver lands" -- reset HEAD a
   }
 )
@@ -523,67 +521,70 @@ only_for_hash sha1-only && (small-repo-in-sandbox
 # hash=sha1-only
 title "gix reset -- a"
 only_for_hash sha1-only && (small-repo-in-sandbox
-  it "TODO matches git behavior" && {
+  it "matches git behavior" && {
     compat_effect "deferred until reset driver lands" -- reset -- a
   }
 )
 
 # --- precondition gates ----------------------------------------------
 
-# mode=effect — `--mixed` (default) in a bare repo dies 128 at
+# mode=bytes — `--mixed` (default) in a bare repo dies 128 at
 # vendor/git/builtin/reset.c:473 ("mixed reset is not allowed in a
-# bare repository"). gix's placeholder skips the gate; exit-code
-# parity is deferred until the bare-repo precondition is wired.
+# bare repository"). gix's placeholder mirrors the verbatim wording.
 # hash=sha1-only
 title "gix reset (in bare repo)"
 only_for_hash sha1-only && (sandbox
   git-init-hash-aware --bare
-  it "TODO matches git behavior" && {
-    compat_effect "deferred until reset driver lands" -- reset
+  it "matches git behavior" && {
+    expect_parity bytes -- reset
   }
 )
 
-# mode=effect — `-N --hard` errors at vendor/git/builtin/reset.c:477
-# ("the option '-N' requires '--mixed'").
+# mode=bytes — `-N --hard` errors at vendor/git/builtin/reset.c:477
+# ("the option '-N' requires '--mixed'"). gix's placeholder mirrors
+# the verbatim wording.
 # hash=sha1-only
 title "gix reset -N --hard"
 only_for_hash sha1-only && (small-repo-in-sandbox
-  it "TODO matches git behavior" && {
-    compat_effect "deferred until reset driver lands" -- reset -N --hard
+  it "matches git behavior" && {
+    expect_parity bytes -- reset -N --hard
   }
 )
 
-# mode=effect — `--patch --hard` errors at
+# mode=bytes — `--patch --hard` errors at
 # vendor/git/builtin/reset.c:438 ("options '--patch' and
-# '--{hard,mixed,soft}' cannot be used together").
+# '--{hard,mixed,soft}' cannot be used together"). gix's placeholder
+# mirrors the verbatim wording.
 # hash=sha1-only
 title "gix reset --patch --hard"
 only_for_hash sha1-only && (small-repo-in-sandbox
-  it "TODO matches git behavior" && {
-    compat_effect "deferred until reset driver lands" -- reset --patch --hard
+  it "matches git behavior" && {
+    expect_parity bytes -- reset --patch --hard
   }
 )
 
-# mode=effect — `--patch --pathspec-from-file=spec.txt` errors at
+# mode=bytes — `--patch --pathspec-from-file=spec.txt` errors at
 # vendor/git/builtin/reset.c:392..393 ("options '--pathspec-from-file'
-# and '--patch' cannot be used together").
+# and '--patch' cannot be used together"). gix's placeholder mirrors
+# the verbatim wording.
 # hash=sha1-only
 title "gix reset --patch --pathspec-from-file=spec.txt"
 only_for_hash sha1-only && (small-repo-in-sandbox
   echo a > spec.txt
-  it "TODO matches git behavior" && {
-    compat_effect "deferred until reset driver lands" -- reset --patch --pathspec-from-file=spec.txt
+  it "matches git behavior" && {
+    expect_parity bytes -- reset --patch --pathspec-from-file=spec.txt
   }
 )
 
-# mode=effect — `--pathspec-from-file=spec.txt -- a` errors at
+# mode=bytes — `--pathspec-from-file=spec.txt -- a` errors at
 # vendor/git/builtin/reset.c:395..396 ("'--pathspec-from-file' and
-# pathspec arguments cannot be used together").
+# pathspec arguments cannot be used together"). gix's placeholder
+# mirrors the verbatim wording.
 # hash=sha1-only
 title "gix reset --pathspec-from-file=spec.txt -- a"
 only_for_hash sha1-only && (small-repo-in-sandbox
   echo a > spec.txt
-  it "TODO matches git behavior" && {
-    compat_effect "deferred until reset driver lands" -- reset --pathspec-from-file=spec.txt -- a
+  it "matches git behavior" && {
+    expect_parity bytes -- reset --pathspec-from-file=spec.txt -- a
   }
 )
