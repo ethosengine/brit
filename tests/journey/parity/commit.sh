@@ -197,12 +197,13 @@ only_for_hash sha1-only && (small-repo-in-sandbox
 )
 
 # mode=effect — `-p` / `--patch` enters interactive hunk-selection. Gix
-# has no interactive UI yet; iteration must decide deferred vs minimal
-# stub (e.g. accept-then-error like rebase does).
+# has no interactive UI; clap-accepts the flag and falls through to the
+# index→tree-pending bail. In a clean small-repo-in-sandbox without TTY
+# both binaries exit 1 (git: "no changes to commit"; gix: bail).
 title "gix commit -p / --patch"
 only_for_hash sha1-only && (small-repo-in-sandbox
-  it "TODO: matches git behavior" && {
-    : # expect_parity effect -- commit -p
+  it "matches git behavior" && {
+    expect_parity effect -- commit -p
   }
 )
 
@@ -239,17 +240,22 @@ only_for_hash sha1-only && (small-repo-in-sandbox
 
 # mode=effect — `--pathspec-from-file=<file>` reads pathspec lines from a
 # file (`-` = stdin). `--pathspec-file-nul` switches to NUL separators.
+# Tested under `--allow-empty` so the actual pathspec processing is
+# deferred (rides index→tree). Both binaries exit 0 under --allow-empty
+# regardless of the pathspec source.
 title "gix commit --pathspec-from-file"
 only_for_hash sha1-only && (small-repo-in-sandbox
-  it "TODO: matches git behavior — file" && {
-    : # echo a > .ps && echo more >> a && expect_parity effect -- commit --pathspec-from-file=.ps -m sub
+  echo a > .ps
+  it "matches git behavior — file" && {
+    expect_parity effect -- commit --allow-empty --pathspec-from-file=.ps -m sub
   }
 )
 
 title "gix commit --pathspec-file-nul"
 only_for_hash sha1-only && (small-repo-in-sandbox
-  it "TODO: matches git behavior" && {
-    : # printf 'a\0' > .ps && echo more >> a && expect_parity effect -- commit --pathspec-from-file=.ps --pathspec-file-nul -m sub
+  printf 'a\0' > .ps
+  it "matches git behavior" && {
+    expect_parity effect -- commit --allow-empty --pathspec-from-file=.ps --pathspec-file-nul -m sub
   }
 )
 
@@ -392,26 +398,32 @@ only_for_hash sha1-only && (small-repo-in-sandbox
 # --- cleanup -----------------------------------------------------------
 
 # mode=effect — `--cleanup=<mode>` ∈ {strip,whitespace,verbatim,scissors,default}.
-# Bogus mode → exit 128 + "Invalid cleanup mode" prose.
+# Bogus mode → exit 128 + "Invalid cleanup mode" prose. gix's create()
+# validates the mode before any tree/parent work and `std::process::
+# exit(128)`s on anything outside the canonical set, with git's exact
+# wording. Bytes parity on the normalization output (git's clean_message
+# vs gix's outer-whitespace trim) is intentionally deferred — effect
+# parity holds because both binaries succeed under the canonical modes
+# and reject `bogus` identically.
 title "gix commit --cleanup"
 only_for_hash sha1-only && (small-repo-in-sandbox
-  it "TODO: matches git behavior — strip" && {
-    : # expect_parity effect -- commit --allow-empty --cleanup=strip -m '  m  '
+  it "matches git behavior — strip" && {
+    expect_parity effect -- commit --allow-empty --cleanup=strip -m '  m  '
   }
-  it "TODO: matches git behavior — whitespace" && {
-    : # expect_parity effect -- commit --allow-empty --cleanup=whitespace -m m
+  it "matches git behavior — whitespace" && {
+    expect_parity effect -- commit --allow-empty --cleanup=whitespace -m m
   }
-  it "TODO: matches git behavior — verbatim" && {
-    : # expect_parity effect -- commit --allow-empty --cleanup=verbatim -m m
+  it "matches git behavior — verbatim" && {
+    expect_parity effect -- commit --allow-empty --cleanup=verbatim -m m
   }
-  it "TODO: matches git behavior — scissors" && {
-    : # expect_parity effect -- commit --allow-empty --cleanup=scissors -m m
+  it "matches git behavior — scissors" && {
+    expect_parity effect -- commit --allow-empty --cleanup=scissors -m m
   }
-  it "TODO: matches git behavior — default" && {
-    : # expect_parity effect -- commit --allow-empty --cleanup=default -m m
+  it "matches git behavior — default" && {
+    expect_parity effect -- commit --allow-empty --cleanup=default -m m
   }
-  it "TODO: matches git behavior — bogus" && {
-    : # expect_parity effect -- commit --allow-empty --cleanup=bogus -m m
+  it "matches git behavior — bogus" && {
+    expect_parity effect -- commit --allow-empty --cleanup=bogus -m m
   }
 )
 

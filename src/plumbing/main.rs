@@ -2734,6 +2734,13 @@ pub fn main() -> Result<()> {
                 date,
                 trailer,
                 pathspec,
+                cleanup,
+                pathspec_from_file: _pathspec_from_file,
+                pathspec_file_nul: _pathspec_file_nul,
+                all: _all,
+                patch: _patch,
+                include: _include,
+                only: _only,
             } = platform;
             match cmd {
                 // Bare `gix commit` (no subcommand): porcelain dispatch.
@@ -2766,6 +2773,7 @@ pub fn main() -> Result<()> {
                                 date,
                                 trailer,
                                 pathspec,
+                                cleanup,
                             },
                         )
                     },

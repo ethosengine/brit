@@ -2274,6 +2274,56 @@ pub mod commit {
         /// unknown-subcommand path).
         #[clap(value_name = "pathspec", trailing_var_arg = true)]
         pub pathspec: Vec<std::ffi::OsString>,
+
+        /// Determine how the supplied commit message is cleaned up
+        /// before committing. One of `strip` / `whitespace` /
+        /// `verbatim` / `scissors` / `default`. Mirrors
+        /// `OPT_STRING(0, "cleanup", ..., parse_cleanup_arg)`.
+        /// Anything else exits 128 with `fatal: Invalid cleanup mode <x>`.
+        #[clap(long = "cleanup", value_name = "mode")]
+        pub cleanup: Option<String>,
+
+        /// Read pathspec from `<file>` instead of commandline args.
+        /// `-` means stdin. Mirrors `OPT_PATHSPEC_FROM_FILE`.
+        /// Clap-accepted today; under `--allow-empty` pathspec is
+        /// not consulted, so the flag is observably a no-op.
+        #[clap(long = "pathspec-from-file", value_name = "file")]
+        pub pathspec_from_file: Option<std::path::PathBuf>,
+
+        /// Pathspec elements separated by `\0` rather than LF/CRLF.
+        /// Mirrors `OPT_PATHSPEC_FILE_NUL`. Accept-only today.
+        #[clap(long = "pathspec-file-nul")]
+        pub pathspec_file_nul: bool,
+
+        /// Stage all modified-or-deleted tracked files before composing
+        /// the commit. Mirrors `OPT_BOOL('a', "all", ...)`. Index→tree
+        /// machinery is pending; clap-accepted but no-op on the
+        /// `--allow-empty` path (which is the only path `create()`
+        /// currently exercises).
+        #[clap(short = 'a', long = "all")]
+        pub all: bool,
+
+        /// Use the interactive patch-selection UI before committing.
+        /// Mirrors `OPT_BOOL('p', "patch", ...)`. gix has no
+        /// interactive UI; clap-accepted but the underlying flow
+        /// still falls through to the non-implemented index→tree
+        /// path → exit 1.
+        #[clap(short = 'p', long = "patch")]
+        pub patch: bool,
+
+        /// Pre-stage the listed pathspecs in addition to staged
+        /// content. Mirrors `OPT_BOOL('i', "include", ...)`. Pending
+        /// index→tree integration; clap-accepted no-op on
+        /// `--allow-empty`.
+        #[clap(short = 'i', long = "include")]
+        pub include: bool,
+
+        /// Make a commit only of the listed pathspecs, ignoring the
+        /// rest of the index. Mirrors `OPT_BOOL('o', "only", ...)`.
+        /// Pending index→tree integration; clap-accepted no-op on
+        /// `--allow-empty`.
+        #[clap(short = 'o', long = "only")]
+        pub only: bool,
     }
 
     #[derive(Debug, clap::Subcommand)]

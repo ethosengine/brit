@@ -197,6 +197,10 @@ pub struct CreateOptions {
     /// Clap surface accepts `gix commit -m m -- <path>` without
     /// tripping the unknown-subcommand path.
     pub pathspec: Vec<std::ffi::OsString>,
+    /// `--cleanup=<mode>`: one of `strip` / `whitespace` / `verbatim`
+    /// / `scissors` / `default`. Anything else exits 128 with
+    /// "fatal: Invalid cleanup mode <x>" mirroring git's wording.
+    pub cleanup: Option<String>,
 }
 
 /// Porcelain `git commit` entry point. Currently only the
@@ -218,6 +222,7 @@ pub fn create(
         date,
         trailer,
         pathspec: _pathspec,
+        cleanup,
     }: CreateOptions,
 ) -> Result<()> {
     // git's `--reset-author` precondition (vendor/git/builtin/commit.c
@@ -242,6 +247,24 @@ pub fn create(
         let _ = writeln!(err, "error: gpg failed to sign the data");
         let _ = writeln!(err, "fatal: failed to write commit object");
         std::process::exit(128);
+    }
+
+    // `--cleanup=<mode>` validation. git's parse_cleanup_arg
+    // (vendor/git/builtin/commit.c) accepts strip / whitespace /
+    // verbatim / scissors / default and dies 128 on anything else
+    // with "fatal: Invalid cleanup mode <x>". Validate before any
+    // tree/parent work so the message-mode check can short-circuit
+    // even on flag combos that would otherwise bail later (e.g.
+    // without --allow-empty).
+    if let Some(mode) = cleanup.as_deref() {
+        match mode {
+            "strip" | "whitespace" | "verbatim" | "scissors" | "default" => {}
+            other => {
+                use std::io::Write as _;
+                let _ = writeln!(std::io::stderr().lock(), "fatal: Invalid cleanup mode {other}");
+                std::process::exit(128);
+            }
+        }
     }
 
     if !allow_empty {
@@ -279,6 +302,20 @@ pub fn create(
         }
         composed.push_str(t);
         composed.push('\n');
+    }
+
+    // Apply cleanup. Bytes parity on the precise normalization rules
+    // (git's clean_message in commit.c) is out of scope for the first
+    // iteration since both git and gix paths exit 0 either way for
+    // effect-mode rows; deeper bytes-parity rides a follow-up row.
+    // verbatim leaves the message untouched. The other modes trim
+    // outer whitespace so identity rules (no trailing space, no empty
+    // leading/trailing lines) match git for typical -m inputs.
+    let cleanup_mode = cleanup.as_deref().unwrap_or("default");
+    if cleanup_mode != "verbatim" {
+        composed = composed
+            .trim_matches(|c: char| c == '\n' || c == ' ' || c == '\t')
+            .to_string();
     }
 
     if composed.is_empty() && !allow_empty_message {
