@@ -1008,11 +1008,14 @@ pub mod diff {
         #[clap(subcommand)]
         pub cmd: Option<SubCommands>,
 
-        /// Positional revspec(s) and/or pathspec(s). Pre-`--` are
-        /// revspecs (1, 2, or a `..`/`...` range form); post-`--` are
-        /// pathspecs.
+        /// Positional revspec(s). 1, 2, or a `..`/`...` range form.
         #[clap(value_parser = crate::shared::AsBString)]
         pub args: Vec<BString>,
+
+        /// Pathspec(s) following the `--` separator, used to limit the
+        /// diff output to a subset of paths.
+        #[clap(last = true, value_parser = crate::shared::AsBString)]
+        pub paths: Vec<BString>,
     }
 
     #[derive(Debug, clap::Subcommand)]

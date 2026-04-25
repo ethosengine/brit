@@ -49,7 +49,22 @@ pub fn porcelain(
     out: &mut dyn std::io::Write,
     progress: impl gix::NestedProgress + 'static,
     args: Vec<BString>,
+    paths: Vec<BString>,
 ) -> anyhow::Result<()> {
+    if !paths.is_empty() {
+        // Pathspec filtering is not yet wired into any of the diff
+        // helpers; emit a placeholder note so callers see the paths
+        // were recognized, then continue without filtering. Bytes
+        // parity (filtered patch output) is deferred via the row's
+        // compat_effect marker until path-filtering lands.
+        use std::io::Write;
+        let mut stderr = std::io::stderr().lock();
+        let _ = writeln!(
+            stderr,
+            "[gix-diff] pathspec filter for {} path(s) recognized — filtering not yet implemented",
+            paths.len()
+        );
+    }
     // Detect range syntax in 1-arg form: `A..B` (two-dot) is shorthand
     // for `A B`; `A...B` (three-dot) is shorthand for `merge-base(A,B) B`.
     // Empty endpoints default to HEAD: `..B` → `HEAD B`, `A..` → `A HEAD`.
@@ -88,7 +103,7 @@ pub fn porcelain(
             } else {
                 vec![l, r]
             };
-            return porcelain(repo, out, progress, new_args);
+            return porcelain(repo, out, progress, new_args, paths);
         }
     }
     match args.len() {

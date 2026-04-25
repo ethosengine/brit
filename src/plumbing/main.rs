@@ -345,7 +345,7 @@ pub fn main() -> Result<()> {
                 core::repository::merge_base(repository(Mode::Lenient)?, first, others, out, format)
             },
         ),
-        Subcommands::Diff(crate::plumbing::options::diff::Platform { cmd, args }) => match cmd {
+        Subcommands::Diff(crate::plumbing::options::diff::Platform { cmd, args, paths }) => match cmd {
             // Bare `gix diff` (no subcommand): porcelain dispatch.
             // Outside a repo with zero positional args, git emits
             // "Not a git repository. Use --no-index..." and dies 129
@@ -377,7 +377,7 @@ pub fn main() -> Result<()> {
                         progress_keep_open,
                         None,
                         move |progress, out, _err| {
-                            core::repository::diff::porcelain(repository(Mode::Lenient)?, out, progress, args)
+                            core::repository::diff::porcelain(repository(Mode::Lenient)?, out, progress, args, paths)
                         },
                     ),
                 }

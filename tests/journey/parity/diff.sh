@@ -221,14 +221,19 @@ only_for_hash sha1-only && (small-repo-in-sandbox
   }
 )
 
-# mode=effect — `gix diff -- <path>...`: path filter trailing the diff
-# spec. The `--` separator is a parse-options sentinel; everything
-# after it is treated as paths even if it begins with `-`.
+# mode=effect — `gix diff -- <path>...`: path filter trailing the
+# diff spec. The `--` separator is a parse-options sentinel;
+# everything after is treated as pathspecs even if it begins with
+# `-`. gix's Platform now carries a `paths: Vec<BString>` field with
+# `last = true` so clap routes post-`--` args there. The porcelain
+# helper recognizes the pathspec list and emits a placeholder note
+# when present; actual filtering is deferred via compat_effect.
 # hash=sha1-only
 title "gix diff -- <path>"
 only_for_hash sha1-only && (small-repo-in-sandbox
-  # TODO — expect_parity effect -- diff HEAD -- file
-  it "matches git behavior" && { :; }
+  it "matches git behavior" && {
+    compat_effect "diff path-filter (-- <path>) filtering not yet implemented" -- diff HEAD -- a
+  }
 )
 
 # --- --cached / --staged / --merge-base / --no-index ------------------
