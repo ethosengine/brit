@@ -2739,8 +2739,8 @@ pub fn main() -> Result<()> {
                 pathspec_file_nul: _pathspec_file_nul,
                 all: _all,
                 patch: _patch,
-                include: _include,
-                only: _only,
+                include,
+                only,
                 reuse_message,
                 reedit_message,
                 squash,
@@ -2756,6 +2756,7 @@ pub fn main() -> Result<()> {
                 no_status: _no_status,
                 verbose: _verbose,
                 untracked_files: _untracked_files,
+                amend,
             } = platform;
             match cmd {
                 // Bare `gix commit` (no subcommand): porcelain dispatch.
@@ -2794,6 +2795,9 @@ pub fn main() -> Result<()> {
                                 squash,
                                 fixup,
                                 dry_run,
+                                amend,
+                                include,
+                                only,
                             },
                         )
                     },

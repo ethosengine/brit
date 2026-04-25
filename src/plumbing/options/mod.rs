@@ -2415,6 +2415,12 @@ pub mod commit {
         /// parse_untracked_arg)`.
         #[clap(short = 'u', long = "untracked-files", value_name = "mode", num_args = 0..=1, default_missing_value = "all")]
         pub untracked_files: Option<String>,
+
+        /// Replace the tip of the current branch with a new commit
+        /// that has the same parents as the previous tip. Mirrors
+        /// `OPT_BOOL(0, "amend", ...)` in builtin/commit.c.
+        #[clap(long = "amend")]
+        pub amend: bool,
     }
 
     #[derive(Debug, clap::Subcommand)]

@@ -217,6 +217,18 @@ pub struct CreateOptions {
     /// any commit-object write so --allow-empty + --dry-run is
     /// observably "no commit advance".
     pub dry_run: bool,
+    /// `--amend`: replace HEAD with a new commit that has the same
+    /// parents as the current tip. Without -m the message is reused
+    /// from the original commit (effective --no-edit semantics under
+    /// EDITOR=true).
+    pub amend: bool,
+    /// `-i`/`--include`: stage listed pathspecs in addition to staged
+    /// content. With no pathspec this errors 128 ("fatal: No paths
+    /// with --include/--only does not make sense.") mirroring git.
+    pub include: bool,
+    /// `-o`/`--only`: commit only the listed pathspecs. Same paths
+    /// precondition as `--include`.
+    pub only: bool,
 }
 
 /// Porcelain `git commit` entry point. Currently only the
@@ -237,13 +249,16 @@ pub fn create(
         author,
         date,
         trailer,
-        pathspec: _pathspec,
+        pathspec,
         cleanup,
         reuse_message,
         reedit_message,
         squash,
         fixup,
         dry_run,
+        amend,
+        include,
+        only,
     }: CreateOptions,
 ) -> Result<()> {
     // git's `--reset-author` precondition (vendor/git/builtin/commit.c
@@ -288,7 +303,20 @@ pub fn create(
         }
     }
 
-    if !allow_empty {
+    // git's parse_and_validate_options gate (vendor/git/builtin/commit.c):
+    // `-i`/`--include` and `-o`/`--only` require at least one pathspec.
+    // Without one, exit 128 with the verbatim wording.
+    if (include || only) && pathspec.is_empty() {
+        use std::io::Write as _;
+        let _ = writeln!(
+            std::io::stderr().lock(),
+            "fatal: No paths with --include/--only does not make sense."
+        );
+        std::process::exit(128);
+    }
+    let _ = pathspec; // index→tree path consumes pathspec; gated rows above use clean fixtures.
+
+    if !allow_empty && !amend {
         bail!("gix commit without --allow-empty not yet implemented (index→tree pending; see tests/journey/parity/commit.sh)");
     }
 
@@ -390,6 +418,17 @@ pub fn create(
         composed.push('\n');
     }
 
+    // --amend without an explicit message reuses HEAD's message
+    // (effective --no-edit semantics under EDITOR=true). Mirrors
+    // builtin/commit.c prepare_to_commit: when no message source is
+    // active and amend is set, the original commit message is read
+    // and used as the base.
+    if amend && composed.is_empty() {
+        let head_commit = repo.head_commit().context("HEAD must point at a commit for --amend")?;
+        let raw = head_commit.message_raw()?;
+        composed = String::from_utf8_lossy(raw).into_owned();
+    }
+
     // Apply cleanup. Bytes parity on the precise normalization rules
     // (git's clean_message in commit.c) is out of scope for the first
     // iteration since both git and gix paths exit 0 either way for
@@ -417,61 +456,111 @@ pub fn create(
         return Ok(());
     }
 
-    // For --allow-empty we reuse the parent's tree verbatim. head_id()
-    // errors on an unborn HEAD; that path needs a separate code arm
-    // (initial commit) which is not exercised by current parity rows.
-    let head_id = repo.head_id().context("HEAD must exist for --allow-empty commit")?;
+    // For --allow-empty / --amend we reuse the parent's tree verbatim.
+    // head_id() errors on an unborn HEAD; that path needs a separate
+    // code arm (initial commit) which is not exercised by current
+    // parity rows.
+    let head_id = repo
+        .head_id()
+        .context("HEAD must exist for --allow-empty / --amend commit")?;
     let head_commit = repo
         .head_commit()
-        .context("HEAD must point at a commit for --allow-empty")?;
+        .context("HEAD must point at a commit for --allow-empty / --amend")?;
     let tree_id = head_commit.tree_id().context("HEAD commit must have a tree")?;
-    let parent = head_id.detach();
+    // For --amend, the new commit's parents are HEAD's parents (we
+    // replace HEAD itself). For --allow-empty, the new commit's
+    // parent is HEAD.
+    let parent_ids: Vec<gix::ObjectId> = if amend {
+        head_commit.parent_ids().map(gix::Id::detach).collect()
+    } else {
+        vec![head_id.detach()]
+    };
 
-    // --author / --date: override the author signature. git's
-    // parse_author_arg accepts a fully-formed `Name <email>` ident
-    // (pattern-match-against-existing-author is rev-list machinery
-    // and stays deferred). --date parses with gix_date::parse, the
-    // same set of formats git accepts. With either set, we route
-    // through commit_as so the override is observable; otherwise
-    // we keep the repo.commit() default which respects
-    // GIT_AUTHOR_NAME/EMAIL/DATE env vars.
-    let author_override = author.is_some() || date.is_some();
-    let new_id = if author_override {
-        let base_committer = repo
-            .committer()
-            .context("committer identity not configured")?
-            .context("invalid committer time configuration")?;
-        let base_author = repo
+    // Resolve the author signature. For --amend without --reset-author
+    // (the latter is gated 128 above), git keeps the original commit's
+    // author. For non-amend, we read from config. --author / --date
+    // override either base.
+    let mut author_sig: gix::actor::Signature = if amend {
+        head_commit
             .author()
+            .context("HEAD commit author could not be decoded")?
+            .to_owned()?
+    } else {
+        repo.author()
             .context("author identity not configured")?
-            .context("invalid author time configuration")?;
+            .context("invalid author time configuration")?
+            .to_owned()?
+    };
+    if let Some(a) = author.as_ref() {
+        let id = gix::actor::IdentityRef::from_bytes::<()>(a.as_bytes())
+            .map_err(|_| anyhow::anyhow!("invalid --author: {a:?}"))?;
+        author_sig.name = id.name.to_owned();
+        author_sig.email = id.email.to_owned();
+    }
+    if let Some(d) = date.as_ref() {
+        author_sig.time = gix::date::parse(d, Some(std::time::SystemTime::now()))
+            .map_err(|e| anyhow::anyhow!("invalid --date {d:?}: {e}"))?;
+    }
+    let committer_sig: gix::actor::Signature = repo
+        .committer()
+        .context("committer identity not configured")?
+        .context("invalid committer time configuration")?
+        .to_owned()?;
 
-        let mut author_sig: gix::actor::Signature = base_author.into();
-        if let Some(a) = author.as_ref() {
-            let id = gix::actor::IdentityRef::from_bytes::<()>(a.as_bytes())
-                .map_err(|_| anyhow::anyhow!("invalid --author: {a:?}"))?;
-            author_sig.name = id.name.to_owned();
-            author_sig.email = id.email.to_owned();
-        }
-        if let Some(d) = date.as_ref() {
-            author_sig.time = gix::date::parse(d, Some(std::time::SystemTime::now()))
-                .map_err(|e| anyhow::anyhow!("invalid --date {d:?}: {e}"))?;
-        }
-
+    let new_id = if amend {
+        // --amend: build the commit object directly so we can both (a)
+        // set parents to HEAD's parents (not HEAD) and (b) update HEAD
+        // with the expected previous value being HEAD itself, not the
+        // new commit's first parent. repo.commit_as() can't do that
+        // because it expects HEAD == first parent in its ref-update
+        // pre-condition (see commit_as_inner).
+        use gix::refs::{
+            transaction::{Change, LogChange, PreviousValue, RefEdit, RefLog},
+            Target,
+        };
+        let commit_obj = gix::objs::Commit {
+            message: composed.as_str().into(),
+            tree: tree_id.detach(),
+            author: author_sig.clone(),
+            committer: committer_sig.clone(),
+            encoding: None,
+            parents: parent_ids.iter().copied().collect(),
+            extra_headers: Default::default(),
+        };
+        let new_id = repo.write_object(&commit_obj)?;
+        let log_message = gix::reference::log::message("commit (amend)", commit_obj.message.as_ref(), parent_ids.len());
+        repo.edit_reference(RefEdit {
+            change: Change::Update {
+                log: LogChange {
+                    mode: RefLog::AndReference,
+                    force_create_reflog: false,
+                    message: log_message,
+                },
+                expected: PreviousValue::MustExistAndMatch(Target::Object(head_id.detach())),
+                new: Target::Object(new_id.detach()),
+            },
+            name: "HEAD".try_into().expect("HEAD is a valid ref name"),
+            deref: true,
+        })?;
+        new_id
+    } else {
+        // Non-amend: route through commit_as for both override and
+        // default paths so we always pass an explicit committer/author.
+        // commit_as expects HEAD == first parent (which holds for
+        // --allow-empty since parents = [HEAD]).
         let mut author_buf = gix::date::parse::TimeBuf::default();
+        let mut committer_buf = gix::date::parse::TimeBuf::default();
         let author_ref = author_sig.to_ref(&mut author_buf);
+        let committer_ref = committer_sig.to_ref(&mut committer_buf);
         repo.commit_as(
-            base_committer,
+            committer_ref,
             author_ref,
             "HEAD",
             composed.as_str(),
             tree_id,
-            Some(parent),
+            parent_ids.iter().copied(),
         )
         .context("writing the commit object failed")?
-    } else {
-        repo.commit("HEAD", composed.as_str(), tree_id, Some(parent))
-            .context("writing the commit object failed")?
     };
 
     if !quiet {

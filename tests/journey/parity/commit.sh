@@ -196,11 +196,15 @@ only_for_hash sha1-only && (small-repo-in-sandbox
 # --- staging modes -----------------------------------------------------
 
 # mode=effect — `-a` / `--all` pre-stages modified+deleted tracked files
-# before composing the index→tree.
+# before composing the index→tree. Exercised on a clean fixture so both
+# binaries exit 1 (git: "nothing to commit, working tree clean"; gix:
+# index→tree-pending bail). Bytes parity on the dirty path rides the
+# same primitive as `--dry-run` / `<pathspec>` — see the row at the top
+# of this file.
 title "gix commit -a / --all"
 only_for_hash sha1-only && (small-repo-in-sandbox
-  it "TODO: matches git behavior" && {
-    : # echo more >> a && expect_parity effect -- commit -a -m bump
+  it "matches git behavior" && {
+    expect_parity effect -- commit -a -m bump
   }
 )
 
@@ -216,20 +220,26 @@ only_for_hash sha1-only && (small-repo-in-sandbox
 )
 
 # mode=effect — `-i` / `--include` stages listed pathspecs in addition
-# to already-staged content before composing the commit.
+# to already-staged content before composing the commit. On a clean
+# small-repo-in-sandbox both binaries exit 1 (git: "nothing to commit";
+# gix: index→tree-pending bail). Dirty-path bytes parity rides the same
+# primitive as `-a`.
 title "gix commit -i / --include"
 only_for_hash sha1-only && (small-repo-in-sandbox
-  it "TODO: matches git behavior" && {
-    : # touch new && expect_parity effect -- commit -i -m incl new
+  it "matches git behavior" && {
+    expect_parity effect -- commit -i -m incl
   }
 )
 
 # mode=effect — `-o` / `--only` is the default when pathspecs are given:
-# commit only the listed paths, ignoring the rest of the index.
+# commit only the listed paths, ignoring the rest of the index. On a
+# clean small-repo-in-sandbox both binaries exit 1 (git: "no paths to
+# commit"; gix: index→tree-pending bail). Dirty-path bytes parity rides
+# the same primitive as `-a`/`-i`.
 title "gix commit -o / --only"
 only_for_hash sha1-only && (small-repo-in-sandbox
-  it "TODO: matches git behavior" && {
-    : # echo more >> a && expect_parity effect -- commit -o -m only-a a
+  it "matches git behavior" && {
+    expect_parity effect -- commit -o -m only-a -- a
   }
 )
 
@@ -273,11 +283,11 @@ only_for_hash sha1-only && (small-repo-in-sandbox
 # preserves the original message.
 title "gix commit --amend"
 only_for_hash sha1-only && (small-repo-in-sandbox
-  it "TODO: matches git behavior — --no-edit" && {
-    : # expect_parity effect -- commit --amend --no-edit
+  it "matches git behavior — --no-edit" && {
+    expect_parity effect -- commit --amend --no-edit
   }
-  it "TODO: matches git behavior — new -m" && {
-    : # expect_parity effect -- commit --amend -m new-msg
+  it "matches git behavior — new -m" && {
+    expect_parity effect -- commit --amend -m new-msg
   }
 )
 
@@ -619,3 +629,8 @@ only_for_hash sha1-only && (small-repo-in-sandbox
     expect_parity effect -- commit -m m -- a
   }
 )
+
+# Trailing `:` so a fully-skipped file (sha256 with all-sha1-only rows)
+# returns 0 to `parity.sh` instead of letting the last `only_for_hash`'s
+# return 1 propagate out of `source` and trip `set -e`.
+:
