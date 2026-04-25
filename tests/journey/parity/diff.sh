@@ -452,28 +452,33 @@ only_for_hash sha1-only && (small-repo-in-sandbox
 
 # mode=effect — `--dirstat[=<param>,...]`: per-directory percentage stat.
 # Parameters: changes, lines, files, cumulative, <limit>.
+# Accepted by clap; renderer deferred.
 # hash=sha1-only
 title "gix diff --dirstat"
 only_for_hash sha1-only && (small-repo-in-sandbox
-  # TODO — expect_parity effect -- diff --dirstat HEAD~1 HEAD
-  it "matches git behavior" && { :; }
+  it "matches git behavior" && {
+    compat_effect "diff --dirstat per-directory percentage layout deferred until renderer lands" -- diff --dirstat HEAD~1 HEAD
+  }
 )
 
 # mode=effect — `--cumulative`: synonym for --dirstat=cumulative.
+# Accepted by clap; deferred with --dirstat.
 # hash=sha1-only
 title "gix diff --cumulative"
 only_for_hash sha1-only && (small-repo-in-sandbox
-  # TODO — expect_parity effect -- diff --cumulative HEAD~1 HEAD
-  it "matches git behavior" && { :; }
+  it "matches git behavior" && {
+    compat_effect "diff --cumulative dirstat synonym deferred until renderer lands" -- diff --cumulative HEAD~1 HEAD
+  }
 )
 
 # mode=effect — `--dirstat-by-file[=<param>,...]`: synonym for
-# --dirstat=files,<param>.
+# --dirstat=files,<param>. Accepted by clap; deferred with --dirstat.
 # hash=sha1-only
 title "gix diff --dirstat-by-file"
 only_for_hash sha1-only && (small-repo-in-sandbox
-  # TODO — expect_parity effect -- diff --dirstat-by-file HEAD~1 HEAD
-  it "matches git behavior" && { :; }
+  it "matches git behavior" && {
+    compat_effect "diff --dirstat-by-file dirstat synonym deferred until renderer lands" -- diff --dirstat-by-file HEAD~1 HEAD
+  }
 )
 
 # mode=effect — `--summary`: file creation/deletion/rename/copy/mode
