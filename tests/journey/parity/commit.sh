@@ -147,41 +147,45 @@ only_for_hash sha1-only && (small-repo-in-sandbox
 )
 
 # mode=effect — `-C <commit>` reuses message + authorship + timestamp
-# from another commit; `-c <commit>` reedits via editor; `--squash=<commit>`
-# constructs a "squash! <subject>" message; `--fixup=<commit>` constructs
-# "fixup! <subject>" (or "amend!" / "amend! reword:" prefixes for
-# amend/reword variants).
+# from another commit; `-c <commit>` reedits via editor (no-op under
+# EDITOR=true); `--squash=<commit>` constructs "squash! <subject>";
+# `--fixup=<commit>` constructs "fixup! <subject>" or amend!/reword!
+# variants. gix's create() routes through the message-source layering
+# in vendor/git/builtin/commit.c parse_and_validate_options:
+# (1) -C/-c → full message copy via rev_parse_single + Commit::message_raw
+# (2) --squash=<commit> → "squash! <subject>" + appended -m paragraphs
+# (3) --fixup=spec → fixup!/amend! variants per spec parse.
 title "gix commit -C / --reuse-message"
 only_for_hash sha1-only && (small-repo-in-sandbox
-  it "TODO: matches git behavior" && {
-    : # expect_parity effect -- commit --allow-empty -C HEAD
+  it "matches git behavior" && {
+    expect_parity effect -- commit --allow-empty -C HEAD
   }
 )
 
 title "gix commit -c / --reedit-message"
 only_for_hash sha1-only && (small-repo-in-sandbox
-  it "TODO: matches git behavior" && {
-    : # EDITOR=true expect_parity effect -- commit --allow-empty -c HEAD
+  it "matches git behavior" && {
+    EDITOR=true expect_parity effect -- commit --allow-empty -c HEAD
   }
 )
 
 title "gix commit --squash"
 only_for_hash sha1-only && (small-repo-in-sandbox
-  it "TODO: matches git behavior" && {
-    : # expect_parity effect -- commit --allow-empty --squash=HEAD
+  it "matches git behavior" && {
+    expect_parity effect -- commit --allow-empty --squash=HEAD
   }
 )
 
 title "gix commit --fixup"
 only_for_hash sha1-only && (small-repo-in-sandbox
-  it "TODO: matches git behavior — plain" && {
-    : # expect_parity effect -- commit --allow-empty --fixup=HEAD
+  it "matches git behavior — plain" && {
+    expect_parity effect -- commit --allow-empty --fixup=HEAD
   }
-  it "TODO: matches git behavior — amend:" && {
-    : # EDITOR=true expect_parity effect -- commit --allow-empty --fixup=amend:HEAD
+  it "matches git behavior — amend:" && {
+    EDITOR=true expect_parity effect -- commit --allow-empty --fixup=amend:HEAD
   }
-  it "TODO: matches git behavior — reword:" && {
-    : # EDITOR=true expect_parity effect -- commit --allow-empty --fixup=reword:HEAD
+  it "matches git behavior — reword:" && {
+    EDITOR=true expect_parity effect -- commit --allow-empty --fixup=reword:HEAD
   }
 )
 

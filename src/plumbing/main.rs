@@ -2741,6 +2741,10 @@ pub fn main() -> Result<()> {
                 patch: _patch,
                 include: _include,
                 only: _only,
+                reuse_message,
+                reedit_message,
+                squash,
+                fixup,
             } = platform;
             match cmd {
                 // Bare `gix commit` (no subcommand): porcelain dispatch.
@@ -2774,6 +2778,10 @@ pub fn main() -> Result<()> {
                                 trailer,
                                 pathspec,
                                 cleanup,
+                                reuse_message,
+                                reedit_message,
+                                squash,
+                                fixup,
                             },
                         )
                     },

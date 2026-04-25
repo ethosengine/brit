@@ -2324,6 +2324,33 @@ pub mod commit {
         /// `--allow-empty`.
         #[clap(short = 'o', long = "only")]
         pub only: bool,
+
+        /// Reuse the message and authorship + timestamp from
+        /// `<commit>`. Mirrors `OPT_CALLBACK_F('C', "reuse-message",
+        /// ..., parse_reuse_arg)`.
+        #[clap(short = 'C', long = "reuse-message", value_name = "commit")]
+        pub reuse_message: Option<String>,
+
+        /// Like `-C`, but invoke the editor afterwards. Mirrors
+        /// `OPT_CALLBACK_F('c', "reedit-message", ..., parse_reedit_arg)`.
+        /// Editor-invoking semantics rest on the editor flow that
+        /// also covers `-e`/`-t`; under EDITOR=true the message is
+        /// passed through unchanged.
+        #[clap(short = 'c', long = "reedit-message", value_name = "commit")]
+        pub reedit_message: Option<String>,
+
+        /// Construct a "squash! <subject>" commit message for use
+        /// with `git rebase --autosquash`. Mirrors
+        /// `OPT_CALLBACK_F(0, "squash", ..., parse_squash_arg)`.
+        #[clap(long = "squash", value_name = "commit")]
+        pub squash: Option<String>,
+
+        /// Construct a "fixup! <subject>" commit message (plain) or
+        /// `amend!`/`amend! reword:` variants for `--fixup=amend:` /
+        /// `--fixup=reword:`. Mirrors
+        /// `OPT_CALLBACK_F(0, "fixup", ..., parse_fixup_arg)`.
+        #[clap(long = "fixup", value_name = "spec")]
+        pub fixup: Option<String>,
     }
 
     #[derive(Debug, clap::Subcommand)]

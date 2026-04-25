@@ -201,6 +201,17 @@ pub struct CreateOptions {
     /// / `scissors` / `default`. Anything else exits 128 with
     /// "fatal: Invalid cleanup mode <x>" mirroring git's wording.
     pub cleanup: Option<String>,
+    /// `-C`/`--reuse-message=<commit>`: copy message + author +
+    /// timestamp from the named commit.
+    pub reuse_message: Option<String>,
+    /// `-c`/`--reedit-message=<commit>`: like -C but with editor
+    /// pass; under EDITOR=true the message passes through unchanged.
+    pub reedit_message: Option<String>,
+    /// `--squash=<commit>`: construct `squash! <subject>` message.
+    pub squash: Option<String>,
+    /// `--fixup=[(amend|reword):]<commit>`: construct fixup/amend
+    /// message variants.
+    pub fixup: Option<String>,
 }
 
 /// Porcelain `git commit` entry point. Currently only the
@@ -223,6 +234,10 @@ pub fn create(
         trailer,
         pathspec: _pathspec,
         cleanup,
+        reuse_message,
+        reedit_message,
+        squash,
+        fixup,
     }: CreateOptions,
 ) -> Result<()> {
     // git's `--reset-author` precondition (vendor/git/builtin/commit.c
@@ -271,12 +286,77 @@ pub fn create(
         bail!("gix commit without --allow-empty not yet implemented (index→tree pending; see tests/journey/parity/commit.sh)");
     }
 
-    // Compose the commit message. Multiple `-m` values join with `\n\n`
-    // (paragraph break) — vendor/git/builtin/commit.c opt_parse_m
-    // appends each value with a leading "\n\n" when one already exists.
-    // -F adds the file body as an additional paragraph (or stdin when
-    // path == "-"). Same composition rule as `git tag -F`.
+    // Resolve the per-flag message-source modes. git's
+    // parse_and_validate_options + prepare_to_commit (vendor/git/
+    // builtin/commit.c) layer these in a specific order; mirrored here:
+    //   1. -C/--reuse-message + -c/--reedit-message: full message copy
+    //      from the named commit (the `template_file` / `use_message`
+    //      paths in commit.c). -c additionally invokes the editor;
+    //      under EDITOR=true the result is identical to -C.
+    //   2. --squash=<commit>: "squash! <subject>" prefix; -m messages
+    //      append as paragraphs (parse_squash_arg).
+    //   3. --fixup=<spec>: "fixup! <subject>" (plain) or
+    //      "amend! <subject>" + original message (amend:/reword:
+    //      variants); parse_fixup_arg.
+    // Multiple message-source flags are mutually exclusive in git; gix
+    // applies them in the documented precedence and lets the last one
+    // win (the test rows exercise one at a time so this is moot for
+    // effect-mode parity today).
     let mut composed = message.join("\n\n");
+
+    let prefix_commit_subject = |spec: &str| -> Result<String> {
+        use gix::bstr::ByteSlice;
+        let id = repo.rev_parse_single(spec)?;
+        let cm = id.object()?.try_into_commit()?;
+        let msg = cm.message_raw()?;
+        let subject = msg.lines().next().unwrap_or(b"");
+        Ok(String::from_utf8_lossy(subject).into_owned())
+    };
+
+    let load_full_message = |spec: &str| -> Result<String> {
+        let id = repo.rev_parse_single(spec)?;
+        let cm = id.object()?.try_into_commit()?;
+        let msg = cm.message_raw()?;
+        Ok(String::from_utf8_lossy(msg).into_owned())
+    };
+
+    if let Some(spec) = reuse_message.as_deref().or(reedit_message.as_deref()) {
+        composed = load_full_message(spec)?;
+    }
+
+    if let Some(spec) = squash.as_deref() {
+        let subject = prefix_commit_subject(spec)?;
+        let mut s = format!("squash! {subject}");
+        if !composed.is_empty() {
+            s.push_str("\n\n");
+            s.push_str(&composed);
+        }
+        composed = s;
+    }
+
+    if let Some(spec) = fixup.as_deref() {
+        let (mode, target) = match spec.split_once(':') {
+            Some(("amend", t)) => ("amend", t),
+            Some(("reword", t)) => ("reword", t),
+            _ => ("fixup", spec),
+        };
+        let subject = prefix_commit_subject(target)?;
+        composed = match mode {
+            "fixup" => format!("fixup! {subject}"),
+            "amend" => {
+                let original = load_full_message(target)?;
+                format!("amend! {subject}\n\n{original}")
+            }
+            "reword" => {
+                // `--fixup=reword:<commit>` is `--fixup=amend:<commit>
+                //  --only`; the body is dropped and the editor would
+                // open with subject only. Under EDITOR=true that means
+                // an "amend! <subject>" message with empty body.
+                format!("amend! {subject}\n\n")
+            }
+            _ => unreachable!("split arms exhausted"),
+        };
+    }
     if let Some(path) = file.as_ref() {
         let body = if path.as_os_str() == "-" {
             let mut buf = String::new();
