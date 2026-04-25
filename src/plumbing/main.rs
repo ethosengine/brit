@@ -374,11 +374,8 @@ pub fn main() -> Result<()> {
                         progress,
                         progress_keep_open,
                         None,
-                        move |_progress, _out, _err| {
-                            let _repo = repository(Mode::Lenient)?;
-                            anyhow::bail!(
-                                "`gix diff` (bare form) not yet implemented; use `gix diff tree` or `gix diff file`"
-                            )
+                        move |progress, out, _err| {
+                            core::repository::diff::worktree_index(repository(Mode::Lenient)?, out, progress)
                         },
                     ),
                 }

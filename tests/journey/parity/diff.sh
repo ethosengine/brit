@@ -96,13 +96,17 @@ only_for_hash dual && (sandbox
 # --- synopsis forms -----------------------------------------------------
 
 # mode=effect — bare `gix diff`: working-tree vs index. Default form,
-# diff-files path in builtin/diff.c. Empty repo / clean working-tree
-# exits 0 with no output.
+# diff-files path in builtin/diff.c. Clean working-tree exits 0 with
+# no output. gitoxide-core::repository::diff::worktree_index walks
+# the gix::status iterator and exits 0 when there are zero tracked
+# Modification / Rewrite items (untracked entries are suppressed —
+# git diff doesn't show them, only git status does).
 # hash=sha1-only
 title "gix diff (no args, clean working tree)"
 only_for_hash sha1-only && (small-repo-in-sandbox
-  # TODO — expect_parity effect -- diff
-  it "matches git behavior" && { :; }
+  it "matches git behavior" && {
+    expect_parity effect -- diff
+  }
 )
 
 # mode=effect — bare `gix diff` with a modified tracked file. Default

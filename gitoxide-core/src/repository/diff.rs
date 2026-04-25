@@ -7,6 +7,56 @@ use gix::{
     ObjectId,
 };
 
+/// Bare `git diff` (no subcommand, no revspec): worktree vs index.
+///
+/// The git C path runs `run_diff_files` over the index-vs-worktree
+/// comparison and renders patches. gix has no patch renderer wired
+/// yet — this helper walks the status iterator, exits 0 silently
+/// when there are no tracked modifications, and bails with an
+/// explicit "patch output not yet implemented" message when the
+/// working tree is dirty. Untracked-file emission is suppressed
+/// (untracked files do not appear in `git diff` output, only in
+/// `git status`).
+pub fn worktree_index(
+    repo: gix::Repository,
+    _out: &mut dyn std::io::Write,
+    progress: impl gix::NestedProgress + 'static,
+) -> anyhow::Result<()> {
+    use gix::status::{self, index_worktree};
+    let iter = repo
+        .status(progress)?
+        .should_interrupt_shared(&gix::interrupt::IS_INTERRUPTED)
+        .into_iter(None)?;
+
+    let mut tracked_changes = 0usize;
+    for item in iter {
+        let item = item?;
+        match item {
+            status::Item::TreeIndex(_) => {
+                // index-vs-HEAD differences (i.e. staged changes) are not
+                // visible in bare `git diff`; they belong to `--cached`.
+                // Suppress them in the bare-form check.
+            }
+            status::Item::IndexWorktree(
+                index_worktree::Item::Modification { .. } | index_worktree::Item::Rewrite { .. },
+            ) => {
+                tracked_changes += 1;
+            }
+            status::Item::IndexWorktree(index_worktree::Item::DirectoryContents { .. }) => {
+                // Untracked / ignored — skipped: `git diff` ignores these.
+            }
+        }
+    }
+
+    if tracked_changes == 0 {
+        Ok(())
+    } else {
+        anyhow::bail!(
+            "`gix diff` (bare form) patch output is not yet implemented; {tracked_changes} tracked file(s) modified"
+        )
+    }
+}
+
 pub fn tree(
     mut repo: gix::Repository,
     out: &mut dyn std::io::Write,
