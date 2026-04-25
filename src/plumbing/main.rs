@@ -2719,6 +2719,8 @@ pub fn main() -> Result<()> {
                 allow_empty,
                 allow_empty_message,
                 quiet,
+                edit: _edit,
+                no_edit: _no_edit,
             } = platform;
             match cmd {
                 // Bare `gix commit` (no subcommand): porcelain dispatch.

@@ -93,29 +93,31 @@ only_for_hash dual && (sandbox
 # --- bare invocation (no staged content) -------------------------------
 
 # mode=effect — `git commit` with nothing staged exits 1 and prints the
-# canonical "no changes added to commit" status block. gix should match
-# the exit code; bytes parity on the prose is compat-deferred (status
-# rendering is wide).
+# canonical "no changes added to commit" status block. gix's porcelain
+# `create` (gitoxide-core/src/repository/commit.rs) bails with the
+# explicit "without --allow-empty not yet implemented" guard until the
+# index→tree path lands; both binaries exit 1 so effect-mode parity
+# holds today. Bytes parity on the status block stays deferred.
 title "gix commit (nothing to commit)"
 only_for_hash sha1-only && (small-repo-in-sandbox
-  it "TODO: matches git behavior" && {
-    : # expect_parity effect -- commit -m msg
+  it "matches git behavior" && {
+    expect_parity effect -- commit
   }
 )
 
 # --- message sources ---------------------------------------------------
 
-# mode=effect — `-m <msg>` is the canonical happy path: stage content,
-# `gix commit -m "msg"`, observe a new commit on HEAD with that message
-# as both subject and body's only paragraph. Multiple `-m` concatenate
-# as separate paragraphs.
+# mode=effect — `-m <msg>` is the canonical happy path. Multiple `-m`
+# values are concatenated as separate paragraphs (`opt_parse_m` in
+# vendor/git/builtin/commit.c). Tested under `--allow-empty` so the
+# index→tree primitive is not required.
 title "gix commit -m / --message"
 only_for_hash sha1-only && (small-repo-in-sandbox
-  it "TODO: matches git behavior — single -m" && {
-    : # expect_parity effect -- commit --allow-empty -m subject
+  it "matches git behavior — single -m" && {
+    expect_parity effect -- commit --allow-empty -m subject
   }
-  it "TODO: matches git behavior — multiple -m paragraphs" && {
-    : # expect_parity effect -- commit --allow-empty -m subject -m body
+  it "matches git behavior — multiple -m paragraphs" && {
+    expect_parity effect -- commit --allow-empty -m subject -m body
   }
 )
 
@@ -292,10 +294,14 @@ only_for_hash sha1-only && (small-repo-in-sandbox
 )
 
 # mode=effect — `--allow-empty-message` permits an empty commit message.
+# vendor/git/builtin/commit.c prepare_to_commit() skips the
+# "empty message" abort when allow_empty_message is set. gix's
+# porcelain `create` mirrors the check — composed.is_empty() is fatal
+# only when the flag is unset.
 title "gix commit --allow-empty-message"
 only_for_hash sha1-only && (small-repo-in-sandbox
-  it "TODO: matches git behavior" && {
-    : # expect_parity effect -- commit --allow-empty --allow-empty-message -m ''
+  it "matches git behavior" && {
+    expect_parity effect -- commit --allow-empty --allow-empty-message -m ''
   }
 )
 
@@ -395,10 +401,14 @@ only_for_hash sha1-only && (small-repo-in-sandbox
 )
 
 # mode=effect — `--no-edit` skips the editor (default for `-m`/`-F`).
+# Effectively a no-op when a message is already supplied via `-m` —
+# clap-accepts and gix proceeds without launching an editor (which it
+# wouldn't anyway). Editor-invoking semantics for `-e`/`--edit` land
+# with later rows that exercise the template / status pass.
 title "gix commit --no-edit"
 only_for_hash sha1-only && (small-repo-in-sandbox
-  it "TODO: matches git behavior" && {
-    : # expect_parity effect -- commit --allow-empty --no-edit -m m
+  it "matches git behavior" && {
+    expect_parity effect -- commit --allow-empty --no-edit -m m
   }
 )
 
@@ -486,10 +496,13 @@ only_for_hash sha1-only && (small-repo-in-sandbox
 )
 
 # mode=effect — `-q` / `--quiet` suppresses the post-commit summary line.
+# Both binaries exit 0; bytes parity on the summary itself is out of
+# scope for the first iterations (git emits stat lines via diff
+# machinery, gix emits a minimal `[<abbrev>] <subject>` shape).
 title "gix commit -q / --quiet"
 only_for_hash sha1-only && (small-repo-in-sandbox
-  it "TODO: matches git behavior" && {
-    : # expect_parity effect -- commit --allow-empty -q -m m
+  it "matches git behavior" && {
+    expect_parity effect -- commit --allow-empty -q -m m
   }
 )
 

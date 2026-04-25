@@ -2168,6 +2168,22 @@ pub mod commit {
         /// Mirrors `OPT__QUIET`.
         #[clap(short = 'q', long = "quiet")]
         pub quiet: bool,
+
+        /// Force a pass through the editor for `-m`/`-F`/`-C` paths.
+        /// Mirrors `OPT_BOOL('e', "edit", ...)` in builtin/commit.c.
+        /// Accepted today as a no-op when a message is supplied via `-m`
+        /// (the editor would not change it under EDITOR=true). Editor-
+        /// invoking semantics land with the trailers / template / status
+        /// rows.
+        #[clap(short = 'e', long = "edit")]
+        pub edit: bool,
+
+        /// Skip the editor pass; counterpart to `--edit`. Mirrors
+        /// `OPT_BOOL(0, "no-edit", ...)`. Effectively a no-op when a
+        /// message is supplied via `-m`/`-F` (the default already
+        /// skips the editor in those cases).
+        #[clap(long = "no-edit", overrides_with = "edit")]
+        pub no_edit: bool,
     }
 
     #[derive(Debug, clap::Subcommand)]
