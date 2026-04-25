@@ -66,8 +66,6 @@
 #   hash=sha1-only "gix cannot load sha256 repos: extensions.objectFormat=sha256 rejected (gix/src/config/tree/sections/extensions.rs)"
 #   mode=effect
 
-title "gix show"
-
 # --- meta / help --------------------------------------------------------
 
 # mode=effect — clap --help short-circuits before repo load, exits 0.
