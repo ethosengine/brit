@@ -96,14 +96,18 @@ only_for_hash dual && (sandbox
 
 # mode=bytes — bare `git pull` with no upstream configured: git emits
 # the 8-line "There is no tracking information for the current branch."
-# stanza + exit 128 (vendor/git/builtin/pull.c::cmd_pull → die path
-# when `branch.<name>.remote` / `branch.<name>.merge` are unset).
-# gix's porcelain placeholder must mirror byte-exact wording.
+# stanza on stderr + exits 1 (vendor/git/builtin/pull.c::cmd_pull
+# → die path when `branch.<name>.merge` is unset). Note exit is 1,
+# not 128: pull's die() routes through advise_die using git's
+# standard exit-1 default. gix's porcelain mirrors the stanza
+# byte-exact via repo.head_ref()?.remote_ref_name(Direction::Fetch)
+# detection in gitoxide_core::repository::pull::porcelain.
 # hash=sha1-only
+# mode=bytes
 title "gix pull (bare, no upstream)"
 only_for_hash sha1-only && (small-repo-in-sandbox
-  it "TODO" && {
-    : # TODO expect_parity bytes -- pull
+  it "matches git behavior" && {
+    expect_parity bytes -- pull
   }
 )
 
