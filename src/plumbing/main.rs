@@ -1835,6 +1835,9 @@ pub fn main() -> Result<()> {
         Subcommands::Pull(crate::plumbing::options::pull::Platform {
             repository: pull_repository,
             refspec: pull_refspec,
+            rebase: pull_rebase,
+            no_rebase: pull_no_rebase,
+            dry_run: pull_dry_run,
             ..
         }) => prepare_and_run(
             "pull",
@@ -1850,6 +1853,11 @@ pub fn main() -> Result<()> {
                     err,
                     pull_repository,
                     pull_refspec,
+                    core::repository::pull::Options {
+                        rebase: pull_rebase,
+                        no_rebase: pull_no_rebase,
+                        dry_run: pull_dry_run,
+                    },
                 )
             },
         ),

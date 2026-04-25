@@ -128,7 +128,12 @@ pub struct Platform {
     pub no_commit: bool,
 
     /// Open the editor on the merge commit message.
-    #[clap(short = 'e', long)]
+    ///
+    /// `git pull` does NOT take a `-e` short (see vendor/git/builtin/pull.c
+    /// OPT_PASSTHRU(0, "edit", ...)) — only the long form. The journey
+    /// row for `gix pull -e` therefore tests the unknown-short-flag
+    /// error path on both binaries (exit 129).
+    #[clap(long)]
     pub edit: bool,
 
     /// Skip editing the merge commit message.
