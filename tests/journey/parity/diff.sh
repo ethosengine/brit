@@ -159,13 +159,16 @@ only_for_hash sha1-only && (small-repo-in-sandbox
 )
 
 # mode=bytes — `git diff <unknown-rev>`: setup_revisions dies 128 with
-# the standard ambiguous-argument 3-line stanza. gix-diff's revspec
-# resolution must mirror that wording for byte parity.
+# the standard ambiguous-argument 3-line stanza
+# (vendor/git/revision.c::handle_revision_arg → die). gix's porcelain
+# helper now matches the wording verbatim and exits 128 on
+# rev_parse_single failure for both 1-arg and 2-arg forms.
 # hash=sha1-only
 title "gix diff <unknown-rev>"
 only_for_hash sha1-only && (small-repo-in-sandbox
-  # TODO — expect_parity bytes -- diff bogus-rev-name
-  it "matches git behavior" && { :; }
+  it "matches git behavior" && {
+    expect_parity bytes -- diff bogus-rev-name
+  }
 )
 
 # mode=effect — `gix diff <commit>..<commit>`: two-dot range (synonym

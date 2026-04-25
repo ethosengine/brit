@@ -28,9 +28,20 @@ pub fn porcelain(
         0 => worktree_index(repo, out, progress),
         1 => {
             let revspec = args.into_iter().next().context("missing revspec")?;
-            let id = repo
-                .rev_parse_single(revspec.as_bstr())
-                .with_context(|| format!("could not resolve revspec '{revspec}'"))?;
+            let id = match repo.rev_parse_single(revspec.as_bstr()) {
+                Ok(id) => id,
+                Err(_) => {
+                    // Parity with git's setup_revisions: unknown revision/path
+                    // dies 128 (vendor/git/revision.c::handle_revision_arg →
+                    // die). Wording is git's exact 3-line stanza.
+                    eprintln!(
+                        "fatal: ambiguous argument '{revspec}': unknown revision or path not in the working tree.\n\
+                         Use '--' to separate paths from revisions, like this:\n\
+                         'git <command> [<revision>...] -- [<file>...]'"
+                    );
+                    std::process::exit(128);
+                }
+            };
             use std::io::Write;
             let mut stderr = std::io::stderr().lock();
             let _ = writeln!(
@@ -44,6 +55,17 @@ pub fn porcelain(
             let mut it = args.into_iter();
             let old_treeish = it.next().context("missing old revspec")?;
             let new_treeish = it.next().context("missing new revspec")?;
+            // Same exact-stanza ambiguous-arg parity as the 1-arg path.
+            for spec in [&old_treeish, &new_treeish] {
+                if repo.rev_parse_single(spec.as_bstr()).is_err() {
+                    eprintln!(
+                        "fatal: ambiguous argument '{spec}': unknown revision or path not in the working tree.\n\
+                         Use '--' to separate paths from revisions, like this:\n\
+                         'git <command> [<revision>...] -- [<file>...]'"
+                    );
+                    std::process::exit(128);
+                }
+            }
             tree(repo, out, old_treeish, new_treeish)
         }
         n => anyhow::bail!("`gix diff` with {n} positional args not yet implemented"),
