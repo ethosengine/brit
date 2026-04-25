@@ -1831,6 +1831,28 @@ pub fn main() -> Result<()> {
                 },
             )
         }
+        #[cfg(feature = "gitoxide-core-blocking-client")]
+        Subcommands::Pull(crate::plumbing::options::pull::Platform {
+            repository: pull_repository,
+            refspec: pull_refspec,
+            ..
+        }) => prepare_and_run(
+            "pull",
+            trace,
+            verbose,
+            progress,
+            progress_keep_open,
+            None,
+            move |_progress, out, err| {
+                core::repository::pull::porcelain(
+                    repository(Mode::LenientWithGitInstallConfig)?,
+                    out,
+                    err,
+                    pull_repository,
+                    pull_refspec,
+                )
+            },
+        ),
         Subcommands::ConfigTree => show_progress(),
         Subcommands::Credential(cmd) => core::repository::credential(
             repository(Mode::StrictWithGitInstallConfig).ok(),

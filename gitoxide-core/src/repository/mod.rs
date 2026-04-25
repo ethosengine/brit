@@ -33,6 +33,8 @@ pub mod exclude;
 #[cfg(feature = "blocking-client")]
 pub mod fetch;
 #[cfg(feature = "blocking-client")]
+pub mod pull;
+#[cfg(feature = "blocking-client")]
 pub mod push;
 #[cfg(feature = "blocking-client")]
 pub use clone::function::clone;

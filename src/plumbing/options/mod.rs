@@ -125,6 +125,9 @@ pub enum Subcommands {
     /// Update remote refs along with associated objects.
     #[cfg(feature = "gitoxide-core-blocking-client")]
     Push(push::Platform),
+    /// Fetch from and integrate with another repository or a local branch.
+    #[cfg(feature = "gitoxide-core-blocking-client")]
+    Pull(pull::Platform),
     /// Interact with the mailmap.
     #[clap(subcommand)]
     Mailmap(mailmap::Subcommands),
@@ -3447,6 +3450,9 @@ pub mod free;
 
 #[cfg(feature = "gitoxide-core-blocking-client")]
 pub mod push;
+
+#[cfg(feature = "gitoxide-core-blocking-client")]
+pub mod pull;
 
 #[cfg(feature = "gitoxide-core-blocking-client")]
 pub mod fetch;
