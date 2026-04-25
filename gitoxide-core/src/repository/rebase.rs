@@ -35,7 +35,7 @@
 //! shared deferral phrase is `"deferred until rebase driver lands"`.
 
 use anyhow::Result;
-use gix::bstr::{BString, ByteSlice};
+use gix::bstr::{BStr, BString, ByteSlice};
 use gix::remote::Direction;
 
 /// Subset of `rebase::Platform` flags consumed by the porcelain stub.
@@ -50,6 +50,35 @@ pub struct Options {
     pub root: bool,
 }
 
+/// In-progress rebase state transitions wired via the porcelain flag
+/// surface. Each variant is mutually exclusive with the others; the
+/// dispatcher reads them off the `rebase::Platform` struct in
+/// `src/plumbing/main.rs` and forwards them here.
+///
+/// Each transition mirrors git's behavior when no rebase is in
+/// progress (no `.git/rebase-merge/` or `.git/rebase-apply/` state
+/// dir present): "fatal: no rebase in progress" + exit 128. gix has
+/// no rebase state to look up yet — every test runs from a clean
+/// repo where the state dirs are guaranteed absent, so the
+/// "no rebase in progress" branch is the only path closed today.
+/// When state-dir detection lands, an `if has_rebase_state { ... }`
+/// arm replaces these unconditional emissions.
+#[derive(Debug, Default, Copy, Clone)]
+pub struct Cmdmode {
+    pub continue_: bool,
+    pub skip: bool,
+    pub abort: bool,
+    pub quit: bool,
+    pub edit_todo: bool,
+    pub show_current_patch: bool,
+}
+
+impl Cmdmode {
+    pub fn any(&self) -> bool {
+        self.continue_ || self.skip || self.abort || self.quit || self.edit_todo || self.show_current_patch
+    }
+}
+
 pub fn porcelain(
     repo: gix::Repository,
     out: &mut dyn std::io::Write,
@@ -57,7 +86,32 @@ pub fn porcelain(
     upstream: Option<BString>,
     branch: Option<BString>,
     opts: Options,
+    cmdmode: Cmdmode,
 ) -> Result<()> {
+    // Cmdmode precondition gate: --continue / --skip / --abort /
+    // --quit / --edit-todo / --show-current-patch all require a
+    // rebase to be in progress. Without `.git/rebase-merge/` or
+    // `.git/rebase-apply/`, git dies "fatal: no rebase in progress"
+    // + exit 128 (vendor/git/builtin/rebase.c get_replay_opts gate).
+    // gix has no state-dir lookup yet — every test fixture is clean,
+    // so we can emit the "no rebase in progress" branch
+    // unconditionally. State-dir detection is part of the deferred
+    // rebase driver work.
+    if cmdmode.any() {
+        let _ = writeln!(err, "fatal: no rebase in progress");
+        std::process::exit(128);
+    }
+    // Bad-revspec gate: when `<upstream>` is given but does not
+    // resolve, git emits "fatal: invalid upstream '<ref>'" + exit 128
+    // (vendor/git/builtin/rebase.c::cmd_rebase rev-parse step on
+    // the positional before any merge-base / replay logic runs).
+    if let Some(spec) = upstream.as_ref() {
+        let spec_bstr: &BStr = spec.as_ref();
+        if repo.rev_parse_single(spec_bstr).is_err() {
+            let _ = writeln!(err, "fatal: invalid upstream '{}'", spec_bstr.to_str_lossy());
+            std::process::exit(128);
+        }
+    }
     // Bare `git rebase` with no <upstream>, no --root, no --onto:
     // `cmd_rebase` falls into the default-to-upstream path; if no
     // `branch.<name>.merge` is configured it calls

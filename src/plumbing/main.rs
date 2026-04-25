@@ -380,6 +380,12 @@ pub fn main() -> Result<()> {
             branch: rebase_branch,
             onto: rebase_onto,
             root: rebase_root,
+            continue_: rebase_continue,
+            skip: rebase_skip,
+            abort: rebase_abort,
+            quit: rebase_quit,
+            edit_todo: rebase_edit_todo,
+            show_current_patch: rebase_show_current_patch,
             ..
         }) => prepare_and_run(
             "rebase",
@@ -398,6 +404,14 @@ pub fn main() -> Result<()> {
                     core::repository::rebase::Options {
                         onto: rebase_onto,
                         root: rebase_root,
+                    },
+                    core::repository::rebase::Cmdmode {
+                        continue_: rebase_continue,
+                        skip: rebase_skip,
+                        abort: rebase_abort,
+                        quit: rebase_quit,
+                        edit_todo: rebase_edit_todo,
+                        show_current_patch: rebase_show_current_patch,
                     },
                 )
             },

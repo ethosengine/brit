@@ -76,8 +76,8 @@ title "gix rebase"
 # hash=dual
 title "gix rebase --help"
 only_for_hash dual && (sandbox
-  it "TODO matches git behavior" && {
-    : # TODO: expect_parity effect -- rebase --help
+  it "matches git behavior" && {
+    expect_parity effect -- rebase --help
   }
 )
 
@@ -88,8 +88,8 @@ only_for_hash dual && (sandbox
 # runs first.
 title "gix rebase --bogus-flag"
 only_for_hash sha1-only && (small-repo-in-sandbox
-  it "TODO matches git behavior" && {
-    : # TODO: expect_parity effect -- rebase --bogus-flag
+  it "matches git behavior" && {
+    expect_parity effect -- rebase --bogus-flag
   }
 )
 
@@ -104,8 +104,8 @@ only_for_hash sha1-only && (small-repo-in-sandbox
 # underlying driver is still a stub.
 title "gix rebase (bare, no upstream)"
 only_for_hash sha1-only && (small-repo-in-sandbox
-  it "TODO matches git behavior" && {
-    : # TODO: expect_parity bytes -- rebase
+  it "matches git behavior" && {
+    expect_parity bytes -- rebase
   }
 )
 
@@ -116,8 +116,8 @@ only_for_hash sha1-only && (small-repo-in-sandbox
 # hash=dual
 title "gix rebase (outside a repository)"
 only_for_hash dual && (sandbox
-  it "TODO matches git behavior" && {
-    : # TODO: expect_parity effect -- rebase main
+  it "matches git behavior" && {
+    expect_parity effect -- rebase main
   }
 )
 
@@ -130,8 +130,8 @@ only_for_hash dual && (sandbox
 # exit-code parity holds. Close as `compat_effect`.
 title "gix rebase <upstream> (already up to date)"
 only_for_hash sha1-only && (small-repo-in-sandbox
-  it "TODO matches git behavior" && {
-    : # TODO: compat_effect "deferred until rebase driver lands" -- rebase main
+  it "matches git behavior" && {
+    compat_effect "deferred until rebase driver lands" -- rebase main
   }
 )
 
@@ -143,8 +143,8 @@ only_for_hash sha1-only && (small-repo-in-sandbox
 title "gix rebase <upstream> (fast-forward)"
 only_for_hash sha1-only && (small-repo-in-sandbox
   git checkout -q dev
-  it "TODO matches git behavior" && {
-    : # TODO: compat_effect "deferred until rebase driver lands" -- rebase main
+  it "matches git behavior" && {
+    compat_effect "deferred until rebase driver lands" -- rebase main
   }
 )
 
@@ -154,20 +154,20 @@ only_for_hash sha1-only && (small-repo-in-sandbox
 # shortcut for `git checkout topic && git rebase master`").
 title "gix rebase <upstream> <branch>"
 only_for_hash sha1-only && (small-repo-in-sandbox
-  it "TODO matches git behavior" && {
-    : # TODO: compat_effect "deferred until rebase driver lands" -- rebase main dev
+  it "matches git behavior" && {
+    compat_effect "deferred until rebase driver lands" -- rebase main dev
   }
 )
 
 # mode=bytes — bad revspec: git emits the verbatim line
-# "fatal: invalid upstream '<ref>'" + exit 128. gix's plumbing
-# repository() closure cannot reach this path because the porcelain
-# placeholder doesn't rev-parse the positionals yet. Close as
-# `compat_effect` until the bad-revspec gate lands.
+# "fatal: invalid upstream '<ref>'" + exit 128. gix's porcelain
+# rev-parses the upstream positional via `repo.rev_parse_single`
+# before the placeholder happy path; on parse failure it emits
+# git's verbatim wording and exits 128.
 title "gix rebase <bad-revspec>"
 only_for_hash sha1-only && (small-repo-in-sandbox
-  it "TODO matches git behavior" && {
-    : # TODO: compat_effect "deferred until rebase driver lands" -- rebase nonexistent-branch
+  it "matches git behavior" && {
+    expect_parity bytes -- rebase nonexistent-branch
   }
 )
 
@@ -175,22 +175,22 @@ only_for_hash sha1-only && (small-repo-in-sandbox
 
 title "gix rebase --onto"
 only_for_hash sha1-only && (small-repo-in-sandbox
-  it "TODO matches git behavior" && {
-    : # TODO: compat_effect "deferred until rebase driver lands" -- rebase --onto main main dev
+  it "matches git behavior" && {
+    compat_effect "deferred until rebase driver lands" -- rebase --onto main main dev
   }
 )
 
 title "gix rebase --keep-base"
 only_for_hash sha1-only && (small-repo-in-sandbox
-  it "TODO matches git behavior" && {
-    : # TODO: compat_effect "deferred until rebase driver lands" -- rebase --keep-base main
+  it "matches git behavior" && {
+    compat_effect "deferred until rebase driver lands" -- rebase --keep-base main
   }
 )
 
 title "gix rebase --root"
 only_for_hash sha1-only && (small-repo-in-sandbox
-  it "TODO matches git behavior" && {
-    : # TODO: compat_effect "deferred until rebase driver lands" -- rebase --root
+  it "matches git behavior" && {
+    compat_effect "deferred until rebase driver lands" -- rebase --root
   }
 )
 
@@ -201,43 +201,43 @@ only_for_hash sha1-only && (small-repo-in-sandbox
 # Mirrors vendor/git/builtin/rebase.c get_replay_opts gate.
 title "gix rebase --continue"
 only_for_hash sha1-only && (small-repo-in-sandbox
-  it "TODO matches git behavior" && {
-    : # TODO: compat_effect "deferred until rebase driver lands" -- rebase --continue
+  it "matches git behavior" && {
+    expect_parity bytes -- rebase --continue
   }
 )
 
 title "gix rebase --skip"
 only_for_hash sha1-only && (small-repo-in-sandbox
-  it "TODO matches git behavior" && {
-    : # TODO: compat_effect "deferred until rebase driver lands" -- rebase --skip
+  it "matches git behavior" && {
+    expect_parity bytes -- rebase --skip
   }
 )
 
 title "gix rebase --abort"
 only_for_hash sha1-only && (small-repo-in-sandbox
-  it "TODO matches git behavior" && {
-    : # TODO: compat_effect "deferred until rebase driver lands" -- rebase --abort
+  it "matches git behavior" && {
+    expect_parity bytes -- rebase --abort
   }
 )
 
 title "gix rebase --quit"
 only_for_hash sha1-only && (small-repo-in-sandbox
-  it "TODO matches git behavior" && {
-    : # TODO: compat_effect "deferred until rebase driver lands" -- rebase --quit
+  it "matches git behavior" && {
+    expect_parity bytes -- rebase --quit
   }
 )
 
 title "gix rebase --edit-todo"
 only_for_hash sha1-only && (small-repo-in-sandbox
-  it "TODO matches git behavior" && {
-    : # TODO: compat_effect "deferred until rebase driver lands" -- rebase --edit-todo
+  it "matches git behavior" && {
+    expect_parity bytes -- rebase --edit-todo
   }
 )
 
 title "gix rebase --show-current-patch"
 only_for_hash sha1-only && (small-repo-in-sandbox
-  it "TODO matches git behavior" && {
-    : # TODO: compat_effect "deferred until rebase driver lands" -- rebase --show-current-patch
+  it "matches git behavior" && {
+    expect_parity bytes -- rebase --show-current-patch
   }
 )
 
@@ -245,36 +245,36 @@ only_for_hash sha1-only && (small-repo-in-sandbox
 
 title "gix rebase --apply"
 only_for_hash sha1-only && (small-repo-in-sandbox
-  it "TODO matches git behavior" && {
-    : # TODO: compat_effect "deferred until rebase driver lands" -- rebase --apply main
+  it "matches git behavior" && {
+    compat_effect "deferred until rebase driver lands" -- rebase --apply main
   }
 )
 
 title "gix rebase --merge"
 only_for_hash sha1-only && (small-repo-in-sandbox
-  it "TODO matches git behavior" && {
-    : # TODO: compat_effect "deferred until rebase driver lands" -- rebase --merge main
+  it "matches git behavior" && {
+    compat_effect "deferred until rebase driver lands" -- rebase --merge main
   }
 )
 
 title "gix rebase -m"
 only_for_hash sha1-only && (small-repo-in-sandbox
-  it "TODO matches git behavior" && {
-    : # TODO: compat_effect "deferred until rebase driver lands" -- rebase -m main
+  it "matches git behavior" && {
+    compat_effect "deferred until rebase driver lands" -- rebase -m main
   }
 )
 
 title "gix rebase --interactive"
 only_for_hash sha1-only && (small-repo-in-sandbox
-  it "TODO matches git behavior" && {
-    : # TODO: compat_effect "deferred until rebase driver lands" -- rebase --interactive main
+  it "matches git behavior" && {
+    compat_effect "deferred until rebase driver lands" -- rebase --interactive main
   }
 )
 
 title "gix rebase -i"
 only_for_hash sha1-only && (small-repo-in-sandbox
-  it "TODO matches git behavior" && {
-    : # TODO: compat_effect "deferred until rebase driver lands" -- rebase -i main
+  it "matches git behavior" && {
+    compat_effect "deferred until rebase driver lands" -- rebase -i main
   }
 )
 
@@ -282,57 +282,57 @@ only_for_hash sha1-only && (small-repo-in-sandbox
 
 title "gix rebase --empty=drop"
 only_for_hash sha1-only && (small-repo-in-sandbox
-  it "TODO matches git behavior" && {
-    : # TODO: compat_effect "deferred until rebase driver lands" -- rebase --empty=drop main
+  it "matches git behavior" && {
+    compat_effect "deferred until rebase driver lands" -- rebase --empty=drop main
   }
 )
 
 title "gix rebase --empty=keep"
 only_for_hash sha1-only && (small-repo-in-sandbox
-  it "TODO matches git behavior" && {
-    : # TODO: compat_effect "deferred until rebase driver lands" -- rebase --empty=keep main
+  it "matches git behavior" && {
+    compat_effect "deferred until rebase driver lands" -- rebase --empty=keep main
   }
 )
 
 title "gix rebase --empty=stop"
 only_for_hash sha1-only && (small-repo-in-sandbox
-  it "TODO matches git behavior" && {
-    : # TODO: compat_effect "deferred until rebase driver lands" -- rebase --empty=stop main
+  it "matches git behavior" && {
+    compat_effect "deferred until rebase driver lands" -- rebase --empty=stop main
   }
 )
 
 title "gix rebase --keep-empty"
 only_for_hash sha1-only && (small-repo-in-sandbox
-  it "TODO matches git behavior" && {
-    : # TODO: compat_effect "deferred until rebase driver lands" -- rebase --keep-empty main
+  it "matches git behavior" && {
+    compat_effect "deferred until rebase driver lands" -- rebase --keep-empty main
   }
 )
 
 title "gix rebase --no-keep-empty"
 only_for_hash sha1-only && (small-repo-in-sandbox
-  it "TODO matches git behavior" && {
-    : # TODO: compat_effect "deferred until rebase driver lands" -- rebase --no-keep-empty main
+  it "matches git behavior" && {
+    compat_effect "deferred until rebase driver lands" -- rebase --no-keep-empty main
   }
 )
 
 title "gix rebase --reapply-cherry-picks"
 only_for_hash sha1-only && (small-repo-in-sandbox
-  it "TODO matches git behavior" && {
-    : # TODO: compat_effect "deferred until rebase driver lands" -- rebase --reapply-cherry-picks main
+  it "matches git behavior" && {
+    compat_effect "deferred until rebase driver lands" -- rebase --reapply-cherry-picks main
   }
 )
 
 title "gix rebase --no-reapply-cherry-picks"
 only_for_hash sha1-only && (small-repo-in-sandbox
-  it "TODO matches git behavior" && {
-    : # TODO: compat_effect "deferred until rebase driver lands" -- rebase --no-reapply-cherry-picks main
+  it "matches git behavior" && {
+    compat_effect "deferred until rebase driver lands" -- rebase --no-reapply-cherry-picks main
   }
 )
 
 title "gix rebase --allow-empty-message"
 only_for_hash sha1-only && (small-repo-in-sandbox
-  it "TODO matches git behavior" && {
-    : # TODO: compat_effect "deferred until rebase driver lands" -- rebase --allow-empty-message main
+  it "matches git behavior" && {
+    compat_effect "deferred until rebase driver lands" -- rebase --allow-empty-message main
   }
 )
 
@@ -340,64 +340,64 @@ only_for_hash sha1-only && (small-repo-in-sandbox
 
 title "gix rebase --strategy=ort"
 only_for_hash sha1-only && (small-repo-in-sandbox
-  it "TODO matches git behavior" && {
-    : # TODO: compat_effect "deferred until rebase driver lands" -- rebase --strategy=ort main
+  it "matches git behavior" && {
+    compat_effect "deferred until rebase driver lands" -- rebase --strategy=ort main
   }
 )
 
 title "gix rebase -s ort"
 only_for_hash sha1-only && (small-repo-in-sandbox
-  it "TODO matches git behavior" && {
-    : # TODO: compat_effect "deferred until rebase driver lands" -- rebase -s ort main
+  it "matches git behavior" && {
+    compat_effect "deferred until rebase driver lands" -- rebase -s ort main
   }
 )
 
 title "gix rebase --strategy-option=ours"
 only_for_hash sha1-only && (small-repo-in-sandbox
-  it "TODO matches git behavior" && {
-    : # TODO: compat_effect "deferred until rebase driver lands" -- rebase --strategy-option=ours main
+  it "matches git behavior" && {
+    compat_effect "deferred until rebase driver lands" -- rebase --strategy-option=ours main
   }
 )
 
 title "gix rebase -X ours"
 only_for_hash sha1-only && (small-repo-in-sandbox
-  it "TODO matches git behavior" && {
-    : # TODO: compat_effect "deferred until rebase driver lands" -- rebase -X ours main
+  it "matches git behavior" && {
+    compat_effect "deferred until rebase driver lands" -- rebase -X ours main
   }
 )
 
 title "gix rebase --rebase-merges"
 only_for_hash sha1-only && (small-repo-in-sandbox
-  it "TODO matches git behavior" && {
-    : # TODO: compat_effect "deferred until rebase driver lands" -- rebase --rebase-merges main
+  it "matches git behavior" && {
+    compat_effect "deferred until rebase driver lands" -- rebase --rebase-merges main
   }
 )
 
 title "gix rebase --rebase-merges=rebase-cousins"
 only_for_hash sha1-only && (small-repo-in-sandbox
-  it "TODO matches git behavior" && {
-    : # TODO: compat_effect "deferred until rebase driver lands" -- rebase --rebase-merges=rebase-cousins main
+  it "matches git behavior" && {
+    compat_effect "deferred until rebase driver lands" -- rebase --rebase-merges=rebase-cousins main
   }
 )
 
 title "gix rebase --rebase-merges=no-rebase-cousins"
 only_for_hash sha1-only && (small-repo-in-sandbox
-  it "TODO matches git behavior" && {
-    : # TODO: compat_effect "deferred until rebase driver lands" -- rebase --rebase-merges=no-rebase-cousins main
+  it "matches git behavior" && {
+    compat_effect "deferred until rebase driver lands" -- rebase --rebase-merges=no-rebase-cousins main
   }
 )
 
 title "gix rebase --no-rebase-merges"
 only_for_hash sha1-only && (small-repo-in-sandbox
-  it "TODO matches git behavior" && {
-    : # TODO: compat_effect "deferred until rebase driver lands" -- rebase --no-rebase-merges main
+  it "matches git behavior" && {
+    compat_effect "deferred until rebase driver lands" -- rebase --no-rebase-merges main
   }
 )
 
 title "gix rebase -r"
 only_for_hash sha1-only && (small-repo-in-sandbox
-  it "TODO matches git behavior" && {
-    : # TODO: compat_effect "deferred until rebase driver lands" -- rebase -r main
+  it "matches git behavior" && {
+    compat_effect "deferred until rebase driver lands" -- rebase -r main
   }
 )
 
@@ -405,36 +405,36 @@ only_for_hash sha1-only && (small-repo-in-sandbox
 
 title "gix rebase --force-rebase"
 only_for_hash sha1-only && (small-repo-in-sandbox
-  it "TODO matches git behavior" && {
-    : # TODO: compat_effect "deferred until rebase driver lands" -- rebase --force-rebase main
+  it "matches git behavior" && {
+    compat_effect "deferred until rebase driver lands" -- rebase --force-rebase main
   }
 )
 
 title "gix rebase -f"
 only_for_hash sha1-only && (small-repo-in-sandbox
-  it "TODO matches git behavior" && {
-    : # TODO: compat_effect "deferred until rebase driver lands" -- rebase -f main
+  it "matches git behavior" && {
+    compat_effect "deferred until rebase driver lands" -- rebase -f main
   }
 )
 
 title "gix rebase --no-ff"
 only_for_hash sha1-only && (small-repo-in-sandbox
-  it "TODO matches git behavior" && {
-    : # TODO: compat_effect "deferred until rebase driver lands" -- rebase --no-ff main
+  it "matches git behavior" && {
+    compat_effect "deferred until rebase driver lands" -- rebase --no-ff main
   }
 )
 
 title "gix rebase --fork-point"
 only_for_hash sha1-only && (small-repo-in-sandbox
-  it "TODO matches git behavior" && {
-    : # TODO: compat_effect "deferred until rebase driver lands" -- rebase --fork-point main
+  it "matches git behavior" && {
+    compat_effect "deferred until rebase driver lands" -- rebase --fork-point main
   }
 )
 
 title "gix rebase --no-fork-point"
 only_for_hash sha1-only && (small-repo-in-sandbox
-  it "TODO matches git behavior" && {
-    : # TODO: compat_effect "deferred until rebase driver lands" -- rebase --no-fork-point main
+  it "matches git behavior" && {
+    compat_effect "deferred until rebase driver lands" -- rebase --no-fork-point main
   }
 )
 
@@ -442,57 +442,57 @@ only_for_hash sha1-only && (small-repo-in-sandbox
 
 title "gix rebase --exec"
 only_for_hash sha1-only && (small-repo-in-sandbox
-  it "TODO matches git behavior" && {
-    : # TODO: compat_effect "deferred until rebase driver lands" -- rebase --exec "true" main
+  it "matches git behavior" && {
+    compat_effect "deferred until rebase driver lands" -- rebase --exec "true" main
   }
 )
 
 title "gix rebase -x"
 only_for_hash sha1-only && (small-repo-in-sandbox
-  it "TODO matches git behavior" && {
-    : # TODO: compat_effect "deferred until rebase driver lands" -- rebase -x "true" main
+  it "matches git behavior" && {
+    compat_effect "deferred until rebase driver lands" -- rebase -x "true" main
   }
 )
 
 title "gix rebase --autosquash"
 only_for_hash sha1-only && (small-repo-in-sandbox
-  it "TODO matches git behavior" && {
-    : # TODO: compat_effect "deferred until rebase driver lands" -- rebase --autosquash main
+  it "matches git behavior" && {
+    compat_effect "deferred until rebase driver lands" -- rebase --autosquash main
   }
 )
 
 title "gix rebase --no-autosquash"
 only_for_hash sha1-only && (small-repo-in-sandbox
-  it "TODO matches git behavior" && {
-    : # TODO: compat_effect "deferred until rebase driver lands" -- rebase --no-autosquash main
+  it "matches git behavior" && {
+    compat_effect "deferred until rebase driver lands" -- rebase --no-autosquash main
   }
 )
 
 title "gix rebase --reschedule-failed-exec"
 only_for_hash sha1-only && (small-repo-in-sandbox
-  it "TODO matches git behavior" && {
-    : # TODO: compat_effect "deferred until rebase driver lands" -- rebase --reschedule-failed-exec main
+  it "matches git behavior" && {
+    compat_effect "deferred until rebase driver lands" -- rebase --reschedule-failed-exec main
   }
 )
 
 title "gix rebase --no-reschedule-failed-exec"
 only_for_hash sha1-only && (small-repo-in-sandbox
-  it "TODO matches git behavior" && {
-    : # TODO: compat_effect "deferred until rebase driver lands" -- rebase --no-reschedule-failed-exec main
+  it "matches git behavior" && {
+    compat_effect "deferred until rebase driver lands" -- rebase --no-reschedule-failed-exec main
   }
 )
 
 title "gix rebase --update-refs"
 only_for_hash sha1-only && (small-repo-in-sandbox
-  it "TODO matches git behavior" && {
-    : # TODO: compat_effect "deferred until rebase driver lands" -- rebase --update-refs main
+  it "matches git behavior" && {
+    compat_effect "deferred until rebase driver lands" -- rebase --update-refs main
   }
 )
 
 title "gix rebase --no-update-refs"
 only_for_hash sha1-only && (small-repo-in-sandbox
-  it "TODO matches git behavior" && {
-    : # TODO: compat_effect "deferred until rebase driver lands" -- rebase --no-update-refs main
+  it "matches git behavior" && {
+    compat_effect "deferred until rebase driver lands" -- rebase --no-update-refs main
   }
 )
 
@@ -500,50 +500,50 @@ only_for_hash sha1-only && (small-repo-in-sandbox
 
 title "gix rebase --quiet"
 only_for_hash sha1-only && (small-repo-in-sandbox
-  it "TODO matches git behavior" && {
-    : # TODO: compat_effect "deferred until rebase driver lands" -- rebase --quiet main
+  it "matches git behavior" && {
+    compat_effect "deferred until rebase driver lands" -- rebase --quiet main
   }
 )
 
 title "gix rebase -q"
 only_for_hash sha1-only && (small-repo-in-sandbox
-  it "TODO matches git behavior" && {
-    : # TODO: compat_effect "deferred until rebase driver lands" -- rebase -q main
+  it "matches git behavior" && {
+    compat_effect "deferred until rebase driver lands" -- rebase -q main
   }
 )
 
 title "gix rebase --verbose"
 only_for_hash sha1-only && (small-repo-in-sandbox
-  it "TODO matches git behavior" && {
-    : # TODO: compat_effect "deferred until rebase driver lands" -- rebase --verbose main
+  it "matches git behavior" && {
+    compat_effect "deferred until rebase driver lands" -- rebase --verbose main
   }
 )
 
 title "gix rebase -v"
 only_for_hash sha1-only && (small-repo-in-sandbox
-  it "TODO matches git behavior" && {
-    : # TODO: compat_effect "deferred until rebase driver lands" -- rebase -v main
+  it "matches git behavior" && {
+    compat_effect "deferred until rebase driver lands" -- rebase -v main
   }
 )
 
 title "gix rebase --stat"
 only_for_hash sha1-only && (small-repo-in-sandbox
-  it "TODO matches git behavior" && {
-    : # TODO: compat_effect "deferred until rebase driver lands" -- rebase --stat main
+  it "matches git behavior" && {
+    compat_effect "deferred until rebase driver lands" -- rebase --stat main
   }
 )
 
 title "gix rebase --no-stat"
 only_for_hash sha1-only && (small-repo-in-sandbox
-  it "TODO matches git behavior" && {
-    : # TODO: compat_effect "deferred until rebase driver lands" -- rebase --no-stat main
+  it "matches git behavior" && {
+    compat_effect "deferred until rebase driver lands" -- rebase --no-stat main
   }
 )
 
 title "gix rebase -n"
 only_for_hash sha1-only && (small-repo-in-sandbox
-  it "TODO matches git behavior" && {
-    : # TODO: compat_effect "deferred until rebase driver lands" -- rebase -n main
+  it "matches git behavior" && {
+    compat_effect "deferred until rebase driver lands" -- rebase -n main
   }
 )
 
@@ -551,15 +551,15 @@ only_for_hash sha1-only && (small-repo-in-sandbox
 
 title "gix rebase --no-verify"
 only_for_hash sha1-only && (small-repo-in-sandbox
-  it "TODO matches git behavior" && {
-    : # TODO: compat_effect "deferred until rebase driver lands" -- rebase --no-verify main
+  it "matches git behavior" && {
+    compat_effect "deferred until rebase driver lands" -- rebase --no-verify main
   }
 )
 
 title "gix rebase --verify"
 only_for_hash sha1-only && (small-repo-in-sandbox
-  it "TODO matches git behavior" && {
-    : # TODO: compat_effect "deferred until rebase driver lands" -- rebase --verify main
+  it "matches git behavior" && {
+    compat_effect "deferred until rebase driver lands" -- rebase --verify main
   }
 )
 
@@ -567,59 +567,64 @@ only_for_hash sha1-only && (small-repo-in-sandbox
 
 title "gix rebase -C"
 only_for_hash sha1-only && (small-repo-in-sandbox
-  it "TODO matches git behavior" && {
-    : # TODO: compat_effect "deferred until rebase driver lands" -- rebase -C 5 main
+  it "matches git behavior" && {
+    compat_effect "deferred until rebase driver lands" -- rebase -C 5 main
   }
 )
 
 title "gix rebase --ignore-whitespace"
 only_for_hash sha1-only && (small-repo-in-sandbox
-  it "TODO matches git behavior" && {
-    : # TODO: compat_effect "deferred until rebase driver lands" -- rebase --ignore-whitespace main
+  it "matches git behavior" && {
+    compat_effect "deferred until rebase driver lands" -- rebase --ignore-whitespace main
   }
 )
 
 title "gix rebase --whitespace=fix"
 only_for_hash sha1-only && (small-repo-in-sandbox
-  it "TODO matches git behavior" && {
-    : # TODO: compat_effect "deferred until rebase driver lands" -- rebase --whitespace=fix main
+  it "matches git behavior" && {
+    compat_effect "deferred until rebase driver lands" -- rebase --whitespace=fix main
   }
 )
 
 # --- trailers / signoff / authorship ------------------------------------
 
+# mode=effect — `--trailer` was added to git-rebase upstream but is
+# absent from system git 2.47.3 (vendor/git v2.54.0 has it). System
+# git emits "error: unknown option `trailer'" + exit 129; gix's clap
+# accepts the flag and exits 0. Hard system-version constraint —
+# closes as `shortcoming` until the test runtime upgrades.
 title "gix rebase --trailer"
 only_for_hash sha1-only && (small-repo-in-sandbox
-  it "TODO matches git behavior" && {
-    : # TODO: compat_effect "deferred until rebase driver lands" -- rebase --trailer "Signed-off-by: x <x@x>" main
+  it "matches git behavior" && {
+    shortcoming "system git 2.47.3 lacks --trailer; vendor/git v2.54.0 has it"
   }
 )
 
 title "gix rebase --signoff"
 only_for_hash sha1-only && (small-repo-in-sandbox
-  it "TODO matches git behavior" && {
-    : # TODO: compat_effect "deferred until rebase driver lands" -- rebase --signoff main
+  it "matches git behavior" && {
+    compat_effect "deferred until rebase driver lands" -- rebase --signoff main
   }
 )
 
 title "gix rebase --committer-date-is-author-date"
 only_for_hash sha1-only && (small-repo-in-sandbox
-  it "TODO matches git behavior" && {
-    : # TODO: compat_effect "deferred until rebase driver lands" -- rebase --committer-date-is-author-date main
+  it "matches git behavior" && {
+    compat_effect "deferred until rebase driver lands" -- rebase --committer-date-is-author-date main
   }
 )
 
 title "gix rebase --reset-author-date"
 only_for_hash sha1-only && (small-repo-in-sandbox
-  it "TODO matches git behavior" && {
-    : # TODO: compat_effect "deferred until rebase driver lands" -- rebase --reset-author-date main
+  it "matches git behavior" && {
+    compat_effect "deferred until rebase driver lands" -- rebase --reset-author-date main
   }
 )
 
 title "gix rebase --ignore-date"
 only_for_hash sha1-only && (small-repo-in-sandbox
-  it "TODO matches git behavior" && {
-    : # TODO: compat_effect "deferred until rebase driver lands" -- rebase --ignore-date main
+  it "matches git behavior" && {
+    compat_effect "deferred until rebase driver lands" -- rebase --ignore-date main
   }
 )
 
@@ -627,15 +632,15 @@ only_for_hash sha1-only && (small-repo-in-sandbox
 
 title "gix rebase --rerere-autoupdate"
 only_for_hash sha1-only && (small-repo-in-sandbox
-  it "TODO matches git behavior" && {
-    : # TODO: compat_effect "deferred until rebase driver lands" -- rebase --rerere-autoupdate main
+  it "matches git behavior" && {
+    compat_effect "deferred until rebase driver lands" -- rebase --rerere-autoupdate main
   }
 )
 
 title "gix rebase --no-rerere-autoupdate"
 only_for_hash sha1-only && (small-repo-in-sandbox
-  it "TODO matches git behavior" && {
-    : # TODO: compat_effect "deferred until rebase driver lands" -- rebase --no-rerere-autoupdate main
+  it "matches git behavior" && {
+    compat_effect "deferred until rebase driver lands" -- rebase --no-rerere-autoupdate main
   }
 )
 
@@ -643,15 +648,15 @@ only_for_hash sha1-only && (small-repo-in-sandbox
 
 title "gix rebase --autostash"
 only_for_hash sha1-only && (small-repo-in-sandbox
-  it "TODO matches git behavior" && {
-    : # TODO: compat_effect "deferred until rebase driver lands" -- rebase --autostash main
+  it "matches git behavior" && {
+    compat_effect "deferred until rebase driver lands" -- rebase --autostash main
   }
 )
 
 title "gix rebase --no-autostash"
 only_for_hash sha1-only && (small-repo-in-sandbox
-  it "TODO matches git behavior" && {
-    : # TODO: compat_effect "deferred until rebase driver lands" -- rebase --no-autostash main
+  it "matches git behavior" && {
+    compat_effect "deferred until rebase driver lands" -- rebase --no-autostash main
   }
 )
 
@@ -659,28 +664,28 @@ only_for_hash sha1-only && (small-repo-in-sandbox
 
 title "gix rebase --gpg-sign"
 only_for_hash sha1-only && (small-repo-in-sandbox
-  it "TODO matches git behavior" && {
-    : # TODO: compat_effect "deferred until rebase driver lands" -- rebase --gpg-sign main
+  it "matches git behavior" && {
+    compat_effect "deferred until rebase driver lands" -- rebase --gpg-sign main
   }
 )
 
 title "gix rebase --gpg-sign=keyid"
 only_for_hash sha1-only && (small-repo-in-sandbox
-  it "TODO matches git behavior" && {
-    : # TODO: compat_effect "deferred until rebase driver lands" -- rebase --gpg-sign=KEYID main
+  it "matches git behavior" && {
+    compat_effect "deferred until rebase driver lands" -- rebase --gpg-sign=KEYID main
   }
 )
 
 title "gix rebase -S"
 only_for_hash sha1-only && (small-repo-in-sandbox
-  it "TODO matches git behavior" && {
-    : # TODO: compat_effect "deferred until rebase driver lands" -- rebase -S main
+  it "matches git behavior" && {
+    compat_effect "deferred until rebase driver lands" -- rebase -S main
   }
 )
 
 title "gix rebase --no-gpg-sign"
 only_for_hash sha1-only && (small-repo-in-sandbox
-  it "TODO matches git behavior" && {
-    : # TODO: compat_effect "deferred until rebase driver lands" -- rebase --no-gpg-sign main
+  it "matches git behavior" && {
+    compat_effect "deferred until rebase driver lands" -- rebase --no-gpg-sign main
   }
 )

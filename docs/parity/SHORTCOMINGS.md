@@ -455,6 +455,77 @@ Two row classes:
 | deferred | `gix pull -a` | git fetch --append precedes merge-candidates check; deferred until pull driver wires fetch composition | [pull.sh:611](../../tests/journey/parity/pull.sh#L611) |
 | deferred | `gix pull --append` | git fetch --append precedes merge-candidates check; deferred until pull driver wires fetch composition | [pull.sh:616](../../tests/journey/parity/pull.sh#L616) |
 
+## rebase
+
+| Class | Section | Reason | Source |
+|---|---|---|---|
+| compat | `gix rebase <upstream> (already up to date)` | deferred until rebase driver lands | [rebase.sh:134](../../tests/journey/parity/rebase.sh#L134) |
+| compat | `gix rebase <upstream> (fast-forward)` | deferred until rebase driver lands | [rebase.sh:147](../../tests/journey/parity/rebase.sh#L147) |
+| compat | `gix rebase <upstream> <branch>` | deferred until rebase driver lands | [rebase.sh:158](../../tests/journey/parity/rebase.sh#L158) |
+| compat | `gix rebase --onto` | deferred until rebase driver lands | [rebase.sh:179](../../tests/journey/parity/rebase.sh#L179) |
+| compat | `gix rebase --keep-base` | deferred until rebase driver lands | [rebase.sh:186](../../tests/journey/parity/rebase.sh#L186) |
+| compat | `gix rebase --root` | deferred until rebase driver lands | [rebase.sh:193](../../tests/journey/parity/rebase.sh#L193) |
+| compat | `gix rebase --apply` | deferred until rebase driver lands | [rebase.sh:249](../../tests/journey/parity/rebase.sh#L249) |
+| compat | `gix rebase --merge` | deferred until rebase driver lands | [rebase.sh:256](../../tests/journey/parity/rebase.sh#L256) |
+| compat | `gix rebase -m` | deferred until rebase driver lands | [rebase.sh:263](../../tests/journey/parity/rebase.sh#L263) |
+| compat | `gix rebase --interactive` | deferred until rebase driver lands | [rebase.sh:270](../../tests/journey/parity/rebase.sh#L270) |
+| compat | `gix rebase -i` | deferred until rebase driver lands | [rebase.sh:277](../../tests/journey/parity/rebase.sh#L277) |
+| compat | `gix rebase --empty=drop` | deferred until rebase driver lands | [rebase.sh:286](../../tests/journey/parity/rebase.sh#L286) |
+| compat | `gix rebase --empty=keep` | deferred until rebase driver lands | [rebase.sh:293](../../tests/journey/parity/rebase.sh#L293) |
+| compat | `gix rebase --empty=stop` | deferred until rebase driver lands | [rebase.sh:300](../../tests/journey/parity/rebase.sh#L300) |
+| compat | `gix rebase --keep-empty` | deferred until rebase driver lands | [rebase.sh:307](../../tests/journey/parity/rebase.sh#L307) |
+| compat | `gix rebase --no-keep-empty` | deferred until rebase driver lands | [rebase.sh:314](../../tests/journey/parity/rebase.sh#L314) |
+| compat | `gix rebase --reapply-cherry-picks` | deferred until rebase driver lands | [rebase.sh:321](../../tests/journey/parity/rebase.sh#L321) |
+| compat | `gix rebase --no-reapply-cherry-picks` | deferred until rebase driver lands | [rebase.sh:328](../../tests/journey/parity/rebase.sh#L328) |
+| compat | `gix rebase --allow-empty-message` | deferred until rebase driver lands | [rebase.sh:335](../../tests/journey/parity/rebase.sh#L335) |
+| compat | `gix rebase --strategy=ort` | deferred until rebase driver lands | [rebase.sh:344](../../tests/journey/parity/rebase.sh#L344) |
+| compat | `gix rebase -s ort` | deferred until rebase driver lands | [rebase.sh:351](../../tests/journey/parity/rebase.sh#L351) |
+| compat | `gix rebase --strategy-option=ours` | deferred until rebase driver lands | [rebase.sh:358](../../tests/journey/parity/rebase.sh#L358) |
+| compat | `gix rebase -X ours` | deferred until rebase driver lands | [rebase.sh:365](../../tests/journey/parity/rebase.sh#L365) |
+| compat | `gix rebase --rebase-merges` | deferred until rebase driver lands | [rebase.sh:372](../../tests/journey/parity/rebase.sh#L372) |
+| compat | `gix rebase --rebase-merges=rebase-cousins` | deferred until rebase driver lands | [rebase.sh:379](../../tests/journey/parity/rebase.sh#L379) |
+| compat | `gix rebase --rebase-merges=no-rebase-cousins` | deferred until rebase driver lands | [rebase.sh:386](../../tests/journey/parity/rebase.sh#L386) |
+| compat | `gix rebase --no-rebase-merges` | deferred until rebase driver lands | [rebase.sh:393](../../tests/journey/parity/rebase.sh#L393) |
+| compat | `gix rebase -r` | deferred until rebase driver lands | [rebase.sh:400](../../tests/journey/parity/rebase.sh#L400) |
+| compat | `gix rebase --force-rebase` | deferred until rebase driver lands | [rebase.sh:409](../../tests/journey/parity/rebase.sh#L409) |
+| compat | `gix rebase -f` | deferred until rebase driver lands | [rebase.sh:416](../../tests/journey/parity/rebase.sh#L416) |
+| compat | `gix rebase --no-ff` | deferred until rebase driver lands | [rebase.sh:423](../../tests/journey/parity/rebase.sh#L423) |
+| compat | `gix rebase --fork-point` | deferred until rebase driver lands | [rebase.sh:430](../../tests/journey/parity/rebase.sh#L430) |
+| compat | `gix rebase --no-fork-point` | deferred until rebase driver lands | [rebase.sh:437](../../tests/journey/parity/rebase.sh#L437) |
+| compat | `gix rebase --exec` | deferred until rebase driver lands | [rebase.sh:446](../../tests/journey/parity/rebase.sh#L446) |
+| compat | `gix rebase -x` | deferred until rebase driver lands | [rebase.sh:453](../../tests/journey/parity/rebase.sh#L453) |
+| compat | `gix rebase --autosquash` | deferred until rebase driver lands | [rebase.sh:460](../../tests/journey/parity/rebase.sh#L460) |
+| compat | `gix rebase --no-autosquash` | deferred until rebase driver lands | [rebase.sh:467](../../tests/journey/parity/rebase.sh#L467) |
+| compat | `gix rebase --reschedule-failed-exec` | deferred until rebase driver lands | [rebase.sh:474](../../tests/journey/parity/rebase.sh#L474) |
+| compat | `gix rebase --no-reschedule-failed-exec` | deferred until rebase driver lands | [rebase.sh:481](../../tests/journey/parity/rebase.sh#L481) |
+| compat | `gix rebase --update-refs` | deferred until rebase driver lands | [rebase.sh:488](../../tests/journey/parity/rebase.sh#L488) |
+| compat | `gix rebase --no-update-refs` | deferred until rebase driver lands | [rebase.sh:495](../../tests/journey/parity/rebase.sh#L495) |
+| compat | `gix rebase --quiet` | deferred until rebase driver lands | [rebase.sh:504](../../tests/journey/parity/rebase.sh#L504) |
+| compat | `gix rebase -q` | deferred until rebase driver lands | [rebase.sh:511](../../tests/journey/parity/rebase.sh#L511) |
+| compat | `gix rebase --verbose` | deferred until rebase driver lands | [rebase.sh:518](../../tests/journey/parity/rebase.sh#L518) |
+| compat | `gix rebase -v` | deferred until rebase driver lands | [rebase.sh:525](../../tests/journey/parity/rebase.sh#L525) |
+| compat | `gix rebase --stat` | deferred until rebase driver lands | [rebase.sh:532](../../tests/journey/parity/rebase.sh#L532) |
+| compat | `gix rebase --no-stat` | deferred until rebase driver lands | [rebase.sh:539](../../tests/journey/parity/rebase.sh#L539) |
+| compat | `gix rebase -n` | deferred until rebase driver lands | [rebase.sh:546](../../tests/journey/parity/rebase.sh#L546) |
+| compat | `gix rebase --no-verify` | deferred until rebase driver lands | [rebase.sh:555](../../tests/journey/parity/rebase.sh#L555) |
+| compat | `gix rebase --verify` | deferred until rebase driver lands | [rebase.sh:562](../../tests/journey/parity/rebase.sh#L562) |
+| compat | `gix rebase -C` | deferred until rebase driver lands | [rebase.sh:571](../../tests/journey/parity/rebase.sh#L571) |
+| compat | `gix rebase --ignore-whitespace` | deferred until rebase driver lands | [rebase.sh:578](../../tests/journey/parity/rebase.sh#L578) |
+| compat | `gix rebase --whitespace=fix` | deferred until rebase driver lands | [rebase.sh:585](../../tests/journey/parity/rebase.sh#L585) |
+| deferred | `gix rebase --trailer` | system git 2.47.3 lacks --trailer; vendor/git v2.54.0 has it | [rebase.sh:599](../../tests/journey/parity/rebase.sh#L599) |
+| compat | `gix rebase --signoff` | deferred until rebase driver lands | [rebase.sh:606](../../tests/journey/parity/rebase.sh#L606) |
+| compat | `gix rebase --committer-date-is-author-date` | deferred until rebase driver lands | [rebase.sh:613](../../tests/journey/parity/rebase.sh#L613) |
+| compat | `gix rebase --reset-author-date` | deferred until rebase driver lands | [rebase.sh:620](../../tests/journey/parity/rebase.sh#L620) |
+| compat | `gix rebase --ignore-date` | deferred until rebase driver lands | [rebase.sh:627](../../tests/journey/parity/rebase.sh#L627) |
+| compat | `gix rebase --rerere-autoupdate` | deferred until rebase driver lands | [rebase.sh:636](../../tests/journey/parity/rebase.sh#L636) |
+| compat | `gix rebase --no-rerere-autoupdate` | deferred until rebase driver lands | [rebase.sh:643](../../tests/journey/parity/rebase.sh#L643) |
+| compat | `gix rebase --autostash` | deferred until rebase driver lands | [rebase.sh:652](../../tests/journey/parity/rebase.sh#L652) |
+| compat | `gix rebase --no-autostash` | deferred until rebase driver lands | [rebase.sh:659](../../tests/journey/parity/rebase.sh#L659) |
+| compat | `gix rebase --gpg-sign` | deferred until rebase driver lands | [rebase.sh:668](../../tests/journey/parity/rebase.sh#L668) |
+| compat | `gix rebase --gpg-sign=keyid` | deferred until rebase driver lands | [rebase.sh:675](../../tests/journey/parity/rebase.sh#L675) |
+| compat | `gix rebase -S` | deferred until rebase driver lands | [rebase.sh:682](../../tests/journey/parity/rebase.sh#L682) |
+| compat | `gix rebase --no-gpg-sign` | deferred until rebase driver lands | [rebase.sh:689](../../tests/journey/parity/rebase.sh#L689) |
+
 ## tag
 
 | Class | Section | Reason | Source |
