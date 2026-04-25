@@ -302,6 +302,8 @@ pub enum Subcommands {
     Env,
     Diff(diff::Platform),
     Log(log::Platform),
+    /// Show various types of objects.
+    Show(show::Platform),
     Worktree(worktree::Platform),
     /// Subcommands that need no Git repository to run.
     #[clap(subcommand)]
@@ -3460,3 +3462,5 @@ pub mod pull;
 pub mod fetch;
 
 pub mod rebase;
+
+pub mod show;

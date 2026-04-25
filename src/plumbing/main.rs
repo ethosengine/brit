@@ -97,7 +97,7 @@ pub fn main() -> Result<()> {
             ) {
                 let _ = e.print();
                 let exit_code = match detect_subcommand_from_argv().as_deref() {
-                    Some("log") if e.kind() == clap::error::ErrorKind::UnknownArgument => 128,
+                    Some("log" | "show") if e.kind() == clap::error::ErrorKind::UnknownArgument => 128,
                     _ => 129,
                 };
                 std::process::exit(exit_code);
@@ -716,6 +716,23 @@ pub fn main() -> Result<()> {
                         revspec: revspecs.into_iter().next(),
                         path: pathspec.into_iter().next(),
                     },
+                )
+            },
+        ),
+        Subcommands::Show(crate::plumbing::options::show::Platform { objects, .. }) => prepare_and_run(
+            "show",
+            trace,
+            verbose,
+            progress,
+            progress_keep_open,
+            None,
+            move |_progress, out, err| {
+                core::repository::show::porcelain(
+                    repository(Mode::Lenient)?,
+                    out,
+                    err,
+                    objects,
+                    core::repository::show::Options::default(),
                 )
             },
         ),

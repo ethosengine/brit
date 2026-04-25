@@ -56,6 +56,7 @@ pub mod odb;
 pub mod rebase;
 pub mod remote;
 pub mod revision;
+pub mod show;
 pub mod status;
 pub mod submodule;
 pub mod tag;
