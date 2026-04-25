@@ -1016,6 +1016,28 @@ pub mod diff {
         /// diff output to a subset of paths.
         #[clap(last = true, value_parser = crate::shared::AsBString)]
         pub paths: Vec<BString>,
+
+        /// Diff index vs `<commit>` (or HEAD if no commit given).
+        /// `--staged` is a synonym. Mirrors
+        /// `OPT_BIT(0, "cached", &option, ..., DIFF_INDEX_CACHED)`
+        /// in vendor/git/builtin/diff.c builtin_diff_index. Accepted
+        /// today; semantics-deferred (close behavior + bytes parity
+        /// pending the diff-index helper).
+        #[clap(long = "cached", alias = "staged")]
+        pub cached: bool,
+
+        /// Use the merge-base of `<commit>` (and HEAD, or A and B in
+        /// the 2-arg form) as the "before" side. Mirrors
+        /// `OPT_BIT(0, "merge-base", &option, ..., DIFF_INDEX_MERGE_BASE)`
+        /// in builtin/diff.c. Accepted today; routing to merge_base
+        /// resolution is deferred.
+        #[clap(long = "merge-base")]
+        pub merge_base: bool,
+
+        /// Compare two paths on the filesystem, no repo context.
+        /// Implies --exit-code. Mirrors `OPT_BOOL(0, "no-index", ...)`.
+        #[clap(long = "no-index")]
+        pub no_index: bool,
     }
 
     #[derive(Debug, clap::Subcommand)]

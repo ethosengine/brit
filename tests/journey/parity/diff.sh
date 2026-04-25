@@ -239,12 +239,16 @@ only_for_hash sha1-only && (small-repo-in-sandbox
 # --- --cached / --staged / --merge-base / --no-index ------------------
 
 # mode=effect — `gix diff --cached`: index vs HEAD (diff-index --cached).
-# `--staged` is a synonym.
+# `--staged` is a synonym (clap alias). Flag is now accepted by gix's
+# Platform; on a clean fixture both binaries exit 0 with no output.
+# Bytes parity (real index-vs-HEAD diff) deferred via compat_effect
+# until the diff-index helper lands.
 # hash=sha1-only
 title "gix diff --cached"
 only_for_hash sha1-only && (small-repo-in-sandbox
-  # TODO — expect_parity effect -- diff --cached
-  it "matches git behavior" && { :; }
+  it "matches git behavior" && {
+    compat_effect "diff --cached index-vs-HEAD patch output deferred until renderer lands" -- diff --cached
+  }
 )
 
 # mode=effect — `gix diff --staged`: alias of --cached.

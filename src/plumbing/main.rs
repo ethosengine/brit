@@ -345,7 +345,14 @@ pub fn main() -> Result<()> {
                 core::repository::merge_base(repository(Mode::Lenient)?, first, others, out, format)
             },
         ),
-        Subcommands::Diff(crate::plumbing::options::diff::Platform { cmd, args, paths }) => match cmd {
+        Subcommands::Diff(crate::plumbing::options::diff::Platform {
+            cmd,
+            args,
+            paths,
+            cached: _cached,
+            merge_base: _merge_base,
+            no_index: _no_index,
+        }) => match cmd {
             // Bare `gix diff` (no subcommand): porcelain dispatch.
             // Outside a repo with zero positional args, git emits
             // "Not a git repository. Use --no-index..." and dies 129
