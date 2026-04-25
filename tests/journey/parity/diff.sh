@@ -353,14 +353,16 @@ only_for_hash sha1-only && (small-repo-in-sandbox
   }
 )
 
-# mode=bytes — `--raw`: scriptable raw diff format (mode/sha/status).
-# This is the canonical diff-tree/diff-index/diff-files output and is
-# byte-stable across git versions.
+# mode=effect — `--raw`: scriptable raw diff format (mode/sha/status).
+# Accepted by clap; gix renderer emits its own format. Bytes parity
+# (canonical `:mode-mode sha-sha STATUS\tpath` rows) deferred via
+# compat_effect until the diff-tree formatter lands.
 # hash=sha1-only
 title "gix diff --raw"
 only_for_hash sha1-only && (small-repo-in-sandbox
-  # TODO — expect_parity bytes -- diff --raw HEAD~1 HEAD
-  it "matches git behavior" && { :; }
+  it "matches git behavior" && {
+    compat_effect "diff --raw scriptable raw format deferred until renderer lands" -- diff --raw HEAD~1 HEAD
+  }
 )
 
 # mode=effect — `--patch-with-raw`: synonym for `-p --raw`.
