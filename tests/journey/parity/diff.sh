@@ -1204,3 +1204,10 @@ title "gix diff --combined-all-paths"
 only_for_hash sha1-only && (small-repo-in-sandbox
   shortcoming "combined-diff per-parent path emission requires combined-diff renderer (not yet implemented)"
 )
+
+# End-of-file sentinel: every row in this file is `only_for_hash sha1-only`,
+# so when the active hash is sha256 the final statement returns 1 (skip).
+# That non-zero exit would propagate out of `source $target` in
+# tests/parity.sh and trip `set -e`. A trailing `:` normalizes the exit so
+# a fully-skipped file still returns 0.
+:
