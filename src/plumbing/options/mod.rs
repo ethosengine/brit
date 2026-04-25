@@ -1766,11 +1766,6 @@ pub mod clone {
         #[clap(long)]
         pub also_filter_submodules: bool,
 
-        /// Partial-clone filter spec (e.g., `blob:none`). Parse-only —
-        /// gix clone's promisor-remote pipeline is not yet wired.
-        #[clap(long, value_name = "SPEC")]
-        pub filter: Option<String>,
-
         /// Non-default upload-pack path for ssh transport. Parse-only —
         /// gix's ssh transport doesn't negotiate the remote command yet.
         #[clap(long = "upload-pack", short = 'u', value_name = "PATH")]
@@ -1894,6 +1889,12 @@ pub mod clone {
 
         #[clap(flatten)]
         pub shallow: ShallowOptions,
+
+        /// Request the remote to omit certain objects when cloning, similar to `git clone --filter`.
+        ///
+        /// Currently supports `blob:none` and `blob:limit=<n>`.
+        #[clap(long, value_name = "FILTER-SPEC")]
+        pub filter: Option<gix::remote::fetch::ObjectFilter>,
 
         /// The url of the remote to connect to, like `https://github.com/byron/gitoxide`.
         ///

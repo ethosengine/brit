@@ -1554,6 +1554,8 @@ dependencies = [
 name = "gix-blame"
 version = "0.11.0"
 dependencies = [
+ "criterion",
+ "gix",
  "gix-commitgraph",
  "gix-date",
  "gix-diff",
@@ -1606,6 +1608,7 @@ dependencies = [
  "gix-hash",
  "gix-testtools",
  "memmap2",
+ "murmur3",
  "nonempty",
  "serde",
 ]
@@ -1758,7 +1761,9 @@ dependencies = [
  "gix-trace",
  "gix-utils",
  "gix-worktree",
+ "libc",
  "pretty_assertions",
+ "rustix",
  "thiserror 2.0.18",
 ]
 
@@ -2103,6 +2108,7 @@ dependencies = [
  "gix-pack",
  "gix-path",
  "gix-quote",
+ "memmap2",
  "parking_lot",
  "serde",
  "tempfile",
@@ -2389,6 +2395,24 @@ dependencies = [
 [[package]]
 name = "gix-sequencer"
 version = "0.0.0"
+
+[[package]]
+name = "gix-serve"
+version = "0.1.0"
+dependencies = [
+ "bstr",
+ "gix-features",
+ "gix-hash",
+ "gix-odb",
+ "gix-pack",
+ "gix-packetline",
+ "gix-protocol",
+ "gix-ref",
+ "gix-serve",
+ "gix-testtools",
+ "gix-transport",
+ "thiserror 2.0.18",
+]
 
 [[package]]
 name = "gix-shallow"
@@ -3670,6 +3694,12 @@ dependencies = [
  "tagptr",
  "uuid",
 ]
+
+[[package]]
+name = "murmur3"
+version = "0.5.2"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "9252111cf132ba0929b6f8e030cac2a24b507f3a4d6db6fb2896f27b354c714b"
 
 [[package]]
 name = "native-tls"

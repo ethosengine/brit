@@ -162,20 +162,39 @@ only_for_hash sha1-only && (small-repo-in-sandbox
 
 # --- list-mode modifiers -----------------------------------------------
 
-# mode=effect (compat) — `-v` / `--verbose` adds "<abbrev-sha>  <subject>"
+# mode=bytes — `-v` / `--verbose` adds "<abbrev-sha>  <subject>"
 # after each branch name, column-aligned to the widest name. `-vv` adds
-# "[<remote>/<branch>: ahead N, behind N]" upstream tracking info.
-# Exit-code parity holds (flag accepted via Platform.verbose count);
-# bytes-mode verbose rendering (column alignment, --abbrev cooperation,
-# subject extraction, upstream tracking) is deferred.
+# "[<remote>/<branch>: ahead N, behind N]" upstream tracking info (Task 4).
+# Both `-v` and `-vv` are bytes-mode parity: the no-upstream case emits
+# identical output to `-v` (small-repo-in-sandbox has no upstream configured).
 # hash=sha1-only
 title "gix branch --verbose"
 only_for_hash sha1-only && (small-repo-in-sandbox
   it "matches git behavior" && {
-    compat_effect "branch -v column-aligned sha+subject rendering deferred" -- branch --verbose
+    expect_parity bytes -- branch --verbose
   }
   it "matches git behavior — -vv" && {
-    compat_effect "branch -vv upstream tracking rendering deferred" -- branch -vv
+    expect_parity bytes -- branch -vv
+  }
+)
+
+# mode=bytes — `-vv` upstream tracking annotation `[origin/main: ahead N, behind N]`.
+# Requires a configured upstream and a fetched remote-tracking ref.
+# hash=sha1-only
+title "gix branch -vv with upstream"
+only_for_hash sha1-only && (sandbox
+  function _branch-vv-upstream-fixture() {
+    git-init-hash-aware
+    git checkout -b main >/dev/null 2>&1
+    git config commit.gpgsign false
+    git -c user.email=t@t -c user.name=t commit -q --allow-empty -m c1
+    git remote add origin .
+    git branch dev
+    git update-ref refs/remotes/origin/main HEAD
+    git branch --set-upstream-to=origin/main dev >/dev/null 2>&1
+  }
+  it "matches git behavior" && {
+    expect_parity_reset _branch-vv-upstream-fixture bytes -- branch -vv
   }
 )
 
@@ -207,10 +226,10 @@ only_for_hash sha1-only && (sandbox
 title "gix branch --abbrev"
 only_for_hash sha1-only && (small-repo-in-sandbox
   it "matches git behavior — --abbrev=12" && {
-    compat_effect "branch -v --abbrev=<n> bytes parity follows -v renderer" -- branch -v --abbrev=12
+    expect_parity bytes -- branch -v --abbrev=12
   }
   it "matches git behavior — --no-abbrev" && {
-    compat_effect "branch -v --no-abbrev bytes parity follows -v renderer" -- branch -v --no-abbrev
+    expect_parity bytes -- branch -v --no-abbrev
   }
 )
 
@@ -306,7 +325,7 @@ only_for_hash sha1-only && (small-repo-in-sandbox
     expect_parity bytes -- branch --no-column
   }
   it "matches git behavior — --column=always" && {
-    compat_effect "branch --column=always packing deferred" -- branch --column=always
+    COLUMNS=80 expect_parity bytes -- branch --column=always
   }
 )
 
@@ -420,15 +439,16 @@ only_for_hash sha1-only && (sandbox
   }
 )
 
-# mode=effect (compat) — `-t` / `--track` sets branch.<name>.remote +
-# branch.<name>.merge config entries. git enforces that the start-
-# point is an actual remote-tracking branch with a configured remote
-# (else exit 128); gix's create() accepts --track silently and skips
-# the upstream config write entirely. Wiring the upstream-config side
-# is its own iteration. --no-track succeeds for both binaries (it is
-# a no-op against a local start-point) and matches in effect mode,
-# but gix-side branch creation may still differ if branch.autoSetupMerge
-# is set in user config — closing both as compat for symmetry.
+# mode=bytes — `-t` / `--track` sets branch.<name>.remote +
+# branch.<name>.merge config entries. gix now writes the upstream
+# config after the ref is created, matching git's setup_tracking()
+# call in create_branch(). For a local start-point (e.g. `main`),
+# both git and gix emit:
+#   branch '<name>' set up to track '<start>'.
+# to stdout and write remote=. / merge=refs/heads/<start> to config.
+# --no-track is a no-op for both (no config written, no message).
+# branch.autoSetupMerge implicit tracking is OUT OF SCOPE — deferred
+# as a future parity row.
 # hash=sha1-only
 title "gix branch --track"
 only_for_hash sha1-only && (sandbox
@@ -439,8 +459,7 @@ only_for_hash sha1-only && (sandbox
     git -c user.email=t@t -c user.name=t commit -q --allow-empty -m c1
   }
   it "matches git behavior — --track" && {
-    expect_parity_reset _branch-track-fixture effect -- branch --track tracked main
-    echo 1>&2 "${YELLOW}   [compat] branch --track upstream-config write deferred (gix accepts --track silently without writing branch.<name>.{remote,merge})"
+    expect_parity_reset _branch-track-fixture bytes -- branch --track tracked main
   }
   it "matches git behavior — --no-track" && {
     expect_parity_reset _branch-track-fixture effect -- branch --no-track untracked main
@@ -499,18 +518,44 @@ only_for_hash sha1-only && (sandbox
     git branch dev
   }
   it "matches git behavior — -u" && {
-    expect_parity_reset _branch-up-fixture effect -- branch -u main dev
-    echo 1>&2 "${YELLOW}   [compat] branch -u upstream-config write deferred (gix accepts cmdmode silently)"
+    expect_parity_reset _branch-up-fixture bytes -- branch -u main dev
   }
   it "matches git behavior — --set-upstream-to" && {
-    expect_parity_reset _branch-up-fixture effect -- branch --set-upstream-to=main dev
-    echo 1>&2 "${YELLOW}   [compat] branch --set-upstream-to= upstream-config write deferred"
+    expect_parity_reset _branch-up-fixture bytes -- branch --set-upstream-to=main dev
+  }
+  # Disk-state guard: gix must actually write the upstream to $GIT_DIR/config.
+  # The bytes-mode parity test above only compares stdout/stderr; this block
+  # verifies that a second process (git config --get) can read what gix wrote.
+  it "persists upstream to disk (gix writes, git reads back)" && {
+    _disk_wd="$(mktemp -d -t branch-up-disk.XXXXXX)"
+    set +e
+    (
+      cd "$_disk_wd"
+      _branch-up-fixture >/dev/null 2>&1
+      "$exe_plumbing" branch -u main dev >/dev/null 2>&1
+      _remote="$(git config --get branch.dev.remote 2>/dev/null)"
+      _merge="$(git config --get branch.dev.merge 2>/dev/null)"
+      if [[ "$_remote" != "." ]]; then
+        echo 1>&2 "${RED} - FAIL: branch.dev.remote expected '.' got '$_remote' (gix did not write to disk)"
+        exit 1
+      fi
+      if [[ "$_merge" != "refs/heads/main" ]]; then
+        echo 1>&2 "${RED} - FAIL: branch.dev.merge expected 'refs/heads/main' got '$_merge'"
+        exit 1
+      fi
+      echo 1>&2 "${GREEN} - OK (disk: remote='$_remote' merge='$_merge')"
+    )
+    _disk_rc=$?
+    set -e
+    rm -rf "$_disk_wd"
+    [[ "$_disk_rc" == "0" ]]
   }
 )
 
-# mode=effect — `--unset-upstream` removes tracking info. Errors if
-# the branch has no upstream set: exit 128, stderr "fatal: Branch
-# '<name>' has no upstream information".
+# mode=bytes — `--unset-upstream` removes tracking info. Errors if
+# the branch has no upstream set: exit 128, stderr
+# "fatal: branch '<name>' has no upstream information" (lowercase 'b',
+# verified against vendor/git and a live git run).
 # hash=sha1-only
 title "gix branch --unset-upstream"
 only_for_hash sha1-only && (sandbox
@@ -522,20 +567,93 @@ only_for_hash sha1-only && (sandbox
     git branch dev
     git branch --set-upstream-to=main dev >/dev/null 2>&1
   }
+  function _branch-no-upstream-fixture() {
+    git-init-hash-aware
+    git checkout -b main >/dev/null 2>&1
+    git config commit.gpgsign false
+    git -c user.email=t@t -c user.name=t commit -q --allow-empty -m c1
+  }
   it "matches git behavior" && {
-    expect_parity_reset _branch-unset-fixture effect -- branch --unset-upstream dev
-    echo 1>&2 "${YELLOW}   [compat] branch --unset-upstream config-clear deferred"
+    expect_parity_reset _branch-unset-fixture bytes -- branch --unset-upstream dev
+  }
+  it "matches git behavior — no upstream error" && {
+    expect_parity_reset _branch-no-upstream-fixture bytes -- branch --unset-upstream main
+  }
+  # Disk-state guard: gix --unset-upstream must remove the keys from $GIT_DIR/config.
+  # Use git to set the upstream (so the on-disk state is authoritative), then
+  # gix to unset it, then git config --get to verify removal.
+  it "removes upstream from disk (git sets, gix unsets, git verifies gone)" && {
+    _disk_wd="$(mktemp -d -t branch-unset-disk.XXXXXX)"
+    set +e
+    (
+      cd "$_disk_wd"
+      _branch-unset-fixture >/dev/null 2>&1
+      "$exe_plumbing" branch --unset-upstream dev >/dev/null 2>&1
+      git config --get branch.dev.remote >/dev/null 2>/dev/null
+      _get_rc=$?
+      if [[ "$_get_rc" == "0" ]]; then
+        echo 1>&2 "${RED} - FAIL: branch.dev.remote still present after gix --unset-upstream (gix did not write to disk)"
+        exit 1
+      fi
+      echo 1>&2 "${GREEN} - OK (disk: branch.dev.remote absent after gix --unset-upstream, exit=$_get_rc)"
+    )
+    _disk_rc=$?
+    set -e
+    rm -rf "$_disk_wd"
+    [[ "$_disk_rc" == "0" ]]
   }
 )
 
-# mode=effect — `--edit-description` opens EDITOR to edit
-# branch.<name>.description. Under EDITOR=true the edit is a no-op.
+# mode=bytes — `--edit-description` with EDITOR=true is a no-op: the
+# temp file is written (empty initial for a branch with no description),
+# `true` ignores its args and exits 0, the file is read back (empty),
+# trimmed (still empty), so set_branch_description receives "" → key is
+# cleared (which is already absent). Both git and gix exit 0 silently.
 # hash=sha1-only
 title "gix branch --edit-description"
 only_for_hash sha1-only && (small-repo-in-sandbox
-  it "matches git behavior" && {
-    EDITOR=true expect_parity effect -- branch --edit-description
-    echo 1>&2 "${YELLOW}   [compat] branch --edit-description EDITOR-spawn deferred"
+  it "matches git behavior — EDITOR=true (no-op)" && {
+    EDITOR=true expect_parity bytes -- branch --edit-description
+  }
+)
+
+# mode=bytes — `--edit-description` with a real edit writes
+# `branch.main.description` to the config. Both binaries should exit 0
+# with no output; the test checks stdout+stderr+exit match.
+# hash=sha1-only
+title "gix branch --edit-description content edit"
+only_for_hash sha1-only && (
+  function _edit-description-fixture() {
+    git-init-hash-aware
+    git checkout -b main >/dev/null 2>&1
+    git config commit.gpgsign false
+    git -c user.email=t@t -c user.name=t commit -q --allow-empty -m c1
+  }
+  it "matches git behavior — content edit" && {
+    EDITOR='sh -c "echo my-description > \"$1\"" --' expect_parity_reset _edit-description-fixture bytes -- branch --edit-description
+  }
+  # Disk-state guard: gix --edit-description must write the description to
+  # $GIT_DIR/config.  The bytes-mode row above only checks stdout/stderr.
+  # Use GIT_EDITOR (highest priority) so the environment's $GIT_EDITOR=true
+  # is overridden and the editor actually writes to the temp file.
+  it "persists description to disk (gix writes, git reads back)" && {
+    _disk_wd="$(mktemp -d -t branch-desc-disk.XXXXXX)"
+    set +e
+    (
+      cd "$_disk_wd"
+      _edit-description-fixture >/dev/null 2>&1
+      GIT_EDITOR='sh -c "echo my-description > \"$1\"" --' "$exe_plumbing" branch --edit-description >/dev/null 2>&1
+      _desc="$(git config --get branch.main.description 2>/dev/null)"
+      if [[ "$_desc" != "my-description" ]]; then
+        echo 1>&2 "${RED} - FAIL: branch.main.description expected 'my-description' got '$_desc' (gix did not write to disk)"
+        exit 1
+      fi
+      echo 1>&2 "${GREEN} - OK (disk: branch.main.description='$_desc')"
+    )
+    _disk_rc=$?
+    set -e
+    rm -rf "$_disk_wd"
+    [[ "$_disk_rc" == "0" ]]
   }
 )
 

@@ -1,4 +1,4 @@
-use gix::bstr::BString;
+use gix::{bstr::BString, hash::ObjectId};
 
 use crate::OutputFormat;
 
@@ -34,7 +34,7 @@ pub(crate) mod function {
         std_shapes::shapes::{Arrow, Element, ShapeKind},
     };
 
-    use super::Options;
+    use super::{ObjectId, Options};
     use crate::OutputFormat;
 
     pub fn fetch<P>(
@@ -154,8 +154,25 @@ pub(crate) mod function {
             }
             Err(e) => return Err(e.into()),
         };
-        if !ref_specs.is_empty() {
-            remote.replace_refspecs(ref_specs.iter(), gix::remote::Direction::Fetch)?;
+
+        // Separate object-id refspecs (fetched via additional_wants for
+        // partial-clone / single-object fetch) from name-based refspecs
+        // (handled via remote.replace_refspecs). Pulled in from upstream
+        // PR #2375 (filters + partial cloning).
+        let mut wants = Vec::new();
+        let mut fetch_refspecs = Vec::new();
+        for spec in ref_specs {
+            if spec.len() == repo.object_hash().len_in_hex() {
+                if let Ok(oid) = ObjectId::from_hex(spec.as_ref()) {
+                    wants.push(oid);
+                    continue;
+                }
+            }
+            fetch_refspecs.push(spec);
+        }
+
+        if !fetch_refspecs.is_empty() {
+            remote.replace_refspecs(fetch_refspecs.iter(), gix::remote::Direction::Fetch)?;
             remote = remote.with_fetch_tags(gix::remote::fetch::Tags::None);
         } else if remote.refspecs(gix::remote::Direction::Fetch).is_empty() {
             // Anonymous URL remote (no configured fetch refspecs) — mirror
@@ -171,6 +188,7 @@ pub(crate) mod function {
             .prepare_fetch(&mut progress, Default::default())?
             .with_dry_run(dry_run)
             .with_shallow(shallow)
+            .with_additional_wants(wants)
             .receive(&mut progress, &gix::interrupt::IS_INTERRUPTED)?;
 
         if handshake_info {

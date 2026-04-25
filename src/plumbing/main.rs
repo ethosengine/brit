@@ -906,16 +906,16 @@ pub fn main() -> Result<()> {
                 show_current,
                 edit_description,
                 force,
-                verbose: _verbose,
+                verbose: branch_verbose,
                 quiet: _quiet,
                 set_upstream_to,
                 unset_upstream,
-                track: _track,
-                no_track: _no_track,
+                track,
+                no_track,
                 recurse_submodules,
                 create_reflog: _create_reflog,
-                abbrev: _abbrev,
-                no_abbrev: _no_abbrev,
+                abbrev,
+                no_abbrev,
                 contains,
                 no_contains,
                 merged,
@@ -924,8 +924,8 @@ pub fn main() -> Result<()> {
                 format_string,
                 omit_empty,
                 sort,
-                column: _column,
-                no_column: _no_column,
+                column,
+                no_column,
                 color: _color,
                 no_color: _no_color,
                 ignore_case,
@@ -985,13 +985,73 @@ pub fn main() -> Result<()> {
                     None,
                     move |_progress, out, _err| core::repository::branch::show_current(repository(Mode::Lenient)?, out),
                 )
-            } else if is_set_upstream || is_unset_upstream || is_edit_description {
-                // Stub: cmdmode is recognized so the rest of the
-                // pipeline doesn't fall through to list/create. The
-                // actual upstream-config write/clear and the
-                // EDITOR-spawn for branch.<name>.description remain
-                // deferred.
-                Ok(())
+            } else if is_set_upstream {
+                let upstream_str = set_upstream_to.expect("guarded by is_set_upstream");
+                let target_arg = args.into_iter().next();
+                prepare_and_run(
+                    "branch-set-upstream-to",
+                    trace,
+                    verbose,
+                    progress,
+                    progress_keep_open,
+                    None,
+                    move |_progress, out, err| {
+                        use gix::bstr::ByteSlice as _;
+                        let target_bstr = target_arg
+                            .as_ref()
+                            .map(|s| gix::path::os_str_into_bstr(s).map(std::borrow::ToOwned::to_owned))
+                            .transpose()?;
+                        core::repository::branch::set_upstream_to(
+                            repository(Mode::Lenient)?,
+                            target_bstr.as_ref().map(|b: &gix::bstr::BString| b.as_ref()),
+                            upstream_str.as_bytes().as_bstr(),
+                            out,
+                            err,
+                        )
+                    },
+                )
+            } else if is_unset_upstream {
+                let target_arg = args.into_iter().next();
+                prepare_and_run(
+                    "branch-unset-upstream",
+                    trace,
+                    verbose,
+                    progress,
+                    progress_keep_open,
+                    None,
+                    move |_progress, _out, err| {
+                        let target_bstr = target_arg
+                            .as_ref()
+                            .map(|s| gix::path::os_str_into_bstr(s).map(std::borrow::ToOwned::to_owned))
+                            .transpose()?;
+                        core::repository::branch::unset_upstream(
+                            repository(Mode::Lenient)?,
+                            target_bstr.as_ref().map(|b: &gix::bstr::BString| b.as_ref()),
+                            err,
+                        )
+                    },
+                )
+            } else if is_edit_description {
+                let target = args.into_iter().next();
+                prepare_and_run(
+                    "branch-edit-description",
+                    trace,
+                    verbose,
+                    progress,
+                    progress_keep_open,
+                    None,
+                    move |_progress, _out, err| {
+                        let target_bstr = target
+                            .as_ref()
+                            .map(|s| gix::path::os_str_into_bstr(s).map(std::borrow::ToOwned::to_owned))
+                            .transpose()?;
+                        core::repository::branch::edit_description(
+                            repository(Mode::Lenient)?,
+                            target_bstr.as_ref().map(|v: &gix::bstr::BString| v.as_ref()),
+                            err,
+                        )
+                    },
+                )
             } else if is_rename {
                 // git rename forms:
                 //   -m <new>           — rename current branch to <new>
@@ -1111,6 +1171,12 @@ pub fn main() -> Result<()> {
                     );
                     std::process::exit(128);
                 }
+                // Convert track mode string (from clap) to BString for
+                // the branch::create API. clap emits "direct" for bare
+                // --track; "inherit" and "always" are also valid values
+                // but only "direct" is wired up on the gix side.
+                let track_bstr: Option<gix::bstr::BString> =
+                    track.map(|s| gix::bstr::BString::from(s.as_bytes()));
                 prepare_and_run(
                     "branch-create",
                     trace,
@@ -1118,13 +1184,16 @@ pub fn main() -> Result<()> {
                     progress,
                     progress_keep_open,
                     None,
-                    move |_progress, _out, err| {
+                    move |_progress, out, err| {
                         let code = core::repository::branch::create(
                             repository(Mode::Lenient)?,
                             name,
                             start_point,
                             force,
                             recurse_submodules,
+                            track_bstr,
+                            no_track,
+                            out,
                             err,
                         )?;
                         if code != 0 {
@@ -1157,6 +1226,11 @@ pub fn main() -> Result<()> {
                     sort,
                     omit_empty,
                     ignore_case,
+                    verbose: branch_verbose,
+                    abbrev,
+                    no_abbrev,
+                    column,
+                    no_column,
                 };
 
                 prepare_and_run(
@@ -1257,7 +1331,6 @@ pub fn main() -> Result<()> {
             remote_submodules: _,
             _no_remote_submodules: _,
             also_filter_submodules: _,
-            filter: _,
             upload_pack: _,
             server_option: _,
             ipv4: _,
@@ -1285,6 +1358,7 @@ pub fn main() -> Result<()> {
             branch,
             remote,
             shallow,
+            filter,
             directory,
             extra_positionals,
         }) => {
@@ -1462,6 +1536,7 @@ pub fn main() -> Result<()> {
                 no_tags,
                 ref_name,
                 shallow: shallow.into(),
+                filter,
             };
             prepare_and_run(
                 "clone",
@@ -1774,6 +1849,15 @@ pub fn main() -> Result<()> {
                 progress_keep_open,
                 None,
                 move |_progress, out, _err| core::discover(&repository_path, out),
+            ),
+            free::Subcommands::Trust { paths } => prepare_and_run(
+                "trust",
+                trace,
+                verbose,
+                progress,
+                progress_keep_open,
+                None,
+                move |_progress, out, _err| core::trust(&paths, out),
             ),
             free::Subcommands::CommitGraph(cmd) => match cmd {
                 free::commitgraph::Subcommands::Verify { path, statistics } => prepare_and_run(

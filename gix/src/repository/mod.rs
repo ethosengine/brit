@@ -22,7 +22,7 @@ mod blame;
 mod cache;
 #[cfg(feature = "worktree-mutation")]
 mod checkout;
-mod config;
+pub(crate) mod config;
 
 ///
 #[cfg(feature = "blob-diff")]

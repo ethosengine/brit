@@ -199,3 +199,111 @@ fn reload_discards_in_memory_only_changes() -> crate::Result {
     assert_eq!(repo.config_snapshot().integer("core.abbrev"), None);
     Ok(())
 }
+
+mod branch_write {
+    use crate::named_repo;
+
+    fn full_ref(name: &str) -> gix_ref::FullName {
+        gix_ref::FullName::try_from(name.to_owned()).expect("static test input is a valid full ref name")
+    }
+
+    #[test]
+    fn set_branch_upstream_remote_tracking_branch() -> crate::Result {
+        let mut repo = named_repo("make_config_repo.sh")?;
+
+        // refs/remotes/<remote>/<branch> → remote=<remote>, merge=refs/heads/<branch>
+        repo.set_branch_upstream(b"dev".into(), full_ref("refs/remotes/origin/main").as_ref())?;
+
+        let snap = repo.config_snapshot();
+        assert_eq!(
+            snap.string("branch.dev.remote").as_deref(),
+            Some("origin".into()),
+            "remote name extracted from refs/remotes/<remote>/..."
+        );
+        assert_eq!(
+            snap.string("branch.dev.merge").as_deref(),
+            Some("refs/heads/main".into()),
+            "merge ref reconstructed as refs/heads/<branch>"
+        );
+        Ok(())
+    }
+
+    #[test]
+    fn set_branch_upstream_local_branch() -> crate::Result {
+        let mut repo = named_repo("make_config_repo.sh")?;
+
+        // refs/heads/<branch> → remote=., merge=refs/heads/<branch> (local tracking sentinel)
+        repo.set_branch_upstream(b"feature".into(), full_ref("refs/heads/main").as_ref())?;
+
+        let snap = repo.config_snapshot();
+        assert_eq!(
+            snap.string("branch.feature.remote").as_deref(),
+            Some(".".into()),
+            "local-tracking branches use '.' as remote sentinel"
+        );
+        assert_eq!(
+            snap.string("branch.feature.merge").as_deref(),
+            Some("refs/heads/main".into()),
+            "full ref passed through unchanged for local tracking"
+        );
+        Ok(())
+    }
+
+    #[test]
+    fn unset_branch_upstream_removes_keys() -> crate::Result {
+        let mut repo = named_repo("make_config_repo.sh")?;
+
+        // First, set an upstream so we have something to unset.
+        repo.set_branch_upstream(b"dev".into(), full_ref("refs/remotes/origin/main").as_ref())?;
+        assert!(
+            repo.config_snapshot().string("branch.dev.remote").is_some(),
+            "remote must be present before unset"
+        );
+
+        repo.unset_branch_upstream(b"dev".into())?;
+
+        let snap = repo.config_snapshot();
+        assert!(snap.string("branch.dev.remote").is_none(), "remote cleared after unset");
+        assert!(snap.string("branch.dev.merge").is_none(), "merge cleared after unset");
+        Ok(())
+    }
+
+    #[test]
+    fn unset_branch_upstream_errors_when_no_upstream() -> crate::Result {
+        let mut repo = named_repo("make_config_repo.sh")?;
+
+        let result = repo.unset_branch_upstream(b"nonexistent".into());
+        assert!(
+            matches!(
+                result,
+                Err(gix::config::branch_write::UnsetUpstream::NoUpstream(_))
+            ),
+            "must error with NoUpstream when the branch has no upstream config"
+        );
+        Ok(())
+    }
+
+    #[test]
+    fn set_branch_description_sets_and_clears() -> crate::Result {
+        let mut repo = named_repo("make_config_repo.sh")?;
+
+        repo.set_branch_description(b"feature".into(), b"my feature branch description".into())?;
+        assert_eq!(
+            repo.config_snapshot()
+                .string("branch.feature.description")
+                .as_deref(),
+            Some("my feature branch description".into()),
+            "description written correctly"
+        );
+
+        // Clearing with empty value.
+        repo.set_branch_description(b"feature".into(), b"".into())?;
+        assert!(
+            repo.config_snapshot()
+                .string("branch.feature.description")
+                .is_none(),
+            "empty value clears the description key"
+        );
+        Ok(())
+    }
+}

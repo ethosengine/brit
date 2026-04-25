@@ -39,6 +39,9 @@ pub struct PrepareFetch {
     /// How to handle shallow clones
     #[cfg_attr(not(feature = "blocking-network-client"), allow(dead_code))]
     shallow: remote::fetch::Shallow,
+    /// Optional object filter to request from the remote.
+    #[cfg_attr(not(feature = "blocking-network-client"), allow(dead_code))]
+    filter: Option<remote::fetch::ObjectFilter>,
     /// The name of the reference to fetch. If `None`, the reference pointed to by `HEAD` will be checked out.
     #[cfg_attr(not(feature = "blocking-network-client"), allow(dead_code))]
     ref_name: Option<gix_ref::PartialName>,
@@ -102,7 +105,10 @@ impl PrepareFetch {
         mut create_opts: crate::create::Options,
         open_opts: crate::open::Options,
     ) -> Result<Self, Error> {
-        create_opts.destination_must_be_empty = true;
+        if create_opts.destination_must_be_empty.is_none() {
+            create_opts.destination_must_be_empty = Some(true);
+        }
+
         let mut repo = crate::ThreadSafeRepository::init_opts(path, kind, create_opts, open_opts)?.to_thread_local();
         url.canonicalize(repo.options.current_dir_or_empty())
             .map_err(|err| Error::CanonicalizeUrl {
@@ -121,6 +127,7 @@ impl PrepareFetch {
             #[cfg(any(feature = "async-network-client", feature = "blocking-network-client"))]
             configure_connection: None,
             shallow: remote::fetch::Shallow::NoChange,
+            filter: None,
             ref_name: None,
         })
     }

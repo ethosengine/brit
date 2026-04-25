@@ -3,6 +3,10 @@ use crate::config::tree::{keys, traits::SubSectionRequirement, Branch, Key, Sect
 const NAME_PARAMETER: Option<SubSectionRequirement> = Some(SubSectionRequirement::Parameter("name"));
 
 impl Branch {
+    /// The `branch.<name>.description` key.
+    pub const DESCRIPTION: keys::String =
+        keys::String::new_string("description", &crate::config::Tree::BRANCH)
+            .with_subsection_requirement(NAME_PARAMETER);
     /// The `branch.<name>.merge` key.
     pub const MERGE: Merge = Merge::new_with_validate("merge", &crate::config::Tree::BRANCH, validate::FullNameRef)
         .with_subsection_requirement(NAME_PARAMETER);
@@ -21,7 +25,7 @@ impl Section for Branch {
     }
 
     fn keys(&self) -> &[&dyn Key] {
-        &[&Self::MERGE, &Self::PUSH_REMOTE, &Self::REMOTE]
+        &[&Self::DESCRIPTION, &Self::MERGE, &Self::PUSH_REMOTE, &Self::REMOTE]
     }
 }
 

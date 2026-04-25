@@ -164,6 +164,23 @@ impl<'repo> SnapshotMut<'repo> {
         Ok(current.map(std::borrow::Cow::into_owned))
     }
 
+    /// Remove the value at `key` in the given `subsection`, returning the previous value if one was present.
+    ///
+    /// This is a best-effort operation: if the section or key does not exist, `None` is returned without error.
+    pub fn clear_subsection_value<'a>(
+        &mut self,
+        key: &'static dyn crate::config::tree::Key,
+        subsection: impl Into<&'a BStr>,
+    ) -> Option<BString> {
+        let subsection = subsection.into();
+        let section_name = key.section().name();
+        let mut section = self
+            .config
+            .section_mut(section_name, Some(subsection))
+            .ok()?;
+        section.remove(key.name()).map(std::borrow::Cow::into_owned)
+    }
+
     pub(crate) fn commit_inner(
         &mut self,
         repo: &'repo mut crate::Repository,

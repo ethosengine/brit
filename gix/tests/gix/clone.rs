@@ -1,4 +1,6 @@
 use crate::{remote, util::restricted};
+#[cfg(any(feature = "async-network-client-async-std", feature = "blocking-network-client"))]
+use gix_testtools::tempfile;
 
 #[cfg(all(feature = "worktree-mutation", feature = "blocking-network-client"))]
 mod blocking_io {
@@ -550,6 +552,36 @@ mod blocking_io {
         assure_index_entries_on_disk(&index, repo.workdir().expect("non-bare"));
         Ok(())
     }
+
+    #[test]
+    fn fetch_and_checkout_into_non_empty_directory() -> crate::Result {
+        let tmp = gix_testtools::tempfile::TempDir::new()?;
+        let existing_path = tmp.path().join("existing.txt");
+        let existing_content = b"I was here before you";
+        std::fs::write(&existing_path, existing_content)?;
+
+        let mut prepare = gix::clone::PrepareFetch::new(
+            remote::repo("base").path(),
+            tmp.path(),
+            gix::create::Kind::WithWorktree,
+            gix::create::Options {
+                destination_must_be_empty: Some(false),
+                ..Default::default()
+            },
+            restricted(),
+        )?;
+        let (mut checkout, _out) =
+            prepare.fetch_then_checkout(gix::progress::Discard, &std::sync::atomic::AtomicBool::default())?;
+        let (repo, _) = checkout.main_worktree(gix::progress::Discard, &std::sync::atomic::AtomicBool::default())?;
+
+        let index = repo.index()?;
+        assert_eq!(index.entries().len(), 1, "All entries are known as per HEAD tree");
+        assure_index_entries_on_disk(&index, repo.workdir().expect("non-bare"));
+
+        assert_eq!(std::fs::read(&existing_path)?, existing_content);
+        Ok(())
+    }
+
     #[test]
     fn fetch_and_checkout_specific_ref() -> crate::Result {
         let tmp = gix_testtools::tempfile::TempDir::new()?;
@@ -765,6 +797,53 @@ mod blocking_io {
     }
 }
 
+#[cfg(any(feature = "async-network-client-async-std", feature = "blocking-network-client"))]
+#[test]
+fn write_remote_to_local_config_file_persists_partial_clone_settings() -> crate::Result {
+    let tmp = tempfile::tempdir()?;
+    let repo: gix::Repository = gix::ThreadSafeRepository::init_opts(
+        tmp.path(),
+        gix::create::Kind::Bare,
+        gix::create::Options::default(),
+        restricted(),
+    )?
+    .to_thread_local();
+
+    let mut remote = repo.remote_at("https://example.com/upstream")?;
+    let config = gix::clone::fetch::write_remote_to_local_config_file(&mut remote, "origin".into(), Some("blob:none"))?;
+
+    assert_eq!(
+        config.raw_value("remote.origin.partialclonefilter")?.as_ref(),
+        "blob:none"
+    );
+    assert_eq!(config.raw_value("remote.origin.promisor")?.as_ref(), "true");
+    assert_eq!(config.raw_value("extensions.partialclone")?.as_ref(), "origin");
+
+    Ok(())
+}
+
+#[cfg(any(feature = "async-network-client-async-std", feature = "blocking-network-client"))]
+#[test]
+fn write_remote_to_local_config_file_skips_partial_clone_settings_without_filter() -> crate::Result {
+    let tmp = tempfile::tempdir()?;
+    let repo: gix::Repository = gix::ThreadSafeRepository::init_opts(
+        tmp.path(),
+        gix::create::Kind::Bare,
+        gix::create::Options::default(),
+        restricted(),
+    )?
+    .to_thread_local();
+
+    let mut remote = repo.remote_at("https://example.com/upstream")?;
+    let config = gix::clone::fetch::write_remote_to_local_config_file(&mut remote, "origin".into(), None)?;
+
+    assert!(config.raw_value("remote.origin.partialclonefilter").is_err());
+    assert!(config.raw_value("remote.origin.promisor").is_err());
+    assert!(config.raw_value("extensions.partialclone").is_err());
+
+    Ok(())
+}
+
 #[test]
 fn clone_and_early_persist_without_receive() -> crate::Result {
     let tmp = gix_testtools::tempfile::TempDir::new()?;
@@ -789,6 +868,25 @@ fn clone_and_destination_must_be_empty() -> crate::Result {
         remote::repo("base").path(),
         tmp.path(),
         gix::create::Kind::Bare,
+        Default::default(),
+        restricted(),
+    ) {
+        Ok(_) => unreachable!("this should fail as the directory isn't empty"),
+        Err(err) => assert!(err
+            .to_string()
+            .starts_with("Refusing to initialize the non-empty directory as ")),
+    }
+    Ok(())
+}
+
+#[test]
+fn clone_with_worktree_and_destination_must_be_empty() -> crate::Result {
+    let tmp = gix_testtools::tempfile::TempDir::new()?;
+    std::fs::write(tmp.path().join("file"), b"hello")?;
+    match gix::clone::PrepareFetch::new(
+        remote::repo("base").path(),
+        tmp.path(),
+        gix::create::Kind::WithWorktree,
         Default::default(),
         restricted(),
     ) {

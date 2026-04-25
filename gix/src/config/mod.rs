@@ -14,6 +14,15 @@ pub mod overrides;
 pub mod tree;
 pub use tree::root::Tree;
 
+/// Error types for branch config write operations.
+///
+/// These are the errors returned by [`Repository::set_branch_upstream()`][crate::Repository::set_branch_upstream()],
+/// [`Repository::unset_branch_upstream()`][crate::Repository::unset_branch_upstream()], and
+/// [`Repository::set_branch_description()`][crate::Repository::set_branch_description()].
+pub mod branch_write {
+    pub use crate::repository::config::branch_write_error::*;
+}
+
 /// A platform to access configuration values as read from disk.
 ///
 /// Note that these values won't update even if the underlying file(s) change.
@@ -473,6 +482,12 @@ pub mod boolean {
 }
 
 ///
+pub mod untracked_cache {
+    /// The error produced when failing to parse `core.untrackedCache` from configuration.
+    pub type Error = super::key::GenericErrorWithValue;
+}
+
+///
 pub mod unsigned_integer {
     /// The error produced when failing to parse a signed integer from configuration.
     pub type Error = super::key::Error<gix_config::value::Error, 'k', 'u'>;
@@ -620,6 +635,8 @@ pub(crate) struct Cache {
     pub(crate) pack_cache_bytes: Option<usize>,
     /// The amount of bytes to use for caching whole objects, or 0 to turn it off entirely.
     pub(crate) object_cache_bytes: usize,
+    /// The maximum size of a single allocation caused by user-controlled on-disk packed object data.
+    pub(crate) alloc_limit_bytes: Option<usize>,
     /// The amount of bytes we can hold in our static LRU cache. Otherwise, go with the defaults.
     pub(crate) static_pack_cache_limit_bytes: Option<usize>,
     /// The config section filter from the options used to initialize this instance. Keep these in sync!
