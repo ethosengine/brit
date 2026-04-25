@@ -100,7 +100,6 @@ only_for_hash dual && (sandbox
 # src/plumbing/main.rs. Tested inside a repo because git outside a
 # repo dies 128 before reaching arg-parse, while clap in gix always
 # runs first.
-# hash=sha1-only
 title "gix reset --bogus-flag"
 only_for_hash sha1-only && (small-repo-in-sandbox
   it "matches git behavior" && {
@@ -126,7 +125,6 @@ only_for_hash dual && (sandbox
 # refreshed to HEAD's tree, working tree untouched, "Unstaged changes
 # after reset:" emitted. gix's placeholder emits a stub note + exits 0;
 # exit-code parity holds.
-# hash=sha1-only
 title "gix reset (default mixed, no args)"
 only_for_hash sha1-only && (small-repo-in-sandbox
   it "matches git behavior" && {
@@ -135,7 +133,6 @@ only_for_hash sha1-only && (small-repo-in-sandbox
 )
 
 # mode=effect — `git reset HEAD` is the explicit form of the bare reset.
-# hash=sha1-only
 title "gix reset HEAD"
 only_for_hash sha1-only && (small-repo-in-sandbox
   it "matches git behavior" && {
@@ -144,7 +141,6 @@ only_for_hash sha1-only && (small-repo-in-sandbox
 )
 
 # mode=effect — `git reset HEAD~1` rewinds HEAD one commit, MIXED.
-# hash=sha1-only
 title "gix reset HEAD~1"
 only_for_hash sha1-only && (small-repo-in-sandbox
   it "matches git behavior" && {
@@ -156,7 +152,6 @@ only_for_hash sha1-only && (small-repo-in-sandbox
 # Per vendor/git/builtin/reset.c:407, unborn=true sets the target tree
 # to the empty-tree OID, and the reset proceeds against that empty
 # tree. gix's placeholder emits a stub note + exits 0.
-# hash=sha1-only
 title "gix reset (unborn HEAD)"
 only_for_hash sha1-only && (sandbox
   git-init-hash-aware
@@ -171,7 +166,6 @@ only_for_hash sha1-only && (sandbox
 # "ambiguous argument" stanza. gix's placeholder mirrors the stanza
 # byte-exactly (gitoxide-core/src/repository/reset.rs::porcelain
 # bad-revspec gate).
-# hash=sha1-only
 title "gix reset <bad-revspec>"
 only_for_hash sha1-only && (small-repo-in-sandbox
   it "matches git behavior" && {
@@ -182,7 +176,6 @@ only_for_hash sha1-only && (small-repo-in-sandbox
 # --- mode flags --------------------------------------------------------
 
 # mode=effect — `--mixed` (explicit form of the default).
-# hash=sha1-only
 title "gix reset --mixed HEAD~1"
 only_for_hash sha1-only && (small-repo-in-sandbox
   it "matches git behavior" && {
@@ -193,7 +186,6 @@ only_for_hash sha1-only && (small-repo-in-sandbox
 # mode=effect — `--soft HEAD~1` keeps both the index and working tree.
 # Per vendor/git/builtin/reset.c:486..488, SOFT is the only mode that
 # does not unpack trees; only the HEAD ref moves.
-# hash=sha1-only
 title "gix reset --soft HEAD~1"
 only_for_hash sha1-only && (small-repo-in-sandbox
   it "matches git behavior" && {
@@ -206,7 +198,6 @@ only_for_hash sha1-only && (small-repo-in-sandbox
 # UNPACK_RESET_OVERWRITE_UNTRACKED. The success line
 # "HEAD is now at <abbrev> <subject>" is emitted via
 # `print_new_head_line` at vendor/git/builtin/reset.c:137..149.
-# hash=sha1-only
 title "gix reset --hard HEAD~1"
 only_for_hash sha1-only && (small-repo-in-sandbox
   it "matches git behavior" && {
@@ -218,7 +209,6 @@ only_for_hash sha1-only && (small-repo-in-sandbox
 # conflicted merge: keeps unstaged working-tree changes that don't
 # overlap, errors otherwise. Per
 # vendor/git/Documentation/git-reset.adoc:58..66.
-# hash=sha1-only
 title "gix reset --merge HEAD~1"
 only_for_hash sha1-only && (small-repo-in-sandbox
   it "matches git behavior" && {
@@ -229,7 +219,6 @@ only_for_hash sha1-only && (small-repo-in-sandbox
 # mode=effect — `--keep HEAD~1` resets index + worktree to target,
 # preserving local working-tree changes that don't conflict. Per
 # vendor/git/Documentation/git-reset.adoc:68..72.
-# hash=sha1-only
 title "gix reset --keep HEAD~1"
 only_for_hash sha1-only && (small-repo-in-sandbox
   it "matches git behavior" && {
@@ -244,7 +233,6 @@ only_for_hash sha1-only && (small-repo-in-sandbox
 # (no error). gix's Clap surface accepts both bools without validating
 # mutual exclusion; the eventual reset driver should mirror git's
 # last-wins semantic. Today the placeholder exits 0 either way.
-# hash=sha1-only
 title "gix reset --soft --hard HEAD~1"
 only_for_hash sha1-only && (small-repo-in-sandbox
   it "matches git behavior" && {
@@ -255,7 +243,6 @@ only_for_hash sha1-only && (small-repo-in-sandbox
 # mode=bytes — `--soft` + paths errors at
 # vendor/git/builtin/reset.c:458 ("Cannot do <mode> reset with paths.").
 # gix's placeholder mirrors the verbatim wording.
-# hash=sha1-only
 title "gix reset --soft -- a"
 only_for_hash sha1-only && (small-repo-in-sandbox
   it "matches git behavior" && {
@@ -268,7 +255,6 @@ only_for_hash sha1-only && (small-repo-in-sandbox
 # paths is deprecated; use 'git reset -- <paths>' instead.") and
 # proceeds with path-mode reset (i.e., `read_from_tree`). gix's
 # placeholder skips the warning; bytes-mode parity is deferred.
-# hash=sha1-only
 title "gix reset --mixed -- a"
 only_for_hash sha1-only && (small-repo-in-sandbox
   it "matches git behavior" && {
@@ -280,7 +266,6 @@ only_for_hash sha1-only && (small-repo-in-sandbox
 
 # mode=effect — `-q` suppresses the progress-message branch (refresh
 # uses REFRESH_QUIET) and the "HEAD is now at..." line for HARD.
-# hash=sha1-only
 title "gix reset -q HEAD~1"
 only_for_hash sha1-only && (small-repo-in-sandbox
   it "matches git behavior" && {
@@ -289,7 +274,6 @@ only_for_hash sha1-only && (small-repo-in-sandbox
 )
 
 # mode=effect — long alias for `-q`.
-# hash=sha1-only
 title "gix reset --quiet HEAD~1"
 only_for_hash sha1-only && (small-repo-in-sandbox
   it "matches git behavior" && {
@@ -301,7 +285,6 @@ only_for_hash sha1-only && (small-repo-in-sandbox
 # vendor/git/Documentation/git-reset.adoc:115); explicit form is a
 # no-op. Accepted by git's parse-options as the inverse of
 # `--no-refresh`.
-# hash=sha1-only
 title "gix reset --refresh HEAD"
 only_for_hash sha1-only && (small-repo-in-sandbox
   it "matches git behavior" && {
@@ -312,7 +295,6 @@ only_for_hash sha1-only && (small-repo-in-sandbox
 # mode=effect — `--no-refresh` skips the `refresh_index` call after a
 # MIXED reset (vendor/git/builtin/reset.c:500..511). Useful when the
 # refresh is expensive on large repos.
-# hash=sha1-only
 title "gix reset --no-refresh HEAD"
 only_for_hash sha1-only && (small-repo-in-sandbox
   it "matches git behavior" && {
@@ -325,7 +307,6 @@ only_for_hash sha1-only && (small-repo-in-sandbox
 # mode=effect — bare `--recurse-submodules` (no value) defaults to
 # on-demand per `parse_update_recurse_submodules_arg`. Threads through
 # the unpack-trees opts.
-# hash=sha1-only
 title "gix reset --recurse-submodules HEAD"
 only_for_hash sha1-only && (small-repo-in-sandbox
   it "matches git behavior" && {
@@ -337,7 +318,6 @@ only_for_hash sha1-only && (small-repo-in-sandbox
 # accepted by `parse_update_recurse_submodules_arg` (the worktree
 # updater used by reset accepts only yes/no/true/false/1/0; the
 # on-demand mode is a fetch-only spelling).
-# hash=sha1-only
 title "gix reset --recurse-submodules=yes HEAD"
 only_for_hash sha1-only && (small-repo-in-sandbox
   it "matches git behavior" && {
@@ -346,7 +326,6 @@ only_for_hash sha1-only && (small-repo-in-sandbox
 )
 
 # mode=effect — `--no-recurse-submodules` disables the recurse path.
-# hash=sha1-only
 title "gix reset --no-recurse-submodules HEAD"
 only_for_hash sha1-only && (small-repo-in-sandbox
   it "matches git behavior" && {
@@ -360,7 +339,6 @@ only_for_hash sha1-only && (small-repo-in-sandbox
 # vendor/git/builtin/reset.c:436..442. With no TTY (test fixture
 # context) git's interactive prompt aborts immediately. gix's
 # placeholder accepts the flag and exits 0.
-# hash=sha1-only
 title "gix reset --patch"
 only_for_hash sha1-only && (small-repo-in-sandbox
   it "matches git behavior" && {
@@ -369,7 +347,6 @@ only_for_hash sha1-only && (small-repo-in-sandbox
 )
 
 # mode=effect — short alias for `--patch`.
-# hash=sha1-only
 title "gix reset -p"
 only_for_hash sha1-only && (small-repo-in-sandbox
   it "matches git behavior" && {
@@ -382,7 +359,6 @@ only_for_hash sha1-only && (small-repo-in-sandbox
 # auto-advance / unified / inter-hunk-context additions to reset's
 # parse-options table; vendor/git v2.54.0 has them. Row reactivates
 # when CI git catches up with vendor/git.
-# hash=sha1-only
 title "gix reset --auto-advance --patch"
 only_for_hash sha1-only && (small-repo-in-sandbox
   it "matches git behavior" && {
@@ -394,7 +370,6 @@ only_for_hash sha1-only && (small-repo-in-sandbox
 # vendor/git/builtin/reset.c:449 when not paired with `--patch`,
 # because PARSE_OPT_NONEG is unset on auto-advance. Same version
 # skew as `--auto-advance`.
-# hash=sha1-only
 title "gix reset --no-auto-advance --patch"
 only_for_hash sha1-only && (small-repo-in-sandbox
   it "matches git behavior" && {
@@ -405,7 +380,6 @@ only_for_hash sha1-only && (small-repo-in-sandbox
 # mode=effect — `-U <n>` / `--unified=<n>` requires `--patch` per
 # vendor/git/builtin/reset.c:444. Same version skew as
 # `--auto-advance` (the OPT_DIFF_UNIFIED line lands in v2.54.0).
-# hash=sha1-only
 title "gix reset --unified=3 --patch"
 only_for_hash sha1-only && (small-repo-in-sandbox
   it "matches git behavior" && {
@@ -414,7 +388,6 @@ only_for_hash sha1-only && (small-repo-in-sandbox
 )
 
 # mode=effect — short form of `--unified`. Same version skew.
-# hash=sha1-only
 title "gix reset -U 5 --patch"
 only_for_hash sha1-only && (small-repo-in-sandbox
   it "matches git behavior" && {
@@ -425,7 +398,6 @@ only_for_hash sha1-only && (small-repo-in-sandbox
 # mode=effect — `--inter-hunk-context=<n>` requires `--patch` per
 # vendor/git/builtin/reset.c:446. Same version skew as
 # `--auto-advance`.
-# hash=sha1-only
 title "gix reset --inter-hunk-context=2 --patch"
 only_for_hash sha1-only && (small-repo-in-sandbox
   it "matches git behavior" && {
@@ -438,7 +410,6 @@ only_for_hash sha1-only && (small-repo-in-sandbox
 # mode=effect — `-N` records removed paths as intent-to-add markers.
 # Only meaningful under `--mixed`; pairing with non-mixed dies 128 at
 # vendor/git/builtin/reset.c:477.
-# hash=sha1-only
 title "gix reset -N"
 only_for_hash sha1-only && (small-repo-in-sandbox
   it "matches git behavior" && {
@@ -447,7 +418,6 @@ only_for_hash sha1-only && (small-repo-in-sandbox
 )
 
 # mode=effect — long form of `-N`.
-# hash=sha1-only
 title "gix reset --intent-to-add"
 only_for_hash sha1-only && (small-repo-in-sandbox
   it "matches git behavior" && {
@@ -460,7 +430,6 @@ only_for_hash sha1-only && (small-repo-in-sandbox
 # mode=effect — `--pathspec-from-file=<file>` reads pathspec entries
 # from a file (per vendor/git/builtin/reset.c:398..400). Conflicts
 # with `--patch` per vendor/git/builtin/reset.c:392.
-# hash=sha1-only
 title "gix reset --pathspec-from-file=spec.txt"
 only_for_hash sha1-only && (small-repo-in-sandbox
   echo a > spec.txt
@@ -472,7 +441,6 @@ only_for_hash sha1-only && (small-repo-in-sandbox
 # mode=effect — `--pathspec-file-nul` is only meaningful with
 # `--pathspec-from-file`; pairing alone dies 128 at
 # vendor/git/builtin/reset.c:401..403.
-# hash=sha1-only
 title "gix reset --pathspec-from-file=spec.txt --pathspec-file-nul"
 only_for_hash sha1-only && (small-repo-in-sandbox
   printf 'a\0' > spec.txt
@@ -484,7 +452,6 @@ only_for_hash sha1-only && (small-repo-in-sandbox
 # mode=bytes — `--pathspec-file-nul` without `--pathspec-from-file`
 # is an error (vendor/git/builtin/reset.c:401..403). gix's placeholder
 # mirrors the verbatim wording.
-# hash=sha1-only
 title "gix reset --pathspec-file-nul"
 only_for_hash sha1-only && (small-repo-in-sandbox
   it "matches git behavior" && {
@@ -497,7 +464,6 @@ only_for_hash sha1-only && (small-repo-in-sandbox
 # mode=effect — `git reset HEAD -- <path>` unstages a single file by
 # path (the "opposite of git add" mode). Per
 # vendor/git/Documentation/git-reset.adoc:82..89.
-# hash=sha1-only
 title "gix reset HEAD -- a"
 only_for_hash sha1-only && (small-repo-in-sandbox
   it "matches git behavior" && {
@@ -509,7 +475,6 @@ only_for_hash sha1-only && (small-repo-in-sandbox
 # vendor/git/builtin/reset.c:247 `parse_args` — the second arg is
 # checked against `repo_get_oid_treeish` and falls through to the
 # pathspec branch.
-# hash=sha1-only
 title "gix reset HEAD a"
 only_for_hash sha1-only && (small-repo-in-sandbox
   it "matches git behavior" && {
@@ -518,7 +483,6 @@ only_for_hash sha1-only && (small-repo-in-sandbox
 )
 
 # mode=effect — `git reset -- <path>` defaults the tree-ish to HEAD.
-# hash=sha1-only
 title "gix reset -- a"
 only_for_hash sha1-only && (small-repo-in-sandbox
   it "matches git behavior" && {
@@ -531,7 +495,6 @@ only_for_hash sha1-only && (small-repo-in-sandbox
 # mode=bytes — `--mixed` (default) in a bare repo dies 128 at
 # vendor/git/builtin/reset.c:473 ("mixed reset is not allowed in a
 # bare repository"). gix's placeholder mirrors the verbatim wording.
-# hash=sha1-only
 title "gix reset (in bare repo)"
 only_for_hash sha1-only && (sandbox
   git-init-hash-aware --bare
@@ -543,7 +506,6 @@ only_for_hash sha1-only && (sandbox
 # mode=bytes — `-N --hard` errors at vendor/git/builtin/reset.c:477
 # ("the option '-N' requires '--mixed'"). gix's placeholder mirrors
 # the verbatim wording.
-# hash=sha1-only
 title "gix reset -N --hard"
 only_for_hash sha1-only && (small-repo-in-sandbox
   it "matches git behavior" && {
@@ -555,7 +517,6 @@ only_for_hash sha1-only && (small-repo-in-sandbox
 # vendor/git/builtin/reset.c:438 ("options '--patch' and
 # '--{hard,mixed,soft}' cannot be used together"). gix's placeholder
 # mirrors the verbatim wording.
-# hash=sha1-only
 title "gix reset --patch --hard"
 only_for_hash sha1-only && (small-repo-in-sandbox
   it "matches git behavior" && {
@@ -567,7 +528,6 @@ only_for_hash sha1-only && (small-repo-in-sandbox
 # vendor/git/builtin/reset.c:392..393 ("options '--pathspec-from-file'
 # and '--patch' cannot be used together"). gix's placeholder mirrors
 # the verbatim wording.
-# hash=sha1-only
 title "gix reset --patch --pathspec-from-file=spec.txt"
 only_for_hash sha1-only && (small-repo-in-sandbox
   echo a > spec.txt
@@ -580,7 +540,6 @@ only_for_hash sha1-only && (small-repo-in-sandbox
 # vendor/git/builtin/reset.c:395..396 ("'--pathspec-from-file' and
 # pathspec arguments cannot be used together"). gix's placeholder
 # mirrors the verbatim wording.
-# hash=sha1-only
 title "gix reset --pathspec-from-file=spec.txt -- a"
 only_for_hash sha1-only && (small-repo-in-sandbox
   echo a > spec.txt
