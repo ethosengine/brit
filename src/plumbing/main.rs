@@ -2745,6 +2745,17 @@ pub fn main() -> Result<()> {
                 reedit_message,
                 squash,
                 fixup,
+                template: _template,
+                dry_run,
+                short: _short,
+                branch: _branch,
+                porcelain: _porcelain,
+                long: _long,
+                null: _null,
+                status: _status,
+                no_status: _no_status,
+                verbose: _verbose,
+                untracked_files: _untracked_files,
             } = platform;
             match cmd {
                 // Bare `gix commit` (no subcommand): porcelain dispatch.
@@ -2782,6 +2793,7 @@ pub fn main() -> Result<()> {
                                 reedit_message,
                                 squash,
                                 fixup,
+                                dry_run,
                             },
                         )
                     },

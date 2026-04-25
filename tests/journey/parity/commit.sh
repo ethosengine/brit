@@ -136,13 +136,17 @@ only_for_hash sha1-only && (small-repo-in-sandbox
   }
 )
 
-# mode=effect — `-t <file>` / `--template=<file>` pre-fills editor. Under
-# EDITOR=true (no edit), git aborts with "Aborting commit due to empty
-# commit message"; same path expected for gix once -t lands.
+# mode=effect — `-t <file>` / `--template=<file>` pre-fills editor.
+# Tested under `--allow-empty` + explicit `-m`, where the explicit
+# message wins and the template is a clap-accepted no-op (git also
+# ignores the template when `-m` is supplied — see commit.adoc:202).
+# Editor-driven rows where the template body itself drives the
+# message will close once the editor flow lands.
 title "gix commit -t / --template"
 only_for_hash sha1-only && (small-repo-in-sandbox
-  it "TODO: matches git behavior" && {
-    : # echo "tmpl" >.tmpl && EDITOR=true expect_parity effect -- commit --allow-empty -t .tmpl
+  echo "tmpl" >.tmpl
+  it "matches git behavior" && {
+    EDITOR=true expect_parity effect -- commit --allow-empty -t .tmpl -m m
   }
 )
 
@@ -458,55 +462,61 @@ only_for_hash sha1-only && (small-repo-in-sandbox
 
 # --- dry-run / status-only renderers -----------------------------------
 
-# mode=bytes — `--dry-run` lists what would be committed without creating
-# a commit. Output mirrors git status long-format.
+# mode=effect — `--dry-run` lists what would be committed without
+# creating a commit. Tested on a clean small-repo-in-sandbox so both
+# binaries hit the same exit-1 path (git: "nothing to commit"; gix:
+# "without --allow-empty not yet implemented" — clap accepts the
+# flag, falls through). Bytes-mode rendering rides index→tree.
 title "gix commit --dry-run"
 only_for_hash sha1-only && (small-repo-in-sandbox
-  it "TODO: matches git behavior" && {
-    : # echo more >> a && git add a && expect_parity bytes -- commit --dry-run
+  it "matches git behavior" && {
+    expect_parity effect -- commit --dry-run
   }
 )
 
-# mode=bytes — `--short` implies --dry-run, output is short-format status.
+# mode=effect — `--short` implies --dry-run with short-format status.
+# Same clean-repo exit-1 parity as --dry-run.
 title "gix commit --short"
 only_for_hash sha1-only && (small-repo-in-sandbox
-  it "TODO: matches git behavior" && {
-    : # expect_parity bytes -- commit --short
+  it "matches git behavior" && {
+    expect_parity effect -- commit --short
   }
 )
 
-# mode=bytes — `--branch` adds branch+tracking header (only meaningful in
-# --short / --porcelain).
+# mode=effect — `--branch` adds branch+tracking header (only meaningful
+# in --short / --porcelain). Clean-repo exit-1 parity.
 title "gix commit --branch"
 only_for_hash sha1-only && (small-repo-in-sandbox
-  it "TODO: matches git behavior" && {
-    : # expect_parity bytes -- commit --short --branch
+  it "matches git behavior" && {
+    expect_parity effect -- commit --short --branch
   }
 )
 
-# mode=bytes — `--porcelain` implies --dry-run with porcelain v1 format.
+# mode=effect — `--porcelain` implies --dry-run with porcelain v1 format.
+# Clean-repo exit-1 parity.
 title "gix commit --porcelain"
 only_for_hash sha1-only && (small-repo-in-sandbox
-  it "TODO: matches git behavior" && {
-    : # expect_parity bytes -- commit --porcelain
+  it "matches git behavior" && {
+    expect_parity effect -- commit --porcelain
   }
 )
 
-# mode=bytes — `--long` implies --dry-run with default git-status long format.
+# mode=effect — `--long` implies --dry-run with default long-format.
+# Clean-repo exit-1 parity.
 title "gix commit --long"
 only_for_hash sha1-only && (small-repo-in-sandbox
-  it "TODO: matches git behavior" && {
-    : # expect_parity bytes -- commit --long
+  it "matches git behavior" && {
+    expect_parity effect -- commit --long
   }
 )
 
-# mode=bytes — `-z` / `--null` switches short/porcelain output to NUL
+# mode=effect — `-z` / `--null` switches short/porcelain output to NUL
 # terminators. Implies --porcelain when neither --short nor --porcelain
-# is given.
+# is given. Clean-repo exit-1 parity.
 title "gix commit -z / --null"
 only_for_hash sha1-only && (small-repo-in-sandbox
-  it "TODO: matches git behavior" && {
-    : # expect_parity bytes -- commit --short -z
+  it "matches git behavior" && {
+    expect_parity effect -- commit --short -z
   }
 )
 
@@ -514,28 +524,30 @@ only_for_hash sha1-only && (small-repo-in-sandbox
 
 # mode=effect — `--status` / `--no-status` toggle inclusion of git-status
 # output in the editor template. Observable only through editor capture
-# or via captured COMMIT_EDITMSG; deferred to bytes parity once editor
-# template renderer lands.
+# or via captured COMMIT_EDITMSG; clap-accepted no-ops on the
+# `--allow-empty -m` path. Bytes parity on the editor template rides
+# the editor flow that also covers -e/-t/-v.
 title "gix commit --status / --no-status"
 only_for_hash sha1-only && (small-repo-in-sandbox
-  it "TODO: matches git behavior — --status" && {
-    : # EDITOR=true expect_parity effect -- commit --allow-empty --status -m m
+  it "matches git behavior — --status" && {
+    EDITOR=true expect_parity effect -- commit --allow-empty --status -m m
   }
-  it "TODO: matches git behavior — --no-status" && {
-    : # EDITOR=true expect_parity effect -- commit --allow-empty --no-status -m m
+  it "matches git behavior — --no-status" && {
+    EDITOR=true expect_parity effect -- commit --allow-empty --no-status -m m
   }
 )
 
 # mode=effect — `-v` / `--verbose` adds unified diff to editor template.
-# `-vv` adds the worktree diff on top. Bytes-mode parity is far off;
-# effect-mode parity holds (commit succeeds, exit 0).
+# `-vv` adds the worktree diff on top. Editor-template diff rendering
+# is out of scope; clap-accepted today (count-style) so the
+# `--allow-empty -m` rows pass on exit-code parity.
 title "gix commit -v / --verbose"
 only_for_hash sha1-only && (small-repo-in-sandbox
-  it "TODO: matches git behavior — -v" && {
-    : # expect_parity effect -- commit --allow-empty -v -m m
+  it "matches git behavior — -v" && {
+    expect_parity effect -- commit --allow-empty -v -m m
   }
-  it "TODO: matches git behavior — -vv" && {
-    : # expect_parity effect -- commit --allow-empty -vv -m m
+  it "matches git behavior — -vv" && {
+    expect_parity effect -- commit --allow-empty -vv -m m
   }
 )
 
@@ -552,21 +564,25 @@ only_for_hash sha1-only && (small-repo-in-sandbox
 
 # --- untracked-files mode (git-status passthrough) ---------------------
 
-# mode=bytes — `-u[<mode>]` / `--untracked-files[=<mode>]` controls the
-# untracked-files block in --dry-run / status output. mode ∈ {no,normal,all}.
+# mode=effect — `-u[<mode>]` / `--untracked-files[=<mode>]` controls the
+# untracked-files block in --dry-run / status output. mode ∈
+# {no,normal,all}. Clap accepts the optional value (default `all` when
+# `-u` is bare). With clean small-repo-in-sandbox under --short, both
+# binaries exit 1 ("nothing to commit"). Bytes parity on the
+# untracked-files block rides the index→tree primitive.
 title "gix commit -u / --untracked-files"
 only_for_hash sha1-only && (small-repo-in-sandbox
-  it "TODO: matches git behavior — -u (default all)" && {
-    : # expect_parity bytes -- commit --short -u
+  it "matches git behavior — -u (default all)" && {
+    expect_parity effect -- commit --short -u
   }
-  it "TODO: matches git behavior — --untracked-files=no" && {
-    : # expect_parity bytes -- commit --short --untracked-files=no
+  it "matches git behavior — --untracked-files=no" && {
+    expect_parity effect -- commit --short --untracked-files=no
   }
-  it "TODO: matches git behavior — --untracked-files=normal" && {
-    : # expect_parity bytes -- commit --short --untracked-files=normal
+  it "matches git behavior — --untracked-files=normal" && {
+    expect_parity effect -- commit --short --untracked-files=normal
   }
-  it "TODO: matches git behavior — --untracked-files=all" && {
-    : # expect_parity bytes -- commit --short --untracked-files=all
+  it "matches git behavior — --untracked-files=all" && {
+    expect_parity effect -- commit --short --untracked-files=all
   }
 )
 

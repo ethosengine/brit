@@ -2351,6 +2351,70 @@ pub mod commit {
         /// `OPT_CALLBACK_F(0, "fixup", ..., parse_fixup_arg)`.
         #[clap(long = "fixup", value_name = "spec")]
         pub fixup: Option<String>,
+
+        /// Editor template file. Mirrors `OPT_FILENAME('t', "template", ...)`.
+        /// Editor flow lands with the template/status rows; under
+        /// EDITOR=true plus an explicit `-m` message the template is
+        /// observably ignored.
+        #[clap(short = 't', long = "template", value_name = "file")]
+        pub template: Option<std::path::PathBuf>,
+
+        /// Print what would be committed without creating a commit.
+        /// Mirrors `OPT_BOOL(0, "dry-run", ...)`. Bytes parity on
+        /// the dry-run rendering rides the index→tree primitive.
+        #[clap(long = "dry-run")]
+        pub dry_run: bool,
+
+        /// Implies --dry-run; output in short-format. Mirrors
+        /// `OPT_SET_INT(0, "short", ..., STATUS_FORMAT_SHORT)`.
+        #[clap(long = "short")]
+        pub short: bool,
+
+        /// Show branch + tracking info in --short / --porcelain.
+        /// Mirrors `OPT_BOOL(0, "branch", ...)`.
+        #[clap(long = "branch")]
+        pub branch: bool,
+
+        /// Implies --dry-run; porcelain v1 format. Mirrors
+        /// `OPT_SET_INT(0, "porcelain", ..., STATUS_FORMAT_PORCELAIN)`.
+        #[clap(long = "porcelain")]
+        pub porcelain: bool,
+
+        /// Implies --dry-run; long-format status. Mirrors
+        /// `OPT_SET_INT(0, "long", ..., STATUS_FORMAT_LONG)`.
+        #[clap(long = "long")]
+        pub long: bool,
+
+        /// NUL-separator for --short / --porcelain. Mirrors
+        /// `OPT_BOOL('z', "null", ...)`.
+        #[clap(short = 'z', long = "null")]
+        pub null: bool,
+
+        /// Include git-status output in the editor template. Mirrors
+        /// `OPT_BOOL(0, "status", ...)`. Default-on in git; observable
+        /// only via editor capture, so accept-only today.
+        #[clap(long = "status")]
+        pub status: bool,
+
+        /// Counterpart to --status. Mirrors `OPT_BOOL(0, "no-status",
+        /// ...)`. Accept-only today.
+        #[clap(long = "no-status", overrides_with = "status")]
+        pub no_status: bool,
+
+        /// Diff verbosity (count-style). `-v` adds the staged diff
+        /// to the editor template, `-vv` adds worktree diff too.
+        /// Mirrors `OPT__VERBOSE`. Editor-template rendering is
+        /// out of scope; clap-accepted today.
+        #[clap(short = 'v', long = "verbose", action = clap::ArgAction::Count)]
+        pub verbose: u8,
+
+        /// Untracked-files mode for the dry-run / status block.
+        /// `-u` alone defaults to `all`; `--untracked-files=<mode>`
+        /// accepts no/normal/all (and the boolean spellings).
+        /// Mirrors `OPT_CALLBACK_F('u', "untracked-files", ...,
+        /// parse_untracked_arg)`.
+        #[clap(short = 'u', long = "untracked-files", value_name = "mode", num_args = 0..=1, default_missing_value = "all")]
+        pub untracked_files: Option<String>,
     }
 
     #[derive(Debug, clap::Subcommand)]

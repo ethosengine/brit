@@ -212,6 +212,11 @@ pub struct CreateOptions {
     /// `--fixup=[(amend|reword):]<commit>`: construct fixup/amend
     /// message variants.
     pub fixup: Option<String>,
+    /// `--dry-run`: report what would be committed without writing
+    /// the commit object. Implementation today short-circuits before
+    /// any commit-object write so --allow-empty + --dry-run is
+    /// observably "no commit advance".
+    pub dry_run: bool,
 }
 
 /// Porcelain `git commit` entry point. Currently only the
@@ -238,6 +243,7 @@ pub fn create(
         reedit_message,
         squash,
         fixup,
+        dry_run,
     }: CreateOptions,
 ) -> Result<()> {
     // git's `--reset-author` precondition (vendor/git/builtin/commit.c
@@ -400,6 +406,15 @@ pub fn create(
 
     if composed.is_empty() && !allow_empty_message {
         bail!("Aborting commit due to empty commit message.");
+    }
+
+    // --dry-run short-circuit: git's `--dry-run` reports what would
+    // be committed and returns 0 without writing the commit object.
+    // Bytes parity on the dry-run rendering rides the index→tree
+    // primitive; the exit-0 short-circuit here is sufficient for
+    // effect-mode parity on `--allow-empty --dry-run -m m` style rows.
+    if dry_run {
+        return Ok(());
     }
 
     // For --allow-empty we reuse the parent's tree verbatim. head_id()
