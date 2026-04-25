@@ -515,82 +515,97 @@ only_for_hash sha1-only && (small-repo-in-sandbox
 # --- output controls ---------------------------------------------------
 
 # mode=effect — `-U<n>` / `--unified=<n>`: number of context lines in
-# patch output. Default 3.
+# patch output. Default 3. Accepted by clap; deferred until renderer.
 # hash=sha1-only
 title "gix diff -U / --unified"
 only_for_hash sha1-only && (small-repo-in-sandbox
-  # TODO — expect_parity effect -- diff -U5 HEAD~1 HEAD
-  it "matches git behavior" && { :; }
+  it "matches git behavior" && {
+    compat_effect "diff -U/--unified context-line count deferred until renderer lands" -- diff -U5 HEAD~1 HEAD
+  }
 )
 
 # mode=effect — `--output=<file>`: write diff to file instead of stdout.
+# Accepted by clap; output redirection deferred until renderer lands.
 # hash=sha1-only
 title "gix diff --output"
 only_for_hash sha1-only && (small-repo-in-sandbox
-  # TODO — expect_parity effect -- diff --output=out.patch HEAD~1 HEAD
-  it "matches git behavior" && { :; }
+  it "matches git behavior" && {
+    compat_effect "diff --output file-redirect deferred until renderer lands" -- diff --output=out.patch HEAD~1 HEAD
+  }
 )
 
 # mode=effect — `--output-indicator-{new,old,context}=<char>`: per-line
-# leading character override (default + - <space>).
+# leading character override (default + - <space>). Accepted by clap;
+# deferred until renderer lands.
 # hash=sha1-only
 title "gix diff --output-indicator-{new,old,context}"
 only_for_hash sha1-only && (small-repo-in-sandbox
-  # TODO — expect_parity effect -- diff --output-indicator-new=! ...
-  it "matches git behavior" && { :; }
+  it "matches git behavior" && {
+    compat_effect "diff --output-indicator-* per-line marker override deferred until renderer lands" -- diff --output-indicator-new=! HEAD~1 HEAD
+  }
 )
 
 # mode=effect — `--abbrev[=<n>]`: hash abbreviation in raw / patch
-# headers.
+# headers. Accepted by clap; deferred until renderer lands.
 # hash=sha1-only
 title "gix diff --abbrev"
 only_for_hash sha1-only && (small-repo-in-sandbox
-  # TODO — expect_parity effect -- diff --abbrev=12 --raw HEAD~1 HEAD
-  it "matches git behavior" && { :; }
+  it "matches git behavior" && {
+    compat_effect "diff --abbrev hash-abbreviation width deferred until renderer lands" -- diff --abbrev=12 --raw HEAD~1 HEAD
+  }
 )
 
 # mode=effect — `--binary`: emit base85-encoded binary patches that
-# git-apply can consume.
+# git-apply can consume. Accepted by clap; binary-patch encoding
+# deferred until renderer lands.
 # hash=sha1-only
 title "gix diff --binary"
 only_for_hash sha1-only && (small-repo-in-sandbox
-  # TODO — expect_parity effect -- diff --binary HEAD~1 HEAD
-  it "matches git behavior" && { :; }
+  it "matches git behavior" && {
+    compat_effect "diff --binary base85 binary patch deferred until renderer lands" -- diff --binary HEAD~1 HEAD
+  }
 )
 
 # mode=effect — `--full-index`: full SHAs in patch headers (override
-# --abbrev's abbreviation).
+# --abbrev's abbreviation). Accepted by clap; deferred until renderer.
 # hash=sha1-only
 title "gix diff --full-index"
 only_for_hash sha1-only && (small-repo-in-sandbox
-  # TODO — expect_parity effect -- diff --full-index HEAD~1 HEAD
-  it "matches git behavior" && { :; }
+  it "matches git behavior" && {
+    compat_effect "diff --full-index full SHA emission deferred until renderer lands" -- diff --full-index HEAD~1 HEAD
+  }
 )
 
 # mode=effect — `--line-prefix=<prefix>`: prepend text to each output
 # line (used by submodule rendering and external tooling).
+# Accepted by clap; deferred until renderer lands.
 # hash=sha1-only
 title "gix diff --line-prefix"
 only_for_hash sha1-only && (small-repo-in-sandbox
-  # TODO — expect_parity effect -- diff --line-prefix='> ' HEAD~1 HEAD
-  it "matches git behavior" && { :; }
+  it "matches git behavior" && {
+    compat_effect "diff --line-prefix per-line prefix deferred until renderer lands" -- diff --line-prefix='> ' HEAD~1 HEAD
+  }
 )
 
 # mode=effect — `--src-prefix=<prefix>` / `--dst-prefix=<prefix>`:
 # override the `a/` / `b/` patch-header prefixes.
+# Accepted by clap; deferred until patch renderer lands.
 # hash=sha1-only
 title "gix diff --src-prefix / --dst-prefix"
 only_for_hash sha1-only && (small-repo-in-sandbox
-  # TODO — expect_parity effect -- diff --src-prefix=old/ --dst-prefix=new/ HEAD~1 HEAD
-  it "matches git behavior" && { :; }
+  it "matches git behavior" && {
+    compat_effect "diff --src-prefix/--dst-prefix patch-header overrides deferred until renderer lands" -- diff --src-prefix=old/ --dst-prefix=new/ HEAD~1 HEAD
+  }
 )
 
 # mode=effect — `--no-prefix`: drop the a/b prefixes entirely.
+# Accepted by clap; deferred until renderer lands.
 # hash=sha1-only
 title "gix diff --no-prefix"
 only_for_hash sha1-only && (small-repo-in-sandbox
-  # TODO — expect_parity effect -- diff --no-prefix HEAD~1 HEAD
-  it "matches git behavior" && { :; }
+  it "matches git behavior" && {
+    compat_effect "diff --no-prefix prefix-suppression deferred until renderer lands" -- diff --no-prefix HEAD~1 HEAD
+  }
 )
 
 # mode=effect — `--default-prefix`: restore default a/b prefixes after
