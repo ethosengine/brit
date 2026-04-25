@@ -60,8 +60,8 @@ title "gix commit"
 # hash=dual
 title "gix commit --help"
 only_for_hash dual && (sandbox
-  it "TODO: matches git behavior" && {
-    : # expect_parity effect -- commit --help
+  it "matches git behavior" && {
+    expect_parity effect -- commit --help
   }
 )
 
@@ -70,8 +70,8 @@ only_for_hash dual && (sandbox
 # via src/plumbing/main.rs.
 title "gix commit --bogus-flag"
 only_for_hash sha1-only && (small-repo-in-sandbox
-  it "TODO: matches git behavior" && {
-    : # expect_parity effect -- commit --bogus-flag
+  it "matches git behavior" && {
+    expect_parity effect -- commit --bogus-flag
   }
 )
 
