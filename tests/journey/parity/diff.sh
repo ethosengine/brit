@@ -341,14 +341,16 @@ only_for_hash sha1-only && (small-repo-in-sandbox
   }
 )
 
-# mode=effect — `-s` / `--no-patch`: suppress diff output. Useful in
-# combination with --stat / --exit-code. With no other format flag,
-# yields empty stdout.
+# mode=effect — `-s` / `--no-patch`: suppress diff output. Both forms
+# parse via clap. With no other format flag, yields empty stdout.
+# Bytes parity (suppression interaction with --stat etc.) deferred
+# via compat_effect.
 # hash=sha1-only
 title "gix diff -s / --no-patch"
 only_for_hash sha1-only && (small-repo-in-sandbox
-  # TODO — expect_parity effect -- diff -s HEAD~1 HEAD
-  it "matches git behavior" && { :; }
+  it "matches git behavior" && {
+    compat_effect "diff -s/--no-patch suppression interaction deferred until renderer lands" -- diff -s HEAD~1 HEAD
+  }
 )
 
 # mode=bytes — `--raw`: scriptable raw diff format (mode/sha/status).
