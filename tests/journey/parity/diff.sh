@@ -144,13 +144,18 @@ only_for_hash sha1-only && (small-repo-in-sandbox
 )
 
 # mode=effect — `gix diff <commit> <commit>`: tree-vs-tree (diff-tree).
-# This maps onto the existing `gix diff tree` subcommand semantics
-# but with the porcelain positional shape.
+# Porcelain helper routes 2-arg case to the existing tree() entry,
+# which resolves both revspecs via rev_parse_single, computes
+# diff_tree_to_tree, and emits gix's plumbing-style change list
+# (`Diffing trees ... -> ...` header + `M: <path>` per change).
+# git emits unified-diff patches; output diverges but both exit 0.
+# Bytes parity deferred via compat_effect until renderer aligns.
 # hash=sha1-only
 title "gix diff <commit> <commit>"
 only_for_hash sha1-only && (small-repo-in-sandbox
-  # TODO — expect_parity effect -- diff HEAD~1 HEAD
-  it "matches git behavior" && { :; }
+  it "matches git behavior" && {
+    compat_effect "diff tree-vs-tree patch output deferred until renderer lands" -- diff HEAD~1 HEAD
+  }
 )
 
 # mode=bytes — `git diff <unknown-rev>`: setup_revisions dies 128 with
