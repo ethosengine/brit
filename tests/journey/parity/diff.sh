@@ -126,12 +126,21 @@ only_for_hash sha1-only && (small-repo-in-sandbox
 )
 
 # mode=effect — `gix diff <commit>`: working-tree vs <commit>. diff-
-# index path in builtin/diff.c (option without --cached).
+# index path in builtin/diff.c (option without --cached). gix's
+# Platform now carries a positional `args: Vec<BString>` and the
+# bare-form dispatch routes by arg-count via
+# gitoxide_core::repository::diff::porcelain — 1-arg form resolves
+# the revspec via repo.rev_parse_single() and emits a placeholder
+# note ("[gix-diff] worktree vs `<spec>` (<short>) — patch output
+# not yet implemented") on stderr, then exits 0. Both binaries exit 0
+# on a clean worktree with valid revspec; bytes parity deferred to
+# the patch renderer (compat_effect ledger).
 # hash=sha1-only
 title "gix diff <commit>"
 only_for_hash sha1-only && (small-repo-in-sandbox
-  # TODO — expect_parity effect -- diff HEAD
-  it "matches git behavior" && { :; }
+  it "matches git behavior" && {
+    compat_effect "diff worktree-vs-<commit> patch output deferred until renderer lands" -- diff HEAD
+  }
 )
 
 # mode=effect — `gix diff <commit> <commit>`: tree-vs-tree (diff-tree).

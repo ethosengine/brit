@@ -345,14 +345,16 @@ pub fn main() -> Result<()> {
                 core::repository::merge_base(repository(Mode::Lenient)?, first, others, out, format)
             },
         ),
-        Subcommands::Diff(crate::plumbing::options::diff::Platform { cmd }) => match cmd {
+        Subcommands::Diff(crate::plumbing::options::diff::Platform { cmd, args }) => match cmd {
             // Bare `gix diff` (no subcommand): porcelain dispatch.
-            // Outside a repo, git emits a "Not a git repository. Use --no-index..."
-            // warning and dies 129 via usage_msg_opt (vendor/git/builtin/diff.c
-            // routes to the no-index path; with no paths it falls into usage).
-            // The 129 must be the exit code, not 128, so we cannot route through
-            // the standard `repository(...)` closure (which exits 128 on
-            // NoGitRepository). Discover ourselves first.
+            // Outside a repo with zero positional args, git emits
+            // "Not a git repository. Use --no-index..." and dies 129
+            // via usage_msg_opt. With positional args inside a repo,
+            // route by arg-count: 0 → worktree-vs-index, 1 → worktree-
+            // vs-<commit>, 2 → tree-vs-tree.
+            // 129 must be the exit code (not 128), so we cannot route
+            // through the standard `repository(...)` closure (which
+            // exits 128 on NoGitRepository). Discover ourselves first.
             None => {
                 let cwd = std::env::current_dir().context("Could not obtain current working directory")?;
                 match gix::discover::upwards(&cwd) {
@@ -375,7 +377,7 @@ pub fn main() -> Result<()> {
                         progress_keep_open,
                         None,
                         move |progress, out, _err| {
-                            core::repository::diff::worktree_index(repository(Mode::Lenient)?, out, progress)
+                            core::repository::diff::porcelain(repository(Mode::Lenient)?, out, progress, args)
                         },
                     ),
                 }

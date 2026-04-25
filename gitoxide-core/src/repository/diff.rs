@@ -7,6 +7,49 @@ use gix::{
     ObjectId,
 };
 
+/// Porcelain `git diff` entry point — routes the bare-form invocation
+/// (no subcommand) by positional-arg count, matching cmd_diff's
+/// classifier in vendor/git/builtin/diff.c.
+///
+/// Routing:
+///   0 args → `worktree_index` (diff-files: worktree vs index);
+///   1 arg  → worktree vs `<commit>` (diff-index path) — currently a
+///            stub that resolves the revspec and emits a placeholder
+///            note; bytes parity deferred until the patch renderer
+///            lands;
+///   2 args → tree-vs-tree, delegating to the existing `tree` helper.
+pub fn porcelain(
+    repo: gix::Repository,
+    out: &mut dyn std::io::Write,
+    progress: impl gix::NestedProgress + 'static,
+    args: Vec<BString>,
+) -> anyhow::Result<()> {
+    match args.len() {
+        0 => worktree_index(repo, out, progress),
+        1 => {
+            let revspec = args.into_iter().next().context("missing revspec")?;
+            let id = repo
+                .rev_parse_single(revspec.as_bstr())
+                .with_context(|| format!("could not resolve revspec '{revspec}'"))?;
+            use std::io::Write;
+            let mut stderr = std::io::stderr().lock();
+            let _ = writeln!(
+                stderr,
+                "[gix-diff] worktree vs `{revspec}` ({}) — patch output not yet implemented",
+                id.shorten_or_id()
+            );
+            Ok(())
+        }
+        2 => {
+            let mut it = args.into_iter();
+            let old_treeish = it.next().context("missing old revspec")?;
+            let new_treeish = it.next().context("missing new revspec")?;
+            tree(repo, out, old_treeish, new_treeish)
+        }
+        n => anyhow::bail!("`gix diff` with {n} positional args not yet implemented"),
+    }
+}
+
 /// Bare `git diff` (no subcommand, no revspec): worktree vs index.
 ///
 /// The git C path runs `run_diff_files` over the index-vs-worktree

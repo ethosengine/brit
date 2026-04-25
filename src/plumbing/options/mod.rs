@@ -993,10 +993,26 @@ pub mod diff {
     /// behavior. The porcelain flag surface (`-p`, `--raw`, `--cached`,
     /// etc., per `vendor/git/Documentation/git-diff.adoc` and
     /// `diff-options.adoc`) lands on this struct as parity rows close.
+    ///
+    /// Positional `args` accept revspecs and pathspecs in the
+    /// porcelain shape. The dispatch arm in `src/plumbing/main.rs`
+    /// splits on `--` (path-separator sentinel) and routes by count:
+    ///   0 args → worktree-vs-index (diff-files path);
+    ///   1 arg  → worktree-vs-`<commit>` (diff-index path);
+    ///   2 args → tree-vs-tree (diff-tree path);
+    ///   `<a>..<b>` → range form, equivalent to `<a> <b>`;
+    ///   `<a>...<b>` → symmetric, equivalent to `<merge-base> <b>`.
     #[derive(Debug, clap::Parser)]
+    #[clap(args_conflicts_with_subcommands = true)]
     pub struct Platform {
         #[clap(subcommand)]
         pub cmd: Option<SubCommands>,
+
+        /// Positional revspec(s) and/or pathspec(s). Pre-`--` are
+        /// revspecs (1, 2, or a `..`/`...` range form); post-`--` are
+        /// pathspecs.
+        #[clap(value_parser = crate::shared::AsBString)]
+        pub args: Vec<BString>,
     }
 
     #[derive(Debug, clap::Subcommand)]
