@@ -71,8 +71,9 @@ only_for_hash dual && (sandbox
 # hash=sha1-only
 title "gix diff --bogus-flag"
 only_for_hash sha1-only && (small-repo-in-sandbox
-  # TODO — expect_parity effect -- diff --bogus-flag
-  it "matches git behavior" && { :; }
+  it "matches git behavior" && {
+    expect_parity effect -- diff --bogus-flag
+  }
 )
 
 # mode=effect — `git diff` outside any repo with no args dies 129 (it
