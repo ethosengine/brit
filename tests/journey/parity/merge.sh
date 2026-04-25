@@ -62,14 +62,14 @@ title "gix merge"
 # --- meta / help --------------------------------------------------------
 
 # mode=effect — clap --help short-circuits before repo load, exits 0.
-# git's --help delegates to `man git-merge`; gix returns clap's auto-
-# generated help. Message text diverges; only the exit-code match is
-# asserted.
+# git's --help delegates to `man git-merge` (exit 0 when man is
+# available); gix returns clap's auto-generated help. Message text
+# diverges; only the exit-code match is asserted.
 # hash=dual
 title "gix merge --help"
 only_for_hash dual && (sandbox
-  it "TODO matches git behavior" && {
-    : # TODO: expect_parity effect -- merge --help
+  it "matches git behavior" && {
+    expect_parity effect -- merge --help
   }
 )
 
@@ -81,8 +81,8 @@ only_for_hash dual && (sandbox
 # hash=sha1-only
 title "gix merge --bogus-flag"
 only_for_hash sha1-only && (small-repo-in-sandbox
-  it "TODO matches git behavior" && {
-    : # TODO: expect_parity effect -- merge --bogus-flag
+  it "matches git behavior" && {
+    expect_parity effect -- merge --bogus-flag
   }
 )
 
@@ -108,8 +108,8 @@ only_for_hash sha1-only && (small-repo-in-sandbox
 # hash=dual
 title "gix merge (outside a repository)"
 only_for_hash dual && (sandbox
-  it "TODO matches git behavior" && {
-    : # TODO: expect_parity effect -- merge HEAD
+  it "matches git behavior" && {
+    expect_parity effect -- merge HEAD
   }
 )
 
