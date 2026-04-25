@@ -188,11 +188,15 @@ only_for_hash sha1-only && (small-repo-in-sandbox
 
 # mode=effect — `gix diff A...B`: three-dot symmetric (merge-base of
 # A,B vs B). Equivalent to `git diff $(git merge-base A B) B`.
+# parse_range detects three-dot, resolves both endpoints, calls
+# repo.merge_base(L, R), and routes (mb_id, R) into the 2-arg path.
+# Bytes parity deferred via compat_effect (tree-vs-tree renderer).
 # hash=sha1-only
 title "gix diff A...B"
 only_for_hash sha1-only && (small-repo-in-sandbox
-  # TODO — expect_parity effect -- diff HEAD~1...HEAD
-  it "matches git behavior" && { :; }
+  it "matches git behavior" && {
+    compat_effect "diff A...B symmetric tree-vs-tree patch output deferred until renderer lands" -- diff HEAD~1...HEAD
+  }
 )
 
 # mode=effect — `gix diff <blob> <blob>`: raw blob-object comparison
