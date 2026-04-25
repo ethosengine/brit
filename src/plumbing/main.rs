@@ -1175,8 +1175,7 @@ pub fn main() -> Result<()> {
                 // the branch::create API. clap emits "direct" for bare
                 // --track; "inherit" and "always" are also valid values
                 // but only "direct" is wired up on the gix side.
-                let track_bstr: Option<gix::bstr::BString> =
-                    track.map(|s| gix::bstr::BString::from(s.as_bytes()));
+                let track_bstr: Option<gix::bstr::BString> = track.map(|s| gix::bstr::BString::from(s.as_bytes()));
                 prepare_and_run(
                     "branch-create",
                     trace,
@@ -2713,8 +2712,28 @@ pub fn main() -> Result<()> {
                 move |_progress, out, _err| core::repository::cat(repository(Mode::Lenient)?, &revspec, out),
             )
         }
-        Subcommands::Commit(cmd) => match cmd {
-            commit::Subcommands::Verify { rev_spec } => prepare_and_run(
+        Subcommands::Commit(platform) => match platform.cmd {
+            // Bare `gix commit` (no subcommand): the porcelain entry point
+            // is not yet wired. Open the repository so we mirror git's
+            // exit-128 / "fatal: not a git repository" path when invoked
+            // outside any repo (the `repository(...)` closure handles that
+            // exact branch). Inside a repo we currently bail with a clear
+            // not-yet-implemented error pending the porcelain reshape.
+            None => prepare_and_run(
+                "commit",
+                trace,
+                auto_verbose,
+                progress,
+                progress_keep_open,
+                None,
+                move |_progress, _out, _err| {
+                    let _repo = repository(Mode::Lenient)?;
+                    Err(anyhow::anyhow!(
+                        "gix commit (porcelain) not yet implemented — see tests/journey/parity/commit.sh"
+                    ))
+                },
+            ),
+            Some(commit::Subcommands::Verify { rev_spec }) => prepare_and_run(
                 "commit-verify",
                 trace,
                 auto_verbose,
@@ -2725,7 +2744,7 @@ pub fn main() -> Result<()> {
                     core::repository::commit::verify(repository(Mode::Lenient)?, rev_spec.as_deref())
                 },
             ),
-            commit::Subcommands::Sign { rev_spec } => prepare_and_run(
+            Some(commit::Subcommands::Sign { rev_spec }) => prepare_and_run(
                 "commit-sign",
                 trace,
                 auto_verbose,
@@ -2736,7 +2755,7 @@ pub fn main() -> Result<()> {
                     core::repository::commit::sign(repository(Mode::Lenient)?, rev_spec.as_deref(), out)
                 },
             ),
-            commit::Subcommands::Describe {
+            Some(commit::Subcommands::Describe {
                 annotated_tags,
                 all_refs,
                 first_parent,
@@ -2746,7 +2765,7 @@ pub fn main() -> Result<()> {
                 max_candidates,
                 rev_spec,
                 dirty_suffix,
-            } => prepare_and_run(
+            }) => prepare_and_run(
                 "commit-describe",
                 trace,
                 verbose,

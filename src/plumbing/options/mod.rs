@@ -101,8 +101,7 @@ pub enum Subcommands {
     #[clap(subcommand)]
     Tree(tree::Subcommands),
     /// Interact with commit objects.
-    #[clap(subcommand)]
-    Commit(commit::Subcommands),
+    Commit(commit::Platform),
     /// Interact with tag objects.
     #[clap(visible_alias = "tags")]
     Tag(tag::Platform),
@@ -2133,6 +2132,22 @@ pub mod tree {
 }
 
 pub mod commit {
+    /// Top-level surface for `gix commit`. Wraps the existing plumbing
+    /// `verify` / `sign` / `describe` subcommands in an optional
+    /// `Subcommands` field so a bare `gix commit` invocation (no
+    /// subcommand) parses cleanly. With no subcommand and outside any
+    /// repository, dispatch falls through to the `repository(...)`
+    /// closure in `src/plumbing/main.rs`, which mirrors git's
+    /// "fatal: not a git repository" exit-128 behavior. The porcelain
+    /// flag surface (`-m` / `-a` / `--amend` / etc., per
+    /// `vendor/git/Documentation/git-commit.adoc` OPTIONS) lands on
+    /// this struct as parity rows close.
+    #[derive(Debug, clap::Parser)]
+    pub struct Platform {
+        #[clap(subcommand)]
+        pub cmd: Option<Subcommands>,
+    }
+
     #[derive(Debug, clap::Subcommand)]
     pub enum Subcommands {
         /// Verify the signature of a commit.

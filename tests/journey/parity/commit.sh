@@ -77,12 +77,16 @@ only_for_hash sha1-only && (small-repo-in-sandbox
 
 # mode=bytes — `git commit` outside any repo dies 128 with the standard
 # "fatal: not a git repository" stanza. gix's plumbing repository() closure
-# maps the RepositoryOpen error to the same exit-code.
+# maps the RepositoryOpen error to the same exit-code + byte-exact wording
+# (src/plumbing/main.rs ~167-185). With the `Subcommands::Commit` reshape
+# from a bare `enum Subcommands` to `Platform { cmd: Option<Subcommands> }`,
+# `gix commit` (no subcommand) parses cleanly and dispatches into the
+# same closure that emits the fatal.
 # hash=dual
 title "gix commit (outside a repository)"
 only_for_hash dual && (sandbox
-  it "TODO: matches git behavior" && {
-    : # expect_parity bytes -- commit -m msg
+  it "matches git behavior" && {
+    expect_parity bytes -- commit
   }
 )
 
