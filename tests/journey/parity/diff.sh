@@ -76,16 +76,21 @@ only_for_hash sha1-only && (small-repo-in-sandbox
   }
 )
 
-# mode=effect — `git diff` outside any repo with no args dies 129 (it
-# would treat a single trailing path as --no-index implicit, but with
-# zero paths falls through to usage). gix's plumbing repository()
-# closure remaps NoGitRepository to 128. Exit-code may diverge — start
-# in effect mode and inspect under iteration.
+# mode=effect — `git diff` (bare, no args) outside any repo emits
+# "warning: Not a git repository. Use --no-index to compare two paths
+# outside a working tree" + the usage stanza, then exits 129 via
+# usage_msg_opt (vendor/git/builtin/diff.c falls through to the
+# no-index usage path with zero paths). gix dispatches the bare form
+# in src/plumbing/main.rs Subcommands::Diff(None): a manual
+# gix::discover::upwards() check intercepts the NoGitRepository case
+# before the standard repository() closure (which exits 128) is
+# called, so the bare-diff path can emit 129 verbatim.
 # hash=dual
 title "gix diff (outside a repository)"
 only_for_hash dual && (sandbox
-  # TODO — expect_parity effect -- diff
-  it "matches git behavior" && { :; }
+  it "matches git behavior" && {
+    expect_parity effect -- diff
+  }
 )
 
 # --- synopsis forms -----------------------------------------------------

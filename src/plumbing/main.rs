@@ -346,10 +346,47 @@ pub fn main() -> Result<()> {
             },
         ),
         Subcommands::Diff(crate::plumbing::options::diff::Platform { cmd }) => match cmd {
-            crate::plumbing::options::diff::SubCommands::Tree {
+            // Bare `gix diff` (no subcommand): porcelain dispatch.
+            // Outside a repo, git emits a "Not a git repository. Use --no-index..."
+            // warning and dies 129 via usage_msg_opt (vendor/git/builtin/diff.c
+            // routes to the no-index path; with no paths it falls into usage).
+            // The 129 must be the exit code, not 128, so we cannot route through
+            // the standard `repository(...)` closure (which exits 128 on
+            // NoGitRepository). Discover ourselves first.
+            None => {
+                let cwd = std::env::current_dir().context("Could not obtain current working directory")?;
+                match gix::discover::upwards(&cwd) {
+                    Err(_) => {
+                        use std::io::Write;
+                        let mut stderr = std::io::stderr().lock();
+                        let _ = writeln!(
+                            stderr,
+                            "warning: Not a git repository. Use --no-index to compare two paths outside a working tree"
+                        );
+                        let _ = writeln!(stderr, "usage: gix diff [<options>] [<commit>] [--] [<path>...]");
+                        drop(stderr);
+                        std::process::exit(129);
+                    }
+                    Ok(_) => prepare_and_run(
+                        "diff",
+                        trace,
+                        verbose,
+                        progress,
+                        progress_keep_open,
+                        None,
+                        move |_progress, _out, _err| {
+                            let _repo = repository(Mode::Lenient)?;
+                            anyhow::bail!(
+                                "`gix diff` (bare form) not yet implemented; use `gix diff tree` or `gix diff file`"
+                            )
+                        },
+                    ),
+                }
+            }
+            Some(crate::plumbing::options::diff::SubCommands::Tree {
                 old_treeish,
                 new_treeish,
-            } => prepare_and_run(
+            }) => prepare_and_run(
                 "diff-tree",
                 trace,
                 verbose,
@@ -360,10 +397,10 @@ pub fn main() -> Result<()> {
                     core::repository::diff::tree(repository(Mode::Lenient)?, out, old_treeish, new_treeish)
                 },
             ),
-            crate::plumbing::options::diff::SubCommands::File {
+            Some(crate::plumbing::options::diff::SubCommands::File {
                 old_revspec,
                 new_revspec,
-            } => prepare_and_run(
+            }) => prepare_and_run(
                 "diff-file",
                 trace,
                 verbose,

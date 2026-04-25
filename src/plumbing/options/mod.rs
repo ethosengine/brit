@@ -983,10 +983,20 @@ pub mod diff {
     use gix::bstr::BString;
 
     /// Print all changes between two objects.
+    ///
+    /// Top-level surface for `gix diff`. Wraps the existing plumbing
+    /// `tree` / `file` subcommands in an optional `SubCommands` field
+    /// so a bare `gix diff` invocation parses cleanly. With no
+    /// subcommand and outside any repository, dispatch in
+    /// `src/plumbing/main.rs` mirrors git's
+    /// "warning: Not a git repository. Use --no-index..." exit-129
+    /// behavior. The porcelain flag surface (`-p`, `--raw`, `--cached`,
+    /// etc., per `vendor/git/Documentation/git-diff.adoc` and
+    /// `diff-options.adoc`) lands on this struct as parity rows close.
     #[derive(Debug, clap::Parser)]
     pub struct Platform {
         #[clap(subcommand)]
-        pub cmd: SubCommands,
+        pub cmd: Option<SubCommands>,
     }
 
     #[derive(Debug, clap::Subcommand)]
