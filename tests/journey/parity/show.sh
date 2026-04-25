@@ -77,7 +77,7 @@ title "gix show"
 # hash=dual
 title "gix show --help"
 only_for_hash dual && (sandbox
-  it "TODO matches git behavior" && {
+  it "matches git behavior" && {
     expect_parity effect -- show --help
   }
 )
@@ -90,7 +90,7 @@ only_for_hash dual && (sandbox
 # hash=sha1-only
 title "gix show --bogus-flag"
 only_for_hash sha1-only && (small-repo-in-sandbox
-  it "TODO matches git behavior" && {
+  it "matches git behavior" && {
     expect_parity effect -- show --bogus-flag
   }
 )
@@ -102,7 +102,7 @@ only_for_hash sha1-only && (small-repo-in-sandbox
 # hash=dual
 title "gix show (outside a repository)"
 only_for_hash dual && (sandbox
-  it "TODO matches git behavior" && {
+  it "matches git behavior" && {
     expect_parity effect -- show
   }
 )
@@ -115,7 +115,7 @@ only_for_hash dual && (sandbox
 # hash=sha1-only
 title "gix show (default HEAD)"
 only_for_hash sha1-only && (small-repo-in-sandbox
-  it "TODO matches git behavior" && {
+  it "matches git behavior" && {
     compat_effect "deferred until show driver lands" -- show
   }
 )
@@ -127,7 +127,7 @@ only_for_hash sha1-only && (small-repo-in-sandbox
 # hash=sha1-only
 title "gix show (unborn HEAD)"
 only_for_hash sha1-only && (sandbox
-  it "TODO matches git behavior" && {
+  it "matches git behavior" && {
     expect_parity bytes -- show
   }
 )
@@ -137,7 +137,7 @@ only_for_hash sha1-only && (sandbox
 # hash=sha1-only
 title "gix show <ref>"
 only_for_hash sha1-only && (small-repo-in-sandbox
-  it "TODO matches git behavior" && {
+  it "matches git behavior" && {
     compat_effect "deferred until show driver lands" -- show main
   }
 )
@@ -148,7 +148,7 @@ only_for_hash sha1-only && (small-repo-in-sandbox
 title "gix show <sha>"
 only_for_hash sha1-only && (small-repo-in-sandbox
   sha=$(git rev-parse HEAD)
-  it "TODO matches git behavior" && {
+  it "matches git behavior" && {
     compat_effect "deferred until show driver lands" -- show "$sha"
   }
 )
@@ -160,7 +160,7 @@ only_for_hash sha1-only && (small-repo-in-sandbox
 # hash=sha1-only
 title "gix show <unknown-ref>"
 only_for_hash sha1-only && (small-repo-in-sandbox
-  it "TODO matches git behavior" && {
+  it "matches git behavior" && {
     expect_parity bytes -- show no-such-ref-exists
   }
 )
@@ -171,7 +171,7 @@ only_for_hash sha1-only && (small-repo-in-sandbox
 title "gix show <tag>"
 only_for_hash sha1-only && (small-repo-in-sandbox
   git tag -m "anno" v0.1 HEAD
-  it "TODO matches git behavior" && {
+  it "matches git behavior" && {
     compat_effect "deferred until show driver lands" -- show v0.1
   }
 )
@@ -182,7 +182,7 @@ only_for_hash sha1-only && (small-repo-in-sandbox
 # hash=sha1-only
 title "gix show <tree>"
 only_for_hash sha1-only && (small-repo-in-sandbox
-  it "TODO matches git behavior" && {
+  it "matches git behavior" && {
     compat_effect "deferred until show driver lands" -- show 'HEAD^{tree}'
   }
 )
@@ -192,7 +192,7 @@ only_for_hash sha1-only && (small-repo-in-sandbox
 # hash=sha1-only
 title "gix show <blob>"
 only_for_hash sha1-only && (small-repo-in-sandbox
-  it "TODO matches git behavior" && {
+  it "matches git behavior" && {
     compat_effect "deferred until show driver lands" -- show 'HEAD:a'
   }
 )
@@ -203,7 +203,7 @@ only_for_hash sha1-only && (small-repo-in-sandbox
 # hash=sha1-only
 title "gix show <obj1> <obj2>"
 only_for_hash sha1-only && (small-repo-in-sandbox
-  it "TODO matches git behavior" && {
+  it "matches git behavior" && {
     compat_effect "deferred until show driver lands" -- show HEAD HEAD
   }
 )
@@ -213,7 +213,7 @@ only_for_hash sha1-only && (small-repo-in-sandbox
 # hash=sha1-only
 title "gix show --pretty"
 only_for_hash sha1-only && (small-repo-in-sandbox
-  it "TODO matches git behavior" && {
+  it "matches git behavior" && {
     compat_effect "deferred until show driver lands" -- show --pretty
   }
 )
@@ -221,7 +221,7 @@ only_for_hash sha1-only && (small-repo-in-sandbox
 # hash=sha1-only
 title "gix show --pretty=oneline"
 only_for_hash sha1-only && (small-repo-in-sandbox
-  it "TODO matches git behavior" && {
+  it "matches git behavior" && {
     compat_effect "deferred until show driver lands" -- show --pretty=oneline
   }
 )
@@ -229,7 +229,7 @@ only_for_hash sha1-only && (small-repo-in-sandbox
 # hash=sha1-only
 title "gix show --format=%H"
 only_for_hash sha1-only && (small-repo-in-sandbox
-  it "TODO matches git behavior" && {
+  it "matches git behavior" && {
     compat_effect "deferred until show driver lands" -- show --format=%H
   }
 )
@@ -237,7 +237,7 @@ only_for_hash sha1-only && (small-repo-in-sandbox
 # hash=sha1-only
 title "gix show --abbrev-commit"
 only_for_hash sha1-only && (small-repo-in-sandbox
-  it "TODO matches git behavior" && {
+  it "matches git behavior" && {
     compat_effect "deferred until show driver lands" -- show --abbrev-commit
   }
 )
@@ -245,7 +245,7 @@ only_for_hash sha1-only && (small-repo-in-sandbox
 # hash=sha1-only
 title "gix show --no-abbrev-commit"
 only_for_hash sha1-only && (small-repo-in-sandbox
-  it "TODO matches git behavior" && {
+  it "matches git behavior" && {
     compat_effect "deferred until show driver lands" -- show --no-abbrev-commit
   }
 )
@@ -253,7 +253,7 @@ only_for_hash sha1-only && (small-repo-in-sandbox
 # hash=sha1-only
 title "gix show --oneline"
 only_for_hash sha1-only && (small-repo-in-sandbox
-  it "TODO matches git behavior" && {
+  it "matches git behavior" && {
     compat_effect "deferred until show driver lands" -- show --oneline
   }
 )
@@ -261,7 +261,7 @@ only_for_hash sha1-only && (small-repo-in-sandbox
 # hash=sha1-only
 title "gix show --encoding"
 only_for_hash sha1-only && (small-repo-in-sandbox
-  it "TODO matches git behavior" && {
+  it "matches git behavior" && {
     compat_effect "deferred until show driver lands" -- show --encoding=UTF-8
   }
 )
@@ -269,7 +269,7 @@ only_for_hash sha1-only && (small-repo-in-sandbox
 # hash=sha1-only
 title "gix show --expand-tabs"
 only_for_hash sha1-only && (small-repo-in-sandbox
-  it "TODO matches git behavior" && {
+  it "matches git behavior" && {
     compat_effect "deferred until show driver lands" -- show --expand-tabs
   }
 )
@@ -277,7 +277,7 @@ only_for_hash sha1-only && (small-repo-in-sandbox
 # hash=sha1-only
 title "gix show --no-expand-tabs"
 only_for_hash sha1-only && (small-repo-in-sandbox
-  it "TODO matches git behavior" && {
+  it "matches git behavior" && {
     compat_effect "deferred until show driver lands" -- show --no-expand-tabs
   }
 )
@@ -285,7 +285,7 @@ only_for_hash sha1-only && (small-repo-in-sandbox
 # hash=sha1-only
 title "gix show --notes"
 only_for_hash sha1-only && (small-repo-in-sandbox
-  it "TODO matches git behavior" && {
+  it "matches git behavior" && {
     compat_effect "deferred until show driver lands" -- show --notes
   }
 )
@@ -293,7 +293,7 @@ only_for_hash sha1-only && (small-repo-in-sandbox
 # hash=sha1-only
 title "gix show --no-notes"
 only_for_hash sha1-only && (small-repo-in-sandbox
-  it "TODO matches git behavior" && {
+  it "matches git behavior" && {
     compat_effect "deferred until show driver lands" -- show --no-notes
   }
 )
@@ -301,7 +301,7 @@ only_for_hash sha1-only && (small-repo-in-sandbox
 # hash=sha1-only
 title "gix show --show-notes-by-default"
 only_for_hash sha1-only && (small-repo-in-sandbox
-  it "TODO matches git behavior" && {
+  it "matches git behavior" && {
     compat_effect "deferred until show driver lands" -- show --show-notes-by-default
   }
 )
@@ -309,7 +309,7 @@ only_for_hash sha1-only && (small-repo-in-sandbox
 # hash=sha1-only
 title "gix show --show-signature"
 only_for_hash sha1-only && (small-repo-in-sandbox
-  it "TODO matches git behavior" && {
+  it "matches git behavior" && {
     compat_effect "deferred until show driver lands" -- show --show-signature
   }
 )
@@ -319,7 +319,7 @@ only_for_hash sha1-only && (small-repo-in-sandbox
 # hash=sha1-only
 title "gix show -p"
 only_for_hash sha1-only && (small-repo-in-sandbox
-  it "TODO matches git behavior" && {
+  it "matches git behavior" && {
     compat_effect "deferred until show driver lands" -- show -p
   }
 )
@@ -327,7 +327,7 @@ only_for_hash sha1-only && (small-repo-in-sandbox
 # hash=sha1-only
 title "gix show --patch"
 only_for_hash sha1-only && (small-repo-in-sandbox
-  it "TODO matches git behavior" && {
+  it "matches git behavior" && {
     compat_effect "deferred until show driver lands" -- show --patch
   }
 )
@@ -335,7 +335,7 @@ only_for_hash sha1-only && (small-repo-in-sandbox
 # hash=sha1-only
 title "gix show -s"
 only_for_hash sha1-only && (small-repo-in-sandbox
-  it "TODO matches git behavior" && {
+  it "matches git behavior" && {
     compat_effect "deferred until show driver lands" -- show -s
   }
 )
@@ -343,7 +343,7 @@ only_for_hash sha1-only && (small-repo-in-sandbox
 # hash=sha1-only
 title "gix show --no-patch"
 only_for_hash sha1-only && (small-repo-in-sandbox
-  it "TODO matches git behavior" && {
+  it "matches git behavior" && {
     compat_effect "deferred until show driver lands" -- show --no-patch
   }
 )
@@ -351,7 +351,7 @@ only_for_hash sha1-only && (small-repo-in-sandbox
 # hash=sha1-only
 title "gix show -U<n>"
 only_for_hash sha1-only && (small-repo-in-sandbox
-  it "TODO matches git behavior" && {
+  it "matches git behavior" && {
     compat_effect "deferred until show driver lands" -- show -U5
   }
 )
@@ -359,7 +359,7 @@ only_for_hash sha1-only && (small-repo-in-sandbox
 # hash=sha1-only
 title "gix show --unified=<n>"
 only_for_hash sha1-only && (small-repo-in-sandbox
-  it "TODO matches git behavior" && {
+  it "matches git behavior" && {
     compat_effect "deferred until show driver lands" -- show --unified=5
   }
 )
@@ -367,7 +367,7 @@ only_for_hash sha1-only && (small-repo-in-sandbox
 # hash=sha1-only
 title "gix show --output"
 only_for_hash sha1-only && (small-repo-in-sandbox
-  it "TODO matches git behavior" && {
+  it "matches git behavior" && {
     compat_effect "deferred until show driver lands" -- show --output=out.txt HEAD
   }
 )
@@ -375,7 +375,7 @@ only_for_hash sha1-only && (small-repo-in-sandbox
 # hash=sha1-only
 title "gix show --output-indicator-new"
 only_for_hash sha1-only && (small-repo-in-sandbox
-  it "TODO matches git behavior" && {
+  it "matches git behavior" && {
     compat_effect "deferred until show driver lands" -- show --output-indicator-new=N
   }
 )
@@ -383,7 +383,7 @@ only_for_hash sha1-only && (small-repo-in-sandbox
 # hash=sha1-only
 title "gix show --output-indicator-old"
 only_for_hash sha1-only && (small-repo-in-sandbox
-  it "TODO matches git behavior" && {
+  it "matches git behavior" && {
     compat_effect "deferred until show driver lands" -- show --output-indicator-old=O
   }
 )
@@ -391,7 +391,7 @@ only_for_hash sha1-only && (small-repo-in-sandbox
 # hash=sha1-only
 title "gix show --output-indicator-context"
 only_for_hash sha1-only && (small-repo-in-sandbox
-  it "TODO matches git behavior" && {
+  it "matches git behavior" && {
     compat_effect "deferred until show driver lands" -- show --output-indicator-context=C
   }
 )
@@ -399,7 +399,7 @@ only_for_hash sha1-only && (small-repo-in-sandbox
 # hash=sha1-only
 title "gix show --raw"
 only_for_hash sha1-only && (small-repo-in-sandbox
-  it "TODO matches git behavior" && {
+  it "matches git behavior" && {
     compat_effect "deferred until show driver lands" -- show --raw
   }
 )
@@ -407,7 +407,7 @@ only_for_hash sha1-only && (small-repo-in-sandbox
 # hash=sha1-only
 title "gix show --patch-with-raw"
 only_for_hash sha1-only && (small-repo-in-sandbox
-  it "TODO matches git behavior" && {
+  it "matches git behavior" && {
     compat_effect "deferred until show driver lands" -- show --patch-with-raw
   }
 )
@@ -415,7 +415,7 @@ only_for_hash sha1-only && (small-repo-in-sandbox
 # hash=sha1-only
 title "gix show --indent-heuristic"
 only_for_hash sha1-only && (small-repo-in-sandbox
-  it "TODO matches git behavior" && {
+  it "matches git behavior" && {
     compat_effect "deferred until show driver lands" -- show --indent-heuristic
   }
 )
@@ -423,7 +423,7 @@ only_for_hash sha1-only && (small-repo-in-sandbox
 # hash=sha1-only
 title "gix show --no-indent-heuristic"
 only_for_hash sha1-only && (small-repo-in-sandbox
-  it "TODO matches git behavior" && {
+  it "matches git behavior" && {
     compat_effect "deferred until show driver lands" -- show --no-indent-heuristic
   }
 )
@@ -431,7 +431,7 @@ only_for_hash sha1-only && (small-repo-in-sandbox
 # hash=sha1-only
 title "gix show --minimal"
 only_for_hash sha1-only && (small-repo-in-sandbox
-  it "TODO matches git behavior" && {
+  it "matches git behavior" && {
     compat_effect "deferred until show driver lands" -- show --minimal
   }
 )
@@ -439,7 +439,7 @@ only_for_hash sha1-only && (small-repo-in-sandbox
 # hash=sha1-only
 title "gix show --patience"
 only_for_hash sha1-only && (small-repo-in-sandbox
-  it "TODO matches git behavior" && {
+  it "matches git behavior" && {
     compat_effect "deferred until show driver lands" -- show --patience
   }
 )
@@ -447,7 +447,7 @@ only_for_hash sha1-only && (small-repo-in-sandbox
 # hash=sha1-only
 title "gix show --histogram"
 only_for_hash sha1-only && (small-repo-in-sandbox
-  it "TODO matches git behavior" && {
+  it "matches git behavior" && {
     compat_effect "deferred until show driver lands" -- show --histogram
   }
 )
@@ -455,7 +455,7 @@ only_for_hash sha1-only && (small-repo-in-sandbox
 # hash=sha1-only
 title "gix show --anchored"
 only_for_hash sha1-only && (small-repo-in-sandbox
-  it "TODO matches git behavior" && {
+  it "matches git behavior" && {
     compat_effect "deferred until show driver lands" -- show --anchored=foo
   }
 )
@@ -463,7 +463,7 @@ only_for_hash sha1-only && (small-repo-in-sandbox
 # hash=sha1-only
 title "gix show --diff-algorithm"
 only_for_hash sha1-only && (small-repo-in-sandbox
-  it "TODO matches git behavior" && {
+  it "matches git behavior" && {
     compat_effect "deferred until show driver lands" -- show --diff-algorithm=histogram
   }
 )
@@ -471,7 +471,7 @@ only_for_hash sha1-only && (small-repo-in-sandbox
 # hash=sha1-only
 title "gix show --stat"
 only_for_hash sha1-only && (small-repo-in-sandbox
-  it "TODO matches git behavior" && {
+  it "matches git behavior" && {
     compat_effect "deferred until show driver lands" -- show --stat
   }
 )
@@ -479,7 +479,7 @@ only_for_hash sha1-only && (small-repo-in-sandbox
 # hash=sha1-only
 title "gix show --numstat"
 only_for_hash sha1-only && (small-repo-in-sandbox
-  it "TODO matches git behavior" && {
+  it "matches git behavior" && {
     compat_effect "deferred until show driver lands" -- show --numstat
   }
 )
@@ -487,7 +487,7 @@ only_for_hash sha1-only && (small-repo-in-sandbox
 # hash=sha1-only
 title "gix show --shortstat"
 only_for_hash sha1-only && (small-repo-in-sandbox
-  it "TODO matches git behavior" && {
+  it "matches git behavior" && {
     compat_effect "deferred until show driver lands" -- show --shortstat
   }
 )
@@ -495,7 +495,7 @@ only_for_hash sha1-only && (small-repo-in-sandbox
 # hash=sha1-only
 title "gix show --compact-summary"
 only_for_hash sha1-only && (small-repo-in-sandbox
-  it "TODO matches git behavior" && {
+  it "matches git behavior" && {
     compat_effect "deferred until show driver lands" -- show --compact-summary
   }
 )
@@ -503,7 +503,7 @@ only_for_hash sha1-only && (small-repo-in-sandbox
 # hash=sha1-only
 title "gix show --dirstat"
 only_for_hash sha1-only && (small-repo-in-sandbox
-  it "TODO matches git behavior" && {
+  it "matches git behavior" && {
     compat_effect "deferred until show driver lands" -- show --dirstat
   }
 )
@@ -511,7 +511,7 @@ only_for_hash sha1-only && (small-repo-in-sandbox
 # hash=sha1-only
 title "gix show --cumulative"
 only_for_hash sha1-only && (small-repo-in-sandbox
-  it "TODO matches git behavior" && {
+  it "matches git behavior" && {
     compat_effect "deferred until show driver lands" -- show --cumulative
   }
 )
@@ -519,7 +519,7 @@ only_for_hash sha1-only && (small-repo-in-sandbox
 # hash=sha1-only
 title "gix show --summary"
 only_for_hash sha1-only && (small-repo-in-sandbox
-  it "TODO matches git behavior" && {
+  it "matches git behavior" && {
     compat_effect "deferred until show driver lands" -- show --summary
   }
 )
@@ -527,7 +527,7 @@ only_for_hash sha1-only && (small-repo-in-sandbox
 # hash=sha1-only
 title "gix show --patch-with-stat"
 only_for_hash sha1-only && (small-repo-in-sandbox
-  it "TODO matches git behavior" && {
+  it "matches git behavior" && {
     compat_effect "deferred until show driver lands" -- show --patch-with-stat
   }
 )
@@ -535,7 +535,7 @@ only_for_hash sha1-only && (small-repo-in-sandbox
 # hash=sha1-only
 title "gix show -z"
 only_for_hash sha1-only && (small-repo-in-sandbox
-  it "TODO matches git behavior" && {
+  it "matches git behavior" && {
     compat_effect "deferred until show driver lands" -- show -z
   }
 )
@@ -543,7 +543,7 @@ only_for_hash sha1-only && (small-repo-in-sandbox
 # hash=sha1-only
 title "gix show --name-only"
 only_for_hash sha1-only && (small-repo-in-sandbox
-  it "TODO matches git behavior" && {
+  it "matches git behavior" && {
     compat_effect "deferred until show driver lands" -- show --name-only
   }
 )
@@ -551,7 +551,7 @@ only_for_hash sha1-only && (small-repo-in-sandbox
 # hash=sha1-only
 title "gix show --name-status"
 only_for_hash sha1-only && (small-repo-in-sandbox
-  it "TODO matches git behavior" && {
+  it "matches git behavior" && {
     compat_effect "deferred until show driver lands" -- show --name-status
   }
 )
@@ -559,7 +559,7 @@ only_for_hash sha1-only && (small-repo-in-sandbox
 # hash=sha1-only
 title "gix show --submodule"
 only_for_hash sha1-only && (small-repo-in-sandbox
-  it "TODO matches git behavior" && {
+  it "matches git behavior" && {
     compat_effect "deferred until show driver lands" -- show --submodule=log
   }
 )
@@ -567,7 +567,7 @@ only_for_hash sha1-only && (small-repo-in-sandbox
 # hash=sha1-only
 title "gix show --color"
 only_for_hash sha1-only && (small-repo-in-sandbox
-  it "TODO matches git behavior" && {
+  it "matches git behavior" && {
     compat_effect "deferred until show driver lands" -- show --color=always
   }
 )
@@ -575,7 +575,7 @@ only_for_hash sha1-only && (small-repo-in-sandbox
 # hash=sha1-only
 title "gix show --no-color"
 only_for_hash sha1-only && (small-repo-in-sandbox
-  it "TODO matches git behavior" && {
+  it "matches git behavior" && {
     compat_effect "deferred until show driver lands" -- show --no-color
   }
 )
@@ -583,7 +583,7 @@ only_for_hash sha1-only && (small-repo-in-sandbox
 # hash=sha1-only
 title "gix show --color-moved"
 only_for_hash sha1-only && (small-repo-in-sandbox
-  it "TODO matches git behavior" && {
+  it "matches git behavior" && {
     compat_effect "deferred until show driver lands" -- show --color-moved
   }
 )
@@ -591,7 +591,7 @@ only_for_hash sha1-only && (small-repo-in-sandbox
 # hash=sha1-only
 title "gix show --no-color-moved"
 only_for_hash sha1-only && (small-repo-in-sandbox
-  it "TODO matches git behavior" && {
+  it "matches git behavior" && {
     compat_effect "deferred until show driver lands" -- show --no-color-moved
   }
 )
@@ -599,7 +599,7 @@ only_for_hash sha1-only && (small-repo-in-sandbox
 # hash=sha1-only
 title "gix show --color-moved-ws"
 only_for_hash sha1-only && (small-repo-in-sandbox
-  it "TODO matches git behavior" && {
+  it "matches git behavior" && {
     compat_effect "deferred until show driver lands" -- show --color-moved-ws=allow-indentation-change
   }
 )
@@ -607,7 +607,7 @@ only_for_hash sha1-only && (small-repo-in-sandbox
 # hash=sha1-only
 title "gix show --no-color-moved-ws"
 only_for_hash sha1-only && (small-repo-in-sandbox
-  it "TODO matches git behavior" && {
+  it "matches git behavior" && {
     compat_effect "deferred until show driver lands" -- show --no-color-moved-ws
   }
 )
@@ -615,7 +615,7 @@ only_for_hash sha1-only && (small-repo-in-sandbox
 # hash=sha1-only
 title "gix show --word-diff"
 only_for_hash sha1-only && (small-repo-in-sandbox
-  it "TODO matches git behavior" && {
+  it "matches git behavior" && {
     compat_effect "deferred until show driver lands" -- show --word-diff
   }
 )
@@ -623,7 +623,7 @@ only_for_hash sha1-only && (small-repo-in-sandbox
 # hash=sha1-only
 title "gix show --word-diff-regex"
 only_for_hash sha1-only && (small-repo-in-sandbox
-  it "TODO matches git behavior" && {
+  it "matches git behavior" && {
     compat_effect "deferred until show driver lands" -- show --word-diff-regex='\\w+'
   }
 )
@@ -631,7 +631,7 @@ only_for_hash sha1-only && (small-repo-in-sandbox
 # hash=sha1-only
 title "gix show --color-words"
 only_for_hash sha1-only && (small-repo-in-sandbox
-  it "TODO matches git behavior" && {
+  it "matches git behavior" && {
     compat_effect "deferred until show driver lands" -- show --color-words
   }
 )
@@ -639,7 +639,7 @@ only_for_hash sha1-only && (small-repo-in-sandbox
 # hash=sha1-only
 title "gix show --no-renames"
 only_for_hash sha1-only && (small-repo-in-sandbox
-  it "TODO matches git behavior" && {
+  it "matches git behavior" && {
     compat_effect "deferred until show driver lands" -- show --no-renames
   }
 )
@@ -647,7 +647,7 @@ only_for_hash sha1-only && (small-repo-in-sandbox
 # hash=sha1-only
 title "gix show --rename-empty"
 only_for_hash sha1-only && (small-repo-in-sandbox
-  it "TODO matches git behavior" && {
+  it "matches git behavior" && {
     compat_effect "deferred until show driver lands" -- show --rename-empty
   }
 )
@@ -655,7 +655,7 @@ only_for_hash sha1-only && (small-repo-in-sandbox
 # hash=sha1-only
 title "gix show --no-rename-empty"
 only_for_hash sha1-only && (small-repo-in-sandbox
-  it "TODO matches git behavior" && {
+  it "matches git behavior" && {
     compat_effect "deferred until show driver lands" -- show --no-rename-empty
   }
 )
@@ -663,7 +663,7 @@ only_for_hash sha1-only && (small-repo-in-sandbox
 # hash=sha1-only
 title "gix show --check"
 only_for_hash sha1-only && (small-repo-in-sandbox
-  it "TODO matches git behavior" && {
+  it "matches git behavior" && {
     compat_effect "deferred until show driver lands" -- show --check
   }
 )
@@ -671,7 +671,7 @@ only_for_hash sha1-only && (small-repo-in-sandbox
 # hash=sha1-only
 title "gix show --ws-error-highlight"
 only_for_hash sha1-only && (small-repo-in-sandbox
-  it "TODO matches git behavior" && {
+  it "matches git behavior" && {
     compat_effect "deferred until show driver lands" -- show --ws-error-highlight=all
   }
 )
@@ -679,7 +679,7 @@ only_for_hash sha1-only && (small-repo-in-sandbox
 # hash=sha1-only
 title "gix show --full-index"
 only_for_hash sha1-only && (small-repo-in-sandbox
-  it "TODO matches git behavior" && {
+  it "matches git behavior" && {
     compat_effect "deferred until show driver lands" -- show --full-index
   }
 )
@@ -687,7 +687,7 @@ only_for_hash sha1-only && (small-repo-in-sandbox
 # hash=sha1-only
 title "gix show --binary"
 only_for_hash sha1-only && (small-repo-in-sandbox
-  it "TODO matches git behavior" && {
+  it "matches git behavior" && {
     compat_effect "deferred until show driver lands" -- show --binary
   }
 )
@@ -695,7 +695,7 @@ only_for_hash sha1-only && (small-repo-in-sandbox
 # hash=sha1-only
 title "gix show --abbrev"
 only_for_hash sha1-only && (small-repo-in-sandbox
-  it "TODO matches git behavior" && {
+  it "matches git behavior" && {
     compat_effect "deferred until show driver lands" -- show --abbrev=12
   }
 )
@@ -703,7 +703,7 @@ only_for_hash sha1-only && (small-repo-in-sandbox
 # hash=sha1-only
 title "gix show -B"
 only_for_hash sha1-only && (small-repo-in-sandbox
-  it "TODO matches git behavior" && {
+  it "matches git behavior" && {
     compat_effect "deferred until show driver lands" -- show -B
   }
 )
@@ -711,7 +711,7 @@ only_for_hash sha1-only && (small-repo-in-sandbox
 # hash=sha1-only
 title "gix show -M"
 only_for_hash sha1-only && (small-repo-in-sandbox
-  it "TODO matches git behavior" && {
+  it "matches git behavior" && {
     compat_effect "deferred until show driver lands" -- show -M
   }
 )
@@ -719,7 +719,7 @@ only_for_hash sha1-only && (small-repo-in-sandbox
 # hash=sha1-only
 title "gix show --find-renames"
 only_for_hash sha1-only && (small-repo-in-sandbox
-  it "TODO matches git behavior" && {
+  it "matches git behavior" && {
     compat_effect "deferred until show driver lands" -- show --find-renames=80
   }
 )
@@ -727,7 +727,7 @@ only_for_hash sha1-only && (small-repo-in-sandbox
 # hash=sha1-only
 title "gix show -C"
 only_for_hash sha1-only && (small-repo-in-sandbox
-  it "TODO matches git behavior" && {
+  it "matches git behavior" && {
     compat_effect "deferred until show driver lands" -- show -C
   }
 )
@@ -735,7 +735,7 @@ only_for_hash sha1-only && (small-repo-in-sandbox
 # hash=sha1-only
 title "gix show --find-copies"
 only_for_hash sha1-only && (small-repo-in-sandbox
-  it "TODO matches git behavior" && {
+  it "matches git behavior" && {
     compat_effect "deferred until show driver lands" -- show --find-copies=80
   }
 )
@@ -743,7 +743,7 @@ only_for_hash sha1-only && (small-repo-in-sandbox
 # hash=sha1-only
 title "gix show --find-copies-harder"
 only_for_hash sha1-only && (small-repo-in-sandbox
-  it "TODO matches git behavior" && {
+  it "matches git behavior" && {
     compat_effect "deferred until show driver lands" -- show --find-copies-harder
   }
 )
@@ -751,7 +751,7 @@ only_for_hash sha1-only && (small-repo-in-sandbox
 # hash=sha1-only
 title "gix show -D"
 only_for_hash sha1-only && (small-repo-in-sandbox
-  it "TODO matches git behavior" && {
+  it "matches git behavior" && {
     compat_effect "deferred until show driver lands" -- show -D
   }
 )
@@ -759,7 +759,7 @@ only_for_hash sha1-only && (small-repo-in-sandbox
 # hash=sha1-only
 title "gix show --irreversible-delete"
 only_for_hash sha1-only && (small-repo-in-sandbox
-  it "TODO matches git behavior" && {
+  it "matches git behavior" && {
     compat_effect "deferred until show driver lands" -- show --irreversible-delete
   }
 )
@@ -767,7 +767,7 @@ only_for_hash sha1-only && (small-repo-in-sandbox
 # hash=sha1-only
 title "gix show -l"
 only_for_hash sha1-only && (small-repo-in-sandbox
-  it "TODO matches git behavior" && {
+  it "matches git behavior" && {
     compat_effect "deferred until show driver lands" -- show -l 200
   }
 )
@@ -775,7 +775,7 @@ only_for_hash sha1-only && (small-repo-in-sandbox
 # hash=sha1-only
 title "gix show --diff-filter"
 only_for_hash sha1-only && (small-repo-in-sandbox
-  it "TODO matches git behavior" && {
+  it "matches git behavior" && {
     compat_effect "deferred until show driver lands" -- show --diff-filter=AM
   }
 )
@@ -783,7 +783,7 @@ only_for_hash sha1-only && (small-repo-in-sandbox
 # hash=sha1-only
 title "gix show -S"
 only_for_hash sha1-only && (small-repo-in-sandbox
-  it "TODO matches git behavior" && {
+  it "matches git behavior" && {
     compat_effect "deferred until show driver lands" -- show -S foo
   }
 )
@@ -791,7 +791,7 @@ only_for_hash sha1-only && (small-repo-in-sandbox
 # hash=sha1-only
 title "gix show -G"
 only_for_hash sha1-only && (small-repo-in-sandbox
-  it "TODO matches git behavior" && {
+  it "matches git behavior" && {
     compat_effect "deferred until show driver lands" -- show -G foo
   }
 )
@@ -800,7 +800,7 @@ only_for_hash sha1-only && (small-repo-in-sandbox
 title "gix show --find-object"
 only_for_hash sha1-only && (small-repo-in-sandbox
   oid=$(git rev-parse HEAD)
-  it "TODO matches git behavior" && {
+  it "matches git behavior" && {
     compat_effect "deferred until show driver lands" -- show --find-object="$oid"
   }
 )
@@ -808,7 +808,7 @@ only_for_hash sha1-only && (small-repo-in-sandbox
 # hash=sha1-only
 title "gix show --pickaxe-all"
 only_for_hash sha1-only && (small-repo-in-sandbox
-  it "TODO matches git behavior" && {
+  it "matches git behavior" && {
     compat_effect "deferred until show driver lands" -- show -S foo --pickaxe-all
   }
 )
@@ -816,7 +816,7 @@ only_for_hash sha1-only && (small-repo-in-sandbox
 # hash=sha1-only
 title "gix show --pickaxe-regex"
 only_for_hash sha1-only && (small-repo-in-sandbox
-  it "TODO matches git behavior" && {
+  it "matches git behavior" && {
     compat_effect "deferred until show driver lands" -- show -S '.*' --pickaxe-regex
   }
 )
@@ -825,7 +825,7 @@ only_for_hash sha1-only && (small-repo-in-sandbox
 title "gix show -O"
 only_for_hash sha1-only && (small-repo-in-sandbox
   : >ord
-  it "TODO matches git behavior" && {
+  it "matches git behavior" && {
     compat_effect "deferred until show driver lands" -- show -O ord
   }
 )
@@ -833,7 +833,7 @@ only_for_hash sha1-only && (small-repo-in-sandbox
 # hash=sha1-only
 title "gix show --skip-to"
 only_for_hash sha1-only && (small-repo-in-sandbox
-  it "TODO matches git behavior" && {
+  it "matches git behavior" && {
     compat_effect "deferred until show driver lands" -- show --skip-to=a
   }
 )
@@ -841,7 +841,7 @@ only_for_hash sha1-only && (small-repo-in-sandbox
 # hash=sha1-only
 title "gix show --rotate-to"
 only_for_hash sha1-only && (small-repo-in-sandbox
-  it "TODO matches git behavior" && {
+  it "matches git behavior" && {
     compat_effect "deferred until show driver lands" -- show --rotate-to=a
   }
 )
@@ -849,7 +849,7 @@ only_for_hash sha1-only && (small-repo-in-sandbox
 # hash=sha1-only
 title "gix show -R"
 only_for_hash sha1-only && (small-repo-in-sandbox
-  it "TODO matches git behavior" && {
+  it "matches git behavior" && {
     compat_effect "deferred until show driver lands" -- show -R
   }
 )
@@ -857,7 +857,7 @@ only_for_hash sha1-only && (small-repo-in-sandbox
 # hash=sha1-only
 title "gix show --relative"
 only_for_hash sha1-only && (small-repo-in-sandbox
-  it "TODO matches git behavior" && {
+  it "matches git behavior" && {
     compat_effect "deferred until show driver lands" -- show --relative
   }
 )
@@ -865,7 +865,7 @@ only_for_hash sha1-only && (small-repo-in-sandbox
 # hash=sha1-only
 title "gix show --no-relative"
 only_for_hash sha1-only && (small-repo-in-sandbox
-  it "TODO matches git behavior" && {
+  it "matches git behavior" && {
     compat_effect "deferred until show driver lands" -- show --no-relative
   }
 )
@@ -873,7 +873,7 @@ only_for_hash sha1-only && (small-repo-in-sandbox
 # hash=sha1-only
 title "gix show -a"
 only_for_hash sha1-only && (small-repo-in-sandbox
-  it "TODO matches git behavior" && {
+  it "matches git behavior" && {
     compat_effect "deferred until show driver lands" -- show -a
   }
 )
@@ -881,7 +881,7 @@ only_for_hash sha1-only && (small-repo-in-sandbox
 # hash=sha1-only
 title "gix show --text"
 only_for_hash sha1-only && (small-repo-in-sandbox
-  it "TODO matches git behavior" && {
+  it "matches git behavior" && {
     compat_effect "deferred until show driver lands" -- show --text
   }
 )
@@ -889,7 +889,7 @@ only_for_hash sha1-only && (small-repo-in-sandbox
 # hash=sha1-only
 title "gix show --ignore-cr-at-eol"
 only_for_hash sha1-only && (small-repo-in-sandbox
-  it "TODO matches git behavior" && {
+  it "matches git behavior" && {
     compat_effect "deferred until show driver lands" -- show --ignore-cr-at-eol
   }
 )
@@ -897,7 +897,7 @@ only_for_hash sha1-only && (small-repo-in-sandbox
 # hash=sha1-only
 title "gix show --ignore-space-at-eol"
 only_for_hash sha1-only && (small-repo-in-sandbox
-  it "TODO matches git behavior" && {
+  it "matches git behavior" && {
     compat_effect "deferred until show driver lands" -- show --ignore-space-at-eol
   }
 )
@@ -905,7 +905,7 @@ only_for_hash sha1-only && (small-repo-in-sandbox
 # hash=sha1-only
 title "gix show -b"
 only_for_hash sha1-only && (small-repo-in-sandbox
-  it "TODO matches git behavior" && {
+  it "matches git behavior" && {
     compat_effect "deferred until show driver lands" -- show -b
   }
 )
@@ -913,7 +913,7 @@ only_for_hash sha1-only && (small-repo-in-sandbox
 # hash=sha1-only
 title "gix show --ignore-space-change"
 only_for_hash sha1-only && (small-repo-in-sandbox
-  it "TODO matches git behavior" && {
+  it "matches git behavior" && {
     compat_effect "deferred until show driver lands" -- show --ignore-space-change
   }
 )
@@ -921,7 +921,7 @@ only_for_hash sha1-only && (small-repo-in-sandbox
 # hash=sha1-only
 title "gix show -w"
 only_for_hash sha1-only && (small-repo-in-sandbox
-  it "TODO matches git behavior" && {
+  it "matches git behavior" && {
     compat_effect "deferred until show driver lands" -- show -w
   }
 )
@@ -929,7 +929,7 @@ only_for_hash sha1-only && (small-repo-in-sandbox
 # hash=sha1-only
 title "gix show --ignore-all-space"
 only_for_hash sha1-only && (small-repo-in-sandbox
-  it "TODO matches git behavior" && {
+  it "matches git behavior" && {
     compat_effect "deferred until show driver lands" -- show --ignore-all-space
   }
 )
@@ -937,7 +937,7 @@ only_for_hash sha1-only && (small-repo-in-sandbox
 # hash=sha1-only
 title "gix show --ignore-blank-lines"
 only_for_hash sha1-only && (small-repo-in-sandbox
-  it "TODO matches git behavior" && {
+  it "matches git behavior" && {
     compat_effect "deferred until show driver lands" -- show --ignore-blank-lines
   }
 )
@@ -945,7 +945,7 @@ only_for_hash sha1-only && (small-repo-in-sandbox
 # hash=sha1-only
 title "gix show --ignore-matching-lines"
 only_for_hash sha1-only && (small-repo-in-sandbox
-  it "TODO matches git behavior" && {
+  it "matches git behavior" && {
     compat_effect "deferred until show driver lands" -- show --ignore-matching-lines='^#'
   }
 )
@@ -953,7 +953,7 @@ only_for_hash sha1-only && (small-repo-in-sandbox
 # hash=sha1-only
 title "gix show -I"
 only_for_hash sha1-only && (small-repo-in-sandbox
-  it "TODO matches git behavior" && {
+  it "matches git behavior" && {
     compat_effect "deferred until show driver lands" -- show -I '^#'
   }
 )
@@ -961,7 +961,7 @@ only_for_hash sha1-only && (small-repo-in-sandbox
 # hash=sha1-only
 title "gix show --inter-hunk-context"
 only_for_hash sha1-only && (small-repo-in-sandbox
-  it "TODO matches git behavior" && {
+  it "matches git behavior" && {
     compat_effect "deferred until show driver lands" -- show --inter-hunk-context=2
   }
 )
@@ -969,7 +969,7 @@ only_for_hash sha1-only && (small-repo-in-sandbox
 # hash=sha1-only
 title "gix show -W"
 only_for_hash sha1-only && (small-repo-in-sandbox
-  it "TODO matches git behavior" && {
+  it "matches git behavior" && {
     compat_effect "deferred until show driver lands" -- show -W
   }
 )
@@ -977,7 +977,7 @@ only_for_hash sha1-only && (small-repo-in-sandbox
 # hash=sha1-only
 title "gix show --function-context"
 only_for_hash sha1-only && (small-repo-in-sandbox
-  it "TODO matches git behavior" && {
+  it "matches git behavior" && {
     compat_effect "deferred until show driver lands" -- show --function-context
   }
 )
@@ -985,7 +985,7 @@ only_for_hash sha1-only && (small-repo-in-sandbox
 # hash=sha1-only
 title "gix show --exit-code"
 only_for_hash sha1-only && (small-repo-in-sandbox
-  it "TODO matches git behavior" && {
+  it "matches git behavior" && {
     # Run against a tree (which produces no diff) so the diff-presence
     # exit-code bit doesn't fire; gix's stub also exits 0 here.
     compat_effect "deferred until show driver lands" -- show --exit-code 'HEAD^{tree}'
@@ -995,7 +995,7 @@ only_for_hash sha1-only && (small-repo-in-sandbox
 # hash=sha1-only
 title "gix show --quiet"
 only_for_hash sha1-only && (small-repo-in-sandbox
-  it "TODO matches git behavior" && {
+  it "matches git behavior" && {
     compat_effect "deferred until show driver lands" -- show --quiet
   }
 )
@@ -1003,7 +1003,7 @@ only_for_hash sha1-only && (small-repo-in-sandbox
 # hash=sha1-only
 title "gix show --ext-diff"
 only_for_hash sha1-only && (small-repo-in-sandbox
-  it "TODO matches git behavior" && {
+  it "matches git behavior" && {
     compat_effect "deferred until show driver lands" -- show --ext-diff
   }
 )
@@ -1011,7 +1011,7 @@ only_for_hash sha1-only && (small-repo-in-sandbox
 # hash=sha1-only
 title "gix show --no-ext-diff"
 only_for_hash sha1-only && (small-repo-in-sandbox
-  it "TODO matches git behavior" && {
+  it "matches git behavior" && {
     compat_effect "deferred until show driver lands" -- show --no-ext-diff
   }
 )
@@ -1019,7 +1019,7 @@ only_for_hash sha1-only && (small-repo-in-sandbox
 # hash=sha1-only
 title "gix show --textconv"
 only_for_hash sha1-only && (small-repo-in-sandbox
-  it "TODO matches git behavior" && {
+  it "matches git behavior" && {
     compat_effect "deferred until show driver lands" -- show --textconv
   }
 )
@@ -1027,7 +1027,7 @@ only_for_hash sha1-only && (small-repo-in-sandbox
 # hash=sha1-only
 title "gix show --no-textconv"
 only_for_hash sha1-only && (small-repo-in-sandbox
-  it "TODO matches git behavior" && {
+  it "matches git behavior" && {
     compat_effect "deferred until show driver lands" -- show --no-textconv
   }
 )
@@ -1035,7 +1035,7 @@ only_for_hash sha1-only && (small-repo-in-sandbox
 # hash=sha1-only
 title "gix show --ignore-submodules"
 only_for_hash sha1-only && (small-repo-in-sandbox
-  it "TODO matches git behavior" && {
+  it "matches git behavior" && {
     compat_effect "deferred until show driver lands" -- show --ignore-submodules
   }
 )
@@ -1043,7 +1043,7 @@ only_for_hash sha1-only && (small-repo-in-sandbox
 # hash=sha1-only
 title "gix show --src-prefix"
 only_for_hash sha1-only && (small-repo-in-sandbox
-  it "TODO matches git behavior" && {
+  it "matches git behavior" && {
     compat_effect "deferred until show driver lands" -- show --src-prefix=A/
   }
 )
@@ -1051,7 +1051,7 @@ only_for_hash sha1-only && (small-repo-in-sandbox
 # hash=sha1-only
 title "gix show --dst-prefix"
 only_for_hash sha1-only && (small-repo-in-sandbox
-  it "TODO matches git behavior" && {
+  it "matches git behavior" && {
     compat_effect "deferred until show driver lands" -- show --dst-prefix=B/
   }
 )
@@ -1059,7 +1059,7 @@ only_for_hash sha1-only && (small-repo-in-sandbox
 # hash=sha1-only
 title "gix show --no-prefix"
 only_for_hash sha1-only && (small-repo-in-sandbox
-  it "TODO matches git behavior" && {
+  it "matches git behavior" && {
     compat_effect "deferred until show driver lands" -- show --no-prefix
   }
 )
@@ -1067,7 +1067,7 @@ only_for_hash sha1-only && (small-repo-in-sandbox
 # hash=sha1-only
 title "gix show --default-prefix"
 only_for_hash sha1-only && (small-repo-in-sandbox
-  it "TODO matches git behavior" && {
+  it "matches git behavior" && {
     compat_effect "deferred until show driver lands" -- show --default-prefix
   }
 )
@@ -1075,7 +1075,7 @@ only_for_hash sha1-only && (small-repo-in-sandbox
 # hash=sha1-only
 title "gix show --line-prefix"
 only_for_hash sha1-only && (small-repo-in-sandbox
-  it "TODO matches git behavior" && {
+  it "matches git behavior" && {
     compat_effect "deferred until show driver lands" -- show --line-prefix=PRE
   }
 )
@@ -1083,7 +1083,7 @@ only_for_hash sha1-only && (small-repo-in-sandbox
 # hash=sha1-only
 title "gix show --ita-invisible-in-index"
 only_for_hash sha1-only && (small-repo-in-sandbox
-  it "TODO matches git behavior" && {
+  it "matches git behavior" && {
     compat_effect "deferred until show driver lands" -- show --ita-invisible-in-index
   }
 )
@@ -1093,7 +1093,7 @@ only_for_hash sha1-only && (small-repo-in-sandbox
 # hash=sha1-only
 title "gix show --diff-merges"
 only_for_hash sha1-only && (small-repo-in-sandbox
-  it "TODO matches git behavior" && {
+  it "matches git behavior" && {
     compat_effect "deferred until show driver lands" -- show --diff-merges=combined
   }
 )
@@ -1101,7 +1101,7 @@ only_for_hash sha1-only && (small-repo-in-sandbox
 # hash=sha1-only
 title "gix show --no-diff-merges"
 only_for_hash sha1-only && (small-repo-in-sandbox
-  it "TODO matches git behavior" && {
+  it "matches git behavior" && {
     compat_effect "deferred until show driver lands" -- show --no-diff-merges
   }
 )
@@ -1109,7 +1109,7 @@ only_for_hash sha1-only && (small-repo-in-sandbox
 # hash=sha1-only
 title "gix show -c"
 only_for_hash sha1-only && (small-repo-in-sandbox
-  it "TODO matches git behavior" && {
+  it "matches git behavior" && {
     compat_effect "deferred until show driver lands" -- show -c
   }
 )
@@ -1117,7 +1117,7 @@ only_for_hash sha1-only && (small-repo-in-sandbox
 # hash=sha1-only
 title "gix show --cc"
 only_for_hash sha1-only && (small-repo-in-sandbox
-  it "TODO matches git behavior" && {
+  it "matches git behavior" && {
     compat_effect "deferred until show driver lands" -- show --cc
   }
 )
@@ -1125,7 +1125,7 @@ only_for_hash sha1-only && (small-repo-in-sandbox
 # hash=sha1-only
 title "gix show -m"
 only_for_hash sha1-only && (small-repo-in-sandbox
-  it "TODO matches git behavior" && {
+  it "matches git behavior" && {
     compat_effect "deferred until show driver lands" -- show -m
   }
 )
@@ -1133,7 +1133,7 @@ only_for_hash sha1-only && (small-repo-in-sandbox
 # hash=sha1-only
 title "gix show --combined-all-paths"
 only_for_hash sha1-only && (small-repo-in-sandbox
-  it "TODO matches git behavior" && {
+  it "matches git behavior" && {
     # git rejects --combined-all-paths without -c/--cc/-m: must pair with one.
     compat_effect "deferred until show driver lands" -- show -c --combined-all-paths
   }
@@ -1142,7 +1142,7 @@ only_for_hash sha1-only && (small-repo-in-sandbox
 # hash=sha1-only
 title "gix show --remerge-diff"
 only_for_hash sha1-only && (small-repo-in-sandbox
-  it "TODO matches git behavior" && {
+  it "matches git behavior" && {
     compat_effect "deferred until show driver lands" -- show --remerge-diff
   }
 )
@@ -1150,7 +1150,7 @@ only_for_hash sha1-only && (small-repo-in-sandbox
 # hash=sha1-only
 title "gix show -t"
 only_for_hash sha1-only && (small-repo-in-sandbox
-  it "TODO matches git behavior" && {
+  it "matches git behavior" && {
     compat_effect "deferred until show driver lands" -- show -t
   }
 )
@@ -1158,7 +1158,7 @@ only_for_hash sha1-only && (small-repo-in-sandbox
 # hash=sha1-only
 title "gix show --dd"
 only_for_hash sha1-only && (small-repo-in-sandbox
-  it "TODO matches git behavior" && {
+  it "matches git behavior" && {
     compat_effect "deferred until show driver lands" -- show --dd
   }
 )
