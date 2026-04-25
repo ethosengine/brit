@@ -117,61 +117,76 @@ only_for_hash dual && (sandbox
 
 # mode=effect — `git merge <commit>` where <commit> is already an
 # ancestor of HEAD: git emits "Already up to date." on stdout and
-# exits 0. gix's placeholder emits a stub note. Close as
-# compat_effect until porcelain.rs implements the ancestor short-circuit.
+# exits 0. gix's placeholder emits a stub note (different bytes) and
+# exits 0; exit-code parity holds. Close as `compat_effect` under
+# the shared deferral phrase.
 # hash=sha1-only
 title "gix merge <commit> (already up to date)"
 only_for_hash sha1-only && (small-repo-in-sandbox
-  it "TODO matches git behavior" && {
-    : # TODO: compat_effect "deferred until merge driver lands" -- merge HEAD
+  it "matches git behavior" && {
+    compat_effect "deferred until merge driver lands" -- merge dev
   }
 )
 
 # mode=effect — `git merge <commit>` where <commit> is a descendant of
 # HEAD: fast-forward; git updates HEAD and emits "Updating <a>..<b>"
-# + a diffstat-stanza, exit 0. gix's placeholder emits a stub note.
-# Close as compat_effect until the fast-forward path lands.
+# + diffstat, exit 0. gix's placeholder emits a stub note (different
+# bytes) and exits 0; exit-code parity holds. Close as
+# `compat_effect` under the shared deferral phrase. (`git checkout
+# dev` first so dev sits behind main and merging main fast-forwards.)
 # hash=sha1-only
 title "gix merge <commit> (fast-forward)"
 only_for_hash sha1-only && (small-repo-in-sandbox
-  it "TODO matches git behavior" && {
-    : # TODO: compat_effect "deferred until merge driver lands" -- merge dev
+  git checkout -q dev
+  it "matches git behavior" && {
+    compat_effect "deferred until merge driver lands" -- merge main
   }
 )
 
 # mode=effect — `git merge <commit>` where neither side is an ancestor
 # of the other: 3-way merge. Clean merge produces a merge-commit
-# (default `--no-edit` under GIT_MERGE_AUTOEDIT=no) + "Merge made by
-# the 'ort' strategy." stanza, exit 0. Close as compat_effect.
+# (under GIT_MERGE_AUTOEDIT=no, set by tests/helpers.sh::set-static-
+# git-environment) + "Merge made by the 'ort' strategy." stanza,
+# exit 0. gix's placeholder emits a stub note and exits 0;
+# exit-code parity holds. Close as `compat_effect`.
 # hash=sha1-only
 title "gix merge <commit> (3-way merge, clean)"
 only_for_hash sha1-only && (small-repo-in-sandbox
-  it "TODO matches git behavior" && {
-    : # TODO: compat_effect "deferred until merge driver lands" -- merge dev
+  # Build a divergent history: dev edits a, main edits b — neither is
+  # an ancestor of the other.
+  git checkout -q dev
+  echo "dev-line" >> a && git commit -qam "dev-edit"
+  git checkout -q main
+  it "matches git behavior" && {
+    compat_effect "deferred until merge driver lands" -- merge dev
   }
 )
 
 # mode=effect — octopus merge: `git merge <commit-1> <commit-2> ...`.
-# git uses the `octopus` strategy by default for >1 head. Clean
-# octopus produces a single multi-parent merge-commit. Close as
-# compat_effect until octopus path lands.
+# git uses the `octopus` strategy by default for >1 head. Even when
+# both extras are ancestors, git emits "Already up to date." and
+# exits 0. gix's placeholder accepts the multi-positional form and
+# exits 0. Close as `compat_effect`.
 # hash=sha1-only
 title "gix merge <commit> <commit> (octopus)"
 only_for_hash sha1-only && (small-repo-in-sandbox
-  it "TODO matches git behavior" && {
-    : # TODO: compat_effect "deferred until merge driver lands" -- merge dev annotated
+  it "matches git behavior" && {
+    compat_effect "deferred until merge driver lands" -- merge dev annotated
   }
 )
 
-# mode=effect — bad revspec: git emits "merge: <ref> - not something
-# we can merge" + exit 1. gix's placeholder accepts any positional
-# without resolving. Close as compat_effect until revspec validation
-# lands in porcelain.rs.
+# mode=bytes — bad revspec: git emits the verbatim line
+# "merge: <ref> - not something we can merge" + exit 1
+# (vendor/git/builtin/merge.c::collect_parents → get_oid_mb die path).
+# gix's porcelain placeholder rev-parses each positional via
+# Repository::rev_parse_single before the (placeholder) merge driver
+# runs and emits the same wording + exit 1 on the first
+# unresolvable ref.
 # hash=sha1-only
 title "gix merge <bad-revspec>"
 only_for_hash sha1-only && (small-repo-in-sandbox
-  it "TODO matches git behavior" && {
-    : # TODO: compat_effect "deferred until merge driver lands" -- merge nonexistent-ref
+  it "matches git behavior" && {
+    expect_parity bytes -- merge nonexistent-ref
   }
 )
 

@@ -17,10 +17,10 @@
 //! is `"deferred until merge driver lands"`.
 
 use anyhow::Result;
-use gix::bstr::BString;
+use gix::bstr::{BStr, BString};
 
 pub fn porcelain(
-    _repo: gix::Repository,
+    repo: gix::Repository,
     _out: impl std::io::Write,
     err: &mut dyn std::io::Write,
     commits: Vec<BString>,
@@ -35,6 +35,18 @@ pub fn porcelain(
     if commits.is_empty() {
         let _ = writeln!(err, "fatal: No remote for the current branch.");
         std::process::exit(128);
+    }
+    // Bad-revspec gate. git's collect_parents loop in cmd_merge calls
+    // get_oid_mb on each positional and dies 1 with
+    // "merge: <ref> - not something we can merge" on the first
+    // unresolvable ref. Mirror that wording verbatim before the
+    // (placeholder) merge driver runs.
+    for spec in &commits {
+        let bstr: &BStr = spec.as_ref();
+        if repo.rev_parse_single(bstr).is_err() {
+            let _ = writeln!(err, "merge: {spec} - not something we can merge");
+            std::process::exit(1);
+        }
     }
     let _ = writeln!(
         err,
