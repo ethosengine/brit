@@ -306,8 +306,16 @@ pub enum Subcommands {
         /// Print additional statistics to help understanding performance.
         #[clap(long, short = 's')]
         statistics: bool,
-        /// The file to create the blame information for.
-        file: std::ffi::OsString,
+        /// Positional args: optional `[REV...]` followed by `<file>`, mirroring
+        /// `git blame [<rev-opts>] [<rev>] [--] <file>`. When `--` is used to
+        /// terminate the rev list, the file lives in `paths`; otherwise the
+        /// last entry of `args` is the file and any preceding entries are
+        /// revisions to peel into the blame suspect.
+        args: Vec<std::ffi::OsString>,
+        /// Trailing path after `--`. At most one entry is honored (mirrors
+        /// builtin/blame.c's single-file constraint).
+        #[clap(last = true)]
+        paths: Vec<std::ffi::OsString>,
         /// Only blame lines in the given 1-based inclusive range '<start>,<end>', e.g. '20,40'.
         #[clap(short='L', value_parser=AsRange, action=clap::ArgAction::Append)]
         ranges: Vec<std::ops::RangeInclusive<u32>>,

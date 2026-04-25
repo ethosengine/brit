@@ -3334,7 +3334,8 @@ pub fn main() -> Result<()> {
         },
         Subcommands::Blame {
             statistics,
-            file,
+            args,
+            paths,
             ranges,
             since,
         } => prepare_and_run(
@@ -3345,11 +3346,26 @@ pub fn main() -> Result<()> {
             progress_keep_open,
             None,
             move |_progress, out, err| {
+                // Mirror builtin/blame.c's `[<rev>...] [--] <file>` shape.
+                // With `--`: every `args` entry is a rev, `paths[0]` is the file.
+                // Without: the last `args` entry is the file, anything before
+                // is a rev. Bare `gix blame` (zero positionals) emits the same
+                // usage stanza git does and exits 129.
+                let mut args = args;
+                let (revs, file) = if let Some(file) = paths.into_iter().next() {
+                    (args, file)
+                } else if let Some(file) = args.pop() {
+                    (args, file)
+                } else {
+                    eprintln!("usage: git blame [<options>] [<rev-opts>] [<rev>] [--] <file>");
+                    std::process::exit(129);
+                };
                 let repo = repository(Mode::Lenient)?;
                 let diff_algorithm = repo.diff_algorithm()?;
 
                 core::repository::blame::blame_file(
                     repo,
+                    &revs,
                     &file,
                     gix::blame::Options {
                         diff_algorithm,

@@ -143,8 +143,8 @@ only_for_hash sha1-only && (small-repo-in-sandbox
 # hash=sha1-only
 title "gix blame HEAD <file>"
 only_for_hash sha1-only && (small-repo-in-sandbox
-  it "TODO matches git behavior" && {
-    : # TODO: expect_parity effect -- blame HEAD b
+  it "matches git behavior" && {
+    compat_effect "blame default-format renderer deferred (rev <file>)" -- blame HEAD b
   }
 )
 

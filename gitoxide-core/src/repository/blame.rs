@@ -4,6 +4,7 @@ use gix::{bstr::ByteSlice, config::tree};
 
 pub fn blame_file(
     mut repo: gix::Repository,
+    revs: &[std::ffi::OsString],
     file: &OsStr,
     options: gix::blame::Options,
     out: impl std::io::Write,
@@ -35,7 +36,35 @@ pub fn blame_file(
         .next()
         .expect("exactly one pattern");
 
-    let suspect: gix::ObjectId = repo.head()?.into_peeled_id()?.into();
+    // builtin/blame.c keeps the rev list in revs.pending and ultimately walks
+    // from each tip's peeled commit. For now honor only the first rev arg
+    // (the common case `git blame <rev> <file>`); multi-tip / range walks
+    // (`<rev>..<rev>`, `--reverse`) are deferred to later rows.
+    // builtin/blame.c keeps the rev list in revs.pending and ultimately walks
+    // from each tip's peeled commit. For now honor only the first rev arg
+    // (the common case `git blame <rev> <file>`); multi-tip / range walks
+    // (`<rev>..<rev>`, `--reverse`) are deferred to later rows.
+    let suspect: gix::ObjectId = match revs.first() {
+        Some(rev) => {
+            let rev_bstr = gix::path::os_str_into_bstr(rev)?;
+            let id = match repo.rev_parse_single(rev_bstr) {
+                Ok(id) => id,
+                Err(_) => {
+                    // Parity with git's setup_revisions: unknown revision/path
+                    // dies 128 with the canonical 3-line stanza
+                    // (vendor/git/revision.c::handle_revision_arg → die).
+                    eprintln!(
+                        "fatal: ambiguous argument '{rev_bstr}': unknown revision or path not in the working tree.\n\
+                         Use '--' to separate paths from revisions, like this:\n\
+                         'git <command> [<revision>...] -- [<file>...]'"
+                    );
+                    std::process::exit(128);
+                }
+            };
+            id.object()?.peel_to_commit()?.id
+        }
+        None => repo.head()?.into_peeled_id()?.into(),
+    };
     let cache: Option<gix::commitgraph::Graph> = repo.commit_graph_if_enabled()?;
     let mut resource_cache = repo.diff_resource_cache_for_tree_diff()?;
     let outcome = match gix::blame::file(
