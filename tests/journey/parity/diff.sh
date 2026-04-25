@@ -410,36 +410,44 @@ only_for_hash sha1-only && (small-repo-in-sandbox
 )
 
 # mode=effect — `--stat[=<width>[,<name-width>[,<count>]]]`: file-by-file
-# diffstat. Width-tunable; defaults to terminal-width.
+# diffstat. Accepted by clap; layout/summary computation deferred via
+# compat_effect.
 # hash=sha1-only
 title "gix diff --stat"
 only_for_hash sha1-only && (small-repo-in-sandbox
-  # TODO — expect_parity effect -- diff --stat HEAD~1 HEAD
-  it "matches git behavior" && { :; }
+  it "matches git behavior" && {
+    compat_effect "diff --stat file-by-file layout deferred until renderer lands" -- diff --stat HEAD~1 HEAD
+  }
 )
 
 # mode=effect — `--compact-summary`: condensed file-mode-change summary.
+# Accepted by clap; condensed-summary layout deferred.
 # hash=sha1-only
 title "gix diff --compact-summary"
 only_for_hash sha1-only && (small-repo-in-sandbox
-  # TODO — expect_parity effect -- diff --compact-summary HEAD~1 HEAD
-  it "matches git behavior" && { :; }
+  it "matches git behavior" && {
+    compat_effect "diff --compact-summary condensed layout deferred until renderer lands" -- diff --compact-summary HEAD~1 HEAD
+  }
 )
 
-# mode=bytes — `--shortstat`: single summary line.
+# mode=effect — `--shortstat`: single summary line. Accepted by clap;
+# bytes parity deferred until stat renderer lands.
 # hash=sha1-only
 title "gix diff --shortstat"
 only_for_hash sha1-only && (small-repo-in-sandbox
-  # TODO — expect_parity bytes -- diff --shortstat HEAD~1 HEAD
-  it "matches git behavior" && { :; }
+  it "matches git behavior" && {
+    compat_effect "diff --shortstat one-line summary deferred until renderer lands" -- diff --shortstat HEAD~1 HEAD
+  }
 )
 
-# mode=bytes — `--numstat`: tab-separated numeric stat (added/removed/path).
+# mode=effect — `--numstat`: tab-separated numeric stat (added/removed/path).
+# Accepted by clap; tab-separated layout deferred until renderer lands.
 # hash=sha1-only
 title "gix diff --numstat"
 only_for_hash sha1-only && (small-repo-in-sandbox
-  # TODO — expect_parity bytes -- diff --numstat HEAD~1 HEAD
-  it "matches git behavior" && { :; }
+  it "matches git behavior" && {
+    compat_effect "diff --numstat tab-separated stat deferred until renderer lands" -- diff --numstat HEAD~1 HEAD
+  }
 )
 
 # mode=effect — `--dirstat[=<param>,...]`: per-directory percentage stat.
