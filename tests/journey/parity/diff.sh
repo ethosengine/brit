@@ -378,11 +378,13 @@ only_for_hash sha1-only && (small-repo-in-sandbox
 
 # mode=effect — `-t`: show tree entries themselves (recurse into
 # subdirectories). git-diff specific extra over diff-options.
+# Accepted by clap; tree-entry recursion in renderer deferred.
 # hash=sha1-only
 title "gix diff -t"
 only_for_hash sha1-only && (small-repo-in-sandbox
-  # TODO — expect_parity effect -- diff -t HEAD~1 HEAD
-  it "matches git behavior" && { :; }
+  it "matches git behavior" && {
+    compat_effect "diff -t tree-entry recursion deferred until renderer lands" -- diff -t HEAD~1 HEAD
+  }
 )
 
 # --- output formats: name / status / stat ------------------------------
