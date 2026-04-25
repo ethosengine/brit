@@ -3338,6 +3338,44 @@ pub fn main() -> Result<()> {
             paths,
             ranges,
             since,
+            // Output-mode flags below are accepted by Clap but don't yet
+            // change the renderer in `gitoxide_core::repository::blame`.
+            // Closing each as compat_effect with "renderer deferred" until
+            // the porcelain / line-porcelain / incremental / annotate-compat
+            // / show-email / show-name / show-number / boundary / abbrev /
+            // date / encoding / color / move/copy / ignore-rev paths are
+            // implemented.
+            incremental,
+            porcelain,
+            line_porcelain: _,
+            annotate_compat: _,
+            raw_timestamp: _,
+            long_hash: _,
+            no_author: _,
+            show_email: _,
+            show_name: _,
+            show_number: _,
+            blank_boundary: _,
+            root: _,
+            score_debug: _,
+            first_parent: _,
+            reverse: _,
+            progress: progress_force,
+            no_progress: _,
+            detect_move: _,
+            detect_copy: _,
+            ignore_rev: _,
+            ignore_revs_file: _,
+            ignore_whitespace: _,
+            diff_algorithm_flag: _,
+            minimal: _,
+            color_lines: _,
+            color_by_age: _,
+            abbrev: _,
+            date: _,
+            encoding: _,
+            contents: _,
+            revs_file: _,
         } => prepare_and_run(
             "blame",
             trace,
@@ -3346,6 +3384,15 @@ pub fn main() -> Result<()> {
             progress_keep_open,
             None,
             move |_progress, out, err| {
+                // Parity with builtin/blame.c:1043-1048 — explicit
+                // --progress is incompatible with porcelain / line-porcelain
+                // / incremental machine-consumption formats. git emits
+                // "fatal: --progress can't be used with --incremental or
+                // porcelain formats" and exits 128.
+                if progress_force && (incremental || porcelain) {
+                    eprintln!("fatal: --progress can't be used with --incremental or porcelain formats");
+                    std::process::exit(128);
+                }
                 // Mirror builtin/blame.c's `[<rev>...] [--] <file>` shape.
                 // With `--`: every `args` entry is a rev, `paths[0]` is the file.
                 // Without: the last `args` entry is the file, anything before

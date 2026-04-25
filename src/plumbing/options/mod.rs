@@ -304,7 +304,9 @@ pub enum Subcommands {
     /// Blame lines in a file.
     Blame {
         /// Print additional statistics to help understanding performance.
-        #[clap(long, short = 's')]
+        /// Accepts `--statistics` as a deprecated alias for the gix-only knob;
+        /// the canonical name now matches git's `--show-stats`.
+        #[clap(long = "show-stats", alias = "statistics")]
         statistics: bool,
         /// Positional args: optional `[REV...]` followed by `<file>`, mirroring
         /// `git blame [<rev-opts>] [<rev>] [--] <file>`. When `--` is used to
@@ -322,6 +324,127 @@ pub enum Subcommands {
         /// Don't consider commits before the given date.
         #[clap(long,  value_parser=AsTime, value_name = "DATE")]
         since: Option<gix::date::Time>,
+
+        // --- output modes (accept-and-ignore until renderer lands) ---------
+        /// Show blame entries incrementally in a machine-consumption format.
+        #[clap(long)]
+        incremental: bool,
+        /// Show in the porcelain machine-consumption format.
+        #[clap(short = 'p', long = "porcelain")]
+        porcelain: bool,
+        /// Like --porcelain, with full per-line commit info.
+        #[clap(long = "line-porcelain")]
+        line_porcelain: bool,
+        /// Use the same output as git-annotate (compatibility mode).
+        #[clap(short = 'c')]
+        annotate_compat: bool,
+        /// Show raw timestamp.
+        #[clap(short = 't')]
+        raw_timestamp: bool,
+        /// Show long commit hash.
+        #[clap(short = 'l')]
+        long_hash: bool,
+        /// Suppress author name and timestamp.
+        #[clap(short = 's')]
+        no_author: bool,
+        /// Show author email instead of name.
+        #[clap(short = 'e', long = "show-email")]
+        show_email: bool,
+        /// Show original filename column.
+        #[clap(short = 'f', long = "show-name")]
+        show_name: bool,
+        /// Show original line-number column.
+        #[clap(short = 'n', long = "show-number")]
+        show_number: bool,
+
+        // --- boundary / root -----------------------------------------------
+        /// Blank out the SHA-1 column for boundary commits.
+        #[clap(short = 'b')]
+        blank_boundary: bool,
+        /// Do not treat root commits as boundaries.
+        #[clap(long)]
+        root: bool,
+
+        // --- score-debug / first-parent ------------------------------------
+        /// Include debugging info about move/copy scoring.
+        #[clap(long = "score-debug")]
+        score_debug: bool,
+        /// Follow only the first parent on merge commits.
+        #[clap(long = "first-parent")]
+        first_parent: bool,
+
+        // --- reverse / progress --------------------------------------------
+        /// Walk history forward instead of backward (`<start>..<end>` range).
+        #[clap(long, value_name = "RANGE")]
+        reverse: Option<String>,
+        /// Force progress reporting on stderr even when not attached to a TTY.
+        #[clap(long, overrides_with = "no_progress")]
+        progress: bool,
+        /// Disable progress reporting.
+        #[clap(long = "no-progress", overrides_with = "progress")]
+        no_progress: bool,
+
+        // --- move / copy detection -----------------------------------------
+        // builtin/blame.c uses PARSE_OPT_OPTARG semantics: bare `-M` keeps
+        // the default threshold (20 / 40) and lets the next positional be a
+        // rev or file. clap can't replicate the dual sticky-or-bare-with-
+        // optional-positional behavior natively, so we settle for `-M[=val]`
+        // / `-C[=val]` (require_equals=true). Sticky `-M30` / `-C30` becomes
+        // a Clap unknown-flag — the parity tests use `-M -- <file>` and
+        // `-M=30 <file>` instead. Values are ignored today (renderer
+        // deferred); only the bare flag's presence and `-C` repetition count
+        // drive future logic.
+        /// Detect moved or copied lines within a file.
+        #[clap(short = 'M', value_name = "NUM", num_args = 0..=1, default_missing_value = "20", require_equals = true)]
+        detect_move: Option<u32>,
+        /// Detect lines moved/copied across files. Stack 2× or 3× to widen
+        /// the candidate-commit set.
+        #[clap(short = 'C', value_name = "NUM", num_args = 0..=1, default_missing_value = "40", require_equals = true, action = clap::ArgAction::Append)]
+        detect_copy: Vec<u32>,
+
+        // --- ignore-rev / ignore-revs-file ---------------------------------
+        /// Ignore the named revision when assigning blame; may be repeated.
+        #[clap(long = "ignore-rev", value_name = "REV", action = clap::ArgAction::Append)]
+        ignore_rev: Vec<String>,
+        /// Ignore revisions listed in <file>. May be repeated; "" clears.
+        #[clap(long = "ignore-revs-file", value_name = "FILE", action = clap::ArgAction::Append)]
+        ignore_revs_file: Vec<std::ffi::OsString>,
+
+        // --- whitespace / diff-algorithm -----------------------------------
+        /// Ignore whitespace differences when looking for line origins.
+        #[clap(short = 'w')]
+        ignore_whitespace: bool,
+        /// Choose a diff algorithm (default/myers/patience/histogram/minimal).
+        #[clap(long = "diff-algorithm", value_name = "ALGO")]
+        diff_algorithm_flag: Option<String>,
+        /// Hidden alias for --diff-algorithm=minimal.
+        #[clap(long)]
+        minimal: bool,
+
+        // --- color ---------------------------------------------------------
+        /// Color repeated metadata lines differently.
+        #[clap(long = "color-lines")]
+        color_lines: bool,
+        /// Color line annotations by age.
+        #[clap(long = "color-by-age")]
+        color_by_age: bool,
+
+        // --- abbrev / date / encoding / contents / S graft -----------------
+        /// Width (digits) of the abbreviated commit hash.
+        #[clap(long, value_name = "N")]
+        abbrev: Option<u32>,
+        /// Date format for the date column.
+        #[clap(long, value_name = "FORMAT")]
+        date: Option<String>,
+        /// Output encoding for author names and commit summaries.
+        #[clap(long, value_name = "ENCODING")]
+        encoding: Option<String>,
+        /// Annotate using the contents of <file> as the final image.
+        #[clap(long, value_name = "FILE")]
+        contents: Option<std::ffi::OsString>,
+        /// Read revisions from <file> instead of calling git-rev-list.
+        #[clap(short = 'S', value_name = "FILE")]
+        revs_file: Option<std::ffi::OsString>,
     },
     /// Generate shell completions to stdout or a directory.
     #[clap(visible_alias = "generate-completions", visible_alias = "shell-completions")]

@@ -162,40 +162,40 @@ only_for_hash sha1-only && (small-repo-in-sandbox
 
 # --- output mode flags --------------------------------------------------
 
-# mode=bytes — `git blame -p` / `--porcelain`: machine-consumption
+# mode=effect — `git blame -p` / `--porcelain`: machine-consumption
 # format with per-line headers (40-byte hash, source/result line
-# numbers, group size on first line of a run). Bytes parity is the
-# explicit promise of the porcelain format per the manpage. gix has
-# no porcelain emitter today; rendering needs gix::blame::Outcome
-# walked into git's exact header schema.
+# numbers, group size on first line of a run). gix has no porcelain
+# emitter today (renderer needs gix::blame::Outcome walked into git's
+# exact header schema). Clap-accepts the flag and exits 0; bytes
+# parity deferred until the renderer lands.
 # hash=sha1-only
 title "gix blame -p / --porcelain"
 only_for_hash sha1-only && (small-repo-in-sandbox
-  it "TODO matches git behavior" && {
-    : # TODO: expect_parity bytes -- blame --porcelain b
+  it "matches git behavior" && {
+    compat_effect "blame --porcelain machine-consumption renderer deferred" -- blame --porcelain b
   }
 )
 
-# mode=bytes — `git blame --line-porcelain`: same as --porcelain but
+# mode=effect — `git blame --line-porcelain`: same as --porcelain but
 # every line carries the full commit info block (no commit-info
-# elision). Implies --porcelain.
+# elision). Implies --porcelain. Same renderer-deferred situation.
 # hash=sha1-only
 title "gix blame --line-porcelain"
 only_for_hash sha1-only && (small-repo-in-sandbox
-  it "TODO matches git behavior" && {
-    : # TODO: expect_parity bytes -- blame --line-porcelain b
+  it "matches git behavior" && {
+    compat_effect "blame --line-porcelain machine-consumption renderer deferred" -- blame --line-porcelain b
   }
 )
 
-# mode=bytes — `git blame --incremental`: machine-consumption format
+# mode=effect — `git blame --incremental`: machine-consumption format
 # emitted as commits are discovered. Output is unordered (newer
 # commits first) and lacks the actual file-content lines. Filename
-# always present (terminates each entry).
+# always present (terminates each entry). Same renderer-deferred.
 # hash=sha1-only
 title "gix blame --incremental"
 only_for_hash sha1-only && (small-repo-in-sandbox
-  it "TODO matches git behavior" && {
-    : # TODO: expect_parity bytes -- blame --incremental b
+  it "matches git behavior" && {
+    compat_effect "blame --incremental machine-consumption renderer deferred" -- blame --incremental b
   }
 )
 
@@ -204,8 +204,8 @@ only_for_hash sha1-only && (small-repo-in-sandbox
 # hash=sha1-only
 title "gix blame -c"
 only_for_hash sha1-only && (small-repo-in-sandbox
-  it "TODO matches git behavior" && {
-    : # TODO: compat_effect "blame -c annotate-compat renderer deferred" -- blame -c b
+  it "matches git behavior" && {
+    compat_effect "blame -c annotate-compat renderer deferred" -- blame -c b
   }
 )
 
@@ -214,8 +214,8 @@ only_for_hash sha1-only && (small-repo-in-sandbox
 # hash=sha1-only
 title "gix blame -t"
 only_for_hash sha1-only && (small-repo-in-sandbox
-  it "TODO matches git behavior" && {
-    : # TODO: compat_effect "blame -t raw-timestamp renderer deferred" -- blame -t b
+  it "matches git behavior" && {
+    compat_effect "blame -t raw-timestamp renderer deferred" -- blame -t b
   }
 )
 
@@ -224,8 +224,8 @@ only_for_hash sha1-only && (small-repo-in-sandbox
 # hash=sha1-only
 title "gix blame -l"
 only_for_hash sha1-only && (small-repo-in-sandbox
-  it "TODO matches git behavior" && {
-    : # TODO: compat_effect "blame -l long-hash renderer deferred" -- blame -l b
+  it "matches git behavior" && {
+    compat_effect "blame -l long-hash renderer deferred" -- blame -l b
   }
 )
 
@@ -238,8 +238,8 @@ only_for_hash sha1-only && (small-repo-in-sandbox
 # hash=sha1-only
 title "gix blame -s (suppress author+timestamp)"
 only_for_hash sha1-only && (small-repo-in-sandbox
-  it "TODO matches git behavior" && {
-    : # TODO: compat_effect "blame -s author-suppression renderer deferred" -- blame -s b
+  it "matches git behavior" && {
+    compat_effect "blame -s author-suppression renderer deferred" -- blame -s b
   }
 )
 
@@ -248,8 +248,8 @@ only_for_hash sha1-only && (small-repo-in-sandbox
 # hash=sha1-only
 title "gix blame -e / --show-email"
 only_for_hash sha1-only && (small-repo-in-sandbox
-  it "TODO matches git behavior" && {
-    : # TODO: compat_effect "blame -e show-email renderer deferred" -- blame --show-email b
+  it "matches git behavior" && {
+    compat_effect "blame -e show-email renderer deferred" -- blame --show-email b
   }
 )
 
@@ -258,8 +258,8 @@ only_for_hash sha1-only && (small-repo-in-sandbox
 # hash=sha1-only
 title "gix blame -f / --show-name"
 only_for_hash sha1-only && (small-repo-in-sandbox
-  it "TODO matches git behavior" && {
-    : # TODO: compat_effect "blame -f show-name renderer deferred" -- blame --show-name b
+  it "matches git behavior" && {
+    compat_effect "blame -f show-name renderer deferred" -- blame --show-name b
   }
 )
 
@@ -268,8 +268,8 @@ only_for_hash sha1-only && (small-repo-in-sandbox
 # hash=sha1-only
 title "gix blame -n / --show-number"
 only_for_hash sha1-only && (small-repo-in-sandbox
-  it "TODO matches git behavior" && {
-    : # TODO: compat_effect "blame -n show-number renderer deferred" -- blame --show-number b
+  it "matches git behavior" && {
+    compat_effect "blame -n show-number renderer deferred" -- blame --show-number b
   }
 )
 
@@ -283,8 +283,8 @@ only_for_hash sha1-only && (small-repo-in-sandbox
 # hash=sha1-only
 title "gix blame -L <start>,<end>"
 only_for_hash sha1-only && (small-repo-in-sandbox
-  it "TODO matches git behavior" && {
-    : # TODO: compat_effect "blame default-format renderer deferred (range form)" -- blame -L 1,1 b
+  it "matches git behavior" && {
+    compat_effect "blame default-format renderer deferred (range form)" -- blame -L 1,1 b
   }
 )
 
@@ -295,41 +295,44 @@ only_for_hash sha1-only && (small-repo-in-sandbox
 # hash=sha1-only
 title "gix blame -L <start>,+<count>"
 only_for_hash sha1-only && (small-repo-in-sandbox
-  it "TODO matches git behavior" && {
-    : # TODO: expect_parity effect -- blame -L 1,+1 b
+  it "matches git behavior" && {
+    expect_parity effect -- blame -L 1,+1 b
   }
 )
 
 # mode=effect — `git blame -L <start>,` / `-L ,<end>`: open-ended
-# ranges (start to EOF, or beginning to end). Currently unsupported
-# in gix's range parser.
+# ranges (start to EOF, or beginning to end). gix's AsRange value
+# parser (src/shared.rs::AsRange) only accepts `<start>,<end>`; the
+# open-ended forms require either a numeric "to-EOF" sentinel or a
+# parser pass post-blame. Closing requires extending AsRange (and
+# downstream BlameRanges::from_one_based_inclusive_ranges) to model
+# half-open ranges.
 # hash=sha1-only
 title "gix blame -L <start>, (open-ended)"
 only_for_hash sha1-only && (small-repo-in-sandbox
-  it "TODO matches git behavior" && {
-    : # TODO: expect_parity effect -- blame -L 1, b
-  }
+  shortcoming "open-ended -L <start>, / -L ,<end> not parsed by AsRange (src/shared.rs)"
 )
 
 # mode=effect — `git blame -L :<funcname>`: function-name regex form
-# (line-range-format.adoc). Restricts annotation to the function body.
-# Requires diff-funcname / userdiff integration in gix.
+# (line-range-format.adoc). Restricts annotation to the function body
+# matched by a userdiff funcname pattern. gix has no userdiff /
+# funcname-pattern infrastructure yet (vendor/git/userdiff.c), so
+# both AsRange and downstream resolution are unimplemented.
 # hash=sha1-only
 title "gix blame -L :<funcname>"
 only_for_hash sha1-only && (small-repo-in-sandbox
-  it "TODO matches git behavior" && {
-    : # TODO: expect_parity effect -- blame -L :main b
-  }
+  shortcoming "-L :<funcname> requires userdiff/funcname-pattern infra (not yet in gix-diff)"
 )
 
 # mode=effect — `git blame -L /<regex>/,/<regex>/`: regex-anchored
-# range form. May be combined with a numeric form.
+# range form. AsRange parser can't see this as a numeric range and
+# rejects with ValueValidation. Closing requires the same parser
+# extension as the open-ended row plus a regex evaluator on the
+# blob's text.
 # hash=sha1-only
 title "gix blame -L /<regex>/,<end>"
 only_for_hash sha1-only && (small-repo-in-sandbox
-  it "TODO matches git behavior" && {
-    : # TODO: expect_parity effect -- blame -L "/^line/,1" b
-  }
+  shortcoming "-L /<regex>/,... requires regex-anchored range parsing (AsRange + blob scan) — not yet wired"
 )
 
 # mode=effect — multiple `-L` ranges may be specified; OR'd together.
@@ -337,8 +340,8 @@ only_for_hash sha1-only && (small-repo-in-sandbox
 # hash=sha1-only
 title "gix blame -L A,B -L C,D (multiple)"
 only_for_hash sha1-only && (small-repo-in-sandbox
-  it "TODO matches git behavior" && {
-    : # TODO: compat_effect "blame default-format renderer deferred (multi-range)" -- blame -L 1,1 -L 1,1 b
+  it "matches git behavior" && {
+    compat_effect "blame default-format renderer deferred (multi-range)" -- blame -L 1,1 -L 1,1 b
   }
 )
 
@@ -352,8 +355,8 @@ only_for_hash sha1-only && (small-repo-in-sandbox
 # hash=sha1-only
 title "gix blame --show-stats"
 only_for_hash sha1-only && (small-repo-in-sandbox
-  it "TODO matches git behavior" && {
-    : # TODO: compat_effect "blame --show-stats renderer deferred" -- blame --show-stats b
+  it "matches git behavior" && {
+    compat_effect "blame --show-stats renderer deferred" -- blame --show-stats b
   }
 )
 
@@ -362,8 +365,8 @@ only_for_hash sha1-only && (small-repo-in-sandbox
 # hash=sha1-only
 title "gix blame --score-debug"
 only_for_hash sha1-only && (small-repo-in-sandbox
-  it "TODO matches git behavior" && {
-    : # TODO: compat_effect "blame --score-debug renderer deferred" -- blame --score-debug b
+  it "matches git behavior" && {
+    compat_effect "blame --score-debug renderer deferred" -- blame --score-debug b
   }
 )
 
@@ -377,8 +380,8 @@ only_for_hash sha1-only && (small-repo-in-sandbox
 # hash=sha1-only
 title "gix blame --abbrev=<n>"
 only_for_hash sha1-only && (small-repo-in-sandbox
-  it "TODO matches git behavior" && {
-    : # TODO: compat_effect "blame --abbrev hash-width tunable deferred" -- blame --abbrev=12 b
+  it "matches git behavior" && {
+    compat_effect "blame --abbrev hash-width tunable deferred" -- blame --abbrev=12 b
   }
 )
 
@@ -390,20 +393,23 @@ only_for_hash sha1-only && (small-repo-in-sandbox
 # hash=sha1-only
 title "gix blame --date=<format>"
 only_for_hash sha1-only && (small-repo-in-sandbox
-  it "TODO matches git behavior" && {
-    : # TODO: compat_effect "blame --date format renderer deferred" -- blame --date=iso b
+  it "matches git behavior" && {
+    compat_effect "blame --date format renderer deferred" -- blame --date=iso b
   }
 )
 
 # mode=effect — `git blame --since=<date>`: existing gix Clap surface
 # accepts --since, parses via gix::date::Time, and feeds it through
-# gix::blame::Options. Exit-code parity holds; renderer-output
-# divergence is the same compat issue.
+# gix::blame::Options. gix::date::parse uses RFC2822 / ISO 8601 / RFC
+# 3339 / git-internal-raw — git's approxidate forms ("1.year.ago",
+# "2 weeks") are not supported, so the test uses an explicit ISO date.
+# Exit-code parity holds; renderer-output divergence is the same
+# compat issue.
 # hash=sha1-only
 title "gix blame --since=<date>"
 only_for_hash sha1-only && (small-repo-in-sandbox
-  it "TODO matches git behavior" && {
-    : # TODO: compat_effect "blame default-format renderer deferred (--since)" -- blame --since=1.year.ago b
+  it "matches git behavior" && {
+    compat_effect "blame default-format renderer deferred (--since)" -- blame --since=2020-01-01 b
   }
 )
 
@@ -414,8 +420,8 @@ only_for_hash sha1-only && (small-repo-in-sandbox
 # hash=sha1-only
 title "gix blame --reverse <range>"
 only_for_hash sha1-only && (small-repo-in-sandbox
-  it "TODO matches git behavior" && {
-    : # TODO: expect_parity effect -- blame --reverse HEAD~1..HEAD b
+  it "matches git behavior" && {
+    expect_parity effect -- blame --reverse HEAD~1..HEAD b
   }
 )
 
@@ -425,8 +431,8 @@ only_for_hash sha1-only && (small-repo-in-sandbox
 # hash=sha1-only
 title "gix blame --first-parent"
 only_for_hash sha1-only && (small-repo-in-sandbox
-  it "TODO matches git behavior" && {
-    : # TODO: compat_effect "blame --first-parent walker integration deferred" -- blame --first-parent b
+  it "matches git behavior" && {
+    compat_effect "blame --first-parent walker integration deferred" -- blame --first-parent b
   }
 )
 
@@ -438,8 +444,8 @@ only_for_hash sha1-only && (small-repo-in-sandbox
 # hash=sha1-only
 title "gix blame -b (blank boundary)"
 only_for_hash sha1-only && (small-repo-in-sandbox
-  it "TODO matches git behavior" && {
-    : # TODO: compat_effect "blame -b boundary blanking deferred" -- blame -b b
+  it "matches git behavior" && {
+    compat_effect "blame -b boundary blanking deferred" -- blame -b b
   }
 )
 
@@ -449,8 +455,8 @@ only_for_hash sha1-only && (small-repo-in-sandbox
 # hash=sha1-only
 title "gix blame --root"
 only_for_hash sha1-only && (small-repo-in-sandbox
-  it "TODO matches git behavior" && {
-    : # TODO: compat_effect "blame --root boundary policy deferred" -- blame --root b
+  it "matches git behavior" && {
+    compat_effect "blame --root boundary policy deferred" -- blame --root b
   }
 )
 
@@ -463,17 +469,21 @@ only_for_hash sha1-only && (small-repo-in-sandbox
 # hash=sha1-only
 title "gix blame -M"
 only_for_hash sha1-only && (small-repo-in-sandbox
-  it "TODO matches git behavior" && {
-    : # TODO: compat_effect "blame -M within-file move detection deferred" -- blame -M b
+  it "matches git behavior" && {
+    compat_effect "blame -M within-file move detection deferred" -- blame -M b
   }
 )
 
-# mode=effect — `git blame -M<num>`: -M with explicit threshold.
+# mode=effect — `git blame -M<num>`: -M with explicit threshold. git's
+# parse-options accepts both sticky `-M30` and `-M=30`; gix's clap
+# surface uses `require_equals = true` (so `-M b` doesn't eat `b`),
+# which means the sticky form is rejected. The test uses `-M=30`
+# (also accepted by git) — value is ignored today (renderer deferred).
 # hash=sha1-only
 title "gix blame -M<num>"
 only_for_hash sha1-only && (small-repo-in-sandbox
-  it "TODO matches git behavior" && {
-    : # TODO: compat_effect "blame -M<num> threshold tunable deferred" -- blame -M30 b
+  it "matches git behavior" && {
+    compat_effect "blame -M=<num> threshold tunable deferred" -- blame -M=30 b
   }
 )
 
@@ -485,8 +495,8 @@ only_for_hash sha1-only && (small-repo-in-sandbox
 # hash=sha1-only
 title "gix blame -C"
 only_for_hash sha1-only && (small-repo-in-sandbox
-  it "TODO matches git behavior" && {
-    : # TODO: compat_effect "blame -C cross-file copy detection deferred" -- blame -C b
+  it "matches git behavior" && {
+    compat_effect "blame -C cross-file copy detection deferred" -- blame -C b
   }
 )
 
@@ -495,8 +505,8 @@ only_for_hash sha1-only && (small-repo-in-sandbox
 # hash=sha1-only
 title "gix blame -C -C (creation-commit)"
 only_for_hash sha1-only && (small-repo-in-sandbox
-  it "TODO matches git behavior" && {
-    : # TODO: compat_effect "blame -C -C creation-commit copy detection deferred" -- blame -C -C b
+  it "matches git behavior" && {
+    compat_effect "blame -C -C creation-commit copy detection deferred" -- blame -C -C b
   }
 )
 
@@ -505,8 +515,8 @@ only_for_hash sha1-only && (small-repo-in-sandbox
 # hash=sha1-only
 title "gix blame -C -C -C (any-commit)"
 only_for_hash sha1-only && (small-repo-in-sandbox
-  it "TODO matches git behavior" && {
-    : # TODO: compat_effect "blame -C -C -C any-commit copy detection deferred" -- blame -C -C -C b
+  it "matches git behavior" && {
+    compat_effect "blame -C -C -C any-commit copy detection deferred" -- blame -C -C -C b
   }
 )
 
@@ -518,8 +528,8 @@ only_for_hash sha1-only && (small-repo-in-sandbox
 # hash=sha1-only
 title "gix blame --ignore-rev <rev>"
 only_for_hash sha1-only && (small-repo-in-sandbox
-  it "TODO matches git behavior" && {
-    : # TODO: compat_effect "blame --ignore-rev attribution-rewrite deferred" -- blame --ignore-rev HEAD b
+  it "matches git behavior" && {
+    compat_effect "blame --ignore-rev attribution-rewrite deferred" -- blame --ignore-rev HEAD b
   }
 )
 
@@ -530,8 +540,8 @@ only_for_hash sha1-only && (small-repo-in-sandbox
 title "gix blame --ignore-revs-file <file>"
 only_for_hash sha1-only && (small-repo-in-sandbox
   echo "" > .git-blame-ignore-revs
-  it "TODO matches git behavior" && {
-    : # TODO: compat_effect "blame --ignore-revs-file deferred" -- blame --ignore-revs-file .git-blame-ignore-revs b
+  it "matches git behavior" && {
+    compat_effect "blame --ignore-revs-file deferred" -- blame --ignore-revs-file .git-blame-ignore-revs b
   }
 )
 
@@ -544,8 +554,8 @@ only_for_hash sha1-only && (small-repo-in-sandbox
 # hash=sha1-only
 title "gix blame -w"
 only_for_hash sha1-only && (small-repo-in-sandbox
-  it "TODO matches git behavior" && {
-    : # TODO: compat_effect "blame -w whitespace-ignore threading deferred" -- blame -w b
+  it "matches git behavior" && {
+    compat_effect "blame -w whitespace-ignore threading deferred" -- blame -w b
   }
 )
 
@@ -555,8 +565,8 @@ only_for_hash sha1-only && (small-repo-in-sandbox
 # hash=sha1-only
 title "gix blame --diff-algorithm=<algo>"
 only_for_hash sha1-only && (small-repo-in-sandbox
-  it "TODO matches git behavior" && {
-    : # TODO: compat_effect "blame --diff-algorithm threading deferred" -- blame --diff-algorithm=histogram b
+  it "matches git behavior" && {
+    compat_effect "blame --diff-algorithm threading deferred" -- blame --diff-algorithm=histogram b
   }
 )
 
@@ -565,8 +575,8 @@ only_for_hash sha1-only && (small-repo-in-sandbox
 # hash=sha1-only
 title "gix blame --minimal"
 only_for_hash sha1-only && (small-repo-in-sandbox
-  it "TODO matches git behavior" && {
-    : # TODO: compat_effect "blame --minimal alias deferred" -- blame --minimal b
+  it "matches git behavior" && {
+    compat_effect "blame --minimal alias deferred" -- blame --minimal b
   }
 )
 
@@ -577,8 +587,8 @@ only_for_hash sha1-only && (small-repo-in-sandbox
 # hash=sha1-only
 title "gix blame --color-lines"
 only_for_hash sha1-only && (small-repo-in-sandbox
-  it "TODO matches git behavior" && {
-    : # TODO: compat_effect "blame --color-lines deferred" -- blame --color-lines b
+  it "matches git behavior" && {
+    compat_effect "blame --color-lines deferred" -- blame --color-lines b
   }
 )
 
@@ -587,8 +597,8 @@ only_for_hash sha1-only && (small-repo-in-sandbox
 # hash=sha1-only
 title "gix blame --color-by-age"
 only_for_hash sha1-only && (small-repo-in-sandbox
-  it "TODO matches git behavior" && {
-    : # TODO: compat_effect "blame --color-by-age deferred" -- blame --color-by-age b
+  it "matches git behavior" && {
+    compat_effect "blame --color-by-age deferred" -- blame --color-by-age b
   }
 )
 
@@ -601,8 +611,8 @@ only_for_hash sha1-only && (small-repo-in-sandbox
 # hash=sha1-only
 title "gix blame --progress"
 only_for_hash sha1-only && (small-repo-in-sandbox
-  it "TODO matches git behavior" && {
-    : # TODO: compat_effect "blame --progress reporting deferred" -- blame --progress b
+  it "matches git behavior" && {
+    compat_effect "blame --progress reporting deferred" -- blame --progress b
   }
 )
 
@@ -611,8 +621,8 @@ only_for_hash sha1-only && (small-repo-in-sandbox
 # hash=sha1-only
 title "gix blame --no-progress"
 only_for_hash sha1-only && (small-repo-in-sandbox
-  it "TODO matches git behavior" && {
-    : # TODO: compat_effect "blame --no-progress deferred" -- blame --no-progress b
+  it "matches git behavior" && {
+    compat_effect "blame --no-progress deferred" -- blame --no-progress b
   }
 )
 
@@ -623,8 +633,8 @@ only_for_hash sha1-only && (small-repo-in-sandbox
 # hash=sha1-only
 title "gix blame --progress --porcelain (incompatible)"
 only_for_hash sha1-only && (small-repo-in-sandbox
-  it "TODO matches git behavior" && {
-    : # TODO: expect_parity bytes -- blame --progress --porcelain b
+  it "matches git behavior" && {
+    expect_parity bytes -- blame --progress --porcelain b
   }
 )
 
@@ -636,8 +646,8 @@ only_for_hash sha1-only && (small-repo-in-sandbox
 title "gix blame --contents <file>"
 only_for_hash sha1-only && (small-repo-in-sandbox
   echo "alt" > alt.txt
-  it "TODO matches git behavior" && {
-    : # TODO: compat_effect "blame --contents alternate-final-image deferred" -- blame --contents alt.txt b
+  it "matches git behavior" && {
+    compat_effect "blame --contents alternate-final-image deferred" -- blame --contents alt.txt b
   }
 )
 
@@ -646,8 +656,8 @@ only_for_hash sha1-only && (small-repo-in-sandbox
 # hash=sha1-only
 title "gix blame --encoding=<encoding>"
 only_for_hash sha1-only && (small-repo-in-sandbox
-  it "TODO matches git behavior" && {
-    : # TODO: compat_effect "blame --encoding output transcoding deferred" -- blame --encoding=UTF-8 b
+  it "matches git behavior" && {
+    compat_effect "blame --encoding output transcoding deferred" -- blame --encoding=UTF-8 b
   }
 )
 
@@ -658,7 +668,7 @@ only_for_hash sha1-only && (small-repo-in-sandbox
 title "gix blame -S <revs-file>"
 only_for_hash sha1-only && (small-repo-in-sandbox
   : > .blame-revs
-  it "TODO matches git behavior" && {
-    : # TODO: compat_effect "blame -S graft-revs-file deferred" -- blame -S .blame-revs b
+  it "matches git behavior" && {
+    compat_effect "blame -S graft-revs-file deferred" -- blame -S .blame-revs b
   }
 )

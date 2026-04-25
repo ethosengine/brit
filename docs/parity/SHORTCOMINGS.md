@@ -7,6 +7,54 @@ Two row classes:
 - **deferred** — `shortcoming "<reason>"`: row closed as a legitimate deferral; reason describes the gap.
 - **compat** — `compat_effect "<reason>"`: row green at effect mode (exit-code parity); byte-output parity is a known follow-up.
 
+## blame
+
+| Class | Section | Reason | Source |
+|---|---|---|---|
+| compat | `gix blame <file> (default format, populated repo)` | blame default-format author/date renderer deferred | [blame.sh:120](../../tests/journey/parity/blame.sh#L120) |
+| compat | `gix blame HEAD <file>` | blame default-format renderer deferred (rev <file>) | [blame.sh:147](../../tests/journey/parity/blame.sh#L147) |
+| compat | `gix blame -- <file>` | blame default-format renderer deferred (-- separator) | [blame.sh:159](../../tests/journey/parity/blame.sh#L159) |
+| compat | `gix blame -p / --porcelain` | blame --porcelain machine-consumption renderer deferred | [blame.sh:175](../../tests/journey/parity/blame.sh#L175) |
+| compat | `gix blame --line-porcelain` | blame --line-porcelain machine-consumption renderer deferred | [blame.sh:186](../../tests/journey/parity/blame.sh#L186) |
+| compat | `gix blame --incremental` | blame --incremental machine-consumption renderer deferred | [blame.sh:198](../../tests/journey/parity/blame.sh#L198) |
+| compat | `gix blame -c` | blame -c annotate-compat renderer deferred | [blame.sh:208](../../tests/journey/parity/blame.sh#L208) |
+| compat | `gix blame -t` | blame -t raw-timestamp renderer deferred | [blame.sh:218](../../tests/journey/parity/blame.sh#L218) |
+| compat | `gix blame -l` | blame -l long-hash renderer deferred | [blame.sh:228](../../tests/journey/parity/blame.sh#L228) |
+| compat | `gix blame -s (suppress author+timestamp)` | blame -s author-suppression renderer deferred | [blame.sh:242](../../tests/journey/parity/blame.sh#L242) |
+| compat | `gix blame -e / --show-email` | blame -e show-email renderer deferred | [blame.sh:252](../../tests/journey/parity/blame.sh#L252) |
+| compat | `gix blame -f / --show-name` | blame -f show-name renderer deferred | [blame.sh:262](../../tests/journey/parity/blame.sh#L262) |
+| compat | `gix blame -n / --show-number` | blame -n show-number renderer deferred | [blame.sh:272](../../tests/journey/parity/blame.sh#L272) |
+| compat | `gix blame -L <start>,<end>` | blame default-format renderer deferred (range form) | [blame.sh:287](../../tests/journey/parity/blame.sh#L287) |
+| deferred | `gix blame -L <start>, (open-ended)` | open-ended -L <start>, / -L ,<end> not parsed by AsRange (src/shared.rs) | [blame.sh:313](../../tests/journey/parity/blame.sh#L313) |
+| deferred | `gix blame -L :<funcname>` | -L :<funcname> requires userdiff/funcname-pattern infra (not yet in gix-diff) | [blame.sh:324](../../tests/journey/parity/blame.sh#L324) |
+| deferred | `gix blame -L /<regex>/,<end>` | -L /<regex>/,... requires regex-anchored range parsing (AsRange + blob scan) — not yet wired | [blame.sh:335](../../tests/journey/parity/blame.sh#L335) |
+| compat | `gix blame -L A,B -L C,D (multiple)` | blame default-format renderer deferred (multi-range) | [blame.sh:344](../../tests/journey/parity/blame.sh#L344) |
+| compat | `gix blame --show-stats` | blame --show-stats renderer deferred | [blame.sh:359](../../tests/journey/parity/blame.sh#L359) |
+| compat | `gix blame --score-debug` | blame --score-debug renderer deferred | [blame.sh:369](../../tests/journey/parity/blame.sh#L369) |
+| compat | `gix blame --abbrev=<n>` | blame --abbrev hash-width tunable deferred | [blame.sh:384](../../tests/journey/parity/blame.sh#L384) |
+| compat | `gix blame --date=<format>` | blame --date format renderer deferred | [blame.sh:397](../../tests/journey/parity/blame.sh#L397) |
+| compat | `gix blame --since=<date>` | blame default-format renderer deferred (--since) | [blame.sh:412](../../tests/journey/parity/blame.sh#L412) |
+| compat | `gix blame --first-parent` | blame --first-parent walker integration deferred | [blame.sh:435](../../tests/journey/parity/blame.sh#L435) |
+| compat | `gix blame -b (blank boundary)` | blame -b boundary blanking deferred | [blame.sh:448](../../tests/journey/parity/blame.sh#L448) |
+| compat | `gix blame --root` | blame --root boundary policy deferred | [blame.sh:459](../../tests/journey/parity/blame.sh#L459) |
+| compat | `gix blame -M` | blame -M within-file move detection deferred | [blame.sh:473](../../tests/journey/parity/blame.sh#L473) |
+| compat | `gix blame -M<num>` | blame -M=<num> threshold tunable deferred | [blame.sh:486](../../tests/journey/parity/blame.sh#L486) |
+| compat | `gix blame -C` | blame -C cross-file copy detection deferred | [blame.sh:499](../../tests/journey/parity/blame.sh#L499) |
+| compat | `gix blame -C -C (creation-commit)` | blame -C -C creation-commit copy detection deferred | [blame.sh:509](../../tests/journey/parity/blame.sh#L509) |
+| compat | `gix blame -C -C -C (any-commit)` | blame -C -C -C any-commit copy detection deferred | [blame.sh:519](../../tests/journey/parity/blame.sh#L519) |
+| compat | `gix blame --ignore-rev <rev>` | blame --ignore-rev attribution-rewrite deferred | [blame.sh:532](../../tests/journey/parity/blame.sh#L532) |
+| compat | `gix blame --ignore-revs-file <file>` | blame --ignore-revs-file deferred | [blame.sh:544](../../tests/journey/parity/blame.sh#L544) |
+| compat | `gix blame -w` | blame -w whitespace-ignore threading deferred | [blame.sh:558](../../tests/journey/parity/blame.sh#L558) |
+| compat | `gix blame --diff-algorithm=<algo>` | blame --diff-algorithm threading deferred | [blame.sh:569](../../tests/journey/parity/blame.sh#L569) |
+| compat | `gix blame --minimal` | blame --minimal alias deferred | [blame.sh:579](../../tests/journey/parity/blame.sh#L579) |
+| compat | `gix blame --color-lines` | blame --color-lines deferred | [blame.sh:591](../../tests/journey/parity/blame.sh#L591) |
+| compat | `gix blame --color-by-age` | blame --color-by-age deferred | [blame.sh:601](../../tests/journey/parity/blame.sh#L601) |
+| compat | `gix blame --progress` | blame --progress reporting deferred | [blame.sh:615](../../tests/journey/parity/blame.sh#L615) |
+| compat | `gix blame --no-progress` | blame --no-progress deferred | [blame.sh:625](../../tests/journey/parity/blame.sh#L625) |
+| compat | `gix blame --contents <file>` | blame --contents alternate-final-image deferred | [blame.sh:650](../../tests/journey/parity/blame.sh#L650) |
+| compat | `gix blame --encoding=<encoding>` | blame --encoding output transcoding deferred | [blame.sh:660](../../tests/journey/parity/blame.sh#L660) |
+| compat | `gix blame -S <revs-file>` | blame -S graft-revs-file deferred | [blame.sh:672](../../tests/journey/parity/blame.sh#L672) |
+
 ## clone
 
 | Class | Section | Reason | Source |
