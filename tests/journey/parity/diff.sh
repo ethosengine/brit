@@ -289,12 +289,15 @@ only_for_hash sha1-only && (small-repo-in-sandbox
 )
 
 # mode=effect — `gix diff --merge-base A B`: merge-base of A,B vs B.
-# Two-commit form.
+# Two-commit form. Flag accepted, args route to 2-arg tree-vs-tree
+# path. Bytes parity (real merge-base substitution + patch output)
+# deferred via compat_effect.
 # hash=sha1-only
 title "gix diff --merge-base A B"
 only_for_hash sha1-only && (small-repo-in-sandbox
-  # TODO — expect_parity effect -- diff --merge-base HEAD~1 HEAD
-  it "matches git behavior" && { :; }
+  it "matches git behavior" && {
+    compat_effect "diff --merge-base A B substitution + patch output deferred until renderer lands" -- diff --merge-base HEAD~1 HEAD
+  }
 )
 
 # mode=effect — `gix diff --cached --merge-base A`: index vs merge-base
