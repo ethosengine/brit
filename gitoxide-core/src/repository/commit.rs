@@ -174,6 +174,13 @@ pub struct CreateOptions {
     /// `--reset-author`: requires -C/-c/--amend per git's precondition;
     /// gix mirrors the exit-128 rejection until those flags are wired.
     pub reset_author: bool,
+    /// `-F`/`--file=<file>`: read commit message from `<file>` (or
+    /// stdin when the path is `-`).
+    pub file: Option<std::path::PathBuf>,
+    /// `-S`/`--gpg-sign[=<keyid>]`: requested. gix has no GPG backend
+    /// today; setting this flag emits git's "unable to start gpg"
+    /// stanza and exits 128 (mirrors tag's rejection path).
+    pub gpg_sign: Option<String>,
 }
 
 /// Porcelain `git commit` entry point. Currently only the
@@ -189,6 +196,8 @@ pub fn create(
         allow_empty_message,
         quiet,
         reset_author,
+        file,
+        gpg_sign,
     }: CreateOptions,
 ) -> Result<()> {
     // git's `--reset-author` precondition (vendor/git/builtin/commit.c
@@ -204,6 +213,17 @@ pub fn create(
         std::process::exit(128);
     }
 
+    // `-S`/`--gpg-sign` requested but gix has no GPG backend wired —
+    // emit git's canonical "unable to start gpg" stanza and exit 128
+    // (mirrors gitoxide-core/src/repository/tag.rs's `-s` path).
+    if gpg_sign.is_some() {
+        use std::io::Write as _;
+        let mut err = std::io::stderr().lock();
+        let _ = writeln!(err, "error: gpg failed to sign the data");
+        let _ = writeln!(err, "fatal: failed to write commit object");
+        std::process::exit(128);
+    }
+
     if !allow_empty {
         bail!("gix commit without --allow-empty not yet implemented (index→tree pending; see tests/journey/parity/commit.sh)");
     }
@@ -211,7 +231,22 @@ pub fn create(
     // Compose the commit message. Multiple `-m` values join with `\n\n`
     // (paragraph break) — vendor/git/builtin/commit.c opt_parse_m
     // appends each value with a leading "\n\n" when one already exists.
-    let composed = message.join("\n\n");
+    // -F adds the file body as an additional paragraph (or stdin when
+    // path == "-"). Same composition rule as `git tag -F`.
+    let mut composed = message.join("\n\n");
+    if let Some(path) = file.as_ref() {
+        let body = if path.as_os_str() == "-" {
+            let mut buf = String::new();
+            std::io::Read::read_to_string(&mut std::io::stdin().lock(), &mut buf)?;
+            buf
+        } else {
+            std::fs::read_to_string(path).with_context(|| format!("could not open '{}' for reading", path.display()))?
+        };
+        if !composed.is_empty() {
+            composed.push_str("\n\n");
+        }
+        composed.push_str(&body);
+    }
     if composed.is_empty() && !allow_empty_message {
         bail!("Aborting commit due to empty commit message.");
     }

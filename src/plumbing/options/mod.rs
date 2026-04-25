@@ -2224,6 +2224,29 @@ pub mod commit {
         /// activate the reuse-message machinery.
         #[clap(long = "reset-author")]
         pub reset_author: bool,
+
+        /// Read commit message from `<file>`. Use `-` to read from
+        /// standard input. Mirrors `OPT_FILENAME('F', "file", ...)`.
+        /// File contents are appended to any `-m` paragraphs (joined
+        /// with `\n\n`) — same composition rule as `git tag -F`.
+        #[clap(short = 'F', long = "file", value_name = "file")]
+        pub file: Option<std::path::PathBuf>,
+
+        /// GPG-sign the commit. The optional `<key-id>` is positional-
+        /// adjacent (`-Skeyid` or `--gpg-sign=keyid`). Mirrors
+        /// `OPT_STRING_F('S', "gpg-sign", ..., PARSE_OPT_OPTARG)`.
+        /// gix has no GPG backend wired today; the create() path emits
+        /// the canonical "unable to start gpg" / exit-128 stanza
+        /// (mirrors `tag -s`'s rejection in
+        /// gitoxide-core/src/repository/tag.rs).
+        #[clap(short = 'S', long = "gpg-sign", value_name = "keyid", num_args = 0..=1, default_missing_value = "")]
+        pub gpg_sign: Option<String>,
+
+        /// Countermand `commit.gpgSign` config + earlier `--gpg-sign`.
+        /// Mirrors `OPT_BOOL(0, "no-gpg-sign", ...)`. Accept-only;
+        /// gix has no signing path so the negation is a no-op today.
+        #[clap(long = "no-gpg-sign", overrides_with = "gpg_sign")]
+        pub no_gpg_sign: bool,
     }
 
     #[derive(Debug, clap::Subcommand)]

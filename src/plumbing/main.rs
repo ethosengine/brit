@@ -2727,6 +2727,9 @@ pub fn main() -> Result<()> {
                 signoff: _signoff,
                 no_signoff: _no_signoff,
                 reset_author,
+                file,
+                gpg_sign,
+                no_gpg_sign: _no_gpg_sign,
             } = platform;
             match cmd {
                 // Bare `gix commit` (no subcommand): porcelain dispatch.
@@ -2753,6 +2756,8 @@ pub fn main() -> Result<()> {
                                 allow_empty_message,
                                 quiet,
                                 reset_author,
+                                file,
+                                gpg_sign,
                             },
                         )
                     },

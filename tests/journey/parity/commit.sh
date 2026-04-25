@@ -122,14 +122,17 @@ only_for_hash sha1-only && (small-repo-in-sandbox
 )
 
 # mode=effect — `-F <file>` reads message from file; `-F -` reads from
-# stdin. Stdin variant requires expect_parity_reset stdin plumbing.
+# stdin (PARITY_STDIN drives both binaries). gix's create() composes
+# the file body as an additional paragraph after any -m values, same
+# rule as `git tag -F`.
 title "gix commit -F / --file"
 only_for_hash sha1-only && (small-repo-in-sandbox
-  it "TODO: matches git behavior — file" && {
-    : # echo "msg" >.msg && expect_parity effect -- commit --allow-empty -F .msg
+  echo "msg-from-file" > .msg
+  it "matches git behavior — file" && {
+    expect_parity effect -- commit --allow-empty -F .msg
   }
-  it "TODO: matches git behavior — stdin" && {
-    : # PARITY_STDIN="msg" expect_parity effect -- commit --allow-empty -F -
+  it "matches git behavior — stdin" && {
+    PARITY_STDIN="msg-from-stdin" expect_parity effect -- commit --allow-empty -F -
   }
 )
 
@@ -542,15 +545,21 @@ only_for_hash sha1-only && (small-repo-in-sandbox
 
 # mode=effect — `-S` / `--gpg-sign[=<keyid>]` requests gpg signing;
 # `--no-gpg-sign` countermands `commit.gpgSign` config + earlier --gpg-sign.
-# gix has no GPG backend wired, so signing-on rows expect to emit a
-# git-compat error + exit 128 (mirroring the `tag -s` shortcoming).
+# gix has no GPG backend wired today; `-S` emits the git-compat
+# "gpg failed to sign" / "failed to write commit object" stanza and
+# exits 128 (mirrors the `tag -s` shortcoming in
+# gitoxide-core/src/repository/tag.rs). git in this CI sandbox also
+# fails 128 — its gpg backend has no secret key — so effect-mode
+# parity holds without requiring a signing backend on either side.
+# `--no-gpg-sign` is a clap-accepted no-op (gix has no signing path
+# to negate anyway).
 title "gix commit -S / --gpg-sign / --no-gpg-sign"
 only_for_hash sha1-only && (small-repo-in-sandbox
-  it "TODO: matches git behavior — -S" && {
-    : # expect_parity effect -- commit --allow-empty -S -m m
+  it "matches git behavior — -S" && {
+    expect_parity effect -- commit --allow-empty -S -m m
   }
-  it "TODO: matches git behavior — --no-gpg-sign" && {
-    : # expect_parity effect -- commit --allow-empty --no-gpg-sign -m m
+  it "matches git behavior — --no-gpg-sign" && {
+    expect_parity effect -- commit --allow-empty --no-gpg-sign -m m
   }
 )
 
