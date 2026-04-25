@@ -251,12 +251,15 @@ only_for_hash sha1-only && (small-repo-in-sandbox
   }
 )
 
-# mode=effect — `gix diff --staged`: alias of --cached.
+# mode=effect — `gix diff --staged`: alias of --cached. Wired as a
+# clap `alias = "staged"` on the --cached field — no separate field
+# needed. Same compat_effect treatment as --cached.
 # hash=sha1-only
 title "gix diff --staged"
 only_for_hash sha1-only && (small-repo-in-sandbox
-  # TODO — expect_parity effect -- diff --staged
-  it "matches git behavior" && { :; }
+  it "matches git behavior" && {
+    compat_effect "diff --staged alias of --cached, same patch output deferral" -- diff --staged
+  }
 )
 
 # mode=effect — `gix diff --cached <commit>`: index vs <commit> (rather
