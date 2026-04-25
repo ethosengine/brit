@@ -25,6 +25,17 @@ pub fn porcelain(
     err: &mut dyn std::io::Write,
     commits: Vec<BString>,
 ) -> Result<()> {
+    // Bare-no-positionals path: until the merge driver lands and can
+    // resolve `branch.<name>.remote` + `branch.<name>.merge` into
+    // FETCH_HEAD entries, gix matches git's exit-128 wording verbatim.
+    // git emits "fatal: No remote for the current branch." (with a
+    // period) when the current branch has no `branch.<name>.remote`
+    // configured (vendor/git/builtin/merge.c::cmd_merge default-to-
+    // upstream path → die_if_checked_out / die_for_remote_other).
+    if commits.is_empty() {
+        let _ = writeln!(err, "fatal: No remote for the current branch.");
+        std::process::exit(128);
+    }
     let _ = writeln!(
         err,
         "[gix-merge] received {} positional commit(s); merge driver not yet implemented",

@@ -86,18 +86,18 @@ only_for_hash sha1-only && (small-repo-in-sandbox
   }
 )
 
-# mode=effect — bare `git merge` with no args and no upstream
-# configured: git dies with "fatal: No remote-tracking branch for ..."
-# (or "fatal: No upstream defined for the current branch") + exit 128.
-# gix's placeholder porcelain currently emits a stub note and exits 0;
-# closing this row is `compat_effect "deferred until merge driver
-# lands"` (the shared phrase) until the upstream-precondition gate
-# is wired in porcelain.rs.
+# mode=bytes — bare `git merge` with no args and no upstream
+# configured: git emits the verbatim line "fatal: No remote for the
+# current branch." + exit 128 (vendor/git/builtin/merge.c::cmd_merge
+# default-to-upstream path → die_if_checked_out / die_for_remote_other).
+# gix's porcelain placeholder gates on commits.is_empty() and emits
+# the same fatal wording + exits 128; bytes parity holds even though
+# the underlying driver is still a stub.
 # hash=sha1-only
 title "gix merge (bare, no upstream)"
 only_for_hash sha1-only && (small-repo-in-sandbox
-  it "TODO matches git behavior" && {
-    : # TODO: compat_effect "deferred until merge driver lands" -- merge
+  it "matches git behavior" && {
+    expect_parity bytes -- merge
   }
 )
 
