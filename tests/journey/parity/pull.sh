@@ -64,8 +64,8 @@ title "gix pull"
 # hash=dual
 title "gix pull --help"
 only_for_hash dual && (sandbox
-  it "TODO" && {
-    : # TODO expect_parity effect -- pull --help
+  it "matches git behavior" && {
+    expect_parity effect -- pull --help
   }
 )
 
@@ -77,8 +77,8 @@ only_for_hash dual && (sandbox
 # hash=sha1-only
 title "gix pull --bogus-flag"
 only_for_hash sha1-only && (small-repo-in-sandbox
-  it "TODO" && {
-    : # TODO expect_parity effect -- pull --bogus-flag
+  it "matches git behavior" && {
+    expect_parity effect -- pull --bogus-flag
   }
 )
 
@@ -89,8 +89,8 @@ only_for_hash sha1-only && (small-repo-in-sandbox
 # hash=dual
 title "gix pull (outside a repository)"
 only_for_hash dual && (sandbox
-  it "TODO" && {
-    : # TODO expect_parity effect -- pull
+  it "matches git behavior" && {
+    expect_parity effect -- pull
   }
 )
 
