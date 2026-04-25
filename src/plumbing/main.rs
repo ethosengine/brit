@@ -351,7 +351,7 @@ pub fn main() -> Result<()> {
             paths,
             cached: _cached,
             merge_base: _merge_base,
-            no_index: _no_index,
+            no_index,
         }) => match cmd {
             // Bare `gix diff` (no subcommand): porcelain dispatch.
             // Outside a repo with zero positional args, git emits
@@ -363,6 +363,18 @@ pub fn main() -> Result<()> {
             // through the standard `repository(...)` closure (which
             // exits 128 on NoGitRepository). Discover ourselves first.
             None => {
+                // --no-index: skip repo discovery and run pure file-vs-file
+                // diff. Implies --exit-code (vendor/git/builtin/diff.c sets
+                // DIFF_NO_INDEX_EXPLICIT). gix's no_index helper currently
+                // emits a placeholder note and exits 1 when the two paths
+                // differ, 0 when identical — matching git's exit-code
+                // contract. Bytes parity (real patch output) deferred via
+                // compat_effect.
+                if no_index {
+                    let mut paths_combined = args;
+                    paths_combined.extend(paths);
+                    return Ok(core::repository::diff::no_index(paths_combined)?);
+                }
                 let cwd = std::env::current_dir().context("Could not obtain current working directory")?;
                 match gix::discover::upwards(&cwd) {
                     Err(_) => {

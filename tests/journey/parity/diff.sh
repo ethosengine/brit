@@ -312,13 +312,19 @@ only_for_hash sha1-only && (small-repo-in-sandbox
 )
 
 # mode=effect — `gix diff --no-index <path-a> <path-b>`: compare two
-# files on disk. Implies --exit-code; works outside a repo. Implicit
-# --no-index also applies when only one path is inside-repo.
+# files on disk. Implies --exit-code; works outside a repo. gix's
+# bare-form dispatch detects --no-index, skips repo discovery, and
+# routes to gitoxide_core::repository::diff::no_index which reads
+# both files and exits 0 if byte-identical, 1 if they differ. Bytes
+# parity (real patch output) deferred via compat_effect.
 # hash=dual
 title "gix diff --no-index <path-a> <path-b>"
 only_for_hash dual && (sandbox
-  # TODO — expect_parity effect -- diff --no-index file-a file-b
-  it "matches git behavior" && { :; }
+  echo a > file-a
+  echo b > file-b
+  it "matches git behavior" && {
+    compat_effect "diff --no-index patch output deferred until renderer lands" -- diff --no-index file-a file-b
+  }
 )
 
 # --- output formats: patch family --------------------------------------

@@ -7,6 +7,35 @@ use gix::{
     ObjectId,
 };
 
+/// `gix diff --no-index <a> <b>`: pure file-vs-file diff, no repo
+/// context required (vendor/git/builtin/diff.c, when nongit or both
+/// paths are outside the working tree). Implies --exit-code:
+/// returns Ok if files are byte-identical, exit 1 if they differ
+/// (placeholder; real patch rendering deferred). Mirrors git's
+/// minimum-args check + diff_no_index() call path.
+pub fn no_index(paths: Vec<BString>) -> anyhow::Result<()> {
+    if paths.len() != 2 {
+        eprintln!("usage: gix diff --no-index [<options>] <path> <path>");
+        std::process::exit(129);
+    }
+    let a = gix::path::from_bstring(paths[0].clone());
+    let b = gix::path::from_bstring(paths[1].clone());
+    let read_a = std::fs::read(&a).with_context(|| format!("could not read '{}'", paths[0]))?;
+    let read_b = std::fs::read(&b).with_context(|| format!("could not read '{}'", paths[1]))?;
+    if read_a == read_b {
+        return Ok(());
+    }
+    use std::io::Write;
+    let mut stderr = std::io::stderr().lock();
+    let _ = writeln!(
+        stderr,
+        "[gix-diff] --no-index '{}' vs '{}' differ — patch output not yet implemented",
+        paths[0], paths[1]
+    );
+    drop(stderr);
+    std::process::exit(1);
+}
+
 /// Detects two-dot (`A..B`) and three-dot (`A...B`) range syntax in a
 /// single positional argument. Returns `(left, right, three_dot)` —
 /// empty `left` / `right` is the implicit-HEAD form (`..B` /
