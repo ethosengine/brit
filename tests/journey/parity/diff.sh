@@ -263,13 +263,17 @@ only_for_hash sha1-only && (small-repo-in-sandbox
 )
 
 # mode=effect — `gix diff --cached <commit>`: index vs <commit> (rather
-# than vs HEAD). Note unborn-HEAD case: --cached without a commit on an
-# unborn branch shows all staged changes (no error).
+# than vs HEAD). gix accepts both --cached + a positional revspec; the
+# 1-arg porcelain branch resolves the revspec and emits a placeholder.
+# Bytes parity (real index-vs-<commit>) deferred via compat_effect.
+# Unborn-HEAD edge case (`--cached` with no <commit> on unborn branch
+# shows all staged changes) is a future row.
 # hash=sha1-only
 title "gix diff --cached <commit>"
 only_for_hash sha1-only && (small-repo-in-sandbox
-  # TODO — expect_parity effect -- diff --cached HEAD
-  it "matches git behavior" && { :; }
+  it "matches git behavior" && {
+    compat_effect "diff --cached <commit> patch output deferred until renderer lands" -- diff --cached HEAD
+  }
 )
 
 # mode=effect — `gix diff --merge-base <commit>`: equivalent to
