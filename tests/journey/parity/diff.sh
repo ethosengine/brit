@@ -613,8 +613,9 @@ only_for_hash sha1-only && (small-repo-in-sandbox
 # hash=sha1-only
 title "gix diff --default-prefix"
 only_for_hash sha1-only && (small-repo-in-sandbox
-  # TODO — expect_parity effect -- diff --default-prefix HEAD~1 HEAD
-  it "matches git behavior" && { :; }
+  it "matches git behavior" && {
+    compat_effect "diff --default-prefix deferred until renderer lands" -- diff --default-prefix HEAD~1 HEAD
+  }
 )
 
 # --- color / word-diff --------------------------------------------------
@@ -624,16 +625,18 @@ only_for_hash sha1-only && (small-repo-in-sandbox
 # hash=sha1-only
 title "gix diff --color"
 only_for_hash sha1-only && (small-repo-in-sandbox
-  # TODO — expect_parity effect -- diff --color=always HEAD~1 HEAD
-  it "matches git behavior" && { :; }
+  it "matches git behavior" && {
+    compat_effect "diff --color=always deferred until renderer lands" -- diff --color=always HEAD~1 HEAD
+  }
 )
 
 # mode=effect — `--no-color`: disable color even on a TTY.
 # hash=sha1-only
 title "gix diff --no-color"
 only_for_hash sha1-only && (small-repo-in-sandbox
-  # TODO — expect_parity effect -- diff --no-color HEAD~1 HEAD
-  it "matches git behavior" && { :; }
+  it "matches git behavior" && {
+    compat_effect "diff --no-color deferred until renderer lands" -- diff --no-color HEAD~1 HEAD
+  }
 )
 
 # mode=effect — `--color-moved[=<mode>]`: highlight blocks moved within
@@ -641,16 +644,18 @@ only_for_hash sha1-only && (small-repo-in-sandbox
 # hash=sha1-only
 title "gix diff --color-moved"
 only_for_hash sha1-only && (small-repo-in-sandbox
-  # TODO — expect_parity effect -- diff --color-moved=zebra HEAD~1 HEAD
-  it "matches git behavior" && { :; }
+  it "matches git behavior" && {
+    compat_effect "diff --color-moved=zebra deferred until renderer lands" -- diff --color-moved=zebra HEAD~1 HEAD
+  }
 )
 
 # mode=effect — `--no-color-moved`: turn it off.
 # hash=sha1-only
 title "gix diff --no-color-moved"
 only_for_hash sha1-only && (small-repo-in-sandbox
-  # TODO — expect_parity effect -- diff --no-color-moved HEAD~1 HEAD
-  it "matches git behavior" && { :; }
+  it "matches git behavior" && {
+    compat_effect "diff --no-color-moved deferred until renderer lands" -- diff --no-color-moved HEAD~1 HEAD
+  }
 )
 
 # mode=effect — `--color-moved-ws=<mode>,...`: how to handle whitespace
@@ -659,24 +664,27 @@ only_for_hash sha1-only && (small-repo-in-sandbox
 # hash=sha1-only
 title "gix diff --color-moved-ws"
 only_for_hash sha1-only && (small-repo-in-sandbox
-  # TODO — expect_parity effect -- diff --color-moved-ws=ignore-all-space ...
-  it "matches git behavior" && { :; }
+  it "matches git behavior" && {
+    compat_effect "diff --color-moved-ws=ignore-all-space deferred until renderer lands" -- diff --color-moved-ws=ignore-all-space HEAD~1 HEAD
+  }
 )
 
 # mode=effect — `--no-color-moved-ws`: revert color-moved-ws to default.
 # hash=sha1-only
 title "gix diff --no-color-moved-ws"
 only_for_hash sha1-only && (small-repo-in-sandbox
-  # TODO — expect_parity effect -- diff --no-color-moved-ws ...
-  it "matches git behavior" && { :; }
+  it "matches git behavior" && {
+    compat_effect "diff --no-color-moved-ws deferred until renderer lands" -- diff --no-color-moved-ws HEAD~1 HEAD
+  }
 )
 
 # mode=effect — `--word-diff[=<mode>]`: color|plain|porcelain|none.
 # hash=sha1-only
 title "gix diff --word-diff"
 only_for_hash sha1-only && (small-repo-in-sandbox
-  # TODO — expect_parity effect -- diff --word-diff=plain HEAD~1 HEAD
-  it "matches git behavior" && { :; }
+  it "matches git behavior" && {
+    compat_effect "diff --word-diff=plain deferred until renderer lands" -- diff --word-diff=plain HEAD~1 HEAD
+  }
 )
 
 # mode=effect — `--word-diff-regex=<regex>`: word-token regex for
@@ -684,8 +692,9 @@ only_for_hash sha1-only && (small-repo-in-sandbox
 # hash=sha1-only
 title "gix diff --word-diff-regex"
 only_for_hash sha1-only && (small-repo-in-sandbox
-  # TODO — expect_parity effect -- diff --word-diff-regex='\\w+' HEAD~1 HEAD
-  it "matches git behavior" && { :; }
+  it "matches git behavior" && {
+    compat_effect "diff --word-diff-regex='\\w+' deferred until renderer lands" -- diff --word-diff-regex='\\w+' HEAD~1 HEAD
+  }
 )
 
 # mode=effect — `--color-words[=<regex>]`: shortcut for
@@ -693,8 +702,9 @@ only_for_hash sha1-only && (small-repo-in-sandbox
 # hash=sha1-only
 title "gix diff --color-words"
 only_for_hash sha1-only && (small-repo-in-sandbox
-  # TODO — expect_parity effect -- diff --color-words HEAD~1 HEAD
-  it "matches git behavior" && { :; }
+  it "matches git behavior" && {
+    compat_effect "diff --color-words deferred until renderer lands" -- diff --color-words HEAD~1 HEAD
+  }
 )
 
 # --- algorithm / heuristic ---------------------------------------------
@@ -703,24 +713,27 @@ only_for_hash sha1-only && (small-repo-in-sandbox
 # hash=sha1-only
 title "gix diff --minimal"
 only_for_hash sha1-only && (small-repo-in-sandbox
-  # TODO — expect_parity effect -- diff --minimal HEAD~1 HEAD
-  it "matches git behavior" && { :; }
+  it "matches git behavior" && {
+    compat_effect "diff --minimal deferred until renderer lands" -- diff --minimal HEAD~1 HEAD
+  }
 )
 
 # mode=effect — `--patience`: patience-diff algorithm.
 # hash=sha1-only
 title "gix diff --patience"
 only_for_hash sha1-only && (small-repo-in-sandbox
-  # TODO — expect_parity effect -- diff --patience HEAD~1 HEAD
-  it "matches git behavior" && { :; }
+  it "matches git behavior" && {
+    compat_effect "diff --patience deferred until renderer lands" -- diff --patience HEAD~1 HEAD
+  }
 )
 
 # mode=effect — `--histogram`: histogram-diff algorithm.
 # hash=sha1-only
 title "gix diff --histogram"
 only_for_hash sha1-only && (small-repo-in-sandbox
-  # TODO — expect_parity effect -- diff --histogram HEAD~1 HEAD
-  it "matches git behavior" && { :; }
+  it "matches git behavior" && {
+    compat_effect "diff --histogram deferred until renderer lands" -- diff --histogram HEAD~1 HEAD
+  }
 )
 
 # mode=effect — `--anchored=<text>`: anchored-diff (lines containing
@@ -728,16 +741,18 @@ only_for_hash sha1-only && (small-repo-in-sandbox
 # hash=sha1-only
 title "gix diff --anchored"
 only_for_hash sha1-only && (small-repo-in-sandbox
-  # TODO — expect_parity effect -- diff --anchored=foo HEAD~1 HEAD
-  it "matches git behavior" && { :; }
+  it "matches git behavior" && {
+    compat_effect "diff --anchored=foo deferred until renderer lands" -- diff --anchored=foo HEAD~1 HEAD
+  }
 )
 
 # mode=effect — `--diff-algorithm=<algo>`: myers|minimal|patience|histogram.
 # hash=sha1-only
 title "gix diff --diff-algorithm"
 only_for_hash sha1-only && (small-repo-in-sandbox
-  # TODO — expect_parity effect -- diff --diff-algorithm=histogram HEAD~1 HEAD
-  it "matches git behavior" && { :; }
+  it "matches git behavior" && {
+    compat_effect "diff --diff-algorithm=histogram deferred until renderer lands" -- diff --diff-algorithm=histogram HEAD~1 HEAD
+  }
 )
 
 # mode=effect — `--indent-heuristic`: shift hunk boundaries to make
@@ -745,16 +760,18 @@ only_for_hash sha1-only && (small-repo-in-sandbox
 # hash=sha1-only
 title "gix diff --indent-heuristic"
 only_for_hash sha1-only && (small-repo-in-sandbox
-  # TODO — expect_parity effect -- diff --indent-heuristic HEAD~1 HEAD
-  it "matches git behavior" && { :; }
+  it "matches git behavior" && {
+    compat_effect "diff --indent-heuristic deferred until renderer lands" -- diff --indent-heuristic HEAD~1 HEAD
+  }
 )
 
 # mode=effect — `--no-indent-heuristic`: opt out.
 # hash=sha1-only
 title "gix diff --no-indent-heuristic"
 only_for_hash sha1-only && (small-repo-in-sandbox
-  # TODO — expect_parity effect -- diff --no-indent-heuristic HEAD~1 HEAD
-  it "matches git behavior" && { :; }
+  it "matches git behavior" && {
+    compat_effect "diff --no-indent-heuristic deferred until renderer lands" -- diff --no-indent-heuristic HEAD~1 HEAD
+  }
 )
 
 # --- whitespace ---------------------------------------------------------
@@ -764,16 +781,18 @@ only_for_hash sha1-only && (small-repo-in-sandbox
 # hash=sha1-only
 title "gix diff -a / --text"
 only_for_hash sha1-only && (small-repo-in-sandbox
-  # TODO — expect_parity effect -- diff -a HEAD~1 HEAD
-  it "matches git behavior" && { :; }
+  it "matches git behavior" && {
+    compat_effect "diff -a deferred until renderer lands" -- diff -a HEAD~1 HEAD
+  }
 )
 
 # mode=effect — `--ignore-cr-at-eol`: ignore CR at line ends.
 # hash=sha1-only
 title "gix diff --ignore-cr-at-eol"
 only_for_hash sha1-only && (small-repo-in-sandbox
-  # TODO — expect_parity effect -- diff --ignore-cr-at-eol HEAD~1 HEAD
-  it "matches git behavior" && { :; }
+  it "matches git behavior" && {
+    compat_effect "diff --ignore-cr-at-eol deferred until renderer lands" -- diff --ignore-cr-at-eol HEAD~1 HEAD
+  }
 )
 
 # mode=effect — `--ignore-space-at-eol`: ignore trailing whitespace
@@ -781,8 +800,9 @@ only_for_hash sha1-only && (small-repo-in-sandbox
 # hash=sha1-only
 title "gix diff --ignore-space-at-eol"
 only_for_hash sha1-only && (small-repo-in-sandbox
-  # TODO — expect_parity effect -- diff --ignore-space-at-eol HEAD~1 HEAD
-  it "matches git behavior" && { :; }
+  it "matches git behavior" && {
+    compat_effect "diff --ignore-space-at-eol deferred until renderer lands" -- diff --ignore-space-at-eol HEAD~1 HEAD
+  }
 )
 
 # mode=effect — `-b` / `--ignore-space-change`: ignore amount of
@@ -790,16 +810,18 @@ only_for_hash sha1-only && (small-repo-in-sandbox
 # hash=sha1-only
 title "gix diff -b / --ignore-space-change"
 only_for_hash sha1-only && (small-repo-in-sandbox
-  # TODO — expect_parity effect -- diff -b HEAD~1 HEAD
-  it "matches git behavior" && { :; }
+  it "matches git behavior" && {
+    compat_effect "diff -b deferred until renderer lands" -- diff -b HEAD~1 HEAD
+  }
 )
 
 # mode=effect — `-w` / `--ignore-all-space`: ignore whitespace entirely.
 # hash=sha1-only
 title "gix diff -w / --ignore-all-space"
 only_for_hash sha1-only && (small-repo-in-sandbox
-  # TODO — expect_parity effect -- diff -w HEAD~1 HEAD
-  it "matches git behavior" && { :; }
+  it "matches git behavior" && {
+    compat_effect "diff -w deferred until renderer lands" -- diff -w HEAD~1 HEAD
+  }
 )
 
 # mode=effect — `--ignore-blank-lines`: ignore changes whose lines are
@@ -807,8 +829,9 @@ only_for_hash sha1-only && (small-repo-in-sandbox
 # hash=sha1-only
 title "gix diff --ignore-blank-lines"
 only_for_hash sha1-only && (small-repo-in-sandbox
-  # TODO — expect_parity effect -- diff --ignore-blank-lines HEAD~1 HEAD
-  it "matches git behavior" && { :; }
+  it "matches git behavior" && {
+    compat_effect "diff --ignore-blank-lines deferred until renderer lands" -- diff --ignore-blank-lines HEAD~1 HEAD
+  }
 )
 
 # mode=effect — `--ignore-matching-lines=<regex>`: ignore changes whose
@@ -816,8 +839,9 @@ only_for_hash sha1-only && (small-repo-in-sandbox
 # hash=sha1-only
 title "gix diff --ignore-matching-lines"
 only_for_hash sha1-only && (small-repo-in-sandbox
-  # TODO — expect_parity effect -- diff --ignore-matching-lines='^#' HEAD~1 HEAD
-  it "matches git behavior" && { :; }
+  it "matches git behavior" && {
+    compat_effect "diff --ignore-matching-lines='^#' deferred until renderer lands" -- diff --ignore-matching-lines='^#' HEAD~1 HEAD
+  }
 )
 
 # mode=effect — `--ws-error-highlight=<kind>`: kinds = (none|default|
@@ -825,8 +849,9 @@ only_for_hash sha1-only && (small-repo-in-sandbox
 # hash=sha1-only
 title "gix diff --ws-error-highlight"
 only_for_hash sha1-only && (small-repo-in-sandbox
-  # TODO — expect_parity effect -- diff --ws-error-highlight=all HEAD~1 HEAD
-  it "matches git behavior" && { :; }
+  it "matches git behavior" && {
+    compat_effect "diff --ws-error-highlight=all deferred until renderer lands" -- diff --ws-error-highlight=all HEAD~1 HEAD
+  }
 )
 
 # mode=effect — `--check`: warn on whitespace errors. Sets exit-code 2
@@ -834,8 +859,9 @@ only_for_hash sha1-only && (small-repo-in-sandbox
 # hash=sha1-only
 title "gix diff --check"
 only_for_hash sha1-only && (small-repo-in-sandbox
-  # TODO — expect_parity effect -- diff --check HEAD~1 HEAD
-  it "matches git behavior" && { :; }
+  it "matches git behavior" && {
+    compat_effect "diff --check deferred until renderer lands" -- diff --check HEAD~1 HEAD
+  }
 )
 
 # mode=effect — `--inter-hunk-context=<n>`: combine hunks closer than n
@@ -843,8 +869,9 @@ only_for_hash sha1-only && (small-repo-in-sandbox
 # hash=sha1-only
 title "gix diff --inter-hunk-context"
 only_for_hash sha1-only && (small-repo-in-sandbox
-  # TODO — expect_parity effect -- diff --inter-hunk-context=3 HEAD~1 HEAD
-  it "matches git behavior" && { :; }
+  it "matches git behavior" && {
+    compat_effect "diff --inter-hunk-context=3 deferred until renderer lands" -- diff --inter-hunk-context=3 HEAD~1 HEAD
+  }
 )
 
 # mode=effect — `-W` / `--function-context`: show whole enclosing
@@ -852,8 +879,9 @@ only_for_hash sha1-only && (small-repo-in-sandbox
 # hash=sha1-only
 title "gix diff -W / --function-context"
 only_for_hash sha1-only && (small-repo-in-sandbox
-  # TODO — expect_parity effect -- diff -W HEAD~1 HEAD
-  it "matches git behavior" && { :; }
+  it "matches git behavior" && {
+    compat_effect "diff -W deferred until renderer lands" -- diff -W HEAD~1 HEAD
+  }
 )
 
 # --- detection ---------------------------------------------------------
@@ -862,8 +890,9 @@ only_for_hash sha1-only && (small-repo-in-sandbox
 # hash=sha1-only
 title "gix diff --no-renames"
 only_for_hash sha1-only && (small-repo-in-sandbox
-  # TODO — expect_parity effect -- diff --no-renames HEAD~1 HEAD
-  it "matches git behavior" && { :; }
+  it "matches git behavior" && {
+    compat_effect "diff --no-renames deferred until renderer lands" -- diff --no-renames HEAD~1 HEAD
+  }
 )
 
 # mode=effect — `--rename-empty` / `--no-rename-empty`: whether empty
@@ -871,8 +900,9 @@ only_for_hash sha1-only && (small-repo-in-sandbox
 # hash=sha1-only
 title "gix diff --rename-empty / --no-rename-empty"
 only_for_hash sha1-only && (small-repo-in-sandbox
-  # TODO — expect_parity effect -- diff --no-rename-empty HEAD~1 HEAD
-  it "matches git behavior" && { :; }
+  it "matches git behavior" && {
+    compat_effect "diff --no-rename-empty deferred until renderer lands" -- diff --no-rename-empty HEAD~1 HEAD
+  }
 )
 
 # mode=effect — `-B[<n>][/<m>]` / `--break-rewrites`: split modify-
@@ -881,8 +911,9 @@ only_for_hash sha1-only && (small-repo-in-sandbox
 # hash=sha1-only
 title "gix diff -B / --break-rewrites"
 only_for_hash sha1-only && (small-repo-in-sandbox
-  # TODO — expect_parity effect -- diff -B50 HEAD~1 HEAD
-  it "matches git behavior" && { :; }
+  it "matches git behavior" && {
+    compat_effect "diff -B50 deferred until renderer lands" -- diff -B50 HEAD~1 HEAD
+  }
 )
 
 # mode=effect — `-M[<n>]` / `--find-renames[=<n>]`: detect renames at
@@ -890,24 +921,27 @@ only_for_hash sha1-only && (small-repo-in-sandbox
 # hash=sha1-only
 title "gix diff -M / --find-renames"
 only_for_hash sha1-only && (small-repo-in-sandbox
-  # TODO — expect_parity effect -- diff -M HEAD~1 HEAD
-  it "matches git behavior" && { :; }
+  it "matches git behavior" && {
+    compat_effect "diff -M deferred until renderer lands" -- diff -M HEAD~1 HEAD
+  }
 )
 
 # mode=effect — `-C[<n>]` / `--find-copies[=<n>]`: detect copies.
 # hash=sha1-only
 title "gix diff -C / --find-copies"
 only_for_hash sha1-only && (small-repo-in-sandbox
-  # TODO — expect_parity effect -- diff -C HEAD~1 HEAD
-  it "matches git behavior" && { :; }
+  it "matches git behavior" && {
+    compat_effect "diff -C deferred until renderer lands" -- diff -C HEAD~1 HEAD
+  }
 )
 
 # mode=effect — `--find-copies-harder`: also inspect unmodified files.
 # hash=sha1-only
 title "gix diff --find-copies-harder"
 only_for_hash sha1-only && (small-repo-in-sandbox
-  # TODO — expect_parity effect -- diff --find-copies-harder HEAD~1 HEAD
-  it "matches git behavior" && { :; }
+  it "matches git behavior" && {
+    compat_effect "diff --find-copies-harder deferred until renderer lands" -- diff --find-copies-harder HEAD~1 HEAD
+  }
 )
 
 # mode=bytes — `--diff-filter=<mask>`: select by status letter set
@@ -915,8 +949,9 @@ only_for_hash sha1-only && (small-repo-in-sandbox
 # hash=sha1-only
 title "gix diff --diff-filter"
 only_for_hash sha1-only && (small-repo-in-sandbox
-  # TODO — expect_parity bytes -- diff --diff-filter=AM --raw HEAD~1 HEAD
-  it "matches git behavior" && { :; }
+  it "matches git behavior" && {
+    compat_effect "diff --diff-filter=AM deferred until renderer lands" -- diff --diff-filter=AM --raw HEAD~1 HEAD
+  }
 )
 
 # mode=effect — `-D` / `--irreversible-delete`: omit pre-image of
@@ -924,8 +959,9 @@ only_for_hash sha1-only && (small-repo-in-sandbox
 # hash=sha1-only
 title "gix diff -D / --irreversible-delete"
 only_for_hash sha1-only && (small-repo-in-sandbox
-  # TODO — expect_parity effect -- diff -D HEAD~1 HEAD
-  it "matches git behavior" && { :; }
+  it "matches git behavior" && {
+    compat_effect "diff -D deferred until renderer lands" -- diff -D HEAD~1 HEAD
+  }
 )
 
 # --- pickaxe -----------------------------------------------------------
@@ -935,8 +971,9 @@ only_for_hash sha1-only && (small-repo-in-sandbox
 # hash=sha1-only
 title "gix diff -S"
 only_for_hash sha1-only && (small-repo-in-sandbox
-  # TODO — expect_parity effect -- diff -Sfoo HEAD~1 HEAD
-  it "matches git behavior" && { :; }
+  it "matches git behavior" && {
+    compat_effect "diff -Sfoo deferred until renderer lands" -- diff -Sfoo HEAD~1 HEAD
+  }
 )
 
 # mode=effect — `-G<regex>`: search for changes whose added/removed
@@ -944,8 +981,9 @@ only_for_hash sha1-only && (small-repo-in-sandbox
 # hash=sha1-only
 title "gix diff -G"
 only_for_hash sha1-only && (small-repo-in-sandbox
-  # TODO — expect_parity effect -- diff -Gfoo HEAD~1 HEAD
-  it "matches git behavior" && { :; }
+  it "matches git behavior" && {
+    compat_effect "diff -Gfoo deferred until renderer lands" -- diff -Gfoo HEAD~1 HEAD
+  }
 )
 
 # mode=effect — `--find-object=<oid>`: changes that touch the named
@@ -953,8 +991,9 @@ only_for_hash sha1-only && (small-repo-in-sandbox
 # hash=sha1-only
 title "gix diff --find-object"
 only_for_hash sha1-only && (small-repo-in-sandbox
-  # TODO — expect_parity effect -- diff --find-object=<oid> HEAD~1 HEAD
-  it "matches git behavior" && { :; }
+  it "matches git behavior" && {
+    compat_effect "diff --find-object deferred until renderer lands" -- diff --find-object=HEAD HEAD~1 HEAD
+  }
 )
 
 # mode=effect — `--pickaxe-all`: when -S/-G triggers, show the full
@@ -962,16 +1001,18 @@ only_for_hash sha1-only && (small-repo-in-sandbox
 # hash=sha1-only
 title "gix diff --pickaxe-all"
 only_for_hash sha1-only && (small-repo-in-sandbox
-  # TODO — expect_parity effect -- diff --pickaxe-all -Sfoo HEAD~1 HEAD
-  it "matches git behavior" && { :; }
+  it "matches git behavior" && {
+    compat_effect "diff --pickaxe-all deferred until renderer lands" -- diff --pickaxe-all -Sfoo HEAD~1 HEAD
+  }
 )
 
 # mode=effect — `--pickaxe-regex`: treat -S argument as POSIX ERE.
 # hash=sha1-only
 title "gix diff --pickaxe-regex"
 only_for_hash sha1-only && (small-repo-in-sandbox
-  # TODO — expect_parity effect -- diff --pickaxe-regex -Sfo+ HEAD~1 HEAD
-  it "matches git behavior" && { :; }
+  it "matches git behavior" && {
+    compat_effect "diff --pickaxe-regex deferred until renderer lands" -- diff --pickaxe-regex -Sfo+ HEAD~1 HEAD
+  }
 )
 
 # --- path control ------------------------------------------------------
@@ -980,8 +1021,9 @@ only_for_hash sha1-only && (small-repo-in-sandbox
 # hash=sha1-only
 title "gix diff -R"
 only_for_hash sha1-only && (small-repo-in-sandbox
-  # TODO — expect_parity effect -- diff -R HEAD~1 HEAD
-  it "matches git behavior" && { :; }
+  it "matches git behavior" && {
+    compat_effect "diff -R deferred until renderer lands" -- diff -R HEAD~1 HEAD
+  }
 )
 
 # mode=effect — `--relative[=<path>]`: emit paths relative to <path>
@@ -989,24 +1031,27 @@ only_for_hash sha1-only && (small-repo-in-sandbox
 # hash=sha1-only
 title "gix diff --relative"
 only_for_hash sha1-only && (small-repo-in-sandbox
-  # TODO — expect_parity effect -- diff --relative HEAD~1 HEAD
-  it "matches git behavior" && { :; }
+  it "matches git behavior" && {
+    compat_effect "diff --relative deferred until renderer lands" -- diff --relative HEAD~1 HEAD
+  }
 )
 
 # mode=effect — `--no-relative`: counter-flag.
 # hash=sha1-only
 title "gix diff --no-relative"
 only_for_hash sha1-only && (small-repo-in-sandbox
-  # TODO — expect_parity effect -- diff --no-relative HEAD~1 HEAD
-  it "matches git behavior" && { :; }
+  it "matches git behavior" && {
+    compat_effect "diff --no-relative deferred until renderer lands" -- diff --no-relative HEAD~1 HEAD
+  }
 )
 
 # mode=effect — `--skip-to=<file>`: skip output before <file>.
 # hash=sha1-only
 title "gix diff --skip-to"
 only_for_hash sha1-only && (small-repo-in-sandbox
-  # TODO — expect_parity effect -- diff --skip-to=somefile HEAD~1 HEAD
-  it "matches git behavior" && { :; }
+  it "matches git behavior" && {
+    compat_effect "diff --skip-to deferred until renderer lands" -- diff --skip-to=b HEAD~1 HEAD
+  }
 )
 
 # mode=effect — `--rotate-to=<file>`: rotate the file list so <file>
@@ -1014,8 +1059,9 @@ only_for_hash sha1-only && (small-repo-in-sandbox
 # hash=sha1-only
 title "gix diff --rotate-to"
 only_for_hash sha1-only && (small-repo-in-sandbox
-  # TODO — expect_parity effect -- diff --rotate-to=somefile HEAD~1 HEAD
-  it "matches git behavior" && { :; }
+  it "matches git behavior" && {
+    compat_effect "diff --rotate-to deferred until renderer lands" -- diff --rotate-to=b HEAD~1 HEAD
+  }
 )
 
 # mode=effect — `<path>...`: pathspec filter trailing the diff spec
@@ -1023,8 +1069,9 @@ only_for_hash sha1-only && (small-repo-in-sandbox
 # hash=sha1-only
 title "gix diff <path>"
 only_for_hash sha1-only && (small-repo-in-sandbox
-  # TODO — expect_parity effect -- diff HEAD~1 HEAD somefile
-  it "matches git behavior" && { :; }
+  it "matches git behavior" && {
+    compat_effect "diff with trailing pathspec deferred until renderer lands" -- diff HEAD~1 HEAD b
+  }
 )
 
 # --- submodule / textconv / ext-diff -----------------------------------
@@ -1034,16 +1081,18 @@ only_for_hash sha1-only && (small-repo-in-sandbox
 # hash=sha1-only
 title "gix diff --submodule"
 only_for_hash sha1-only && (small-repo-in-sandbox
-  # TODO — expect_parity effect -- diff --submodule=log HEAD~1 HEAD
-  it "matches git behavior" && { :; }
+  it "matches git behavior" && {
+    compat_effect "diff --submodule=log deferred until renderer lands" -- diff --submodule=log HEAD~1 HEAD
+  }
 )
 
 # mode=effect — `--ignore-submodules[=<when>]`: none|untracked|dirty|all.
 # hash=sha1-only
 title "gix diff --ignore-submodules"
 only_for_hash sha1-only && (small-repo-in-sandbox
-  # TODO — expect_parity effect -- diff --ignore-submodules=all HEAD~1 HEAD
-  it "matches git behavior" && { :; }
+  it "matches git behavior" && {
+    compat_effect "diff --ignore-submodules=all deferred until renderer lands" -- diff --ignore-submodules=all HEAD~1 HEAD
+  }
 )
 
 # mode=effect — `--ita-invisible-in-index`: hide intent-to-add entries
@@ -1051,8 +1100,9 @@ only_for_hash sha1-only && (small-repo-in-sandbox
 # hash=sha1-only
 title "gix diff --ita-invisible-in-index"
 only_for_hash sha1-only && (small-repo-in-sandbox
-  # TODO — expect_parity effect -- diff --ita-invisible-in-index HEAD
-  it "matches git behavior" && { :; }
+  it "matches git behavior" && {
+    compat_effect "diff --ita-invisible-in-index deferred until renderer lands" -- diff --ita-invisible-in-index HEAD
+  }
 )
 
 # mode=effect — `--textconv` / `--no-textconv`: run user-defined
@@ -1060,8 +1110,9 @@ only_for_hash sha1-only && (small-repo-in-sandbox
 # hash=sha1-only
 title "gix diff --textconv / --no-textconv"
 only_for_hash sha1-only && (small-repo-in-sandbox
-  # TODO — expect_parity effect -- diff --textconv HEAD~1 HEAD
-  it "matches git behavior" && { :; }
+  it "matches git behavior" && {
+    compat_effect "diff --textconv deferred until renderer lands" -- diff --textconv HEAD~1 HEAD
+  }
 )
 
 # mode=effect — `--ext-diff` / `--no-ext-diff`: enable/disable user-
@@ -1069,8 +1120,9 @@ only_for_hash sha1-only && (small-repo-in-sandbox
 # hash=sha1-only
 title "gix diff --ext-diff / --no-ext-diff"
 only_for_hash sha1-only && (small-repo-in-sandbox
-  # TODO — expect_parity effect -- diff --ext-diff HEAD~1 HEAD
-  it "matches git behavior" && { :; }
+  it "matches git behavior" && {
+    compat_effect "diff --ext-diff deferred until renderer lands" -- diff --ext-diff HEAD~1 HEAD
+  }
 )
 
 # --- exit-code / quiet -------------------------------------------------
@@ -1080,16 +1132,18 @@ only_for_hash sha1-only && (small-repo-in-sandbox
 # hash=sha1-only
 title "gix diff --exit-code"
 only_for_hash sha1-only && (small-repo-in-sandbox
-  # TODO — expect_parity effect -- diff --exit-code HEAD~1 HEAD
-  it "matches git behavior" && { :; }
+  it "matches git behavior" && {
+    compat_effect "diff --exit-code semantic-parity (exit 1 on diff) deferred" -- diff --exit-code HEAD HEAD
+  }
 )
 
 # mode=effect — `--quiet`: --exit-code + suppress diff output.
 # hash=sha1-only
 title "gix diff --quiet"
 only_for_hash sha1-only && (small-repo-in-sandbox
-  # TODO — expect_parity effect -- diff --quiet HEAD~1 HEAD
-  it "matches git behavior" && { :; }
+  it "matches git behavior" && {
+    compat_effect "diff --quiet semantic-parity (exit 1 on diff) deferred" -- diff --quiet HEAD HEAD
+  }
 )
 
 # --- merge stage selection (-1 / -2 / -3 / -0) -------------------------
@@ -1099,24 +1153,27 @@ only_for_hash sha1-only && (small-repo-in-sandbox
 # hash=sha1-only
 title "gix diff -1 / --base"
 only_for_hash sha1-only && (small-repo-in-sandbox
-  # TODO — expect_parity effect -- diff -1
-  it "matches git behavior" && { :; }
+  it "matches git behavior" && {
+    compat_effect "diff -1 deferred until renderer lands" -- diff -1
+  }
 )
 
 # mode=effect — `-2` / `--ours`.
 # hash=sha1-only
 title "gix diff -2 / --ours"
 only_for_hash sha1-only && (small-repo-in-sandbox
-  # TODO — expect_parity effect -- diff -2
-  it "matches git behavior" && { :; }
+  it "matches git behavior" && {
+    compat_effect "diff -2 deferred until renderer lands" -- diff -2
+  }
 )
 
 # mode=effect — `-3` / `--theirs`.
 # hash=sha1-only
 title "gix diff -3 / --theirs"
 only_for_hash sha1-only && (small-repo-in-sandbox
-  # TODO — expect_parity effect -- diff -3
-  it "matches git behavior" && { :; }
+  it "matches git behavior" && {
+    compat_effect "diff -3 deferred until renderer lands" -- diff -3
+  }
 )
 
 # mode=effect — `-0`: omit diff output for unmerged entries; print
@@ -1124,8 +1181,9 @@ only_for_hash sha1-only && (small-repo-in-sandbox
 # hash=sha1-only
 title "gix diff -0"
 only_for_hash sha1-only && (small-repo-in-sandbox
-  # TODO — expect_parity effect -- diff -0
-  it "matches git behavior" && { :; }
+  it "matches git behavior" && {
+    compat_effect "diff -0 deferred until renderer lands" -- diff -0
+  }
 )
 
 # --- combined-diff (merge commit) --------------------------------------
@@ -1136,8 +1194,7 @@ only_for_hash sha1-only && (small-repo-in-sandbox
 # hash=sha1-only
 title "gix diff <merge> <merge>^@"
 only_for_hash sha1-only && (small-repo-in-sandbox
-  # TODO — expect_parity effect -- diff HEAD HEAD^@
-  it "matches git behavior" && { :; }
+  shortcoming "combined-diff (gix-rev lacks ^@ revision syntax for parent-set expansion; renderer also unimplemented)"
 )
 
 # mode=effect — `--combined-all-paths`: list paths from each parent in
@@ -1145,6 +1202,5 @@ only_for_hash sha1-only && (small-repo-in-sandbox
 # hash=sha1-only
 title "gix diff --combined-all-paths"
 only_for_hash sha1-only && (small-repo-in-sandbox
-  # TODO — expect_parity effect -- diff --combined-all-paths <merge> <merge>^@
-  it "matches git behavior" && { :; }
+  shortcoming "combined-diff per-parent path emission requires combined-diff renderer (not yet implemented)"
 )

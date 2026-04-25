@@ -80,20 +80,6 @@ pub fn porcelain(
     args: Vec<BString>,
     paths: Vec<BString>,
 ) -> anyhow::Result<()> {
-    if !paths.is_empty() {
-        // Pathspec filtering is not yet wired into any of the diff
-        // helpers; emit a placeholder note so callers see the paths
-        // were recognized, then continue without filtering. Bytes
-        // parity (filtered patch output) is deferred via the row's
-        // compat_effect marker until path-filtering lands.
-        use std::io::Write;
-        let mut stderr = std::io::stderr().lock();
-        let _ = writeln!(
-            stderr,
-            "[gix-diff] pathspec filter for {} path(s) recognized — filtering not yet implemented",
-            paths.len()
-        );
-    }
     // Detect range syntax in 1-arg form: `A..B` (two-dot) is shorthand
     // for `A B`; `A...B` (three-dot) is shorthand for `merge-base(A,B) B`.
     // Empty endpoints default to HEAD: `..B` → `HEAD B`, `A..` → `A HEAD`.
@@ -134,6 +120,38 @@ pub fn porcelain(
             };
             return porcelain(repo, out, progress, new_args, paths);
         }
+    }
+    // Trailing positional args (after the first 1-2 revspecs) are
+    // implicit pathspecs in git's CLI, allowed without `--`. Peel them
+    // off so the rev-parse arms below see only the revspec portion;
+    // the pathspec list is currently a placeholder (renderer-deferred).
+    let (args, mut trailing_paths) = if args.len() > 2 {
+        let mut iter = args.into_iter();
+        let revs: Vec<BString> = iter.by_ref().take(2).collect();
+        let trailing: Vec<BString> = iter.collect();
+        (revs, trailing)
+    } else {
+        (args, Vec::new())
+    };
+    if !trailing_paths.is_empty() {
+        // Merge the explicit `paths` (post `--`) with the implicit
+        // trailing pathspecs so the renderer (when it lands) sees one
+        // unified pathspec set.
+        trailing_paths.extend(paths);
+    } else {
+        trailing_paths = paths;
+    }
+    let paths = trailing_paths;
+    if !paths.is_empty() {
+        // Re-emit the placeholder note now that paths may have grown
+        // from the implicit-pathspec collapse. Renderer-deferred.
+        use std::io::Write;
+        let mut stderr = std::io::stderr().lock();
+        let _ = writeln!(
+            stderr,
+            "[gix-diff] pathspec filter for {} path(s) recognized — filtering not yet implemented",
+            paths.len()
+        );
     }
     match args.len() {
         0 => worktree_index(repo, out, progress),
