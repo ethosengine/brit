@@ -171,6 +171,9 @@ pub struct CreateOptions {
     pub allow_empty_message: bool,
     /// `-q`/`--quiet`: suppress the post-commit summary line.
     pub quiet: bool,
+    /// `--reset-author`: requires -C/-c/--amend per git's precondition;
+    /// gix mirrors the exit-128 rejection until those flags are wired.
+    pub reset_author: bool,
 }
 
 /// Porcelain `git commit` entry point. Currently only the
@@ -185,8 +188,22 @@ pub fn create(
         allow_empty,
         allow_empty_message,
         quiet,
+        reset_author,
     }: CreateOptions,
 ) -> Result<()> {
+    // git's `--reset-author` precondition (vendor/git/builtin/commit.c
+    // parse_and_validate_options): only valid with `-C`, `-c`, or
+    // `--amend`. Without those (and they aren't wired yet), error 128
+    // with git's exact wording.
+    if reset_author {
+        use std::io::Write as _;
+        let _ = writeln!(
+            std::io::stderr().lock(),
+            "fatal: --reset-author can be used only with -C, -c or --amend."
+        );
+        std::process::exit(128);
+    }
+
     if !allow_empty {
         bail!("gix commit without --allow-empty not yet implemented (index→tree pending; see tests/journey/parity/commit.sh)");
     }

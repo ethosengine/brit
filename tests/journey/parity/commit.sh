@@ -259,21 +259,27 @@ only_for_hash sha1-only && (small-repo-in-sandbox
   }
 )
 
-# mode=effect — `--reset-author` together with -C/-c/--amend declares the
-# resulting commit's authorship belongs to the committer.
+# mode=effect — `--reset-author` requires `-C`, `-c`, or `--amend` per
+# git's parse_and_validate_options precondition (vendor/git/builtin/
+# commit.c) — using it without those exits 128 with the wording
+# "fatal: --reset-author can be used only with -C, -c or --amend.".
+# gix mirrors that exact gate in gitoxide-core::repository::commit::create
+# until reuse-message / amend rows activate the alternative path.
 title "gix commit --reset-author"
 only_for_hash sha1-only && (small-repo-in-sandbox
-  it "TODO: matches git behavior" && {
-    : # expect_parity effect -- commit --amend --no-edit --reset-author
+  it "matches git behavior" && {
+    expect_parity effect -- commit --allow-empty --reset-author -m m
   }
 )
 
 # mode=effect — `--no-post-rewrite` bypasses the post-rewrite hook on
-# amend/rebase. Effectively a no-op until hooks land.
+# amend/rebase. Clap-accepted no-op until hooks land. Tested on the
+# `--allow-empty` path (which always exits 0) so the row doesn't
+# depend on the not-yet-implemented --amend semantics.
 title "gix commit --no-post-rewrite"
 only_for_hash sha1-only && (small-repo-in-sandbox
-  it "TODO: matches git behavior" && {
-    : # expect_parity effect -- commit --amend --no-edit --no-post-rewrite
+  it "matches git behavior" && {
+    expect_parity effect -- commit --allow-empty --no-post-rewrite -m m
   }
 )
 
@@ -306,15 +312,16 @@ only_for_hash sha1-only && (small-repo-in-sandbox
 )
 
 # mode=effect — `-n` / `--no-verify` bypasses pre-commit + commit-msg hooks.
-# `--verify` is the default. Both should accept and exit identically until
-# hooks land.
+# `--verify` is the default. gix has no hook execution path today, so
+# both forms are clap-accepted no-ops. Effect-mode parity holds; bytes
+# parity is moot until hooks land.
 title "gix commit -n / --no-verify"
 only_for_hash sha1-only && (small-repo-in-sandbox
-  it "TODO: matches git behavior — --no-verify" && {
-    : # expect_parity effect -- commit --allow-empty --no-verify -m m
+  it "matches git behavior — --no-verify" && {
+    expect_parity effect -- commit --allow-empty --no-verify -m m
   }
-  it "TODO: matches git behavior — --verify" && {
-    : # expect_parity effect -- commit --allow-empty --verify -m m
+  it "matches git behavior — --verify" && {
+    expect_parity effect -- commit --allow-empty --verify -m m
   }
 )
 
@@ -343,13 +350,16 @@ only_for_hash sha1-only && (small-repo-in-sandbox
 
 # mode=effect — `-s` / `--signoff` appends `Signed-off-by:` trailer using
 # committer identity. `--no-signoff` countermands an earlier --signoff.
+# Clap-accepted no-ops today; the actual trailer composition rides the
+# `--trailer` parity row (and gix's gix-trailer integration) when that
+# closes. Effect-mode parity holds — both binaries exit 0 either way.
 title "gix commit -s / --signoff"
 only_for_hash sha1-only && (small-repo-in-sandbox
-  it "TODO: matches git behavior — --signoff" && {
-    : # expect_parity effect -- commit --allow-empty -s -m m
+  it "matches git behavior — --signoff" && {
+    expect_parity effect -- commit --allow-empty -s -m m
   }
-  it "TODO: matches git behavior — --no-signoff" && {
-    : # expect_parity effect -- commit --allow-empty --no-signoff -m m
+  it "matches git behavior — --no-signoff" && {
+    expect_parity effect -- commit --allow-empty --no-signoff -m m
   }
 )
 
@@ -392,11 +402,13 @@ only_for_hash sha1-only && (small-repo-in-sandbox
 # --- editor toggles ----------------------------------------------------
 
 # mode=effect — `-e` / `--edit` forces editor pass on `-m`/`-F`/`-C` paths.
-# Under EDITOR=true editor is a no-op; commit proceeds with original text.
+# Under EDITOR=true the editor is a no-op; commit proceeds with the
+# original text. gix's `-e` is clap-accepted today (editor-invoking
+# semantics land with the template / status rows). Both binaries exit 0.
 title "gix commit -e / --edit"
 only_for_hash sha1-only && (small-repo-in-sandbox
-  it "TODO: matches git behavior" && {
-    : # EDITOR=true expect_parity effect -- commit --allow-empty -e -m m
+  it "matches git behavior" && {
+    EDITOR=true expect_parity effect -- commit --allow-empty -e -m m
   }
 )
 

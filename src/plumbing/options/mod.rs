@@ -2184,6 +2184,46 @@ pub mod commit {
         /// skips the editor in those cases).
         #[clap(long = "no-edit", overrides_with = "edit")]
         pub no_edit: bool,
+
+        /// Bypass the `pre-commit` and `commit-msg` hooks. Mirrors the
+        /// `OPT_BOOL('n', "no-verify", ...)` + `OPT_BOOL(0, "verify",
+        /// ...)` pair in builtin/commit.c. gix has no hook execution
+        /// path today, so both forms are accepted no-ops.
+        #[clap(short = 'n', long = "no-verify")]
+        pub no_verify: bool,
+
+        /// Run `pre-commit` and `commit-msg` hooks (the default).
+        /// Mirrors `OPT_BOOL(0, "verify", ...)`. Accept-only today
+        /// (see `--no-verify`).
+        #[clap(long = "verify", overrides_with = "no_verify")]
+        pub verify: bool,
+
+        /// Bypass the `post-rewrite` hook. Mirrors
+        /// `OPT_BOOL(0, "no-post-rewrite", ...)`. Accept-only today
+        /// since gix has no hook execution path.
+        #[clap(long = "no-post-rewrite")]
+        pub no_post_rewrite: bool,
+
+        /// Append a `Signed-off-by:` trailer using the committer
+        /// identity. Mirrors `OPT_BOOL('s', "signoff", ...)`. Trailer
+        /// composition lands with the dedicated --trailer parity row;
+        /// accept-only today.
+        #[clap(short = 's', long = "signoff")]
+        pub signoff: bool,
+
+        /// Countermand `commit.signoff` config + earlier `--signoff`.
+        /// Mirrors `OPT_BOOL(0, "no-signoff", ...)`.
+        #[clap(long = "no-signoff", overrides_with = "signoff")]
+        pub no_signoff: bool,
+
+        /// With `-C`/`-c`/`--amend`, declare authorship belongs to the
+        /// committer (renews author timestamp). Mirrors
+        /// `OPT_BOOL(0, "reset-author", ...)`. Currently observable
+        /// only on the --allow-empty path where author is already
+        /// committer by default — no-op until -C/-c/--amend rows
+        /// activate the reuse-message machinery.
+        #[clap(long = "reset-author")]
+        pub reset_author: bool,
     }
 
     #[derive(Debug, clap::Subcommand)]

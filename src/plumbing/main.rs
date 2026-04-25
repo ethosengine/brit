@@ -2721,6 +2721,12 @@ pub fn main() -> Result<()> {
                 quiet,
                 edit: _edit,
                 no_edit: _no_edit,
+                no_verify: _no_verify,
+                verify: _verify,
+                no_post_rewrite: _no_post_rewrite,
+                signoff: _signoff,
+                no_signoff: _no_signoff,
+                reset_author,
             } = platform;
             match cmd {
                 // Bare `gix commit` (no subcommand): porcelain dispatch.
@@ -2746,6 +2752,7 @@ pub fn main() -> Result<()> {
                                 allow_empty,
                                 allow_empty_message,
                                 quiet,
+                                reset_author,
                             },
                         )
                     },
