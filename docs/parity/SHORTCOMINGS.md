@@ -444,6 +444,17 @@ Two row classes:
 | compat | `gix merge --verify` | deferred until merge driver lands | [merge.sh:755](../../tests/journey/parity/merge.sh#L755) |
 | compat | `gix merge --no-verify` | deferred until merge driver lands | [merge.sh:765](../../tests/journey/parity/merge.sh#L765) |
 
+## pull
+
+| Class | Section | Reason | Source |
+|---|---|---|---|
+| compat | `gix pull <remote> (already up to date)` | deferred until pull driver lands | [pull.sh:138](../../tests/journey/parity/pull.sh#L138) |
+| compat | `gix pull <remote> <refspec>` | deferred until pull driver lands | [pull.sh:149](../../tests/journey/parity/pull.sh#L149) |
+| deferred | `gix pull <remote> <bad-revspec>` | bad-revspec exit-1 emerges from the fetch step; deferred until pull driver wires fetch composition | [pull.sh:162](../../tests/journey/parity/pull.sh#L162) |
+| deferred | `gix pull --compact-summary` | system git 2.47.3 lacks --compact-summary; vendor/git v2.54.0 has it | [pull.sh:343](../../tests/journey/parity/pull.sh#L343) |
+| deferred | `gix pull -a` | git fetch --append precedes merge-candidates check; deferred until pull driver wires fetch composition | [pull.sh:611](../../tests/journey/parity/pull.sh#L611) |
+| deferred | `gix pull --append` | git fetch --append precedes merge-candidates check; deferred until pull driver wires fetch composition | [pull.sh:616](../../tests/journey/parity/pull.sh#L616) |
+
 ## tag
 
 | Class | Section | Reason | Source |
