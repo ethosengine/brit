@@ -1054,11 +1054,164 @@ pub mod merge {
         pub debug: bool,
     }
 
+    /// Join two or more development histories together.
+    ///
+    /// Top-level surface for `gix merge`. Wraps the existing plumbing
+    /// `file` / `tree` / `commit` subcommands in an optional
+    /// `SubCommands` field so a bare `gix merge <commit>...` invocation
+    /// parses cleanly. The porcelain flag surface (`--ff`, `--no-ff`,
+    /// `--ff-only`, `--squash`, `--no-commit`, `--abort`, `--continue`,
+    /// `--quit`, `-m`, `-F`, `-s`, `-X`, etc., per
+    /// `vendor/git/Documentation/git-merge.adoc` +
+    /// `merge-options.adoc` +
+    /// `vendor/git/builtin/merge.c::builtin_merge_options`) lands on
+    /// this struct as parity rows close.
+    ///
+    /// Positional `commits` accept revspecs in the porcelain shape:
+    /// zero commits → use upstream (`branch.<name>.remote/merge`);
+    /// one commit → typical case (fast-forward or 3-way);
+    /// two-or-more commits → octopus.
     #[derive(Debug, clap::Parser)]
-    #[command(about = "Perform merges of various kinds")]
+    #[clap(args_conflicts_with_subcommands = true)]
+    #[command(about = "Join two or more development histories together")]
     pub struct Platform {
         #[clap(subcommand)]
-        pub cmd: SubCommands,
+        pub cmd: Option<SubCommands>,
+
+        /// Positional commit(s) to merge into our branch. Zero commits
+        /// means "use the configured upstream"; two or more means an
+        /// octopus merge.
+        #[clap(value_parser = crate::shared::AsBString)]
+        pub commits: Vec<BString>,
+
+        // --- merge-options.adoc compat surface ---------------------
+        // Flags accepted by clap so `gix merge <flag> ...` does not
+        // trip UnknownArgument. Semantics are deferred until the
+        // porcelain merge driver lands; per-row entries in
+        // tests/journey/parity/merge.sh close each flag with
+        // `compat_effect "<reason>"` until then.
+
+        // Diffstat at end of merge
+        #[clap(short = 'n', long = "no-stat", action = clap::ArgAction::SetTrue)]
+        pub no_stat: bool,
+        #[clap(long = "stat")]
+        pub stat: bool,
+        #[clap(long = "summary")]
+        pub summary: bool,
+        #[clap(long = "no-summary")]
+        pub no_summary: bool,
+        #[clap(long = "compact-summary")]
+        pub compact_summary: bool,
+
+        // Shortlog in the merge message
+        #[clap(long = "log", num_args = 0..=1, default_missing_value = "20", value_name = "n")]
+        pub log: Option<String>,
+        #[clap(long = "no-log")]
+        pub no_log: bool,
+
+        // Squash / commit / edit
+        #[clap(long = "squash")]
+        pub squash: bool,
+        #[clap(long = "no-squash")]
+        pub no_squash: bool,
+        #[clap(long = "commit")]
+        pub commit: bool,
+        #[clap(long = "no-commit")]
+        pub no_commit: bool,
+        #[clap(short = 'e', long = "edit")]
+        pub edit: bool,
+        #[clap(long = "no-edit")]
+        pub no_edit: bool,
+        #[clap(long = "cleanup", value_name = "mode")]
+        pub cleanup: Option<String>,
+
+        // Fast-forward control
+        #[clap(long = "ff")]
+        pub ff: bool,
+        #[clap(long = "no-ff")]
+        pub no_ff: bool,
+        #[clap(long = "ff-only")]
+        pub ff_only: bool,
+
+        // Rerere
+        #[clap(long = "rerere-autoupdate")]
+        pub rerere_autoupdate: bool,
+        #[clap(long = "no-rerere-autoupdate")]
+        pub no_rerere_autoupdate: bool,
+
+        // Signature verification
+        #[clap(long = "verify-signatures")]
+        pub verify_signatures: bool,
+        #[clap(long = "no-verify-signatures")]
+        pub no_verify_signatures: bool,
+
+        // Strategy / strategy options
+        #[clap(short = 's', long = "strategy", value_name = "strategy", action = clap::ArgAction::Append)]
+        pub strategy: Vec<String>,
+        #[clap(short = 'X', long = "strategy-option", value_name = "option=value", action = clap::ArgAction::Append)]
+        pub strategy_option: Vec<String>,
+
+        // Message / file / into-name
+        #[clap(short = 'm', long = "message", value_name = "msg", action = clap::ArgAction::Append)]
+        pub message: Vec<String>,
+        #[clap(short = 'F', long = "file", value_name = "path")]
+        pub file: Option<std::path::PathBuf>,
+        #[clap(long = "into-name", value_name = "branch")]
+        pub into_name: Option<String>,
+
+        // Verbosity
+        #[clap(short = 'v', long = "verbose", action = clap::ArgAction::Count)]
+        pub verbose_flag: u8,
+        #[clap(short = 'q', long = "quiet", action = clap::ArgAction::Count)]
+        pub quiet_flag: u8,
+
+        // In-progress merge transitions
+        #[clap(long = "abort")]
+        pub abort: bool,
+        #[clap(long = "quit")]
+        pub quit: bool,
+        #[clap(long = "continue")]
+        pub continue_: bool,
+
+        // Histories / progress
+        #[clap(long = "allow-unrelated-histories")]
+        pub allow_unrelated_histories: bool,
+        #[clap(long = "no-allow-unrelated-histories")]
+        pub no_allow_unrelated_histories: bool,
+        #[clap(long = "progress")]
+        pub progress: bool,
+        #[clap(long = "no-progress")]
+        pub no_progress: bool,
+
+        // GPG signing
+        #[clap(short = 'S', long = "gpg-sign", num_args = 0..=1, default_missing_value = "", value_name = "key-id")]
+        pub gpg_sign: Option<String>,
+        #[clap(long = "no-gpg-sign")]
+        pub no_gpg_sign: bool,
+
+        // Autostash
+        #[clap(long = "autostash")]
+        pub autostash: bool,
+        #[clap(long = "no-autostash")]
+        pub no_autostash: bool,
+
+        // Overwrite-ignore
+        #[clap(long = "overwrite-ignore")]
+        pub overwrite_ignore: bool,
+        #[clap(long = "no-overwrite-ignore")]
+        pub no_overwrite_ignore: bool,
+
+        // Signoff
+        #[clap(long = "signoff")]
+        pub signoff: bool,
+        #[clap(long = "no-signoff")]
+        pub no_signoff: bool,
+
+        // Pre-merge / commit-msg hooks
+        #[clap(long = "verify")]
+        pub verify: bool,
+        #[clap(long = "no-verify")]
+        pub no_verify: bool,
     }
 
     #[derive(Debug, clap::Subcommand)]

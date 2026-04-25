@@ -238,13 +238,30 @@ pub fn main() -> Result<()> {
             None,
             move |_progress, out, _err| core::env(out, format),
         ),
-        Subcommands::Merge(merge::Platform { cmd }) => match cmd {
-            merge::SubCommands::File {
+        Subcommands::Merge(merge::Platform { cmd, commits, .. }) => match cmd {
+            // Bare `gix merge [<commit>...]`: porcelain dispatch.
+            // Fast-forward / 3-way / octopus path. The placeholder
+            // emits a stub note and exits 0; the real merge driver
+            // lands in a future iteration. Every flag in the porcelain
+            // surface is currently `compat_effect`-deferred via
+            // tests/journey/parity/merge.sh.
+            None => prepare_and_run(
+                "merge",
+                trace,
+                verbose,
+                progress,
+                progress_keep_open,
+                None,
+                move |_progress, out, err| {
+                    core::repository::merge::porcelain(repository(Mode::Lenient)?, out, err, commits)
+                },
+            ),
+            Some(merge::SubCommands::File {
                 resolve_with,
                 ours,
                 base,
                 theirs,
-            } => prepare_and_run(
+            }) => prepare_and_run(
                 "merge-file",
                 trace,
                 verbose,
@@ -263,7 +280,7 @@ pub fn main() -> Result<()> {
                     )
                 },
             ),
-            merge::SubCommands::Tree {
+            Some(merge::SubCommands::Tree {
                 opts:
                     merge::SharedOptions {
                         in_memory,
@@ -274,7 +291,7 @@ pub fn main() -> Result<()> {
                 ours,
                 base,
                 theirs,
-            } => prepare_and_run(
+            }) => prepare_and_run(
                 "merge-tree",
                 trace,
                 verbose,
@@ -299,7 +316,7 @@ pub fn main() -> Result<()> {
                     )
                 },
             ),
-            merge::SubCommands::Commit {
+            Some(merge::SubCommands::Commit {
                 opts:
                     merge::SharedOptions {
                         in_memory,
@@ -309,7 +326,7 @@ pub fn main() -> Result<()> {
                     },
                 ours,
                 theirs,
-            } => prepare_and_run(
+            }) => prepare_and_run(
                 "merge-commit",
                 trace,
                 verbose,
