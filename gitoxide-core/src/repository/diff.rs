@@ -7,6 +7,32 @@ use gix::{
     ObjectId,
 };
 
+/// Detects two-dot (`A..B`) and three-dot (`A...B`) range syntax in a
+/// single positional argument. Returns `(left, right, three_dot)` —
+/// empty `left` / `right` is the implicit-HEAD form (`..B` /
+/// `A..`). Returns `None` for non-range tokens.
+///
+/// Skips `..` occurrences that look like path traversal (`./..`,
+/// `../foo`) — those are pathspecs, not ranges. git's
+/// revision.c::handle_dotdot_1 leans on the same heuristic.
+fn parse_range(arg: &[u8]) -> Option<(&[u8], &[u8], bool)> {
+    // `..` cannot appear at offset 0 if the token starts with `.` or `/`
+    // (would be a path).
+    if arg.starts_with(b".") || arg.starts_with(b"/") {
+        return None;
+    }
+    // Search for the first `..`; if followed by a third `.`, it's a
+    // three-dot range; otherwise two-dot.
+    for i in 0..arg.len().saturating_sub(1) {
+        if arg[i] == b'.' && arg[i + 1] == b'.' {
+            let three_dot = arg.get(i + 2) == Some(&b'.');
+            let sep_len = if three_dot { 3 } else { 2 };
+            return Some((&arg[..i], &arg[i + sep_len..], three_dot));
+        }
+    }
+    None
+}
+
 /// Porcelain `git diff` entry point — routes the bare-form invocation
 /// (no subcommand) by positional-arg count, matching cmd_diff's
 /// classifier in vendor/git/builtin/diff.c.
@@ -24,6 +50,47 @@ pub fn porcelain(
     progress: impl gix::NestedProgress + 'static,
     args: Vec<BString>,
 ) -> anyhow::Result<()> {
+    // Detect range syntax in 1-arg form: `A..B` (two-dot) is shorthand
+    // for `A B`; `A...B` (three-dot) is shorthand for `merge-base(A,B) B`.
+    // Empty endpoints default to HEAD: `..B` → `HEAD B`, `A..` → `A HEAD`.
+    // Mirrors git's revision.c handle_dotdot_1 (see gitrevisions(7)).
+    if args.len() == 1 {
+        if let Some((left, right, three_dot)) = parse_range(args[0].as_slice()) {
+            let l: BString = if left.is_empty() { "HEAD".into() } else { left.into() };
+            let r: BString = if right.is_empty() { "HEAD".into() } else { right.into() };
+            let new_args = if three_dot {
+                let l_id = match repo.rev_parse_single(l.as_bstr()) {
+                    Ok(id) => id,
+                    Err(_) => {
+                        eprintln!(
+                            "fatal: ambiguous argument '{l}': unknown revision or path not in the working tree.\n\
+                             Use '--' to separate paths from revisions, like this:\n\
+                             'git <command> [<revision>...] -- [<file>...]'"
+                        );
+                        std::process::exit(128);
+                    }
+                };
+                let r_id = match repo.rev_parse_single(r.as_bstr()) {
+                    Ok(id) => id,
+                    Err(_) => {
+                        eprintln!(
+                            "fatal: ambiguous argument '{r}': unknown revision or path not in the working tree.\n\
+                             Use '--' to separate paths from revisions, like this:\n\
+                             'git <command> [<revision>...] -- [<file>...]'"
+                        );
+                        std::process::exit(128);
+                    }
+                };
+                let mb = repo
+                    .merge_base(l_id, r_id)
+                    .with_context(|| format!("could not compute merge-base for {l}...{r}"))?;
+                vec![mb.to_string().into(), r]
+            } else {
+                vec![l, r]
+            };
+            return porcelain(repo, out, progress, new_args);
+        }
+    }
     match args.len() {
         0 => worktree_index(repo, out, progress),
         1 => {

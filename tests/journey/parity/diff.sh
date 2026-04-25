@@ -172,13 +172,18 @@ only_for_hash sha1-only && (small-repo-in-sandbox
 )
 
 # mode=effect — `gix diff <commit>..<commit>`: two-dot range (synonym
-# for two-arg form). gix_revision::Spec::Range parses, then resolves
-# both endpoints.
+# for two-arg form per gitrevisions(7); revision.c::handle_dotdot_1).
+# gitoxide_core::repository::diff::porcelain detects `..` in a single
+# positional, splits on first occurrence, defaults empty endpoint to
+# HEAD (`..B` → `HEAD B`, `A..` → `A HEAD`), and recurses into the
+# 2-arg path. Both binaries exit 0; bytes parity deferred via
+# compat_effect (tree-vs-tree renderer follow-up).
 # hash=sha1-only
 title "gix diff A..B"
 only_for_hash sha1-only && (small-repo-in-sandbox
-  # TODO — expect_parity effect -- diff HEAD~1..HEAD
-  it "matches git behavior" && { :; }
+  it "matches git behavior" && {
+    compat_effect "diff A..B tree-vs-tree patch output deferred until renderer lands" -- diff HEAD~1..HEAD
+  }
 )
 
 # mode=effect — `gix diff A...B`: three-dot symmetric (merge-base of
