@@ -60,8 +60,8 @@ title "gix blame"
 # hash=dual
 title "gix blame --help"
 only_for_hash dual && (sandbox
-  it "TODO matches git behavior" && {
-    : # TODO: expect_parity effect -- blame --help
+  it "matches git behavior" && {
+    expect_parity effect -- blame --help
   }
 )
 
@@ -73,8 +73,8 @@ only_for_hash dual && (sandbox
 # hash=sha1-only
 title "gix blame --bogus-flag"
 only_for_hash sha1-only && (small-repo-in-sandbox
-  it "TODO matches git behavior" && {
-    : # TODO: expect_parity effect -- blame --bogus-flag a
+  it "matches git behavior" && {
+    expect_parity effect -- blame --bogus-flag a
   }
 )
 
@@ -86,8 +86,8 @@ only_for_hash sha1-only && (small-repo-in-sandbox
 # hash=sha1-only
 title "gix blame (bare, no file)"
 only_for_hash sha1-only && (small-repo-in-sandbox
-  it "TODO matches git behavior" && {
-    : # TODO: expect_parity effect -- blame
+  it "matches git behavior" && {
+    expect_parity effect -- blame
   }
 )
 
@@ -100,8 +100,8 @@ only_for_hash sha1-only && (small-repo-in-sandbox
 # hash=dual
 title "gix blame (outside a repository)"
 only_for_hash dual && (sandbox
-  it "TODO matches git behavior" && {
-    : # TODO: expect_parity effect -- blame foo
+  it "matches git behavior" && {
+    expect_parity effect -- blame foo
   }
 )
 
