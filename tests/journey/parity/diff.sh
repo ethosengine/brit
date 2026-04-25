@@ -301,12 +301,14 @@ only_for_hash sha1-only && (small-repo-in-sandbox
 )
 
 # mode=effect — `gix diff --cached --merge-base A`: index vs merge-base
-# of A and HEAD.
+# of A and HEAD. Both flags accepted; bytes parity (real index-vs-
+# merge-base) deferred via compat_effect.
 # hash=sha1-only
 title "gix diff --cached --merge-base"
 only_for_hash sha1-only && (small-repo-in-sandbox
-  # TODO — expect_parity effect -- diff --cached --merge-base HEAD
-  it "matches git behavior" && { :; }
+  it "matches git behavior" && {
+    compat_effect "diff --cached --merge-base index-vs-merge-base patch output deferred until renderer lands" -- diff --cached --merge-base HEAD
+  }
 )
 
 # mode=effect — `gix diff --no-index <path-a> <path-b>`: compare two
