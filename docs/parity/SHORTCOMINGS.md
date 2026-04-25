@@ -386,6 +386,64 @@ Two row classes:
 | compat | `gix log --no-standard-notes` | gix log --no-standard-notes deprecated --no-standard-notes alias deferred — flag accepted | [log.sh:2249](../../tests/journey/parity/log.sh#L2249) |
 | compat | `gix log --no-use-mailmap` | gix log --no-use-mailmap --no-use-mailmap (alias of --no-mailmap) deferred — flag accepted | [log.sh:2259](../../tests/journey/parity/log.sh#L2259) |
 
+## merge
+
+| Class | Section | Reason | Source |
+|---|---|---|---|
+| compat | `gix merge <commit> (already up to date)` | deferred until merge driver lands | [merge.sh:127](../../tests/journey/parity/merge.sh#L127) |
+| compat | `gix merge <commit> (fast-forward)` | deferred until merge driver lands | [merge.sh:142](../../tests/journey/parity/merge.sh#L142) |
+| compat | `gix merge <commit> (3-way merge, clean)` | deferred until merge driver lands | [merge.sh:161](../../tests/journey/parity/merge.sh#L161) |
+| compat | `gix merge <commit> <commit> (octopus)` | deferred until merge driver lands | [merge.sh:174](../../tests/journey/parity/merge.sh#L174) |
+| compat | `gix merge -n` | deferred until merge driver lands | [merge.sh:203](../../tests/journey/parity/merge.sh#L203) |
+| compat | `gix merge --stat` | deferred until merge driver lands | [merge.sh:213](../../tests/journey/parity/merge.sh#L213) |
+| compat | `gix merge --no-stat` | deferred until merge driver lands | [merge.sh:222](../../tests/journey/parity/merge.sh#L222) |
+| compat | `gix merge --summary` | deferred until merge driver lands | [merge.sh:232](../../tests/journey/parity/merge.sh#L232) |
+| compat | `gix merge --no-summary` | deferred until merge driver lands | [merge.sh:241](../../tests/journey/parity/merge.sh#L241) |
+| deferred | `gix merge --compact-summary` | system git 2.47.3 lacks --compact-summary; vendor/git v2.54.0 has it | [merge.sh:255](../../tests/journey/parity/merge.sh#L255) |
+| compat | `gix merge --log` | deferred until merge driver lands | [merge.sh:269](../../tests/journey/parity/merge.sh#L269) |
+| compat | `gix merge --log=<n>` | deferred until merge driver lands | [merge.sh:278](../../tests/journey/parity/merge.sh#L278) |
+| compat | `gix merge --no-log` | deferred until merge driver lands | [merge.sh:287](../../tests/journey/parity/merge.sh#L287) |
+| compat | `gix merge --squash` | deferred until merge driver lands | [merge.sh:301](../../tests/journey/parity/merge.sh#L301) |
+| compat | `gix merge --no-squash` | deferred until merge driver lands | [merge.sh:311](../../tests/journey/parity/merge.sh#L311) |
+| compat | `gix merge --commit` | deferred until merge driver lands | [merge.sh:321](../../tests/journey/parity/merge.sh#L321) |
+| compat | `gix merge --no-commit` | deferred until merge driver lands | [merge.sh:331](../../tests/journey/parity/merge.sh#L331) |
+| compat | `gix merge --edit` | deferred until merge driver lands | [merge.sh:342](../../tests/journey/parity/merge.sh#L342) |
+| compat | `gix merge --no-edit` | deferred until merge driver lands | [merge.sh:352](../../tests/journey/parity/merge.sh#L352) |
+| compat | `gix merge --cleanup=<mode>` | deferred until merge driver lands | [merge.sh:363](../../tests/journey/parity/merge.sh#L363) |
+| compat | `gix merge --ff` | deferred until merge driver lands | [merge.sh:376](../../tests/journey/parity/merge.sh#L376) |
+| compat | `gix merge --no-ff` | deferred until merge driver lands | [merge.sh:386](../../tests/journey/parity/merge.sh#L386) |
+| compat | `gix merge --ff-only` | deferred until merge driver lands | [merge.sh:398](../../tests/journey/parity/merge.sh#L398) |
+| compat | `gix merge --rerere-autoupdate` | deferred until merge driver lands | [merge.sh:410](../../tests/journey/parity/merge.sh#L410) |
+| compat | `gix merge --no-rerere-autoupdate` | deferred until merge driver lands | [merge.sh:419](../../tests/journey/parity/merge.sh#L419) |
+| compat | `gix merge --verify-signatures` | deferred until merge driver lands | [merge.sh:433](../../tests/journey/parity/merge.sh#L433) |
+| compat | `gix merge --no-verify-signatures` | deferred until merge driver lands | [merge.sh:442](../../tests/journey/parity/merge.sh#L442) |
+| compat | `gix merge -s <strategy>` | deferred until merge driver lands | [merge.sh:456](../../tests/journey/parity/merge.sh#L456) |
+| compat | `gix merge --strategy=<strategy>` | deferred until merge driver lands | [merge.sh:465](../../tests/journey/parity/merge.sh#L465) |
+| compat | `gix merge -X <option>` | deferred until merge driver lands | [merge.sh:476](../../tests/journey/parity/merge.sh#L476) |
+| compat | `gix merge --strategy-option=<option>` | deferred until merge driver lands | [merge.sh:485](../../tests/journey/parity/merge.sh#L485) |
+| compat | `gix merge -m <msg>` | deferred until merge driver lands | [merge.sh:498](../../tests/journey/parity/merge.sh#L498) |
+| compat | `gix merge --message=<msg>` | deferred until merge driver lands | [merge.sh:507](../../tests/journey/parity/merge.sh#L507) |
+| compat | `gix merge -F <file>` | deferred until merge driver lands | [merge.sh:521](../../tests/journey/parity/merge.sh#L521) |
+| compat | `gix merge --file=<file>` | deferred until merge driver lands | [merge.sh:531](../../tests/journey/parity/merge.sh#L531) |
+| compat | `gix merge --into-name <branch>` | deferred until merge driver lands | [merge.sh:541](../../tests/journey/parity/merge.sh#L541) |
+| compat | `gix merge -v` | deferred until merge driver lands | [merge.sh:553](../../tests/journey/parity/merge.sh#L553) |
+| compat | `gix merge -q` | deferred until merge driver lands | [merge.sh:563](../../tests/journey/parity/merge.sh#L563) |
+| compat | `gix merge --allow-unrelated-histories` | deferred until merge driver lands | [merge.sh:616](../../tests/journey/parity/merge.sh#L616) |
+| compat | `gix merge --no-allow-unrelated-histories` | deferred until merge driver lands | [merge.sh:625](../../tests/journey/parity/merge.sh#L625) |
+| compat | `gix merge --progress` | deferred until merge driver lands | [merge.sh:635](../../tests/journey/parity/merge.sh#L635) |
+| compat | `gix merge --no-progress` | deferred until merge driver lands | [merge.sh:644](../../tests/journey/parity/merge.sh#L644) |
+| compat | `gix merge -S` | deferred until merge driver lands | [merge.sh:659](../../tests/journey/parity/merge.sh#L659) |
+| compat | `gix merge --gpg-sign` | deferred until merge driver lands | [merge.sh:668](../../tests/journey/parity/merge.sh#L668) |
+| compat | `gix merge --no-gpg-sign` | deferred until merge driver lands | [merge.sh:678](../../tests/journey/parity/merge.sh#L678) |
+| compat | `gix merge --autostash` | deferred until merge driver lands | [merge.sh:690](../../tests/journey/parity/merge.sh#L690) |
+| compat | `gix merge --no-autostash` | deferred until merge driver lands | [merge.sh:699](../../tests/journey/parity/merge.sh#L699) |
+| compat | `gix merge --overwrite-ignore` | deferred until merge driver lands | [merge.sh:711](../../tests/journey/parity/merge.sh#L711) |
+| compat | `gix merge --no-overwrite-ignore` | deferred until merge driver lands | [merge.sh:721](../../tests/journey/parity/merge.sh#L721) |
+| compat | `gix merge --signoff` | deferred until merge driver lands | [merge.sh:733](../../tests/journey/parity/merge.sh#L733) |
+| compat | `gix merge --no-signoff` | deferred until merge driver lands | [merge.sh:743](../../tests/journey/parity/merge.sh#L743) |
+| compat | `gix merge --verify` | deferred until merge driver lands | [merge.sh:755](../../tests/journey/parity/merge.sh#L755) |
+| compat | `gix merge --no-verify` | deferred until merge driver lands | [merge.sh:765](../../tests/journey/parity/merge.sh#L765) |
+
 ## tag
 
 | Class | Section | Reason | Source |
