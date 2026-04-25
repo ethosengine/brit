@@ -8,4 +8,4 @@ mod commit;
 pub use commit::commit;
 
 pub mod porcelain;
-pub use porcelain::porcelain;
+pub use porcelain::{porcelain, Transitions};

@@ -1104,7 +1104,7 @@ pub mod merge {
         pub compact_summary: bool,
 
         // Shortlog in the merge message
-        #[clap(long = "log", num_args = 0..=1, default_missing_value = "20", value_name = "n")]
+        #[clap(long = "log", num_args = 0..=1, default_missing_value = "20", require_equals = true, value_name = "n")]
         pub log: Option<String>,
         #[clap(long = "no-log")]
         pub no_log: bool,
@@ -1184,7 +1184,7 @@ pub mod merge {
         pub no_progress: bool,
 
         // GPG signing
-        #[clap(short = 'S', long = "gpg-sign", num_args = 0..=1, default_missing_value = "", value_name = "key-id")]
+        #[clap(short = 'S', long = "gpg-sign", num_args = 0..=1, default_missing_value = "", require_equals = true, value_name = "key-id")]
         pub gpg_sign: Option<String>,
         #[clap(long = "no-gpg-sign")]
         pub no_gpg_sign: bool,

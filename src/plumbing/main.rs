@@ -238,7 +238,14 @@ pub fn main() -> Result<()> {
             None,
             move |_progress, out, _err| core::env(out, format),
         ),
-        Subcommands::Merge(merge::Platform { cmd, commits, .. }) => match cmd {
+        Subcommands::Merge(merge::Platform {
+            cmd,
+            commits,
+            abort,
+            quit,
+            continue_,
+            ..
+        }) => match cmd {
             // Bare `gix merge [<commit>...]`: porcelain dispatch.
             // Fast-forward / 3-way / octopus path. The placeholder
             // emits a stub note and exits 0; the real merge driver
@@ -253,7 +260,13 @@ pub fn main() -> Result<()> {
                 progress_keep_open,
                 None,
                 move |_progress, out, err| {
-                    core::repository::merge::porcelain(repository(Mode::Lenient)?, out, err, commits)
+                    core::repository::merge::porcelain(
+                        repository(Mode::Lenient)?,
+                        out,
+                        err,
+                        commits,
+                        core::repository::merge::Transitions { abort, quit, continue_ },
+                    )
                 },
             ),
             Some(merge::SubCommands::File {

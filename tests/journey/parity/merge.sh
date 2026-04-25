@@ -193,24 +193,24 @@ only_for_hash sha1-only && (small-repo-in-sandbox
 # --- diffstat: -n / --stat / --no-stat / --summary / --compact-summary --
 
 # mode=effect — `-n` is a SET_INT alias for --no-stat (suppress the
-# trailing diffstat). git accepts it before the merge runs. Close as
-# compat_effect.
+# trailing diffstat). dev is an ancestor of HEAD, so both binaries
+# emit "Already up to date." / placeholder note + exit 0;
+# exit-code parity holds. compat_effect.
 # hash=sha1-only
 title "gix merge -n"
 only_for_hash sha1-only && (small-repo-in-sandbox
-  it "TODO matches git behavior" && {
-    : # TODO: compat_effect "deferred until merge driver lands" -- merge -n dev
+  it "matches git behavior" && {
+    compat_effect "deferred until merge driver lands" -- merge -n dev
   }
 )
 
-# mode=effect — `--stat` enables the trailing diffstat; default behavior
-# unless overridden by `merge.stat=false` config. Close as
-# compat_effect.
+# mode=effect — `--stat` enables the trailing diffstat; default
+# behavior unless overridden by `merge.stat=false` config.
 # hash=sha1-only
 title "gix merge --stat"
 only_for_hash sha1-only && (small-repo-in-sandbox
-  it "TODO matches git behavior" && {
-    : # TODO: compat_effect "deferred until merge driver lands" -- merge --stat dev
+  it "matches git behavior" && {
+    compat_effect "deferred until merge driver lands" -- merge --stat dev
   }
 )
 
@@ -218,8 +218,8 @@ only_for_hash sha1-only && (small-repo-in-sandbox
 # hash=sha1-only
 title "gix merge --no-stat"
 only_for_hash sha1-only && (small-repo-in-sandbox
-  it "TODO matches git behavior" && {
-    : # TODO: compat_effect "deferred until merge driver lands" -- merge --no-stat dev
+  it "matches git behavior" && {
+    compat_effect "deferred until merge driver lands" -- merge --no-stat dev
   }
 )
 
@@ -228,8 +228,8 @@ only_for_hash sha1-only && (small-repo-in-sandbox
 # hash=sha1-only
 title "gix merge --summary"
 only_for_hash sha1-only && (small-repo-in-sandbox
-  it "TODO matches git behavior" && {
-    : # TODO: compat_effect "deferred until merge driver lands" -- merge --summary dev
+  it "matches git behavior" && {
+    compat_effect "deferred until merge driver lands" -- merge --summary dev
   }
 )
 
@@ -237,31 +237,36 @@ only_for_hash sha1-only && (small-repo-in-sandbox
 # hash=sha1-only
 title "gix merge --no-summary"
 only_for_hash sha1-only && (small-repo-in-sandbox
-  it "TODO matches git behavior" && {
-    : # TODO: compat_effect "deferred until merge driver lands" -- merge --no-summary dev
+  it "matches git behavior" && {
+    compat_effect "deferred until merge driver lands" -- merge --no-summary dev
   }
 )
 
-# mode=effect — `--compact-summary` enables the compact diffstat format
-# at the end of the merge.
+# mode=effect — `--compact-summary` is a vendor/git v2.54.0 flag (see
+# vendor/git/builtin/merge.c::builtin_merge_options) that the test
+# runtime's system git (2.47.3) does not recognize. The version skew
+# is a hard system constraint of the parity loop's test harness, not
+# a closeable gix gap. Once the test runtime upgrades to a git that
+# carries --compact-summary, this row flips to compat_effect under
+# the shared "deferred until merge driver lands" phrase.
 # hash=sha1-only
 title "gix merge --compact-summary"
 only_for_hash sha1-only && (small-repo-in-sandbox
-  it "TODO matches git behavior" && {
-    : # TODO: compat_effect "deferred until merge driver lands" -- merge --compact-summary dev
-  }
+  shortcoming "system git 2.47.3 lacks --compact-summary; vendor/git v2.54.0 has it"
 )
 
 # --- shortlog: --log[=<n>] / --no-log -----------------------------------
 
-# mode=effect — `--log` (no arg) populates the merge message with up
-# to DEFAULT_MERGE_LOG_LEN one-line shortlog entries. With a value:
-# `--log=5` caps it at 5.
+# mode=effect — `--log` (bare) populates the merge message with up to
+# DEFAULT_MERGE_LOG_LEN one-line shortlog entries. `require_equals = true`
+# in the Clap shape so `--log dev` parses as `--log` (default) +
+# positional `dev`, mirroring git's PARSE_OPT_OPTARG semantics where
+# the optarg must be stuck with `=`.
 # hash=sha1-only
 title "gix merge --log"
 only_for_hash sha1-only && (small-repo-in-sandbox
-  it "TODO matches git behavior" && {
-    : # TODO: compat_effect "deferred until merge driver lands" -- merge --log dev
+  it "matches git behavior" && {
+    compat_effect "deferred until merge driver lands" -- merge --log dev
   }
 )
 
@@ -269,8 +274,8 @@ only_for_hash sha1-only && (small-repo-in-sandbox
 # hash=sha1-only
 title "gix merge --log=<n>"
 only_for_hash sha1-only && (small-repo-in-sandbox
-  it "TODO matches git behavior" && {
-    : # TODO: compat_effect "deferred until merge driver lands" -- merge --log=3 dev
+  it "matches git behavior" && {
+    compat_effect "deferred until merge driver lands" -- merge --log=3 dev
   }
 )
 
@@ -278,8 +283,8 @@ only_for_hash sha1-only && (small-repo-in-sandbox
 # hash=sha1-only
 title "gix merge --no-log"
 only_for_hash sha1-only && (small-repo-in-sandbox
-  it "TODO matches git behavior" && {
-    : # TODO: compat_effect "deferred until merge driver lands" -- merge --no-log dev
+  it "matches git behavior" && {
+    compat_effect "deferred until merge driver lands" -- merge --no-log dev
   }
 )
 
@@ -292,8 +297,8 @@ only_for_hash sha1-only && (small-repo-in-sandbox
 # hash=sha1-only
 title "gix merge --squash"
 only_for_hash sha1-only && (small-repo-in-sandbox
-  it "TODO matches git behavior" && {
-    : # TODO: compat_effect "deferred until merge driver lands" -- merge --squash dev
+  it "matches git behavior" && {
+    compat_effect "deferred until merge driver lands" -- merge --squash dev
   }
 )
 
@@ -302,8 +307,8 @@ only_for_hash sha1-only && (small-repo-in-sandbox
 # hash=sha1-only
 title "gix merge --no-squash"
 only_for_hash sha1-only && (small-repo-in-sandbox
-  it "TODO matches git behavior" && {
-    : # TODO: compat_effect "deferred until merge driver lands" -- merge --no-squash dev
+  it "matches git behavior" && {
+    compat_effect "deferred until merge driver lands" -- merge --no-squash dev
   }
 )
 
@@ -312,8 +317,8 @@ only_for_hash sha1-only && (small-repo-in-sandbox
 # hash=sha1-only
 title "gix merge --commit"
 only_for_hash sha1-only && (small-repo-in-sandbox
-  it "TODO matches git behavior" && {
-    : # TODO: compat_effect "deferred until merge driver lands" -- merge --commit dev
+  it "matches git behavior" && {
+    compat_effect "deferred until merge driver lands" -- merge --commit dev
   }
 )
 
@@ -322,18 +327,19 @@ only_for_hash sha1-only && (small-repo-in-sandbox
 # hash=sha1-only
 title "gix merge --no-commit"
 only_for_hash sha1-only && (small-repo-in-sandbox
-  it "TODO matches git behavior" && {
-    : # TODO: compat_effect "deferred until merge driver lands" -- merge --no-commit dev
+  it "matches git behavior" && {
+    compat_effect "deferred until merge driver lands" -- merge --no-commit dev
   }
 )
 
 # mode=effect — `-e` / `--edit` invokes EDITOR before committing the
-# merge. Tested under EDITOR=true (no-op) for parity.
+# merge. tests/helpers.sh::set-static-git-environment sets
+# GIT_EDITOR=true so EDITOR invocation is a no-op for parity.
 # hash=sha1-only
 title "gix merge --edit"
 only_for_hash sha1-only && (small-repo-in-sandbox
-  it "TODO matches git behavior" && {
-    : # TODO: compat_effect "deferred until merge driver lands" -- merge --edit dev
+  it "matches git behavior" && {
+    compat_effect "deferred until merge driver lands" -- merge --edit dev
   }
 )
 
@@ -342,8 +348,8 @@ only_for_hash sha1-only && (small-repo-in-sandbox
 # hash=sha1-only
 title "gix merge --no-edit"
 only_for_hash sha1-only && (small-repo-in-sandbox
-  it "TODO matches git behavior" && {
-    : # TODO: compat_effect "deferred until merge driver lands" -- merge --no-edit dev
+  it "matches git behavior" && {
+    compat_effect "deferred until merge driver lands" -- merge --no-edit dev
   }
 )
 
@@ -353,8 +359,8 @@ only_for_hash sha1-only && (small-repo-in-sandbox
 # hash=sha1-only
 title "gix merge --cleanup=<mode>"
 only_for_hash sha1-only && (small-repo-in-sandbox
-  it "TODO matches git behavior" && {
-    : # TODO: compat_effect "deferred until merge driver lands" -- merge --cleanup=strip dev
+  it "matches git behavior" && {
+    compat_effect "deferred until merge driver lands" -- merge --cleanup=strip dev
   }
 )
 
@@ -366,8 +372,8 @@ only_for_hash sha1-only && (small-repo-in-sandbox
 # hash=sha1-only
 title "gix merge --ff"
 only_for_hash sha1-only && (small-repo-in-sandbox
-  it "TODO matches git behavior" && {
-    : # TODO: compat_effect "deferred until merge driver lands" -- merge --ff dev
+  it "matches git behavior" && {
+    compat_effect "deferred until merge driver lands" -- merge --ff dev
   }
 )
 
@@ -376,19 +382,20 @@ only_for_hash sha1-only && (small-repo-in-sandbox
 # hash=sha1-only
 title "gix merge --no-ff"
 only_for_hash sha1-only && (small-repo-in-sandbox
-  it "TODO matches git behavior" && {
-    : # TODO: compat_effect "deferred until merge driver lands" -- merge --no-ff dev
+  it "matches git behavior" && {
+    compat_effect "deferred until merge driver lands" -- merge --no-ff dev
   }
 )
 
 # mode=effect — `--ff-only` requires a fast-forward; if not possible,
-# refuse the merge and exit non-zero ("fatal: Not possible to fast-
-# forward, aborting." + exit 128).
+# refuse the merge and exit non-zero. dev is an ancestor of HEAD so
+# the merge resolves as Already-up-to-date (ff-only succeeds vacuously);
+# both binaries exit 0.
 # hash=sha1-only
 title "gix merge --ff-only"
 only_for_hash sha1-only && (small-repo-in-sandbox
-  it "TODO matches git behavior" && {
-    : # TODO: compat_effect "deferred until merge driver lands" -- merge --ff-only dev
+  it "matches git behavior" && {
+    compat_effect "deferred until merge driver lands" -- merge --ff-only dev
   }
 )
 
@@ -399,8 +406,8 @@ only_for_hash sha1-only && (small-repo-in-sandbox
 # hash=sha1-only
 title "gix merge --rerere-autoupdate"
 only_for_hash sha1-only && (small-repo-in-sandbox
-  it "TODO matches git behavior" && {
-    : # TODO: compat_effect "deferred until merge driver lands" -- merge --rerere-autoupdate dev
+  it "matches git behavior" && {
+    compat_effect "deferred until merge driver lands" -- merge --rerere-autoupdate dev
   }
 )
 
@@ -408,8 +415,8 @@ only_for_hash sha1-only && (small-repo-in-sandbox
 # hash=sha1-only
 title "gix merge --no-rerere-autoupdate"
 only_for_hash sha1-only && (small-repo-in-sandbox
-  it "TODO matches git behavior" && {
-    : # TODO: compat_effect "deferred until merge driver lands" -- merge --no-rerere-autoupdate dev
+  it "matches git behavior" && {
+    compat_effect "deferred until merge driver lands" -- merge --no-rerere-autoupdate dev
   }
 )
 
@@ -417,13 +424,13 @@ only_for_hash sha1-only && (small-repo-in-sandbox
 
 # mode=effect — `--verify-signatures` aborts the merge unless the tip
 # commit of the side branch is signed with a valid key. Without GPG
-# tooling wired into gix, this row will close as compat_effect once
-# the merge driver gates on the precondition.
+# tooling wired into gix, this row closes as compat_effect; the
+# precondition gate lands when the merge driver does.
 # hash=sha1-only
 title "gix merge --verify-signatures"
 only_for_hash sha1-only && (small-repo-in-sandbox
-  it "TODO matches git behavior" && {
-    : # TODO: compat_effect "deferred until merge driver lands" -- merge --verify-signatures dev
+  it "matches git behavior" && {
+    compat_effect "deferred until merge driver lands" -- merge --verify-signatures dev
   }
 )
 
@@ -431,8 +438,8 @@ only_for_hash sha1-only && (small-repo-in-sandbox
 # hash=sha1-only
 title "gix merge --no-verify-signatures"
 only_for_hash sha1-only && (small-repo-in-sandbox
-  it "TODO matches git behavior" && {
-    : # TODO: compat_effect "deferred until merge driver lands" -- merge --no-verify-signatures dev
+  it "matches git behavior" && {
+    compat_effect "deferred until merge driver lands" -- merge --no-verify-signatures dev
   }
 )
 
@@ -441,12 +448,12 @@ only_for_hash sha1-only && (small-repo-in-sandbox
 # mode=effect — `-s <strategy>` / `--strategy=<strategy>` selects the
 # merge strategy (ort, recursive, octopus, resolve, ours, subtree).
 # Can be supplied multiple times; the implementations are tried in
-# order. Closing requires gix-merge to expose strategy enumeration.
+# order. Closing as compat_effect.
 # hash=sha1-only
 title "gix merge -s <strategy>"
 only_for_hash sha1-only && (small-repo-in-sandbox
-  it "TODO matches git behavior" && {
-    : # TODO: compat_effect "deferred until merge driver lands" -- merge -s ort dev
+  it "matches git behavior" && {
+    compat_effect "deferred until merge driver lands" -- merge -s ort dev
   }
 )
 
@@ -454,8 +461,8 @@ only_for_hash sha1-only && (small-repo-in-sandbox
 # hash=sha1-only
 title "gix merge --strategy=<strategy>"
 only_for_hash sha1-only && (small-repo-in-sandbox
-  it "TODO matches git behavior" && {
-    : # TODO: compat_effect "deferred until merge driver lands" -- merge --strategy=ort dev
+  it "matches git behavior" && {
+    compat_effect "deferred until merge driver lands" -- merge --strategy=ort dev
   }
 )
 
@@ -465,8 +472,8 @@ only_for_hash sha1-only && (small-repo-in-sandbox
 # hash=sha1-only
 title "gix merge -X <option>"
 only_for_hash sha1-only && (small-repo-in-sandbox
-  it "TODO matches git behavior" && {
-    : # TODO: compat_effect "deferred until merge driver lands" -- merge -X ours dev
+  it "matches git behavior" && {
+    compat_effect "deferred until merge driver lands" -- merge -X ours dev
   }
 )
 
@@ -474,8 +481,8 @@ only_for_hash sha1-only && (small-repo-in-sandbox
 # hash=sha1-only
 title "gix merge --strategy-option=<option>"
 only_for_hash sha1-only && (small-repo-in-sandbox
-  it "TODO matches git behavior" && {
-    : # TODO: compat_effect "deferred until merge driver lands" -- merge --strategy-option=theirs dev
+  it "matches git behavior" && {
+    compat_effect "deferred until merge driver lands" -- merge --strategy-option=theirs dev
   }
 )
 
@@ -487,8 +494,8 @@ only_for_hash sha1-only && (small-repo-in-sandbox
 # hash=sha1-only
 title "gix merge -m <msg>"
 only_for_hash sha1-only && (small-repo-in-sandbox
-  it "TODO matches git behavior" && {
-    : # TODO: compat_effect "deferred until merge driver lands" -- merge -m "merge dev" dev
+  it "matches git behavior" && {
+    compat_effect "deferred until merge driver lands" -- merge -m "merge dev" dev
   }
 )
 
@@ -496,18 +503,22 @@ only_for_hash sha1-only && (small-repo-in-sandbox
 # hash=sha1-only
 title "gix merge --message=<msg>"
 only_for_hash sha1-only && (small-repo-in-sandbox
-  it "TODO matches git behavior" && {
-    : # TODO: compat_effect "deferred until merge driver lands" -- merge --message="merge dev" dev
+  it "matches git behavior" && {
+    compat_effect "deferred until merge driver lands" -- merge --message="merge dev" dev
   }
 )
 
-# mode=effect — `-F <file>` / `--file=<file>` reads the commit message
-# from a file. Implies `have_message`. PARSE_OPT_NONEG.
+# mode=effect — `-F <file>` reads the commit message from a file.
+# git emits "error: could not read file '<f>'" + exit 129 when the
+# file does not exist; the test pre-creates `merge-msg.txt` so the
+# happy path is exercised. Both binaries exit 0 (Already up to date
+# / placeholder note).
 # hash=sha1-only
 title "gix merge -F <file>"
 only_for_hash sha1-only && (small-repo-in-sandbox
-  it "TODO matches git behavior" && {
-    : # TODO: compat_effect "deferred until merge driver lands" -- merge -F MERGE_MSG dev
+  echo "merge dev into main" > merge-msg.txt
+  it "matches git behavior" && {
+    compat_effect "deferred until merge driver lands" -- merge -F merge-msg.txt dev
   }
 )
 
@@ -515,8 +526,9 @@ only_for_hash sha1-only && (small-repo-in-sandbox
 # hash=sha1-only
 title "gix merge --file=<file>"
 only_for_hash sha1-only && (small-repo-in-sandbox
-  it "TODO matches git behavior" && {
-    : # TODO: compat_effect "deferred until merge driver lands" -- merge --file=MERGE_MSG dev
+  echo "merge dev into main" > merge-msg.txt
+  it "matches git behavior" && {
+    compat_effect "deferred until merge driver lands" -- merge --file=merge-msg.txt dev
   }
 )
 
@@ -525,8 +537,8 @@ only_for_hash sha1-only && (small-repo-in-sandbox
 # hash=sha1-only
 title "gix merge --into-name <branch>"
 only_for_hash sha1-only && (small-repo-in-sandbox
-  it "TODO matches git behavior" && {
-    : # TODO: compat_effect "deferred until merge driver lands" -- merge --into-name release dev
+  it "matches git behavior" && {
+    compat_effect "deferred until merge driver lands" -- merge --into-name release dev
   }
 )
 
@@ -537,8 +549,8 @@ only_for_hash sha1-only && (small-repo-in-sandbox
 # hash=sha1-only
 title "gix merge -v"
 only_for_hash sha1-only && (small-repo-in-sandbox
-  it "TODO matches git behavior" && {
-    : # TODO: compat_effect "deferred until merge driver lands" -- merge -v dev
+  it "matches git behavior" && {
+    compat_effect "deferred until merge driver lands" -- merge -v dev
   }
 )
 
@@ -547,42 +559,49 @@ only_for_hash sha1-only && (small-repo-in-sandbox
 # hash=sha1-only
 title "gix merge -q"
 only_for_hash sha1-only && (small-repo-in-sandbox
-  it "TODO matches git behavior" && {
-    : # TODO: compat_effect "deferred until merge driver lands" -- merge -q dev
+  it "matches git behavior" && {
+    compat_effect "deferred until merge driver lands" -- merge -q dev
   }
 )
 
 # --- in-progress transitions: --abort / --quit / --continue -------------
 
-# mode=effect — `--abort` (no merge in progress): git emits
-# "fatal: There is no merge to abort (MERGE_HEAD missing)." + exit
-# 128. Close as compat_effect until the precondition gate lands.
+# mode=bytes — `--abort` (no merge in progress): git emits the
+# verbatim line "fatal: There is no merge to abort (MERGE_HEAD
+# missing)." + exit 128. gix's porcelain placeholder gates on
+# Transitions.abort and emits the same wording verbatim before the
+# bare-no-commits / revspec gates run. Bytes parity holds.
 # hash=sha1-only
 title "gix merge --abort (no merge in progress)"
 only_for_hash sha1-only && (small-repo-in-sandbox
-  it "TODO matches git behavior" && {
-    : # TODO: compat_effect "deferred until merge driver lands" -- merge --abort
+  it "matches git behavior" && {
+    expect_parity bytes -- merge --abort
   }
 )
 
-# mode=effect — `--quit` (no merge in progress): git emits "fatal:
-# There is no merge in progress (MERGE_HEAD missing)." + exit 128.
+# mode=bytes — `--quit` (no merge in progress): git silently exits 0
+# (just removes the (absent) MERGE_HEAD ref). gix's porcelain
+# placeholder gates on Transitions.quit and returns Ok(()) directly,
+# bypassing the bare-no-commits gate. Bytes parity holds (both emit
+# nothing).
 # hash=sha1-only
 title "gix merge --quit (no merge in progress)"
 only_for_hash sha1-only && (small-repo-in-sandbox
-  it "TODO matches git behavior" && {
-    : # TODO: compat_effect "deferred until merge driver lands" -- merge --quit
+  it "matches git behavior" && {
+    expect_parity bytes -- merge --quit
   }
 )
 
-# mode=effect — `--continue` (no merge in progress): git emits
-# "fatal: There is no merge in progress (MERGE_HEAD missing)." +
-# exit 128.
+# mode=bytes — `--continue` (no merge in progress): git emits the
+# verbatim line "fatal: There is no merge in progress (MERGE_HEAD
+# missing)." + exit 128. gix's porcelain placeholder gates on
+# Transitions.continue_ and emits the same wording verbatim.
+# Bytes parity holds.
 # hash=sha1-only
 title "gix merge --continue (no merge in progress)"
 only_for_hash sha1-only && (small-repo-in-sandbox
-  it "TODO matches git behavior" && {
-    : # TODO: compat_effect "deferred until merge driver lands" -- merge --continue
+  it "matches git behavior" && {
+    expect_parity bytes -- merge --continue
   }
 )
 
@@ -593,8 +612,8 @@ only_for_hash sha1-only && (small-repo-in-sandbox
 # hash=sha1-only
 title "gix merge --allow-unrelated-histories"
 only_for_hash sha1-only && (small-repo-in-sandbox
-  it "TODO matches git behavior" && {
-    : # TODO: compat_effect "deferred until merge driver lands" -- merge --allow-unrelated-histories dev
+  it "matches git behavior" && {
+    compat_effect "deferred until merge driver lands" -- merge --allow-unrelated-histories dev
   }
 )
 
@@ -602,8 +621,8 @@ only_for_hash sha1-only && (small-repo-in-sandbox
 # hash=sha1-only
 title "gix merge --no-allow-unrelated-histories"
 only_for_hash sha1-only && (small-repo-in-sandbox
-  it "TODO matches git behavior" && {
-    : # TODO: compat_effect "deferred until merge driver lands" -- merge --no-allow-unrelated-histories dev
+  it "matches git behavior" && {
+    compat_effect "deferred until merge driver lands" -- merge --no-allow-unrelated-histories dev
   }
 )
 
@@ -612,8 +631,8 @@ only_for_hash sha1-only && (small-repo-in-sandbox
 # hash=sha1-only
 title "gix merge --progress"
 only_for_hash sha1-only && (small-repo-in-sandbox
-  it "TODO matches git behavior" && {
-    : # TODO: compat_effect "deferred until merge driver lands" -- merge --progress dev
+  it "matches git behavior" && {
+    compat_effect "deferred until merge driver lands" -- merge --progress dev
   }
 )
 
@@ -621,21 +640,23 @@ only_for_hash sha1-only && (small-repo-in-sandbox
 # hash=sha1-only
 title "gix merge --no-progress"
 only_for_hash sha1-only && (small-repo-in-sandbox
-  it "TODO matches git behavior" && {
-    : # TODO: compat_effect "deferred until merge driver lands" -- merge --no-progress dev
+  it "matches git behavior" && {
+    compat_effect "deferred until merge driver lands" -- merge --no-progress dev
   }
 )
 
 # --- GPG signing: -S / --gpg-sign / --no-gpg-sign -----------------------
 
-# mode=effect — `-S[<key-id>]` / `--gpg-sign[=<key-id>]` GPG-signs the
-# resulting merge commit. Without GPG tooling wired into gix, this
-# row closes as compat_effect.
+# mode=effect — `-S[<key-id>]` GPG-signs the resulting merge commit.
+# `require_equals = true` in the Clap shape so `-S dev` parses as
+# `-S` (no key-id, default-missing-value) + positional `dev`,
+# mirroring git's PARSE_OPT_OPTARG semantics where the optarg must
+# be stuck without a space.
 # hash=sha1-only
 title "gix merge -S"
 only_for_hash sha1-only && (small-repo-in-sandbox
-  it "TODO matches git behavior" && {
-    : # TODO: compat_effect "deferred until merge driver lands" -- merge -S dev
+  it "matches git behavior" && {
+    compat_effect "deferred until merge driver lands" -- merge -S dev
   }
 )
 
@@ -643,8 +664,8 @@ only_for_hash sha1-only && (small-repo-in-sandbox
 # hash=sha1-only
 title "gix merge --gpg-sign"
 only_for_hash sha1-only && (small-repo-in-sandbox
-  it "TODO matches git behavior" && {
-    : # TODO: compat_effect "deferred until merge driver lands" -- merge --gpg-sign dev
+  it "matches git behavior" && {
+    compat_effect "deferred until merge driver lands" -- merge --gpg-sign dev
   }
 )
 
@@ -653,8 +674,8 @@ only_for_hash sha1-only && (small-repo-in-sandbox
 # hash=sha1-only
 title "gix merge --no-gpg-sign"
 only_for_hash sha1-only && (small-repo-in-sandbox
-  it "TODO matches git behavior" && {
-    : # TODO: compat_effect "deferred until merge driver lands" -- merge --no-gpg-sign dev
+  it "matches git behavior" && {
+    compat_effect "deferred until merge driver lands" -- merge --no-gpg-sign dev
   }
 )
 
@@ -665,8 +686,8 @@ only_for_hash sha1-only && (small-repo-in-sandbox
 # hash=sha1-only
 title "gix merge --autostash"
 only_for_hash sha1-only && (small-repo-in-sandbox
-  it "TODO matches git behavior" && {
-    : # TODO: compat_effect "deferred until merge driver lands" -- merge --autostash dev
+  it "matches git behavior" && {
+    compat_effect "deferred until merge driver lands" -- merge --autostash dev
   }
 )
 
@@ -674,8 +695,8 @@ only_for_hash sha1-only && (small-repo-in-sandbox
 # hash=sha1-only
 title "gix merge --no-autostash"
 only_for_hash sha1-only && (small-repo-in-sandbox
-  it "TODO matches git behavior" && {
-    : # TODO: compat_effect "deferred until merge driver lands" -- merge --no-autostash dev
+  it "matches git behavior" && {
+    compat_effect "deferred until merge driver lands" -- merge --no-autostash dev
   }
 )
 
@@ -686,8 +707,8 @@ only_for_hash sha1-only && (small-repo-in-sandbox
 # hash=sha1-only
 title "gix merge --overwrite-ignore"
 only_for_hash sha1-only && (small-repo-in-sandbox
-  it "TODO matches git behavior" && {
-    : # TODO: compat_effect "deferred until merge driver lands" -- merge --overwrite-ignore dev
+  it "matches git behavior" && {
+    compat_effect "deferred until merge driver lands" -- merge --overwrite-ignore dev
   }
 )
 
@@ -696,8 +717,8 @@ only_for_hash sha1-only && (small-repo-in-sandbox
 # hash=sha1-only
 title "gix merge --no-overwrite-ignore"
 only_for_hash sha1-only && (small-repo-in-sandbox
-  it "TODO matches git behavior" && {
-    : # TODO: compat_effect "deferred until merge driver lands" -- merge --no-overwrite-ignore dev
+  it "matches git behavior" && {
+    compat_effect "deferred until merge driver lands" -- merge --no-overwrite-ignore dev
   }
 )
 
@@ -708,8 +729,8 @@ only_for_hash sha1-only && (small-repo-in-sandbox
 # hash=sha1-only
 title "gix merge --signoff"
 only_for_hash sha1-only && (small-repo-in-sandbox
-  it "TODO matches git behavior" && {
-    : # TODO: compat_effect "deferred until merge driver lands" -- merge --signoff dev
+  it "matches git behavior" && {
+    compat_effect "deferred until merge driver lands" -- merge --signoff dev
   }
 )
 
@@ -718,8 +739,8 @@ only_for_hash sha1-only && (small-repo-in-sandbox
 # hash=sha1-only
 title "gix merge --no-signoff"
 only_for_hash sha1-only && (small-repo-in-sandbox
-  it "TODO matches git behavior" && {
-    : # TODO: compat_effect "deferred until merge driver lands" -- merge --no-signoff dev
+  it "matches git behavior" && {
+    compat_effect "deferred until merge driver lands" -- merge --no-signoff dev
   }
 )
 
@@ -730,8 +751,8 @@ only_for_hash sha1-only && (small-repo-in-sandbox
 # hash=sha1-only
 title "gix merge --verify"
 only_for_hash sha1-only && (small-repo-in-sandbox
-  it "TODO matches git behavior" && {
-    : # TODO: compat_effect "deferred until merge driver lands" -- merge --verify dev
+  it "matches git behavior" && {
+    compat_effect "deferred until merge driver lands" -- merge --verify dev
   }
 )
 
@@ -740,8 +761,8 @@ only_for_hash sha1-only && (small-repo-in-sandbox
 # hash=sha1-only
 title "gix merge --no-verify"
 only_for_hash sha1-only && (small-repo-in-sandbox
-  it "TODO matches git behavior" && {
-    : # TODO: compat_effect "deferred until merge driver lands" -- merge --no-verify dev
+  it "matches git behavior" && {
+    compat_effect "deferred until merge driver lands" -- merge --no-verify dev
   }
 )
 
