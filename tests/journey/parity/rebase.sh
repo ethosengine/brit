@@ -65,8 +65,6 @@
 #   hash=sha1-only "gix cannot load sha256 repos: extensions.objectFormat=sha256 rejected (gix/src/config/tree/sections/extensions.rs)"
 #   mode=effect
 
-title "gix rebase"
-
 # --- meta / help --------------------------------------------------------
 
 # mode=effect — clap --help short-circuits before repo load, exits 0.
@@ -86,6 +84,7 @@ only_for_hash dual && (sandbox
 # src/plumbing/main.rs. Tested inside a repo because git outside a
 # repo dies 128 before reaching arg-parse, while clap in gix always
 # runs first.
+# hash=sha1-only
 title "gix rebase --bogus-flag"
 only_for_hash sha1-only && (small-repo-in-sandbox
   it "matches git behavior" && {
@@ -102,6 +101,7 @@ only_for_hash sha1-only && (small-repo-in-sandbox
 # branch.is_none() && opts.onto.is_none() && !opts.root) and emits
 # the same stanza + exits 1; bytes parity holds even though the
 # underlying driver is still a stub.
+# hash=sha1-only
 title "gix rebase (bare, no upstream)"
 only_for_hash sha1-only && (small-repo-in-sandbox
   it "matches git behavior" && {
@@ -128,6 +128,7 @@ only_for_hash dual && (sandbox
 # emits "Current branch <name> is up to date." + exits 0. gix's
 # placeholder emits a stub note (different bytes) + exits 0;
 # exit-code parity holds. Close as `compat_effect`.
+# hash=sha1-only
 title "gix rebase <upstream> (already up to date)"
 only_for_hash sha1-only && (small-repo-in-sandbox
   it "matches git behavior" && {
@@ -140,6 +141,7 @@ only_for_hash sha1-only && (small-repo-in-sandbox
 # "Successfully rebased and updated refs/heads/<name>." + exit 0.
 # gix's placeholder emits a stub note + exit 0; exit-code parity
 # holds. Close as `compat_effect`.
+# hash=sha1-only
 title "gix rebase <upstream> (fast-forward)"
 only_for_hash sha1-only && (small-repo-in-sandbox
   git checkout -q dev
@@ -152,6 +154,7 @@ only_for_hash sha1-only && (small-repo-in-sandbox
 # of <branch> before rebasing. Documented at
 # Documentation/git-rebase.adoc:33 ("`git rebase master topic` is a
 # shortcut for `git checkout topic && git rebase master`").
+# hash=sha1-only
 title "gix rebase <upstream> <branch>"
 only_for_hash sha1-only && (small-repo-in-sandbox
   it "matches git behavior" && {
@@ -164,6 +167,7 @@ only_for_hash sha1-only && (small-repo-in-sandbox
 # rev-parses the upstream positional via `repo.rev_parse_single`
 # before the placeholder happy path; on parse failure it emits
 # git's verbatim wording and exits 128.
+# hash=sha1-only
 title "gix rebase <bad-revspec>"
 only_for_hash sha1-only && (small-repo-in-sandbox
   it "matches git behavior" && {
@@ -173,6 +177,7 @@ only_for_hash sha1-only && (small-repo-in-sandbox
 
 # --- starting-point control ---------------------------------------------
 
+# hash=sha1-only
 title "gix rebase --onto"
 only_for_hash sha1-only && (small-repo-in-sandbox
   it "matches git behavior" && {
@@ -180,6 +185,7 @@ only_for_hash sha1-only && (small-repo-in-sandbox
   }
 )
 
+# hash=sha1-only
 title "gix rebase --keep-base"
 only_for_hash sha1-only && (small-repo-in-sandbox
   it "matches git behavior" && {
@@ -187,6 +193,7 @@ only_for_hash sha1-only && (small-repo-in-sandbox
   }
 )
 
+# hash=sha1-only
 title "gix rebase --root"
 only_for_hash sha1-only && (small-repo-in-sandbox
   it "matches git behavior" && {
@@ -199,6 +206,7 @@ only_for_hash sha1-only && (small-repo-in-sandbox
 # mode=bytes — git emits "fatal: No rebase in progress?" + exit 128
 # when no .git/rebase-merge/ or .git/rebase-apply/ state dir exists.
 # Mirrors vendor/git/builtin/rebase.c get_replay_opts gate.
+# hash=sha1-only
 title "gix rebase --continue"
 only_for_hash sha1-only && (small-repo-in-sandbox
   it "matches git behavior" && {
@@ -206,6 +214,8 @@ only_for_hash sha1-only && (small-repo-in-sandbox
   }
 )
 
+# mode=bytes
+# hash=sha1-only
 title "gix rebase --skip"
 only_for_hash sha1-only && (small-repo-in-sandbox
   it "matches git behavior" && {
@@ -213,6 +223,8 @@ only_for_hash sha1-only && (small-repo-in-sandbox
   }
 )
 
+# mode=bytes
+# hash=sha1-only
 title "gix rebase --abort"
 only_for_hash sha1-only && (small-repo-in-sandbox
   it "matches git behavior" && {
@@ -220,6 +232,8 @@ only_for_hash sha1-only && (small-repo-in-sandbox
   }
 )
 
+# mode=bytes
+# hash=sha1-only
 title "gix rebase --quit"
 only_for_hash sha1-only && (small-repo-in-sandbox
   it "matches git behavior" && {
@@ -227,6 +241,8 @@ only_for_hash sha1-only && (small-repo-in-sandbox
   }
 )
 
+# mode=bytes
+# hash=sha1-only
 title "gix rebase --edit-todo"
 only_for_hash sha1-only && (small-repo-in-sandbox
   it "matches git behavior" && {
@@ -234,6 +250,8 @@ only_for_hash sha1-only && (small-repo-in-sandbox
   }
 )
 
+# mode=bytes
+# hash=sha1-only
 title "gix rebase --show-current-patch"
 only_for_hash sha1-only && (small-repo-in-sandbox
   it "matches git behavior" && {
@@ -243,6 +261,7 @@ only_for_hash sha1-only && (small-repo-in-sandbox
 
 # --- backend selection --------------------------------------------------
 
+# hash=sha1-only
 title "gix rebase --apply"
 only_for_hash sha1-only && (small-repo-in-sandbox
   it "matches git behavior" && {
@@ -250,6 +269,7 @@ only_for_hash sha1-only && (small-repo-in-sandbox
   }
 )
 
+# hash=sha1-only
 title "gix rebase --merge"
 only_for_hash sha1-only && (small-repo-in-sandbox
   it "matches git behavior" && {
@@ -257,6 +277,7 @@ only_for_hash sha1-only && (small-repo-in-sandbox
   }
 )
 
+# hash=sha1-only
 title "gix rebase -m"
 only_for_hash sha1-only && (small-repo-in-sandbox
   it "matches git behavior" && {
@@ -264,6 +285,7 @@ only_for_hash sha1-only && (small-repo-in-sandbox
   }
 )
 
+# hash=sha1-only
 title "gix rebase --interactive"
 only_for_hash sha1-only && (small-repo-in-sandbox
   it "matches git behavior" && {
@@ -271,6 +293,7 @@ only_for_hash sha1-only && (small-repo-in-sandbox
   }
 )
 
+# hash=sha1-only
 title "gix rebase -i"
 only_for_hash sha1-only && (small-repo-in-sandbox
   it "matches git behavior" && {
@@ -280,6 +303,7 @@ only_for_hash sha1-only && (small-repo-in-sandbox
 
 # --- empty / cherry-pick handling ---------------------------------------
 
+# hash=sha1-only
 title "gix rebase --empty=drop"
 only_for_hash sha1-only && (small-repo-in-sandbox
   it "matches git behavior" && {
@@ -287,6 +311,7 @@ only_for_hash sha1-only && (small-repo-in-sandbox
   }
 )
 
+# hash=sha1-only
 title "gix rebase --empty=keep"
 only_for_hash sha1-only && (small-repo-in-sandbox
   it "matches git behavior" && {
@@ -294,6 +319,7 @@ only_for_hash sha1-only && (small-repo-in-sandbox
   }
 )
 
+# hash=sha1-only
 title "gix rebase --empty=stop"
 only_for_hash sha1-only && (small-repo-in-sandbox
   it "matches git behavior" && {
@@ -301,6 +327,7 @@ only_for_hash sha1-only && (small-repo-in-sandbox
   }
 )
 
+# hash=sha1-only
 title "gix rebase --keep-empty"
 only_for_hash sha1-only && (small-repo-in-sandbox
   it "matches git behavior" && {
@@ -308,6 +335,7 @@ only_for_hash sha1-only && (small-repo-in-sandbox
   }
 )
 
+# hash=sha1-only
 title "gix rebase --no-keep-empty"
 only_for_hash sha1-only && (small-repo-in-sandbox
   it "matches git behavior" && {
@@ -315,6 +343,7 @@ only_for_hash sha1-only && (small-repo-in-sandbox
   }
 )
 
+# hash=sha1-only
 title "gix rebase --reapply-cherry-picks"
 only_for_hash sha1-only && (small-repo-in-sandbox
   it "matches git behavior" && {
@@ -322,6 +351,7 @@ only_for_hash sha1-only && (small-repo-in-sandbox
   }
 )
 
+# hash=sha1-only
 title "gix rebase --no-reapply-cherry-picks"
 only_for_hash sha1-only && (small-repo-in-sandbox
   it "matches git behavior" && {
@@ -329,6 +359,7 @@ only_for_hash sha1-only && (small-repo-in-sandbox
   }
 )
 
+# hash=sha1-only
 title "gix rebase --allow-empty-message"
 only_for_hash sha1-only && (small-repo-in-sandbox
   it "matches git behavior" && {
@@ -338,6 +369,7 @@ only_for_hash sha1-only && (small-repo-in-sandbox
 
 # --- strategy / merge-driver tuning -------------------------------------
 
+# hash=sha1-only
 title "gix rebase --strategy=ort"
 only_for_hash sha1-only && (small-repo-in-sandbox
   it "matches git behavior" && {
@@ -345,6 +377,7 @@ only_for_hash sha1-only && (small-repo-in-sandbox
   }
 )
 
+# hash=sha1-only
 title "gix rebase -s ort"
 only_for_hash sha1-only && (small-repo-in-sandbox
   it "matches git behavior" && {
@@ -352,6 +385,7 @@ only_for_hash sha1-only && (small-repo-in-sandbox
   }
 )
 
+# hash=sha1-only
 title "gix rebase --strategy-option=ours"
 only_for_hash sha1-only && (small-repo-in-sandbox
   it "matches git behavior" && {
@@ -359,6 +393,7 @@ only_for_hash sha1-only && (small-repo-in-sandbox
   }
 )
 
+# hash=sha1-only
 title "gix rebase -X ours"
 only_for_hash sha1-only && (small-repo-in-sandbox
   it "matches git behavior" && {
@@ -366,6 +401,7 @@ only_for_hash sha1-only && (small-repo-in-sandbox
   }
 )
 
+# hash=sha1-only
 title "gix rebase --rebase-merges"
 only_for_hash sha1-only && (small-repo-in-sandbox
   it "matches git behavior" && {
@@ -373,6 +409,7 @@ only_for_hash sha1-only && (small-repo-in-sandbox
   }
 )
 
+# hash=sha1-only
 title "gix rebase --rebase-merges=rebase-cousins"
 only_for_hash sha1-only && (small-repo-in-sandbox
   it "matches git behavior" && {
@@ -380,6 +417,7 @@ only_for_hash sha1-only && (small-repo-in-sandbox
   }
 )
 
+# hash=sha1-only
 title "gix rebase --rebase-merges=no-rebase-cousins"
 only_for_hash sha1-only && (small-repo-in-sandbox
   it "matches git behavior" && {
@@ -387,6 +425,7 @@ only_for_hash sha1-only && (small-repo-in-sandbox
   }
 )
 
+# hash=sha1-only
 title "gix rebase --no-rebase-merges"
 only_for_hash sha1-only && (small-repo-in-sandbox
   it "matches git behavior" && {
@@ -394,6 +433,7 @@ only_for_hash sha1-only && (small-repo-in-sandbox
   }
 )
 
+# hash=sha1-only
 title "gix rebase -r"
 only_for_hash sha1-only && (small-repo-in-sandbox
   it "matches git behavior" && {
@@ -403,6 +443,7 @@ only_for_hash sha1-only && (small-repo-in-sandbox
 
 # --- force / fork-point -------------------------------------------------
 
+# hash=sha1-only
 title "gix rebase --force-rebase"
 only_for_hash sha1-only && (small-repo-in-sandbox
   it "matches git behavior" && {
@@ -410,6 +451,7 @@ only_for_hash sha1-only && (small-repo-in-sandbox
   }
 )
 
+# hash=sha1-only
 title "gix rebase -f"
 only_for_hash sha1-only && (small-repo-in-sandbox
   it "matches git behavior" && {
@@ -417,6 +459,7 @@ only_for_hash sha1-only && (small-repo-in-sandbox
   }
 )
 
+# hash=sha1-only
 title "gix rebase --no-ff"
 only_for_hash sha1-only && (small-repo-in-sandbox
   it "matches git behavior" && {
@@ -424,6 +467,7 @@ only_for_hash sha1-only && (small-repo-in-sandbox
   }
 )
 
+# hash=sha1-only
 title "gix rebase --fork-point"
 only_for_hash sha1-only && (small-repo-in-sandbox
   it "matches git behavior" && {
@@ -431,6 +475,7 @@ only_for_hash sha1-only && (small-repo-in-sandbox
   }
 )
 
+# hash=sha1-only
 title "gix rebase --no-fork-point"
 only_for_hash sha1-only && (small-repo-in-sandbox
   it "matches git behavior" && {
@@ -440,6 +485,7 @@ only_for_hash sha1-only && (small-repo-in-sandbox
 
 # --- interactive companions ---------------------------------------------
 
+# hash=sha1-only
 title "gix rebase --exec"
 only_for_hash sha1-only && (small-repo-in-sandbox
   it "matches git behavior" && {
@@ -447,6 +493,7 @@ only_for_hash sha1-only && (small-repo-in-sandbox
   }
 )
 
+# hash=sha1-only
 title "gix rebase -x"
 only_for_hash sha1-only && (small-repo-in-sandbox
   it "matches git behavior" && {
@@ -454,6 +501,7 @@ only_for_hash sha1-only && (small-repo-in-sandbox
   }
 )
 
+# hash=sha1-only
 title "gix rebase --autosquash"
 only_for_hash sha1-only && (small-repo-in-sandbox
   it "matches git behavior" && {
@@ -461,6 +509,7 @@ only_for_hash sha1-only && (small-repo-in-sandbox
   }
 )
 
+# hash=sha1-only
 title "gix rebase --no-autosquash"
 only_for_hash sha1-only && (small-repo-in-sandbox
   it "matches git behavior" && {
@@ -468,6 +517,7 @@ only_for_hash sha1-only && (small-repo-in-sandbox
   }
 )
 
+# hash=sha1-only
 title "gix rebase --reschedule-failed-exec"
 only_for_hash sha1-only && (small-repo-in-sandbox
   it "matches git behavior" && {
@@ -475,6 +525,7 @@ only_for_hash sha1-only && (small-repo-in-sandbox
   }
 )
 
+# hash=sha1-only
 title "gix rebase --no-reschedule-failed-exec"
 only_for_hash sha1-only && (small-repo-in-sandbox
   it "matches git behavior" && {
@@ -482,6 +533,7 @@ only_for_hash sha1-only && (small-repo-in-sandbox
   }
 )
 
+# hash=sha1-only
 title "gix rebase --update-refs"
 only_for_hash sha1-only && (small-repo-in-sandbox
   it "matches git behavior" && {
@@ -489,6 +541,7 @@ only_for_hash sha1-only && (small-repo-in-sandbox
   }
 )
 
+# hash=sha1-only
 title "gix rebase --no-update-refs"
 only_for_hash sha1-only && (small-repo-in-sandbox
   it "matches git behavior" && {
@@ -498,6 +551,7 @@ only_for_hash sha1-only && (small-repo-in-sandbox
 
 # --- verbosity / diffstat -----------------------------------------------
 
+# hash=sha1-only
 title "gix rebase --quiet"
 only_for_hash sha1-only && (small-repo-in-sandbox
   it "matches git behavior" && {
@@ -505,6 +559,7 @@ only_for_hash sha1-only && (small-repo-in-sandbox
   }
 )
 
+# hash=sha1-only
 title "gix rebase -q"
 only_for_hash sha1-only && (small-repo-in-sandbox
   it "matches git behavior" && {
@@ -512,6 +567,7 @@ only_for_hash sha1-only && (small-repo-in-sandbox
   }
 )
 
+# hash=sha1-only
 title "gix rebase --verbose"
 only_for_hash sha1-only && (small-repo-in-sandbox
   it "matches git behavior" && {
@@ -519,6 +575,7 @@ only_for_hash sha1-only && (small-repo-in-sandbox
   }
 )
 
+# hash=sha1-only
 title "gix rebase -v"
 only_for_hash sha1-only && (small-repo-in-sandbox
   it "matches git behavior" && {
@@ -526,6 +583,7 @@ only_for_hash sha1-only && (small-repo-in-sandbox
   }
 )
 
+# hash=sha1-only
 title "gix rebase --stat"
 only_for_hash sha1-only && (small-repo-in-sandbox
   it "matches git behavior" && {
@@ -533,6 +591,7 @@ only_for_hash sha1-only && (small-repo-in-sandbox
   }
 )
 
+# hash=sha1-only
 title "gix rebase --no-stat"
 only_for_hash sha1-only && (small-repo-in-sandbox
   it "matches git behavior" && {
@@ -540,6 +599,7 @@ only_for_hash sha1-only && (small-repo-in-sandbox
   }
 )
 
+# hash=sha1-only
 title "gix rebase -n"
 only_for_hash sha1-only && (small-repo-in-sandbox
   it "matches git behavior" && {
@@ -549,6 +609,7 @@ only_for_hash sha1-only && (small-repo-in-sandbox
 
 # --- hooks --------------------------------------------------------------
 
+# hash=sha1-only
 title "gix rebase --no-verify"
 only_for_hash sha1-only && (small-repo-in-sandbox
   it "matches git behavior" && {
@@ -556,6 +617,7 @@ only_for_hash sha1-only && (small-repo-in-sandbox
   }
 )
 
+# hash=sha1-only
 title "gix rebase --verify"
 only_for_hash sha1-only && (small-repo-in-sandbox
   it "matches git behavior" && {
@@ -565,6 +627,7 @@ only_for_hash sha1-only && (small-repo-in-sandbox
 
 # --- apply-backend passthroughs -----------------------------------------
 
+# hash=sha1-only
 title "gix rebase -C"
 only_for_hash sha1-only && (small-repo-in-sandbox
   it "matches git behavior" && {
@@ -572,6 +635,7 @@ only_for_hash sha1-only && (small-repo-in-sandbox
   }
 )
 
+# hash=sha1-only
 title "gix rebase --ignore-whitespace"
 only_for_hash sha1-only && (small-repo-in-sandbox
   it "matches git behavior" && {
@@ -579,6 +643,7 @@ only_for_hash sha1-only && (small-repo-in-sandbox
   }
 )
 
+# hash=sha1-only
 title "gix rebase --whitespace=fix"
 only_for_hash sha1-only && (small-repo-in-sandbox
   it "matches git behavior" && {
@@ -593,6 +658,7 @@ only_for_hash sha1-only && (small-repo-in-sandbox
 # git emits "error: unknown option `trailer'" + exit 129; gix's clap
 # accepts the flag and exits 0. Hard system-version constraint —
 # closes as `shortcoming` until the test runtime upgrades.
+# hash=sha1-only
 title "gix rebase --trailer"
 only_for_hash sha1-only && (small-repo-in-sandbox
   it "matches git behavior" && {
@@ -600,6 +666,7 @@ only_for_hash sha1-only && (small-repo-in-sandbox
   }
 )
 
+# hash=sha1-only
 title "gix rebase --signoff"
 only_for_hash sha1-only && (small-repo-in-sandbox
   it "matches git behavior" && {
@@ -607,6 +674,7 @@ only_for_hash sha1-only && (small-repo-in-sandbox
   }
 )
 
+# hash=sha1-only
 title "gix rebase --committer-date-is-author-date"
 only_for_hash sha1-only && (small-repo-in-sandbox
   it "matches git behavior" && {
@@ -614,6 +682,7 @@ only_for_hash sha1-only && (small-repo-in-sandbox
   }
 )
 
+# hash=sha1-only
 title "gix rebase --reset-author-date"
 only_for_hash sha1-only && (small-repo-in-sandbox
   it "matches git behavior" && {
@@ -621,6 +690,7 @@ only_for_hash sha1-only && (small-repo-in-sandbox
   }
 )
 
+# hash=sha1-only
 title "gix rebase --ignore-date"
 only_for_hash sha1-only && (small-repo-in-sandbox
   it "matches git behavior" && {
@@ -630,6 +700,7 @@ only_for_hash sha1-only && (small-repo-in-sandbox
 
 # --- rerere -------------------------------------------------------------
 
+# hash=sha1-only
 title "gix rebase --rerere-autoupdate"
 only_for_hash sha1-only && (small-repo-in-sandbox
   it "matches git behavior" && {
@@ -637,6 +708,7 @@ only_for_hash sha1-only && (small-repo-in-sandbox
   }
 )
 
+# hash=sha1-only
 title "gix rebase --no-rerere-autoupdate"
 only_for_hash sha1-only && (small-repo-in-sandbox
   it "matches git behavior" && {
@@ -646,6 +718,7 @@ only_for_hash sha1-only && (small-repo-in-sandbox
 
 # --- autostash ----------------------------------------------------------
 
+# hash=sha1-only
 title "gix rebase --autostash"
 only_for_hash sha1-only && (small-repo-in-sandbox
   it "matches git behavior" && {
@@ -653,6 +726,7 @@ only_for_hash sha1-only && (small-repo-in-sandbox
   }
 )
 
+# hash=sha1-only
 title "gix rebase --no-autostash"
 only_for_hash sha1-only && (small-repo-in-sandbox
   it "matches git behavior" && {
@@ -662,6 +736,7 @@ only_for_hash sha1-only && (small-repo-in-sandbox
 
 # --- GPG signing --------------------------------------------------------
 
+# hash=sha1-only
 title "gix rebase --gpg-sign"
 only_for_hash sha1-only && (small-repo-in-sandbox
   it "matches git behavior" && {
@@ -669,6 +744,7 @@ only_for_hash sha1-only && (small-repo-in-sandbox
   }
 )
 
+# hash=sha1-only
 title "gix rebase --gpg-sign=keyid"
 only_for_hash sha1-only && (small-repo-in-sandbox
   it "matches git behavior" && {
@@ -676,6 +752,7 @@ only_for_hash sha1-only && (small-repo-in-sandbox
   }
 )
 
+# hash=sha1-only
 title "gix rebase -S"
 only_for_hash sha1-only && (small-repo-in-sandbox
   it "matches git behavior" && {
@@ -683,6 +760,7 @@ only_for_hash sha1-only && (small-repo-in-sandbox
   }
 )
 
+# hash=sha1-only
 title "gix rebase --no-gpg-sign"
 only_for_hash sha1-only && (small-repo-in-sandbox
   it "matches git behavior" && {
