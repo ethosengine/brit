@@ -200,12 +200,25 @@ only_for_hash sha1-only && (small-repo-in-sandbox
 )
 
 # mode=effect — `gix diff <blob> <blob>`: raw blob-object comparison
-# (builtin_diff_blobs). Both args resolve to blob objects directly.
+# (vendor/git/builtin/diff.c builtin_diff_blobs). Both args resolve
+# to blob objects directly. gix's porcelain helper detects the
+# blob-vs-blob case in the 2-arg branch via repo.find_object().kind
+# and emits a placeholder note ("[gix-diff] blob <a> vs blob <b> —
+# patch output not yet implemented") on stderr, exits 0. Bytes
+# parity (real blob diff via gix-diff::blob) deferred via
+# compat_effect.
 # hash=sha1-only
 title "gix diff <blob> <blob>"
 only_for_hash sha1-only && (small-repo-in-sandbox
-  # TODO — expect_parity effect -- diff <blob-sha-1> <blob-sha-2>
-  it "matches git behavior" && { :; }
+  echo modified > a
+  B1=$(git hash-object a)
+  git add a
+  git commit -q -m blob-2
+  echo more > a
+  B2=$(git hash-object a)
+  it "matches git behavior" && {
+    compat_effect "diff blob-vs-blob patch output deferred until renderer lands" -- diff "$B1" "$B2"
+  }
 )
 
 # mode=effect — `gix diff -- <path>...`: path filter trailing the diff

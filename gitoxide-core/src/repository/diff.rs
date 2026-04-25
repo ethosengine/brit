@@ -123,15 +123,38 @@ pub fn porcelain(
             let old_treeish = it.next().context("missing old revspec")?;
             let new_treeish = it.next().context("missing new revspec")?;
             // Same exact-stanza ambiguous-arg parity as the 1-arg path.
+            let mut ids = Vec::with_capacity(2);
             for spec in [&old_treeish, &new_treeish] {
-                if repo.rev_parse_single(spec.as_bstr()).is_err() {
-                    eprintln!(
-                        "fatal: ambiguous argument '{spec}': unknown revision or path not in the working tree.\n\
-                         Use '--' to separate paths from revisions, like this:\n\
-                         'git <command> [<revision>...] -- [<file>...]'"
-                    );
-                    std::process::exit(128);
+                match repo.rev_parse_single(spec.as_bstr()) {
+                    Ok(id) => ids.push(id),
+                    Err(_) => {
+                        eprintln!(
+                            "fatal: ambiguous argument '{spec}': unknown revision or path not in the working tree.\n\
+                             Use '--' to separate paths from revisions, like this:\n\
+                             'git <command> [<revision>...] -- [<file>...]'"
+                        );
+                        std::process::exit(128);
+                    }
                 }
+            }
+            // Detect blob-vs-blob form (vendor/git/builtin/diff.c
+            // builtin_diff_blobs): if both args resolve to blob objects
+            // directly, emit a placeholder note and exit 0. Mixed
+            // blob/tree is rejected by git too.
+            let kinds: Vec<gix::object::Kind> = ids
+                .iter()
+                .map(|id| repo.find_object(*id).map(|o| o.kind))
+                .collect::<Result<Vec<_>, _>>()?;
+            if kinds.iter().all(|k| *k == gix::object::Kind::Blob) {
+                use std::io::Write;
+                let mut stderr = std::io::stderr().lock();
+                let _ = writeln!(
+                    stderr,
+                    "[gix-diff] blob {} vs blob {} — patch output not yet implemented",
+                    ids[0].shorten_or_id(),
+                    ids[1].shorten_or_id()
+                );
+                return Ok(());
             }
             tree(repo, out, old_treeish, new_treeish)
         }
