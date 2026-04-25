@@ -68,6 +68,7 @@ only_for_hash dual && (sandbox
 # mode=effect — unknown flag: git exits 129 (usage_msg_opt in
 # vendor/git/parse-options.c). gix's Clap layer maps UnknownArgument to 129
 # via src/plumbing/main.rs.
+# hash=sha1-only
 title "gix commit --bogus-flag"
 only_for_hash sha1-only && (small-repo-in-sandbox
   it "matches git behavior" && {
@@ -98,6 +99,7 @@ only_for_hash dual && (sandbox
 # explicit "without --allow-empty not yet implemented" guard until the
 # index→tree path lands; both binaries exit 1 so effect-mode parity
 # holds today. Bytes parity on the status block stays deferred.
+# hash=sha1-only
 title "gix commit (nothing to commit)"
 only_for_hash sha1-only && (small-repo-in-sandbox
   it "matches git behavior" && {
@@ -111,6 +113,7 @@ only_for_hash sha1-only && (small-repo-in-sandbox
 # values are concatenated as separate paragraphs (`opt_parse_m` in
 # vendor/git/builtin/commit.c). Tested under `--allow-empty` so the
 # index→tree primitive is not required.
+# hash=sha1-only
 title "gix commit -m / --message"
 only_for_hash sha1-only && (small-repo-in-sandbox
   it "matches git behavior — single -m" && {
@@ -125,6 +128,7 @@ only_for_hash sha1-only && (small-repo-in-sandbox
 # stdin (PARITY_STDIN drives both binaries). gix's create() composes
 # the file body as an additional paragraph after any -m values, same
 # rule as `git tag -F`.
+# hash=sha1-only
 title "gix commit -F / --file"
 only_for_hash sha1-only && (small-repo-in-sandbox
   echo "msg-from-file" > .msg
@@ -142,6 +146,7 @@ only_for_hash sha1-only && (small-repo-in-sandbox
 # ignores the template when `-m` is supplied — see commit.adoc:202).
 # Editor-driven rows where the template body itself drives the
 # message will close once the editor flow lands.
+# hash=sha1-only
 title "gix commit -t / --template"
 only_for_hash sha1-only && (small-repo-in-sandbox
   echo "tmpl" >.tmpl
@@ -159,6 +164,7 @@ only_for_hash sha1-only && (small-repo-in-sandbox
 # (1) -C/-c → full message copy via rev_parse_single + Commit::message_raw
 # (2) --squash=<commit> → "squash! <subject>" + appended -m paragraphs
 # (3) --fixup=spec → fixup!/amend! variants per spec parse.
+# hash=sha1-only
 title "gix commit -C / --reuse-message"
 only_for_hash sha1-only && (small-repo-in-sandbox
   it "matches git behavior" && {
@@ -166,6 +172,7 @@ only_for_hash sha1-only && (small-repo-in-sandbox
   }
 )
 
+# hash=sha1-only
 title "gix commit -c / --reedit-message"
 only_for_hash sha1-only && (small-repo-in-sandbox
   it "matches git behavior" && {
@@ -173,6 +180,7 @@ only_for_hash sha1-only && (small-repo-in-sandbox
   }
 )
 
+# hash=sha1-only
 title "gix commit --squash"
 only_for_hash sha1-only && (small-repo-in-sandbox
   it "matches git behavior" && {
@@ -180,6 +188,7 @@ only_for_hash sha1-only && (small-repo-in-sandbox
   }
 )
 
+# hash=sha1-only
 title "gix commit --fixup"
 only_for_hash sha1-only && (small-repo-in-sandbox
   it "matches git behavior — plain" && {
@@ -201,6 +210,7 @@ only_for_hash sha1-only && (small-repo-in-sandbox
 # index→tree-pending bail). Bytes parity on the dirty path rides the
 # same primitive as `--dry-run` / `<pathspec>` — see the row at the top
 # of this file.
+# hash=sha1-only
 title "gix commit -a / --all"
 only_for_hash sha1-only && (small-repo-in-sandbox
   it "matches git behavior" && {
@@ -212,6 +222,7 @@ only_for_hash sha1-only && (small-repo-in-sandbox
 # has no interactive UI; clap-accepts the flag and falls through to the
 # index→tree-pending bail. In a clean small-repo-in-sandbox without TTY
 # both binaries exit 1 (git: "no changes to commit"; gix: bail).
+# hash=sha1-only
 title "gix commit -p / --patch"
 only_for_hash sha1-only && (small-repo-in-sandbox
   it "matches git behavior" && {
@@ -224,6 +235,7 @@ only_for_hash sha1-only && (small-repo-in-sandbox
 # small-repo-in-sandbox both binaries exit 1 (git: "nothing to commit";
 # gix: index→tree-pending bail). Dirty-path bytes parity rides the same
 # primitive as `-a`.
+# hash=sha1-only
 title "gix commit -i / --include"
 only_for_hash sha1-only && (small-repo-in-sandbox
   it "matches git behavior" && {
@@ -236,6 +248,7 @@ only_for_hash sha1-only && (small-repo-in-sandbox
 # clean small-repo-in-sandbox both binaries exit 1 (git: "no paths to
 # commit"; gix: index→tree-pending bail). Dirty-path bytes parity rides
 # the same primitive as `-a`/`-i`.
+# hash=sha1-only
 title "gix commit -o / --only"
 only_for_hash sha1-only && (small-repo-in-sandbox
   it "matches git behavior" && {
@@ -249,6 +262,7 @@ only_for_hash sha1-only && (small-repo-in-sandbox
 # small-repo-in-sandbox both binaries exit 1 (git: "nothing to commit,
 # working tree clean"; gix: "without --allow-empty not yet implemented")
 # — effect parity holds. Bytes parity rides the index→tree primitive.
+# hash=sha1-only
 title "gix commit <pathspec>"
 only_for_hash sha1-only && (small-repo-in-sandbox
   it "matches git behavior" && {
@@ -261,6 +275,7 @@ only_for_hash sha1-only && (small-repo-in-sandbox
 # Tested under `--allow-empty` so the actual pathspec processing is
 # deferred (rides index→tree). Both binaries exit 0 under --allow-empty
 # regardless of the pathspec source.
+# hash=sha1-only
 title "gix commit --pathspec-from-file"
 only_for_hash sha1-only && (small-repo-in-sandbox
   echo a > .ps
@@ -269,6 +284,7 @@ only_for_hash sha1-only && (small-repo-in-sandbox
   }
 )
 
+# hash=sha1-only
 title "gix commit --pathspec-file-nul"
 only_for_hash sha1-only && (small-repo-in-sandbox
   printf 'a\0' > .ps
@@ -281,6 +297,7 @@ only_for_hash sha1-only && (small-repo-in-sandbox
 
 # mode=effect — `--amend` replaces tip with a new commit; --no-edit
 # preserves the original message.
+# hash=sha1-only
 title "gix commit --amend"
 only_for_hash sha1-only && (small-repo-in-sandbox
   it "matches git behavior — --no-edit" && {
@@ -297,6 +314,7 @@ only_for_hash sha1-only && (small-repo-in-sandbox
 # "fatal: --reset-author can be used only with -C, -c or --amend.".
 # gix mirrors that exact gate in gitoxide-core::repository::commit::create
 # until reuse-message / amend rows activate the alternative path.
+# hash=sha1-only
 title "gix commit --reset-author"
 only_for_hash sha1-only && (small-repo-in-sandbox
   it "matches git behavior" && {
@@ -308,6 +326,7 @@ only_for_hash sha1-only && (small-repo-in-sandbox
 # amend/rebase. Clap-accepted no-op until hooks land. Tested on the
 # `--allow-empty` path (which always exits 0) so the row doesn't
 # depend on the not-yet-implemented --amend semantics.
+# hash=sha1-only
 title "gix commit --no-post-rewrite"
 only_for_hash sha1-only && (small-repo-in-sandbox
   it "matches git behavior" && {
@@ -324,6 +343,7 @@ only_for_hash sha1-only && (small-repo-in-sandbox
 # HEAD's tree verbatim under --allow-empty and calls Repository::commit
 # to advance HEAD; the in-process index is not consulted (no index→tree
 # is required because the tree is the parent's).
+# hash=sha1-only
 title "gix commit --allow-empty"
 only_for_hash sha1-only && (small-repo-in-sandbox
   it "matches git behavior" && {
@@ -336,6 +356,7 @@ only_for_hash sha1-only && (small-repo-in-sandbox
 # "empty message" abort when allow_empty_message is set. gix's
 # porcelain `create` mirrors the check — composed.is_empty() is fatal
 # only when the flag is unset.
+# hash=sha1-only
 title "gix commit --allow-empty-message"
 only_for_hash sha1-only && (small-repo-in-sandbox
   it "matches git behavior" && {
@@ -347,6 +368,7 @@ only_for_hash sha1-only && (small-repo-in-sandbox
 # `--verify` is the default. gix has no hook execution path today, so
 # both forms are clap-accepted no-ops. Effect-mode parity holds; bytes
 # parity is moot until hooks land.
+# hash=sha1-only
 title "gix commit -n / --no-verify"
 only_for_hash sha1-only && (small-repo-in-sandbox
   it "matches git behavior — --no-verify" && {
@@ -366,6 +388,7 @@ only_for_hash sha1-only && (small-repo-in-sandbox
 # (`git rev-list -i --author=<pat>` lookup) stays deferred — git's
 # parse_author_arg uses rev-list; for parity rows that want byte
 # matching on the lookup, a dedicated fixture row will close later.
+# hash=sha1-only
 title "gix commit --author"
 only_for_hash sha1-only && (small-repo-in-sandbox
   it "matches git behavior — explicit ident" && {
@@ -376,6 +399,7 @@ only_for_hash sha1-only && (small-repo-in-sandbox
 # mode=effect — `--date=<date>` overrides author date. Accepts
 # RFC2822 / ISO8601 / git-internal forms via `gix::date::parse`,
 # the same set git accepts (see date-formats.adoc + gix-date crate).
+# hash=sha1-only
 title "gix commit --date"
 only_for_hash sha1-only && (small-repo-in-sandbox
   it "matches git behavior" && {
@@ -390,6 +414,7 @@ only_for_hash sha1-only && (small-repo-in-sandbox
 # Clap-accepted no-ops today; the actual trailer composition rides the
 # `--trailer` parity row (and gix's gix-trailer integration) when that
 # closes. Effect-mode parity holds — both binaries exit 0 either way.
+# hash=sha1-only
 title "gix commit -s / --signoff"
 only_for_hash sha1-only && (small-repo-in-sandbox
   it "matches git behavior — --signoff" && {
@@ -406,6 +431,7 @@ only_for_hash sha1-only && (small-repo-in-sandbox
 # Bytes parity on the message format (interpret_trailers cleanup,
 # duplicate elision, configurable separators per trailer.* config)
 # stays deferred pending dedicated gix-trailer integration.
+# hash=sha1-only
 title "gix commit --trailer"
 only_for_hash sha1-only && (small-repo-in-sandbox
   it "matches git behavior" && {
@@ -423,6 +449,7 @@ only_for_hash sha1-only && (small-repo-in-sandbox
 # vs gix's outer-whitespace trim) is intentionally deferred — effect
 # parity holds because both binaries succeed under the canonical modes
 # and reject `bogus` identically.
+# hash=sha1-only
 title "gix commit --cleanup"
 only_for_hash sha1-only && (small-repo-in-sandbox
   it "matches git behavior — strip" && {
@@ -451,6 +478,7 @@ only_for_hash sha1-only && (small-repo-in-sandbox
 # Under EDITOR=true the editor is a no-op; commit proceeds with the
 # original text. gix's `-e` is clap-accepted today (editor-invoking
 # semantics land with the template / status rows). Both binaries exit 0.
+# hash=sha1-only
 title "gix commit -e / --edit"
 only_for_hash sha1-only && (small-repo-in-sandbox
   it "matches git behavior" && {
@@ -463,6 +491,7 @@ only_for_hash sha1-only && (small-repo-in-sandbox
 # clap-accepts and gix proceeds without launching an editor (which it
 # wouldn't anyway). Editor-invoking semantics for `-e`/`--edit` land
 # with later rows that exercise the template / status pass.
+# hash=sha1-only
 title "gix commit --no-edit"
 only_for_hash sha1-only && (small-repo-in-sandbox
   it "matches git behavior" && {
@@ -477,6 +506,7 @@ only_for_hash sha1-only && (small-repo-in-sandbox
 # binaries hit the same exit-1 path (git: "nothing to commit"; gix:
 # "without --allow-empty not yet implemented" — clap accepts the
 # flag, falls through). Bytes-mode rendering rides index→tree.
+# hash=sha1-only
 title "gix commit --dry-run"
 only_for_hash sha1-only && (small-repo-in-sandbox
   it "matches git behavior" && {
@@ -486,6 +516,7 @@ only_for_hash sha1-only && (small-repo-in-sandbox
 
 # mode=effect — `--short` implies --dry-run with short-format status.
 # Same clean-repo exit-1 parity as --dry-run.
+# hash=sha1-only
 title "gix commit --short"
 only_for_hash sha1-only && (small-repo-in-sandbox
   it "matches git behavior" && {
@@ -495,6 +526,7 @@ only_for_hash sha1-only && (small-repo-in-sandbox
 
 # mode=effect — `--branch` adds branch+tracking header (only meaningful
 # in --short / --porcelain). Clean-repo exit-1 parity.
+# hash=sha1-only
 title "gix commit --branch"
 only_for_hash sha1-only && (small-repo-in-sandbox
   it "matches git behavior" && {
@@ -504,6 +536,7 @@ only_for_hash sha1-only && (small-repo-in-sandbox
 
 # mode=effect — `--porcelain` implies --dry-run with porcelain v1 format.
 # Clean-repo exit-1 parity.
+# hash=sha1-only
 title "gix commit --porcelain"
 only_for_hash sha1-only && (small-repo-in-sandbox
   it "matches git behavior" && {
@@ -513,6 +546,7 @@ only_for_hash sha1-only && (small-repo-in-sandbox
 
 # mode=effect — `--long` implies --dry-run with default long-format.
 # Clean-repo exit-1 parity.
+# hash=sha1-only
 title "gix commit --long"
 only_for_hash sha1-only && (small-repo-in-sandbox
   it "matches git behavior" && {
@@ -523,6 +557,7 @@ only_for_hash sha1-only && (small-repo-in-sandbox
 # mode=effect — `-z` / `--null` switches short/porcelain output to NUL
 # terminators. Implies --porcelain when neither --short nor --porcelain
 # is given. Clean-repo exit-1 parity.
+# hash=sha1-only
 title "gix commit -z / --null"
 only_for_hash sha1-only && (small-repo-in-sandbox
   it "matches git behavior" && {
@@ -537,6 +572,7 @@ only_for_hash sha1-only && (small-repo-in-sandbox
 # or via captured COMMIT_EDITMSG; clap-accepted no-ops on the
 # `--allow-empty -m` path. Bytes parity on the editor template rides
 # the editor flow that also covers -e/-t/-v.
+# hash=sha1-only
 title "gix commit --status / --no-status"
 only_for_hash sha1-only && (small-repo-in-sandbox
   it "matches git behavior — --status" && {
@@ -551,6 +587,7 @@ only_for_hash sha1-only && (small-repo-in-sandbox
 # `-vv` adds the worktree diff on top. Editor-template diff rendering
 # is out of scope; clap-accepted today (count-style) so the
 # `--allow-empty -m` rows pass on exit-code parity.
+# hash=sha1-only
 title "gix commit -v / --verbose"
 only_for_hash sha1-only && (small-repo-in-sandbox
   it "matches git behavior — -v" && {
@@ -565,6 +602,7 @@ only_for_hash sha1-only && (small-repo-in-sandbox
 # Both binaries exit 0; bytes parity on the summary itself is out of
 # scope for the first iterations (git emits stat lines via diff
 # machinery, gix emits a minimal `[<abbrev>] <subject>` shape).
+# hash=sha1-only
 title "gix commit -q / --quiet"
 only_for_hash sha1-only && (small-repo-in-sandbox
   it "matches git behavior" && {
@@ -580,6 +618,7 @@ only_for_hash sha1-only && (small-repo-in-sandbox
 # `-u` is bare). With clean small-repo-in-sandbox under --short, both
 # binaries exit 1 ("nothing to commit"). Bytes parity on the
 # untracked-files block rides the index→tree primitive.
+# hash=sha1-only
 title "gix commit -u / --untracked-files"
 only_for_hash sha1-only && (small-repo-in-sandbox
   it "matches git behavior — -u (default all)" && {
@@ -608,6 +647,7 @@ only_for_hash sha1-only && (small-repo-in-sandbox
 # parity holds without requiring a signing backend on either side.
 # `--no-gpg-sign` is a clap-accepted no-op (gix has no signing path
 # to negate anyway).
+# hash=sha1-only
 title "gix commit -S / --gpg-sign / --no-gpg-sign"
 only_for_hash sha1-only && (small-repo-in-sandbox
   it "matches git behavior — -S" && {
@@ -623,6 +663,7 @@ only_for_hash sha1-only && (small-repo-in-sandbox
 # mode=effect — `--` separates options from pathspec. clap interprets
 # the trailing positional sequence after `--` as `pathspec`. Same
 # clean-repo exit-1 parity as the bare-pathspec row.
+# hash=sha1-only
 title "gix commit -- <pathspec>"
 only_for_hash sha1-only && (small-repo-in-sandbox
   it "matches git behavior" && {
