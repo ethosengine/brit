@@ -389,20 +389,24 @@ only_for_hash sha1-only && (small-repo-in-sandbox
 
 # --- output formats: name / status / stat ------------------------------
 
-# mode=bytes — `--name-only`: one path per line, byte-stable.
+# mode=effect — `--name-only`: one path per line. Accepted by clap;
+# bytes parity (changed-path enumeration) deferred until renderer lands.
 # hash=sha1-only
 title "gix diff --name-only"
 only_for_hash sha1-only && (small-repo-in-sandbox
-  # TODO — expect_parity bytes -- diff --name-only HEAD~1 HEAD
-  it "matches git behavior" && { :; }
+  it "matches git behavior" && {
+    compat_effect "diff --name-only changed-path enumeration deferred until renderer lands" -- diff --name-only HEAD~1 HEAD
+  }
 )
 
-# mode=bytes — `--name-status`: status letter + path per line.
+# mode=effect — `--name-status`: status letter + path per line.
+# Accepted by clap; bytes parity deferred until renderer lands.
 # hash=sha1-only
 title "gix diff --name-status"
 only_for_hash sha1-only && (small-repo-in-sandbox
-  # TODO — expect_parity bytes -- diff --name-status HEAD~1 HEAD
-  it "matches git behavior" && { :; }
+  it "matches git behavior" && {
+    compat_effect "diff --name-status status-letter+path enumeration deferred until renderer lands" -- diff --name-status HEAD~1 HEAD
+  }
 )
 
 # mode=effect — `--stat[=<width>[,<name-width>[,<count>]]]`: file-by-file
