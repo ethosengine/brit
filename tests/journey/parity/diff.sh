@@ -330,13 +330,15 @@ only_for_hash dual && (sandbox
 # --- output formats: patch family --------------------------------------
 
 # mode=effect — `-p` / `-u` / `--patch`: generate patch (default for
-# git diff). gix-diff currently has no patch renderer; close as
-# compat_effect until a renderer lands or with byte-mode once it does.
+# git diff). All three forms parse via clap (`short = 'p',
+# short_alias = 'u', long = "patch"`). Bytes parity deferred via
+# compat_effect until the patch renderer lands.
 # hash=sha1-only
 title "gix diff -p / -u / --patch"
 only_for_hash sha1-only && (small-repo-in-sandbox
-  # TODO — expect_parity effect -- diff -p HEAD~1 HEAD
-  it "matches git behavior" && { :; }
+  it "matches git behavior" && {
+    compat_effect "diff -p/-u/--patch patch output deferred until renderer lands" -- diff -p HEAD~1 HEAD
+  }
 )
 
 # mode=effect — `-s` / `--no-patch`: suppress diff output. Useful in

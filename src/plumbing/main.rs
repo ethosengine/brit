@@ -349,9 +349,8 @@ pub fn main() -> Result<()> {
             cmd,
             args,
             paths,
-            cached: _cached,
-            merge_base: _merge_base,
             no_index,
+            ..
         }) => match cmd {
             // Bare `gix diff` (no subcommand): porcelain dispatch.
             // Outside a repo with zero positional args, git emits
@@ -373,7 +372,7 @@ pub fn main() -> Result<()> {
                 if no_index {
                     let mut paths_combined = args;
                     paths_combined.extend(paths);
-                    return Ok(core::repository::diff::no_index(paths_combined)?);
+                    return core::repository::diff::no_index(paths_combined);
                 }
                 let cwd = std::env::current_dir().context("Could not obtain current working directory")?;
                 match gix::discover::upwards(&cwd) {

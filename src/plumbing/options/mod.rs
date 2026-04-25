@@ -1038,6 +1038,215 @@ pub mod diff {
         /// Implies --exit-code. Mirrors `OPT_BOOL(0, "no-index", ...)`.
         #[clap(long = "no-index")]
         pub no_index: bool,
+
+        // --- diff-options.adoc compat surface ---------------------
+        // The flags below are accepted by clap so `gix diff <flag> …`
+        // doesn't trip UnknownArgument; semantics are deferred until
+        // the patch renderer / specific helpers land. Each row in
+        // tests/journey/parity/diff.sh closes the matching flag with
+        // a `compat_effect "<reason>"` ledger marker.
+
+        // Output format
+        #[clap(short = 'p', short_alias = 'u', long = "patch")]
+        pub patch: bool,
+        #[clap(short = 's', long = "no-patch")]
+        pub no_patch: bool,
+        #[clap(long = "raw")]
+        pub raw: bool,
+        #[clap(long = "patch-with-raw")]
+        pub patch_with_raw: bool,
+        #[clap(short = 't', name = "diff-flag-t")]
+        pub show_t: bool,
+        #[clap(long = "name-only")]
+        pub name_only: bool,
+        #[clap(long = "name-status")]
+        pub name_status: bool,
+        #[clap(long = "stat", num_args = 0..=1, default_missing_value = "")]
+        pub stat: Option<String>,
+        #[clap(long = "compact-summary")]
+        pub compact_summary: bool,
+        #[clap(long = "shortstat")]
+        pub shortstat: bool,
+        #[clap(long = "numstat")]
+        pub numstat: bool,
+        #[clap(long = "dirstat", num_args = 0..=1, default_missing_value = "")]
+        pub dirstat: Option<String>,
+        #[clap(long = "cumulative")]
+        pub cumulative: bool,
+        #[clap(long = "dirstat-by-file", num_args = 0..=1, default_missing_value = "")]
+        pub dirstat_by_file: Option<String>,
+        #[clap(long = "summary")]
+        pub summary: bool,
+        #[clap(long = "patch-with-stat")]
+        pub patch_with_stat: bool,
+        #[clap(short = 'z')]
+        pub null_terminator: bool,
+
+        // Output controls
+        #[clap(short = 'U', long = "unified", value_name = "n")]
+        pub unified: Option<u32>,
+        #[clap(long = "output", value_name = "file")]
+        pub output: Option<String>,
+        #[clap(long = "output-indicator-new", value_name = "char")]
+        pub output_indicator_new: Option<String>,
+        #[clap(long = "output-indicator-old", value_name = "char")]
+        pub output_indicator_old: Option<String>,
+        #[clap(long = "output-indicator-context", value_name = "char")]
+        pub output_indicator_context: Option<String>,
+        #[clap(long = "abbrev", num_args = 0..=1, default_missing_value = "7")]
+        pub abbrev: Option<String>,
+        #[clap(long = "binary")]
+        pub binary: bool,
+        #[clap(long = "full-index")]
+        pub full_index: bool,
+        #[clap(long = "line-prefix", value_name = "prefix")]
+        pub line_prefix: Option<String>,
+        #[clap(long = "src-prefix", value_name = "prefix")]
+        pub src_prefix: Option<String>,
+        #[clap(long = "dst-prefix", value_name = "prefix")]
+        pub dst_prefix: Option<String>,
+        #[clap(long = "no-prefix")]
+        pub no_prefix: bool,
+        #[clap(long = "default-prefix")]
+        pub default_prefix: bool,
+
+        // Color / word-diff
+        #[clap(long = "color", num_args = 0..=1, default_missing_value = "always", value_name = "when")]
+        pub color: Option<String>,
+        #[clap(long = "no-color")]
+        pub no_color: bool,
+        #[clap(long = "color-moved", num_args = 0..=1, default_missing_value = "default", value_name = "mode")]
+        pub color_moved: Option<String>,
+        #[clap(long = "no-color-moved")]
+        pub no_color_moved: bool,
+        #[clap(long = "color-moved-ws", value_name = "modes")]
+        pub color_moved_ws: Option<String>,
+        #[clap(long = "no-color-moved-ws")]
+        pub no_color_moved_ws: bool,
+        #[clap(long = "word-diff", num_args = 0..=1, default_missing_value = "plain", value_name = "mode")]
+        pub word_diff: Option<String>,
+        #[clap(long = "word-diff-regex", value_name = "regex")]
+        pub word_diff_regex: Option<String>,
+        #[clap(long = "color-words", num_args = 0..=1, default_missing_value = "", value_name = "regex")]
+        pub color_words: Option<String>,
+
+        // Algorithm / heuristic
+        #[clap(long = "minimal")]
+        pub minimal: bool,
+        #[clap(long = "patience")]
+        pub patience: bool,
+        #[clap(long = "histogram")]
+        pub histogram: bool,
+        #[clap(long = "anchored", value_name = "text")]
+        pub anchored: Option<String>,
+        #[clap(long = "diff-algorithm", value_name = "algo")]
+        pub diff_algorithm: Option<String>,
+        #[clap(long = "indent-heuristic")]
+        pub indent_heuristic: bool,
+        #[clap(long = "no-indent-heuristic")]
+        pub no_indent_heuristic: bool,
+
+        // Whitespace
+        #[clap(short = 'a', long = "text")]
+        pub text: bool,
+        #[clap(long = "ignore-cr-at-eol")]
+        pub ignore_cr_at_eol: bool,
+        #[clap(long = "ignore-space-at-eol")]
+        pub ignore_space_at_eol: bool,
+        #[clap(short = 'b', long = "ignore-space-change")]
+        pub ignore_space_change: bool,
+        #[clap(short = 'w', long = "ignore-all-space")]
+        pub ignore_all_space: bool,
+        #[clap(long = "ignore-blank-lines")]
+        pub ignore_blank_lines: bool,
+        #[clap(short = 'I', long = "ignore-matching-lines", value_name = "regex")]
+        pub ignore_matching_lines: Option<String>,
+        #[clap(long = "ws-error-highlight", value_name = "kind")]
+        pub ws_error_highlight: Option<String>,
+        #[clap(long = "check")]
+        pub check: bool,
+        #[clap(long = "inter-hunk-context", value_name = "n")]
+        pub inter_hunk_context: Option<u32>,
+        #[clap(short = 'W', long = "function-context")]
+        pub function_context: bool,
+
+        // Detection
+        #[clap(long = "no-renames")]
+        pub no_renames: bool,
+        #[clap(long = "rename-empty")]
+        pub rename_empty: bool,
+        #[clap(long = "no-rename-empty")]
+        pub no_rename_empty: bool,
+        #[clap(short = 'B', long = "break-rewrites", num_args = 0..=1, default_missing_value = "")]
+        pub break_rewrites: Option<String>,
+        #[clap(short = 'M', long = "find-renames", num_args = 0..=1, default_missing_value = "")]
+        pub find_renames: Option<String>,
+        #[clap(short = 'C', long = "find-copies", num_args = 0..=1, default_missing_value = "")]
+        pub find_copies: Option<String>,
+        #[clap(long = "find-copies-harder")]
+        pub find_copies_harder: bool,
+        #[clap(long = "diff-filter", value_name = "filter")]
+        pub diff_filter: Option<String>,
+        #[clap(short = 'D', long = "irreversible-delete")]
+        pub irreversible_delete: bool,
+
+        // Pickaxe
+        #[clap(short = 'S', value_name = "string")]
+        pub pickaxe_s: Option<String>,
+        #[clap(short = 'G', value_name = "regex")]
+        pub pickaxe_g: Option<String>,
+        #[clap(long = "find-object", value_name = "oid")]
+        pub find_object: Option<String>,
+        #[clap(long = "pickaxe-all")]
+        pub pickaxe_all: bool,
+        #[clap(long = "pickaxe-regex")]
+        pub pickaxe_regex: bool,
+
+        // Path control
+        #[clap(short = 'R', name = "diff-flag-R")]
+        pub reverse: bool,
+        #[clap(long = "relative", num_args = 0..=1, default_missing_value = "")]
+        pub relative: Option<String>,
+        #[clap(long = "no-relative")]
+        pub no_relative: bool,
+        #[clap(long = "skip-to", value_name = "file")]
+        pub skip_to: Option<String>,
+        #[clap(long = "rotate-to", value_name = "file")]
+        pub rotate_to: Option<String>,
+
+        // Submodule / textconv / ext-diff
+        #[clap(long = "submodule", num_args = 0..=1, default_missing_value = "log", value_name = "format")]
+        pub submodule: Option<String>,
+        #[clap(long = "ignore-submodules", num_args = 0..=1, default_missing_value = "all", value_name = "when")]
+        pub ignore_submodules: Option<String>,
+        #[clap(long = "ita-invisible-in-index")]
+        pub ita_invisible_in_index: bool,
+        #[clap(long = "textconv")]
+        pub textconv: bool,
+        #[clap(long = "no-textconv")]
+        pub no_textconv: bool,
+        #[clap(long = "ext-diff")]
+        pub ext_diff: bool,
+        #[clap(long = "no-ext-diff")]
+        pub no_ext_diff: bool,
+
+        // Exit-code / merge stage
+        #[clap(long = "exit-code")]
+        pub exit_code: bool,
+        #[clap(long = "quiet")]
+        pub quiet: bool,
+        #[clap(long = "base", short = '1', name = "diff-flag-1")]
+        pub base: bool,
+        #[clap(long = "ours", short = '2', name = "diff-flag-2")]
+        pub ours: bool,
+        #[clap(long = "theirs", short = '3', name = "diff-flag-3")]
+        pub theirs: bool,
+        #[clap(short = '0', name = "diff-flag-0")]
+        pub omit_unmerged: bool,
+
+        // Combined-diff
+        #[clap(long = "combined-all-paths")]
+        pub combined_all_paths: bool,
     }
 
     #[derive(Debug, clap::Subcommand)]
