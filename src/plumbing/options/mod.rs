@@ -296,6 +296,8 @@ pub enum Subcommands {
     Corpus(corpus::Platform),
     MergeBase(merge_base::Command),
     Merge(merge::Platform),
+    /// Reapply commits on top of another base tip.
+    Rebase(rebase::Platform),
     /// Print paths relevant to the Git installation.
     Env,
     Diff(diff::Platform),
@@ -3456,3 +3458,5 @@ pub mod pull;
 
 #[cfg(feature = "gitoxide-core-blocking-client")]
 pub mod fetch;
+
+pub mod rebase;

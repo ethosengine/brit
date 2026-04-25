@@ -375,6 +375,33 @@ pub fn main() -> Result<()> {
                 core::repository::merge_base(repository(Mode::Lenient)?, first, others, out, format)
             },
         ),
+        Subcommands::Rebase(crate::plumbing::options::rebase::Platform {
+            upstream: rebase_upstream,
+            branch: rebase_branch,
+            onto: rebase_onto,
+            root: rebase_root,
+            ..
+        }) => prepare_and_run(
+            "rebase",
+            trace,
+            verbose,
+            progress,
+            progress_keep_open,
+            None,
+            move |_progress, out, err| {
+                core::repository::rebase::porcelain(
+                    repository(Mode::Lenient)?,
+                    out,
+                    err,
+                    rebase_upstream,
+                    rebase_branch,
+                    core::repository::rebase::Options {
+                        onto: rebase_onto,
+                        root: rebase_root,
+                    },
+                )
+            },
+        ),
         Subcommands::Diff(crate::plumbing::options::diff::Platform {
             cmd,
             args,
