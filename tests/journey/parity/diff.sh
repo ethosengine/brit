@@ -482,29 +482,34 @@ only_for_hash sha1-only && (small-repo-in-sandbox
 )
 
 # mode=effect — `--summary`: file creation/deletion/rename/copy/mode
-# change summary lines.
+# change summary lines. Accepted by clap; deferred until renderer lands.
 # hash=sha1-only
 title "gix diff --summary"
 only_for_hash sha1-only && (small-repo-in-sandbox
-  # TODO — expect_parity effect -- diff --summary HEAD~1 HEAD
-  it "matches git behavior" && { :; }
+  it "matches git behavior" && {
+    compat_effect "diff --summary mode-change/rename summary deferred until renderer lands" -- diff --summary HEAD~1 HEAD
+  }
 )
 
 # mode=effect — `--patch-with-stat`: synonym for `-p --stat`.
+# Accepted by clap; deferred with --patch and --stat.
 # hash=sha1-only
 title "gix diff --patch-with-stat"
 only_for_hash sha1-only && (small-repo-in-sandbox
-  # TODO — expect_parity effect -- diff --patch-with-stat HEAD~1 HEAD
-  it "matches git behavior" && { :; }
+  it "matches git behavior" && {
+    compat_effect "diff --patch-with-stat composite output deferred until renderer lands" -- diff --patch-with-stat HEAD~1 HEAD
+  }
 )
 
-# mode=bytes — `-z`: NUL-terminated paths in raw / name-only / name-
-# status / numstat outputs (suppresses pathname-quoting).
+# mode=effect — `-z`: NUL-terminated paths in raw / name-only / name-
+# status / numstat outputs (suppresses pathname-quoting). Accepted by
+# clap; bytes parity deferred with the underlying renderers.
 # hash=sha1-only
 title "gix diff -z"
 only_for_hash sha1-only && (small-repo-in-sandbox
-  # TODO — expect_parity bytes -- diff -z --raw HEAD~1 HEAD
-  it "matches git behavior" && { :; }
+  it "matches git behavior" && {
+    compat_effect "diff -z NUL-termination deferred until renderer lands" -- diff -z --raw HEAD~1 HEAD
+  }
 )
 
 # --- output controls ---------------------------------------------------
