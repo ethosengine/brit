@@ -116,20 +116,21 @@ only_for_hash dual && (sandbox
 # hash=sha1-only
 title "gix blame <file> (default format, populated repo)"
 only_for_hash sha1-only && (small-repo-in-sandbox
-  it "TODO matches git behavior" && {
-    : # TODO: compat_effect "blame default-format author/date renderer deferred" -- blame b
+  it "matches git behavior" && {
+    compat_effect "blame default-format author/date renderer deferred" -- blame b
   }
 )
 
-# mode=effect — `git blame` on an untracked / nonexistent path emits
-# "fatal: no such path '<file>' in HEAD" + exit 128. gix today emits
-# its own pathspec-resolution error and may exit a different code;
-# wire the precondition gate so gix matches git's wording verbatim.
+# mode=bytes — `git blame` on an untracked / nonexistent path emits
+# "fatal: no such path '<file>' in HEAD" + exit 128. The
+# gitoxide_core::repository::blame::blame_file entry point now matches
+# the gix_blame::Error::FileMissing variant before propagating, emits
+# git's exact wording on stderr, and std::process::exit(128).
 # hash=sha1-only
 title "gix blame <missing-file>"
 only_for_hash sha1-only && (small-repo-in-sandbox
-  it "TODO matches git behavior" && {
-    : # TODO: expect_parity effect -- blame nonexistent.txt
+  it "matches git behavior" && {
+    expect_parity bytes -- blame nonexistent.txt
   }
 )
 
@@ -154,8 +155,8 @@ only_for_hash sha1-only && (small-repo-in-sandbox
 # hash=sha1-only
 title "gix blame -- <file>"
 only_for_hash sha1-only && (small-repo-in-sandbox
-  it "TODO matches git behavior" && {
-    : # TODO: expect_parity effect -- blame -- b
+  it "matches git behavior" && {
+    compat_effect "blame default-format renderer deferred (-- separator)" -- blame -- b
   }
 )
 

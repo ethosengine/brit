@@ -38,14 +38,24 @@ pub fn blame_file(
     let suspect: gix::ObjectId = repo.head()?.into_peeled_id()?.into();
     let cache: Option<gix::commitgraph::Graph> = repo.commit_graph_if_enabled()?;
     let mut resource_cache = repo.diff_resource_cache_for_tree_diff()?;
-    let outcome = gix::blame::file(
+    let outcome = match gix::blame::file(
         &repo.objects,
         suspect,
         cache,
         &mut resource_cache,
         file.as_bstr(),
         options,
-    )?;
+    ) {
+        Ok(outcome) => outcome,
+        // Parity with git: missing path emits "fatal: no such path '<file>' in HEAD"
+        // and exits 128 (vendor/git/builtin/blame.c → fake_working_tree_commit →
+        // die). gix's gix_blame::Error::FileMissing carries the same signal.
+        Err(gix::blame::Error::FileMissing { file_path, .. }) => {
+            eprintln!("fatal: no such path '{file_path}' in HEAD");
+            std::process::exit(128);
+        }
+        Err(err) => return Err(err.into()),
+    };
     let statistics = outcome.statistics;
     show_blame_entries(out, outcome, file)?;
 
