@@ -366,11 +366,14 @@ only_for_hash sha1-only && (small-repo-in-sandbox
 )
 
 # mode=effect — `--patch-with-raw`: synonym for `-p --raw`.
+# Accepted by clap; bytes parity deferred via compat_effect together
+# with --raw and the patch renderer.
 # hash=sha1-only
 title "gix diff --patch-with-raw"
 only_for_hash sha1-only && (small-repo-in-sandbox
-  # TODO — expect_parity effect -- diff --patch-with-raw HEAD~1 HEAD
-  it "matches git behavior" && { :; }
+  it "matches git behavior" && {
+    compat_effect "diff --patch-with-raw composite output deferred until renderer lands" -- diff --patch-with-raw HEAD~1 HEAD
+  }
 )
 
 # mode=effect — `-t`: show tree entries themselves (recurse into
