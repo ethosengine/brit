@@ -4,9 +4,8 @@ const NAME_PARAMETER: Option<SubSectionRequirement> = Some(SubSectionRequirement
 
 impl Branch {
     /// The `branch.<name>.description` key.
-    pub const DESCRIPTION: keys::String =
-        keys::String::new_string("description", &crate::config::Tree::BRANCH)
-            .with_subsection_requirement(NAME_PARAMETER);
+    pub const DESCRIPTION: keys::String = keys::String::new_string("description", &crate::config::Tree::BRANCH)
+        .with_subsection_requirement(NAME_PARAMETER);
     /// The `branch.<name>.merge` key.
     pub const MERGE: Merge = Merge::new_with_validate("merge", &crate::config::Tree::BRANCH, validate::FullNameRef)
         .with_subsection_requirement(NAME_PARAMETER);

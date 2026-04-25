@@ -274,10 +274,7 @@ mod branch_write {
 
         let result = repo.unset_branch_upstream(b"nonexistent".into());
         assert!(
-            matches!(
-                result,
-                Err(gix::config::branch_write::UnsetUpstream::NoUpstream(_))
-            ),
+            matches!(result, Err(gix::config::branch_write::UnsetUpstream::NoUpstream(_))),
             "must error with NoUpstream when the branch has no upstream config"
         );
         Ok(())
@@ -289,9 +286,7 @@ mod branch_write {
 
         repo.set_branch_description(b"feature".into(), b"my feature branch description".into())?;
         assert_eq!(
-            repo.config_snapshot()
-                .string("branch.feature.description")
-                .as_deref(),
+            repo.config_snapshot().string("branch.feature.description").as_deref(),
             Some("my feature branch description".into()),
             "description written correctly"
         );
@@ -299,9 +294,7 @@ mod branch_write {
         // Clearing with empty value.
         repo.set_branch_description(b"feature".into(), b"".into())?;
         assert!(
-            repo.config_snapshot()
-                .string("branch.feature.description")
-                .is_none(),
+            repo.config_snapshot().string("branch.feature.description").is_none(),
             "empty value clears the description key"
         );
         Ok(())

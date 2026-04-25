@@ -114,7 +114,8 @@ pub fn create(
                 } else if let Some(r) = repo.try_find_reference(refs_heads.as_str())? {
                     Some(r.name().to_owned())
                 } else {
-                    repo.try_find_reference(refs_remotes.as_str())?.map(|r| r.name().to_owned())
+                    repo.try_find_reference(refs_remotes.as_str())?
+                        .map(|r| r.name().to_owned())
                 }
             } else {
                 None
@@ -538,9 +539,7 @@ pub fn edit_description(
     // in vendor/git/builtin/branch.c branch_edit_description().
     let trimmed: &[u8] = {
         let mut end = edited.len();
-        while end > 0
-            && matches!(edited[end - 1], b'\n' | b'\r' | b' ' | b'\t')
-        {
+        while end > 0 && matches!(edited[end - 1], b'\n' | b'\r' | b' ' | b'\t') {
             end -= 1;
         }
         &edited[..end]

@@ -174,10 +174,7 @@ impl<'repo> SnapshotMut<'repo> {
     ) -> Option<BString> {
         let subsection = subsection.into();
         let section_name = key.section().name();
-        let mut section = self
-            .config
-            .section_mut(section_name, Some(subsection))
-            .ok()?;
+        let mut section = self.config.section_mut(section_name, Some(subsection)).ok()?;
         section.remove(key.name()).map(std::borrow::Cow::into_owned)
     }
 
