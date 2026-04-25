@@ -2712,86 +2712,102 @@ pub fn main() -> Result<()> {
                 move |_progress, out, _err| core::repository::cat(repository(Mode::Lenient)?, &revspec, out),
             )
         }
-        Subcommands::Commit(platform) => match platform.cmd {
-            // Bare `gix commit` (no subcommand): the porcelain entry point
-            // is not yet wired. Open the repository so we mirror git's
-            // exit-128 / "fatal: not a git repository" path when invoked
-            // outside any repo (the `repository(...)` closure handles that
-            // exact branch). Inside a repo we currently bail with a clear
-            // not-yet-implemented error pending the porcelain reshape.
-            None => prepare_and_run(
-                "commit",
-                trace,
-                auto_verbose,
-                progress,
-                progress_keep_open,
-                None,
-                move |_progress, _out, _err| {
-                    let _repo = repository(Mode::Lenient)?;
-                    Err(anyhow::anyhow!(
-                        "gix commit (porcelain) not yet implemented — see tests/journey/parity/commit.sh"
-                    ))
-                },
-            ),
-            Some(commit::Subcommands::Verify { rev_spec }) => prepare_and_run(
-                "commit-verify",
-                trace,
-                auto_verbose,
-                progress,
-                progress_keep_open,
-                None,
-                move |_progress, _out, _err| {
-                    core::repository::commit::verify(repository(Mode::Lenient)?, rev_spec.as_deref())
-                },
-            ),
-            Some(commit::Subcommands::Sign { rev_spec }) => prepare_and_run(
-                "commit-sign",
-                trace,
-                auto_verbose,
-                progress,
-                progress_keep_open,
-                None,
-                move |_progress, out, _err| {
-                    core::repository::commit::sign(repository(Mode::Lenient)?, rev_spec.as_deref(), out)
-                },
-            ),
-            Some(commit::Subcommands::Describe {
-                annotated_tags,
-                all_refs,
-                first_parent,
-                always,
-                long,
-                statistics,
-                max_candidates,
-                rev_spec,
-                dirty_suffix,
-            }) => prepare_and_run(
-                "commit-describe",
-                trace,
-                verbose,
-                progress,
-                progress_keep_open,
-                None,
-                move |_progress, out, err| {
-                    core::repository::commit::describe(
-                        repository(Mode::Strict)?,
-                        rev_spec.as_deref(),
-                        out,
-                        err,
-                        core::repository::commit::describe::Options {
-                            all_tags: !annotated_tags,
-                            all_refs,
-                            long_format: long,
-                            first_parent,
-                            statistics,
-                            max_candidates,
-                            always,
-                            dirty_suffix: dirty_suffix.map(|suffix| suffix.unwrap_or_else(|| "dirty".to_string())),
-                        },
-                    )
-                },
-            ),
-        },
+        Subcommands::Commit(platform) => {
+            let commit::Platform {
+                cmd,
+                message,
+                allow_empty,
+                allow_empty_message,
+                quiet,
+            } = platform;
+            match cmd {
+                // Bare `gix commit` (no subcommand): porcelain dispatch.
+                // The `repository(...)` closure mirrors git's exit-128 +
+                // "fatal: not a git repository" path when invoked outside
+                // any repo. Inside a repo, route to the porcelain `create`
+                // function in gitoxide-core. Flag combinations not yet
+                // implemented bail with an explicit not-yet-supported error.
+                None => prepare_and_run(
+                    "commit",
+                    trace,
+                    auto_verbose,
+                    progress,
+                    progress_keep_open,
+                    None,
+                    move |_progress, out, _err| {
+                        let repo = repository(Mode::Lenient)?;
+                        core::repository::commit::create(
+                            repo,
+                            out,
+                            core::repository::commit::CreateOptions {
+                                message,
+                                allow_empty,
+                                allow_empty_message,
+                                quiet,
+                            },
+                        )
+                    },
+                ),
+                Some(commit::Subcommands::Verify { rev_spec }) => prepare_and_run(
+                    "commit-verify",
+                    trace,
+                    auto_verbose,
+                    progress,
+                    progress_keep_open,
+                    None,
+                    move |_progress, _out, _err| {
+                        core::repository::commit::verify(repository(Mode::Lenient)?, rev_spec.as_deref())
+                    },
+                ),
+                Some(commit::Subcommands::Sign { rev_spec }) => prepare_and_run(
+                    "commit-sign",
+                    trace,
+                    auto_verbose,
+                    progress,
+                    progress_keep_open,
+                    None,
+                    move |_progress, out, _err| {
+                        core::repository::commit::sign(repository(Mode::Lenient)?, rev_spec.as_deref(), out)
+                    },
+                ),
+                Some(commit::Subcommands::Describe {
+                    annotated_tags,
+                    all_refs,
+                    first_parent,
+                    always,
+                    long,
+                    statistics,
+                    max_candidates,
+                    rev_spec,
+                    dirty_suffix,
+                }) => prepare_and_run(
+                    "commit-describe",
+                    trace,
+                    verbose,
+                    progress,
+                    progress_keep_open,
+                    None,
+                    move |_progress, out, err| {
+                        core::repository::commit::describe(
+                            repository(Mode::Strict)?,
+                            rev_spec.as_deref(),
+                            out,
+                            err,
+                            core::repository::commit::describe::Options {
+                                all_tags: !annotated_tags,
+                                all_refs,
+                                long_format: long,
+                                first_parent,
+                                statistics,
+                                max_candidates,
+                                always,
+                                dirty_suffix: dirty_suffix.map(|suffix| suffix.unwrap_or_else(|| "dirty".to_string())),
+                            },
+                        )
+                    },
+                ),
+            }
+        }
         Subcommands::Tag(platform) => {
             let tag::Platform {
                 list,

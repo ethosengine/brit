@@ -154,3 +154,75 @@ pub mod describe {
         pub dirty_suffix: Option<String>,
     }
 }
+
+/// Options for the porcelain `create` (a.k.a. `git commit`) entry point.
+/// Only the smallest viable subset of `git commit` flags is wired in
+/// the first iterations; the field set will grow as parity rows close.
+#[derive(Debug, Clone)]
+pub struct CreateOptions {
+    /// `-m`/`--message` values, in order. Concatenated with `\n\n`
+    /// when multiple are given (mirrors `opt_parse_m` in
+    /// vendor/git/builtin/commit.c).
+    pub message: Vec<String>,
+    /// `--allow-empty`: permit a commit whose tree is identical to its
+    /// sole parent's tree.
+    pub allow_empty: bool,
+    /// `--allow-empty-message`: permit an empty commit message.
+    pub allow_empty_message: bool,
+    /// `-q`/`--quiet`: suppress the post-commit summary line.
+    pub quiet: bool,
+}
+
+/// Porcelain `git commit` entry point. Currently only the
+/// `--allow-empty -m <msg>` happy path is implemented — other flag
+/// combinations bail with an explicit not-yet-implemented error so the
+/// boundary stays grep-able as parity rows close.
+pub fn create(
+    repo: gix::Repository,
+    mut out: impl std::io::Write,
+    CreateOptions {
+        message,
+        allow_empty,
+        allow_empty_message,
+        quiet,
+    }: CreateOptions,
+) -> Result<()> {
+    if !allow_empty {
+        bail!("gix commit without --allow-empty not yet implemented (index→tree pending; see tests/journey/parity/commit.sh)");
+    }
+
+    // Compose the commit message. Multiple `-m` values join with `\n\n`
+    // (paragraph break) — vendor/git/builtin/commit.c opt_parse_m
+    // appends each value with a leading "\n\n" when one already exists.
+    let composed = message.join("\n\n");
+    if composed.is_empty() && !allow_empty_message {
+        bail!("Aborting commit due to empty commit message.");
+    }
+
+    // For --allow-empty we reuse the parent's tree verbatim. head_id()
+    // errors on an unborn HEAD; that path needs a separate code arm
+    // (initial commit) which is not exercised by current parity rows.
+    let head_id = repo.head_id().context("HEAD must exist for --allow-empty commit")?;
+    let head_commit = repo
+        .head_commit()
+        .context("HEAD must point at a commit for --allow-empty")?;
+    let tree_id = head_commit.tree_id().context("HEAD commit must have a tree")?;
+    let parent = head_id.detach();
+
+    let new_id = repo
+        .commit("HEAD", composed.as_str(), tree_id, Some(parent))
+        .context("writing the commit object failed")?;
+
+    if !quiet {
+        // Minimal summary. git's wording is `[<branch> <abbrev>] <subject>`;
+        // bytes parity is out of scope for the first iteration since
+        // git also emits stat lines that depend on diff machinery. Use
+        // a stable, grep-able shape — bytes-mode rows that need the
+        // full git wording will close later via dedicated work.
+        let abbrev = new_id.shorten_or_id().to_string();
+        let subject = composed.lines().next().unwrap_or("");
+        writeln!(out, "[{abbrev}] {subject}")?;
+    }
+
+    Ok(())
+}

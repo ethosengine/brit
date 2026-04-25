@@ -278,10 +278,16 @@ only_for_hash sha1-only && (small-repo-in-sandbox
 # --- safety bypasses ---------------------------------------------------
 
 # mode=effect — `--allow-empty` permits same-tree-as-parent commits.
+# vendor/git/builtin/commit.c prepare_to_commit() short-circuits the
+# "tree matches parent" safety check when allow_empty is set. gix's
+# porcelain `create` (gitoxide-core/src/repository/commit.rs) reuses
+# HEAD's tree verbatim under --allow-empty and calls Repository::commit
+# to advance HEAD; the in-process index is not consulted (no index→tree
+# is required because the tree is the parent's).
 title "gix commit --allow-empty"
 only_for_hash sha1-only && (small-repo-in-sandbox
-  it "TODO: matches git behavior" && {
-    : # expect_parity effect -- commit --allow-empty -m e
+  it "matches git behavior" && {
+    expect_parity effect -- commit --allow-empty -m e
   }
 )
 

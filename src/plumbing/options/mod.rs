@@ -2146,6 +2146,28 @@ pub mod commit {
     pub struct Platform {
         #[clap(subcommand)]
         pub cmd: Option<Subcommands>,
+
+        /// Use _<msg>_ as the commit message. If multiple `-m` options
+        /// are given, their values are concatenated as separate
+        /// paragraphs. Mirrors `OPT_CALLBACK_F('m', "message", ...,
+        /// opt_parse_m)` in vendor/git/builtin/commit.c.
+        #[clap(short = 'm', long = "message", value_name = "msg", action = clap::ArgAction::Append)]
+        pub message: Vec<String>,
+
+        /// Permit recording a commit whose tree is identical to its sole
+        /// parent's. Mirrors `OPT_BOOL(0, "allow-empty", ...)`.
+        #[clap(long = "allow-empty")]
+        pub allow_empty: bool,
+
+        /// Permit recording a commit with an empty commit message.
+        /// Mirrors `OPT_BOOL(0, "allow-empty-message", ...)`.
+        #[clap(long = "allow-empty-message")]
+        pub allow_empty_message: bool,
+
+        /// Suppress the post-commit summary line.
+        /// Mirrors `OPT__QUIET`.
+        #[clap(short = 'q', long = "quiet")]
+        pub quiet: bool,
     }
 
     #[derive(Debug, clap::Subcommand)]
