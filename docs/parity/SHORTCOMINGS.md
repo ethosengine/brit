@@ -22,6 +22,111 @@ Two row classes:
 | deferred | `gix clone --shallow-since=<time>` | deferred: gix-protocol shallow-since decoder returns 'Could not decode server reply' | [clone.sh:533](../../tests/journey/parity/clone.sh#L533) |
 | deferred | `gix clone --shallow-exclude=<ref>` | deferred: gix-protocol deepen-not opcode alignment (same gap as fetch.sh --shallow-exclude) | [clone.sh:545](../../tests/journey/parity/clone.sh#L545) |
 
+## diff
+
+| Class | Section | Reason | Source |
+|---|---|---|---|
+| compat | `gix diff (no args, dirty working tree)` | diff worktree-vs-index patch output deferred until renderer lands | [diff.sh:124](../../tests/journey/parity/diff.sh#L124) |
+| compat | `gix diff <commit>` | diff worktree-vs-<commit> patch output deferred until renderer lands | [diff.sh:142](../../tests/journey/parity/diff.sh#L142) |
+| compat | `gix diff <commit> <commit>` | diff tree-vs-tree patch output deferred until renderer lands | [diff.sh:157](../../tests/journey/parity/diff.sh#L157) |
+| compat | `gix diff A..B` | diff A..B tree-vs-tree patch output deferred until renderer lands | [diff.sh:185](../../tests/journey/parity/diff.sh#L185) |
+| compat | `gix diff A...B` | diff A...B symmetric tree-vs-tree patch output deferred until renderer lands | [diff.sh:198](../../tests/journey/parity/diff.sh#L198) |
+| compat | `gix diff <blob> <blob>` | diff blob-vs-blob patch output deferred until renderer lands | [diff.sh:220](../../tests/journey/parity/diff.sh#L220) |
+| compat | `gix diff -- <path>` | diff path-filter (-- <path>) filtering not yet implemented | [diff.sh:235](../../tests/journey/parity/diff.sh#L235) |
+| compat | `gix diff --cached` | diff --cached index-vs-HEAD patch output deferred until renderer lands | [diff.sh:250](../../tests/journey/parity/diff.sh#L250) |
+| compat | `gix diff --staged` | diff --staged alias of --cached, same patch output deferral | [diff.sh:261](../../tests/journey/parity/diff.sh#L261) |
+| compat | `gix diff --cached <commit>` | diff --cached <commit> patch output deferred until renderer lands | [diff.sh:275](../../tests/journey/parity/diff.sh#L275) |
+| compat | `gix diff --merge-base <commit>` | diff --merge-base <commit> resolution + patch output deferred until renderer lands | [diff.sh:287](../../tests/journey/parity/diff.sh#L287) |
+| compat | `gix diff --merge-base A B` | diff --merge-base A B substitution + patch output deferred until renderer lands | [diff.sh:299](../../tests/journey/parity/diff.sh#L299) |
+| compat | `gix diff --cached --merge-base` | diff --cached --merge-base index-vs-merge-base patch output deferred until renderer lands | [diff.sh:310](../../tests/journey/parity/diff.sh#L310) |
+| compat | `gix diff --no-index <path-a> <path-b>` | diff --no-index patch output deferred until renderer lands | [diff.sh:326](../../tests/journey/parity/diff.sh#L326) |
+| compat | `gix diff -p / -u / --patch` | diff -p/-u/--patch patch output deferred until renderer lands | [diff.sh:340](../../tests/journey/parity/diff.sh#L340) |
+| compat | `gix diff -s / --no-patch` | diff -s/--no-patch suppression interaction deferred until renderer lands | [diff.sh:352](../../tests/journey/parity/diff.sh#L352) |
+| compat | `gix diff --raw` | diff --raw scriptable raw format deferred until renderer lands | [diff.sh:364](../../tests/journey/parity/diff.sh#L364) |
+| compat | `gix diff --patch-with-raw` | diff --patch-with-raw composite output deferred until renderer lands | [diff.sh:375](../../tests/journey/parity/diff.sh#L375) |
+| compat | `gix diff -t` | diff -t tree-entry recursion deferred until renderer lands | [diff.sh:386](../../tests/journey/parity/diff.sh#L386) |
+| compat | `gix diff --name-only` | diff --name-only changed-path enumeration deferred until renderer lands | [diff.sh:398](../../tests/journey/parity/diff.sh#L398) |
+| compat | `gix diff --name-status` | diff --name-status status-letter+path enumeration deferred until renderer lands | [diff.sh:408](../../tests/journey/parity/diff.sh#L408) |
+| compat | `gix diff --stat` | diff --stat file-by-file layout deferred until renderer lands | [diff.sh:419](../../tests/journey/parity/diff.sh#L419) |
+| compat | `gix diff --compact-summary` | diff --compact-summary condensed layout deferred until renderer lands | [diff.sh:429](../../tests/journey/parity/diff.sh#L429) |
+| compat | `gix diff --shortstat` | diff --shortstat one-line summary deferred until renderer lands | [diff.sh:439](../../tests/journey/parity/diff.sh#L439) |
+| compat | `gix diff --numstat` | diff --numstat tab-separated stat deferred until renderer lands | [diff.sh:449](../../tests/journey/parity/diff.sh#L449) |
+| compat | `gix diff --dirstat` | diff --dirstat per-directory percentage layout deferred until renderer lands | [diff.sh:460](../../tests/journey/parity/diff.sh#L460) |
+| compat | `gix diff --cumulative` | diff --cumulative dirstat synonym deferred until renderer lands | [diff.sh:470](../../tests/journey/parity/diff.sh#L470) |
+| compat | `gix diff --dirstat-by-file` | diff --dirstat-by-file dirstat synonym deferred until renderer lands | [diff.sh:480](../../tests/journey/parity/diff.sh#L480) |
+| compat | `gix diff --summary` | diff --summary mode-change/rename summary deferred until renderer lands | [diff.sh:490](../../tests/journey/parity/diff.sh#L490) |
+| compat | `gix diff --patch-with-stat` | diff --patch-with-stat composite output deferred until renderer lands | [diff.sh:500](../../tests/journey/parity/diff.sh#L500) |
+| compat | `gix diff -z` | diff -z NUL-termination deferred until renderer lands | [diff.sh:511](../../tests/journey/parity/diff.sh#L511) |
+| compat | `gix diff -U / --unified` | diff -U/--unified context-line count deferred until renderer lands | [diff.sh:523](../../tests/journey/parity/diff.sh#L523) |
+| compat | `gix diff --output` | diff --output file-redirect deferred until renderer lands | [diff.sh:533](../../tests/journey/parity/diff.sh#L533) |
+| compat | `gix diff --output-indicator-{new,old,context}` | diff --output-indicator-* per-line marker override deferred until renderer lands | [diff.sh:544](../../tests/journey/parity/diff.sh#L544) |
+| compat | `gix diff --abbrev` | diff --abbrev hash-abbreviation width deferred until renderer lands | [diff.sh:554](../../tests/journey/parity/diff.sh#L554) |
+| compat | `gix diff --binary` | diff --binary base85 binary patch deferred until renderer lands | [diff.sh:565](../../tests/journey/parity/diff.sh#L565) |
+| compat | `gix diff --full-index` | diff --full-index full SHA emission deferred until renderer lands | [diff.sh:575](../../tests/journey/parity/diff.sh#L575) |
+| compat | `gix diff --line-prefix` | diff --line-prefix per-line prefix deferred until renderer lands | [diff.sh:586](../../tests/journey/parity/diff.sh#L586) |
+| compat | `gix diff --src-prefix / --dst-prefix` | diff --src-prefix/--dst-prefix patch-header overrides deferred until renderer lands | [diff.sh:597](../../tests/journey/parity/diff.sh#L597) |
+| compat | `gix diff --no-prefix` | diff --no-prefix prefix-suppression deferred until renderer lands | [diff.sh:607](../../tests/journey/parity/diff.sh#L607) |
+| compat | `gix diff --default-prefix` | diff --default-prefix deferred until renderer lands | [diff.sh:617](../../tests/journey/parity/diff.sh#L617) |
+| compat | `gix diff --color` | diff --color=always deferred until renderer lands | [diff.sh:629](../../tests/journey/parity/diff.sh#L629) |
+| compat | `gix diff --no-color` | diff --no-color deferred until renderer lands | [diff.sh:638](../../tests/journey/parity/diff.sh#L638) |
+| compat | `gix diff --color-moved` | diff --color-moved=zebra deferred until renderer lands | [diff.sh:648](../../tests/journey/parity/diff.sh#L648) |
+| compat | `gix diff --no-color-moved` | diff --no-color-moved deferred until renderer lands | [diff.sh:657](../../tests/journey/parity/diff.sh#L657) |
+| compat | `gix diff --color-moved-ws` | diff --color-moved-ws=ignore-all-space deferred until renderer lands | [diff.sh:668](../../tests/journey/parity/diff.sh#L668) |
+| compat | `gix diff --no-color-moved-ws` | diff --no-color-moved-ws deferred until renderer lands | [diff.sh:677](../../tests/journey/parity/diff.sh#L677) |
+| compat | `gix diff --word-diff` | diff --word-diff=plain deferred until renderer lands | [diff.sh:686](../../tests/journey/parity/diff.sh#L686) |
+| compat | `gix diff --word-diff-regex` | diff --word-diff-regex='\\w+' deferred until renderer lands | [diff.sh:696](../../tests/journey/parity/diff.sh#L696) |
+| compat | `gix diff --color-words` | diff --color-words deferred until renderer lands | [diff.sh:706](../../tests/journey/parity/diff.sh#L706) |
+| compat | `gix diff --minimal` | diff --minimal deferred until renderer lands | [diff.sh:717](../../tests/journey/parity/diff.sh#L717) |
+| compat | `gix diff --patience` | diff --patience deferred until renderer lands | [diff.sh:726](../../tests/journey/parity/diff.sh#L726) |
+| compat | `gix diff --histogram` | diff --histogram deferred until renderer lands | [diff.sh:735](../../tests/journey/parity/diff.sh#L735) |
+| compat | `gix diff --anchored` | diff --anchored=foo deferred until renderer lands | [diff.sh:745](../../tests/journey/parity/diff.sh#L745) |
+| compat | `gix diff --diff-algorithm` | diff --diff-algorithm=histogram deferred until renderer lands | [diff.sh:754](../../tests/journey/parity/diff.sh#L754) |
+| compat | `gix diff --indent-heuristic` | diff --indent-heuristic deferred until renderer lands | [diff.sh:764](../../tests/journey/parity/diff.sh#L764) |
+| compat | `gix diff --no-indent-heuristic` | diff --no-indent-heuristic deferred until renderer lands | [diff.sh:773](../../tests/journey/parity/diff.sh#L773) |
+| compat | `gix diff -a / --text` | diff -a deferred until renderer lands | [diff.sh:785](../../tests/journey/parity/diff.sh#L785) |
+| compat | `gix diff --ignore-cr-at-eol` | diff --ignore-cr-at-eol deferred until renderer lands | [diff.sh:794](../../tests/journey/parity/diff.sh#L794) |
+| compat | `gix diff --ignore-space-at-eol` | diff --ignore-space-at-eol deferred until renderer lands | [diff.sh:804](../../tests/journey/parity/diff.sh#L804) |
+| compat | `gix diff -b / --ignore-space-change` | diff -b deferred until renderer lands | [diff.sh:814](../../tests/journey/parity/diff.sh#L814) |
+| compat | `gix diff -w / --ignore-all-space` | diff -w deferred until renderer lands | [diff.sh:823](../../tests/journey/parity/diff.sh#L823) |
+| compat | `gix diff --ignore-blank-lines` | diff --ignore-blank-lines deferred until renderer lands | [diff.sh:833](../../tests/journey/parity/diff.sh#L833) |
+| compat | `gix diff --ignore-matching-lines` | diff --ignore-matching-lines='^#' deferred until renderer lands | [diff.sh:843](../../tests/journey/parity/diff.sh#L843) |
+| compat | `gix diff --ws-error-highlight` | diff --ws-error-highlight=all deferred until renderer lands | [diff.sh:853](../../tests/journey/parity/diff.sh#L853) |
+| compat | `gix diff --check` | diff --check deferred until renderer lands | [diff.sh:863](../../tests/journey/parity/diff.sh#L863) |
+| compat | `gix diff --inter-hunk-context` | diff --inter-hunk-context=3 deferred until renderer lands | [diff.sh:873](../../tests/journey/parity/diff.sh#L873) |
+| compat | `gix diff -W / --function-context` | diff -W deferred until renderer lands | [diff.sh:883](../../tests/journey/parity/diff.sh#L883) |
+| compat | `gix diff --no-renames` | diff --no-renames deferred until renderer lands | [diff.sh:894](../../tests/journey/parity/diff.sh#L894) |
+| compat | `gix diff --rename-empty / --no-rename-empty` | diff --no-rename-empty deferred until renderer lands | [diff.sh:904](../../tests/journey/parity/diff.sh#L904) |
+| compat | `gix diff -B / --break-rewrites` | diff -B50 deferred until renderer lands | [diff.sh:915](../../tests/journey/parity/diff.sh#L915) |
+| compat | `gix diff -M / --find-renames` | diff -M deferred until renderer lands | [diff.sh:925](../../tests/journey/parity/diff.sh#L925) |
+| compat | `gix diff -C / --find-copies` | diff -C deferred until renderer lands | [diff.sh:934](../../tests/journey/parity/diff.sh#L934) |
+| compat | `gix diff --find-copies-harder` | diff --find-copies-harder deferred until renderer lands | [diff.sh:943](../../tests/journey/parity/diff.sh#L943) |
+| compat | `gix diff --diff-filter` | diff --diff-filter=AM deferred until renderer lands | [diff.sh:953](../../tests/journey/parity/diff.sh#L953) |
+| compat | `gix diff -D / --irreversible-delete` | diff -D deferred until renderer lands | [diff.sh:963](../../tests/journey/parity/diff.sh#L963) |
+| compat | `gix diff -S` | diff -Sfoo deferred until renderer lands | [diff.sh:975](../../tests/journey/parity/diff.sh#L975) |
+| compat | `gix diff -G` | diff -Gfoo deferred until renderer lands | [diff.sh:985](../../tests/journey/parity/diff.sh#L985) |
+| compat | `gix diff --find-object` | diff --find-object deferred until renderer lands | [diff.sh:995](../../tests/journey/parity/diff.sh#L995) |
+| compat | `gix diff --pickaxe-all` | diff --pickaxe-all deferred until renderer lands | [diff.sh:1005](../../tests/journey/parity/diff.sh#L1005) |
+| compat | `gix diff --pickaxe-regex` | diff --pickaxe-regex deferred until renderer lands | [diff.sh:1014](../../tests/journey/parity/diff.sh#L1014) |
+| compat | `gix diff -R` | diff -R deferred until renderer lands | [diff.sh:1025](../../tests/journey/parity/diff.sh#L1025) |
+| compat | `gix diff --relative` | diff --relative deferred until renderer lands | [diff.sh:1035](../../tests/journey/parity/diff.sh#L1035) |
+| compat | `gix diff --no-relative` | diff --no-relative deferred until renderer lands | [diff.sh:1044](../../tests/journey/parity/diff.sh#L1044) |
+| compat | `gix diff --skip-to` | diff --skip-to deferred until renderer lands | [diff.sh:1053](../../tests/journey/parity/diff.sh#L1053) |
+| compat | `gix diff --rotate-to` | diff --rotate-to deferred until renderer lands | [diff.sh:1063](../../tests/journey/parity/diff.sh#L1063) |
+| compat | `gix diff <path>` | diff with trailing pathspec deferred until renderer lands | [diff.sh:1073](../../tests/journey/parity/diff.sh#L1073) |
+| compat | `gix diff --submodule` | diff --submodule=log deferred until renderer lands | [diff.sh:1085](../../tests/journey/parity/diff.sh#L1085) |
+| compat | `gix diff --ignore-submodules` | diff --ignore-submodules=all deferred until renderer lands | [diff.sh:1094](../../tests/journey/parity/diff.sh#L1094) |
+| compat | `gix diff --ita-invisible-in-index` | diff --ita-invisible-in-index deferred until renderer lands | [diff.sh:1104](../../tests/journey/parity/diff.sh#L1104) |
+| compat | `gix diff --textconv / --no-textconv` | diff --textconv deferred until renderer lands | [diff.sh:1114](../../tests/journey/parity/diff.sh#L1114) |
+| compat | `gix diff --ext-diff / --no-ext-diff` | diff --ext-diff deferred until renderer lands | [diff.sh:1124](../../tests/journey/parity/diff.sh#L1124) |
+| compat | `gix diff --exit-code` | diff --exit-code semantic-parity (exit 1 on diff) deferred | [diff.sh:1136](../../tests/journey/parity/diff.sh#L1136) |
+| compat | `gix diff --quiet` | diff --quiet semantic-parity (exit 1 on diff) deferred | [diff.sh:1145](../../tests/journey/parity/diff.sh#L1145) |
+| compat | `gix diff -1 / --base` | diff -1 deferred until renderer lands | [diff.sh:1157](../../tests/journey/parity/diff.sh#L1157) |
+| compat | `gix diff -2 / --ours` | diff -2 deferred until renderer lands | [diff.sh:1166](../../tests/journey/parity/diff.sh#L1166) |
+| compat | `gix diff -3 / --theirs` | diff -3 deferred until renderer lands | [diff.sh:1175](../../tests/journey/parity/diff.sh#L1175) |
+| compat | `gix diff -0` | diff -0 deferred until renderer lands | [diff.sh:1185](../../tests/journey/parity/diff.sh#L1185) |
+| deferred | `gix diff <merge> <merge>^@` | combined-diff (gix-rev lacks ^@ revision syntax for parent-set expansion; renderer also unimplemented) | [diff.sh:1197](../../tests/journey/parity/diff.sh#L1197) |
+| deferred | `gix diff --combined-all-paths` | combined-diff per-parent path emission requires combined-diff renderer (not yet implemented) | [diff.sh:1205](../../tests/journey/parity/diff.sh#L1205) |
+
 ## fetch
 
 | Class | Section | Reason | Source |
