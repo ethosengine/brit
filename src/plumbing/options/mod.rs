@@ -2247,6 +2247,33 @@ pub mod commit {
         /// gix has no signing path so the negation is a no-op today.
         #[clap(long = "no-gpg-sign", overrides_with = "gpg_sign")]
         pub no_gpg_sign: bool,
+
+        /// Override the commit author. Accept either a fully-formed
+        /// `Name <email>` string or a search pattern (the latter
+        /// requires rev-list machinery and stays deferred).
+        /// Mirrors `OPT_STRING(0, "author", ..., parse_author_arg)`.
+        #[clap(long = "author", value_name = "author")]
+        pub author: Option<String>,
+
+        /// Override the author date. Accepts the standard git date
+        /// formats (RFC2822 / ISO8601 / git-internal). Mirrors
+        /// `OPT_DATE(0, "date", ...)`.
+        #[clap(long = "date", value_name = "date")]
+        pub date: Option<String>,
+
+        /// Append `<token>[(=|:)<value>]` as a trailer to the commit
+        /// message. Multiple `--trailer` accumulate. Mirrors
+        /// `OPT_CALLBACK_F(0, "trailer", ..., opt_pass_trailer)`.
+        #[clap(long = "trailer", value_name = "trailer", action = clap::ArgAction::Append)]
+        pub trailer: Vec<String>,
+
+        /// Pathspec restricting which paths participate in the commit.
+        /// Without `-i`/`-o` git defaults to `--only` semantics; gix
+        /// today only supports the --allow-empty path so pathspec is
+        /// effectively a no-op (clap-accepted to avoid tripping the
+        /// unknown-subcommand path).
+        #[clap(value_name = "pathspec", trailing_var_arg = true)]
+        pub pathspec: Vec<std::ffi::OsString>,
     }
 
     #[derive(Debug, clap::Subcommand)]

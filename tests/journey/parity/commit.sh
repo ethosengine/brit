@@ -224,11 +224,16 @@ only_for_hash sha1-only && (small-repo-in-sandbox
   }
 )
 
-# mode=effect — pathspec args without -i/-o default to --only.
+# mode=effect — pathspec args without -i/-o default to --only. gix's
+# Platform now accepts trailing `pathspec: Vec<OsString>` so positional
+# args don't trip clap's "unrecognized subcommand" path. With a clean
+# small-repo-in-sandbox both binaries exit 1 (git: "nothing to commit,
+# working tree clean"; gix: "without --allow-empty not yet implemented")
+# — effect parity holds. Bytes parity rides the index→tree primitive.
 title "gix commit <pathspec>"
 only_for_hash sha1-only && (small-repo-in-sandbox
-  it "TODO: matches git behavior" && {
-    : # echo more >> a && expect_parity effect -- commit -m sub a
+  it "matches git behavior" && {
+    expect_parity effect -- commit -m sub a
   }
 )
 
@@ -330,22 +335,27 @@ only_for_hash sha1-only && (small-repo-in-sandbox
 
 # --- author / date overrides -------------------------------------------
 
-# mode=effect — `--author=<author>` overrides committer-as-author. Pattern
-# matching for partial-author lookup (`git rev-list -i --author=<pat>`)
-# is a separate, larger feature.
+# mode=effect — `--author=<author>` overrides commit author. gix's
+# create() parses the explicit `Name <email>` form via
+# gix::actor::IdentityRef::from_bytes and routes through
+# Repository::commit_as. The pattern-match form
+# (`git rev-list -i --author=<pat>` lookup) stays deferred — git's
+# parse_author_arg uses rev-list; for parity rows that want byte
+# matching on the lookup, a dedicated fixture row will close later.
 title "gix commit --author"
 only_for_hash sha1-only && (small-repo-in-sandbox
-  it "TODO: matches git behavior — explicit ident" && {
-    : # expect_parity effect -- commit --allow-empty --author='A U <a@u>' -m m
+  it "matches git behavior — explicit ident" && {
+    expect_parity effect -- commit --allow-empty --author='A U <a@u>' -m m
   }
 )
 
 # mode=effect — `--date=<date>` overrides author date. Accepts
-# RFC2822 / ISO8601 / git-internal forms (see date-formats.adoc).
+# RFC2822 / ISO8601 / git-internal forms via `gix::date::parse`,
+# the same set git accepts (see date-formats.adoc + gix-date crate).
 title "gix commit --date"
 only_for_hash sha1-only && (small-repo-in-sandbox
-  it "TODO: matches git behavior" && {
-    : # expect_parity effect -- commit --allow-empty --date='2020-01-01' -m m
+  it "matches git behavior" && {
+    expect_parity effect -- commit --allow-empty --date='2020-01-01' -m m
   }
 )
 
@@ -367,12 +377,15 @@ only_for_hash sha1-only && (small-repo-in-sandbox
 )
 
 # mode=effect — `--trailer <token>=<value>` appends one or more
-# RFC2822-style trailers; multiple --trailer accumulate. Implementation
-# composes via gix-trailer / interpret-trailers semantics.
+# RFC2822-style trailers; multiple --trailer accumulate. gix's create()
+# appends each trailer as a single line, mirroring tag.rs:175-181.
+# Bytes parity on the message format (interpret_trailers cleanup,
+# duplicate elision, configurable separators per trailer.* config)
+# stays deferred pending dedicated gix-trailer integration.
 title "gix commit --trailer"
 only_for_hash sha1-only && (small-repo-in-sandbox
-  it "TODO: matches git behavior" && {
-    : # expect_parity effect -- commit --allow-empty --trailer 'Helped-by: x <x@x>' -m m
+  it "matches git behavior" && {
+    expect_parity effect -- commit --allow-empty --trailer 'Helped-by: x <x@x>' -m m
   }
 )
 
@@ -565,10 +578,12 @@ only_for_hash sha1-only && (small-repo-in-sandbox
 
 # --- terminator --------------------------------------------------------
 
-# mode=effect — `--` separates options from pathspec.
+# mode=effect — `--` separates options from pathspec. clap interprets
+# the trailing positional sequence after `--` as `pathspec`. Same
+# clean-repo exit-1 parity as the bare-pathspec row.
 title "gix commit -- <pathspec>"
 only_for_hash sha1-only && (small-repo-in-sandbox
-  it "TODO: matches git behavior" && {
-    : # echo more >> a && expect_parity effect -- commit -m m -- a
+  it "matches git behavior" && {
+    expect_parity effect -- commit -m m -- a
   }
 )

@@ -2730,6 +2730,10 @@ pub fn main() -> Result<()> {
                 file,
                 gpg_sign,
                 no_gpg_sign: _no_gpg_sign,
+                author,
+                date,
+                trailer,
+                pathspec,
             } = platform;
             match cmd {
                 // Bare `gix commit` (no subcommand): porcelain dispatch.
@@ -2758,6 +2762,10 @@ pub fn main() -> Result<()> {
                                 reset_author,
                                 file,
                                 gpg_sign,
+                                author,
+                                date,
+                                trailer,
+                                pathspec,
                             },
                         )
                     },

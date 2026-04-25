@@ -181,6 +181,22 @@ pub struct CreateOptions {
     /// today; setting this flag emits git's "unable to start gpg"
     /// stanza and exits 128 (mirrors tag's rejection path).
     pub gpg_sign: Option<String>,
+    /// `--author=<author>`: override the commit author. Accepts a
+    /// fully-formed `Name <email>` ident; pattern-matching to look up
+    /// an existing author (`git rev-list -i --author=<pat>`) is
+    /// deferred.
+    pub author: Option<String>,
+    /// `--date=<date>`: override the author date. Accepts the standard
+    /// git date formats (gix-date::parse).
+    pub date: Option<String>,
+    /// `--trailer <token>[(=|:)<value>]`: appended to the commit
+    /// message. Multiple `--trailer` accumulate, one per line.
+    pub trailer: Vec<String>,
+    /// Trailing pathspec args. With only `--allow-empty` exercised
+    /// today, pathspec is effectively a no-op — present here so the
+    /// Clap surface accepts `gix commit -m m -- <path>` without
+    /// tripping the unknown-subcommand path.
+    pub pathspec: Vec<std::ffi::OsString>,
 }
 
 /// Porcelain `git commit` entry point. Currently only the
@@ -198,6 +214,10 @@ pub fn create(
         reset_author,
         file,
         gpg_sign,
+        author,
+        date,
+        trailer,
+        pathspec: _pathspec,
     }: CreateOptions,
 ) -> Result<()> {
     // git's `--reset-author` precondition (vendor/git/builtin/commit.c
@@ -247,6 +267,20 @@ pub fn create(
         }
         composed.push_str(&body);
     }
+    // --trailer <token>=<value>: append each as a separate line to the
+    // message, mirroring tag.rs:175-181. opt_pass_trailer in
+    // vendor/git/builtin/commit.c routes through interpret_trailers;
+    // the simple-append path is sufficient for effect-mode parity
+    // (a dedicated --trailer parity row may close on bytes mode later
+    // when gix-trailer integration lands).
+    for t in &trailer {
+        if !composed.is_empty() && !composed.ends_with('\n') {
+            composed.push('\n');
+        }
+        composed.push_str(t);
+        composed.push('\n');
+    }
+
     if composed.is_empty() && !allow_empty_message {
         bail!("Aborting commit due to empty commit message.");
     }
@@ -261,9 +295,52 @@ pub fn create(
     let tree_id = head_commit.tree_id().context("HEAD commit must have a tree")?;
     let parent = head_id.detach();
 
-    let new_id = repo
-        .commit("HEAD", composed.as_str(), tree_id, Some(parent))
-        .context("writing the commit object failed")?;
+    // --author / --date: override the author signature. git's
+    // parse_author_arg accepts a fully-formed `Name <email>` ident
+    // (pattern-match-against-existing-author is rev-list machinery
+    // and stays deferred). --date parses with gix_date::parse, the
+    // same set of formats git accepts. With either set, we route
+    // through commit_as so the override is observable; otherwise
+    // we keep the repo.commit() default which respects
+    // GIT_AUTHOR_NAME/EMAIL/DATE env vars.
+    let author_override = author.is_some() || date.is_some();
+    let new_id = if author_override {
+        let base_committer = repo
+            .committer()
+            .context("committer identity not configured")?
+            .context("invalid committer time configuration")?;
+        let base_author = repo
+            .author()
+            .context("author identity not configured")?
+            .context("invalid author time configuration")?;
+
+        let mut author_sig: gix::actor::Signature = base_author.into();
+        if let Some(a) = author.as_ref() {
+            let id = gix::actor::IdentityRef::from_bytes::<()>(a.as_bytes())
+                .map_err(|_| anyhow::anyhow!("invalid --author: {a:?}"))?;
+            author_sig.name = id.name.to_owned();
+            author_sig.email = id.email.to_owned();
+        }
+        if let Some(d) = date.as_ref() {
+            author_sig.time = gix::date::parse(d, Some(std::time::SystemTime::now()))
+                .map_err(|e| anyhow::anyhow!("invalid --date {d:?}: {e}"))?;
+        }
+
+        let mut author_buf = gix::date::parse::TimeBuf::default();
+        let author_ref = author_sig.to_ref(&mut author_buf);
+        repo.commit_as(
+            base_committer,
+            author_ref,
+            "HEAD",
+            composed.as_str(),
+            tree_id,
+            Some(parent),
+        )
+        .context("writing the commit object failed")?
+    } else {
+        repo.commit("HEAD", composed.as_str(), tree_id, Some(parent))
+            .context("writing the commit object failed")?
+    };
 
     if !quiet {
         // Minimal summary. git's wording is `[<branch> <abbrev>] <subject>`;
