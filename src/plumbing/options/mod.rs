@@ -298,6 +298,8 @@ pub enum Subcommands {
     Merge(merge::Platform),
     /// Reapply commits on top of another base tip.
     Rebase(rebase::Platform),
+    /// Add file contents to the index.
+    Add(add::Platform),
     /// Reset current HEAD to the specified state.
     Reset(reset::Platform),
     /// Print paths relevant to the Git installation.
@@ -3462,6 +3464,8 @@ pub mod pull;
 
 #[cfg(feature = "gitoxide-core-blocking-client")]
 pub mod fetch;
+
+pub mod add;
 
 pub mod rebase;
 

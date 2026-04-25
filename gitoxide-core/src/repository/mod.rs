@@ -4,6 +4,7 @@ use std::path::PathBuf;
 use anyhow::{Context as AnyhowContext, Result};
 use gix::bstr::BString;
 
+pub mod add;
 #[cfg(feature = "archive")]
 pub mod archive;
 pub mod branch;

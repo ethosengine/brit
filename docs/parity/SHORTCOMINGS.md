@@ -7,6 +7,53 @@ Two row classes:
 - **deferred** — `shortcoming "<reason>"`: row closed as a legitimate deferral; reason describes the gap.
 - **compat** — `compat_effect "<reason>"`: row green at effect mode (exit-code parity); byte-output parity is a known follow-up.
 
+## add
+
+| Class | Section | Reason | Source |
+|---|---|---|---|
+| compat | `gix add a` | deferred until add driver lands | [add.sh:144](../../tests/journey/parity/add.sh#L144) |
+| compat | `gix add new-file` | deferred until add driver lands | [add.sh:154](../../tests/journey/parity/add.sh#L154) |
+| compat | `gix add .` | deferred until add driver lands | [add.sh:164](../../tests/journey/parity/add.sh#L164) |
+| compat | `gix add -- a` | deferred until add driver lands | [add.sh:173](../../tests/journey/parity/add.sh#L173) |
+| compat | `gix add missing-file` | deferred until add driver lands | [add.sh:184](../../tests/journey/parity/add.sh#L184) |
+| compat | `gix add -n a` | deferred until add driver lands | [add.sh:196](../../tests/journey/parity/add.sh#L196) |
+| compat | `gix add --dry-run a` | deferred until add driver lands | [add.sh:205](../../tests/journey/parity/add.sh#L205) |
+| compat | `gix add -v a` | deferred until add driver lands | [add.sh:215](../../tests/journey/parity/add.sh#L215) |
+| compat | `gix add --verbose a` | deferred until add driver lands | [add.sh:224](../../tests/journey/parity/add.sh#L224) |
+| compat | `gix add -f a` | deferred until add driver lands | [add.sh:236](../../tests/journey/parity/add.sh#L236) |
+| compat | `gix add --force a` | deferred until add driver lands | [add.sh:245](../../tests/journey/parity/add.sh#L245) |
+| compat | `gix add -u` | deferred until add driver lands | [add.sh:255](../../tests/journey/parity/add.sh#L255) |
+| compat | `gix add --update` | deferred until add driver lands | [add.sh:264](../../tests/journey/parity/add.sh#L264) |
+| compat | `gix add -A` | deferred until add driver lands | [add.sh:274](../../tests/journey/parity/add.sh#L274) |
+| compat | `gix add --all` | deferred until add driver lands | [add.sh:283](../../tests/journey/parity/add.sh#L283) |
+| compat | `gix add --no-all` | deferred until add driver lands | [add.sh:293](../../tests/journey/parity/add.sh#L293) |
+| compat | `gix add --ignore-removal` | deferred until add driver lands | [add.sh:302](../../tests/journey/parity/add.sh#L302) |
+| compat | `gix add --no-ignore-removal` | deferred until add driver lands | [add.sh:312](../../tests/journey/parity/add.sh#L312) |
+| compat | `gix add --sparse a` | deferred until add driver lands | [add.sh:322](../../tests/journey/parity/add.sh#L322) |
+| compat | `gix add -N new-file` | deferred until add driver lands | [add.sh:335](../../tests/journey/parity/add.sh#L335) |
+| compat | `gix add --intent-to-add new-file` | deferred until add driver lands | [add.sh:345](../../tests/journey/parity/add.sh#L345) |
+| compat | `gix add --renormalize` | deferred until add driver lands | [add.sh:357](../../tests/journey/parity/add.sh#L357) |
+| compat | `gix add --refresh a` | deferred until add driver lands | [add.sh:369](../../tests/journey/parity/add.sh#L369) |
+| compat | `gix add --ignore-errors a` | deferred until add driver lands | [add.sh:379](../../tests/journey/parity/add.sh#L379) |
+| compat | `gix add --chmod=+x a` | deferred until add driver lands | [add.sh:391](../../tests/journey/parity/add.sh#L391) |
+| compat | `gix add --chmod=-x a` | deferred until add driver lands | [add.sh:400](../../tests/journey/parity/add.sh#L400) |
+| compat | `gix add --pathspec-from-file=spec.txt` | deferred until add driver lands | [add.sh:413](../../tests/journey/parity/add.sh#L413) |
+| compat | `gix add --pathspec-from-file=spec.txt --pathspec-file-nul` | deferred until add driver lands | [add.sh:426](../../tests/journey/parity/add.sh#L426) |
+| compat | `gix add -i` | deferred until add driver lands | [add.sh:440](../../tests/journey/parity/add.sh#L440) |
+| compat | `gix add --interactive` | deferred until add driver lands | [add.sh:449](../../tests/journey/parity/add.sh#L449) |
+| compat | `gix add -p` | deferred until add driver lands | [add.sh:459](../../tests/journey/parity/add.sh#L459) |
+| compat | `gix add --patch` | deferred until add driver lands | [add.sh:468](../../tests/journey/parity/add.sh#L468) |
+| compat | `gix add -e a` | deferred until add driver lands | [add.sh:485](../../tests/journey/parity/add.sh#L485) |
+| compat | `gix add --edit a` | deferred until add driver lands | [add.sh:495](../../tests/journey/parity/add.sh#L495) |
+| deferred | `gix add --auto-advance --patch` | system git 2.47.3 lacks --auto-advance; vendor/git v2.54.0 has it | [add.sh:509](../../tests/journey/parity/add.sh#L509) |
+| deferred | `gix add -U 3 --patch` | system git 2.47.3 lacks -U for add; vendor/git v2.54.0 has it | [add.sh:521](../../tests/journey/parity/add.sh#L521) |
+| deferred | `gix add --unified=3 --patch` | system git 2.47.3 lacks --unified for add; vendor/git v2.54.0 has it | [add.sh:530](../../tests/journey/parity/add.sh#L530) |
+| deferred | `gix add --inter-hunk-context=2 --patch` | system git 2.47.3 lacks --inter-hunk-context for add; vendor/git v2.54.0 has it | [add.sh:541](../../tests/journey/parity/add.sh#L541) |
+| compat | `gix add --dry-run --ignore-missing missing-file` | deferred until add driver lands | [add.sh:554](../../tests/journey/parity/add.sh#L554) |
+| deferred | `gix add --unified=3` | system git 2.47.3 lacks --unified for add; vendor/git v2.54.0 has it | [add.sh:666](../../tests/journey/parity/add.sh#L666) |
+| deferred | `gix add --inter-hunk-context=2` | system git 2.47.3 lacks --inter-hunk-context for add; vendor/git v2.54.0 has it | [add.sh:678](../../tests/journey/parity/add.sh#L678) |
+| deferred | `gix add --no-auto-advance` | system git 2.47.3 lacks --no-auto-advance; vendor/git v2.54.0 has it | [add.sh:690](../../tests/journey/parity/add.sh#L690) |
+
 ## blame
 
 | Class | Section | Reason | Source |
