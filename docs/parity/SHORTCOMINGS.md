@@ -610,6 +610,14 @@ Two row classes:
 | compat | `gix reset HEAD a` | deferred until reset driver lands | [reset.sh:514](../../tests/journey/parity/reset.sh#L514) |
 | compat | `gix reset -- a` | deferred until reset driver lands | [reset.sh:523](../../tests/journey/parity/reset.sh#L523) |
 
+## rm
+
+| Class | Section | Reason | Source |
+|---|---|---|---|
+| compat | `gix rm --ignore-unmatch missing-file` | deferred until rm driver lands | [rm.sh:203](../../tests/journey/parity/rm.sh#L203) |
+| compat | `gix rm -n a` | deferred until rm driver lands | [rm.sh:240](../../tests/journey/parity/rm.sh#L240) |
+| compat | `gix rm --dry-run a` | deferred until rm driver lands | [rm.sh:249](../../tests/journey/parity/rm.sh#L249) |
+
 ## show
 
 | Class | Section | Reason | Source |

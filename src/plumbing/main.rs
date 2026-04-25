@@ -801,6 +801,46 @@ pub fn main() -> Result<()> {
                 )
             },
         ),
+        Subcommands::Rm(crate::plumbing::options::rm::Platform {
+            args: rm_args,
+            paths: rm_paths,
+            dry_run: rm_dry_run,
+            quiet: rm_quiet,
+            cached: rm_cached,
+            force: rm_force,
+            recursive: rm_recursive,
+            ignore_unmatch: rm_ignore_unmatch,
+            sparse: rm_sparse,
+            pathspec_from_file: rm_pathspec_from_file,
+            pathspec_file_nul: rm_pathspec_file_nul,
+        }) => prepare_and_run(
+            "rm",
+            trace,
+            verbose,
+            progress,
+            progress_keep_open,
+            None,
+            move |_progress, out, err| {
+                core::repository::rm::porcelain(
+                    repository(Mode::Lenient)?,
+                    out,
+                    err,
+                    rm_args,
+                    rm_paths,
+                    core::repository::rm::Options {
+                        dry_run: rm_dry_run,
+                        quiet: rm_quiet,
+                        cached: rm_cached,
+                        force: rm_force,
+                        recursive: rm_recursive,
+                        ignore_unmatch: rm_ignore_unmatch,
+                        sparse: rm_sparse,
+                        pathspec_from_file: rm_pathspec_from_file,
+                        pathspec_file_nul: rm_pathspec_file_nul,
+                    },
+                )
+            },
+        ),
         Subcommands::Reset(crate::plumbing::options::reset::Platform {
             args: reset_args,
             paths: reset_paths,

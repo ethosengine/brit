@@ -302,6 +302,8 @@ pub enum Subcommands {
     Add(add::Platform),
     /// Reset current HEAD to the specified state.
     Reset(reset::Platform),
+    /// Remove files from the working tree and from the index.
+    Rm(rm::Platform),
     /// Print paths relevant to the Git installation.
     Env,
     Diff(diff::Platform),
@@ -3470,5 +3472,7 @@ pub mod add;
 pub mod rebase;
 
 pub mod reset;
+
+pub mod rm;
 
 pub mod show;
