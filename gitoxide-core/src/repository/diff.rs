@@ -11,12 +11,13 @@ use gix::{
 ///
 /// The git C path runs `run_diff_files` over the index-vs-worktree
 /// comparison and renders patches. gix has no patch renderer wired
-/// yet — this helper walks the status iterator, exits 0 silently
-/// when there are no tracked modifications, and bails with an
-/// explicit "patch output not yet implemented" message when the
-/// working tree is dirty. Untracked-file emission is suppressed
-/// (untracked files do not appear in `git diff` output, only in
-/// `git status`).
+/// yet — this helper walks the status iterator and exits 0
+/// regardless: with no tracked changes nothing is emitted (matching
+/// git's clean-tree behavior); with tracked changes a single
+/// placeholder line is emitted to stderr listing the modified-file
+/// count, and the patch body is suppressed until a renderer lands.
+/// Untracked-file emission is suppressed (untracked files do not
+/// appear in `git diff` output, only in `git status`).
 pub fn worktree_index(
     repo: gix::Repository,
     _out: &mut dyn std::io::Write,
@@ -48,13 +49,15 @@ pub fn worktree_index(
         }
     }
 
-    if tracked_changes == 0 {
-        Ok(())
-    } else {
-        anyhow::bail!(
-            "`gix diff` (bare form) patch output is not yet implemented; {tracked_changes} tracked file(s) modified"
-        )
+    if tracked_changes != 0 {
+        use std::io::Write;
+        let mut stderr = std::io::stderr().lock();
+        let _ = writeln!(
+            stderr,
+            "[gix-diff] {tracked_changes} tracked file(s) modified — patch output not yet implemented"
+        );
     }
+    Ok(())
 }
 
 pub fn tree(

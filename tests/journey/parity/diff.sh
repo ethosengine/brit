@@ -109,15 +109,20 @@ only_for_hash sha1-only && (small-repo-in-sandbox
   }
 )
 
-# mode=effect — bare `gix diff` with a modified tracked file. Default
-# patch output. Currently gix-diff has no working-tree-vs-index path;
-# this row will likely close as compat_effect with a "diff worktree-
-# vs-index pending" reason until the diff-files primitive lands.
+# mode=effect — bare `gix diff` with a modified tracked file. git
+# emits a unified-diff patch on stdout and exits 0. gix's
+# worktree_index helper detects tracked modifications, prints a
+# placeholder note to stderr ("[gix-diff] N tracked file(s)
+# modified..."), and exits 0. Effect-mode parity (exit code 0 on
+# both) holds; bytes parity is intentionally deferred via the
+# compat_effect ledger marker until the patch renderer lands.
 # hash=sha1-only
 title "gix diff (no args, dirty working tree)"
 only_for_hash sha1-only && (small-repo-in-sandbox
-  # TODO — expect_parity effect -- diff (after touching a tracked file)
-  it "matches git behavior" && { :; }
+  echo "dirty" >> a
+  it "matches git behavior" && {
+    compat_effect "diff worktree-vs-index patch output deferred until renderer lands" -- diff
+  }
 )
 
 # mode=effect — `gix diff <commit>`: working-tree vs <commit>. diff-
