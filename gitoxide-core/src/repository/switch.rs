@@ -37,7 +37,7 @@
 //! `"deferred until switch driver lands"`.
 
 use anyhow::Result;
-use gix::bstr::BString;
+use gix::bstr::{BString, ByteSlice};
 
 /// Subset of `switch::Platform` flags consumed by the porcelain stub.
 #[derive(Debug, Default)]
@@ -84,6 +84,25 @@ pub fn porcelain(
     if !has_target {
         let _ = writeln!(err, "fatal: missing branch or commit argument");
         std::process::exit(128);
+    }
+
+    // Existing-ref switch (no -c/-C/--orphan/--detach, exactly one
+    // positional, not the "@{-1}" sugar `-`): mirror git's
+    // "fatal: invalid reference: <name>" die when the ref doesn't exist.
+    // `has_dash_dash` is forced to 1 in
+    // vendor/git/builtin/checkout.c:1399..1403 because switch sets
+    // `accept_pathspec=0`, so the dwim-fail branch dies (vendor/git/
+    // builtin/checkout.c:1463..1465) instead of falling through.
+    if opts.create.is_none() && opts.force_create.is_none() && opts.orphan.is_none() && !opts.detach && args.len() == 1
+    {
+        let target = args[0].to_str_lossy();
+        if target != "-" {
+            let exists = matches!(repo.try_find_reference(target.as_ref()), Ok(Some(_)));
+            if !exists {
+                let _ = writeln!(err, "fatal: invalid reference: {target}");
+                std::process::exit(128);
+            }
+        }
     }
 
     // Happy path placeholder: emit a stub note so the shape of stdout

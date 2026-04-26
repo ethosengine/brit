@@ -91,50 +91,68 @@
 
 # --- meta / help --------------------------------------------------------
 
-# TODO: --help — git delegates to man (exit 0); gix's clap renders auto help.
-# mode=effect, hash=dual.
+# mode=effect — clap --help short-circuits before repo load, exits 0.
+# git's --help delegates to `man git-switch` (exit 0); gix returns clap's
+# auto-generated help. Message text diverges; only the exit-code match is
+# asserted.
+# hash=dual
 title "gix switch --help"
 only_for_hash dual && (sandbox
   it "matches git behavior" && {
-    :
+    expect_parity effect -- switch --help
   }
 )
 
-# TODO: --bogus-flag — git's parse-options dies 129 with the usage banner;
-# gix's clap maps UnknownArgument to 129 via src/plumbing/main.rs.
+# mode=effect — unknown flag: git exits 129 (usage_msg_opt in
+# parse-options.c). gix's Clap layer maps UnknownArgument to 129 via
+# src/plumbing/main.rs. Tested inside a repo because git outside a repo
+# dies 128 before reaching arg-parse, while clap in gix always runs first.
 title "gix switch --bogus-flag"
 only_for_hash sha1-only && (small-repo-in-sandbox
   it "matches git behavior" && {
-    :
+    expect_parity effect -- switch --bogus-flag
   }
 )
 
-# TODO: outside any repo — git dies 128 with "fatal: not a git repository";
-# gix's plumbing repository() closure remaps NoGitRepository* variants.
-# mode=bytes, hash=dual.
+# mode=bytes — outside any repo: git dies 128 with "fatal: not a git
+# repository (or any of the parent directories): .git". gix's plumbing
+# repository() closure already remaps gix_discover::upwards::Error::
+# NoGitRepository* variants to git's exact wording + exit 128. The
+# positional `xyz` is needed to bypass clap's required-arg gate before
+# the shared repo-open glue runs.
+# hash=dual
 title "gix switch (outside a repository)"
 only_for_hash dual && (sandbox
   it "matches git behavior" && {
-    :
+    expect_parity bytes -- switch xyz
   }
 )
 
 # --- argument-count gates ----------------------------------------------
 
-# TODO: bare `git switch` (no positional, no -c/-C/--orphan/--detach) hits
-# the "fatal: missing branch or commit argument" die (exit 128).
+# mode=bytes — bare `git switch` (no positional, no -c/-C/--orphan/--detach)
+# dies 128 with "fatal: missing branch or commit argument" — emitted by
+# checkout_main's argument-count gate when accept_pathspec=0. gix's
+# porcelain placeholder mirrors the wording verbatim.
 title "gix switch (no positional)"
 only_for_hash sha1-only && (small-repo-in-sandbox
   it "matches git behavior" && {
-    :
+    expect_parity bytes -- switch
   }
 )
 
-# TODO: nonexistent ref — git dies 128 with "fatal: invalid reference: X".
+# mode=bytes — nonexistent ref: git dies 128 with
+# "fatal: invalid reference: <name>". The die fires from
+# vendor/git/builtin/checkout.c:1463..1465 because switch sets
+# accept_pathspec=0, so has_dash_dash is forced to 1 at
+# vendor/git/builtin/checkout.c:1399..1403, which routes the dwim-fail
+# branch into die() instead of falling through. gix's porcelain stub
+# wires `try_find_reference()` and emits the verbatim error on Ok(None)
+# / Err.
 title "gix switch nosuchbranch"
 only_for_hash sha1-only && (small-repo-in-sandbox
   it "matches git behavior" && {
-    :
+    expect_parity bytes -- switch nosuchbranch
   }
 )
 
