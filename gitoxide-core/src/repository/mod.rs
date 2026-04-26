@@ -53,6 +53,7 @@ pub mod mailmap;
 mod merge_base;
 pub use merge_base::merge_base;
 pub mod merge;
+pub mod mv;
 pub mod odb;
 pub mod rebase;
 pub mod remote;

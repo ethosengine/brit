@@ -841,6 +841,38 @@ pub fn main() -> Result<()> {
                 )
             },
         ),
+        Subcommands::Mv(crate::plumbing::options::mv::Platform {
+            args: mv_args,
+            paths: mv_paths,
+            verbose: mv_verbose,
+            dry_run: mv_dry_run,
+            force: mv_force,
+            ignore_errors: mv_ignore_errors,
+            sparse: mv_sparse,
+        }) => prepare_and_run(
+            "mv",
+            trace,
+            verbose,
+            progress,
+            progress_keep_open,
+            None,
+            move |_progress, out, err| {
+                core::repository::mv::porcelain(
+                    repository(Mode::Lenient)?,
+                    out,
+                    err,
+                    mv_args,
+                    mv_paths,
+                    core::repository::mv::Options {
+                        verbose: mv_verbose,
+                        dry_run: mv_dry_run,
+                        force: mv_force,
+                        ignore_errors: mv_ignore_errors,
+                        sparse: mv_sparse,
+                    },
+                )
+            },
+        ),
         Subcommands::Reset(crate::plumbing::options::reset::Platform {
             args: reset_args,
             paths: reset_paths,

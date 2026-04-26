@@ -304,6 +304,8 @@ pub enum Subcommands {
     Reset(reset::Platform),
     /// Remove files from the working tree and from the index.
     Rm(rm::Platform),
+    /// Move or rename a file, a directory, or a symlink.
+    Mv(mv::Platform),
     /// Print paths relevant to the Git installation.
     Env,
     Diff(diff::Platform),
@@ -3474,5 +3476,7 @@ pub mod rebase;
 pub mod reset;
 
 pub mod rm;
+
+pub mod mv;
 
 pub mod show;

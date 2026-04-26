@@ -491,6 +491,14 @@ Two row classes:
 | compat | `gix merge --verify` | deferred until merge driver lands | [merge.sh:755](../../tests/journey/parity/merge.sh#L755) |
 | compat | `gix merge --no-verify` | deferred until merge driver lands | [merge.sh:765](../../tests/journey/parity/merge.sh#L765) |
 
+## mv
+
+| Class | Section | Reason | Source |
+|---|---|---|---|
+| compat | `gix mv -n a b` | deferred until mv driver lands | [mv.sh:337](../../tests/journey/parity/mv.sh#L337) |
+| compat | `gix mv --dry-run a b` | deferred until mv driver lands | [mv.sh:355](../../tests/journey/parity/mv.sh#L355) |
+| compat | `gix mv -k missing-file b` | deferred until mv driver lands | [mv.sh:409](../../tests/journey/parity/mv.sh#L409) |
+
 ## pull
 
 | Class | Section | Reason | Source |
