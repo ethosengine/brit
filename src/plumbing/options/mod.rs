@@ -306,6 +306,8 @@ pub enum Subcommands {
     Rm(rm::Platform),
     /// Move or rename a file, a directory, or a symlink.
     Mv(mv::Platform),
+    /// Switch branches.
+    Switch(switch::Platform),
     /// Print paths relevant to the Git installation.
     Env,
     Diff(diff::Platform),
@@ -3478,5 +3480,7 @@ pub mod reset;
 pub mod rm;
 
 pub mod mv;
+
+pub mod switch;
 
 pub mod show;

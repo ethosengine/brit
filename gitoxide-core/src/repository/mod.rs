@@ -64,6 +64,7 @@ pub mod revision;
 pub mod show;
 pub mod status;
 pub mod submodule;
+pub mod switch;
 pub mod tag;
 pub mod tree;
 pub mod verify;
