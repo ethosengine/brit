@@ -97,49 +97,55 @@
 
 # --- meta / help --------------------------------------------------------
 
-# TODO: clap --help short-circuits before repo load, exits 0. git's --help
-# delegates to `man git-restore`. Close as `expect_parity effect`.
+# mode=effect — clap --help short-circuits before repo load, exits 0.
+# git's --help delegates to `man git-restore` (exit 0); gix returns clap's
+# auto-generated help. Message text diverges; only the exit-code match is
+# asserted.
 # hash=dual
 title "gix restore --help"
 only_for_hash dual && (sandbox
   it "matches git behavior" && {
-    :
+    expect_parity effect -- restore --help
   }
 )
 
-# TODO: unknown flag: git exits 129 (usage_msg_opt). gix's Clap layer maps
-# UnknownArgument to 129. Close as `expect_parity effect` against
-# small-repo-in-sandbox.
+# mode=effect — unknown flag: git exits 129 (usage_msg_opt in
+# parse-options.c). gix's Clap layer maps UnknownArgument to 129 via
+# src/plumbing/main.rs. Tested inside a repo because git outside a repo
+# dies 128 before reaching arg-parse, while clap in gix always runs first.
 title "gix restore --bogus-flag"
 only_for_hash sha1-only && (small-repo-in-sandbox
   it "matches git behavior" && {
-    :
+    expect_parity effect -- restore --bogus-flag
   }
 )
 
-# TODO: outside any repo: git dies 128 with "fatal: not a git repository".
-# gix's plumbing repository() closure already remaps. The positional `a`
-# is needed to bypass clap's required-arg gate before the shared repo-open
-# glue runs. Close as `expect_parity bytes`.
+# mode=bytes — outside any repo: git dies 128 with "fatal: not a git
+# repository (or any of the parent directories): .git". gix's plumbing
+# repository() closure already remaps gix_discover::upwards::Error::
+# NoGitRepository* variants to git's exact wording + exit 128. The
+# positional `a` is needed to bypass clap's required-arg gate before
+# the shared repo-open glue runs.
 # hash=dual
 title "gix restore (outside a repository)"
 only_for_hash dual && (sandbox
   it "matches git behavior" && {
-    :
+    expect_parity bytes -- restore a
   }
 )
 
 # --- argument-count gates ----------------------------------------------
 
-# TODO: bare `git restore` (no positional, no `--pathspec-from-file`) dies
-# 128 with "fatal: you must specify path(s) to restore" — emitted by
-# checkout_main's empty-pathspec gate when `accept_pathspec=1` and
-# `empty_pathspec_ok=0`. gix porcelain placeholder mirrors verbatim.
-# Close as `expect_parity bytes`.
+# mode=bytes — bare `git restore` (no positional, no
+# `--pathspec-from-file`) dies 128 with "fatal: you must specify path(s)
+# to restore" — emitted by checkout_main's empty-pathspec gate when
+# `accept_pathspec=1` (vendor/git/builtin/checkout.c:2149) and
+# `empty_pathspec_ok=0` (:2150). gix porcelain placeholder mirrors the
+# wording verbatim.
 title "gix restore (no positional)"
 only_for_hash sha1-only && (small-repo-in-sandbox
   it "matches git behavior" && {
-    :
+    expect_parity bytes -- restore
   }
 )
 
@@ -472,23 +478,24 @@ only_for_hash sha1-only && (small-repo-in-sandbox
 
 # --- precondition gates ----------------------------------------------
 
-# TODO: `--pathspec-from-file=spec.txt -- a` — the parse-options gate dies
-# with "fatal: '--pathspec-from-file' and pathspec arguments cannot be
-# used together" + exit 128. Bytes-perfect parity (gix porcelain mirrors
-# verbatim).
+# mode=bytes — `--pathspec-from-file=<file> -- <pathspec>` — the parse-
+# options gate dies with "fatal: '--pathspec-from-file' and pathspec
+# arguments cannot be used together" + exit 128. Bytes-perfect parity
+# (gix porcelain mirrors verbatim).
 title "gix restore --pathspec-from-file -- a"
 only_for_hash sha1-only && (small-repo-in-sandbox
   it "matches git behavior" && {
-    :
+    expect_parity bytes -- restore --pathspec-from-file=spec.txt -- a
   }
 )
 
-# TODO: `--pathspec-file-nul` without `--pathspec-from-file` dies 128 with
-# "fatal: the option '--pathspec-file-nul' requires '--pathspec-from-file'".
+# mode=bytes — `--pathspec-file-nul` without `--pathspec-from-file` dies
+# 128 with "fatal: the option '--pathspec-file-nul' requires
+# '--pathspec-from-file'". Bytes-perfect parity.
 title "gix restore --pathspec-file-nul (no --pathspec-from-file)"
 only_for_hash sha1-only && (small-repo-in-sandbox
   it "matches git behavior" && {
-    :
+    expect_parity bytes -- restore --pathspec-file-nul
   }
 )
 
