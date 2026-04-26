@@ -149,330 +149,364 @@ only_for_hash sha1-only && (small-repo-in-sandbox
   }
 )
 
-# TODO: missing pathspec — git dies 128 with "fatal: pathspec '<x>' did not
-# match any files" once the pathspec walker fires. gix placeholder skips
-# the walker (deferred until restore driver lands), so this is a
-# `compat_effect` row today. Close as
-# `compat_effect "deferred until restore driver lands"`.
+# mode=effect — missing pathspec: git emits `error: pathspec '<x>' did
+# not match any file(s) known to git` + exit 1 (note: `error()` not
+# `die()`, exit 1 not 128 — distinguishes restore from rm/add, which
+# both `die()` with exit 128). The error fires from the checkout
+# pathspec walker (part of the deferred restore driver), so the
+# placeholder cannot match the exit code today.
 title "gix restore missing-file"
 only_for_hash sha1-only && (small-repo-in-sandbox
   it "matches git behavior" && {
-    :
+    shortcoming "deferred until restore driver implements pathspec walker (exit-code 1 mismatch)"
   }
 )
 
 # --- happy-path single-pathspec ----------------------------------------
 
-# TODO: `git restore a` restores `a` from the index (default --worktree
-# only). gix-placeholder accepts the pathspec and exits 0 on the stub.
-# Close as `compat_effect "deferred until restore driver lands"` against
-# `expect_parity_reset _restore-fixture` so the second binary sees the
-# pre-mutation fixture.
+# mode=effect — `git restore a` restores `a` from the index (default
+# --worktree only). On a clean fixture `a` is at the index version, so
+# both binaries exit 0 (gix via the stub-note path). Bytes parity
+# deferred until the restore driver lands.
 title "gix restore <pathspec>"
 only_for_hash sha1-only && (small-repo-in-sandbox
   it "matches git behavior" && {
-    :
+    compat_effect "deferred until restore driver lands" -- restore a
   }
 )
 
-# TODO: explicit pathspec terminator — `git restore -- a` is the canonical
-# form of the previous row.
+# mode=effect — explicit pathspec terminator. `git restore -- a` is the
+# canonical synopsis form (vendor/git/Documentation/git-restore.adoc:11).
 title "gix restore -- <pathspec>"
 only_for_hash sha1-only && (small-repo-in-sandbox
   it "matches git behavior" && {
-    :
+    compat_effect "deferred until restore driver lands" -- restore -- a
   }
 )
 
 # --- source ------------------------------------------------------------
 
-# TODO: `-s <tree-ish>` short form. Mirrors restore_options[0] OPT_STRING.
+# mode=effect — `-s <tree-ish>` short form. Mirrors restore_options[0]
+# `OPT_STRING('s', "source", ...)` at vendor/git/builtin/checkout.c:2136.
 title "gix restore -s"
 only_for_hash sha1-only && (small-repo-in-sandbox
   it "matches git behavior" && {
-    :
+    compat_effect "deferred until restore driver lands" -- restore -s HEAD a
   }
 )
 
-# TODO: `--source=<tree-ish>` long form.
+# mode=effect — `--source=<tree-ish>` long form.
 title "gix restore --source"
 only_for_hash sha1-only && (small-repo-in-sandbox
   it "matches git behavior" && {
-    :
+    compat_effect "deferred until restore driver lands" -- restore --source HEAD a
   }
 )
 
-# TODO: `--source=HEAD` (the canonical default for --staged) — exercises
-# the rev-parse path on the porcelain driver once it lands.
+# mode=effect — `--source=HEAD` (the canonical default for --staged).
+# Exercises the rev-parse path on the porcelain driver once it lands.
 title "gix restore --source=HEAD"
 only_for_hash sha1-only && (small-repo-in-sandbox
   it "matches git behavior" && {
-    :
+    compat_effect "deferred until restore driver lands" -- restore --source=HEAD a
   }
 )
 
 # --- staged / worktree -------------------------------------------------
 
-# TODO: `-S` short for `--staged`. Restores the index from HEAD by default.
+# mode=effect — `-S` short for `--staged`. Restores the index from HEAD
+# by default. Mirrors restore_options[1] OPT_BOOL at
+# vendor/git/builtin/checkout.c:2138.
 title "gix restore -S"
 only_for_hash sha1-only && (small-repo-in-sandbox
   it "matches git behavior" && {
-    :
+    compat_effect "deferred until restore driver lands" -- restore -S a
   }
 )
 
-# TODO: `--staged` long form.
+# mode=effect — `--staged` long form.
 title "gix restore --staged"
 only_for_hash sha1-only && (small-repo-in-sandbox
   it "matches git behavior" && {
-    :
+    compat_effect "deferred until restore driver lands" -- restore --staged a
   }
 )
 
-# TODO: `-W` short for `--worktree` (the default location).
+# mode=effect — `-W` short for `--worktree` (the default location).
+# Mirrors restore_options[2] OPT_BOOL at
+# vendor/git/builtin/checkout.c:2140.
 title "gix restore -W"
 only_for_hash sha1-only && (small-repo-in-sandbox
   it "matches git behavior" && {
-    :
+    compat_effect "deferred until restore driver lands" -- restore -W a
   }
 )
 
-# TODO: `--worktree` long form.
+# mode=effect — `--worktree` long form.
 title "gix restore --worktree"
 only_for_hash sha1-only && (small-repo-in-sandbox
   it "matches git behavior" && {
-    :
+    compat_effect "deferred until restore driver lands" -- restore --worktree a
   }
 )
 
-# TODO: `--staged --worktree` together — restore both index and worktree.
+# mode=effect — `--staged --worktree` together — restore both index
+# and worktree per vendor/git/Documentation/git-restore.adoc:60..61.
 title "gix restore --staged --worktree"
 only_for_hash sha1-only && (small-repo-in-sandbox
   it "matches git behavior" && {
-    :
+    compat_effect "deferred until restore driver lands" -- restore --staged --worktree a
   }
 )
 
 # --- ignore-unmerged ---------------------------------------------------
 
-# TODO: `--ignore-unmerged` — restore_options[3] OPT_BOOL. On a clean
-# fixture there are no unmerged entries; both 0.
+# mode=effect — `--ignore-unmerged` — restore_options[3] OPT_BOOL at
+# vendor/git/builtin/checkout.c:2142. On a clean fixture there are no
+# unmerged entries; both 0.
 title "gix restore --ignore-unmerged"
 only_for_hash sha1-only && (small-repo-in-sandbox
   it "matches git behavior" && {
-    :
+    compat_effect "deferred until restore driver lands" -- restore --ignore-unmerged a
   }
 )
 
 # --- overlay / no-overlay ----------------------------------------------
 
-# TODO: `--overlay` — restore_options[4] OPT_BOOL. Default is no-overlay;
-# explicit overlay is rare.
+# mode=effect — `--overlay` — restore_options[4] OPT_BOOL at
+# vendor/git/builtin/checkout.c:2144. Default is no-overlay; explicit
+# overlay is rare.
 title "gix restore --overlay"
 only_for_hash sha1-only && (small-repo-in-sandbox
   it "matches git behavior" && {
-    :
+    compat_effect "deferred until restore driver lands" -- restore --overlay a
   }
 )
 
-# TODO: `--no-overlay` — documented inverse at git-restore.adoc:122..127.
-# This is the default; explicit pass is a no-op on a clean fixture.
+# mode=effect — `--no-overlay` — documented inverse at
+# vendor/git/Documentation/git-restore.adoc:122..127. This is the
+# default; explicit pass is a no-op on a clean fixture.
 title "gix restore --no-overlay"
 only_for_hash sha1-only && (small-repo-in-sandbox
   it "matches git behavior" && {
-    :
+    compat_effect "deferred until restore driver lands" -- restore --no-overlay a
   }
 )
 
 # --- quiet / progress -------------------------------------------------
 
-# TODO: `-q` / `--quiet` — add_common_options OPT__QUIET. Both 0.
+# mode=effect — `-q` / `--quiet` — add_common_options OPT__QUIET at
+# vendor/git/builtin/checkout.c:1716. Both 0.
 title "gix restore -q"
 only_for_hash sha1-only && (small-repo-in-sandbox
   it "matches git behavior" && {
-    :
+    compat_effect "deferred until restore driver lands" -- restore -q a
   }
 )
 
-# TODO: long form of `-q`.
+# mode=effect — long form of `-q`.
 title "gix restore --quiet"
 only_for_hash sha1-only && (small-repo-in-sandbox
   it "matches git behavior" && {
-    :
+    compat_effect "deferred until restore driver lands" -- restore --quiet a
   }
 )
 
-# TODO: `--progress` — force progress reporting on non-TTY.
+# mode=effect — `--progress` — add_common_options OPT_BOOL at
+# vendor/git/builtin/checkout.c:1720. Force progress reporting on
+# non-TTY.
 title "gix restore --progress"
 only_for_hash sha1-only && (small-repo-in-sandbox
   it "matches git behavior" && {
-    :
+    compat_effect "deferred until restore driver lands" -- restore --progress a
   }
 )
 
-# TODO: `--no-progress` — disable progress reporting.
+# mode=effect — `--no-progress` disables progress reporting.
 title "gix restore --no-progress"
 only_for_hash sha1-only && (small-repo-in-sandbox
   it "matches git behavior" && {
-    :
+    compat_effect "deferred until restore driver lands" -- restore --no-progress a
   }
 )
 
 # --- merge / conflict -------------------------------------------------
 
-# TODO: `-m` short for `--merge` — recreate conflicted merge in unmerged
-# paths. On a clean fixture there are no conflicts; both 0.
+# mode=effect — `-m` short for `--merge` — add_common_options OPT_BOOL
+# at vendor/git/builtin/checkout.c:1721. Recreate conflicted merge in
+# unmerged paths. On a clean fixture there are no conflicts; both 0.
 title "gix restore -m"
 only_for_hash sha1-only && (small-repo-in-sandbox
   it "matches git behavior" && {
-    :
+    compat_effect "deferred until restore driver lands" -- restore -m a
   }
 )
 
-# TODO: `--merge` long form.
+# mode=effect — `--merge` long form.
 title "gix restore --merge"
 only_for_hash sha1-only && (small-repo-in-sandbox
   it "matches git behavior" && {
-    :
+    compat_effect "deferred until restore driver lands" -- restore --merge a
   }
 )
 
-# TODO: `--conflict=merge` style. On a clean fixture the merge degenerates
-# to a no-op; both 0.
+# mode=effect — `--conflict=merge` style. add_common_options
+# OPT_CALLBACK at vendor/git/builtin/checkout.c:1722..1724. On a clean
+# fixture the merge degenerates to a no-op; both 0.
 title "gix restore --conflict=merge"
 only_for_hash sha1-only && (small-repo-in-sandbox
   it "matches git behavior" && {
-    :
+    compat_effect "deferred until restore driver lands" -- restore --conflict=merge a
   }
 )
 
-# TODO: `--conflict=diff3` style.
+# mode=effect — `--conflict=diff3` style.
 title "gix restore --conflict=diff3"
 only_for_hash sha1-only && (small-repo-in-sandbox
   it "matches git behavior" && {
-    :
+    compat_effect "deferred until restore driver lands" -- restore --conflict=diff3 a
   }
 )
 
-# TODO: `--conflict=zdiff3` style.
+# mode=effect — `--conflict=zdiff3` style.
 title "gix restore --conflict=zdiff3"
 only_for_hash sha1-only && (small-repo-in-sandbox
   it "matches git behavior" && {
-    :
+    compat_effect "deferred until restore driver lands" -- restore --conflict=zdiff3 a
   }
 )
 
 # --- ours / theirs ----------------------------------------------------
 
-# TODO: `--ours` — add_checkout_path_options OPT_SET_INT_F('2', "ours",
-# ..., 2, PARSE_OPT_NONEG). Default writeout_stage is 0; --ours sets it to
-# stage #2. On a clean fixture there are no unmerged paths; both 0.
+# mode=effect — `--ours` — add_checkout_path_options
+# `OPT_SET_INT_F('2', "ours", ..., 2, PARSE_OPT_NONEG)` at
+# vendor/git/builtin/checkout.c:1760..1762. Default writeout_stage is
+# 0; --ours sets it to stage #2. On a clean fixture there are no
+# unmerged paths; both 0.
 title "gix restore --ours"
 only_for_hash sha1-only && (small-repo-in-sandbox
   it "matches git behavior" && {
-    :
+    compat_effect "deferred until restore driver lands" -- restore --ours a
   }
 )
 
-# TODO: `--theirs` — OPT_SET_INT_F('3', "theirs", ..., 3, PARSE_OPT_NONEG).
+# mode=effect — `--theirs` — `OPT_SET_INT_F('3', "theirs", ..., 3,
+# PARSE_OPT_NONEG)` at vendor/git/builtin/checkout.c:1763..1765.
 title "gix restore --theirs"
 only_for_hash sha1-only && (small-repo-in-sandbox
   it "matches git behavior" && {
-    :
+    compat_effect "deferred until restore driver lands" -- restore --theirs a
   }
 )
 
 # --- patch / unified / inter-hunk-context -----------------------------
 
-# TODO: `-p` short for `--patch` — interactive hunk select. Closes as
-# `compat_effect` because gix has no interactive driver yet (and the test
-# environment has no TTY).
+# mode=effect — `-p` short for `--patch` — add_checkout_path_options
+# OPT_BOOL at vendor/git/builtin/checkout.c:1766. Interactive hunk
+# select. The test environment has no TTY so git's add_p_init reads
+# nothing and returns 0; gix-placeholder also exits 0.
 title "gix restore -p"
 only_for_hash sha1-only && (small-repo-in-sandbox
   it "matches git behavior" && {
-    :
+    compat_effect "deferred until restore driver lands" -- restore -p a
   }
 )
 
-# TODO: `--patch` long form.
+# mode=effect — `--patch` long form.
 title "gix restore --patch"
 only_for_hash sha1-only && (small-repo-in-sandbox
   it "matches git behavior" && {
-    :
+    compat_effect "deferred until restore driver lands" -- restore --patch a
   }
 )
 
-# TODO: `-U <n>` short for `--unified=<n>` — diff context. Without
-# `--patch` git emits a value-still-required hint; with `--patch` it
-# accepts. Test under `--patch` to keep parity.
+# mode=effect — `-U <n>` short for `--unified=<n>` — diff context.
+# `OPT_DIFF_UNIFIED` was added to add_checkout_path_options after git
+# 2.47.3 — vendor/git v2.54.0 has it but the test runtime's system
+# git lacks it (rejects with `unknown switch 'U'` + exit 129). Defer
+# as a hard system constraint until the test runtime upgrades.
+# hash=sha1-only
 title "gix restore -U --patch"
 only_for_hash sha1-only && (small-repo-in-sandbox
   it "matches git behavior" && {
-    :
+    shortcoming "system git 2.47.3 lacks -U for restore; vendor/git v2.54.0 has it"
   }
 )
 
-# TODO: `--unified=<n>` long form.
+# mode=effect — long form of `-U`. Same version skew.
+# hash=sha1-only
 title "gix restore --unified --patch"
 only_for_hash sha1-only && (small-repo-in-sandbox
   it "matches git behavior" && {
-    :
+    shortcoming "system git 2.47.3 lacks --unified for restore; vendor/git v2.54.0 has it"
   }
 )
 
-# TODO: `--inter-hunk-context=<n>` — show context between diff hunks.
+# mode=effect — `--inter-hunk-context=<n>` — show context between diff
+# hunks. `OPT_DIFF_INTERHUNK_CONTEXT` was added after git 2.47.3.
+# Same version skew as `--unified`.
+# hash=sha1-only
 title "gix restore --inter-hunk-context --patch"
 only_for_hash sha1-only && (small-repo-in-sandbox
   it "matches git behavior" && {
-    :
+    shortcoming "system git 2.47.3 lacks --inter-hunk-context for restore; vendor/git v2.54.0 has it"
   }
 )
 
 # --- ignore-skip-worktree-bits ----------------------------------------
 
-# TODO: `--ignore-skip-worktree-bits` — OPT_BOOL. On a fixture without
-# sparse checkout this is a no-op; both 0.
+# mode=effect — `--ignore-skip-worktree-bits` — add_checkout_path_options
+# OPT_BOOL at vendor/git/builtin/checkout.c:1769..1770. On a fixture
+# without sparse checkout this is a no-op; both 0.
 title "gix restore --ignore-skip-worktree-bits"
 only_for_hash sha1-only && (small-repo-in-sandbox
   it "matches git behavior" && {
-    :
+    compat_effect "deferred until restore driver lands" -- restore --ignore-skip-worktree-bits a
   }
 )
 
 # --- pathspec sources -------------------------------------------------
 
-# TODO: `--pathspec-from-file=<file>` — read pathspecs from `<file>`.
+# mode=effect — `--pathspec-from-file=<file>` reads pathspecs from
+# `<file>`. add_checkout_path_options OPT_PATHSPEC_FROM_FILE at
+# vendor/git/builtin/checkout.c:1771.
 title "gix restore --pathspec-from-file"
 only_for_hash sha1-only && (small-repo-in-sandbox
+  echo a > spec.txt
   it "matches git behavior" && {
-    :
+    compat_effect "deferred until restore driver lands" -- restore --pathspec-from-file=spec.txt
   }
 )
 
-# TODO: `--pathspec-from-file=<file> --pathspec-file-nul` — NUL-separated.
+# mode=effect — `--pathspec-from-file=<file> --pathspec-file-nul` —
+# NUL-separated. add_checkout_path_options OPT_PATHSPEC_FILE_NUL at
+# vendor/git/builtin/checkout.c:1772.
 title "gix restore --pathspec-from-file --pathspec-file-nul"
 only_for_hash sha1-only && (small-repo-in-sandbox
+  printf 'a' > spec.txt
   it "matches git behavior" && {
-    :
+    compat_effect "deferred until restore driver lands" -- restore --pathspec-from-file=spec.txt --pathspec-file-nul
   }
 )
 
 # --- recurse-submodules -----------------------------------------------
 
-# TODO: `--recurse-submodules` — add_common_options OPT_CALLBACK_F
-# PARSE_OPT_OPTARG. On a fixture without submodules, no-op; both 0.
+# mode=effect — `--recurse-submodules` — add_common_options
+# `OPT_CALLBACK_F(0, "recurse-submodules", ..., PARSE_OPT_OPTARG, ...)`
+# at vendor/git/builtin/checkout.c:1717..1719. On a fixture without
+# submodules, no-op; both 0.
 title "gix restore --recurse-submodules"
 only_for_hash sha1-only && (small-repo-in-sandbox
   it "matches git behavior" && {
-    :
+    compat_effect "deferred until restore driver lands" -- restore --recurse-submodules a
   }
 )
 
-# TODO: `--no-recurse-submodules` disables submodule recursion.
+# mode=effect — `--no-recurse-submodules` disables submodule recursion.
 title "gix restore --no-recurse-submodules"
 only_for_hash sha1-only && (small-repo-in-sandbox
   it "matches git behavior" && {
-    :
+    compat_effect "deferred until restore driver lands" -- restore --no-recurse-submodules a
   }
 )
 

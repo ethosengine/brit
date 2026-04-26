@@ -618,6 +618,46 @@ Two row classes:
 | compat | `gix reset HEAD a` | deferred until reset driver lands | [reset.sh:514](../../tests/journey/parity/reset.sh#L514) |
 | compat | `gix reset -- a` | deferred until reset driver lands | [reset.sh:523](../../tests/journey/parity/reset.sh#L523) |
 
+## restore
+
+| Class | Section | Reason | Source |
+|---|---|---|---|
+| deferred | `gix restore missing-file` | deferred until restore driver implements pathspec walker (exit-code 1 mismatch) | [restore.sh:161](../../tests/journey/parity/restore.sh#L161) |
+| compat | `gix restore <pathspec>` | deferred until restore driver lands | [restore.sh:174](../../tests/journey/parity/restore.sh#L174) |
+| compat | `gix restore -- <pathspec>` | deferred until restore driver lands | [restore.sh:183](../../tests/journey/parity/restore.sh#L183) |
+| compat | `gix restore -s` | deferred until restore driver lands | [restore.sh:194](../../tests/journey/parity/restore.sh#L194) |
+| compat | `gix restore --source` | deferred until restore driver lands | [restore.sh:202](../../tests/journey/parity/restore.sh#L202) |
+| compat | `gix restore --source=HEAD` | deferred until restore driver lands | [restore.sh:211](../../tests/journey/parity/restore.sh#L211) |
+| compat | `gix restore -S` | deferred until restore driver lands | [restore.sh:223](../../tests/journey/parity/restore.sh#L223) |
+| compat | `gix restore --staged` | deferred until restore driver lands | [restore.sh:231](../../tests/journey/parity/restore.sh#L231) |
+| compat | `gix restore -W` | deferred until restore driver lands | [restore.sh:241](../../tests/journey/parity/restore.sh#L241) |
+| compat | `gix restore --worktree` | deferred until restore driver lands | [restore.sh:249](../../tests/journey/parity/restore.sh#L249) |
+| compat | `gix restore --staged --worktree` | deferred until restore driver lands | [restore.sh:258](../../tests/journey/parity/restore.sh#L258) |
+| compat | `gix restore --ignore-unmerged` | deferred until restore driver lands | [restore.sh:270](../../tests/journey/parity/restore.sh#L270) |
+| compat | `gix restore --overlay` | deferred until restore driver lands | [restore.sh:282](../../tests/journey/parity/restore.sh#L282) |
+| compat | `gix restore --no-overlay` | deferred until restore driver lands | [restore.sh:292](../../tests/journey/parity/restore.sh#L292) |
+| compat | `gix restore -q` | deferred until restore driver lands | [restore.sh:303](../../tests/journey/parity/restore.sh#L303) |
+| compat | `gix restore --quiet` | deferred until restore driver lands | [restore.sh:311](../../tests/journey/parity/restore.sh#L311) |
+| compat | `gix restore --progress` | deferred until restore driver lands | [restore.sh:321](../../tests/journey/parity/restore.sh#L321) |
+| compat | `gix restore --no-progress` | deferred until restore driver lands | [restore.sh:329](../../tests/journey/parity/restore.sh#L329) |
+| compat | `gix restore -m` | deferred until restore driver lands | [restore.sh:341](../../tests/journey/parity/restore.sh#L341) |
+| compat | `gix restore --merge` | deferred until restore driver lands | [restore.sh:349](../../tests/journey/parity/restore.sh#L349) |
+| compat | `gix restore --conflict=merge` | deferred until restore driver lands | [restore.sh:359](../../tests/journey/parity/restore.sh#L359) |
+| compat | `gix restore --conflict=diff3` | deferred until restore driver lands | [restore.sh:367](../../tests/journey/parity/restore.sh#L367) |
+| compat | `gix restore --conflict=zdiff3` | deferred until restore driver lands | [restore.sh:375](../../tests/journey/parity/restore.sh#L375) |
+| compat | `gix restore --ours` | deferred until restore driver lands | [restore.sh:389](../../tests/journey/parity/restore.sh#L389) |
+| compat | `gix restore --theirs` | deferred until restore driver lands | [restore.sh:398](../../tests/journey/parity/restore.sh#L398) |
+| compat | `gix restore -p` | deferred until restore driver lands | [restore.sh:411](../../tests/journey/parity/restore.sh#L411) |
+| compat | `gix restore --patch` | deferred until restore driver lands | [restore.sh:419](../../tests/journey/parity/restore.sh#L419) |
+| deferred | `gix restore -U --patch` | system git 2.47.3 lacks -U for restore; vendor/git v2.54.0 has it | [restore.sh:432](../../tests/journey/parity/restore.sh#L432) |
+| deferred | `gix restore --unified --patch` | system git 2.47.3 lacks --unified for restore; vendor/git v2.54.0 has it | [restore.sh:441](../../tests/journey/parity/restore.sh#L441) |
+| deferred | `gix restore --inter-hunk-context --patch` | system git 2.47.3 lacks --inter-hunk-context for restore; vendor/git v2.54.0 has it | [restore.sh:452](../../tests/journey/parity/restore.sh#L452) |
+| compat | `gix restore --ignore-skip-worktree-bits` | deferred until restore driver lands | [restore.sh:464](../../tests/journey/parity/restore.sh#L464) |
+| compat | `gix restore --pathspec-from-file` | deferred until restore driver lands | [restore.sh:477](../../tests/journey/parity/restore.sh#L477) |
+| compat | `gix restore --pathspec-from-file --pathspec-file-nul` | deferred until restore driver lands | [restore.sh:488](../../tests/journey/parity/restore.sh#L488) |
+| compat | `gix restore --recurse-submodules` | deferred until restore driver lands | [restore.sh:501](../../tests/journey/parity/restore.sh#L501) |
+| compat | `gix restore --no-recurse-submodules` | deferred until restore driver lands | [restore.sh:509](../../tests/journey/parity/restore.sh#L509) |
+
 ## rm
 
 | Class | Section | Reason | Source |
