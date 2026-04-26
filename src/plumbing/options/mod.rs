@@ -308,6 +308,8 @@ pub enum Subcommands {
     Mv(mv::Platform),
     /// Switch branches.
     Switch(switch::Platform),
+    /// Restore working tree files.
+    Restore(restore::Platform),
     /// Print paths relevant to the Git installation.
     Env,
     Diff(diff::Platform),
@@ -3482,5 +3484,7 @@ pub mod rm;
 pub mod mv;
 
 pub mod switch;
+
+pub mod restore;
 
 pub mod show;

@@ -58,6 +58,7 @@ pub mod odb;
 pub mod rebase;
 pub mod remote;
 pub mod reset;
+pub mod restore;
 pub mod rm;
 
 pub mod revision;
