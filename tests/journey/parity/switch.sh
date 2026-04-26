@@ -158,286 +158,357 @@ only_for_hash sha1-only && (small-repo-in-sandbox
 
 # --- happy-path ref switching -----------------------------------------
 
-# TODO: switch to an existing local branch on a fixture with at least two
-# branches. Mutating: needs expect_parity_reset.
+# mode=effect — switch to an existing local branch. git's first run moves
+# HEAD to feat; gix's back-to-back run still finds feat (try_find_reference
+# succeeds) and falls through to the placeholder stub. Both exit 0. Bytes
+# parity (the "Switched to branch 'feat'" stderr emission) is deferred
+# until the real switch driver lands.
 title "gix switch <existing-branch>"
-only_for_hash sha1-only && (sandbox
+only_for_hash sha1-only && (small-repo-in-sandbox
+  git branch feat
   it "matches git behavior" && {
-    :
+    compat_effect "deferred until switch driver lands" -- switch feat
   }
 )
 
-# TODO: `git switch -` switches to @{-1} (the previous branch). Mutating.
+# mode=effect — `git switch -` resolves @{-1}. Fixture creates a previous
+# branch in HEAD's reflog by switching to feat then back to main; both git
+# and gix-placeholder then exit 0 on `switch -`. Bytes parity (the
+# "Switched to branch 'feat'" stderr emission and the actual @{-1}
+# resolution by gix) is deferred.
 title "gix switch -"
-only_for_hash sha1-only && (sandbox
+only_for_hash sha1-only && (small-repo-in-sandbox
+  git checkout -b feat >/dev/null 2>&1
+  git checkout - >/dev/null 2>&1
   it "matches git behavior" && {
-    :
+    compat_effect "deferred until switch driver lands" -- switch -
   }
 )
 
 # --- create / force-create --------------------------------------------
 
-# TODO: -c <new-branch>: branch creation + switch.
+# mode=effect — `-c <new-branch>` (vendor/git/builtin/checkout.c:2097..2098
+# OPT_STRING). git creates `newbranch` and switches; gix-placeholder skips
+# ref resolution when create.is_some() and exits 0. Both 0.
 title "gix switch -c"
-only_for_hash sha1-only && (sandbox
+only_for_hash sha1-only && (small-repo-in-sandbox
   it "matches git behavior" && {
-    :
+    compat_effect "deferred until switch driver lands" -- switch -c newbranch
   }
 )
 
-# TODO: --create <new-branch>: long form of -c.
+# mode=effect — long form of -c.
 title "gix switch --create"
-only_for_hash sha1-only && (sandbox
+only_for_hash sha1-only && (small-repo-in-sandbox
   it "matches git behavior" && {
-    :
+    compat_effect "deferred until switch driver lands" -- switch --create newbranch
   }
 )
 
-# TODO: -C <existing>: force create / reset.
+# mode=effect — `-C <existing>` (vendor/git/builtin/checkout.c:2099..2100
+# OPT_STRING force_create). git resets `feat` to HEAD and switches;
+# gix-placeholder skips ref check via force_create.is_some() and exits 0.
 title "gix switch -C"
-only_for_hash sha1-only && (sandbox
+only_for_hash sha1-only && (small-repo-in-sandbox
+  git branch feat
   it "matches git behavior" && {
-    :
+    compat_effect "deferred until switch driver lands" -- switch -C feat
   }
 )
 
-# TODO: --force-create <existing>: long form of -C.
+# mode=effect — long form of -C.
 title "gix switch --force-create"
-only_for_hash sha1-only && (sandbox
+only_for_hash sha1-only && (small-repo-in-sandbox
+  git branch feat
   it "matches git behavior" && {
-    :
+    compat_effect "deferred until switch driver lands" -- switch --force-create feat
   }
 )
 
 # --- detach -----------------------------------------------------------
 
-# TODO: -d HEAD: detach at HEAD.
+# mode=effect — `-d HEAD` (vendor/git/builtin/checkout.c:1736 OPT_BOOL
+# force_detach). git detaches HEAD at the named commit; gix-placeholder
+# skips ref resolution when detach=true and exits 0.
 title "gix switch -d"
-only_for_hash sha1-only && (sandbox
+only_for_hash sha1-only && (small-repo-in-sandbox
   it "matches git behavior" && {
-    :
+    compat_effect "deferred until switch driver lands" -- switch -d HEAD
   }
 )
 
-# TODO: --detach HEAD: long form of -d.
+# mode=effect — long form of -d.
 title "gix switch --detach"
-only_for_hash sha1-only && (sandbox
+only_for_hash sha1-only && (small-repo-in-sandbox
   it "matches git behavior" && {
-    :
+    compat_effect "deferred until switch driver lands" -- switch --detach HEAD
   }
 )
 
 # --- guess ------------------------------------------------------------
 
-# TODO: --guess: enable DWIM-from-remote (default; explicit pass).
+# mode=effect — `--guess` (vendor/git/builtin/checkout.c:2101..2102 OPT_BOOL
+# dwim_new_local_branch). Default is on; explicit pass is a no-op when the
+# positional resolves locally. Both binaries exit 0 on a fixture with the
+# target branch present.
 title "gix switch --guess"
-only_for_hash sha1-only && (sandbox
+only_for_hash sha1-only && (small-repo-in-sandbox
+  git branch feat
   it "matches git behavior" && {
-    :
+    compat_effect "deferred until switch driver lands" -- switch --guess feat
   }
 )
 
-# TODO: --no-guess: disable DWIM-from-remote.
+# mode=effect — `--no-guess` disables the dwim-from-remote second-guess.
+# When the positional resolves locally, the flag is a no-op; both 0.
 title "gix switch --no-guess"
-only_for_hash sha1-only && (sandbox
+only_for_hash sha1-only && (small-repo-in-sandbox
+  git branch feat
   it "matches git behavior" && {
-    :
+    compat_effect "deferred until switch driver lands" -- switch --no-guess feat
   }
 )
 
 # --- discard-changes / force / merge ---------------------------------
 
-# TODO: --discard-changes: hard-reset over local mods.
+# mode=effect — `--discard-changes` (vendor/git/builtin/checkout.c:2103..2104
+# OPT_BOOL). On a clean fixture the flag is a no-op; both 0.
 title "gix switch --discard-changes"
-only_for_hash sha1-only && (sandbox
+only_for_hash sha1-only && (small-repo-in-sandbox
+  git branch feat
   it "matches git behavior" && {
-    :
+    compat_effect "deferred until switch driver lands" -- switch --discard-changes feat
   }
 )
 
-# TODO: -f: alias for --discard-changes (per docs:113..115).
+# mode=effect — `-f` is documented as an alias for `--discard-changes`
+# (vendor/git/Documentation/git-switch.adoc:113..115). Wired via OPT__FORCE
+# at vendor/git/builtin/checkout.c:1741..1742.
 title "gix switch -f"
-only_for_hash sha1-only && (sandbox
+only_for_hash sha1-only && (small-repo-in-sandbox
+  git branch feat
   it "matches git behavior" && {
-    :
+    compat_effect "deferred until switch driver lands" -- switch -f feat
   }
 )
 
-# TODO: --force: long form of -f.
+# mode=effect — long form of -f.
 title "gix switch --force"
-only_for_hash sha1-only && (sandbox
+only_for_hash sha1-only && (small-repo-in-sandbox
+  git branch feat
   it "matches git behavior" && {
-    :
+    compat_effect "deferred until switch driver lands" -- switch --force feat
   }
 )
 
-# TODO: -m: 3-way merge with the new branch.
+# mode=effect — `-m` / `--merge` (vendor/git/builtin/checkout.c:1721
+# OPT_BOOL). On a clean fixture the 3-way merge degenerates to a fast-
+# forward; both 0.
 title "gix switch -m"
-only_for_hash sha1-only && (sandbox
+only_for_hash sha1-only && (small-repo-in-sandbox
+  git branch feat
   it "matches git behavior" && {
-    :
+    compat_effect "deferred until switch driver lands" -- switch -m feat
   }
 )
 
-# TODO: --merge: long form of -m.
+# mode=effect — long form of -m.
 title "gix switch --merge"
-only_for_hash sha1-only && (sandbox
+only_for_hash sha1-only && (small-repo-in-sandbox
+  git branch feat
   it "matches git behavior" && {
-    :
+    compat_effect "deferred until switch driver lands" -- switch --merge feat
   }
 )
 
-# TODO: --conflict=merge (default style).
+# mode=effect — `--conflict=<style>` (vendor/git/builtin/checkout.c:1722..
+# 1724 OPT_CALLBACK parse_opt_conflict). On a clean fixture there are no
+# conflicts; both 0 regardless of style.
 title "gix switch --conflict=merge"
-only_for_hash sha1-only && (sandbox
+only_for_hash sha1-only && (small-repo-in-sandbox
+  git branch feat
   it "matches git behavior" && {
-    :
+    compat_effect "deferred until switch driver lands" -- switch --conflict=merge feat
   }
 )
 
-# TODO: --conflict=diff3.
+# mode=effect — `--conflict=diff3` style.
 title "gix switch --conflict=diff3"
-only_for_hash sha1-only && (sandbox
+only_for_hash sha1-only && (small-repo-in-sandbox
+  git branch feat
   it "matches git behavior" && {
-    :
+    compat_effect "deferred until switch driver lands" -- switch --conflict=diff3 feat
   }
 )
 
-# TODO: --conflict=zdiff3.
+# mode=effect — `--conflict=zdiff3` style.
 title "gix switch --conflict=zdiff3"
-only_for_hash sha1-only && (sandbox
+only_for_hash sha1-only && (small-repo-in-sandbox
+  git branch feat
   it "matches git behavior" && {
-    :
+    compat_effect "deferred until switch driver lands" -- switch --conflict=zdiff3 feat
   }
 )
 
 # --- quiet / progress -------------------------------------------------
 
-# TODO: -q: suppress progress.
+# mode=effect — `-q` / `--quiet` (vendor/git/builtin/checkout.c:1716
+# OPT__QUIET) suppresses progress reporting. Both 0; bytes deferred.
 title "gix switch -q"
-only_for_hash sha1-only && (sandbox
+only_for_hash sha1-only && (small-repo-in-sandbox
+  git branch feat
   it "matches git behavior" && {
-    :
+    compat_effect "deferred until switch driver lands" -- switch -q feat
   }
 )
 
-# TODO: --quiet: long form of -q.
+# mode=effect — long form of -q.
 title "gix switch --quiet"
-only_for_hash sha1-only && (sandbox
+only_for_hash sha1-only && (small-repo-in-sandbox
+  git branch feat
   it "matches git behavior" && {
-    :
+    compat_effect "deferred until switch driver lands" -- switch --quiet feat
   }
 )
 
-# TODO: --progress: force progress.
+# mode=effect — `--progress` (vendor/git/builtin/checkout.c:1720 OPT_BOOL
+# show_progress) forces progress reporting even when stderr isn't a TTY.
+# Both 0; the actual progress emission is deferred.
 title "gix switch --progress"
-only_for_hash sha1-only && (sandbox
+only_for_hash sha1-only && (small-repo-in-sandbox
+  git branch feat
   it "matches git behavior" && {
-    :
+    compat_effect "deferred until switch driver lands" -- switch --progress feat
   }
 )
 
-# TODO: --no-progress: suppress progress.
+# mode=effect — `--no-progress` is the inverse.
 title "gix switch --no-progress"
-only_for_hash sha1-only && (sandbox
+only_for_hash sha1-only && (small-repo-in-sandbox
+  git branch feat
   it "matches git behavior" && {
-    :
+    compat_effect "deferred until switch driver lands" -- switch --no-progress feat
   }
 )
 
 # --- track / no-track ------------------------------------------------
 
-# TODO: -t: tracking-config (implies -c).
+# mode=bytes — `-t` / `--track` family (vendor/git/builtin/checkout.c:1737..
+# 1740 OPT_CALLBACK parse_opt_tracking_mode). When the start-point doesn't
+# resolve as a ref, both binaries die 128 with "fatal: invalid reference:
+# <name>" — bytes-perfect parity. The shape `<remote>/<branch>` is required
+# for the dwim-from-remote derivation per vendor/git/builtin/checkout.c:1917..
+# 1922 (skip_prefix refs/, then remotes/, then derive name after the slash);
+# `origin/feat` doesn't exist as a ref in the fixture, so both die before
+# tracking-config setup.
 title "gix switch -t"
-only_for_hash sha1-only && (sandbox
+only_for_hash sha1-only && (small-repo-in-sandbox
   it "matches git behavior" && {
-    :
+    expect_parity bytes -- switch -t origin/feat
   }
 )
 
-# TODO: --track: long form of -t.
+# mode=bytes — long form of -t.
 title "gix switch --track"
-only_for_hash sha1-only && (sandbox
+only_for_hash sha1-only && (small-repo-in-sandbox
   it "matches git behavior" && {
-    :
+    expect_parity bytes -- switch --track origin/feat
   }
 )
 
-# TODO: --track=direct.
+# mode=bytes — explicit `direct` tracking mode.
 title "gix switch --track=direct"
-only_for_hash sha1-only && (sandbox
+only_for_hash sha1-only && (small-repo-in-sandbox
   it "matches git behavior" && {
-    :
+    expect_parity bytes -- switch --track=direct origin/feat
   }
 )
 
-# TODO: --track=inherit.
+# mode=bytes — `inherit` tracking mode.
 title "gix switch --track=inherit"
-only_for_hash sha1-only && (sandbox
+only_for_hash sha1-only && (small-repo-in-sandbox
   it "matches git behavior" && {
-    :
+    expect_parity bytes -- switch --track=inherit origin/feat
   }
 )
 
-# TODO: --no-track.
+# mode=bytes — `--no-track` (vendor/git/builtin/checkout.c:1737..1740 sets
+# track to BRANCH_TRACK_NEVER, a non-default value, so the dwim-derive
+# branch at vendor/git/builtin/checkout.c:1913..1923 still fires). Same
+# "invalid reference" die path on an unresolvable start-point.
 title "gix switch --no-track"
-only_for_hash sha1-only && (sandbox
+only_for_hash sha1-only && (small-repo-in-sandbox
   it "matches git behavior" && {
-    :
+    expect_parity bytes -- switch --no-track origin/feat
   }
 )
 
 # --- orphan ---------------------------------------------------------
 
-# TODO: --orphan <new-branch>: create unborn branch.
+# mode=effect — `--orphan <new-branch>` (vendor/git/builtin/checkout.c:1743
+# OPT_STRING new_orphan_branch). git creates an unborn branch with an
+# empty index; gix-placeholder skips ref resolution when orphan.is_some()
+# and exits 0.
 title "gix switch --orphan"
-only_for_hash sha1-only && (sandbox
+only_for_hash sha1-only && (small-repo-in-sandbox
   it "matches git behavior" && {
-    :
+    compat_effect "deferred until switch driver lands" -- switch --orphan neworphan
   }
 )
 
 # --- overwrite-ignore / ignore-other-worktrees -----------------------
 
-# TODO: --overwrite-ignore: clobber ignored files (default).
+# mode=effect — `--overwrite-ignore` (vendor/git/builtin/checkout.c:1744..
+# 1746 OPT_BOOL_F overwrite_ignore) is the default; explicit pass is a
+# no-op on a fixture with no ignored files in the way. Both 0.
 title "gix switch --overwrite-ignore"
-only_for_hash sha1-only && (sandbox
+only_for_hash sha1-only && (small-repo-in-sandbox
+  git branch feat
   it "matches git behavior" && {
-    :
+    compat_effect "deferred until switch driver lands" -- switch --overwrite-ignore feat
   }
 )
 
-# TODO: --no-overwrite-ignore: preserve ignored files.
+# mode=effect — `--no-overwrite-ignore` preserves ignored files in the
+# working tree during the switch. On a clean fixture, no-op; both 0.
 title "gix switch --no-overwrite-ignore"
-only_for_hash sha1-only && (sandbox
+only_for_hash sha1-only && (small-repo-in-sandbox
+  git branch feat
   it "matches git behavior" && {
-    :
+    compat_effect "deferred until switch driver lands" -- switch --no-overwrite-ignore feat
   }
 )
 
-# TODO: --ignore-other-worktrees.
+# mode=effect — `--ignore-other-worktrees` (vendor/git/builtin/checkout.c:
+# 1747..1748 OPT_BOOL ignore_other_worktrees). On a fixture without
+# additional worktrees, no-op; both 0.
 title "gix switch --ignore-other-worktrees"
-only_for_hash sha1-only && (sandbox
+only_for_hash sha1-only && (small-repo-in-sandbox
+  git branch feat
   it "matches git behavior" && {
-    :
+    compat_effect "deferred until switch driver lands" -- switch --ignore-other-worktrees feat
   }
 )
 
 # --- recurse-submodules --------------------------------------------
 
-# TODO: --recurse-submodules.
+# mode=effect — `--recurse-submodules` (vendor/git/builtin/checkout.c:1717..
+# 1719 OPT_CALLBACK_F PARSE_OPT_OPTARG). On a fixture without submodules,
+# no-op; both 0.
 title "gix switch --recurse-submodules"
-only_for_hash sha1-only && (sandbox
+only_for_hash sha1-only && (small-repo-in-sandbox
+  git branch feat
   it "matches git behavior" && {
-    :
+    compat_effect "deferred until switch driver lands" -- switch --recurse-submodules feat
   }
 )
 
-# TODO: --no-recurse-submodules.
+# mode=effect — `--no-recurse-submodules` disables submodule recursion.
 title "gix switch --no-recurse-submodules"
-only_for_hash sha1-only && (sandbox
+only_for_hash sha1-only && (small-repo-in-sandbox
+  git branch feat
   it "matches git behavior" && {
-    :
+    compat_effect "deferred until switch driver lands" -- switch --no-recurse-submodules feat
   }
 )
 

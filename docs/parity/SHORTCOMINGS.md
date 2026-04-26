@@ -756,6 +756,39 @@ Two row classes:
 | compat | `gix show -t` | deferred until show driver lands | [show.sh:1152](../../tests/journey/parity/show.sh#L1152) |
 | compat | `gix show --dd` | deferred until show driver lands | [show.sh:1160](../../tests/journey/parity/show.sh#L1160) |
 
+## switch
+
+| Class | Section | Reason | Source |
+|---|---|---|---|
+| compat | `gix switch <existing-branch>` | deferred until switch driver lands | [switch.sh:170](../../tests/journey/parity/switch.sh#L170) |
+| compat | `gix switch -` | deferred until switch driver lands | [switch.sh:184](../../tests/journey/parity/switch.sh#L184) |
+| compat | `gix switch -c` | deferred until switch driver lands | [switch.sh:196](../../tests/journey/parity/switch.sh#L196) |
+| compat | `gix switch --create` | deferred until switch driver lands | [switch.sh:204](../../tests/journey/parity/switch.sh#L204) |
+| compat | `gix switch -C` | deferred until switch driver lands | [switch.sh:215](../../tests/journey/parity/switch.sh#L215) |
+| compat | `gix switch --force-create` | deferred until switch driver lands | [switch.sh:224](../../tests/journey/parity/switch.sh#L224) |
+| compat | `gix switch -d` | deferred until switch driver lands | [switch.sh:236](../../tests/journey/parity/switch.sh#L236) |
+| compat | `gix switch --detach` | deferred until switch driver lands | [switch.sh:244](../../tests/journey/parity/switch.sh#L244) |
+| compat | `gix switch --guess` | deferred until switch driver lands | [switch.sh:258](../../tests/journey/parity/switch.sh#L258) |
+| compat | `gix switch --no-guess` | deferred until switch driver lands | [switch.sh:268](../../tests/journey/parity/switch.sh#L268) |
+| compat | `gix switch --discard-changes` | deferred until switch driver lands | [switch.sh:280](../../tests/journey/parity/switch.sh#L280) |
+| compat | `gix switch -f` | deferred until switch driver lands | [switch.sh:291](../../tests/journey/parity/switch.sh#L291) |
+| compat | `gix switch --force` | deferred until switch driver lands | [switch.sh:300](../../tests/journey/parity/switch.sh#L300) |
+| compat | `gix switch -m` | deferred until switch driver lands | [switch.sh:311](../../tests/journey/parity/switch.sh#L311) |
+| compat | `gix switch --merge` | deferred until switch driver lands | [switch.sh:320](../../tests/journey/parity/switch.sh#L320) |
+| compat | `gix switch --conflict=merge` | deferred until switch driver lands | [switch.sh:331](../../tests/journey/parity/switch.sh#L331) |
+| compat | `gix switch --conflict=diff3` | deferred until switch driver lands | [switch.sh:340](../../tests/journey/parity/switch.sh#L340) |
+| compat | `gix switch --conflict=zdiff3` | deferred until switch driver lands | [switch.sh:349](../../tests/journey/parity/switch.sh#L349) |
+| compat | `gix switch -q` | deferred until switch driver lands | [switch.sh:361](../../tests/journey/parity/switch.sh#L361) |
+| compat | `gix switch --quiet` | deferred until switch driver lands | [switch.sh:370](../../tests/journey/parity/switch.sh#L370) |
+| compat | `gix switch --progress` | deferred until switch driver lands | [switch.sh:381](../../tests/journey/parity/switch.sh#L381) |
+| compat | `gix switch --no-progress` | deferred until switch driver lands | [switch.sh:390](../../tests/journey/parity/switch.sh#L390) |
+| compat | `gix switch --orphan` | deferred until switch driver lands | [switch.sh:455](../../tests/journey/parity/switch.sh#L455) |
+| compat | `gix switch --overwrite-ignore` | deferred until switch driver lands | [switch.sh:468](../../tests/journey/parity/switch.sh#L468) |
+| compat | `gix switch --no-overwrite-ignore` | deferred until switch driver lands | [switch.sh:478](../../tests/journey/parity/switch.sh#L478) |
+| compat | `gix switch --ignore-other-worktrees` | deferred until switch driver lands | [switch.sh:489](../../tests/journey/parity/switch.sh#L489) |
+| compat | `gix switch --recurse-submodules` | deferred until switch driver lands | [switch.sh:502](../../tests/journey/parity/switch.sh#L502) |
+| compat | `gix switch --no-recurse-submodules` | deferred until switch driver lands | [switch.sh:511](../../tests/journey/parity/switch.sh#L511) |
+
 ## tag
 
 | Class | Section | Reason | Source |
