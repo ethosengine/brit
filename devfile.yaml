@@ -103,14 +103,11 @@ commands:
           --env SONARQUBE_URL="$SONARQUBE_URL" \
           -- java -jar /opt/mcp/sonarqube-mcp.jar
 
-        # Jenkins MCP
+        # Jenkins MCP. Sent as anonymous: Jenkins is OIDC-protected, so any
+        # Authorization header triggers the interactive login flow and breaks the MCP
+        # transport. Anonymous has read access to jobs/builds/logs.
         claude mcp remove jenkins 2>/dev/null || true
-        if [ -n "$JENKINS_USERNAME" ] && [ -n "$JENKINS_TOKEN" ]; then
-          JENKINS_AUTH=$(echo -n "$JENKINS_USERNAME:$JENKINS_TOKEN" | base64)
-          claude mcp add jenkins "$JENKINS_URL/mcp-server/mcp" \
-            --transport http \
-            --header "Authorization: Basic $JENKINS_AUTH"
-        fi
+        claude mcp add jenkins "$JENKINS_URL/mcp-server/mcp" --transport http
 
         # GitHub CLI auth
         if [ -n "$GH_TOKEN" ]; then
