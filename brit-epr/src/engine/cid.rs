@@ -18,7 +18,7 @@ const RAW_CODEC: u64 = 0x55;
 /// A content identifier — a CIDv1 wrapping the sha2-256 of canonical bytes.
 ///
 /// Displayed and parsed as base32 (`bafyrei…` for dag-cbor, `bafkrei…` for raw).
-#[derive(Debug, Clone, PartialEq, Eq, Hash, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord, Hash, Serialize, Deserialize)]
 #[serde(transparent)]
 pub struct BritCid(Cid);
 
@@ -106,5 +106,12 @@ mod tests {
         let json = serde_json::to_string(&cid).unwrap();
         let back: BritCid = serde_json::from_str(&json).unwrap();
         assert_eq!(cid, back);
+    }
+
+    #[test]
+    fn brit_cids_sort_deterministically() {
+        let mut v = vec![BritCid::compute(&[2]), BritCid::compute(&[1])];
+        v.sort();
+        assert!(v[0] <= v[1]);
     }
 }
