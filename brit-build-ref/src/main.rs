@@ -11,7 +11,10 @@ mod reach_cmd;
 mod validate_cmd;
 
 #[derive(Parser)]
-#[command(name = "brit-build-ref", about = "Manage build/deploy/validate/reach attestation refs")]
+#[command(
+    name = "brit-build-ref",
+    about = "Manage build/deploy/validate/reach attestation refs"
+)]
 struct Cli {
     /// Path to the git repository (default: current directory).
     #[arg(long, default_value = ".")]
@@ -213,20 +216,44 @@ enum ReachCmd {
 
 fn main() -> anyhow::Result<()> {
     let cli = Cli::parse();
-    let repo = cli.repo.canonicalize()
-        .unwrap_or_else(|_| cli.repo.clone());
+    let repo = cli.repo.canonicalize().unwrap_or_else(|_| cli.repo.clone());
 
     match cli.command {
         TopCommand::Build { cmd } => match cmd {
-            BuildCmd::Put { step, manifest, output, inputs_hash, success, hardware, duration_ms, commit } => {
-                build_cmd::put(&repo, &step, &manifest, &output, &inputs_hash, success, &hardware, duration_ms, &commit)
-            }
+            BuildCmd::Put {
+                step,
+                manifest,
+                output,
+                inputs_hash,
+                success,
+                hardware,
+                duration_ms,
+                commit,
+            } => build_cmd::put(
+                &repo,
+                &step,
+                &manifest,
+                &output,
+                &inputs_hash,
+                success,
+                &hardware,
+                duration_ms,
+                &commit,
+            ),
             BuildCmd::Get { step, commit } => build_cmd::get(&repo, &step, &commit),
             BuildCmd::List => build_cmd::list(&repo),
         },
 
         TopCommand::Deploy { cmd } => match cmd {
-            DeployCmd::Put { step, env, artifact, endpoint, health_check_epr, health, ttl } => {
+            DeployCmd::Put {
+                step,
+                env,
+                artifact,
+                endpoint,
+                health_check_epr,
+                health,
+                ttl,
+            } => {
                 use brit_epr::elohim::attestation::deploy::HealthStatus;
                 let health_status = match health.as_str() {
                     "healthy" => HealthStatus::Healthy,
@@ -234,14 +261,30 @@ fn main() -> anyhow::Result<()> {
                     "unreachable" => HealthStatus::Unreachable,
                     other => anyhow::bail!("unknown --health value: {other} (expected healthy|degraded|unreachable)"),
                 };
-                deploy_cmd::put(&repo, &step, &env, &artifact, &endpoint, &health_check_epr, health_status, ttl)
+                deploy_cmd::put(
+                    &repo,
+                    &step,
+                    &env,
+                    &artifact,
+                    &endpoint,
+                    &health_check_epr,
+                    health_status,
+                    ttl,
+                )
             }
             DeployCmd::Get { step, env } => deploy_cmd::get(&repo, &step, &env),
             DeployCmd::List => deploy_cmd::list(&repo),
         },
 
         TopCommand::Validate { cmd } => match cmd {
-            ValidateCmd::Put { step, check, artifact, result, summary, validator_version } => {
+            ValidateCmd::Put {
+                step,
+                check,
+                artifact,
+                result,
+                summary,
+                validator_version,
+            } => {
                 use brit_epr::elohim::attestation::validation::ValidationResult;
                 let vr = match result.as_str() {
                     "pass" => ValidationResult::Pass,

@@ -2,10 +2,10 @@
 
 use std::path::Path;
 
-use brit_epr::engine::cid::BritCid;
-use brit_epr::engine::content_node::ContentNode;
-use brit_epr::engine::object_store::LocalObjectStore;
-use brit_epr::{EprMeta, MetaEntry};
+use brit_epr::{
+    engine::{cid::BritCid, content_node::ContentNode, object_store::LocalObjectStore},
+    EprMeta, MetaEntry,
+};
 
 /// Seal the immediate files of `dir` into an EprMeta; print + store its CID.
 pub fn seal(repo: &Path, dir: &Path) -> anyhow::Result<()> {
@@ -24,17 +24,21 @@ pub fn seal(repo: &Path, dir: &Path) -> anyhow::Result<()> {
     for path in &files {
         let bytes = std::fs::read(path)?;
         let cid = BritCid::compute_raw(&bytes);
-        let name = path.file_name().and_then(|n| n.to_str()).unwrap_or_default().to_string();
+        let name = path
+            .file_name()
+            .and_then(|n| n.to_str())
+            .unwrap_or_default()
+            .to_string();
         entries.push(MetaEntry { path: name, cid });
     }
 
-    let subtree = dir
-        .strip_prefix(repo)
-        .unwrap_or(dir)
-        .to_string_lossy()
-        .into_owned();
+    let subtree = dir.strip_prefix(repo).unwrap_or(dir).to_string_lossy().into_owned();
 
-    let meta = EprMeta { epr_meta_version: 1, subtree, entries };
+    let meta = EprMeta {
+        epr_meta_version: 1,
+        subtree,
+        entries,
+    };
     let cid = store.put(&meta)?;
     println!("{cid}");
     Ok(())
