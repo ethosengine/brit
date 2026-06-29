@@ -31,6 +31,9 @@ pub enum GraphError {
     /// Failed to compute CID for a node.
     #[error("CID computation failed: {0}")]
     CidError(#[from] serde_json::Error),
+    /// Failed to encode a node's canonical bytes (dag-cbor).
+    #[error("content encode error: {0}")]
+    Cbor(#[from] brit_epr::CborError),
 }
 
 impl<N: ContentNode, E> EprGraph<N, E> {

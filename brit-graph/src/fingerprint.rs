@@ -71,7 +71,7 @@ impl ContentFingerprint {
             let input_cid = BritCid::compute(bytes);
             combined.extend_from_slice(name.as_bytes());
             combined.push(0);
-            combined.extend_from_slice(input_cid.as_str().as_bytes());
+            combined.extend_from_slice(input_cid.to_string().as_bytes());
             combined.push(0);
             individual.insert(name.clone(), input_cid);
         }

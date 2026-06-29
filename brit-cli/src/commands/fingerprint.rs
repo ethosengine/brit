@@ -63,7 +63,7 @@ pub fn run(manifest_path: &Path, step_filter: Option<&str>, commit_ref: &str) ->
         out.push(StepFingerprint {
             pipeline: m.pipeline.clone(),
             step: name.clone(),
-            fingerprint: fp.cid.as_str().to_string(),
+            fingerprint: fp.cid.to_string(),
             input_count: fp.inputs.len(),
         });
     }

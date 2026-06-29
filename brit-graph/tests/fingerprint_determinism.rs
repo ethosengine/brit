@@ -45,7 +45,10 @@ fn insertion_order_does_not_matter() {
 fn empty_inputs_produce_valid_fingerprint() {
     let inputs = BTreeMap::new();
     let fp = ContentFingerprint::compute(&inputs);
-    assert_eq!(fp.cid.as_str().len(), 64);
+    // Empty inputs still yield a valid CIDv1 dag-cbor fingerprint (bafyrei…).
+    let rendered = fp.cid.to_string();
+    assert!(rendered.starts_with("bafyrei"), "got {rendered}");
+    assert_eq!(fp.cid, fp.cid.to_string().parse().unwrap());
 }
 
 #[test]

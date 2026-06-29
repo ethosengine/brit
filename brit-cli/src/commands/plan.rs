@@ -106,7 +106,7 @@ fn compute_fingerprints(
                 ))
             })?;
 
-            out.insert(step.qualified_name.clone(), fp.cid.as_str().to_string());
+            out.insert(step.qualified_name.clone(), fp.cid.to_string());
         }
     }
 

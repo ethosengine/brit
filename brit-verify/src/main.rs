@@ -105,7 +105,7 @@ fn parse_args(args: &[String]) -> Result<(String, String), String> {
                 if i >= args.len() {
                     return Err("--repo requires a path argument".into());
                 }
-                repo_path = args[i].clone();
+                repo_path.clone_from(&args[i]);
                 i += 1;
             }
             unknown => return Err(format!("unknown argument: {unknown}")),
