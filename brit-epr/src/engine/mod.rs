@@ -24,3 +24,5 @@ pub use object_store::{LocalObjectStore, ObjectStoreError};
 pub use signing::{verify_signature, verify_signed_node, AgentKey, AgentKeyError, Signed};
 pub use trailer_block::parse_trailer_block;
 pub use trailer_set::TrailerSet;
+pub mod verdict;
+pub use verdict::{verdict, Verdict};

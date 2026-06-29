@@ -110,7 +110,7 @@ mod tests {
 
     #[test]
     fn brit_cids_sort_deterministically() {
-        let mut v = vec![BritCid::compute(&[2]), BritCid::compute(&[1])];
+        let mut v = [BritCid::compute(&[2]), BritCid::compute(&[1])];
         v.sort();
         assert!(v[0] <= v[1]);
     }
