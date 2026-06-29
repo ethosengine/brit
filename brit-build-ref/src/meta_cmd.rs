@@ -3,7 +3,14 @@
 use std::path::Path;
 
 use brit_epr::{
-    engine::{cid::BritCid, content_node::ContentNode, object_store::LocalObjectStore},
+    engine::{
+        cid::BritCid,
+        cite::SlugIndex,
+        content_node::ContentNode,
+        frontmatter,
+        object_store::LocalObjectStore,
+        verdict::verdict,
+    },
     EprMeta, MetaEntry,
 };
 
@@ -90,4 +97,35 @@ pub fn verify(repo: &Path, cid: &str) -> anyhow::Result<()> {
     }
     println!("ok {parsed}");
     Ok(())
+}
+
+/// Print the cite verdict of every doc-cite under `dir` (advisory; exit 0).
+pub fn status(_repo: &Path, dir: &Path) -> anyhow::Result<()> {
+    let idx = SlugIndex::build(&[dir.to_path_buf()])?;
+    let mut files: Vec<_> = walk_md(dir)?;
+    files.sort();
+    for path in &files {
+        let content = std::fs::read_to_string(path)?;
+        let (fm, _) = frontmatter::split_frontmatter(&content);
+        let Some(fm) = fm else { continue };
+        let slug = brit_epr::engine::cite::extract_id(fm).unwrap_or_default();
+        for edge in brit_epr::engine::cite::extract_cites(fm) {
+            let v = format!("{:?}", verdict(&edge, &idx)).to_lowercase();
+            println!("{v} {slug}: {} -> {}", path.display(), edge.ref_);
+        }
+    }
+    Ok(())
+}
+
+fn walk_md(dir: &Path) -> anyhow::Result<Vec<std::path::PathBuf>> {
+    let mut out = Vec::new();
+    for e in std::fs::read_dir(dir)? {
+        let p = e?.path();
+        if p.is_dir() {
+            out.extend(walk_md(&p)?);
+        } else if p.extension().is_some_and(|x| x == "md") {
+            out.push(p);
+        }
+    }
+    Ok(out)
 }

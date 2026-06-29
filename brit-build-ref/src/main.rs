@@ -69,6 +69,12 @@ enum MetaCmd {
         #[arg(long)]
         cid: String,
     },
+    /// Print the cite verdict (ok/held/stale/dead) for every doc-cite under dir.
+    Status {
+        /// Directory to scan.
+        #[arg(long)]
+        dir: PathBuf,
+    },
 }
 
 // ─── Build subcommands ────────────────────────────────────────────────────────
@@ -307,6 +313,7 @@ fn main() -> anyhow::Result<()> {
         TopCommand::Meta { cmd } => match cmd {
             MetaCmd::Seal { dir } => meta_cmd::seal(&repo, &dir),
             MetaCmd::Verify { cid } => meta_cmd::verify(&repo, &cid),
+            MetaCmd::Status { dir } => meta_cmd::status(&repo, &dir),
         },
     }
 }
