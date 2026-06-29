@@ -443,6 +443,7 @@ dependencies = [
  "brit-epr",
  "chrono",
  "clap",
+ "serde_ipld_dagcbor",
  "serde_json",
  "tempfile",
 ]

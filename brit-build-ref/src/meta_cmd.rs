@@ -34,12 +34,44 @@ pub fn seal(repo: &Path, dir: &Path) -> anyhow::Result<()> {
 
     let subtree = dir.strip_prefix(repo).unwrap_or(dir).to_string_lossy().into_owned();
 
+    use brit_epr::engine::{
+        cite, frontmatter,
+        interface_ref::{EdgeKind, EdgeRole, InterfaceRef},
+    };
+    let mut imports = Vec::new();
+    let mut exports = Vec::new();
+    for path in &files {
+        if path.extension().is_none_or(|e| e != "md") {
+            continue;
+        }
+        let content = std::fs::read_to_string(path)?;
+        let (fm, _) = frontmatter::split_frontmatter(&content);
+        if let Some(fm) = fm {
+            if let Some(id) = cite::extract_id(fm) {
+                exports.push(InterfaceRef {
+                    kind: EdgeKind::DocCite,
+                    role: EdgeRole::Export,
+                    ref_: id,
+                    cid: None,
+                    drift: Some(frontmatter::drift_fingerprint(&content)),
+                    desc: None,
+                });
+            }
+            for mut c in cite::extract_cites(fm) {
+                c.role = EdgeRole::Import;
+                imports.push(c);
+            }
+        }
+    }
+    imports.sort();
+    exports.sort();
+
     let meta = EprMeta {
         epr_meta_version: 1,
         subtree,
         entries,
-        imports: vec![],
-        exports: vec![],
+        imports,
+        exports,
     };
     let cid = store.put(&meta)?;
     println!("{cid}");
