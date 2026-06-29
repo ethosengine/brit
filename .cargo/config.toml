@@ -1,0 +1,12 @@
+# .cargo/config.toml — consume the internal Nexus cargo registry.
+# Auth is only needed to PUBLISH; anonymous read resolves dependencies.
+# To publish or for private-read envs: CARGO_REGISTRIES_ELOHIM_TOKEN="Bearer <NpmToken>".
+
+[registries.elohim]
+index = "sparse+https://nexus.ethosengine.com/repository/cargo-internal/"
+
+[source.crates-io]
+replace-with = "elohim-mirror"
+
+[source.elohim-mirror]
+registry = "sparse+https://nexus.ethosengine.com/repository/cargo/"

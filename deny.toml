@@ -51,3 +51,10 @@ deny = [
     # end range due to https://github.com/serde-rs/serde/pull/2590
     { name = "serde_derive", version = ">1.0.171, <1.0.185" },
 ]
+
+[sources]
+allow-registry = [
+    "https://github.com/rust-lang/crates.io-index",
+    "sparse+https://nexus.ethosengine.com/repository/cargo-internal/",
+    "sparse+https://nexus.ethosengine.com/repository/cargo/",
+]
