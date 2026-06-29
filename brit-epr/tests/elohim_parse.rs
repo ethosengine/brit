@@ -3,7 +3,7 @@
 use brit_epr::{parse_pillar_trailers, PillarTrailers};
 
 fn fixture(name: &str) -> Vec<u8> {
-    let path = format!("tests/fixtures/{}", name);
+    let path = format!("tests/fixtures/{name}");
     std::fs::read(&path).unwrap_or_else(|e| panic!("failed to read fixture {path}: {e}"))
 }
 

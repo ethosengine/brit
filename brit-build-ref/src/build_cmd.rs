@@ -52,7 +52,7 @@ pub fn put(
         signature: String::new(),
     };
 
-    let canonical = node.canonical_json()?;
+    let canonical = node.canonical_bytes()?;
     node.signature = agent_key.sign(&canonical);
 
     let cid = store.put(&node)?;

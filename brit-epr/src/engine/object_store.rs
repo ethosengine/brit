@@ -24,20 +24,23 @@ impl LocalObjectStore {
 
     /// Store a ContentNode. Returns its CID. Idempotent.
     pub fn put<T: ContentNode>(&self, node: &T) -> Result<BritCid, ObjectStoreError> {
-        let json = node.canonical_json().map_err(ObjectStoreError::Serialize)?;
-        let cid = BritCid::compute(&json);
+        let bytes = node
+            .canonical_bytes()
+            .map_err(|e| ObjectStoreError::Serialize(e.to_string()))?;
+        let cid = BritCid::compute(&bytes);
         fs::create_dir_all(&self.base_dir).map_err(ObjectStoreError::Io)?;
-        let path = self.base_dir.join(cid.as_str());
+        let name = cid.to_string();
+        let path = self.base_dir.join(&name);
         // Atomic write: temp file + rename prevents partial writes on crash.
-        let tmp_path = self.base_dir.join(format!("{}.tmp", cid.as_str()));
-        fs::write(&tmp_path, &json).map_err(ObjectStoreError::Io)?;
+        let tmp_path = self.base_dir.join(format!("{name}.tmp"));
+        fs::write(&tmp_path, &bytes).map_err(ObjectStoreError::Io)?;
         fs::rename(&tmp_path, &path).map_err(ObjectStoreError::Io)?;
         Ok(cid)
     }
 
     /// Retrieve a ContentNode by CID.
     pub fn get<T: ContentNode>(&self, cid: &BritCid) -> Result<T, ObjectStoreError> {
-        let path = self.base_dir.join(cid.as_str());
+        let path = self.base_dir.join(cid.to_string());
         let bytes = fs::read(&path).map_err(|e| {
             if e.kind() == std::io::ErrorKind::NotFound {
                 ObjectStoreError::NotFound(cid.clone())
@@ -45,7 +48,7 @@ impl LocalObjectStore {
                 ObjectStoreError::Io(e)
             }
         })?;
-        serde_json::from_slice(&bytes).map_err(ObjectStoreError::Deserialize)
+        serde_ipld_dagcbor::from_slice(&bytes).map_err(|e| ObjectStoreError::Deserialize(e.to_string()))
     }
 
     /// List all stored CIDs.
@@ -74,10 +77,10 @@ pub enum ObjectStoreError {
     Io(#[from] std::io::Error),
     /// Serialization failed.
     #[error("serialization error: {0}")]
-    Serialize(serde_json::Error),
+    Serialize(String),
     /// Deserialization failed.
     #[error("deserialization error: {0}")]
-    Deserialize(serde_json::Error),
+    Deserialize(String),
     /// Object not found.
     #[error("object not found: {0}")]
     NotFound(BritCid),

@@ -12,7 +12,7 @@ mod trailer_set;
 
 pub use app_schema::AppSchema;
 pub use cid::{BritCid, CidParseError};
-pub use content_node::ContentNode;
+pub use content_node::{CborError, ContentNode};
 pub use error::{EngineError, ValidationError};
 pub use object_store::{LocalObjectStore, ObjectStoreError};
 pub use signing::{verify_signature, verify_signed_node, AgentKey, AgentKeyError, Signed};

@@ -1,37 +1,51 @@
-//! `BritCid` — content identifier based on BLAKE3 hashing.
+//! `BritCid` — content identifier: CIDv1 over canonical bytes.
 //!
-//! Phase 2a uses a simplified CID: the BLAKE3 hash of the canonical JSON
-//! serialization of a ContentNode. Full multiformats CIDv1 comes in a later
-//! phase when interop with IPFS/Holochain requires it.
+//! Nodes use multicodec 0x71 (dag-cbor); raw blobs use 0x55 (raw).
+//! Multihash is 0x12 (sha2-256). Byte-identical to the protocol's
+//! `elohim-epr` codec. BLAKE3 is for non-address fingerprints only.
 
 use std::fmt;
 use std::str::FromStr;
 
+use cid::Cid;
+use multihash_codetable::{Code, MultihashDigest};
 use serde::{Deserialize, Serialize};
 
-/// A content identifier — the BLAKE3 hash of a content payload.
+/// Multicodec for dag-cbor content (the IPLD multicodec table).
+const DAG_CBOR_CODEC: u64 = 0x71;
+/// Multicodec for raw bytes.
+const RAW_CODEC: u64 = 0x55;
+
+/// A content identifier — a CIDv1 wrapping the sha2-256 of canonical bytes.
 ///
-/// Displayed and parsed as a 64-character lowercase hex string.
+/// Displayed and parsed as base32 (`bafyrei…` for dag-cbor, `bafkrei…` for raw).
 #[derive(Debug, Clone, PartialEq, Eq, Hash, Serialize, Deserialize)]
 #[serde(transparent)]
-pub struct BritCid(String);
+pub struct BritCid(Cid);
 
 impl BritCid {
-    /// Compute a CID from arbitrary bytes.
-    pub fn compute(data: &[u8]) -> Self {
-        let hash = blake3::hash(data);
-        Self(hash.to_hex().to_string())
+    /// Compute a dag-cbor CID (codec 0x71) over already-canonical DAG-CBOR bytes.
+    pub fn compute(canonical_bytes: &[u8]) -> Self {
+        let mh = Code::Sha2_256.digest(canonical_bytes);
+        Self(Cid::new_v1(DAG_CBOR_CODEC, mh))
     }
 
-    /// Return the hex string representation.
-    pub fn as_str(&self) -> &str {
+    /// Compute a raw-blob CID (codec 0x55) over arbitrary file bytes.
+    pub fn compute_raw(bytes: &[u8]) -> Self {
+        let mh = Code::Sha2_256.digest(bytes);
+        Self(Cid::new_v1(RAW_CODEC, mh))
+    }
+
+    /// Borrow the underlying multiformats CID.
+    pub fn as_cid(&self) -> &Cid {
         &self.0
     }
 }
 
 impl fmt::Display for BritCid {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        f.write_str(&self.0)
+        // cid's Display is base32 lowercase by default.
+        write!(f, "{}", self.0)
     }
 }
 
@@ -39,61 +53,57 @@ impl FromStr for BritCid {
     type Err = CidParseError;
 
     fn from_str(s: &str) -> Result<Self, Self::Err> {
-        if s.len() != 64 {
-            return Err(CidParseError::InvalidLength(s.len()));
-        }
-        if !s.chars().all(|c| c.is_ascii_hexdigit()) {
-            return Err(CidParseError::InvalidHex);
-        }
-        Ok(Self(s.to_lowercase()))
+        Cid::from_str(s).map(Self).map_err(|e| CidParseError(e.to_string()))
     }
 }
 
-/// Errors when parsing a CID string.
+/// Error parsing a CID string.
 #[derive(Debug, thiserror::Error, PartialEq, Eq)]
-pub enum CidParseError {
-    /// Expected 64 hex characters.
-    #[error("expected 64 hex characters, got {0}")]
-    InvalidLength(usize),
-    /// Non-hex character found.
-    #[error("CID contains non-hex characters")]
-    InvalidHex,
-}
+#[error("invalid CID: {0}")]
+pub struct CidParseError(String);
 
 #[cfg(test)]
 mod tests {
     use super::*;
 
     #[test]
+    fn empty_cbor_map_is_bafyrei() {
+        // The elohim-epr golden vector: 0xa0 (empty map) → dag-cbor CIDv1.
+        let cid = BritCid::compute(&[0xa0]);
+        assert!(cid.to_string().starts_with("bafyrei"), "got {cid}");
+    }
+
+    #[test]
+    fn raw_blob_is_bafkrei() {
+        let cid = BritCid::compute_raw(b"hello world");
+        assert!(cid.to_string().starts_with("bafkrei"), "got {cid}");
+    }
+
+    #[test]
     fn compute_is_deterministic() {
-        let a = BritCid::compute(b"hello world");
-        let b = BritCid::compute(b"hello world");
-        assert_eq!(a, b);
+        assert_eq!(BritCid::compute(&[1, 2, 3]), BritCid::compute(&[1, 2, 3]));
     }
 
     #[test]
     fn different_input_different_cid() {
-        let a = BritCid::compute(b"hello");
-        let b = BritCid::compute(b"world");
-        assert_ne!(a, b);
+        assert_ne!(BritCid::compute(&[1]), BritCid::compute(&[2]));
     }
 
     #[test]
     fn roundtrip_display_parse() {
-        let cid = BritCid::compute(b"test data");
+        let cid = BritCid::compute(&[0xa0]);
         let parsed: BritCid = cid.to_string().parse().unwrap();
         assert_eq!(cid, parsed);
     }
 
     #[test]
-    fn rejects_short_string() {
-        let result = "abc123".parse::<BritCid>();
-        assert_eq!(result, Err(CidParseError::InvalidLength(6)));
+    fn rejects_non_cid_string() {
+        assert!("not-a-cid".parse::<BritCid>().is_err());
     }
 
     #[test]
-    fn serde_roundtrip() {
-        let cid = BritCid::compute(b"serde test");
+    fn serde_roundtrip_json() {
+        let cid = BritCid::compute(&[0xa0]);
         let json = serde_json::to_string(&cid).unwrap();
         let back: BritCid = serde_json::from_str(&json).unwrap();
         assert_eq!(cid, back);

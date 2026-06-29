@@ -108,7 +108,7 @@ fn build_attestation_sign_store_retrieve_verify() {
     };
 
     // Sign
-    let canonical = node.canonical_json().unwrap();
+    let canonical = node.canonical_bytes().unwrap();
     node.signature = key.sign(&canonical);
 
     // Store

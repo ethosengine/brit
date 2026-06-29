@@ -52,8 +52,8 @@ fn list_returns_all_stored_cids() {
     let a = store.put(&TestNode { name: "a".into(), value: 1 }).unwrap();
     let b = store.put(&TestNode { name: "b".into(), value: 2 }).unwrap();
     let mut cids = store.list().unwrap();
-    cids.sort_by(|x, y| x.as_str().cmp(y.as_str()));
+    cids.sort_by_key(ToString::to_string);
     let mut expected = vec![a, b];
-    expected.sort_by(|x, y| x.as_str().cmp(y.as_str()));
+    expected.sort_by_key(ToString::to_string);
     assert_eq!(cids, expected);
 }

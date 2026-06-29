@@ -92,7 +92,7 @@ pub trait Signed: crate::engine::content_node::ContentNode + Clone {
 pub fn verify_signed_node<T: Signed>(node: &T) -> Result<bool, AgentKeyError> {
     let unsigned = node.without_signature();
     let canonical = unsigned
-        .canonical_json()
+        .canonical_bytes()
         .map_err(|e| AgentKeyError::Io(std::io::Error::other(e)))?;
     verify_signature(&canonical, node.signature(), node.agent_id())
 }
