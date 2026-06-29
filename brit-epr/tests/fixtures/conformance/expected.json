@@ -1,0 +1,7 @@
+{
+  "no_trailing_newline.md": "sha256:1d94cc6fdefc70d0",
+  "plain.md": "sha256:8a2e7ba2c2f104a7",
+  "trailing_ws.md": "sha256:860a18a15b8496f1",
+  "unicode.md": "sha256:ee4bb224fff787f8",
+  "with_fm.md": "sha256:8bab6bb08a0b2f06"
+}
