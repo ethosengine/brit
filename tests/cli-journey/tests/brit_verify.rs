@@ -9,11 +9,9 @@
 //! Staging layout: a single entry for the binary itself (no subcommands):
 //!   BRIT_TEST_PAGE_STAGING/rust/brit-verify.txt
 
-use std::fs;
-use std::path::PathBuf;
+use std::{fs, path::PathBuf};
 
-use cli_journey::support::runner::BritInvocation;
-use cli_journey::support::test_repo::TestRepo;
+use cli_journey::support::{runner::BritInvocation, test_repo::TestRepo};
 
 fn brit_verify_bin() -> PathBuf {
     // tests/cli-journey -> ../../target/release/brit-verify

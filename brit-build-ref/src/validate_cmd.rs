@@ -2,11 +2,13 @@
 
 use std::path::Path;
 
-use brit_epr::engine::content_node::ContentNode;
-use brit_epr::engine::object_store::LocalObjectStore;
-use brit_epr::engine::signing::AgentKey;
-use brit_epr::elohim::attestation::validation::{ValidationAttestationContentNode, ValidationResult};
-use brit_epr::elohim::refs::BritRefManager;
+use brit_epr::{
+    elohim::{
+        attestation::validation::{ValidationAttestationContentNode, ValidationResult},
+        refs::BritRefManager,
+    },
+    engine::{content_node::ContentNode, object_store::LocalObjectStore, signing::AgentKey},
+};
 
 pub fn put(
     repo: &Path,
@@ -33,7 +35,11 @@ pub fn put(
         artifact_cid,
         check_name: check.to_string(),
         validator_id: agent_key.agent_id(),
-        validator_version: if validator_version.is_empty() { "unknown".to_string() } else { validator_version.to_string() },
+        validator_version: if validator_version.is_empty() {
+            "unknown".to_string()
+        } else {
+            validator_version.to_string()
+        },
         result,
         result_summary: summary.to_string(),
         findings_cid: None,

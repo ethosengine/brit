@@ -91,10 +91,10 @@ fn assert_diffs(diffs: &[(String, String, bool, String)]) {
 }
 
 mod baseline {
+    use std::{ffi::OsStr, path::Path};
+
     use gix_diff::blob::Algorithm;
     use gix_object::bstr::ByteSlice;
-    use std::ffi::OsStr;
-    use std::path::Path;
 
     pub struct DirEntry {
         pub file_name: String,

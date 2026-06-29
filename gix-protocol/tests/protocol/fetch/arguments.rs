@@ -1,11 +1,11 @@
 use bstr::ByteSlice;
-use gix_transport::Protocol;
-
-use crate::fetch;
 #[cfg(feature = "async-client")]
 use gix_transport::client::git::async_io::Connection;
 #[cfg(feature = "blocking-client")]
 use gix_transport::client::git::blocking_io::Connection;
+use gix_transport::Protocol;
+
+use crate::fetch;
 
 fn arguments_v1(features: impl IntoIterator<Item = &'static str>) -> fetch::Arguments {
     fetch::Arguments::new(Protocol::V1, features.into_iter().map(|n| (n, None)).collect(), false)

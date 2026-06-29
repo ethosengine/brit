@@ -1,6 +1,8 @@
-use crate::{bstr::ByteVec, name::is_pseudo_ref, Category, FullName, FullNameRef, Namespace, PartialNameRef};
-use gix_object::bstr::{BStr, BString, ByteSlice};
 use std::{borrow::Borrow, path::Path};
+
+use gix_object::bstr::{BStr, BString, ByteSlice};
+
+use crate::{bstr::ByteVec, name::is_pseudo_ref, Category, FullName, FullNameRef, Namespace, PartialNameRef};
 
 impl TryFrom<&str> for FullName {
     type Error = gix_validate::reference::name::Error;

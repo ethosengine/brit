@@ -3,8 +3,7 @@ use std::ops::Range;
 use bstr::{BStr, BString, ByteSlice};
 use winnow::prelude::*;
 
-use crate::parse::parse_signature;
-use crate::{Commit, CommitRef, TagRef};
+use crate::{parse::parse_signature, Commit, CommitRef, TagRef};
 
 /// The well-known field name for gpg signatures.
 pub const SIGNATURE_FIELD_NAME: &str = "gpgsig";

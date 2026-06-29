@@ -4,14 +4,16 @@ use std::{
     fs,
     io::{ErrorKind, ErrorKind::AlreadyExists},
     path::{Path, PathBuf},
-    sync::atomic::{AtomicBool, AtomicUsize, Ordering},
+    sync::{
+        atomic::{AtomicBool, AtomicUsize, Ordering},
+        LazyLock,
+    },
 };
 
 use gix_features::progress;
 use gix_object::{bstr::ByteSlice, Data};
 use gix_testtools::tempfile::TempDir;
 use gix_worktree_state::checkout::Collision;
-use std::sync::LazyLock;
 
 use crate::fixture_path;
 

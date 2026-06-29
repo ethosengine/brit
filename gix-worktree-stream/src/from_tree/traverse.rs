@@ -1,13 +1,12 @@
 use std::{collections::VecDeque, io::Write};
 
+use gix_error::{message, ResultExt};
 use gix_filter::{driver::apply::MaybeDelayed, pipeline::convert::ToWorktreeOutcome};
 use gix_object::{
     bstr::{BStr, BString, ByteSlice, ByteVec},
     tree, FindExt,
 };
 use gix_traverse::tree::{visit::Action, Visit};
-
-use gix_error::{message, ResultExt};
 
 use crate::{entry::Error, protocol, SharedErrorSlot};
 

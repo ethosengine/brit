@@ -3,8 +3,7 @@
 
 #![cfg(feature = "repo")]
 
-use std::collections::BTreeMap;
-use std::process::Command;
+use std::{collections::BTreeMap, process::Command};
 
 use brit_graph::fingerprint::ContentFingerprint;
 use tempfile::TempDir;
@@ -14,9 +13,21 @@ use tempfile::TempDir;
 fn init_repo_with_files(files: &[(&str, &str)]) -> (TempDir, std::path::PathBuf, gix::ObjectId) {
     let dir = TempDir::new().expect("temp");
     let path = dir.path().to_path_buf();
-    Command::new("git").args(["init", "-q"]).current_dir(&path).status().expect("init");
-    Command::new("git").args(["config", "user.email", "t@t.t"]).current_dir(&path).status().expect("");
-    Command::new("git").args(["config", "user.name", "t"]).current_dir(&path).status().expect("");
+    Command::new("git")
+        .args(["init", "-q"])
+        .current_dir(&path)
+        .status()
+        .expect("init");
+    Command::new("git")
+        .args(["config", "user.email", "t@t.t"])
+        .current_dir(&path)
+        .status()
+        .expect("");
+    Command::new("git")
+        .args(["config", "user.name", "t"])
+        .current_dir(&path)
+        .status()
+        .expect("");
 
     for (rel, contents) in files {
         let abs = path.join(rel);
@@ -24,7 +35,11 @@ fn init_repo_with_files(files: &[(&str, &str)]) -> (TempDir, std::path::PathBuf,
             std::fs::create_dir_all(parent).expect("mkdir");
         }
         std::fs::write(&abs, contents).expect("write");
-        Command::new("git").args(["add", rel]).current_dir(&path).status().expect("add");
+        Command::new("git")
+            .args(["add", rel])
+            .current_dir(&path)
+            .status()
+            .expect("add");
     }
     Command::new("git")
         .args(["commit", "-q", "-m", "init"])
@@ -64,15 +79,16 @@ fn single_pattern_matches_one_file() {
 
     // Only foo.ts should be in the inputs
     assert_eq!(fp.inputs.len(), 1, "one .ts file");
-    assert!(fp.inputs.contains_key("src/foo.ts"), "found keys: {:?}", fp.inputs.keys().collect::<Vec<_>>());
+    assert!(
+        fp.inputs.contains_key("src/foo.ts"),
+        "found keys: {:?}",
+        fp.inputs.keys().collect::<Vec<_>>()
+    );
 }
 
 #[test]
 fn deterministic_across_calls_same_inputs() {
-    let (_keep, path, head) = init_repo_with_files(&[
-        ("src/a.ts", "a\n"),
-        ("src/b.ts", "b\n"),
-    ]);
+    let (_keep, path, head) = init_repo_with_files(&[("src/a.ts", "a\n"), ("src/b.ts", "b\n")]);
     let repo = gix::open(&path).expect("open");
 
     let patterns = vec!["src/**/*.ts".to_string()];
@@ -97,7 +113,10 @@ fn different_content_different_fingerprint() {
     let fp_a = ContentFingerprint::from_repo_globs(&repo_a, head_a, &patterns).expect("a");
     let fp_b = ContentFingerprint::from_repo_globs(&repo_b, head_b, &patterns).expect("b");
 
-    assert_ne!(fp_a.cid, fp_b.cid, "different content must produce different fingerprint");
+    assert_ne!(
+        fp_a.cid, fp_b.cid,
+        "different content must produce different fingerprint"
+    );
 }
 
 #[test]
@@ -111,11 +130,8 @@ fn no_matching_files_is_empty_fingerprint() {
 
 #[test]
 fn multiple_patterns_combine() {
-    let (_keep, path, head) = init_repo_with_files(&[
-        ("src/foo.ts", "ts\n"),
-        ("src/bar.rs", "rs\n"),
-        ("README.md", "md\n"),
-    ]);
+    let (_keep, path, head) =
+        init_repo_with_files(&[("src/foo.ts", "ts\n"), ("src/bar.rs", "rs\n"), ("README.md", "md\n")]);
     let repo = gix::open(&path).expect("open");
     let patterns = vec!["src/**/*.ts".to_string(), "src/**/*.rs".to_string()];
     let fp = ContentFingerprint::from_repo_globs(&repo, head, &patterns).expect("compute");
@@ -130,5 +146,8 @@ fn invalid_glob_returns_error() {
     let repo = gix::open(&path).expect("open");
     let patterns = vec!["[invalid".to_string()];
     let err = ContentFingerprint::from_repo_globs(&repo, head, &patterns).unwrap_err();
-    assert!(matches!(err, brit_graph::fingerprint::FingerprintError::InvalidGlob { .. }));
+    assert!(matches!(
+        err,
+        brit_graph::fingerprint::FingerprintError::InvalidGlob { .. }
+    ));
 }

@@ -1,8 +1,10 @@
 //! BritInvocation — process invocation + capture + optional normalization.
 
-use std::ffi::OsString;
-use std::path::PathBuf;
-use std::process::{Command, ExitStatus};
+use std::{
+    ffi::OsString,
+    path::PathBuf,
+    process::{Command, ExitStatus},
+};
 
 use anyhow::{anyhow, Context, Result};
 
@@ -76,13 +78,9 @@ impl BritInvocation {
         if let Some(cwd) = &self.cwd {
             cmd.current_dir(cwd);
         }
-        let out = cmd
-            .output()
-            .with_context(|| format!("invoke {:?}", self.program))?;
-        let mut stdout = String::from_utf8(out.stdout)
-            .map_err(|e| anyhow!("non-utf8 stdout: {e}"))?;
-        let mut stderr = String::from_utf8(out.stderr)
-            .map_err(|e| anyhow!("non-utf8 stderr: {e}"))?;
+        let out = cmd.output().with_context(|| format!("invoke {:?}", self.program))?;
+        let mut stdout = String::from_utf8(out.stdout).map_err(|e| anyhow!("non-utf8 stdout: {e}"))?;
+        let mut stderr = String::from_utf8(out.stderr).map_err(|e| anyhow!("non-utf8 stderr: {e}"))?;
         if self.normalize {
             let n = Normalizer::new();
             stdout = n.normalize(&stdout);

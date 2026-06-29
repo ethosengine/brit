@@ -1,10 +1,10 @@
 pub(super) mod function {
-    use anyhow::Context;
     use std::{
         collections::HashSet,
         path::{Path, PathBuf},
     };
 
+    use anyhow::Context;
     use gix::{
         bstr::{BString, ByteSlice},
         objs::FindExt,

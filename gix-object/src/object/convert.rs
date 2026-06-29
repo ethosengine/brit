@@ -1,7 +1,8 @@
 use std::convert::TryFrom;
 
-use crate::parse::parse_signature;
-use crate::{tree, Blob, BlobRef, Commit, CommitRef, Object, ObjectRef, Tag, TagRef, Tree, TreeRef};
+use crate::{
+    parse::parse_signature, tree, Blob, BlobRef, Commit, CommitRef, Object, ObjectRef, Tag, TagRef, Tree, TreeRef,
+};
 
 impl TryFrom<TagRef<'_>> for Tag {
     type Error = crate::decode::Error;

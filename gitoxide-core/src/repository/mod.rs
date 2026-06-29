@@ -1,5 +1,4 @@
-use std::fmt::Formatter;
-use std::path::PathBuf;
+use std::{fmt::Formatter, path::PathBuf};
 
 use anyhow::{Context as AnyhowContext, Result};
 use gix::bstr::BString;

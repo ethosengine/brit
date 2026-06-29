@@ -1,6 +1,5 @@
 use brit_epr::{BritCid, ContentNode};
-use brit_graph::graph::EprGraph;
-use brit_graph::traits::GraphConnections;
+use brit_graph::{graph::EprGraph, traits::GraphConnections};
 use serde::{Deserialize, Serialize};
 
 /// A minimal ContentNode for testing.

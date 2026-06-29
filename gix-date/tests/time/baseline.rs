@@ -1,12 +1,14 @@
-use std::{collections::HashMap, time::SystemTime};
+use std::{
+    collections::HashMap,
+    sync::LazyLock,
+    time::{Duration, SystemTime},
+};
 
 use gix_date::{
     time::{format, Format},
     SecondsSinceUnixEpoch,
 };
 use gix_testtools::Result;
-use std::sync::LazyLock;
-use std::time::Duration;
 
 struct Sample {
     format_name: Option<String>,

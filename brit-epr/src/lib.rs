@@ -25,23 +25,27 @@ pub mod engine;
 pub mod elohim;
 
 // Unconditional re-exports
-pub use engine::{AppSchema, BritCid, CborError, CidParseError, ContentNode, LocalObjectStore, ObjectStoreError, TrailerSet, ValidationError};
-
 // Feature-gated re-exports
 #[cfg(feature = "elohim-protocol")]
 pub use elohim::{
-    parse_pillar_trailers, validate_pillar_trailers, ElohimProtocolSchema, EprMeta, MetaEntry,
-    NodeSeed, PillarTrailers, PillarValidationError, TrailerKey,
+    parse_pillar_trailers, validate_pillar_trailers, ElohimProtocolSchema, EprMeta, MetaEntry, NodeSeed,
+    PillarTrailers, PillarValidationError, TrailerKey,
+};
+pub use engine::{
+    AppSchema, BritCid, CborError, CidParseError, ContentNode, LocalObjectStore, ObjectStoreError, TrailerSet,
+    ValidationError,
 };
 
 /// Convenience re-exports for attestation types.
 #[cfg(feature = "elohim-protocol")]
 pub mod attestation {
-    pub use crate::elohim::attestation::build::BuildAttestationContentNode;
-    pub use crate::elohim::attestation::deploy::{DeployAttestationContentNode, HealthStatus};
-    pub use crate::elohim::attestation::reach::{compute_reach, ReachInput, ReachLevel};
-    pub use crate::elohim::attestation::validation::{
-        ValidationAttestationContentNode, ValidationResult,
+    pub use crate::elohim::{
+        attestation::{
+            build::BuildAttestationContentNode,
+            deploy::{DeployAttestationContentNode, HealthStatus},
+            reach::{compute_reach, ReachInput, ReachLevel},
+            validation::{ValidationAttestationContentNode, ValidationResult},
+        },
+        refs::BritRefManager,
     };
-    pub use crate::elohim::refs::BritRefManager;
 }

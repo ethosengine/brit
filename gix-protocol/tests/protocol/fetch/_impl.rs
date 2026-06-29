@@ -11,6 +11,8 @@ pub enum RefsAction {
 }
 
 mod fetch_fn {
+    use std::{borrow::Cow, ops::ControlFlow};
+
     use gix_features::progress::NestedProgress;
     use gix_protocol::{
         credentials,
@@ -22,8 +24,6 @@ mod fetch_fn {
     #[cfg(feature = "blocking-client")]
     use gix_transport::client::blocking_io::{ExtendedBufRead, HandleProgress, Transport};
     use maybe_async::maybe_async;
-    use std::borrow::Cow;
-    use std::ops::ControlFlow;
 
     use super::{Action, Delegate, RefsAction};
     use crate::fetch::Error;

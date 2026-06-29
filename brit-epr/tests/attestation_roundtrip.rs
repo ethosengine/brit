@@ -1,12 +1,20 @@
-use brit_epr::engine::cid::BritCid;
-use brit_epr::engine::content_node::ContentNode;
-use brit_epr::engine::signing::{verify_signed_node, AgentKey};
-use brit_epr::elohim::attestation::build::BuildAttestationContentNode;
-use brit_epr::elohim::attestation::deploy::{DeployAttestationContentNode, HealthStatus};
-use brit_epr::elohim::attestation::validation::{ValidationAttestationContentNode, ValidationResult};
+use brit_epr::{
+    elohim::attestation::{
+        build::BuildAttestationContentNode,
+        deploy::{DeployAttestationContentNode, HealthStatus},
+        validation::{ValidationAttestationContentNode, ValidationResult},
+    },
+    engine::{
+        cid::BritCid,
+        content_node::ContentNode,
+        signing::{verify_signed_node, AgentKey},
+    },
+};
 use tempfile::TempDir;
 
-fn sample_cid() -> BritCid { BritCid::compute(b"sample artifact") }
+fn sample_cid() -> BritCid {
+    BritCid::compute(b"sample artifact")
+}
 
 #[test]
 fn build_attestation_roundtrips() {
@@ -84,7 +92,10 @@ fn validation_result_serializes_as_lowercase() {
 fn health_status_serializes_as_lowercase() {
     assert_eq!(serde_json::to_string(&HealthStatus::Healthy).unwrap(), r#""healthy""#);
     assert_eq!(serde_json::to_string(&HealthStatus::Degraded).unwrap(), r#""degraded""#);
-    assert_eq!(serde_json::to_string(&HealthStatus::Unreachable).unwrap(), r#""unreachable""#);
+    assert_eq!(
+        serde_json::to_string(&HealthStatus::Unreachable).unwrap(),
+        r#""unreachable""#
+    );
 }
 
 #[test]
@@ -123,5 +134,8 @@ fn build_attestation_sign_store_retrieve_verify() {
     // Tamper — must fail
     let mut tampered = back;
     tampered.success = false;
-    assert!(!verify_signed_node(&tampered).unwrap(), "tampered node should fail verification");
+    assert!(
+        !verify_signed_node(&tampered).unwrap(),
+        "tampered node should fail verification"
+    );
 }

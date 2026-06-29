@@ -5,10 +5,8 @@ use std::{
 };
 
 use crate::{borrowed::oid, Kind};
-
 #[cfg(feature = "sha1")]
 use crate::{EMPTY_BLOB_SHA1, EMPTY_TREE_SHA1, SIZE_OF_SHA1_DIGEST};
-
 #[cfg(feature = "sha256")]
 use crate::{EMPTY_BLOB_SHA256, EMPTY_TREE_SHA256, SIZE_OF_SHA256_DIGEST};
 
@@ -43,10 +41,8 @@ pub mod decode {
     use std::str::FromStr;
 
     use crate::object_id::ObjectId;
-
     #[cfg(feature = "sha1")]
     use crate::{SIZE_OF_SHA1_DIGEST, SIZE_OF_SHA1_HEX_DIGEST};
-
     #[cfg(feature = "sha256")]
     use crate::{SIZE_OF_SHA256_DIGEST, SIZE_OF_SHA256_HEX_DIGEST};
 

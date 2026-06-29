@@ -1,8 +1,9 @@
+use std::sync::LazyLock;
+
 use gix_fsck::Connectivity;
 use gix_hash::ObjectId;
 use gix_hashtable::HashMap;
 use gix_object::Kind;
-use std::sync::LazyLock;
 
 use crate::hex_to_id;
 

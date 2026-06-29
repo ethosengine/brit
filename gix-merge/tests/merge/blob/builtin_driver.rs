@@ -27,6 +27,8 @@ fn binary() {
 }
 
 mod text {
+    use std::num::NonZero;
+
     use arbitrary::Arbitrary;
     use bstr::ByteSlice;
     use gix_merge::blob::{
@@ -35,7 +37,6 @@ mod text {
         Resolution,
     };
     use pretty_assertions::assert_str_eq;
-    use std::num::NonZero;
 
     const DIVERGING: &[&str] = &[
         // Somehow, on in zdiff mode, it's different, and I wasn't able to figure out the rule properly.

@@ -344,9 +344,11 @@ mod error;
 
 /// Various kinds of concrete errors that implement [`std::error::Error`].
 mod concrete;
-pub use concrete::chain::ChainedError;
-pub use concrete::message::{message, Message};
-pub use concrete::validate::ValidationError;
+pub use concrete::{
+    chain::ChainedError,
+    message::{message, Message},
+    validate::ValidationError,
+};
 
 pub(crate) fn write_location(f: &mut std::fmt::Formatter<'_>, location: &std::panic::Location) -> std::fmt::Result {
     write!(f, ", at {}:{}", location.file(), location.line())

@@ -9,8 +9,10 @@ use std::collections::VecDeque;
 use brit_epr::{BritCid, ContentNode};
 use rustc_hash::{FxHashMap, FxHashSet};
 
-use crate::graph::{EprGraph, GraphError};
-use crate::traits::GraphConnections;
+use crate::{
+    graph::{EprGraph, GraphError},
+    traits::GraphConnections,
+};
 
 /// Why a node was marked as affected.
 #[derive(Debug, Clone)]

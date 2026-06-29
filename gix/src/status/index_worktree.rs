@@ -206,11 +206,11 @@ pub struct BuiltinSubmoduleStatus {
 mod submodule_status {
     use std::borrow::Cow;
 
-    use crate::config::cache::util::ApplyLeniency;
     use crate::{
         bstr,
         bstr::BStr,
         config,
+        config::cache::util::ApplyLeniency,
         status::{index_worktree::BuiltinSubmoduleStatus, Submodule},
     };
 

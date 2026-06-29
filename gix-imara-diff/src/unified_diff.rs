@@ -1,11 +1,15 @@
 // Modified for gitoxide from the upstream imara-diff crate.
 // Upstream source: git cat-file -p 32d1e45d3df061e6ccba6db7fdce92db29e345d8:src/unified_diff.rs
 
-use std::fmt::{self, Display};
-use std::hash::Hash;
+use std::{
+    fmt::{self, Display},
+    hash::Hash,
+};
 
-use crate::intern::{InternedInput, Interner, Token};
-use crate::Diff;
+use crate::{
+    intern::{InternedInput, Interner, Token},
+    Diff,
+};
 
 impl Diff {
     /// Creates a unified diff output that can be formatted as a string.

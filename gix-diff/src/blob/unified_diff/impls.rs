@@ -1,7 +1,7 @@
+use std::{fmt::Write, hash::Hash, ops::Range};
+
 use bstr::{BString, ByteSlice, ByteVec};
 use imara_diff::{Diff, InternedInput, Interner, Token};
-use std::fmt::Write;
-use std::{hash::Hash, ops::Range};
 
 use super::{ConsumeBinaryHunk, ConsumeBinaryHunkDelegate, ConsumeHunk, ContextSize, DiffLineKind, HunkHeader};
 

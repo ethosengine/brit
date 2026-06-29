@@ -1,11 +1,12 @@
 use std::{str::FromStr, time::SystemTime};
 
+use bstr::{BStr, BString, ByteSlice, ByteVec};
+use gix_error::{ErrorExt, Exn, ResultExt};
+
 use crate::{
     spec,
     spec::parse::{delegate, delegate::SiblingBranch, Delegate, Error},
 };
-use bstr::{BStr, BString, ByteSlice, ByteVec};
-use gix_error::{ErrorExt, Exn, ResultExt};
 
 /// Parse a git [`revspec`](https://git-scm.com/docs/git-rev-parse#_specifying_revisions) and call `delegate` for each token
 /// successfully parsed.
@@ -74,9 +75,10 @@ pub fn parse(mut input: &BStr, delegate: &mut impl Delegate) -> Result<(), Exn<E
 }
 
 mod intercept {
-    use crate::spec::parse::{delegate, Delegate};
     use bstr::{BStr, BString};
     use gix_error::Exn;
+
+    use crate::spec::parse::{delegate, Delegate};
 
     #[derive(PartialEq, Eq, Debug, Hash, Ord, PartialOrd, Clone)]
     pub(crate) enum PrefixHintOwned {

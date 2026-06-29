@@ -7,20 +7,22 @@ use bstr::BStr;
 use filetime::{set_file_mtime, FileTime};
 use gix_filter::eol::AutoCrlf;
 use gix_index as index;
-use gix_index::{entry, Entry};
+use gix_index::{
+    entry,
+    entry::{Flags, Mode},
+    Entry,
+};
 use gix_status::{
     index_as_worktree,
     index_as_worktree::{
         traits::{CompareBlobs, FastEq, ReadData, SubmoduleStatus},
-        Change as WorktreeChange, Conflict, Context, EntryStatus as WorktreeEntryStatus, Options, Outcome, Record,
-        Recorder,
+        Change as WorktreeChange, Conflict, ConflictIndexEntry, Context, EntryStatus as WorktreeEntryStatus, Options,
+        Outcome, Record, Recorder,
     },
 };
+use pretty_assertions::assert_eq;
 
 use crate::{fixture_path, hex_to_id};
-use gix_index::entry::{Flags, Mode};
-use gix_status::index_as_worktree::ConflictIndexEntry;
-use pretty_assertions::assert_eq;
 
 // since tests are fixtures a bunch of stat information (like inode number)
 // changes when extracting the data so we need to disable all advanced stat

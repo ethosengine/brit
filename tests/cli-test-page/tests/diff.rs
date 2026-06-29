@@ -1,4 +1,4 @@
-use cli_test_page::diff::{render_unified_diff, has_diff};
+use cli_test_page::diff::{has_diff, render_unified_diff};
 
 #[test]
 fn identical_strings_have_no_diff() {

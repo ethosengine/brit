@@ -411,18 +411,22 @@ pub(super) mod function {
     }
 
     mod rewrite {
-        use crate::{
-            index_as_worktree::{Change, EntryStatus},
-            index_as_worktree_with_renames::{Entry, Error},
+        use std::{
+            io::{ErrorKind, Read},
+            path::Path,
         };
+
         use bstr::BStr;
         use gix_diff::{rewrites::tracker::ChangeKind, tree::visit::Relation};
         use gix_dir::entry::Kind;
         use gix_filter::pipeline::convert::ToGitOutcome;
         use gix_hash::oid;
         use gix_object::tree::EntryMode;
-        use std::io::ErrorKind;
-        use std::{io::Read, path::Path};
+
+        use crate::{
+            index_as_worktree::{Change, EntryStatus},
+            index_as_worktree_with_renames::{Entry, Error},
+        };
 
         #[derive(Clone)]
         pub enum ModificationOrDirwalkEntry<'index, T, U>

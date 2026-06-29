@@ -1,12 +1,15 @@
 use std::io;
 
-use crate::transport::client::blocking_io::ExtendedBufRead;
-use crate::transport::{client::MessageKind, Protocol};
-
-use crate::fetch::{
-    response,
-    response::{shallow_update_from_line, Acknowledgement, ShallowUpdate, WantedRef},
-    Response,
+use crate::{
+    fetch::{
+        response,
+        response::{shallow_update_from_line, Acknowledgement, ShallowUpdate, WantedRef},
+        Response,
+    },
+    transport::{
+        client::{blocking_io::ExtendedBufRead, MessageKind},
+        Protocol,
+    },
 };
 
 fn parse_v2_section<'a, T>(

@@ -10,8 +10,13 @@ use gix_ref::{
 };
 use smallvec::SmallVec;
 
-use crate::repository::{new_commit, new_commit_as};
-use crate::{commit, ext::ObjectIdExt, object, tag, Blob, Commit, Id, Object, Reference, Tag, Tree};
+use crate::{
+    commit,
+    ext::ObjectIdExt,
+    object,
+    repository::{new_commit, new_commit_as},
+    tag, Blob, Commit, Id, Object, Reference, Tag, Tree,
+};
 
 /// Tree editing
 #[cfg(feature = "tree-editor")]

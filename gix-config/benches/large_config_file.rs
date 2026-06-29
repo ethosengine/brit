@@ -1,6 +1,7 @@
+use std::hint::black_box;
+
 use criterion::{criterion_group, criterion_main, Criterion};
 use gix_config::{parse::Events, File};
-use std::hint::black_box;
 
 fn gix_config(c: &mut Criterion) {
     c.bench_function("GitConfig large config file", |b| {

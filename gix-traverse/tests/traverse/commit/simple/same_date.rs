@@ -1,8 +1,9 @@
 //! Same dates are somewhat special as they show how sorting-details on priority queues affects ordering
-use super::*;
-use crate::util::fixture;
 use gix_hash::oid;
 use gix_traverse::commit::simple::CommitTimeOrder;
+
+use super::*;
+use crate::util::fixture;
 
 fn same_date_repo() -> crate::Result<(std::path::PathBuf, gix_odb::Handle)> {
     let dir = fixture("make_traversal_repo_for_commits_same_date.sh")?;

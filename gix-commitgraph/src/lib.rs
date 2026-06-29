@@ -15,8 +15,9 @@
 #![cfg_attr(all(doc, feature = "document-features"), feature(doc_cfg))]
 #![deny(missing_docs, rust_2018_idioms, unsafe_code)]
 
-use gix_error::{Exn, Message};
 use std::path::Path;
+
+use gix_error::{Exn, Message};
 
 /// A single commit-graph file.
 ///

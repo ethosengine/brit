@@ -42,11 +42,7 @@ impl TopoPlan {
             let count = graph
                 .inner_graph()
                 .neighbors_directed(idx, Direction::Outgoing)
-                .filter(|&neighbor| {
-                    graph
-                        .index_to_cid(neighbor)
-                        .is_some_and(|c| affected_set.contains(&c))
-                })
+                .filter(|&neighbor| graph.index_to_cid(neighbor).is_some_and(|c| affected_set.contains(&c)))
                 .count();
             in_degree.insert(cid.clone(), count);
         }

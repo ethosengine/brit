@@ -1,10 +1,14 @@
 // Modified for gitoxide from the upstream imara-diff crate.
 // Upstream source: git cat-file -p 32d1e45d3df061e6ccba6db7fdce92db29e345d8:src/histogram.rs
 
-use crate::histogram::lcs::find_lcs;
-use crate::histogram::list_pool::{ListHandle, ListPool};
-use crate::intern::Token;
-use crate::myers;
+use crate::{
+    histogram::{
+        lcs::find_lcs,
+        list_pool::{ListHandle, ListPool},
+    },
+    intern::Token,
+    myers,
+};
 
 mod lcs;
 mod list_pool;

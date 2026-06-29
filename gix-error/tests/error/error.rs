@@ -1,6 +1,8 @@
-use crate::{debug_string, new_tree_error, ErrorWithSource};
-use gix_error::{message, Error, ErrorExt};
 use std::error::Error as _;
+
+use gix_error::{message, Error, ErrorExt};
+
+use crate::{debug_string, new_tree_error, ErrorWithSource};
 
 #[test]
 fn from_exn_error() {

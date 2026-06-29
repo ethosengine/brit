@@ -1,18 +1,17 @@
+use gix_date::parse::TimeBuf;
+use gix_lock::acquire::Fail;
+use gix_ref::{
+    file::{transaction::prepare::Error, ReferenceExt},
+    transaction::{Change, LogChange, PreviousValue, RefEdit, RefLog},
+    FullName, Reference, Target,
+};
+
 use crate::{
     file::{
         store_writable,
         transaction::prepare_and_commit::{committer, empty_store},
     },
     hex_to_id,
-};
-use gix_date::parse::TimeBuf;
-use gix_lock::acquire::Fail;
-use gix_ref::file::transaction::prepare::Error;
-use gix_ref::transaction::LogChange;
-use gix_ref::{
-    file::ReferenceExt,
-    transaction::{Change, PreviousValue, RefEdit, RefLog},
-    FullName, Reference, Target,
 };
 
 #[test]

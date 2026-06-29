@@ -9,10 +9,10 @@
 #![deny(missing_docs, rust_2018_idioms)]
 #![forbid(unsafe_code)]
 
-pub mod graph;
-pub mod traits;
 pub mod affected;
 pub mod fingerprint;
+pub mod graph;
 #[cfg(feature = "repo")]
 pub mod repo_fingerprint;
 pub mod topo;
+pub mod traits;

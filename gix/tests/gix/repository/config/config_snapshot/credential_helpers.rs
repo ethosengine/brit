@@ -3,10 +3,9 @@ use gix_testtools::Env;
 use crate::remote;
 
 mod baseline {
-    use std::collections::HashMap;
+    use std::{collections::HashMap, sync::LazyLock};
 
     use gix_object::bstr::BString;
-    use std::sync::LazyLock;
 
     use crate::remote;
 

@@ -44,7 +44,10 @@ fn malformed_shefa_node_stored_as_raw_string() {
     let body = fixture("malformed_shefa_node.txt");
     let trailers = parse_pillar_trailers(&body);
 
-    assert_eq!(trailers.lamad.as_deref(), Some("teaches the permissive parser behavior"));
+    assert_eq!(
+        trailers.lamad.as_deref(),
+        Some("teaches the permissive parser behavior")
+    );
     assert_eq!(trailers.shefa.as_deref(), Some("value summary is fine"));
     assert_eq!(trailers.qahal.as_deref(), Some("governance review complete"));
 

@@ -421,8 +421,9 @@ fn since() -> gix_testtools::Result {
 }
 
 mod blame_ranges {
-    use crate::{fixture_path, Baseline, Fixture};
     use gix_blame::BlameRanges;
+
+    use crate::{fixture_path, Baseline, Fixture};
 
     #[test]
     fn line_range() -> gix_testtools::Result {

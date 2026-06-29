@@ -20,13 +20,9 @@
 //!   BRIT_TEST_PAGE_STAGING/rust/brit/commit/<leaf>.txt
 //!   BRIT_TEST_PAGE_STAGING/rust/brit/tag/<leaf>.txt
 
-use std::fs;
-use std::path::PathBuf;
-use std::process::Command;
+use std::{fs, path::PathBuf, process::Command};
 
-use cli_journey::support::mock_remote::MockRemote;
-use cli_journey::support::runner::BritInvocation;
-use cli_journey::support::test_repo::TestRepo;
+use cli_journey::support::{mock_remote::MockRemote, runner::BritInvocation, test_repo::TestRepo};
 
 fn brit_bin() -> PathBuf {
     PathBuf::from(env!("CARGO_MANIFEST_DIR"))
@@ -114,12 +110,8 @@ fn status_with_untracked_file() {
 #[test]
 fn diff_tree_between_two_commits() {
     let temp = TestRepo::new("diff-tree").expect("repo");
-    let sha1 = temp
-        .commit_file("first.txt", "version 1\n")
-        .expect("commit v1");
-    let sha2 = temp
-        .commit_file("first.txt", "version 2\n")
-        .expect("commit v2");
+    let sha1 = temp.commit_file("first.txt", "version 1\n").expect("commit v1");
+    let sha2 = temp.commit_file("first.txt", "version 2\n").expect("commit v2");
 
     let cap = BritInvocation::new(brit_bin())
         .args(["diff", "tree", &sha1, &sha2])
@@ -140,10 +132,8 @@ fn diff_file_between_two_revisions() {
     // brit diff file <OLD_REVSPEC> <NEW_REVSPEC>
     // Old = HEAD~1:first.txt  New = HEAD:first.txt
     let temp = TestRepo::new("diff-file").expect("repo");
-    temp.commit_file("first.txt", "line one\n")
-        .expect("commit v1");
-    temp.commit_file("first.txt", "line two\n")
-        .expect("commit v2");
+    temp.commit_file("first.txt", "line one\n").expect("commit v1");
+    temp.commit_file("first.txt", "line two\n").expect("commit v2");
 
     let cap = BritInvocation::new(brit_bin())
         .args(["diff", "file", "HEAD~1:first.txt", "HEAD:first.txt"])
@@ -318,8 +308,7 @@ fn clone_from_mock_remote() {
     // Seed the upstream via a local repo + git push
     let upstream = MockRemote::new("clone-test").expect("upstream");
     let seed = TestRepo::new("clone-seed").expect("seed");
-    seed.commit_file("seed.txt", "initial content\n")
-        .expect("seed commit");
+    seed.commit_file("seed.txt", "initial content\n").expect("seed commit");
     // Push the seed repo's main branch to the bare upstream
     let _ = Command::new("git")
         .args(["push", "-q", &upstream.url(), "main"])

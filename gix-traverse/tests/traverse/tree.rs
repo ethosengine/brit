@@ -1,5 +1,4 @@
-use crate::hex_to_id;
-use crate::util::fixture_odb;
+use crate::{hex_to_id, util::fixture_odb};
 
 fn odb() -> crate::Result<gix_odb::Handle> {
     fixture_odb("make_traversal_repo_for_trees.sh")

@@ -2,8 +2,10 @@
 
 use std::path::Path;
 
-use petgraph::dot::{Config, Dot};
-use petgraph::graph::DiGraph;
+use petgraph::{
+    dot::{Config, Dot},
+    graph::DiGraph,
+};
 use serde::Serialize;
 
 use crate::error::{CliError, Result};
@@ -35,8 +37,8 @@ pub fn run(repo: &Path, format: &str) -> Result<()> {
         source,
     })?;
 
-    let manifests = rakia_core::discover::discover_manifests(&repo)
-        .map_err(|e| CliError::ManifestDiscovery(format!("{e}")))?;
+    let manifests =
+        rakia_core::discover::discover_manifests(&repo).map_err(|e| CliError::ManifestDiscovery(format!("{e}")))?;
     let constellation = rakia_core::constellation::build_constellation(&manifests)?;
 
     match format {

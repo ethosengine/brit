@@ -6,8 +6,7 @@
 
 use serde::{Deserialize, Serialize};
 
-use crate::engine::cid::BritCid;
-use crate::engine::content_node::ContentNode;
+use crate::engine::{cid::BritCid, content_node::ContentNode};
 
 /// The node-level seed/lockfile.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -35,7 +34,11 @@ mod tests {
 
     #[test]
     fn content_type_is_stable() {
-        let s = NodeSeed { epr_meta_version: 1, repo: "brit".into(), epr_metas: vec![] };
+        let s = NodeSeed {
+            epr_meta_version: 1,
+            repo: "brit".into(),
+            epr_metas: vec![],
+        };
         assert_eq!(s.content_type(), "brit.node-seed");
     }
 
@@ -44,8 +47,16 @@ mod tests {
         use crate::engine::cid::BritCid;
         // Caller sorts epr_metas; identical sets → identical CID.
         let (x, y) = (BritCid::compute_raw(b"x"), BritCid::compute_raw(b"y"));
-        let a = NodeSeed { epr_meta_version: 1, repo: "brit".into(), epr_metas: vec![x.clone(), y.clone()] };
-        let b = NodeSeed { epr_meta_version: 1, repo: "brit".into(), epr_metas: vec![x, y] };
+        let a = NodeSeed {
+            epr_meta_version: 1,
+            repo: "brit".into(),
+            epr_metas: vec![x.clone(), y.clone()],
+        };
+        let b = NodeSeed {
+            epr_meta_version: 1,
+            repo: "brit".into(),
+            epr_metas: vec![x, y],
+        };
         assert_eq!(a.compute_cid().unwrap(), b.compute_cid().unwrap());
     }
 }

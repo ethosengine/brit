@@ -11,9 +11,14 @@ fn seal_prints_bafyrei_and_stores_the_node() {
     std::fs::write(sub.join("b.md"), b"beta").unwrap();
 
     let out = Command::new(env!("CARGO_BIN_EXE_brit-build-ref"))
-        .arg("--repo").arg(tmp.path())
-        .arg("meta").arg("seal").arg("--dir").arg(&sub)
-        .output().unwrap();
+        .arg("--repo")
+        .arg(tmp.path())
+        .arg("meta")
+        .arg("seal")
+        .arg("--dir")
+        .arg(&sub)
+        .output()
+        .unwrap();
 
     assert!(out.status.success(), "stderr: {}", String::from_utf8_lossy(&out.stderr));
     let cid = String::from_utf8(out.stdout).unwrap();

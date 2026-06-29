@@ -144,18 +144,17 @@
 //! );
 //! ```
 
-use std::ops::Range;
-use std::slice;
+use std::{ops::Range, slice};
 
+pub use intern::{InternedInput, Interner, Token, TokenSource};
+#[cfg(feature = "unified_diff")]
+pub use unified_diff::{BasicLineDiffPrinter, UnifiedDiff, UnifiedDiffConfig, UnifiedDiffPrinter};
+
+pub use crate::slider_heuristic::{IndentHeuristic, IndentLevel, NoSliderHeuristic, SliderHeuristic};
 use crate::{
     sources::words,
     util::{strip_common_postfix, strip_common_prefix},
 };
-
-pub use crate::slider_heuristic::{IndentHeuristic, IndentLevel, NoSliderHeuristic, SliderHeuristic};
-pub use intern::{InternedInput, Interner, Token, TokenSource};
-#[cfg(feature = "unified_diff")]
-pub use unified_diff::{BasicLineDiffPrinter, UnifiedDiff, UnifiedDiffConfig, UnifiedDiffPrinter};
 
 mod histogram;
 mod intern;

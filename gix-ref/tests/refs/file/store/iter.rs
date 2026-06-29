@@ -1,8 +1,9 @@
+use gix_object::bstr::ByteSlice;
+
 use crate::{
     file::{store, store_at, store_with_packed_refs},
     hex_to_id,
 };
-use gix_object::bstr::ByteSlice;
 
 mod with_namespace {
     use gix_object::bstr::{BString, ByteSlice};

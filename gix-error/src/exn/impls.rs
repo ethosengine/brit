@@ -12,12 +12,7 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-use std::collections::VecDeque;
-use std::error::Error;
-use std::fmt;
-use std::marker::PhantomData;
-use std::ops::Deref;
-use std::panic::Location;
+use std::{collections::VecDeque, error::Error, fmt, marker::PhantomData, ops::Deref, panic::Location};
 
 use crate::{write_location, ChainedError, Exn};
 

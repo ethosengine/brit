@@ -2,8 +2,9 @@ use bstr::{BStr, BString, ByteSlice};
 
 ///
 pub mod name {
-    use bstr::BString;
     use std::convert::Infallible;
+
+    use bstr::BString;
 
     /// The error used in [name()][super::name()] and [`name_partial()`][super::name_partial()]
     #[derive(Debug)]

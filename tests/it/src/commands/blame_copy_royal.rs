@@ -3,18 +3,19 @@ pub struct Options {
 }
 
 pub(super) mod function {
+    use std::{
+        collections::BTreeSet,
+        ffi::OsStr,
+        fmt::Display,
+        path::{Path, PathBuf},
+    };
+
     use anyhow::Context;
     use gix::{
         blame::BlamePathEntry,
         bstr::{BString, ByteSlice},
         objs::FindExt,
         ObjectId,
-    };
-    use std::{
-        collections::BTreeSet,
-        ffi::OsStr,
-        fmt::Display,
-        path::{Path, PathBuf},
     };
 
     use super::Options;

@@ -1,7 +1,8 @@
 #[cfg(any(feature = "tree-error", not(feature = "auto-chain-error")))]
 mod _impl {
-    use crate::{Error, Exn};
     use std::fmt::Formatter;
+
+    use crate::{Error, Exn};
 
     /// Utilities
     impl Error {
@@ -84,8 +85,9 @@ pub(super) use _impl::Inner;
 
 #[cfg(all(feature = "auto-chain-error", not(feature = "tree-error")))]
 mod _impl {
-    use crate::{Error, Exn};
     use std::fmt::Formatter;
+
+    use crate::{Error, Exn};
 
     /// Utilities
     impl Error {

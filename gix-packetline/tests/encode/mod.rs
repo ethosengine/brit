@@ -5,12 +5,12 @@ mod data_to_write {
     use bstr::ByteSlice;
     #[cfg(all(feature = "async-io", not(feature = "blocking-io")))]
     use futures_lite::io;
-
-    use crate::assert_err_display;
     #[cfg(all(feature = "async-io", not(feature = "blocking-io")))]
     use gix_packetline::async_io::encode::data_to_write;
     #[cfg(all(feature = "blocking-io", not(feature = "async-io")))]
     use gix_packetline::blocking_io::encode::data_to_write;
+
+    use crate::assert_err_display;
 
     #[maybe_async::test(feature = "blocking-io", async(feature = "async-io", async_std::test))]
     async fn binary_and_non_binary() -> crate::Result {

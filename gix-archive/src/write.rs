@@ -1,12 +1,12 @@
+#[cfg(feature = "zip")]
+use std::io::Write;
+
 #[cfg(any(feature = "tar", feature = "tar_gz", feature = "zip"))]
 use gix_error::ResultExt;
 use gix_error::{message, ErrorExt};
 use gix_worktree_stream::{Entry, Stream};
 
 use crate::{Error, Format, Options};
-
-#[cfg(feature = "zip")]
-use std::io::Write;
 
 /// Write all stream entries in `stream` as provided by `next_entry(stream)` to `out` configured according to `opts` which
 /// also includes the streaming format.

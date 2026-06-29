@@ -1,9 +1,6 @@
-use std::mem::take;
-use std::ops::RangeBounds;
+use std::{mem::take, ops::RangeBounds};
 
-use crate::intern::Token;
-use crate::myers::preprocess::PreprocessedFile;
-use crate::util::common_edges;
+use crate::{intern::Token, myers::preprocess::PreprocessedFile, util::common_edges};
 
 /// A slice of a preprocessed file used during the Myers algorithm's divide-and-conquer.
 ///

@@ -52,11 +52,7 @@ impl<N: ContentNode, E> GraphConnections<N> for EprGraph<N, E> {
 }
 
 impl<N: ContentNode, E> EprGraph<N, E> {
-    fn traverse_deep(
-        &self,
-        start: &BritCid,
-        direction: Direction,
-    ) -> Result<Vec<BritCid>, GraphError> {
+    fn traverse_deep(&self, start: &BritCid, direction: Direction) -> Result<Vec<BritCid>, GraphError> {
         let start_idx = self.resolve_index(start)?;
         let graph = self.inner_graph();
         let mut visited = FxHashSet::default();

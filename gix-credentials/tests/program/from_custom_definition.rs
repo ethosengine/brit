@@ -1,5 +1,6 @@
-use gix_credentials::{helper, program::Kind, Program};
 use std::sync::LazyLock;
+
+use gix_credentials::{helper, program::Kind, Program};
 
 static GIT: std::sync::LazyLock<&'static str> = std::sync::LazyLock::new(|| {
     gix_path::env::exe_invocation()

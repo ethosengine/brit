@@ -92,8 +92,9 @@ pub fn list(repo: gix::Repository, out: &mut dyn std::io::Write, format: OutputF
 
 #[cfg(test)]
 mod tests {
-    use super::*;
     use std::cmp::Ordering;
+
+    use super::*;
 
     #[test]
     fn sorts_versions_correctly() {

@@ -9,7 +9,6 @@ pub enum Error {
 pub(super) mod _impl {
     #[cfg(feature = "sha1")]
     use sha1_checked::{CollisionResult, Digest};
-
     #[cfg(all(not(feature = "sha1"), feature = "sha256"))]
     use sha2::Digest;
 

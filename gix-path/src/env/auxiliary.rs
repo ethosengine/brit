@@ -1,9 +1,8 @@
 use std::{
     ffi::OsString,
     path::{Path, PathBuf},
+    sync::LazyLock,
 };
-
-use std::sync::LazyLock;
 
 /// `usr`-like directory component names that MSYS2 may provide, other than for `/usr` itself.
 ///

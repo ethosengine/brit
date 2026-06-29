@@ -6,8 +6,7 @@
 
 use serde::{Deserialize, Serialize};
 
-use crate::engine::cid::BritCid;
-use crate::engine::content_node::ContentNode;
+use crate::engine::{cid::BritCid, content_node::ContentNode};
 
 /// One sealed filesystem entry: a path and the content address of its bytes.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -49,8 +48,14 @@ mod tests {
             epr_meta_version: 1,
             subtree: "docs".into(),
             entries: vec![
-                MetaEntry { path: "a.md".into(), cid: BritCid::compute_raw(b"a") },
-                MetaEntry { path: "b.md".into(), cid: BritCid::compute_raw(b"b") },
+                MetaEntry {
+                    path: "a.md".into(),
+                    cid: BritCid::compute_raw(b"a"),
+                },
+                MetaEntry {
+                    path: "b.md".into(),
+                    cid: BritCid::compute_raw(b"b"),
+                },
             ],
         }
     }

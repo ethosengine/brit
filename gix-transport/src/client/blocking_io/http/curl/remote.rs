@@ -11,8 +11,7 @@ use gix_features::io::pipe;
 
 use crate::client::blocking_io::http::{
     self,
-    curl::curl_is_spurious,
-    curl::Error,
+    curl::{curl_is_spurious, Error},
     options::{FollowRedirects, HttpVersion, ProxyAuthMethod, SslVersion},
     redirect,
     traits::PostBodyDataKind,

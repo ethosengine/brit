@@ -1,10 +1,9 @@
 //! `LocalObjectStore` — stores ContentNodes as JSON files under
 //! `.git/brit/objects/`, addressed by their BritCid.
 
-use std::fs;
-use std::path::PathBuf;
-use crate::engine::cid::BritCid;
-use crate::engine::content_node::ContentNode;
+use std::{fs, path::PathBuf};
+
+use crate::engine::{cid::BritCid, content_node::ContentNode};
 
 /// Filesystem-backed content-addressed store.
 pub struct LocalObjectStore {

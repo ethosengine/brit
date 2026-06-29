@@ -1,5 +1,6 @@
-use gix_testtools::Result;
 use std::collections::HashMap;
+
+use gix_testtools::Result;
 
 fn hex_to_id(hex: &str) -> gix_hash::ObjectId {
     gix_hash::ObjectId::from_hex(hex.as_bytes()).expect("valid hex id")

@@ -5,16 +5,16 @@
 //!   --update                    — copy candidate over baseline.md (after human review)
 //!   --candidate <path>          — write candidate to arbitrary path (TDD redesign loop)
 
-use std::collections::BTreeSet;
-use std::fs;
-use std::path::PathBuf;
-use std::process::{Command, ExitCode};
+use std::{
+    collections::BTreeSet,
+    fs,
+    path::PathBuf,
+    process::{Command, ExitCode},
+};
 
 use anyhow::{Context, Result};
 use clap::Parser;
-
 use cli_test_page::{coverage, diff, discover, format};
-
 use coverage::compute_coverage;
 use discover::{discover_subcommands, SubcommandPath};
 use format::{format_test_page, BinarySection, SubcommandCapture};
@@ -22,7 +22,11 @@ use format::{format_test_page, BinarySection, SubcommandCapture};
 const BINARIES: &[&str] = &["brit", "rakia", "brit-verify", "brit-build-ref"];
 
 #[derive(Parser)]
-#[command(name = "brit-test-page", version, about = "Run the brit CLI test suite and produce a markdown test page")]
+#[command(
+    name = "brit-test-page",
+    version,
+    about = "Run the brit CLI test suite and produce a markdown test page"
+)]
 struct Cli {
     /// Path to the brit workspace root (default: derived from CARGO_MANIFEST_DIR or cwd)
     #[arg(long)]
@@ -92,11 +96,14 @@ fn run() -> Result<ExitCode> {
     for binary_name in BINARIES {
         let binary_path = target_dir.join(binary_name);
         if !binary_path.exists() {
-            eprintln!("warning: {binary_name} not found at {}; skipping", binary_path.display());
+            eprintln!(
+                "warning: {binary_name} not found at {}; skipping",
+                binary_path.display()
+            );
             continue;
         }
-        let universe = discover_subcommands(&binary_path, binary_name)
-            .with_context(|| format!("discover {binary_name}"))?;
+        let universe =
+            discover_subcommands(&binary_path, binary_name).with_context(|| format!("discover {binary_name}"))?;
         let captured = collect_captured_paths(&staging_dir, binary_name)?;
         let cov = compute_coverage(binary_name, &universe, &captured);
         all_coverage.push(cov);
@@ -119,8 +126,7 @@ fn run() -> Result<ExitCode> {
     }
 
     if cli.mode.update {
-        fs::write(&baseline_path, &candidate)
-            .with_context(|| format!("write {}", baseline_path.display()))?;
+        fs::write(&baseline_path, &candidate).with_context(|| format!("write {}", baseline_path.display()))?;
         println!("baseline updated: {}", baseline_path.display());
         return Ok(ExitCode::SUCCESS);
     }
@@ -162,8 +168,10 @@ fn invoke_test_layers(workspace: &PathBuf) -> Result<()> {
     if !status.success() {
         // Don't bail outright — let the runner produce a candidate even when
         // tests fail, so the user can see what broke. Just warn.
-        eprintln!("warning: cli-journey tests failed (exit {}); candidate may be incomplete",
-            status.code().unwrap_or(-1));
+        eprintln!(
+            "warning: cli-journey tests failed (exit {}); candidate may be incomplete",
+            status.code().unwrap_or(-1)
+        );
     }
     Ok(())
 }
@@ -181,11 +189,7 @@ fn collect_captured_paths(staging_dir: &PathBuf, binary: &str) -> Result<BTreeSe
     Ok(out)
 }
 
-fn walk_captures(
-    dir: &std::path::Path,
-    prefix: &[String],
-    out: &mut BTreeSet<SubcommandPath>,
-) -> Result<()> {
+fn walk_captures(dir: &std::path::Path, prefix: &[String], out: &mut BTreeSet<SubcommandPath>) -> Result<()> {
     for entry in fs::read_dir(dir).with_context(|| format!("read {}", dir.display()))? {
         let entry = entry?;
         let path = entry.path();
@@ -217,11 +221,7 @@ fn read_captures(staging_dir: &PathBuf, binary: &str) -> Result<Vec<SubcommandCa
     Ok(captures)
 }
 
-fn read_capture_dir(
-    dir: &std::path::Path,
-    prefix: &[String],
-    captures: &mut Vec<SubcommandCapture>,
-) -> Result<()> {
+fn read_capture_dir(dir: &std::path::Path, prefix: &[String], captures: &mut Vec<SubcommandCapture>) -> Result<()> {
     for entry in fs::read_dir(dir)? {
         let entry = entry?;
         let path = entry.path();

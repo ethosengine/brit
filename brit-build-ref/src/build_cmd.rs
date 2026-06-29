@@ -2,11 +2,10 @@
 
 use std::path::Path;
 
-use brit_epr::engine::content_node::ContentNode;
-use brit_epr::engine::object_store::LocalObjectStore;
-use brit_epr::engine::signing::AgentKey;
-use brit_epr::elohim::attestation::build::BuildAttestationContentNode;
-use brit_epr::elohim::refs::BritRefManager;
+use brit_epr::{
+    elohim::{attestation::build::BuildAttestationContentNode, refs::BritRefManager},
+    engine::{content_node::ContentNode, object_store::LocalObjectStore, signing::AgentKey},
+};
 
 #[allow(clippy::too_many_arguments)]
 pub fn put(
@@ -26,8 +25,8 @@ pub fn put(
     let store = LocalObjectStore::for_git_dir(&git_dir);
     let refs = BritRefManager::new(repo)?;
 
-    let hardware_profile: serde_json::Value = serde_json::from_str(hardware)
-        .map_err(|e| anyhow::anyhow!("invalid --hardware JSON: {e}"))?;
+    let hardware_profile: serde_json::Value =
+        serde_json::from_str(hardware).map_err(|e| anyhow::anyhow!("invalid --hardware JSON: {e}"))?;
 
     let manifest_cid: brit_epr::engine::cid::BritCid = manifest_cid
         .parse()

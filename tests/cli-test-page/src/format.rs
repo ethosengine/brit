@@ -2,8 +2,7 @@
 
 use std::fmt::Write;
 
-use crate::coverage::BinaryCoverage;
-use crate::discover::SubcommandPath;
+use crate::{coverage::BinaryCoverage, discover::SubcommandPath};
 
 pub struct BinarySection {
     pub binary: String,
@@ -34,8 +33,16 @@ pub fn format_test_page(coverage: &[BinaryCoverage], sections: &[BinarySection])
     }
     let total_covered: usize = coverage.iter().map(|c| c.covered).sum();
     let total_total: usize = coverage.iter().map(|c| c.total).sum();
-    let total_pct = if total_total == 0 { 100 } else { (total_covered * 100) / total_total };
-    let _ = writeln!(out, "| **Total** | **{}** | **{}** | **{}%** |", total_covered, total_total, total_pct);
+    let total_pct = if total_total == 0 {
+        100
+    } else {
+        (total_covered * 100) / total_total
+    };
+    let _ = writeln!(
+        out,
+        "| **Total** | **{}** | **{}** | **{}%** |",
+        total_covered, total_total, total_pct
+    );
     let _ = writeln!(out);
 
     // Uncovered list per binary

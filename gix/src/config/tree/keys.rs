@@ -410,6 +410,10 @@ mod workers {
 }
 
 mod time {
+    use std::borrow::Cow;
+
+    use gix_error::Exn;
+
     use crate::{
         bstr::{BStr, ByteSlice},
         config::tree::{
@@ -417,8 +421,6 @@ mod time {
             Section,
         },
     };
-    use gix_error::Exn;
-    use std::borrow::Cow;
 
     impl Time {
         /// Create a new instance.

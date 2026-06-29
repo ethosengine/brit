@@ -1,5 +1,6 @@
-use gix_credentials::program::main;
 use std::io::Cursor;
+
+use gix_credentials::program::main;
 
 #[derive(Debug, thiserror::Error)]
 #[error("Test error")]

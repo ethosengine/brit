@@ -2,8 +2,10 @@
 //!
 //! Uses local file:// transport; no daemon, no network. Deterministic.
 
-use std::path::{Path, PathBuf};
-use std::process::Command;
+use std::{
+    path::{Path, PathBuf},
+    process::Command,
+};
 
 use anyhow::{anyhow, Context, Result};
 use tempfile::TempDir;

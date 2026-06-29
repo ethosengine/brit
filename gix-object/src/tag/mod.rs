@@ -1,6 +1,6 @@
-use crate::parse::parse_signature;
-use crate::TagRef;
 use winnow::prelude::*;
+
+use crate::{parse::parse_signature, TagRef};
 
 mod decode;
 

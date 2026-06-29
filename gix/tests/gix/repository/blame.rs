@@ -1,5 +1,6 @@
-use gix::bstr::BString;
 use std::num::NonZero;
+
+use gix::bstr::BString;
 
 #[test]
 fn simple() -> crate::Result {

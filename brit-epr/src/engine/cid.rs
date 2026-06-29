@@ -4,8 +4,7 @@
 //! Multihash is 0x12 (sha2-256). Byte-identical to the protocol's
 //! `elohim-epr` codec. BLAKE3 is for non-address fingerprints only.
 
-use std::fmt;
-use std::str::FromStr;
+use std::{fmt, str::FromStr};
 
 use cid::Cid;
 use multihash_codetable::{Code, MultihashDigest};

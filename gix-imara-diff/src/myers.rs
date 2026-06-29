@@ -3,10 +3,14 @@
 
 use std::ptr::NonNull;
 
-use crate::intern::Token;
-use crate::myers::middle_snake::{MiddleSnakeSearch, SearchResult};
-use crate::myers::slice::FileSlice;
-use crate::util::sqrt;
+use crate::{
+    intern::Token,
+    myers::{
+        middle_snake::{MiddleSnakeSearch, SearchResult},
+        slice::FileSlice,
+    },
+    util::sqrt,
+};
 
 mod middle_snake;
 mod preprocess;

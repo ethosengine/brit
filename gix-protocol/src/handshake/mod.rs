@@ -71,13 +71,15 @@ pub(crate) mod hero {
 
     #[cfg(feature = "fetch")]
     mod fetch {
+        use std::borrow::Cow;
+
+        use gix_features::progress::Progress;
+
         #[cfg(feature = "async-client")]
         use crate::transport::client::async_io;
         #[cfg(feature = "blocking-client")]
         use crate::transport::client::blocking_io;
         use crate::{fetch::RefMap, ls_refs::RefPrefixes, Handshake};
-        use gix_features::progress::Progress;
-        use std::borrow::Cow;
 
         /// Intermediate state while potentially fetching a refmap after the handshake.
         pub enum ObtainRefMap<'a> {

@@ -36,9 +36,7 @@ pub fn validate_pillar_trailers(t: &PillarTrailers) -> Result<(), PillarValidati
         };
         match summary {
             None => return Err(PillarValidationError::MissingPillar(pillar)),
-            Some(v) if v.trim().is_empty() => {
-                return Err(PillarValidationError::EmptyPillar(pillar))
-            }
+            Some(v) if v.trim().is_empty() => return Err(PillarValidationError::EmptyPillar(pillar)),
             Some(_) => {}
         }
     }

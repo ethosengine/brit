@@ -3,14 +3,14 @@
 //! Gated behind `#[cfg(feature = "elohim-protocol")]`. With this feature
 //! disabled, `brit-epr` ships only the engine.
 
-mod parse;
-mod pillar_trailers;
-mod schema;
-mod validate;
 pub mod attestation;
 pub mod meta;
 pub mod node_seed;
+mod parse;
+mod pillar_trailers;
 pub mod refs;
+mod schema;
+mod validate;
 
 pub use meta::{EprMeta, MetaEntry};
 pub use node_seed::NodeSeed;

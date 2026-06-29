@@ -1,7 +1,6 @@
 #![allow(clippy::result_large_err)]
 
-use gix::open::Permissions;
-use gix::{Repository, ThreadSafeRepository};
+use gix::{open::Permissions, Repository, ThreadSafeRepository};
 use gix_sec::Permission;
 use serial_test::serial;
 
@@ -17,11 +16,12 @@ pub fn named_subrepo_opts(
 mod with_overrides {
     use std::borrow::Cow;
 
-    use crate::named_subrepo_opts;
     use gix_object::bstr::BStr;
     use gix_sec::Permission;
     use gix_testtools::Env;
     use serial_test::serial;
+
+    use crate::named_subrepo_opts;
 
     #[test]
     #[serial]

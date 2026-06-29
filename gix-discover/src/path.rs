@@ -1,7 +1,10 @@
+use std::{
+    ffi::OsStr,
+    io::Read,
+    path::{Path, PathBuf},
+};
+
 use crate::{DOT_GIT_DIR, MODULES};
-use std::ffi::OsStr;
-use std::path::Path;
-use std::{io::Read, path::PathBuf};
 
 /// The kind of repository by looking exclusively at its `git_dir`.
 #[derive(Debug, Copy, Clone, Ord, PartialOrd, Eq, PartialEq, Hash)]

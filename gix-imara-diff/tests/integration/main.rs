@@ -3,11 +3,8 @@ use std::mem::swap;
 use expect_test::expect;
 // use git::bstr::BStr;
 // use git_repository as git;
-
 use gix_imara_diff::sources::words;
-use gix_imara_diff::BasicLineDiffPrinter;
-use gix_imara_diff::InternedInput;
-use gix_imara_diff::{Algorithm, Diff, UnifiedDiffConfig};
+use gix_imara_diff::{Algorithm, BasicLineDiffPrinter, Diff, InternedInput, UnifiedDiffConfig};
 
 const ALL_ALGORITHMS: [Algorithm; 2] = [Algorithm::Histogram, Algorithm::Myers];
 
@@ -273,12 +270,11 @@ i
 }
 
 mod latin_word_diff {
-    use crate::ALL_ALGORITHMS;
+    use std::{mem::swap, ops::Range};
 
-    use gix_imara_diff::sources::words;
-    use gix_imara_diff::{Diff, InternedInput, Token};
-    use std::mem::swap;
-    use std::ops::Range;
+    use gix_imara_diff::{sources::words, Diff, InternedInput, Token};
+
+    use crate::ALL_ALGORITHMS;
 
     #[test]
     fn pure_insertion_or_removal() {

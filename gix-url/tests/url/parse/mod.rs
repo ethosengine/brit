@@ -108,8 +108,9 @@ mod radicle {
 mod http;
 
 mod ports {
-    use crate::parse::{assert_url_roundtrip, url};
     use gix_url::Scheme;
+
+    use crate::parse::{assert_url_roundtrip, url};
 
     #[test]
     fn max_valid_port() -> crate::Result {

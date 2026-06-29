@@ -5,10 +5,7 @@ use cli_journey::support::runner::BritInvocation;
 #[test]
 fn invokes_echo_and_captures_stdout() {
     // Use `echo` as a stand-in for any binary — it's universally present
-    let cap = BritInvocation::new("echo")
-        .arg("hello world")
-        .run()
-        .expect("run");
+    let cap = BritInvocation::new("echo").arg("hello world").run().expect("run");
     assert!(cap.status.success());
     assert_eq!(cap.stdout.trim(), "hello world");
 }

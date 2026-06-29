@@ -1,9 +1,13 @@
-use crate::hex_to_id;
-use crate::util::{commit_graph, fixture, fixture_odb};
+use std::path::PathBuf;
+
 use gix_hash::{oid, ObjectId};
 use gix_object::bstr::ByteSlice;
 use gix_traverse::commit::{topo, Parents};
-use std::path::PathBuf;
+
+use crate::{
+    hex_to_id,
+    util::{commit_graph, fixture, fixture_odb},
+};
 
 fn odb() -> crate::Result<gix_odb::Handle> {
     fixture_odb("make_repo_for_topo.sh")

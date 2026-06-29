@@ -1,13 +1,10 @@
-use cli_test_page::coverage::compute_coverage;
-use cli_test_page::discover::SubcommandPath;
 use std::collections::BTreeSet;
+
+use cli_test_page::{coverage::compute_coverage, discover::SubcommandPath};
 
 #[test]
 fn full_coverage_when_all_paths_have_captures() {
-    let universe: Vec<SubcommandPath> = vec![
-        vec!["brit".into(), "log".into()],
-        vec!["brit".into(), "status".into()],
-    ];
+    let universe: Vec<SubcommandPath> = vec![vec!["brit".into(), "log".into()], vec!["brit".into(), "status".into()]];
     let captured: BTreeSet<SubcommandPath> = universe.iter().cloned().collect();
     let cov = compute_coverage("brit", &universe, &captured);
     assert_eq!(cov.covered, 2);
@@ -23,11 +20,7 @@ fn partial_coverage_lists_uncovered() {
         vec!["brit".into(), "status".into()],
         vec!["brit".into(), "blame".into()],
     ];
-    let captured: BTreeSet<SubcommandPath> = vec![
-        vec!["brit".into(), "log".into()],
-    ]
-    .into_iter()
-    .collect();
+    let captured: BTreeSet<SubcommandPath> = vec![vec!["brit".into(), "log".into()]].into_iter().collect();
     let cov = compute_coverage("brit", &universe, &captured);
     assert_eq!(cov.covered, 1);
     assert_eq!(cov.total, 3);

@@ -1,9 +1,11 @@
-use crate::{File, Graph, MAX_COMMITS};
-use gix_error::{message, ErrorExt, Exn, Message, ResultExt};
 use std::{
     io::{BufRead, BufReader},
     path::Path,
 };
+
+use gix_error::{message, ErrorExt, Exn, Message, ResultExt};
+
+use crate::{File, Graph, MAX_COMMITS};
 
 /// Instantiate a `Graph` from various sources.
 impl Graph {

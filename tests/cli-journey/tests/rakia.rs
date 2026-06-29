@@ -11,11 +11,9 @@
 //!   rakia fingerprint     →  staging/rust/rakia/fingerprint.txt
 //!   rakia baseline read   →  staging/rust/rakia/baseline/read.txt
 
-use std::fs;
-use std::path::PathBuf;
+use std::{fs, path::PathBuf};
 
-use cli_journey::support::runner::BritInvocation;
-use cli_journey::support::test_repo::TestRepo;
+use cli_journey::support::{runner::BritInvocation, test_repo::TestRepo};
 
 fn rakia_bin() -> PathBuf {
     // tests/cli-journey -> ../../target/release/rakia
@@ -72,12 +70,7 @@ fn graph_discover_emits_manifests_array() {
         .normalize(true)
         .run()
         .expect("invoke");
-    assert!(
-        cap.status.success(),
-        "exit: {:?} stderr: {}",
-        cap.status,
-        cap.stderr
-    );
+    assert!(cap.status.success(), "exit: {:?} stderr: {}", cap.status, cap.stderr);
     assert!(cap.stdout.contains("manifests"), "stdout: {}", cap.stdout);
     staging_dump_path(&["rakia", "graph", "discover"], &cap.stdout);
 }
@@ -88,14 +81,13 @@ fn graph_discover_emits_manifests_array() {
 fn graph_show_emits_dot_or_json() {
     // Use the elohim repo if available for a richer graph; fall back to an empty
     // temp repo (empty graph is a valid, documented outcome).
-    let (target_path, _temp): (PathBuf, Option<TestRepo>) =
-        if let Some(root) = elohim_repo_root() {
-            (root, None)
-        } else {
-            let t = TestRepo::new("graph-show").expect("repo");
-            let p = t.path().to_path_buf();
-            (p, Some(t))
-        };
+    let (target_path, _temp): (PathBuf, Option<TestRepo>) = if let Some(root) = elohim_repo_root() {
+        (root, None)
+    } else {
+        let t = TestRepo::new("graph-show").expect("repo");
+        let p = t.path().to_path_buf();
+        (p, Some(t))
+    };
 
     let cap = BritInvocation::new(rakia_bin())
         .args(["graph", "show", "--format", "dot", "--repo"])
@@ -171,11 +163,7 @@ fn fingerprint_emits_64_char_blake3_hex() {
         .expect("invoke");
     assert!(cap.status.success(), "exit: {:?}", cap.status);
     // Output is a JSON object with a "fingerprints" array
-    assert!(
-        cap.stdout.contains("fingerprints"),
-        "stdout: {}",
-        cap.stdout
-    );
+    assert!(cap.stdout.contains("fingerprints"), "stdout: {}", cap.stdout);
     staging_dump_path(&["rakia", "fingerprint"], &cap.stdout);
 }
 

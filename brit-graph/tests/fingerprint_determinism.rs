@@ -1,6 +1,7 @@
+use std::collections::BTreeMap;
+
 use brit_epr::BritCid;
 use brit_graph::fingerprint::ContentFingerprint;
-use std::collections::BTreeMap;
 
 #[test]
 fn same_inputs_same_fingerprint() {

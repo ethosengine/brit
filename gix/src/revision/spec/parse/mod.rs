@@ -1,6 +1,7 @@
-use crate::{bstr::BStr, revision::Spec, Repository};
 use gix_error::Exn;
 use gix_hash::ObjectId;
+
+use crate::{bstr::BStr, revision::Spec, Repository};
 
 mod types;
 pub use types::{ObjectKindHint, Options, RefsHint};

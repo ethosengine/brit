@@ -1,7 +1,8 @@
+use std::error::Error as _;
+
 use gix_error::{message, Error};
 #[cfg(not(feature = "tree-error"))]
 use gix_error::{ErrorExt, Exn, Message};
-use std::error::Error as _;
 
 #[cfg(not(feature = "tree-error"))]
 #[test]

@@ -5,8 +5,7 @@
 //! git client (gitoxide-derived); this `rakia` binary is the build app
 //! that consumes brit's primitives.
 
-use std::path::PathBuf;
-use std::process::ExitCode;
+use std::{path::PathBuf, process::ExitCode};
 
 use clap::{Parser, Subcommand};
 
@@ -121,10 +120,17 @@ fn run() -> Result<()> {
         Command::Graph(GraphCmd::Discover { repo }) => commands::graph_discover::run(&repo),
         Command::Graph(GraphCmd::Show { repo, format }) => commands::graph_show::run(&repo, &format),
         Command::Affected(args) => commands::affected::run(&args.repo, args.files.as_deref(), args.since.as_deref()),
-        Command::Plan(args) => commands::plan::run(&args.repo, args.files.as_deref(), args.since.as_deref(), args.pipeline.as_deref()),
+        Command::Plan(args) => commands::plan::run(
+            &args.repo,
+            args.files.as_deref(),
+            args.since.as_deref(),
+            args.pipeline.as_deref(),
+        ),
         Command::Fingerprint(args) => commands::fingerprint::run(&args.manifest, args.step.as_deref(), &args.commit),
         Command::Baseline(BaselineCmd::Read { pipeline, repo }) => commands::baseline::read(&repo, &pipeline),
-        Command::Baseline(BaselineCmd::Write { pipeline, commit, repo }) => commands::baseline::write(&repo, &pipeline, &commit),
+        Command::Baseline(BaselineCmd::Write { pipeline, commit, repo }) => {
+            commands::baseline::write(&repo, &pipeline, &commit)
+        }
         Command::Baseline(BaselineCmd::Migrate { json_path, repo }) => commands::baseline::migrate(&repo, &json_path),
     }
 }

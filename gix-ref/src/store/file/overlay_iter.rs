@@ -1,5 +1,3 @@
-use gix_object::bstr::ByteSlice;
-use gix_path::RelativePath;
 use std::{
     borrow::Cow,
     cmp::Ordering,
@@ -7,6 +5,9 @@ use std::{
     iter::Peekable,
     path::{Path, PathBuf},
 };
+
+use gix_object::bstr::ByteSlice;
+use gix_path::RelativePath;
 
 use crate::{
     file::loose::{self, iter::SortedLoosePaths},

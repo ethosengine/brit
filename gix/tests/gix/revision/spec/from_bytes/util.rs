@@ -1,10 +1,9 @@
 #![allow(clippy::result_large_err)]
-use std::{collections::HashMap, path::PathBuf, str::FromStr};
+use std::{collections::HashMap, path::PathBuf, str::FromStr, sync::LazyLock};
 
 use gix_object::{bstr, bstr::BStr};
 use gix_ref::bstr::{BString, ByteSlice};
 use gix_revision::spec::Kind;
-use std::sync::LazyLock;
 
 const FIXTURE_NAME: &str = "make_rev_spec_parse_repos.sh";
 static BASELINE: LazyLock<HashMap<PathBuf, HashMap<BString, Option<gix_revision::Spec>>>> = LazyLock::new(|| {

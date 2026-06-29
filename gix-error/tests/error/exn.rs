@@ -12,11 +12,9 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
+use gix_error::{message, ErrorExt, Exn, Message, OptionExt, ResultExt};
+
 use crate::{debug_string, fixup_paths, new_tree_error, ErrorWithSource};
-use gix_error::OptionExt;
-use gix_error::ResultExt;
-use gix_error::{message, ErrorExt};
-use gix_error::{Exn, Message};
 
 #[test]
 fn raise_chain() {

@@ -122,6 +122,7 @@ pub use gix_date as date;
 #[cfg(feature = "dirwalk")]
 pub use gix_dir as dir;
 pub use gix_error as error;
+pub use gix_error::{Error, Exn};
 pub use gix_features as features;
 use gix_features::threading::OwnShared;
 pub use gix_features::{
@@ -160,8 +161,6 @@ pub use gix_url::Url;
 pub use gix_utils as utils;
 pub use gix_validate as validate;
 pub use hash::{oid, ObjectId};
-
-pub use gix_error::{Error, Exn};
 
 pub mod interrupt;
 

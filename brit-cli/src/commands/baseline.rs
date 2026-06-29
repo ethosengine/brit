@@ -33,8 +33,8 @@ pub fn read(repo: &Path, pipeline: &str) -> Result<()> {
         path: repo.display().to_string(),
         source,
     })?;
-    let commit = rakia_brit::baselines::read_baseline(&repo, pipeline)
-        .map_err(|e| CliError::Baseline(format!("{e}")))?;
+    let commit =
+        rakia_brit::baselines::read_baseline(&repo, pipeline).map_err(|e| CliError::Baseline(format!("{e}")))?;
     crate::output::print_json(&BaselineRead {
         pipeline: pipeline.to_string(),
         r#ref: format!("refs/notes/rakia/baselines/{pipeline}"),
@@ -48,8 +48,7 @@ pub fn write(repo: &Path, pipeline: &str, commit: &str) -> Result<()> {
         path: repo.display().to_string(),
         source,
     })?;
-    rakia_brit::baselines::write_baseline(&repo, pipeline, commit)
-        .map_err(|e| CliError::Baseline(format!("{e}")))?;
+    rakia_brit::baselines::write_baseline(&repo, pipeline, commit).map_err(|e| CliError::Baseline(format!("{e}")))?;
     crate::output::print_json(&BaselineWrite {
         pipeline: pipeline.to_string(),
         r#ref: format!("refs/notes/rakia/baselines/{pipeline}"),
@@ -64,8 +63,8 @@ pub fn migrate(repo: &Path, json_path: &Path) -> Result<()> {
         path: repo.display().to_string(),
         source,
     })?;
-    let migrated = rakia_brit::baselines::migrate_baselines(&repo, json_path)
-        .map_err(|e| CliError::Baseline(format!("{e}")))?;
+    let migrated =
+        rakia_brit::baselines::migrate_baselines(&repo, json_path).map_err(|e| CliError::Baseline(format!("{e}")))?;
     let count = migrated.len();
     crate::output::print_json(&BaselineMigrate {
         source: json_path.display().to_string(),

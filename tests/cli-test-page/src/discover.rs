@@ -4,8 +4,7 @@
 //! `Commands:` block, recurse into each subcommand's `--help`,
 //! return the full tree of leaf subcommand paths.
 
-use std::path::Path;
-use std::process::Command;
+use std::{path::Path, process::Command};
 
 use anyhow::{Context, Result};
 
@@ -48,10 +47,7 @@ pub fn parse_subcommands_from_help(help_text: &str) -> Vec<String> {
         }
         // Subcommand line: "  <name>       <description>"
         let line = trimmed.trim_start();
-        let name = line
-            .split_whitespace()
-            .next()
-            .map(|s| s.to_string());
+        let name = line.split_whitespace().next().map(|s| s.to_string());
         if let Some(n) = name {
             if n != "help" {
                 subs.push(n);

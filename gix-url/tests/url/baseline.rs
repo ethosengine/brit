@@ -105,8 +105,9 @@ fn assert_urls_equal(expected: &baseline::GitDiagUrl<'_>, actual: &gix_url::Url)
 
 #[allow(clippy::module_inception)]
 mod baseline {
-    use bstr::{BStr, BString, ByteSlice};
     use std::sync::LazyLock;
+
+    use bstr::{BStr, BString, ByteSlice};
 
     pub enum Kind {
         Unix,

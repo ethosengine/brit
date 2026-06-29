@@ -33,10 +33,11 @@ impl From<std::convert::Infallible> for Error {
 ///
 #[cfg(feature = "revision")]
 pub mod describe {
+    use std::borrow::Cow;
+
     use gix_error::Exn;
     use gix_hash::ObjectId;
     use gix_hashtable::HashMap;
-    use std::borrow::Cow;
 
     use crate::{bstr::BStr, ext::ObjectIdExt, Repository};
 

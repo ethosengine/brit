@@ -1,10 +1,10 @@
 #![allow(clippy::result_large_err)]
-use crate::{bstr::BString, remote};
-
 #[cfg(feature = "async-network-client")]
 use gix_transport::client::async_io::Transport;
 #[cfg(feature = "blocking-network-client")]
 use gix_transport::client::blocking_io::Transport;
+
+use crate::{bstr::BString, remote};
 
 type ConfigureRemoteFn =
     Box<dyn FnMut(crate::Remote<'_>) -> Result<crate::Remote<'_>, Box<dyn std::error::Error + Send + Sync>>>;

@@ -1,17 +1,17 @@
+use std::collections::HashSet;
+
 use gix_error::{bail, message, ErrorExt, Exn, ResultExt};
 use gix_hash::ObjectId;
 use gix_revision::spec::parse::{
     delegate,
     delegate::{ReflogLookup, SiblingBranch},
 };
-use std::collections::HashSet;
 
-use crate::revision::spec::parse::error;
 use crate::{
     bstr::{BStr, BString, ByteSlice},
     ext::ReferenceExt,
     remote,
-    revision::spec::parse::{Delegate, RefsHint},
+    revision::spec::parse::{error, Delegate, RefsHint},
 };
 
 impl delegate::Revision for Delegate<'_> {

@@ -1,9 +1,10 @@
-use crate::parse::{assert_parse, b, try_parse};
 use gix_refspec::{
     instruction::Push,
     parse::{Error, Operation},
     Instruction,
 };
+
+use crate::parse::{assert_parse, b, try_parse};
 
 #[test]
 fn negative_must_not_be_empty() {

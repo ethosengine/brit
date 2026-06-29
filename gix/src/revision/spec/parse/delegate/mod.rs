@@ -1,12 +1,13 @@
+use gix_error::{message, ErrorExt, Exn, ResultExt};
+use gix_hash::ObjectId;
+use gix_revision::spec::{parse, parse::delegate};
+use smallvec::SmallVec;
+
 use super::{error, Delegate, ObjectKindHint};
 use crate::{
     ext::{ObjectIdExt, ReferenceExt},
     Repository,
 };
-use gix_error::{message, ErrorExt, Exn, ResultExt};
-use gix_hash::ObjectId;
-use gix_revision::spec::{parse, parse::delegate};
-use smallvec::SmallVec;
 
 type Replacements = SmallVec<[(ObjectId, ObjectId); 1]>;
 

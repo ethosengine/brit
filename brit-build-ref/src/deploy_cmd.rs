@@ -2,11 +2,13 @@
 
 use std::path::Path;
 
-use brit_epr::engine::content_node::ContentNode;
-use brit_epr::engine::object_store::LocalObjectStore;
-use brit_epr::engine::signing::AgentKey;
-use brit_epr::elohim::attestation::deploy::{DeployAttestationContentNode, HealthStatus};
-use brit_epr::elohim::refs::BritRefManager;
+use brit_epr::{
+    elohim::{
+        attestation::deploy::{DeployAttestationContentNode, HealthStatus},
+        refs::BritRefManager,
+    },
+    engine::{content_node::ContentNode, object_store::LocalObjectStore, signing::AgentKey},
+};
 
 #[allow(clippy::too_many_arguments)]
 pub fn put(

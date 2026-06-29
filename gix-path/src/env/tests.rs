@@ -1,8 +1,10 @@
 mod system_prefix {
-    use super::super::system_prefix_from_exepath_var;
+    use std::{ffi::OsString, path::PathBuf};
+
     use gix_testtools::tempfile;
     use serial_test::serial;
-    use std::{ffi::OsString, path::PathBuf};
+
+    use super::super::system_prefix_from_exepath_var;
 
     fn if_exepath(key: &str, value: impl Into<OsString>) -> Option<OsString> {
         match key {

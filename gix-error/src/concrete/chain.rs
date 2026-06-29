@@ -1,6 +1,9 @@
+use std::{
+    fmt::{Debug, Display, Formatter},
+    panic::Location,
+};
+
 use crate::write_location;
-use std::fmt::{Debug, Display, Formatter};
-use std::panic::Location;
 
 /// A generic error which represents a linked-list of errors and exposes it with [source()](std::error::Error::source).
 /// It's meant to be the target of a conversion of any [Exn](crate::Exn) error tree.

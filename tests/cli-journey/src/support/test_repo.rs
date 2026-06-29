@@ -4,8 +4,10 @@
 //! `helpers.sh::set-static-git-environment`) so commits made within the
 //! test produce stable SHA values across runs and machines.
 
-use std::path::{Path, PathBuf};
-use std::process::Command;
+use std::{
+    path::{Path, PathBuf},
+    process::Command,
+};
 
 use anyhow::{anyhow, Context, Result};
 use tempfile::TempDir;
@@ -58,12 +60,7 @@ impl TestRepo {
     /// Write a file and commit it with an explicit commit message.
     /// The `message` string is passed verbatim to `git commit -m`, so it can
     /// include newlines and trailers. Returns the new commit SHA-1 hex.
-    pub fn commit_file_with_message(
-        &self,
-        rel: &str,
-        contents: &str,
-        message: &str,
-    ) -> Result<String> {
+    pub fn commit_file_with_message(&self, rel: &str, contents: &str, message: &str) -> Result<String> {
         let abs = self.path.join(rel);
         if let Some(parent) = abs.parent() {
             std::fs::create_dir_all(parent).context("mkdir")?;
@@ -99,10 +96,7 @@ impl TestRepo {
             .output()
             .with_context(|| format!("git {args:?}"))?;
         if !out.status.success() {
-            return Err(anyhow!(
-                "git {args:?} failed: {}",
-                String::from_utf8_lossy(&out.stderr)
-            ));
+            return Err(anyhow!("git {args:?} failed: {}", String::from_utf8_lossy(&out.stderr)));
         }
         Ok(())
     }

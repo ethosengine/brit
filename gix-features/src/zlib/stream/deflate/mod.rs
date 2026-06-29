@@ -1,5 +1,6 @@
-use crate::zlib::Status;
 use zlib_rs::DeflateError;
+
+use crate::zlib::Status;
 
 const BUF_SIZE: usize = 4096 * 8;
 
@@ -145,8 +146,10 @@ pub enum FlushCompress {
 mod impls {
     use std::io;
 
-    use crate::zlib::stream::deflate::{self, Compress, FlushCompress};
-    use crate::zlib::Status;
+    use crate::zlib::{
+        stream::deflate::{self, Compress, FlushCompress},
+        Status,
+    };
 
     pub(crate) fn new_compress() -> Compress {
         Compress::new()

@@ -1,6 +1,6 @@
-use gix_hash::ObjectId;
 use std::path::PathBuf;
 
+use gix_hash::ObjectId;
 pub use gix_testtools::Result;
 
 /// Convert a hexadecimal hash into its corresponding `ObjectId` or _panic_.

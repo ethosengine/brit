@@ -1,11 +1,12 @@
-use crate::{
-    remote::{connection::AuthenticateFn, Connection},
-    Remote,
-};
 #[cfg(feature = "async-network-client")]
 use gix_transport::client::async_io::Transport;
 #[cfg(feature = "blocking-network-client")]
 use gix_transport::client::blocking_io::Transport;
+
+use crate::{
+    remote::{connection::AuthenticateFn, Connection},
+    Remote,
+};
 
 /// Builder
 impl<'a, T> Connection<'a, '_, T>

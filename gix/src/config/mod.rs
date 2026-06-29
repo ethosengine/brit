@@ -239,8 +239,9 @@ pub mod command_context {
 
 ///
 pub mod exclude_stack {
-    use crate::config;
     use std::path::PathBuf;
+
+    use crate::config;
 
     /// The error produced when setting up a stack to query `gitignore` information.
     #[derive(Debug, thiserror::Error)]

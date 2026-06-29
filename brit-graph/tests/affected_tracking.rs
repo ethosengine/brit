@@ -1,6 +1,8 @@
 use brit_epr::{BritCid, ContentNode};
-use brit_graph::affected::{AffectedBy, AffectedTracker, PropagationScope};
-use brit_graph::graph::EprGraph;
+use brit_graph::{
+    affected::{AffectedBy, AffectedTracker, PropagationScope},
+    graph::EprGraph,
+};
 use serde::{Deserialize, Serialize};
 
 #[derive(Debug, Clone, Serialize, Deserialize)]

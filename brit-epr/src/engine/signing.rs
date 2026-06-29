@@ -1,7 +1,10 @@
 //! Agent signing — ed25519 keypair management for attestation signatures.
 
-use std::fs;
-use std::path::{Path, PathBuf};
+use std::{
+    fs,
+    path::{Path, PathBuf},
+};
+
 use ed25519_dalek::{Signer, SigningKey, VerifyingKey};
 
 /// An agent's signing identity, loaded from or generated to a file.
@@ -28,7 +31,10 @@ impl AgentKey {
         }
         let seed: [u8; 32] = bytes.try_into().map_err(|_| AgentKeyError::InvalidKeyLength(0))?;
         let signing_key = SigningKey::from_bytes(&seed);
-        Ok(Self { signing_key, key_path: key_path.to_path_buf() })
+        Ok(Self {
+            signing_key,
+            key_path: key_path.to_path_buf(),
+        })
     }
 
     /// Generate a new keypair and write the 32-byte seed to disk.
@@ -44,10 +50,12 @@ impl AgentKey {
         #[cfg(unix)]
         {
             use std::os::unix::fs::PermissionsExt;
-            fs::set_permissions(key_path, fs::Permissions::from_mode(0o600))
-                .map_err(AgentKeyError::Io)?;
+            fs::set_permissions(key_path, fs::Permissions::from_mode(0o600)).map_err(AgentKeyError::Io)?;
         }
-        Ok(Self { signing_key, key_path: key_path.to_path_buf() })
+        Ok(Self {
+            signing_key,
+            key_path: key_path.to_path_buf(),
+        })
     }
 
     /// Sign arbitrary bytes. Returns the 64-byte ed25519 signature as hex.
@@ -98,18 +106,12 @@ pub fn verify_signed_node<T: Signed>(node: &T) -> Result<bool, AgentKeyError> {
 }
 
 /// Verify a hex-encoded signature against a hex-encoded public key.
-pub fn verify_signature(
-    payload: &[u8],
-    signature_hex: &str,
-    pubkey_hex: &str,
-) -> Result<bool, AgentKeyError> {
+pub fn verify_signature(payload: &[u8], signature_hex: &str, pubkey_hex: &str) -> Result<bool, AgentKeyError> {
     let sig_bytes = hex::decode(signature_hex).map_err(|_| AgentKeyError::InvalidSignatureHex)?;
-    let sig = ed25519_dalek::Signature::from_slice(&sig_bytes)
-        .map_err(|_| AgentKeyError::InvalidSignatureHex)?;
+    let sig = ed25519_dalek::Signature::from_slice(&sig_bytes).map_err(|_| AgentKeyError::InvalidSignatureHex)?;
     let pub_bytes = hex::decode(pubkey_hex).map_err(|_| AgentKeyError::InvalidPubkeyHex)?;
-    let pubkey = VerifyingKey::from_bytes(
-        &pub_bytes.try_into().map_err(|_| AgentKeyError::InvalidPubkeyHex)?,
-    ).map_err(|_| AgentKeyError::InvalidPubkeyHex)?;
+    let pubkey = VerifyingKey::from_bytes(&pub_bytes.try_into().map_err(|_| AgentKeyError::InvalidPubkeyHex)?)
+        .map_err(|_| AgentKeyError::InvalidPubkeyHex)?;
     Ok(pubkey.verify_strict(payload, &sig).is_ok())
 }
 
@@ -132,8 +134,9 @@ pub enum AgentKeyError {
 
 #[cfg(test)]
 mod tests {
-    use super::*;
     use tempfile::TempDir;
+
+    use super::*;
 
     #[test]
     fn generate_load_roundtrip() {

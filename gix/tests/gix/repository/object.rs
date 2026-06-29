@@ -446,8 +446,7 @@ fn writes_avoid_io_using_duplicate_check() -> crate::Result {
 mod find {
     use gix_pack::Find;
 
-    use crate::basic_repo;
-    use crate::repository::object::empty_bare_in_memory_repo;
+    use crate::{basic_repo, repository::object::empty_bare_in_memory_repo};
 
     #[test]
     fn find_and_try_find_with_and_without_object_cache() -> crate::Result {

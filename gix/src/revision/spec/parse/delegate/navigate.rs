@@ -6,12 +6,14 @@ use gix_revision::spec::parse::{
     delegate::{PeelTo, Traversal},
 };
 
-use crate::revision::spec::parse::delegate::peel;
 use crate::{
     bstr::{BStr, ByteSlice},
     ext::ObjectIdExt,
     object,
-    revision::spec::parse::{delegate::Replacements, Delegate},
+    revision::spec::parse::{
+        delegate::{peel, Replacements},
+        Delegate,
+    },
     Object,
 };
 

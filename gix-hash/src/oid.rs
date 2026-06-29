@@ -1,10 +1,8 @@
 use std::hash;
 
 use crate::{Kind, ObjectId};
-
 #[cfg(feature = "sha1")]
 use crate::{EMPTY_BLOB_SHA1, EMPTY_TREE_SHA1, SIZE_OF_SHA1_DIGEST};
-
 #[cfg(feature = "sha256")]
 use crate::{EMPTY_BLOB_SHA256, EMPTY_TREE_SHA256, SIZE_OF_SHA256_DIGEST};
 

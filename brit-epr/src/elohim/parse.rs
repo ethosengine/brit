@@ -1,8 +1,10 @@
 //! `parse_pillar_trailers` — convenience function that projects a
 //! `TrailerSet` into the strongly-typed `PillarTrailers` view.
 
-use crate::elohim::pillar_trailers::{PillarTrailers, TrailerKey};
-use crate::engine::parse_trailer_block;
+use crate::{
+    elohim::pillar_trailers::{PillarTrailers, TrailerKey},
+    engine::parse_trailer_block,
+};
 
 /// Parse pillar trailers from a commit body.
 ///

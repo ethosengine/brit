@@ -1,5 +1,6 @@
-use crate::Time;
 use jiff::Zoned;
+
+use crate::Time;
 
 /// Parse Git-style flexible date formats that aren't covered by standard strptime:
 /// - ISO8601 with dots: `2008.02.14 20:30:45 -0500`

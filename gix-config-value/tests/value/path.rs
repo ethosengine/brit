@@ -131,8 +131,9 @@ mod interpolate {
 mod optional_prefix {
     use std::borrow::Cow;
 
-    use crate::{b, cow_str};
     use bstr::ByteSlice;
+
+    use crate::{b, cow_str};
 
     #[test]
     fn path_without_optional_prefix_is_not_optional() {

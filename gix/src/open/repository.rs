@@ -1,15 +1,15 @@
 #![allow(clippy::result_large_err)]
-use gix_config::file::Metadata;
-use gix_features::threading::OwnShared;
-use gix_object::bstr::ByteSlice;
-use gix_path::RelativePath;
-use std::path::Path;
 use std::{
     borrow::Cow,
     collections::{btree_map::Entry, BTreeMap},
     ffi::OsStr,
-    path::PathBuf,
+    path::{Path, PathBuf},
 };
+
+use gix_config::file::Metadata;
+use gix_features::threading::OwnShared;
+use gix_object::bstr::ByteSlice;
+use gix_path::RelativePath;
 
 use super::{Error, Options};
 use crate::{

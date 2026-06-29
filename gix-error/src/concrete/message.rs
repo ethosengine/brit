@@ -1,5 +1,7 @@
-use std::borrow::Cow;
-use std::fmt::{Debug, Display, Formatter};
+use std::{
+    borrow::Cow,
+    fmt::{Debug, Display, Formatter},
+};
 
 /// An error that is further described in a message.
 #[derive(Debug)]

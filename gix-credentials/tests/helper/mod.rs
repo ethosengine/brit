@@ -40,10 +40,11 @@ mod invoke_outcome_to_helper_result {
     }
 }
 
+use std::{borrow::Cow, path::Path};
+
 use bstr::{BString, ByteVec};
 use gix_credentials::Program;
 use gix_testtools::fixture_path;
-use std::{borrow::Cow, path::Path};
 
 pub fn script_helper(name: &str) -> Program {
     fn to_arg<'a>(path: impl Into<Cow<'a, Path>>) -> BString {

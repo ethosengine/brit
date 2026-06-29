@@ -1,7 +1,6 @@
 use serde::{Deserialize, Serialize};
-use crate::engine::cid::BritCid;
-use crate::engine::content_node::ContentNode;
-use crate::engine::signing::Signed;
+
+use crate::engine::{cid::BritCid, content_node::ContentNode, signing::Signed};
 
 /// Records that an agent produced an output artifact from a manifest's inputs.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
@@ -36,8 +35,12 @@ impl ContentNode for BuildAttestationContentNode {
 }
 
 impl Signed for BuildAttestationContentNode {
-    fn signature(&self) -> &str { &self.signature }
-    fn agent_id(&self) -> &str { &self.agent_id }
+    fn signature(&self) -> &str {
+        &self.signature
+    }
+    fn agent_id(&self) -> &str {
+        &self.agent_id
+    }
     fn without_signature(&self) -> Self {
         let mut c = self.clone();
         c.signature = String::new();

@@ -10,7 +10,9 @@ fn rakia_binary() -> std::path::PathBuf {
 fn graph_discover_outputs_json_with_manifests() {
     // Use the actual repo root (three levels up from brit-cli)
     let repo_root = std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR"))
-        .join("../../../").canonicalize().unwrap();
+        .join("../../../")
+        .canonicalize()
+        .unwrap();
 
     let out = Command::new(rakia_binary())
         .args(["graph", "discover", "--repo"])
@@ -18,23 +20,30 @@ fn graph_discover_outputs_json_with_manifests() {
         .output()
         .expect("invoke rakia");
 
-    assert!(out.status.success(),
+    assert!(
+        out.status.success(),
         "exit {} stderr: {}",
         out.status,
-        String::from_utf8_lossy(&out.stderr));
+        String::from_utf8_lossy(&out.stderr)
+    );
     let stdout = String::from_utf8(out.stdout).expect("utf8 stdout");
     let v: serde_json::Value = serde_json::from_str(&stdout).expect("parse json");
     assert!(v.get("manifests").is_some(), "expected 'manifests' key in output");
 
     let manifests = v["manifests"].as_array().expect("manifests is array");
-    assert!(manifests.len() >= 8,
-        "expected at least 8 manifests, got {}", manifests.len());
+    assert!(
+        manifests.len() >= 8,
+        "expected at least 8 manifests, got {}",
+        manifests.len()
+    );
 }
 
 #[test]
 fn fingerprint_emits_content_addressed_hex_for_real_manifest() {
     let repo_root = std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR"))
-        .join("../../../").canonicalize().unwrap();
+        .join("../../../")
+        .canonicalize()
+        .unwrap();
 
     let manifest = repo_root.join("app/elohim-app/build-manifest.json");
     if !manifest.exists() {

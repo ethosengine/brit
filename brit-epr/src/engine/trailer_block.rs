@@ -1,8 +1,7 @@
 //! `parse_trailer_block` — extract a commit's RFC-822-style trailer block
 //! into a `TrailerSet`. Wraps `gix_object::commit::message::BodyRef::trailers()`.
 
-use gix_object::bstr::ByteSlice;
-use gix_object::commit::message::BodyRef;
+use gix_object::{bstr::ByteSlice, commit::message::BodyRef};
 
 use crate::engine::TrailerSet;
 

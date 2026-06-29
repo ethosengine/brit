@@ -3,12 +3,12 @@ pub(super) mod function {
         ffi::{OsStr, OsString},
         io::{BufRead, BufReader, Read},
         process::{Command, Stdio},
+        sync::LazyLock,
     };
 
     use anyhow::{bail, Context};
     use gix::bstr::ByteSlice;
     use regex::bytes::Regex;
-    use std::sync::LazyLock;
 
     pub fn check_mode() -> anyhow::Result<()> {
         let root = find_root()?;

@@ -33,9 +33,8 @@ pub fn run(manifest_path: &Path, step_filter: Option<&str>, commit_ref: &str) ->
     let manifest_dir = manifest_path
         .parent()
         .ok_or_else(|| CliError::Args(format!("manifest has no parent dir: {}", manifest_path.display())))?;
-    let repo = gix::discover(manifest_dir).map_err(|e| {
-        CliError::Args(format!("repo discovery failed for {}: {e}", manifest_dir.display()))
-    })?;
+    let repo = gix::discover(manifest_dir)
+        .map_err(|e| CliError::Args(format!("repo discovery failed for {}: {e}", manifest_dir.display())))?;
 
     // Resolve the commit ref to an ObjectId
     let commit_id = repo
@@ -53,12 +52,8 @@ pub fn run(manifest_path: &Path, step_filter: Option<&str>, commit_ref: &str) ->
         let mut all_patterns: Vec<String> = step.inputs.sources.clone();
         all_patterns.extend(step.inputs.build_process.iter().cloned());
 
-        let fp = brit_graph::fingerprint::ContentFingerprint::from_repo_globs(
-            &repo,
-            commit_id,
-            &all_patterns,
-        )
-        .map_err(|e| CliError::Args(format!("fingerprint compute failed for step '{name}': {e}")))?;
+        let fp = brit_graph::fingerprint::ContentFingerprint::from_repo_globs(&repo, commit_id, &all_patterns)
+            .map_err(|e| CliError::Args(format!("fingerprint compute failed for step '{name}': {e}")))?;
 
         out.push(StepFingerprint {
             pipeline: m.pipeline.clone(),

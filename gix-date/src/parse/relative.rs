@@ -1,8 +1,9 @@
 use std::{str::FromStr, time::SystemTime};
 
-use crate::Error;
 use gix_error::{ensure, Exn, ResultExt, ValidationError};
 use jiff::{tz::TimeZone, Span, Timestamp, Zoned};
+
+use crate::Error;
 
 pub fn parse(input: &str, now: Option<SystemTime>) -> Option<Result<Zoned, Exn<Error>>> {
     // First try named dates

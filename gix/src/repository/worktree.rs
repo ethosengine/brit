@@ -1,7 +1,7 @@
-use crate::bstr::BStr;
-use crate::{worktree, Worktree};
 #[cfg(feature = "worktree-archive")]
 use gix_error::ResultExt;
+
+use crate::{bstr::BStr, worktree, Worktree};
 
 /// Interact with individual worktrees and their information.
 impl crate::Repository {

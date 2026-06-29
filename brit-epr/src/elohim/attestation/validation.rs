@@ -1,7 +1,6 @@
 use serde::{Deserialize, Serialize};
-use crate::engine::cid::BritCid;
-use crate::engine::content_node::ContentNode;
-use crate::engine::signing::Signed;
+
+use crate::engine::{cid::BritCid, content_node::ContentNode, signing::Signed};
 
 /// Outcome of a named validation check.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
@@ -50,8 +49,12 @@ impl ContentNode for ValidationAttestationContentNode {
 }
 
 impl Signed for ValidationAttestationContentNode {
-    fn signature(&self) -> &str { &self.signature }
-    fn agent_id(&self) -> &str { &self.validator_id }
+    fn signature(&self) -> &str {
+        &self.signature
+    }
+    fn agent_id(&self) -> &str {
+        &self.validator_id
+    }
     fn without_signature(&self) -> Self {
         let mut c = self.clone();
         c.signature = String::new();

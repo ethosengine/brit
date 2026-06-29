@@ -1,8 +1,7 @@
 use std::io::Write;
 
-use gix_object::{bstr::BStr, FindExt};
-
 use gix_error::{message, ResultExt};
+use gix_object::{bstr::BStr, FindExt};
 
 use crate::{entry, entry::Error, protocol, AdditionalEntry, SharedErrorSlot, Stream};
 

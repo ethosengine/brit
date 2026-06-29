@@ -1,6 +1,6 @@
-use gix_error::bstr::ByteSlice;
-use gix_error::ValidationError;
 use std::ops::Range;
+
+use gix_error::{bstr::ByteSlice, ValidationError};
 
 use crate::{file, file::index};
 

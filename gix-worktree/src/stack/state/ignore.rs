@@ -2,15 +2,14 @@ use std::path::Path;
 
 use bstr::{BStr, ByteSlice};
 use gix_glob::pattern::Case;
+/// Specify how to parse ignore patterns.
+pub use gix_ignore::search::Ignore as ParseIgnore;
 use gix_object::FindExt;
 
 use crate::{
     stack::state::{Ignore, IgnoreMatchGroup},
     PathIdMapping,
 };
-
-/// Specify how to parse ignore patterns.
-pub use gix_ignore::search::Ignore as ParseIgnore;
 
 /// Decide where to read `.gitignore` files from.
 #[derive(Default, Debug, Clone, Copy)]

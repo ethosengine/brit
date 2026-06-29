@@ -1,7 +1,11 @@
-use crate::Message;
+use std::{
+    borrow::Cow,
+    fmt::{Debug, Display, Formatter},
+};
+
 use bstr::BString;
-use std::borrow::Cow;
-use std::fmt::{Debug, Display, Formatter};
+
+use crate::Message;
 
 /// An error occurred when validating input.
 ///

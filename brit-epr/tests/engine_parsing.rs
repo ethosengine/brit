@@ -19,7 +19,10 @@ Qahal: no governance review required
     let trailers: TrailerSet = parse_trailer_block(body);
 
     assert_eq!(trailers.len(), 4, "expected 4 trailers, got {}", trailers.len());
-    assert_eq!(trailers.get("Signed-off-by"), Some("Matthew Dowell <matthew@ethosengine.com>"));
+    assert_eq!(
+        trailers.get("Signed-off-by"),
+        Some("Matthew Dowell <matthew@ethosengine.com>")
+    );
     assert_eq!(trailers.get("Lamad"), Some("introduces pillar trailer model"));
     assert_eq!(trailers.get("Shefa"), Some("stewardship by @matthew"));
     assert_eq!(trailers.get("Qahal"), Some("no governance review required"));

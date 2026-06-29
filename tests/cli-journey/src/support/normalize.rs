@@ -36,19 +36,13 @@ impl Normalizer {
             ansi_re: Regex::new(r"\x1b\[[0-9;]*[a-zA-Z]").unwrap(),
             // /tmp/anything-up-to-next-space-or-end OR /tmp/path/with/segments
             // brit-test-XXX or brit-mockremote-XXX prefixes
-            posix_tempdir_re: Regex::new(
-                r"/tmp/(?:brit-test-|brit-mockremote-|brit-)[A-Za-z0-9_\-.]+",
-            )
-            .unwrap(),
+            posix_tempdir_re: Regex::new(r"/tmp/(?:brit-test-|brit-mockremote-|brit-)[A-Za-z0-9_\-.]+").unwrap(),
             // macOS: /var/folders/XX/YYYY/T/brit-test-...
             macos_tempdir_re: Regex::new(
                 r"/var/folders/[A-Za-z0-9_]+/[A-Za-z0-9_]+/T/(?:brit-test-|brit-)[A-Za-z0-9_\-.]+",
             )
             .unwrap(),
-            rfc3339_re: Regex::new(
-                r"\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(?:\.\d+)?(?:[+-]\d{2}:\d{2}|Z)",
-            )
-            .unwrap(),
+            rfc3339_re: Regex::new(r"\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(?:\.\d+)?(?:[+-]\d{2}:\d{2}|Z)").unwrap(),
             // Wall-clock HH:MM:SS at the start of progress lines (gitoxide).
             // E.g. " 23:19:01 indexing done ..." → " <CLOCK> indexing done ..."
             clock_time_re: Regex::new(r"\b\d{2}:\d{2}:\d{2}\b").unwrap(),
@@ -56,10 +50,7 @@ impl Normalizer {
             duration_re: Regex::new(r"\b\d+\.\d{2}s\b").unwrap(),
             // Throughput: "15.4k objects/s", "1.3MB/s", "450B/s", etc.
             // Pattern: number (optional unit prefix) + (objects|files|B)/s
-            throughput_re: Regex::new(
-                r"\b\d+(?:\.\d+)?[kMG]?(?:B| objects| files)/s\b",
-            )
-            .unwrap(),
+            throughput_re: Regex::new(r"\b\d+(?:\.\d+)?[kMG]?(?:B| objects| files)/s\b").unwrap(),
             sha40_re: Regex::new(r"\b[0-9a-f]{40}\b").unwrap(),
             sha7_re: Regex::new(r"\b[0-9a-f]{7,12}\b").unwrap(),
             stable_shas: HashSet::new(),

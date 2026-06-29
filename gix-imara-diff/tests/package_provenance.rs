@@ -2,11 +2,12 @@
 //! packaged file, and that files tracked as upstream or modified still match the
 //! `UPSTREAM-PROVENANCE.tsv` manifest.
 
-use std::collections::{BTreeMap, BTreeSet};
-use std::env;
-use std::fs;
-use std::path::{Path, PathBuf};
-use std::process::Command;
+use std::{
+    collections::{BTreeMap, BTreeSet},
+    env, fs,
+    path::{Path, PathBuf},
+    process::Command,
+};
 
 #[derive(Debug)]
 struct Provenance {

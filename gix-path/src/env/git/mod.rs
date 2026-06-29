@@ -2,10 +2,10 @@ use std::{
     env,
     path::{Path, PathBuf},
     process::{Command, Stdio},
+    sync::LazyLock,
 };
 
 use bstr::{BStr, BString, ByteSlice};
-use std::sync::LazyLock;
 
 /// Other places to find Git in.
 #[cfg(windows)]

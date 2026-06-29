@@ -1,11 +1,15 @@
 // Modified for gitoxide from the upstream imara-diff crate.
 // Upstream source: git cat-file -p 32d1e45d3df061e6ccba6db7fdce92db29e345d8:src/intern.rs
 
-use std::hash::{BuildHasher as _, Hash};
-use std::ops::Index;
+use std::{
+    hash::{BuildHasher as _, Hash},
+    ops::Index,
+};
 
-use hashbrown::hash_table::{Entry, HashTable};
-use hashbrown::DefaultHashBuilder as RandomState;
+use hashbrown::{
+    hash_table::{Entry, HashTable},
+    DefaultHashBuilder as RandomState,
+};
 
 /// A token represented as an interned integer.
 ///

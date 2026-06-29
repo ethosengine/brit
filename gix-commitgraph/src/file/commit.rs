@@ -1,12 +1,14 @@
 //! Low-level operations on individual commits.
-use crate::{
-    file::{self, EXTENDED_EDGES_MASK, LAST_EXTENDED_EDGE_MASK, NO_PARENT},
-    File, Position,
-};
-use gix_error::{message, Message};
 use std::{
     fmt::{Debug, Formatter},
     slice::Chunks,
+};
+
+use gix_error::{message, Message};
+
+use crate::{
+    file::{self, EXTENDED_EDGES_MASK, LAST_EXTENDED_EDGE_MASK, NO_PARENT},
+    File, Position,
 };
 
 /// A commit as stored in a [`File`].

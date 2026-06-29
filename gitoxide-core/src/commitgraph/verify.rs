@@ -22,9 +22,10 @@ impl Default for Context<Vec<u8>, Vec<u8>> {
 pub(crate) mod function {
     use std::{io, path::Path};
 
-    use crate::OutputFormat;
     use anyhow::Result;
     use gix::commitgraph::{verify::Outcome, Graph};
+
+    use crate::OutputFormat;
 
     pub fn verify<W1, W2>(
         path: impl AsRef<Path>,

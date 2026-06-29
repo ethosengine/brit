@@ -1,8 +1,6 @@
-use gix_diff::blob::unified_diff::ConsumeBinaryHunk;
-use gix_diff::blob::UnifiedDiff;
 use gix_diff::blob::{
-    unified_diff::{ConsumeHunk, ContextSize, DiffLineKind, HunkHeader},
-    Algorithm,
+    unified_diff::{ConsumeBinaryHunk, ConsumeHunk, ContextSize, DiffLineKind, HunkHeader},
+    Algorithm, UnifiedDiff,
 };
 use gix_object::bstr::BString;
 

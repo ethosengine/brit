@@ -26,8 +26,8 @@ pub fn run(repo: &Path) -> Result<()> {
         source,
     })?;
 
-    let manifests = rakia_core::discover::discover_manifests(&repo)
-        .map_err(|e| CliError::ManifestDiscovery(format!("{e}")))?;
+    let manifests =
+        rakia_core::discover::discover_manifests(&repo).map_err(|e| CliError::ManifestDiscovery(format!("{e}")))?;
 
     let summaries: Vec<ManifestSummary> = manifests
         .into_iter()
@@ -35,11 +35,7 @@ pub fn run(repo: &Path) -> Result<()> {
             let mut steps: Vec<String> = m.steps.keys().cloned().collect();
             steps.sort();
             ManifestSummary {
-                path: path
-                    .strip_prefix(&repo)
-                    .unwrap_or(&path)
-                    .display()
-                    .to_string(),
+                path: path.strip_prefix(&repo).unwrap_or(&path).display().to_string(),
                 pipeline: m.pipeline,
                 description: m.description,
                 step_count: steps.len(),

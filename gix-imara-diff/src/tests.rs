@@ -1,5 +1,6 @@
-use crate::{Algorithm, BasicLineDiffPrinter, Diff, InternedInput, UnifiedDiffConfig};
 use expect_test::expect;
+
+use crate::{Algorithm, BasicLineDiffPrinter, Diff, InternedInput, UnifiedDiffConfig};
 
 #[test]
 fn myers_is_even() {

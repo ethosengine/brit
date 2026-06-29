@@ -1,6 +1,7 @@
+use std::{cell::Cell, rc::Rc};
+
 use super::*;
 use crate::util::{commit_graph, fixture, git_rev_list};
-use std::{cell::Cell, rc::Rc};
 
 fn assert_simple_repo_graph(repo_dir: &std::path::Path) -> crate::Result {
     let graph = git_graph(repo_dir)?;

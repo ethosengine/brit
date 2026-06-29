@@ -28,10 +28,7 @@ impl TrailerSet {
 
     /// Return the first value for a given key, or `None` if absent.
     pub fn get(&self, key: &str) -> Option<&str> {
-        self.entries
-            .iter()
-            .find(|(k, _)| k == key)
-            .map(|(_, v)| v.as_str())
+        self.entries.iter().find(|(k, _)| k == key).map(|(_, v)| v.as_str())
     }
 
     /// Return all values for a given key (preserves order).

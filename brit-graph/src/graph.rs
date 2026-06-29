@@ -7,8 +7,10 @@
 use std::collections::HashMap;
 
 use brit_epr::{BritCid, ContentNode};
-use petgraph::algo::is_cyclic_directed;
-use petgraph::graph::{DiGraph, NodeIndex};
+use petgraph::{
+    algo::is_cyclic_directed,
+    graph::{DiGraph, NodeIndex},
+};
 
 /// A content-addressed directed graph where nodes implement `ContentNode`.
 pub struct EprGraph<N: ContentNode, E = ()> {

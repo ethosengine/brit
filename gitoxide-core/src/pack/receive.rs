@@ -4,7 +4,6 @@ use std::{
     sync::{atomic::AtomicBool, Arc},
 };
 
-use crate::{net, pack::receive::protocol::fetch::negotiate, OutputFormat};
 #[cfg(feature = "async-client")]
 use gix::protocol::transport::client::async_io::connect;
 #[cfg(feature = "blocking-client")]
@@ -23,6 +22,8 @@ pub use gix::{
     },
     NestedProgress, Progress,
 };
+
+use crate::{net, pack::receive::protocol::fetch::negotiate, OutputFormat};
 
 pub const PROGRESS_RANGE: std::ops::RangeInclusive<u8> = 1..=3;
 pub struct Context<W> {

@@ -1,7 +1,9 @@
 //! `ElohimProtocolSchema` — the first-party `AppSchema` implementation.
 
-use crate::elohim::pillar_trailers::TrailerKey;
-use crate::engine::{AppSchema, TrailerSet, ValidationError};
+use crate::{
+    elohim::pillar_trailers::TrailerKey,
+    engine::{AppSchema, TrailerSet, ValidationError},
+};
 
 /// Zero-sized implementor of [`AppSchema`] for the Elohim Protocol.
 ///
@@ -50,9 +52,7 @@ impl AppSchema for ElohimProtocolSchema {
             let summary = key.summary_token();
             match trailers.get(summary) {
                 None => return Err(ValidationError::MissingKey(summary.to_string())),
-                Some(v) if v.trim().is_empty() => {
-                    return Err(ValidationError::EmptyValue(summary.to_string()))
-                }
+                Some(v) if v.trim().is_empty() => return Err(ValidationError::EmptyValue(summary.to_string())),
                 Some(_) => {}
             }
         }

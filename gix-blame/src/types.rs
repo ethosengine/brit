@@ -1,14 +1,13 @@
+use std::{
+    num::NonZeroU32,
+    ops::{AddAssign, Range, RangeInclusive, SubAssign},
+};
+
 use gix_hash::ObjectId;
 use gix_object::bstr::BString;
 use smallvec::SmallVec;
-use std::ops::RangeInclusive;
-use std::{
-    num::NonZeroU32,
-    ops::{AddAssign, Range, SubAssign},
-};
 
-use crate::file::function::tokens_for_diffing;
-use crate::Error;
+use crate::{file::function::tokens_for_diffing, Error};
 
 /// A type to represent one or more line ranges to blame in a file.
 ///

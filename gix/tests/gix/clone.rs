@@ -4,10 +4,6 @@ use crate::{remote, util::restricted};
 mod blocking_io {
     use std::{borrow::Cow, path::Path, sync::atomic::AtomicBool};
 
-    use crate::{
-        remote,
-        util::{hex_to_id, restricted},
-    };
     use gix::{
         bstr::BString,
         config::tree::{Clone, Core, Init, Key},
@@ -19,6 +15,11 @@ mod blocking_io {
     use gix_object::bstr::ByteSlice;
     use gix_ref::TargetRef;
     use gix_refspec::parse::Operation;
+
+    use crate::{
+        remote,
+        util::{hex_to_id, restricted},
+    };
 
     fn shallow_ids(repo: &gix::Repository, expected: &'static str) -> crate::Result<Vec<gix::ObjectId>> {
         let commits = repo.shallow_commits()?.expect(expected);

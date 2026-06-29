@@ -1,8 +1,9 @@
+use gix_ref::Category;
+
 use crate::{
     bstr::{BString, ByteSlice},
     clone::PrepareFetch,
 };
-use gix_ref::Category;
 
 /// The error returned by [`PrepareFetch::fetch_only()`].
 #[derive(Debug, thiserror::Error)]

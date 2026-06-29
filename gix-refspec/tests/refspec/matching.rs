@@ -3,7 +3,7 @@ use std::sync::LazyLock;
 static BASELINE: LazyLock<baseline::Baseline> = LazyLock::new(|| baseline::parse().unwrap());
 
 pub mod baseline {
-    use std::{borrow::Borrow, collections::HashMap};
+    use std::{borrow::Borrow, collections::HashMap, sync::LazyLock};
 
     use bstr::{BString, ByteSlice, ByteVec};
     use gix_hash::ObjectId;
@@ -12,7 +12,6 @@ pub mod baseline {
         parse::Operation,
         MatchGroup,
     };
-    use std::sync::LazyLock;
 
     use crate::matching::BASELINE;
 

@@ -38,13 +38,14 @@ pub enum Operation {
 }
 
 pub(crate) mod function {
+    use bstr::{BStr, ByteSlice};
+    use gix_error::Exn;
+
     use crate::{
         parse::{Error, Operation},
         types::Mode,
         RefSpecRef,
     };
-    use bstr::{BStr, ByteSlice};
-    use gix_error::Exn;
 
     /// Parse `spec` for use in `operation` and return it if it is valid.
     pub fn parse(mut spec: &BStr, operation: Operation) -> Result<RefSpecRef<'_>, Error> {

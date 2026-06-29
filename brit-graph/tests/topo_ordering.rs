@@ -1,6 +1,5 @@
 use brit_epr::{BritCid, ContentNode};
-use brit_graph::graph::EprGraph;
-use brit_graph::topo::TopoPlan;
+use brit_graph::{graph::EprGraph, topo::TopoPlan};
 use serde::{Deserialize, Serialize};
 
 #[derive(Debug, Clone, Serialize, Deserialize)]

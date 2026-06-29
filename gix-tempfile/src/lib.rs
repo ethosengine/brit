@@ -58,10 +58,8 @@ use std::{
     io,
     marker::PhantomData,
     path::{Path, PathBuf},
-    sync::atomic::AtomicUsize,
+    sync::{atomic::AtomicUsize, LazyLock},
 };
-
-use std::sync::LazyLock;
 
 #[cfg(feature = "hp-hashmap")]
 type HashMap<K, V> = dashmap::DashMap<K, V>;

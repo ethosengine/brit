@@ -1,5 +1,6 @@
-use super::*;
 use gix_traverse::commit::simple::CommitTimeOrder;
+
+use super::*;
 
 fn simple_repo() -> crate::Result<(std::path::PathBuf, gix_odb::Handle)> {
     named_fixture("make_repos.sh", "simple")

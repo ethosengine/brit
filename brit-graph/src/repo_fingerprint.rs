@@ -7,8 +7,8 @@
 
 use std::collections::{BTreeMap, VecDeque};
 
-use globset::{Glob, GlobSetBuilder};
 use gix::bstr::{BStr, BString, ByteSlice, ByteVec};
+use globset::{Glob, GlobSetBuilder};
 
 use crate::fingerprint::{ContentFingerprint, FingerprintError};
 
@@ -37,12 +37,10 @@ impl ContentFingerprint {
             })?;
             builder.add(glob);
         }
-        let globset = builder
-            .build()
-            .map_err(|e| FingerprintError::InvalidGlob {
-                pattern: patterns.join(", "),
-                message: e.to_string(),
-            })?;
+        let globset = builder.build().map_err(|e| FingerprintError::InvalidGlob {
+            pattern: patterns.join(", "),
+            message: e.to_string(),
+        })?;
 
         // Step B: open the tree at the commit
         let object = repo
@@ -51,15 +49,11 @@ impl ContentFingerprint {
                 commit: commit_id.to_hex().to_string(),
                 message: e.to_string(),
             })?;
-        let commit = object
-            .try_into_commit()
-            .map_err(|e| FingerprintError::CommitResolve {
-                commit: commit_id.to_hex().to_string(),
-                message: format!("not a commit: {e}"),
-            })?;
-        let tree = commit
-            .tree()
-            .map_err(|e| FingerprintError::TreeWalk(e.to_string()))?;
+        let commit = object.try_into_commit().map_err(|e| FingerprintError::CommitResolve {
+            commit: commit_id.to_hex().to_string(),
+            message: format!("not a commit: {e}"),
+        })?;
+        let tree = commit.tree().map_err(|e| FingerprintError::TreeWalk(e.to_string()))?;
 
         // Step C: walk the tree, collect matching (path, blob_bytes)
         let mut inputs: BTreeMap<String, Vec<u8>> = BTreeMap::new();
@@ -153,18 +147,12 @@ impl<'a> gix::traverse::tree::Visit for TreeCollector<'a> {
         self.pop_element();
     }
 
-    fn visit_tree(
-        &mut self,
-        _entry: &gix::objs::tree::EntryRef<'_>,
-    ) -> gix::traverse::tree::visit::Action {
+    fn visit_tree(&mut self, _entry: &gix::objs::tree::EntryRef<'_>) -> gix::traverse::tree::visit::Action {
         // Continue(true) = descend into this subtree
         std::ops::ControlFlow::Continue(true)
     }
 
-    fn visit_nontree(
-        &mut self,
-        entry: &gix::objs::tree::EntryRef<'_>,
-    ) -> gix::traverse::tree::visit::Action {
+    fn visit_nontree(&mut self, entry: &gix::objs::tree::EntryRef<'_>) -> gix::traverse::tree::visit::Action {
         // Skip submodules and symlinks
         if !matches!(
             entry.mode.kind(),
@@ -178,8 +166,7 @@ impl<'a> gix::traverse::tree::Visit for TreeCollector<'a> {
         let path_str = match std::str::from_utf8(&self.path) {
             Ok(s) => s.to_string(),
             Err(_) => {
-                self.errors
-                    .push(format!("non-utf8 path: {:?}", self.path.as_bstr()));
+                self.errors.push(format!("non-utf8 path: {:?}", self.path.as_bstr()));
                 return std::ops::ControlFlow::Continue(true);
             }
         };

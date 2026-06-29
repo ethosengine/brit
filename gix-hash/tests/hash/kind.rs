@@ -1,5 +1,6 @@
-use gix_hash::{Kind, ObjectId};
 use std::str::FromStr;
+
+use gix_hash::{Kind, ObjectId};
 
 #[test]
 fn from_str() {

@@ -37,8 +37,8 @@ pub fn run(repo: &Path, files: Option<&str>, since: Option<&str>) -> Result<()> 
         return Err(CliError::Args("need --files or --since".into()));
     };
 
-    let manifests = rakia_core::discover::discover_manifests(&repo)
-        .map_err(|e| CliError::ManifestDiscovery(format!("{e}")))?;
+    let manifests =
+        rakia_core::discover::discover_manifests(&repo).map_err(|e| CliError::ManifestDiscovery(format!("{e}")))?;
     let constellation = rakia_core::constellation::build_constellation(&manifests)?;
     let plan = rakia_core::constellation::plan_from_changes(&constellation, &changed_paths)?;
 

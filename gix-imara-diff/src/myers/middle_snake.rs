@@ -3,8 +3,10 @@
 
 use std::ptr::NonNull;
 
-use crate::myers::slice::FileSlice;
-use crate::util::{common_postfix, common_prefix};
+use crate::{
+    myers::slice::FileSlice,
+    util::{common_postfix, common_prefix},
+};
 
 /// Minimum snake length to be considered a "good" snake for heuristics.
 const SNAKE_CNT: u32 = 20;

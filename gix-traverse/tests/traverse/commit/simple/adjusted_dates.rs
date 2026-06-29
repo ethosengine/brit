@@ -1,7 +1,8 @@
 //! Some dates adjusted to be a year apart, but still 'c1' and 'c2' with the same date.
+use gix_traverse::commit::simple::CommitTimeOrder;
+
 use super::*;
 use crate::util::fixture;
-use gix_traverse::commit::simple::CommitTimeOrder;
 
 fn adjusted_dates_repo() -> crate::Result<(std::path::PathBuf, gix_odb::Handle)> {
     let dir = fixture("make_traversal_repo_for_commits_with_dates.sh")?;

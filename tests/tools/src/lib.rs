@@ -24,17 +24,15 @@ use std::{
     io::Read,
     path::{Path, PathBuf},
     str::FromStr,
+    sync::LazyLock,
     time::Duration,
 };
 
 pub use bstr;
 use bstr::ByteSlice;
 use io_close::Close;
-
 pub use is_ci;
 use parking_lot::Mutex;
-use std::sync::LazyLock;
-
 pub use tempfile;
 
 const ARCHIVE_DIR_NAME: &str = "generated-archives";

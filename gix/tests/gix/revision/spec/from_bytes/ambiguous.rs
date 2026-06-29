@@ -1,3 +1,11 @@
+use gix::{
+    prelude::{ObjectIdExt, RevSpecExt},
+    revision::{
+        spec::parse::{Options, RefsHint},
+        Spec,
+    },
+};
+
 use super::repo;
 use crate::{
     revision::spec::from_bytes::{
@@ -5,13 +13,6 @@ use crate::{
         parse_spec_opts, rev_parse,
     },
     util::hex_to_id,
-};
-use gix::{
-    prelude::{ObjectIdExt, RevSpecExt},
-    revision::{
-        spec::parse::{Options, RefsHint},
-        Spec,
-    },
 };
 
 #[test]

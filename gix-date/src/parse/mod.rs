@@ -1,7 +1,8 @@
 use std::str::FromStr;
 
-use crate::{Error, Time};
 use smallvec::SmallVec;
+
+use crate::{Error, Time};
 
 /// A container for just enough bytes to hold the largest-possible [`time`](Time) instance.
 /// It's used in conjunction with

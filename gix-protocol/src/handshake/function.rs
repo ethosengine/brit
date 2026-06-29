@@ -7,8 +7,7 @@ use super::Error;
 use crate::transport::client::async_io::{SetServiceResponse, Transport};
 #[cfg(feature = "blocking-client")]
 use crate::transport::client::blocking_io::{SetServiceResponse, Transport};
-use crate::Handshake;
-use crate::{credentials, handshake::refs};
+use crate::{credentials, handshake::refs, Handshake};
 
 /// Perform a handshake with the server on the other side of `transport`, with `authenticate` being used if authentication
 /// turns out to be required. `extra_parameters` are the parameters `(name, optional value)` to add to the handshake,

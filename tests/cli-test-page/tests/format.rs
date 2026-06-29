@@ -1,5 +1,7 @@
-use cli_test_page::coverage::BinaryCoverage;
-use cli_test_page::format::{format_test_page, BinarySection, SubcommandCapture};
+use cli_test_page::{
+    coverage::BinaryCoverage,
+    format::{format_test_page, BinarySection, SubcommandCapture},
+};
 
 #[test]
 fn renders_coverage_summary_table() {

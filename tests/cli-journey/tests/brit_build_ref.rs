@@ -13,11 +13,9 @@
 //! Staging layout (per leaf):
 //!   BRIT_TEST_PAGE_STAGING/rust/brit-build-ref/<group>/<leaf>.txt
 
-use std::fs;
-use std::path::PathBuf;
+use std::{fs, path::PathBuf};
 
-use cli_journey::support::runner::BritInvocation;
-use cli_journey::support::test_repo::TestRepo;
+use cli_journey::support::{runner::BritInvocation, test_repo::TestRepo};
 
 fn brit_build_ref_bin() -> PathBuf {
     PathBuf::from(env!("CARGO_MANIFEST_DIR"))
@@ -177,7 +175,15 @@ fn validate_list_in_empty_repo() {
 fn validate_get_for_unknown_step() {
     let temp = TestRepo::new("validate-get").expect("repo");
     let cap = BritInvocation::new(brit_build_ref_bin())
-        .args(["validate", "get", "--step", "no-such-step", "--check", "lint@v1", "--repo"])
+        .args([
+            "validate",
+            "get",
+            "--step",
+            "no-such-step",
+            "--check",
+            "lint@v1",
+            "--repo",
+        ])
         .arg(temp.path())
         .normalize(true)
         .run()

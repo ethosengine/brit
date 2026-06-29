@@ -1,10 +1,10 @@
 use std::{
     ffi::{OsStr, OsString},
     path::{Path, PathBuf},
+    sync::LazyLock,
 };
 
 use bstr::{BString, ByteSlice};
-use std::sync::LazyLock;
 
 use crate::env::git::EXE_NAME;
 
