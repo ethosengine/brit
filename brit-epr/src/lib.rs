@@ -30,8 +30,8 @@ pub use engine::{AppSchema, BritCid, CborError, CidParseError, ContentNode, Loca
 // Feature-gated re-exports
 #[cfg(feature = "elohim-protocol")]
 pub use elohim::{
-    parse_pillar_trailers, validate_pillar_trailers, ElohimProtocolSchema, PillarTrailers,
-    PillarValidationError, TrailerKey,
+    parse_pillar_trailers, validate_pillar_trailers, ElohimProtocolSchema, EprMeta, MetaEntry,
+    PillarTrailers, PillarValidationError, TrailerKey,
 };
 
 /// Convenience re-exports for attestation types.

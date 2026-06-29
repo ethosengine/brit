@@ -8,8 +8,10 @@ mod pillar_trailers;
 mod schema;
 mod validate;
 pub mod attestation;
+pub mod meta;
 pub mod refs;
 
+pub use meta::{EprMeta, MetaEntry};
 pub use parse::parse_pillar_trailers;
 pub use pillar_trailers::{PillarTrailers, TrailerKey};
 pub use schema::ElohimProtocolSchema;
