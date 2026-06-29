@@ -4,11 +4,7 @@ use std::path::Path;
 
 use brit_epr::{
     engine::{
-        cid::BritCid,
-        cite::SlugIndex,
-        content_node::ContentNode,
-        frontmatter,
-        object_store::LocalObjectStore,
+        cid::BritCid, cite::SlugIndex, content_node::ContentNode, frontmatter, object_store::LocalObjectStore,
         verdict::verdict,
     },
     EprMeta, MetaEntry,

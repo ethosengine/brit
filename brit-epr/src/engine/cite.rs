@@ -82,7 +82,8 @@ fn walk(dir: &Path, f: &mut dyn FnMut(&Path, &str)) -> std::io::Result<()> {
 mod tests {
     use super::*;
 
-    const FM: &str = "id: my-doc\ncites:\n  - alpha | a desc | sha256:00aa11bb22cc33dd\n  - beta | b | sha256:44ee55ff66007788\n";
+    const FM: &str =
+        "id: my-doc\ncites:\n  - alpha | a desc | sha256:00aa11bb22cc33dd\n  - beta | b | sha256:44ee55ff66007788\n";
 
     #[test]
     fn extracts_id() {

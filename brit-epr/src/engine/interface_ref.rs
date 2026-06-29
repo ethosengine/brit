@@ -1,8 +1,8 @@
 //! `InterfaceRef` — one typed import/export edge of the composition envelope.
 //! Generic: `kind: doc-cite` is the only populated kind in this slice.
 
-use serde::{Deserialize, Serialize};
 use crate::engine::cid::BritCid;
+use serde::{Deserialize, Serialize};
 
 /// The typed interface kind an edge carries.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize)]

@@ -7,7 +7,11 @@ use std::process::Command;
 #[test]
 fn brit_verdicts_match_oracle() {
     let dir = Path::new(env!("CARGO_MANIFEST_DIR")).join("tests/fixtures/cite_corpus");
-    let py = Command::new("python3").arg(dir.join("oracle.py")).arg(&dir).output().unwrap();
+    let py = Command::new("python3")
+        .arg(dir.join("oracle.py"))
+        .arg(&dir)
+        .output()
+        .unwrap();
     if py.status.code() == Some(3) {
         eprintln!("oracle absent; skipping parity");
         return;
@@ -15,7 +19,7 @@ fn brit_verdicts_match_oracle() {
     assert!(py.status.success(), "oracle: {}", String::from_utf8_lossy(&py.stderr));
     let oracle: BTreeMap<String, String> = serde_json::from_slice(&py.stdout).unwrap();
 
-    let idx = brit_epr::engine::cite::SlugIndex::build(&[dir.clone()]).unwrap();
+    let idx = brit_epr::engine::cite::SlugIndex::build(std::slice::from_ref(&dir)).unwrap();
     let mut brit = BTreeMap::new();
     for e in std::fs::read_dir(&dir).unwrap() {
         let p = e.unwrap().path();

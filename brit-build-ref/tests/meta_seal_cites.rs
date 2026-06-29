@@ -13,9 +13,14 @@ fn seal_projects_cites_into_eprmeta() {
     .unwrap();
 
     let out = Command::new(env!("CARGO_BIN_EXE_brit-build-ref"))
-        .arg("--repo").arg(tmp.path())
-        .arg("meta").arg("seal").arg("--dir").arg(&docs)
-        .output().unwrap();
+        .arg("--repo")
+        .arg(tmp.path())
+        .arg("meta")
+        .arg("seal")
+        .arg("--dir")
+        .arg(&docs)
+        .output()
+        .unwrap();
     assert!(out.status.success(), "stderr: {}", String::from_utf8_lossy(&out.stderr));
     let cid = String::from_utf8(out.stdout).unwrap();
     let node_path = tmp.path().join(".git/brit/objects").join(cid.trim());

@@ -2,8 +2,8 @@
 //! dispatch contract but not any specific schema vocabulary.
 
 mod app_schema;
-pub mod cite;
 pub mod cid;
+pub mod cite;
 pub mod content_node;
 mod error;
 pub mod frontmatter;
@@ -16,12 +16,12 @@ mod trailer_block;
 mod trailer_set;
 
 pub use app_schema::AppSchema;
-pub use cite::{extract_cites, extract_id, SlugIndex};
 pub use cid::{BritCid, CidParseError};
+pub use cite::{extract_cites, extract_id, SlugIndex};
 pub use content_node::{CborError, ContentNode};
 pub use error::{EngineError, ValidationError};
 pub use frontmatter::{canonical_body, drift_fingerprint, split_frontmatter};
-pub use interface_ref::{EdgeKind, EdgeRole, InterfaceRef, parse_cite_line};
+pub use interface_ref::{parse_cite_line, EdgeKind, EdgeRole, InterfaceRef};
 pub use meta::{EprMeta, MetaEntry};
 pub use node_seed::NodeSeed;
 pub use object_store::{LocalObjectStore, ObjectStoreError};

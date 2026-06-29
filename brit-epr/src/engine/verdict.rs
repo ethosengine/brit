@@ -76,9 +76,18 @@ mod tests {
         let target_fp = drift_fingerprint("---\nid: target\n---\nbody\n");
 
         assert_eq!(verdict(&cite("target", Some(&target_fp)), &idx), Verdict::Ok);
-        assert_eq!(verdict(&cite("target", Some("sha256:0000000000000000")), &idx), Verdict::Stale);
-        assert_eq!(verdict(&cite("held-doc", Some("sha256:0000000000000000")), &idx), Verdict::Held);
-        assert_eq!(verdict(&cite("nope", Some("sha256:0000000000000000")), &idx), Verdict::Dead);
+        assert_eq!(
+            verdict(&cite("target", Some("sha256:0000000000000000")), &idx),
+            Verdict::Stale
+        );
+        assert_eq!(
+            verdict(&cite("held-doc", Some("sha256:0000000000000000")), &idx),
+            Verdict::Held
+        );
+        assert_eq!(
+            verdict(&cite("nope", Some("sha256:0000000000000000")), &idx),
+            Verdict::Dead
+        );
         // parity with the oracle: a cite carrying no fingerprint is Ok, never Stale.
         assert_eq!(verdict(&cite("target", None), &idx), Verdict::Ok);
     }
