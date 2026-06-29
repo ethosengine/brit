@@ -6,6 +6,7 @@ use clap::{Parser, Subcommand};
 
 mod build_cmd;
 mod deploy_cmd;
+mod meta_cmd;
 mod reach_cmd;
 mod validate_cmd;
 
@@ -41,6 +42,29 @@ enum TopCommand {
     Reach {
         #[command(subcommand)]
         cmd: ReachCmd,
+    },
+    /// Canonical epr-meta artifacts.
+    Meta {
+        #[command(subcommand)]
+        cmd: MetaCmd,
+    },
+}
+
+// ─── Meta subcommands ─────────────────────────────────────────────────────────
+
+#[derive(Subcommand)]
+enum MetaCmd {
+    /// Seal a directory subtree into a canonical EprMeta.
+    Seal {
+        /// Directory to seal.
+        #[arg(long)]
+        dir: PathBuf,
+    },
+    /// Verify a stored EprMeta against its CID.
+    Verify {
+        /// CID to verify.
+        #[arg(long)]
+        cid: String,
     },
 }
 
@@ -235,6 +259,11 @@ fn main() -> anyhow::Result<()> {
         TopCommand::Reach { cmd } => match cmd {
             ReachCmd::Compute { step } => reach_cmd::compute(&repo, &step),
             ReachCmd::Get { step } => reach_cmd::get(&repo, &step),
+        },
+
+        TopCommand::Meta { cmd } => match cmd {
+            MetaCmd::Seal { dir } => meta_cmd::seal(&repo, &dir),
+            MetaCmd::Verify { cid } => meta_cmd::verify(&repo, &cid),
         },
     }
 }
