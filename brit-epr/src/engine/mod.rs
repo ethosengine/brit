@@ -2,6 +2,7 @@
 //! dispatch contract but not any specific schema vocabulary.
 
 mod app_schema;
+pub mod cite;
 pub mod cid;
 pub mod content_node;
 mod error;
@@ -13,6 +14,7 @@ mod trailer_block;
 mod trailer_set;
 
 pub use app_schema::AppSchema;
+pub use cite::{extract_cites, extract_id, SlugIndex};
 pub use cid::{BritCid, CidParseError};
 pub use content_node::{CborError, ContentNode};
 pub use error::{EngineError, ValidationError};
