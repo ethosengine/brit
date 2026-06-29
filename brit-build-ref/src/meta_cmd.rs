@@ -38,6 +38,8 @@ pub fn seal(repo: &Path, dir: &Path) -> anyhow::Result<()> {
         epr_meta_version: 1,
         subtree,
         entries,
+        imports: vec![],
+        exports: vec![],
     };
     let cid = store.put(&meta)?;
     println!("{cid}");

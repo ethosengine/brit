@@ -29,6 +29,12 @@ pub struct EprMeta {
     pub subtree: String,
     /// Sealed entries, sorted by `path` for deterministic encoding.
     pub entries: Vec<MetaEntry>,
+    /// Typed import edges (cites). Stable empty encoding (Decision A).
+    #[serde(default)]
+    pub imports: Vec<crate::engine::interface_ref::InterfaceRef>,
+    /// Typed export edges (provided ids). Stable empty encoding.
+    #[serde(default)]
+    pub exports: Vec<crate::engine::interface_ref::InterfaceRef>,
 }
 
 impl ContentNode for EprMeta {
@@ -57,6 +63,8 @@ mod tests {
                     cid: BritCid::compute_raw(b"b"),
                 },
             ],
+            imports: vec![],
+            exports: vec![],
         }
     }
 
@@ -75,5 +83,28 @@ mod tests {
         let mut other = sample();
         other.subtree = "src".into();
         assert_ne!(sample().compute_cid().unwrap(), other.compute_cid().unwrap());
+    }
+
+    #[test]
+    fn epr_meta_carries_imports_exports_with_stable_default() {
+        use crate::engine::interface_ref::{EdgeKind, EdgeRole, InterfaceRef};
+        let m = EprMeta {
+            epr_meta_version: 1,
+            subtree: "docs".into(),
+            entries: vec![],
+            imports: vec![InterfaceRef {
+                kind: EdgeKind::DocCite,
+                role: EdgeRole::Import,
+                ref_: "x".into(),
+                cid: None,
+                drift: Some("sha256:0000000000000000".into()),
+                desc: None,
+            }],
+            exports: vec![],
+        };
+        assert_eq!(m.content_type(), "brit.epr-meta");
+        let bytes = m.canonical_bytes().unwrap();
+        let back: EprMeta = serde_ipld_dagcbor::from_slice(&bytes).unwrap();
+        assert_eq!(m, back);
     }
 }

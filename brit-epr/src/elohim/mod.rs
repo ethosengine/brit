@@ -4,16 +4,12 @@
 //! disabled, `brit-epr` ships only the engine.
 
 pub mod attestation;
-pub mod meta;
-pub mod node_seed;
 mod parse;
 mod pillar_trailers;
 pub mod refs;
 mod schema;
 mod validate;
 
-pub use meta::{EprMeta, MetaEntry};
-pub use node_seed::NodeSeed;
 pub use parse::parse_pillar_trailers;
 pub use pillar_trailers::{PillarTrailers, TrailerKey};
 pub use schema::ElohimProtocolSchema;

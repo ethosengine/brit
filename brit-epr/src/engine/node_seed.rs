@@ -19,6 +19,15 @@ pub struct NodeSeed {
     /// CID links to every EprMeta in the node, sorted for determinism
     /// (real IPLD links, not string FKs).
     pub epr_metas: Vec<BritCid>,
+    /// Recursive child seeds composing this node (the WIT-world tree).
+    #[serde(default)]
+    pub sub_seeds: Vec<crate::engine::cid::BritCid>,
+    /// Typed import edges aggregated for this node. Stable empty encoding.
+    #[serde(default)]
+    pub imports: Vec<crate::engine::interface_ref::InterfaceRef>,
+    /// Typed export edges aggregated for this node. Stable empty encoding.
+    #[serde(default)]
+    pub exports: Vec<crate::engine::interface_ref::InterfaceRef>,
 }
 
 impl ContentNode for NodeSeed {
@@ -38,6 +47,9 @@ mod tests {
             epr_meta_version: 1,
             repo: "brit".into(),
             epr_metas: vec![],
+            sub_seeds: vec![],
+            imports: vec![],
+            exports: vec![],
         };
         assert_eq!(s.content_type(), "brit.node-seed");
     }
@@ -51,11 +63,17 @@ mod tests {
             epr_meta_version: 1,
             repo: "brit".into(),
             epr_metas: vec![x.clone(), y.clone()],
+            sub_seeds: vec![],
+            imports: vec![],
+            exports: vec![],
         };
         let b = NodeSeed {
             epr_meta_version: 1,
             repo: "brit".into(),
             epr_metas: vec![x, y],
+            sub_seeds: vec![],
+            imports: vec![],
+            exports: vec![],
         };
         assert_eq!(a.compute_cid().unwrap(), b.compute_cid().unwrap());
     }
