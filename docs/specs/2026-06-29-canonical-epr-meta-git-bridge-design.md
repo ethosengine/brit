@@ -1,3 +1,7 @@
+---
+id: canonical-epr-meta-git-bridge
+---
+
 # Canonical EPR-Meta & the Git Bridge — Next-Generation `epr-meta` Design
 
 **Date:** 2026-06-29

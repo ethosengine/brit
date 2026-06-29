@@ -1,3 +1,9 @@
+---
+id: epr-meta-composition-snapshot
+cites:
+  - canonical-epr-meta-git-bridge | the master design this slice refines | sha256:c1283ad6e6bda687
+---
+
 # EPR-Meta as Composition Snapshot — Canonical Cites & the Parity-Supersession Slice
 
 **Date:** 2026-06-29

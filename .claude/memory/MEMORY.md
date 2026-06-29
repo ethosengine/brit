@@ -5,6 +5,7 @@ One line per memory. This is the brit-local discipline index — the place the *
 ## project
 
 - [Canonical EPR-meta & the git bridge design](../../docs/specs/2026-06-29-canonical-epr-meta-git-bridge-design.md) — next-gen `epr-meta` = content-addressed `EprMeta`/`NodeSeed` artifacts (CIDv1 via published `elohim-epr` 0.1) + git-as-bridge + two-layer (static CID / runtime notarization) + import/export world-contract; canonical-first, bits-to-apps; supersedes the parent's Python epr-meta discipline. Branch: `brit-dev`.
+- [EPR-meta composition snapshot — canonical cites & parity slice](../../docs/specs/2026-06-29-epr-meta-composition-snapshot-canonical-cites-design.md) — the Snapshot discipline: generic cite verdict engine + EprMeta/NodeSeed import/export envelope + `brit epr-meta status`, proven at parity with the parent cite oracle; governance (floor/ceiling, Dunbar-graduated stewardship, Mishpat::Commitment) is Layer-2/DHT, deferred.
 - elohim-epr 0.1.0 is PUBLISHED (2026-06-29) to the internal `elohim` Nexus registry — consume as `elohim-epr = "0.1"` (needs `[registries.elohim]` in `.cargo/config.toml` + the cross-format Nexus token). Do NOT reproduce the codec; it is the source of truth for CIDv1 · dag-cbor · sha2-256.
 
 ## reference
