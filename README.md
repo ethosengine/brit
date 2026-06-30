@@ -182,6 +182,14 @@ on your needs, for _Linux_, _MacOS_ and _Windows_.
 
 [releases]: https://github.com/GitoxideLabs/gitoxide/releases
 
+### Install with Homebrew
+
+For macOS and Linux, `gitoxide` can be installed from [Homebrew](https://brew.sh):
+
+```sh
+brew install gitoxide
+```
+
 ### Download from Arch Linux repository
 
 For Arch Linux you can download `gitoxide` from `community` repository:
@@ -348,8 +356,10 @@ We recommend running `just test` during the development process to assure CI is 
 A backlog for work ready to be picked up is [available in the Project's Kanban board][project-board], which contains instructions on how
 to pick a task. If it's empty or you have other questions, feel free to [start a discussion][discussions] or reach out to @Byron [privately][keybase].
 
-For additional details, also take a look at the [collaboration guide].
+For additional details, also take a look at the [collaboration guide]. If AI participates in a contribution, please
+follow the [AI disclosure requirements]. "Full-auto" contributions without a human on the other end may be closed unceremoniously.
 
+[AI disclosure requirements]: https://github.com/GitoxideLabs/gitoxide/blob/main/CONTRIBUTING.md#please-disclose-the-use-of-ai
 [collaboration guide]: https://github.com/GitoxideLabs/gitoxide/blob/main/COLLABORATING.md
 [project-board]: https://github.com/GitoxideLabs/gitoxide/projects
 [discussions]: https://github.com/GitoxideLabs/gitoxide/discussions

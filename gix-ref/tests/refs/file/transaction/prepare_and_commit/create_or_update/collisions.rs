@@ -1,15 +1,15 @@
 use gix_date::parse::TimeBuf;
 use gix_lock::acquire::Fail;
 use gix_ref::{
+    Target,
     file::transaction::PackedRefs,
     transaction::{Change, LogChange, PreviousValue, RefEdit},
-    Target,
 };
 
 use crate::{
     file::{
-        transaction::prepare_and_commit::{committer, create_at, create_symbolic_at, delete_at, empty_store},
         EmptyCommit,
+        transaction::prepare_and_commit::{committer, create_at, create_symbolic_at, delete_at, empty_store},
     },
     hex_to_id,
 };
@@ -79,15 +79,19 @@ fn packed_refs_lock_is_mandatory_for_multiple_ongoing_transactions_even_if_one_d
     let t2res = store
         .transaction()
         .prepare([delete_at(ref_name)], Fail::Immediately, Fail::Immediately);
-    assert_eq!(&t2res.unwrap_err().to_string()[..54], "The lock for the packed-ref file could not be obtained", "if packed-refs are about to be created, other transactions always acquire a packed-refs lock as to not miss anything");
+    assert_eq!(
+        &t2res.unwrap_err().to_string()[..54],
+        "The lock for the packed-ref file could not be obtained",
+        "if packed-refs are about to be created, other transactions always acquire a packed-refs lock as to not miss anything"
+    );
     Ok(())
 }
 
 #[test]
 fn conflicting_creation_into_packed_refs() -> crate::Result {
-    let (_dir, store) = empty_store()?;
+    let (dir, store) = empty_store()?;
     let mut buf = TimeBuf::default();
-    store
+    let transaction = store
         .transaction()
         .packed_refs(PackedRefs::DeletionsAndNonSymbolicUpdatesRemoveLooseSourceReference(
             Box::new(EmptyCommit),
@@ -100,8 +104,18 @@ fn conflicting_creation_into_packed_refs() -> crate::Result {
             ],
             Fail::Immediately,
             Fail::Immediately,
-        )?
-        .commit(committer().to_ref(&mut buf))?;
+        );
+
+    if !case_sensitive(dir.path()) {
+        assert_eq!(
+            transaction.unwrap_err().to_string(),
+            "A lock could not be obtained for reference \"refs/A\"",
+            "packed ref updates still acquire loose locks before their CAS read"
+        );
+        return Ok(());
+    }
+
+    transaction?.commit(committer().to_ref(&mut buf))?;
 
     assert_eq!(
         store.cached_packed_buffer()?.expect("created").iter()?.count(),
@@ -117,8 +131,8 @@ fn conflicting_creation_into_packed_refs() -> crate::Result {
     assert!(store.reflog_exists("refs/A")?);
     assert!(!store.reflog_exists("refs/symbolic")?, "and they can't have reflogs");
 
-    // The following works because locks aren't actually obtained if there would be no change.
-    // Otherwise there would be a conflict on case-insensitive filesystems
+    // This works as case-sensitive filesystems can lock both paths independently.
+    let null = crate::fixture_hash_kind().null();
     store
         .transaction()
         .packed_refs(PackedRefs::DeletionsAndNonSymbolicUpdatesRemoveLooseSourceReference(
@@ -130,7 +144,7 @@ fn conflicting_creation_into_packed_refs() -> crate::Result {
                     change: Change::Update {
                         log: LogChange::default(),
                         expected: PreviousValue::Any,
-                        new: Target::Object(gix_hash::Kind::Sha1.null()),
+                        new: Target::Object(null),
                     },
                     name: "refs/a".try_into().expect("valid"),
                     deref: false,
@@ -141,7 +155,7 @@ fn conflicting_creation_into_packed_refs() -> crate::Result {
                         expected: PreviousValue::MustExistAndMatch(Target::Object(hex_to_id(
                             "e69de29bb2d1d6434b8b29ae775ad8c2e48c5391",
                         ))),
-                        new: Target::Object(gix_hash::Kind::Sha1.null()),
+                        new: Target::Object(null),
                     },
                     name: "refs/A".try_into().expect("valid"),
                     deref: false,

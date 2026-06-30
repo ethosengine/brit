@@ -1,10 +1,21 @@
-use gix_config::{lookup, File};
+use gix_config::{File, lookup};
 
 #[test]
 fn single_section() -> crate::Result {
     let config = File::try_from("[core]\na=b\nc=d")?;
     assert_eq!(config.raw_value("core.a")?.as_ref(), "b");
     assert_eq!(config.raw_value_by("core", None, "c")?.as_ref(), "d");
+    Ok(())
+}
+
+#[test]
+fn global_property_uses_empty_section_name() -> crate::Result {
+    let config = File::try_from("a=b\n[core]\na=c")?;
+    assert_eq!(
+        config.raw_value_by("", None, "a").unwrap_err().to_string(),
+        "The requested section does not exist",
+        "these are not readable because the supporting this adds a lot of complexity"
+    );
     Ok(())
 }
 

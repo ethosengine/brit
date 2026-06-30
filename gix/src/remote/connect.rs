@@ -3,11 +3,11 @@
 use std::borrow::Cow;
 
 #[cfg(feature = "async-network-client")]
-use gix_transport::client::async_io::{connect, Transport};
+use gix_transport::client::async_io::{Transport, connect};
 #[cfg(feature = "blocking-network-client")]
-use gix_transport::client::blocking_io::{connect, Transport};
+use gix_transport::client::blocking_io::{Transport, connect};
 
-use crate::{config::tree::Protocol, remote::Connection, Remote};
+use crate::{Remote, config::tree::Protocol, remote::Connection};
 
 mod error {
     use super::connect;
@@ -58,7 +58,7 @@ impl<'repo> Remote<'repo> {
     ///
     /// Note that this method expects the `transport` to be created by the user, which would involve the [`url()`](Self::url()).
     /// It's meant to be used when async operation is needed with runtimes of the user's choice.
-    pub fn to_connection_with_transport<T>(&self, transport: T) -> Connection<'_, 'repo, T>
+    pub fn to_connection_with_transport<T>(&self, transport: T) -> Connection<'_, 'static, 'repo, T>
     where
         T: Transport,
     {
@@ -86,7 +86,7 @@ impl<'repo> Remote<'repo> {
     pub async fn connect(
         &self,
         direction: crate::remote::Direction,
-    ) -> Result<Connection<'_, 'repo, Box<dyn Transport + Send>>, Error> {
+    ) -> Result<Connection<'_, 'static, 'repo, Box<dyn Transport + Send>>, Error> {
         let (url, version) = self.sanitized_url_and_version(direction)?;
         #[cfg(feature = "blocking-network-client")]
         let scheme_is_ssh = url.scheme == gix_url::Scheme::Ssh;

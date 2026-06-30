@@ -16,7 +16,7 @@ mod blocking_and_async_io {
 
     use gix::{
         config::tree::Protocol,
-        remote::{fetch, fetch::Status, Direction::Fetch},
+        remote::{Direction::Fetch, fetch, fetch::Status},
     };
     use gix_features::progress;
     use gix_protocol::maybe_async;
@@ -83,6 +83,27 @@ mod blocking_and_async_io {
 
     pub(crate) fn repo_rw(name: &str) -> (gix::Repository, gix_testtools::tempfile::TempDir) {
         try_repo_rw(name).unwrap()
+    }
+
+    fn commit_empty(repo: &gix::Repository, message: &str) -> crate::Result<gix::ObjectId> {
+        Ok(repo
+            .commit(
+                "HEAD",
+                message,
+                gix::hash::ObjectId::empty_tree(repo.object_hash()),
+                gix::commit::NO_PARENT_IDS,
+            )?
+            .detach())
+    }
+
+    fn init_repo(path: &std::path::Path) -> crate::Result<gix::Repository> {
+        Ok(gix::ThreadSafeRepository::init_opts(
+            path,
+            gix::create::Kind::WithWorktree,
+            gix::create::Options::default(),
+            crate::restricted(),
+        )?
+        .to_thread_local())
     }
 
     fn shallow_ids(repo: &gix::Repository, expected: &'static str) -> crate::Result<Vec<gix::ObjectId>> {
@@ -183,9 +204,10 @@ mod blocking_and_async_io {
                 {
                     Ok(out) => check_fetch_output(&local_repo, out, expected_object_count)?,
                     Err(err) => {
-                        assert!(err
-                            .to_string()
-                            .starts_with("The slotmap turned out to be too small with "));
+                        assert!(
+                            err.to_string()
+                                .starts_with("The slotmap turned out to be too small with ")
+                        );
                         // But opening a new repo will always be able to read all objects
                         // as it dynamically sizes the otherwise static slotmap.
                         let local_repo = gix::open_opts(
@@ -272,6 +294,59 @@ mod blocking_and_async_io {
             }
             _ => unreachable!("we get a pack as alternates are unrelated"),
         }
+        Ok(())
+    }
+
+    #[maybe_async::test(
+        feature = "blocking-network-client",
+        async(feature = "async-network-client-async-std", async_std::test)
+    )]
+    async fn local_transport_fetches_head_against_remote_refs() -> crate::Result {
+        let remote_dir = TempDir::new()?;
+        let remote_repo = init_repo(remote_dir.path())?;
+        let remote_main = commit_empty(&remote_repo, "remote-main")?;
+
+        let local_dir = TempDir::new()?;
+        let local_repo = init_repo(local_dir.path())?;
+        let local_main = commit_empty(&local_repo, "local-main")?;
+        assert_ne!(
+            remote_main, local_main,
+            "the regression requires matching refnames to resolve to different objects locally and remotely"
+        );
+
+        let daemon = spawn_git_daemon_if_async(remote_repo.workdir().expect("non-bare"))?;
+        let mut remote = into_daemon_remote_if_async(
+            local_repo
+                .remote_at(remote_repo.workdir().expect("non-bare"))?
+                .with_fetch_tags(fetch::Tags::None),
+            daemon.as_ref(),
+            None,
+        );
+        remote.replace_refspecs(Some("+HEAD:refs/test/repo"), Fetch)?;
+
+        let outcome = remote
+            .connect(Fetch)
+            .await?
+            .prepare_fetch(gix::progress::Discard, Default::default())
+            .await?
+            .receive(gix::progress::Discard, &AtomicBool::default())
+            .await?;
+
+        assert!(
+            matches!(outcome.status, Status::Change { .. }),
+            "the remote object is missing locally and must be fetched"
+        );
+        let fetched = local_repo.find_reference("refs/test/repo")?;
+        assert_eq!(
+            fetched.target().try_id(),
+            Some(remote_main.as_ref()),
+            "HEAD must resolve through the remote's symbolic target, not through the local ref with the same name"
+        );
+        assert_eq!(
+            local_repo.find_reference("refs/heads/main")?.id(),
+            local_main,
+            "the local HEAD branch remains distinct from the fetched remote HEAD"
+        );
         Ok(())
     }
 
@@ -510,14 +585,22 @@ mod blocking_and_async_io {
                         .await?;
 
                     match res.status {
-                    fetch::Status::NoPackReceived { update_refs, negotiate: _, dry_run } => {
-                        assert_eq!(update_refs.edits.len(), expected_ref_count, "{shallow_args:?}|{fetch_tags:?}");
-                        assert!(!dry_run, "we actually perform the operation");
-                    },
-                    _ => unreachable!(
-                        "{shallow_args:?}|{fetch_tags:?}: default negotiation is able to realize nothing is required and doesn't get to receiving a pack"
-                    ),
-                }
+                        fetch::Status::NoPackReceived {
+                            update_refs,
+                            negotiate: _,
+                            dry_run,
+                        } => {
+                            assert_eq!(
+                                update_refs.edits.len(),
+                                expected_ref_count,
+                                "{shallow_args:?}|{fetch_tags:?}"
+                            );
+                            assert!(!dry_run, "we actually perform the operation");
+                        }
+                        _ => unreachable!(
+                            "{shallow_args:?}|{fetch_tags:?}: default negotiation is able to realize nothing is required and doesn't get to receiving a pack"
+                        ),
+                    }
                 }
             }
         }
@@ -568,16 +651,43 @@ mod blocking_and_async_io {
                 .await?;
 
             match res.status {
-                gix::remote::fetch::Status::Change { write_pack_bundle, update_refs, negotiate } => {
+                gix::remote::fetch::Status::Change {
+                    write_pack_bundle,
+                    update_refs,
+                    negotiate,
+                } => {
                     assert_eq!(negotiate.rounds.len(), 1);
-                    assert_eq!(write_pack_bundle.index.data_hash, hex_to_id(expected_data_hash), );
-                    assert_eq!(write_pack_bundle.index.num_objects, 3 + num_objects_offset, "{fetch_tags:?}");
-                    assert!(write_pack_bundle.data_path.as_deref().is_some_and(std::path::Path::is_file));
-                    assert!(write_pack_bundle.index_path.as_deref().is_some_and(std::path::Path::is_file));
+                    assert_eq!(write_pack_bundle.index.data_hash, hex_to_id(expected_data_hash),);
+                    assert_eq!(
+                        write_pack_bundle.index.num_objects,
+                        3 + num_objects_offset,
+                        "{fetch_tags:?}"
+                    );
+                    assert!(
+                        write_pack_bundle
+                            .data_path
+                            .as_deref()
+                            .is_some_and(std::path::Path::is_file)
+                    );
+                    assert!(
+                        write_pack_bundle
+                            .index_path
+                            .as_deref()
+                            .is_some_and(std::path::Path::is_file)
+                    );
                     assert_eq!(update_refs.edits.len(), expected_ref_edits, "{fetch_tags:?}");
-                    assert_eq!(write_pack_bundle.keep_path.as_deref().is_some_and(std::path::Path::is_file), update_refs.edits.is_empty(),".keep are kept if there was no edit to prevent `git gc` from clearing out the pack as it's not referred to necessarily");
-                },
-                _ => unreachable!("Naive negotiation sends the same have and wants, resulting in an empty pack (technically no change, but we don't detect it) - empty packs are fine")
+                    assert_eq!(
+                        write_pack_bundle
+                            .keep_path
+                            .as_deref()
+                            .is_some_and(std::path::Path::is_file),
+                        update_refs.edits.is_empty(),
+                        ".keep are kept if there was no edit to prevent `git gc` from clearing out the pack as it's not referred to necessarily"
+                    );
+                }
+                _ => unreachable!(
+                    "Naive negotiation sends the same have and wants, resulting in an empty pack (technically no change, but we don't detect it) - empty packs are fine"
+                ),
             }
         }
         Ok(())
@@ -687,7 +797,10 @@ mod blocking_and_async_io {
                         assert_eq!(negotiate.rounds.len(), 1);
                         assert_eq!(write_pack_bundle.pack_version, gix::odb::pack::data::Version::V2);
                         assert_eq!(write_pack_bundle.object_hash, repo.object_hash());
-                        assert_eq!(write_pack_bundle.index.num_objects, 4, "{dry_run}: this value is 4 when git does it with 'consecutive' negotiation style, but could be 33 if completely naive.");
+                        assert_eq!(
+                            write_pack_bundle.index.num_objects, 4,
+                            "{dry_run}: this value is 4 when git does it with 'consecutive' negotiation style, but could be 33 if completely naive."
+                        );
                         assert_eq!(
                             write_pack_bundle.index.index_version,
                             gix::odb::pack::index::Version::V2

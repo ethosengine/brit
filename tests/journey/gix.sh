@@ -107,20 +107,20 @@ title "gix (with repository)"
         )
         fi
 
-        # for some reason, on CI the daemon always shuts down before we can connect,
-        # or isn't actually ready despite having accepted the first connection already.
+        # Use a wrapper to bind to an ephemeral port and only continue once the
+        # daemon can serve a real Git request.
         (with "git:// protocol"
           launch-git-daemon
           (with "version 1"
             it "generates the correct output" && {
               WITH_SNAPSHOT="$snapshot/file-v-any" \
-              expect_run $SUCCESSFULLY "$exe_plumbing" --no-verbose --config protocol.version=1 remote --name git://localhost/ refs
+              expect_run $SUCCESSFULLY "$exe_plumbing" --no-verbose --config protocol.version=1 remote --name "$git_daemon_url" refs
             }
           )
           (with "version 2"
             it "generates the correct output" && {
               WITH_SNAPSHOT="$snapshot/file-v-any" \
-              expect_run $SUCCESSFULLY "$exe_plumbing" --no-verbose -c protocol.version=2 remote -n git://localhost/ refs
+              expect_run $SUCCESSFULLY "$exe_plumbing" --no-verbose -c protocol.version=2 remote -n "$git_daemon_url" refs
             }
           )
         )
@@ -157,6 +157,37 @@ title "gix (with repository)"
       )
     )
   )
+  if test "$kind" = "max" || test "$kind" = "max-pure"; then
+  title "gix fetch"
+  (when "running 'fetch'"
+    snapshot="$snapshot/fetch"
+    (with "a SHA-256 repository"
+      (sandbox
+        git init --object-format=sha256 -q remote
+        (
+          cd remote
+          git checkout -q -b main
+          echo first >file
+          git add file
+          git commit -q -m "first"
+        )
+        git clone -q "$PWD/remote" clone
+        (
+          cd remote
+          echo second >file
+          git commit -q -am "second"
+        )
+
+        it "fetches from origin" && {
+          expect_run_sh $SUCCESSFULLY "cd clone && \"$exe_plumbing\" --no-verbose fetch"
+        }
+        it "updates the remote-tracking branch" && {
+          expect_run_sh $SUCCESSFULLY 'test "$(git -C clone rev-parse refs/remotes/origin/main)" = "$(git -C remote rev-parse refs/heads/main)"'
+        }
+      )
+    )
+  )
+  fi
 )
 
 title "gix attributes"
@@ -285,13 +316,13 @@ title "gix commit-graph"
               (with "no wanted refs"
                 it "generates the correct output" && {
                   WITH_SNAPSHOT="$snapshot/file-v-any-no-output" \
-                  expect_run $SUCCESSFULLY "$exe_plumbing" --no-verbose free pack receive -p 1 git://localhost/
+                  expect_run $SUCCESSFULLY "$exe_plumbing" --no-verbose free pack receive -p 1 "$git_daemon_url"
                 }
               )
               (with "wanted refs"
                 it "generates the correct output" && {
                   WITH_SNAPSHOT="$snapshot/file-v-any-no-output-wanted-ref-p1" \
-                  expect_run $WITH_FAILURE "$exe_plumbing" --no-verbose free pack receive -p 1 git://localhost/ -r =refs/heads/main
+                  expect_run $WITH_FAILURE "$exe_plumbing" --no-verbose free pack receive -p 1 "$git_daemon_url" -r =refs/heads/main
                 }
               )
             )
@@ -299,7 +330,7 @@ title "gix commit-graph"
               mkdir out
               it "generates the correct output" && {
                 WITH_SNAPSHOT="$snapshot/file-v-any-with-output" \
-                expect_run $SUCCESSFULLY "$exe_plumbing" --no-verbose free pack receive -p 1 git://localhost/ out/
+                expect_run $SUCCESSFULLY "$exe_plumbing" --no-verbose free pack receive -p 1 "$git_daemon_url" out/
               }
             )
           )
@@ -308,18 +339,18 @@ title "gix commit-graph"
               (with "NO wanted refs"
                 it "generates the correct output" && {
                   WITH_SNAPSHOT="$snapshot/file-v-any-no-output-p2" \
-                  expect_run $SUCCESSFULLY "$exe_plumbing" --no-verbose free pack receive -p 2 git://localhost/
+                  expect_run $SUCCESSFULLY "$exe_plumbing" --no-verbose free pack receive -p 2 "$git_daemon_url"
                 }
               )
               (with "wanted refs"
                 it "generates the correct output" && {
                   WITH_SNAPSHOT="$snapshot/file-v-any-no-output-single-ref" \
-                  expect_run $SUCCESSFULLY "$exe_plumbing" --no-verbose free pack receive -p 2 git://localhost/ -r refs/heads/main
+                  expect_run $SUCCESSFULLY "$exe_plumbing" --no-verbose free pack receive -p 2 "$git_daemon_url" -r refs/heads/main
                 }
                 (when "ref does not exist"
                   it "fails with a detailed error message including what the server said" && {
                     WITH_SNAPSHOT="$snapshot/file-v-any-no-output-non-existing-single-ref" \
-                    expect_run $WITH_FAILURE "$exe_plumbing" --no-verbose free pack receive -p 2 git://localhost/ -r refs/heads/does-not-exist
+                    expect_run $WITH_FAILURE "$exe_plumbing" --no-verbose free pack receive -p 2 "$git_daemon_url" -r refs/heads/does-not-exist
                   }
                 )
               )
@@ -327,7 +358,7 @@ title "gix commit-graph"
             (with "output directory"
               it "generates the correct output" && {
                 WITH_SNAPSHOT="$snapshot/file-v-any-with-output-p2" \
-                expect_run $SUCCESSFULLY "$exe_plumbing" --no-verbose free pack receive git://localhost/ out/
+                expect_run $SUCCESSFULLY "$exe_plumbing" --no-verbose free pack receive "$git_daemon_url" out/
               }
             )
           )
@@ -386,6 +417,28 @@ title "gix commit-graph"
     if test "$kind" = "max" || test "$kind" = "max-pure"; then
     (with "the 'clone' sub-command"
         snapshot="$snapshot/clone"
+        (with "a SHA-256 remote"
+          (sandbox
+            git init --object-format=sha256 -q remote
+            (
+              cd remote
+              git checkout -q -b main
+              echo first >file
+              git add file
+              git commit -q -m "first"
+            )
+
+            it "adopts the remote object format" && {
+              expect_run $SUCCESSFULLY "$exe_plumbing" clone "$PWD/remote" clone
+            }
+            it "persists the adopted object format" && {
+              expect_run_sh $SUCCESSFULLY 'test "$(git -C clone config --get extensions.objectformat)" = sha256'
+            }
+            it "persists the origin remote" && {
+              expect_run_sh $SUCCESSFULLY 'test -n "$(git -C clone config --get remote.origin.url)"'
+            }
+          )
+        )
         (with "an ambiguous ssh username which could be mistaken for an argument"
           snapshot="$snapshot/fail-ambiguous-username"
           (with "explicit ssh (true url with scheme)"

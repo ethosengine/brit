@@ -1,15 +1,15 @@
 use gix_date::parse::TimeBuf;
 use gix_lock::acquire::Fail;
 use gix_ref::{
+    Target,
     file::transaction::PackedRefs,
     store::WriteReflog,
     transaction::{Change, LogChange, PreviousValue, RefEdit},
-    Target,
 };
 
 use crate::file::{
-    transaction::prepare_and_commit::{committer, create_at},
     EmptyCommit,
+    transaction::prepare_and_commit::{committer, create_at},
 };
 
 mod access;
@@ -29,6 +29,7 @@ fn precompose_unicode_journey() -> crate::Result {
         root,
         gix_ref::store::init::Options {
             write_reflog: WriteReflog::Always,
+            object_hash: crate::fixture_hash_kind(),
             precompose_unicode: false,
             ..Default::default()
         },
@@ -57,6 +58,7 @@ fn precompose_unicode_journey() -> crate::Result {
         tmp.path().join(precomposed_a), // it's important that root paths are also precomposed then.
         gix_ref::store::init::Options {
             write_reflog: WriteReflog::Always,
+            object_hash: crate::fixture_hash_kind(),
             precompose_unicode: true,
             ..Default::default()
         },
@@ -94,7 +96,13 @@ fn precompose_unicode_journey() -> crate::Result {
     );
 
     assert_eq!(
-        store_decomposed.iter()?.all()?.nth(1).expect("two refs")?.name.shorten(),
+        store_decomposed
+            .iter()?
+            .all()?
+            .nth(1)
+            .expect("two refs")?
+            .name
+            .shorten(),
         decomposed_u,
         "the ref name isn't transformed in any way and left decomposed on disk as well, making sure internal loose/packed-ref interactions work reliably"
     );

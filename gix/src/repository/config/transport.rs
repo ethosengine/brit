@@ -57,7 +57,7 @@ impl crate::Repository {
                         config,
                         config::{
                             cache::util::ApplyLeniency,
-                            tree::{gitoxide, Key, Remote},
+                            tree::{Key, Remote, gitoxide},
                         },
                     };
                     fn try_cow_to_string(
@@ -388,7 +388,7 @@ impl crate::Repository {
                                 trusted_only,
                                 lenient,
                             )
-                            .map(|max| min.and_then(|min| max.map(|max| (min, max))))
+                            .map(|max| min.zip(max))
                         })?;
                         if let Some((min, max)) = min_max {
                             let v = opts.ssl_version.get_or_insert(SslVersionRangeInclusive {

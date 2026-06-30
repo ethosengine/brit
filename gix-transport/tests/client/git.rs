@@ -19,9 +19,8 @@ use gix_transport::client::{
     git::blocking_io::Connection,
 };
 use gix_transport::{
-    client,
-    client::{git, TransportWithoutIO},
-    Protocol, Service,
+    Protocol, Service, client,
+    client::{TransportWithoutIO, git},
 };
 
 use crate::fixture_bytes;
@@ -203,11 +202,12 @@ async fn push_v1_simulated() -> crate::Result {
             &["000eunpack ok", "0017ok refs/heads/main", "0000"],
             "this seems to be a packetline encoding within a packetline encoding! Including a flush package. Strange, but it's the real deal."
         );
-        let expected_progress = &["Resolving deltas:   0% (0/2)\r", 
+        let expected_progress = &[
+            "Resolving deltas:   0% (0/2)\r",
             "Resolving deltas:  50% (1/2)\r",
-            "Resolving deltas: 100% (2/2)\r", 
-            "Resolving deltas: 100% (2/2), completed with 2 local objects.", 
-            "\nGitHub found 1 vulnerability on the-lean-crate/criner's default branch (1 high). To find out more, visit:\n     https://github.com/the-lean-crate/criner/security/dependabot/1\n"
+            "Resolving deltas: 100% (2/2)\r",
+            "Resolving deltas: 100% (2/2), completed with 2 local objects.",
+            "\nGitHub found 1 vulnerability on the-lean-crate/criner's default branch (1 high). To find out more, visit:\n     https://github.com/the-lean-crate/criner/security/dependabot/1\n",
         ];
         assert_eq!(
             messages.lock().expect("no poison").as_slice(),
@@ -449,6 +449,45 @@ async fn handshake_v2_and_request_inner() -> crate::Result {
 0000"
             .as_bstr(),
         "it sends the correct request, including the adjusted version"
+    );
+    Ok(())
+}
+
+#[maybe_async::test(feature = "blocking-client", async(feature = "async-client", async_std::test))]
+async fn handshake_v2_with_sha256_object_format() -> crate::Result {
+    let mut out = Vec::new();
+    let input = fixture_bytes("v2/handshake-sha256.response");
+    let mut c = Connection::new(
+        input.as_slice(),
+        &mut out,
+        Protocol::V2,
+        "/bar.git",
+        Some(("example.org", None)),
+        git::ConnectMode::Daemon,
+        false,
+    );
+    let res = c.handshake(Service::UploadPack, &[]).await?;
+    assert_eq!(res.actual_protocol, Protocol::V2);
+    assert!(
+        res.refs.is_none(),
+        "V2 needs a separate trip for getting refs (with additional capabilities)"
+    );
+    assert_eq!(
+        res.capabilities
+            .iter()
+            .map(|c| (c.name().to_owned(), c.value().map(ToOwned::to_owned)))
+            .collect::<Vec<_>>(),
+        [
+            ("agent", Some("git/2.40.0")),
+            ("ls-refs", None),
+            ("fetch", Some("shallow")),
+            ("server-option", None),
+            ("object-format", Some("sha256")),
+        ]
+        .iter()
+        .map(|(k, v)| (k.as_bytes().into(), v.map(|v| v.as_bytes().into())))
+        .collect::<Vec<_>>(),
+        "the sha256 object-format advertised by the server is surfaced from the V2 handshake"
     );
     Ok(())
 }

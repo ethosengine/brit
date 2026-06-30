@@ -22,7 +22,7 @@ mod blame;
 mod cache;
 #[cfg(feature = "worktree-mutation")]
 mod checkout;
-pub(crate) mod config;
+mod config;
 
 ///
 #[cfg(feature = "blob-diff")]
@@ -59,28 +59,6 @@ mod state;
 mod submodule;
 mod thread_safe;
 mod worktree;
-
-///
-#[cfg(feature = "blocking-network-client")]
-pub mod push {
-    /// The error returned by [`Repository::push()`](crate::Repository::push()).
-    #[derive(Debug, thiserror::Error)]
-    #[allow(missing_docs)]
-    pub enum Error {
-        #[error("find remote")]
-        FindRemote(#[from] crate::remote::find::existing::Error),
-        #[error("parse remote URL")]
-        UrlParse(#[from] gix_url::parse::Error),
-        #[error("open anonymous remote from URL")]
-        RemoteInit(#[from] crate::remote::init::Error),
-        #[error("connect to remote")]
-        Connect(#[from] crate::remote::connect::Error),
-        #[error("prepare push (handshake)")]
-        Prepare(#[source] crate::remote::push::Error),
-        #[error("transmit pack")]
-        Transmit(#[source] crate::remote::push::Error),
-    }
-}
 
 ///
 mod new_commit {

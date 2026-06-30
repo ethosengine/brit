@@ -1,4 +1,4 @@
-use std::{collections::HashMap, path::PathBuf, sync::atomic::AtomicBool};
+use std::{path::PathBuf, sync::atomic::AtomicBool};
 
 use gix_hash::ObjectId;
 use gix_object::WriteTo;
@@ -73,11 +73,24 @@ pub fn fixture(path: &str) -> PathBuf {
 }
 
 pub fn fixture_hash_kind() -> gix_hash::Kind {
-    gix_testtools::hash_kind_from_env().unwrap_or_default()
+    gix_testtools::object_hash()
 }
 
 fn fixture_bytes(path: &str) -> Vec<u8> {
     fixup(std::fs::read(fixture(path)).unwrap())
+}
+
+pub(crate) fn fuzz_artifact_paths(target: &str) -> Vec<PathBuf> {
+    let mut paths = std::fs::read_dir(
+        PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+            .join("fuzz/artifacts")
+            .join(target),
+    )
+    .expect("artifact directory exists")
+    .filter_map(|entry| entry.ok().map(|entry| entry.path()))
+    .collect::<Vec<_>>();
+    paths.sort();
+    paths
 }
 
 fn fixture_name(kind: &str, path: &str) -> Vec<u8> {
@@ -86,18 +99,35 @@ fn fixture_name(kind: &str, path: &str) -> Vec<u8> {
 
 /// Return the object id expected in fixture assertions for the active fixture hash kind.
 ///
-/// Tree fixtures in this test module are authored as SHA-1 data and are rewritten on demand for
-/// SHA-256 runs. This helper mirrors that rewrite on the expectation side so tree parsing tests can
-/// use one set of source ids for both hash kinds.
+/// Object fixtures in this test module are authored as SHA-1 data and are rewritten on demand for
+/// SHA-256 runs. This helper mirrors that rewrite on the expectation side so parsing tests can use
+/// one set of source ids for both hash kinds.
 pub fn fixture_oid(hex: &str) -> ObjectId {
     let oid = hex_to_id(hex);
-    match fixture_hash_kind() {
+    translate_fixture_oid(oid, fixture_hash_kind())
+}
+
+fn translate_fixture_oid(oid: ObjectId, kind: gix_hash::Kind) -> ObjectId {
+    match kind {
         gix_hash::Kind::Sha1 => oid,
         kind => {
             let mut hasher = gix_hash::hasher(kind);
             hasher.update(oid.as_bytes());
             hasher.try_finalize().expect("sha256 hashing is available for tests")
         }
+    }
+}
+
+/// Load an object fixture and, if needed, rewrite its SHA-1 object ids for the active fixture hash kind.
+pub fn object_fixture(path: &str) -> Result<Vec<u8>> {
+    if let Some(path) = path.strip_prefix("tree/") {
+        tree_fixture(path)
+    } else if let Some(path) = path.strip_prefix("commit/") {
+        commit_fixture(path)
+    } else if let Some(path) = path.strip_prefix("tag/") {
+        tag_fixture(path)
+    } else {
+        Ok(fixture_bytes(path))
     }
 }
 
@@ -113,14 +143,48 @@ pub fn tree_fixture(path: &str) -> Result<Vec<u8>> {
         kind => {
             let mut tree: gix_object::Tree = gix_object::TreeRef::from_bytes(&fixture, gix_hash::Kind::Sha1)?.into();
             for entry in &mut tree.entries {
-                let mut hasher = gix_hash::hasher(kind);
-                hasher.update(entry.oid.as_bytes());
-                entry.oid = hasher.try_finalize()?;
+                entry.oid = translate_fixture_oid(entry.oid, kind);
             }
             let mut out = Vec::with_capacity(
                 fixture.len() + tree.entries.len() * (kind.len_in_bytes() - gix_hash::Kind::Sha1.len_in_bytes()),
             );
             tree.write_to(&mut out)?;
+            Ok(out)
+        }
+    }
+}
+
+fn commit_fixture(path: &str) -> Result<Vec<u8>> {
+    let fixture = fixture_name("commit", path);
+    match fixture_hash_kind() {
+        gix_hash::Kind::Sha1 => Ok(fixture),
+        kind => {
+            let mut commit = gix_object::CommitRef::from_bytes(&fixture, gix_hash::Kind::Sha1)?.into_owned()?;
+            commit.tree = translate_fixture_oid(commit.tree, kind);
+            for parent in &mut commit.parents {
+                *parent = translate_fixture_oid(*parent, kind);
+            }
+
+            let mut out = Vec::with_capacity(
+                fixture.len()
+                    + (1 + commit.parents.len()) * (kind.len_in_bytes() - gix_hash::Kind::Sha1.len_in_bytes()),
+            );
+            commit.write_to(&mut out)?;
+            Ok(out)
+        }
+    }
+}
+
+fn tag_fixture(path: &str) -> Result<Vec<u8>> {
+    let fixture = fixture_name("tag", path);
+    match fixture_hash_kind() {
+        gix_hash::Kind::Sha1 => Ok(fixture),
+        kind => {
+            let mut tag = gix_object::TagRef::from_bytes(&fixture, gix_hash::Kind::Sha1)?.into_owned()?;
+            tag.target = translate_fixture_oid(tag.target, kind);
+
+            let mut out = Vec::with_capacity(fixture.len() + kind.len_in_bytes() - gix_hash::Kind::Sha1.len_in_bytes());
+            tag.write_to(&mut out)?;
             Ok(out)
         }
     }
@@ -136,39 +200,8 @@ pub fn generated_tree_root_id() -> Result<ObjectId> {
     )?)
 }
 
-/// Normalize rendered tree snapshots so one inline `insta` expectation can be reused for
-/// SHA-1 and SHA-256 fixtures.
-///
-/// Every object id whose hex length matches one of [`gix_hash::Kind::all()`] is rewritten to a
-/// stable `Oid(<n>)` placeholder in first-seen order while the tree rendering itself remains
-/// unchanged.
 pub fn normalize_tree_snapshot(input: &str) -> String {
-    let mut out = String::with_capacity(input.len());
-    let mut seen = HashMap::<&str, usize>::new();
-    let mut next_id = 1usize;
-    let mut cursor = input;
-
-    while !cursor.is_empty() {
-        let hex_len = cursor.bytes().take_while(u8::is_ascii_hexdigit).count();
-        if hex_len >= 40 && gix_hash::Kind::all().iter().any(|kind| kind.len_in_hex() == hex_len) {
-            let oid = &cursor[..hex_len];
-            let normalized = *seen.entry(oid).or_insert_with(|| {
-                let current = next_id;
-                next_id += 1;
-                current
-            });
-            out.push_str("Oid(");
-            out.push_str(&normalized.to_string());
-            out.push(')');
-            cursor = &cursor[hex_len..];
-            continue;
-        }
-
-        let ch = cursor.chars().next().expect("not empty");
-        out.push(ch);
-        cursor = &cursor[ch.len_utf8()..];
-    }
-    out
+    gix_testtools::normalize_hashes(input).0
 }
 
 #[test]

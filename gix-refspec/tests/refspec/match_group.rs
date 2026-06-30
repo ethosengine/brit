@@ -4,12 +4,12 @@ mod single {
     use crate::matching::baseline;
 
     fn test_hashes() -> (String, String) {
-        let annotated_tag = match gix_testtools::hash_kind_from_env().unwrap_or_default() {
+        let annotated_tag = match gix_testtools::object_hash() {
             gix_hash::Kind::Sha1 => "78b1c1be9421b33a49a7a8176d93eeeafa112da1",
             gix_hash::Kind::Sha256 => "b071221ea854da2958fba3a37527ca5cf32c4ebcd71ab0b68b6b8f10f04e93ad",
             _ => unimplemented!(),
         };
-        let initial_commit = match gix_testtools::hash_kind_from_env().unwrap_or_default() {
+        let initial_commit = match gix_testtools::object_hash() {
             gix_hash::Kind::Sha1 => "9d2fab1a0ba3585d0bc50922bfdd04ebb59361df",
             gix_hash::Kind::Sha256 => "ac050883b75422e0d03bfee760c591b292cbc10cee8ad934480ea5fb2ebc44fe",
             _ => unimplemented!(),
@@ -65,7 +65,11 @@ mod single {
 }
 
 mod multiple {
+    use bstr::BString;
+    use gix_hash::ObjectId;
     use gix_refspec::{
+        MatchGroup,
+        match_group::Item,
         match_group::validate::Fix,
         parse::{Error, Operation},
     };
@@ -108,6 +112,45 @@ mod multiple {
         );
         baseline::agrees_with_fetch_specs(["^refs/heads/main", "refs/heads/*:refs/remotes/origin/*"]);
         baseline::agrees_with_fetch_specs(["refs/heads/*:refs/remotes/origin/*", "^refs/heads/main"]);
+        baseline::agrees_with_fetch_specs(["refs/heads/*:refs/remotes/origin/*", "^refs/heads/*-deploy"]);
+    }
+
+    #[test]
+    fn reverse_fetch_mapping_honors_negative_source_patterns() {
+        let specs = ["refs/heads/*:refs/remotes/origin/*", "^refs/heads/*-deploy"]
+            .into_iter()
+            .map(|spec| gix_refspec::parse(spec.into(), Operation::Fetch).expect("valid refspec"));
+        let target = ObjectId::from_hex(b"1111111111111111111111111111111111111111").expect("valid object id");
+        let refs = [
+            BString::from("refs/remotes/origin/main"),
+            BString::from("refs/remotes/origin/foo-deploy"),
+        ];
+        let items: Vec<_> = refs
+            .iter()
+            .map(|name| Item {
+                full_ref_name: name.as_ref(),
+                target: &target,
+                object: None,
+            })
+            .collect();
+
+        let outcome = MatchGroup::from_fetch_specs(specs).match_rhs(items.iter().copied());
+        insta::assert_debug_snapshot!(outcome.mappings, @r#"
+        [
+            Mapping {
+                item_index: Some(
+                    0,
+                ),
+                lhs: FullName(
+                    "refs/heads/main",
+                ),
+                rhs: Some(
+                    "refs/remotes/origin/main",
+                ),
+                spec_index: 0,
+            },
+        ]
+        "#);
     }
 
     #[test]
@@ -205,7 +248,7 @@ mod multiple {
 mod complex_globs {
     use bstr::BString;
     use gix_hash::ObjectId;
-    use gix_refspec::{parse::Operation, MatchGroup};
+    use gix_refspec::{MatchGroup, parse::Operation};
 
     #[test]
     fn one_sided_complex_glob_patterns_can_be_parsed() {

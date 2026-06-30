@@ -1,8 +1,8 @@
 use std::{io::Read, path::PathBuf};
 
 use crate::{
-    store_impl::{file, file::log},
     FullNameRef,
+    store_impl::{file, file::log},
 };
 
 impl file::Store {
@@ -91,7 +91,7 @@ pub mod create_or_update {
         path::{Path, PathBuf},
     };
 
-    use gix_hash::{oid, ObjectId};
+    use gix_hash::{ObjectId, oid};
     use gix_object::bstr::BStr;
 
     use crate::store_impl::{file, file::WriteReflog};
@@ -153,7 +153,7 @@ pub mod create_or_update {
                     if let Some(mut file) = file_for_appending {
                         let committer = committer.ok_or(Error::MissingCommitter)?;
                         write!(file, "{} {} ", previous_oid.unwrap_or_else(|| new.kind().null()), new)
-                            .and_then(|_| committer.write_to(&mut file))
+                            .and_then(|_| committer.trim().write_to(&mut file))
                             .and_then(|_| {
                                 if !message.is_empty() {
                                     writeln!(file, "\t{message}")

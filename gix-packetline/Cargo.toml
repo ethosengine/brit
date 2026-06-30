@@ -2,14 +2,14 @@ lints.workspace = true
 
 [package]
 name = "gix-packetline"
-version = "0.21.2"
+version = "0.21.5"
 repository = "https://github.com/GitoxideLabs/gitoxide"
 license = "MIT OR Apache-2.0"
 description = "A crate of the gitoxide project implementing the pkt-line serialization format"
 authors = ["Sebastian Thiel <sebastian.thiel@icloud.com>"]
-edition = "2021"
+edition = "2024"
 include = ["/src/**/*", "/LICENSE-*"]
-rust-version = "1.82"
+rust-version = "1.85"
 
 [lib]
 doctest = true
@@ -30,16 +30,16 @@ serde = ["dep:serde", "bstr/serde", "faster-hex/serde"]
 
 [[test]]
 name = "async-packetline"
-path = "tests/async-packetline.rs"
+path = "tests/packetline/main-async.rs"
 required-features = ["async-io"]
 
 [[test]]
 name = "blocking-packetline"
-path = "tests/blocking-packetline.rs"
+path = "tests/packetline/main-blocking.rs"
 required-features = ["blocking-io", "maybe-async/is_sync"]
 
 [dependencies]
-gix-trace = { version = "^0.1.18", path = "../gix-trace" }
+gix-trace = { version = "^0.1.20", path = "../gix-trace" }
 
 serde = { version = "1.0.114", optional = true, default-features = false, features = ["std", "derive"] }
 thiserror = "2.0.18"
@@ -57,7 +57,7 @@ gix-odb = { path = "../gix-odb" }
 gix-pack-for-configuration = { package = "gix-pack", path = "../gix-pack", default-features = false, features = ["streaming-input"] }
 gix-hash = { path = "../gix-hash", features = ["sha1"] }
 async-std = { version = "1.9.0", features = ["attributes"] }
-maybe-async = "0.2.6"
+maybe-async = "0.2.11"
 
 [package.metadata.docs.rs]
 features = ["document-features", "blocking-io", "serde"]

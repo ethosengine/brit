@@ -1,14 +1,14 @@
 use std::{borrow::Cow, io::Write};
 
 use gix_ref::{
+    Category, FullNameRef, PartialName,
     transaction::{LogChange, RefLog},
-    FullNameRef, PartialName,
 };
 
 use super::Error;
 use crate::{
-    bstr::{BStr, BString, ByteSlice},
     Repository,
+    bstr::{BStr, BString, ByteSlice},
 };
 
 enum WriteMode {
@@ -16,43 +16,73 @@ enum WriteMode {
     Append,
 }
 
-/// Persist the provided remote into the repository's local config, optionally adding partial clone settings.
 #[allow(clippy::result_large_err)]
-pub fn write_remote_to_local_config_file(
+pub fn append_remote_to_local_config_file(
     remote: &mut crate::Remote<'_>,
     remote_name: BString,
-    filter: Option<&str>,
 ) -> Result<gix_config::File<'static>, Error> {
-    use gix_config::parse::section::ValueName;
-
     let mut config = gix_config::File::new(local_config_meta(remote.repo));
-    remote.save_as_to(remote_name.clone(), &mut config)?;
-
-    if let Some(filter_spec) = filter {
-        let subsection = remote_name.to_str().map_err(|err| Error::RemoteNameNotUtf8 {
-            remote_name: remote_name.clone(),
-            source: err,
-        })?;
-        let mut remote_section = config.section_mut_or_create_new("remote", Some(subsection.into()))?;
-
-        while remote_section.remove("partialclonefilter").is_some() {}
-        while remote_section.remove("promisor").is_some() {}
-
-        let partial_clone_filter = ValueName::try_from("partialclonefilter").expect("known to be valid");
-        remote_section.push(partial_clone_filter, Some(filter_spec.into()));
-
-        let promisor = ValueName::try_from("promisor").expect("known to be valid");
-        remote_section.push(promisor, Some("true".into()));
-
-        let mut extensions_section = config.section_mut_or_create_new("extensions", None)?;
-        while extensions_section.remove("partialClone").is_some() {}
-
-        let partial_clone = ValueName::try_from("partialClone").expect("known to be valid");
-        extensions_section.push(partial_clone, Some(remote_name.as_ref()));
-    }
+    remote.save_as_to(remote_name, &mut config)?;
 
     write_to_local_config(&config, WriteMode::Append)?;
     Ok(config)
+}
+
+/// Reconfigure the freshly-initialized, still-empty repository `repo` to use `object_hash`
+/// by rewriting the object-format related entries in its local configuration file on disk,
+/// and reload the repository handle.
+///
+/// This relies on the initial reference database not having persisted any hash-format-dependent
+/// state. That is true for the current file-based ref store, but a future reftable backend must
+/// not be initialized with the wrong hash and then reused. If clone learns the remote hash only
+/// after repository creation, initialize a non-reftable reference database first, then convert it
+/// to reftable once the remote hash is known.
+///
+/// Existing local configuration, including the remote section written during clone setup,
+/// is preserved. Only local sections are written back to `.git/config`,
+///
+/// The returned repository is reopened from disk so the object hash change affects all
+/// hash-dependent state. Callers that need in-memory configuration from `repo` must
+/// transfer it to the returned handle.
+#[cfg(feature = "sha256")]
+pub(super) fn reinitialize_with_object_hash(
+    repo: &crate::Repository,
+    object_hash: gix_hash::Kind,
+) -> Result<crate::Repository, Error> {
+    use gix_config::parse::section::ValueName;
+
+    let git_dir = repo.git_dir();
+    let config_path = git_dir.join("config");
+
+    let mut config = gix_config::File::from_path_no_includes(config_path.clone(), gix_config::Source::Local)?;
+    // Mirror what `crate::create` writes at init time: only SHA-256 repositories get
+    // `repositoryformatversion = 1` along with the `objectformat` extension.
+    let is_sha256 = object_hash == gix_hash::Kind::Sha256;
+    config
+        .section_mut("core", None)
+        .expect("freshly initialized repository has a core section")
+        .set(
+            ValueName::try_from("repositoryformatversion").expect("valid"),
+            if is_sha256 { "1" } else { "0" }.into(),
+        );
+    if is_sha256 {
+        config
+            .section_mut_or_create_new("extensions", None)
+            .expect("valid section name")
+            .set(
+                ValueName::try_from("objectformat").expect("valid"),
+                object_hash.to_string().as_str().into(),
+            );
+    } else {
+        // In a freshly initialized repository, this section exists solely to carry `objectformat`.
+        config.remove_section("extensions", None);
+    }
+    let mut lock =
+        gix_lock::File::acquire_to_update_resource(&config_path, gix_lock::acquire::Fail::Immediately, None)?;
+    config.write_to_filter(&mut lock, |section| section.meta().source == gix_config::Source::Local)?;
+    lock.commit()?;
+
+    Ok(crate::ThreadSafeRepository::open_opts(git_dir, repo.options.clone())?.to_thread_local())
 }
 
 fn local_config_meta(repo: &Repository) -> gix_config::file::Metadata {
@@ -80,6 +110,11 @@ fn write_to_local_config(config: &gix_config::File<'static>, mode: WriteMode) ->
     config.write_to_filter(&mut local_config, |s| s.meta().source == gix_config::Source::Local)
 }
 
+/// Append `config` to `repo`'s in-memory resolved configuration.
+///
+/// This is used after writing clone-specific local configuration to `.git/config`,
+/// as the `repo` handle was opened before that write and won't observe it until
+/// it is either updated in memory or reopened.
 pub fn append_config_to_repo_config(repo: &mut Repository, config: gix_config::File<'static>) {
     let repo_config = gix_features::threading::OwnShared::make_mut(&mut repo.config.resolved);
     repo_config.append(config);
@@ -96,11 +131,14 @@ pub fn update_head(
     ref_name: Option<&PartialName>,
 ) -> Result<(), Error> {
     use gix_ref::{
-        transaction::{PreviousValue, RefEdit},
         Target,
+        transaction::{PreviousValue, RefEdit},
     };
     let head_info = match ref_name {
-        Some(ref_name) => Some(find_custom_refname(ref_map, ref_name)?),
+        Some(ref_name) => {
+            let (target, full_ref_name) = find_custom_refname(ref_map, ref_name)?;
+            Some((Some(target), Some(full_ref_name)))
+        }
         None => ref_map.remote_refs.iter().find_map(|r| {
             Some(match r {
                 gix_protocol::handshake::Ref::Symbolic {
@@ -213,26 +251,40 @@ pub fn update_head(
 pub(super) fn find_custom_refname<'a>(
     ref_map: &'a crate::remote::fetch::RefMap,
     ref_name: &PartialName,
-) -> Result<(Option<&'a gix_hash::oid>, Option<&'a BStr>), Error> {
+) -> Result<(&'a gix_hash::oid, &'a BStr), Error> {
     let group = gix_refspec::MatchGroup::from_fetch_specs(Some(
         gix_refspec::parse(ref_name.as_ref().as_bstr(), gix_refspec::parse::Operation::Fetch)
             .expect("partial names are valid refs"),
     ));
-    // TODO: to fix ambiguity, implement priority system
     let filtered_items: Vec<_> = ref_map
         .mappings
         .iter()
-        .filter_map(|m| {
-            m.remote
-                .as_name()
-                .and_then(|name| m.remote.as_id().map(|id| (name, id)))
-        })
+        .filter_map(|m| m.remote.as_name().zip(m.remote.as_id()))
         .map(|(full_ref_name, target)| gix_refspec::match_group::Item {
             full_ref_name,
             target,
             object: None,
         })
         .collect();
+
+    let requested_name = ref_name.as_ref().as_bstr();
+    let find_item = |name: &BStr| filtered_items.iter().find(|item| item.full_ref_name == name).copied();
+    // Preserve gix's documented full-ref support, then match git clone --branch by trying heads before tags.
+    if let Some(item) = find_item(requested_name) {
+        return Ok((item.target, item.full_ref_name));
+    }
+    if !requested_name.starts_with(b"refs/") {
+        let branch_name = Category::LocalBranch.to_full_name(requested_name)?;
+        if let Some(item) = find_item(branch_name.as_bstr()) {
+            return Ok((item.target, item.full_ref_name));
+        }
+
+        let tag_name = Category::Tag.to_full_name(requested_name)?;
+        if let Some(item) = find_item(tag_name.as_bstr()) {
+            return Ok((item.target, item.full_ref_name));
+        }
+    }
+
     let res = group.match_lhs(filtered_items.iter().copied());
     match res.mappings.len() {
         0 => Err(Error::RefNameMissing {
@@ -242,7 +294,7 @@ pub(super) fn find_custom_refname<'a>(
             let item = filtered_items[res.mappings[0]
                 .item_index
                 .expect("we map by name only and have no object-id in refspec")];
-            Ok((Some(item.target), Some(item.full_ref_name)))
+            Ok((item.target, item.full_ref_name))
         }
         _ => Err(Error::RefNameAmbiguous {
             wanted: ref_name.clone(),

@@ -68,7 +68,7 @@ impl crate::Repository {
     {
         use crate::config::{
             cache::util::ApplyLeniency,
-            tree::{gitoxide, Core, Ssh},
+            tree::{Core, Ssh, gitoxide},
         };
 
         let config = &self.config.resolved;
@@ -150,9 +150,6 @@ impl crate::Repository {
 }
 
 mod branch;
-mod branch_write;
-#[allow(unused_imports)]
-pub use branch_write::error as branch_write_error;
 mod remote;
 #[cfg(any(feature = "blocking-network-client", feature = "async-network-client"))]
 mod transport;

@@ -1,7 +1,7 @@
 use std::{ops::DerefMut, path::PathBuf, sync::atomic::AtomicBool};
 
 use gix_odb::store::RefreshMode;
-use gix_protocol::fetch::{negotiate, refmap, Arguments, Shallow};
+use gix_protocol::fetch::{Arguments, negotiate};
 #[cfg(feature = "async-network-client")]
 use gix_transport::client::async_io::Transport;
 #[cfg(feature = "blocking-network-client")]
@@ -12,11 +12,10 @@ use crate::{
         cache::util::ApplyLeniency,
         tree::{Clone, Fetch},
     },
-    remote,
     remote::{
-        connection::fetch::config,
+        connection::fetch::{PrepareDetached, config},
         fetch,
-        fetch::{negotiate::Algorithm, outcome, refs, Error, Outcome, Prepare, RefLogMessage, Status},
+        fetch::{Error, Outcome, Prepare, RefLogMessage, Status, negotiate::Algorithm, outcome, refs},
     },
 };
 
@@ -71,13 +70,33 @@ where
     /// - `gitoxide.userAgent` is read to obtain the application user agent for git servers and for HTTP servers as well.
     ///
     #[gix_protocol::maybe_async::maybe_async]
-    pub async fn receive<P>(mut self, progress: P, should_interrupt: &AtomicBool) -> Result<Outcome, Error>
+    pub async fn receive<P>(self, progress: P, should_interrupt: &AtomicBool) -> Result<Outcome, Error>
+    where
+        P: gix_features::progress::NestedProgress,
+        P::SubProgress: 'static,
+    {
+        let Prepare { inner, repo } = self;
+        inner.receive(repo, progress, should_interrupt).await
+    }
+}
+
+impl<T> PrepareDetached<'_, T>
+where
+    T: Transport,
+{
+    #[gix_protocol::maybe_async::maybe_async]
+    pub(crate) async fn receive<P>(
+        mut self,
+        repo: &crate::Repository,
+        progress: P,
+        should_interrupt: &AtomicBool,
+    ) -> Result<Outcome, Error>
     where
         P: gix_features::progress::NestedProgress,
         P::SubProgress: 'static,
     {
         let ref_map = &self.ref_map;
-        if self.additional_wants.is_empty() && ref_map.is_missing_required_mapping() {
+        if ref_map.is_missing_required_mapping() {
             let mut specs = ref_map.refspecs.clone();
             specs.extend(ref_map.extra_refspecs.clone());
             return Err(Error::NoMapping {
@@ -88,7 +107,6 @@ where
 
         let mut con = self.con.take().expect("receive() can only be called once");
         let mut handshake = con.handshake.take().expect("receive() can only be called once");
-        let repo = con.remote.repo;
 
         let expected_object_hash = repo.object_hash();
         if ref_map.object_hash != expected_object_hash {
@@ -97,12 +115,6 @@ where
                 remote: ref_map.object_hash,
             });
         }
-
-        let filter_argument = self
-            .filter
-            .as_ref()
-            .map(crate::remote::fetch::ObjectFilter::to_argument_string)
-            .filter(|_| self.additional_wants.is_empty());
 
         let fetch_options = gix_protocol::fetch::Options {
             shallow_file: repo.shallow_file(),
@@ -115,7 +127,7 @@ where
                 .map(|val| Clone::REJECT_SHALLOW.enrich_error(val))
                 .transpose()?
                 .unwrap_or(false),
-            filter: filter_argument.as_deref(),
+            filter: None,
         };
         let context = gix_protocol::fetch::Context {
             handshake: &mut handshake,
@@ -154,14 +166,13 @@ where
             tags: con.remote.fetch_tags,
             negotiator,
             open_options: repo.options.clone(),
-            additional_wants: &self.additional_wants,
         };
 
         let write_pack_options = gix_pack::bundle::write::Options {
             thread_limit: config::index_threads(repo)?,
             index_version: config::pack_index_version(repo)?,
             iteration_mode: gix_pack::data::input::Mode::Verify,
-            object_hash: con.remote.repo.object_hash(),
+            object_hash: repo.object_hash(),
         };
         let mut write_pack_bundle = None;
 
@@ -211,7 +222,7 @@ where
                 .take()
                 .unwrap_or_else(|| RefLogMessage::Prefixed { action: "fetch".into() }),
             &self.ref_map.mappings,
-            con.remote.refspecs(remote::Direction::Fetch),
+            con.remote.fetch_refspecs(),
             &self.ref_map.extra_refspecs,
             con.remote.fetch_tags,
             self.dry_run,
@@ -256,12 +267,11 @@ struct Negotiate<'a, 'b, 'c> {
     tags: gix_protocol::fetch::Tags,
     negotiator: Box<dyn gix_negotiate::Negotiator>,
     open_options: crate::open::Options,
-    additional_wants: &'a [gix_hash::ObjectId],
 }
 
 impl gix_protocol::fetch::Negotiate for Negotiate<'_, '_, '_> {
     fn mark_complete_and_common_ref(&mut self) -> Result<negotiate::Action, negotiate::Error> {
-        let action = negotiate::mark_complete_and_common_ref(
+        negotiate::mark_complete_and_common_ref(
             &self.objects,
             self.refs,
             {
@@ -283,71 +293,18 @@ impl gix_protocol::fetch::Negotiate for Negotiate<'_, '_, '_> {
             self.ref_map,
             self.shallow,
             negotiate::make_refmapping_ignore_predicate(self.tags, self.ref_map),
-        )?;
-
-        if self.additional_wants.is_empty() {
-            return Ok(action);
-        }
-
-        Ok(match action {
-            negotiate::Action::MustNegotiate {
-                remote_ref_target_known,
-            } => negotiate::Action::MustNegotiate {
-                remote_ref_target_known,
-            },
-            negotiate::Action::NoChange | negotiate::Action::SkipToRefUpdate => negotiate::Action::MustNegotiate {
-                remote_ref_target_known: std::iter::repeat_n(true, self.ref_map.mappings.len()).collect(),
-            },
-        })
+        )
     }
 
     fn add_wants(&mut self, arguments: &mut Arguments, remote_ref_target_known: &[bool]) -> bool {
-        if self.additional_wants.is_empty() {
-            let mut has_wants = negotiate::add_wants(
-                self.objects,
-                arguments,
-                self.ref_map,
-                remote_ref_target_known,
-                self.shallow,
-                negotiate::make_refmapping_ignore_predicate(self.tags, self.ref_map),
-            );
-
-            for want in self.additional_wants {
-                arguments.want(want);
-                has_wants = true;
-            }
-
-            return has_wants;
-        }
-
-        let mut has_wants = false;
-        let mapping_is_ignored = negotiate::make_refmapping_ignore_predicate(self.tags, self.ref_map);
-        let is_shallow = !matches!(self.shallow, Shallow::NoChange);
-        for (mapping, known) in self.ref_map.mappings.iter().zip(remote_ref_target_known) {
-            if !is_shallow && *known {
-                continue;
-            }
-            if mapping_is_ignored(mapping) {
-                continue;
-            }
-
-            if !arguments.can_use_ref_in_want() || matches!(mapping.remote, refmap::Source::ObjectId(_)) {
-                if let Some(id) = mapping.remote.as_id() {
-                    arguments.want(id);
-                    has_wants = true;
-                }
-            } else if let Some(name) = mapping.remote.as_name() {
-                arguments.want_ref(name);
-                has_wants = true;
-            }
-        }
-
-        for want in self.additional_wants {
-            arguments.want(want);
-            has_wants = true;
-        }
-
-        has_wants
+        negotiate::add_wants(
+            self.objects,
+            arguments,
+            self.ref_map,
+            remote_ref_target_known,
+            self.shallow,
+            negotiate::make_refmapping_ignore_predicate(self.tags, self.ref_map),
+        )
     }
 
     fn one_round(
@@ -356,24 +313,12 @@ impl gix_protocol::fetch::Negotiate for Negotiate<'_, '_, '_> {
         arguments: &mut Arguments,
         previous_response: Option<&gix_protocol::fetch::Response>,
     ) -> Result<(negotiate::Round, bool), negotiate::Error> {
-        if self.additional_wants.is_empty() {
-            return negotiate::one_round(
-                self.negotiator.deref_mut(),
-                &mut *self.graph,
-                state,
-                arguments,
-                previous_response,
-            );
-        }
-
-        Ok((
-            negotiate::Round {
-                haves_sent: 0,
-                in_vain: 0,
-                haves_to_send: 0,
-                previous_response_had_at_least_one_in_common: false,
-            },
-            true,
-        ))
+        negotiate::one_round(
+            self.negotiator.deref_mut(),
+            &mut *self.graph,
+            state,
+            arguments,
+            previous_response,
+        )
     }
 }

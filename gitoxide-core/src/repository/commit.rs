@@ -4,7 +4,7 @@ use std::{
     process::Stdio,
 };
 
-use anyhow::{anyhow, bail, Context, Result};
+use anyhow::{Context, Result, anyhow, bail};
 use gix::{
     bstr::{BStr, BString},
     objs::commit::SIGNATURE_FIELD_NAME,
@@ -492,7 +492,7 @@ pub fn create(
             .to_owned()?
     };
     if let Some(a) = author.as_ref() {
-        let id = gix::actor::IdentityRef::from_bytes::<()>(a.as_bytes())
+        let id = gix::actor::IdentityRef::from_bytes(a.as_bytes())
             .map_err(|_| anyhow::anyhow!("invalid --author: {a:?}"))?;
         author_sig.name = id.name.to_owned();
         author_sig.email = id.email.to_owned();

@@ -2,20 +2,21 @@ lints.workspace = true
 
 [package]
 name = "gix-diff"
-version = "0.61.0"
+version = "0.65.0"
 repository = "https://github.com/GitoxideLabs/gitoxide"
 license = "MIT OR Apache-2.0"
 description = "Calculate differences between various git objects"
 authors = ["Sebastian Thiel <sebastian.thiel@icloud.com>"]
-edition = "2021"
+edition = "2024"
 include = ["/src/**/*", "/LICENSE-*"]
-rust-version = "1.82"
-autotests = false
+rust-version = "1.85"
 
 [features]
 default = ["blob", "index"]
 ## Enable support for the SHA-1 hash by enabling the respective feature in the `gix-hash` crate.
 sha1 = ["gix-hash/sha1"]
+## Enable support for the SHA-256 hash by enabling the respective feature in the `gix-hash` crate.
+sha256 = ["gix-hash/sha256"]
 ## Enable diffing of blobs using imara-diff.
 blob = [
     "dep:imara-diff",
@@ -45,20 +46,20 @@ required-features = ["blob"]
 path = "./benches/line_count.rs"
 
 [dependencies]
-gix-index = { version = "^0.49.0", path = "../gix-index", optional = true }
-gix-pathspec = { version = "^0.16.1", path = "../gix-pathspec", optional = true }
-gix-attributes = { version = "^0.31.0", path = "../gix-attributes", optional = true }
-gix-hash = { version = "^0.23.0", path = "../gix-hash" }
-gix-object = { version = "^0.58.0", path = "../gix-object" }
-gix-filter = { version = "^0.28.0", path = "../gix-filter", optional = true }
-gix-worktree = { version = "^0.50.0", path = "../gix-worktree", default-features = false, features = ["attributes"], optional = true }
-gix-command = { version = "^0.8.0", path = "../gix-command", optional = true }
-gix-path = { version = "^0.11.2", path = "../gix-path", optional = true }
-gix-fs = { version = "^0.19.2", path = "../gix-fs", optional = true }
-gix-tempfile = { version = "^21.0.0", path = "../gix-tempfile", optional = true }
-gix-trace = { version = "^0.1.18", path = "../gix-trace", optional = true }
-gix-traverse = { version = "^0.55.0", path = "../gix-traverse", optional = true }
-imara-diff = { package = "gix-imara-diff", version = "0.2.0", optional = true, path = "../gix-imara-diff" }
+gix-index = { version = "^0.53.0", path = "../gix-index", optional = true }
+gix-pathspec = { version = "^0.18.1", path = "../gix-pathspec", optional = true }
+gix-attributes = { version = "^0.33.2", path = "../gix-attributes", optional = true }
+gix-hash = { version = "^0.25.1", path = "../gix-hash" }
+gix-object = { version = "^0.62.0", path = "../gix-object" }
+gix-filter = { version = "^0.32.0", path = "../gix-filter", optional = true }
+gix-worktree = { version = "^0.54.0", path = "../gix-worktree", default-features = false, features = ["attributes"], optional = true }
+gix-command = { version = "^0.9.1", path = "../gix-command", optional = true }
+gix-path = { version = "^0.12.1", path = "../gix-path", optional = true }
+gix-fs = { version = "^0.21.2", path = "../gix-fs", optional = true }
+gix-tempfile = { version = "^23.0.0", path = "../gix-tempfile", optional = true }
+gix-trace = { version = "^0.1.20", path = "../gix-trace", optional = true }
+gix-traverse = { version = "^0.59.0", path = "../gix-traverse", optional = true }
+imara-diff = { package = "gix-imara-diff", version = "^0.2.3", optional = true, path = "../gix-imara-diff" }
 
 thiserror = "2.0.18"
 serde = { version = "1.0.114", optional = true, default-features = false, features = ["derive"] }
@@ -69,7 +70,20 @@ document-features = { version = "0.2.0", optional = true }
 
 [dev-dependencies]
 criterion = "0.8.2"
-gix-hash = { path = "../gix-hash", features = ["sha1"] }
+gix-hash = { path = "../gix-hash", features = ["sha1", "sha256"] }
+gix-testtools = { path = "../tests/tools", default-features = false }
+gix-index = { path = "../gix-index" }
+gix-pathspec = { path = "../gix-pathspec" }
+gix-fs = { path = "../gix-fs" }
+gix-worktree = { path = "../gix-worktree" }
+gix-object = { path = "../gix-object" }
+gix-odb = { path = "../gix-odb" }
+gix-filter = { path = "../gix-filter" }
+gix-traverse = { path = "../gix-traverse" }
+
+insta = "1.46.3"
+shell-words = "1"
+pretty_assertions = "1.4.0"
 
 [package.metadata.docs.rs]
 all-features = true

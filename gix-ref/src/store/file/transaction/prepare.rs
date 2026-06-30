@@ -1,40 +1,33 @@
 use crate::{
-    packed,
+    FullName, FullNameRef, Reference, Target, packed,
     packed::transaction::buffer_into_transaction,
     store_impl::{
         file,
         file::{
-            loose,
+            Transaction, loose,
             transaction::{Edit, PackedRefs},
-            Transaction,
         },
     },
     transaction::{Change, LogChange, PreviousValue, RefEdit, RefEditsExt, RefLog},
-    FullName, FullNameRef, Reference, Target,
 };
 
 impl Transaction<'_, '_> {
-    fn lock_ref_and_apply_change(
+    /// Read the current value of a reference from loose storage, falling back to packed refs.
+    ///
+    /// Must be called while holding the lock for `name` so the subsequent CAS check
+    /// compares against a value that cannot be changed concurrently.
+    fn read_existing_ref(
         store: &file::Store,
-        lock_fail_mode: gix_lock::acquire::Fail,
+        name: &FullNameRef,
         packed: Option<&packed::Buffer>,
-        change: &mut Edit,
-        has_global_lock: bool,
-        direct_to_packed_refs: bool,
-    ) -> Result<(), Error> {
-        use std::io::Write;
-        assert!(
-            change.lock.is_none(),
-            "locks can only be acquired once and it's all or nothing"
-        );
-
-        let existing_ref = store
-            .ref_contents(change.update.name.as_ref())
+    ) -> Result<Option<Reference>, Error> {
+        store
+            .ref_contents(name)
             .map_err(Error::from)
             .and_then(|maybe_loose| {
                 maybe_loose
                     .map(|buf| {
-                        loose::Reference::try_from_path(change.update.name.clone(), &buf)
+                        loose::Reference::try_from_path(name.to_owned(), &buf, store.object_hash)
                             .map(Reference::from)
                             .map_err(Error::from)
                     })
@@ -46,29 +39,58 @@ impl Transaction<'_, '_> {
             })
             .and_then(|maybe_loose| match (maybe_loose, packed) {
                 (None, Some(packed)) => packed
-                    .try_find(change.update.name.as_ref())
+                    .try_find(name)
                     .map(|opt| opt.map(Into::into))
                     .map_err(Error::from),
                 (None, None) => Ok(None),
                 (maybe_loose, _) => Ok(maybe_loose),
-            })?;
+            })
+    }
+
+    /// Map a lock-acquisition failure to our error type, surfacing genuine I/O errors
+    /// (such as a path collision reported as `NotADirectory`) as [`Error::Io`] rather than
+    /// burying them in [`Error::LockAcquire`], which is reserved for actual contention.
+    // This happens for path collisions where `a` is a ref file, and `a/b` is the lock to be created.
+    fn lock_acquire_error(err: gix_lock::acquire::Error, full_name: &str) -> Error {
+        match err {
+            gix_lock::acquire::Error::Io(err) => Error::Io(err),
+            source => Error::LockAcquire {
+                source,
+                full_name: full_name.into(),
+            },
+        }
+    }
+
+    fn lock_ref_and_apply_change(
+        store: &file::Store,
+        lock_fail_mode: gix_lock::acquire::Fail,
+        packed: Option<&packed::Buffer>,
+        change: &mut Edit,
+        direct_to_packed_refs: bool,
+    ) -> Result<(), Error> {
+        use std::io::Write;
+        assert!(
+            change.lock.is_none(),
+            "locks can only be acquired once and it's all or nothing"
+        );
+
+        // Reject Windows reserved device names before acquiring the lock.
+        // The lock file itself (e.g. `CON.lock`) is also a device name,
+        // so acquiring it would fail or open the device instead of
+        // returning the configured validation error.
+        store.check_windows_device_name(change.update.name.as_ref())?;
+
         let lock = match &mut change.update.change {
             Change::Delete { expected, .. } => {
                 let (base, relative_path) = store.reference_path_with_base(change.update.name.as_ref());
-                let lock = if has_global_lock {
-                    None
-                } else {
-                    gix_lock::Marker::acquire_to_hold_resource(
-                        base.join(relative_path.as_ref()),
-                        lock_fail_mode,
-                        Some(base.clone().into_owned()),
-                    )
-                    .map_err(|err| Error::LockAcquire {
-                        source: err,
-                        full_name: "borrowcheck won't allow change.name()".into(),
-                    })?
-                    .into()
-                };
+                let lock = gix_lock::Marker::acquire_to_hold_resource(
+                    base.join(relative_path.as_ref()),
+                    lock_fail_mode,
+                    Some(base.clone().into_owned()),
+                )
+                .map_err(|err| Self::lock_acquire_error(err, "borrowcheck won't allow change.name()"))?;
+
+                let existing_ref = Self::read_existing_ref(store, change.update.name.as_ref(), packed)?;
 
                 match (&expected, &existing_ref) {
                     (PreviousValue::MustNotExist, _) => {
@@ -79,7 +101,7 @@ impl Transaction<'_, '_> {
                     (PreviousValue::MustExist | PreviousValue::MustExistAndMatch(_), None) => {
                         return Err(Error::DeleteReferenceMustExist {
                             full_name: change.name(),
-                        })
+                        });
                     }
                     (
                         PreviousValue::MustExistAndMatch(previous) | PreviousValue::ExistingMustMatch(previous),
@@ -102,7 +124,7 @@ impl Transaction<'_, '_> {
                     *expected = PreviousValue::MustExistAndMatch(existing.target);
                 }
 
-                lock
+                Some(lock)
             }
             Change::Update { expected, new, .. } => {
                 let (base, relative_path) = store.reference_path_with_base(change.update.name.as_ref());
@@ -112,12 +134,16 @@ impl Transaction<'_, '_> {
                         lock_fail_mode,
                         Some(base.clone().into_owned()),
                     )
-                    .map_err(|err| Error::LockAcquire {
-                        source: err,
-                        full_name: "borrowcheck won't allow change.name() and this will be corrected by caller".into(),
+                    .map_err(|err| {
+                        Self::lock_acquire_error(
+                            err,
+                            "borrowcheck won't allow change.name() and this will be corrected by caller",
+                        )
                     })
                 };
-                let mut lock = (!has_global_lock).then(obtain_lock).transpose()?;
+                let mut lock = obtain_lock()?;
+
+                let existing_ref = Self::read_existing_ref(store, change.update.name.as_ref(), packed)?;
 
                 match (&expected, &existing_ref) {
                     (PreviousValue::Any, _)
@@ -178,13 +204,14 @@ impl Transaction<'_, '_> {
                     (true, matches!(new, Target::Symbolic(_)))
                 };
 
+                let keep_lock_for_loose_source_delete = direct_to_packed_refs && matches!(new, Target::Object(_));
                 if (is_effective && !direct_to_packed_refs) || is_symbolic {
-                    let mut lock = lock.take().map_or_else(obtain_lock, Ok)?;
-
                     lock.with_mut(|file| match new {
                         Target::Object(oid) => writeln!(file, "{oid}"),
                         Target::Symbolic(name) => writeln!(file, "ref: {}", name.0),
                     })?;
+                    Some(lock.close()?)
+                } else if keep_lock_for_loose_source_delete {
                     Some(lock.close()?)
                 } else {
                     None
@@ -357,7 +384,6 @@ impl Transaction<'_, '_> {
                 ref_files_lock_fail_mode,
                 self.packed_transaction.as_ref().and_then(packed::Transaction::buffer),
                 change,
-                self.packed_transaction.is_some(),
                 matches!(
                     self.packed_refs,
                     PackedRefs::DeletionsAndNonSymbolicUpdatesRemoveLooseSourceReference(_)
@@ -443,8 +469,8 @@ mod error {
     use gix_object::bstr::BString;
 
     use crate::{
-        store_impl::{file, packed},
         Target,
+        store_impl::{file, packed},
     };
 
     /// The error returned by various [`Transaction`][super::Transaction] methods.
@@ -470,7 +496,9 @@ mod error {
         Io(#[from] std::io::Error),
         #[error("The reference {full_name:?} for deletion did not exist or could not be parsed")]
         DeleteReferenceMustExist { full_name: BString },
-        #[error("Reference {full_name:?} was not supposed to exist when writing it with value {new:?}, but actual content was {actual:?}")]
+        #[error(
+            "Reference {full_name:?} was not supposed to exist when writing it with value {new:?}, but actual content was {actual:?}"
+        )]
         MustNotExist {
             full_name: BString,
             actual: Target,

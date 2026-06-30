@@ -1,6 +1,9 @@
 #!/usr/bin/env bash
 set -eu -o pipefail
 
+# This fixture is based on Git's SHA-1 disambiguation tests and relies on
+# exact SHA-1 prefixes in object names, refs, and expected messages.
+export GIT_DEFAULT_HASH=sha1
 
 function baseline() {
   local spec=${1:?first argument is the spec to test}
@@ -445,6 +448,37 @@ EOF
   baseline "..."
   baseline @..@
   baseline @...@
+)
+
+git init deleted_prior_checkout
+(
+  cd deleted_prior_checkout
+  tick
+
+  git commit --allow-empty -m c1
+  git checkout -b prev-target
+  git checkout main
+  git branch -d prev-target
+
+  # `@{-1}` replays the previous checkout name through regular revision
+  # parsing. Once that branch is deleted, Git rejects it even though HEAD's
+  # reflog still contains the previous object id.
+  baseline "@{-1}"
+)
+
+git init deleted_prior_checkout_named_like_object
+(
+  cd deleted_prior_checkout_named_like_object
+  tick
+
+  git commit --allow-empty -m c1
+  git checkout -b 0123456789012345678901234567890123456789
+  git checkout main
+  git branch -d 0123456789012345678901234567890123456789
+
+  # Git interprets a previous checkout name that is a full object id as
+  # that object id, even when no such object exists in the database.
+  baseline "@{-1}"
 )
 
 git init new

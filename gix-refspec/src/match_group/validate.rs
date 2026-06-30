@@ -3,8 +3,8 @@ use std::collections::BTreeMap;
 use bstr::BString;
 
 use crate::{
-    match_group::{match_lhs, match_push, Source},
     RefSpec,
+    match_group::{Source, match_lhs, match_push},
 };
 
 /// The error returned [outcome validation](match_lhs::Outcome::validated()).

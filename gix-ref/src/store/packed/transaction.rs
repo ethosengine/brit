@@ -1,10 +1,9 @@
 use std::{borrow::Cow, fmt::Formatter, io::Write};
 
 use crate::{
-    file,
+    Namespace, Target, file,
     store_impl::{packed, packed::Edit},
     transaction::{Change, RefEdit},
-    Namespace, Target,
 };
 
 pub(crate) const HEADER_LINE: &[u8] = b"# pack-refs with: peeled fully-peeled sorted \n";
@@ -107,14 +106,20 @@ impl packed::Transaction {
             {
                 let mut next_id = new;
                 edit.peeled = loop {
-                    let kind = objects.try_find(&next_id, &mut buf)?.map(|d| d.kind);
-                    match kind {
-                        Some(gix_object::Kind::Tag) => {
-                            next_id = gix_object::TagRefIter::from_bytes(&buf).target_id().map_err(|_| {
-                                prepare::Error::Resolve(
-                                    format!("Couldn't get target object id from tag {next_id}").into(),
-                                )
-                            })?;
+                    let data = objects.try_find(&next_id, &mut buf)?;
+                    match data {
+                        Some(gix_object::Data {
+                            kind: gix_object::Kind::Tag,
+                            data,
+                            object_hash: hash_kind,
+                        }) => {
+                            next_id = gix_object::TagRefIter::from_bytes(data, hash_kind)
+                                .target_id()
+                                .map_err(|_| {
+                                    prepare::Error::Resolve(
+                                        format!("Couldn't get target object id from tag {next_id}").into(),
+                                    )
+                                })?;
                         }
                         Some(_) => {
                             break if next_id == new { None } else { Some(next_id) };
@@ -122,7 +127,7 @@ impl packed::Transaction {
                         None => {
                             return Err(prepare::Error::Resolve(
                                 format!("Couldn't find object with id {next_id}").into(),
-                            ))
+                            ));
                         }
                     }
                 };

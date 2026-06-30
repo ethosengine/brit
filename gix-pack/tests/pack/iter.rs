@@ -21,10 +21,7 @@ mod new_from_header {
         pack::data::input::{EntryDataMode, Mode},
     };
 
-    use crate::{
-        fixture_path,
-        pack::{SMALL_PACK, V2_PACKS_AND_INDICES},
-    };
+    use crate::{SMALL_PACK, V2_PACKS_AND_INDICES, fixture_path};
 
     #[test]
     fn header_encode() -> Result<(), Box<dyn std::error::Error>> {
@@ -40,8 +37,7 @@ mod new_from_header {
 
                 let mut buf = Vec::<u8>::new();
                 entry.header.write_to(entry.decompressed_size, &mut buf)?;
-                let new_entry =
-                    pack::data::Entry::from_bytes(&buf, entry.pack_offset, gix_hash::Kind::Sha1.len_in_bytes())?;
+                let new_entry = pack::data::Entry::from_bytes(&buf, entry.pack_offset, gix_hash::Kind::Sha1)?;
 
                 assert_eq!(
                     new_entry.header_size(),

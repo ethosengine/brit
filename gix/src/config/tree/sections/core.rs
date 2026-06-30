@@ -1,6 +1,6 @@
 use crate::{
     config,
-    config::tree::{keys, Core, Key, Section},
+    config::tree::{Core, Key, Section, keys},
 };
 
 impl Core {
@@ -55,9 +55,6 @@ impl Core {
     pub const SYMLINKS: keys::Boolean = keys::Boolean::new_boolean("symlinks", &config::Tree::CORE);
     /// The `core.trustCTime` key.
     pub const TRUST_C_TIME: keys::Boolean = keys::Boolean::new_boolean("trustCTime", &config::Tree::CORE);
-    /// The `core.untrackedCache` key.
-    pub const UNTRACKED_CACHE: UntrackedCache =
-        UntrackedCache::new_with_validate("untrackedCache", &config::Tree::CORE, validate::UntrackedCache);
     /// The `core.worktree` key.
     pub const WORKTREE: keys::Any = keys::Any::new("worktree", &config::Tree::CORE)
         .with_environment_override("GIT_WORK_TREE")
@@ -122,7 +119,6 @@ impl Section for Core {
             &Self::REPOSITORY_FORMAT_VERSION,
             &Self::SYMLINKS,
             &Self::TRUST_C_TIME,
-            &Self::UNTRACKED_CACHE,
             &Self::WORKTREE,
             &Self::PROTECT_HFS,
             &Self::PROTECT_NTFS,
@@ -156,9 +152,6 @@ pub type LogAllRefUpdates = keys::Any<validate::LogAllRefUpdates>;
 /// The `core.disambiguate` key.
 pub type Disambiguate = keys::Any<validate::Disambiguate>;
 
-/// The `core.untrackedCache` key.
-pub type UntrackedCache = keys::Any<validate::UntrackedCache>;
-
 #[cfg(feature = "attributes")]
 mod filter {
     use super::validate;
@@ -182,7 +175,7 @@ mod filter {
         use crate::{
             bstr::{BStr, ByteSlice},
             config,
-            config::tree::{core::CheckRoundTripEncoding, Key},
+            config::tree::{Key, core::CheckRoundTripEncoding},
         };
 
         impl CheckRoundTripEncoding {
@@ -364,33 +357,6 @@ mod log_all_ref_updates {
     }
 }
 
-mod untracked_cache {
-    use crate::{config, config::tree::core::UntrackedCache};
-
-    impl UntrackedCache {
-        /// Returns `Some(true)` to use the untracked cache, `Some(false)` to disable it,
-        /// or `None` when the value is `keep` (preserve existing state) or absent.
-        ///
-        /// `value` is expected to be provided by [`gix_config::File::boolean()`].
-        pub fn try_into_untracked_cache(
-            &'static self,
-            value: Option<Result<bool, gix_config::value::Error>>,
-        ) -> Result<Option<bool>, config::key::GenericErrorWithValue> {
-            match value {
-                Some(Ok(b)) => Ok(Some(b)),
-                Some(Err(err)) => {
-                    if err.input.eq_ignore_ascii_case(b"keep") {
-                        Ok(None)
-                    } else {
-                        Err(config::key::GenericErrorWithValue::from_value(self, err.input))
-                    }
-                }
-                None => Ok(None),
-            }
-        }
-    }
-}
-
 mod check_stat {
     use std::borrow::Cow;
 
@@ -507,21 +473,14 @@ mod validate {
     }
 
     #[derive(Clone, Copy)]
-    pub struct UntrackedCache;
-    impl keys::Validate for UntrackedCache {
-        fn validate(&self, value: &BStr) -> Result<(), Box<dyn std::error::Error + Send + Sync + 'static>> {
-            super::Core::UNTRACKED_CACHE
-                .try_into_untracked_cache(Some(gix_config::Boolean::try_from(value).map(|b| b.0)))?;
-            Ok(())
-        }
-    }
-
-    #[derive(Clone, Copy)]
     pub struct Abbrev;
     impl keys::Validate for Abbrev {
         fn validate(&self, value: &BStr) -> Result<(), Box<dyn std::error::Error + Send + Sync + 'static>> {
-            // TODO: when there is options, validate against all hashes and assure all fail to trigger a validation failure.
-            super::Core::ABBREV.try_into_abbreviation(value.into(), gix_hash::Kind::Sha1)?;
+            // The keys::Validate trait API doesn't take a hash kind, and passing one through
+            // would touch ~50 impl sites. The repo-aware check with the actual hash runs in
+            // config::cache::util::parse_core_abbrev, so here we just use Kind::longest()
+            // to allow the most permissive upper bound.
+            super::Core::ABBREV.try_into_abbreviation(value.into(), gix_hash::Kind::longest())?;
             Ok(())
         }
     }

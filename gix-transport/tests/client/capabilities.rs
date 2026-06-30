@@ -1,13 +1,13 @@
 use bstr::ByteSlice;
 #[cfg(all(feature = "async-client", not(feature = "blocking-client")))]
-use gix_packetline::async_io::{encode, StreamingPeekableIter};
+use gix_packetline::async_io::{StreamingPeekableIter, encode};
 #[cfg(all(feature = "blocking-client", not(feature = "async-client")))]
-use gix_packetline::blocking_io::{encode, StreamingPeekableIter};
+use gix_packetline::blocking_io::{StreamingPeekableIter, encode};
+use gix_transport::client::Capabilities;
 #[cfg(all(feature = "async-client", not(feature = "blocking-client")))]
 use gix_transport::client::capabilities::async_recv::Handshake;
 #[cfg(all(feature = "blocking-client", not(feature = "async-client")))]
 use gix_transport::client::capabilities::blocking_recv::Handshake;
-use gix_transport::client::Capabilities;
 
 #[test]
 fn from_bytes() -> crate::Result {
@@ -54,6 +54,23 @@ fn from_bytes() -> crate::Result {
             b"sha1".as_bstr(),
             b"git/2.28.0".as_bstr()
         ]
+    );
+    Ok(())
+}
+
+#[test]
+fn from_bytes_with_sha256_object_format() -> crate::Result {
+    let (caps, _delim_pos) = Capabilities::from_bytes(
+        &b"7814e8a05a59c0cf5fb186661d1551c75d1299b5 HEAD\0side-band-64k object-format=sha256 agent=git/2.40.0"[..],
+    )?;
+    let object_format = caps.capability("object-format").expect("cap exists");
+    assert!(
+        object_format.supports("sha256").expect("there is a value"),
+        "sha256 is supported"
+    );
+    assert!(
+        !object_format.supports("sha1").expect("there is a value"),
+        "sha1 is not supported when the server advertises sha256"
     );
     Ok(())
 }

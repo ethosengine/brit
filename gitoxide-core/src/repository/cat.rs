@@ -1,4 +1,4 @@
-use anyhow::{anyhow, Context};
+use anyhow::{Context, anyhow};
 use gix::{diff::blob::ResourceKind, filter::plumbing::driver::apply::Delay, revision::Spec};
 
 use crate::repository::revision::resolve::{BlobFormat, TreeMode};
@@ -227,7 +227,7 @@ pub(super) mod function {
         let root_tree_id = match object.kind {
             gix::object::Kind::Tree => object.id,
             gix::object::Kind::Commit => {
-                let commit = gix::objs::CommitRef::from_bytes(&object.data)?;
+                let commit = gix::objs::CommitRef::from_bytes(&object.data, object.id.kind())?;
                 gix::hash::ObjectId::from_hex(commit.tree)?
             }
             _ => return Ok(SymOutcome::NotFollowable),
@@ -751,7 +751,7 @@ pub(super) mod function {
         let size = match object.kind {
             gix::object::Kind::Commit => {
                 let snapshot = repo.open_mailmap();
-                let commit_ref = gix::objs::CommitRef::from_bytes(&object.data)?;
+                let commit_ref = gix::objs::CommitRef::from_bytes(&object.data, object.id.kind())?;
                 let mut commit = gix::objs::Commit::try_from(commit_ref)?;
                 let mut buf = gix::date::parse::TimeBuf::default();
                 commit.author = snapshot.resolve_cow(commit.author.to_ref(&mut buf)).into();
@@ -763,7 +763,7 @@ pub(super) mod function {
             }
             gix::object::Kind::Tag => {
                 let snapshot = repo.open_mailmap();
-                let tag_ref = gix::objs::TagRef::from_bytes(&object.data)?;
+                let tag_ref = gix::objs::TagRef::from_bytes(&object.data, object.id.kind())?;
                 let mut tag = gix::objs::Tag::try_from(tag_ref)?;
                 if let Some(tagger) = tag.tagger.take() {
                     let mut buf = gix::date::parse::TimeBuf::default();

@@ -2,21 +2,21 @@ lints.workspace = true
 
 [package]
 name = "gix-prompt"
-version = "0.14.1"
+version = "0.15.1"
 repository = "https://github.com/GitoxideLabs/gitoxide"
 license = "MIT OR Apache-2.0"
 description = "A crate of the gitoxide project for handling prompts in the terminal"
 authors = ["Sebastian Thiel <sebastian.thiel@icloud.com>"]
-edition = "2021"
+edition = "2024"
 include = ["/src/**/*", "/LICENSE-*", "/README.md"]
-rust-version = "1.82"
+rust-version = "1.85"
 
 [lib]
 doctest = false
 
 [dependencies]
-gix-command = { version = "^0.8.0", path = "../gix-command" }
-gix-config-value = { version = "^0.17.1", path = "../gix-config-value" }
+gix-command = { version = "^0.9.1", path = "../gix-command" }
+gix-config-value = { version = "^0.18.1", path = "../gix-config-value" }
 
 thiserror = "2.0.18"
 

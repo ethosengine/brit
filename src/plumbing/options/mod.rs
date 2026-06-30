@@ -83,9 +83,6 @@ pub enum Subcommands {
     /// Subcommands for creating worktree archives.
     #[cfg(feature = "gitoxide-core-tools-archive")]
     Archive(archive::Platform),
-    /// Interact with branches.
-    #[clap(visible_alias = "branches")]
-    Branch(branch::Platform),
     /// Remove untracked files from the working tree.
     #[cfg(feature = "gitoxide-core-tools-clean")]
     Clean(clean::Command),
@@ -122,9 +119,6 @@ pub enum Subcommands {
     /// Clone a repository into a new directory.
     #[cfg(feature = "gitoxide-core-blocking-client")]
     Clone(clone::Platform),
-    /// Update remote refs along with associated objects.
-    #[cfg(feature = "gitoxide-core-blocking-client")]
-    Push(push::Platform),
     /// Fetch from and integrate with another repository or a local branch.
     #[cfg(feature = "gitoxide-core-blocking-client")]
     Pull(pull::Platform),
@@ -291,6 +285,7 @@ pub enum Subcommands {
     /// Show which git configuration values are used or planned.
     ConfigTree,
     Status(status::Platform),
+    Dirwalk(dirwalk::Platform),
     Config(config::Platform),
     #[cfg(feature = "gitoxide-core-tools-corpus")]
     Corpus(corpus::Platform),
@@ -930,6 +925,35 @@ pub mod status {
     }
 }
 
+pub mod dirwalk {
+    use gix::bstr::BString;
+
+    use crate::shared::CheckPathSpec;
+
+    #[derive(Default, Debug, Copy, Clone, PartialEq, Eq, PartialOrd, Ord, clap::ValueEnum)]
+    pub enum Untracked {
+        /// Collapse untracked directories when possible.
+        #[default]
+        Collapsed,
+        /// Emit matching untracked files and directories.
+        Matching,
+    }
+
+    #[derive(Debug, clap::Parser)]
+    #[command(about = "Run only the repository directory walk")]
+    pub struct Platform {
+        /// Print additional statistics to help understanding performance.
+        #[clap(long, short = 's')]
+        pub statistics: bool,
+        /// How untracked files should be emitted.
+        #[clap(long, default_value = "collapsed")]
+        pub untracked: Untracked,
+        /// The git path specifications to walk.
+        #[clap(value_parser = CheckPathSpec)]
+        pub pathspec: Vec<BString>,
+    }
+}
+
 pub mod merge_base {
     #[derive(Debug, clap::Parser)]
     #[command(about = "A command for calculating all merge-bases")]
@@ -1256,6 +1280,13 @@ pub mod merge {
         Tree {
             #[clap(flatten)]
             opts: SharedOptions,
+
+            /// Create a commit on top of HEAD with this message and the merged tree.
+            #[clap(long)]
+            message: Option<String>,
+            /// Update HEAD to the created commit and set the index to its tree.
+            #[clap(long, requires = "message", conflicts_with = "in_memory")]
+            update_head: bool,
 
             /// A revspec to our treeish.
             #[clap(value_name = "OURS", value_parser = crate::shared::AsBString)]
@@ -2452,11 +2483,6 @@ pub mod clone {
         #[clap(flatten)]
         pub shallow: ShallowOptions,
 
-        /// Request the remote to omit certain objects when cloning, similar to `git clone --filter`.
-        ///
-        /// Currently supports `blob:none` and `blob:limit=<n>`.
-        #[clap(long, value_name = "FILTER-SPEC")]
-        pub filter: Option<gix::remote::fetch::ObjectFilter>,
 
         /// The url of the remote to connect to, like `https://github.com/byron/gitoxide`.
         ///

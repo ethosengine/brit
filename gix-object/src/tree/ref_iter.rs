@@ -1,9 +1,8 @@
 use std::ops::ControlFlow;
 
 use bstr::BStr;
-use winnow::error::ParserError;
 
-use crate::{tree, tree::EntryRef, TreeRef, TreeRefIter};
+use crate::{TreeRef, TreeRefIter, tree, tree::EntryRef};
 
 /// Advance a path lookup by matching the next path component against `tree`.
 ///
@@ -39,7 +38,7 @@ where
         return ControlFlow::Break(None);
     };
 
-    let Some(entry) = TreeRefIter::from_bytes(tree.data, tree.hash_kind)
+    let Some(entry) = TreeRefIter::from_bytes(tree.data, tree.object_hash)
         .filter_map(Result::ok)
         .find(|entry| component.eq(entry.filename))
     else {
@@ -54,7 +53,7 @@ where
 }
 
 impl<'a> TreeRefIter<'a> {
-    /// Instantiate an iterator from the given tree `data` and `hash_kind`.
+    /// Instantiate an iterator from the given tree `data` and `object_hash`.
     pub fn from_bytes(data: &'a [u8], hash_kind: gix_hash::Kind) -> TreeRefIter<'a> {
         TreeRefIter { data, hash_kind }
     }
@@ -122,7 +121,7 @@ impl<'a> TreeRefIter<'a> {
 }
 
 impl<'a> TreeRef<'a> {
-    /// Deserialize a Tree from `data`, assuming `hash_kind` to determine how the object ids are encoded in this particular tree.
+    /// Deserialize a Tree from `data`, assuming `object_hash` to determine how the object ids are encoded in this particular tree.
     pub fn from_bytes(data: &'a [u8], hash_kind: gix_hash::Kind) -> Result<TreeRef<'a>, crate::decode::Error> {
         decode::tree(data, hash_kind.len_in_bytes())
     }
@@ -192,13 +191,8 @@ impl<'a> Iterator for TreeRefIter<'a> {
                 Some(Ok(entry))
             }
             None => {
-                let failing = self.data;
                 self.data = &[];
-                #[allow(clippy::unit_arg)]
-                Some(Err(crate::decode::Error::with_err(
-                    winnow::error::ErrMode::from_input(&failing),
-                    failing,
-                )))
+                Some(Err(crate::decode::Error))
             }
         }
     }
@@ -214,9 +208,8 @@ impl<'a> TryFrom<&'a [u8]> for tree::EntryMode {
 
 mod decode {
     use bstr::ByteSlice;
-    use winnow::error::ParserError;
 
-    use crate::{tree, tree::EntryRef, TreeRef};
+    use crate::{TreeRef, tree, tree::EntryRef};
 
     pub fn fast_entry(i: &[u8], hash_len: usize) -> Option<(&[u8], EntryRef<'_>)> {
         let (mode, i) = tree::EntryMode::extract_from_bytes(i)?;
@@ -253,11 +246,7 @@ mod decode {
 
         while !i.is_empty() {
             let Some((rest, entry)) = fast_entry(i, hash_len) else {
-                #[allow(clippy::unit_arg)]
-                return Err(crate::decode::Error::with_err(
-                    winnow::error::ErrMode::from_input(&i),
-                    i,
-                ));
+                return Err(crate::decode::Error);
             };
             i = rest;
             out.push(entry);

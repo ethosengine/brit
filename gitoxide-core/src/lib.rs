@@ -27,7 +27,6 @@
 )]
 #![cfg_attr(all(doc, feature = "document-features"), feature(doc_cfg))]
 #![cfg_attr(feature = "async-client", allow(unused))]
-#![deny(rust_2018_idioms)]
 #![forbid(unsafe_code)]
 
 use std::str::FromStr;
@@ -79,6 +78,8 @@ pub mod organize;
 pub mod pack;
 #[cfg(feature = "query")]
 pub mod query;
+#[cfg(feature = "blocking-client")]
+pub mod remote;
 pub mod repository;
 pub mod shared;
 

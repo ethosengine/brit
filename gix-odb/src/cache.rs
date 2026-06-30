@@ -135,11 +135,11 @@ impl<S> DerefMut for Cache<S> {
 mod impls {
     use std::{cell::RefCell, io::Read, ops::DerefMut};
 
-    use gix_hash::{oid, ObjectId};
+    use gix_hash::{ObjectId, oid};
     use gix_object::{Data, Kind};
     use gix_pack::cache::Object;
 
-    use crate::{find::Header, pack::data::entry::Location, Cache};
+    use crate::{Cache, find::Header, pack::data::entry::Location};
 
     impl<S> gix_object::Write for Cache<S>
     where
@@ -152,6 +152,25 @@ mod impls {
             from: &mut dyn Read,
         ) -> Result<ObjectId, gix_object::write::Error> {
             self.inner.write_stream(kind, size, from)
+        }
+
+        fn write_buf_with_known_id(
+            &self,
+            kind: Kind,
+            from: &[u8],
+            id: ObjectId,
+        ) -> Result<ObjectId, gix_object::write::Error> {
+            self.inner.write_buf_with_known_id(kind, from, id)
+        }
+
+        fn write_stream_with_known_id(
+            &self,
+            kind: Kind,
+            size: u64,
+            from: &mut dyn Read,
+            id: ObjectId,
+        ) -> Result<ObjectId, gix_object::write::Error> {
+            self.inner.write_stream_with_known_id(kind, size, from, id)
         }
     }
 

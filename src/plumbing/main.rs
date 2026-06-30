@@ -1,23 +1,23 @@
 use std::{
-    io::{stdin, BufReader},
+    io::{BufReader, stdin},
     path::PathBuf,
     sync::{
-        atomic::{AtomicBool, Ordering},
         Arc,
+        atomic::{AtomicBool, Ordering},
     },
 };
 
-use anyhow::{anyhow, Context, Result};
+use anyhow::{Context, Result, anyhow};
 use clap::{CommandFactory, Parser};
 use gitoxide_core as core;
 use gitoxide_core::{pack::verify, repository::PathsOrPatterns};
-use gix::bstr::{io::BufReadExt, BString};
+use gix::bstr::{BString, io::BufReadExt};
 
 use crate::{
     plumbing::{
         options::{
-            attributes, branch, commit, commitgraph, config, credential, exclude, free, fsck, index, mailmap, merge,
-            odb, revision, tag, tree, Args, Subcommands,
+            Args, Subcommands, attributes, commit, commitgraph, config, credential, exclude, free, fsck, index,
+            mailmap, merge, odb, revision, tag, tree,
         },
         show_progress,
     },
@@ -301,6 +301,8 @@ pub fn main() -> Result<()> {
                         tree_favor,
                         debug,
                     },
+                message,
+                update_head,
                 ours,
                 base,
                 theirs,
@@ -325,6 +327,8 @@ pub fn main() -> Result<()> {
                             in_memory,
                             tree_favor: tree_favor.map(Into::into),
                             debug,
+                            message,
+                            update_head,
                         },
                     )
                 },
@@ -359,6 +363,8 @@ pub fn main() -> Result<()> {
                             tree_favor: tree_favor.map(Into::into),
                             in_memory,
                             debug,
+                            message: None,
+                            update_head: false,
                         },
                     )
                 },
@@ -1264,6 +1270,38 @@ pub fn main() -> Result<()> {
                 },
             )
         }
+        Subcommands::Dirwalk(crate::plumbing::options::dirwalk::Platform {
+            statistics,
+            untracked,
+            pathspec,
+        }) => prepare_and_run(
+            "dirwalk",
+            trace,
+            auto_verbose,
+            progress,
+            progress_keep_open,
+            None,
+            move |_progress, out, err| {
+                core::repository::dirwalk::walk(
+                    repository(Mode::Lenient)?,
+                    pathspec,
+                    out,
+                    err,
+                    core::repository::dirwalk::Options {
+                        output_format: format,
+                        statistics,
+                        untracked: match untracked {
+                            crate::plumbing::options::dirwalk::Untracked::Collapsed => {
+                                core::repository::dirwalk::Untracked::Collapsed
+                            }
+                            crate::plumbing::options::dirwalk::Untracked::Matching => {
+                                core::repository::dirwalk::Untracked::Matching
+                            }
+                        },
+                    },
+                )
+            },
+        ),
         Subcommands::Submodule(platform) => match platform
             .cmds
             .unwrap_or(crate::plumbing::options::submodule::Subcommands::List { dirty_suffix: None })
@@ -1336,359 +1374,6 @@ pub fn main() -> Result<()> {
                 )
             },
         ),
-        Subcommands::Branch(platform) => {
-            let branch::Platform {
-                list: _list_flag,
-                remotes,
-                all,
-                delete,
-                delete_force,
-                move_,
-                move_force,
-                copy,
-                copy_force,
-                show_current,
-                edit_description,
-                force,
-                verbose: branch_verbose,
-                quiet: _quiet,
-                set_upstream_to,
-                unset_upstream,
-                track,
-                no_track,
-                recurse_submodules,
-                create_reflog: _create_reflog,
-                abbrev,
-                no_abbrev,
-                contains,
-                no_contains,
-                merged,
-                no_merged,
-                points_at,
-                format_string,
-                omit_empty,
-                sort,
-                column,
-                no_column,
-                color: _color,
-                no_color: _no_color,
-                ignore_case,
-                args,
-            } = platform;
-            use core::repository::branch::list;
-            use gix::bstr::BString;
-
-            // Default cmdmode is list; builtin/branch.c cmd_branch
-            // picks list when no -d/-D/-m/-M/-c/-C/--show-current/
-            // --edit-description/-u/--unset-upstream is set and no
-            // positional create-args are present. For now only list
-            // mode is wired; other modes go through here too with
-            // flags silently ignored until their individual rows
-            // implement them.
-            // Per builtin/branch.c cmd_branch, any list-implying
-            // filter (--contains, --no-contains, --merged, --no-merged,
-            // --points-at) forces list mode even with positional args.
-            // Bare --list also forces list. Otherwise positional args
-            // without a cmdmode mean create.
-            let list_forced = _list_flag
-                || contains.is_some()
-                || no_contains.is_some()
-                || merged.is_some()
-                || no_merged.is_some()
-                || points_at.is_some();
-            // -u / --set-upstream-to and --unset-upstream are non-
-            // create cmdmodes. Without the gate they'd be misread as
-            // `branch <name>` create with the named branch tripping
-            // the already-exists check. Both are stubbed for now — the
-            // actual upstream-config write/clear is deferred.
-            let is_set_upstream = set_upstream_to.is_some();
-            let is_unset_upstream = unset_upstream;
-            let is_edit_description = edit_description;
-            let is_rename = move_ || move_force;
-            let rename_force = move_force || force;
-            let is_copy = copy || copy_force;
-            let copy_force_eff = copy_force || force;
-            let is_delete = delete || delete_force;
-            let is_create = !show_current
-                && !is_set_upstream
-                && !is_unset_upstream
-                && !is_edit_description
-                && !is_rename
-                && !is_copy
-                && !is_delete
-                && !list_forced
-                && !args.is_empty();
-
-            if show_current {
-                prepare_and_run(
-                    "branch-show-current",
-                    trace,
-                    verbose,
-                    progress,
-                    progress_keep_open,
-                    None,
-                    move |_progress, out, _err| core::repository::branch::show_current(repository(Mode::Lenient)?, out),
-                )
-            } else if is_set_upstream {
-                let upstream_str = set_upstream_to.expect("guarded by is_set_upstream");
-                let target_arg = args.into_iter().next();
-                prepare_and_run(
-                    "branch-set-upstream-to",
-                    trace,
-                    verbose,
-                    progress,
-                    progress_keep_open,
-                    None,
-                    move |_progress, out, err| {
-                        use gix::bstr::ByteSlice as _;
-                        let target_bstr = target_arg
-                            .as_ref()
-                            .map(|s| gix::path::os_str_into_bstr(s).map(std::borrow::ToOwned::to_owned))
-                            .transpose()?;
-                        core::repository::branch::set_upstream_to(
-                            repository(Mode::Lenient)?,
-                            target_bstr.as_ref().map(|b: &gix::bstr::BString| b.as_ref()),
-                            upstream_str.as_bytes().as_bstr(),
-                            out,
-                            err,
-                        )
-                    },
-                )
-            } else if is_unset_upstream {
-                let target_arg = args.into_iter().next();
-                prepare_and_run(
-                    "branch-unset-upstream",
-                    trace,
-                    verbose,
-                    progress,
-                    progress_keep_open,
-                    None,
-                    move |_progress, _out, err| {
-                        let target_bstr = target_arg
-                            .as_ref()
-                            .map(|s| gix::path::os_str_into_bstr(s).map(std::borrow::ToOwned::to_owned))
-                            .transpose()?;
-                        core::repository::branch::unset_upstream(
-                            repository(Mode::Lenient)?,
-                            target_bstr.as_ref().map(|b: &gix::bstr::BString| b.as_ref()),
-                            err,
-                        )
-                    },
-                )
-            } else if is_edit_description {
-                let target = args.into_iter().next();
-                prepare_and_run(
-                    "branch-edit-description",
-                    trace,
-                    verbose,
-                    progress,
-                    progress_keep_open,
-                    None,
-                    move |_progress, _out, err| {
-                        let target_bstr = target
-                            .as_ref()
-                            .map(|s| gix::path::os_str_into_bstr(s).map(std::borrow::ToOwned::to_owned))
-                            .transpose()?;
-                        core::repository::branch::edit_description(
-                            repository(Mode::Lenient)?,
-                            target_bstr.as_ref().map(|v: &gix::bstr::BString| v.as_ref()),
-                            err,
-                        )
-                    },
-                )
-            } else if is_rename {
-                // git rename forms:
-                //   -m <new>           — rename current branch to <new>
-                //   -m <old> <new>     — rename <old> to <new>
-                //   -M ...             — same, but force-overwrite <new>
-                let mut iter = args.into_iter();
-                let (old_arg, new_arg) = match (iter.next(), iter.next()) {
-                    (Some(a), Some(b)) => (Some(a), b),
-                    (Some(a), None) => (None, a),
-                    _ => {
-                        use std::io::Write;
-                        let mut stderr = std::io::stderr().lock();
-                        let _ = writeln!(stderr, "fatal: branch -m/-M needs at least <newname>");
-                        std::process::exit(128);
-                    }
-                };
-                let old = match old_arg {
-                    Some(s) => Some(gix::path::os_str_into_bstr(&s)?.to_owned()),
-                    None => None,
-                };
-                let new = gix::path::os_str_into_bstr(&new_arg)?.to_owned();
-                prepare_and_run(
-                    "branch-rename",
-                    trace,
-                    verbose,
-                    progress,
-                    progress_keep_open,
-                    None,
-                    move |_progress, _out, err| {
-                        let code =
-                            core::repository::branch::rename(repository(Mode::Lenient)?, old, new, rename_force, err)?;
-                        if code != 0 {
-                            std::process::exit(code);
-                        }
-                        Ok(())
-                    },
-                )
-            } else if is_copy {
-                // git copy forms:
-                //   -c <new>           — copy current branch to <new>
-                //   -c <old> <new>     — copy <old> to <new>
-                //   -C ...             — same, but force-overwrite <new>
-                let mut iter = args.into_iter();
-                let (old_arg, new_arg) = match (iter.next(), iter.next()) {
-                    (Some(a), Some(b)) => (Some(a), b),
-                    (Some(a), None) => (None, a),
-                    _ => {
-                        use std::io::Write;
-                        let mut stderr = std::io::stderr().lock();
-                        let _ = writeln!(stderr, "fatal: branch -c/-C needs at least <newname>");
-                        std::process::exit(128);
-                    }
-                };
-                let old = match old_arg {
-                    Some(s) => Some(gix::path::os_str_into_bstr(&s)?.to_owned()),
-                    None => None,
-                };
-                let new = gix::path::os_str_into_bstr(&new_arg)?.to_owned();
-                prepare_and_run(
-                    "branch-copy",
-                    trace,
-                    verbose,
-                    progress,
-                    progress_keep_open,
-                    None,
-                    move |_progress, _out, err| {
-                        let code =
-                            core::repository::branch::copy(repository(Mode::Lenient)?, old, new, copy_force_eff, err)?;
-                        if code != 0 {
-                            std::process::exit(code);
-                        }
-                        Ok(())
-                    },
-                )
-            } else if is_delete {
-                let names: Vec<gix::bstr::BString> = args
-                    .iter()
-                    .map(|os| gix::path::os_str_into_bstr(os).map(std::borrow::ToOwned::to_owned))
-                    .collect::<Result<_, _>>()?;
-                prepare_and_run(
-                    "branch-delete",
-                    trace,
-                    verbose,
-                    progress,
-                    progress_keep_open,
-                    None,
-                    move |_progress, out, err| {
-                        let code =
-                            core::repository::branch::delete(repository(Mode::Lenient)?, names, remotes, out, err)?;
-                        if code != 0 {
-                            std::process::exit(code);
-                        }
-                        Ok(())
-                    },
-                )
-            } else if is_create {
-                let mut iter = args.into_iter();
-                let name_os = iter.next().expect("is_create ⇒ args.len() >= 1");
-                let start_point_os = iter.next();
-                let name = gix::path::os_str_into_bstr(&name_os)?.to_owned();
-                let start_point = match start_point_os {
-                    Some(s) => Some(gix::path::os_str_into_bstr(&s)?.to_owned()),
-                    None => None,
-                };
-                // Pre-validate the refname to match git's byte-exact
-                // "fatal: '<name>' is not a valid branch name" + 128
-                // exit, instead of letting the gix-ref edit emit an
-                // anyhow backtrace via prepare_and_run.
-                if gix::validate::reference::name_partial(name.as_ref()).is_err() {
-                    use std::io::Write;
-                    let mut stderr = std::io::stderr().lock();
-                    let _ = writeln!(stderr, "fatal: '{name}' is not a valid branch name");
-                    let _ = writeln!(stderr, "hint: See `man git check-ref-format`");
-                    let _ = writeln!(
-                        stderr,
-                        "hint: Disable this message with \"git config advice.refSyntax false\""
-                    );
-                    std::process::exit(128);
-                }
-                // Convert track mode string (from clap) to BString for
-                // the branch::create API. clap emits "direct" for bare
-                // --track; "inherit" and "always" are also valid values
-                // but only "direct" is wired up on the gix side.
-                let track_bstr: Option<gix::bstr::BString> = track.map(|s| gix::bstr::BString::from(s.as_bytes()));
-                prepare_and_run(
-                    "branch-create",
-                    trace,
-                    verbose,
-                    progress,
-                    progress_keep_open,
-                    None,
-                    move |_progress, out, err| {
-                        let code = core::repository::branch::create(
-                            repository(Mode::Lenient)?,
-                            name,
-                            start_point,
-                            force,
-                            recurse_submodules,
-                            track_bstr,
-                            no_track,
-                            out,
-                            err,
-                        )?;
-                        if code != 0 {
-                            std::process::exit(code);
-                        }
-                        Ok(())
-                    },
-                )
-            } else {
-                let kind = if all {
-                    list::Kind::All
-                } else if remotes {
-                    list::Kind::Remote
-                } else {
-                    list::Kind::Local
-                };
-                let patterns: Vec<BString> = args
-                    .iter()
-                    .map(|os| gix::path::os_str_into_bstr(os).map(std::borrow::ToOwned::to_owned))
-                    .collect::<Result<_, _>>()?;
-                let options = list::Options {
-                    kind,
-                    patterns,
-                    contains,
-                    no_contains,
-                    merged,
-                    no_merged,
-                    points_at,
-                    format_string,
-                    sort,
-                    omit_empty,
-                    ignore_case,
-                    verbose: branch_verbose,
-                    abbrev,
-                    no_abbrev,
-                    column,
-                    no_column,
-                };
-
-                prepare_and_run(
-                    "branch-list",
-                    trace,
-                    verbose,
-                    progress,
-                    progress_keep_open,
-                    None,
-                    move |_progress, out, _err| {
-                        core::repository::branch::list(repository(Mode::Lenient)?, out, format, options)
-                    },
-                )
-            }
-        }
         #[cfg(feature = "gitoxide-core-tools-corpus")]
         Subcommands::Corpus(crate::plumbing::options::corpus::Platform { db, path, cmd }) => {
             let reverse_trace_lines = progress;
@@ -1801,7 +1486,6 @@ pub fn main() -> Result<()> {
             branch,
             remote,
             shallow,
-            filter,
             directory,
             extra_positionals,
         }) => {
@@ -1979,7 +1663,6 @@ pub fn main() -> Result<()> {
                 no_tags,
                 ref_name,
                 shallow: shallow.into(),
-                filter,
             };
             prepare_and_run(
                 "clone",
@@ -2073,7 +1756,6 @@ pub fn main() -> Result<()> {
                 drop(stderr);
                 std::process::exit(128);
             }
-            let unshallow_requested = platform.shallow.unshallow;
             let shallow = crate::plumbing::options::fetch::resolve_shallow(&platform.shallow);
             // `--remote` (gix-native) overrides the git-compatible positional
             // `<repository>` when both are supplied, matching the pre-parity
@@ -2088,7 +1770,6 @@ pub fn main() -> Result<()> {
                 open_negotiation_graph: platform.open_negotiation_graph,
                 shallow,
                 ref_specs: platform.refspec,
-                unshallow_requested,
             };
             prepare_and_run(
                 "fetch",
@@ -2099,95 +1780,6 @@ pub fn main() -> Result<()> {
                 core::repository::fetch::PROGRESS_RANGE,
                 move |progress, out, err| {
                     core::repository::fetch(repository(Mode::LenientWithGitInstallConfig)?, progress, out, err, opts)
-                },
-            )
-        }
-        #[cfg(feature = "gitoxide-core-blocking-client")]
-        Subcommands::Push(crate::plumbing::options::push::Platform {
-            all,
-            mirror,
-            delete,
-            tags,
-            follow_tags,
-            dry_run,
-            porcelain,
-            force,
-            force_with_lease,
-            force_if_includes,
-            atomic,
-            prune,
-            set_upstream,
-            verbose: _,
-            quiet: _,
-            progress: push_progress,
-            no_progress,
-            thin,
-            no_thin,
-            no_verify,
-            receive_pack,
-            signed,
-            push_option,
-            recurse_submodules,
-            ipv4,
-            ipv6,
-            repo,
-            repository: push_repository,
-            refspec,
-        }) => {
-            let opts = core::repository::push::Options {
-                format,
-                all,
-                mirror,
-                delete,
-                tags,
-                follow_tags,
-                dry_run,
-                porcelain,
-                force,
-                force_with_lease,
-                force_if_includes,
-                atomic,
-                prune,
-                set_upstream,
-                progress: if push_progress {
-                    Some(true)
-                } else if no_progress {
-                    Some(false)
-                } else {
-                    None
-                },
-                thin: if thin {
-                    Some(true)
-                } else if no_thin {
-                    Some(false)
-                } else {
-                    None
-                },
-                no_verify,
-                receive_pack,
-                signed_arg: signed,
-                push_options: push_option,
-                recurse_submodules_arg: recurse_submodules,
-                ipv4,
-                ipv6,
-                repo,
-                remote: push_repository,
-                ref_specs: refspec,
-            };
-            // `--porcelain` emits machine-readable output; auto-verbose progress
-            // on stderr would leak ANSI escapes that confuse scripts. Same
-            // suppression applies to `--quiet`. Mirrors git's own `-q` /
-            // `--porcelain` suppression of progress output.
-            let push_auto_verbose = auto_verbose && !opts.porcelain;
-            prepare_and_run(
-                "push",
-                trace,
-                push_auto_verbose,
-                progress,
-                progress_keep_open,
-                core::repository::push::PROGRESS_RANGE,
-                move |progress, out, err| {
-                    core::repository::push(repository(Mode::LenientWithGitInstallConfig)?, progress, out, err, opts)
                 },
             )
         }
@@ -2446,6 +2038,36 @@ pub fn main() -> Result<()> {
                     progress_keep_open,
                     core::mailmap::PROGRESS_RANGE,
                     move |_progress, out, _err| core::mailmap::verify(path, format, out),
+                ),
+            },
+            #[cfg(feature = "gitoxide-core-blocking-client")]
+            free::Subcommands::Remote(subcommands) => match subcommands {
+                free::remote::Subcommands::Refs {
+                    protocol,
+                    refs_directory,
+                    write_reflog,
+                    url,
+                } => prepare_and_run(
+                    "remote-refs",
+                    trace,
+                    verbose,
+                    progress,
+                    progress_keep_open,
+                    core::remote::PROGRESS_RANGE,
+                    move |progress, out, _err| {
+                        core::remote::refs(
+                            protocol,
+                            &url,
+                            refs_directory,
+                            progress,
+                            core::remote::Context {
+                                format,
+                                out,
+                                object_hash,
+                                write_reflog,
+                            },
+                        )
+                    },
                 ),
             },
             free::Subcommands::Pack(subcommands) => match subcommands {

@@ -7,10 +7,9 @@ use std::{
 pub use error::Error;
 
 use crate::{
-    file,
+    BStr, BString, FullNameRef, PartialName, PartialNameRef, Reference, file,
     name::is_pseudo_ref,
     store_impl::{file::loose, packed},
-    BStr, BString, FullNameRef, PartialName, PartialNameRef, Reference,
 };
 
 /// ### Finding References - notes about precomposed unicode.
@@ -165,10 +164,16 @@ impl file::Store {
         let full_name = precomposed_partial_name
             .unwrap_or(partial_name)
             .construct_full_name_ref(inbetween, path_buf, consider_pseudo_ref);
-        let content_buf = self.ref_contents(full_name).map_err(|err| Error::ReadFileContents {
-            source: err,
-            path: self.reference_path(full_name),
-        })?;
+        let content_buf = match self.ref_contents(full_name) {
+            Ok(content_buf) => content_buf,
+            Err(err) if err.kind() == io::ErrorKind::NotADirectory => return Ok(None),
+            Err(err) => {
+                return Err(Error::ReadFileContents {
+                    source: err,
+                    path: self.reference_path(full_name),
+                });
+            }
+        };
 
         match content_buf {
             None => {
@@ -194,7 +199,7 @@ impl file::Store {
                 Ok(None)
             }
             Some(content) => Ok(Some(
-                loose::Reference::try_from_path(full_name.to_owned(), &content)
+                loose::Reference::try_from_path(full_name.to_owned(), &content, self.object_hash)
                     .map(Into::into)
                     .map(|mut r: Reference| {
                         if let Some(namespace) = &self.namespace {
@@ -271,22 +276,32 @@ impl file::Store {
         base.join(relative_path)
     }
 
-    /// Read the file contents with a verified full reference path and return it in the given vector if possible.
-    pub(crate) fn ref_contents(&self, name: &FullNameRef) -> io::Result<Option<Vec<u8>>> {
-        let (base, relative_path) = self.reference_path_with_base(name);
-        if self.prohibit_windows_device_names
-            && relative_path
-                .components()
-                .filter_map(|c| gix_path::try_os_str_into_bstr(c.as_os_str().into()).ok())
-                .any(|c| gix_validate::path::component_is_windows_device(c.as_ref()))
+    /// If `prohibit_windows_device_names` is set, check that `name` does not
+    /// contain a path component that matches a reserved Windows device name.
+    pub(crate) fn check_windows_device_name(&self, name: &FullNameRef) -> io::Result<()> {
+        if !self.prohibit_windows_device_names {
+            return Ok(());
+        }
+        let (_, relative_path) = self.reference_path_with_base(name);
+        if relative_path
+            .components()
+            .filter_map(|c| gix_path::try_os_str_into_bstr(c.as_os_str().into()).ok())
+            .any(|c| gix_validate::path::component_is_windows_device(c.as_ref()))
         {
-            return Err(std::io::Error::other(format!(
+            Err(std::io::Error::other(format!(
                 "Illegal use of reserved Windows device name in \"{}\"",
                 name.as_bstr()
-            )));
+            )))
+        } else {
+            Ok(())
         }
+    }
 
-        let ref_path = base.join(relative_path);
+    /// Read the file contents with a verified full reference path and return it in the given vector if possible.
+    pub(crate) fn ref_contents(&self, name: &FullNameRef) -> io::Result<Option<Vec<u8>>> {
+        self.check_windows_device_name(name)?;
+        let (base, relative_path) = self.reference_path_with_base(name);
+        let ref_path = base.join(&relative_path);
         match std::fs::File::open(&ref_path) {
             Ok(mut file) => {
                 let mut buf = Vec::with_capacity(128);
@@ -295,12 +310,43 @@ impl file::Store {
                 }
                 Ok(buf.into())
             }
-            Err(err) if err.kind() == io::ErrorKind::NotFound => Ok(None),
+            Err(err) if err.kind() == io::ErrorKind::NotFound => {
+                #[cfg(windows)]
+                if path_has_file_prefix(base.as_ref(), relative_path.as_ref()) {
+                    return Err(io::Error::new(io::ErrorKind::NotADirectory, err));
+                }
+                Ok(None)
+            }
             #[cfg(windows)]
-            Err(err) if err.kind() == std::io::ErrorKind::PermissionDenied => Ok(None),
+            Err(err) if err.kind() == std::io::ErrorKind::PermissionDenied => {
+                if path_has_file_prefix(base.as_ref(), relative_path.as_ref()) {
+                    Err(io::Error::new(io::ErrorKind::NotADirectory, err))
+                } else {
+                    Ok(None)
+                }
+            }
             Err(err) => Err(err),
         }
     }
+}
+
+#[cfg(windows)]
+fn path_has_file_prefix(base: &Path, relative_path: &Path) -> bool {
+    let mut path = base.to_owned();
+    let mut components = relative_path.components().peekable();
+    while let Some(component) = components.next() {
+        if components.peek().is_none() {
+            break;
+        }
+        path.push(component.as_os_str());
+        match std::fs::metadata(&path) {
+            Ok(metadata) if metadata.is_file() => return true,
+            Ok(_) => {}
+            Err(err) if err.kind() == io::ErrorKind::NotFound => return false,
+            Err(_) => {}
+        }
+    }
+    false
 }
 
 ///
@@ -308,12 +354,12 @@ pub mod existing {
     pub use error::Error;
 
     use crate::{
+        PartialNameRef, Reference,
         file::{self},
         store_impl::{
             file::{find, loose},
             packed,
         },
-        PartialNameRef, Reference,
     };
 
     impl file::Store {

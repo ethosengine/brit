@@ -11,7 +11,7 @@ type ConfigureRemoteFn =
 #[cfg(any(feature = "async-network-client", feature = "blocking-network-client"))]
 type ConfigureConnectionFn = Box<
     dyn FnMut(
-        &mut remote::Connection<'_, '_, Box<dyn Transport + Send>>,
+        &mut remote::Connection<'_, '_, '_, Box<dyn Transport + Send>>,
     ) -> Result<(), Box<dyn std::error::Error + Send + Sync>>,
 >;
 
@@ -39,12 +39,11 @@ pub struct PrepareFetch {
     /// How to handle shallow clones
     #[cfg_attr(not(feature = "blocking-network-client"), allow(dead_code))]
     shallow: remote::fetch::Shallow,
-    /// Optional object filter to request from the remote.
-    #[cfg_attr(not(feature = "blocking-network-client"), allow(dead_code))]
-    filter: Option<remote::fetch::ObjectFilter>,
     /// The name of the reference to fetch. If `None`, the reference pointed to by `HEAD` will be checked out.
     #[cfg_attr(not(feature = "blocking-network-client"), allow(dead_code))]
     ref_name: Option<gix_ref::PartialName>,
+    /// If `true`, drop removes the entire worktree. Otherwise leave it alone.
+    remove_worktree_on_drop: bool,
 }
 
 /// The error returned by [`PrepareFetch::new()`].
@@ -109,6 +108,15 @@ impl PrepareFetch {
             create_opts.destination_must_be_empty = Some(true);
         }
 
+        // Capture this before init_opts creates `.git`, otherwise the check below would see our own files.
+        let remove_worktree_on_drop = match std::fs::read_dir(path) {
+            Ok(mut entries) => entries.next().is_none(),
+            // Non-existent destinations will be created by init_opts.
+            Err(err) if err.kind() == std::io::ErrorKind::NotFound => true,
+            // If we can't verify emptiness, keep cleanup conservative and leave the destination untouched.
+            Err(_) => false,
+        };
+
         let mut repo = crate::ThreadSafeRepository::init_opts(path, kind, create_opts, open_opts)?.to_thread_local();
         url.canonicalize(repo.options.current_dir_or_empty())
             .map_err(|err| Error::CanonicalizeUrl {
@@ -127,8 +135,8 @@ impl PrepareFetch {
             #[cfg(any(feature = "async-network-client", feature = "blocking-network-client"))]
             configure_connection: None,
             shallow: remote::fetch::Shallow::NoChange,
-            filter: None,
             ref_name: None,
+            remove_worktree_on_drop,
         })
     }
 }
@@ -143,6 +151,21 @@ pub struct PrepareCheckout {
     pub(self) repo: Option<crate::Repository>,
     /// The name of the reference to check out. If `None`, the reference pointed to by `HEAD` will be checked out.
     pub(self) ref_name: Option<gix_ref::PartialName>,
+    /// If `true`, drop removes the entire worktree. Otherwise leave it alone.
+    pub(self) remove_worktree_on_drop: bool,
+}
+
+fn cleanup_clone_destination_on_drop(repo: &crate::Repository, remove_worktree_on_drop: bool) {
+    let path_to_remove = if remove_worktree_on_drop {
+        Some(repo.workdir().unwrap_or_else(|| repo.path()))
+    } else {
+        // The destination held pre-existing user files. Leave everything, including the `.git` we created,
+        // so the user can inspect or clean up the partially cloned repository with Git tooling.
+        None
+    };
+    if let Some(path_to_remove) = path_to_remove {
+        std::fs::remove_dir_all(path_to_remove).ok();
+    }
 }
 
 // This module encapsulates functionality that works with both feature toggles. Can be combined with `fetch`
@@ -161,9 +184,9 @@ mod access_feat {
         pub fn configure_connection(
             mut self,
             f: impl FnMut(
-                    &mut crate::remote::Connection<'_, '_, Box<dyn Transport + Send>>,
-                ) -> Result<(), Box<dyn std::error::Error + Send + Sync>>
-                + 'static,
+                &mut crate::remote::Connection<'_, '_, '_, Box<dyn Transport + Send>>,
+            ) -> Result<(), Box<dyn std::error::Error + Send + Sync>>
+            + 'static,
         ) -> Self {
             self.configure_connection = Some(Box::new(f));
             self

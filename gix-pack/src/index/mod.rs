@@ -88,15 +88,6 @@ pub enum Version {
     V2 = 2,
 }
 
-impl Version {
-    /// The kind of hash to produce to be compatible to this kind of index
-    pub fn hash(&self) -> gix_hash::Kind {
-        match self {
-            Version::V1 | Version::V2 => gix_hash::Kind::Sha1,
-        }
-    }
-}
-
 /// A way to indicate if a lookup, despite successful, was ambiguous or yielded exactly
 /// one result in the particular index.
 pub type PrefixLookupResult = Result<EntryIndex, ()>;

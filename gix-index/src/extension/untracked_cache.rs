@@ -7,8 +7,40 @@ use crate::{
     util::{read_u32, split_at_byte_exclusive, var_int},
 };
 
+impl UntrackedCache {
+    /// Something identifying the location and machine that this cache is for.
+    pub fn identifier(&self) -> &bstr::BStr {
+        self.identifier.as_ref()
+    }
+
+    /// Stat and object id for the `.git/info/exclude` file, if available.
+    pub fn info_exclude(&self) -> Option<&OidStat> {
+        self.info_exclude.as_ref()
+    }
+
+    /// Stat and object id for the `core.excludesfile`, if available.
+    pub fn excludes_file(&self) -> Option<&OidStat> {
+        self.excludes_file.as_ref()
+    }
+
+    /// Usually `.gitignore`.
+    pub fn exclude_filename_per_dir(&self) -> &bstr::BStr {
+        self.exclude_filename_per_dir.as_ref()
+    }
+
+    /// The directory flags Git used while populating the cache.
+    pub fn dir_flags(&self) -> u32 {
+        self.dir_flags
+    }
+
+    /// A list of directories and sub-directories, with `directories[0]` being the root.
+    pub fn directories(&self) -> &[Directory] {
+        &self.directories
+    }
+}
+
 /// A structure to track filesystem stat information along with an object id, linking a worktree file with what's in our ODB.
-#[derive(Clone)]
+#[derive(Clone, Debug)]
 pub struct OidStat {
     /// The file system stat information
     pub stat: entry::Stat,
@@ -17,19 +49,19 @@ pub struct OidStat {
 }
 
 impl OidStat {
-    /// Return filesystem stat information for the tracked file.
+    /// The file system stat information.
     pub fn stat(&self) -> &entry::Stat {
         &self.stat
     }
 
-    /// Return the object id associated with the tracked file contents.
-    pub fn id(&self) -> &ObjectId {
-        &self.id
+    /// The id of the file in our ODB.
+    pub fn id(&self) -> ObjectId {
+        self.id
     }
 }
 
 /// A directory with information about its untracked files, and its sub-directories
-#[derive(Clone)]
+#[derive(Clone, Debug)]
 pub struct Directory {
     /// The directories name, or an empty string if this is the root directory.
     pub name: BString,
@@ -47,32 +79,33 @@ pub struct Directory {
 }
 
 impl Directory {
-    /// Return the directory name, or an empty string for the root directory.
+    /// The directory name, or an empty string if this is the root directory.
+    /// `/` is always used as path-separator.
     pub fn name(&self) -> &bstr::BStr {
         self.name.as_ref()
     }
 
-    /// Return all cached untracked entries contained directly in this directory.
+    /// Untracked files and directory names.
     pub fn untracked_entries(&self) -> &[BString] {
         &self.untracked_entries
     }
 
-    /// Return indices pointing at cached child directories.
+    /// Indices for sub-directories similar to this one.
     pub fn sub_directories(&self) -> &[usize] {
         &self.sub_directories
     }
 
-    /// Return the cached stat information for this directory, if available.
+    /// The directory stat data, if available and valid.
     pub fn stat(&self) -> Option<&entry::Stat> {
         self.stat.as_ref()
     }
 
-    /// Return the cached object id of this directory's ignore file, if available.
-    pub fn exclude_file_oid(&self) -> Option<&ObjectId> {
-        self.exclude_file_oid.as_ref()
+    /// The oid of a `.gitignore` file, if it exists.
+    pub fn exclude_file_oid(&self) -> Option<ObjectId> {
+        self.exclude_file_oid
     }
 
-    /// Return whether this directory was cached in `check_only` mode.
+    /// Whether Git marked this directory as check-only.
     pub fn check_only(&self) -> bool {
         self.check_only
     }
@@ -81,7 +114,6 @@ impl Directory {
 /// Only used as an indicator
 pub const SIGNATURE: Signature = *b"UNTR";
 
-// #[allow(unused)]
 /// Decode an untracked cache extension from `data`, assuming object hashes are of type `object_hash`.
 pub fn decode(data: &[u8], object_hash: gix_hash::Kind, alloc_limit_bytes: Option<usize>) -> Option<UntrackedCache> {
     if data.last().is_none_or(|b| *b != 0) {

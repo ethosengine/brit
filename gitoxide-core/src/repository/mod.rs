@@ -7,7 +7,6 @@ use gix::bstr::BString;
 pub mod add;
 #[cfg(feature = "archive")]
 pub mod archive;
-pub mod branch;
 pub mod cat;
 pub use cat::function::{
     batch as cat_batch, batch_all_objects as cat_batch_all_objects, batch_check as cat_batch_check,
@@ -26,6 +25,7 @@ pub mod attributes;
 pub mod clean;
 pub mod diff;
 pub mod dirty;
+pub mod dirwalk;
 #[cfg(feature = "clean")]
 pub use clean::function::clean;
 #[cfg(feature = "blocking-client")]
@@ -36,13 +36,11 @@ pub mod fetch;
 #[cfg(feature = "blocking-client")]
 pub mod pull;
 #[cfg(feature = "blocking-client")]
-pub mod push;
 #[cfg(feature = "blocking-client")]
 pub use clone::function::clone;
 #[cfg(feature = "blocking-client")]
 pub use fetch::function::fetch;
 #[cfg(feature = "blocking-client")]
-pub use push::function::push;
 
 pub mod commitgraph;
 mod fsck;

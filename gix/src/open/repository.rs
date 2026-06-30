@@ -6,21 +6,21 @@ use gix_path::RelativePath;
 use std::path::Path;
 use std::{
     borrow::Cow,
-    collections::{btree_map::Entry, BTreeMap},
+    collections::{BTreeMap, btree_map::Entry},
     ffi::OsStr,
     path::PathBuf,
 };
 
 use super::{Error, Options};
 use crate::{
+    ThreadSafeRepository,
     bstr::BString,
     config,
     config::{
         cache::interpolate_context,
-        tree::{gitoxide, Core, Key, Safe},
+        tree::{Core, Key, Safe, gitoxide},
     },
     open::Permissions,
-    ThreadSafeRepository,
 };
 
 #[derive(Default, Clone)]
@@ -153,6 +153,7 @@ impl ThreadSafeRepository {
 
         let git_dir_trust = gix_sec::Trust::from_path_ownership(&git_dir)?;
         let mut options = trust_map.into_value_by_level(git_dir_trust);
+        options.git_dir_trust = git_dir_trust.into();
         options.current_dir = Some(cwd);
         ThreadSafeRepository::open_from_paths(git_dir, worktree_dir, options)
     }
@@ -299,12 +300,17 @@ impl ThreadSafeRepository {
                     | gix_config::Source::Cli
                     | gix_config::Source::Api
                     | gix_config::Source::EnvOverride => wt_path,
-                    _ => git_dir.join(wt_path).into(),
+                    _ => git_dir_resolving_symlinks_for_worktree_base(&git_dir, current_dir)
+                        .join(wt_path)
+                        .into(),
                 };
                 worktree_dir = gix_path::normalize(wt_path, current_dir).map(Cow::into_owned);
                 #[allow(unused_variables)]
                 if let Some(worktree_path) = worktree_dir.as_deref().filter(|wtd| !wtd.is_dir()) {
-                    gix_trace::warn!("The configured worktree path '{}' is not a directory or doesn't exist - `core.worktree` may be misleading", worktree_path.display());
+                    gix_trace::warn!(
+                        "The configured worktree path '{}' is not a directory or doesn't exist - `core.worktree` may be misleading",
+                        worktree_path.display()
+                    );
                 }
             } else if !config.lenient_config
                 && config
@@ -504,6 +510,30 @@ impl ThreadSafeRepository {
             #[cfg(feature = "attributes")]
             modules: gix_fs::SharedFileSnapshotMut::new().into(),
         })
+    }
+}
+
+/// Return the path that should be used as base for `core.worktree` values from repository-owned config.
+///
+/// Git resolves symlinks in the `.git` directory before interpreting these relative worktree paths. Preserve the
+/// original `git_dir` unless realpathing actually changes it, both to avoid needless allocation and to keep existing
+/// paths stable when no symlink needs to be accounted for.
+fn git_dir_resolving_symlinks_for_worktree_base<'a>(git_dir: &'a Path, current_dir: &Path) -> Cow<'a, Path> {
+    let logical_git_dir = gix_path::normalize(
+        Cow::Owned(if git_dir.is_relative() {
+            current_dir.join(git_dir)
+        } else {
+            git_dir.to_owned()
+        }),
+        current_dir,
+    )
+    .map(Cow::into_owned);
+    match (
+        crate::path::realpath_opts(git_dir, current_dir, crate::path::realpath::MAX_SYMLINKS),
+        logical_git_dir,
+    ) {
+        (Ok(real_git_dir), Some(logical_git_dir)) if real_git_dir != logical_git_dir => Cow::Owned(real_git_dir),
+        _ => Cow::Borrowed(git_dir),
     }
 }
 

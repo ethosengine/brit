@@ -27,6 +27,8 @@ pub struct Tree {
     /// The amount of non-tree items in this directory tree, including sub-trees, recursively.
     /// The value of the top-level tree is thus equal to the value of the total amount of entries.
     /// If `None`, the tree is considered invalid and needs to be refreshed
+    ///
+    /// Note that this value can't be trusted, and it may exceed the amount of entries or mismatch.
     pub num_entries: Option<u32>,
     /// The child-trees below the current tree.
     pub children: Vec<Tree>,
@@ -43,7 +45,7 @@ pub struct Link {
 
 /// The extension for untracked files.
 #[allow(dead_code)]
-#[derive(Clone)]
+#[derive(Debug, Clone)]
 pub struct UntrackedCache {
     /// Something identifying the location and machine that this cache is for.
     /// Should the repository be copied to a different machine, the entire cache can immediately be invalidated.
@@ -58,38 +60,6 @@ pub struct UntrackedCache {
 
     /// A list of directories and sub-directories, with `directories[0]` being the root.
     directories: Vec<untracked_cache::Directory>,
-}
-
-impl UntrackedCache {
-    /// Return an identifier tying this cache to the worktree location and host system.
-    pub fn identifier(&self) -> &bstr::BStr {
-        self.identifier.as_ref()
-    }
-
-    /// Return stat information for `$GIT_DIR/info/exclude`, along with its object id if available.
-    pub fn info_exclude(&self) -> Option<&untracked_cache::OidStat> {
-        self.info_exclude.as_ref()
-    }
-
-    /// Return stat information for `core.excludesFile`, along with its object id if available.
-    pub fn excludes_file(&self) -> Option<&untracked_cache::OidStat> {
-        self.excludes_file.as_ref()
-    }
-
-    /// Return the filename used for per-directory ignore files, typically `.gitignore`.
-    pub fn exclude_filename_per_dir(&self) -> &bstr::BStr {
-        self.exclude_filename_per_dir.as_ref()
-    }
-
-    /// Return flags that describe how the cache contents were recorded.
-    pub fn dir_flags(&self) -> u32 {
-        self.dir_flags
-    }
-
-    /// Return all cached directories, with index `0` representing the repository root.
-    pub fn directories(&self) -> &[untracked_cache::Directory] {
-        &self.directories
-    }
 }
 
 /// The extension for keeping state on recent information provided by the filesystem monitor.

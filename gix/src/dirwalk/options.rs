@@ -1,6 +1,6 @@
 use gix_dir::walk::{CollapsedEntriesEmissionMode, EmissionMode, ForDeletionMode};
 
-use crate::dirwalk::{Options, UntrackedCache};
+use crate::dirwalk::Options;
 
 /// Construction
 impl Options {
@@ -19,7 +19,6 @@ impl Options {
             emit_collapsed: None,
             empty_patterns_match_prefix: false,
             symlinks_to_directories_are_ignored_like_directories: false,
-            untracked_cache: UntrackedCache::Ignore,
         }
     }
 }
@@ -40,8 +39,8 @@ impl From<Options> for gix_dir::walk::Options<'static> {
             emit_collapsed: v.emit_collapsed,
             symlinks_to_directories_are_ignored_like_directories: v
                 .symlinks_to_directories_are_ignored_like_directories,
-            use_untracked_cache: v.untracked_cache == UntrackedCache::Use,
             worktree_relative_worktree_dirs: None,
+            use_untracked_cache: false,
         }
     }
 }
@@ -185,18 +184,6 @@ impl Options {
     /// but only requires a mutably borrowed instance.
     pub fn set_symlinks_to_directories_are_ignored_like_directories(&mut self, toggle: bool) -> &mut Self {
         self.symlinks_to_directories_are_ignored_like_directories = toggle;
-        self
-    }
-
-    /// Control whether to consult the untracked cache if it is present and applicable.
-    pub fn untracked_cache(mut self, value: UntrackedCache) -> Self {
-        self.untracked_cache = value;
-        self
-    }
-
-    /// Like [`untracked_cache()`](Self::untracked_cache), but only requires a mutably borrowed instance.
-    pub fn set_untracked_cache(&mut self, value: UntrackedCache) -> &mut Self {
-        self.untracked_cache = value;
         self
     }
 }

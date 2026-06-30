@@ -1,6 +1,6 @@
 use std::{cmp::Ordering, path::PathBuf};
 
-use gix_ref::{file::ReferenceExt, Reference};
+use gix_ref::{Reference, file::ReferenceExt};
 use gix_testtools::Creation;
 
 fn dir(packed: bool, writable: bool) -> crate::Result<(PathBuf, Option<gix_testtools::tempfile::TempDir>)> {
@@ -10,10 +10,10 @@ fn dir(packed: bool, writable: bool) -> crate::Result<(PathBuf, Option<gix_testt
         args.push("packed");
     }
     if writable {
-        gix_testtools::scripted_fixture_writable_with_args_standalone(name, args, Creation::Execute)
+        crate::scripted_fixture_writable_with_args(name, args, Creation::Execute)
             .map(|tmp| (tmp.path().to_owned(), tmp.into()))
     } else {
-        gix_testtools::scripted_fixture_read_only_with_args_standalone(name, args).map(|p| (p, None))
+        crate::scripted_fixture_read_only_with_args(name, args).map(|p| (p, None))
     }
 }
 
@@ -29,8 +29,8 @@ fn main_store(
     let (dir, tmp) = dir(packed, writable)?;
     let git_dir = dir.join("repo").join(".git");
     Ok((
-        gix_ref::file::Store::at(git_dir.clone(), Default::default()),
-        gix_odb::at(git_dir.join("objects"))?,
+        gix_ref::file::Store::at(git_dir.clone(), crate::file::store_options()),
+        crate::file::odb_at(git_dir.join("objects"))?,
         tmp,
     ))
 }
@@ -50,8 +50,8 @@ fn worktree_store(
         .into_repository_and_work_tree_directories();
     let common_dir = git_dir.join("../..");
     Ok((
-        gix_ref::file::Store::for_linked_worktree(git_dir, common_dir.clone(), Default::default()),
-        gix_odb::at(common_dir.join("objects"))?,
+        gix_ref::file::Store::for_linked_worktree(git_dir, common_dir.clone(), crate::file::store_options()),
+        crate::file::odb_at(common_dir.join("objects"))?,
         tmp,
     ))
 }
@@ -68,6 +68,10 @@ enum Mode {
     Write,
 }
 
+fn oid(hex: &str) -> String {
+    crate::hex_to_id(hex).to_string()
+}
+
 impl From<Mode> for bool {
     fn from(v: Mode) -> Self {
         match v {
@@ -78,7 +82,7 @@ impl From<Mode> for bool {
 }
 
 mod read_only {
-    use crate::file::worktree::{assert_reflog, into_peel, main_store, worktree_store, Mode};
+    use crate::file::worktree::{Mode, assert_reflog, into_peel, main_store, worktree_store};
 
     #[test]
     fn linked() -> crate::Result {
@@ -194,16 +198,16 @@ mod writable {
     use gix_date::parse::TimeBuf;
     use gix_lock::acquire::Fail;
     use gix_ref::{
-        file::{transaction::PackedRefs, Store},
-        transaction::{Change, LogChange, PreviousValue, RefEdit},
         FullName, FullNameRef, Target,
+        file::{Store, transaction::PackedRefs},
+        transaction::{Change, LogChange, PreviousValue, RefEdit},
     };
 
     use crate::{
         file::{
-            transaction::prepare_and_commit::committer,
-            worktree::{main_store, worktree_store, Mode},
             EmptyCommit,
+            transaction::prepare_and_commit::committer,
+            worktree::{Mode, main_store, oid, worktree_store},
         },
         hex_to_id,
     };
@@ -218,10 +222,10 @@ mod writable {
 
     #[test]
     fn main() -> crate::Result {
-        let new_id_main_str = "11111111111111111162102c6a483440bfda2a03";
-        let new_id_main = hex_to_id(new_id_main_str);
-        let new_id_linked_str = "22222222222222222262102c6a483440bfda2a03";
-        let new_id_linked = hex_to_id(new_id_linked_str);
+        let new_id_main = hex_to_id("11111111111111111162102c6a483440bfda2a03");
+        let new_id_main_str = new_id_main.to_string();
+        let new_id_linked = hex_to_id("22222222222222222262102c6a483440bfda2a03");
+        let new_id_linked_str = new_id_linked.to_string();
 
         for packed in [false, true] {
             let (store, _odb, _tmp) = main_store(packed, Mode::Write)?;
@@ -273,20 +277,23 @@ mod writable {
                     .map(|r| (r.name.to_string(), r.target.to_string()))
                     .collect::<Vec<_>>(),
                 [
-                    ("refs/bisect/bad", "9556057aee5abb06912922e9f26c46386a816822"),
-                    ("refs/bisect/good", new_id_main_str),
-                    ("refs/heads/main", "9556057aee5abb06912922e9f26c46386a816822"),
-                    ("refs/heads/new", new_id_main_str),
-                    ("refs/heads/shared", new_id_linked_str),
-                    ("refs/heads/w1", "9902e3c3e8f0c569b4ab295ddf473e6de763e1e7"),
-                    ("refs/stacks/common", "134385f6d781b7e97062102c6a483440bfda2a03"),
-                    ("refs/stacks/w1", "17d78c64cef6c33a10a604573fd2c429e477fd63"),
-                    ("refs/stacks/wtdetached", "9902e3c3e8f0c569b4ab295ddf473e6de763e1e7"),
-                    ("refs/tags/dt1", "d3ba65e5e3be5cdd7210da9998307a4762999cc5"),
-                    ("refs/tags/t1", "9556057aee5abb06912922e9f26c46386a816822")
+                    ("refs/bisect/bad", oid("9556057aee5abb06912922e9f26c46386a816822")),
+                    ("refs/bisect/good", new_id_main_str.clone()),
+                    ("refs/heads/main", oid("9556057aee5abb06912922e9f26c46386a816822")),
+                    ("refs/heads/new", new_id_main_str.clone()),
+                    ("refs/heads/shared", new_id_linked_str.clone()),
+                    ("refs/heads/w1", oid("9902e3c3e8f0c569b4ab295ddf473e6de763e1e7")),
+                    ("refs/stacks/common", oid("134385f6d781b7e97062102c6a483440bfda2a03")),
+                    ("refs/stacks/w1", oid("17d78c64cef6c33a10a604573fd2c429e477fd63")),
+                    (
+                        "refs/stacks/wtdetached",
+                        oid("9902e3c3e8f0c569b4ab295ddf473e6de763e1e7")
+                    ),
+                    ("refs/tags/dt1", oid("d3ba65e5e3be5cdd7210da9998307a4762999cc5")),
+                    ("refs/tags/t1", oid("9556057aee5abb06912922e9f26c46386a816822"))
                 ]
                 .iter()
-                .map(|(a, b)| (a.to_string(), b.to_string()))
+                .map(|(a, b)| (a.to_string(), b.clone()))
                 .collect::<Vec<_>>(),
                 "we traverse only refs of the main worktree"
             );
@@ -298,12 +305,15 @@ mod writable {
                     .map(|r| (r.name.to_string(), r.target.to_string()))
                     .collect::<Vec<_>>(),
                 [
-                    ("refs/stacks/common", "134385f6d781b7e97062102c6a483440bfda2a03"),
-                    ("refs/stacks/w1", "17d78c64cef6c33a10a604573fd2c429e477fd63"),
-                    ("refs/stacks/wtdetached", "9902e3c3e8f0c569b4ab295ddf473e6de763e1e7"),
+                    ("refs/stacks/common", oid("134385f6d781b7e97062102c6a483440bfda2a03")),
+                    ("refs/stacks/w1", oid("17d78c64cef6c33a10a604573fd2c429e477fd63")),
+                    (
+                        "refs/stacks/wtdetached",
+                        oid("9902e3c3e8f0c569b4ab295ddf473e6de763e1e7")
+                    ),
                 ]
                 .iter()
-                .map(|(a, b)| (a.to_string(), b.to_string()))
+                .map(|(a, b)| (a.to_string(), b.clone()))
                 .collect::<Vec<_>>(),
             );
 
@@ -420,25 +430,28 @@ mod writable {
                 );
             }
 
-            assert!(matches!(
-                store.transaction().prepare(
-                    vec![
-                        RefEdit {
-                            change: change_with_id(new_id_main),
-                            name: "main-worktree/refs/heads/foo".try_into()?,
-                            deref: false,
-                        },
-                        RefEdit {
-                            change: change_with_id(new_id_main),
-                            name: "refs/heads/foo".try_into()?,
-                            deref: false,
-                        },
-                    ],
-                    Fail::Immediately,
-                    Fail::Immediately,
+            assert!(
+                matches!(
+                    store.transaction().prepare(
+                        vec![
+                            RefEdit {
+                                change: change_with_id(new_id_main),
+                                name: "main-worktree/refs/heads/foo".try_into()?,
+                                deref: false,
+                            },
+                            RefEdit {
+                                change: change_with_id(new_id_main),
+                                name: "refs/heads/foo".try_into()?,
+                                deref: false,
+                            },
+                        ],
+                        Fail::Immediately,
+                        Fail::Immediately,
+                    ),
+                    Err(gix_ref::file::transaction::prepare::Error::LockAcquire { .. })
                 ),
-                Err(gix_ref::file::transaction::prepare::Error::LockAcquire { .. })
-            ), "prefixed refs resolve to the same name and will fail to be locked (so we don't check for this when doing dupe checking)");
+                "prefixed refs resolve to the same name and will fail to be locked (so we don't check for this when doing dupe checking)"
+            );
 
             assert!(matches!(
                 store.transaction().prepare(
@@ -476,33 +489,36 @@ mod writable {
 
     #[test]
     fn linked() -> crate::Result {
-        let new_id_str = "134385f6d781b7e97062102c6a483440bfda2a03";
-        let new_id = hex_to_id(new_id_str);
-        let new_id_main_str = "22222222222222227062102c6a483440bfda2a03";
-        let new_id_main = hex_to_id(new_id_main_str);
+        let new_id = hex_to_id("134385f6d781b7e97062102c6a483440bfda2a03");
+        let new_id_str = new_id.to_string();
+        let new_id_main = hex_to_id("22222222222222227062102c6a483440bfda2a03");
+        let new_id_main_str = new_id_main.to_string();
         for packed in [false, true] {
             let (store, _odb, _tmp) = worktree_store(packed, "w1", Mode::Write)?;
 
             for conflicting_name in ["main-worktree/refs/heads/shared", "worktrees/w1/refs/heads/shared"] {
-                assert!(matches!(
-                    store.transaction().prepare(
-                        vec![
-                            RefEdit {
-                                change: change_with_id(new_id),
-                                name: conflicting_name.try_into()?,
-                                deref: false,
-                            },
-                            RefEdit {
-                                change: change_with_id(new_id),
-                                name: "refs/heads/shared".try_into()?,
-                                deref: false,
-                            },
-                        ],
-                        Fail::Immediately,
-                        Fail::Immediately,
+                assert!(
+                    matches!(
+                        store.transaction().prepare(
+                            vec![
+                                RefEdit {
+                                    change: change_with_id(new_id),
+                                    name: conflicting_name.try_into()?,
+                                    deref: false,
+                                },
+                                RefEdit {
+                                    change: change_with_id(new_id),
+                                    name: "refs/heads/shared".try_into()?,
+                                    deref: false,
+                                },
+                            ],
+                            Fail::Immediately,
+                            Fail::Immediately,
+                        ),
+                        Err(gix_ref::file::transaction::prepare::Error::LockAcquire { .. })
                     ),
-                    Err(gix_ref::file::transaction::prepare::Error::LockAcquire { .. })
-                ), "prefixed refs resolve to the same name and will fail to be locked (so we don't check for this when doing dupe checking)");
+                    "prefixed refs resolve to the same name and will fail to be locked (so we don't check for this when doing dupe checking)"
+                );
             }
 
             let mut t = store.transaction();
@@ -553,21 +569,24 @@ mod writable {
                     .map(|r| (r.name.to_string(), r.target.to_string()))
                     .collect::<Vec<_>>(),
                 [
-                    ("refs/bisect/bad", "9902e3c3e8f0c569b4ab295ddf473e6de763e1e7"),
-                    ("refs/bisect/good", new_id_str),
-                    ("refs/heads/main", "9556057aee5abb06912922e9f26c46386a816822"),
-                    ("refs/heads/new", new_id_main_str),
-                    ("refs/heads/shared", new_id_str),
-                    ("refs/heads/w1", "9902e3c3e8f0c569b4ab295ddf473e6de763e1e7"),
-                    ("refs/stacks/common", "134385f6d781b7e97062102c6a483440bfda2a03"),
-                    ("refs/stacks/w1", "17d78c64cef6c33a10a604573fd2c429e477fd63"),
-                    ("refs/stacks/wtdetached", "9902e3c3e8f0c569b4ab295ddf473e6de763e1e7"),
-                    ("refs/tags/dt1", "d3ba65e5e3be5cdd7210da9998307a4762999cc5"),
-                    ("refs/tags/t1", "9556057aee5abb06912922e9f26c46386a816822"),
-                    ("refs/worktree/private", new_id_str)
+                    ("refs/bisect/bad", oid("9902e3c3e8f0c569b4ab295ddf473e6de763e1e7")),
+                    ("refs/bisect/good", new_id_str.clone()),
+                    ("refs/heads/main", oid("9556057aee5abb06912922e9f26c46386a816822")),
+                    ("refs/heads/new", new_id_main_str.clone()),
+                    ("refs/heads/shared", new_id_str.clone()),
+                    ("refs/heads/w1", oid("9902e3c3e8f0c569b4ab295ddf473e6de763e1e7")),
+                    ("refs/stacks/common", oid("134385f6d781b7e97062102c6a483440bfda2a03")),
+                    ("refs/stacks/w1", oid("17d78c64cef6c33a10a604573fd2c429e477fd63")),
+                    (
+                        "refs/stacks/wtdetached",
+                        oid("9902e3c3e8f0c569b4ab295ddf473e6de763e1e7")
+                    ),
+                    ("refs/tags/dt1", oid("d3ba65e5e3be5cdd7210da9998307a4762999cc5")),
+                    ("refs/tags/t1", oid("9556057aee5abb06912922e9f26c46386a816822")),
+                    ("refs/worktree/private", new_id_str.clone())
                 ]
                 .iter()
-                .map(|(a, b)| (a.to_string(), b.to_string()))
+                .map(|(a, b)| (a.to_string(), b.clone()))
                 .collect::<Vec<_>>(),
                 "we traverse only refs of the main worktree"
             );
@@ -579,12 +598,15 @@ mod writable {
                     .map(|r| (r.name.to_string(), r.target.to_string()))
                     .collect::<Vec<_>>(),
                 [
-                    ("refs/stacks/common", "134385f6d781b7e97062102c6a483440bfda2a03"),
-                    ("refs/stacks/w1", "17d78c64cef6c33a10a604573fd2c429e477fd63"),
-                    ("refs/stacks/wtdetached", "9902e3c3e8f0c569b4ab295ddf473e6de763e1e7"),
+                    ("refs/stacks/common", oid("134385f6d781b7e97062102c6a483440bfda2a03")),
+                    ("refs/stacks/w1", oid("17d78c64cef6c33a10a604573fd2c429e477fd63")),
+                    (
+                        "refs/stacks/wtdetached",
+                        oid("9902e3c3e8f0c569b4ab295ddf473e6de763e1e7")
+                    ),
                 ]
                 .iter()
-                .map(|(a, b)| (a.to_string(), b.to_string()))
+                .map(|(a, b)| (a.to_string(), b.clone()))
                 .collect::<Vec<_>>(),
             );
 

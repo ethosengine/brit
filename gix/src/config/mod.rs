@@ -1,7 +1,7 @@
 pub use gix_config::*;
 use gix_features::threading::OnceCell;
 
-use crate::{bstr::BString, repository::identity, Repository};
+use crate::{Repository, bstr::BString, repository::identity};
 
 pub(crate) mod cache;
 mod snapshot;
@@ -13,15 +13,6 @@ pub mod overrides;
 
 pub mod tree;
 pub use tree::root::Tree;
-
-/// Error types for branch config write operations.
-///
-/// These are the errors returned by [`Repository::set_branch_upstream()`][crate::Repository::set_branch_upstream()],
-/// [`Repository::unset_branch_upstream()`][crate::Repository::unset_branch_upstream()], and
-/// [`Repository::set_branch_description()`][crate::Repository::set_branch_description()].
-pub mod branch_write {
-    pub use crate::repository::config::branch_write_error::*;
-}
 
 /// A platform to access configuration values as read from disk.
 ///
@@ -95,6 +86,13 @@ pub enum Error {
     RefsNamespace(#[from] refs_namespace::Error),
     #[error("Cannot handle objects formatted as {:?}", .name)]
     UnsupportedObjectFormat { name: BString },
+    #[error(
+        "extensions.objectFormat is a v1-only extension, but the repository format version is 0; \
+         set core.repositoryFormatVersion=1 to use it, or remove extensions.objectFormat to fall back to the default Sha1 format (if supported by this build)"
+    )]
+    ObjectFormatRequiresV1,
+    #[error("Unsupported repository format version {version}; only versions 0 and 1 are supported")]
+    UnsupportedRepositoryFormatVersion { version: usize },
     #[error(transparent)]
     CoreAbbrev(#[from] abbrev::Error),
     #[error("Could not read configuration file at \"{}\"", path.display())]
@@ -479,12 +477,6 @@ pub mod duration {
 pub mod boolean {
     /// The error produced when failing to parse time from configuration.
     pub type Error = super::key::Error<gix_config::value::Error, 'b', 'i'>;
-}
-
-///
-pub mod untracked_cache {
-    /// The error produced when failing to parse `core.untrackedCache` from configuration.
-    pub type Error = super::key::GenericErrorWithValue;
 }
 
 ///

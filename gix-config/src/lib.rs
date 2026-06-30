@@ -54,7 +54,7 @@
     doc = ::document_features::document_features!()
 )]
 #![cfg_attr(all(doc, feature = "document-features"), feature(doc_cfg))]
-#![deny(missing_docs, rust_2018_idioms, unsafe_code)]
+#![deny(missing_docs, unsafe_code)]
 
 pub mod file;
 
@@ -63,7 +63,7 @@ pub mod lookup;
 pub mod parse;
 ///
 pub mod value;
-pub use gix_config_value::{color, integer, path, Boolean, Color, Integer, Path};
+pub use gix_config_value::{Boolean, Color, Integer, Path, color, integer, path};
 
 mod key;
 pub use key::{AsKey, KeyRef};

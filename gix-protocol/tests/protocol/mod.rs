@@ -8,6 +8,6 @@ pub fn fixture_bytes(path: &str) -> Vec<u8> {
 mod command;
 pub mod fetch;
 mod handshake;
-pub use fetch::_impl::{fetch, FetchConnection};
+pub use fetch::_impl::{FetchConnection, fetch};
 pub mod remote_progress;
 pub mod send_pack;

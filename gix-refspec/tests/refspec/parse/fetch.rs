@@ -1,7 +1,7 @@
 use gix_refspec::{
+    Instruction,
     instruction::Fetch,
     parse::{Error, Operation},
-    Instruction,
 };
 
 use crate::parse::{assert_parse, b, try_parse};
@@ -72,11 +72,23 @@ fn exclude() {
     ));
     assert!(matches!(
         try_parse("^a*", Operation::Fetch).unwrap_err(),
-        Error::NegativeGlobPattern
+        Error::NegativePartialName
     ));
     assert_parse(
         "^refs/heads/a",
         Instruction::Fetch(Fetch::Exclude { src: b("refs/heads/a") }),
+    );
+    assert_parse(
+        "^refs/heads/*-deploy",
+        Instruction::Fetch(Fetch::Exclude {
+            src: b("refs/heads/*-deploy"),
+        }),
+    );
+    assert_parse(
+        "^refs/tags/*-deploy",
+        Instruction::Fetch(Fetch::Exclude {
+            src: b("refs/tags/*-deploy"),
+        }),
     );
 }
 

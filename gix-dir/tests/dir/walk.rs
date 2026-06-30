@@ -2,7 +2,7 @@ use std::{collections::BTreeSet, process::Command, sync::atomic::AtomicBool};
 
 use bstr::ByteSlice;
 use gix_dir::{
-    entry,
+    EntryRef, entry,
     entry::{Kind::*, PathspecMatch::*, Property::*, Status::*},
     walk,
     walk::{
@@ -10,15 +10,14 @@ use gix_dir::{
         EmissionMode::*,
         ForDeletionMode,
     },
-    EntryRef,
 };
 use gix_ignore::Kind::*;
 use pretty_assertions::assert_eq;
 
 use crate::walk_utils::{
-    collect, collect_filtered, collect_filtered_with_cwd, entry, entry_dirstat, entry_nokind, entry_nomatch, entryps,
-    entryps_dirstat, fixture, fixture_in, options, options_emit_all, try_collect, try_collect_filtered_opts,
-    try_collect_filtered_opts_collect, try_collect_filtered_opts_collect_with_root, EntryExt, Options,
+    EntryExt, Options, collect, collect_filtered, collect_filtered_with_cwd, entry, entry_dirstat, entry_nokind,
+    entry_nomatch, entryps, entryps_dirstat, fixture, fixture_in, options, options_emit_all, try_collect,
+    try_collect_filtered_opts, try_collect_filtered_opts_collect, try_collect_filtered_opts_collect_with_root,
 };
 
 #[test]
@@ -455,9 +454,28 @@ fn complex_empty() -> crate::Result {
         &[
             entry("dirs-and-files", Untracked, Directory),
             entry("empty-toplevel", Untracked, Directory).with_property(EmptyDirectory),
-            entry("only-dirs", Untracked, Directory),
+            entry("only-dirs", Untracked, Directory).with_property(EmptyDirectory),
         ],
         "empty directories collapse just fine"
+    );
+
+    let (_, entries) = collect(&root, None, |keep, ctx| {
+        walk(
+            &root,
+            ctx,
+            walk::Options {
+                emit_empty_directories: false,
+                emit_untracked: CollapseDirectory,
+                ..options()
+            },
+            keep,
+        )
+    });
+    assert_eq!(
+        entries,
+        &[entry("dirs-and-files", Untracked, Directory)],
+        "a tree of only empty directories is skipped when empty directories aren't emitted, \
+         just like Git treats it as clean (https://github.com/GitoxideLabs/gitoxide/issues/2490)"
     );
     Ok(())
 }
@@ -539,6 +557,43 @@ fn ignored_with_prefix_pathspec_collapses_just_like_untracked() -> crate::Result
 }
 
 #[test]
+fn ignored_collapse_of_empty_directories_is_not_classified_as_empty_directory() -> crate::Result {
+    let root = fixture("ignored-with-only-empty-dirs");
+    let ((out, _root), entries) = collect_filtered(
+        &root,
+        None,
+        |keep, ctx| {
+            walk(
+                &root,
+                ctx,
+                walk::Options {
+                    emit_ignored: Some(CollapseDirectory),
+                    emit_empty_directories: false,
+                    ..options()
+                },
+                keep,
+            )
+        },
+        ["target"],
+    );
+
+    assert_eq!(
+        out,
+        walk::Outcome {
+            read_dir_calls: 5,
+            returned_entries: entries.len(),
+            seen_entries: 6,
+        }
+    );
+    assert_eq!(
+        entries,
+        [entryps("target", Ignored(Expendable), Directory, Prefix)],
+        "collapsed ignored directories must remain observable even when they contain only empty directories"
+    );
+    Ok(())
+}
+
+#[test]
 fn ignored_dir_with_cwd_handling() -> crate::Result {
     let root = fixture("untracked-and-ignored-for-collapse");
     let ((out, _root), entries) = collect_filtered_with_cwd(
@@ -606,9 +661,7 @@ fn ignored_dir_with_cwd_handling() -> crate::Result {
     );
     assert_eq!(
         entries,
-        [
-            entryps("ignored/b", Ignored(Expendable), File, Prefix),
-        ],
+        [entryps("ignored/b", Ignored(Expendable), File, Prefix),],
         "the traversal starts from the top, but we automatically prevent the 'd' directory from being deleted by stopping its collapse."
     );
 
@@ -1174,7 +1227,8 @@ fn only_untracked_explicit_pathspec_selection() -> crate::Result {
         [
             entryps("d/a", Untracked, File, Verbatim),
             entry_nokind("d/b", Pruned),
-            entryps("d/d/a", Untracked, File, Verbatim)],
+            entryps("d/d/a", Untracked, File, Verbatim)
+        ],
         "we actually want to mention the entries that matched the pathspec precisely, so two of them would be needed here \
         while preventing the directory collapse from happening"
     );
@@ -2502,7 +2556,13 @@ fn untracked_and_ignored_collapse_handling_for_deletion_mixed() -> crate::Result
             entryps("d/d", Untracked, Directory, WildcardMatch),
             entryps_dirstat("d/d/a.o", Ignored(Expendable), File, WildcardMatch, Untracked),
             entryps_dirstat("d/d/b.o", Ignored(Expendable), File, WildcardMatch, Untracked),
-            entryps_dirstat("d/d/generated", Ignored(Expendable), Directory, WildcardMatch, Untracked),
+            entryps_dirstat(
+                "d/d/generated",
+                Ignored(Expendable),
+                Directory,
+                WildcardMatch,
+                Untracked
+            ),
         ],
         "everything is filtered down to the pathspec, otherwise it's like before. Not how all-matching  'generated' collapses, \
         but also how 'd/d' collapses as our current working directory the worktree"

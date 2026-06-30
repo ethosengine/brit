@@ -7,19 +7,19 @@ use std::{
 
 use bstr::BStr;
 use filetime::FileTime;
-use gix_features::parallel::{in_parallel_if, Reduce};
+use gix_features::parallel::{Reduce, in_parallel_if};
 use gix_filter::pipeline::convert::ToGitOutcome;
 use gix_object::FindExt;
 
 use crate::index_as_worktree::types::ConflictIndexEntry;
 use crate::{
+    AtomicU64, SymlinkCheck,
     index_as_worktree::{
-        traits,
-        traits::{read_data::Stream, CompareBlobs, SubmoduleStatus},
+        Change, Conflict, Context, EntryStatus, Outcome, VisitEntry, traits,
+        traits::{CompareBlobs, SubmoduleStatus, read_data::Stream},
         types::{Error, Options},
-        Change, Conflict, Context, EntryStatus, Outcome, VisitEntry,
     },
-    is_dir_to_mode, AtomicU64, SymlinkCheck,
+    is_dir_to_mode,
 };
 
 /// Calculates the changes that need to be applied to an `index` to match the state of the `worktree` and makes them
@@ -156,6 +156,14 @@ where
             let mut out = Vec::new();
             let mut idx = 0;
             while let Some(entry) = chunk_entries.get(idx) {
+                // Allow a cooperative early-out *within* a chunk: once `should_interrupt` is set
+                // (e.g. by a caller that only needs to know whether *any* change exists, like
+                // `Repository::is_dirty`), stop promptly instead of finishing the whole chunk.
+                // Without this, an in-flight chunk would run to completion (~several hundred entries)
+                // even after another worker already found the first change.
+                if should_interrupt.load(Ordering::Relaxed) {
+                    break;
+                }
                 let absolute_entry_index = entry_offset + idx;
                 if idx == 0 && entry.stage_raw() != 0 {
                     let offset = entry_offset.checked_sub(1).and_then(|prev_idx| {
@@ -370,7 +378,7 @@ impl<'index> State<'_, 'index> {
             Ok(path) => path,
             Err(err) if crate::stack::is_symlink_step_error(&err) => return Ok(Some(Change::Removed.into())),
             Err(err) if gix_fs::io_err::is_not_found(err.kind(), err.raw_os_error()) => {
-                return Ok(Some(Change::Removed.into()))
+                return Ok(Some(Change::Removed.into()));
             }
             Err(err) => return Err(Error::Io(err.into())),
         };
@@ -395,7 +403,7 @@ impl<'index> State<'_, 'index> {
             }
             Ok(metadata) => metadata,
             Err(err) if gix_fs::io_err::is_not_found(err.kind(), err.raw_os_error()) => {
-                return Ok(Some(Change::Removed.into()))
+                return Ok(Some(Change::Removed.into()));
             }
             Err(err) => {
                 return Err(Error::Io(err.into()));
@@ -416,7 +424,7 @@ impl<'index> State<'_, 'index> {
                             worktree_mode: new_mode,
                         }
                         .into(),
-                    ))
+                    ));
                 }
                 Some(gix_index::entry::mode::Change::ExecutableBit) => true,
                 None => false,

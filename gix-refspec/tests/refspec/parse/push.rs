@@ -1,8 +1,8 @@
 use crate::parse::{assert_parse, b, try_parse};
 use gix_refspec::{
+    Instruction,
     instruction::Push,
     parse::{Error, Operation},
-    Instruction,
 };
 
 #[test]
@@ -39,11 +39,17 @@ fn exclude() {
     ));
     assert!(matches!(
         try_parse("^a*", Operation::Push).unwrap_err(),
-        Error::NegativeGlobPattern
+        Error::NegativePartialName
     ));
     assert_parse(
         "^refs/heads/a",
         Instruction::Push(Push::Exclude { src: b("refs/heads/a") }),
+    );
+    assert_parse(
+        "^refs/heads/*-deploy",
+        Instruction::Push(Push::Exclude {
+            src: b("refs/heads/*-deploy"),
+        }),
     );
 }
 

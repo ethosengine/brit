@@ -2,7 +2,7 @@ use gix::{prelude::ObjectIdExt, revision::Spec};
 
 use crate::{
     revision::spec::from_bytes::{parse_spec, parse_spec_no_baseline, repo},
-    util::hex_to_id,
+    util::hex_to_id_sha1_only,
 };
 
 #[test]
@@ -28,6 +28,30 @@ fn nth_prior_checkout() {
 }
 
 #[test]
+fn nth_prior_checkout_to_deleted_branch_fails_like_git() -> crate::Result {
+    let repo = repo("deleted_prior_checkout")?;
+    let err = parse_spec("@{-1}", &repo).expect_err("deleted prior checkout branch must not resolve by object id");
+    assert!(
+        err.probable_cause()
+            .to_string()
+            .contains("Previous checkout 'prev-target' does not resolve"),
+        "error should explain that the reflog name no longer resolves"
+    );
+    Ok(())
+}
+
+#[test]
+fn nth_prior_checkout_to_deleted_branch_named_like_object_matches_git() -> crate::Result {
+    let repo = repo("deleted_prior_checkout_named_like_object")?;
+    assert_eq!(
+        parse_spec("@{-1}", &repo)?,
+        Spec::from_id(hex_to_id_sha1_only("0123456789012345678901234567890123456789").attach(&repo)),
+        "full object ids are accepted as previous checkout names, even without matching objects"
+    );
+    Ok(())
+}
+
+#[test]
 fn by_index_unborn_head() {
     let repo = &repo("new").unwrap();
 
@@ -44,7 +68,7 @@ fn by_index() {
         let spec = parse_spec("@{0}", repo).unwrap();
         assert_eq!(
             spec,
-            Spec::from_id(hex_to_id("55e825ebe8fd2ff78cad3826afb696b96b576a7e").attach(repo))
+            Spec::from_id(hex_to_id_sha1_only("55e825ebe8fd2ff78cad3826afb696b96b576a7e").attach(repo))
         );
         assert_eq!(
             spec.first_reference().expect("set").name.as_bstr(),
@@ -58,7 +82,7 @@ fn by_index() {
         let spec = parse_spec("HEAD@{5}", repo).unwrap();
         assert_eq!(
             spec,
-            Spec::from_id(hex_to_id("5b3f9e24965d0b28780b7ce5daf2b5b7f7e0459f").attach(repo))
+            Spec::from_id(hex_to_id_sha1_only("5b3f9e24965d0b28780b7ce5daf2b5b7f7e0459f").attach(repo))
         );
         assert_eq!(
             spec.first_reference().map(|r| r.name.to_string()),
@@ -85,6 +109,6 @@ fn by_date() {
 
     assert_eq!(
         spec,
-        Spec::from_id(hex_to_id("9f9eac6bd1cd4b4cc6a494f044b28c985a22972b").attach(&repo))
+        Spec::from_id(hex_to_id_sha1_only("9f9eac6bd1cd4b4cc6a494f044b28c985a22972b").attach(&repo))
     );
 }

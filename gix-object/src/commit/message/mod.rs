@@ -1,9 +1,9 @@
 use std::borrow::Cow;
 
 use crate::{
+    CommitRef,
     bstr::{BStr, BString, ByteSlice, ByteVec},
     commit::MessageRef,
-    CommitRef,
 };
 
 ///
@@ -60,7 +60,7 @@ impl<'a> MessageRef<'a> {
     ///
     /// Note that this cannot fail as everything will be interpreted as title if there is no body separator.
     pub fn from_bytes(input: &'a [u8]) -> Self {
-        let (title, body) = decode::message(input);
+        let (title, body) = decode::message_title_and_body(input);
         MessageRef { title, body }
     }
 

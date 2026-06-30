@@ -1,6 +1,6 @@
 use std::io::Write;
 
-use crate::{entry, extension, write::util::CountBytes, State, Version};
+use crate::{State, Version, entry, extension, write::util::CountBytes};
 
 /// A way to specify which of the optional extensions to write.
 #[derive(Default, Debug, Copy, Clone)]
@@ -60,6 +60,10 @@ pub struct Options {
 
 impl State {
     /// Serialize this instance to `out` with [`options`][Options].
+    ///
+    /// Note that the `tree` (tree-cache) extension is written as-is and is **not** recomputed or
+    /// invalidated to match the entries; see [`File::write()`](crate::File::write()) for the
+    /// implications and the recommended workaround.
     pub fn write_to(
         &self,
         out: impl std::io::Write,

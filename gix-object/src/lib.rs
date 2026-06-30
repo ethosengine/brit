@@ -34,7 +34,7 @@
     doc = ::document_features::document_features!()
 )]
 #![cfg_attr(all(doc, feature = "document-features"), feature(doc_cfg))]
-#![deny(missing_docs, rust_2018_idioms)]
+#![deny(missing_docs)]
 #![forbid(unsafe_code)]
 
 use std::borrow::Cow;
@@ -109,7 +109,7 @@ pub struct Blob {
 #[derive(PartialEq, Eq, Debug, Hash, Ord, PartialOrd, Clone)]
 #[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
 pub struct CommitRef<'a> {
-    /// HEX hash of tree object we point to. Usually 40 bytes long.
+    /// HEX hash of tree object we point to.
     ///
     /// Use [`tree()`](CommitRef::tree()) to obtain a decoded version of it.
     #[cfg_attr(feature = "serde", serde(borrow))]
@@ -140,6 +140,7 @@ pub struct CommitRef<'a> {
 pub struct CommitRefIter<'a> {
     data: &'a [u8],
     state: commit::ref_iter::State,
+    hash_kind: gix_hash::Kind,
 }
 
 /// A mutable git commit, representing an annotated state of a working tree along with a reference to its historical commits.
@@ -194,6 +195,7 @@ pub struct TagRef<'a> {
 pub struct TagRefIter<'a> {
     data: &'a [u8],
     state: tag::ref_iter::State,
+    hash_kind: gix_hash::Kind,
 }
 
 /// A mutable git tag.
@@ -292,7 +294,7 @@ pub struct Data<'a> {
     /// kind of object
     pub kind: Kind,
     /// The hash kind to use for parsing this data.
-    pub hash_kind: gix_hash::Kind,
+    pub object_hash: gix_hash::Kind,
     /// decoded, decompressed data, owned by a backing store.
     pub data: &'a [u8],
 }
@@ -308,78 +310,14 @@ pub struct Header {
 
 ///
 pub mod decode {
-    #[cfg(feature = "verbose-object-parsing-errors")]
-    mod _decode {
-        /// The type to be used for parse errors.
-        pub type ParseError = winnow::error::ContextError<winnow::error::StrContext>;
-
+    mod error {
         pub(crate) fn empty_error() -> Error {
-            Error {
-                inner: winnow::error::ContextError::new(),
-                remaining: Default::default(),
-            }
+            Error
         }
 
-        /// A type to indicate errors during parsing and to abstract away details related to `nom`.
-        #[derive(Debug, Clone)]
-        pub struct Error {
-            /// The actual error
-            pub inner: ParseError,
-            /// Where the error occurred
-            pub remaining: Vec<u8>,
-        }
-
-        impl Error {
-            pub(crate) fn with_err(err: winnow::error::ErrMode<ParseError>, remaining: &[u8]) -> Self {
-                Self {
-                    inner: err.into_inner().expect("we don't have streaming parsers"),
-                    remaining: remaining.to_owned(),
-                }
-            }
-        }
-
-        impl std::fmt::Display for Error {
-            fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-                write!(f, "object parsing failed at `{}`", bstr::BStr::new(&self.remaining))?;
-                if self.inner.context().next().is_some() {
-                    writeln!(f)?;
-                    self.inner.fmt(f)?;
-                }
-                Ok(())
-            }
-        }
-
-        impl std::error::Error for Error {
-            fn source(&self) -> Option<&(dyn std::error::Error + 'static)> {
-                self.inner.cause().map(|v| v as &(dyn std::error::Error + 'static))
-            }
-        }
-    }
-
-    ///
-    #[cfg(not(feature = "verbose-object-parsing-errors"))]
-    mod _decode {
-        /// The type to be used for parse errors, discards everything and is zero size
-        pub type ParseError = ();
-
-        pub(crate) fn empty_error() -> Error {
-            Error { inner: () }
-        }
-
-        /// A type to indicate errors during parsing and to abstract away details related to `nom`.
-        #[derive(Debug, Clone)]
-        pub struct Error {
-            /// The actual error
-            pub inner: ParseError,
-        }
-
-        impl Error {
-            pub(crate) fn with_err(err: winnow::error::ErrMode<ParseError>, _remaining: &[u8]) -> Self {
-                Self {
-                    inner: err.into_inner().expect("we don't have streaming parsers"),
-                }
-            }
-        }
+        /// A type to indicate any error occurred during parsing.
+        #[derive(Debug, Clone, Copy, Default)]
+        pub struct Error;
 
         impl std::fmt::Display for Error {
             fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
@@ -389,8 +327,8 @@ pub mod decode {
 
         impl std::error::Error for Error {}
     }
-    pub(crate) use _decode::empty_error;
-    pub use _decode::{Error, ParseError};
+    pub use error::Error;
+    pub(crate) use error::empty_error;
 
     /// Returned by [`loose_header()`]
     #[derive(Debug, thiserror::Error)]
@@ -438,7 +376,7 @@ fn object_hasher(hash_kind: gix_hash::Kind, object_kind: Kind, object_size: u64)
     hasher
 }
 
-/// A function to compute a hash of kind `hash_kind` for an object of `object_kind` and its `data`.
+/// A function to compute a hash of kind `object_hash` for an object of `object_kind` and its `data`.
 #[doc(alias = "hash_object", alias = "git2")]
 pub fn compute_hash(
     hash_kind: gix_hash::Kind,
@@ -450,7 +388,7 @@ pub fn compute_hash(
     hasher.try_finalize()
 }
 
-/// A function to compute a hash of kind `hash_kind` for an object of `object_kind` and its data read from `stream`
+/// A function to compute a hash of kind `object_hash` for an object of `object_kind` and its data read from `stream`
 /// which has to yield exactly `stream_len` bytes.
 /// Use `progress` to learn about progress in bytes processed and `should_interrupt` to be able to abort the operation
 /// if set to `true`.

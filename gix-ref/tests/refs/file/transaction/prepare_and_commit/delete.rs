@@ -10,9 +10,9 @@ use gix_lock::acquire::Fail;
 use gix_ref::file::transaction::prepare::Error;
 use gix_ref::transaction::LogChange;
 use gix_ref::{
+    FullName, Reference, Target,
     file::ReferenceExt,
     transaction::{Change, PreviousValue, RefEdit, RefLog},
-    FullName, Reference, Target,
 };
 
 #[test]
@@ -127,7 +127,13 @@ fn delete_ref_with_incorrect_previous_value_fails() -> crate::Result {
 
     match res {
         Err(err) => {
-            assert_eq!(err.to_string(), "The reference \"refs/heads/main\" should have content ref: refs/heads/main, actual content was 02a7a22d90d7c02fb494ed25551850b868e634f0");
+            assert_eq!(
+                err.to_string(),
+                format!(
+                    "The reference \"refs/heads/main\" should have content ref: refs/heads/main, actual content was {}",
+                    hex_to_id("02a7a22d90d7c02fb494ed25551850b868e634f0")
+                )
+            );
         }
         Ok(_) => unreachable!("must be err"),
     }
@@ -243,18 +249,12 @@ fn rename_a_to_a_slash_b_in_one_transaction() -> crate::Result {
         .unwrap_err();
 
     match err {
-        #[cfg(unix)]
         Error::Io(err) => {
             assert_eq!(
                 err.kind(),
                 std::io::ErrorKind::NotADirectory,
-                "For now this isn't supported in the same transaction."
+                "For now this isn't supported in the same transaction, and path-prefix collisions are reported early."
             );
-        }
-        #[cfg(windows)]
-        Error::LockAcquire { .. } => {
-            // It's bad that the error differs on Windows, but then again, doing this kind of pseudo-db on a filesystem
-            // probably is never going to be great, so let's wait for ref-tables.
         }
         err => unreachable!("unexpected error variant: {err:?}"),
     }
@@ -438,8 +438,8 @@ fn store_write_mode_has_no_effect_and_reflogs_are_always_deleted() -> crate::Res
 }
 
 #[test]
-fn packed_refs_are_consulted_when_determining_previous_value_of_ref_to_be_deleted_and_are_deleted_from_packed_ref_file(
-) -> crate::Result {
+fn packed_refs_are_consulted_when_determining_previous_value_of_ref_to_be_deleted_and_are_deleted_from_packed_ref_file()
+-> crate::Result {
     let (_keep, store) = store_writable("make_packed_ref_repository.sh")?;
     assert!(
         store.try_find_loose("main")?.is_none(),

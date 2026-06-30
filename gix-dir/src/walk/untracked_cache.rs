@@ -57,7 +57,7 @@ impl<'a> Validated<'a> {
         // would change the directory stat, which is already checked above.
         if let Some(expected_oid) = dir.exclude_file_oid() {
             let ignore_path = absolute_dir.join(gix_path::from_bstr(self.cache.exclude_filename_per_dir()));
-            gitignore_matches(expected_oid, &ignore_path, self.object_hash)
+            gitignore_matches(&expected_oid, &ignore_path, self.object_hash)
         } else {
             true
         }
@@ -118,7 +118,7 @@ pub(crate) fn validate<'a>(
     match cache.info_exclude() {
         Some(expected)
             if !validate_cached_stat(expected, &info_exclude_path)
-                || !gitignore_matches(expected.id(), &info_exclude_path, object_hash) =>
+                || !gitignore_matches(&expected.id(), &info_exclude_path, object_hash) =>
         {
             return None
         }

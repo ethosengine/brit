@@ -1,4 +1,4 @@
-use gix_error::{bail, message, ErrorExt, Exn, ResultExt};
+use gix_error::{ErrorExt, Exn, ResultExt, bail, message};
 use gix_hash::ObjectId;
 use gix_revision::spec::parse::{
     delegate,
@@ -207,7 +207,19 @@ impl delegate::Revision for Delegate<'_> {
                         self.refs[self.idx] = Some(r.detach());
                         id
                     }
-                    Err(_) => id,
+                    Err(crate::reference::find::existing::Error::NotFound { .. }) => {
+                        match ObjectId::from_hex(ref_name.as_ref()) {
+                            Ok(id) if id.kind() == self.repo.object_hash() => id,
+                            _ => {
+                                return Err(message!(
+                                    "Previous checkout '{name}' does not resolve to an existing revision",
+                                    name = ref_name.as_bstr()
+                                )
+                                .raise_erased());
+                            }
+                        }
+                    }
+                    Err(err) => return Err(err.raise_erased()),
                 };
                 let objs = self.objs[self.idx].get_or_insert_with(Vec::new);
                 if !objs.contains(&id) {
@@ -232,7 +244,7 @@ impl delegate::Revision for Delegate<'_> {
                     r
                 }
                 Ok(None) => {
-                    return Err(message("Unborn heads cannot have push or upstream tracking branches").raise_erased())
+                    return Err(message("Unborn heads cannot have push or upstream tracking branches").raise_erased());
                 }
                 Err(err) => {
                     return Err(err.raise_erased());

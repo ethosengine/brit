@@ -1,5 +1,9 @@
 use gix::Repository;
 
+fn blob_id(repo: &Repository, data: &[u8]) -> gix_hash::ObjectId {
+    gix_object::compute_hash(repo.object_hash(), gix_object::Kind::Blob, data).expect("valid object hash")
+}
+
 #[cfg(feature = "blame")]
 mod blame;
 mod config;
@@ -7,6 +11,8 @@ mod config;
 mod excludes;
 #[cfg(feature = "attributes")]
 mod filter;
+#[cfg(feature = "mailmap")]
+mod mailmap;
 #[cfg(feature = "merge")]
 mod merge;
 mod object;
@@ -25,7 +31,7 @@ mod worktree;
 
 #[cfg(feature = "revision")]
 mod revision {
-    use crate::util::hex_to_id;
+    use crate::util::hex_to_id_sha1_only;
 
     #[test]
     fn date() -> crate::Result {
@@ -33,14 +39,14 @@ mod revision {
         let actual = repo
             .rev_parse_single("old@{20 years ago}")
             .expect("it returns the oldest possible rev when overshooting");
-        assert_eq!(actual, hex_to_id("be2f093f0588eaeb71e1eff7451b18c2a9b1d765"));
+        assert_eq!(actual, hex_to_id_sha1_only("be2f093f0588eaeb71e1eff7451b18c2a9b1d765"));
 
         let actual = repo
             .rev_parse_single("old@{1732184844}")
             .expect("it finds something in the middle");
         assert_eq!(
             actual,
-            hex_to_id("b29405fe9147a3a366c4048fbe295ea04de40fa6"),
+            hex_to_id_sha1_only("b29405fe9147a3a366c4048fbe295ea04de40fa6"),
             "It also figures out that we don't mean an index, but a date"
         );
         Ok(())
@@ -95,6 +101,8 @@ mod dirwalk {
             untracked_only,
             &mut collect,
         )?;
+        // `some/` (a tree of only empty directories) is skipped now that empty trees collapse
+        // to an empty directory and aren't emitted by default, matching Git which treats it as clean (#2490).
         let expected = [
             ("all-untracked".to_string(), Repository),
             ("bare-repo-with-index.git".to_string(), Directory),
@@ -102,7 +110,7 @@ mod dirwalk {
             ("empty-core-excludes".into(), Repository),
             ("non-bare-repo-without-index".into(), Repository),
             ("non-bare-without-worktree".into(), Directory),
-            ("some".into(), Directory),
+            ("some-with-file".into(), Directory),
             ("unborn".into(), Repository),
         ];
         assert_eq!(
