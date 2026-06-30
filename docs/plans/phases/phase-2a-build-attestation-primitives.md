@@ -1,10 +1,18 @@
 # Phase 2a — Build Attestation Primitives
 
-**Status:** Design
+**Status:** Implemented 2026-04 on `feature/phase-2a-attestation-primitives` → **superseded** by the content-addressed epr-meta foundation, 2026-06 (see **Disposition** below)
 **Date:** 2026-04-13
 **Depends on:** Phase 0 (EPR trailer foundation), Phase 2 (ContentNode adapter)
 **Independent of:** Phases 3–6 (libp2p, branch READMEs, DHT discovery, fork governance) — this phase is pure local, requires no networking
 **Consumers:** rakia (see `elohim/rakia/docs/plans/build-attestation-integration.md`)
+
+## Disposition (2026-06-30)
+
+This design was **implemented** on `feature/phase-2a-attestation-primitives` (16 commits, 2026-04): three attestation `ContentNode` schemas (build / deploy / validation), ed25519 agent signing, a first `BritCid` (blake3), a `BritRefManager` for the `refs/notes/brit/` namespace, the `brit build-ref` CLI, and deterministic reach computation.
+
+It was then **superseded** by the content-addressed **epr-meta foundation** (2026-06; `docs/specs/2026-06-29-canonical-epr-meta-git-bridge-design.md`), which re-grounded the same ideas on a canonical-first, **CIDv1 · dag-cbor · sha2-256** `BritCid` (blake3 retained only for non-address fingerprints) with a WIT-shaped import/export contract. The attestation/signing concept lives on, evolved, in `main`'s `brit-epr` (`src/engine/signing.rs`, `tests/attestation_roundtrip.rs`).
+
+The branch was **retired 2026-06-30** (its code remains recoverable by SHA `48eb4ed3d4`); this design doc and its sibling implementation plan (`docs/plans/2026-04-16-phase-2a-build-attestation-primitives.md`) are preserved here as the thought-process record.
 
 ## Problem
 
