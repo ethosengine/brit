@@ -28,6 +28,10 @@ jobs:
         with:
           ref: gix-main
           fetch-depth: 0
+          # Don't leave the token in .git/config (CI hardening: the
+          # check-no-persist-credentials gate forbids persisted creds).
+          # Pushes below re-supply the token explicitly.
+          persist-credentials: false
           token: ${{ secrets.GITHUB_TOKEN }}
 
       - name: Configure git identity
@@ -60,7 +64,9 @@ jobs:
 
       - name: Push updated gix-main
         if: steps.ff.outputs.changed == 'true'
-        run: git push origin gix-main
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: git push "https://x-access-token:${GH_TOKEN}@github.com/${{ github.repository }}.git" HEAD:gix-main
 
       # Tags are nice-to-have but not critical for our sync purposes.
       # Upstream has 6000+ tags; a single collision or protected-tag rule
@@ -68,9 +74,11 @@ jobs:
       - name: Push mirrored tags (best effort)
         if: steps.ff.outputs.changed == 'true'
         continue-on-error: true
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
           set +e
-          git push origin --tags 2>&1 | tee push-tags.log
+          git push "https://x-access-token:${GH_TOKEN}@github.com/${{ github.repository }}.git" --tags 2>&1 | tee push-tags.log
           status=${PIPESTATUS[0]}
           if [ "$status" -ne 0 ]; then
             echo "::warning::Tag mirror push exited with status $status; some tags may not have synced. See push-tags.log above."
