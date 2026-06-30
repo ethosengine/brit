@@ -5518,6 +5518,8 @@ checksum = "f8dcc9c7d52a811697d2151c701e0d08956f92b0e24136cf4cf27b57a6a0d9bf"
 [[package]]
 name = "rakia-brit"
 version = "0.1.0"
+source = "sparse+https://nexus.ethosengine.com/repository/cargo-internal/"
+checksum = "05a7c6dea4acc1a49b2b7e886265fb38d4b2cc455c781284e906da40da3f19e5"
 dependencies = [
  "gix 0.81.0 (registry+https://github.com/rust-lang/crates.io-index)",
  "serde",
@@ -5528,6 +5530,8 @@ dependencies = [
 [[package]]
 name = "rakia-core"
 version = "0.1.0"
+source = "sparse+https://nexus.ethosengine.com/repository/cargo-internal/"
+checksum = "d9ae802e0534a80da54e178e8e6bc618ce9b1813761e7430eb86e88aef98a620"
 dependencies = [
  "chrono",
  "globset",

@@ -16,8 +16,13 @@ path = "src/main.rs"
 
 [dependencies]
 brit-graph = { path = "../brit-graph", features = ["repo"] }
-rakia-core = { path = "../../rakia/rakia-core" }
-rakia-brit = { path = "../../rakia/rakia-brit" }
+# rakia lives in a separate repo (ethosengine/rakia) and is published to the
+# internal Nexus registry by rakia's own pipeline. Consumed here as a registry
+# dependency so brit's standalone CI can resolve it. For monorepo development
+# against a local rakia checkout, a `paths` override in .cargo/config.toml
+# redirects these to ../rakia (and is silently ignored where it's absent).
+rakia-core = { version = "0.1", registry = "elohim" }
+rakia-brit = { version = "0.1", registry = "elohim" }
 
 clap = { version = "4", features = ["derive"] }
 gix = { version = "0.81", default-features = false, features = ["basic", "revision", "blob-diff", "sha1"] }
