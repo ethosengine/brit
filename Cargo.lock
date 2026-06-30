@@ -452,8 +452,6 @@ dependencies = [
 name = "brit-cli"
 version = "0.0.0"
 dependencies = [
- "anyhow",
- "brit-epr",
  "brit-graph",
  "clap",
  "gix 0.81.0 (registry+https://github.com/rust-lang/crates.io-index)",
@@ -469,14 +467,11 @@ dependencies = [
 name = "brit-epr"
 version = "0.0.0"
 dependencies = [
- "blake3",
- "chrono",
  "cid",
  "ed25519-dalek",
  "elohim-epr",
  "gix-object 0.58.0",
  "hex",
- "ipld-core",
  "multihash-codetable",
  "rand 0.8.6",
  "serde",
@@ -716,8 +711,6 @@ version = "0.0.0"
 dependencies = [
  "anyhow",
  "regex",
- "serde",
- "serde_json",
  "tempfile",
 ]
 
@@ -727,9 +720,6 @@ version = "0.0.0"
 dependencies = [
  "anyhow",
  "clap",
- "regex",
- "serde",
- "serde_json",
  "similar",
 ]
 
