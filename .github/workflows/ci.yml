@@ -17,6 +17,19 @@ permissions:
 env:
   CARGO_TERM_COLOR: always
   CLICOLOR: "1"
+  # Read-only credential for the internal Nexus cargo registry. `cargo-internal`
+  # is a hosted repo: Nexus serves its content to anonymous clients (verified),
+  # but config.json advertises auth-required:true and the cargo *client* refuses
+  # to fetch without a credential — and hosted cargo repos have no
+  # requireAuthentication knob to turn that off (Nexus 3.89). So we hand cargo a
+  # least-privilege Basic-auth token (cargo-ci user; repository-view read+browse
+  # on cargo-internal only) to resolve elohim-epr and the rakia crates. cargo
+  # sends it verbatim as the Authorization header. The crates.io mirror (cargo
+  # group) is not auth-required, so its reads stay anonymous. Publishing is
+  # unaffected — it needs the separate cargo-deployer write privilege.
+  # Secret value: "Basic " + base64("cargo-ci:<password>").
+  CARGO_REGISTRIES_ELOHIM_TOKEN: ${{ secrets.CARGO_REGISTRIES_ELOHIM_TOKEN }}
+  CARGO_REGISTRY_GLOBAL_CREDENTIAL_PROVIDERS: cargo:token
 
 jobs:
   msrv:
