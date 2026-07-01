@@ -9,6 +9,9 @@ authors = ["Matthew Dowell <matthew@ethosengine.com>"]
 license = "MIT OR Apache-2.0"
 edition = "2021"
 rust-version = "1.82"
+# Not published: brit-verify path-deps the FULL forked gix (not in the Nexus
+# publish set), so publishing it would emit broken upstream-pointing metadata.
+publish = false
 
 [[bin]]
 name = "brit-verify"
