@@ -2,7 +2,7 @@ lints.workspace = true
 
 [package]
 name = "brit-epr"
-version = "0.0.0"
+version = "0.1.0"
 description = "Elohim Protocol primitives (pillar trailers, dispatch trait, validation) for brit — an expansion of gitoxide with covenant semantics"
 repository = "https://github.com/ethosengine/brit"
 authors = ["Matthew Dowell <matthew@ethosengine.com>"]

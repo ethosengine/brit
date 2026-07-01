@@ -2,7 +2,7 @@ lints.workspace = true
 
 [package]
 name = "brit-graph"
-version = "0.0.0"
+version = "0.1.0"
 description = "EPR-native graph engine — DAG construction, affected tracking, topological planning"
 repository = "https://github.com/ethosengine/brit"
 authors = ["Matthew Dowell <matthew@ethosengine.com>"]

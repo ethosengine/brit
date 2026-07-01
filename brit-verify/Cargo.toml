@@ -15,5 +15,5 @@ name = "brit-verify"
 path = "src/main.rs"
 
 [dependencies]
-brit-epr = { version = "^0.0.0", path = "../brit-epr" }
+brit-epr = { version = "0.1", path = "../brit-epr" }
 gix = { version = "^0.81.0", path = "../gix", default-features = false, features = ["revision"] }

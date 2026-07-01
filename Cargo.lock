@@ -437,7 +437,7 @@ dependencies = [
 
 [[package]]
 name = "brit-build-ref"
-version = "0.0.0"
+version = "0.1.0"
 dependencies = [
  "anyhow",
  "brit-epr",
@@ -450,7 +450,7 @@ dependencies = [
 
 [[package]]
 name = "brit-cli"
-version = "0.0.0"
+version = "0.1.0"
 dependencies = [
  "brit-graph",
  "clap",
@@ -465,7 +465,7 @@ dependencies = [
 
 [[package]]
 name = "brit-epr"
-version = "0.0.0"
+version = "0.1.0"
 dependencies = [
  "cid",
  "ed25519-dalek",
@@ -483,7 +483,7 @@ dependencies = [
 
 [[package]]
 name = "brit-graph"
-version = "0.0.0"
+version = "0.1.0"
 dependencies = [
  "brit-epr",
  "gix 0.81.0 (registry+https://github.com/rust-lang/crates.io-index)",
