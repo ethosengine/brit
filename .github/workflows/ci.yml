@@ -548,7 +548,9 @@ jobs:
       - name: Publish brit crates (idempotent, 409-safe)
         env:
           NEXUS_NPM_TOKEN: ${{ secrets.NEXUS_NPM_TOKEN }}
-          CARGO_REGISTRIES_ELOHIM_TOKEN: ${{ secrets.CARGO_REGISTRIES_ELOHIM_TOKEN }}
+          # Clear the workflow-level (read-intent) token so cargo-publish-brit.sh
+          # derives the write Bearer header from NEXUS_NPM_TOKEN (cargo-deployer).
+          CARGO_REGISTRIES_ELOHIM_TOKEN: ""
         run: bash scripts/ci/cargo-publish-brit.sh
 
   # This job is not required for PR auto-merge, so that sudden announcement of a
