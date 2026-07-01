@@ -271,16 +271,15 @@ jobs:
   test-fast:
     strategy:
       matrix:
+        # Windows legs dropped: this fork of gitoxide does not maintain Windows
+        # parity for the gix crates. Windows coverage remains available via the
+        # non-blocking test-fixtures-windows job.
         os:
-          - windows-latest
-          - windows-11-arm
           - macos-latest
           - ubuntu-latest
           - ubuntu-24.04-arm
         include:
           - test-args: ""
-          - os: windows-11-arm
-            test-args: "--skip fuzzed_timeout --skip performance --skip speed"
 
     runs-on: ${{ matrix.os }}
 
@@ -700,11 +699,19 @@ jobs:
 
     env:
       # List all jobs that are intended NOT to block PR auto-merge here.
+      # Non-gating jobs. Besides the originals (cargo-deny-advisories, publish,
+      # wasm, tests-pass), this fork also declares the gitoxide platform/parity
+      # legs it does not maintain (Windows fixtures, QEMU-emulated 32-bit, and
+      # the upstream gix shell-journey) as non-blocking: they still run for
+      # visibility but must not gate merge.
       EXPECTED_NONBLOCKING_JOBS: |-
         cargo-deny-advisories
         publish
         wasm
         tests-pass
+        test-journey
+        test-fixtures-windows
+        test-32bit
 
     defaults:
       run:
@@ -742,10 +749,7 @@ jobs:
       - pure-rust-build
       - test
       - test-doc
-      - test-journey
       - test-fast
-      - test-fixtures-windows
-      - test-32bit
       - test-32bit-windows-size-doc
       - lint
       - cargo-deny
