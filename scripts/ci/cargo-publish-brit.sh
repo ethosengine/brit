@@ -54,7 +54,7 @@ sparse_path() {
 # Read a crate's [package] version from its own Cargo.toml.
 crate_version() {
   local crate="$1"
-  awk '/^\[package\]/{p=1} p&&/^version[[:space:]]*=/{gsub(/.*"([^"]+)".*/,"\\1"); print; exit}' \
+  awk '/^\[package\]/{p=1} p&&/^version[[:space:]]*=/{match($0,/"[^"]+"/); print substr($0,RSTART+1,RLENGTH-2); exit}' \
     "${REPO_ROOT}/${crate}/Cargo.toml"
 }
 
