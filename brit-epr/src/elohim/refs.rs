@@ -182,8 +182,25 @@ impl BritRefManager {
 
     fn write_note(&self, ref_name: &str, commit_sha: &str, payload: &serde_json::Value) -> Result<(), RefError> {
         let json = serde_json::to_string(payload).map_err(RefError::Json)?;
+        // `git notes add` creates a notes commit, which needs a committer identity.
+        // brit is designed to run in CI (Jenkins) where ambient git identity is
+        // often unset, so supply a deterministic one via `-c` rather than relying
+        // on the environment.
         let output = Command::new("git")
-            .args(["notes", "--ref", ref_name, "add", "-f", "-m", &json, commit_sha])
+            .args([
+                "-c",
+                "user.name=brit",
+                "-c",
+                "user.email=brit@ethosengine.com",
+                "notes",
+                "--ref",
+                ref_name,
+                "add",
+                "-f",
+                "-m",
+                &json,
+                commit_sha,
+            ])
             .current_dir(&self.repo_path)
             .output()
             .map_err(RefError::GitCommand)?;

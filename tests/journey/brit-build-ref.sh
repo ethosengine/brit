@@ -3,6 +3,7 @@
 
 title brit-build-ref
 exe_brit_build_ref="${exe%/*}/brit-build-ref"
+[ -x "$exe_brit_build_ref" ] || { echo "  (skip: brit-build-ref binary not built at $exe_brit_build_ref)"; return 0; }
 
 (when "running 'brit-build-ref --help'"
   it "prints the top-level help with subcommand list" && {

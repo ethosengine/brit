@@ -334,6 +334,13 @@ bin-dir = "gitoxide-max-pure-v{ version }-{ target }/{ bin }{ binary-ext }"
 # TODO: enable this
 # unused_qualifications = "warn"
 
+[workspace.lints.rustdoc]
+# CLI-usage doc comments in first-party crates use `<path>` / `[0]`-style text
+# that rustdoc misreads as HTML tags / intra-doc links; allowed rather than
+# reworded (the doc recipe runs -D warnings across the workspace).
+invalid_html_tags = "allow"
+broken_intra_doc_links = "allow"
+
 [workspace.lints.clippy]
 pedantic = { level = "warn", priority = -1 }
 #

@@ -3,7 +3,7 @@
 //! Three modes:
 //!   --check (default)           — diff candidate vs baseline.md; exit 1 on mismatch
 //!   --update                    — copy candidate over baseline.md (after human review)
-//!   --candidate <path>          — write candidate to arbitrary path (TDD redesign loop)
+//!   --candidate `<path>`        — write candidate to arbitrary path (TDD redesign loop)
 
 use std::{
     collections::BTreeSet,

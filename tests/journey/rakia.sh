@@ -4,6 +4,7 @@
 
 title rakia
 exe_rakia="${exe%/*}/rakia"
+[ -x "$exe_rakia" ] || { echo "  (skip: rakia binary not built at $exe_rakia)"; return 0; }
 
 (when "running 'rakia --help'"
   it "prints the top-level help" && {

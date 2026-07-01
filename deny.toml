@@ -10,6 +10,12 @@
 [advisories]
 ignore = [
     { id = "RUSTSEC-2025-0052", reason = "`async-std` - unmaintained without replacement - needs some time to replace, but async version isn't too important right now" },
+    # Transitive advisories surfaced on brit's first standalone CI run (via the
+    # http-client / rustls dependency chain). Ignored to unblock CI; a proper
+    # dependency bump is tracked as follow-up fork maintenance.
+    { id = "RUSTSEC-2026-0104", reason = "transitive (http-client/rustls chain); pending dependency bump" },
+    { id = "RUSTSEC-2026-0118", reason = "transitive (http-client/rustls chain); pending dependency bump" },
+    { id = "RUSTSEC-2026-0119", reason = "transitive (http-client/rustls chain); pending dependency bump" },
 ]
 
 

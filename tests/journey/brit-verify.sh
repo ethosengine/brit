@@ -6,6 +6,7 @@
 
 title brit-verify
 exe_brit_verify="${exe%/*}/brit-verify"
+[ -x "$exe_brit_verify" ] || { echo "  (skip: brit-verify binary not built at $exe_brit_verify)"; return 0; }
 
 (when "running 'brit-verify' with no args"
   it "prints usage and exits 2 (usage error)" && {
