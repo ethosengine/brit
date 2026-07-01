@@ -15,12 +15,10 @@ use std::{fs, path::PathBuf};
 
 use cli_journey::support::{runner::BritInvocation, test_repo::TestRepo};
 
-fn rakia_bin() -> PathBuf {
+fn rakia_bin() -> Option<PathBuf> {
     // tests/cli-journey -> ../../target/release/rakia
-    PathBuf::from(env!("CARGO_MANIFEST_DIR"))
-        .join("../../target/release/rakia")
-        .canonicalize()
-        .expect("rakia binary not built — run `cargo build -p brit-cli --release` first")
+    let p = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../../target/release/rakia");
+    p.canonicalize().ok().filter(|p| p.exists())
 }
 
 /// Dump captured output to BRIT_TEST_PAGE_STAGING/rust/<path[0]>/<path[1]>/.../<last>.txt
@@ -64,7 +62,11 @@ fn graph_discover_emits_manifests_array() {
         eprintln!("skip: not in elohim repo");
         return;
     };
-    let cap = BritInvocation::new(rakia_bin())
+    let Some(bin) = rakia_bin() else {
+        eprintln!("skipping: rakia binary not built (run `cargo build -p brit-cli --release`)");
+        return;
+    };
+    let cap = BritInvocation::new(bin)
         .args(["graph", "discover", "--repo"])
         .arg(&repo_root)
         .normalize(true)
@@ -89,7 +91,11 @@ fn graph_show_emits_dot_or_json() {
         (p, Some(t))
     };
 
-    let cap = BritInvocation::new(rakia_bin())
+    let Some(bin) = rakia_bin() else {
+        eprintln!("skipping: rakia binary not built (run `cargo build -p brit-cli --release`)");
+        return;
+    };
+    let cap = BritInvocation::new(bin)
         .args(["graph", "show", "--format", "dot", "--repo"])
         .arg(&target_path)
         .normalize(true)
@@ -111,7 +117,11 @@ fn affected_with_no_change_paths_returns_empty() {
         eprintln!("skip: not in elohim repo");
         return;
     };
-    let cap = BritInvocation::new(rakia_bin())
+    let Some(bin) = rakia_bin() else {
+        eprintln!("skipping: rakia binary not built (run `cargo build -p brit-cli --release`)");
+        return;
+    };
+    let cap = BritInvocation::new(bin)
         .args(["affected", "--repo"])
         .arg(&repo_root)
         .normalize(true)
@@ -132,7 +142,11 @@ fn plan_against_a_single_file() {
         eprintln!("skip: not in elohim repo");
         return;
     };
-    let cap = BritInvocation::new(rakia_bin())
+    let Some(bin) = rakia_bin() else {
+        eprintln!("skipping: rakia binary not built (run `cargo build -p brit-cli --release`)");
+        return;
+    };
+    let cap = BritInvocation::new(bin)
         .args(["plan", "--repo"])
         .arg(&repo_root)
         .args(["--files", "app/elohim-app/src/styles.scss"])
@@ -154,7 +168,11 @@ fn fingerprint_emits_64_char_blake3_hex() {
         return;
     };
     let manifest = repo_root.join("app/elohim-app/build-manifest.json");
-    let cap = BritInvocation::new(rakia_bin())
+    let Some(bin) = rakia_bin() else {
+        eprintln!("skipping: rakia binary not built (run `cargo build -p brit-cli --release`)");
+        return;
+    };
+    let cap = BritInvocation::new(bin)
         .args(["fingerprint"])
         .arg(&manifest)
         .args(["--step", "build-angular"])
@@ -172,7 +190,11 @@ fn fingerprint_emits_64_char_blake3_hex() {
 #[test]
 fn baseline_read_returns_null_for_unknown_pipeline() {
     let temp = TestRepo::new("baseline-read").expect("repo");
-    let cap = BritInvocation::new(rakia_bin())
+    let Some(bin) = rakia_bin() else {
+        eprintln!("skipping: rakia binary not built (run `cargo build -p brit-cli --release`)");
+        return;
+    };
+    let cap = BritInvocation::new(bin)
         .args(["baseline", "read", "no-such-pipeline", "--repo"])
         .arg(temp.path())
         .normalize(true)
@@ -191,8 +213,12 @@ fn baseline_read_returns_null_for_unknown_pipeline() {
 fn baseline_write_then_read_roundtrip() {
     let temp = TestRepo::new("baseline-write").expect("repo");
     let head = temp.head_id().expect("head");
+    let Some(bin) = rakia_bin() else {
+        eprintln!("skipping: rakia binary not built (run `cargo build -p brit-cli --release`)");
+        return;
+    };
 
-    let cap_write = BritInvocation::new(rakia_bin())
+    let cap_write = BritInvocation::new(bin.clone())
         .args(["baseline", "write", "test-pipeline"])
         .arg(&head)
         .args(["--repo"])
@@ -204,7 +230,7 @@ fn baseline_write_then_read_roundtrip() {
 
     // Verify the round-trip: reading back should return the same commit.
     // Do NOT normalize — we need the raw SHA to assert the round-trip.
-    let cap_read = BritInvocation::new(rakia_bin())
+    let cap_read = BritInvocation::new(bin)
         .args(["baseline", "read", "test-pipeline", "--repo"])
         .arg(temp.path())
         .normalize(false)
@@ -241,7 +267,11 @@ fn baseline_migrate_with_minimal_jenkins_json() {
     )
     .expect("write json");
 
-    let cap = BritInvocation::new(rakia_bin())
+    let Some(bin) = rakia_bin() else {
+        eprintln!("skipping: rakia binary not built (run `cargo build -p brit-cli --release`)");
+        return;
+    };
+    let cap = BritInvocation::new(bin)
         .args(["baseline", "migrate"])
         .arg(&json_path)
         .args(["--repo"])

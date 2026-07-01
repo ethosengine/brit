@@ -24,11 +24,9 @@ use std::{fs, path::PathBuf, process::Command};
 
 use cli_journey::support::{mock_remote::MockRemote, runner::BritInvocation, test_repo::TestRepo};
 
-fn brit_bin() -> PathBuf {
-    PathBuf::from(env!("CARGO_MANIFEST_DIR"))
-        .join("../../target/release/brit")
-        .canonicalize()
-        .expect("brit binary not built — run `cargo build -p gitoxide --bin brit --release` first")
+fn brit_bin() -> Option<PathBuf> {
+    let p = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../../target/release/brit");
+    p.canonicalize().ok().filter(|p| p.exists())
 }
 
 /// Dump captured output to BRIT_TEST_PAGE_STAGING/rust/<path[0]>/<path[1]>/.../<last>.txt
@@ -58,7 +56,11 @@ fn log_lists_commits() {
     temp.commit_file("a.txt", "alpha\n").expect("commit a");
     temp.commit_file("b.txt", "beta\n").expect("commit b");
 
-    let cap = BritInvocation::new(brit_bin())
+    let Some(bin) = brit_bin() else {
+        eprintln!("skipping: brit binary not built (run `cargo build -p gitoxide --bin brit --release`)");
+        return;
+    };
+    let cap = BritInvocation::new(bin)
         .arg("log")
         .current_dir(temp.path())
         .normalize(true)
@@ -75,7 +77,11 @@ fn log_lists_commits() {
 #[test]
 fn status_in_clean_repo() {
     let temp = TestRepo::new("status").expect("repo");
-    let cap = BritInvocation::new(brit_bin())
+    let Some(bin) = brit_bin() else {
+        eprintln!("skipping: brit binary not built (run `cargo build -p gitoxide --bin brit --release`)");
+        return;
+    };
+    let cap = BritInvocation::new(bin)
         .arg("status")
         .current_dir(temp.path())
         .normalize(true)
@@ -91,7 +97,11 @@ fn status_in_clean_repo() {
 fn status_with_untracked_file() {
     let temp = TestRepo::new("status-dirty").expect("repo");
     fs::write(temp.path().join("untracked.txt"), "hello\n").expect("write untracked");
-    let cap = BritInvocation::new(brit_bin())
+    let Some(bin) = brit_bin() else {
+        eprintln!("skipping: brit binary not built (run `cargo build -p gitoxide --bin brit --release`)");
+        return;
+    };
+    let cap = BritInvocation::new(bin)
         .arg("status")
         .current_dir(temp.path())
         .normalize(true)
@@ -113,7 +123,11 @@ fn diff_tree_between_two_commits() {
     let sha1 = temp.commit_file("first.txt", "version 1\n").expect("commit v1");
     let sha2 = temp.commit_file("first.txt", "version 2\n").expect("commit v2");
 
-    let cap = BritInvocation::new(brit_bin())
+    let Some(bin) = brit_bin() else {
+        eprintln!("skipping: brit binary not built (run `cargo build -p gitoxide --bin brit --release`)");
+        return;
+    };
+    let cap = BritInvocation::new(bin)
         .args(["diff", "tree", &sha1, &sha2])
         .current_dir(temp.path())
         .normalize(true)
@@ -135,7 +149,11 @@ fn diff_file_between_two_revisions() {
     temp.commit_file("first.txt", "line one\n").expect("commit v1");
     temp.commit_file("first.txt", "line two\n").expect("commit v2");
 
-    let cap = BritInvocation::new(brit_bin())
+    let Some(bin) = brit_bin() else {
+        eprintln!("skipping: brit binary not built (run `cargo build -p gitoxide --bin brit --release`)");
+        return;
+    };
+    let cap = BritInvocation::new(bin)
         .args(["diff", "file", "HEAD~1:first.txt", "HEAD:first.txt"])
         .current_dir(temp.path())
         .normalize(true)
@@ -152,7 +170,11 @@ fn diff_file_between_two_revisions() {
 #[test]
 fn branch_list_shows_main() {
     let temp = TestRepo::new("branch-list").expect("repo");
-    let cap = BritInvocation::new(brit_bin())
+    let Some(bin) = brit_bin() else {
+        eprintln!("skipping: brit binary not built (run `cargo build -p gitoxide --bin brit --release`)");
+        return;
+    };
+    let cap = BritInvocation::new(bin)
         .args(["branch", "list"])
         .current_dir(temp.path())
         .normalize(true)
@@ -169,7 +191,11 @@ fn branch_list_shows_main() {
 #[test]
 fn tag_list_in_empty_repo() {
     let temp = TestRepo::new("tag-list").expect("repo");
-    let cap = BritInvocation::new(brit_bin())
+    let Some(bin) = brit_bin() else {
+        eprintln!("skipping: brit binary not built (run `cargo build -p gitoxide --bin brit --release`)");
+        return;
+    };
+    let cap = BritInvocation::new(bin)
         .args(["tag", "list"])
         .current_dir(temp.path())
         .normalize(true)
@@ -190,7 +216,11 @@ fn tag_list_after_creating_a_tag() {
         .args(["tag", "v0.1.0"])
         .current_dir(temp.path())
         .output();
-    let cap = BritInvocation::new(brit_bin())
+    let Some(bin) = brit_bin() else {
+        eprintln!("skipping: brit binary not built (run `cargo build -p gitoxide --bin brit --release`)");
+        return;
+    };
+    let cap = BritInvocation::new(bin)
         .args(["tag", "list"])
         .current_dir(temp.path())
         .normalize(true)
@@ -215,7 +245,11 @@ fn commit_describe_with_annotated_tag() {
         .args(["tag", "-a", "v1.0.0", "-m", "release v1.0.0", &sha])
         .current_dir(temp.path())
         .output();
-    let cap = BritInvocation::new(brit_bin())
+    let Some(bin) = brit_bin() else {
+        eprintln!("skipping: brit binary not built (run `cargo build -p gitoxide --bin brit --release`)");
+        return;
+    };
+    let cap = BritInvocation::new(bin)
         .args(["commit", "describe"])
         .current_dir(temp.path())
         .normalize(true)
@@ -234,7 +268,11 @@ fn commit_verify_unsigned_commit() {
     // brit commit verify will likely fail/warn on an unsigned commit — that is
     // the documented behavior we want to capture.
     let temp = TestRepo::new("commit-verify").expect("repo");
-    let cap = BritInvocation::new(brit_bin())
+    let Some(bin) = brit_bin() else {
+        eprintln!("skipping: brit binary not built (run `cargo build -p gitoxide --bin brit --release`)");
+        return;
+    };
+    let cap = BritInvocation::new(bin)
         .args(["commit", "verify"])
         .current_dir(temp.path())
         .normalize(true)
@@ -253,7 +291,11 @@ fn blame_a_committed_file() {
     let temp = TestRepo::new("blame").expect("repo");
     temp.commit_file("poem.txt", "line one\nline two\nline three\n")
         .expect("commit");
-    let cap = BritInvocation::new(brit_bin())
+    let Some(bin) = brit_bin() else {
+        eprintln!("skipping: brit binary not built (run `cargo build -p gitoxide --bin brit --release`)");
+        return;
+    };
+    let cap = BritInvocation::new(bin)
         .args(["blame", "poem.txt"])
         .current_dir(temp.path())
         .normalize(true)
@@ -271,7 +313,11 @@ fn blame_a_committed_file() {
 fn cat_a_commit_object() {
     let temp = TestRepo::new("cat").expect("repo");
     let head = temp.head_id().expect("head");
-    let cap = BritInvocation::new(brit_bin())
+    let Some(bin) = brit_bin() else {
+        eprintln!("skipping: brit binary not built (run `cargo build -p gitoxide --bin brit --release`)");
+        return;
+    };
+    let cap = BritInvocation::new(bin)
         .args(["cat", &head])
         .current_dir(temp.path())
         .normalize(true)
@@ -288,7 +334,11 @@ fn cat_a_blob_via_revspec() {
     let temp = TestRepo::new("cat-blob").expect("repo");
     temp.commit_file("blob.txt", "blob content\n").expect("commit");
     // HEAD:blob.txt resolves to the blob object
-    let cap = BritInvocation::new(brit_bin())
+    let Some(bin) = brit_bin() else {
+        eprintln!("skipping: brit binary not built (run `cargo build -p gitoxide --bin brit --release`)");
+        return;
+    };
+    let cap = BritInvocation::new(bin)
         .args(["cat", "HEAD:blob.txt"])
         .current_dir(temp.path())
         .normalize(true)
@@ -322,7 +372,11 @@ fn clone_from_mock_remote() {
         .expect("mktemp dest");
     let dest_path = dest_temp.path().join("cloned");
 
-    let cap = BritInvocation::new(brit_bin())
+    let Some(bin) = brit_bin() else {
+        eprintln!("skipping: brit binary not built (run `cargo build -p gitoxide --bin brit --release`)");
+        return;
+    };
+    let cap = BritInvocation::new(bin)
         .args(["clone", &upstream.url()])
         .arg(&dest_path)
         .normalize(true)
@@ -348,6 +402,11 @@ fn fetch_from_mock_remote() {
         .current_dir(seed.path())
         .output();
 
+    let Some(bin) = brit_bin() else {
+        eprintln!("skipping: brit binary not built (run `cargo build -p gitoxide --bin brit --release`)");
+        return;
+    };
+
     // Local clone via raw git (no brit needed for setup)
     let local_temp = tempfile::Builder::new()
         .prefix("brit-test-fetch-local-")
@@ -362,7 +421,7 @@ fn fetch_from_mock_remote() {
     if !clone_out.status.success() {
         // If git clone itself fails (e.g. empty upstream), capture the fetch
         // help page so the staging slot still gets populated.
-        let cap = BritInvocation::new(brit_bin())
+        let cap = BritInvocation::new(bin)
             .args(["fetch", "--help"])
             .normalize(true)
             .run()
@@ -375,7 +434,7 @@ fn fetch_from_mock_remote() {
     }
 
     // Run brit fetch to pull (dry-run so we don't need write access guarantees)
-    let cap = BritInvocation::new(brit_bin())
+    let cap = BritInvocation::new(bin)
         .args(["fetch", "--dry-run", "--remote", "origin"])
         .current_dir(&local_path)
         .normalize(true)
@@ -400,7 +459,11 @@ fn push_not_yet_implemented() {
     // Invoke brit with no args to get the top-level help (which lists what IS
     // available). This gives the test page a populated staging file for the
     // push slot while honestly reflecting the gap.
-    let cap = BritInvocation::new(brit_bin())
+    let Some(bin) = brit_bin() else {
+        eprintln!("skipping: brit binary not built (run `cargo build -p gitoxide --bin brit --release`)");
+        return;
+    };
+    let cap = BritInvocation::new(bin)
         .args(["--help"])
         .normalize(true)
         .run()

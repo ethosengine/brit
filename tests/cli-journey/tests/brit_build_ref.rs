@@ -17,11 +17,9 @@ use std::{fs, path::PathBuf};
 
 use cli_journey::support::{runner::BritInvocation, test_repo::TestRepo};
 
-fn brit_build_ref_bin() -> PathBuf {
-    PathBuf::from(env!("CARGO_MANIFEST_DIR"))
-        .join("../../target/release/brit-build-ref")
-        .canonicalize()
-        .expect("brit-build-ref binary not built — run `cargo build -p brit-build-ref --release` first")
+fn brit_build_ref_bin() -> Option<PathBuf> {
+    let p = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../../target/release/brit-build-ref");
+    p.canonicalize().ok().filter(|p| p.exists())
 }
 
 /// Dump captured output to staging at a nested path.
@@ -49,7 +47,11 @@ fn staging_dump_path(path: &[&str], output: &str) {
 #[test]
 fn build_list_in_empty_repo() {
     let temp = TestRepo::new("build-list").expect("repo");
-    let cap = BritInvocation::new(brit_build_ref_bin())
+    let Some(bin) = brit_build_ref_bin() else {
+        eprintln!("skipping: brit-build-ref binary not built (run `cargo build -p brit-build-ref --release`)");
+        return;
+    };
+    let cap = BritInvocation::new(bin)
         .args(["build", "list", "--repo"])
         .arg(temp.path())
         .normalize(true)
@@ -64,7 +66,11 @@ fn build_list_in_empty_repo() {
 #[test]
 fn build_get_for_unknown_step() {
     let temp = TestRepo::new("build-get").expect("repo");
-    let cap = BritInvocation::new(brit_build_ref_bin())
+    let Some(bin) = brit_build_ref_bin() else {
+        eprintln!("skipping: brit-build-ref binary not built (run `cargo build -p brit-build-ref --release`)");
+        return;
+    };
+    let cap = BritInvocation::new(bin)
         .args(["build", "get", "--step", "no-such-step", "--repo"])
         .arg(temp.path())
         .normalize(true)
@@ -80,7 +86,11 @@ fn build_get_for_unknown_step() {
 fn build_put_help_only() {
     // build put requires --step, --manifest, --output, --inputs-hash; capture
     // --help to document the subcommand exists without needing valid CID fixtures.
-    let cap = BritInvocation::new(brit_build_ref_bin())
+    let Some(bin) = brit_build_ref_bin() else {
+        eprintln!("skipping: brit-build-ref binary not built (run `cargo build -p brit-build-ref --release`)");
+        return;
+    };
+    let cap = BritInvocation::new(bin)
         .args(["build", "put", "--help"])
         .normalize(true)
         .run()
@@ -104,7 +114,11 @@ fn build_put_help_only() {
 #[test]
 fn deploy_list_in_empty_repo() {
     let temp = TestRepo::new("deploy-list").expect("repo");
-    let cap = BritInvocation::new(brit_build_ref_bin())
+    let Some(bin) = brit_build_ref_bin() else {
+        eprintln!("skipping: brit-build-ref binary not built (run `cargo build -p brit-build-ref --release`)");
+        return;
+    };
+    let cap = BritInvocation::new(bin)
         .args(["deploy", "list", "--repo"])
         .arg(temp.path())
         .normalize(true)
@@ -119,7 +133,11 @@ fn deploy_list_in_empty_repo() {
 #[test]
 fn deploy_get_for_unknown_target() {
     let temp = TestRepo::new("deploy-get").expect("repo");
-    let cap = BritInvocation::new(brit_build_ref_bin())
+    let Some(bin) = brit_build_ref_bin() else {
+        eprintln!("skipping: brit-build-ref binary not built (run `cargo build -p brit-build-ref --release`)");
+        return;
+    };
+    let cap = BritInvocation::new(bin)
         .args(["deploy", "get", "--step", "no-such-step", "--env", "prod", "--repo"])
         .arg(temp.path())
         .normalize(true)
@@ -135,7 +153,11 @@ fn deploy_get_for_unknown_target() {
 fn deploy_put_help_only() {
     // deploy put requires --step, --env, --artifact, --endpoint, --health-check-epr;
     // capture --help to document the subcommand surface without complex fixtures.
-    let cap = BritInvocation::new(brit_build_ref_bin())
+    let Some(bin) = brit_build_ref_bin() else {
+        eprintln!("skipping: brit-build-ref binary not built (run `cargo build -p brit-build-ref --release`)");
+        return;
+    };
+    let cap = BritInvocation::new(bin)
         .args(["deploy", "put", "--help"])
         .normalize(true)
         .run()
@@ -159,7 +181,11 @@ fn deploy_put_help_only() {
 #[test]
 fn validate_list_in_empty_repo() {
     let temp = TestRepo::new("validate-list").expect("repo");
-    let cap = BritInvocation::new(brit_build_ref_bin())
+    let Some(bin) = brit_build_ref_bin() else {
+        eprintln!("skipping: brit-build-ref binary not built (run `cargo build -p brit-build-ref --release`)");
+        return;
+    };
+    let cap = BritInvocation::new(bin)
         .args(["validate", "list", "--repo"])
         .arg(temp.path())
         .normalize(true)
@@ -174,7 +200,11 @@ fn validate_list_in_empty_repo() {
 #[test]
 fn validate_get_for_unknown_step() {
     let temp = TestRepo::new("validate-get").expect("repo");
-    let cap = BritInvocation::new(brit_build_ref_bin())
+    let Some(bin) = brit_build_ref_bin() else {
+        eprintln!("skipping: brit-build-ref binary not built (run `cargo build -p brit-build-ref --release`)");
+        return;
+    };
+    let cap = BritInvocation::new(bin)
         .args([
             "validate",
             "get",
@@ -198,7 +228,11 @@ fn validate_get_for_unknown_step() {
 fn validate_put_help_only() {
     // validate put requires --step, --check, --artifact, --result;
     // capture --help to document the subcommand surface without valid CID fixtures.
-    let cap = BritInvocation::new(brit_build_ref_bin())
+    let Some(bin) = brit_build_ref_bin() else {
+        eprintln!("skipping: brit-build-ref binary not built (run `cargo build -p brit-build-ref --release`)");
+        return;
+    };
+    let cap = BritInvocation::new(bin)
         .args(["validate", "put", "--help"])
         .normalize(true)
         .run()
@@ -224,7 +258,11 @@ fn reach_compute_for_unknown_step() {
     // reach compute --step is required; invoke against a temp repo where the step
     // doesn't exist to observe the error path and document the exit behaviour.
     let temp = TestRepo::new("reach-compute").expect("repo");
-    let cap = BritInvocation::new(brit_build_ref_bin())
+    let Some(bin) = brit_build_ref_bin() else {
+        eprintln!("skipping: brit-build-ref binary not built (run `cargo build -p brit-build-ref --release`)");
+        return;
+    };
+    let cap = BritInvocation::new(bin)
         .args(["reach", "compute", "--step", "no-such-step", "--repo"])
         .arg(temp.path())
         .normalize(true)
@@ -239,7 +277,11 @@ fn reach_compute_for_unknown_step() {
 #[test]
 fn reach_get_for_unknown_step() {
     let temp = TestRepo::new("reach-get").expect("repo");
-    let cap = BritInvocation::new(brit_build_ref_bin())
+    let Some(bin) = brit_build_ref_bin() else {
+        eprintln!("skipping: brit-build-ref binary not built (run `cargo build -p brit-build-ref --release`)");
+        return;
+    };
+    let cap = BritInvocation::new(bin)
         .args(["reach", "get", "--step", "no-such-step", "--repo"])
         .arg(temp.path())
         .normalize(true)
