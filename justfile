@@ -194,7 +194,7 @@ doc $RUSTDOCFLAGS='-D warnings':
 
 # Run all unit tests
 unit-tests:
-    cargo nextest run --no-fail-fast
+    cargo nextest run --workspace --exclude gix-error --no-fail-fast
     cargo nextest run -p gix-testtools --no-fail-fast
     cargo nextest run -p gix-testtools --features xz --no-fail-fast
     cargo nextest run -p gix-archive --no-default-features --no-fail-fast
