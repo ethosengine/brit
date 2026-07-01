@@ -25,7 +25,7 @@ sha256 = ["dep:sha2"]
 serde = ["dep:serde", "faster-hex/serde"]
 
 [dependencies]
-gix-features = { version = "^0.46.2", path = "../gix-features", features = ["progress"] }
+gix-features = { version = "^0.46.2", path = "../gix-features", registry = "elohim", features = ["progress"] }
 
 thiserror = "2.0.18"
 faster-hex = { version = "0.10.0", default-features = false, features = ["std"] }

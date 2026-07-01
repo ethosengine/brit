@@ -43,15 +43,15 @@ serde = [
 verbose-object-parsing-errors = ["winnow/std"]
 
 [dependencies]
-gix-features = { version = "^0.46.2", path = "../gix-features", features = [
+gix-features = { version = "^0.46.2", path = "../gix-features", registry = "elohim", features = [
     "progress",
 ] }
-gix-hash = { version = "^0.23.0", path = "../gix-hash" }
-gix-hashtable = { version = "^0.13.0", path = "../gix-hashtable" }
-gix-validate = { version = "^0.11.0", path = "../gix-validate" }
-gix-actor = { version = "^0.40.0", path = "../gix-actor" }
-gix-date = { version = "^0.15.1", path = "../gix-date" }
-gix-utils = { version = "^0.3.1", path = "../gix-utils" }
+gix-hash = { version = "^0.23.0", path = "../gix-hash", registry = "elohim" }
+gix-hashtable = { version = "^0.13.0", path = "../gix-hashtable", registry = "elohim" }
+gix-validate = { version = "^0.11.0", path = "../gix-validate", registry = "elohim" }
+gix-actor = { version = "^0.40.0", path = "../gix-actor", registry = "elohim" }
+gix-date = { version = "^0.15.1", path = "../gix-date", registry = "elohim" }
+gix-utils = { version = "^0.3.1", path = "../gix-utils", registry = "elohim" }
 
 itoa = "1.0.17"
 thiserror = "2.0.18"
