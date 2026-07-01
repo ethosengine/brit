@@ -15,7 +15,7 @@ name = "brit-build-ref"
 path = "src/main.rs"
 
 [dependencies]
-brit-epr = { version = "0.1", path = "../brit-epr" }
+brit-epr = { version = "0.1", registry = "elohim", path = "../brit-epr" }
 clap = { version = "4", features = ["derive"] }
 serde_json = "1"
 chrono = { version = "0.4", default-features = false, features = ["clock"] }

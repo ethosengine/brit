@@ -15,7 +15,7 @@ name = "rakia"
 path = "src/main.rs"
 
 [dependencies]
-brit-graph = { path = "../brit-graph", features = ["repo"] }
+brit-graph = { version = "0.1", registry = "elohim", path = "../brit-graph", features = ["repo"] }
 # rakia lives in a separate repo (ethosengine/rakia) and is published to the
 # internal Nexus registry by rakia's own pipeline. Consumed here as a registry
 # dependency so brit's standalone CI can resolve it. For monorepo development

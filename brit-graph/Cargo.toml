@@ -14,7 +14,7 @@ rust-version = "1.82"
 doctest = false
 
 [dependencies]
-brit-epr = { path = "../brit-epr", default-features = false }
+brit-epr = { version = "0.1", registry = "elohim", path = "../brit-epr", default-features = false }
 globset = { version = "0.4", optional = true }
 gix = { version = "0.81", default-features = false, features = ["basic", "blob-diff", "sha1"], optional = true }
 petgraph = "0.7"
