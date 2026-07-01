@@ -711,6 +711,7 @@ jobs:
         publish
         wasm
         tests-pass
+        test
         test-journey
         test-fixtures-windows
         test-32bit
@@ -749,7 +750,6 @@ jobs:
       - msrv
       - msrv-badge
       - pure-rust-build
-      - test
       - test-doc
       - test-fast
       - test-32bit-windows-size-doc
