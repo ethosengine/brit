@@ -227,9 +227,11 @@ jobs:
       - uses: taiki-e/install-action@6e4b50d359005dacdb018fa32c03bc35522c6616 # v2.75.12
         with:
           tool: nextest
+      # Use the committed fixture archives (like test-fast) rather than
+      # regenerating them from make_*.sh. Fixture regeneration is gitoxide
+      # parity infrastructure this fork does not maintain (git-version-sensitive
+      # gix-odb/gix-pack fixtures); archive-based runs still exercise the suite.
       - name: test
-        env:
-          GIX_TEST_IGNORE_ARCHIVES: "1"
         run: just ci-test
 
   test-doc:
