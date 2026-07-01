@@ -345,6 +345,20 @@ missing_panics_doc = "allow"  # x447
 module_name_repetitions = "allow"  # x125
 must_use_candidate = "allow"  # x1696
 #
+# Style lints newer clippy versions flag across the gitoxide fork; allowed
+# rather than hand-fixed to avoid gix parity-maintenance (brit fork policy).
+elidable_lifetime_names = "allow"
+uninlined_format_args = "allow"
+manual_option_zip = "allow"
+unnecessary_debug_formatting = "allow"
+redundant_closure_for_method_calls = "allow"
+manual_checked_ops = "allow"
+doc_link_with_quotes = "allow"
+map_unwrap_or = "allow"
+ptr_arg = "allow"
+single_char_pattern = "allow"
+case_sensitive_file_extension_comparisons = "allow"
+#
 # Lints that we may want to forbid in the future
 default_trait_access = "allow"  # x709
 doc_markdown = "allow"  # x552

@@ -32,7 +32,11 @@ allow = [
     "OpenSSL",
     "Zlib",
     "MPL-2.0",
-    "Unicode-3.0"
+    "Unicode-3.0",
+    # Elohim ecosystem crates (elohim-epr and friends, consumed from the Nexus
+    # `elohim` registry) are licensed under the Cryptographic Autonomy License,
+    # matching the Holochain substrate brit integrates with.
+    "CAL-1.0"
 ]
 # The confidence threshold for detecting a license from license text.
 # The higher the value, the more closely the license text must be to the
