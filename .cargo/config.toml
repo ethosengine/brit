@@ -6,13 +6,15 @@
 #   export CARGO_REGISTRIES_ELOHIM_TOKEN="Bearer <NpmToken>"
 # A read-only token suffices; CI supplies one via the like-named secret.
 
-# Local monorepo development: when a rakia checkout sits beside brit (the elohim
-# monorepo layout), build against it directly instead of the published crates.
-# This is a top-level key (must precede any [table]); paths are relative to the
-# project root (the directory containing .cargo). Cargo silently ignores
-# override entries whose directory is absent, so standalone CI (no sibling
-# rakia) transparently falls back to the registry.
-paths = ["../rakia/rakia-core", "../rakia/rakia-brit"]
+# rakia (rakia-core / rakia-brit) is consumed from the `elohim` registry below —
+# it is published to Nexus, so no local path override is needed or wanted here.
+#
+# Do NOT add a `paths = ["../rakia/..."]` override to this committed file: cargo
+# ERRORS ("failed to update path override … No such file or directory") when an
+# override directory is absent — it does NOT silently fall back to the registry.
+# Standalone CI has no sibling rakia checkout, so a committed override breaks
+# every cargo job. For local co-development of rakia + brit, add the override in
+# a gitignored config (e.g. a parent-directory .cargo/config.toml) instead.
 
 [registries.elohim]
 index = "sparse+https://nexus.ethosengine.com/repository/cargo-internal/"
