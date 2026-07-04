@@ -427,6 +427,17 @@ dependencies = [
 ]
 
 [[package]]
+name = "brit-eprfs"
+version = "0.0.0"
+dependencies = [
+ "eprfs-core",
+ "gix 0.81.0",
+ "serde_json",
+ "tempfile",
+ "thiserror 2.0.18",
+]
+
+[[package]]
 name = "brit-graph"
 version = "0.0.0"
 dependencies = [
@@ -1265,6 +1276,17 @@ dependencies = [
  "env_filter",
  "jiff",
  "log",
+]
+
+[[package]]
+name = "eprfs-core"
+version = "0.1.0"
+dependencies = [
+ "async-trait",
+ "bytes",
+ "serde",
+ "serde_json",
+ "thiserror 2.0.18",
 ]
 
 [[package]]
