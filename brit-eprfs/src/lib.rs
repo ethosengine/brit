@@ -5,5 +5,7 @@
 //! or materialize files. Those concerns belong below this adapter.
 
 mod project;
+mod storage;
 
 pub use project::{project_tree, project_tree_from_repo, BritEprfsError, Result};
+pub use storage::GitObjectStorage;
