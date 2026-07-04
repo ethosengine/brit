@@ -304,6 +304,7 @@ members = [
     "gix-traverse/tests",
     "gix-shallow",
     "brit-epr",
+    "brit-eprfs",
     "brit-verify",
     "brit-build-ref",
     "brit-graph",
