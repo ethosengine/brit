@@ -281,6 +281,8 @@ mod tests {
         repo.write("Cargo.toml", "[package]\nname = \"demo\"\n");
         repo.write("src/main.rs", "fn main() {}\n");
         repo.write("scripts/run.sh", "#!/bin/sh\ntrue\n");
+        #[cfg(unix)]
+        std::os::unix::fs::symlink("src/main.rs", repo.path().join("current.rs")).expect("symlink");
         repo.git(["add", "."]);
         repo.git(["update-index", "--chmod=+x", "scripts/run.sh"]);
         repo.git(["commit", "-m", "initial"]);
@@ -297,6 +299,8 @@ mod tests {
 
         assert_eq!(report.directories, 2);
         assert_eq!(report.files_written, 3);
+        #[cfg(unix)]
+        assert_eq!(report.symlinks_written, 1);
         assert_eq!(
             fs::read_to_string(target.join("Cargo.toml")).unwrap(),
             "[package]\nname = \"demo\"\n"
@@ -318,6 +322,10 @@ mod tests {
                 .permissions()
                 .mode();
             assert_ne!(mode & 0o111, 0, "executable bit should be materialized");
+            assert_eq!(
+                fs::read_link(target.join("current.rs")).unwrap(),
+                PathBuf::from("src/main.rs")
+            );
         }
     }
 
