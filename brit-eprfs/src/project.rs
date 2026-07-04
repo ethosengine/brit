@@ -225,8 +225,11 @@ impl gix::traverse::tree::Visit for ProjectionCollector {
 mod tests {
     use std::{fs, process::Command};
 
-    use eprfs_core::EntryKind;
+    use eprfs_core::{EntryKind, MaterializationPolicy};
+    use eprfs_local::LocalMaterializer;
     use tempfile::TempDir;
+
+    use crate::GitObjectStorage;
 
     use super::*;
 
@@ -270,6 +273,52 @@ mod tests {
 
         assert_eq!(manifest.metadata["adapter"], "brit-eprfs");
         assert_eq!(manifest.metadata["rev"], "HEAD");
+    }
+
+    #[tokio::test]
+    async fn materializes_projected_tree_from_git_objects() {
+        let repo = TestRepo::new();
+        repo.write("Cargo.toml", "[package]\nname = \"demo\"\n");
+        repo.write("src/main.rs", "fn main() {}\n");
+        repo.write("scripts/run.sh", "#!/bin/sh\ntrue\n");
+        repo.git(["add", "."]);
+        repo.git(["update-index", "--chmod=+x", "scripts/run.sh"]);
+        repo.git(["commit", "-m", "initial"]);
+
+        let manifest = project_tree(repo.path(), "HEAD").expect("projection");
+        let storage = GitObjectStorage::open(repo.path()).expect("git object storage");
+        let materializer = LocalMaterializer::new(storage);
+        let target = repo.path().join("projected");
+
+        let report = materializer
+            .materialize(&manifest, &target, MaterializationPolicy::LocalOnly)
+            .await
+            .expect("materialize");
+
+        assert_eq!(report.directories, 2);
+        assert_eq!(report.files_written, 3);
+        assert_eq!(
+            fs::read_to_string(target.join("Cargo.toml")).unwrap(),
+            "[package]\nname = \"demo\"\n"
+        );
+        assert_eq!(
+            fs::read_to_string(target.join("src/main.rs")).unwrap(),
+            "fn main() {}\n"
+        );
+        assert_eq!(
+            fs::read_to_string(target.join("scripts/run.sh")).unwrap(),
+            "#!/bin/sh\ntrue\n"
+        );
+
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::PermissionsExt;
+            let mode = fs::metadata(target.join("scripts/run.sh"))
+                .unwrap()
+                .permissions()
+                .mode();
+            assert_ne!(mode & 0o111, 0, "executable bit should be materialized");
+        }
     }
 
     fn entry<'a>(manifest: &'a ProjectionManifest, path: &str) -> &'a ProjectionEntry {
