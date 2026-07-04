@@ -5,7 +5,7 @@ use std::{
 
 use eprfs_core::{
     BlobCid, EntryKind, EprRef, ProjectionEntry, ProjectionId, ProjectionManifest, ProjectionPath, ProjectionRoot,
-    ProjectionStatus,
+    ProjectionSource, ProjectionSourceKind, ProjectionStatus,
 };
 use gix::{
     bstr::{BStr, BString, ByteSlice, ByteVec},
@@ -149,21 +149,29 @@ impl ProjectionCollector {
         }
     }
 
-    fn push_entry(&mut self, entry: &EntryRef<'_>, kind: EntryKind, blob: Option<BlobCid>) {
+    fn push_entry(
+        &mut self,
+        entry: &EntryRef<'_>,
+        kind: EntryKind,
+        source_kind: ProjectionSourceKind,
+        blob: Option<BlobCid>,
+    ) {
         let Some(path) = self.current_projection_path() else {
             return;
         };
 
+        let object_id = entry.oid.to_hex().to_string();
         self.entries.push(ProjectionEntry {
             path,
             kind,
+            source: Some(ProjectionSource::new("git", source_kind, object_id.clone())),
             epr: None,
             blob,
             size_bytes: None,
             executable: matches!(entry.mode.kind(), GitEntryKind::BlobExecutable),
             status: ProjectionStatus::Remote,
             metadata: serde_json::json!({
-                "gitObjectId": entry.oid.to_hex().to_string(),
+                "gitObjectId": object_id,
                 "gitMode": format!("{:o}", entry.mode.value()),
                 "gitEntryKind": format!("{:?}", entry.mode.kind()),
             }),
@@ -197,7 +205,7 @@ impl gix::traverse::tree::Visit for ProjectionCollector {
     }
 
     fn visit_tree(&mut self, entry: &EntryRef<'_>) -> Action {
-        self.push_entry(entry, EntryKind::Directory, None);
+        self.push_entry(entry, EntryKind::Directory, ProjectionSourceKind::Container, None);
         std::ops::ControlFlow::Continue(true)
     }
 
@@ -205,14 +213,14 @@ impl gix::traverse::tree::Visit for ProjectionCollector {
         match entry.mode.kind() {
             GitEntryKind::Blob | GitEntryKind::BlobExecutable => {
                 let blob = BlobCid::new(format!("git-blob:{}", entry.oid.to_hex()));
-                self.push_entry(entry, EntryKind::File, Some(blob));
+                self.push_entry(entry, EntryKind::File, ProjectionSourceKind::Content, Some(blob));
             }
             GitEntryKind::Link => {
                 let blob = BlobCid::new(format!("git-blob:{}", entry.oid.to_hex()));
-                self.push_entry(entry, EntryKind::Symlink, Some(blob));
+                self.push_entry(entry, EntryKind::Symlink, ProjectionSourceKind::Link, Some(blob));
             }
             GitEntryKind::Commit => {
-                self.push_entry(entry, EntryKind::Directory, None);
+                self.push_entry(entry, EntryKind::Directory, ProjectionSourceKind::External, None);
             }
             GitEntryKind::Tree => unreachable!("tree entries are handled by visit_tree"),
         }
@@ -225,7 +233,7 @@ impl gix::traverse::tree::Visit for ProjectionCollector {
 mod tests {
     use std::{fs, process::Command};
 
-    use eprfs_core::{EntryKind, MaterializationPolicy};
+    use eprfs_core::{EntryKind, MaterializationPolicy, ProjectionSourceKind};
     use eprfs_local::LocalMaterializer;
     use tempfile::TempDir;
 
@@ -259,20 +267,55 @@ mod tests {
         let cargo = entry(&manifest, "Cargo.toml");
         assert_eq!(cargo.kind, EntryKind::File);
         assert!(cargo.blob.as_ref().unwrap().as_str().starts_with("git-blob:"));
+        assert_eq!(cargo.source.as_ref().unwrap().namespace, "git");
+        assert_eq!(cargo.source.as_ref().unwrap().kind, ProjectionSourceKind::Content);
         assert_eq!(cargo.metadata["adapter"], serde_json::Value::Null);
         assert_eq!(cargo.metadata["gitEntryKind"], "Blob");
 
         let script = entry(&manifest, "scripts/run.sh");
         assert_eq!(script.kind, EntryKind::File);
         assert!(script.executable);
+        assert_eq!(script.source.as_ref().unwrap().kind, ProjectionSourceKind::Content);
         assert_eq!(script.metadata["gitEntryKind"], "BlobExecutable");
 
         let src = entry(&manifest, "src");
         assert_eq!(src.kind, EntryKind::Directory);
         assert!(src.blob.is_none());
+        assert_eq!(src.source.as_ref().unwrap().kind, ProjectionSourceKind::Container);
 
         assert_eq!(manifest.metadata["adapter"], "brit-eprfs");
         assert_eq!(manifest.metadata["rev"], "HEAD");
+    }
+
+    #[test]
+    fn projects_gitlinks_as_external_directory_boundaries() {
+        let child = TestRepo::new();
+        child.write("README.md", "child\n");
+        child.git(["add", "."]);
+        child.git(["commit", "-m", "child"]);
+        let child_commit = child.git_stdout(["rev-parse", "HEAD"]);
+
+        let repo = TestRepo::new();
+        repo.git([
+            "update-index",
+            "--add",
+            "--cacheinfo",
+            &format!("160000,{child_commit},vendor/lib"),
+        ]);
+        repo.git(["commit", "-m", "gitlink"]);
+
+        let manifest = project_tree(repo.path(), "HEAD").expect("projection");
+
+        let vendor = entry(&manifest, "vendor");
+        assert_eq!(vendor.kind, EntryKind::Directory);
+        assert_eq!(vendor.source.as_ref().unwrap().kind, ProjectionSourceKind::Container);
+
+        let gitlink = entry(&manifest, "vendor/lib");
+        assert_eq!(gitlink.kind, EntryKind::Directory);
+        assert!(gitlink.blob.is_none());
+        assert_eq!(gitlink.source.as_ref().unwrap().kind, ProjectionSourceKind::External);
+        assert_eq!(gitlink.source.as_ref().unwrap().id, child_commit);
+        assert_eq!(gitlink.metadata["gitEntryKind"], "Commit");
     }
 
     #[tokio::test]
@@ -376,6 +419,25 @@ mod tests {
                 String::from_utf8_lossy(&output.stdout),
                 String::from_utf8_lossy(&output.stderr)
             );
+        }
+
+        fn git_stdout<const N: usize>(&self, args: [&str; N]) -> String {
+            let output = Command::new("git")
+                .args(args)
+                .current_dir(self.path())
+                .output()
+                .expect("git command");
+            assert!(
+                output.status.success(),
+                "git failed: {}\nstdout: {}\nstderr: {}",
+                output.status,
+                String::from_utf8_lossy(&output.stdout),
+                String::from_utf8_lossy(&output.stderr)
+            );
+            String::from_utf8(output.stdout)
+                .expect("git stdout utf8")
+                .trim()
+                .to_owned()
         }
     }
 }
