@@ -304,7 +304,6 @@ members = [
     "gix-traverse/tests",
     "gix-shallow",
     "brit-epr",
-    "brit-eprfs",
     "brit-verify",
     "brit-build-ref",
     "brit-graph",
@@ -312,6 +311,13 @@ members = [
     "tests/cli-journey",
     "tests/cli-test-page",
 ]
+
+# brit-eprfs is EXCLUDED from the standalone workspace: it path-deps on the monorepo's
+# ../../eprfs/eprfs-core, only resolvable when brit is checked out as the elohim/brit submodule.
+# Building it in a standalone brit clone (this repo's CI) would fail manifest resolution. This
+# mirrors how the elohim monorepo excludes elohim/eprfs; brit-eprfs builds only in the submodule
+# layout where its sibling paths resolve.
+exclude = ["brit-eprfs"]
 
 [workspace.dependencies]
 
