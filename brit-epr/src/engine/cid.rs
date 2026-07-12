@@ -39,6 +39,19 @@ impl BritCid {
     pub fn as_cid(&self) -> &Cid {
         &self.0
     }
+
+    /// The cite **short-form**: `"sha256:" + hex(multihash digest)[:16]`. The same first-16-hex of
+    /// sha2-256 that [`drift_fingerprint`] emits — a short projection of THIS CID's digest. For a
+    /// [`compute_raw`] CID over a canonical body, it equals the doc's `drift_fingerprint` exactly:
+    /// one sha2-256 digest, two renderings (full CID `bafkrei…` ↔ `sha256:hex16`). Mirrors
+    /// `eprfs_core::BlobCid::short_fingerprint`.
+    ///
+    /// [`drift_fingerprint`]: crate::engine::frontmatter::drift_fingerprint
+    /// [`compute_raw`]: BritCid::compute_raw
+    pub fn short_fingerprint(&self) -> String {
+        let hex = hex::encode(self.0.hash().digest());
+        format!("sha256:{}", &hex[..16])
+    }
 }
 
 impl fmt::Display for BritCid {

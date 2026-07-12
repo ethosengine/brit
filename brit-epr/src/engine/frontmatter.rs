@@ -34,6 +34,13 @@ pub fn canonical_body(content: &str) -> String {
 
 /// `"sha256:" + first-16-hex of sha256(canonical_body)` — a non-address
 /// fingerprint that byte-matches the parent oracle.
+///
+/// Formally, this is the SHORT-FORM of the canonical body's content address: it equals
+/// `BritCid::compute_raw(canonical_body(content).as_bytes()).short_fingerprint()` — the first 16
+/// hex of the very sha2-256 digest that the raw-codec body CID (`bafkrei…`) wraps. One digest, two
+/// renderings; the cite fingerprint is the truncation of the canonical body CID. Pinned by the
+/// `cid_fingerprint_derivation` test and the cross-impl convergence design
+/// (`genesis/docs/superpowers/specs/2026-07-12-cite-fingerprint-cid-convergence-design.md`).
 pub fn drift_fingerprint(content: &str) -> String {
     let body = canonical_body(content);
     let mh = Code::Sha2_256.digest(body.as_bytes());
