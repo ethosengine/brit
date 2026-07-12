@@ -4,9 +4,11 @@
 
 use serde::{Deserialize, Serialize};
 
-use crate::engine::cite::SlugIndex;
-use crate::engine::frontmatter::drift_fingerprint;
-use crate::engine::interface_ref::{EdgeKind, InterfaceRef};
+use crate::engine::{
+    cite::SlugIndex,
+    frontmatter::drift_fingerprint,
+    interface_ref::{EdgeKind, InterfaceRef},
+};
 
 /// The health of one cite edge.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
@@ -18,7 +20,12 @@ pub enum Verdict {
     Held,
     /// Resolves but the target body drifted since the pin.
     Stale,
-    /// The slug resolves nowhere.
+    /// Absent from the live tree, but the edge carries positive remote evidence
+    /// — a full-CID token (`baf…`) in the fingerprint slot, resolvable on the
+    /// substrate. Conservative: only a full CID promotes an absent target off
+    /// `Dead`; a short-form/absent fingerprint stays `Dead`.
+    Remote,
+    /// The slug resolves nowhere and there is no full-CID evidence.
     Dead,
 }
 
@@ -30,7 +37,15 @@ pub fn verdict(edge: &InterfaceRef, idx: &SlugIndex) -> Verdict {
         return Verdict::Ok;
     }
     let Some(path) = idx.resolve(&edge.ref_) else {
-        return Verdict::Dead;
+        // Absent locally. Conservative mirror of the oracle: stays `Dead` UNLESS the fingerprint
+        // slot (`edge.drift`) carries a full-CID token (`baf…`) — positive, substrate-resolvable
+        // remote evidence. A short-form `sha256:hex16` (or absent) fingerprint is NOT full-CID
+        // evidence → `Dead`. Existing dead cites are never reclassified.
+        return if edge.drift.as_deref().is_some_and(|d| d.starts_with("baf")) {
+            Verdict::Remote
+        } else {
+            Verdict::Dead
+        };
     };
     if path.components().any(|c| c.as_os_str() == "held") {
         return Verdict::Held;
@@ -52,8 +67,11 @@ pub fn verdict(edge: &InterfaceRef, idx: &SlugIndex) -> Verdict {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::engine::interface_ref::{EdgeKind, EdgeRole, InterfaceRef};
-    use crate::engine::{cite::SlugIndex, frontmatter::drift_fingerprint};
+    use crate::engine::{
+        cite::SlugIndex,
+        frontmatter::drift_fingerprint,
+        interface_ref::{EdgeKind, EdgeRole, InterfaceRef},
+    };
 
     fn cite(reff: &str, drift: Option<&str>) -> InterfaceRef {
         InterfaceRef {
@@ -90,5 +108,24 @@ mod tests {
         );
         // parity with the oracle: a cite carrying no fingerprint is Ok, never Stale.
         assert_eq!(verdict(&cite("target", None), &idx), Verdict::Ok);
+    }
+
+    #[test]
+    fn remote_only_on_absent_slug_with_full_cid() {
+        let tmp = tempfile::tempdir().unwrap();
+        std::fs::write(tmp.path().join("t.md"), "---\nid: target\n---\nbody\n").unwrap();
+        let idx = SlugIndex::build(&[tmp.path().to_path_buf()]).unwrap();
+        // Absent slug + full-CID (`baf…`) drift token → positive remote evidence → Remote.
+        let full_cid = "bafkreidmi27tswvwvwm45sbvlytbbe4yo5acu3jpif42eynnk3h4sntyty";
+        assert_eq!(verdict(&cite("no-such-slug", Some(full_cid)), &idx), Verdict::Remote);
+        // Absent slug + short-form fingerprint → conservative → still Dead.
+        assert_eq!(
+            verdict(&cite("no-such-slug", Some("sha256:0000000000000000")), &idx),
+            Verdict::Dead
+        );
+        // Absent slug + no fingerprint → still Dead.
+        assert_eq!(verdict(&cite("no-such-slug", None), &idx), Verdict::Dead);
+        // Precedence: a resolvable target with a full-CID token is never Remote.
+        assert_eq!(verdict(&cite("target", Some(full_cid)), &idx), Verdict::Stale);
     }
 }
