@@ -343,3 +343,97 @@ merely *observed* equality.
   `elohim/eprfs/eprfs-agent/src/canonical.rs` (lineage golden),
   `brit-epr/src/engine/cid.rs` (`BritCid`).
 - Today's brit landings: `1df2fff23f` (derivation pin), `f6544964c0` (remote verdict).
+
+---
+
+## 10. Decision record — IPLD link conformance is tag-42 (operator-ratified, 2026-07-12)
+
+This resolves the fork left open in §4/§6 (the "possible stage-4" that was either (a) a tag-42
+`BlobLink` serde on `BlobCid` or (b) brit adopting string-wire CIDs). The direction is decided.
+
+**Decision.** Canonical dag-cbor envelopes adopt **strict IPLD link conformance: links are
+tag-42**, per the DAG-CBOR spec. **brit's `BritCid` encoding is the correct target; `eprfs-core`
+`BlobCid`'s string encoding is the drift** — not the other way around. Where §4 was scrupulously
+neutral ("neither is first-stage; neither is free"), the choice is now made: consolidate toward
+tag-42.
+
+**Seam — identity once, encoding is an explicit per-format choice.** The identity *math* lives in
+exactly one place (`eprfs-core::BlobCid` — the addressing owner of §3.1). **Encoding is NOT part of
+that identity; it is an explicit choice made at the codec boundary, per format:**
+
+- **tag-42 in canonical dag-cbor** — the format where identity is *minted*. A `MetaEntry.cid`, a
+  `claims`/`schemaRef`/`supersedes` link, a coupling edge — all are real IPLD links, native CBOR
+  tag-42, never a string FK, so they cannot dangle across versions (the existing `MetaEntry.cid`
+  contract, §4).
+- **strings on authored / JSON / human surfaces** — package JSONs, frontmatter, cite envelopes
+  (`slug | desc | sha256:… | path:…`), any `--json` output. Here the base32 string is a **display
+  form**, chosen deliberately because a human reads and diffs it.
+
+The rule that makes this safe: **never let a serde default silently pick the encoding.** The drift
+this spec audits (row 7) happened precisely because two newtypes' `#[serde(...)]` attributes quietly
+diverged — `BritCid`'s `transparent` (→ tag-42 link) vs `BlobCid`'s `into="String"` (→ text string)
+— and the difference lived exactly in the canonical bytes that define identity. The fix is to make
+encoding **explicit and dual**: `eprfs-core` grows an explicit **`BlobLink`** (tag-42 serde) *alongside*
+the existing string form, and each call site names which one it wants. This is stage-4 option (a) from
+§4, now chosen over option (b).
+
+**Rationale — "recognize kin in the wild."** The kinship/lineage design (§5) requires **schema-free
+link extraction from a stranger's block**: to find kin you must be able to walk the links out of an
+`EprMeta` you did not author and whose schema you do not have. That is *exactly* what tag-42 provides
+— a self-describing, format-native link the decoder surfaces without the payload schema. It also
+unlocks the rest of the IPLD toolchain the versioning primitives lean on: **CAR export** for the §5b
+boundary-set / export envelope, **selectors** for partial-graph fetch, and **IPFS interop**. A
+base32 string in a `cid` slot is opaque to all of this — it is just text until something with the
+schema re-parses it. tag-42 is the encoding the "recognize kin in the wild" floor is built on.
+
+**Migration — do it NOW, while it is cheap.** The tag-42 flip **changes canonical bytes**, so it is a
+one-time **versioned re-CID** of the `eprfs-agent` package envelopes:
+
+- bump the codec / `epr-meta-version` (the change is a declared version step, never a silent recompute);
+- **golden dag-cbor byte-diff gates** — the flip is validated by an explicit before/after byte
+  comparison (the same discipline as `eprfs-agent`'s `absent_lineage_canonical_bytes_and_cid_are_unchanged`,
+  inverted: here bytes *must* change, and only for the links);
+- refresh the **compose-graph** and any **governance `eprRef`s** that pin the moved CIDs
+  (content-addressed, so the refresh is mechanical — a move never breaks a link).
+
+Execute it **now**, while the artifacts are **young, dev-layer, and un-anchored**. The cost of a
+canonical-bytes migration is monotonic in exposure: it only grows once the envelopes are **DHT-anchored**
+or **exported** across a boundary (every remote replica would then have to re-accept the re-CID). The
+window where re-CID is a local, un-gossiped operation is open today and closes as soon as the snapshot
+is shared.
+
+### Required check — what does the protocol wire envelope emit *today*?
+
+The protocol codec (`elohim-epr`) is the canon this decision must align with. Inspected at HEAD:
+
+- **`elohim/epr/src/envelope.rs::canonical_bytes`** (the identity-minting path) encodes **every
+  embedded CID as `Ipld::Link(...)`** — `claims` (`Ipld::Link(*c)`, line 68), `schemaRef`
+  (`Ipld::Link(self.schema_ref)`, line 82), `supersedes` (`Ipld::Link(s)`, line 84), and the
+  `coupling` knowledge/value/governance edges (`Ipld::Link(...)`, lines 93–101).
+- **`elohim/epr/src/cbor.rs::encode`** serializes that `Ipld` via `serde_ipld_dagcbor::to_vec`, under
+  which **`Ipld::Link` is CBOR tag-42** (the dag-cbor IPLD-link representation).
+
+**Finding: the protocol wire envelope emits tag-42 links, NOT strings.** The canonical codec is
+*already conformant* with this decision. Therefore:
+
+- The conformance target (**tag-42**) is not merely "brit's flavor" — it is **the protocol canon**.
+  `BritCid`'s tag-42 wire is aligned with `elohim-epr`; `eprfs-core` `BlobCid`'s
+  `#[serde(into="String")]` (confirmed at `elohim/eprfs/eprfs-core/src/address.rs:57-58`) is the lone
+  outlier — it diverges from **both** brit and the protocol codec.
+- **No protocol-layer change is flagged.** `elohim-epr` needs nothing here; it is the standard the
+  other two align to. (Had the codec been found emitting *strings*, the conformance target would have
+  had to move up to it and this record would flag a protocol-layer decision — it does not, because it
+  does not.)
+
+*(The `Envelope.cid` field itself is `#[ts(type = "string")]` for the TS/JSON projection and is
+excluded from `canonical_bytes` — consistent with this decision's "strings on the JSON/human surface,
+tag-42 in canonical dag-cbor" split: the display projection is a string; the minted identity's
+internal links are tag-42.)*
+
+### Scope of this record
+
+This section **records the decision only**. It does **not** implement the tag-42 flip, does not add
+`BlobLink` to `eprfs-core`, and does not perform the re-CID migration — those are their own
+plan + gated stages (stage-4 of §6, now unblocked with a chosen direction). The load-bearing output
+here is the *direction* (tag-42 is the target, string is the drift) and the *evidence* that the
+protocol codec already sits at that target.
