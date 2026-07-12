@@ -1,8 +1,9 @@
 //! `InterfaceRef` — one typed import/export edge of the composition envelope.
 //! Generic: `kind: doc-cite` is the only populated kind in this slice.
 
-use crate::engine::cid::BritCid;
 use serde::{Deserialize, Serialize};
+
+use crate::engine::cid::BritCid;
 
 /// The typed interface kind an edge carries.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize)]
@@ -54,7 +55,12 @@ pub struct InterfaceRef {
 }
 
 fn is_fingerprint(s: &str) -> bool {
-    s.starts_with("sha256:") || s.starts_with("bafy")
+    // `sha256:hex16` short-form, OR a full CIDv1 base32 token in the fingerprint slot: both
+    // `bafy…` (dag-cbor 0x71) and `bafk…` (raw 0x55). A raw-codec *body* CID starts `bafk`, so a
+    // `bafy`-only guard silently dropped it into `desc` — leaving `drift: None` and defeating the
+    // `remote` verdict for raw-codec pins. `baf` covers the multibase-b CID family and matches both
+    // the parent oracle (`cite_graph._is_fingerprint`) and this crate's own `verdict.rs`.
+    s.starts_with("sha256:") || s.starts_with("baf")
 }
 
 /// Parse one frontmatter `cites:` line into a `DocCite` import (or `Legacy`).
@@ -104,6 +110,29 @@ mod tests {
         assert_eq!(r.ref_, "constitution");
         assert_eq!(r.desc.as_deref(), Some("the law"));
         assert_eq!(r.drift.as_deref(), Some("sha256:1eb96af782012fc6"));
+    }
+
+    #[test]
+    fn parses_raw_codec_full_cid_into_drift() {
+        // A raw-codec body CID (`bafk…`, codec 0x55) in the fingerprint slot must be captured as
+        // `drift`, not misread as `desc`. Regression pin for the `bafy`→`baf` parity fix: with the
+        // old guard this CID fell through to `desc` and `drift` stayed `None`, so an absent target
+        // could never reach `Verdict::Remote`.
+        let full_cid = "bafkreifzjut3te2nhyekklss27nh3k72ysco7y32koao5eei66wof36n5e";
+        let r = parse_cite_line(&format!("some-slug | a description | {full_cid}"));
+        assert_eq!(r.kind, EdgeKind::DocCite);
+        assert_eq!(r.drift.as_deref(), Some(full_cid));
+        assert_eq!(r.desc.as_deref(), Some("a description"));
+    }
+
+    #[test]
+    fn parses_dag_cbor_full_cid_into_drift() {
+        // The `bafy…` (dag-cbor) rendering keeps working — the broadening is additive.
+        let r = parse_cite_line("slug | desc | bafyreic36hmigi34p4nf6s2l3sfpnlcuop7hlc6zzd7uee2q6ar2ekzioy");
+        assert_eq!(
+            r.drift.as_deref(),
+            Some("bafyreic36hmigi34p4nf6s2l3sfpnlcuop7hlc6zzd7uee2q6ar2ekzioy")
+        );
     }
 
     #[test]
