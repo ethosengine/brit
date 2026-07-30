@@ -16,11 +16,15 @@
 # every cargo job. For local co-development of rakia + brit, add the override in
 # a gitignored config (e.g. a parent-directory .cargo/config.toml) instead.
 
+# crates.io is consumed DIRECTLY — deliberately NOT mirrored through Nexus.
+# Nexus is reserved for first-party components (rakia-core / rakia-brit /
+# elohim-epr via `registry = "elohim"` above). Decided 2026-07-30: our Nexus is
+# Sonatype Community Edition, and its 100k-requests/day cap is enforced by
+# refusing to add new components — so proxying a free public registry spends the
+# budget that first-party PUBLISHING depends on, and couples every cargo job to
+# Nexus uptime. Sibling `elohim/rakia/.cargo/config.toml` set this precedent.
+# Source replacement is lock-transparent: brit's Cargo.lock records canonical
+# crates.io sources (only rakia-* name cargo-internal), so this causes no churn.
+
 [registries.elohim]
 index = "sparse+https://nexus.ethosengine.com/repository/cargo-internal/"
-
-[source.crates-io]
-replace-with = "elohim-mirror"
-
-[source.elohim-mirror]
-registry = "sparse+https://nexus.ethosengine.com/repository/cargo/"
