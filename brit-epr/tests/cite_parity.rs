@@ -1,8 +1,6 @@
 //! Verdict-label parity with the parent cite oracle on the fixture corpus.
 //! Skips (returns) when the oracle (parent monorepo) is not on disk.
-use std::collections::BTreeMap;
-use std::path::Path;
-use std::process::Command;
+use std::{collections::BTreeMap, path::Path, process::Command};
 
 #[test]
 fn brit_verdicts_match_oracle() {

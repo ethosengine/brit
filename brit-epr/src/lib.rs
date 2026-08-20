@@ -24,16 +24,16 @@ pub mod engine;
 #[cfg(feature = "elohim-protocol")]
 pub mod elohim;
 
-// Unconditional re-exports
-pub use engine::{
-    AppSchema, BritCid, CborError, CidParseError, ContentNode, EprMeta, LocalObjectStore, MetaEntry, NodeSeed,
-    ObjectStoreError, TrailerSet, ValidationError,
-};
 // Feature-gated re-exports
 #[cfg(feature = "elohim-protocol")]
 pub use elohim::{
     parse_pillar_trailers, validate_pillar_trailers, ElohimProtocolSchema, PillarTrailers, PillarValidationError,
     TrailerKey,
+};
+// Unconditional re-exports
+pub use engine::{
+    AppSchema, BritCid, CborError, CidParseError, ContentNode, EprMeta, LocalObjectStore, MetaEntry, NodeSeed,
+    ObjectStoreError, TrailerSet, ValidationError,
 };
 
 /// Convenience re-exports for attestation types.

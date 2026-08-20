@@ -1,9 +1,7 @@
 //! brit's canonical-body fingerprint MUST reproduce the parent oracle's
 //! `cite_graph.fingerprint` byte-for-byte. The committed vectors are the
 //! portable spec (regenerate with tests/fixtures/conformance/gen.py).
-use std::collections::BTreeMap;
-use std::fs;
-use std::path::Path;
+use std::{collections::BTreeMap, fs, path::Path};
 
 #[test]
 fn drift_fingerprint_matches_oracle_vectors() {

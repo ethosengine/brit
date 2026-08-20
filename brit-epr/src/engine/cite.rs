@@ -1,10 +1,14 @@
 //! `id`/`cites` frontmatter extraction + the move-survivable slug index.
 
-use std::collections::BTreeMap;
-use std::path::{Path, PathBuf};
+use std::{
+    collections::BTreeMap,
+    path::{Path, PathBuf},
+};
 
-use crate::engine::frontmatter::split_frontmatter;
-use crate::engine::interface_ref::{parse_cite_line, InterfaceRef};
+use crate::engine::{
+    frontmatter::split_frontmatter,
+    interface_ref::{parse_cite_line, InterfaceRef},
+};
 
 /// Read the `id:` scalar from a frontmatter block.
 pub fn extract_id(frontmatter: &str) -> Option<String> {
