@@ -3,8 +3,8 @@ use std::{path::PathBuf, sync::Arc};
 use arc_swap::ArcSwap;
 
 use crate::{
-    store::types::{MutableIndexAndPack, SlotMapIndex},
     Store,
+    store::types::{MutableIndexAndPack, SlotMapIndex},
 };
 
 /// Options for use in [`Store::at_opts()`].
@@ -12,22 +12,30 @@ use crate::{
 pub struct Options {
     /// How to obtain a size for the slot map.
     pub slots: Slots,
-    /// The kind of hash we expect in our packs and would use for loose object iteration and object writing.
-    pub object_hash: gix_hash::Kind,
     /// If false, no multi-pack indices will be used. If true, they will be used if their hash matches `object_hash`.
     pub use_multi_pack_index: bool,
+    /// The maximum size of a single allocation caused by user-controlled on-disk pack data.
+    ///
+    /// If `None`, no additional limit is enforced.
+    pub alloc_limit_bytes: Option<usize>,
     /// The current directory of the process at the time of instantiation.
     /// If unset, it will be retrieved using `gix_fs::current_dir(false)`.
     pub current_dir: Option<std::path::PathBuf>,
+    /// The compression level to use when writing loose objects.
+    ///
+    /// Defaults to [`Compression::BEST_SPEED`](gix_zlib::Compression::BEST_SPEED), which is
+    /// also what `git` uses unless configured otherwise with `core.looseCompression` or `core.compression`.
+    pub loose_compression: gix_zlib::Compression,
 }
 
 impl Default for Options {
     fn default() -> Self {
         Options {
             slots: Default::default(),
-            object_hash: Default::default(),
             use_multi_pack_index: true,
+            alloc_limit_bytes: None,
             current_dir: None,
+            loose_compression: gix_zlib::Compression::BEST_SPEED,
         }
     }
 }
@@ -67,16 +75,19 @@ impl Store {
     /// Note that the `slots` isn't used for packs, these are included with their multi-index or index respectively.
     /// For example, In a repository with 250m objects and geometric packing one would expect 27 index/pack pairs,
     /// or a single multi-pack index.
+    /// `object_hash` is the hash expected in packs and used for loose object iteration and object writing.
     /// `replacements` is an iterator over pairs of old and new object ids for replacement support.
     /// This means that when asking for object `X`, one will receive object `X-replaced` given an iterator like `Some((X, X-replaced))`.
     pub fn at_opts(
         objects_dir: PathBuf,
+        object_hash: gix_hash::Kind,
         replacements: &mut dyn Iterator<Item = (gix_hash::ObjectId, gix_hash::ObjectId)>,
         Options {
             slots,
-            object_hash,
             use_multi_pack_index,
+            alloc_limit_bytes,
             current_dir,
+            loose_compression,
         }: Options,
     ) -> std::io::Result<Self> {
         let _span = gix_features::trace::detail!("gix_odb::Store::at()");
@@ -99,9 +110,10 @@ impl Store {
                 let mut db_paths =
                     crate::alternate::resolve(objects_dir.clone(), &current_dir).map_err(std::io::Error::other)?;
                 db_paths.insert(0, objects_dir.clone());
-                let num_slots = Store::collect_indices_and_mtime_sorted_by_size(db_paths, None, None)
-                    .map_err(std::io::Error::other)?
-                    .len();
+                let num_slots =
+                    Store::collect_indices_and_mtime_sorted_by_size(db_paths, None, None, alloc_limit_bytes)
+                        .map_err(std::io::Error::other)?
+                        .len();
 
                 let candidate = ((num_slots as f32 * multiplier) as usize).max(minimum);
                 if candidate > crate::store::types::PackId::max_indices() {
@@ -130,6 +142,8 @@ impl Store {
             index: ArcSwap::new(Arc::new(SlotMapIndex::default())),
             use_multi_pack_index,
             object_hash,
+            alloc_limit_bytes,
+            loose_compression,
             num_handles_stable: Default::default(),
             num_handles_unstable: Default::default(),
             num_disk_state_consolidation: Default::default(),

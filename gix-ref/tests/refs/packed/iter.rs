@@ -1,12 +1,13 @@
-use gix_object::bstr::ByteSlice;
 use gix_ref::packed;
 
 use crate::file::{store_at, store_with_packed_refs};
 
+const HASH_KIND: gix_hash::Kind = gix_hash::Kind::Sha1;
+
 #[test]
 fn empty() -> crate::Result {
     assert_eq!(
-        packed::Iter::new(&[])?.count(),
+        packed::Iter::new(&[], HASH_KIND)?.count(),
         0,
         "empty buffers are fine and lead to no line returned"
     );
@@ -15,9 +16,9 @@ fn empty() -> crate::Result {
 
 #[test]
 fn packed_refs_with_header() -> crate::Result {
-    let dir = gix_testtools::scripted_fixture_read_only_standalone("make_packed_ref_repository.sh")?;
+    let dir = crate::scripted_fixture_read_only("make_packed_ref_repository.sh")?;
     let buf = std::fs::read(dir.join(".git").join("packed-refs"))?;
-    let iter = packed::Iter::new(&buf)?;
+    let iter = packed::Iter::new(&buf, crate::fixture_hash_kind())?;
     assert_eq!(iter.count(), 11, "it finds the right amount of items");
     Ok(())
 }
@@ -28,52 +29,39 @@ fn iter_prefix() -> crate::Result {
     assert_eq!(
         packed
             .iter_prefixed("refs/heads/".into())?
-            .map(|r| r.map(|r| r.name.as_bstr()))
             .collect::<Result<Vec<_>, _>>()?,
-        vec![
-            "refs/heads/A".as_bytes().as_bstr(),
-            "refs/heads/d1".into(),
-            "refs/heads/dt1".into(),
-            "refs/heads/main".into()
-        ]
+        vec!["refs/heads/A", "refs/heads/d1", "refs/heads/dt1", "refs/heads/main"]
     );
 
     assert_eq!(
         packed
             .iter_prefixed("refs/heads/d".into())?
-            .map(|r| r.map(|r| r.name.as_bstr()))
             .collect::<Result<Vec<_>, _>>()?,
-        vec!["refs/heads/d1".as_bytes().as_bstr(), "refs/heads/dt1".into(),],
+        vec!["refs/heads/d1", "refs/heads/dt1"],
         "partial prefixes are fine, they don't have to resemble or be a directory"
     );
 
     assert_eq!(
         packed
             .iter_prefixed("refs/remotes/".into())?
-            .map(|r| r.map(|r| r.name.as_bstr()))
             .collect::<Result<Vec<_>, _>>()?,
-        vec![
-            "refs/remotes/origin/main".as_bytes().as_bstr(),
-            "refs/remotes/origin/multi-link-target3".into(),
-        ]
+        vec!["refs/remotes/origin/main", "refs/remotes/origin/multi-link-target3",]
     );
 
     let last_ref_in_file = "refs/tags/t1";
     assert_eq!(
         packed
             .iter_prefixed(last_ref_in_file.into())?
-            .map(|r| r.map(|r| r.name.as_bstr()))
             .collect::<Result<Vec<_>, _>>()?,
-        vec![last_ref_in_file.as_bytes().as_bstr()],
+        vec![last_ref_in_file],
         "prefixes which are a ref also work, this one is the last of the file"
     );
     let first_ref_in_file = "refs/d1";
     assert_eq!(
         packed
             .iter_prefixed(first_ref_in_file.into())?
-            .map(|r| r.map(|r| r.name.as_bstr()))
             .collect::<Result<Vec<_>, _>>()?,
-        vec![first_ref_in_file.as_bytes().as_bstr()],
+        vec![first_ref_in_file],
         "prefixes which are a ref also work, and this one at the beginning of the file"
     );
     Ok(())
@@ -86,7 +74,7 @@ c4cebba92af964f2d126be90b8a6298c4cf84d45 refs/tags/gix-actor-v0.1.0
 ^13da90b54699a6b500ec5cd7d175f2cd5a1bed06
 0b92c8a256ae06c189e3b9c30b646d62ac8f7d10 refs/tags/gix-actor-v0.1.1\n";
     assert_eq!(
-        packed::Iter::new(packed_refs)?.collect::<Result<Vec<_>, _>>()?,
+        packed::Iter::new(packed_refs, HASH_KIND)?.collect::<Result<Vec<_>, _>>()?,
         vec![
             packed::Reference {
                 name: "refs/tags/TEST-0.0.1".try_into()?,
@@ -114,7 +102,7 @@ fn broken_ref_doesnt_end_the_iteration() -> crate::Result {
 buggy-hash refs/wrong
 ^buggy-hash-too
 0b92c8a256ae06c189e3b9c30b646d62ac8f7d10 refs/tags/gix-actor-v0.1.1\n";
-    let mut iter = packed::Iter::new(packed_refs)?;
+    let mut iter = packed::Iter::new(packed_refs, HASH_KIND)?;
 
     assert!(iter.next().expect("first ref").is_ok(), "first line is valid");
     assert_eq!(

@@ -6,16 +6,18 @@ mod merge {
 
     use bstr::{BStr, ByteSlice};
     use gix_merge::blob::{
-        builtin_driver,
+        BuiltinDriver, Resolution, ResourceKind, builtin_driver,
         builtin_driver::text::ConflictStyle,
         pipeline, platform,
-        platform::{builtin_merge::Pick, DriverChoice},
-        BuiltinDriver, Resolution, ResourceKind,
+        platform::{DriverChoice, builtin_merge::Pick},
     };
     use gix_object::tree::EntryKind;
 
     use crate::{
-        blob::{platform::new_platform, util::ObjectDb},
+        blob::{
+            platform::new_platform,
+            util::{insert, object_db},
+        },
         hex_to_id,
     };
 
@@ -30,12 +32,12 @@ mod merge {
             &gix_object::find::Never,
         )?;
 
-        let mut db = ObjectDb::default();
+        let db = object_db();
         for (content, kind) in [
             ("ours", ResourceKind::CurrentOrOurs),
             ("theirs\0", ResourceKind::OtherOrTheirs),
         ] {
-            let id = db.insert(content)?;
+            let id = insert(&db, content)?;
             platform.set_resource(
                 id,
                 EntryKind::Blob,
@@ -80,12 +82,12 @@ mod merge {
             &gix_object::find::Never,
         )?;
 
-        let mut db = ObjectDb::default();
+        let db = object_db();
         for (content, kind) in [
             ("any\0", ResourceKind::CurrentOrOurs),
             ("any\0", ResourceKind::OtherOrTheirs),
         ] {
-            let id = db.insert(content)?;
+            let id = insert(&db, content)?;
             platform.set_resource(
                 id,
                 EntryKind::Blob,
@@ -130,12 +132,12 @@ mod merge {
             &gix_object::find::Never,
         )?;
 
-        let mut db = ObjectDb::default();
+        let db = object_db();
         for (content, kind) in [
             ("ours", ResourceKind::CurrentOrOurs),
             ("theirs", ResourceKind::OtherOrTheirs),
         ] {
-            let id = db.insert(content)?;
+            let id = insert(&db, content)?;
             platform.set_resource(id, EntryKind::Blob, "b".into(), kind, &db)?;
         }
 
@@ -219,7 +221,7 @@ theirs
                 })
                 .unwrap()
                 .unwrap(),
-            hex_to_id("424860eef4edb9f5a2dacbbd6dc8c2d2e7645035"),
+            "424860eef4edb9f5a2dacbbd6dc8c2d2e7645035",
             "there is no need to write a buffer here, it just returns one of our inputs"
         );
 
@@ -283,12 +285,12 @@ theirs
             &gix_object::find::Never,
         )?;
 
-        let mut db = ObjectDb::default();
+        let db = object_db();
         for (content, kind) in [
             ("ours", ResourceKind::CurrentOrOurs),
             ("theirs", ResourceKind::OtherOrTheirs),
         ] {
-            let id = db.insert(content)?;
+            let id = insert(&db, content)?;
             platform.set_resource(id, EntryKind::Blob, "b".into(), kind, &db)?;
         }
 
@@ -317,7 +319,7 @@ theirs
             "we handle word-splitting and definitely pick-up what's written into the %A buffer"
         );
 
-        let id = db.insert("binary\0")?;
+        let id = insert(&db, "binary\0")?;
         platform.set_resource(id, EntryKind::Blob, "b".into(), ResourceKind::OtherOrTheirs, &db)?;
         let platform_ref = platform.prepare_merge(&db, Default::default())?;
         let res = platform_ref.merge(&mut buf, default_labels(), &Default::default())?;
@@ -390,13 +392,13 @@ cat "%B" >> "%A""#
             pipeline::Mode::ToGit,
         );
 
-        let mut db = ObjectDb::default();
+        let db = object_db();
         for (content, kind) in [
             ("base", ResourceKind::CommonAncestorOrBase),
             ("ours", ResourceKind::CurrentOrOurs),
             ("theirs", ResourceKind::OtherOrTheirs),
         ] {
-            let id = db.insert(content)?;
+            let id = insert(&db, content)?;
             platform.set_resource(id, EntryKind::Blob, "b".into(), kind, &db)?;
         }
 
@@ -592,9 +594,8 @@ cat "%B" >> "%A""#
 
 mod prepare_merge {
     use gix_merge::blob::{
-        builtin_driver, pipeline,
-        platform::{resource, DriverChoice},
-        BuiltinDriver, ResourceKind,
+        BuiltinDriver, ResourceKind, builtin_driver, pipeline,
+        platform::{DriverChoice, resource},
     };
     use gix_object::tree::EntryKind;
 
@@ -805,7 +806,7 @@ mod prepare_merge {
 }
 
 mod set_resource {
-    use gix_merge::blob::{pipeline, ResourceKind};
+    use gix_merge::blob::{ResourceKind, pipeline};
     use gix_object::tree::EntryKind;
 
     use crate::blob::platform::new_platform;

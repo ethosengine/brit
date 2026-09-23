@@ -1,6 +1,6 @@
 pub use gix_status as plumbing;
 
-use crate::{config, config::cache::util::ApplyLeniencyDefault, util::OwnedOrStaticAtomicBool, Repository};
+use crate::{Repository, config, config::cache::util::ApplyLeniencyDefault, util::OwnedOrStaticAtomicBool};
 
 /// A structure to hold options configuring the status request, which can then be turned into an iterator.
 pub struct Platform<'repo, Progress>
@@ -65,7 +65,7 @@ impl Default for Submodule {
 
 /// The error returned by [status()](Repository::status).
 #[derive(Debug, thiserror::Error)]
-#[allow(missing_docs)]
+#[expect(missing_docs)]
 pub enum Error {
     #[error(transparent)]
     DirwalkOptions(#[from] config::boolean::Error),
@@ -139,7 +139,7 @@ pub mod is_dirty {
 
     /// The error returned by [Repository::is_dirty()].
     #[derive(Debug, thiserror::Error)]
-    #[allow(missing_docs)]
+    #[expect(missing_docs)]
     pub enum Error {
         #[error(transparent)]
         StatusPlatform(#[from] crate::status::Error),
@@ -167,14 +167,24 @@ pub mod is_dirty {
         //                    optimal resource usage.
         pub fn is_dirty(&self) -> Result<bool, Error> {
             {
-                let head_tree_id = self.head_tree_id()?;
+                let head_tree_id = self.head_tree_id_or_empty()?;
                 let mut index_is_dirty = false;
 
+                // The default pathspec would limit the comparison to the prefix of the current working directory.
+                let mut pathspec = self
+                    .pathspec(
+                        false, /* this forces the status from the root, ignoring the prefix/CWD */
+                        None::<&str>,
+                        false,
+                        &gix_index::State::new(self.object_hash()),
+                        gix_worktree::stack::state::attributes::Source::IdMapping,
+                    )
+                    .expect("Impossible for this to fail without patterns");
                 // Run this first as there is a high likelihood to find something, and it's very fast.
                 self.tree_index_status(
                     &head_tree_id,
                     &*self.index_or_empty()?,
-                    None,
+                    Some(&mut pathspec),
                     crate::status::tree_index::TrackRenames::Disabled,
                     |_, _, _| {
                         index_is_dirty = true;
@@ -205,7 +215,7 @@ pub mod is_dirty {
 pub mod into_iter {
     /// The error returned by [status::Platform::into_iter()](crate::status::Platform::into_iter()).
     #[derive(Debug, thiserror::Error)]
-    #[allow(missing_docs)]
+    #[expect(missing_docs)]
     pub enum Error {
         #[error(transparent)]
         Index(#[from] crate::worktree::open_index::Error),

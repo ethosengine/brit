@@ -70,7 +70,7 @@ pub enum Sorting {
 
 /// The error is part of the item returned by the [Ancestors](super::Simple) iterator.
 #[derive(Debug, thiserror::Error)]
-#[allow(missing_docs)]
+#[expect(missing_docs)]
 pub enum Error {
     #[error(transparent)]
     Find(#[from] gix_object::find::existing_iter::Error),
@@ -138,6 +138,10 @@ pub(super) struct State {
     queue: CommitDateQueue,
     /// Backing storage for the currently yielded commit.
     buf: Vec<u8>,
+    /// The object hash kind of the currently yielded commit data in `buf`.
+    /// It's used to know the kind of hash to expect when a new iterator is returned from `buf`
+    /// via `Simple::commit_iter()`.
+    object_hash: gix_hash::Kind,
     /// Set of commits that were already enqueued for the visible traversal, for cycle-checking.
     seen: gix_hashtable::HashSet<ObjectId>,
     /// Hidden frontier commits that must not be yielded or crossed during traversal.
@@ -232,16 +236,14 @@ fn compute_hidden_frontier(
 
 ///
 mod init {
-    use std::{cmp::Reverse, collections::VecDeque};
-
-    use gix_date::SecondsSinceUnixEpoch;
-    use gix_hash::{oid, ObjectId};
-    use gix_object::{CommitRefIter, FindExt};
-
     use super::{
-        collect_parents, compute_hidden_frontier, to_queue_key, CommitDateQueue, CommitTimeOrder, Error, Sorting, State,
+        CommitDateQueue, CommitTimeOrder, Error, Sorting, State, collect_parents, compute_hidden_frontier, to_queue_key,
     };
     use crate::commit::{Either, Info, ParentIds, Parents, Simple};
+    use gix_date::SecondsSinceUnixEpoch;
+    use gix_hash::{ObjectId, oid};
+    use gix_object::{CommitRefIter, FindExt};
+    use std::{cmp::Reverse, collections::VecDeque};
 
     impl Default for State {
         fn default() -> Self {
@@ -249,6 +251,7 @@ mod init {
                 next: Default::default(),
                 queue: gix_revwalk::PriorityQueue::new(),
                 buf: vec![],
+                object_hash: gix_hash::Kind::shortest(),
                 seen: Default::default(),
                 hidden: Default::default(),
                 hidden_tips: Vec::new(),
@@ -264,6 +267,7 @@ mod init {
                 next,
                 queue,
                 buf,
+                object_hash,
                 seen,
                 hidden,
                 hidden_tips,
@@ -273,6 +277,7 @@ mod init {
             next.clear();
             queue.clear();
             buf.clear();
+            *object_hash = gix_hash::Kind::shortest();
             seen.clear();
             hidden.clear();
             hidden_tips.clear();
@@ -466,7 +471,7 @@ mod init {
     impl<Find, Predicate> Simple<Find, Predicate> {
         /// Return an iterator for accessing data of the current commit, parsed lazily.
         pub fn commit_iter(&self) -> CommitRefIter<'_> {
-            CommitRefIter::from_bytes(self.commit_data())
+            CommitRefIter::from_bytes(self.commit_data(), self.state.object_hash)
         }
 
         /// Return the current commits' raw data, which can be parsed using [`gix_object::CommitRef::from_bytes()`].
@@ -521,13 +526,16 @@ mod init {
                 let (commit_time, oid) = match next.pop()? {
                     (Ok(t) | Err(Reverse(t)), o) => (t, o),
                 };
+                state.object_hash = oid.kind();
                 if state.hidden.contains_key(&oid) {
                     continue;
                 }
                 let mut parents: ParentIds = Default::default();
+                let generation;
 
                 match super::super::find(self.cache.as_ref(), &self.objects, &oid, &mut state.buf) {
                     Ok(Either::CachedCommit(commit)) => {
+                        generation = Some(commit.generation());
                         if !collect_parents(&mut state.parent_ids, self.cache.as_ref(), commit.iter_parents()) {
                             // drop corrupt caches and try again with ODB
                             self.cache = None;
@@ -548,6 +556,7 @@ mod init {
                         }
                     }
                     Ok(Either::CommitRefIter(commit_iter)) => {
+                        generation = None;
                         for token in commit_iter {
                             match token {
                                 Ok(gix_object::commit::ref_iter::Token::Tree { .. }) => continue,
@@ -583,6 +592,7 @@ mod init {
                 return Some(Ok(Info {
                     id: oid,
                     parent_ids: parents,
+                    generation,
                     commit_time: Some(commit_time),
                 }));
             }
@@ -594,13 +604,16 @@ mod init {
 
             loop {
                 let oid = next.pop_front()?;
+                state.object_hash = oid.kind();
                 if state.hidden.contains_key(&oid) {
                     continue;
                 }
                 let mut parents: ParentIds = Default::default();
+                let generation;
 
                 match super::super::find(self.cache.as_ref(), &self.objects, &oid, &mut state.buf) {
                     Ok(Either::CachedCommit(commit)) => {
+                        generation = Some(commit.generation());
                         if !collect_parents(&mut state.parent_ids, self.cache.as_ref(), commit.iter_parents()) {
                             // drop corrupt caches and try again with ODB
                             self.cache = None;
@@ -616,6 +629,7 @@ mod init {
                         }
                     }
                     Ok(Either::CommitRefIter(commit_iter)) => {
+                        generation = None;
                         for token in commit_iter {
                             match token {
                                 Ok(gix_object::commit::ref_iter::Token::Tree { .. }) => continue,
@@ -643,6 +657,7 @@ mod init {
                 return Some(Ok(Info {
                     id: oid,
                     parent_ids: parents,
+                    generation,
                     commit_time: None,
                 }));
             }
@@ -664,7 +679,7 @@ mod init {
         }
     }
 
-    #[allow(clippy::too_many_arguments)]
+    #[expect(clippy::too_many_arguments)]
     fn insert_into_seen_and_queue(
         seen: &mut gix_hashtable::HashSet<ObjectId>,
         hidden: &gix_revwalk::graph::IdMap<()>,

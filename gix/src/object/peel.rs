@@ -1,9 +1,8 @@
 //!
 #![allow(clippy::empty_docs)]
 use crate::{
-    object,
-    object::{peel, Kind},
-    Commit, Object, Tree,
+    Commit, Object, Tree, object,
+    object::{Kind, peel},
 };
 
 ///
@@ -14,7 +13,7 @@ pub mod to_kind {
 
         /// The error returned by [`Object::peel_to_kind()`][crate::Object::peel_to_kind()].
         #[derive(Debug, thiserror::Error)]
-        #[allow(missing_docs)]
+        #[expect(missing_docs)]
         pub enum Error {
             #[error(transparent)]
             FindExistingObject(#[from] object::find::existing::Error),
@@ -62,7 +61,7 @@ impl<'repo> Object<'repo> {
                         oid: self.id().shorten().unwrap_or_else(|_| self.id.into()),
                         actual: self.kind,
                         expected: kind,
-                    })
+                    });
                 }
             }
         }

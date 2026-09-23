@@ -1,9 +1,8 @@
-use gix_object::bstr::ByteSlice;
-
 use crate::{
     file::{store, store_at, store_with_packed_refs},
     hex_to_id,
 };
+use gix_object::bstr::ByteSlice;
 
 mod with_namespace {
     use gix_object::bstr::{BString, ByteSlice};
@@ -36,18 +35,11 @@ mod with_namespace {
             "refs/namespaces/bar/refs/remotes/origin/multi-link-target3",
             "refs/namespaces/bar/refs/tags/multi-link-target2",
         ];
-        assert_eq!(
-            namespaced_refs
-                .iter()
-                .map(gix_ref::FullName::as_bstr)
-                .collect::<Vec<_>>(),
-            expected_namespaced_refs
-        );
+        assert_eq!(namespaced_refs, expected_namespaced_refs);
         assert_eq!(
             store
                 .loose_iter_prefixed(ns_two.as_bstr().try_into().unwrap())?
                 .map(Result::unwrap)
-                .map(|r| r.name.into_inner())
                 .collect::<Vec<_>>(),
             [
                 "refs/namespaces/bar/refs/heads/multi-link-target1",
@@ -61,7 +53,6 @@ mod with_namespace {
                 .expect("present")
                 .iter_prefixed(ns_two.as_bstr().to_owned())?
                 .map(Result::unwrap)
-                .map(|r| r.name.to_owned().into_inner())
                 .collect::<Vec<_>>(),
             ["refs/namespaces/bar/refs/remotes/origin/multi-link-target3"]
         );
@@ -72,9 +63,7 @@ mod with_namespace {
                 "it finds namespaced items by fully qualified name"
             );
             assert_eq!(
-                store
-                    .find(fullname.as_bstr().splitn_str(2, b"/").nth(1).expect("name").as_bstr())?
-                    .name,
+                store.find(fullname.as_bstr().splitn_str(2, b"/").nth(1).expect("name").as_bstr())?,
                 fullname,
                 "it will find namespaced items just by their shortened (but not shortest) name"
             );
@@ -122,7 +111,7 @@ mod with_namespace {
                     |r: gix_ref::Reference| if r.name.as_bstr().starts_with_str("refs/namespaces") {
                         None
                     } else {
-                        Some(r.name.as_bstr().to_owned())
+                        Some(r)
                     }
                 )
                 .collect::<Vec<_>>(),
@@ -160,14 +149,11 @@ mod with_namespace {
             .map(Result::unwrap)
             .map(|r: gix_ref::Reference| r.name)
             .collect::<Vec<_>>();
-        assert_eq!(
-            ref_names.iter().map(gix_ref::FullName::as_bstr).collect::<Vec<_>>(),
-            expected_refs
-        );
+        assert_eq!(ref_names, expected_refs);
 
         for fullname in ref_names {
             assert_eq!(
-                ns_store.find(fullname.as_bstr())?.name,
+                ns_store.find(fullname.as_bstr())?,
                 fullname,
                 "it finds namespaced items by fully qualified name, excluding namespace"
             );
@@ -178,9 +164,7 @@ mod with_namespace {
                 "it won't find namespaced items by their store-relative name with namespace"
             );
             assert_eq!(
-                ns_store
-                    .find(fullname.as_bstr().splitn_str(2, b"/").nth(1).expect("name").as_bstr())?
-                    .name,
+                ns_store.find(fullname.as_bstr().splitn_str(2, b"/").nth(1).expect("name").as_bstr())?,
                 fullname,
                 "it finds partial names within the namespace"
             );
@@ -192,11 +176,7 @@ mod with_namespace {
             "packed refs have no namespace support at all"
         );
         assert_eq!(
-            ns_store
-                .loose_iter()?
-                .map(Result::unwrap)
-                .map(|r| r.name.into_inner())
-                .collect::<Vec<_>>(),
+            ns_store.loose_iter()?.map(Result::unwrap).collect::<Vec<_>>(),
             [
                 "refs/heads/multi-link-target1",
                 "refs/multi-link",
@@ -208,11 +188,7 @@ mod with_namespace {
         {
             let prev = ns_store.namespace.take();
             assert_eq!(
-                ns_store
-                    .loose_iter()?
-                    .map(Result::unwrap)
-                    .map(|r| r.name.into_inner())
-                    .collect::<Vec<_>>(),
+                ns_store.loose_iter()?.map(Result::unwrap).collect::<Vec<_>>(),
                 [
                     "refs/namespaces/bar/refs/heads/multi-link-target1",
                     "refs/namespaces/bar/refs/multi-link",
@@ -228,12 +204,7 @@ mod with_namespace {
         ns_store.namespace = ns_one.into();
 
         assert_eq!(
-            ns_store
-                .iter()?
-                .all()?
-                .map(Result::unwrap)
-                .map(|r: gix_ref::Reference| r.name.into_inner())
-                .collect::<Vec<_>>(),
+            ns_store.iter()?.all()?.map(Result::unwrap).collect::<Vec<_>>(),
             vec!["refs/d1", "refs/remotes/origin/HEAD", "refs/remotes/origin/main"],
         );
         Ok(())
@@ -261,11 +232,7 @@ fn packed_file_iter() -> crate::Result {
 fn pseudo_refs_iter() -> crate::Result {
     let store = store_at("make_pseudo_ref_repository.sh")?;
 
-    let actual = store
-        .iter_pseudo()?
-        .map(Result::unwrap)
-        .map(|r: gix_ref::Reference| r.name.as_bstr().to_string())
-        .collect::<Vec<_>>();
+    let actual = store.iter_pseudo()?.map(Result::unwrap).collect::<Vec<_>>();
 
     assert_eq!(actual, ["FETCH_HEAD", "HEAD", "JIRI_HEAD"]);
     Ok(())
@@ -296,10 +263,7 @@ fn loose_iter_with_broken_refs() -> crate::Result {
         actual[first_error].as_ref().expect_err("unparsable ref").to_string(),
         msg
     );
-    let ref_paths: Vec<_> = actual
-        .drain(..first_error)
-        .filter_map(|e| e.ok().map(|e| e.name.into_inner()))
-        .collect();
+    let ref_paths: Vec<_> = actual.drain(..first_error).filter_map(Result::ok).collect();
 
     assert_eq!(
         ref_paths,
@@ -336,23 +300,17 @@ fn loose_iter_with_prefix() -> crate::Result {
     let actual = store()?
         .loose_iter_prefixed(prefix_with_slash.try_into().unwrap())?
         .collect::<Result<Vec<_>, _>>()
-        .expect("no broken ref in this subset")
-        .into_iter()
-        .map(|e| e.name.into_inner())
-        .collect::<Vec<_>>();
+        .expect("no broken ref in this subset");
 
     assert_eq!(
         actual,
-        vec![
+        [
             "refs/heads/A",
             "refs/heads/d1",
             "refs/heads/dt1",
             "refs/heads/main",
             "refs/heads/multi-link-target1",
-        ]
-        .into_iter()
-        .map(String::from)
-        .collect::<Vec<_>>(),
+        ],
         "all paths are as expected"
     );
     Ok(())
@@ -364,23 +322,17 @@ fn loose_iter_with_partial_prefix_dir() -> crate::Result {
     let actual = store()?
         .loose_iter_prefixed(prefix_without_slash.try_into().unwrap())?
         .collect::<Result<Vec<_>, _>>()
-        .expect("no broken ref in this subset")
-        .into_iter()
-        .map(|e| e.name.into_inner())
-        .collect::<Vec<_>>();
+        .expect("no broken ref in this subset");
 
     assert_eq!(
         actual,
-        vec![
+        [
             "refs/heads/A",
             "refs/heads/d1",
             "refs/heads/dt1",
             "refs/heads/main",
             "refs/heads/multi-link-target1",
-        ]
-        .into_iter()
-        .map(String::from)
-        .collect::<Vec<_>>(),
+        ],
         "all paths are as expected"
     );
     Ok(())
@@ -391,19 +343,9 @@ fn loose_iter_with_partial_prefix() -> crate::Result {
     let actual = store()?
         .loose_iter_prefixed(b"refs/heads/d".as_bstr().try_into().unwrap())?
         .collect::<Result<Vec<_>, _>>()
-        .expect("no broken ref in this subset")
-        .into_iter()
-        .map(|e| e.name.into_inner())
-        .collect::<Vec<_>>();
+        .expect("no broken ref in this subset");
 
-    assert_eq!(
-        actual,
-        vec!["refs/heads/d1", "refs/heads/dt1"]
-            .into_iter()
-            .map(String::from)
-            .collect::<Vec<_>>(),
-        "all paths are as expected"
-    );
+    assert_eq!(actual, ["refs/heads/d1", "refs/heads/dt1"], "all paths are as expected");
     Ok(())
 }
 
@@ -449,46 +391,89 @@ fn overlay_iter_reproduce_1850() -> crate::Result {
         .all()?
         .map(|r| r.map(|r| (r.name.as_bstr().to_owned(), r.target)))
         .collect::<Result<Vec<_>, _>>()?;
-    insta::assert_debug_snapshot!(ref_names, @r#"
-    [
-        (
-            "refs/heads/ig-branch-remote",
-            Object(
-                Sha1(17dad46c0ce3be4d4b6d45def031437ab2e40666),
+    if crate::fixture_hash_kind() != gix_hash::Kind::Sha1 {
+        insta::assert_debug_snapshot!(ref_names, @r#"
+        [
+            (
+                "refs/heads/ig-branch-remote",
+                Object(
+                    Sha256(1111111111111111111111111111111111111111111111111111111111111111),
+                ),
             ),
-        ),
-        (
-            "refs/heads/ig-inttest",
-            Object(
-                Sha1(83a70366fcc1255d35a00102138293bac673b331),
+            (
+                "refs/heads/ig-inttest",
+                Object(
+                    Sha256(2222222222222222222222222222222222222222222222222222222222222222),
+                ),
             ),
-        ),
-        (
-            "refs/heads/ig-pr4021",
-            Object(
-                Sha1(4dec145966c546402c5a9e28b932e7c8c939e01e),
+            (
+                "refs/heads/ig-pr4021",
+                Object(
+                    Sha256(7777777777777777777777777777777777777777777777777777777777777777),
+                ),
             ),
-        ),
-        (
-            "refs/heads/ig/aliases",
-            Object(
-                Sha1(d773228d0ee0012fcca53fffe581b0fce0b1dc56),
+            (
+                "refs/heads/ig/aliases",
+                Object(
+                    Sha256(4444444444444444444444444444444444444444444444444444444444444444),
+                ),
             ),
-        ),
-        (
-            "refs/heads/ig/cifail",
-            Object(
-                Sha1(ba37abe04f91fec76a6b9a817d40ee2daec47207),
+            (
+                "refs/heads/ig/cifail",
+                Object(
+                    Sha256(5555555555555555555555555555555555555555555555555555555555555555),
+                ),
             ),
-        ),
-        (
-            "refs/heads/ig/push-name",
-            Object(
-                Sha1(d22f46f3d7d2504d56c573b5fe54919bd16be48a),
+            (
+                "refs/heads/ig/push-name",
+                Object(
+                    Sha256(6666666666666666666666666666666666666666666666666666666666666666),
+                ),
             ),
-        ),
-    ]
-    "#);
+        ]
+        "#);
+    } else {
+        insta::assert_debug_snapshot!(ref_names, @r#"
+        [
+            (
+                "refs/heads/ig-branch-remote",
+                Object(
+                    Sha1(17dad46c0ce3be4d4b6d45def031437ab2e40666),
+                ),
+            ),
+            (
+                "refs/heads/ig-inttest",
+                Object(
+                    Sha1(83a70366fcc1255d35a00102138293bac673b331),
+                ),
+            ),
+            (
+                "refs/heads/ig-pr4021",
+                Object(
+                    Sha1(4dec145966c546402c5a9e28b932e7c8c939e01e),
+                ),
+            ),
+            (
+                "refs/heads/ig/aliases",
+                Object(
+                    Sha1(d773228d0ee0012fcca53fffe581b0fce0b1dc56),
+                ),
+            ),
+            (
+                "refs/heads/ig/cifail",
+                Object(
+                    Sha1(ba37abe04f91fec76a6b9a817d40ee2daec47207),
+                ),
+            ),
+            (
+                "refs/heads/ig/push-name",
+                Object(
+                    Sha1(d22f46f3d7d2504d56c573b5fe54919bd16be48a),
+                ),
+            ),
+        ]
+        "#);
+    }
     Ok(())
 }
 
@@ -500,6 +485,13 @@ fn overlay_iter_reproduce_1928() -> crate::Result {
         .all()?
         .map(|r| r.map(|r| (r.name.as_bstr().to_owned(), r.target)))
         .collect::<Result<Vec<_>, _>>()?;
+    if crate::fixture_hash_kind() != gix_hash::Kind::Sha1 {
+        assert_eq!(
+            ref_names.iter().map(|(name, _)| name.to_string()).collect::<Vec<_>>(),
+            vec!["refs/heads/a-", "refs/heads/a/b", "refs/heads/a0"]
+        );
+        return Ok(());
+    }
     insta::assert_debug_snapshot!(ref_names, @r#"
     [
         (

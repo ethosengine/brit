@@ -2,14 +2,14 @@ lints.workspace = true
 
 [package]
 name = "gix-transport"
-version = "0.55.1"
+version = "0.59.2"
 repository = "https://github.com/GitoxideLabs/gitoxide"
 license = "MIT OR Apache-2.0"
 description = "A crate of the gitoxide project dedicated to implementing the git transport layer"
 authors = ["Sebastian Thiel <sebastian.thiel@icloud.com>"]
-edition = "2021"
+edition = "2024"
 include = ["/src/**/*", "/LICENSE-*"]
-rust-version = "1.82"
+rust-version = "1.88"
 
 [lib]
 doctest = false
@@ -22,6 +22,7 @@ blocking-client = ["gix-packetline/blocking-io"]
 ## Implies `blocking-client`, and adds support for the http and https transports.
 http-client = [
     "base64",
+    "parking_lot",
     "gix-features/io-pipe",
     "blocking-client",
     "gix-credentials",
@@ -72,12 +73,17 @@ serde = ["dep:serde", "bstr/serde"]
 [[test]]
 name = "blocking-transport"
 path = "tests/blocking-transport.rs"
-required-features = ["blocking-client", "http-client-insecure-credentials", "maybe-async/is_sync"]
+required-features = ["blocking-client", "http-client-insecure-credentials"]
 
 [[test]]
 name = "blocking-transport-http-only"
 path = "tests/blocking-transport-http.rs"
-required-features = ["http-client-curl", "http-client-insecure-credentials", "maybe-async/is_sync"]
+required-features = ["http-client-curl", "http-client-insecure-credentials"]
+
+[[test]]
+name = "blocking-transport-http-reqwest"
+path = "tests/blocking-transport-http-reqwest.rs"
+required-features = ["http-client-reqwest"]
 
 [[test]]
 name = "async-transport"
@@ -85,13 +91,15 @@ path = "tests/async-transport.rs"
 required-features = ["async-client"]
 
 [dependencies]
-gix-command = { version = "^0.8.0", path = "../gix-command" }
-gix-features = { version = "^0.46.2", path = "../gix-features" }
-gix-url = { version = "^0.35.2", path = "../gix-url" }
-gix-sec = { version = "^0.13.2", path = "../gix-sec" }
-gix-packetline = { version = "^0.21.2", path = "../gix-packetline" }
-gix-credentials = { version = "^0.37.1", path = "../gix-credentials", optional = true }
-gix-quote = { version = "^0.7.0", path = "../gix-quote" }
+gix-command = { version = "^0.10.1", path = "../gix-command" }
+gix-error = { version = "^0.3.0", path = "../gix-error" }
+gix-path = { version = "^0.12.6", path = "../gix-path" }
+gix-features = { version = "^0.49.1", path = "../gix-features" }
+gix-url = { version = "^0.38.0", path = "../gix-url" }
+gix-sec = { version = "^0.14.2", path = "../gix-sec" }
+gix-packetline = { version = "^0.22.2", path = "../gix-packetline" }
+gix-credentials = { version = "^0.40.0", path = "../gix-credentials", optional = true }
+gix-quote = { version = "^0.8.0", path = "../gix-quote" }
 
 serde = { version = "1.0.114", optional = true, default-features = false, features = [
     "std",
@@ -102,6 +110,7 @@ bstr = { version = "1.12.0", default-features = false, features = [
     "unicode",
 ] }
 thiserror = "2.0.18"
+parking_lot = { version = "0.12.4", optional = true }
 
 # for async-client
 async-trait = { version = "0.1.51", optional = true }
@@ -117,7 +126,7 @@ curl = { version = "0.4", optional = true, default-features = false }
 
 # for http-client-reqwest
 # all but the 'default-tls' feature
-reqwest = { version = "0.13.2", optional = true, default-features = false, features = ["blocking", "charset", "http2"] }
+reqwest = { version = "0.13.4", optional = true, default-features = false, features = ["blocking", "charset", "http2"] }
 
 ## If used in conjunction with `async-client`, the `connect()` method will become available along with supporting the git protocol over TCP,
 ## where the TCP stream is created using this crate.
@@ -126,12 +135,14 @@ async-std = { version = "1.12.0", optional = true }
 document-features = { version = "0.2.0", optional = true }
 
 [dev-dependencies]
+gix-transport = { path = ".", features = ["parking_lot"] }
 gix-pack = { path = "../gix-pack", default-features = false, features = [
+    "sha1",
     "streaming-input",
 ] }
 gix-hash = { path = "../gix-hash", features = ["sha1"] }
 async-std = { version = "1.9.0", features = ["attributes"] }
-maybe-async = "0.2.6"
+gix-macros = { path = "../gix-macros" }
 blocking = "1.6.2"
 
 [package.metadata.docs.rs]

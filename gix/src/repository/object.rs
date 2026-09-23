@@ -4,22 +4,13 @@ use std::ops::DerefMut;
 use gix_hash::ObjectId;
 use gix_object::{Exists, Find, FindExt, Write};
 use gix_odb::{Header, HeaderExt};
-use gix_ref::{
-    transaction::{LogChange, PreviousValue, RefLog},
-    FullName,
-};
+use gix_ref::{FullName, transaction::PreviousValue};
 use smallvec::SmallVec;
 
-use crate::{
-    commit,
-    ext::ObjectIdExt,
-    object,
-    repository::{new_commit, new_commit_as},
-    tag, Blob, Commit, Id, Object, Reference, Tag, Tree,
-};
+use crate::repository::{new_commit, new_commit_as};
+use crate::{Blob, Commit, Id, Object, Reference, Tag, Tree, commit, ext::ObjectIdExt, object, tag};
 
 /// Tree editing
-#[cfg(feature = "tree-editor")]
 impl crate::Repository {
     /// Return an editor for adjusting the tree at `id`.
     ///
@@ -270,7 +261,7 @@ impl crate::Repository {
         }
 
         self.objects
-            .write_buf(kind, buf)
+            .write_buf_with_known_id(kind, buf, oid)
             .map(|oid| oid.attach(self))
             .map_err(Into::into)
     }
@@ -300,7 +291,7 @@ impl crate::Repository {
             return Ok(oid.attach(self));
         }
         self.objects
-            .write_buf(gix_object::Kind::Blob, bytes)
+            .write_buf_with_known_id(gix_object::Kind::Blob, bytes, oid)
             .map_err(Into::into)
             .map(|oid| oid.attach(self))
     }
@@ -327,7 +318,7 @@ impl crate::Repository {
         }
 
         self.objects
-            .write_buf(gix_object::Kind::Blob, buf)
+            .write_buf_with_known_id(gix_object::Kind::Blob, buf, oid)
             .map_err(Into::into)
             .map(|oid| oid.attach(self))
     }
@@ -355,7 +346,7 @@ impl crate::Repository {
             name: name.as_ref().into(),
             tagger: tagger.map(|t| t.to_owned()).transpose()?,
             message: message.as_ref().into(),
-            pgp_signature: None,
+            signature: None,
         };
         let tag_id = self.write_object(&tag)?;
         self.tag_reference(name, tag_id, constraint).map_err(Into::into)
@@ -396,10 +387,7 @@ impl crate::Repository {
         tree: ObjectId,
         parents: SmallVec<[ObjectId; 1]>,
     ) -> Result<Id<'_>, commit::Error> {
-        use gix_ref::{
-            transaction::{Change, RefEdit},
-            Target,
-        };
+        use gix_ref::{Target, transaction::RefEdit};
 
         // TODO: possibly use CommitRef to save a few allocations (but will have to allocate for object ids anyway.
         //       This can be made vastly more efficient though if we wanted to, so we lie in the API
@@ -414,33 +402,26 @@ impl crate::Repository {
         };
 
         let commit_id = self.write_object(&commit)?;
+        let expected = match commit.parents.first().map(|p| Target::Object(*p)) {
+            Some(previous) => {
+                if reference.as_bstr() == "HEAD" {
+                    PreviousValue::MustExistAndMatch(previous)
+                } else {
+                    PreviousValue::ExistingMustMatch(previous)
+                }
+            }
+            None => PreviousValue::MustNotExist,
+        };
         self.edit_references_as(
-            Some(RefEdit {
-                change: Change::Update {
-                    log: LogChange {
-                        mode: RefLog::AndReference,
-                        force_create_reflog: false,
-                        message: crate::reference::log::message(
-                            "commit",
-                            commit.message.as_ref(),
-                            commit.parents.len(),
-                        ),
-                    },
-                    expected: match commit.parents.first().map(|p| Target::Object(*p)) {
-                        Some(previous) => {
-                            if reference.as_bstr() == "HEAD" {
-                                PreviousValue::MustExistAndMatch(previous)
-                            } else {
-                                PreviousValue::ExistingMustMatch(previous)
-                            }
-                        }
-                        None => PreviousValue::MustNotExist,
-                    },
-                    new: Target::Object(commit_id.inner),
-                },
-                name: reference,
-                deref: true,
-            }),
+            Some(
+                RefEdit::update(
+                    reference,
+                    commit_id.inner,
+                    expected,
+                    crate::reference::log::message("commit", commit.message.as_ref(), commit.parents.len()),
+                )
+                .with_deref(true),
+            ),
             Some(committer),
         )?;
         Ok(commit_id)

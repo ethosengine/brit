@@ -1,9 +1,9 @@
-/// Returned by [`crate::index::File::write_data_iter_to_stream()`]
+/// Returned by [`crate::index::write_data_iter_to_stream()`]
 #[derive(thiserror::Error, Debug)]
-#[allow(missing_docs)]
+#[expect(missing_docs)]
 pub enum Error {
     #[error("An error occurred when writing the pack index file")]
-    Io(#[from] gix_hash::io::Error),
+    Io(#[from] std::io::Error),
     #[error("A pack entry could not be extracted")]
     PackEntryDecode(#[from] crate::data::input::Error),
     #[error("Indices of type {} cannot be written, only {} are supported", *.0 as usize, crate::index::Version::default() as usize)]
@@ -20,4 +20,10 @@ pub enum Error {
     Tree(#[from] crate::cache::delta::Error),
     #[error(transparent)]
     TreeTraversal(#[from] crate::cache::delta::traverse::Error),
+}
+
+impl From<gix_hash::io::Error> for Error {
+    fn from(err: gix_hash::io::Error) -> Self {
+        Error::Io(std::io::Error::other(err.into_error()))
+    }
 }

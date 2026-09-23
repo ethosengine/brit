@@ -6,7 +6,7 @@ pub mod name {
 
     /// The error returned by [`name()`][super::name()].
     #[derive(Debug)]
-    #[allow(missing_docs)]
+    #[expect(missing_docs)]
     #[non_exhaustive]
     pub enum Error {
         InvalidByte { byte: BString },
@@ -66,6 +66,10 @@ pub(crate) enum Mode {
     Validate,
 }
 
+/// Validate or sanitize `input` according to `mode`.
+///
+/// Validation returns `Ok(None)` when `input` is valid, while sanitization returns the rebuilt name
+/// in `Ok(Some(_))` even if it is identical to `input`. An error means validation failed.
 pub(crate) fn name_inner(input: &BStr, mode: Mode) -> Result<Option<BString>, name::Error> {
     let mut out: Option<BString> =
         matches!(mode, Mode::Sanitize).then(|| BString::from(Vec::with_capacity(input.len())));

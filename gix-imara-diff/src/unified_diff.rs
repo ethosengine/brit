@@ -1,15 +1,11 @@
 // Modified for gitoxide from the upstream imara-diff crate.
 // Upstream source: git cat-file -p 32d1e45d3df061e6ccba6db7fdce92db29e345d8:src/unified_diff.rs
 
-use std::{
-    fmt::{self, Display},
-    hash::Hash,
-};
+use std::fmt::{self, Display};
+use std::hash::Hash;
 
-use crate::{
-    intern::{InternedInput, Interner, Token},
-    Diff,
-};
+use crate::Diff;
+use crate::intern::{InternedInput, Interner, Token};
 
 impl Diff {
     /// Creates a unified diff output that can be formatted as a string.
@@ -172,7 +168,7 @@ impl<T: EndsWithNewline + Hash + Eq + Display + ?Sized> UnifiedDiffPrinter for B
     }
 
     fn display_context_token(&self, mut f: impl fmt::Write, token: Token) -> fmt::Result {
-        write!(f, " {}", &self.0[token])?;
+        write!(f, " {}", self.0[token])?;
         if !&self.0[token].ends_with_newline() {
             writeln!(f)?;
         }

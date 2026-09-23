@@ -2,7 +2,7 @@ use gix::prelude::ObjectIdExt;
 
 use crate::{
     revision::spec::from_bytes::{parse_spec_no_baseline, repo},
-    util::hex_to_id,
+    util::hex_to_id_sha1_only,
 };
 
 mod with_known_revision {
@@ -15,7 +15,7 @@ mod with_known_revision {
     #[cfg(not(feature = "revparse-regex"))]
     fn contained_string_matches_in_unanchored_regex_and_disambiguates_automatically() {
         let repo = repo("ambiguous_blob_tree_commit").unwrap();
-        let expected = Spec::from_id(hex_to_id("0000000000e4f9fbd19cf1e932319e5ad0d1d00b").attach(&repo));
+        let expected = Spec::from_id(hex_to_id_sha1_only("0000000000e4f9fbd19cf1e932319e5ad0d1d00b").attach(&repo));
 
         assert_eq!(parse_spec("0000000000^{/x}", &repo).unwrap(), expected);
         assert_eq!(parse_spec("@^{/x}", &repo).unwrap(), expected, "ref names are resolved");
@@ -37,7 +37,7 @@ mod with_known_revision {
     #[cfg(feature = "revparse-regex")]
     fn contained_string_matches_in_unanchored_regex_and_disambiguates_automatically() {
         let repo = repo("ambiguous_blob_tree_commit").unwrap();
-        let expected = Spec::from_id(hex_to_id("0000000000e4f9fbd19cf1e932319e5ad0d1d00b").attach(&repo));
+        let expected = Spec::from_id(hex_to_id_sha1_only("0000000000e4f9fbd19cf1e932319e5ad0d1d00b").attach(&repo));
 
         assert_eq!(
             parse_spec("0000000000^{/x}", &repo).unwrap(),
@@ -68,31 +68,62 @@ mod with_known_revision {
     }
 }
 
+mod empty_pattern {
+    use super::*;
+    use crate::revision::spec::from_bytes::{parse_spec, repo};
+
+    #[test]
+    fn matches_everything_and_peels_to_a_commit() -> crate::Result {
+        let repo = repo("complex_graph")?;
+
+        assert_eq!(
+            parse_spec("@^{/}", &repo)?,
+            parse_spec_no_baseline("@^{commit}", &repo)?,
+            "an empty pattern matches the first commit reachable from the anchor, i.e. the anchor peeled to a commit"
+        );
+        assert_eq!(
+            parse_spec("b-tag^{/}", &repo)?,
+            parse_spec("b", &repo)?,
+            "the annotated tag is peeled to its commit first, just like Git"
+        );
+
+        let err = parse_spec("@^{/!-}", &repo).unwrap_err();
+        let cause = err.probable_cause().to_string();
+        assert!(
+            cause.starts_with("None of") && cause.contains("matched"),
+            "a negated empty pattern matches nothing and fails like Git: {cause}"
+        );
+        Ok(())
+    }
+}
+
 mod find_youngest_matching_commit {
     use gix::revision::Spec;
 
     use super::*;
-    use crate::revision::spec::from_bytes::parse_spec;
+    use crate::revision::spec::from_bytes::{parse_spec, repo_with_correct_pattern_revision_order};
 
     #[test]
     #[cfg(not(feature = "revparse-regex"))]
     fn contained_string_matches() {
-        let repo = repo("complex_graph").unwrap();
+        let Some(repo) = repo_with_correct_pattern_revision_order("complex_graph").unwrap() else {
+            return;
+        };
 
         assert_eq!(
             parse_spec(":/message", &repo).unwrap(),
-            Spec::from_id(hex_to_id("ef80b4b77b167f326351c93284dc0eb00dd54ff4").attach(&repo))
+            Spec::from_id(hex_to_id_sha1_only("ef80b4b77b167f326351c93284dc0eb00dd54ff4").attach(&repo))
         );
 
         assert_eq!(
             parse_spec("@^{/!-B}", &repo).unwrap(),
-            Spec::from_id(hex_to_id("55e825ebe8fd2ff78cad3826afb696b96b576a7e").attach(&repo)),
+            Spec::from_id(hex_to_id_sha1_only("55e825ebe8fd2ff78cad3826afb696b96b576a7e").attach(&repo)),
             "negations work as well"
         );
 
         assert_eq!(
             parse_spec(":/!-message", &repo).unwrap(),
-            Spec::from_id(hex_to_id("55e825ebe8fd2ff78cad3826afb696b96b576a7e").attach(&repo))
+            Spec::from_id(hex_to_id_sha1_only("55e825ebe8fd2ff78cad3826afb696b96b576a7e").attach(&repo))
         );
 
         let err = parse_spec_no_baseline(":/messa.e", &repo).unwrap_err();
@@ -111,11 +142,13 @@ mod find_youngest_matching_commit {
     #[test]
     #[cfg(feature = "revparse-regex")]
     fn regex_matches() {
-        let repo = repo("complex_graph").unwrap();
+        let Some(repo) = repo_with_correct_pattern_revision_order("complex_graph").unwrap() else {
+            return;
+        };
 
         assert_eq!(
             parse_spec(":/mes.age", &repo).unwrap(),
-            Spec::from_id(hex_to_id("ef80b4b77b167f326351c93284dc0eb00dd54ff4").attach(&repo))
+            Spec::from_id(hex_to_id_sha1_only("ef80b4b77b167f326351c93284dc0eb00dd54ff4").attach(&repo))
         );
 
         let err = parse_spec(":/not there", &repo).unwrap_err();
@@ -131,12 +164,12 @@ mod find_youngest_matching_commit {
 
         assert_eq!(
             parse_spec(":/!-message", &repo).unwrap(),
-            Spec::from_id(hex_to_id("55e825ebe8fd2ff78cad3826afb696b96b576a7e").attach(&repo))
+            Spec::from_id(hex_to_id_sha1_only("55e825ebe8fd2ff78cad3826afb696b96b576a7e").attach(&repo))
         );
 
         assert_eq!(
             parse_spec("@^{/!-B}", &repo).unwrap(),
-            Spec::from_id(hex_to_id("55e825ebe8fd2ff78cad3826afb696b96b576a7e").attach(&repo)),
+            Spec::from_id(hex_to_id_sha1_only("55e825ebe8fd2ff78cad3826afb696b96b576a7e").attach(&repo)),
             "negations work as well"
         );
     }

@@ -7,10 +7,10 @@ pub struct LookupRefDeltaObjectsIter<I, Find> {
     /// The inner iterator whose entries we will resolve.
     pub inner: I,
     lookup: Find,
+    /// The compression level to use when deflating resolved base objects into entries.
+    compression: gix_zlib::Compression,
     /// The cached delta to provide next time we are called, it's the delta to go with the base we just resolved in its place.
     next_delta: Option<input::Entry>,
-    /// Fuse to stop iteration after first missing object.
-    error: bool,
     /// The overall pack-offset we accumulated thus far. Each inserted entry offsets all following
     /// objects by its length. We need to determine exactly where the object was inserted to see if its affected at all.
     inserted_entry_length_at_offset: Vec<Change>,
@@ -25,12 +25,12 @@ where
     Find: gix_object::Find,
 {
     /// Create a new instance wrapping `iter` and using `lookup` as function to retrieve objects that will serve as bases
-    /// for ref deltas seen while traversing `iter`.
-    pub fn new(iter: I, lookup: Find) -> Self {
+    /// for ref deltas seen while traversing `iter`, deflating them with `compression`.
+    pub fn new(iter: I, lookup: Find, compression: gix_zlib::Compression) -> Self {
         LookupRefDeltaObjectsIter {
             inner: iter,
             lookup,
-            error: false,
+            compression,
             inserted_entry_length_at_offset: Vec::new(),
             inserted_entries_length_in_bytes: 0,
             next_delta: None,
@@ -55,7 +55,7 @@ where
             size_change_in_bytes: size_change,
             oid: oid.unwrap_or_else(||
                 // NOTE: this value acts as sentinel and the actual hash kind doesn't matter.
-                gix_hash::Kind::Sha1.null()),
+                gix_hash::Kind::shortest().null()),
         });
         self.inserted_entries_length_in_bytes += size_change;
     }
@@ -81,9 +81,6 @@ where
     type Item = Result<input::Entry, input::Error>;
 
     fn next(&mut self) -> Option<Self::Item> {
-        if self.error {
-            return None;
-        }
         if let Some(delta) = self.next_delta.take() {
             return Some(Ok(delta));
         }
@@ -95,7 +92,7 @@ where
                             let base_entry = match self.lookup.try_find(&base_id, &mut self.buf).ok()? {
                                 Some(obj) => {
                                     let current_pack_offset = entry.pack_offset;
-                                    let mut entry = match input::Entry::from_data_obj(&obj, 0) {
+                                    let mut entry = match input::Entry::from_data_obj(&obj, 0, self.compression) {
                                         Ok(e) => e,
                                         Err(err) => return Some(Err(err)),
                                     };
@@ -109,8 +106,8 @@ where
                                     entry
                                 }
                                 None => {
-                                    self.error = true;
-                                    return Some(Err(input::Error::NotFound { object_id: base_id }));
+                                    entry.pack_offset = self.shifted_pack_offset(entry.pack_offset);
+                                    return Some(Ok(entry));
                                 }
                             };
 
@@ -133,10 +130,14 @@ where
                         if let Header::OfsDelta { base_distance } = entry.header {
                             // We have to find the new distance based on the previous distance to the base, using the absolute
                             // pack offset computed from it as stored in `base_pack_offset`.
-                            let base_pack_offset = entry
-                                .pack_offset
-                                .checked_sub(base_distance)
-                                .expect("distance to be in range of pack");
+                            let Some(base_pack_offset) =
+                                Header::verified_base_pack_offset(entry.pack_offset, base_distance)
+                            else {
+                                return Some(Err(input::Error::InvalidBaseDistance {
+                                    pack_offset: entry.pack_offset,
+                                    distance: base_distance,
+                                }));
+                            };
                             match self
                                 .inserted_entry_length_at_offset
                                 .binary_search_by_key(&base_pack_offset, |c| c.pack_offset)
@@ -185,7 +186,7 @@ where
 
     fn size_hint(&self) -> (usize, Option<usize>) {
         let (min, max) = self.inner.size_hint();
-        max.map_or_else(|| (min * 2, None), |max| (min, Some(max * 2)))
+        (min, max.map(|max| max.saturating_mul(2)))
     }
 }
 

@@ -12,7 +12,7 @@
     doc = ::document_features::document_features!()
 )]
 #![cfg_attr(all(doc, feature = "document-features"), feature(doc_cfg))]
-#![deny(rust_2018_idioms, missing_docs)]
+#![deny(missing_docs)]
 
 ///
 pub mod cache;
@@ -28,10 +28,6 @@ pub mod parallel;
 pub mod progress;
 pub mod threading;
 pub use gix_trace as trace;
-
-///
-#[cfg(feature = "zlib")]
-pub mod zlib;
 
 ///
 pub mod iter {

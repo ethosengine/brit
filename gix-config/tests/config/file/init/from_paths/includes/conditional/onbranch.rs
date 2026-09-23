@@ -9,7 +9,7 @@ use gix_config::file::{
 use gix_ref::FullName;
 use gix_testtools::tempfile::tempdir;
 
-use crate::file::{cow_str, init::from_paths::includes::conditional::git_init};
+use crate::file::{bstring, init::from_paths::includes::conditional::git_init};
 
 type Result = crate::Result;
 
@@ -249,7 +249,7 @@ value = branch-override-by-include
     .expect("non-empty");
     assert_eq!(
         config.string_by("section", None, "value"),
-        Some(cow_str(match expect {
+        Some(bstring(match expect {
             Value::OverrideByInclude => "branch-override-by-include",
             Value::Base => "base-value",
         })),
@@ -276,13 +276,12 @@ value = branch-override-by-include
 
 fn assure_git_agrees(expected: Value, dir: &mut gix_testtools::tempfile::TempDir) -> crate::Result {
     let git_dir = dir.path();
-    let output = std::process::Command::new(gix_path::env::exe_invocation())
+    let output = gix_testtools::git_command(git_dir)
         .args(["config", "--get", "section.value"])
         .env("GIT_DIR", git_dir)
         .env("HOME", git_dir)
-        .env_remove("GIT_CONFIG_COUNT")
-        .env_remove("XDG_CONFIG_HOME")
-        .current_dir(git_dir)
+        .env("USERPROFILE", git_dir)
+        .env("GIT_CONFIG_GLOBAL", git_dir.join(".gitconfig"))
         .output()?;
 
     let mut keep_dir_on_disk = || {

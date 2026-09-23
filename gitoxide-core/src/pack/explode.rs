@@ -2,16 +2,16 @@ use std::{
     fs,
     io::Read,
     path::Path,
-    sync::{atomic::AtomicBool, Arc},
+    sync::{Arc, atomic::AtomicBool},
 };
 
-use anyhow::{anyhow, Result};
+use anyhow::{Result, anyhow};
 use gix::{
+    NestedProgress,
     hash::ObjectId,
     object, objs, odb,
     odb::{loose, pack},
     prelude::Write,
-    NestedProgress,
 };
 
 #[derive(Default, Clone, Eq, PartialEq, Debug)]
@@ -90,7 +90,10 @@ enum Error {
     WrittenFileCorrupt { source: loose::find::Error, id: ObjectId },
 }
 
-#[allow(clippy::large_enum_variant)]
+#[expect(
+    clippy::large_enum_variant,
+    reason = "will be removed once `gix-error` is used consistently"
+)]
 #[derive(Clone)]
 enum OutputWriter {
     Loose(loose::Store),
@@ -105,6 +108,18 @@ impl gix::objs::Write for OutputWriter {
         }
     }
 
+    fn write_buf_with_known_id(
+        &self,
+        kind: object::Kind,
+        from: &[u8],
+        id: ObjectId,
+    ) -> Result<ObjectId, gix::objs::write::Error> {
+        match self {
+            OutputWriter::Loose(db) => db.write_buf_with_known_id(kind, from, id),
+            OutputWriter::Sink(db) => db.write_buf_with_known_id(kind, from, id),
+        }
+    }
+
     fn write_stream(
         &self,
         kind: object::Kind,
@@ -116,13 +131,28 @@ impl gix::objs::Write for OutputWriter {
             OutputWriter::Sink(db) => db.write_stream(kind, size, from),
         }
     }
+
+    fn write_stream_with_known_id(
+        &self,
+        kind: object::Kind,
+        size: u64,
+        from: &mut dyn Read,
+        id: ObjectId,
+    ) -> Result<ObjectId, gix::objs::write::Error> {
+        match self {
+            OutputWriter::Loose(db) => db.write_stream_with_known_id(kind, size, from, id),
+            OutputWriter::Sink(db) => db.write_stream_with_known_id(kind, size, from, id),
+        }
+    }
 }
 
 impl OutputWriter {
     fn new(path: Option<impl AsRef<Path>>, compress: bool, object_hash: gix::hash::Kind) -> Self {
         match path {
             Some(path) => OutputWriter::Loose(loose::Store::at(path.as_ref(), object_hash)),
-            None => OutputWriter::Sink(odb::sink(object_hash).compress(compress)),
+            None => OutputWriter::Sink(
+                odb::sink(object_hash).compress(compress.then_some(gix::zlib::Compression::BEST_SPEED)),
+            ),
         }
     }
 }
@@ -192,7 +222,9 @@ pub fn pack_or_pack_index(
                 let object_path = object_path.map(|p| p.as_ref().to_owned());
                 let out = OutputWriter::new(object_path.clone(), sink_compress, object_hash);
                 let loose_odb = verify
-                    .then(|| object_path.as_ref().map(|path| loose::Store::at(path, object_hash)))
+                    .then(|| {
+                        object_path.as_ref().map(|path| loose::Store::at(path, object_hash))
+                    })
                     .flatten();
                 let mut read_buf = Vec::new();
                 move |object_kind, buf, index_entry, progress| {
@@ -231,6 +263,7 @@ pub fn pack_or_pack_index(
                 traversal: algorithm,
                 thread_limit,
                 check: check.into(),
+                alloc_limit_bytes: bundle.pack.alloc_limit_bytes,
                 make_pack_lookup_cache: pack::cache::lru::StaticLinkedList::<64>::default,
             },
         )

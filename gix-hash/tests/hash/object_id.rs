@@ -17,29 +17,33 @@ mod from_hex {
     }
 
     mod invalid {
-        use gix_hash::{decode, ObjectId};
+        use gix_hash::ObjectId;
 
         #[test]
         fn non_hex_characters() {
-            assert!(matches!(
-                ObjectId::from_hex(b"zzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzz").unwrap_err(),
-                decode::Error::Invalid
-            ));
+            assert_eq!(
+                ObjectId::from_hex(b"zzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzz")
+                    .unwrap_err()
+                    .to_string(),
+                "Invalid character encountered"
+            );
         }
 
         #[test]
         fn too_short() {
-            assert!(matches!(
-                ObjectId::from_hex(b"abcd").unwrap_err(),
-                decode::Error::InvalidHexEncodingLength(4)
-            ));
+            assert_eq!(
+                ObjectId::from_hex(b"abcd").unwrap_err().to_string(),
+                "A hash sized 4 hexadecimal characters is invalid"
+            );
         }
         #[test]
         fn too_long() {
-            assert!(matches!(
-                ObjectId::from_hex(b"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaf").unwrap_err(),
-                decode::Error::InvalidHexEncodingLength(41)
-            ));
+            assert_eq!(
+                ObjectId::from_hex(b"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaf")
+                    .unwrap_err()
+                    .to_string(),
+                "A hash sized 41 hexadecimal characters is invalid"
+            );
         }
     }
 }
@@ -62,7 +66,7 @@ fn from_bytes_or_panic_sha256() {
 mod sha1 {
     use std::str::FromStr as _;
 
-    use gix_hash::{hasher, Kind, ObjectId};
+    use gix_hash::{Kind, ObjectId, hasher};
 
     fn hash_contents(s: &[u8]) -> Result<ObjectId, hasher::Error> {
         let mut hasher = hasher(Kind::Sha1);
@@ -125,21 +129,15 @@ mod sha1 {
         let expected =
             ObjectId::from_str("8ac60ba76f1999a1ab70223f225aefdc78d4ddc0").expect("Shambles digest to be valid");
 
-        let Err(hasher::Error::CollisionAttack { digest }) = hash_contents(message_a) else {
-            panic!("expected Shambles input to collide");
-        };
-        assert_eq!(digest, expected);
-
-        let Err(hasher::Error::CollisionAttack { digest }) = hash_contents(message_b) else {
-            panic!("expected Shambles input to collide");
-        };
-        assert_eq!(digest, expected);
+        let expected = format!("Detected SHA-1 collision attack with digest {expected}");
+        assert_eq!(hash_contents(message_a).unwrap_err().to_string(), expected);
+        assert_eq!(hash_contents(message_b).unwrap_err().to_string(), expected);
     }
 }
 
 #[cfg(feature = "sha256")]
 mod sha256 {
-    use gix_hash::{hasher, Kind, ObjectId};
+    use gix_hash::{Kind, ObjectId, hasher};
 
     fn hash_contents(s: &[u8]) -> Result<ObjectId, hasher::Error> {
         let mut hasher = hasher(Kind::Sha256);

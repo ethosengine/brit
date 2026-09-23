@@ -36,12 +36,12 @@ pub fn contains_lines(hunks: &[Hunk]) -> bool {
 /// to understand what's going on there without investing more time than it seemed worth.
 pub fn detect_line_ending(
     hunks: &[Hunk],
-    input: &mut imara_diff::InternedInput<&[u8]>,
+    input: &imara_diff::InternedInput<&[u8]>,
     current_tokens: &[imara_diff::Token],
 ) -> Option<&'static BStr> {
     fn is_eol_crlf(
         hunks: &[Hunk],
-        input: &mut imara_diff::InternedInput<&[u8]>,
+        input: &imara_diff::InternedInput<&[u8]>,
         current_tokens: &[imara_diff::Token],
     ) -> Option<bool> {
         let (range, side) = hunks.iter().rev().find_map(|h| {
@@ -71,7 +71,7 @@ pub fn detect_line_ending(
 
 pub fn detect_line_ending_or_nl(
     hunks: &[Hunk],
-    input: &mut imara_diff::InternedInput<&[u8]>,
+    input: &imara_diff::InternedInput<&[u8]>,
     current_tokens: &[imara_diff::Token],
 ) -> &'static BStr {
     detect_line_ending(hunks, input, current_tokens).unwrap_or(b"\n".into())
@@ -210,13 +210,9 @@ pub fn zealously_contract_hunks(
             }
         }
 
-        let mut out = Vec::with_capacity(remove_leading_a_hunks_from.unwrap_or_else(|| {
-            if a_hunk_token_equal_till.is_some() {
-                1
-            } else {
-                0
-            }
-        }));
+        let mut out = Vec::with_capacity(
+            remove_leading_a_hunks_from.unwrap_or_else(|| if a_hunk_token_equal_till.is_some() { 1 } else { 0 }),
+        );
         truncate_hunks_from_from_front(
             a_hunks,
             remove_leading_a_hunks_from,
@@ -424,9 +420,8 @@ pub fn take_intersecting(
     intersecting.clear();
 
     fn left_overlaps_right(left: &Hunk, right: &Hunk) -> bool {
-        left.side != right.side
-            && (right.before.contains(&left.before.start)
-                || (right.before.is_empty() && right.before.start == left.before.start))
+        // Like Git, consider changes disjoint only if there is a gap between their base ranges.
+        left.side != right.side && left.before.start <= right.before.end
     }
 
     loop {

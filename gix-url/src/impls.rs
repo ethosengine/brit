@@ -2,7 +2,7 @@ use std::path::{Path, PathBuf};
 
 use bstr::BStr;
 
-use crate::{parse, Scheme, Url};
+use crate::{Scheme, Url};
 
 impl Default for Url {
     fn default() -> Self {
@@ -14,28 +14,29 @@ impl Default for Url {
             host: None,
             port: None,
             path: bstr::BString::default(),
+            path_with_percent_escapes: None,
         }
     }
 }
 
 impl TryFrom<&str> for Url {
-    type Error = parse::Error;
+    type Error = gix_error::Error;
 
     fn try_from(value: &str) -> Result<Self, Self::Error> {
-        Self::from_bytes(value.into())
+        Self::from_bytes(value.into()).map_err(Into::into)
     }
 }
 
 impl TryFrom<String> for Url {
-    type Error = parse::Error;
+    type Error = gix_error::Error;
 
     fn try_from(value: String) -> Result<Self, Self::Error> {
-        Self::from_bytes(value.as_str().into())
+        Self::from_bytes(value.as_str().into()).map_err(Into::into)
     }
 }
 
 impl TryFrom<PathBuf> for Url {
-    type Error = parse::Error;
+    type Error = gix_error::Error;
 
     fn try_from(value: PathBuf) -> Result<Self, Self::Error> {
         gix_path::into_bstr(value).try_into()
@@ -43,7 +44,7 @@ impl TryFrom<PathBuf> for Url {
 }
 
 impl TryFrom<&Path> for Url {
-    type Error = parse::Error;
+    type Error = gix_error::Error;
 
     fn try_from(value: &Path) -> Result<Self, Self::Error> {
         gix_path::into_bstr(value).try_into()
@@ -51,7 +52,7 @@ impl TryFrom<&Path> for Url {
 }
 
 impl TryFrom<&std::ffi::OsStr> for Url {
-    type Error = parse::Error;
+    type Error = gix_error::Error;
 
     fn try_from(value: &std::ffi::OsStr) -> Result<Self, Self::Error> {
         gix_path::os_str_into_bstr(value)
@@ -61,15 +62,15 @@ impl TryFrom<&std::ffi::OsStr> for Url {
 }
 
 impl TryFrom<&BStr> for Url {
-    type Error = parse::Error;
+    type Error = gix_error::Error;
 
     fn try_from(value: &BStr) -> Result<Self, Self::Error> {
-        Self::from_bytes(value)
+        Self::from_bytes(value).map_err(Into::into)
     }
 }
 
 impl<'a> TryFrom<std::borrow::Cow<'a, BStr>> for Url {
-    type Error = parse::Error;
+    type Error = gix_error::Error;
 
     fn try_from(value: std::borrow::Cow<'a, BStr>) -> Result<Self, Self::Error> {
         Self::try_from(&*value)

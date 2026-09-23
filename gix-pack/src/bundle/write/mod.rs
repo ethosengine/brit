@@ -3,7 +3,7 @@ use std::{
     io::Write,
     marker::PhantomData,
     path::{Path, PathBuf},
-    sync::{atomic::AtomicBool, Arc},
+    sync::{Arc, atomic::AtomicBool},
 };
 
 use gix_features::{interrupt, progress, progress::Progress};
@@ -52,7 +52,8 @@ impl crate::Bundle {
     /// * `should_interrupt` is checked regularly and when true, the whole operation will stop.
     /// * `thin_pack_base_object_lookup` If set, we expect to see a thin-pack with objects that reference their base object by object id which is
     ///   expected to exist in the object database the bundle is contained within.
-    ///   `options` further configure how the task is performed.
+    /// * `object_hash` specifies the hash to use for writing the bundle.
+    /// * `options` further configure how the task is performed.
     ///
     /// # Note
     ///
@@ -65,6 +66,7 @@ impl crate::Bundle {
         progress: &mut dyn DynNestedProgress,
         should_interrupt: &AtomicBool,
         thin_pack_base_object_lookup: Option<impl gix_object::Find>,
+        object_hash: gix_hash::Kind,
         options: Options,
     ) -> Result<Outcome, Error> {
         let _span = gix_features::trace::coarse!("gix_pack::Bundle::write_to_directory()");
@@ -75,7 +77,6 @@ impl crate::Bundle {
             progress: progress::ThroughputOnDrop::new(read_progress),
         };
 
-        let object_hash = options.object_hash;
         let data_file = Arc::new(parking_lot::Mutex::new(io::BufWriter::with_capacity(
             64 * 1024,
             match directory.as_ref() {
@@ -101,6 +102,7 @@ impl crate::Bundle {
                         object_hash,
                     )?,
                     thin_pack_lookup,
+                    options.compression,
                 );
                 let pack_version = pack_entries_iter.inner.version();
                 let pack_entries_iter = data::input::EntriesToBytesIter::new(
@@ -109,7 +111,7 @@ impl crate::Bundle {
                         writer: data_file.clone(),
                     },
                     pack_version,
-                    gix_hash::Kind::Sha1, // Thin packs imply a pack being transported, and there we only ever know SHA1 at the moment.
+                    object_hash,
                 );
                 (Box::new(pack_entries_iter), pack_version)
             }
@@ -144,6 +146,7 @@ impl crate::Bundle {
         } = crate::Bundle::inner_write(
             directory,
             progress,
+            object_hash,
             options,
             data_file,
             pack_entries_iter,
@@ -168,6 +171,7 @@ impl crate::Bundle {
     /// As it sends portions of the input to a thread it requires the 'static lifetime for the interrupt flags. This can only
     /// be satisfied by a static `AtomicBool` which is only suitable for programs that only run one of these operations at a time
     /// or don't mind that all of them abort when the flag is set.
+    #[expect(clippy::too_many_arguments)]
     pub fn write_to_directory_eagerly(
         pack: Box<dyn io::Read + Send + 'static>,
         pack_size: Option<u64>,
@@ -175,6 +179,7 @@ impl crate::Bundle {
         progress: &mut dyn DynNestedProgress,
         should_interrupt: &'static AtomicBool,
         thin_pack_base_object_lookup: Option<impl gix_object::Find + Send + 'static>,
+        object_hash: gix_hash::Kind,
         options: Options,
     ) -> Result<Outcome, Error> {
         let _span = gix_features::trace::coarse!("gix_pack::Bundle::write_to_directory_eagerly()");
@@ -189,7 +194,6 @@ impl crate::Bundle {
             Some(directory) => gix_tempfile::new(directory, ContainingDirectory::Exists, AutoRemove::Tempfile)?,
             None => gix_tempfile::new(std::env::temp_dir(), ContainingDirectory::Exists, AutoRemove::Tempfile)?,
         })));
-        let object_hash = options.object_hash;
         let eight_pages = 4096 * 8;
         let (pack_entries_iter, pack_version): (
             Box<dyn Iterator<Item = Result<data::input::Entry, data::input::Error>> + Send + 'static>,
@@ -209,6 +213,7 @@ impl crate::Bundle {
                         object_hash,
                     )?,
                     thin_pack_lookup,
+                    options.compression,
                 );
                 let pack_kind = pack_entries_iter.inner.version();
                 (Box::new(pack_entries_iter), pack_kind)
@@ -244,6 +249,7 @@ impl crate::Bundle {
         } = crate::Bundle::inner_write(
             directory,
             progress,
+            object_hash,
             options,
             data_file,
             Box::new(pack_entries_iter),
@@ -261,14 +267,17 @@ impl crate::Bundle {
         })
     }
 
+    #[expect(clippy::too_many_arguments)]
     fn inner_write<'a>(
         directory: Option<impl AsRef<Path>>,
         progress: &mut dyn DynNestedProgress,
+        object_hash: gix_hash::Kind,
         Options {
             thread_limit,
             iteration_mode: _,
             index_version: index_kind,
-            object_hash,
+            alloc_limit_bytes,
+            compression: _,
         }: Options,
         data_file: SharedTempFile,
         mut pack_entries_iter: Box<dyn Iterator<Item = Result<data::input::Entry, data::input::Error>> + 'a>,
@@ -284,7 +293,7 @@ impl crate::Bundle {
                 let directory = directory.as_ref();
                 let mut index_file = gix_tempfile::new(directory, ContainingDirectory::Exists, AutoRemove::Tempfile)?;
 
-                let outcome = crate::index::File::write_data_iter_to_stream(
+                let outcome = crate::index::write_data_iter_to_stream(
                     index_kind,
                     {
                         let data_file = Arc::clone(&data_file);
@@ -296,6 +305,7 @@ impl crate::Bundle {
                     &mut index_file,
                     should_interrupt,
                     object_hash,
+                    alloc_limit_bytes,
                     pack_version,
                 )?;
                 drop(pack_entries_iter);
@@ -342,7 +352,7 @@ impl crate::Bundle {
                 }
             }
             None => WriteOutcome {
-                outcome: crate::index::File::write_data_iter_to_stream(
+                outcome: crate::index::write_data_iter_to_stream(
                     index_kind,
                     move || new_pack_file_resolver(data_file),
                     &mut pack_entries_iter,
@@ -351,6 +361,7 @@ impl crate::Bundle {
                     &mut io::sink(),
                     should_interrupt,
                     object_hash,
+                    alloc_limit_bytes,
                     pack_version,
                 )?,
                 data_path: None,
@@ -365,7 +376,7 @@ fn resolve_entry(range: data::EntryRange, mapped_file: &memmap2::Mmap) -> Option
     mapped_file.get(range.start as usize..range.end as usize)
 }
 
-#[allow(clippy::type_complexity)] // cannot typedef impl Fn
+#[expect(clippy::type_complexity)] // cannot typedef impl Fn
 fn new_pack_file_resolver(
     data_file: SharedTempFile,
 ) -> io::Result<(

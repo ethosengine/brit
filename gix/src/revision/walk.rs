@@ -2,11 +2,11 @@ use gix_hash::ObjectId;
 use gix_object::FindExt;
 use gix_traverse::commit::simple::CommitTimeOrder;
 
-use crate::{ext::ObjectIdExt, revision, Repository};
+use crate::{Repository, ext::ObjectIdExt, revision};
 
 /// The error returned by [`Platform::all()`] and [`Platform::selected()`].
 #[derive(Debug, thiserror::Error)]
-#[allow(missing_docs)]
+#[expect(missing_docs)]
 pub enum Error {
     #[error(transparent)]
     SimpleTraversal(#[from] gix_traverse::commit::simple::Error),
@@ -85,6 +85,8 @@ pub struct Info<'repo> {
     pub id: gix_hash::ObjectId,
     /// All parent ids we have encountered. Note that these will be at most one if [`Parents::First`][gix_traverse::commit::Parents::First] is enabled.
     pub parent_ids: gix_traverse::commit::ParentIds,
+    /// The generation number if this commit was read from a commit-graph.
+    pub generation: Option<gix_revwalk::graph::Generation>,
     /// The time at which the commit was created. It will only be `Some(_)` if the chosen traversal was
     /// taking dates into consideration.
     pub commit_time: Option<gix_date::SecondsSinceUnixEpoch>,
@@ -129,6 +131,7 @@ impl<'repo> Info<'repo> {
         Info {
             id: info.id,
             parent_ids: info.parent_ids,
+            generation: info.generation,
             commit_time: info.commit_time,
             repo,
         }
@@ -140,6 +143,7 @@ impl<'repo> Info<'repo> {
         gix_traverse::commit::Info {
             id: self.id,
             parent_ids: self.parent_ids,
+            generation: self.generation,
             commit_time: self.commit_time,
         }
     }
@@ -230,10 +234,10 @@ impl Platform<'_> {
         for id in ids.into_iter() {
             let id = id.into();
             if !self.boundary.contains(&id) {
-                if let Some(time) = self.repo.find_commit(id).ok().and_then(|c| c.time().ok()) {
-                    if cutoff.is_none() || cutoff > Some(time.seconds) {
-                        cutoff = time.seconds.into();
-                    }
+                if let Some(time) = self.repo.find_commit(id).ok().and_then(|c| c.time().ok())
+                    && (cutoff.is_none() || cutoff > Some(time.seconds))
+                {
+                    cutoff = time.seconds.into();
                 }
                 self.boundary.push(id);
             }
@@ -304,11 +308,11 @@ impl<'repo> Platform<'repo> {
                                     grafted_parents_to_skip.remove(idx);
                                     return false;
                                 }
-                                if commits.binary_search(&id).is_ok() {
-                                    if let Ok(commit) = repo.objects.find_commit_iter(&id, &mut buf) {
-                                        grafted_parents_to_skip.extend(commit.parent_ids());
-                                        grafted_parents_to_skip.sort();
-                                    }
+                                if commits.binary_search(&id).is_ok()
+                                    && let Ok(commit) = repo.objects.find_commit_iter(&id, &mut buf)
+                                {
+                                    grafted_parents_to_skip.extend(commit.parent_ids());
+                                    grafted_parents_to_skip.sort();
                                 }
                                 true
                             }
@@ -344,7 +348,7 @@ impl<'repo> Platform<'repo> {
 pub mod iter {
     /// The error returned by the [Walk](crate::revision::Walk) iterator.
     #[derive(Debug, thiserror::Error)]
-    #[allow(missing_docs)]
+    #[expect(missing_docs)]
     pub enum Error {
         #[error(transparent)]
         SimpleTraversal(#[from] gix_traverse::commit::simple::Error),

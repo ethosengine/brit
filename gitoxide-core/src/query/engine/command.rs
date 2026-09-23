@@ -1,12 +1,12 @@
 use std::collections::HashMap;
 
-use anyhow::{bail, Context};
-use gix::{bstr::ByteSlice, prelude::ObjectIdExt, Count, Progress};
-use rusqlite::{params, OptionalExtension};
+use anyhow::{Context, bail};
+use gix::{Count, Progress, bstr::ByteSlice, prelude::ObjectIdExt};
+use rusqlite::{OptionalExtension, params};
 
 use crate::{
     query,
-    query::{engine::update::FileMode, Command},
+    query::{Command, engine::update::FileMode},
 };
 
 impl query::Engine {
@@ -19,25 +19,19 @@ impl query::Engine {
         match cmd {
             Command::TracePath { spec } => {
                 let is_excluded = spec.is_excluded();
-                // Just to get the normalized version of the path with everything auto-configured.
-                let relpath = self
-                    .repo
-                    .pathspec(
-                        true,
-                        Some(spec.to_bstring()),
-                        false,
-                        &gix::index::State::new(self.repo.object_hash()),
-                        gix::worktree::stack::state::attributes::Source::WorktreeThenIdMapping
-                            .adjust_for_bare(self.repo.is_bare()),
-                    )?
-                    .search()
-                    .patterns()
-                    .next()
-                    .expect("exactly one")
-                    .path()
-                    .to_owned();
+                let relpath = if spec.signature.contains(gix::pathspec::MagicSignature::TOP) {
+                    let root = self.repo.workdir().unwrap_or_else(|| self.repo.git_dir());
+                    let path = root.join(gix::path::from_bstr(spec.path()).as_ref());
+                    self.repo
+                        .normalize_path(gix::path::into_bstr(path).as_ref())?
+                        .into_owned()
+                } else {
+                    self.repo.normalize_path(spec.path())?.into_owned()
+                };
                 if relpath.is_empty() || is_excluded {
-                    bail!("Invalid pathspec {spec} - path must not be empty, not be excluded, and wildcards are taken literally")
+                    bail!(
+                        "Invalid pathspec {spec} - path must not be empty, not be excluded, and wildcards are taken literally"
+                    )
                 }
                 let file_id: usize = self
                     .con
@@ -89,11 +83,12 @@ impl query::Engine {
                             }),
                             source_file_id,
                         });
-                        if let Some(source_id) = source_file_id {
-                            if let std::collections::hash_map::Entry::Vacant(e) = seen.entry(source_id) {
-                                stack.push(source_id);
-                                e.insert(path_by_id.query_row([source_id], |r| r.get(0))?);
-                            }
+                        let Some(source_id) = source_file_id else {
+                            continue;
+                        };
+                        if let std::collections::hash_map::Entry::Vacant(e) = seen.entry(source_id) {
+                            stack.push(source_id);
+                            e.insert(path_by_id.query_row([source_id], |r| r.get(0))?);
                         }
                     }
                 }

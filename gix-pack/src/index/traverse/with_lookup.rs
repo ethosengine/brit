@@ -3,8 +3,7 @@ use std::sync::atomic::{AtomicBool, Ordering};
 use gix_features::{
     parallel::{self, in_parallel_if},
     progress::{self, Count, DynNestedProgress, Progress},
-    threading::{lock, Mutable, OwnShared},
-    zlib,
+    threading::{Mutable, OwnShared, lock},
 };
 
 use super::{Error, Reducer};
@@ -61,15 +60,18 @@ impl From<ProgressId> for gix_features::progress::Id {
 }
 
 /// Verify and validate the content of the index file
-impl index::File {
+impl<T> index::File<T>
+where
+    T: crate::FileData + Sync,
+{
     /// Iterate through all _decoded objects_ in the given `pack` and handle them with a `Processor` using a cache to reduce the amount of
     /// waste while decoding objects.
     ///
     /// For more details, see the documentation on the [`traverse()`][index::File::traverse()] method.
-    pub fn traverse_with_lookup<C, Processor, E, F>(
+    pub fn traverse_with_lookup<C, Processor, E, F, D>(
         &self,
         mut processor: Processor,
-        pack: &data::File,
+        pack: &data::File<D>,
         progress: &mut dyn DynNestedProgress,
         should_interrupt: &AtomicBool,
         Options {
@@ -83,21 +85,16 @@ impl index::File {
         E: std::error::Error + Send + Sync + 'static,
         Processor: FnMut(gix_object::Kind, &[u8], &index::Entry, &dyn Progress) -> Result<(), E> + Send + Clone,
         F: Fn() -> C + Send + Clone,
+        D: crate::FileData + Send + Sync,
     {
         let (verify_result, traversal_result) = parallel::join(
             {
                 let mut pack_progress = progress.add_child_with_id(
-                    format!(
-                        "Hash of pack '{}'",
-                        pack.path().file_name().expect("pack has filename").to_string_lossy()
-                    ),
+                    format!("Hash of pack '{}'", crate::source_name(pack.path())),
                     ProgressId::HashPackDataBytes.into(),
                 );
                 let mut index_progress = progress.add_child_with_id(
-                    format!(
-                        "Hash of index '{}'",
-                        self.path.file_name().expect("index has filename").to_string_lossy()
-                    ),
+                    format!("Hash of index '{}'", crate::source_name(&self.path)),
                     ProgressId::HashPackIndexBytes.into(),
                 );
                 move || {
@@ -133,7 +130,7 @@ impl index::File {
                         (
                             make_pack_lookup_cache(),
                             Vec::with_capacity(2048), // decode buffer
-                            zlib::Inflate::default(),
+                            gix_zlib::Inflate::default(),
                             lock(&reduce_progress)
                                 .add_child_with_id(format!("thread {index}"), gix_features::progress::UNKNOWN), // per thread progress
                         )

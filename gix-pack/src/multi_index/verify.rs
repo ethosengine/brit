@@ -10,7 +10,7 @@ pub mod integrity {
 
     /// Returned by [`multi_index::File::verify_integrity()`][crate::multi_index::File::verify_integrity()].
     #[derive(thiserror::Error, Debug)]
-    #[allow(missing_docs)]
+    #[expect(missing_docs)]
     pub enum Error {
         #[error("Object {id} should be at pack-offset {expected_pack_offset} but was found at {actual_pack_offset}")]
         PackOffsetMismatch {
@@ -34,6 +34,8 @@ pub mod integrity {
         Fan { index: usize },
         #[error("The multi-index claims to have no objects")]
         Empty,
+        #[error("The multi-index path '{path}' has no parent directory")]
+        InvalidPath { path: std::path::PathBuf },
         #[error("Interrupted")]
         Interrupted,
     }
@@ -73,7 +75,10 @@ pub mod checksum {
     pub type Error = crate::verify::checksum::Error;
 }
 
-impl File {
+impl<T> File<T>
+where
+    T: crate::FileData,
+{
     /// Validate that our [`checksum()`][File::checksum()] matches the actual contents
     /// of this index file, and return it if it does.
     pub fn verify_checksum(
@@ -139,7 +144,11 @@ impl File {
         C: crate::cache::DecodeEntry,
         F: Fn() -> C + Send + Clone,
     {
-        let parent = self.path.parent().expect("must be in a directory");
+        let parent = self.path.parent().ok_or_else(|| {
+            index::traverse::Error::Processor(integrity::Error::InvalidPath {
+                path: self.path.clone(),
+            })
+        })?;
 
         let actual_index_checksum = self
             .verify_checksum(
@@ -213,10 +222,11 @@ impl File {
             let index;
             let index_path = parent.join(index_file_name);
             let index = if deep_check {
-                bundle = crate::Bundle::at(index_path, self.object_hash)
+                let mut opened_bundle = crate::Bundle::at(index_path, self.object_hash)
                     .map_err(integrity::Error::from)
-                    .map_err(index::traverse::Error::Processor)?
-                    .into();
+                    .map_err(index::traverse::Error::Processor)?;
+                opened_bundle.pack.alloc_limit_bytes = self.alloc_limit_bytes;
+                bundle = Some(opened_bundle);
                 bundle.as_ref().map(|b| &b.index).expect("just set")
             } else {
                 index = Some(

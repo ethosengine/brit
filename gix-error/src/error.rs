@@ -1,21 +1,356 @@
+/// A borrowed error together with its optional caller location, intended for diagnostic display.
+///
+/// Errors owned by a [`crate::Frame`] have the location captured when that frame was created. Native
+/// [`std::error::Error::source()`] values have no location because no caller location was captured for them.
+///
+/// Unlike [`crate::Frame`], this type neither owns the error nor represents relationships in an error tree. This lets
+/// [`crate::Error::iter_errors_with_locations()`] provide the same lightweight view for the tree-backed and flattened-chain
+/// representations.
+///
+/// Its normal [`Display`](std::fmt::Display) output appends the location when one is available. Alternate formatting
+/// (`{source:#}`) forwards alternate formatting to the underlying error and always omits the location.
+#[derive(Clone, Copy, Debug)]
+pub struct DisplaySource<'a> {
+    error: &'a (dyn std::error::Error + 'static),
+    location: Option<&'static std::panic::Location<'static>>,
+}
+
+impl<'a> DisplaySource<'a> {
+    /// Return the stored error, preserving its concrete type for downcasting.
+    pub fn error(&self) -> &'a (dyn std::error::Error + 'static) {
+        self.error
+    }
+
+    /// Return the caller location captured for this error frame, or `None` for a native error source.
+    pub fn location(&self) -> Option<&'static std::panic::Location<'static>> {
+        self.location
+    }
+}
+
+impl std::fmt::Display for DisplaySource<'_> {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        std::fmt::Display::fmt(self.error, f)?;
+        if !f.alternate()
+            && let Some(location) = self.location
+        {
+            crate::write_location(f, location)?;
+        }
+        Ok(())
+    }
+}
+
+impl crate::Error {
+    /// Find the first stored error or native source that downcasts to `T` in logical breadth-first order.
+    pub fn downcast_any_ref<T: std::error::Error + 'static>(&self) -> Option<&T> {
+        self.iter_errors().find_map(|error| error.downcast_ref())
+    }
+
+    /// Return all known classifications in the same logical breadth-first order as [`Self::iter_errors()`].
+    ///
+    /// Unknown errors are omitted. Classifications aren't deduplicated because distinct errors may independently have
+    /// the same meaning. Each item retains the classified error for downcasting and origin inspection.
+    pub fn classify(&self) -> impl Iterator<Item = Classification<'_>> + '_ {
+        self.iter_errors().filter_map(classify_one)
+    }
+
+    /// Return `true` if any stored error or native source is explicitly marked with [`crate::RetryableError`].
+    ///
+    /// Nested [`crate::Error`] values are inspected recursively. Unlike [`Self::can_retry()`], this does not infer
+    /// retryability from I/O error kinds.
+    pub fn is_retryable(&self) -> bool {
+        self.classify()
+            .any(|classification| classification.class() == Class::Retryable)
+    }
+
+    /// Return `true` if any stored error or native source reports resource exhaustion.
+    ///
+    /// This recognizes [`crate::ResourceExhaustionError`] of any kind, [`std::collections::TryReserveError`], and
+    /// [`std::io::ErrorKind::OutOfMemory`], including within nested [`crate::Error`] values.
+    pub fn is_resource_exhausted(&self) -> bool {
+        self.classify()
+            .any(|classification| matches!(classification.class(), Class::ResourceExhaustion(_)))
+    }
+
+    /// Return `true` if any stored error, or an error in its [`source()`](std::error::Error::source) chain, is:
+    ///
+    /// * explicitly marked with [`RetryableError`](crate::RetryableError), or
+    /// * an [`std::io::Error`] with kind `Interrupted` or `TimedOut`.
+    ///
+    /// Nested [`crate::Error`] values are inspected recursively. `false` only means that no known retryable error was
+    /// found; it does not guarantee that retrying cannot succeed.
+    pub fn can_retry(&self) -> bool {
+        self.classify()
+            .any(|classification| class_can_retry(classification.class()))
+    }
+
+    /// Return `true` if any stored error, or an error in its [`source()`](std::error::Error::source) chain, is:
+    ///
+    /// * explicitly marked with [`RetryableError`](crate::RetryableError), or
+    /// * an [`std::io::Error`] with kind `Interrupted`, `UnexpectedEof`, `OutOfMemory`, `TimedOut`, `BrokenPipe`,
+    ///   `AddrInUse`, `ConnectionAborted`, `ConnectionReset`, or `ConnectionRefused`.
+    ///
+    /// This applies a more lenient policy than [`Self::can_retry`]. Nested [`crate::Error`] values are inspected recursively.
+    /// `false` only means that no known retryable error was found; it does not guarantee that retrying cannot succeed.
+    pub fn can_retry_lenient(&self) -> bool {
+        self.classify().any(classification_can_retry_lenient)
+    }
+
+    /// Return `true` if malformed or internally inconsistent data caused the failure.
+    pub fn is_corrupted(&self) -> bool {
+        self.classify()
+            .any(|classification| classification.class() == Class::Corruption)
+    }
+
+    /// Return `true` if a requested resource was not found.
+    pub fn is_not_found(&self) -> bool {
+        self.classify()
+            .any(|classification| classification.class() == Class::NotFound)
+    }
+
+    /// Return `true` if invalid input caused the failure.
+    pub fn is_validation(&self) -> bool {
+        self.classify()
+            .any(|classification| classification.class() == Class::Validation)
+    }
+}
+
+/// Classification helpers for inspecting an exception without consuming it or losing its typed outer error.
+///
+/// The corresponding helpers on [`crate::Error`] would require consuming the exception with
+/// [`into_error()`](crate::Exn::into_error), while dereferencing an exception only exposes its outer error `E`, not
+/// the full error tree. These helpers inspect that tree directly, so callers can recognize a failure's meaning
+/// even when it is wrapped in context, and still propagate the original exception afterward.
+impl<E: std::error::Error + Send + Sync + 'static> crate::Exn<E> {
+    /// Return all known classifications in logical breadth-first order, including native sources and nested
+    /// [`crate::Error`] values.
+    ///
+    /// As with [`crate::Error::classify()`], unknown errors are omitted, classifications aren't deduplicated, and each
+    /// item retains the classified error for downcasting and origin inspection.
+    pub fn classify(&self) -> impl Iterator<Item = Classification<'_>> + '_ {
+        self.frame()
+            .collect_errors_with_locations()
+            .into_iter()
+            .filter_map(|source| classify_one(source.error()))
+    }
+
+    /// Apply the conservative retry policy of [`crate::Error::can_retry()`] without consuming this exception.
+    ///
+    /// This inspects stored errors, native sources, and nested [`crate::Error`] values for explicit retry markers or
+    /// I/O errors with kind `Interrupted` or `TimedOut`. `false` does not guarantee that retrying cannot succeed.
+    pub fn can_retry(&self) -> bool {
+        self.classify()
+            .any(|classification| class_can_retry(classification.class()))
+    }
+
+    /// Apply the broader I/O retry policy of [`crate::Error::can_retry_lenient()`] without consuming this exception.
+    ///
+    /// This inspects stored errors, native sources, and nested [`crate::Error`] values. `false` does not guarantee that
+    /// retrying cannot succeed.
+    pub fn can_retry_lenient(&self) -> bool {
+        self.classify().any(classification_can_retry_lenient)
+    }
+
+    /// Return `true` if any stored error or native source is explicitly marked with [`crate::RetryableError`].
+    ///
+    /// Nested [`crate::Error`] values are inspected recursively. Unlike [`Self::can_retry()`], this does not
+    /// infer retryability from I/O error kinds.
+    pub fn is_retryable(&self) -> bool {
+        self.any_class(|class| class == Class::Retryable)
+    }
+
+    /// Return `true` if any stored error or native source reports a missing resource.
+    ///
+    /// This recognizes [`crate::NotFoundError`] and [`std::io::ErrorKind::NotFound`], including within nested
+    /// [`crate::Error`] values. It does not require the outermost error to have this classification.
+    pub fn is_not_found(&self) -> bool {
+        self.any_class(|class| class == Class::NotFound)
+    }
+
+    /// Return `true` if any stored error or native source is a [`crate::ValidationError`].
+    ///
+    /// Nested [`crate::Error`] values are inspected recursively. It does not require the outermost error to have this
+    /// classification.
+    pub fn is_validation(&self) -> bool {
+        self.any_class(|class| class == Class::Validation)
+    }
+
+    /// Return `true` if any stored error or native source is a [`crate::CorruptionError`].
+    ///
+    /// Nested [`crate::Error`] values are inspected recursively. It does not require the outermost error to have this
+    /// classification.
+    pub fn is_corrupted(&self) -> bool {
+        self.any_class(|class| class == Class::Corruption)
+    }
+
+    /// Return `true` if any stored error or native source reports resource exhaustion.
+    ///
+    /// This recognizes [`crate::ResourceExhaustionError`] of any kind, [`std::collections::TryReserveError`], and
+    /// [`std::io::ErrorKind::OutOfMemory`], including within nested [`crate::Error`] values.
+    pub fn is_resource_exhausted(&self) -> bool {
+        self.any_class(|class| matches!(class, Class::ResourceExhaustion(_)))
+    }
+
+    fn any_class(&self, predicate: impl Fn(Class) -> bool) -> bool {
+        self.classify().any(|classification| predicate(classification.class()))
+    }
+}
+
+/// The semantic class of an error.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+#[non_exhaustive]
+pub enum Class {
+    /// Function or method input was invalid.
+    Validation,
+    /// Stored or streamed data was malformed or internally inconsistent.
+    Corruption,
+    /// A requested resource does not exist.
+    NotFound,
+    /// Retrying the operation may succeed.
+    Retryable,
+    /// A finite resource was exhausted.
+    ResourceExhaustion(crate::ResourceExhaustionKind),
+    /// An I/O failure not normalized to another semantic class.
+    Io(std::io::ErrorKind),
+}
+
+/// A semantic class together with the concrete error which established it.
+#[derive(Clone, Copy, Debug)]
+pub struct Classification<'a> {
+    class: Class,
+    error: &'a (dyn std::error::Error + 'static),
+}
+
+impl<'a> Classification<'a> {
+    /// Return the semantic class.
+    pub fn class(&self) -> Class {
+        self.class
+    }
+
+    /// Return the concrete error which established the classification.
+    pub fn error(&self) -> &'a (dyn std::error::Error + 'static) {
+        self.error
+    }
+
+    /// Return the original I/O error kind, if the underlying error is an [`std::io::Error`].
+    pub fn io_kind(&self) -> Option<std::io::ErrorKind> {
+        self.error.downcast_ref::<std::io::Error>().map(std::io::Error::kind)
+    }
+}
+
+fn classify_one<'a>(error: &'a (dyn std::error::Error + 'static)) -> Option<Classification<'a>> {
+    let class = if error.is::<crate::ValidationError>() {
+        Class::Validation
+    } else if error.is::<crate::CorruptionError>() {
+        Class::Corruption
+    } else if error.is::<crate::NotFoundError>() {
+        Class::NotFound
+    } else if error.is::<crate::RetryableError>() {
+        Class::Retryable
+    } else if let Some(error) = error.downcast_ref::<crate::ResourceExhaustionError>() {
+        Class::ResourceExhaustion(error.kind())
+    } else if error.is::<std::collections::TryReserveError>() {
+        Class::ResourceExhaustion(crate::ResourceExhaustionKind::AllocationFailure)
+    } else {
+        let error = error.downcast_ref::<std::io::Error>()?;
+        match error.kind() {
+            std::io::ErrorKind::NotFound => Class::NotFound,
+            std::io::ErrorKind::OutOfMemory => {
+                Class::ResourceExhaustion(crate::ResourceExhaustionKind::AllocationFailure)
+            }
+            kind => Class::Io(kind),
+        }
+    };
+    Some(Classification { class, error })
+}
+
+fn class_can_retry(class: Class) -> bool {
+    matches!(
+        class,
+        Class::Retryable | Class::Io(std::io::ErrorKind::Interrupted | std::io::ErrorKind::TimedOut)
+    )
+}
+
+fn classification_can_retry_lenient(classification: Classification<'_>) -> bool {
+    class_can_retry(classification.class())
+        || classification.io_kind().is_some_and(|kind| {
+            use std::io::ErrorKind::*;
+            matches!(
+                kind,
+                UnexpectedEof
+                    | OutOfMemory
+                    | BrokenPipe
+                    | AddrInUse
+                    | ConnectionAborted
+                    | ConnectionReset
+                    | ConnectionRefused
+            )
+        })
+}
+
 #[cfg(any(feature = "tree-error", not(feature = "auto-chain-error")))]
 mod _impl {
+    use crate::{DisplaySource, Error, Exn};
     use std::fmt::Formatter;
-
-    use crate::{Error, Exn};
 
     /// Utilities
     impl Error {
+        /// Return the error stored at this error boundary.
+        ///
+        /// This is the first error yielded by [`Self::iter_errors()`] and is distinct from
+        /// [`Self::probable_cause()`].
+        pub fn error(&self) -> &(dyn std::error::Error + 'static) {
+            self.inner.frame().error()
+        }
+
         /// Return the error that is most likely the root cause, based on heuristics.
         /// Note that if there is nothing but this error, i.e. no source or children, this error is returned.
         pub fn probable_cause(&self) -> &(dyn std::error::Error + 'static) {
             let root = self.inner.frame();
-            root.probable_cause().unwrap_or(root).error()
+            let cause = root.probable_cause().unwrap_or_else(|| root.error());
+            cause.downcast_ref::<Error>().map_or(cause, Error::probable_cause)
         }
 
-        /// Return an iterator over all errors in the tree in breadth-first order, starting with this one.
-        pub fn sources(&self) -> impl Iterator<Item = &(dyn std::error::Error + 'static)> + '_ {
-            self.inner.frame().iter_frames().map(|f| f.error() as _)
+        /// Return the stored error and all frame errors and native sources reachable from it, recursively expanding nested
+        /// [`Error`] values.
+        ///
+        /// The first item is the error stored inside this [`Error`], not this `Error` wrapper. Remaining errors are ordered
+        /// logically breadth-first; a frame's direct native source precedes its explicitly raised child frames.
+        /// These are references to the underlying errors, so their concrete types remain available for *downcasting* and
+        /// their own [`Display`](std::fmt::Display) implementations can be used. Use
+        /// [`Self::iter_errors_with_locations()`] to access caller locations.
+        pub fn iter_errors(&self) -> impl Iterator<Item = &(dyn std::error::Error + 'static)> + '_ {
+            self.collect_errors_with_locations()
+                .into_iter()
+                .map(|source| source.error)
+        }
+
+        /// Return the same errors as [`Self::iter_errors()`], paired with their captured caller locations where available
+        /// and in the same order.
+        pub fn iter_errors_with_locations(&self) -> impl Iterator<Item = DisplaySource<'_>> + '_ {
+            self.collect_errors_with_locations().into_iter()
+        }
+
+        fn collect_errors_with_locations(&self) -> Vec<DisplaySource<'_>> {
+            self.inner.frame().collect_errors_with_locations()
+        }
+    }
+
+    impl crate::Frame {
+        pub(crate) fn collect_errors_with_locations(&self) -> Vec<DisplaySource<'_>> {
+            let mut queue = std::collections::VecDeque::from([crate::exn::ErrorNode::Frame(self)]);
+            let mut out = Vec::new();
+            while let Some(node) = queue.pop_front() {
+                let error = node.error();
+                out.push(DisplaySource {
+                    error,
+                    location: node.captured_location(),
+                });
+                if let Some(error) = error.downcast_ref::<Error>() {
+                    queue.push_back(crate::exn::ErrorNode::Frame(error.inner.frame()));
+                }
+                queue.extend(node.children());
+            }
+            out
         }
     }
 
@@ -25,7 +360,7 @@ mod _impl {
     }
 
     impl Inner {
-        fn frame(&self) -> &crate::exn::Frame {
+        pub(crate) fn frame(&self) -> &crate::exn::Frame {
             match self {
                 Inner::ExnAsError(f) | Inner::Exn(f) => f,
             }
@@ -39,6 +374,12 @@ mod _impl {
             Error {
                 inner: Inner::ExnAsError(Exn::new(error).into()),
             }
+        }
+
+        /// Create a new instance representing an already boxed `error`.
+        #[track_caller]
+        pub fn from_boxed(error: Box<dyn std::error::Error + Send + Sync + 'static>) -> Self {
+            Self::from_error(crate::Untyped::from_boxed(error))
         }
     }
 
@@ -64,7 +405,13 @@ mod _impl {
         /// Return the first source of an [Exn] error, or the source of a boxed error.
         fn source(&self) -> Option<&(dyn std::error::Error + 'static)> {
             match &self.inner {
-                Inner::ExnAsError(frame) | Inner::Exn(frame) => frame.children().first().map(|f| f.error() as _),
+                Inner::ExnAsError(frame) | Inner::Exn(frame) => {
+                    let error = frame.error();
+                    (!error.is::<Error>())
+                        .then(|| error.source())
+                        .flatten()
+                        .or_else(|| frame.children().first().map(|frame| frame.error() as _))
+                }
             }
         }
     }
@@ -85,26 +432,164 @@ pub(super) use _impl::Inner;
 
 #[cfg(all(feature = "auto-chain-error", not(feature = "tree-error")))]
 mod _impl {
+    use crate::{DisplaySource, Error, Exn};
     use std::fmt::Formatter;
 
-    use crate::{Error, Exn};
+    /// A temporary adjacency-list node used to recover the logical error graph from flattened [`crate::ChainedError`]
+    /// values.
+    ///
+    /// Auto-chain storage is a linked list for compatibility with [`std::error::Error::source()`]. The iteration APIs
+    /// rebuild its retained parent relationships in a `Vec<ErrorGraphNode>` so nested [`Error`] values can join the same
+    /// breadth-first traversal without changing that source-chain representation.
+    struct ErrorGraphNode<'a> {
+        /// The borrowed error and optional frame location yielded for this node.
+        source: DisplaySource<'a>,
+        /// Indices of logical children in the temporary node vector, in traversal order.
+        children: Vec<usize>,
+    }
+
+    /// Expand nested [`Error`] values, then collect the graph's errors and locations breadth-first from `root`.
+    ///
+    /// `nested` pairs each wrapper's index in `graph` with the error whose stored chain still needs to be added.
+    /// Each nested chain's root becomes the wrapper's first child, before its existing children, matching tree-backed
+    /// traversal. Newly discovered nested errors are expanded in turn before collecting the output.
+    ///
+    /// Expanding the graph first lets nested errors participate at their logical depth: simply splicing their flattened
+    /// chains into the output would visit their descendants before shallower errors elsewhere in the graph.
+    fn collect_graph_errors<'a>(
+        mut graph: Vec<ErrorGraphNode<'a>>,
+        root: usize,
+        nested: Vec<(usize, &'a Error)>,
+    ) -> Vec<DisplaySource<'a>> {
+        let mut pending = std::collections::VecDeque::from(nested);
+        while let Some((parent, error)) = pending.pop_front() {
+            let (nested_root, more_nested) = error.append_error_chain(&mut graph);
+            graph[parent].children.insert(0, nested_root);
+            pending.extend(more_nested);
+        }
+
+        let mut queue = std::collections::VecDeque::from([root]);
+        let mut out = Vec::new();
+        while let Some(index) = queue.pop_front() {
+            let node = &graph[index];
+            out.push(node.source);
+            queue.extend(node.children.iter().copied());
+        }
+        out
+    }
+
+    impl crate::Frame {
+        pub(crate) fn collect_errors_with_locations(&self) -> Vec<DisplaySource<'_>> {
+            let mut graph: Vec<ErrorGraphNode<'_>> = Vec::new();
+            let mut nested = Vec::new();
+            let mut queue = std::collections::VecDeque::from([(crate::exn::ErrorNode::Frame(self), None::<usize>)]);
+            while let Some((node, parent)) = queue.pop_front() {
+                let index = graph.len();
+                let error = node.error();
+                graph.push(ErrorGraphNode {
+                    source: DisplaySource {
+                        error,
+                        location: node.captured_location(),
+                    },
+                    children: Vec::new(),
+                });
+                if let Some(parent) = parent {
+                    graph[parent].children.push(index);
+                }
+                if let Some(error) = error.downcast_ref::<Error>() {
+                    nested.push((index, error));
+                }
+                queue.extend(node.children().into_iter().map(|child| (child, Some(index))));
+            }
+            collect_graph_errors(graph, 0, nested)
+        }
+    }
 
     /// Utilities
     impl Error {
+        /// Return the error stored at this error boundary.
+        ///
+        /// This is the first error yielded by [`Self::iter_errors()`] and is distinct from
+        /// [`Self::probable_cause()`].
+        pub fn error(&self) -> &(dyn std::error::Error + 'static) {
+            self.inner.err.error()
+        }
+
         /// Return the error that is most likely the root cause, based on heuristics.
         /// Note that if there is nothing but this error, i.e. no source or children, this error is returned.
         pub fn probable_cause(&self) -> &(dyn std::error::Error + 'static) {
-            use std::error::Error;
-            self.inner
-                .source()
-                .unwrap_or(self as &(dyn std::error::Error + 'static))
+            let cause = std::iter::successors(Some(&self.inner), |err| err.source.as_deref())
+                .find(|err| err.is_probable_cause)
+                .map_or(self as &(dyn std::error::Error + 'static), |err| err.err.error());
+            cause.downcast_ref::<Error>().map_or(cause, Error::probable_cause)
         }
 
-        /// Return an iterator over all errors in the tree in breadth-first order, starting with this one.
-        pub fn sources(&self) -> impl Iterator<Item = &(dyn std::error::Error + 'static)> + '_ {
-            std::iter::successors(Some(&self.inner as &(dyn std::error::Error + 'static)), |err| {
-                err.source()
-            })
+        /// Return the stored error and all frame errors and native sources reachable from it, recursively expanding nested
+        /// [`Error`] values.
+        ///
+        /// The first item is the error stored inside this [`Error`], not this `Error` wrapper. Remaining errors retain the
+        /// logical breadth-first order captured while flattening; a frame's direct native source precedes its
+        /// explicitly raised child frames. These are references to the underlying errors, so their concrete types remain
+        /// available for downcasting and their own [`Display`](std::fmt::Display) implementations can be used. Use
+        /// [`Self::iter_errors_with_locations()`] to access caller locations.
+        pub fn iter_errors(&self) -> impl Iterator<Item = &(dyn std::error::Error + 'static)> + '_ {
+            self.collect_errors_with_locations()
+                .into_iter()
+                .map(|source| source.error)
+        }
+
+        /// Return the same errors as [`Self::iter_errors()`], paired with their captured caller locations where available
+        /// and in the same order.
+        ///
+        /// The stored error, rather than this `Error` wrapper, is the first item. Frame errors have the location
+        /// captured when their frame was created; native sources have no caller location of their own. This enables opt-in
+        /// caller traces without making locations part of the underlying errors or their
+        /// [`Display`](std::fmt::Display) implementations. Each [`DisplaySource`] exposes both values for custom rendering,
+        /// and its own [`Display`](std::fmt::Display) implementation appends an available location by default.
+        pub fn iter_errors_with_locations(&self) -> impl Iterator<Item = DisplaySource<'_>> + '_ {
+            self.collect_errors_with_locations().into_iter()
+        }
+
+        fn collect_errors_with_locations(&self) -> Vec<DisplaySource<'_>> {
+            let mut graph = Vec::new();
+            let (root, nested) = self.append_error_chain(&mut graph);
+            collect_graph_errors(graph, root, nested)
+        }
+
+        /// Append this error boundary's flattened chain to `graph` and reconstruct its local parent-child relationships.
+        ///
+        /// The first tuple value is the graph index of the stored error. Each entry in the second value contains the graph
+        /// index of a node whose error is another [`Error`], paired with that nested boundary. The caller appends those
+        /// nested chains iteratively and connects each returned root as the wrapper node's first child, avoiding recursive
+        /// graph construction before the completed graph is traversed breadth-first.
+        fn append_error_chain<'a>(&'a self, graph: &mut Vec<ErrorGraphNode<'a>>) -> (usize, Vec<(usize, &'a Error)>) {
+            let chain = std::iter::successors(Some(&self.inner), |err| err.source.as_deref()).collect::<Vec<_>>();
+            let root = graph.len();
+            graph.extend(chain.iter().map(|chained| ErrorGraphNode {
+                source: DisplaySource {
+                    error: chained.err.error(),
+                    location: (!chained.err.is_native_source()).then_some(chained.location),
+                },
+                children: Vec::new(),
+            }));
+
+            for (index, chained) in chain.iter().enumerate() {
+                if let Some(parent) = chained.logical_parent {
+                    graph[root + parent].children.push(root + index);
+                }
+            }
+            let nested = chain
+                .into_iter()
+                .enumerate()
+                .filter_map(|(index, chained)| {
+                    chained
+                        .err
+                        .error()
+                        .downcast_ref::<Error>()
+                        .map(|error| (root + index, error))
+                })
+                .collect();
+            (root, nested)
         }
     }
 
@@ -115,6 +600,12 @@ mod _impl {
             Error {
                 inner: Exn::new(error).into_chain(),
             }
+        }
+
+        /// Create a new instance representing an already boxed `error`.
+        #[track_caller]
+        pub fn from_boxed(error: Box<dyn std::error::Error + Send + Sync + 'static>) -> Self {
+            Self::from_error(crate::Untyped::from_boxed(error))
         }
     }
 
@@ -147,4 +638,39 @@ mod _impl {
             }
         }
     }
+}
+
+/// Return `true` if `err` or any error in its [`source()`](std::error::Error::source) chain is explicitly marked with
+/// [`RetryableError`](crate::RetryableError), or is an [`std::io::Error`] whose kind is `Interrupted` or `TimedOut`.
+///
+/// Nested [`crate::Error`] values are inspected recursively. `false` only means that no known retryable error was found; it
+/// does not guarantee that retrying cannot succeed.
+pub fn can_retry(err: &(dyn std::error::Error + 'static)) -> bool {
+    error_chain(err).any(|err| {
+        if let Some(err) = err.downcast_ref::<crate::Error>() {
+            return err.can_retry();
+        }
+        classify_one(err).is_some_and(|classification| class_can_retry(classification.class()))
+    })
+}
+
+/// Return `true` if `err` or any error in its [`source()`](std::error::Error::source) chain is explicitly marked with
+/// [`RetryableError`](crate::RetryableError), or is an [`std::io::Error`] whose kind is `Interrupted`, `UnexpectedEof`,
+/// `OutOfMemory`, `TimedOut`, `BrokenPipe`, `AddrInUse`, `ConnectionAborted`, `ConnectionReset`, or `ConnectionRefused`.
+///
+/// This applies a more lenient policy than [`can_retry`]. Nested [`crate::Error`] values are inspected recursively.
+/// `false` only means that no known retryable error was found; it does not guarantee that retrying cannot succeed.
+pub fn can_retry_lenient(err: &(dyn std::error::Error + 'static)) -> bool {
+    error_chain(err).any(|err| {
+        if let Some(err) = err.downcast_ref::<crate::Error>() {
+            return err.can_retry_lenient();
+        }
+        classify_one(err).is_some_and(classification_can_retry_lenient)
+    })
+}
+
+fn error_chain<'a>(
+    err: &'a (dyn std::error::Error + 'static),
+) -> impl Iterator<Item = &'a (dyn std::error::Error + 'static)> {
+    std::iter::successors(Some(err), |err| err.source())
 }

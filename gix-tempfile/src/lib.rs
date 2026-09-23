@@ -52,14 +52,16 @@
     doc = ::document_features::document_features!()
 )]
 #![cfg_attr(all(doc, feature = "document-features"), feature(doc_cfg))]
-#![deny(missing_docs, rust_2018_idioms, unsafe_code)]
+#![deny(missing_docs, unsafe_code)]
 
 use std::{
     io,
     marker::PhantomData,
     path::{Path, PathBuf},
-    sync::{atomic::AtomicUsize, LazyLock},
+    sync::atomic::AtomicUsize,
 };
+
+use std::sync::LazyLock;
 
 #[cfg(feature = "hp-hashmap")]
 type HashMap<K, V> = dashmap::DashMap<K, V>;
@@ -134,7 +136,7 @@ static REGISTRY: LazyLock<HashMap<usize, Option<ForksafeTempfile>>> = LazyLock::
     if signal::handler::MODE.load(std::sync::atomic::Ordering::SeqCst) != signal::handler::Mode::None as usize {
         for sig in signal_hook::consts::TERM_SIGNALS {
             // SAFETY: handlers are considered unsafe because a lot can go wrong. See `cleanup_tempfiles()` for details on safety.
-            #[allow(unsafe_code)]
+            #[expect(unsafe_code)]
             unsafe {
                 #[cfg(not(windows))]
                 {

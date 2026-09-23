@@ -3,7 +3,7 @@ use std::{cmp::Ordering, io::Write, process::Stdio};
 use bstr::{BStr, BString, ByteSlice};
 
 use super::Algorithm;
-use crate::blob::{pipeline, Pipeline, Platform, ResourceKind};
+use crate::blob::{Pipeline, Platform, ResourceKind, pipeline};
 
 /// A key to uniquely identify either a location in the worktree, or in the object database.
 #[derive(Clone)]
@@ -54,7 +54,7 @@ impl Eq for CacheKey {}
 impl Default for CacheKey {
     fn default() -> Self {
         CacheKey {
-            id: gix_hash::Kind::Sha1.null(),
+            id: gix_hash::Kind::shortest().null(),
             use_id: false,
             is_link: false,
             location: BString::default(),
@@ -242,11 +242,11 @@ pub mod resource {
 pub mod set_resource {
     use bstr::BString;
 
-    use crate::blob::{pipeline, ResourceKind};
+    use crate::blob::{ResourceKind, pipeline};
 
     /// The error returned by [Platform::set_resource](super::Platform::set_resource).
     #[derive(Debug, thiserror::Error)]
-    #[allow(missing_docs)]
+    #[expect(missing_docs)]
     pub enum Error {
         #[error("Can only diff blobs and links, not {mode:?}")]
         InvalidMode { mode: gix_object::tree::EntryKind },
@@ -336,7 +336,7 @@ pub mod prepare_diff {
 
     /// The error returned by [Platform::prepare_diff()](super::Platform::prepare_diff()).
     #[derive(Debug, thiserror::Error)]
-    #[allow(missing_docs)]
+    #[expect(missing_docs)]
     pub enum Error {
         #[error("Either the source or the destination of the diff operation were not set")]
         SourceOrDestinationUnset,
@@ -353,15 +353,13 @@ pub mod prepare_diff_command {
 
     /// The error returned by [Platform::prepare_diff_command()](super::Platform::prepare_diff_command()).
     #[derive(Debug, thiserror::Error)]
-    #[allow(missing_docs)]
+    #[expect(missing_docs)]
     pub enum Error {
         #[error("Either the source or the destination of the diff operation were not set")]
         SourceOrDestinationUnset,
         #[error("Binary resources can't be diffed with an external command (as we don't have the data anymore)")]
         SourceOrDestinationBinary,
-        #[error(
-            "Tempfile to store content of '{rela_path}' for passing to external diff command could not be created"
-        )]
+        #[error("Tempfile to store content of '{rela_path}' for passing to external diff command could not be created")]
         CreateTempfile { rela_path: BString, source: std::io::Error },
         #[error("Could not write content of '{rela_path}' to tempfile for passing to external diff command")]
         WriteTempfile { rela_path: BString, source: std::io::Error },
@@ -539,6 +537,7 @@ impl Platform {
             .resources()
             .ok_or(prepare_diff_command::Error::SourceOrDestinationUnset)?;
         let mut cmd: std::process::Command = gix_command::prepare(gix_path::from_bstring(diff_command))
+            .command_may_be_shell_script_disallow_manual_argument_splitting()
             .with_context(context)
             .env("GIT_DIFF_PATH_COUNTER", (count + 1).to_string())
             .env("GIT_DIFF_PATH_TOTAL", total.to_string())

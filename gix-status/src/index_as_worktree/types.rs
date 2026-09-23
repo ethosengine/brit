@@ -5,14 +5,14 @@ use gix_index::entry;
 
 /// The error returned by [index_as_worktree()`](crate::index_as_worktree()).
 #[derive(Debug, thiserror::Error)]
-#[allow(missing_docs)]
+#[expect(missing_docs)]
 pub enum Error {
     #[error("Could not convert path to UTF8")]
     IllformedUtf8,
     #[error("The clock was off when reading file related metadata after updating a file on disk")]
     Time(#[from] std::time::SystemTimeError),
     #[error("IO error while writing blob or reading file metadata or changing filetype")]
-    Io(#[from] gix_hash::io::Error),
+    Io(#[from] std::io::Error),
     #[error("Failed to obtain blob from object database")]
     Find(#[from] gix_object::find::existing_object::Error),
     #[error("Could not determine status for submodule at '{rela_path}'")]
@@ -20,6 +20,15 @@ pub enum Error {
         rela_path: BString,
         source: Box<dyn std::error::Error + Send + Sync + 'static>,
     },
+}
+
+impl From<gix_hash::io::Error> for Error {
+    fn from(err: gix_hash::io::Error) -> Self {
+        let kind = err
+            .downcast_any_ref::<std::io::Error>()
+            .map_or(std::io::ErrorKind::Other, std::io::Error::kind);
+        Error::Io(std::io::Error::new(kind, err.into_error()))
+    }
 }
 
 /// Options that control how the index status with a worktree is computed.
@@ -33,6 +42,11 @@ pub struct Options {
     pub thread_limit: Option<usize>,
     /// Options that control how stat comparisons are made when checking if a file is fresh.
     pub stat: gix_index::entry::stat::Options,
+    /// Use the internal lazy worktree metadata cache.
+    ///
+    /// Misses fall through to a live `lstat`, so this only affects performance.
+    /// Effective only on Windows.
+    pub fscache: bool,
 }
 
 /// The context for [index_as_worktree()`](crate::index_as_worktree()).

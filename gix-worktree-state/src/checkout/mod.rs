@@ -55,6 +55,10 @@ pub struct Options {
     /// even if they appear to be changed. When creating directories that clash with existing worktree entries,
     /// these will try to delete the existing entry.
     /// This is similar in behaviour as `git checkout --force`.
+    ///
+    /// Note that when `destination_is_initially_empty` is `false`, existing files may still have their
+    /// executable bit updated to match the index. This option prevents overwriting file contents, but
+    /// does not necessarily prevent metadata updates.
     pub overwrite_existing: bool,
     /// If true, default false, try to checkout as much as possible and don't abort on first error which isn't
     /// due to a conflict.
@@ -72,7 +76,7 @@ pub struct Options {
 
 /// The error returned by the [checkout()][crate::checkout()] function.
 #[derive(Debug, thiserror::Error)]
-#[allow(missing_docs)]
+#[expect(missing_docs)]
 pub enum Error {
     #[error("Could not convert path to UTF8: {}", .path)]
     IllformedUtf8 { path: BString },
@@ -92,6 +96,8 @@ pub enum Error {
     FilterListDelayed(#[from] gix_filter::driver::delayed::list::Error),
     #[error(transparent)]
     FilterFetchDelayed(#[from] gix_filter::driver::delayed::fetch::Error),
+    #[error("Could not shut down filter processes")]
+    FilterShutdownIo(#[source] std::io::Error),
     #[error("The entry at path '{rela_path}' was listed as delayed by the filter process, but we never passed it")]
     FilterPathUnknown { rela_path: BString },
     #[error("The following paths were delayed and apparently forgotten to be processed by the filter driver: ")]

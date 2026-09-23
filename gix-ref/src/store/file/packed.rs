@@ -9,7 +9,8 @@ impl file::Store {
         &self,
         lock_mode: gix_lock::acquire::Fail,
     ) -> Result<packed::Transaction, transaction::Error> {
-        let lock = gix_lock::File::acquire_to_update_resource(self.packed_refs_path(), lock_mode, None)?;
+        let lock = gix_lock::File::acquire_to_update_resource(self.packed_refs_path(), lock_mode, None)
+            .map_err(|err| transaction::Error::TransactionLock(std::io::Error::other(err.into_error())))?;
         // We 'steal' the possibly existing packed buffer which may safe time if it's already there and fresh.
         // If nothing else is happening, nobody will get to see the soon stale buffer either, but if so, they will pay
         // for reloading it. That seems preferred over always loading up a new one.
@@ -26,7 +27,11 @@ impl file::Store {
     /// Note that it will automatically be memory mapped if it exceeds the default threshold of 32KB.
     /// Change the threshold with [file::Store::set_packed_buffer_mmap_threshold()].
     pub fn open_packed_buffer(&self) -> Result<Option<packed::Buffer>, packed::buffer::open::Error> {
-        match packed::Buffer::open(self.packed_refs_path(), self.packed_buffer_mmap_threshold) {
+        match packed::Buffer::open(
+            self.packed_refs_path(),
+            self.packed_buffer_mmap_threshold,
+            self.object_hash,
+        ) {
             Ok(buf) => Ok(Some(buf)),
             Err(packed::buffer::open::Error::Io(err)) if err.kind() == std::io::ErrorKind::NotFound => Ok(None),
             Err(err) => Err(err),
@@ -63,12 +68,12 @@ pub mod transaction {
 
     /// The error returned by [`file::Transaction::prepare()`][crate::file::Transaction::prepare()].
     #[derive(Debug, thiserror::Error)]
-    #[allow(missing_docs)]
+    #[expect(missing_docs)]
     pub enum Error {
         #[error("An existing pack couldn't be opened or read when preparing a transaction")]
         BufferOpen(#[from] packed::buffer::open::Error),
         #[error("The lock for a packed transaction could not be obtained")]
-        TransactionLock(#[from] gix_lock::acquire::Error),
+        TransactionLock(#[source] std::io::Error),
     }
 }
 

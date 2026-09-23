@@ -12,9 +12,8 @@ pub struct Context<W1: std::io::Write, W2: std::io::Write> {
 pub(crate) mod function {
     use std::io;
 
+    use crate::{OutputFormat, repository::commitgraph::verify::Context};
     use anyhow::Result;
-
-    use crate::{repository::commitgraph::verify::Context, OutputFormat};
 
     pub fn verify<W1, W2>(
         repo: gix::Repository,
@@ -30,7 +29,7 @@ pub(crate) mod function {
     {
         let g = repo.commit_graph()?;
 
-        #[allow(clippy::unnecessary_wraps, unknown_lints)]
+        #[expect(clippy::unnecessary_wraps)]
         fn noop_processor(_commit: &gix::commitgraph::file::Commit<'_>) -> std::result::Result<(), std::fmt::Error> {
             Ok(())
         }

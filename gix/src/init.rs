@@ -1,16 +1,16 @@
 #![allow(clippy::result_large_err)]
-use std::{borrow::Cow, path::Path};
+use std::path::Path;
 
 use gix_ref::{
+    Category, FullName,
     store::WriteReflog,
     transaction::{PreviousValue, RefEdit},
-    Category, FullName, Target,
 };
 
 use crate::{
+    ThreadSafeRepository,
     bstr::{BString, ByteSlice},
     config::tree::Init,
-    ThreadSafeRepository,
 };
 
 /// The name of the branch to use if non is configured via git configuration.
@@ -22,7 +22,7 @@ pub const DEFAULT_BRANCH_NAME: &str = "main";
 
 /// The error returned by [`crate::init()`].
 #[derive(Debug, thiserror::Error)]
-#[allow(missing_docs)]
+#[expect(missing_docs)]
 pub enum Error {
     #[error("Could not obtain the current directory")]
     CurrentDir(#[from] std::io::Error),
@@ -42,8 +42,10 @@ pub enum Error {
 impl ThreadSafeRepository {
     /// Create a repository with work-tree within `directory`, creating intermediate directories as needed.
     ///
-    /// Fails without action if there is already a `.git` repository inside of `directory`, but
-    /// won't mind if the `directory` otherwise is non-empty.
+    /// Fails without action if the destination directory isn't empty unless
+    /// [`create::Options::destination_must_be_empty`][crate::create::Options::destination_must_be_empty] is `None`
+    /// or `Some(false)`. Note that initialization still fails if a `.git` directory already exists in
+    /// the destination.
     pub fn init(
         directory: impl AsRef<Path>,
         kind: crate::create::Kind,
@@ -66,20 +68,23 @@ impl ThreadSafeRepository {
         create_options: crate::create::Options,
         mut open_options: crate::open::Options,
     ) -> Result<Self, Error> {
-        let path = crate::create::into(directory.as_ref(), kind, create_options)?;
+        let (path, capabilities) = crate::create::into_with_capabilities(directory.as_ref(), kind, create_options)?;
+        if !capabilities.symlink {
+            open_options.api_config_overrides.push("core.symlinks=false".into());
+        }
         let (git_dir, worktree_dir) = path.into_repository_and_work_tree_directories();
         open_options.git_dir_trust = Some(gix_sec::Trust::Full);
         // The repo will use `core.precomposeUnicode` to adjust the value as needed.
         open_options.current_dir = gix_fs::current_dir(false)?.into();
-        let repo = ThreadSafeRepository::open_from_paths(git_dir, worktree_dir, open_options)?;
+        let repo = ThreadSafeRepository::open_from_paths(git_dir, worktree_dir, open_options, None)?;
 
         let branch_name = repo
             .config
             .resolved
             .string(Init::DEFAULT_BRANCH)
-            .unwrap_or_else(|| Cow::Borrowed(DEFAULT_BRANCH_NAME.into()));
-        if branch_name.as_ref() != DEFAULT_BRANCH_NAME {
-            let configured_branch_name = branch_name.into_owned();
+            .unwrap_or_else(|| DEFAULT_BRANCH_NAME.into());
+        if branch_name.as_bstr() != DEFAULT_BRANCH_NAME {
+            let configured_branch_name = branch_name;
             let sym_ref: FullName = Category::LocalBranch
                 .to_full_name(configured_branch_name.as_bstr())
                 .map_err(|err| Error::InvalidBranchName {
@@ -93,15 +98,12 @@ impl ThreadSafeRepository {
             let mut repo = repo.to_thread_local();
             let prev_write_reflog = repo.refs.write_reflog;
             repo.refs.write_reflog = WriteReflog::Disable;
-            repo.edit_reference(RefEdit {
-                change: gix_ref::transaction::Change::Update {
-                    log: Default::default(),
-                    expected: PreviousValue::Any,
-                    new: Target::Symbolic(sym_ref),
-                },
-                name: "HEAD".try_into().expect("valid"),
-                deref: false,
-            })?;
+            repo.edit_reference(RefEdit::update(
+                "HEAD".try_into().expect("valid"),
+                sym_ref,
+                PreviousValue::Any,
+                "",
+            ))?;
             repo.refs.write_reflog = prev_write_reflog;
         }
 

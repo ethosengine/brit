@@ -3,16 +3,25 @@ use std::io::Write;
 use crate::{data::output, exact_vec};
 
 /// The error returned by `next()` in the [`FromEntriesIter`] iterator.
-#[allow(missing_docs)]
+#[expect(missing_docs)]
 #[derive(Debug, thiserror::Error)]
 pub enum Error<E>
 where
     E: std::error::Error + 'static,
 {
     #[error(transparent)]
-    Io(#[from] gix_hash::io::Error),
+    Io(#[from] std::io::Error),
     #[error(transparent)]
     Input(E),
+}
+
+impl<E> From<gix_hash::io::Error> for Error<E>
+where
+    E: std::error::Error + 'static,
+{
+    fn from(err: gix_hash::io::Error) -> Self {
+        Error::Io(std::io::Error::other(err.into_error()))
+    }
 }
 
 /// An implementation of [`Iterator`] to write [encoded entries][output::Entry] to an inner implementation each time
@@ -51,10 +60,6 @@ where
     ///
     /// The input chunks are expected to be sorted already. You can use the [`InOrderIter`][gix_features::parallel::InOrderIter] to assure
     /// this happens on the fly holding entire chunks in memory as long as needed for them to be dispensed in order.
-    ///
-    /// # Panics
-    ///
-    /// Not all combinations of `object_hash` and `version` are supported currently triggering assertion errors.
     pub fn new(
         input: I,
         output: W,
@@ -62,10 +67,6 @@ where
         version: crate::data::Version,
         object_hash: gix_hash::Kind,
     ) -> Self {
-        assert!(
-            matches!(version, crate::data::Version::V2),
-            "currently only pack version 2 can be written",
-        );
         FromEntriesIter {
             input,
             output: gix_hash::io::Write::new(output, object_hash),
@@ -97,7 +98,7 @@ where
             let header_bytes = crate::data::header::encode(version, num_entries);
             self.output
                 .write_all(&header_bytes[..])
-                .map_err(gix_hash::io::Error::from)?;
+                .map_err(gix_hash::io::from_std_io)?;
             self.written += header_bytes.len() as u64;
         }
         match self.input.next() {
@@ -117,9 +118,9 @@ where
                     });
                     self.written += header
                         .write_to(entry.decompressed_size as u64, &mut self.output)
-                        .map_err(gix_hash::io::Error::from)? as u64;
+                        .map_err(gix_hash::io::from_std_io)? as u64;
                     self.written += std::io::copy(&mut &*entry.compressed_data, &mut self.output)
-                        .map_err(gix_hash::io::Error::from)?;
+                        .map_err(gix_hash::io::from_std_io)?;
                 }
             }
             None => {
@@ -128,13 +129,13 @@ where
                     .hash
                     .clone()
                     .try_finalize()
-                    .map_err(gix_hash::io::Error::from)?;
+                    .map_err(gix_hash::io::from_hasher)?;
                 self.output
                     .inner
                     .write_all(digest.as_slice())
-                    .map_err(gix_hash::io::Error::from)?;
+                    .map_err(gix_hash::io::from_std_io)?;
                 self.written += digest.as_slice().len() as u64;
-                self.output.inner.flush().map_err(gix_hash::io::Error::from)?;
+                self.output.inner.flush().map_err(gix_hash::io::from_std_io)?;
                 self.is_done = true;
                 self.trailer = Some(digest);
             }

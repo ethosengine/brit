@@ -1,12 +1,12 @@
 use bstr::{BStr, BString, ByteSlice};
 
+use crate::Protocol;
 #[cfg(any(feature = "blocking-client", feature = "async-client"))]
 use crate::client;
-use crate::Protocol;
 
 /// The error used in [`Capabilities::from_bytes()`] and [`Capabilities::from_lines()`].
 #[derive(Debug, thiserror::Error)]
-#[allow(missing_docs)]
+#[expect(missing_docs)]
 pub enum Error {
     #[error("Capabilities were missing entirely as there was no 0 byte")]
     MissingDelimitingNullByte,
@@ -173,9 +173,9 @@ pub mod blocking_recv {
     use bstr::ByteVec;
 
     use crate::{
-        client::{self, blocking_io::ReadlineBufRead, Capabilities},
-        packetline::blocking_io::StreamingPeekableIter,
         Protocol,
+        client::{self, Capabilities, blocking_io::ReadlineBufRead},
+        packetline::blocking_io::StreamingPeekableIter,
     };
 
     /// The information provided by the server upon first connection.
@@ -255,15 +255,14 @@ pub mod blocking_recv {
 
 ///
 #[cfg(feature = "async-client")]
-#[allow(missing_docs)]
 pub mod async_recv {
     use bstr::ByteVec;
     use futures_io::AsyncRead;
 
     use crate::{
-        client::{self, async_io::ReadlineBufRead, Capabilities},
-        packetline::async_io::StreamingPeekableIter,
         Protocol,
+        client::{self, Capabilities, async_io::ReadlineBufRead},
+        packetline::async_io::StreamingPeekableIter,
     };
 
     /// The information provided by the server upon first connection.

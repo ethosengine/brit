@@ -1,6 +1,5 @@
 use std::ops::Deref;
 
-use gix_features::zlib;
 use gix_hash::oid;
 
 use super::find::Error;
@@ -16,7 +15,7 @@ where
     pub(crate) fn try_header_inner<'b>(
         &'b self,
         mut id: &'b gix_hash::oid,
-        inflate: &mut zlib::Inflate,
+        inflate: &mut gix_zlib::Inflate,
         snapshot: &mut load_index::Snapshot,
         recursion: Option<DeltaBaseRecursion<'_>>,
     ) -> Result<Option<Header>, Error> {
@@ -27,14 +26,13 @@ where
                     id: r.original_id.to_owned(),
                 });
             }
-        } else if !self.ignore_replacements {
-            if let Ok(pos) = self
+        } else if !self.ignore_replacements
+            && let Ok(pos) = self
                 .store
                 .replacements
                 .binary_search_by(|(map_this, _)| map_this.as_ref().cmp(id))
-            {
-                id = self.store.replacements[pos].1.as_ref();
-            }
+        {
+            id = self.store.replacements[pos].1.as_ref();
         }
 
         'outer: loop {
@@ -56,7 +54,7 @@ where
                                 }
                                 None => {
                                     // The pack wasn't available anymore so we are supposed to try another round with a fresh index
-                                    match self.store.load_one_index(self.refresh, snapshot.marker)? {
+                                    match self.store.load_one_index(self.index_ctx(snapshot.marker))? {
                                         Some(new_snapshot) => {
                                             *snapshot = new_snapshot;
                                             self.clear_cache();
@@ -169,7 +167,7 @@ where
                 }
             }
 
-            match self.store.load_one_index(self.refresh, snapshot.marker)? {
+            match self.store.load_one_index(self.index_ctx(snapshot.marker))? {
                 Some(new_snapshot) => {
                     *snapshot = new_snapshot;
                     self.clear_cache();

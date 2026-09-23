@@ -10,12 +10,9 @@
 [advisories]
 ignore = [
     { id = "RUSTSEC-2025-0052", reason = "`async-std` - unmaintained without replacement - needs some time to replace, but async version isn't too important right now" },
-    # Transitive advisories surfaced on brit's first standalone CI run (via the
-    # http-client / rustls dependency chain). Ignored to unblock CI; a proper
-    # dependency bump is tracked as follow-up fork maintenance.
-    { id = "RUSTSEC-2026-0104", reason = "transitive (http-client/rustls chain); pending dependency bump" },
-    { id = "RUSTSEC-2026-0118", reason = "transitive (http-client/rustls chain); pending dependency bump" },
-    { id = "RUSTSEC-2026-0119", reason = "transitive (http-client/rustls chain); pending dependency bump" },
+    { id = "RUSTSEC-2024-0436", reason = "unmaintained, comes in with `curl`" },
+    { id = "RUSTSEC-2026-0118", reason = "`hickory-proto` comes through reqwest's optional hickory DNS feature; no safe 0.25.x upgrade is available yet" },
+    { id = "RUSTSEC-2026-0119", reason = "`hickory-proto` comes through reqwest's optional hickory DNS feature; reqwest has not upgraded to hickory 0.26.1 yet" }
 ]
 
 
@@ -31,6 +28,7 @@ allow = [
     "Apache-2.0",
     "BSD-3-Clause",
     "BSL-1.0",
+    "CC0-1.0",
     "CDLA-Permissive-2.0",
     "MIT",
     "MIT-0",
@@ -38,11 +36,7 @@ allow = [
     "OpenSSL",
     "Zlib",
     "MPL-2.0",
-    "Unicode-3.0",
-    # Elohim ecosystem crates (elohim-epr and friends, consumed from the Nexus
-    # `elohim` registry) are licensed under the Cryptographic Autonomy License,
-    # matching the Holochain substrate brit integrates with.
-    "CAL-1.0"
+    "Unicode-3.0"
 ]
 # The confidence threshold for detecting a license from license text.
 # The higher the value, the more closely the license text must be to the
@@ -60,11 +54,4 @@ deny = [
     # Start range due to https://github.com/serde-rs/serde/issues/2538
     # end range due to https://github.com/serde-rs/serde/pull/2590
     { name = "serde_derive", version = ">1.0.171, <1.0.185" },
-]
-
-[sources]
-allow-registry = [
-    "https://github.com/rust-lang/crates.io-index",
-    "sparse+https://nexus.ethosengine.com/repository/cargo-internal/",
-    "sparse+https://nexus.ethosengine.com/repository/cargo/",
 ]

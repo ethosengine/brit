@@ -22,10 +22,9 @@ impl Default for Context<Vec<u8>, Vec<u8>> {
 pub(crate) mod function {
     use std::{io, path::Path};
 
-    use anyhow::Result;
-    use gix::commitgraph::{verify::Outcome, Graph};
-
     use crate::OutputFormat;
+    use anyhow::Result;
+    use gix::commitgraph::{Graph, verify::Outcome};
 
     pub fn verify<W1, W2>(
         path: impl AsRef<Path>,
@@ -41,7 +40,7 @@ pub(crate) mod function {
     {
         let g = Graph::at(path.as_ref())?;
 
-        #[allow(clippy::unnecessary_wraps, unknown_lints)]
+        #[expect(clippy::unnecessary_wraps)]
         fn noop_processor(_commit: &gix::commitgraph::file::Commit<'_>) -> std::result::Result<(), std::fmt::Error> {
             Ok(())
         }

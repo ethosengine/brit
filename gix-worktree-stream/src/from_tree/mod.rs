@@ -1,9 +1,10 @@
 use std::io::Write;
 
-use gix_error::{message, ResultExt};
-use gix_object::{bstr::BStr, FindExt};
+use gix_object::{FindExt, bstr::BStr};
 
-use crate::{entry, entry::Error, protocol, AdditionalEntry, SharedErrorSlot, Stream};
+use gix_error::{ResultExt, message};
+
+use crate::{AdditionalEntry, SharedErrorSlot, Stream, entry, entry::Error, protocol};
 
 /// Use `objects` to traverse `tree` and fetch the contained blobs to return as [`Stream`], which makes them queryable
 /// on demand with support for streaming each entry.
@@ -38,8 +39,8 @@ pub fn from_tree<Find, E>(
     objects: Find,
     pipeline: gix_filter::Pipeline,
     attributes: impl FnMut(&BStr, gix_object::tree::EntryMode, &mut gix_attributes::search::Outcome) -> Result<(), E>
-        + Send
-        + 'static,
+    + Send
+    + 'static,
 ) -> Stream
 where
     Find: gix_object::Find + Clone + Send + 'static,
@@ -78,8 +79,8 @@ fn run<Find, E>(
     objects: Find,
     mut pipeline: gix_filter::Pipeline,
     mut attributes: impl FnMut(&BStr, gix_object::tree::EntryMode, &mut gix_attributes::search::Outcome) -> Result<(), E>
-        + Send
-        + 'static,
+    + Send
+    + 'static,
     out: &mut gix_features::io::pipe::Writer,
     err: SharedErrorSlot,
     additional_entries: std::sync::mpsc::Receiver<AdditionalEntry>,
@@ -118,6 +119,11 @@ where
         &mut dlg,
     )
     .or_raise(|| message("Could not traverse tree"))?;
+    dlg.pipeline
+        .driver_state_mut()
+        .shutdown(gix_filter::driver::shutdown::Mode::WaitForProcesses)
+        .or_raise(|| message("Could not shut down filter processes"))?;
+    drop(dlg);
 
     for entry in additional_entries {
         protocol::write_entry_header_and_path(
@@ -129,7 +135,6 @@ where
         )
         .or_raise(|| message("Could not write entry header"))?;
         // pipe writer always writes all in one go.
-        #[allow(clippy::unused_io_amount)]
         match entry.source {
             entry::Source::Memory(buf) => out.write(&buf).map(|_| ()),
             entry::Source::Null => out.write(&[]).map(|_| ()),

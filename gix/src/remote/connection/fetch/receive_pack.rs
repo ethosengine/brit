@@ -1,7 +1,7 @@
 use std::{ops::DerefMut, path::PathBuf, sync::atomic::AtomicBool};
 
 use gix_odb::store::RefreshMode;
-use gix_protocol::fetch::{negotiate, Arguments};
+use gix_protocol::fetch::{Arguments, negotiate};
 #[cfg(feature = "async-network-client")]
 use gix_transport::client::async_io::Transport;
 #[cfg(feature = "blocking-network-client")]
@@ -12,11 +12,10 @@ use crate::{
         cache::util::ApplyLeniency,
         tree::{Clone, Fetch},
     },
-    remote,
     remote::{
-        connection::fetch::config,
+        connection::fetch::{PrepareDetached, config},
         fetch,
-        fetch::{negotiate::Algorithm, outcome, refs, Error, Outcome, Prepare, RefLogMessage, Status},
+        fetch::{Error, Outcome, Prepare, RefLogMessage, Status, negotiate::Algorithm, outcome, refs},
     },
 };
 
@@ -54,8 +53,8 @@ where
     /// When **updating refs**, the `git-fetch` docs state the following:
     ///
     /// > Unlike when pushing with git-push, any updates outside of refs/{tags,heads}/* will be accepted without + in the refspec (or --force),
-    /// whether that’s swapping e.g. a tree object for a blob, or a commit for another commit that’s doesn’t have the previous commit
-    /// as an ancestor etc.
+    /// > whether that’s swapping e.g. a tree object for a blob, or a commit for another commit that’s doesn’t have the previous commit
+    /// > as an ancestor etc.
     ///
     /// We explicitly don't special case those refs and expect the caller to take control. Note that by its nature,
     /// force only applies to refs pointing to commits and if they don't, they will be updated either way in our
@@ -70,8 +69,28 @@ where
     ///
     /// - `gitoxide.userAgent` is read to obtain the application user agent for git servers and for HTTP servers as well.
     ///
-    #[gix_protocol::maybe_async::maybe_async]
-    pub async fn receive<P>(mut self, progress: P, should_interrupt: &AtomicBool) -> Result<Outcome, Error>
+    #[gix_protocol::bisync::bisync]
+    pub async fn receive<P>(self, progress: P, should_interrupt: &AtomicBool) -> Result<Outcome, Error>
+    where
+        P: gix_features::progress::NestedProgress,
+        P::SubProgress: 'static,
+    {
+        let Prepare { inner, repo } = self;
+        inner.receive(repo, progress, should_interrupt).await
+    }
+}
+
+impl<T> PrepareDetached<'_, T>
+where
+    T: Transport,
+{
+    #[gix_protocol::bisync::bisync]
+    pub(crate) async fn receive<P>(
+        mut self,
+        repo: &crate::Repository,
+        progress: P,
+        should_interrupt: &AtomicBool,
+    ) -> Result<Outcome, Error>
     where
         P: gix_features::progress::NestedProgress,
         P::SubProgress: 'static,
@@ -88,7 +107,6 @@ where
 
         let mut con = self.con.take().expect("receive() can only be called once");
         let mut handshake = con.handshake.take().expect("receive() can only be called once");
-        let repo = con.remote.repo;
 
         let expected_object_hash = repo.object_hash();
         if ref_map.object_hash != expected_object_hash {
@@ -102,12 +120,12 @@ where
             shallow_file: repo.shallow_file(),
             shallow: &self.shallow,
             tags: con.remote.fetch_tags,
-            reject_shallow_remote: repo
-                .config
-                .resolved
-                .boolean_filter("clone.rejectShallow", &mut repo.filter_config_section())
-                .map(|val| Clone::REJECT_SHALLOW.enrich_error(val))
-                .transpose()?
+            reject_shallow_remote: Clone::REJECT_SHALLOW
+                .enrich_error(
+                    repo.config
+                        .resolved
+                        .boolean_filter("clone.rejectShallow", &mut repo.filter_config_section()),
+                )?
                 .unwrap_or(false),
         };
         let context = gix_protocol::fetch::Context {
@@ -153,7 +171,8 @@ where
             thread_limit: config::index_threads(repo)?,
             index_version: config::pack_index_version(repo)?,
             iteration_mode: gix_pack::data::input::Mode::Verify,
-            object_hash: con.remote.repo.object_hash(),
+            alloc_limit_bytes: repo.config.alloc_limit_bytes,
+            compression: repo.config.loose_compression,
         };
         let mut write_pack_bundle = None;
 
@@ -171,6 +190,7 @@ where
                             let repo = repo.clone();
                             repo.objects
                         })),
+                        repo.object_hash(),
                         write_pack_options,
                     )?;
                     may_read_to_end = true;
@@ -203,19 +223,18 @@ where
                 .take()
                 .unwrap_or_else(|| RefLogMessage::Prefixed { action: "fetch".into() }),
             &self.ref_map.mappings,
-            con.remote.refspecs(remote::Direction::Fetch),
+            con.remote.fetch_refspecs(),
             &self.ref_map.extra_refspecs,
             con.remote.fetch_tags,
             self.dry_run,
             self.write_packed_refs,
         )?;
 
-        if let Some(bundle) = write_pack_bundle.as_mut() {
-            if !update_refs.edits.is_empty() || bundle.index.num_objects == 0 {
-                if let Some(path) = bundle.keep_path.take() {
-                    std::fs::remove_file(&path).map_err(|err| Error::RemovePackKeepFile { path, source: err })?;
-                }
-            }
+        if let Some(bundle) = write_pack_bundle.as_mut()
+            && (!update_refs.edits.is_empty() || bundle.index.num_objects == 0)
+            && let Some(path) = bundle.keep_path.take()
+        {
+            std::fs::remove_file(&path).map_err(|err| Error::RemovePackKeepFile { path, source: err })?;
         }
 
         let out = Outcome {

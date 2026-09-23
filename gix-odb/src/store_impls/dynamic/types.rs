@@ -1,8 +1,8 @@
 use std::{
     path::{Path, PathBuf},
     sync::{
-        atomic::{AtomicU16, AtomicU32, AtomicUsize, Ordering},
         Arc,
+        atomic::{AtomicU16, AtomicU32, AtomicUsize, Ordering},
     },
     time::SystemTime,
 };
@@ -311,7 +311,11 @@ impl IndexAndPacks {
         }
     }
 
-    pub(crate) fn load_index(&mut self, object_hash: gix_hash::Kind) -> std::io::Result<()> {
+    pub(crate) fn load_index(
+        &mut self,
+        object_hash: gix_hash::Kind,
+        alloc_limit_bytes: Option<usize>,
+    ) -> std::io::Result<()> {
         match self {
             IndexAndPacks::Index(bundle) => bundle.index.load_strict(|path| {
                 gix_pack::index::File::at(path, object_hash)
@@ -323,7 +327,7 @@ impl IndexAndPacks {
             }),
             IndexAndPacks::MultiIndex(bundle) => {
                 bundle.multi_index.load_strict(|path| {
-                    gix_pack::multi_index::File::at(path)
+                    gix_pack::multi_index::File::at(path, alloc_limit_bytes)
                         .map(Arc::new)
                         .map_err(|err| match err {
                             gix_pack::multi_index::init::Error::Io { source, .. } => source,
@@ -370,7 +374,7 @@ impl IndexAndPacks {
         multi_index: &gix_pack::multi_index::File,
     ) -> Vec<OnDiskFile<Arc<gix_pack::data::File>>> {
         let parent_dir = multi_index.path().parent().expect("parent present");
-        let data = multi_index
+        multi_index
             .index_names()
             .iter()
             .map(|idx| OnDiskFile {
@@ -378,8 +382,7 @@ impl IndexAndPacks {
                 state: OnDiskFileState::Unloaded,
                 mtime: SystemTime::UNIX_EPOCH,
             })
-            .collect();
-        data
+            .collect()
     }
 }
 

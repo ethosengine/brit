@@ -1,7 +1,7 @@
 use gix_attributes::State;
 use gix_pathspec::{MagicSignature, SearchMode};
 
-use crate::parse::{check_against_baseline, check_valid_inputs, NormalizedPattern};
+use crate::parse::{NormalizedPattern, check_against_baseline, check_valid_inputs};
 
 #[test]
 fn repeated_matcher_keywords() {
@@ -12,6 +12,41 @@ fn repeated_matcher_keywords() {
         (":(icase,icase)", pat_with_sig(MagicSignature::ICASE)),
         (":(attr,attr)", pat_with_attrs(vec![])),
         (":!^(exclude,exclude)", pat_with_sig(MagicSignature::EXCLUDE)),
+    ];
+
+    check_valid_inputs(input);
+}
+
+#[test]
+fn empty_keywords_are_ignored() {
+    let input = vec![
+        (
+            ":(top,)some/path",
+            pat_with_path_and_sig("some/path", MagicSignature::TOP),
+        ),
+        (
+            ":(,top)some/path",
+            pat_with_path_and_sig("some/path", MagicSignature::TOP),
+        ),
+        (
+            ":(top,,icase)some/path",
+            pat_with_path_and_sig("some/path", MagicSignature::TOP | MagicSignature::ICASE),
+        ),
+        (":(,)some/path", pat_with_path("some/path")),
+        (":(,,)some/path", pat_with_path("some/path")),
+        (
+            ":(icase,)some/path",
+            pat_with_path_and_sig("some/path", MagicSignature::ICASE),
+        ),
+        (
+            ":(attr:someAttr,)some/path",
+            pat(
+                "some/path",
+                MagicSignature::empty(),
+                SearchMode::ShellGlob,
+                vec![("someAttr", State::Set)],
+            ),
+        ),
     ];
 
     check_valid_inputs(input);
@@ -283,6 +318,10 @@ fn attributes_in_signature() {
         (
             ":(attr:someAttr anotherAttr)",
             pat_with_attrs(vec![("someAttr", State::Set), ("anotherAttr", State::Set)]),
+        ),
+        (
+            ":(attr:builtin_objectmode)",
+            pat_with_attrs(vec![("builtin_objectmode", State::Set)]),
         ),
     ];
 

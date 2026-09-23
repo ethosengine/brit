@@ -3,8 +3,11 @@ use std::mem::swap;
 use expect_test::expect;
 // use git::bstr::BStr;
 // use git_repository as git;
+
+use gix_imara_diff::BasicLineDiffPrinter;
+use gix_imara_diff::InternedInput;
 use gix_imara_diff::sources::words;
-use gix_imara_diff::{Algorithm, BasicLineDiffPrinter, Diff, InternedInput, UnifiedDiffConfig};
+use gix_imara_diff::{Algorithm, Diff, UnifiedDiffConfig};
 
 const ALL_ALGORITHMS: [Algorithm; 2] = [Algorithm::Histogram, Algorithm::Myers];
 
@@ -85,7 +88,9 @@ fn words_tokenizer() {
     let tokens = words(text).collect::<Vec<_>>();
     assert_eq!(
         tokens,
-        vec!["Hello", ",", "  ", "imara", "!", "\n", " ", "(", "foo", "-", "bar_baz", ")"]
+        vec![
+            "Hello", ",", "  ", "imara", "!", "\n", " ", "(", "foo", "-", "bar_baz", ")"
+        ]
     );
 }
 
@@ -270,11 +275,12 @@ i
 }
 
 mod latin_word_diff {
-    use std::{mem::swap, ops::Range};
-
-    use gix_imara_diff::{sources::words, Diff, InternedInput, Token};
-
     use crate::ALL_ALGORITHMS;
+
+    use gix_imara_diff::sources::words;
+    use gix_imara_diff::{Diff, InternedInput, Token};
+    use std::mem::swap;
+    use std::ops::Range;
 
     #[test]
     fn pure_insertion_or_removal() {
@@ -660,4 +666,82 @@ fn postprocess() {
         "#]]
         .assert_eq(&diff);
     }
+}
+
+/// Check for parity with Git at frequent-line detection. Even though the line being checked is
+/// frequent, it is not discarded because it is bounded by unmatched runs that are short, which
+/// is offset by Git counting the line twice. Counting it only once would cause it to be discarded.
+#[test]
+fn a_frequent_line_between_short_unmatched_runs_is_kept() {
+    fn file(tag: &str) -> String {
+        // The first and last lines differ so that stripping the common prefix and postfix leaves
+        // the blank lines in the region, which is what makes an empty line frequent here. The
+        // unmatched runs are bounded by non-blank shared lines, so nothing else inside them is.
+        let mut out = format!("first line, {tag}\n");
+        for i in 0..8 {
+            out.push_str(&format!("shared line {i}\n\n"));
+        }
+        out.push_str("anchor above\n");
+        for i in 0..3 {
+            out.push_str(&format!("only in {tag} {i}\n"));
+        }
+        out.push('\n');
+        for i in 3..6 {
+            out.push_str(&format!("only in {tag} {i}\n"));
+        }
+        out.push_str("anchor below\n");
+        for i in 8..16 {
+            out.push_str(&format!("shared line {i}\n\n"));
+        }
+        out.push_str(&format!("last line, {tag}\n"));
+        out
+    }
+
+    let (before, after) = (file("old"), file("new"));
+    let input = InternedInput::new(before.as_str(), after.as_str());
+    let diff = Diff::compute(Algorithm::Myers, &input);
+    let changed = diff.hunks().fold((0, 0), |(removed, inserted), hunk| {
+        (removed + hunk.before.len(), inserted + hunk.after.len())
+    });
+    assert_eq!(
+        changed,
+        (8, 8),
+        "the blank line between the two unmatched runs should still be matched, just like `git diff --no-index --numstat`"
+    );
+}
+
+#[test]
+fn a_repeated_line_below_gits_frequency_limit_is_kept() {
+    // These 19 lines give Git's `xdl_bogosqrt` a frequency limit of 8; rounding
+    // down gives 4 and incorrectly treats the four blank lines as frequent.
+    // Eight unmatched lines surround the last blank, so it would then be pruned.
+    // Different first and last lines prevent common-edge stripping.
+    let before = "old start
+a
+
+b
+
+c
+
+anchor above
+old 0
+old 1
+old 2
+old 3
+
+old 4
+old 5
+old 6
+old 7
+anchor below
+old end
+";
+    let after = before.replace("old", "new");
+    let input = InternedInput::new(before, after.as_str());
+    let diff = Diff::compute(Algorithm::Myers, &input);
+    assert_eq!(
+        (diff.count_removals(), diff.count_additions()),
+        (10, 10),
+        "the blank line between the unmatched runs should still be matched, just like `git diff --no-index --numstat`"
+    );
 }

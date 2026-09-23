@@ -1,14 +1,19 @@
 use std::{collections::VecDeque, io::Write};
 
-use gix_error::{message, ResultExt};
-use gix_filter::{driver::apply::MaybeDelayed, pipeline::convert::ToWorktreeOutcome};
-use gix_object::{
-    bstr::{BStr, BString, ByteSlice, ByteVec},
-    tree, FindExt,
+use gix_filter::{
+    driver::apply::MaybeDelayed,
+    pipeline::convert::{ToWorktreeOutcome, to_worktree},
 };
-use gix_traverse::tree::{visit::Action, Visit};
+use gix_object::{
+    FindExt,
+    bstr::{BStr, BString, ByteSlice, ByteVec},
+    tree,
+};
+use gix_traverse::tree::{Visit, visit::Action};
 
-use crate::{entry::Error, protocol, SharedErrorSlot};
+use gix_error::{ResultExt, message};
+
+use crate::{SharedErrorSlot, entry::Error, protocol};
 
 pub struct Delegate<'a, AttributesFn, Find>
 where
@@ -79,12 +84,14 @@ where
                 &mut |a, b| {
                     (self.fetch_attributes)(a, entry.mode, b).ok();
                 },
-                gix_filter::driver::apply::Delay::Forbid,
+                to_worktree::Options {
+                    can_delay: gix_filter::driver::apply::Delay::Forbid,
+                    unknown_encoding: to_worktree::UnknownEncoding::Fail,
+                },
             )
             .or_raise(|| message("Could not convert to worktree representation"))?;
 
         // Our pipe writer always writes the whole amount.
-        #[allow(clippy::unused_io_amount)]
         match converted {
             ToWorktreeOutcome::Unchanged(buf) | ToWorktreeOutcome::Buffer(buf) => {
                 protocol::write_entry_header_and_path(

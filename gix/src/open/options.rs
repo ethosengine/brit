@@ -1,7 +1,7 @@
 use std::path::PathBuf;
 
 use super::{Error, Options};
-use crate::{bstr::BString, config, open::Permissions, ThreadSafeRepository};
+use crate::{ThreadSafeRepository, bstr::BString, config, open::Permissions};
 
 impl Default for Options {
     fn default() -> Self {
@@ -16,6 +16,9 @@ impl Default for Options {
             open_path_as_is: false,
             api_config_overrides: Vec::new(),
             cli_config_overrides: Vec::new(),
+            git_installation_config_path: None,
+            system_config_path: None,
+            use_repository_local_environment: true,
             current_dir: None,
         }
     }
@@ -56,6 +59,28 @@ impl Options {
         self
     }
 
+    /// Use `path` as Git's installation configuration file instead of discovering it.
+    ///
+    /// Common locations are `$(prefix)/etc/gitconfig` on Unix,
+    /// `/Applications/Xcode.app/Contents/Developer/usr/share/git-core/gitconfig` for Apple Git,
+    /// and `C:/Program Files/Git/etc/gitconfig` for Git for Windows.
+    ///
+    /// The file is loaded only when [`permissions.config.git_binary`][Permissions::config] is enabled.
+    pub fn git_installation_config_path(mut self, path: impl Into<PathBuf>) -> Self {
+        self.git_installation_config_path = Some(path.into().into_boxed_path());
+        self
+    }
+
+    /// Use `path` as the system configuration file instead of discovering it.
+    ///
+    /// Common locations are `/etc/gitconfig` on Unix and `C:/ProgramData/Git/config` on Windows.
+    ///
+    /// The file is loaded only when [`permissions.config.system`][Permissions::config] is enabled.
+    pub fn system_config_path(mut self, path: impl Into<PathBuf>) -> Self {
+        self.system_config_path = Some(path.into().into_boxed_path());
+        self
+    }
+
     /// Set the amount of slots to use for the object database. It's a value that doesn't need changes on the client, typically,
     /// but should be controlled on the server.
     pub fn object_store_slots(mut self, slots: gix_odb::store::init::Slots) -> Self {
@@ -70,10 +95,11 @@ impl Options {
         self
     }
 
-    /// If `true`, default `false`, we will not modify the incoming path to open to assure it is a `.git` directory.
+    /// If `true`, default `false`, we will not modify the incoming path for this open call to assure it is a `.git` directory.
     ///
-    /// If `false`, we will try to open the input directory as is, even though it doesn't appear to be a `git` repository
+    /// If `true`, we will try to open the input directory as is, even though it doesn't appear to be a `git` repository
     /// due to the lack of `.git` suffix or because its basename is not `.git` as in `worktree/.git`.
+    /// This option is consumed while resolving the path and isn't retained in the opened repository's options.
     pub fn open_path_as_is(mut self, enable: bool) -> Self {
         self.open_path_as_is = enable;
         self
@@ -142,13 +168,24 @@ impl Options {
     }
 
     /// Open a repository at `path` with the options set so far.
-    #[allow(clippy::result_large_err)]
+    #[expect(
+        clippy::result_large_err,
+        reason = "will be removed once `gix-error` is used consistently"
+    )]
     pub fn open(self, path: impl Into<PathBuf>) -> Result<ThreadSafeRepository, Error> {
         ThreadSafeRepository::open_opts(path, self)
     }
 }
 
 impl Options {
+    /// Prevent repository-local environment overrides from being inherited when opening another repository.
+    ///
+    /// To be used when opening a nested repository, like worktrees or submodules.
+    pub(crate) fn without_repository_environment_overrides(mut self) -> Self {
+        self.use_repository_local_environment = false;
+        self
+    }
+
     pub(crate) fn current_dir_or_empty(&self) -> &std::path::Path {
         self.current_dir.as_deref().unwrap_or(std::path::Path::new(""))
     }
@@ -168,6 +205,9 @@ impl gix_sec::trust::DefaultForLevel for Options {
                 open_path_as_is: false,
                 api_config_overrides: Vec::new(),
                 cli_config_overrides: Vec::new(),
+                git_installation_config_path: None,
+                system_config_path: None,
+                use_repository_local_environment: true,
                 current_dir: None,
             },
             gix_sec::Trust::Reduced => Options {
@@ -181,6 +221,9 @@ impl gix_sec::trust::DefaultForLevel for Options {
                 lossy_config: false,
                 api_config_overrides: Vec::new(),
                 cli_config_overrides: Vec::new(),
+                git_installation_config_path: None,
+                system_config_path: None,
+                use_repository_local_environment: true,
                 current_dir: None,
             },
         }

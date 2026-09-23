@@ -3,19 +3,18 @@ pub struct Options {
 }
 
 pub(super) mod function {
+    use anyhow::Context;
+    use gix::{
+        ObjectId,
+        blame::BlamePathEntry,
+        bstr::{BString, ByteSlice},
+        objs::FindExt,
+    };
     use std::{
         collections::BTreeSet,
         ffi::OsStr,
         fmt::Display,
         path::{Path, PathBuf},
-    };
-
-    use anyhow::Context;
-    use gix::{
-        blame::BlamePathEntry,
-        bstr::{BString, ByteSlice},
-        objs::FindExt,
-        ObjectId,
     };
 
     use super::Options;
@@ -67,7 +66,7 @@ pub(super) mod function {
 
         let outcome = gix::blame::file(
             &repo.objects,
-            suspect,
+            gix::blame::Start::Commit(suspect),
             cache,
             &mut resource_cache,
             file.as_bstr(),
@@ -315,7 +314,7 @@ git commit -m {commit_id}
 
             children.sort_by_key(|(_, x)| x.parent_index);
 
-            let parents = children
+            children
                 .iter()
                 .filter_map(|(index, child)| {
                     let parent_blob_id = child.previous_blob_id;
@@ -330,9 +329,7 @@ git commit -m {commit_id}
                         })
                         .cloned()
                 })
-                .collect();
-
-            parents
+                .collect()
         }
     }
 }

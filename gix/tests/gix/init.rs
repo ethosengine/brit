@@ -2,7 +2,9 @@ mod bare {
     use gix_testtools::tempfile;
 
     #[test]
+    #[serial_test::serial]
     fn init_into_non_existing_directory_creates_it() -> crate::Result {
+        let _environment = gix_testtools::isolate_git_environment()?;
         let tmp = tempfile::tempdir()?;
         let git_dir = tmp.path().join("bare.git");
         let repo = gix::init_bare(&git_dir)?;
@@ -16,12 +18,14 @@ mod bare {
             git_dir,
             "the repository is placed into the given directory without added sub-directories"
         );
-        assert_eq!(gix::open(repo.git_dir())?, repo);
+        assert_eq!(gix::open_opts(repo.git_dir(), crate::restricted())?, repo);
         Ok(())
     }
 
     #[test]
+    #[serial_test::serial]
     fn init_into_empty_directory_uses_it_directly() -> crate::Result {
+        let _environment = gix_testtools::isolate_git_environment()?;
         let tmp = tempfile::tempdir()?;
         let repo = gix::init_bare(tmp.path())?;
         assert_eq!(repo.kind(), gix::repository::Kind::Common);
@@ -34,7 +38,7 @@ mod bare {
             tmp.path(),
             "the repository is placed into the directory itself"
         );
-        assert_eq!(gix::open(repo.git_dir())?, repo);
+        assert_eq!(gix::open_opts(repo.git_dir(), crate::restricted())?, repo);
         Ok(())
     }
 
@@ -43,10 +47,12 @@ mod bare {
         let tmp = tempfile::tempdir()?;
         std::fs::write(tmp.path().join("existing.txt"), b"I was here before you")?;
 
-        assert!(gix::init_bare(tmp.path())
-            .unwrap_err()
-            .to_string()
-            .starts_with("Refusing to initialize the non-empty directory as"));
+        assert!(
+            gix::init_bare(tmp.path())
+                .unwrap_err()
+                .to_string()
+                .starts_with("Refusing to initialize the non-empty directory as")
+        );
         Ok(())
     }
 }
@@ -68,10 +74,7 @@ mod non_bare {
             ]),
         )?
         .into();
-        assert_eq!(
-            repo.head()?.referent_name().expect("name").as_bstr(),
-            "refs/heads/special"
-        );
+        assert_eq!(repo.head()?.referent_name().expect("name"), "refs/heads/special");
         Ok(())
     }
 
@@ -89,10 +92,7 @@ mod non_bare {
             ]),
         )?
         .into();
-        assert_eq!(
-            repo.head()?.referent_name().expect("name").as_bstr(),
-            "refs/heads/special"
-        );
+        assert_eq!(repo.head()?.referent_name().expect("name"), "refs/heads/special");
         assert_eq!(
             repo.is_pristine(),
             Some(true),
@@ -146,7 +146,9 @@ mod non_bare {
     }
 
     #[test]
+    #[serial_test::serial]
     fn init_into_empty_directory_creates_a_dot_git_dir() -> crate::Result {
+        let _environment = gix_testtools::isolate_git_environment()?;
         let tmp = tempfile::tempdir()?;
         let repo = gix::init(tmp.path())?;
         assert_eq!(repo.kind(), gix::repository::Kind::Common);
@@ -156,13 +158,41 @@ mod non_bare {
             tmp.path().join(".git"),
             "there is a work tree by default"
         );
-        assert_eq!(gix::open(repo.git_dir())?, repo);
-        assert_eq!(gix::open(repo.workdir().as_ref().expect("non-bare repo"))?, repo);
+        assert_eq!(gix::open_opts(repo.git_dir(), crate::restricted())?, repo);
+        assert_eq!(
+            gix::open_opts(repo.workdir().as_ref().expect("non-bare repo"), crate::restricted())?,
+            repo
+        );
         Ok(())
     }
 
     #[test]
-    fn init_into_non_empty_directory_is_not_allowed_if_option_is_set_as_used_for_clone() -> crate::Result {
+    fn init_into_non_empty_directory_is_allowed_if_option_is_none_or_false() -> crate::Result {
+        for destination_must_be_empty in [None, Some(false)] {
+            let tmp = tempfile::tempdir()?;
+            std::fs::write(tmp.path().join("existing.txt"), b"I was here before you")?;
+            let repo: gix::Repository = gix::ThreadSafeRepository::init_opts(
+                tmp.path(),
+                gix::create::Kind::WithWorktree,
+                gix::create::Options {
+                    destination_must_be_empty,
+                    ..Default::default()
+                },
+                gix::open::Options::isolated(),
+            )?
+            .into();
+            assert_eq!(repo.workdir().expect("present"), tmp.path());
+            assert_eq!(
+                repo.git_dir(),
+                tmp.path().join(".git"),
+                "gitdir is inside of the workdir"
+            );
+        }
+        Ok(())
+    }
+
+    #[test]
+    fn init_into_non_empty_directory_is_not_allowed_if_option_is_true() -> crate::Result {
         let tmp = tempfile::tempdir()?;
         std::fs::write(tmp.path().join("existing.txt"), b"I was here before you")?;
 
@@ -170,29 +200,15 @@ mod non_bare {
             tmp.path(),
             gix::create::Kind::WithWorktree,
             gix::create::Options {
-                destination_must_be_empty: true,
+                destination_must_be_empty: Some(true),
                 ..Default::default()
             },
             gix::open::Options::isolated(),
         )
         .unwrap_err();
-        assert!(err
-            .to_string()
-            .starts_with("Refusing to initialize the non-empty directory as"));
-        Ok(())
-    }
-
-    #[test]
-    fn init_into_non_empty_directory_is_allowed_by_default() -> crate::Result {
-        let tmp = tempfile::tempdir()?;
-        std::fs::write(tmp.path().join("existing.txt"), b"I was here before you")?;
-
-        let repo = gix::init(tmp.path())?;
-        assert_eq!(repo.workdir().expect("present"), tmp.path());
-        assert_eq!(
-            repo.git_dir(),
-            tmp.path().join(".git"),
-            "gitdir is inside of the workdir"
+        assert!(
+            err.to_string()
+                .starts_with("Refusing to initialize the non-empty directory as")
         );
         Ok(())
     }

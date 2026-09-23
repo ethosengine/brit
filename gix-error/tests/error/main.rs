@@ -1,8 +1,9 @@
+mod classification;
 mod error;
 mod exn;
 
 mod utils {
-    use gix_error::{message, ErrorExt, Exn, Message};
+    use gix_error::{ErrorExt, Exn, Message, message};
 
     pub fn new_tree_error() -> Exn<Message> {
         let e1 = message("E1").raise();
@@ -30,26 +31,24 @@ mod utils {
     }
 
     pub fn fixup_paths(input: String) -> String {
-        if cfg!(windows) {
-            input.replace('\\', "/")
-        } else {
-            input
-        }
+        if cfg!(windows) { input.replace('\\', "/") } else { input }
     }
 
     #[derive(Debug)]
-    pub struct ErrorWithSource(pub &'static str, pub Message);
+    pub struct ErrorWithSource<E = Message>(pub &'static str, pub E);
 
-    impl std::fmt::Display for ErrorWithSource {
+    impl<E> std::fmt::Display for ErrorWithSource<E> {
         fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
             write!(f, "{}", self.0)
         }
     }
 
-    impl std::error::Error for ErrorWithSource {
+    impl<E: std::error::Error + 'static> std::error::Error for ErrorWithSource<E> {
         fn source(&self) -> Option<&(dyn std::error::Error + 'static)> {
             Some(&self.1)
         }
     }
 }
 pub use utils::*;
+
+mod test;

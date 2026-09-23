@@ -1,14 +1,11 @@
 #[cfg(any(feature = "prodash-render-line", feature = "prodash-render-tui"))]
 pub const DEFAULT_FRAME_RATE: f32 = 6.0;
 
-#[allow(unused)]
 pub type ProgressRange = std::ops::RangeInclusive<prodash::progress::key::Level>;
-#[allow(unused)]
 pub const STANDARD_RANGE: ProgressRange = 2..=2;
 
 /// If verbose is true, the env logger will be forcibly set to 'info' logging level. Otherwise env logging facilities
 /// will just be initialized.
-#[allow(unused)] // Squelch warning because it's used in porcelain as well and we can't know that at compile time
 pub fn init_env_logger() {
     if cfg!(feature = "small") {
         env_logger::Builder::from_env(env_logger::Env::default().default_filter_or("info"))
@@ -140,12 +137,12 @@ pub mod pretty {
         #[cfg_attr(not(feature = "prodash-render-tui"), allow(unused_variables))] progress_keep_open: bool,
         range: impl Into<Option<ProgressRange>>,
         run: impl FnOnce(
-                progress::DoOrDiscard<prodash::tree::Item>,
-                &mut dyn std::io::Write,
-                &mut dyn std::io::Write,
-            ) -> Result<T>
-            + Send
-            + 'static,
+            progress::DoOrDiscard<prodash::tree::Item>,
+            &mut dyn std::io::Write,
+            &mut dyn std::io::Write,
+        ) -> Result<T>
+        + Send
+        + 'static,
     ) -> Result<T> {
         crate::shared::init_env_logger();
 
@@ -248,7 +245,6 @@ pub mod pretty {
     }
 }
 
-#[allow(unused)]
 #[cfg(feature = "prodash-render-line")]
 pub fn setup_line_renderer_range(
     progress: &std::sync::Arc<prodash::tree::Root>,
@@ -273,7 +269,7 @@ pub fn setup_line_renderer_range(
 mod clap {
     use std::{ffi::OsStr, str::FromStr};
 
-    use clap::{builder, builder::PossibleValue, error::ErrorKind, Arg, Command, Error};
+    use clap::{Arg, Command, Error, builder, builder::PossibleValue, error::ErrorKind};
     use gitoxide_core as core;
     use gix::bstr::BString;
 
@@ -332,16 +328,22 @@ mod clap {
     });
 
     impl TypedValueParser for AsPathSpec {
-        type Value = gix::pathspec::Pattern;
+        type Value = BString;
 
         fn parse_ref(&self, cmd: &Command, arg: Option<&Arg>, value: &OsStr) -> Result<Self::Value, Error> {
             OsStringValueParser::new()
-                .try_map(|arg| {
-                    let arg: &std::path::Path = arg.as_os_str().as_ref();
-                    gix::pathspec::parse(gix::path::into_bstr(arg).as_ref(), *PATHSPEC_DEFAULTS)
+                .try_map(|arg| -> Result<_, gix::pathspec::parse::Error> {
+                    let arg = gix::path::into_bstr(std::path::PathBuf::from(arg));
+                    gix::pathspec::parse(arg.as_ref(), *PATHSPEC_DEFAULTS)?;
+                    Ok(arg.into_owned())
                 })
                 .parse_ref(cmd, arg, value)
         }
+    }
+
+    pub fn parse_pathspec_argument(value: BString) -> gix::pathspec::Pattern {
+        gix::pathspec::parse(value.as_ref(), *PATHSPEC_DEFAULTS)
+            .expect("AsPathSpec validated the pathspec before storing its argument")
     }
 
     #[derive(Clone)]
@@ -391,7 +393,7 @@ mod clap {
 
         fn parse_ref(&self, cmd: &Command, arg: Option<&Arg>, value: &OsStr) -> Result<Self::Value, Error> {
             StringValueParser::new()
-                .try_map(|arg| gix::date::parse(&arg, Some(std::time::SystemTime::now())).map_err(gix::Exn::into_inner))
+                .try_map(|arg| gix::date::parse(&arg, Some(gix::date::Zoned::now())).map_err(gix::Exn::into_inner))
                 .parse_ref(cmd, arg, value)
         }
     }
@@ -436,7 +438,7 @@ mod clap {
 }
 pub use self::clap::{
     AsBString, AsHashKind, AsOutputFormat, AsPartialRefName, AsPathSpec, AsRange, AsTime, CheckPathSpec,
-    ParseRenameFraction,
+    ParseRenameFraction, parse_pathspec_argument,
 };
 
 #[cfg(test)]

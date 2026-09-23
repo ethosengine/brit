@@ -1,12 +1,108 @@
 mod invoke {
     use bstr::ByteSlice;
     use gix_credentials::{
+        Program,
         helper::{Action, Cascade},
         protocol,
         protocol::Context,
-        Program,
     };
     use gix_sec::identity::Account;
+
+    #[test]
+    fn invalid_authentication_challenges_fail_without_helpers() {
+        for value in [
+            b"Basic realm=\"a\rb\"".as_slice(),
+            b"Basic\nusername=other",
+            b"Basic\0realm=example",
+        ] {
+            let err = invoke_cascade(
+                [],
+                Action::Get(Context {
+                    url: Some("https://example.com/repo".into()),
+                    www_authenticate: vec![value.into()],
+                    ..Default::default()
+                }),
+            )
+            .expect_err("malformed authentication challenges must fail without panicking");
+            assert!(
+                matches!(
+                    err,
+                    protocol::Error::InvokeHelper(gix_credentials::helper::Error::Io(_))
+                ),
+                "protocol validation must run even when no helper is configured and prompting is disabled"
+            );
+        }
+    }
+
+    #[test]
+    fn a_helper_closing_its_input_does_not_prevent_fallback_with_challenges() -> crate::Result {
+        let outcome = Cascade::default()
+            .extend([
+                Program::from_custom_definition("!f() { exit 1; }; f"),
+                Program::from_custom_definition(
+                    "!f() { cat >/dev/null; printf 'username=user\\npassword=pass\\n'; }; f",
+                ),
+            ])
+            .invoke(
+                Action::Get(Context {
+                    url: Some("https://example.com/repo".into()),
+                    // Exceed the pipe buffer so the first helper's early exit is observed while writing.
+                    www_authenticate: vec![vec![b'x'; 1024 * 1024].into()],
+                    ..Default::default()
+                }),
+                gix_prompt::Options {
+                    mode: gix_prompt::Mode::Disable,
+                    askpass: None,
+                },
+            )?
+            .expect("the fallback helper supplies a complete credential");
+        assert_eq!(
+            outcome.identity,
+            identity("user", "pass"),
+            "a helper that closes its input cannot prevent the next helper from supplying credentials"
+        );
+        Ok(())
+    }
+
+    #[test]
+    fn authentication_challenges_reach_all_helpers_until_credentials_are_complete() -> crate::Result {
+        let outcome = Cascade::default()
+            .extend([
+                Program::from_custom_definition("!f() { cat >/dev/null; echo username=user; }; f"),
+                Program::from_custom_definition(
+                    r#"!f() {
+                        while IFS= read -r line; do
+                            if test "$line" = 'wwwauth[]=Basic realm="example"'; then
+                                echo password=pass
+                            fi
+                        done
+                    }; f"#,
+                ),
+            ])
+            .invoke(
+                Action::Get(Context {
+                    url: Some("https://example.com/repo".into()),
+                    www_authenticate: vec![r#"Basic realm="example""#.into()],
+                    ..Default::default()
+                }),
+                gix_prompt::Options {
+                    mode: gix_prompt::Mode::Disable,
+                    askpass: None,
+                },
+            )?
+            .expect("both helpers contribute to the credential");
+        assert_eq!(
+            outcome.identity,
+            identity("user", "pass"),
+            "the second helper receives the challenge"
+        );
+        let context = Context::try_from(&outcome.next)?;
+        assert!(
+            context.www_authenticate.is_empty(),
+            "completed credentials do not carry authentication challenges into store or erase"
+        );
+        Ok(())
+    }
 
     #[test]
     fn credentials_are_filled_in_one_by_one_and_stop_when_complete() {
@@ -14,6 +110,41 @@ mod invoke {
             .unwrap()
             .expect("credentials");
         assert_eq!(actual.identity, identity("user", "pass"));
+    }
+
+    #[test]
+    fn disabled_protocol_protection_is_preserved_for_the_next_action() {
+        let actual = Cascade {
+            context_options: protocol::ContextOptions {
+                protect_protocol: false,
+            },
+            ..Default::default()
+        }
+        .extend(fixtures(["carriage-return"]))
+        .invoke(
+            action_get(),
+            gix_prompt::Options {
+                mode: gix_prompt::Mode::Disable,
+                askpass: None,
+            },
+        )
+        .expect("CR is allowed")
+        .expect("credentials are complete");
+
+        assert_eq!(actual.identity, identity("user\rname", "pass"));
+        let context: Context = (&actual.next).try_into().expect("the next action retains its options");
+        assert_eq!(context.username.as_deref(), Some("user\rname"));
+        let mut serialized = Vec::new();
+        actual
+            .next
+            .store()
+            .send(&mut serialized)
+            .expect("in-memory write succeeds");
+        assert!(
+            serialized
+                .windows(b"username=user\rname".len())
+                .any(|value| value == b"username=user\rname")
+        );
     }
 
     #[test]
@@ -166,7 +297,7 @@ mod invoke {
         }
     }
 
-    #[allow(clippy::result_large_err)]
+    #[expect(clippy::result_large_err)]
     fn invoke_cascade<'a>(names: impl IntoIterator<Item = &'a str>, action: Action) -> protocol::Result {
         Cascade::default().use_http_path(true).extend(fixtures(names)).invoke(
             action,

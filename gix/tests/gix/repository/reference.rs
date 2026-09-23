@@ -23,25 +23,17 @@ mod set_namespace {
             "no references are in the namespace yet"
         );
 
-        repo.tag_reference(
-            "new-tag",
-            gix::ObjectId::empty_tree(gix::hash::Kind::Sha1),
-            PreviousValue::MustNotExist,
-        )?;
+        repo.tag_reference("new-tag", repo.object_hash().empty_tree(), PreviousValue::MustNotExist)?;
 
         repo.reference(
             "refs/heads/new-branch",
-            gix::ObjectId::empty_tree(gix::hash::Kind::Sha1),
+            repo.object_hash().empty_tree(),
             PreviousValue::MustNotExist,
             "message",
         )?;
 
         assert_eq!(
-            repo.references()?
-                .all()?
-                .filter_map(Result::ok)
-                .map(|r| r.name().as_bstr().to_owned())
-                .collect::<Vec<_>>(),
+            repo.references()?.all()?.filter_map(Result::ok).collect::<Vec<_>>(),
             vec!["refs/heads/new-branch", "refs/tags/new-tag"],
             "namespaced references appear like normal ones"
         );
@@ -50,25 +42,24 @@ mod set_namespace {
             repo.references()?
                 .prefixed("refs/tags/")?
                 .filter_map(Result::ok)
-                .map(|r| r.name().as_bstr().to_owned())
                 .collect::<Vec<_>>(),
             vec!["refs/tags/new-tag"],
             "namespaced references appear like normal ones"
         );
         let fully_qualified_tag_name = "refs/tags/new-tag";
         assert_eq!(
-            repo.find_reference(fully_qualified_tag_name)?.name().as_bstr(),
+            repo.find_reference(fully_qualified_tag_name)?,
             fully_qualified_tag_name,
             "fully qualified (yet namespaced) names work"
         );
         assert_eq!(
-            repo.find_reference("new-tag")?.name().as_bstr(),
+            repo.find_reference("new-tag")?,
             fully_qualified_tag_name,
             "namespaces are transparent"
         );
 
         let previous_ns = repo.clear_namespace().expect("namespace set");
-        assert_eq!(previous_ns.as_bstr(), "refs/namespaces/foo/");
+        assert_eq!(previous_ns, "refs/namespaces/foo/");
         assert!(repo.clear_namespace().is_none(), "it doesn't invent namespaces");
 
         assert_eq!(
@@ -78,6 +69,22 @@ mod set_namespace {
         );
         Ok(())
     }
+}
+
+#[test]
+fn try_find_reference_with_existing_ref_as_path_prefix_returns_none() -> crate::Result {
+    let (repo, _tmp) = crate::repo_rw("make_references_repo.sh")?;
+    std::fs::create_dir_all(repo.git_dir().join("refs/heads"))?;
+    std::fs::write(
+        repo.git_dir().join("refs/heads/A"),
+        repo.head_id()?.to_hex().to_string(),
+    )?;
+
+    assert!(
+        repo.try_find_reference("refs/heads/A/new")?.is_none(),
+        "a ref whose path prefix is an existing ref does not exist"
+    );
+    Ok(())
 }
 
 mod iter_references {
@@ -91,11 +98,7 @@ mod iter_references {
     fn all() -> crate::Result {
         let repo = repo()?;
         assert_eq!(
-            repo.references()?
-                .all()?
-                .filter_map(Result::ok)
-                .map(|r| r.name().as_bstr().to_owned())
-                .collect::<Vec<_>>(),
+            repo.references()?.all()?.filter_map(Result::ok).collect::<Vec<_>>(),
             vec![
                 "refs/d1",
                 "refs/heads/d1",
@@ -195,7 +198,7 @@ mod iter_references {
             .filter_map(Result::ok)
             .max_by_key(|tag| tag.name().shorten().to_owned())
             .ok_or(std::io::Error::other("latest tag not found"))?;
-        assert_eq!(actual.name().as_bstr(), "refs/tags/t1");
+        assert_eq!(actual, "refs/tags/t1");
         Ok(())
     }
 }
@@ -219,7 +222,7 @@ mod head {
             }
             _ => panic!("unexpected head kind"),
         }
-        assert_eq!(head.referent_name().expect("born").as_bstr(), "refs/heads/main");
+        assert_eq!(head.referent_name().expect("born"), "refs/heads/main");
         assert!(!head.is_detached());
         Ok(())
     }

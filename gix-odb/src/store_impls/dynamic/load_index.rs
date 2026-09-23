@@ -4,13 +4,13 @@ use std::{
     ops::Deref,
     path::{Path, PathBuf},
     sync::{
-        atomic::{AtomicU16, Ordering},
         Arc,
+        atomic::{AtomicU16, Ordering},
     },
     time::SystemTime,
 };
 
-use crate::store::{handle, types, RefreshMode};
+use crate::store::{IndexCtx, RefreshMode, handle, types};
 
 pub(crate) struct Snapshot {
     /// Indices ready for object lookup or contains checks, ordered usually by modification data, recent ones first.
@@ -28,7 +28,7 @@ mod error {
 
     /// Returned by [`crate::at_opts()`]
     #[derive(thiserror::Error, Debug)]
-    #[allow(missing_docs)]
+    #[expect(missing_docs)]
     pub enum Error {
         #[error("The objects directory at '{0}' is not an accessible directory")]
         Inaccessible(PathBuf),
@@ -46,7 +46,9 @@ mod error {
             super::Generation::MAX
         )]
         GenerationOverflow,
-        #[error("Cannot numerically handle more than {limit} packs in a single multi-pack index, got {actual} in file {index_path:?}")]
+        #[error(
+            "Cannot numerically handle more than {limit} packs in a single multi-pack index, got {actual} in file {index_path:?}"
+        )]
         TooManyPacksInMultiIndex {
             actual: PackIndex,
             limit: PackIndex,
@@ -63,7 +65,11 @@ impl super::Store {
     /// Load all indices, refreshing from disk only if needed.
     pub(crate) fn load_all_indices(&self) -> Result<Snapshot, Error> {
         let mut snapshot = self.collect_snapshot();
-        while let Some(new_snapshot) = self.load_one_index(RefreshMode::Never, snapshot.marker)? {
+        while let Some(new_snapshot) = self.load_one_index(IndexCtx {
+            refresh_mode: RefreshMode::Never,
+            marker: snapshot.marker,
+            loose_compression: self.loose_compression,
+        })? {
             snapshot = new_snapshot;
         }
         Ok(snapshot)
@@ -73,12 +79,19 @@ impl super::Store {
     /// as here might be no change to pick up.
     pub(crate) fn load_one_index(
         &self,
-        refresh_mode: RefreshMode,
-        marker: types::SlotIndexMarker,
+        IndexCtx {
+            refresh_mode,
+            marker,
+            loose_compression,
+        }: IndexCtx,
     ) -> Result<Option<Snapshot>, Error> {
         let index = self.index.load();
         if !index.is_initialized() {
-            return self.consolidate_with_disk_state(true /* needs_init */, false /*load one new index*/);
+            return self.consolidate_with_disk_state(
+                true,  /* needs_init */
+                false, /* load one new index */
+                loose_compression,
+            );
         }
 
         if marker.generation != index.generation || marker.state_id != index.state_id() {
@@ -93,9 +106,11 @@ impl super::Store {
                 // …and if that didn't yield anything new consider refreshing our disk state.
                 match refresh_mode {
                     RefreshMode::Never => Ok(None),
-                    RefreshMode::AfterAllIndicesLoaded => {
-                        self.consolidate_with_disk_state(false /* needs init */, true /*load one new index*/)
-                    }
+                    RefreshMode::AfterAllIndicesLoaded => self.consolidate_with_disk_state(
+                        false, /* needs init */
+                        true,  /* load one new index */
+                        loose_compression,
+                    ),
                 }
             }
         }
@@ -129,7 +144,7 @@ impl super::Store {
                         if let Some(files) = bundle_mut.as_mut() {
                             // these are always expected to be set, unless somebody raced us. We handle this later by retrying.
                             let res = {
-                                let res = files.load_index(self.object_hash);
+                                let res = files.load_index(self.object_hash, self.alloc_limit_bytes);
                                 slot.files.store(bundle);
                                 index.loaded_indices.fetch_add(1, Ordering::SeqCst);
                                 res
@@ -187,6 +202,7 @@ impl super::Store {
         &self,
         needs_init: bool,
         load_new_index: bool,
+        loose_compression: gix_zlib::Compression,
     ) -> Result<Option<Snapshot>, Error> {
         let index = self.index.load();
         let previous_index_state = Arc::as_ptr(&index) as usize;
@@ -229,7 +245,16 @@ impl super::Store {
             Arc::new(
                 db_paths
                     .iter()
-                    .map(|path| crate::loose::Store::at(path, self.object_hash))
+                    .map(|path| {
+                        crate::loose::Store::at_opts(
+                            path,
+                            self.object_hash,
+                            crate::loose::Options {
+                                alloc_limit_bytes: self.alloc_limit_bytes,
+                                compression: loose_compression,
+                            },
+                        )
+                    })
                     .collect::<Vec<_>>(),
             )
         } else {
@@ -240,6 +265,7 @@ impl super::Store {
             db_paths,
             index.slot_indices.len().into(),
             self.use_multi_pack_index.then_some(self.object_hash),
+            self.alloc_limit_bytes,
         )?;
         let mut idx_by_index_path: BTreeMap<_, _> = index
             .slot_indices
@@ -444,6 +470,7 @@ impl super::Store {
         db_paths: Vec<PathBuf>,
         initial_capacity: Option<usize>,
         multi_pack_index_object_hash: Option<gix_hash::Kind>,
+        alloc_limit_bytes: Option<usize>,
     ) -> Result<Vec<(Either, SystemTime, u64)>, Error> {
         let mut indices_by_modification_time = Vec::with_capacity(initial_capacity.unwrap_or_default());
         for db_path in db_paths {
@@ -471,7 +498,7 @@ impl super::Store {
                         is_multipack_index(p)
                             .then(|| {
                                 // we always open the multi-pack here to be able to remove indices
-                                gix_pack::multi_index::File::at(p)
+                                gix_pack::multi_index::File::at(p, alloc_limit_bytes)
                                     .ok()
                                     .filter(|midx| midx.object_hash() == hash)
                                     .map(|midx| (midx, *a, *b))
@@ -525,7 +552,6 @@ impl super::Store {
     }
 
     /// returns `Ok(dest_slot_was_empty)` if the copy could happen because dest-slot was actually free or disposable.
-    #[allow(clippy::too_many_arguments)]
     fn try_set_index_slot(
         lock: &parking_lot::MutexGuard<'_, ()>,
         dest_slot: &MutableIndexAndPack,
@@ -626,7 +652,9 @@ impl super::Store {
                 bundle.index_is_loaded()
             }
             None => {
-                unreachable!("BUG: a slot can never be deleted if we have it recorded in the index WHILE changing said index. There shouldn't be a race")
+                unreachable!(
+                    "BUG: a slot can never be deleted if we have it recorded in the index WHILE changing said index. There shouldn't be a race"
+                )
             }
         }
     }
@@ -734,10 +762,9 @@ impl PartialEq<Self> for Either {
     }
 }
 
-#[allow(clippy::non_canonical_partial_ord_impl)]
 impl PartialOrd<Self> for Either {
     fn partial_cmp(&self, other: &Self) -> Option<std::cmp::Ordering> {
-        Some(self.path().cmp(other.path()))
+        Some(self.cmp(other))
     }
 }
 

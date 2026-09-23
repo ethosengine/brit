@@ -1,8 +1,10 @@
 use std::str::FromStr;
 
-use crate::{oid, Kind, ObjectId};
+use crate::{Kind, ObjectId, oid};
+
 #[cfg(feature = "sha1")]
 use crate::{SIZE_OF_SHA1_DIGEST, SIZE_OF_SHA1_HEX_DIGEST};
+
 #[cfg(feature = "sha256")]
 use crate::{SIZE_OF_SHA256_DIGEST, SIZE_OF_SHA256_HEX_DIGEST};
 

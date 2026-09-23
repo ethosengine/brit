@@ -10,7 +10,7 @@ mod error {
 
     /// The error returned by the [dynamic Store's][crate::Store] [`Write`](gix_object::Write) implementation.
     #[derive(Debug, thiserror::Error)]
-    #[allow(missing_docs)]
+    #[expect(missing_docs)]
     pub enum Error {
         #[error(transparent)]
         LoadIndex(#[from] store::load_index::Error),
@@ -35,11 +35,54 @@ where
             None => {
                 let new_snapshot = self
                     .store
-                    .load_one_index(self.refresh, snapshot.marker)
+                    .load_one_index(self.index_ctx(snapshot.marker))
                     .map_err(Box::new)?
                     .expect("there is always at least one ODB, and this code runs only once for initialization");
                 *snapshot = new_snapshot;
                 snapshot.loose_dbs[0].write_stream(kind, size, from)?
+            }
+        })
+    }
+
+    fn write_buf_with_known_id(
+        &self,
+        kind: Kind,
+        from: &[u8],
+        id: ObjectId,
+    ) -> Result<ObjectId, gix_object::write::Error> {
+        let mut snapshot = self.snapshot.borrow_mut();
+        Ok(match snapshot.loose_dbs.first() {
+            Some(ldb) => ldb.write_buf_with_known_id(kind, from, id)?,
+            None => {
+                let new_snapshot = self
+                    .store
+                    .load_one_index(self.index_ctx(snapshot.marker))
+                    .map_err(Box::new)?
+                    .expect("there is always at least one ODB, and this code runs only once for initialization");
+                *snapshot = new_snapshot;
+                snapshot.loose_dbs[0].write_buf_with_known_id(kind, from, id)?
+            }
+        })
+    }
+
+    fn write_stream_with_known_id(
+        &self,
+        kind: Kind,
+        size: u64,
+        from: &mut dyn Read,
+        id: ObjectId,
+    ) -> Result<ObjectId, gix_object::write::Error> {
+        let mut snapshot = self.snapshot.borrow_mut();
+        Ok(match snapshot.loose_dbs.first() {
+            Some(ldb) => ldb.write_stream_with_known_id(kind, size, from, id)?,
+            None => {
+                let new_snapshot = self
+                    .store
+                    .load_one_index(self.index_ctx(snapshot.marker))
+                    .map_err(Box::new)?
+                    .expect("there is always at least one ODB, and this code runs only once for initialization");
+                *snapshot = new_snapshot;
+                snapshot.loose_dbs[0].write_stream_with_known_id(kind, size, from, id)?
             }
         })
     }

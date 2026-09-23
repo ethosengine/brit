@@ -2,8 +2,11 @@
 //!
 //! Note that the algorithm implemented here is in many ways different from what `git` does.
 //!
-//! - it's less sophisticated and doesn't use any ranking of candidates. Instead, it picks the first possible match.
+//! - it's less sophisticated than `git`, but prefers a candidate whose file name matches the
+//!   destination's in identity matches, and uses that as a tie-breaker for similarity matches.
 //! - the set used for copy-detection is probably smaller by default.
+// TODO: Rewrite this based on what Git actually this, as long as there are test-cases for any 'complication'.
+//       In practice, even this simplified version seems to have worked pretty well.
 
 use std::ops::Range;
 
@@ -11,10 +14,10 @@ use bstr::{BStr, ByteSlice};
 use gix_object::tree::{EntryKind, EntryMode};
 
 use crate::{
-    blob::{platform::prepare_diff::Operation, DiffLineStats, ResourceKind},
-    rewrites::{tracker::visit::SourceKind, CopySource, Outcome, Tracker},
-    tree::visit::{Action, ChangeId, Relation},
     Rewrites,
+    blob::{DiffLineStats, ResourceKind, platform::prepare_diff::Operation},
+    rewrites::{CopySource, Outcome, Tracker, tracker::visit::SourceKind},
+    tree::visit::{Action, ChangeId, Relation},
 };
 
 /// The kind of a change.
@@ -72,7 +75,7 @@ impl<T: Change> Item<T> {
         use EntryKind::*;
         matches!(
             (other.kind(), self.change.entry_mode().kind()),
-            (Blob | BlobExecutable, Blob | BlobExecutable) | (Link, Link) | (Tree, Tree)
+            (Blob | BlobExecutable, Blob | BlobExecutable) | (Link, Link) | (Tree, Tree) | (Commit, Commit)
         )
     }
 
@@ -134,7 +137,7 @@ pub mod visit {
 pub mod emit {
     /// The error returned by [Tracker::emit()](super::Tracker::emit()).
     #[derive(Debug, thiserror::Error)]
-    #[allow(missing_docs)]
+    #[expect(missing_docs)]
     pub enum Error {
         #[error("Could not find blob for similarity checking")]
         FindExistingBlob(#[from] gix_object::find::existing_object::Error),
@@ -170,9 +173,6 @@ impl<T: Change> Tracker<T> {
         }
 
         let entry_kind = change.entry_mode().kind();
-        if entry_kind == EntryKind::Commit {
-            return Some(change);
-        }
         let relation = change
             .relation()
             .filter(|_| matches!(change_kind, ChangeKind::Addition | ChangeKind::Deletion));
@@ -230,15 +230,6 @@ impl<T: Change> Tracker<T> {
         }
         diff_cache.options.skip_internal_diff_if_external_is_configured = false;
 
-        // The point of this is to optimize for identity-based lookups, which should be easy to find
-        // by partitioning.
-        fn by_id_and_location<T: Change>(a: &Item<T>, b: &Item<T>) -> std::cmp::Ordering {
-            a.change
-                .id()
-                .cmp(b.change.id())
-                .then_with(|| a.path.start.cmp(&b.path.start).then(a.path.end.cmp(&b.path.end)))
-        }
-
         // Early abort: if there is no pair, don't do anything.
         let has_work = {
             let (mut num_deletions, mut num_additions, mut num_modifications) = (0, 0, 0);
@@ -269,7 +260,7 @@ impl<T: Change> Tracker<T> {
             ..Default::default()
         };
         if has_work {
-            self.items.sort_by(by_id_and_location);
+            self.sort_items_by_id_and_location();
 
             // Rewrites by directory (without local changes) can be pruned out quickly,
             // by finding only parents, their counterpart, and then all children can be matched by
@@ -317,7 +308,7 @@ impl<T: Change> Tracker<T> {
                             }
                         })
                         .map_err(|err| emit::Error::GetItemsForExhaustiveCopyDetection(Box::new(err)))?;
-                        self.items.sort_by(by_id_and_location);
+                        self.sort_items_by_id_and_location();
 
                         self.match_pairs_of_kind(
                             visit::SourceKind::Copy,
@@ -353,7 +344,26 @@ impl<T: Change> Tracker<T> {
 }
 
 impl<T: Change> Tracker<T> {
-    #[allow(clippy::too_many_arguments)]
+    /// Sort `items` primarily by their id, so identity-based lookups can be found quickly by
+    /// partitioning (see `find_match`). Same-id items are then ordered by location, change-kind,
+    /// relation and entry-mode - a total order over each item's observable identity - so that
+    /// matching is deterministic and independent of the order in which changes were pushed, which
+    /// the parallel dirwalk and index-traversal threads leave nondeterministic
+    /// (see <https://github.com/GitoxideLabs/gitoxide/issues/1832>). Any items that still compare
+    /// equal are identical in every observable field and are thus interchangeable for matching.
+    fn sort_items_by_id_and_location(&mut self) {
+        self.items.sort_by(|a, b| {
+            a.change
+                .id()
+                .cmp(b.change.id())
+                .then_with(|| a.location(&self.path_backing).cmp(b.location(&self.path_backing)))
+                .then_with(|| a.change.kind().cmp(&b.change.kind()))
+                .then_with(|| a.change.relation().cmp(&b.change.relation()))
+                .then_with(|| a.change.entry_mode().cmp(&b.change.entry_mode()))
+        });
+    }
+
+    #[expect(clippy::too_many_arguments)]
     fn match_pairs_of_kind(
         &mut self,
         kind: visit::SourceKind,
@@ -404,7 +414,7 @@ impl<T: Change> Tracker<T> {
         Ok(())
     }
 
-    #[allow(clippy::too_many_arguments)]
+    #[expect(clippy::too_many_arguments)]
     fn match_pairs(
         &mut self,
         cb: &mut impl FnMut(visit::Destination<'_, T>, Option<visit::Source<'_, T>>) -> Action,
@@ -422,11 +432,7 @@ impl<T: Change> Tracker<T> {
             // There can be trees with a lot of entries and pathological search behaviour, as they can be repeated
             // and then have a lot of similar hashes. This also means we have to search a lot of candidates which
             // can be too slow despite best attempts. So play it save and detect such cases 'roughly' by amount of items.
-            if self.items.len() < 100_000 {
-                0
-            } else {
-                limit
-            }
+            if self.items.len() < 100_000 { 0 } else { limit }
         };
 
         while let Some((mut dest_idx, dest)) = self.items[dest_ofs..].iter().enumerate().find_map(|(idx, item)| {
@@ -575,7 +581,9 @@ impl<T: Change> Tracker<T> {
                     return Ok(res);
                 }
             } else {
-                gix_trace::warn!("Children of parents with change-id {src_parent_id} and {dst_parent_id} were not equal, even though their parents claimed to be");
+                gix_trace::warn!(
+                    "Children of parents with change-id {src_parent_id} and {dst_parent_id} were not equal, even though their parents claimed to be"
+                );
                 break;
             }
         }
@@ -684,7 +692,7 @@ type SourceTuple<'a, T> = (usize, &'a Item<T>, Option<DiffLineStats>);
 /// any non-deletion otherwise.
 /// Note that we always try to find by identity first even if a percentage is given as it's much faster and may reduce the set
 /// of items to be searched.
-#[allow(clippy::too_many_arguments)]
+#[expect(clippy::too_many_arguments)]
 fn find_match<'a, T: Change>(
     items: &'a [Item<T>],
     item: &Item<T>,
@@ -698,7 +706,8 @@ fn find_match<'a, T: Change>(
     num_checks: &mut usize,
 ) -> Result<Option<SourceTuple<'a, T>>, emit::Error> {
     let (item_id, item_mode) = item.change.id_and_entry_mode();
-    if needs_exact_match(percentage) || item_mode.is_link() {
+    // Symlinks and gitlinks only participate in exact-ID matching; neither has meaningful blob similarity here.
+    if needs_exact_match(percentage) || item_mode.is_link() || item_mode.is_commit() {
         let first_idx = items.partition_point(|a| a.change.id() < item_id);
         let range = items.get(first_idx..).map(|slice| {
             let end = slice
@@ -714,18 +723,32 @@ fn find_match<'a, T: Change>(
         if range.is_empty() {
             return Ok(None);
         }
-        let res = items[range.clone()].iter().enumerate().find_map(|(mut src_idx, src)| {
+        let item_name = filename(item.location(path_backing));
+        let mut fallback = None;
+        for (mut src_idx, src) in items[range.clone()].iter().enumerate() {
             src_idx += range.start;
             *num_checks += 1;
-            (src_idx != item_idx && src.is_source_for_destination_of(kind, item_mode)).then_some((src_idx, src, None))
-        });
-        if let Some(src) = res {
-            return Ok(Some(src));
+            if src_idx == item_idx || !src.is_source_for_destination_of(kind, item_mode) {
+                continue;
+            }
+            // Like Git, prefer a source whose file name matches the destination's to keep
+            // renames of equally-named files together when contents are identical.
+            if filename(src.location(path_backing)) == item_name {
+                return Ok(Some((src_idx, src, None)));
+            }
+            fallback.get_or_insert((src_idx, src, None));
+        }
+        if fallback.is_some() {
+            return Ok(fallback);
         }
     } else if item_mode.is_blob() {
         let mut has_new = false;
         let percentage = percentage.expect("it's set to something below 1.0 and we assured this");
+        let item_name = filename(item.location(path_backing));
 
+        // Like Git's inexact rename matrix, choose by similarity score first and use basename as
+        // a tie-breaker only.
+        let mut best: Option<(usize, &Item<T>, DiffLineStats, bool)> = None;
         for (can_idx, src) in items
             .iter()
             .enumerate()
@@ -761,18 +784,26 @@ fn find_match<'a, T: Change>(
                     let new_data_len = prep.new.data.as_slice().unwrap_or_default().len();
                     let similarity = (old_data_len - removed_bytes) as f32 / old_data_len.max(new_data_len) as f32;
                     if similarity >= percentage {
-                        return Ok(Some((
-                            can_idx,
-                            src,
-                            DiffLineStats {
-                                removals: diff.count_removals(),
-                                insertions: diff.count_additions(),
-                                before: tokens.before.len(),
-                                after: tokens.after.len(),
-                                similarity,
-                            }
-                            .into(),
-                        )));
+                        let candidate_diff = DiffLineStats {
+                            removals: diff.count_removals(),
+                            insertions: diff.count_additions(),
+                            before: tokens.before.len(),
+                            after: tokens.after.len(),
+                            similarity,
+                        };
+                        let has_same_filename = filename(src.location(path_backing)) == item_name;
+                        let is_better =
+                            best.as_ref()
+                                .is_none_or(|(_, _, best_diff, best_has_same_filename)| {
+                                    match candidate_diff.similarity.total_cmp(&best_diff.similarity) {
+                                        std::cmp::Ordering::Greater => true,
+                                        std::cmp::Ordering::Equal => has_same_filename && !best_has_same_filename,
+                                        std::cmp::Ordering::Less => false,
+                                    }
+                                });
+                        if is_better {
+                            best = Some((can_idx, src, candidate_diff, has_same_filename));
+                        }
                     }
                 }
                 Operation::ExternalCommand { .. } => {
@@ -783,6 +814,7 @@ fn find_match<'a, T: Change>(
                 }
             }
         }
+        return Ok(best.map(|(candidate_idx, src, diff, _)| (candidate_idx, src, Some(diff))));
     }
     Ok(None)
 }
@@ -803,7 +835,7 @@ mod diff {
 #[cfg(test)]
 mod estimate_involved_items {
     use super::estimate_involved_items;
-    use crate::rewrites::tracker::{visit::SourceKind, ChangeKind};
+    use crate::rewrites::tracker::{ChangeKind, visit::SourceKind};
 
     #[test]
     fn renames_count_unemitted_as_sources_and_destinations() {

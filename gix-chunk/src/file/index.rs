@@ -1,8 +1,9 @@
 use std::ops::Range;
 
-use gix_error::{bstr::ByteSlice, message, Message};
-
-use crate::{file::Index, Id};
+use crate::Id;
+use crate::file::Index;
+use gix_error::bstr::ByteSlice;
+use gix_error::{Message, message};
 
 /// An entry of a chunk file index
 pub struct Entry {

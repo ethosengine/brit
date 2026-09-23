@@ -1,9 +1,9 @@
 use std::borrow::Cow;
 
 use bstr::{BStr, ByteSlice};
-use kstring::KStringRef;
+use gix_error::{ErrorExt, ResultExt, ValidationError};
 
-use crate::{name, AssignmentRef, Name, NameRef, StateRef};
+use crate::{AssignmentRef, Name, NameRef, StateRef, name};
 
 /// The kind of attribute that was parsed.
 #[derive(PartialEq, Eq, Debug, Hash, Ord, PartialOrd, Clone)]
@@ -15,23 +15,8 @@ pub enum Kind {
     Macro(Name),
 }
 
-mod error {
-    use bstr::BString;
-    /// The error returned by [`parse::Lines`][crate::parse::Lines].
-    #[derive(thiserror::Error, Debug)]
-    #[allow(missing_docs)]
-    pub enum Error {
-        #[error(r"Line {line_number} has a negative pattern, for literal characters use \!: {line}")]
-        PatternNegation { line_number: usize, line: BString },
-        #[error("Attribute in line {line_number} has non-ascii characters or starts with '-': {attribute}")]
-        AttributeName { line_number: usize, attribute: BString },
-        #[error("Macro in line {line_number} has non-ascii characters or starts with '-': {macro_name}")]
-        MacroName { line_number: usize, macro_name: BString },
-        #[error("Could not unquote attributes line")]
-        Unquote(#[from] gix_quote::ansi_c::undo::Error),
-    }
-}
-pub use error::Error;
+/// The error returned by [`parse::Lines`][crate::parse::Lines].
+pub type Error = gix_error::Exn<ValidationError>;
 
 /// An iterator over attribute assignments, parsed line by line.
 pub struct Lines<'a> {
@@ -41,13 +26,15 @@ pub struct Lines<'a> {
 
 /// An iterator over attribute assignments in a single line.
 pub struct Iter<'a> {
-    attrs: bstr::Fields<'a>,
+    attrs: std::slice::Split<'a, u8, fn(&u8) -> bool>,
 }
 
 impl<'a> Iter<'a> {
     /// Create a new instance to parse attribute assignments from `input`.
     pub fn new(input: &'a BStr) -> Self {
-        Iter { attrs: input.fields() }
+        Iter {
+            attrs: input.split(is_blank as fn(&u8) -> bool),
+        }
     }
 
     fn parse_attr(&self, attr: &'a [u8]) -> Result<AssignmentRef<'a>, name::Error> {
@@ -66,25 +53,18 @@ impl<'a> Iter<'a> {
 }
 
 fn check_attr(attr: &BStr) -> Result<NameRef<'_>, name::Error> {
-    fn attr_valid(attr: &BStr) -> bool {
-        if attr.first() == Some(&b'-') {
-            return false;
-        }
-
-        attr.bytes()
-            .all(|b| matches!(b, b'-' | b'.' | b'_' | b'A'..=b'Z' | b'a'..=b'z' | b'0'..=b'9'))
-    }
-
-    attr_valid(attr)
-        .then(|| NameRef(KStringRef::from_ref(attr.to_str().expect("no illformed utf8"))))
-        .ok_or_else(|| name::Error { attribute: attr.into() })
+    NameRef::try_from(attr).and_then(|name| {
+        (!name.as_str().starts_with("builtin_"))
+            .then_some(name)
+            .ok_or_else(|| name::Error::new_with_input("Attribute name uses the reserved 'builtin_' prefix", attr))
+    })
 }
 
 impl<'a> Iterator for Iter<'a> {
     type Item = Result<AssignmentRef<'a>, name::Error>;
 
     fn next(&mut self) -> Option<Self::Item> {
-        let attr = self.attrs.next().filter(|a| !a.is_empty())?;
+        let attr = self.attrs.find(|a| !a.is_empty())?;
         self.parse_attr(attr).into()
     }
 }
@@ -128,32 +108,30 @@ fn parse_line(line: &BStr, line_number: usize) -> Option<Result<(Kind, Iter<'_>,
         return None;
     }
 
-    let (line, attrs): (Cow<'_, _>, _) = if line.starts_with(b"\"") {
-        let (unquoted, consumed) = match gix_quote::ansi_c::undo(line) {
-            Ok(res) => res,
-            Err(err) => return Some(Err(err.into())),
-        };
-        (unquoted, &line[consumed..])
-    } else {
-        line.find_byteset(BLANKS)
+    let unquoted = line
+        .starts_with(b"\"")
+        .then(|| gix_quote::ansi_c::undo(line).ok())
+        .flatten();
+    let (line, attrs): (Cow<'_, _>, _) = match unquoted {
+        Some((unquoted, consumed)) => (unquoted, &line[consumed..]),
+        None => line
+            .find_byteset(BLANKS)
             .map(|pos| (line[..pos].as_bstr().into(), line[pos..].as_bstr()))
-            .unwrap_or((line.into(), [].as_bstr()))
+            .unwrap_or((line.into(), [].as_bstr())),
     };
 
-    let kind_res = match line.strip_prefix(b"[attr]") {
+    let kind_res = match line.strip_prefix(b"[attr]").filter(|name| !name.is_empty()) {
         Some(macro_name) => check_attr(macro_name.into())
-            .map_err(|err| Error::MacroName {
-                line_number,
-                macro_name: err.attribute,
-            })
+            .or_raise(|| ValidationError::new(format!("Macro in line {line_number} has an invalid name")))
             .map(|name| Kind::Macro(name.to_owned())),
         None => {
             let pattern = gix_glob::Pattern::from_bytes(line.as_ref())?;
             if pattern.mode.contains(gix_glob::pattern::Mode::NEGATIVE) {
-                Err(Error::PatternNegation {
-                    line: line.into_owned(),
-                    line_number,
-                })
+                Err(ValidationError::new_with_input(
+                    format!(r"Line {line_number} has a negative pattern, for literal characters use \!"),
+                    line.as_ref(),
+                )
+                .raise())
             } else {
                 Ok(Kind::Pattern(pattern))
             }
@@ -164,6 +142,10 @@ fn parse_line(line: &BStr, line_number: usize) -> Option<Result<(Kind, Iter<'_>,
         Err(err) => return Some(Err(err)),
     };
     Ok((kind, Iter::new(attrs), line_number)).into()
+}
+
+fn is_blank(b: &u8) -> bool {
+    BLANKS.contains(b)
 }
 
 const BLANKS: &[u8] = b" \t\r";

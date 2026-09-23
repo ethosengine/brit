@@ -54,7 +54,7 @@
 //! assert_eq!(gix_fs::current_dir(capabilities.precompose_unicode)?, std::env::current_dir()?);
 //! # Ok(()) }
 //! ```
-#![deny(rust_2018_idioms, missing_docs)]
+#![deny(missing_docs)]
 #![forbid(unsafe_code)]
 
 use std::path::PathBuf;
@@ -116,6 +116,49 @@ pub fn current_dir(precompose_unicode: bool) -> std::io::Result<PathBuf> {
     })
 }
 
+/// Adjust `permissions` according to Git's shared-repository permission policy.
+///
+/// `permissions` should normally be the permissions of a newly created file, read back after the operating system has
+/// applied the process umask. Apply this function before the file is made visible at its final path. Existing permission
+/// bits not governed by the policy are preserved.
+///
+/// `shared_repository_permissions` uses Git's compact signed encoding and usually comes from parsing the effective
+/// `core.sharedRepository` configuration value:
+///
+/// - `0` leaves the permissions produced by the umask unchanged. An absent key, `umask`, boolean `false`, and legacy
+///   value `0` produce this.
+/// - A positive mode is ORed into the post-umask mode. A bare key, `group`, boolean `true`, and legacy value `1` usually
+///   produce `0o660`; `all`, `world`, `everybody`, and legacy value `2` usually produce `0o664`.
+/// - A negative mode replaces the low nine Unix permission bits with its absolute value. Git-compatible parsers use this
+///   for explicit octal configuration such as `0640`, represented here as `-0o640`, so it can remove bits allowed by the
+///   umask instead of merely adding bits.
+///
+/// Callers must pass the parsed encoding, not an explicit octal configuration value directly. On non-Unix platforms the
+/// shared-repository mode has no portable representation in [`std::fs::Permissions`], so this function returns
+/// `permissions` unchanged.
+pub fn adjust_shared_repository_permissions(
+    permissions: std::fs::Permissions,
+    shared_repository_permissions: i32,
+) -> std::fs::Permissions {
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::PermissionsExt;
+        let mut permissions = permissions;
+        let mode = permissions.mode();
+        permissions.set_mode(if shared_repository_permissions < 0 {
+            (mode & !0o777) | (-shared_repository_permissions) as u32
+        } else {
+            mode | shared_repository_permissions as u32
+        });
+        permissions
+    }
+    #[cfg(not(unix))]
+    {
+        let _ = shared_repository_permissions;
+        permissions
+    }
+}
+
 /// A stack of path components with the delegation of side-effects as the currently set path changes, component by component.
 #[derive(Clone)]
 pub struct Stack {
@@ -127,7 +170,7 @@ pub struct Stack {
     current_relative: PathBuf,
     /// The amount of path components of 'current' beyond the roots components.
     valid_components: usize,
-    /// If set, we assume the `current` element is a directory to affect calls to `(push|pop)_directory()`.
+    /// Whether `current` has active delegate directory state, rather than being a terminal entry.
     current_is_directory: bool,
 }
 
@@ -142,11 +185,9 @@ pub fn is_executable(metadata: &std::fs::Metadata) -> bool {
 pub mod io_err {
     use std::io::ErrorKind;
 
-    /// Return `true` if `err` indicates that the entry doesn't exist on disk. `raw` is used as well
-    /// for additional checks while the variants are outside the MSRV.
-    pub fn is_not_found(err: ErrorKind, raw_err: Option<i32>) -> bool {
-        // TODO: use variant once MSRV is 1.83
-        err == ErrorKind::NotFound || raw_err == Some(20)
+    /// Return `true` if `err` indicates that the entry doesn't exist on disk.
+    pub fn is_not_found(err: ErrorKind, _raw_err: Option<i32>) -> bool {
+        err == ErrorKind::NotFound || err == ErrorKind::NotADirectory
     }
 }
 

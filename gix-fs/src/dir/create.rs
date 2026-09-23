@@ -31,7 +31,7 @@ mod error {
     use crate::dir::create::Retries;
 
     /// The error returned by [all()][super::all()].
-    #[allow(missing_docs)]
+    #[expect(missing_docs)]
     #[derive(Debug)]
     pub enum Error<'a> {
         /// A failure we will probably recover from by trying again.
@@ -152,7 +152,10 @@ impl<'a> Iterator for Iter<'a> {
                         self.state = State::CurrentlyCreatingDirectories;
                         Some(Ok(dir))
                     }
-                    AlreadyExists => self.permanent_failure(dir, err), // is non-directory
+                    // A component exists but is not a directory. Report that precisely instead
+                    // of the raw `AlreadyExists` so callers (e.g. locking) can tell a path
+                    // collision apart from a directory that already exists.
+                    AlreadyExists => self.permanent_failure(dir, std::io::Error::new(NotADirectory, err)),
                     NotFound => {
                         self.retries.on_create_directory_failure -= 1;
                         if let State::CurrentlyCreatingDirectories = self.state {

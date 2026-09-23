@@ -1,23 +1,23 @@
 use std::{
-    io::{stdin, BufReader},
+    io::{BufReader, stdin},
     path::PathBuf,
     sync::{
-        atomic::{AtomicBool, Ordering},
         Arc,
+        atomic::{AtomicBool, Ordering},
     },
 };
 
-use anyhow::{anyhow, Context, Result};
+use anyhow::{Context, Result, anyhow};
 use clap::{CommandFactory, Parser};
 use gitoxide_core as core;
 use gitoxide_core::{pack::verify, repository::PathsOrPatterns};
-use gix::bstr::{io::BufReadExt, BString};
+use gix::bstr::{BString, io::BufReadExt};
 
 use crate::{
     plumbing::{
         options::{
-            attributes, branch, commit, commitgraph, config, credential, exclude, free, fsck, index, mailmap, merge,
-            odb, revision, tag, tree, Args, Subcommands,
+            Args, Subcommands, attributes, branch, commit, commitgraph, config, credential, exclude, free, fsck, index,
+            mailmap, merge, odb, revision, tag, tree,
         },
         show_progress,
     },
@@ -122,7 +122,7 @@ pub fn main() -> Result<()> {
                 let mut config_mut = repo.config_snapshot_mut();
                 // Enable precious file parsing unless the user made a choice.
                 if config_mut
-                    .boolean(gix::config::tree::Gitoxide::PARSE_PRECIOUS)
+                    .boolean(gix::config::tree::Gitoxide::PARSE_PRECIOUS)?
                     .is_none()
                 {
                     config_mut.set_raw_value(gix::config::tree::Gitoxide::PARSE_PRECIOUS, "true")?;
@@ -147,7 +147,7 @@ pub fn main() -> Result<()> {
     let auto_verbose = !progress && !args.no_verbose;
 
     let should_interrupt = Arc::new(AtomicBool::new(false));
-    #[allow(unsafe_code)]
+    #[expect(unsafe_code)]
     unsafe {
         // SAFETY: The closure doesn't use mutexes or memory allocation, so it should be safe to call from a signal handler.
         gix::interrupt::init_handler(1, {
@@ -157,6 +157,8 @@ pub fn main() -> Result<()> {
     }
 
     match cmd {
+        #[cfg(feature = "tix")]
+        Subcommands::Tix(command) => command.run(repository(Mode::Lenient)?.into_sync()),
         Subcommands::Env => prepare_and_run(
             "env",
             trace,
@@ -166,6 +168,7 @@ pub fn main() -> Result<()> {
             None,
             move |_progress, out, _err| core::env(out, format),
         ),
+        Subcommands::Editor { paths } => core::repository::editor(repository(Mode::Lenient)?, paths),
         Subcommands::Merge(merge::Platform { cmd }) => match cmd {
             merge::SubCommands::File {
                 resolve_with,
@@ -199,6 +202,8 @@ pub fn main() -> Result<()> {
                         tree_favor,
                         debug,
                     },
+                message,
+                update_head,
                 ours,
                 base,
                 theirs,
@@ -223,6 +228,8 @@ pub fn main() -> Result<()> {
                             in_memory,
                             tree_favor: tree_favor.map(Into::into),
                             debug,
+                            message,
+                            update_head,
                         },
                     )
                 },
@@ -257,6 +264,8 @@ pub fn main() -> Result<()> {
                             tree_favor: tree_favor.map(Into::into),
                             in_memory,
                             debug,
+                            message: None,
+                            update_head: false,
                         },
                     )
                 },
@@ -384,6 +393,7 @@ pub fn main() -> Result<()> {
         ),
         Subcommands::Status(crate::plumbing::options::status::Platform {
             ignored,
+            untracked,
             format: status_format,
             statistics,
             submodules,
@@ -422,6 +432,13 @@ pub fn main() -> Result<()> {
                                 core::repository::status::Ignored::Collapsed
                             }
                         }),
+                        untracked: untracked.map(|mode| match mode.unwrap_or_default() {
+                            crate::plumbing::options::status::Untracked::No => gix::status::UntrackedFiles::None,
+                            crate::plumbing::options::status::Untracked::Normal => {
+                                gix::status::UntrackedFiles::Collapsed
+                            }
+                            crate::plumbing::options::status::Untracked::All => gix::status::UntrackedFiles::Files,
+                        }),
                         output_format: format,
                         statistics,
                         thread_limit: thread_limit.or(cfg!(target_os = "macos").then_some(3)), // TODO: make this a configurable when in `gix`, this seems to be optimal on MacOS, linux scales though! MacOS also scales if reading a lot of files for refresh index
@@ -433,6 +450,38 @@ pub fn main() -> Result<()> {
                             Submodules::Modifications => core::repository::status::Submodules::Modifications,
                             Submodules::None => core::repository::status::Submodules::None,
                         }),
+                    },
+                )
+            },
+        ),
+        Subcommands::Dirwalk(crate::plumbing::options::dirwalk::Platform {
+            statistics,
+            untracked,
+            pathspec,
+        }) => prepare_and_run(
+            "dirwalk",
+            trace,
+            auto_verbose,
+            progress,
+            progress_keep_open,
+            None,
+            move |_progress, out, err| {
+                core::repository::dirwalk::walk(
+                    repository(Mode::Lenient)?,
+                    pathspec,
+                    out,
+                    err,
+                    core::repository::dirwalk::Options {
+                        output_format: format,
+                        statistics,
+                        untracked: match untracked {
+                            crate::plumbing::options::dirwalk::Untracked::Collapsed => {
+                                core::repository::dirwalk::Untracked::Collapsed
+                            }
+                            crate::plumbing::options::dirwalk::Untracked::Matching => {
+                                core::repository::dirwalk::Untracked::Matching
+                            }
+                        },
                     },
                 )
             },
@@ -490,7 +539,9 @@ pub fn main() -> Result<()> {
                         add_paths: add_path,
                         prefix,
                         files: add_virtual_file
-                            .chunks_exact(2)
+                            .as_chunks::<2>()
+                            .0
+                            .iter()
                             .map(|c| (c[0].clone(), c[1].clone()))
                             .collect(),
                         format: format.map(|f| match f {
@@ -602,6 +653,7 @@ pub fn main() -> Result<()> {
             bare,
             no_tags,
             ref_name,
+            revision,
             remote,
             shallow,
             directory,
@@ -612,6 +664,7 @@ pub fn main() -> Result<()> {
                 handshake_info,
                 no_tags,
                 ref_name,
+                revision,
                 shallow: shallow.into(),
             };
             prepare_and_run(
@@ -673,6 +726,17 @@ pub fn main() -> Result<()> {
         }) => {
             use crate::plumbing::options::remote;
             match cmd {
+                remote::Subcommands::Url { all, push } => core::repository::remote::url(
+                    repository(Mode::LenientWithGitInstallConfig)?,
+                    name.as_deref(),
+                    if push {
+                        gix::remote::Direction::Push
+                    } else {
+                        gix::remote::Direction::Fetch
+                    },
+                    all,
+                    std::io::stdout(),
+                ),
                 remote::Subcommands::Refs | remote::Subcommands::RefMap { .. } => {
                     let kind = match cmd {
                         remote::Subcommands::Refs => core::repository::remote::refs::Kind::Remote,
@@ -683,6 +747,7 @@ pub fn main() -> Result<()> {
                             ref_specs: ref_spec,
                             show_unmapped_remote_refs,
                         },
+                        remote::Subcommands::Url { .. } => unreachable!("handled above"),
                     };
                     let context = core::repository::remote::refs::Options {
                         name_or_url: name,
@@ -730,24 +795,63 @@ pub fn main() -> Result<()> {
                 }
             }
         }
-        Subcommands::Config(config::Platform { filter }) => prepare_and_run(
-            "config-list",
-            trace,
-            verbose,
-            progress,
-            progress_keep_open,
-            None,
-            move |_progress, out, _err| {
-                core::repository::config::list(
-                    repository(Mode::LenientWithGitInstallConfig)?,
-                    filter,
-                    config,
-                    format,
-                    out,
-                )
-            },
-        )
-        .map(|_| ()),
+        Subcommands::Config(config::Platform { filter, cmd }) => match cmd {
+            Some(config::Subcommands::Show) | None => prepare_and_run(
+                "config-show",
+                trace,
+                verbose,
+                progress,
+                progress_keep_open,
+                None,
+                move |_progress, out, _err| {
+                    core::repository::config::show(
+                        repository(Mode::LenientWithGitInstallConfig)?,
+                        filter,
+                        config,
+                        format,
+                        out,
+                    )
+                },
+            )
+            .map(|_| ()),
+            Some(config::Subcommands::List) => prepare_and_run(
+                "config-list-files",
+                trace,
+                verbose,
+                progress,
+                progress_keep_open,
+                None,
+                move |_progress, out, _err| {
+                    core::repository::config::list_files(
+                        repository(Mode::LenientWithGitInstallConfig)?,
+                        config,
+                        format,
+                        out,
+                    )
+                },
+            )
+            .map(|_| ()),
+            Some(config::Subcommands::Fmt {
+                in_place,
+                in_file,
+                out_file,
+            }) => prepare_and_run(
+                "config-fmt",
+                trace,
+                verbose,
+                progress,
+                progress_keep_open,
+                None,
+                move |_progress, out, _err| {
+                    let repo = in_file
+                        .is_none()
+                        .then(|| repository(Mode::LenientWithGitInstallConfig))
+                        .transpose()?;
+                    core::repository::config::fmt(repo, in_file, out_file, in_place, out)
+                },
+            )
+            .map(|_| ()),
+        },
         Subcommands::Free(subcommands) => match subcommands {
             free::Subcommands::Discover => prepare_and_run(
                 "discover",
@@ -757,6 +861,15 @@ pub fn main() -> Result<()> {
                 progress_keep_open,
                 None,
                 move |_progress, out, _err| core::discover(&repository_path, out),
+            ),
+            free::Subcommands::Trust { paths } => prepare_and_run(
+                "trust",
+                trace,
+                verbose,
+                progress,
+                progress_keep_open,
+                None,
+                move |_progress, out, _err| core::trust(&paths, out),
             ),
             free::Subcommands::CommitGraph(cmd) => match cmd {
                 free::commitgraph::Subcommands::Verify { path, statistics } => prepare_and_run(
@@ -872,6 +985,36 @@ pub fn main() -> Result<()> {
                     progress_keep_open,
                     core::mailmap::PROGRESS_RANGE,
                     move |_progress, out, _err| core::mailmap::verify(path, format, out),
+                ),
+            },
+            #[cfg(feature = "gitoxide-core-blocking-client")]
+            free::Subcommands::Remote(subcommands) => match subcommands {
+                free::remote::Subcommands::Refs {
+                    protocol,
+                    refs_directory,
+                    write_reflog,
+                    url,
+                } => prepare_and_run(
+                    "remote-refs",
+                    trace,
+                    verbose,
+                    progress,
+                    progress_keep_open,
+                    core::remote::PROGRESS_RANGE,
+                    move |progress, out, _err| {
+                        core::remote::refs(
+                            protocol,
+                            &url,
+                            refs_directory,
+                            progress,
+                            core::remote::Context {
+                                format,
+                                out,
+                                object_hash,
+                                write_reflog,
+                            },
+                        )
+                    },
                 ),
             },
             free::Subcommands::Pack(subcommands) => match subcommands {
@@ -1517,7 +1660,7 @@ pub fn main() -> Result<()> {
             exclude::Subcommands::Query {
                 statistics,
                 patterns,
-                pathspec,
+                paths,
                 show_ignore_patterns,
             } => prepare_and_run(
                 "exclude-query",
@@ -1528,16 +1671,16 @@ pub fn main() -> Result<()> {
                 None,
                 move |_progress, out, err| {
                     let repo = repository(Mode::Strict)?;
-                    let pathspecs = if pathspec.is_empty() {
+                    let paths = if paths.is_empty() {
                         PathsOrPatterns::Paths(Box::new(
                             stdin_or_bail()?.byte_lines().filter_map(Result::ok).map(BString::from),
                         ))
                     } else {
-                        PathsOrPatterns::Patterns(pathspec)
+                        PathsOrPatterns::Patterns(paths)
                     };
                     core::repository::exclude::query(
                         repo,
-                        pathspecs,
+                        paths,
                         out,
                         err,
                         core::repository::exclude::query::Options {
@@ -1689,5 +1832,56 @@ mod tests {
     fn clap() {
         use clap::CommandFactory;
         Args::command().debug_assert();
+    }
+
+    #[test]
+    #[cfg(feature = "tix")]
+    fn tix_aliases_are_visible_and_route_to_tix() {
+        use clap::{CommandFactory, Parser};
+
+        let command = Args::command();
+        let tix = command.find_subcommand("tix").expect("tix is registered");
+        assert_eq!(
+            tix.get_visible_aliases().collect::<Vec<_>>(),
+            ["tui", "interactive", "i"],
+            "all aliases are shown in help"
+        );
+        for name in ["tix", "tui", "interactive", "i"] {
+            let args = Args::try_parse_from(["gix", name]).expect("the command or alias parses");
+            assert!(
+                matches!(args.cmd, Subcommands::Tix(_)),
+                "{name} routes to the tix command"
+            );
+        }
+
+        for arguments in [
+            vec!["gix", "tix", "-x", "main", "--hide", "tag", "topic"],
+            vec!["gix", "tix", "amend"],
+            vec!["gix", "tix", "spill"],
+        ] {
+            assert!(
+                matches!(
+                    Args::try_parse_from(arguments).expect("shared tix arguments parse").cmd,
+                    Subcommands::Tix(_)
+                ),
+                "the complete tix command is delegated"
+            );
+        }
+        assert_eq!(
+            Args::try_parse_from(["gix", "tix", "--screen", "half"])
+                .expect_err("screen selection is no longer supported")
+                .kind(),
+            clap::error::ErrorKind::UnknownArgument,
+            "alternate-screen operation has no command-line mode"
+        );
+        for help in ["-h", "--help"] {
+            assert_eq!(
+                Args::try_parse_from(["gix", "tix", help])
+                    .expect_err("help exits through clap")
+                    .kind(),
+                clap::error::ErrorKind::DisplayHelp,
+                "embedded tix supports {help}"
+            );
+        }
     }
 }

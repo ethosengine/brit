@@ -17,8 +17,9 @@ pub struct Permissions {
 ///
 /// ### Replacement Objects for the object database
 ///
-/// The environment variables `GIT_REPLACE_REF_BASE` and `GIT_NO_REPLACE_OBJECTS` are mapped to `gitoxide.objects.replaceRefBase`
-/// and `gitoxide.objects.noReplace` respectively and then interpreted exactly as their environment variable counterparts.
+/// The environment variables `GIT_REPLACE_REF_BASE`, `GIT_NO_REPLACE_OBJECTS`, and `GIT_ALLOC_LIMIT` are mapped to
+/// `gitoxide.objects.replaceRefBase`, `gitoxide.objects.noReplace`, and `gitoxide.objects.allocLimit` respectively and then
+/// interpreted exactly as their environment variable counterparts.
 ///
 /// Use [Permissions] to control which environment variables can be read, and config-overrides to control these values programmatically.
 #[derive(Clone)]
@@ -34,14 +35,24 @@ pub struct Options {
     pub(crate) bail_if_untrusted: bool,
     pub(crate) api_config_overrides: Vec<BString>,
     pub(crate) cli_config_overrides: Vec<BString>,
+    pub(crate) git_installation_config_path: Option<Box<std::path::Path>>,
+    pub(crate) system_config_path: Option<Box<std::path::Path>>,
+    /// Whether repository-local environment variables like `GIT_WORK_TREE` and `GIT_INDEX_FILE` may be applied.
+    /// This is disabled when reusing these options to enter another repository.
+    pub(crate) use_repository_local_environment: bool,
+    /// Whether to treat the input path as a git directory without first trying `<path>/.git`.
+    /// This only controls how the current call's input is interpreted, so it is reset after path resolution.
+    /// Retaining it would make later submodule or worktree opens that clone these options skip their normal
+    /// `<path>/.git` lookup as well.
     pub(crate) open_path_as_is: bool,
-    /// Internal to pass an already obtained CWD on to where it may also be used. This avoids the CWD being queried more than once per repo.
+    /// Internal to pass an already obtained CWD on to where it may also be used.
+    /// This avoids the CWD being queried more than once per repo.
     pub(crate) current_dir: Option<PathBuf>,
 }
 
 /// The error returned by [`crate::open()`].
 #[derive(Debug, thiserror::Error)]
-#[allow(missing_docs)]
+#[expect(missing_docs)]
 pub enum Error {
     #[error("Failed to load the git configuration")]
     Config(#[from] config::Error),

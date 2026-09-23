@@ -16,6 +16,9 @@ pub struct Options {
     pub thread_limit: Option<usize>,
     /// The kinds of safety checks to perform.
     pub check: crate::index::traverse::SafetyCheck,
+    /// If `Some`, rejects individual allocations above the given number of bytes while resolving decoded object and
+    /// delta result buffers. `Some(0)` rejects all non-empty allocations.
+    pub alloc_limit_bytes: Option<usize>,
 }
 
 /// The progress ids used in [`index::File::traverse_with_index()`].
@@ -51,39 +54,41 @@ impl From<ProgressId> for gix_features::progress::Id {
 }
 
 /// Traversal with index
-impl index::File {
+impl<T> index::File<T>
+where
+    T: crate::FileData + Sync,
+{
     /// Iterate through all _decoded objects_ in the given `pack` and handle them with a `Processor`, using an index to reduce waste
     /// at the cost of memory.
     ///
     /// For more details, see the documentation on the [`traverse()`][index::File::traverse()] method.
-    pub fn traverse_with_index<Processor, E>(
+    pub fn traverse_with_index<Processor, E, D>(
         &self,
-        pack: &crate::data::File,
+        pack: &crate::data::File<D>,
         mut processor: Processor,
         progress: &mut dyn DynNestedProgress,
         should_interrupt: &AtomicBool,
-        Options { check, thread_limit }: Options,
+        Options {
+            check,
+            thread_limit,
+            alloc_limit_bytes,
+        }: Options,
     ) -> Result<Outcome, Error<E>>
     where
         Processor: FnMut(gix_object::Kind, &[u8], &index::Entry, &dyn gix_features::progress::Progress) -> Result<(), E>
             + Send
             + Clone,
         E: std::error::Error + Send + Sync + 'static,
+        D: crate::FileData + Send + Sync,
     {
         let (verify_result, traversal_result) = parallel::join(
             {
                 let mut pack_progress = progress.add_child_with_id(
-                    format!(
-                        "Hash of pack '{}'",
-                        pack.path().file_name().expect("pack has filename").to_string_lossy()
-                    ),
+                    format!("Hash of pack '{}'", crate::source_name(pack.path())),
                     ProgressId::HashPackDataBytes.into(),
                 );
                 let mut index_progress = progress.add_child_with_id(
-                    format!(
-                        "Hash of index '{}'",
-                        self.path.file_name().expect("index has filename").to_string_lossy()
-                    ),
+                    format!("Hash of index '{}'", crate::source_name(&self.path)),
                     ProgressId::HashPackIndexBytes.into(),
                 );
                 move || {
@@ -164,6 +169,7 @@ impl index::File {
                         thread_limit,
                         should_interrupt,
                         object_hash: self.object_hash,
+                        alloc_limit_bytes,
                     },
                 )?);
                 outcome.pack_size = pack.data_len() as u64;

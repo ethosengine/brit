@@ -1,11 +1,12 @@
 use std::cell::RefCell;
 
 impl crate::Repository {
-    #[allow(clippy::too_many_arguments)]
+    #[expect(clippy::too_many_arguments)]
     pub(crate) fn from_refs_and_objects(
         refs: crate::RefStore,
         mut objects: crate::OdbHandle,
         work_tree: Option<std::path::PathBuf>,
+        index_path: std::path::PathBuf,
         common_dir: Option<std::path::PathBuf>,
         config: crate::config::Cache,
         linked_worktree_options: crate::open::Options,
@@ -17,6 +18,7 @@ impl crate::Repository {
         crate::Repository {
             bufs: Some(RefCell::new(Vec::with_capacity(4))),
             work_tree,
+            index_path,
             common_dir,
             objects,
             refs,
@@ -37,7 +39,7 @@ impl crate::Repository {
 
     /// Reopen this repository in place using the stored open options.
     /// Use this to forcefully refresh Git configuration, drop caches, and release system resources
-    /// for opened object database resources.
+    /// for opened object database resources (if this is the last instance to a repository).
     ///
     /// This discards in-memory-only configuration edits and any other transient repository state that is recreated
     /// during opening.
@@ -50,12 +52,11 @@ impl crate::Repository {
     pub fn reload(&mut self) -> Result<&mut Self, crate::open::Error> {
         let mut git_dir = self.git_dir().to_owned();
         let options = self.options.clone().open_path_as_is(true);
-        if git_dir.is_relative() {
-            if let Some((prev_cwd, cwd)) = options.current_dir.as_ref().zip(std::env::current_dir().ok()) {
-                if *prev_cwd != cwd {
-                    git_dir = prev_cwd.join(git_dir);
-                }
-            }
+        if git_dir.is_relative()
+            && let Some((prev_cwd, cwd)) = options.current_dir.as_ref().zip(std::env::current_dir().ok())
+            && *prev_cwd != cwd
+        {
+            git_dir = prev_cwd.join(git_dir);
         }
         *self = crate::ThreadSafeRepository::open_opts(git_dir, options)?.to_thread_local();
         Ok(self)

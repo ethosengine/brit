@@ -1,10 +1,9 @@
 use gix_object::bstr::ByteSlice;
 
 use crate::{
-    file,
+    FullNameRef, file,
     file::loose::reference::logiter::must_be_io_err,
     store_impl::file::{log, log::iter::decode::LineNumber},
-    FullNameRef,
 };
 
 ///
@@ -148,7 +147,7 @@ pub mod reverse {
 
     /// The error returned by the [`Reverse`][super::Reverse] iterator
     #[derive(Debug, thiserror::Error)]
-    #[allow(missing_docs)]
+    #[expect(missing_docs)]
     pub enum Error {
         #[error("The buffer could not be filled to make more lines available")]
         Io(#[from] std::io::Error),

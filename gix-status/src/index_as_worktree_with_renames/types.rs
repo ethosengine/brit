@@ -6,7 +6,7 @@ use crate::index_as_worktree::{Change, EntryStatus};
 
 /// The error returned by [index_as_worktree_with_renames()`](crate::index_as_worktree_with_renames()).
 #[derive(Debug, thiserror::Error)]
-#[allow(missing_docs)]
+#[expect(missing_docs)]
 pub enum Error {
     #[error(transparent)]
     TrackedFileModifications(#[from] crate::index_as_worktree::Error),
@@ -19,7 +19,7 @@ pub enum Error {
     #[error("Could not open worktree file for reading")]
     OpenWorktreeFile(std::io::Error),
     #[error(transparent)]
-    HashFile(gix_hash::io::Error),
+    HashFile(std::io::Error),
     #[error("Could not read worktree link content")]
     ReadLink(std::io::Error),
     #[error(transparent)]
@@ -295,6 +295,11 @@ pub struct Options<'a> {
     pub object_hash: gix_hash::Kind,
     /// Options to configure how modifications to tracked files should be obtained.
     pub tracked_file_modifications: crate::index_as_worktree::Options,
+    /// Use the internal lazy worktree metadata cache.
+    ///
+    /// See [`crate::index_as_worktree::Options::fscache`] for details.
+    /// Ineffective on non-Windows.
+    pub fscache: bool,
     /// Options to control the directory walk that informs about untracked files.
     ///
     /// Note that we forcefully disable emission of tracked files to avoid any overlap

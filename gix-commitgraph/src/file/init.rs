@@ -1,13 +1,13 @@
 use std::path::{Path, PathBuf};
 
-use gix_error::{message, ErrorExt, Exn, Message, ResultExt};
+use gix_error::{ErrorExt, Exn, Message, ResultExt, message};
 
 use crate::{
+    File,
     file::{
         BASE_GRAPHS_LIST_CHUNK_ID, COMMIT_DATA_CHUNK_ID, COMMIT_DATA_ENTRY_SIZE_SANS_HASH,
         EXTENDED_EDGES_LIST_CHUNK_ID, FAN_LEN, HEADER_LEN, OID_FAN_CHUNK_ID, OID_LOOKUP_CHUNK_ID, SIGNATURE,
     },
-    File,
 };
 
 const MIN_FILE_SIZE: usize = HEADER_LEN
@@ -181,7 +181,7 @@ impl TryFrom<&Path> for File {
         let data = std::fs::File::open(path)
             .and_then(|file| {
                 // SAFETY: we have to take the risk of somebody changing the file underneath. Git never writes into the same file.
-                #[allow(unsafe_code)]
+                #[expect(unsafe_code)]
                 unsafe {
                     memmap2::MmapOptions::new().map_copy_read_only(&file)
                 }
@@ -196,8 +196,8 @@ fn read_fan(d: &[u8]) -> ([u32; FAN_LEN], usize) {
     assert!(d.len() >= FAN_LEN * 4);
 
     let mut fan = [0; FAN_LEN];
-    for (c, f) in d.chunks_exact(4).zip(fan.iter_mut()) {
-        *f = u32::from_be_bytes(c.try_into().unwrap());
+    for (c, f) in d.as_chunks::<4>().0.iter().zip(fan.iter_mut()) {
+        *f = u32::from_be_bytes(*c);
     }
     (fan, FAN_LEN * 4)
 }

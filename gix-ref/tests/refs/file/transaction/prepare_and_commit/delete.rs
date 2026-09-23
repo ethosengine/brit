@@ -1,17 +1,17 @@
-use gix_date::parse::TimeBuf;
-use gix_lock::acquire::Fail;
-use gix_ref::{
-    file::{transaction::prepare::Error, ReferenceExt},
-    transaction::{Change, LogChange, PreviousValue, RefEdit, RefLog},
-    FullName, Reference, Target,
-};
-
 use crate::{
     file::{
         store_writable,
         transaction::prepare_and_commit::{committer, empty_store},
     },
     hex_to_id,
+};
+use gix_date::parse::TimeBuf;
+use gix_lock::acquire::Fail;
+use gix_ref::file::transaction::prepare::Error;
+use gix_ref::{
+    FullName, Reference, Target,
+    file::ReferenceExt,
+    transaction::{PreviousValue, RefEdit, RefLog},
 };
 
 #[test]
@@ -20,14 +20,7 @@ fn delete_a_ref_which_is_gone_succeeds() -> crate::Result {
     let edits = store
         .transaction()
         .prepare(
-            Some(RefEdit {
-                change: Change::Delete {
-                    expected: PreviousValue::Any,
-                    log: RefLog::AndReference,
-                },
-                name: "DOES_NOT_EXIST".try_into()?,
-                deref: false,
-            }),
+            Some(RefEdit::delete("DOES_NOT_EXIST".try_into()?, PreviousValue::Any)),
             Fail::Immediately,
             Fail::Immediately,
         )?
@@ -40,14 +33,7 @@ fn delete_a_ref_which_is_gone_succeeds() -> crate::Result {
 fn delete_a_ref_which_is_gone_but_must_exist_fails() -> crate::Result {
     let (_keep, store) = empty_store()?;
     let res = store.transaction().prepare(
-        Some(RefEdit {
-            change: Change::Delete {
-                expected: PreviousValue::MustExist,
-                log: RefLog::AndReference,
-            },
-            name: "DOES_NOT_EXIST".try_into()?,
-            deref: false,
-        }),
+        Some(RefEdit::delete("DOES_NOT_EXIST".try_into()?, PreviousValue::MustExist)),
         Fail::Immediately,
         Fail::Immediately,
     );
@@ -71,14 +57,7 @@ fn delete_ref_and_reflog_on_symbolic_no_deref() -> crate::Result {
     let edits = store
         .transaction()
         .prepare(
-            Some(RefEdit {
-                change: Change::Delete {
-                    expected: PreviousValue::MustExist,
-                    log: RefLog::AndReference,
-                },
-                name: head.name.clone(),
-                deref: false,
-            }),
+            Some(RefEdit::delete(head.name.clone(), PreviousValue::MustExist)),
             Fail::Immediately,
             Fail::Immediately,
         )?
@@ -86,14 +65,10 @@ fn delete_ref_and_reflog_on_symbolic_no_deref() -> crate::Result {
 
     assert_eq!(
         edits,
-        vec![RefEdit {
-            change: Change::Delete {
-                expected: PreviousValue::MustExistAndMatch(Target::Symbolic("refs/heads/main".try_into()?)),
-                log: RefLog::AndReference,
-            },
-            name: head.name,
-            deref: false
-        }],
+        vec![RefEdit::delete(
+            head.name,
+            PreviousValue::MustExistAndMatch(Target::Symbolic("refs/heads/main".try_into()?)),
+        )],
         "the previous value was updated with the actual one"
     );
     assert!(
@@ -112,21 +87,27 @@ fn delete_ref_with_incorrect_previous_value_fails() -> crate::Result {
     assert!(head.log_exists(&store));
 
     let res = store.transaction().prepare(
-        Some(RefEdit {
-            change: Change::Delete {
-                expected: PreviousValue::MustExistAndMatch(Target::Symbolic("refs/heads/main".try_into()?)),
-                log: RefLog::Only,
-            },
-            name: head.name,
-            deref: true,
-        }),
+        Some(
+            RefEdit::delete_with_log(
+                head.name,
+                PreviousValue::MustExistAndMatch(Target::Symbolic("refs/heads/main".try_into()?)),
+                RefLog::Only,
+            )
+            .with_deref(true),
+        ),
         Fail::Immediately,
         Fail::Immediately,
     );
 
     match res {
         Err(err) => {
-            assert_eq!(err.to_string(), "The reference \"refs/heads/main\" should have content ref: refs/heads/main, actual content was 02a7a22d90d7c02fb494ed25551850b868e634f0");
+            assert_eq!(
+                err.to_string(),
+                format!(
+                    "The reference \"refs/heads/main\" should have content ref: refs/heads/main, actual content was {}",
+                    hex_to_id("02a7a22d90d7c02fb494ed25551850b868e634f0")
+                )
+            );
         }
         Ok(_) => unreachable!("must be err"),
     }
@@ -147,14 +128,11 @@ fn delete_reflog_only_of_symbolic_no_deref() -> crate::Result {
     let edits = store
         .transaction()
         .prepare(
-            Some(RefEdit {
-                change: Change::Delete {
-                    expected: PreviousValue::MustExistAndMatch(Target::Symbolic("refs/heads/main".try_into()?)),
-                    log: RefLog::Only,
-                },
-                name: head.name,
-                deref: false,
-            }),
+            Some(RefEdit::delete_with_log(
+                head.name,
+                PreviousValue::MustExistAndMatch(Target::Symbolic("refs/heads/main".try_into()?)),
+                RefLog::Only,
+            )),
             Fail::Immediately,
             Fail::Immediately,
         )?
@@ -182,14 +160,7 @@ fn delete_reflog_only_of_symbolic_with_deref() -> crate::Result {
     let edits = store
         .transaction()
         .prepare(
-            Some(RefEdit {
-                change: Change::Delete {
-                    expected: PreviousValue::MustExist,
-                    log: RefLog::Only,
-                },
-                name: head.name,
-                deref: true,
-            }),
+            Some(RefEdit::delete_with_log(head.name, PreviousValue::MustExist, RefLog::Only).with_deref(true)),
             Fail::Immediately,
             Fail::Immediately,
         )?
@@ -218,23 +189,8 @@ fn rename_a_to_a_slash_b_in_one_transaction() -> crate::Result {
         .transaction()
         .prepare(
             [
-                RefEdit {
-                    change: Change::Delete {
-                        expected: PreviousValue::MustExist,
-                        log: RefLog::AndReference,
-                    },
-                    name: old.name.clone(),
-                    deref: true,
-                },
-                RefEdit {
-                    change: Change::Update {
-                        expected: PreviousValue::MustNotExist,
-                        log: LogChange::default(),
-                        new: old.target.clone(),
-                    },
-                    name: new_name.clone(),
-                    deref: true,
-                },
+                RefEdit::delete(old.name.clone(), PreviousValue::MustExist).with_deref(true),
+                RefEdit::update(new_name.clone(), old.target.clone(), PreviousValue::MustNotExist, "").with_deref(true),
             ],
             Fail::Immediately,
             Fail::Immediately,
@@ -242,18 +198,12 @@ fn rename_a_to_a_slash_b_in_one_transaction() -> crate::Result {
         .unwrap_err();
 
     match err {
-        #[cfg(unix)]
         Error::Io(err) => {
             assert_eq!(
                 err.kind(),
                 std::io::ErrorKind::NotADirectory,
-                "For now this isn't supported in the same transaction."
+                "For now this isn't supported in the same transaction, and path-prefix collisions are reported early."
             );
-        }
-        #[cfg(windows)]
-        Error::LockAcquire { .. } => {
-            // It's bad that the error differs on Windows, but then again, doing this kind of pseudo-db on a filesystem
-            // probably is never going to be great, so let's wait for ref-tables.
         }
         err => unreachable!("unexpected error variant: {err:?}"),
     }
@@ -261,14 +211,7 @@ fn rename_a_to_a_slash_b_in_one_transaction() -> crate::Result {
     let edits = store
         .transaction()
         .prepare(
-            [RefEdit {
-                change: Change::Delete {
-                    expected: PreviousValue::MustExist,
-                    log: RefLog::AndReference,
-                },
-                name: old.name,
-                deref: true,
-            }],
+            [RefEdit::delete(old.name, PreviousValue::MustExist).with_deref(true)],
             Fail::Immediately,
             Fail::Immediately,
         )?
@@ -278,15 +221,7 @@ fn rename_a_to_a_slash_b_in_one_transaction() -> crate::Result {
     let edits = store
         .transaction()
         .prepare(
-            [RefEdit {
-                change: Change::Update {
-                    expected: PreviousValue::MustNotExist,
-                    log: LogChange::default(),
-                    new: old.target,
-                },
-                name: new_name.clone(),
-                deref: true,
-            }],
+            [RefEdit::update(new_name.clone(), old.target, PreviousValue::MustNotExist, "").with_deref(true)],
             Fail::Immediately,
             Fail::Immediately,
         )?
@@ -307,14 +242,7 @@ fn delete_broken_ref_that_must_exist_fails_as_it_is_no_valid_ref() -> crate::Res
     assert!(store.try_find_loose("HEAD").is_err(), "the ref is truly broken");
 
     let res = store.transaction().prepare(
-        Some(RefEdit {
-            change: Change::Delete {
-                expected: PreviousValue::MustExist,
-                log: RefLog::AndReference,
-            },
-            name: "HEAD".try_into()?,
-            deref: true,
-        }),
+        Some(RefEdit::delete("HEAD".try_into()?, PreviousValue::MustExist).with_deref(true)),
         Fail::Immediately,
         Fail::Immediately,
     );
@@ -338,14 +266,7 @@ fn non_existing_can_be_deleted_with_the_may_exist_match_constraint() -> crate::R
     let edits = store
         .transaction()
         .prepare(
-            Some(RefEdit {
-                change: Change::Delete {
-                    expected: previous_value.clone(),
-                    log: RefLog::AndReference,
-                },
-                name: "refs/heads/not-there".try_into()?,
-                deref: true,
-            }),
+            Some(RefEdit::delete("refs/heads/not-there".try_into()?, previous_value.clone()).with_deref(true)),
             Fail::Immediately,
             Fail::Immediately,
         )?
@@ -353,14 +274,7 @@ fn non_existing_can_be_deleted_with_the_may_exist_match_constraint() -> crate::R
 
     assert_eq!(
         edits,
-        vec![RefEdit {
-            change: Change::Delete {
-                expected: previous_value,
-                log: RefLog::AndReference,
-            },
-            name: "refs/heads/not-there".try_into()?,
-            deref: false,
-        }]
+        vec![RefEdit::delete("refs/heads/not-there".try_into()?, previous_value,)]
     );
     Ok(())
 }
@@ -375,31 +289,14 @@ fn delete_broken_ref_that_may_not_exist_works_even_in_deref_mode() -> crate::Res
     let edits = store
         .transaction()
         .prepare(
-            Some(RefEdit {
-                change: Change::Delete {
-                    expected: PreviousValue::Any,
-                    log: RefLog::AndReference,
-                },
-                name: "HEAD".try_into()?,
-                deref: true,
-            }),
+            Some(RefEdit::delete("HEAD".try_into()?, PreviousValue::Any).with_deref(true)),
             Fail::Immediately,
             Fail::Immediately,
         )?
         .commit(committer().to_ref(&mut TimeBuf::default()))?;
 
     assert!(store.try_find_loose("HEAD")?.is_none(), "the ref was deleted");
-    assert_eq!(
-        edits,
-        vec![RefEdit {
-            change: Change::Delete {
-                expected: PreviousValue::Any,
-                log: RefLog::AndReference,
-            },
-            name: "HEAD".try_into()?,
-            deref: false,
-        }]
-    );
+    assert_eq!(edits, vec![RefEdit::delete("HEAD".try_into()?, PreviousValue::Any,)]);
     Ok(())
 }
 
@@ -417,14 +314,11 @@ fn store_write_mode_has_no_effect_and_reflogs_are_always_deleted() -> crate::Res
         let edits = store
             .transaction()
             .prepare(
-                Some(RefEdit {
-                    change: Change::Delete {
-                        expected: PreviousValue::Any,
-                        log: RefLog::Only,
-                    },
-                    name: "HEAD".try_into()?,
-                    deref: false,
-                }),
+                Some(RefEdit::delete_with_log(
+                    "HEAD".try_into()?,
+                    PreviousValue::Any,
+                    RefLog::Only,
+                )),
                 Fail::Immediately,
                 Fail::Immediately,
             )?
@@ -437,8 +331,8 @@ fn store_write_mode_has_no_effect_and_reflogs_are_always_deleted() -> crate::Res
 }
 
 #[test]
-fn packed_refs_are_consulted_when_determining_previous_value_of_ref_to_be_deleted_and_are_deleted_from_packed_ref_file(
-) -> crate::Result {
+fn packed_refs_are_consulted_when_determining_previous_value_of_ref_to_be_deleted_and_are_deleted_from_packed_ref_file()
+-> crate::Result {
     let (_keep, store) = store_writable("make_packed_ref_repository.sh")?;
     assert!(
         store.try_find_loose("main")?.is_none(),
@@ -453,14 +347,10 @@ fn packed_refs_are_consulted_when_determining_previous_value_of_ref_to_be_delete
     let edits = store
         .transaction()
         .prepare(
-            Some(RefEdit {
-                change: Change::Delete {
-                    expected: PreviousValue::MustExistAndMatch(Target::Object(old_id)),
-                    log: RefLog::AndReference,
-                },
-                name: "refs/heads/main".try_into()?,
-                deref: false,
-            }),
+            Some(RefEdit::delete(
+                "refs/heads/main".try_into()?,
+                PreviousValue::MustExistAndMatch(Target::Object(old_id)),
+            )),
             Fail::Immediately,
             Fail::Immediately,
         )?
@@ -487,14 +377,10 @@ fn a_loose_ref_with_old_value_check_and_outdated_packed_refs_value_deletes_both_
     let edits = store
         .transaction()
         .prepare(
-            Some(RefEdit {
-                change: Change::Delete {
-                    expected: PreviousValue::MustExistAndMatch(Target::Object(branch_id)),
-                    log: RefLog::AndReference,
-                },
-                name: branch.name,
-                deref: false,
-            }),
+            Some(RefEdit::delete(
+                branch.name,
+                PreviousValue::MustExistAndMatch(Target::Object(branch_id)),
+            )),
             Fail::Immediately,
             Fail::Immediately,
         )?
@@ -521,18 +407,14 @@ fn all_contained_references_deletes_the_packed_ref_file_too() -> crate::Result {
             .prepare(
                 store.open_packed_buffer()?.expect("packed-refs").iter()?.map(|r| {
                     let r = r.expect("valid ref");
-                    RefEdit {
-                        change: Change::Delete {
-                            expected: match mode {
-                                "must-exist" => PreviousValue::MustExistAndMatch(Target::Object(r.target())),
-                                "may-exist" => PreviousValue::ExistingMustMatch(Target::Object(r.target())),
-                                _ => unimplemented!("unknown mode: {}", mode),
-                            },
-                            log: RefLog::AndReference,
+                    RefEdit::delete(
+                        r.name.into(),
+                        match mode {
+                            "must-exist" => PreviousValue::MustExistAndMatch(Target::Object(r.target())),
+                            "may-exist" => PreviousValue::ExistingMustMatch(Target::Object(r.target())),
+                            _ => unimplemented!("unknown mode: {}", mode),
                         },
-                        name: r.name.into(),
-                        deref: false,
-                    }
+                    )
                 }),
                 Fail::Immediately,
                 Fail::Immediately,

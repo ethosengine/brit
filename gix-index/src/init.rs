@@ -4,16 +4,16 @@ pub mod from_tree {
 
     use bstr::{BStr, BString, ByteSlice, ByteVec};
     use gix_object::{tree, tree::EntryKind};
-    use gix_traverse::tree::{depthfirst, visit::Action, Visit};
+    use gix_traverse::tree::{Visit, depthfirst, visit::Action};
 
     use crate::{
-        entry::{Flags, Mode, Stat},
         Entry, PathStorage, State, Version,
+        entry::{Flags, Mode, Stat},
     };
 
     /// The error returned by [State::from_tree()].
     #[derive(Debug, thiserror::Error)]
-    #[allow(missing_docs)]
+    #[expect(missing_docs)]
     pub enum Error {
         #[error("The path \"{path}\" is invalid")]
         InvalidComponent {
@@ -44,9 +44,20 @@ pub mod from_tree {
                 end_of_index_at_decode_time: false,
             }
         }
+
         /// Create an index [`State`] by traversing `tree` recursively, accessing sub-trees
         /// with `objects`.
         /// `validate` is used to determine which validations to perform on every path component we see.
+        ///
+        /// # Security
+        ///
+        /// This currently trusts tree shape beyond individual path-component validation, and is exploitable with
+        /// malicious trees that contain file/directory conflicts like `a` and `a/x`. Such trees can produce an
+        /// index [`State`] with inconsistent paths, which may panic or confuse downstream checkout/index consumers.
+        ///
+        /// A previous normalization pass tried to remove these conflicts after traversal, but only checked adjacent
+        /// entries. That was incomplete because [`Entry::cmp_filepaths()`] can order unrelated paths between a file
+        /// and its conflicting child, for example `a`, `a.`, `a/x`.
         ///
         /// **No extension data is currently produced**.
         pub fn from_tree<Find>(
@@ -131,10 +142,10 @@ pub mod from_tree {
                 self.path.push(b'/');
             }
             self.path.push_str(name);
-            if self.invalid_path.is_none() {
-                if let Err(err) = gix_validate::path::component(name, None, self.validate) {
-                    self.invalid_path = Some((self.path.clone(), err));
-                }
+            if self.invalid_path.is_none()
+                && let Err(err) = gix_validate::path::component(name, None, self.validate)
+            {
+                self.invalid_path = Some((self.path.clone(), err));
             }
         }
 

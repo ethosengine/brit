@@ -1,11 +1,10 @@
-use gix_testtools::Env;
-
 use crate::remote;
 
 mod baseline {
-    use std::{collections::HashMap, sync::LazyLock};
+    use std::collections::HashMap;
 
     use gix_object::bstr::BString;
+    use std::sync::LazyLock;
 
     use crate::remote;
 
@@ -54,7 +53,7 @@ mod baseline {
     });
 
     pub fn works_but_we_dont_parse_invalid_url(url: &str) {
-        assert!(gix::url::parse(url.into()).is_err(), "{url:?} should not be parseable");
+        assert!(gix::url::parse(url).is_err(), "{url:?} should not be parseable");
         assert!(
             BASELINE.get(url).is_some(),
             "Url {url} must be in baseline, whether it's valid or not"
@@ -65,7 +64,7 @@ mod baseline {
         let repo = remote::repo("credential-helpers");
         let (cascade, mut action, prompt_options) = repo
             .config_snapshot()
-            .credential_helpers(gix::url::parse(url.into()).expect("valid input URL"))
+            .credential_helpers(gix::url::parse(url).expect("valid input URL"))
             .unwrap();
 
         assert_ne!(
@@ -126,6 +125,37 @@ fn any_url_calls_global() {
 }
 
 #[test]
+fn protect_protocol_defaults_to_true_and_can_be_overridden_per_url() -> crate::Result {
+    let mut repo = remote::repo("credential-helpers");
+    let url = "https://example.com";
+    let (cascade, action, _) = repo.config_snapshot().credential_helpers(url.try_into()?)?;
+    assert!(
+        cascade.context_options.protect_protocol,
+        "protocol protection is enabled by default"
+    );
+    assert_eq!(action.context().expect("get action").options, cascade.context_options);
+
+    repo.config_snapshot_mut()
+        .set_raw_value("credential.protectProtocol", "false")?;
+    let (cascade, action, _) = repo.config_snapshot().credential_helpers(url.try_into()?)?;
+    assert!(
+        !cascade.context_options.protect_protocol,
+        "global configuration is honored"
+    );
+    assert_eq!(action.context().expect("get action").options, cascade.context_options);
+
+    repo.config_snapshot_mut()
+        .set_raw_value("credential.https://example.com.protectProtocol", "true")?;
+    let (cascade, action, _) = repo.config_snapshot().credential_helpers(url.try_into()?)?;
+    assert!(
+        cascade.context_options.protect_protocol,
+        "URL-specific configuration wins"
+    );
+    assert_eq!(action.context().expect("get action").options, cascade.context_options);
+    Ok(())
+}
+
+#[test]
 fn http_port_defaulting() {
     baseline::agrees_with("https://example.com");
     baseline::agrees_with("https://example.com/");
@@ -170,22 +200,24 @@ fn subdomain_globs_match_on_their_level() {
 
 #[test]
 #[serial_test::serial]
-fn http_urls_match_the_host_without_path_as_well() {
-    let _env = Env::new().set("GIT_ASKPASS", "foo");
+fn http_urls_match_the_host_without_path_as_well() -> crate::Result {
+    let _environment = gix_testtools::isolate_git_environment()?.set("GIT_ASKPASS", "foo");
     baseline::agrees_with("http://example.com:8080/other/path");
     baseline::agrees_with_but_drops_default_port_in_prompt("http://example.com:80/");
     baseline::agrees_with_but_drops_default_port_in_prompt("http://example.com:80");
     baseline::agrees_with("http://example.com");
+    Ok(())
 }
 
 #[test]
 #[serial_test::serial]
-fn user_rules_only_match_urls_with_user() {
-    let _env = Env::new().set("SSH_ASKPASS", "foo");
+fn user_rules_only_match_urls_with_user() -> crate::Result {
+    let _environment = gix_testtools::isolate_git_environment()?.set("SSH_ASKPASS", "foo");
     baseline::agrees_with("https://user@example.com/with-user");
     baseline::agrees_with("https://example.com/with-user");
     baseline::agrees_with("ssh://user@host/with-user");
     baseline::agrees_with("ssh://host/with-user");
+    Ok(())
 }
 
 #[test]

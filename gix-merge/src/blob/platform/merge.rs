@@ -1,6 +1,6 @@
 use std::{io::Read, path::PathBuf};
 
-use crate::blob::{builtin_driver, PlatformRef, Resolution};
+use crate::blob::{PlatformRef, Resolution, builtin_driver};
 
 /// Options for the use in the [`PlatformRef::merge()`] call.
 #[derive(Default, Copy, Clone, Debug, Eq, PartialEq)]
@@ -17,7 +17,7 @@ pub struct Options {
 
 /// The error returned by [`PlatformRef::merge()`].
 #[derive(Debug, thiserror::Error)]
-#[allow(missing_docs)]
+#[expect(missing_docs)]
 pub enum Error {
     #[error(transparent)]
     PrepareExternalDriver(#[from] inner::prepare_external_driver::Error),
@@ -38,7 +38,10 @@ pub enum Error {
 /// but `stdin` closed.
 /// It's expected to leave its result in the file substituted at `current` which is then supposed to be read back from there.
 // TODO: remove dead-code annotation
-#[allow(dead_code)]
+#[expect(
+    dead_code,
+    reason = "the tempfile handles are retained for RAII cleanup while the external merge command runs"
+)]
 pub struct Command {
     /// The pre-configured command
     cmd: std::process::Command,
@@ -67,15 +70,14 @@ pub(super) mod inner {
         use gix_tempfile::{AutoRemove, ContainingDirectory};
 
         use crate::blob::{
-            builtin_driver,
+            BuiltinDriver, Driver, PlatformRef, ResourceKind, builtin_driver,
             builtin_driver::text::Conflict,
-            platform::{merge, DriverChoice},
-            BuiltinDriver, Driver, PlatformRef, ResourceKind,
+            platform::{DriverChoice, merge},
         };
 
         /// The error returned by [PlatformRef::prepare_external_driver()](PlatformRef::prepare_external_driver()).
         #[derive(Debug, thiserror::Error)]
-        #[allow(missing_docs)]
+        #[expect(missing_docs)]
         pub enum Error {
             #[error("The resource of kind {kind:?} was too large to be processed")]
             ResourceTooLarge { kind: ResourceKind },
@@ -281,9 +283,8 @@ pub(super) mod inner {
     ///
     pub mod builtin_merge {
         use crate::blob::{
-            builtin_driver,
+            BuiltinDriver, PlatformRef, Resolution, builtin_driver,
             platform::{resource, resource::Data},
-            BuiltinDriver, PlatformRef, Resolution,
         };
 
         /// An identifier to tell us how a merge conflict was resolved by [builtin_merge](PlatformRef::builtin_merge).
@@ -344,11 +345,15 @@ pub(super) mod inner {
                         (Pick::Buffer, resolution)
                     }
                     BuiltinDriver::Binary => {
-                        // easier to reason about the 'split' compared to merging both conditions
-                        #[allow(clippy::if_same_then_else)]
-                        if !(self.current.id.is_null() || self.other.id.is_null()) && self.current.id == self.other.id {
-                            (Pick::Ours, Resolution::Complete)
-                        } else if (self.current.id.is_null() || self.other.id.is_null()) && ours == theirs {
+                        // Object IDs are authoritative when both resources have one. A null ID means the resource isn't
+                        // backed by an object, so compare its prepared data.
+                        let ours_matches_theirs = if self.current.id.is_null() || self.other.id.is_null() {
+                            ours == theirs
+                        } else {
+                            self.current.id == self.other.id
+                        };
+
+                        if ours_matches_theirs {
                             (Pick::Ours, Resolution::Complete)
                         } else {
                             let (pick, resolution) = builtin_driver::binary(self.options.resolve_binary_with);
@@ -440,7 +445,11 @@ impl<'parent> PlatformRef<'parent> {
     /// Using a `pick` obtained from [`merge()`](Self::merge), obtain the respective buffer suitable for reading or copying.
     /// Return `Ok(None)`  if the `pick` corresponds to a buffer (that was written separately).
     /// Return `Err(())` if the buffer is *too large*, so it was never read.
-    #[allow(clippy::result_unit_err)]
+    #[expect(
+        clippy::result_unit_err,
+        // TODO: make this nicer once we have nicer errors. OOM should be a standard error anyway.
+        reason = "Err(()) is needed to encode 'too large', without need for anything specific"
+    )]
     pub fn buffer_by_pick(&self, pick: inner::builtin_merge::Pick) -> Result<Option<&'parent [u8]>, ()> {
         match pick {
             inner::builtin_merge::Pick::Ancestor => self.ancestor.data.as_slice().map(Some).ok_or(()),

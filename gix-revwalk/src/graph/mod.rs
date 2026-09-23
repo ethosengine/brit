@@ -18,7 +18,7 @@ mod errors {
 
         /// The error returned by [`insert_parents()`](crate::Graph::insert_parents()).
         #[derive(Debug, thiserror::Error)]
-        #[allow(missing_docs)]
+        #[expect(missing_docs)]
         pub enum Error {
             #[error(transparent)]
             Lookup(#[from] gix_object::find::existing_iter::Error),
@@ -35,7 +35,7 @@ mod errors {
 
         /// The error returned by [`try_lookup_or_insert_default()`](crate::Graph::try_lookup_or_insert_default()).
         #[derive(Debug, thiserror::Error)]
-        #[allow(missing_docs)]
+        #[expect(missing_docs)]
         pub enum Error {
             #[error(transparent)]
             Lookup(#[from] gix_object::find::existing_iter::Error),
@@ -166,7 +166,7 @@ impl<'cache, T> Graph<'_, 'cache, T> {
     /// provided the full parent commit information.
     /// It will be provided either existing data, along with complete information about the parent,
     /// and produces new data even though it's only used in case the parent isn't stored in the graph yet.
-    #[allow(clippy::type_complexity)]
+    #[expect(clippy::type_complexity)]
     pub fn insert_parents_with_lookup<E>(
         &mut self,
         id: &gix_hash::oid,
@@ -366,20 +366,21 @@ fn try_lookup<'graph, 'cache>(
     cache: Option<&'cache gix_commitgraph::Graph>,
     buf: &'graph mut Vec<u8>,
 ) -> Result<Option<LazyCommit<'graph, 'cache>>, gix_object::find::existing_iter::Error> {
-    if let Some(cache) = cache {
-        if let Some(pos) = cache.lookup(id) {
-            return Ok(Some(LazyCommit {
-                backing: Either::Right((cache, pos)),
-            }));
-        }
+    if let Some(cache) = cache
+        && let Some(pos) = cache.lookup(id)
+    {
+        return Ok(Some(LazyCommit {
+            object_hash: id.kind(),
+            backing: Either::Right((cache, pos)),
+        }));
     }
-    #[allow(clippy::manual_map)]
     Ok(
         match objects
             .try_find(id, buf)
             .map_err(gix_object::find::existing_iter::Error::Find)?
         {
             Some(data) => data.kind.is_commit().then_some(LazyCommit {
+                object_hash: data.object_hash,
                 backing: Either::Left(buf),
             }),
             None => None,
@@ -439,6 +440,7 @@ where
 ///
 /// The owned version of this type is called [`Commit`] and can be obtained by calling [`LazyCommit::to_owned()`].
 pub struct LazyCommit<'graph, 'cache> {
+    object_hash: gix_hash::Kind,
     backing: Either<&'graph [u8], (&'cache gix_commitgraph::Graph, gix_commitgraph::Position)>,
 }
 

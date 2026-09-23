@@ -1,5 +1,15 @@
 # Development Guide
 
+See the [contribution guide] for requirements to meet before beginning implementation.
+
+[contribution guide]: https://github.com/GitoxideLabs/gitoxide/blob/main/CONTRIBUTING.md
+
+## Common commands
+
+Run `just` to browse commands grouped by purpose, with everyday development tasks
+first. Use `just --groups` to list the groups, or filter the overview with, for
+example, `just --list --group 'Dependencies and SBOMs'`.
+
 ## Practices
 
  * **test-first development**
@@ -12,6 +22,12 @@
       * Run the same test against git whenever feasible to assure git agrees with our implementation.
         See `gix-glob` for examples.
    * *use libgit2* test fixtures and cases where appropriate, or learn from them.
+ * **fuzzing**
+   * fuzz parsers, algorithms, and other code that processes untrusted input.
+   * add a regression test for every issue found before fixing it.
+ * **benchmarks**
+   * benchmark performance-sensitive changes before and after implementation.
+   * use representative inputs and compare against git when applicable.
  * **safety first**
    * handle all errors, never `unwrap()`. If needed, `expect("why")`.
    * provide an error chain and make it easy to understand what went wrong.
@@ -41,6 +57,10 @@ Features or other changes that are visible and people should know about look lik
   And here is how it's used and some more details.
 - fix: don't panic when calling `foo()` in a bare repository. (#456)
 
+A conventional commit _scope_ naming the crate that should receive the changelog entry is required whenever a changelog-worthy
+commit touches paths outside that crate. If in doubt, always add the scope, for example
+`feat(gix-odb)!: add a new object lookup API` or `fix(gix-ref)!: reject invalid reference names`.
+
 Everything else, particularly refactors or chores, don't use _conventional commits_ as these don't affect users of the API.
 Examples could be:
 
@@ -57,14 +77,11 @@ are breaking so would be seen with their _exclamation mark_ suffix, like `change
 Commit messages are used for guiding `cargo smart-release` to do most of the release work for us. This includes changelog generation
 as well as picking the right version bump for each crate.
 
-## Commit splitting on breaking changes.
+## Commit self-containment
 
-Knowing that `cargo smart-release` is driven by commit messages and affects their versions with per-crate granularity, it becomes important
-to split edits into multiple commits to clearly indicate which crate is actually broken.
-
-Typical patterns include making a breaking change in one crate and then fix all others to work with it. For changelogs to look proper
-and version bumps to be correct, the first commit would contain only the breaking changes themselves,
-like "rename: `foo()` to `bar()`", and the second commit would contain all changes to adapt to that and look like "adapt to changes in `<crate name>`".
+Every commit must be self-contained and pass CI independently. Keep a breaking change and all adaptations required to build and test the
+workspace in the same commit. Do not split them merely to route changelog entries. If that commit touches multiple crates, use the
+conventional commit _scope_ to name the crate whose changelog should receive the entry, as described above.
 
 ## Commit History
 
@@ -92,6 +109,49 @@ changed in memory before invoking a method in order to affect it.
 Parameters which are not available in git or specific to `gitoxide` or the needs of the caller can be passed as parameters or via
 `Options` or `Context` structures as needed.
 
+## Software bills of materials (SBOMs)
+
+Install the pinned Rust tools once with `just sbom-install`, then run `just sbom` to
+write CycloneDX 1.5 and SPDX 2.3 JSON inventories of all workspace members, with all
+features and platforms enabled. `cargo deny` remains the audit tool; it does not
+export these SBOM formats. `cargo-cyclonedx` generates the inventory and
+`sbom-tools` converts that same inventory to SPDX, reporting any metadata loss
+(such as CycloneDX properties) on standard error.
+
+Use `--package` to select a workspace crate with its default features on the host
+platform. The `gitoxide` package builds the `gix` and `ein` binaries; the `gix`
+package is the library. For example:
+
+```sh
+just sbom --package gitoxide --no-default-features --features small
+just sbom --package gitoxide --no-default-features --features max-pure
+just sbom --package gix --no-default-features --features sha1
+just sbom --package gix --features blocking-http-transport-reqwest-rust-tls
+just sbom --package gix --no-default-features --features sha1,blocking-http-transport-curl-openssl
+```
+
+`--features` accepts comma- or space-separated named crate features and can be
+repeated. `--all-features` enables every feature of the selected crate. Use
+`--target TRIPLE` for another platform or `--target all` for all platforms.
+
+Outputs default to `<Cargo target directory>/sbom/<workspace-or-package>.cdx.json`
+and `.spdx.json`. Use `--output-dir PATH` to keep inventories for different feature
+or target selections alongside each other. Each run replaces the existing files
+for that package or workspace only after both tools succeed.
+
+Inventories include runtime and build dependencies and exclude dev-only dependencies.
+Every workspace member is a root in workspace mode, including internal tooling.
+Package mode resolves in a temporary workspace so unrelated workspace members
+cannot enable extra HTTP or TLS backends. Resolution uses a copy of `Cargo.lock`
+and rejects changed package versions; source manifests and lockfiles stay untouched.
+The selected graph comes from `cargo tree`, which resolves platform-specific features
+and host build dependencies that `cargo metadata --filter-platform` alone cannot isolate.
+These are Cargo dependency inventories, not scans of native libraries installed
+on the system or of the contents of a compiled binary.
+
+Run `just sbom-test` to exercise generation using an isolated offline Cargo fixture,
+including feature selection and matching inventories in both formats.
+
 ## General
 
 * **async**
@@ -113,13 +173,9 @@ Parameters which are not available in git or specific to `gitoxide` or the needs
       needs a lot of resources and threads will do just fine.~~
       * Support async out of the box without locking it into particular traits using conditional complication. This will make integrating
         into an async codebase easier, which we assume is given on the server side _these days_.
-  * **usage of `maybe_async`**
-    * Right not we intentionally only use it in tests to allow one set of test cases to test both blocking and async implementations. This is the
-      only way to prevent drift of otherwise distinct implementations.
-    * **Why not use it to generate blocking versions of traits automatically?**
-      * This would require `maybe_async` and its dependencies to always be present, increasing compile times. For now we chose a little more code to handle
-        over increasing compile times for everyone. This stance may change later once compile times don't matter that much anymore to allow the removal of code.
-
+  * **shared blocking and async code**
+    * Use async-shaped source with the `keep`, `discard`, and `sync` attributes from `gix-macros`. Alias them in a local `bisync` module at each
+      integration point so both variants can coexist while being generated from one implementation that cannot drift.
 * **`Default` trait implementations**
   * These can change only if the effect is contained within the callers process.
     This means **changing the default of a file version** is a **breaking change**.

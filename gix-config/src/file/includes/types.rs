@@ -4,7 +4,7 @@ use crate::{parse, path::interpolate};
 
 /// The error returned when following includes.
 #[derive(Debug, thiserror::Error)]
-#[allow(missing_docs)]
+#[expect(missing_docs)]
 pub enum Error {
     #[error("Failed to copy configuration file into buffer")]
     CopyBuffer(#[source] std::io::Error),
@@ -12,6 +12,8 @@ pub enum Error {
     Io { path: PathBuf, source: std::io::Error },
     #[error(transparent)]
     Parse(#[from] parse::Error),
+    #[error(transparent)]
+    Span(#[from] parse::span::Error),
     #[error(transparent)]
     Interpolate(#[from] interpolate::Error),
     #[error("The maximum allowed length {} of the file include chain built by following nested resolve_includes is exceeded", .max_depth)]
@@ -37,7 +39,8 @@ pub struct Options<'a> {
     pub err_on_max_depth_exceeded: bool,
     /// If true, default false, failing to interpolate paths will result in an error.
     ///
-    /// Interpolation also happens if paths in conditional includes can't be interpolated.
+    /// This also applies to paths in conditional include patterns. If false, patterns with missing
+    /// interpolation context or unknown users are matched unchanged, while such include paths are skipped.
     pub err_on_interpolation_failure: bool,
     /// If true, default true, configuration not originating from a path will cause errors when trying to resolve
     /// relative include paths (which would require the including configuration's path).

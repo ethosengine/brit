@@ -9,12 +9,52 @@ use std::{borrow::Cow, io::Read};
 use bstr::{BStr, BString, ByteSlice};
 use gix_error::{ErrorExt, OptionExt, ResultExt, ValidationError};
 
+/// Quote `input` using Git's C-style quotation rules.
+///
+/// Printable ASCII is returned unchanged if no quotation is necessary. Otherwise the result is
+/// surrounded by double quotes, common control bytes use their named escape, and all remaining
+/// non-printable or non-ASCII bytes use three-digit octal escapes.
+pub fn quote(input: &BStr) -> Cow<'_, BStr> {
+    if input
+        .iter()
+        .all(|byte| matches!(byte, b' '..=b'~') && !matches!(byte, b'"' | b'\\'))
+    {
+        return Cow::Borrowed(input);
+    }
+
+    let mut out = BString::new(Vec::with_capacity(input.len() + 2));
+    out.push(b'"');
+    for byte in input.iter().copied() {
+        match byte {
+            7 => out.extend_from_slice(br"\a"),
+            8 => out.extend_from_slice(br"\b"),
+            b'\t' => out.extend_from_slice(br"\t"),
+            b'\n' => out.extend_from_slice(br"\n"),
+            11 => out.extend_from_slice(br"\v"),
+            12 => out.extend_from_slice(br"\f"),
+            b'\r' => out.extend_from_slice(br"\r"),
+            b'"' => out.extend_from_slice(br#"\""#),
+            b'\\' => out.extend_from_slice(br"\\"),
+            b' '..=b'~' => out.push(byte),
+            byte => {
+                out.push(b'\\');
+                out.push(b'0' + ((byte >> 6) & 0b11));
+                out.push(b'0' + ((byte >> 3) & 0b111));
+                out.push(b'0' + (byte & 0b111));
+            }
+        }
+    }
+    out.push(b'"');
+    Cow::Owned(out)
+}
+
 /// Unquote the given ansi-c quoted `input` string, returning it and all of the consumed bytes.
 ///
 /// The `input` is returned unaltered if it doesn't start with a `"` character to indicate
 /// quotation, otherwise a new unquoted string will always be allocated.
 /// The amount of consumed bytes allow to pass strings that start with a quote, and skip all quoted text for additional processing
 ///
+/// A quote that is never closed is an error.
 /// See [the tests][tests] for quotation examples.
 ///
 /// [tests]: https://github.com/GitoxideLabs/gitoxide/blob/64872690e60efdd9267d517f4d9971eecd3b875c/gix-quote/tests/quote.rs#L57-L74
@@ -85,7 +125,7 @@ pub fn undo(input: &BStr) -> Result<(Cow<'_, BStr>, usize), undo::Error> {
                                     format!("Invalid escaped value {next}"),
                                     original,
                                 )
-                                .raise())
+                                .raise());
                             }
                         }
                     }
@@ -93,9 +133,9 @@ pub fn undo(input: &BStr) -> Result<(Cow<'_, BStr>, usize), undo::Error> {
                 }
             }
             None => {
-                out.extend_from_slice(input);
-                consumed += input.len();
-                break;
+                return Err(
+                    ValidationError::new_with_input("Missing closing quote in quoted string", original).raise(),
+                );
             }
         }
     }

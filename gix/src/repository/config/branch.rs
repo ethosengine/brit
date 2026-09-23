@@ -1,9 +1,9 @@
-use std::{borrow::Cow, collections::BTreeSet};
+use std::collections::BTreeSet;
 
 use gix_ref::{FullName, FullNameRef};
 
 use crate::{
-    bstr::BStr,
+    bstr::{BStr, ByteSlice},
     config::{
         cache::util::ApplyLeniencyDefault,
         tree::{Branch, Push},
@@ -45,7 +45,7 @@ impl crate::Repository {
         &self,
         name: &FullNameRef,
         direction: remote::Direction,
-    ) -> Option<Result<Cow<'_, FullNameRef>, branch_remote_ref_name::Error>> {
+    ) -> Option<Result<FullName, branch_remote_ref_name::Error>> {
         match direction {
             remote::Direction::Fetch => {
                 let short_name = name.shorten();
@@ -56,9 +56,7 @@ impl crate::Repository {
                         if name.starts_with(b"refs/") {
                             crate::config::tree::branch::Merge::try_into_fullrefname(name)
                         } else {
-                            gix_ref::Category::LocalBranch
-                                .to_full_name(name.as_ref())
-                                .map(Cow::Owned)
+                            gix_ref::Category::LocalBranch.to_full_name(name.as_bstr())
                         }
                         .map_err(Into::into)
                     })
@@ -84,7 +82,7 @@ impl crate::Repository {
                         };
                     match push_default {
                         push::Default::Nothing => None,
-                        push::Default::Current | push::Default::Matching => Some(Ok(Cow::Owned(name.to_owned()))),
+                        push::Default::Current | push::Default::Matching => Some(Ok(name.to_owned())),
                         push::Default::Upstream => self.branch_remote_ref_name(name, remote::Direction::Fetch),
                         push::Default::Simple => match self.branch_remote_ref_name(name, remote::Direction::Fetch)? {
                             Ok(fetch_ref) if fetch_ref.as_ref() == name => Some(Ok(fetch_ref)),
@@ -122,7 +120,7 @@ impl crate::Repository {
         &self,
         name: &FullNameRef,
         direction: remote::Direction,
-    ) -> Option<Result<Cow<'_, FullNameRef>, branch_remote_tracking_ref_name::Error>> {
+    ) -> Option<Result<FullName, branch_remote_tracking_ref_name::Error>> {
         let remote_ref = match self.branch_remote_ref_name(name, direction)? {
             Ok(r) => r,
             Err(err) => return Some(Err(err.into())),
@@ -143,11 +141,8 @@ impl crate::Repository {
     /// the side of the remote, also called upstream branch.
     ///
     /// Return `Ok(None)` if there is no remote with fetch-refspecs that would match `tracking_branch` on the right-hand side,
-    /// or `Err` if the matches were ambiguous.
-    ///
-    /// ### Limitations
-    ///
-    /// A single valid mapping is required as fine-grained matching isn't implemented yet. This means that
+    /// or `Err` if the matches were ambiguous. All configured remotes are searched, and their fetch refspecs are reverse-mapped.
+    /// A single valid mapping is required: mappings from multiple remotes or multiple mappings within one remote are ambiguous.
     pub fn upstream_branch_and_remote_for_tracking_branch(
         &self,
         tracking_branch: &FullNameRef,
@@ -168,7 +163,7 @@ impl crate::Repository {
         let mut candidates = Vec::new();
         let mut ambiguous_remotes = Vec::new();
         for remote_name in self.remote_names() {
-            let remote = self.find_remote(remote_name.as_ref())?;
+            let remote = self.find_remote(remote_name)?;
             let match_group = gix_refspec::MatchGroup::from_fetch_specs(
                 remote
                     .refspecs(remote::Direction::Fetch)
@@ -185,15 +180,10 @@ impl crate::Repository {
 
         if candidates.len() == 1 {
             let (remote, candidate) = candidates.pop().expect("just checked for one entry");
-            let upstream_branch = match candidate {
-                gix_refspec::match_group::SourceRef::FullName(name) => gix_ref::FullName::try_from(name.into_owned())?,
-                gix_refspec::match_group::SourceRef::ObjectId(_) => {
-                    unreachable!("Such a reverse mapping isn't ever produced")
-                }
-            };
+            let upstream_branch = source_ref_to_full_name(candidate)?;
             return Ok(Some((upstream_branch, remote)));
         }
-        if ambiguous_remotes.len() + candidates.len() > 1 {
+        if !ambiguous_remotes.is_empty() || candidates.len() > 1 {
             return Err(Error::AmbiguousRemotes {
                 remotes: ambiguous_remotes
                     .into_iter()
@@ -235,7 +225,7 @@ impl crate::Repository {
             })
             .flatten()
             .or_else(|| config.string_by("branch", Some(name), Branch::REMOTE.name))
-            .and_then(|name| name.try_into().ok())
+            .map(Into::into)
     }
 
     /// Like [`branch_remote_name(…)`](Self::branch_remote_name()), but returns a [Remote](crate::Remote).
@@ -252,7 +242,8 @@ impl crate::Repository {
         self.try_find_remote(name.as_bstr())
             .map(|res| res.map_err(Into::into))
             .or_else(|| match name {
-                remote::Name::Url(url) => gix_url::parse(url.as_ref())
+                remote::Name::Url(url) => gix_url::parse(&url)
+                    .map_err(gix_error::Exn::into_error)
                     .map_err(Into::into)
                     .and_then(|url| {
                         self.remote_at(url)
@@ -264,11 +255,20 @@ impl crate::Repository {
     }
 }
 
+fn source_ref_to_full_name(source: gix_refspec::match_group::SourceRef<'_>) -> Result<FullName, gix_ref::name::Error> {
+    match source {
+        gix_refspec::match_group::SourceRef::FullName(name) => gix_ref::FullName::try_from(name.into_owned()),
+        gix_refspec::match_group::SourceRef::ObjectId(_) => {
+            unreachable!("Such a reverse mapping isn't ever produced")
+        }
+    }
+}
+
 fn matching_remote<'a>(
     lhs: &FullNameRef,
     specs: impl IntoIterator<Item = &'a gix_refspec::RefSpec>,
     object_hash: gix_hash::Kind,
-) -> Option<Result<Cow<'static, FullNameRef>, gix_validate::reference::name::Error>> {
+) -> Option<Result<FullName, gix_validate::reference::name::Error>> {
     let search = gix_refspec::MatchGroup {
         specs: specs
             .into_iter()
@@ -288,5 +288,5 @@ fn matching_remote<'a>(
     out.mappings
         .into_iter()
         .next()
-        .and_then(|m| m.rhs.map(|name| FullName::try_from(name.into_owned()).map(Cow::Owned)))
+        .and_then(|m| m.rhs.map(|name| FullName::try_from(name.into_owned())))
 }

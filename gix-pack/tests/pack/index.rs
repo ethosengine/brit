@@ -6,15 +6,21 @@ use gix_object::{self as object};
 use gix_odb::pack;
 
 use crate::{
-    fixture_path, hex_to_id,
-    pack::{INDEX_V1, PACK_FOR_INDEX_V1, SMALL_PACK, SMALL_PACK_INDEX},
+    INDEX_V1, PACK_FOR_INDEX_V1, SMALL_PACK, SMALL_PACK_INDEX, fixture_path, leaked_fixture_bytes, pack_from_memory_at,
 };
+
+fn memory_backed_index(at: &str) -> gix_pack::index::File<&'static [u8]> {
+    let (data, path) = leaked_fixture_bytes(fixture_path(at));
+    gix_pack::index::File::from_data(data, path, gix_hash::Kind::Sha1).expect("valid index file")
+}
+
+mod fuzzed;
 
 mod version {
     mod v1 {
         use gix_pack::index;
 
-        use crate::{fixture_path, pack::INDEX_V1};
+        use crate::{INDEX_V1, fixture_path};
 
         #[test]
         fn lookup() -> Result<(), Box<dyn std::error::Error>> {
@@ -58,7 +64,7 @@ mod version {
     mod v2 {
         use gix_pack::index;
 
-        use crate::{fixture_path, pack::INDEX_V2};
+        use crate::{INDEX_V2, fixture_path};
 
         #[test]
         fn lookup() -> Result<(), Box<dyn std::error::Error>> {
@@ -108,7 +114,7 @@ mod version {
         }
     }
 
-    #[cfg(feature = "gix-features-parallel")]
+    #[cfg(feature = "parallel")]
     mod any {
         use std::{fs, io, sync::atomic::AtomicBool};
 
@@ -116,10 +122,7 @@ mod version {
         use gix_odb::pack;
         use gix_pack::{data::input, index};
 
-        use crate::{
-            fixture_path,
-            pack::{INDEX_V2, V2_PACKS_AND_INDICES},
-        };
+        use crate::{INDEX_V2, SMALL_PACK, V2_PACKS_AND_INDICES, fixture_path};
 
         fn slice_map(entry: gix_pack::data::EntryRange, map: &memmap2::Mmap) -> Option<&[u8]> {
             map.get(entry.start as usize..entry.end as usize)
@@ -144,7 +147,7 @@ mod version {
                 let desired_kind = pack::index::Version::default();
                 let num_objects = pack_iter.len() as u32;
                 let pack_version = pack_iter.version();
-                let outcome = pack::index::File::write_data_iter_to_stream(
+                let outcome = pack::index::write_data_iter_to_stream(
                     desired_kind,
                     || {
                         let file = std::fs::File::open(fixture_path(data_path))?;
@@ -157,6 +160,7 @@ mod version {
                     &mut actual,
                     &AtomicBool::new(false),
                     gix_hash::Kind::Sha1,
+                    None,
                     pack_version,
                 )?;
 
@@ -225,8 +229,45 @@ mod version {
         }
 
         #[test]
+        fn write_to_stream_respects_alloc_limit_bytes() -> Result<(), Box<dyn std::error::Error>> {
+            let data_path = SMALL_PACK;
+            let mut pack_iter = pack::data::input::BytesToEntriesIter::new_from_header(
+                io::BufReader::new(fs::File::open(fixture_path(data_path))?),
+                input::Mode::Verify,
+                input::EntryDataMode::Crc32,
+                gix_hash::Kind::Sha1,
+            )?;
+            let pack_version = pack_iter.version();
+
+            let prevent_allocation = Some(0);
+            let err = pack::index::write_data_iter_to_stream(
+                pack::index::Version::default(),
+                || {
+                    let file = std::fs::File::open(fixture_path(data_path))?;
+                    let map = unsafe { memmap2::MmapOptions::new().map_copy_read_only(&file)? };
+                    Ok((slice_map, map))
+                },
+                &mut pack_iter,
+                Some(1),
+                &mut progress::Discard,
+                &mut Vec::new(),
+                &AtomicBool::new(false),
+                gix_hash::Kind::Sha1,
+                prevent_allocation,
+                pack_version,
+            )
+            .expect_err("a zero allocation limit rejects non-empty delta-tree storage");
+
+            assert!(
+                crate::error_chain_contains_message(&err, "The pack delta tree is too large to fit in memory"),
+                "index writing must apply the allocation limit to delta-tree storage"
+            );
+            Ok(())
+        }
+
+        #[test]
         fn lookup_missing() {
-            let file = index::File::at(&fixture_path(INDEX_V2), gix_hash::Kind::Sha1).unwrap();
+            let file = index::File::at(fixture_path(INDEX_V2), gix_hash::Kind::Sha1).unwrap();
             let prefix = gix_hash::Prefix::new(&gix_hash::Kind::Sha1.null(), 7).unwrap();
             assert!(file.lookup_prefix(prefix, None).is_none());
 
@@ -261,11 +302,73 @@ fn traverse_with_index_and_forward_ref_deltas() {
     assert_eq!(count.load(Ordering::SeqCst), 9, "we traverse all objects");
 }
 
+#[test]
+fn traverse_with_index_respects_alloc_limit_bytes() -> Result<(), Box<dyn std::error::Error>> {
+    let index = index::File::at(fixture_path(SMALL_PACK_INDEX), gix_hash::Kind::Sha1)?;
+    let data = pack::data::File::at(fixture_path(SMALL_PACK), gix_hash::Kind::Sha1)?;
+
+    let prevent_allocation = Some(0);
+    let err = match index.traverse_with_index(
+        &data,
+        |_, _, _, _| Ok::<_, std::io::Error>(()),
+        &mut progress::Discard,
+        &AtomicBool::new(false),
+        index::traverse::with_index::Options {
+            alloc_limit_bytes: prevent_allocation,
+            thread_limit: Some(1),
+            ..Default::default()
+        },
+    ) {
+        Ok(_) => panic!("a zero allocation limit rejects the first non-empty decoded object"),
+        Err(err) => err,
+    };
+
+    assert!(
+        crate::error_chain_contains_message(&err, "Entry too large to fit in memory"),
+        "traverse_with_index must pass its allocation limit to delta-tree traversal"
+    );
+    Ok(())
+}
+
+#[test]
+fn from_memory_backing_supports_verification_and_traversal() {
+    use gix_features::progress;
+
+    let index = memory_backed_index(SMALL_PACK_INDEX);
+    let data = pack_from_memory_at(SMALL_PACK);
+    assert_eq!(
+        index
+            .verify_checksum(&mut progress::Discard, &AtomicBool::new(false))
+            .unwrap(),
+        index.index_checksum()
+    );
+    assert_eq!(
+        data.verify_checksum(&mut progress::Discard, &AtomicBool::new(false))
+            .unwrap(),
+        data.checksum()
+    );
+
+    let count = AtomicUsize::new(0);
+    index
+        .traverse_with_index(
+            &data,
+            |_, _, _, _| {
+                count.fetch_add(1, Ordering::SeqCst);
+                Ok::<_, std::io::Error>(())
+            },
+            &mut progress::Discard,
+            &AtomicBool::new(false),
+            gix_pack::index::traverse::with_index::Options::default(),
+        )
+        .unwrap();
+    assert_eq!(count.load(Ordering::SeqCst), index.num_objects() as usize);
+}
+
 use gix_features::progress;
 use gix_pack::{cache, data::decode::entry::Outcome, index};
 use maplit::btreemap;
 
-use crate::pack::{INDEX_V2, PACK_FOR_INDEX_V2};
+use crate::{INDEX_V2, PACK_FOR_INDEX_V2};
 
 static ALGORITHMS: &[index::traverse::Algorithm] = &[
     index::traverse::Algorithm::Lookup,
@@ -378,7 +481,7 @@ fn pack_lookup() -> Result<(), Box<dyn std::error::Error>> {
                                 verify_mode: *mode,
                                 traversal: *algo,
                                 make_pack_lookup_cache: || cache::Never,
-                                thread_limit: None
+                                thread_limit: None,
                             }
                         }),
                         &mut progress::Discard,
@@ -447,8 +550,45 @@ fn pack_lookup() -> Result<(), Box<dyn std::error::Error>> {
 }
 
 #[test]
+fn verify_integrity_respects_pack_alloc_limit_bytes() -> Result<(), Box<dyn std::error::Error>> {
+    let prevent_allocation = Some(0);
+    let idx = index::File::at(fixture_path(SMALL_PACK_INDEX), gix_hash::Kind::Sha1)?;
+    let pack = pack::data::File::at(fixture_path(SMALL_PACK), gix_hash::Kind::Sha1)?
+        .with_alloc_limit_bytes(prevent_allocation);
+
+    for traversal in [
+        gix_pack::index::traverse::Algorithm::Lookup,
+        gix_pack::index::traverse::Algorithm::DeltaTreeLookup,
+    ] {
+        let err = match idx.verify_integrity(
+            Some(gix_pack::index::verify::PackContext {
+                data: &pack,
+                options: gix_pack::index::verify::integrity::Options {
+                    traversal,
+                    thread_limit: Some(1),
+                    ..Default::default()
+                },
+            }),
+            &mut progress::Discard,
+            &AtomicBool::new(false),
+        ) {
+            Ok(_) => panic!("{traversal:?}: a zero allocation limit rejects the first non-empty decoded object"),
+            Err(err) => err,
+        };
+
+        assert!(
+            crate::error_chain_contains_message(&err, "Entry too large to fit in memory"),
+            "{traversal:?}: verify_integrity() must obtain the allocation limit from the pack data file, even for \
+             DeltaTreeLookup where decoded objects are resolved by delta-tree traversal instead of regular pack \
+             lookups"
+        );
+    }
+    Ok(())
+}
+
+#[test]
 fn iter() -> Result<(), Box<dyn std::error::Error>> {
-    for (path, kind, num_objects, index_checksum, pack_checksum) in &[
+    for (path, kind, num_objects, index_checksum, pack_checksum) in [
         (
             INDEX_V1,
             index::Version::V1,
@@ -472,8 +612,8 @@ fn iter() -> Result<(), Box<dyn std::error::Error>> {
         ),
     ] {
         let idx = index::File::at(fixture_path(path), gix_hash::Kind::Sha1)?;
-        assert_eq!(idx.version(), *kind);
-        assert_eq!(idx.num_objects(), *num_objects);
+        assert_eq!(idx.version(), kind);
+        assert_eq!(idx.num_objects(), num_objects);
         assert_eq!(
             idx.verify_integrity(
                 None::<gix_pack::index::verify::PackContext<'_, fn() -> cache::Never>>,
@@ -483,9 +623,9 @@ fn iter() -> Result<(), Box<dyn std::error::Error>> {
             .map(|o| (o.actual_index_checksum, o.pack_traverse_statistics))?,
             (idx.index_checksum(), None)
         );
-        assert_eq!(idx.index_checksum(), hex_to_id(index_checksum));
-        assert_eq!(idx.pack_checksum(), hex_to_id(pack_checksum));
-        assert_eq!(idx.iter().count(), *num_objects as usize);
+        assert_eq!(idx.index_checksum(), index_checksum);
+        assert_eq!(idx.pack_checksum(), pack_checksum);
+        assert_eq!(idx.iter().count(), num_objects as usize);
     }
     Ok(())
 }

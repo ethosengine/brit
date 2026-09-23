@@ -48,8 +48,10 @@ pub(crate) fn write_entry_header_and_path(
     bytes[1] = hash_to_byte(oid.kind());
     bytes[2..][..oid.kind().len_in_bytes()].copy_from_slice(oid.as_bytes());
 
-    // We know how `out` works in a pipe writer, it's always writing everything.
-    #[allow(clippy::unused_io_amount)]
+    #[expect(
+        clippy::unused_io_amount,
+        reason = "We know how `out` works in a pipe writer, it's always writing everything."
+    )]
     {
         out.write(&buf[..HEADER_LEN + oid.kind().len_in_bytes()])?;
         out.write(path)?;
@@ -67,8 +69,10 @@ pub(crate) fn write_stream(
     const BUF_LEN: usize = u16::MAX as usize;
     clear_and_set_len(buf, BUF_LEN)?;
 
-    // We know how `out` works in a pipe writer, it's always writing everything.
-    #[allow(clippy::unused_io_amount)]
+    #[expect(
+        clippy::unused_io_amount,
+        reason = "We know how `out` works in a pipe writer, it's always writing everything."
+    )]
     loop {
         match input.read(buf) {
             Ok(0) => {
@@ -90,7 +94,10 @@ pub(crate) fn write_stream(
 
 fn byte_to_hash(b: u8) -> gix_hash::Kind {
     match b {
+        #[cfg(feature = "sha1")]
         0 => gix_hash::Kind::Sha1,
+        #[cfg(feature = "sha256")]
+        1 => gix_hash::Kind::Sha256,
         _ => unreachable!("BUG: we control the protocol"),
     }
 }
@@ -110,7 +117,10 @@ fn byte_to_mode(b: u8) -> gix_object::tree::EntryMode {
 
 fn hash_to_byte(h: gix_hash::Kind) -> u8 {
     match h {
+        #[cfg(feature = "sha1")]
         gix_hash::Kind::Sha1 => 0,
+        #[cfg(feature = "sha256")]
+        gix_hash::Kind::Sha256 => 1,
         _ => unreachable!("BUG: not implemented for hash kind {h}"),
     }
 }

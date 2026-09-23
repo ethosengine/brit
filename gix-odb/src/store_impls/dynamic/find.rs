@@ -9,7 +9,7 @@ pub(crate) mod error {
 
     /// Returned by [`Handle::try_find()`][gix_pack::Find::try_find()]
     #[derive(thiserror::Error, Debug)]
-    #[allow(missing_docs)]
+    #[expect(missing_docs)]
     pub enum Error {
         #[error("An error occurred while obtaining an object from the loose object store")]
         Loose(#[from] loose::find::Error),
@@ -77,7 +77,6 @@ pub(crate) mod error {
     }
 }
 pub use error::Error;
-use gix_features::zlib;
 
 use crate::store::types::PackId;
 
@@ -89,7 +88,7 @@ where
         &'b self,
         mut id: &'b gix_hash::oid,
         buffer: &'a mut Vec<u8>,
-        inflate: &mut zlib::Inflate,
+        inflate: &mut gix_zlib::Inflate,
         pack_cache: &mut dyn DecodeEntry,
         snapshot: &mut load_index::Snapshot,
         recursion: Option<error::DeltaBaseRecursion<'_>>,
@@ -101,14 +100,13 @@ where
                     id: r.original_id.to_owned(),
                 });
             }
-        } else if !self.ignore_replacements {
-            if let Ok(pos) = self
+        } else if !self.ignore_replacements
+            && let Ok(pos) = self
                 .store
                 .replacements
                 .binary_search_by(|(map_this, _)| map_this.as_ref().cmp(id))
-            {
-                id = self.store.replacements[pos].1.as_ref();
-            }
+        {
+            id = self.store.replacements[pos].1.as_ref();
         }
 
         'outer: loop {
@@ -130,7 +128,7 @@ where
                                 }
                                 None => {
                                     // The pack wasn't available anymore so we are supposed to try another round with a fresh index
-                                    match self.store.load_one_index(self.refresh, snapshot.marker)? {
+                                    match self.store.load_one_index(self.index_ctx(snapshot.marker))? {
                                         Some(new_snapshot) => {
                                             *snapshot = new_snapshot;
                                             self.clear_cache();
@@ -164,7 +162,7 @@ where
                             Ok(r) => Ok((
                                 gix_object::Data {
                                     kind: r.kind,
-                                    hash_kind: pack.object_hash(),
+                                    object_hash: pack.object_hash(),
                                     data: buffer.as_slice(),
                                 },
                                 Some(gix_pack::data::entry::Location {
@@ -266,7 +264,7 @@ where
                                     (
                                         gix_object::Data {
                                             kind: r.kind,
-                                            hash_kind: pack.object_hash(),
+                                            object_hash: pack.object_hash(),
                                             data: buffer.as_slice(),
                                         },
                                         Some(gix_pack::data::entry::Location {
@@ -298,7 +296,7 @@ where
                 }
             }
 
-            match self.store.load_one_index(self.refresh, snapshot.marker)? {
+            match self.store.load_one_index(self.index_ctx(snapshot.marker))? {
                 Some(new_snapshot) => {
                     *snapshot = new_snapshot;
                     self.clear_cache();
@@ -336,7 +334,7 @@ where
                 }
             }
 
-            match self.store.load_one_index(self.refresh, snapshot.marker) {
+            match self.store.load_one_index(self.index_ctx(snapshot.marker)) {
                 Ok(Some(new_snapshot)) => {
                     *snapshot = new_snapshot;
                     self.clear_cache();
@@ -365,7 +363,10 @@ where
             "BUG: handle must be configured to `prevent_pack_unload()` before using this method"
         );
 
-        assert!(self.store_ref().replacements.is_empty() || self.ignore_replacements, "Everything related to packing must not use replacements. These are not used here, but it should be turned off for good measure.");
+        assert!(
+            self.store_ref().replacements.is_empty() || self.ignore_replacements,
+            "Everything related to packing must not use replacements. These are not used here, but it should be turned off for good measure."
+        );
 
         let mut snapshot = self.snapshot.borrow_mut();
         let mut inflate = self.inflate.borrow_mut();
@@ -388,7 +389,7 @@ where
                                 }
                                 None => {
                                     // The pack wasn't available anymore so we are supposed to try another round with a fresh index
-                                    match self.store.load_one_index(self.refresh, snapshot.marker).ok()? {
+                                    match self.store.load_one_index(self.index_ctx(snapshot.marker)).ok()? {
                                         Some(new_snapshot) => {
                                             *snapshot = new_snapshot;
                                             self.clear_cache();
@@ -405,8 +406,13 @@ where
                             },
                         };
                         let entry = pack.entry(pack_offset).ok()?;
-
-                        buf.resize(entry.decompressed_size.try_into().expect("representable size"), 0);
+                        // This allocation is driven by on-disk pack metadata, so keep it aligned with
+                        // `gix_pack::data::File::with_alloc_limit_bytes()`.
+                        let size: usize = entry.decompressed_size.try_into().ok()?;
+                        if pack.alloc_limit_bytes.is_some_and(|limit| size > limit) {
+                            return None;
+                        }
+                        buf.resize(size, 0);
                         assert_eq!(pack.id, pack_id.to_intrinsic_pack_id(), "both ids must always match");
 
                         let res = pack
@@ -426,12 +432,10 @@ where
                 }
             }
 
-            match self.store.load_one_index(self.refresh, snapshot.marker).ok()? {
-                Some(new_snapshot) => {
-                    *snapshot = new_snapshot;
-                    self.clear_cache();
-                }
-                None => return None,
+            {
+                let new_snapshot = self.store.load_one_index(self.index_ctx(snapshot.marker)).ok()??;
+                *snapshot = new_snapshot;
+                self.clear_cache();
             }
         }
     }
@@ -452,12 +456,10 @@ where
                 }
             }
 
-            match self.store.load_one_index(self.refresh, snapshot.marker).ok()? {
-                Some(new_snapshot) => {
-                    drop(snapshot);
-                    *self.snapshot.borrow_mut() = new_snapshot;
-                }
-                None => return None,
+            {
+                let new_snapshot = self.store.load_one_index(self.index_ctx(snapshot.marker)).ok()??;
+                drop(snapshot);
+                *self.snapshot.borrow_mut() = new_snapshot;
             }
         }
     }

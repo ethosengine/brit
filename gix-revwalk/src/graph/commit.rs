@@ -8,7 +8,7 @@ impl<'graph, 'cache> LazyCommit<'graph, 'cache> {
     /// Return an iterator over the parents of this commit.
     pub fn iter_parents(&self) -> Parents<'graph, 'cache> {
         let backing = match &self.backing {
-            Either::Left(buf) => Either::Left(gix_object::CommitRefIter::from_bytes(buf)),
+            Either::Left(buf) => Either::Left(gix_object::CommitRefIter::from_bytes(buf, self.object_hash)),
             Either::Right((cache, pos)) => Either::Right((*cache, cache.commit_at(*pos).iter_parents())),
         };
         Parents { backing }
@@ -20,7 +20,9 @@ impl<'graph, 'cache> LazyCommit<'graph, 'cache> {
     /// Note that this can only fail if the commit is backed by the object database *and* parsing fails.
     pub fn committer_timestamp(&self) -> Result<SecondsSinceUnixEpoch, gix_object::decode::Error> {
         Ok(match &self.backing {
-            Either::Left(buf) => gix_object::CommitRefIter::from_bytes(buf).committer()?.seconds(),
+            Either::Left(buf) => gix_object::CommitRefIter::from_bytes(buf, self.object_hash)
+                .committer()?
+                .seconds(),
             Either::Right((cache, pos)) => cache.commit_at(*pos).committer_timestamp() as SecondsSinceUnixEpoch, // a cast as we cannot represent the error and trying seems overkill
         })
     }
@@ -38,7 +40,12 @@ impl<'graph, 'cache> LazyCommit<'graph, 'cache> {
         &self,
     ) -> Result<(Option<Generation>, SecondsSinceUnixEpoch), gix_object::decode::Error> {
         Ok(match &self.backing {
-            Either::Left(buf) => (None, gix_object::CommitRefIter::from_bytes(buf).committer()?.seconds()),
+            Either::Left(buf) => (
+                None,
+                gix_object::CommitRefIter::from_bytes(buf, self.object_hash)
+                    .committer()?
+                    .seconds(),
+            ),
             Either::Right((cache, pos)) => {
                 let commit = cache.commit_at(*pos);
                 (
@@ -57,7 +64,7 @@ impl<'graph, 'cache> LazyCommit<'graph, 'cache> {
         Ok(match &self.backing {
             Either::Left(buf) => {
                 use gix_object::commit::ref_iter::Token;
-                let iter = gix_object::CommitRefIter::from_bytes(buf);
+                let iter = gix_object::CommitRefIter::from_bytes(buf, self.object_hash);
                 let mut parents = SmallVec::default();
                 let mut timestamp = None;
                 for token in iter {
@@ -143,7 +150,7 @@ impl Iterator for Parents<'_, '_> {
 pub mod iter_parents {
     /// The error returned by the [`Parents`][super::Parents] iterator.
     #[derive(Debug, thiserror::Error)]
-    #[allow(missing_docs)]
+    #[expect(missing_docs)]
     pub enum Error {
         #[error("An error occurred when parsing commit parents")]
         DecodeCommit(#[from] gix_object::decode::Error),
@@ -156,7 +163,7 @@ pub mod iter_parents {
 pub mod to_owned {
     /// The error returned by [`to_owned()`][crate::graph::LazyCommit::to_owned()].
     #[derive(Debug, thiserror::Error)]
-    #[allow(missing_docs)]
+    #[expect(missing_docs)]
     pub enum Error {
         #[error("A commit could not be decoded during traversal")]
         Decode(#[from] gix_object::decode::Error),

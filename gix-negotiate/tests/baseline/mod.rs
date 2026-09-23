@@ -1,7 +1,7 @@
 use std::cell::RefCell;
 
 use gix_negotiate::Algorithm;
-use gix_object::{bstr, bstr::ByteSlice, FindExt};
+use gix_object::{FindExt, bstr, bstr::ByteSlice};
 use gix_ref::{file::ReferenceExt, store::WriteReflog};
 
 #[test]
@@ -23,9 +23,11 @@ fn run() -> crate::Result {
         ] {
             let obj_buf = RefCell::new(Vec::new());
             let buf = std::fs::read(base.join(format!("baseline.{algo_name}")))?;
-            let store = gix_odb::at(base.join("client").join(".git/objects"))?;
-            let refs = gix_ref::file::Store::at(
+            let object_hash = gix_testtools::object_hash();
+            let store = gix_odb::at(base.join("client").join(".git/objects"), object_hash)?;
+            let refs = gix_ref::file::Store::at_opts(
                 base.join("client").join(".git"),
+                object_hash,
                 gix_ref::store::init::Options {
                     write_reflog: WriteReflog::Disable,
                     ..Default::default()
@@ -102,11 +104,16 @@ fn run() -> crate::Result {
                                 "b2.c0",
                             ]);
                         } else if case == "advertisement_as_filter" {
+                            let id = match gix_testtools::object_hash() {
+                                gix_hash::Kind::Sha1 => "f36cefa0be2ac180d360a54b1cc4214985cea60a",
+                                gix_hash::Kind::Sha256 => {
+                                    "03169d756e206a996a65e0c4734af4cddfd341d40a5694bda5712de7e78ca60c"
+                                }
+                                _ => unimplemented!(),
+                            };
                             haves = lookup_names(&["c2side", "c5", "origin/main"])
                                 .into_iter()
-                                .chain(Some(
-                                    gix_hash::ObjectId::from_hex(b"f36cefa0be2ac180d360a54b1cc4214985cea60a").unwrap(),
-                                ))
+                                .chain(Some(gix_hash::ObjectId::from_hex(id.as_bytes()).unwrap()))
                                 .collect();
                         }
                     }
@@ -118,7 +125,9 @@ fn run() -> crate::Result {
                             actual,
                             have,
                             "{algo_name}:cache={use_cache}: order and commit matches exactly, wanted {expected}, got {actual}, commits left: {:?}",
-                            std::iter::from_fn(|| negotiator.next_have(&mut graph)).map(|id| message(id.unwrap())).collect::<Vec<_>>(),
+                            std::iter::from_fn(|| negotiator.next_have(&mut graph))
+                                .map(|id| message(id.unwrap()))
+                                .collect::<Vec<_>>(),
                             actual = message(actual),
                             expected = message(have)
                         );

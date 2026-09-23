@@ -1,6 +1,7 @@
 use std::{borrow::Cow, ffi::OsStr, path::Path};
 
-use crate::{path::RepositoryKind, DOT_GIT_DIR};
+use crate::DOT_GIT_DIR;
+use crate::path::RepositoryKind;
 
 /// Returns true if the given `git_dir` seems to be a bare repository.
 ///
@@ -26,6 +27,7 @@ pub fn submodule_git_dir(git_dir: &Path) -> bool {
 ///   * …an objects directory
 ///   * …a refs directory
 ///
+/// This obtains filesystem metadata for `git_dir` before checking its repository layout.
 pub fn git(git_dir: &Path) -> Result<crate::repository::Kind, crate::is_git::Error> {
     let git_dir_metadata = git_dir.metadata().map_err(|err| crate::is_git::Error::Metadata {
         source: err,
@@ -33,12 +35,12 @@ pub fn git(git_dir: &Path) -> Result<crate::repository::Kind, crate::is_git::Err
     })?;
     // precompose-unicode can't be known here, so we just default it to false, hoping it won't matter.
     let cwd = gix_fs::current_dir(false)?;
-    git_with_metadata(git_dir, git_dir_metadata, &cwd)
+    git_with_metadata(git_dir, &git_dir_metadata, &cwd)
 }
 
 pub(crate) fn git_with_metadata(
     git_dir: &Path,
-    git_dir_metadata: std::fs::Metadata,
+    git_dir_metadata: &std::fs::Metadata,
     cwd: &Path,
 ) -> Result<crate::repository::Kind, crate::is_git::Error> {
     #[derive(Eq, PartialEq)]
@@ -92,7 +94,7 @@ pub(crate) fn git_with_metadata(
                 return Err(crate::is_git::Error::MissingCommonDir {
                     missing: common_dir,
                     source: err,
-                })
+                });
             }
             Some(Ok(common_dir)) => {
                 let common_dir = dot_git.join(common_dir);
@@ -105,7 +107,7 @@ pub(crate) fn git_with_metadata(
         let worktree_and_common_dir = crate::path::from_plain_file(&common_dir)
             .and_then(Result::ok)
             .and_then(|cd| {
-                crate::path::from_plain_file(&dot_git.join("gitdir"))
+                crate::path::from_plain_file_relative_to_file(&dot_git.join("gitdir"))
                     .and_then(Result::ok)
                     .map(|worktree_gitfile| (crate::path::without_dot_git_dir(worktree_gitfile), cd))
             });

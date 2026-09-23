@@ -4,7 +4,7 @@ use bstr::{BStr, ByteSlice};
 pub mod component {
     /// The error returned by [`component()`](super::component()).
     #[derive(Debug)]
-    #[allow(missing_docs)]
+    #[expect(missing_docs)]
     #[non_exhaustive]
     pub enum Error {
         Empty,
@@ -125,10 +125,8 @@ pub fn component(
             return Err(component::Error::SymlinkedGitModules);
         }
 
-        if protect_windows {
-            if let Some(err) = check_win_devices_and_illegal_characters(input) {
-                return Err(err);
-            }
+        if protect_windows && let Some(err) = check_win_devices_and_illegal_characters(input) {
+            return Err(err);
         }
     }
 

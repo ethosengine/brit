@@ -1,15 +1,15 @@
-fn file(input: &str) -> gix_config::File<'static> {
+fn file(input: &str) -> gix_config::File {
     input.parse().unwrap()
 }
 
 fn assert_set_value(value: &str) {
     let mut file = file("[a]k=b\n[a]\nk=c\nk=d");
     file.set_existing_raw_value_by("a", None, "k", value).unwrap();
-    assert_eq!(file.raw_value("a.k").unwrap().as_ref(), value);
+    assert_eq!(file.raw_value("a.k").unwrap(), value);
 
     let file: gix_config::File = file.to_string().parse().unwrap();
     assert_eq!(
-        file.raw_value("a.k").unwrap().as_ref(),
+        file.raw_value("a.k").unwrap(),
         value,
         "{:?} didn't have expected value {:?}",
         file.to_string(),
@@ -20,6 +20,18 @@ fn assert_set_value(value: &str) {
 #[test]
 fn single_line() {
     assert_set_value("hello world");
+}
+
+#[test]
+fn global_property_uses_empty_section_name() -> crate::Result {
+    let mut file = file("a=b\n[core]\na=c");
+    let err = file.set_existing_raw_value_by("", None, "a", "d").unwrap_err();
+    assert_eq!(
+        err.to_string(),
+        "The requested section does not exist",
+        "cannot set global values"
+    );
+    Ok(())
 }
 
 #[test]

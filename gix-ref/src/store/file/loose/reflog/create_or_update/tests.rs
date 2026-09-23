@@ -7,15 +7,42 @@ use super::*;
 
 type Result<T = ()> = std::result::Result<T, Box<dyn std::error::Error>>;
 
-/// Convert a hexadecimal hash into its corresponding `ObjectId` or _panic_.
+static SHA1_TO_SHA256_HASHES: std::sync::LazyLock<std::collections::HashMap<&str, &str>> =
+    std::sync::LazyLock::new(|| {
+        [
+            (
+                "28ce6a8b26aa170e1de65536fe8abe1832bd3242",
+                "28ce6a8b26aa170e1de65536fe8abe1832bd3242000000000000000000000000",
+            ),
+            (
+                "0000000000000000000000111111111111111111",
+                "0000000000000000000000111111111111111111000000000000000000000000",
+            ),
+        ]
+        .into()
+    });
+
+/// Convert a hexadecimal SHA-1 hash or the corresponding SHA-256 hash into an `ObjectId` or
+/// _panic_.
 fn hex_to_id(hex: &str) -> gix_hash::ObjectId {
-    gix_hash::ObjectId::from_hex(hex.as_bytes()).expect("40 bytes hex")
+    match gix_testtools::object_hash() {
+        gix_hash::Kind::Sha1 => gix_hash::ObjectId::from_hex(hex.as_bytes()).expect("40 bytes hex"),
+        gix_hash::Kind::Sha256 => gix_hash::ObjectId::from_hex(
+            SHA1_TO_SHA256_HASHES
+                .get(hex)
+                .unwrap_or_else(|| panic!("SHA-1 {hex} wasn't mapped to SHA-256 yet"))
+                .as_bytes(),
+        )
+        .expect("64 bytes hex"),
+        _ => unimplemented!(),
+    }
 }
 
 fn empty_store(writemode: WriteReflog) -> Result<(TempDir, file::Store)> {
     let dir = TempDir::new()?;
-    let store = file::Store::at(
+    let store = file::Store::at_opts(
         dir.path().into(),
+        gix_testtools::object_hash(),
         crate::store::init::Options {
             write_reflog: writemode,
             ..Default::default()
@@ -74,7 +101,7 @@ fn missing_reflog_creates_it_even_if_similarly_named_empty_dir_exists_and_append
                 assert_eq!(
                     reflog_lines(&store, full_name_str, &mut buf)?,
                     vec![crate::log::Line {
-                        previous_oid: gix_hash::Kind::Sha1.null(),
+                        previous_oid: gix_testtools::object_hash().null(),
                         new_oid: new,
                         signature: committer.clone(),
                         message: "the message".into()
@@ -153,5 +180,44 @@ fn missing_reflog_creates_it_even_if_similarly_named_empty_dir_exists_and_append
             }
         }
     }
+    Ok(())
+}
+
+#[test]
+fn reflog_write_normalizes_committer_name_and_email_like_git() -> Result {
+    let (_keep, store) = empty_store(WriteReflog::Always)?;
+    let full_name_str = "refs/heads/main";
+    let full_name: &FullNameRef = full_name_str.try_into()?;
+    let new = hex_to_id("28ce6a8b26aa170e1de65536fe8abe1832bd3242");
+    let committer = Signature {
+        name: "  committer\n  ".into(),
+        email: "  committer@example.com\n  ".into(),
+        time: gix_date::parse_header("1234 +0800").unwrap(),
+    };
+
+    store.reflog_create_or_append(
+        full_name,
+        None,
+        &new,
+        committer.to_ref(&mut TimeBuf::default()).into(),
+        b"the message".as_bstr(),
+        false,
+    )?;
+
+    let mut buf = Vec::new();
+    assert_eq!(
+        reflog_lines(&store, full_name_str, &mut buf)?,
+        vec![crate::log::Line {
+            previous_oid: gix_testtools::object_hash().null(),
+            new_oid: new,
+            signature: Signature {
+                name: "committer".into(),
+                email: "committer@example.com".into(),
+                time: gix_date::parse_header("1234 +0800").unwrap(),
+            },
+            message: "the message".into()
+        }],
+        "it trimmed whitespace as basic fix for slightly malformed signatures"
+    );
     Ok(())
 }

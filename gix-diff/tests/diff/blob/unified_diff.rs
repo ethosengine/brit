@@ -1,6 +1,8 @@
+use gix_diff::blob::UnifiedDiff;
+use gix_diff::blob::unified_diff::ConsumeBinaryHunk;
 use gix_diff::blob::{
-    unified_diff::{ConsumeBinaryHunk, ConsumeHunk, ContextSize, DiffLineKind, HunkHeader},
-    Algorithm, UnifiedDiff,
+    Algorithm,
+    unified_diff::{ConsumeHunk, ContextSize, DiffLineKind, HunkHeader},
 };
 use gix_object::bstr::BString;
 
@@ -488,7 +490,7 @@ where
 }
 
 struct Recorder {
-    #[allow(clippy::type_complexity)]
+    #[expect(clippy::type_complexity)]
     hunks: Vec<((u32, u32), (u32, u32), String)>,
     newline: &'static str,
 }

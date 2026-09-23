@@ -16,11 +16,14 @@
 //!     Duration::from_millis(9),
 //! ]);
 //! ```
-#![deny(rust_2018_idioms, missing_docs)]
+#![deny(missing_docs)]
 #![forbid(unsafe_code)]
 
 ///
 pub mod backoff;
+
+///
+pub mod rng;
 
 ///
 pub mod buffers;
@@ -30,6 +33,20 @@ pub mod str;
 
 ///
 pub mod btoi;
+
+/// Byte-string conversion utilities.
+#[cfg(feature = "bstr")]
+mod bstr;
+#[cfg(feature = "bstr")]
+pub use bstr::{AsBStr, AsBStrOpt};
+
+/// Return whether `byte` is whitespace according to Git's locale-independent `sane_ctype` table.
+///
+/// This includes space, horizontal tab, newline and carriage return, but excludes vertical tab and form feed.
+#[inline]
+pub const fn git_is_space(byte: u8) -> bool {
+    matches!(byte, b' ' | b'\t' | b'\n' | b'\r')
+}
 
 /// A utility to do buffer-swapping with.
 ///

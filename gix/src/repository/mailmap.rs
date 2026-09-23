@@ -1,7 +1,6 @@
-use crate::{config::tree::Mailmap, Id};
+use crate::{Id, bstr::ByteSlice, config::tree::Mailmap};
 
 impl crate::Repository {
-    // TODO: tests
     /// Similar to [`open_mailmap_into()`][crate::Repository::open_mailmap_into()], but ignores all errors and returns at worst
     /// an empty mailmap, e.g. if there is no mailmap or if there were errors loading them.
     ///
@@ -13,7 +12,6 @@ impl crate::Repository {
         out
     }
 
-    // TODO: tests
     /// Try to merge mailmaps from the following locations into `target`:
     ///
     /// - read the `.mailmap` file without following symlinks from the working tree, if present
@@ -27,7 +25,7 @@ impl crate::Repository {
         let mut err = None::<crate::mailmap::load::Error>;
         let mut buf = Vec::new();
         let mut blob_id = self.config.resolved.string(Mailmap::BLOB).and_then(|spec| {
-            self.rev_parse_single(spec.as_ref())
+            self.rev_parse_single(spec.as_bstr())
                 .map_err(|e| err.get_or_insert(e.into()))
                 .map(Id::detach)
                 .ok()
@@ -68,7 +66,9 @@ impl crate::Repository {
         let configured_path = self
             .config_snapshot()
             .trusted_path(Mailmap::FILE)
-            .and_then(|res| res.map_err(|e| err.get_or_insert(e.into())).ok());
+            .map_err(|e| err.get_or_insert(e.into()))
+            .ok()
+            .flatten();
 
         if let Some(mut file) =
             configured_path.and_then(|path| std::fs::File::open(path).map_err(|e| err.get_or_insert(e.into())).ok())

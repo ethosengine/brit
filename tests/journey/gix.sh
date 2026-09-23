@@ -5,14 +5,15 @@ snapshot="$snapshot/plumbing"
 title "gix-tempfile crate"
 (when "testing 'gix-tempfile'"
   snapshot="$snapshot/gix-tempfile"
-  cd gix-tempfile
+  sandbox
+  manifest="$root/../gix-tempfile/Cargo.toml"
   ABORTED=143
 
   (when "running the example program to raise a signal with a tempfile present"
     it "fails as the process aborts" && {
-      expect_run $ABORTED cargo run --features signals --example delete-tempfiles-on-sigterm
+      expect_run $ABORTED cargo run --manifest-path "$manifest" --features signals --example delete-tempfiles-on-sigterm
     }
-    TEMPFILE="$(cargo run --features signals --example delete-tempfiles-on-sigterm 2>/dev/null || true)"
+    TEMPFILE="$(cargo run --manifest-path "$manifest" --features signals --example delete-tempfiles-on-sigterm 2>/dev/null || true)"
     it "outputs a tempfile with an expected name" && {
       expect_run $SUCCESSFULLY test "$TEMPFILE" = "tempfile.ext"
     }
@@ -24,7 +25,7 @@ title "gix-tempfile crate"
   (when "running the example program to help assure there cannot be deadlocks"
     ABORTED=134
     it "succeeds as it won't deadlock" && {
-      expect_run $ABORTED cargo run --release --features signals --example try-deadlock-on-cleanup -- 1
+      expect_run $ABORTED cargo run --manifest-path "$manifest" --release --features signals --example try-deadlock-on-cleanup -- 1
     }
   )
 )
@@ -32,12 +33,13 @@ title "gix-tempfile crate"
 title '`gix` crate'
 (when "testing 'gix'"
   snapshot="$snapshot/gix"
-  cd gix
+  sandbox
+  manifest="$root/../gix/Cargo.toml"
   ABORTED=143
 
   (when "running the example program to check order of signal handlers"
     it "fails as the process aborts" && {
-      expect_run $ABORTED cargo run --no-default-features --features interrupt --example interrupt-handler-allows-graceful-shutdown
+      expect_run $ABORTED cargo run --manifest-path "$manifest" --no-default-features --features interrupt --example interrupt-handler-allows-graceful-shutdown
     }
     it "cleans up the tempfile it created" && {
       expect_run $WITH_FAILURE test -e "example-file.tmp"
@@ -45,7 +47,7 @@ title '`gix` crate'
   )
   (when "running the example program to check reversibility of signal handlers"
     it "fails as the process aborts" && {
-      expect_run $ABORTED cargo run --no-default-features --features interrupt --example reversible-interrupt-handlers
+      expect_run $ABORTED cargo run --manifest-path "$manifest" --no-default-features --features interrupt --example reversible-interrupt-handlers
     }
   )
 )
@@ -53,6 +55,114 @@ title '`gix` crate'
 title "gix (with repository)"
 (with "a git repository"
   snapshot="$snapshot/repository"
+
+  title "gix editor"
+  (sandbox
+    git init -q
+    touch first second
+    printf '%s\n' '#!/bin/sh' \
+      'test "$#" = 2 && test "$1" = first && test "$2" = second' >check-editor
+    cp check-editor "check editor"
+    chmod +x "check editor"
+
+    it "launches the configured editor with all paths" && {
+      expect_run $SUCCESSFULLY "$exe_plumbing" --no-verbose -c "core.editor=sh check-editor" editor first second
+    }
+    it "preserves shell execution for editor command strings" && {
+      expect_run $SUCCESSFULLY env GIT_EDITOR='exec true' "$exe_plumbing" --no-verbose editor first second
+    }
+    it "launches an existing editor path with spaces directly" && {
+      expect_run $SUCCESSFULLY env GIT_EDITOR="$PWD/check editor" "$exe_plumbing" --no-verbose editor first second
+    }
+    it "launches a trusted relative editor path from the repository directly" && {
+      expect_run $SUCCESSFULLY env GIT_EDITOR='./check editor' "$exe_plumbing" --no-verbose editor first second
+    }
+    it "rejects an explicitly empty editor" && {
+      expect_run $WITH_FAILURE env GIT_EDITOR= "$exe_plumbing" --no-verbose editor
+    }
+    it "honors the whitespace-padded no-op editor" && {
+      expect_run $SUCCESSFULLY env 'GIT_EDITOR=: ' "$exe_plumbing" --no-verbose editor first second
+    }
+  )
+
+  title "gix index"
+  (with "the 'entries' sub-command"
+    snapshot="$snapshot/index/entries"
+    (sandbox
+      git init -q
+
+      # Keep the hostile names in the index only so this regression also works on
+      # filesystems that reject terminal control characters in paths.
+      empty_blob="$(git hash-object -w --stdin </dev/null)"
+      ansi_path="$(printf 'ansi-\033[31mred\033[0m')"
+      newline_path="$(printf 'line\nbreak')"
+      git update-index --add --cacheinfo "100644,$empty_blob,$ansi_path"
+      git update-index --add --cacheinfo "100644,$empty_blob,$newline_path"
+
+      it "escapes repository-controlled paths in simple output" && {
+        WITH_SNAPSHOT="$snapshot/control-characters-simple" \
+        expect_run $SUCCESSFULLY "$exe_plumbing" --no-verbose index entries --no-attributes
+      }
+      it "escapes repository-controlled paths in rich output" && {
+        WITH_SNAPSHOT="$snapshot/control-characters-rich" \
+        expect_run $SUCCESSFULLY "$exe_plumbing" --no-verbose index entries --no-attributes --format rich
+      }
+    )
+  )
+
+  title "gix exclude"
+  (with "the 'query' sub-command"
+    snapshot="$snapshot/exclude/query"
+    (sandbox
+      git init -q
+
+      # An ignored directory with an indexed file must still expose untracked ignored children.
+      mkdir -p src/bin other/bin
+      printf 'bin/\nbuild/\n' >.gitignore
+      printf 'fn main() {}\n' >src/bin/stub_gen.rs
+      git add -f .gitignore src/bin/stub_gen.rs
+      printf 'extra\n' >src/bin/extra.txt
+      printf 'other\n' >other/bin/file.txt
+      printf '%s\n' \
+        src/bin \
+        src/bin/ \
+        src/bin/stub_gen.rs \
+        src/bin/extra.txt \
+        other/bin \
+        other/bin/file.txt >paths
+
+      it "handles tracked paths below ignored directories" && {
+        WITH_SNAPSHOT="$snapshot/tracked-paths-below-ignored-directories" \
+        expect_run $SUCCESSFULLY "$exe_plumbing" --no-verbose exclude query \
+          src/bin src/bin/ src/bin/stub_gen.rs src/bin/extra.txt other/bin other/bin/file.txt
+      }
+      it "produces the same output for paths read from stdin" && {
+        WITH_SNAPSHOT="$snapshot/same-paths-from-stdin" \
+        expect_run $SUCCESSFULLY "$exe_plumbing" --no-verbose exclude query <paths
+      }
+      it "resolves stdin paths relative to the current directory" && {
+        (
+          cd src &&
+          WITH_SNAPSHOT="$snapshot/stdin-paths-relative-to-cwd" \
+          expect_run $SUCCESSFULLY "$exe_plumbing" --no-verbose exclude query \
+            < <(printf 'bin/stub_gen.rs\nbin/extra.txt\n')
+        )
+      }
+      it "doesn't show ignore patterns for tracked paths" && {
+        WITH_SNAPSHOT="$snapshot/tracked-path-with-ignore-patterns" \
+        expect_run $SUCCESSFULLY "$exe_plumbing" --no-verbose exclude query --show-ignore-patterns src/bin/stub_gen.rs
+      }
+      it "keeps positional output in input order" && {
+        WITH_SNAPSHOT="$snapshot/positional-output-order" \
+        expect_run $SUCCESSFULLY "$exe_plumbing" --no-verbose exclude query src/bin/stub_gen.rs other/bin/file.txt
+      }
+      it "preserves directory intent for missing paths" && {
+        WITH_SNAPSHOT="$snapshot/missing-directory" \
+        expect_run $SUCCESSFULLY "$exe_plumbing" --no-verbose exclude query build/
+      }
+    )
+  )
+
   (small-repo-in-sandbox
     (with "the 'verify' sub-command"
       snapshot="$snapshot/verify"
@@ -70,6 +180,20 @@ title "gix (with repository)"
         }
       )
       fi
+    )
+  )
+
+  title "gix diff"
+  (with "the 'diff' sub-command"
+    snapshot="$snapshot/diff"
+    (small-repo-in-sandbox
+      (with "'file', an index revspec, and an on-disk path"
+        it "diffs the blob in the index against the file on disk" && {
+          echo "an addition" >> b &&
+          WITH_SNAPSHOT="$snapshot/file-index-vs-worktree" \
+          expect_run $SUCCESSFULLY "$exe_plumbing" --no-verbose diff file :b b
+        }
+      )
     )
   )
 
@@ -107,20 +231,20 @@ title "gix (with repository)"
         )
         fi
 
-        # for some reason, on CI the daemon always shuts down before we can connect,
-        # or isn't actually ready despite having accepted the first connection already.
+        # Use a wrapper to bind to an ephemeral port and only continue once the
+        # daemon can serve a real Git request.
         (with "git:// protocol"
           launch-git-daemon
           (with "version 1"
             it "generates the correct output" && {
               WITH_SNAPSHOT="$snapshot/file-v-any" \
-              expect_run $SUCCESSFULLY "$exe_plumbing" --no-verbose --config protocol.version=1 remote --name git://localhost/ refs
+              expect_run $SUCCESSFULLY "$exe_plumbing" --no-verbose --config protocol.version=1 remote --name "$git_daemon_url" refs
             }
           )
           (with "version 2"
             it "generates the correct output" && {
               WITH_SNAPSHOT="$snapshot/file-v-any" \
-              expect_run $SUCCESSFULLY "$exe_plumbing" --no-verbose -c protocol.version=2 remote -n git://localhost/ refs
+              expect_run $SUCCESSFULLY "$exe_plumbing" --no-verbose -c protocol.version=2 remote -n "$git_daemon_url" refs
             }
           )
         )
@@ -157,14 +281,59 @@ title "gix (with repository)"
       )
     )
   )
+  if test "$kind" = "max" || test "$kind" = "max-pure"; then
+  title "gix fetch"
+  (when "running 'fetch'"
+    snapshot="$snapshot/fetch"
+    (with "a SHA-256 repository"
+      (sandbox
+        git init --object-format=sha256 -q remote
+        (
+          cd remote
+          git checkout -q -b main
+          echo first >file
+          git add file
+          git commit -q -m "first"
+        )
+        git clone -q "$PWD/remote" clone
+        (
+          cd remote
+          echo second >file
+          git commit -q -am "second"
+        )
+
+        it "fetches from origin" && {
+          expect_run_sh $SUCCESSFULLY "cd clone && \"$exe_plumbing\" --no-verbose fetch"
+        }
+        it "updates the remote-tracking branch" && {
+          expect_run_sh $SUCCESSFULLY 'test "$(git -C clone rev-parse refs/remotes/origin/main)" = "$(git -C remote rev-parse refs/heads/main)"'
+        }
+      )
+    )
+  )
+  fi
 )
 
 title "gix attributes"
 (with "gix attributes"
   (with "the 'validate-baseline' sub-command"
-    it "passes when operating on all of our files" && {
-      expect_run_sh_no_pipefail $SUCCESSFULLY "find . -type f | sed 's|^./||' | $exe_plumbing --no-verbose attributes validate-baseline"
-    }
+    (sandbox
+      git init -q
+      # Cover attribute inheritance, overrides, binary files, and ignore rules in a disposable repository.
+      printf '%s\n' '*.txt text' '*.bin binary' 'nested/** custom=root' >.gitattributes
+      printf '%s\n' '*.ignored' >.gitignore
+      mkdir nested
+      printf '%s\n' '*.txt -text custom=nested' >nested/.gitattributes
+      printf 'text\n' >file.txt
+      printf '\0binary\n' >file.bin
+      printf 'nested\n' >nested/file.txt
+      touch file.ignored
+      git add .gitattributes .gitignore file.txt file.bin nested
+
+      it "agrees with Git for fixture attributes and ignore rules" && {
+        expect_run_sh_no_pipefail $SUCCESSFULLY "find . -path ./.git -prune -o -type f -print | sed 's|^./||' | $exe_plumbing --no-verbose attributes validate-baseline"
+      }
+    )
   )
 )
 
@@ -285,13 +454,13 @@ title "gix commit-graph"
               (with "no wanted refs"
                 it "generates the correct output" && {
                   WITH_SNAPSHOT="$snapshot/file-v-any-no-output" \
-                  expect_run $SUCCESSFULLY "$exe_plumbing" --no-verbose free pack receive -p 1 git://localhost/
+                  expect_run $SUCCESSFULLY "$exe_plumbing" --no-verbose free pack receive -p 1 "$git_daemon_url"
                 }
               )
               (with "wanted refs"
                 it "generates the correct output" && {
                   WITH_SNAPSHOT="$snapshot/file-v-any-no-output-wanted-ref-p1" \
-                  expect_run $WITH_FAILURE "$exe_plumbing" --no-verbose free pack receive -p 1 git://localhost/ -r =refs/heads/main
+                  expect_run $WITH_FAILURE "$exe_plumbing" --no-verbose free pack receive -p 1 "$git_daemon_url" -r =refs/heads/main
                 }
               )
             )
@@ -299,7 +468,7 @@ title "gix commit-graph"
               mkdir out
               it "generates the correct output" && {
                 WITH_SNAPSHOT="$snapshot/file-v-any-with-output" \
-                expect_run $SUCCESSFULLY "$exe_plumbing" --no-verbose free pack receive -p 1 git://localhost/ out/
+                expect_run $SUCCESSFULLY "$exe_plumbing" --no-verbose free pack receive -p 1 "$git_daemon_url" out/
               }
             )
           )
@@ -308,18 +477,18 @@ title "gix commit-graph"
               (with "NO wanted refs"
                 it "generates the correct output" && {
                   WITH_SNAPSHOT="$snapshot/file-v-any-no-output-p2" \
-                  expect_run $SUCCESSFULLY "$exe_plumbing" --no-verbose free pack receive -p 2 git://localhost/
+                  expect_run $SUCCESSFULLY "$exe_plumbing" --no-verbose free pack receive -p 2 "$git_daemon_url"
                 }
               )
               (with "wanted refs"
                 it "generates the correct output" && {
                   WITH_SNAPSHOT="$snapshot/file-v-any-no-output-single-ref" \
-                  expect_run $SUCCESSFULLY "$exe_plumbing" --no-verbose free pack receive -p 2 git://localhost/ -r refs/heads/main
+                  expect_run $SUCCESSFULLY "$exe_plumbing" --no-verbose free pack receive -p 2 "$git_daemon_url" -r refs/heads/main
                 }
                 (when "ref does not exist"
                   it "fails with a detailed error message including what the server said" && {
                     WITH_SNAPSHOT="$snapshot/file-v-any-no-output-non-existing-single-ref" \
-                    expect_run $WITH_FAILURE "$exe_plumbing" --no-verbose free pack receive -p 2 git://localhost/ -r refs/heads/does-not-exist
+                    expect_run $WITH_FAILURE "$exe_plumbing" --no-verbose free pack receive -p 2 "$git_daemon_url" -r refs/heads/does-not-exist
                   }
                 )
               )
@@ -327,7 +496,7 @@ title "gix commit-graph"
             (with "output directory"
               it "generates the correct output" && {
                 WITH_SNAPSHOT="$snapshot/file-v-any-with-output-p2" \
-                expect_run $SUCCESSFULLY "$exe_plumbing" --no-verbose free pack receive git://localhost/ out/
+                expect_run $SUCCESSFULLY "$exe_plumbing" --no-verbose free pack receive "$git_daemon_url" out/
               }
             )
           )
@@ -386,6 +555,28 @@ title "gix commit-graph"
     if test "$kind" = "max" || test "$kind" = "max-pure"; then
     (with "the 'clone' sub-command"
         snapshot="$snapshot/clone"
+        (with "a SHA-256 remote"
+          (sandbox
+            git init --object-format=sha256 -q remote
+            (
+              cd remote
+              git checkout -q -b main
+              echo first >file
+              git add file
+              git commit -q -m "first"
+            )
+
+            it "adopts the remote object format" && {
+              expect_run $SUCCESSFULLY "$exe_plumbing" clone "$PWD/remote" clone
+            }
+            it "persists the adopted object format" && {
+              expect_run_sh $SUCCESSFULLY 'test "$(git -C clone config --get extensions.objectformat)" = sha256'
+            }
+            it "persists the origin remote" && {
+              expect_run_sh $SUCCESSFULLY 'test -n "$(git -C clone config --get remote.origin.url)"'
+            }
+          )
+        )
         (with "an ambiguous ssh username which could be mistaken for an argument"
           snapshot="$snapshot/fail-ambiguous-username"
           (with "explicit ssh (true url with scheme)"

@@ -11,15 +11,12 @@ mod method {
 
     use gix_features::progress;
 
-    use crate::{
-        hex_to_id,
-        pack::{data::file::pack_at, SMALL_PACK},
-    };
+    use crate::{SMALL_PACK, data::file::pack_at, pack_from_memory_at};
 
     #[test]
     fn checksum() {
         let p = pack_at(SMALL_PACK);
-        assert_eq!(p.checksum(), hex_to_id("0f3ea84cd1bba10c2a03d736a460635082833e59"));
+        assert_eq!(p.checksum(), "0f3ea84cd1bba10c2a03d736a460635082833e59");
     }
 
     #[test]
@@ -30,6 +27,54 @@ mod method {
             p.checksum()
         );
         Ok(())
+    }
+
+    #[test]
+    fn verify_checksum_from_memory() -> Result<(), Box<dyn std::error::Error>> {
+        let p = pack_from_memory_at(SMALL_PACK);
+        assert_eq!(
+            p.verify_checksum(&mut progress::Discard, &AtomicBool::new(false))?,
+            p.checksum()
+        );
+        Ok(())
+    }
+
+    #[test]
+    fn decode_entry_respects_alloc_limit_bytes() {
+        let entry_offset = 1968;
+        let mut buf = Vec::new();
+        let mut inflate = Default::default();
+
+        let pack = pack_at(SMALL_PACK);
+        let entry = pack.entry(entry_offset).expect("valid object type");
+        assert!(
+            pack.decode_entry(
+                entry.clone(),
+                &mut buf,
+                &mut inflate,
+                &|_, _| None,
+                &mut gix_odb::pack::cache::Never
+            )
+            .is_ok(),
+            "without an explicit allocation limit decoding succeeds"
+        );
+
+        buf.clear();
+        let pack = pack_at(SMALL_PACK).with_alloc_limit_bytes(Some(0));
+        let entry = pack.entry(entry_offset).expect("valid object type");
+        assert!(
+            matches!(
+                pack.decode_entry(
+                    entry,
+                    &mut buf,
+                    &mut inflate,
+                    &|_, _| None,
+                    &mut gix_odb::pack::cache::Never
+                ),
+                Err(gix_odb::pack::data::decode::Error::OutOfMemory)
+            ),
+            "pack-controlled allocations larger than the configured limit are rejected"
+        );
     }
 
     #[test]
@@ -46,10 +91,7 @@ mod decode_entry {
     use bstr::ByteSlice;
     use gix_pack::{cache, data::decode::entry::ResolvedBase};
 
-    use crate::{
-        fixture_path, fixup,
-        pack::{data::file::pack_at, SMALL_PACK},
-    };
+    use crate::{SMALL_PACK, data::file::pack_at, fixture_path, fixup};
 
     fn content_of(path: &str) -> Vec<u8> {
         fixup(std::fs::read(fixture_path(path)).expect("valid fixture"))
@@ -97,7 +139,6 @@ mod decode_entry {
     }
 
     fn decode_entry_at_offset(offset: u64) -> Vec<u8> {
-        #[allow(clippy::ptr_arg)]
         fn resolve_with_panic(_oid: &gix_hash::oid, _out: &mut Vec<u8>) -> Option<ResolvedBase> {
             panic!("should not want to resolve an id here")
         }
@@ -119,7 +160,7 @@ mod decode_entry {
 
 /// All hardcoded offsets are obtained via `git pack-verify --verbose  tests/fixtures/packs/pack-a2bf8e71d8c18879e499335762dd95119d93d9f1.idx`
 mod resolve_header {
-    use crate::pack::{data::file::pack_at, SMALL_PACK};
+    use crate::{SMALL_PACK, data::file::pack_at};
 
     #[test]
     fn commit() {
@@ -168,7 +209,7 @@ mod resolve_header {
 mod decompress_entry {
     use gix_object::bstr::ByteSlice;
 
-    use crate::pack::{data::file::pack_at, SMALL_PACK};
+    use crate::{SMALL_PACK, data::file::pack_at};
 
     #[test]
     fn commit() {
@@ -203,6 +244,22 @@ mod decompress_entry {
             buf.capacity(),
             34,
             "capacity must be controlled by the caller to be big enough"
+        );
+    }
+
+    #[test]
+    fn caller_provided_buffer_ignores_alloc_limit() {
+        let p = pack_at(SMALL_PACK).with_alloc_limit_bytes(Some(0));
+        let entry = p.entry(1968).expect("valid object type");
+        let mut buf = vec![0; entry.decompressed_size as usize];
+
+        p.decompress_entry(&entry, &mut Default::default(), &mut buf)
+            .expect("caller-provided buffers should not be rejected by allocation limits");
+
+        assert_eq!(
+            buf.len(),
+            187,
+            "the buffer is larger than the alloc limit and that's alright"
         );
     }
 

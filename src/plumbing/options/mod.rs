@@ -153,6 +153,7 @@ pub enum Subcommands {
     /// Show which git configuration values are used or planned.
     ConfigTree,
     Status(status::Platform),
+    Dirwalk(dirwalk::Platform),
     Config(config::Platform),
     #[cfg(feature = "gitoxide-core-tools-corpus")]
     Corpus(corpus::Platform),
@@ -160,8 +161,17 @@ pub enum Subcommands {
     Merge(merge::Platform),
     /// Print paths relevant to the Git installation.
     Env,
+    /// Open paths in the editor selected by Git's precedence rules.
+    Editor {
+        /// Paths to open, or none to start the editor without a file.
+        paths: Vec<PathBuf>,
+    },
     Diff(diff::Platform),
     Log(log::Platform),
+    /// Interactively browse commits and their graph.
+    #[cfg(feature = "tix")]
+    #[clap(visible_alias = "tui", visible_alias = "interactive", visible_alias = "i")]
+    Tix(gix_tix::command::Platform),
     Worktree(worktree::Platform),
     /// Subcommands that need no Git repository to run.
     #[clap(subcommand)]
@@ -290,6 +300,17 @@ pub mod status {
     }
 
     #[derive(Default, Debug, Copy, Clone, PartialEq, Eq, PartialOrd, Ord, clap::ValueEnum)]
+    pub enum Untracked {
+        /// Do not show untracked files.
+        No,
+        /// Collapse untracked directories when possible.
+        Normal,
+        /// Show individual untracked files.
+        #[default]
+        All,
+    }
+
+    #[derive(Default, Debug, Copy, Clone, PartialEq, Eq, PartialOrd, Ord, clap::ValueEnum)]
     pub enum Format {
         /// A basic format that is easy to read, and useful for a first glimpse as flat list.
         #[default]
@@ -307,6 +328,9 @@ pub mod status {
         /// If enabled, show ignored files and directories.
         #[clap(long)]
         pub ignored: Option<Option<Ignored>>,
+        /// Define how to show untracked files. If set without a value, show all individual untracked files.
+        #[clap(long, short = 'u', require_equals = true)]
+        pub untracked: Option<Option<Untracked>>,
         /// Define how to display the submodule status. Defaults to git configuration if unset.
         #[clap(long)]
         pub submodules: Option<Submodules>,
@@ -320,6 +344,35 @@ pub mod status {
         #[clap(long, value_parser = ParseRenameFraction)]
         pub index_worktree_renames: Option<Option<f32>>,
         /// The git path specifications to list attributes for, or unset to read from stdin one per line.
+        #[clap(value_parser = CheckPathSpec)]
+        pub pathspec: Vec<BString>,
+    }
+}
+
+pub mod dirwalk {
+    use gix::bstr::BString;
+
+    use crate::shared::CheckPathSpec;
+
+    #[derive(Default, Debug, Copy, Clone, PartialEq, Eq, PartialOrd, Ord, clap::ValueEnum)]
+    pub enum Untracked {
+        /// Collapse untracked directories when possible.
+        #[default]
+        Collapsed,
+        /// Emit matching untracked files and directories.
+        Matching,
+    }
+
+    #[derive(Debug, clap::Parser)]
+    #[command(about = "Run only the repository directory walk")]
+    pub struct Platform {
+        /// Print additional statistics to help understanding performance.
+        #[clap(long, short = 's')]
+        pub statistics: bool,
+        /// How untracked files should be emitted.
+        #[clap(long, default_value = "collapsed")]
+        pub untracked: Untracked,
+        /// The git path specifications to walk.
         #[clap(value_parser = CheckPathSpec)]
         pub pathspec: Vec<BString>,
     }
@@ -499,6 +552,13 @@ pub mod merge {
             #[clap(flatten)]
             opts: SharedOptions,
 
+            /// Create a commit on top of HEAD with this message and the merged tree.
+            #[clap(long)]
+            message: Option<String>,
+            /// Update HEAD to the created commit and set the index to its tree.
+            #[clap(long, requires = "message", conflicts_with = "in_memory")]
+            update_head: bool,
+
             /// A revspec to our treeish.
             #[clap(value_name = "OURS", value_parser = crate::shared::AsBString)]
             ours: BString,
@@ -570,6 +630,8 @@ pub mod log {
 }
 
 pub mod config {
+    use std::path::PathBuf;
+
     use gix::bstr::BString;
 
     /// Print all entries in a configuration file or access other sub-commands.
@@ -582,6 +644,32 @@ pub mod config {
         /// and comparisons are case-insensitive.
         #[clap(value_parser = crate::shared::AsBString)]
         pub filter: Vec<BString>,
+
+        /// Subcommands for working with configuration files.
+        #[clap(subcommand)]
+        pub cmd: Option<Subcommands>,
+    }
+
+    #[derive(Debug, clap::Subcommand)]
+    pub enum Subcommands {
+        /// Show all resolved configuration entries, optionally filtered by section or subsection.
+        Show,
+        /// List all configuration files contributing to the resolved configuration.
+        ///
+        /// Included files are shown as well, along with the Source they inherit and their inclusion level.
+        List,
+        /// Format a git configuration file, normalizing insignificant whitespace.
+        ///
+        /// Includes are never resolved; only whitespace, newlines and the `=` separator are rewritten.
+        Fmt {
+            /// Write the formatted result back to the input file instead of to standard output.
+            #[clap(long)]
+            in_place: bool,
+            /// The configuration file to format. If unset, the repository-local configuration is used.
+            in_file: Option<PathBuf>,
+            /// Where to write the formatted result. If unset, it is written to standard output.
+            out_file: Option<PathBuf>,
+        },
     }
 }
 
@@ -695,8 +783,17 @@ pub mod clone {
         pub remote: OsString,
 
         /// The name of the reference to check out.
-        #[clap(long = "ref", value_parser = crate::shared::AsPartialRefName, value_name = "REF_NAME")]
+        #[clap(
+            long = "ref",
+            value_parser = crate::shared::AsPartialRefName,
+            value_name = "REF_NAME",
+            conflicts_with = "revision"
+        )]
         pub ref_name: Option<gix::refs::PartialName>,
+
+        /// Fetch only this full reference or object ID and check it out with a detached HEAD.
+        #[clap(long, value_parser = crate::shared::AsBString, value_name = "REVISION")]
+        pub revision: Option<gix::bstr::BString>,
 
         /// The directory to initialize with the new repository and to which all data should be written.
         pub directory: Option<PathBuf>,
@@ -757,6 +854,15 @@ pub mod remote {
     #[derive(Debug, clap::Subcommand)]
     #[clap(visible_alias = "remotes")]
     pub enum Subcommands {
+        /// Print the effective URL of the remote.
+        Url {
+            /// Print all effective URLs instead of only the first one.
+            #[clap(long)]
+            all: bool,
+            /// Print push URLs instead of fetch URLs.
+            #[clap(long)]
+            push: bool,
+        },
         /// Print all references available on the remote.
         Refs,
         /// Print all references available on the remote as filtered through ref-specs.
@@ -1121,11 +1227,11 @@ pub mod exclude {
 
     use gix::bstr::BString;
 
-    use crate::shared::CheckPathSpec;
+    use crate::shared::AsBString;
 
     #[derive(Debug, clap::Subcommand)]
     pub enum Subcommands {
-        /// Check if path-specs are excluded and print the result similar to `git check-ignore`.
+        /// Check if paths are excluded and print the result similar to `git check-ignore`.
         Query {
             /// Print various statistics to stderr.
             #[clap(long, short = 's')]
@@ -1140,9 +1246,9 @@ pub mod exclude {
             /// Useful for undoing previous patterns using the '!' prefix.
             #[clap(long, short = 'p')]
             patterns: Vec<OsString>,
-            /// The git path specifications to check for exclusion, or unset to read from stdin one per line.
-            #[clap(value_parser = CheckPathSpec)]
-            pathspec: Vec<BString>,
+            /// The paths to check for exclusion, or unset to read from stdin one per line.
+            #[clap(value_parser = AsBString)]
+            paths: Vec<BString>,
         },
     }
 }

@@ -1,9 +1,9 @@
 use bstr::BString;
-use gix_diff::{tree_with_rewrites::Change, Rewrites};
+use gix_diff::{Rewrites, tree_with_rewrites::Change};
 
 /// The error returned by [`tree()`](crate::tree()).
 #[derive(Debug, thiserror::Error)]
-#[allow(missing_docs)]
+#[expect(missing_docs)]
 pub enum Error {
     #[error("Could not find ancestor, our or their tree to get started")]
     FindTree(#[from] gix_object::find::existing_object::Error),
@@ -294,6 +294,9 @@ impl Conflict {
             match failure {
                 ResolutionFailure::OursRenamedTheirsRenamedDifferently { merged_blob } => *merged_blob,
                 ResolutionFailure::Unknown
+                | ResolutionFailure::SubmoduleMerge
+                | ResolutionFailure::SubmoduleAddAdd
+                | ResolutionFailure::OursRenamedTheirsRenamedToSameLocation
                 | ResolutionFailure::OursDirectoryTheirsNonDirectoryTheirsRenamed { .. }
                 | ResolutionFailure::OursModifiedTheirsDeleted
                 | ResolutionFailure::OursModifiedTheirsRenamedTypeMismatch
@@ -357,6 +360,14 @@ pub enum Resolution {
 /// Describes of a conflict involving *our* change and *their* failed to be resolved.
 #[derive(Debug, Clone)]
 pub enum ResolutionFailure {
+    /// *ours* and *theirs* produced conflicting commits for a submodule, but submodule history isn't available to this
+    /// tree merge to determine whether either commit contains the other.
+    SubmoduleMerge,
+    /// *ours* and *theirs* added different submodule commits at the same path, possibly by renaming one into place.
+    /// There is no common gitlink at this path, so this is not a candidate for three-way reachability resolution.
+    SubmoduleAddAdd,
+    /// *ours* and *theirs* renamed different source entries to the same destination.
+    OursRenamedTheirsRenamedToSameLocation,
     /// *ours* was renamed, but *theirs* was renamed differently. Both versions will be present in the tree,
     OursRenamedTheirsRenamedDifferently {
         /// If `Some(…)`, the content of the involved blob had to be merged.
@@ -476,13 +487,13 @@ pub mod apply_index_entries {
     }
 
     pub(super) mod function {
-        use std::collections::{hash_map, HashMap};
+        use std::collections::{HashMap, hash_map};
 
         use bstr::{BStr, ByteSlice};
 
         use crate::tree::{
-            apply_index_entries::RemovalMode, Conflict, ConflictIndexEntryPathHint, Resolution, ResolutionFailure,
-            TreatAsUnresolved,
+            Conflict, ConflictIndexEntryPathHint, Resolution, ResolutionFailure, TreatAsUnresolved,
+            apply_index_entries::RemovalMode,
         };
 
         /// Returns `true` if `index` changed as we applied conflicting stages to it, using `how` to determine if a
@@ -533,6 +544,9 @@ pub mod apply_index_entries {
                             (Some(conflict.theirs.location()), conflict.ours.location())
                         }
                         ResolutionFailure::OursModifiedTheirsRenamedTypeMismatch
+                        | ResolutionFailure::SubmoduleMerge
+                        | ResolutionFailure::SubmoduleAddAdd
+                        | ResolutionFailure::OursRenamedTheirsRenamedToSameLocation
                         | ResolutionFailure::OursDeletedTheirsRenamed
                         | ResolutionFailure::OursModifiedTheirsDeleted
                         | ResolutionFailure::Unknown => (None, conflict.ours.location()),

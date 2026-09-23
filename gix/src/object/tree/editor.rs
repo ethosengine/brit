@@ -2,16 +2,16 @@ use gix_hash::ObjectId;
 use gix_object::tree::EntryKind;
 
 use crate::{
+    Id, Repository,
     bstr::{BStr, BString},
     prelude::ObjectIdExt,
-    Id, Repository,
 };
 
 ///
 pub mod init {
     /// The error returned by [`Editor::new()](crate::object::tree::Editor::new()).
     #[derive(Debug, thiserror::Error)]
-    #[allow(missing_docs)]
+    #[expect(missing_docs)]
     pub enum Error {
         #[error(transparent)]
         DecodeTree(#[from] gix_object::decode::Error),
@@ -26,7 +26,7 @@ pub mod write {
 
     /// The error returned by [`Editor::write()](crate::object::tree::Editor::write()) and [`Cursor::write()](super::Cursor::write).
     #[derive(Debug, thiserror::Error)]
-    #[allow(missing_docs)]
+    #[expect(missing_docs)]
     pub enum Error {
         #[error(transparent)]
         WriteTree(#[from] crate::object::write::Error),
@@ -75,7 +75,6 @@ impl<'repo> super::Editor<'repo> {
 }
 
 /// Tree editing
-#[cfg(feature = "tree-editor")]
 impl<'repo> crate::Tree<'repo> {
     /// Start editing a new tree based on this one.
     #[doc(alias = "treebuilder", alias = "git2")]
@@ -176,6 +175,12 @@ impl<'repo> Cursor<'_, 'repo> {
         Ok(self)
     }
 
+    /// Like [`Editor::remove_leaf()`](super::Editor::remove_leaf), but with the constraint of only editing in this cursor's tree.
+    pub fn remove_leaf(&mut self, rela_path: impl ToComponents) -> Result<&mut Self, gix_object::tree::editor::Error> {
+        self.inner.remove_leaf(rela_path.to_components())?;
+        Ok(self)
+    }
+
     /// Like [`Editor::write()`](super::Editor::write()), but will write only the subtree of the cursor.
     pub fn write(&mut self) -> Result<Id<'repo>, write::Error> {
         write_cursor(self)
@@ -240,6 +245,15 @@ impl<'repo> super::Editor<'repo> {
     /// It's no error if the entry doesn't exist, or if `rela_path` doesn't lead to an existing entry at all.
     pub fn remove(&mut self, rela_path: impl ToComponents) -> Result<&mut Self, gix_object::tree::editor::Error> {
         self.inner.remove(rela_path.to_components())?;
+        Ok(self)
+    }
+
+    /// Remove a non-tree entry at `rela_path`, loading all trees on the path accordingly.
+    /// It's no error if the entry doesn't exist, or if `rela_path` doesn't lead to an existing entry at all.
+    ///
+    /// Return an error if the entry exists and is a tree, as that would otherwise also remove all entries below it.
+    pub fn remove_leaf(&mut self, rela_path: impl ToComponents) -> Result<&mut Self, gix_object::tree::editor::Error> {
+        self.inner.remove_leaf(rela_path.to_components())?;
         Ok(self)
     }
 

@@ -71,7 +71,7 @@ mod submodules {
                 .expect("submodules")
                 .map(|sm| (
                     sm.name().to_owned(),
-                    sm.path().expect("valid path").into_owned(),
+                    sm.path().expect("valid path"),
                     sm.head_id().expect("valid"),
                     sm.index_id().expect("valid"),
                     sm.is_active().expect("no config error")
@@ -92,6 +92,42 @@ mod submodules {
             .collect::<Vec<_>>()
         );
 
+        Ok(())
+    }
+}
+
+#[cfg(unix)]
+mod advisory {
+    use gix_testtools::tempfile;
+
+    /// Reproducer for GHSA-pg4w-g64p-qwhj: `Repository::open_modules_file()` and
+    /// `Repository::submodules()` currently follow a symlinked worktree `.gitmodules`, allowing
+    /// attacker-controlled bytes outside the repository to define submodule configuration.
+    #[test]
+    fn symlinked_gitmodules_are_rejected() -> crate::Result {
+        use std::os::unix::fs as unix_fs;
+
+        let temp = tempfile::tempdir()?;
+        let repo_dir = temp.path().join("repo");
+        let outside_modules = temp.path().join("outside.gitmodules");
+
+        crate::init_repo_isolated(&repo_dir, gix::create::Kind::WithWorktree)?;
+        std::fs::write(
+            &outside_modules,
+            "[submodule \"escaped\"]\n\tpath = escaped\n\turl = https://example.invalid/escaped\n",
+        )?;
+        unix_fs::symlink(&outside_modules, repo_dir.join(".gitmodules"))?;
+        std::fs::create_dir(repo_dir.join("escaped"))?;
+
+        let repo = gix::open_opts(&repo_dir, crate::restricted())?;
+        assert!(
+            repo.open_modules_file()?.is_none(),
+            "worktree `.gitmodules` symlinks should not be followed outside the repository"
+        );
+        assert!(
+            repo.submodules()?.is_none(),
+            "attacker-controlled `.gitmodules` content outside the repository should not become active submodule configuration"
+        );
         Ok(())
     }
 }

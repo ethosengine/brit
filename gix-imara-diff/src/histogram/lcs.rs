@@ -1,10 +1,8 @@
 // Modified for gitoxide from the upstream imara-diff crate.
 // Upstream source: git cat-file -p 32d1e45d3df061e6ccba6db7fdce92db29e345d8:src/histogram/lcs.rs
 
-use crate::{
-    histogram::{Histogram, MAX_CHAIN_LEN},
-    intern::Token,
-};
+use crate::histogram::{Histogram, MAX_CHAIN_LEN};
+use crate::intern::Token;
 
 /// Finds the longest common subsequence (LCS) using a histogram-based approach.
 ///
@@ -16,11 +14,7 @@ pub(super) fn find_lcs(before: &[Token], after: &[Token], histogram: &mut Histog
         found_cs: false,
     };
     search.run(before, after, histogram);
-    if search.success() {
-        Some(search.lcs)
-    } else {
-        None
-    }
+    if search.success() { Some(search.lcs) } else { None }
 }
 
 /// Represents a longest common subsequence found by the histogram algorithm.

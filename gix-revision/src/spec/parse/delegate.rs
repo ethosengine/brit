@@ -60,8 +60,9 @@ pub trait Navigate {
     /// Peel the current object until it reached `kind` or `None` if the chain does not contain such object.
     fn peel_until(&mut self, kind: PeelTo<'_>) -> Result<(), Exn>;
 
-    /// Find the first revision/commit whose message matches the given `regex` (which is never empty).
-    /// to see how it should be matched.
+    /// Find the first revision/commit whose message matches the given `regex`.
+    /// An empty `regex` matches every message, and `<rev>^{/}` resolves
+    /// to the first commit reachable from `<rev>`, i.e. `<rev>` peeled to a commit.
     /// If `negated` is `true`, the first non-match will be a match.
     ///
     /// If no revision is known yet, find the _youngest_ matching commit from _any_ reference, including `HEAD`.
@@ -72,7 +73,8 @@ pub trait Navigate {
     /// or return `None` if it doesn't exist at this `stage`.
     /// Note that this implies no revision is needed and no anchor is set yet.
     ///
-    /// * `stage` ranges from 0 to 2, with 0 being the base, 1 being ours, 2 being theirs.
+    /// * `stage` ranges from 0 to 3, with 0 being unconflicted, 1 being the base, 2 being ours
+    ///   and 3 being theirs, just like the stages Git records in the index.
     /// * `path` without prefix is relative to the root of the repository, while prefixes like `./` and `../` make it
     ///   relative to the current working directory.
     fn index_lookup(&mut self, path: &BStr, stage: u8) -> Result<(), Exn>;
@@ -108,8 +110,7 @@ pub enum Traversal {
     /// Select the given parent commit of the currently selected commit, start at `1` for the first parent.
     /// The value will never be `0`.
     NthParent(usize),
-    /// Select the given ancestor of the currently selected commit, start at `1` for the first ancestor.
-    /// The value will never be `0`.
+    /// Select the given ancestor of the currently selected commit, with `0` meaning the commit itself.
     NthAncestor(usize),
 }
 

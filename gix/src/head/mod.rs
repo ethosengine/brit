@@ -4,8 +4,8 @@ use gix_hash::ObjectId;
 use gix_ref::FullNameRef;
 
 use crate::{
-    ext::{ObjectIdExt, ReferenceExt},
     Head,
+    ext::{ObjectIdExt, ReferenceExt},
 };
 
 /// Represents the kind of `HEAD` reference.
@@ -55,7 +55,7 @@ impl<'repo> Head<'repo> {
     /// # let repo = doctest::open_repo(doctest::basic_repo_dir()?)?;
     /// let head = repo.head()?;
     ///
-    /// assert_eq!(head.referent_name().expect("branch head").as_bstr(), "refs/heads/main");
+    /// assert_eq!(head.referent_name().expect("branch head"), "refs/heads/main");
     /// # Ok(()) }
     /// ```
     pub fn referent_name(&self) -> Option<&FullNameRef> {
@@ -111,7 +111,7 @@ impl<'repo> Head<'repo> {
     /// # let repo = doctest::open_repo(doctest::basic_repo_dir()?)?;
     /// let branch = repo.head()?.try_into_referent().expect("symbolic head");
     ///
-    /// assert_eq!(branch.name().as_bstr(), "refs/heads/main");
+    /// assert_eq!(branch, "refs/heads/main");
     /// # Ok(()) }
     /// ```
     pub fn try_into_referent(self) -> Option<crate::Reference<'repo>> {
@@ -124,7 +124,7 @@ impl<'repo> Head<'repo> {
 
 mod remote {
     use super::Head;
-    use crate::{remote, Remote};
+    use crate::{Remote, remote};
 
     /// Remote
     impl<'repo> Head<'repo> {

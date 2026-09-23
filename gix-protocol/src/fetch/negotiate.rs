@@ -11,13 +11,13 @@ use gix_date::SecondsSinceUnixEpoch;
 use gix_negotiate::Flags;
 use gix_ref::file::ReferenceExt;
 
-use crate::fetch::{refmap, RefMap, Shallow, Tags};
+use crate::fetch::{RefMap, Shallow, Tags, refmap};
 
 type Queue = gix_revwalk::PriorityQueue<SecondsSinceUnixEpoch, gix_hash::ObjectId>;
 
 /// The error returned during [`one_round()`] or [`mark_complete_and_common_ref()`].
 #[derive(Debug, thiserror::Error)]
-#[allow(missing_docs)]
+#[expect(missing_docs)]
 pub enum Error {
     #[error("We were unable to figure out what objects the server should send after {rounds} round(s)")]
     NegotiationFailed { rounds: usize },
@@ -117,7 +117,7 @@ pub struct Round {
 /// * `mapping_is_ignored`
 ///     - `f(mapping) -> bool` returns `true` if the given mapping should not participate in change tracking.
 ///     - [`make_refmapping_ignore_predicate()`] is a typical implementation for this.
-#[allow(clippy::too_many_arguments)]
+#[expect(clippy::too_many_arguments)]
 pub fn mark_complete_and_common_ref<Out, F, E>(
     objects: &(impl gix_object::Find + gix_object::FindHeader + gix_object::Exists),
     refs: &gix_ref::file::Store,
@@ -373,7 +373,14 @@ fn mark_all_refs_in_repo(
     let _span = gix_trace::detail!("mark_all_refs");
     for local_ref in store.iter()?.all()? {
         let mut local_ref = local_ref?;
-        let id = local_ref.peel_to_id_packed(store, objects, store.cached_packed_buffer()?.as_ref().map(|b| &***b))?;
+        let id =
+            match local_ref.peel_to_id_packed(store, objects, store.cached_packed_buffer()?.as_ref().map(|b| &***b)) {
+                Ok(id) => id,
+                Err(gix_ref::peel::to_id::Error::FollowToObject(gix_ref::peel::to_object::Error::Follow(
+                    gix_ref::file::find::existing::Error::NotFound { .. },
+                ))) => continue,
+                Err(err) => return Err(err.into()),
+            };
         let mut is_complete = false;
         if let Some(commit) = graph
             .get_or_insert_commit(id, |md| {
@@ -383,7 +390,7 @@ fn mark_all_refs_in_repo(
             .filter(|_| !is_complete)
         {
             queue.insert(commit.commit_time, id);
-        };
+        }
     }
     Ok(())
 }

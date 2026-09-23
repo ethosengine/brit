@@ -1,8 +1,7 @@
 use std::convert::TryFrom;
 
-use crate::{
-    parse::parse_signature, tree, Blob, BlobRef, Commit, CommitRef, Object, ObjectRef, Tag, TagRef, Tree, TreeRef,
-};
+use crate::parse::parse_signature;
+use crate::{Blob, BlobRef, Commit, CommitRef, Object, ObjectRef, Tag, TagRef, Tree, TreeRef, tree};
 
 impl TryFrom<TagRef<'_>> for Tag {
     type Error = crate::decode::Error;
@@ -14,7 +13,7 @@ impl TryFrom<TagRef<'_>> for Tag {
             target_kind,
             message,
             tagger,
-            pgp_signature,
+            signature,
         } = other;
         let untrimmed_tagger = tagger.map(parse_signature).transpose()?.map(Into::into);
         Ok(Tag {
@@ -23,7 +22,7 @@ impl TryFrom<TagRef<'_>> for Tag {
             target_kind,
             message: message.to_owned(),
             tagger: untrimmed_tagger,
-            pgp_signature: pgp_signature.map(ToOwned::to_owned),
+            signature: signature.map(ToOwned::to_owned),
         })
     }
 }

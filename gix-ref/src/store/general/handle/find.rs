@@ -1,11 +1,11 @@
-use crate::{store, PartialNameRef, Reference};
+use crate::{PartialNameRef, Reference, store};
 
 mod error {
     use std::convert::Infallible;
 
     /// The error returned by [`crate::file::Store::find_loose()`].
     #[derive(Debug, thiserror::Error)]
-    #[allow(missing_docs)]
+    #[expect(missing_docs)]
     pub enum Error {
         #[error("An error occurred while finding a reference in the loose file database")]
         Loose(#[from] crate::file::find::Error),
@@ -33,7 +33,7 @@ impl store::Handle {
     {
         let _name = partial.try_into()?;
         match &self.state {
-            handle::State::Loose { store: _, .. } => {
+            handle::State::Loose { .. } => {
                 todo!()
             }
         }
@@ -46,7 +46,6 @@ mod existing {
 
         /// The error returned by [file::Store::find_existing()][crate::file::Store::find_existing()].
         #[derive(Debug, thiserror::Error)]
-        #[allow(missing_docs)]
         pub enum Error {
             #[error("An error occurred while finding a reference in the database")]
             Find(#[from] crate::store::find::Error),
@@ -57,7 +56,7 @@ mod existing {
 
     pub use error::Error;
 
-    use crate::{store, PartialNameRef, Reference};
+    use crate::{PartialNameRef, Reference, store};
 
     impl store::Handle {
         /// Similar to [`crate::file::Store::find()`] but a non-existing ref is treated as error.

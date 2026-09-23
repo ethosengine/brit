@@ -101,6 +101,18 @@ fn no_bare_repo_without_index_file_looks_like_worktree() -> crate::Result {
 }
 
 #[test]
+fn non_bare_repo_with_git_extension_is_not_a_worktree() -> crate::Result {
+    let worktree = repo_path()?.join("repo.git");
+    let err = gix_discover::is_git(&worktree).unwrap_err();
+    assert_eq!(
+        err.to_string(),
+        "Missing HEAD at '.git/HEAD'",
+        "repo.git isn't a .git directory after all"
+    );
+    Ok(())
+}
+
+#[test]
 fn missing_configuration_file_is_not_a_dealbreaker_in_nonbare_repo() -> crate::Result {
     for name in ["worktree-no-config-after-init/.git", "worktree-no-config/.git"] {
         let repo = repo_path()?.join(name);
@@ -133,14 +145,13 @@ fn split_worktree_using_configuration() -> crate::Result {
 
 #[test]
 fn reftable() -> crate::Result {
-    let repo_path = match gix_testtools::scripted_fixture_read_only("make_reftable_repo.sh") {
-        Ok(root) => root.join("reftable-clone/.git"),
-        Err(_) if *gix_testtools::GIT_VERSION < (2, 44, 0) => {
-            eprintln!("Fixture script failure ignored as it looks like Git isn't recent enough.");
-            return Ok(());
-        }
-        Err(err) => panic!("{err}"),
+    let Some(root) = gix_testtools::scripted_fixture_read_only_with_git_version("make_reftable_repo.sh", |version| {
+        version >= (2, 44, 0)
+    })?
+    else {
+        return Ok(());
     };
+    let repo_path = root.join("reftable-clone/.git");
     let kind = gix_discover::is_git(&repo_path)?;
     assert_eq!(kind, gix_discover::repository::Kind::WorkTree { linked_git_dir: None });
     Ok(())

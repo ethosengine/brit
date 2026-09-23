@@ -1,12 +1,11 @@
-use std::{str::FromStr, time::SystemTime};
-
-use bstr::{BStr, BString, ByteSlice, ByteVec};
-use gix_error::{ErrorExt, Exn, ResultExt};
+use std::str::FromStr;
 
 use crate::{
     spec,
-    spec::parse::{delegate, delegate::SiblingBranch, Delegate, Error},
+    spec::parse::{Delegate, Error, delegate, delegate::SiblingBranch},
 };
+use bstr::{BStr, BString, ByteSlice, ByteVec};
+use gix_error::{ErrorExt, Exn, ResultExt};
 
 /// Parse a git [`revspec`](https://git-scm.com/docs/git-rev-parse#_specifying_revisions) and call `delegate` for each token
 /// successfully parsed.
@@ -75,10 +74,9 @@ pub fn parse(mut input: &BStr, delegate: &mut impl Delegate) -> Result<(), Exn<E
 }
 
 mod intercept {
+    use crate::spec::parse::{Delegate, delegate};
     use bstr::{BStr, BString};
     use gix_error::Exn;
-
-    use crate::spec::parse::{delegate, Delegate};
 
     #[derive(PartialEq, Eq, Debug, Hash, Ord, PartialOrd, Clone)]
     pub(crate) enum PrefixHintOwned {
@@ -253,13 +251,18 @@ fn long_describe_prefix(name: &BStr) -> Option<(&BStr, delegate::PrefixHint<'_>)
     let candidate = iter.clone().any(|token| !token.is_empty()).then_some(candidate);
     let hint = iter
         .next()
-        .and_then(|gen| gen.to_str().ok().and_then(|gen| usize::from_str(gen).ok()))
+        .and_then(|generation| {
+            generation
+                .to_str()
+                .ok()
+                .and_then(|generation| usize::from_str(generation).ok())
+        })
         .and_then(|generation| {
             iter.next().map(|token| {
                 let last_token_len = token.len();
                 let first_token_ptr = iter.next_back().map_or(token.as_ptr(), <[_]>::as_ptr);
                 // SAFETY: both pointers are definitely part of the same object
-                #[allow(unsafe_code)]
+                #[expect(unsafe_code)]
                 let prior_tokens_len: usize = unsafe { token.as_ptr().offset_from(first_token_ptr) }
                     .try_into()
                     .expect("positive value");
@@ -373,7 +376,7 @@ where
         [b':'] => {
             return Err(
                 Error::new("':' must be followed by either slash and regex or path to lookup in HEAD tree").raise(),
-            )
+            );
         }
         [b':', b'/'] => return Err(Error::new("':/' must be followed by a regular expression").raise()),
         [b':', b'/', regex @ ..] => {
@@ -388,22 +391,27 @@ where
         [b':', b'0', b':', path @ ..] => {
             return consume_all(delegate.index_lookup(path.as_bstr(), 0), || {
                 format!("Couldn't find index '{path}' stage 0", path = path.as_bstr())
-            })
+            });
         }
         [b':', b'1', b':', path @ ..] => {
             return consume_all(delegate.index_lookup(path.as_bstr(), 1), || {
                 format!("Couldn't find index '{path}' stage 1", path = path.as_bstr())
-            })
+            });
         }
         [b':', b'2', b':', path @ ..] => {
             return consume_all(delegate.index_lookup(path.as_bstr(), 2), || {
                 format!("Couldn't find index '{path}' stage 2", path = path.as_bstr())
-            })
+            });
+        }
+        [b':', b'3', b':', path @ ..] => {
+            return consume_all(delegate.index_lookup(path.as_bstr(), 3), || {
+                format!("Couldn't find index '{path}' stage 3", path = path.as_bstr())
+            });
         }
         [b':', path @ ..] => {
             return consume_all(delegate.index_lookup(path.as_bstr(), 0), || {
                 format!("Couldn't find index '{path}' stage 0 (implicit)", path = path.as_bstr())
-            })
+            });
         }
         _ => {}
     }
@@ -472,7 +480,10 @@ where
             })
             .or_else(|| {
                 name.is_empty().then_some(()).or_else(|| {
-                    #[allow(clippy::let_unit_value)]
+                    #[expect(
+                        clippy::let_unit_value,
+                        reason = "the binding keeps generated async and blocking code structurally consistent"
+                    )]
                     {
                         let res = delegate.find_ref(name).or_else_none(|err| {
                             errors.push(err);
@@ -547,7 +558,7 @@ where
                     .to_str()
                     .map_err(|_| Error::new_with_input("could not parse time for reflog lookup", nav))
                     .and_then(|date| {
-                        gix_date::parse(date, Some(SystemTime::now()))
+                        gix_date::parse(date, Some(gix_date::Zoned::now()))
                             .map_err(|_| Error::new_with_input("could not parse time for reflog lookup", nav))
                     })?;
                 let lookup = delegate::ReflogLookup::Date(time);
@@ -585,12 +596,10 @@ where
                     .and_then(|past_sep| try_parse_usize(past_sep.as_bstr()).transpose())
                     .transpose()?
                     .unwrap_or((1, 0));
-                if number != 0 {
-                    let traversal = delegate::Traversal::NthAncestor(number);
-                    delegate.traverse(traversal).or_raise(|| {
-                        Error::new_with_input(format!("delegate.traverse({traversal:?}) failed"), input)
-                    })?;
-                }
+                let traversal = delegate::Traversal::NthAncestor(number);
+                delegate
+                    .traverse(traversal)
+                    .or_raise(|| Error::new_with_input(format!("delegate.traverse({traversal:?}) failed"), input))?;
                 cursor += consumed;
             }
             b'^' => {
@@ -669,11 +678,9 @@ where
                         b"" => delegate::PeelTo::RecursiveTagObject,
                         regex if regex.starts_with(b"/") => {
                             let (regex, negated) = parse_regex_prefix(regex[1..].as_bstr())?;
-                            if !regex.is_empty() {
-                                delegate.find(regex, negated).or_raise(|| {
-                                    Error::new(format!("Delegate couldn't find '{regex}' (negated: {negated})"))
-                                })?;
-                            }
+                            delegate.find(regex, negated).or_raise(|| {
+                                Error::new(format!("Delegate couldn't find '{regex}' (negated: {negated})"))
+                            })?;
                             continue;
                         }
                         invalid => return Err(Error::new_with_input("cannot peel to unknown target", invalid).raise()),

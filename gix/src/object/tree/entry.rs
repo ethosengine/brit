@@ -1,8 +1,5 @@
-use crate::{
-    bstr::BStr,
-    ext::ObjectIdExt,
-    object::tree::{Entry, EntryRef},
-};
+use crate::object::tree::EntryRef;
+use crate::{bstr::BStr, ext::ObjectIdExt, object::tree::Entry};
 
 /// Access
 impl<'repo> Entry<'repo> {

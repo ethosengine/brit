@@ -1,10 +1,38 @@
-use std::io::Cursor;
-
 use gix_credentials::program::main;
+use std::io::Cursor;
 
 #[derive(Debug, thiserror::Error)]
 #[error("Test error")]
 struct TestError;
+
+#[test]
+fn context_options_apply_to_input_and_output() {
+    let input = b"url=https://github.com/with\rreturn\n";
+    let mut output = Vec::new();
+    let options = gix_credentials::protocol::ContextOptions {
+        protect_protocol: false,
+    };
+
+    main(
+        ["get".into()],
+        Cursor::new(input),
+        &mut output,
+        options,
+        |_action, context| -> Result<Option<gix_credentials::protocol::Context>, TestError> {
+            assert_eq!(
+                context.url.as_ref().map(|url| url.as_slice()),
+                Some(&input[4..input.len() - 1])
+            );
+            Ok(Some(gix_credentials::protocol::Context {
+                username: Some("user\rname".into()),
+                ..Default::default()
+            }))
+        },
+    )
+    .expect("carriage returns are allowed");
+
+    assert!(output.windows(9).any(|window| window == b"user\rname"));
+}
 
 #[test]
 fn protocol_and_host_without_url_is_valid() {
@@ -16,6 +44,7 @@ fn protocol_and_host_without_url_is_valid() {
         ["get".into()],
         Cursor::new(input),
         &mut output,
+        gix_credentials::protocol::ContextOptions::default(),
         |_action, context| -> Result<Option<gix_credentials::protocol::Context>, TestError> {
             assert_eq!(context.protocol.as_deref(), Some("https"));
             assert_eq!(context.host.as_deref(), Some("github.com"));
@@ -49,6 +78,7 @@ fn missing_protocol_with_only_host_or_protocol_fails() {
             ["get".into()],
             Cursor::new(input),
             &mut output,
+            gix_credentials::protocol::ContextOptions::default(),
             |_action, _context| -> Result<Option<gix_credentials::protocol::Context>, TestError> {
                 called = true;
                 Ok(None)
@@ -74,6 +104,7 @@ fn url_alone_is_valid() {
         ["get".into()],
         Cursor::new(input),
         &mut output,
+        gix_credentials::protocol::ContextOptions::default(),
         |_action, context| -> Result<Option<gix_credentials::protocol::Context>, TestError> {
             called = true;
             assert_eq!(context.url.unwrap(), "https://github.com");

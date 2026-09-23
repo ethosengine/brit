@@ -27,7 +27,6 @@
 )]
 #![cfg_attr(all(doc, feature = "document-features"), feature(doc_cfg))]
 #![cfg_attr(feature = "async-client", allow(unused))]
-#![deny(rust_2018_idioms)]
 #![forbid(unsafe_code)]
 
 use std::str::FromStr;
@@ -79,10 +78,24 @@ pub mod organize;
 pub mod pack;
 #[cfg(feature = "query")]
 pub mod query;
+#[cfg(feature = "blocking-client")]
+pub mod remote;
 pub mod repository;
+
+mod output;
 
 mod discover;
 pub use discover::discover;
+
+pub fn trust(paths: &[std::path::PathBuf], mut out: impl std::io::Write) -> anyhow::Result<()> {
+    let trust_width = "Reduced".len();
+    for path in paths {
+        let trust = gix::sec::Trust::from_path_ownership(path)?;
+        let trust = format!("{trust:?}");
+        writeln!(out, "{trust:<trust_width$} {}", path.display())?;
+    }
+    Ok(())
+}
 
 pub fn env(mut out: impl std::io::Write, format: OutputFormat) -> anyhow::Result<()> {
     if format != OutputFormat::Human {

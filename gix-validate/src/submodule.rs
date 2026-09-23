@@ -4,7 +4,7 @@ use bstr::{BStr, ByteSlice};
 pub mod name {
     /// The error used in [name()](super::name()).
     #[derive(Debug)]
-    #[allow(missing_docs)]
+    #[expect(missing_docs)]
     #[non_exhaustive]
     pub enum Error {
         Empty,
@@ -28,15 +28,10 @@ pub fn name(name: &BStr) -> Result<&BStr, name::Error> {
     if name.is_empty() {
         return Err(name::Error::Empty);
     }
-    match name.find(b"..") {
-        Some(pos) => {
-            let &b = name.get(pos + 2).ok_or(name::Error::ParentComponent)?;
-            if b == b'/' || b == b'\\' {
-                Err(name::Error::ParentComponent)
-            } else {
-                Ok(name)
-            }
+    for component in name.as_bytes().split(|b| *b == b'/' || *b == b'\\') {
+        if component == b".." {
+            return Err(name::Error::ParentComponent);
         }
-        None => Ok(name),
     }
+    Ok(name)
 }

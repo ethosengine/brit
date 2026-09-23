@@ -3,15 +3,16 @@ use std::sync::LazyLock;
 static BASELINE: LazyLock<baseline::Baseline> = LazyLock::new(|| baseline::parse().unwrap());
 
 pub mod baseline {
-    use std::{borrow::Borrow, collections::HashMap, sync::LazyLock};
+    use std::{borrow::Borrow, collections::HashMap};
 
     use bstr::{BString, ByteSlice, ByteVec};
     use gix_hash::ObjectId;
     use gix_refspec::{
-        match_group::{validate::Fix, SourceRef},
-        parse::Operation,
         MatchGroup,
+        match_group::{SourceRef, validate::Fix},
+        parse::Operation,
     };
+    use std::sync::LazyLock;
 
     use crate::matching::BASELINE;
 
@@ -98,24 +99,6 @@ pub mod baseline {
                 validate_err: Some(validate_err.into()),
             },
         );
-    }
-
-    pub fn invalid_specs_fail_to_parse_where_git_shows_surprising_behaviour<'a>(
-        specs: impl IntoIterator<Item = &'a str>,
-        err: gix_refspec::parse::Error,
-    ) {
-        let err = err.to_string();
-        let mut saw_err = false;
-        for spec in specs {
-            match gix_refspec::parse(spec.into(), Operation::Fetch) {
-                Ok(_) => {}
-                Err(e) if e.to_string() == err => {
-                    saw_err = true;
-                }
-                Err(err) => panic!("Unexpected parse error: {err:?}"),
-            }
-        }
-        assert!(saw_err, "Failed to see error when parsing specs: {err:?}");
     }
 
     /// Here we checked by hand which refs are actually written with a particular refspec

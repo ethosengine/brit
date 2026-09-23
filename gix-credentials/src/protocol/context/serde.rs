@@ -5,7 +5,7 @@ use crate::protocol::context::Error;
 mod write {
     use bstr::{BStr, BString};
 
-    use crate::protocol::{context::serde::validate, Context};
+    use crate::protocol::{Context, ContextOptions, context::serde::validate};
 
     impl Context {
         /// Write ourselves to `out` such that [`from_bytes()`][Self::from_bytes()] can decode it losslessly.
@@ -18,6 +18,7 @@ mod write {
                 out.write_all(b"\n")
             }
             let Context {
+                options: ContextOptions { protect_protocol },
                 protocol,
                 host,
                 path,
@@ -25,6 +26,7 @@ mod write {
                 password,
                 oauth_refresh_token,
                 password_expiry_utc,
+                www_authenticate,
                 url,
                 // We only decode quit and interpret it, but won't get to pass it on as it means to stop the
                 // credential helper invocation chain.
@@ -32,7 +34,7 @@ mod write {
             } = self;
             for (key, value) in [("url", url), ("path", path)] {
                 if let Some(value) = value {
-                    validate(key, value.as_slice().into()).map_err(std::io::Error::other)?;
+                    validate(key, value.as_slice().into(), *protect_protocol).map_err(std::io::Error::other)?;
                     write_key(&mut out, key, value.as_ref()).ok();
                 }
             }
@@ -44,15 +46,20 @@ mod write {
                 ("oauth_refresh_token", oauth_refresh_token),
             ] {
                 if let Some(value) = value {
-                    validate(key, value.as_str().into()).map_err(std::io::Error::other)?;
+                    validate(key, value.as_str().into(), *protect_protocol).map_err(std::io::Error::other)?;
                     write_key(&mut out, key, value.as_bytes().as_bstr()).ok();
                 }
             }
             if let Some(value) = password_expiry_utc {
                 let key = "password_expiry_utc";
                 let value = value.to_string();
-                validate(key, value.as_str().into()).map_err(std::io::Error::other)?;
+                validate(key, value.as_str().into(), *protect_protocol).map_err(std::io::Error::other)?;
                 write_key(&mut out, key, value.as_bytes().as_bstr()).ok();
+            }
+            for value in www_authenticate {
+                let key = "wwwauth[]";
+                validate(key, value.as_ref(), *protect_protocol).map_err(std::io::Error::other)?;
+                write_key(&mut out, key, value.as_ref()).ok();
             }
             Ok(())
         }
@@ -70,11 +77,11 @@ mod write {
 pub mod decode {
     use bstr::{BString, ByteSlice};
 
-    use crate::protocol::{context, context::serde::validate, Context};
+    use crate::protocol::{Context, ContextOptions, context, context::serde::validate};
 
     /// The error returned by [`from_bytes()`][Context::from_bytes()].
     #[derive(Debug, thiserror::Error)]
-    #[allow(missing_docs)]
+    #[expect(missing_docs)]
     pub enum Error {
         #[error("Illformed UTF-8 in value of key {key:?}: {value:?}")]
         IllformedUtf8InValue { key: String, value: BString },
@@ -86,9 +93,14 @@ pub mod decode {
 
     impl Context {
         /// Decode ourselves from `input` which is the format written by [`write_to()`][Self::write_to()].
-        pub fn from_bytes(input: &[u8]) -> Result<Self, Error> {
-            let mut ctx = Context::default();
+        /// `options` control what to support during deserialization.
+        pub fn from_bytes(input: &[u8], options: ContextOptions) -> Result<Self, Error> {
+            let mut ctx = Context {
+                options,
+                ..Context::default()
+            };
             let Context {
+                options: _,
                 protocol,
                 host,
                 path,
@@ -96,6 +108,7 @@ pub mod decode {
                 password,
                 oauth_refresh_token,
                 password_expiry_utc,
+                www_authenticate,
                 url,
                 quit,
             } = &mut ctx;
@@ -105,7 +118,7 @@ pub mod decode {
                     it.next().and_then(|k| k.to_str().ok()),
                     it.next().map(ByteSlice::as_bstr),
                 ) {
-                    (Some(key), Some(value)) => validate(key, value)
+                    (Some(key), Some(value)) => validate(key, value, options.protect_protocol)
                         .map(|_| (key, value.to_owned()))
                         .map_err(Into::into),
                     _ => Err(Error::Syntax { line: line.into() }),
@@ -132,8 +145,11 @@ pub mod decode {
                     }
                     "url" => *url = Some(value),
                     "path" => *path = Some(value),
+                    "wwwauth[]" => www_authenticate.push(value),
                     "quit" => {
-                        *quit = gix_config_value::Boolean::try_from(value.as_ref()).ok().map(Into::into);
+                        *quit = gix_config_value::Boolean::try_from(value.as_bstr())
+                            .ok()
+                            .map(Into::into);
                     }
                     _ => {}
                 }
@@ -143,8 +159,14 @@ pub mod decode {
     }
 }
 
-fn validate(key: &str, value: &BStr) -> Result<(), Error> {
-    if key.contains('\0') || key.contains('\n') || value.contains(&0) || value.contains(&b'\n') {
+fn validate(key: &str, value: &BStr, protect_protocol: bool) -> Result<(), Error> {
+    if key.contains('\0')
+        || key.contains('\n')
+        || key.contains('\r')
+        || value.contains(&0)
+        || value.contains(&b'\n')
+        || (protect_protocol && value.contains(&b'\r'))
+    {
         return Err(Error::Encoding {
             key: key.to_owned(),
             value: value.to_owned(),

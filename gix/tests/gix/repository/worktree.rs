@@ -1,11 +1,18 @@
 use gix_ref::bstr;
 
+/// The buffer length for SHA1 archives.
 #[cfg(target_pointer_width = "64")]
 #[cfg(feature = "worktree-stream")]
 const EXPECTED_BUFFER_LENGTH: usize = 102;
+/// The buffer length for SHA1 archives on 32bit machines.
 #[cfg(target_pointer_width = "32")]
 #[cfg(feature = "worktree-stream")]
 const EXPECTED_BUFFER_LENGTH: usize = 86;
+
+#[cfg(feature = "worktree-stream")]
+fn expected_buffer_length(repo: &gix::Repository) -> usize {
+    EXPECTED_BUFFER_LENGTH + repo.object_hash().len_in_hex() - gix::hash::Kind::Sha1.len_in_hex()
+}
 
 #[test]
 #[cfg(feature = "worktree-stream")]
@@ -14,7 +21,7 @@ fn stream() -> crate::Result {
     let mut stream = repo.worktree_stream(repo.head_commit()?.tree_id()?)?.0.into_read();
     assert_eq!(
         std::io::copy(&mut stream, &mut std::io::sink())?,
-        EXPECTED_BUFFER_LENGTH as u64,
+        expected_buffer_length(&repo) as u64,
         "there is some content in the stream, it works"
     );
     Ok(())
@@ -34,7 +41,7 @@ fn archive() -> crate::Result {
         &std::sync::atomic::AtomicBool::default(),
         Default::default(),
     )?;
-    assert_eq!(buf.len(), EXPECTED_BUFFER_LENGTH, "default format is internal");
+    assert_eq!(buf.len(), expected_buffer_length(&repo), "default format is internal");
     Ok(())
 }
 
@@ -136,6 +143,37 @@ mod with_core_worktree_config {
         Ok(())
     }
 
+    #[test]
+    #[cfg(unix)] // symlinks are used here, let's not try our luck on Windows.
+    fn relative_through_symlinked_ancestor_keeps_callers_path_namespace() -> crate::Result {
+        let link = gix_testtools::scripted_fixture_read_only("make_core_worktree_repo.sh")?.join("symlinked-ancestor");
+
+        let repo = gix::open_opts(link.join("relative-worktree"), crate::restricted())?;
+        assert_eq!(
+            repo.workdir(),
+            Some(link.join("worktree").as_path()),
+            "if a symlink in an ancestor changes nothing about how the relative worktree resolves, \
+             the caller's path namespace is kept instead of jumping to the canonicalized one"
+        );
+        Ok(())
+    }
+
+    #[test]
+    #[cfg(unix)] // symlinks are used here, let's not try our luck on Windows.
+    fn relative_from_symlinked_git_dir() -> crate::Result {
+        let fixture = gix_testtools::scripted_fixture_read_only("make_core_worktree_repo.sh")?;
+        let root = fixture.join("linked-git-dir-detached-worktree");
+        let repo = gix::open_opts(root.join("home"), crate::restricted())?;
+        let git_worktree = std::fs::read_to_string(root.join("worktree.baseline"))?;
+
+        assert_eq!(
+            gix_path::realpath(repo.workdir().expect("core.worktree is configured"))?,
+            gix_path::realpath(git_worktree.trim_end())?,
+            "relative core.worktree values from repository config are resolved against the real git dir"
+        );
+        Ok(())
+    }
+
     fn repo(name: &str) -> gix::Repository {
         let dir = gix_testtools::scripted_fixture_read_only("make_core_worktree_repo.sh").unwrap();
         gix::open_opts(dir.join(name), crate::restricted()).unwrap()
@@ -176,7 +214,6 @@ mod baseline {
     pub type Reason = BString;
 
     #[derive(Debug)]
-    #[allow(dead_code)]
     pub struct Worktree {
         pub root: PathBuf,
         pub bare: bool,
@@ -234,34 +271,93 @@ mod baseline {
 
 #[test]
 fn from_bare_parent_repo() {
-    if gix_testtools::should_skip_as_git_version_is_smaller_than(2, 31, 0) {
+    let Some(dir) = gix_testtools::scripted_fixture_read_only_with_args_with_git_version(
+        "make_worktree_repo.sh",
+        ["bare"],
+        |version| version >= (2, 31, 0),
+    )
+    .unwrap() else {
         return;
-    }
-    let dir = gix_testtools::scripted_fixture_read_only_with_args("make_worktree_repo.sh", ["bare"]).unwrap();
-    let repo = gix::open(dir.join("repo.git")).unwrap();
+    };
+    let repo = gix::open_opts(dir.join("repo.git"), crate::restricted()).expect("fixture repository opens");
 
     run_assertions(repo, true /* bare */);
 }
 
 #[test]
 fn from_nonbare_parent_repo() {
-    if gix_testtools::should_skip_as_git_version_is_smaller_than(2, 31, 0) {
+    let Some(dir) = gix_testtools::scripted_fixture_read_only_with_git_version("make_worktree_repo.sh", |version| {
+        version >= (2, 31, 0)
+    })
+    .unwrap() else {
         return;
-    }
-    let dir = gix_testtools::scripted_fixture_read_only("make_worktree_repo.sh").unwrap();
-    let repo = gix::open(dir.join("repo")).unwrap();
+    };
+    let repo = gix::open_opts(dir.join("repo"), crate::restricted()).expect("fixture repository opens");
 
     run_assertions(repo, false /* bare */);
 }
 
 #[test]
-fn from_nonbare_parent_repo_set_workdir() -> gix_testtools::Result {
-    if gix_testtools::should_skip_as_git_version_is_smaller_than(2, 31, 0) {
-        return Ok(());
-    }
+fn linked_worktree_proxy_base_with_relative_linking_files() -> crate::Result {
+    let fixture = gix_testtools::scripted_fixture_read_only_needs_archive("make_worktree_relative_linking.sh")?;
+    let main = fixture.join("main");
+    let linked = fixture.join("linked");
+    let private_git_dir = main.join(".git/worktrees/linked");
+    let repo = gix::open_opts(&main, crate::restricted())?;
+    let worktrees = repo.worktrees()?;
+    assert_eq!(worktrees.len(), 1, "the relative-path fixture has one linked worktree");
+    let proxy = worktrees.into_iter().next().expect("one worktree");
 
-    let dir = gix_testtools::scripted_fixture_read_only("make_worktree_repo.sh").unwrap();
-    let mut repo = gix::open(dir.join("repo")).unwrap();
+    assert_eq!(
+        gix_path::realpath(proxy.base()?)?,
+        gix_path::realpath(&linked)?,
+        "proxy bases resolve relative worktrees/<id>/gitdir paths against the private git dir"
+    );
+    let linked_repo = proxy.into_repo()?;
+    assert_eq!(
+        linked_repo.workdir().map(gix_path::realpath).transpose()?,
+        Some(gix_path::realpath(&linked)?)
+    );
+    assert_eq!(linked_repo.git_dir(), private_git_dir);
+
+    Ok(())
+}
+
+#[test]
+#[cfg(unix)]
+fn linked_worktree_proxy_base_with_symlinked_main_repo() -> crate::Result {
+    let fixture = gix_testtools::scripted_fixture_read_only_needs_archive("make_worktree_relative_linking.sh")?;
+    let linked = fixture.join("actual/linked");
+    let main_symlink = fixture.join("main-symlink");
+
+    let repo = gix::open_opts(&main_symlink, crate::restricted())?;
+    let worktrees = repo.worktrees()?;
+    assert_eq!(worktrees.len(), 1, "the relative-path fixture has one linked worktree");
+    let proxy = worktrees.into_iter().next().expect("one worktree");
+
+    assert_eq!(
+        gix_path::realpath(proxy.base()?)?,
+        gix_path::realpath(&linked)?,
+        "proxy bases preserve symlink semantics when resolving relative worktrees/<id>/gitdir paths"
+    );
+    let repo = proxy.into_repo()?;
+    assert_eq!(
+        repo.workdir().map(gix_path::realpath).transpose()?,
+        Some(gix_path::realpath(&linked)?)
+    );
+
+    Ok(())
+}
+
+#[test]
+fn from_nonbare_parent_repo_set_workdir() -> gix_testtools::Result {
+    let Some(dir) = gix_testtools::scripted_fixture_read_only_with_git_version("make_worktree_repo.sh", |version| {
+        version >= (2, 31, 0)
+    })?
+    else {
+        return Ok(());
+    };
+    let mut repo = gix::open_opts(dir.join("repo"), crate::restricted()).expect("fixture repository opens");
 
     assert!(repo.worktree().is_some_and(|wt| wt.is_main()), "we have main worktree");
 
@@ -313,7 +409,7 @@ fn run_assertions(main_repo: gix::Repository, should_be_bare: bool) {
         );
         assert_eq!(main_repo.head_id().unwrap(), expected_main.peeled);
         assert_eq!(
-            main_repo.head_name().unwrap().expect("no detached head").as_bstr(),
+            main_repo.head_name().unwrap().expect("no detached head"),
             expected_main.branch.unwrap()
         );
         let worktree = main_repo.worktree().expect("not bare");
@@ -343,6 +439,11 @@ fn run_assertions(main_repo: gix::Repository, should_be_bare: bool) {
         assert_eq!(proxy_lock_reason, expected.locked);
         let proxy_is_locked = actual.is_locked();
         assert_eq!(proxy_is_locked, proxy_lock_reason.is_some());
+        assert_eq!(
+            actual.is_prunable(),
+            expected.prunable.is_some(),
+            "prunability matches `git worktree list --porcelain`"
+        );
         // TODO: check id of expected worktree, but need access to .gitdir from worktree base
         let proxy_id = actual.id().to_owned();
         assert_eq!(
@@ -360,7 +461,7 @@ fn run_assertions(main_repo: gix::Repository, should_be_bare: bool) {
         let repo = if base.is_dir() {
             let repo = actual.clone().into_repo().unwrap();
             assert_eq!(
-                &gix::open(base).unwrap(),
+                &gix::open_opts(base, crate::restricted()).expect("linked worktree repository opens"),
                 &repo,
                 "repos are considered the same no matter if opened from worktree or from git dir"
             );
@@ -389,15 +490,15 @@ fn run_assertions(main_repo: gix::Repository, should_be_bare: bool) {
         let proxy_by_id = repo
             .worktree_proxy_by_id(actual.id())
             .expect("can get the proxy from a linked repo as well");
-        assert_ne!(
+        assert_eq!(
             proxy_by_id.git_dir(),
             actual.git_dir(),
-            "The git directories might not look the same…"
+            "The git directories are the same"
         );
         assert_eq!(
             gix_path::realpath(proxy_by_id.git_dir()).ok(),
             gix_path::realpath(actual.git_dir()).ok(),
-            "…but they are the same effectively"
+            "the git directories are effectively the same"
         );
     }
 }

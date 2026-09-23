@@ -1,6 +1,48 @@
-/// Convert a hexadecimal hash into its corresponding `ObjectId` or _panic_.
+static SHA1_TO_SHA256_HASHES: std::sync::LazyLock<std::collections::HashMap<&str, &str>> =
+    std::sync::LazyLock::new(|| {
+        [
+            (
+                "45c160c35c17ad264b96431cceb9793160396e99",
+                "e34ae8e2c517230c6c613202a955b5f2095567830de5c3bb7081d72f1af393dd",
+            ),
+            (
+                "45b983be36b73c0788dc9cbcb76cbb80fc7bb057",
+                "96c18f0297e38d01f4b2dacddea4259aea6b2961eb0822bd2c0c3f6029030045",
+            ),
+            (
+                "2e65efe2a145dda7ee51d1741299f848e5bf752e",
+                "eb337bcee2061c5313c9a1392116b6c76039e9e30d71467ae359b36277e17dc7",
+            ),
+            (
+                "ab4a98190cf776b43cb0fe57cef231fb93fd07e6",
+                "cf84f9ae227fa5c481dacd97f6d6506de727dabd30377c6907f623ef1192637a",
+            ),
+            (
+                "e69de29bb2d1d6434b8b29ae775ad8c2e48c5391",
+                "473a0f4c3be8a93681a267e3b1e9a7dcda1185436fe141f7749120a303721813",
+            ),
+            (
+                "0000000000000000000000000000000000000000",
+                "0000000000000000000000000000000000000000000000000000000000000000",
+            ),
+        ]
+        .into()
+    });
+
+/// Convert a hexadecimal SHA-1 hash or the corresponding SHA-256 hash into an `ObjectId` or
+/// _panic_.
 fn hex_to_id(hex: &str) -> gix_hash::ObjectId {
-    gix_hash::ObjectId::from_hex(hex.as_bytes()).expect("40 bytes hex")
+    match gix_testtools::object_hash() {
+        gix_hash::Kind::Sha1 => gix_hash::ObjectId::from_hex(hex.as_bytes()).expect("40 bytes hex"),
+        gix_hash::Kind::Sha256 => gix_hash::ObjectId::from_hex(
+            SHA1_TO_SHA256_HASHES
+                .get(hex)
+                .unwrap_or_else(|| panic!("SHA-1 {hex} wasn't mapped to SHA-256 yet"))
+                .as_bytes(),
+        )
+        .expect("64 bytes hex"),
+        _ => unimplemented!(),
+    }
 }
 
 mod from_tree {
@@ -8,22 +50,29 @@ mod from_tree {
 
     use gix_archive::Format;
     use gix_attributes::glob::pattern::Case;
-    use gix_error::{Exn, ResultExt};
+    use gix_error::ResultExt;
     use gix_object::tree::EntryKind;
     use gix_testtools::bstr::ByteSlice;
     use gix_worktree::stack::state::attributes::Source;
 
     use crate::hex_to_id;
 
-    #[cfg(target_pointer_width = "64")]
-    const EXPECTED_BUFFER_LENGTH: usize = 551;
-    #[cfg(target_pointer_width = "32")]
-    const EXPECTED_BUFFER_LENGTH: usize = 479;
-
     #[test]
     fn basic_usage_internal() -> gix_testtools::Result {
         basic_usage(gix_archive::Format::InternalTransientNonPersistable, |buf| {
-            assert_eq!(buf.len(), EXPECTED_BUFFER_LENGTH);
+            #[cfg(target_pointer_width = "64")]
+            let expected_buffer_length = match gix_testtools::object_hash() {
+                gix_hash::Kind::Sha1 => 551,
+                gix_hash::Kind::Sha256 => 659,
+                _ => unimplemented!(),
+            };
+            #[cfg(target_pointer_width = "32")]
+            let expected_buffer_length = match gix_testtools::object_hash() {
+                gix_hash::Kind::Sha1 => 479,
+                gix_hash::Kind::Sha256 => todo!("let the test fail on CI and add the value here"),
+                _ => unimplemented!(),
+            };
+            assert_eq!(buf.len(), expected_buffer_length);
 
             let mut stream = gix_worktree_stream::Stream::from_read(std::io::Cursor::new(buf));
             let mut paths_and_modes = Vec::new();
@@ -240,11 +289,12 @@ mod from_tree {
                     .map(|_| ())
             },
         );
+        let object_hash = gix_testtools::object_hash();
         stream
-            .add_entry_from_path(&dir, &dir.join("extra-file"))?
-            .add_entry_from_path(&dir, &dir.join("extra-exe"))?
-            .add_entry_from_path(&dir, &dir.join("extra-dir-empty"))?
-            .add_entry_from_path(&dir, &dir.join("extra-dir").join("symlink-to-extra"))?;
+            .add_entry_from_path(&dir, &dir.join("extra-file"), object_hash)?
+            .add_entry_from_path(&dir, &dir.join("extra-exe"), object_hash)?
+            .add_entry_from_path(&dir, &dir.join("extra-dir-empty"), object_hash)?
+            .add_entry_from_path(&dir, &dir.join("extra-dir").join("symlink-to-extra"), object_hash)?;
 
         let mut buf = Vec::new();
         if format == Format::InternalTransientNonPersistable {
@@ -260,8 +310,7 @@ mod from_tree {
                         tree_prefix: Some("prefix/".into()),
                         modification_time: 1820000000, // needs to be within a certain bound to be a valid MSDos time!
                     },
-                )
-                .map_err(Exn::into_error)?;
+                )?;
             } else {
                 gix_archive::write_stream(
                     &mut stream,
@@ -272,11 +321,10 @@ mod from_tree {
                         tree_prefix: Some("prefix/".into()),
                         modification_time: 120,
                     },
-                )
-                .map_err(Exn::into_error)?;
+                )?;
             }
             assert!(
-                stream.next_entry().map_err(Exn::into_error)?.is_none(),
+                stream.next_entry()?.is_none(),
                 "stream is exhausted, all written to buf"
             );
         }
@@ -291,7 +339,7 @@ mod from_tree {
             let hex = std::fs::read(dir.join("head.hex"))?;
             gix_hash::ObjectId::from_hex(hex.trim())?
         };
-        let odb = gix_odb::at(dir.join(".git").join("objects"))?;
+        let odb = gix_odb::at(dir.join(".git").join("objects"), gix_testtools::object_hash())?;
 
         let mut collection = Default::default();
         let mut buf = Default::default();

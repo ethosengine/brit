@@ -13,7 +13,7 @@ pub struct Args {
     /// Bring up a terminal user interface displaying progress visually.
     #[clap(long, conflicts_with("quiet"))]
     pub progress: bool,
-    /// The number of threads to use. If unset, use all cores, if 0 use all physical cores.
+    /// The number of threads to use. If unset or 0, use the command default; repository discovery uses 8 on macOS.
     #[clap(short = 't', long)]
     pub threads: Option<usize>,
 
@@ -136,8 +136,9 @@ pub mod tools {
             #[command(visible_alias = "trace-file")]
             TracePath {
                 /// The path to trace through history.
+                // This can't be here anymore as we also need to compile without `Send` support.
                 #[clap(value_parser = AsPathSpec)]
-                path: gix::pathspec::Pattern,
+                path: gix::bstr::BString,
             },
         }
     }
@@ -209,6 +210,7 @@ pub mod tools {
         fn assure_is_repo(dir: &OsStr) -> anyhow::Result<()> {
             let git_dir = PathBuf::from(dir).join(".git");
             let p = gix::path::realpath(&git_dir)
+                .map_err(gix::path::realpath::Error::into_error)
                 .with_context(|| format!("Could not canonicalize git repository at '{}'", git_dir.display()))?;
             if p.extension().unwrap_or_default() == "git"
                 || p.file_name().unwrap_or_default() == ".git"

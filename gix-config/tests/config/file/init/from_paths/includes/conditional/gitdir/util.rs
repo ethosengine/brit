@@ -3,14 +3,13 @@
 use std::{
     io::Write,
     path::{Path, PathBuf},
-    process::Command,
 };
 
 use bstr::{BString, ByteSlice};
 use gix_config::file::init::{self};
 
 use crate::file::{
-    cow_str,
+    bstring,
     init::from_paths::{
         escape_backslashes,
         includes::conditional::{git_init, options_with_git_dir},
@@ -138,8 +137,8 @@ pub fn assert_section_value(
     assert_eq!(
         config.string_by("section", None, "value"),
         match expected {
-            Some(Value::Original) => Some(cow_str("base-value")),
-            Some(Value::Override) => Some(cow_str("override-value")),
+            Some(Value::Original) => Some(bstring("base-value")),
+            Some(Value::Override) => Some(bstring("override-value")),
             None => None,
         },
         "gix-config disagrees with the expected value, {} for debugging",
@@ -159,13 +158,12 @@ pub fn git_env_with_symlinked_repo() -> crate::Result<GitEnv> {
 }
 
 fn assure_git_agrees(expected: Option<Value>, env: GitEnv) -> crate::Result {
-    let output = Command::new("git")
+    let output = gix_testtools::git_command(env.worktree_dir())
         .args(["config", "--get", "section.value"])
         .env("HOME", env.home_dir())
+        .env("USERPROFILE", env.home_dir())
+        .env("GIT_CONFIG_GLOBAL", env.home_dir().join(".gitconfig"))
         .env("GIT_DIR", env.git_dir())
-        .env_remove("GIT_CONFIG_COUNT")
-        .env_remove("XDG_CONFIG_HOME")
-        .current_dir(env.worktree_dir())
         .output()?;
 
     assert_eq!(

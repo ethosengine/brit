@@ -1,5 +1,44 @@
 use gix::remote::Direction;
 
+#[test]
+fn compares_with_name_representations() -> crate::Result {
+    use gix::{
+        bstr::{BString, ByteSlice},
+        refs::{FullName, FullNameRef, Target},
+    };
+
+    let repo = crate::basic_repo()?;
+    let reference = repo.find_reference("main")?;
+    let text = "refs/heads/main";
+    let string = text.to_owned();
+    let bytes = text.as_bytes().as_bstr();
+    let byte_string: BString = text.into();
+    let name: FullName = text.try_into()?;
+    let name_ref: &FullNameRef = name.as_ref();
+
+    assert_eq!(reference, text, "an attached reference matches str");
+    // Note that the following doesn't compile as this breaks symmetry
+    // (as always when a lesser type is compared to one that has more data)
+    // assert_eq!(text, reference, "an attached reference matches str");
+    assert_eq!(reference, string, "an attached reference matches String");
+    assert_eq!(reference, bytes, "an attached reference matches BStr");
+    assert_eq!(reference, byte_string, "an attached reference matches BString");
+    assert_eq!(reference, name, "an attached reference matches FullName");
+    assert_eq!(reference, name_ref, "an attached reference matches FullNameRef");
+
+    let mut other_target = reference.clone();
+    other_target.inner.target = Target::Symbolic(FullName::try_from("refs/heads/other")?);
+    assert_eq!(
+        other_target, text,
+        "reference-name equality is independent of the target"
+    );
+    assert_ne!(
+        other_target, "refs/heads/other",
+        "a target name does not compare as the reference name"
+    );
+    Ok(())
+}
+
 mod log {
 
     #[test]
@@ -37,8 +76,8 @@ fn remote_name() -> crate::Result {
     ] {
         let r = repo.find_reference(ref_name)?;
         assert_eq!(
-            r.remote_name(Direction::Fetch).map(|name| name.as_bstr().to_owned()),
-            Some(expected_remote.into())
+            r.remote_name(Direction::Fetch).expect("remote name can be inferred"),
+            expected_remote
         );
     }
     Ok(())
@@ -58,7 +97,7 @@ mod find {
         let repo = repo()?;
         let mut packed_tag_ref = repo.try_find_reference("dt1")?.expect("tag to exist");
         let expected: &FullNameRef = "refs/tags/dt1".try_into()?;
-        assert_eq!(packed_tag_ref.name(), expected);
+        assert_eq!(packed_tag_ref, expected);
 
         assert_eq!(
             packed_tag_ref.inner.target,
@@ -78,11 +117,11 @@ mod find {
         let mut symbolic_ref = repo.find_reference("multi-link-target1")?;
 
         let expected: &FullNameRef = "refs/heads/multi-link-target1".try_into()?;
-        assert_eq!(symbolic_ref.name(), expected);
+        assert_eq!(symbolic_ref, expected);
         assert_eq!(symbolic_ref.peel_to_id()?, the_commit);
 
         let expected: &FullNameRef = "refs/remotes/origin/multi-link-target3".try_into()?;
-        assert_eq!(symbolic_ref.name(), expected, "it follows symbolic refs, too");
+        assert_eq!(symbolic_ref, expected, "it follows symbolic refs, too");
         assert_eq!(symbolic_ref.into_fully_peeled_id()?, the_commit, "idempotency");
 
         let mut tag_ref = repo.find_reference("dt3")?;
@@ -109,12 +148,17 @@ mod find {
         );
         let target_commit_id = hex_to_id("134385f6d781b7e97062102c6a483440bfda2a03");
         assert_eq!(
-            tag_ref.inner.peeled, Some(target_commit_id),
+            tag_ref.inner.peeled,
+            Some(target_commit_id),
             "It only counts as peeled as this ref is packed, and peeling in place is a way to 'make it the target' officially."
         );
 
         let err = tag_ref.peel_to_kind(gix::object::Kind::Blob).unwrap_err();
-        let expected_err = "Last encountered object 4b825dc was tree while trying to peel to blob";
+        let empty_tree_id = hex_to_id("4b825dc642cb6eb9a060e54bf8d69288fbee4904");
+        let expected_err = format!(
+            "Last encountered object {} was tree while trying to peel to blob",
+            &empty_tree_id.to_string()[..7]
+        );
         assert_eq!(
             err.to_string(),
             expected_err,
@@ -131,7 +175,7 @@ mod find {
 
         let obj = tag_ref.peel_to_kind(gix::object::Kind::Tree)?;
         assert!(obj.kind.is_tree());
-        assert_eq!(obj.id, hex_to_id("4b825dc642cb6eb9a060e54bf8d69288fbee4904"));
+        assert_eq!(obj.id, empty_tree_id);
         assert_eq!(tag_ref.peel_to_tree()?.id, obj.id);
 
         assert_eq!(
@@ -207,11 +251,13 @@ fn set_target_id() {
     assert_eq!(head_ref.id(), target_id, "the id was set and is observable right away");
 
     head_ref.delete().unwrap();
-    assert!(head_ref
-        .set_target_id(prev_id, "fails")
-        .unwrap_err()
-        .to_string()
-        .starts_with("Reference \"refs/heads/main\" was supposed to exist"));
+    assert!(
+        head_ref
+            .set_target_id(prev_id, "fails")
+            .unwrap_err()
+            .to_string()
+            .starts_with("Reference \"refs/heads/main\" was supposed to exist")
+    );
 }
 
 mod remote;

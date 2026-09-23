@@ -1,12 +1,10 @@
-use std::time::SystemTime;
-
 use gix_date::Time;
 use gix_error::Exn;
 
 #[test]
 fn time_without_offset_defaults_to_utc() {
     // Git parses datetime without offset and defaults to UTC (+0000)
-    let result = gix_date::parse("1979-02-26 18:30:00", Some(SystemTime::now()));
+    let result = gix_date::parse("1979-02-26 18:30:00", Some(gix_date::Zoned::now()));
     assert!(result.is_ok(), "Git parses datetime without offset, defaulting to UTC");
     let time = result.unwrap();
     assert_eq!(time.offset, 0, "Offset should default to UTC (+0000)");
@@ -27,7 +25,7 @@ fn parse_header_is_not_too_lenient() {
 #[test]
 fn short() {
     assert_eq!(
-        gix_date::parse("1979-02-26", Some(SystemTime::now())).unwrap(),
+        gix_date::parse("1979-02-26", Some(gix_date::Zoned::now())).unwrap(),
         Time {
             seconds: 288835200,
             offset: 0,
@@ -180,7 +178,7 @@ fn git_default() {
 fn invalid_dates_can_be_produced_without_current_time() {
     assert_eq!(
         gix_date::parse("foobar", None).unwrap_err().to_string(),
-        "Unknown date format: foobar"
+        "Unknown date format: \"foobar\""
     );
 }
 
@@ -227,15 +225,44 @@ mod subsecond_precision {
 
 /// Various cases the fuzzer found
 mod fuzz {
+    use std::path::PathBuf;
+
+    fn fuzz_artifact_paths(target: &str) -> Vec<PathBuf> {
+        let mut paths = std::fs::read_dir(
+            PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+                .join("fuzz/artifacts")
+                .join(target),
+        )
+        .expect("artifact directory exists")
+        .filter_map(|entry| entry.ok().map(|entry| entry.path()))
+        .collect::<Vec<_>>();
+        paths.sort();
+        paths
+    }
+
     #[test]
     fn reproduce_1979() {
         gix_date::parse("fRi ", None).ok();
     }
 
     #[test]
+    fn artifact_inputs_can_be_parsed_without_panicking() {
+        for path in fuzz_artifact_paths("parse") {
+            let input = std::fs::read(path).expect("artifact is readable");
+            if let Ok(input) = std::str::from_utf8(&input) {
+                gix_date::parse(input, None).ok();
+            }
+        }
+    }
+
+    #[test]
     fn invalid_but_does_not_cause_panic() {
         for input in ["-9999-1-1", "7	-𬞋", "5 ڜ-09", "-4 week ago Z", "8960609 day ago"] {
-            gix_date::parse(input, Some(std::time::UNIX_EPOCH)).ok();
+            gix_date::parse(
+                input,
+                Some(jiff::Timestamp::UNIX_EPOCH.to_zoned(jiff::tz::TimeZone::UTC)),
+            )
+            .ok();
         }
     }
 }

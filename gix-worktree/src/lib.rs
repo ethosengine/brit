@@ -8,7 +8,7 @@
     doc = ::document_features::document_features!()
 )]
 #![cfg_attr(all(doc, feature = "document-features"), feature(doc_cfg))]
-#![deny(missing_docs, rust_2018_idioms, unsafe_code)]
+#![deny(missing_docs, unsafe_code)]
 use bstr::BString;
 /// Provides types needed for using [`stack::Platform::matching_attributes()`].
 #[cfg(feature = "attributes")]
@@ -50,6 +50,8 @@ pub struct Stack {
     stack: gix_fs::Stack,
     /// tells us what to do as we change paths.
     state: stack::State,
+    /// Whether to reject terminal non-directory symlinks on Windows.
+    reject_terminal_symlinks: bool,
     /// A buffer used when reading attribute or ignore files or their respective objects from the object database.
     buf: Vec<u8>,
     /// If case folding should happen when looking up attributes or exclusions.

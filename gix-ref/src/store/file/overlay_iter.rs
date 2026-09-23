@@ -1,3 +1,5 @@
+use gix_object::bstr::ByteSlice;
+use gix_path::RelativePath;
 use std::{
     borrow::Cow,
     cmp::Ordering,
@@ -6,13 +8,10 @@ use std::{
     path::{Path, PathBuf},
 };
 
-use gix_object::bstr::ByteSlice;
-use gix_path::RelativePath;
-
 use crate::{
+    BStr, FullName, Namespace, Reference,
     file::loose::{self, iter::SortedLoosePaths},
     store_impl::{file, packed},
-    BStr, FullName, Namespace, Reference,
 };
 
 /// An iterator stepping through sorted input of loose references and packed references, preferring loose refs over otherwise
@@ -22,10 +21,10 @@ use crate::{
 pub struct LooseThenPacked<'p, 's> {
     git_dir: &'s Path,
     common_dir: Option<&'s Path>,
+    object_hash: gix_hash::Kind,
     namespace: Option<&'s Namespace>,
     iter_packed: Option<Peekable<packed::Iter<'p>>>,
     iter_git_dir: Peekable<SortedLoosePaths>,
-    #[allow(dead_code)]
     iter_common_dir: Option<Peekable<SortedLoosePaths>>,
     buf: Vec<u8>,
 }
@@ -98,7 +97,7 @@ impl<'p> LooseThenPacked<'p, '_> {
                 source: err,
                 path: refpath.to_owned(),
             })?;
-        loose::Reference::try_from_path(name, buf)
+        loose::Reference::try_from_path(name, buf, self.object_hash)
             .map_err(|err| {
                 let relative_path = refpath
                     .strip_prefix(git_dir)
@@ -413,7 +412,10 @@ impl file::Store {
             }
             Some(namespace) => {
                 let prefix = namespace.to_owned().into_namespaced_prefix(prefix);
-                let prefix = prefix.as_bstr().try_into().map_err(std::io::Error::other)?;
+                let prefix = prefix
+                    .as_bstr()
+                    .try_into()
+                    .map_err(|err: gix_path::relative_path::Error| std::io::Error::other(err.into_error()))?;
                 let git_dir_info = IterInfo::from_prefix(self.git_dir(), prefix, self.precompose_unicode)?;
                 let common_dir_info = self
                     .common_dir()
@@ -433,6 +435,7 @@ impl file::Store {
         Ok(LooseThenPacked {
             git_dir: self.git_dir(),
             common_dir: self.common_dir(),
+            object_hash: self.object_hash,
             iter_packed: match packed {
                 Some(packed) => Some(
                     match git_dir_info.prefix() {
@@ -461,7 +464,7 @@ mod error {
 
     /// The error returned by the [`LooseThenPacked`][super::LooseThenPacked] iterator.
     #[derive(Debug, thiserror::Error)]
-    #[allow(missing_docs)]
+    #[expect(missing_docs)]
     pub enum Error {
         #[error("The file system could not be traversed")]
         Traversal(#[source] io::Error),

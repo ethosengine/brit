@@ -32,7 +32,7 @@ pub enum Kind {
 }
 
 /// The error returned by [`output::Entry::from_data()`].
-#[allow(missing_docs)]
+#[expect(missing_docs)]
 #[derive(Debug, thiserror::Error)]
 pub enum Error {
     #[error("{0}")]
@@ -45,7 +45,7 @@ impl output::Entry {
     /// An object which can be identified as invalid easily which happens if objects didn't exist even if they were referred to.
     pub fn invalid() -> output::Entry {
         output::Entry {
-            id: gix_hash::Kind::Sha1.null(), // NOTE: the actual object hash used in the repo doesn't matter here, this is a sentinel value.
+            id: gix_hash::Kind::shortest().null(), // NOTE: the actual object hash used in the repo doesn't matter here, this is a sentinel value.
             kind: Kind::Base(gix_object::Kind::Blob),
             decompressed_size: 0,
             compressed_data: vec![],
@@ -61,7 +61,8 @@ impl output::Entry {
     }
 
     /// Create an Entry from a previously counted object which is located in a pack. It's `entry` is provided here.
-    /// The `version` specifies what kind of target `Entry` version the caller desires.
+    /// The `target_version` specifies what kind of target `Entry` version the caller desires. Both supported versions use
+    /// the same entry encoding.
     pub fn from_pack_entry(
         mut entry: find::Entry,
         count: &output::Count,
@@ -75,8 +76,7 @@ impl output::Entry {
         }
 
         let pack_offset_must_be_zero = 0;
-        let pack_entry = match data::Entry::from_bytes(&entry.data, pack_offset_must_be_zero, count.id.as_slice().len())
-        {
+        let pack_entry = match data::Entry::from_bytes(&entry.data, pack_offset_must_be_zero, count.id.kind()) {
             Ok(e) => e,
             Err(err) => return Some(Err(err.into())),
         };
@@ -89,10 +89,14 @@ impl output::Entry {
             Tag => Some(output::entry::Kind::Base(gix_object::Kind::Tag)),
             OfsDelta { base_distance } => {
                 let pack_location = count.entry_pack_location.as_ref().expect("packed");
-                let base_offset = pack_location
-                    .pack_offset
-                    .checked_sub(base_distance)
-                    .expect("pack-offset - distance is firmly within the pack");
+                let Some(base_offset) =
+                    crate::data::entry::Header::verified_base_pack_offset(pack_location.pack_offset, base_distance)
+                else {
+                    return Some(Err(crate::data::entry::decode::Error::Corrupt {
+                        message: "an ofs-delta base distance pointing before pack start",
+                    }
+                    .into()));
+                };
                 potential_bases
                     .binary_search_by(|e| {
                         e.entry_pack_location
@@ -131,14 +135,22 @@ impl output::Entry {
         })
     }
 
-    /// Create a new instance from the given `oid` and its corresponding git object data `obj`.
-    pub fn from_data(count: &output::Count, obj: &gix_object::Data<'_>) -> Result<Self, Error> {
+    /// Create a new instance from the given `oid` and its corresponding git object data `obj`,
+    /// deflating it with `compression`.
+    ///
+    /// Note that `git` compresses pack entries with the level configured with `pack.compression`,
+    /// whose default is [`Compression::DEFAULT`](gix_zlib::Compression::DEFAULT).
+    pub fn from_data(
+        count: &output::Count,
+        obj: &gix_object::Data<'_>,
+        compression: gix_zlib::Compression,
+    ) -> Result<Self, Error> {
         Ok(output::Entry {
             id: count.id.to_owned(),
             kind: Kind::Base(obj.kind),
             decompressed_size: obj.data.len(),
             compressed_data: {
-                let mut out = gix_features::zlib::stream::deflate::Write::new(Vec::new());
+                let mut out = gix_zlib::stream::deflate::Write::new(Vec::new(), compression);
                 if let Err(err) = std::io::copy(&mut &*obj.data, &mut out) {
                     match err.kind() {
                         std::io::ErrorKind::Other => return Err(Error::ZlibDeflate(err)),
@@ -151,21 +163,16 @@ impl output::Entry {
         })
     }
 
-    /// Transform ourselves into pack entry header of `version` which can be written into a pack.
+    /// Transform ourselves into a pack entry header which can be written into a pack of `version`.
     ///
     /// `index_to_pack(object_index) -> pack_offset` is a function to convert the base object's index into
     /// the input object array (if each object is numbered) to an offset into the pack.
     /// This information is known to the one calling the method.
     pub fn to_entry_header(
         &self,
-        version: data::Version,
+        _version: data::Version,
         index_to_base_distance: impl FnOnce(usize) -> u64,
     ) -> data::entry::Header {
-        assert!(
-            matches!(version, data::Version::V2),
-            "we can only write V2 pack entries for now"
-        );
-
         use Kind::*;
         match self.kind {
             Base(kind) => {

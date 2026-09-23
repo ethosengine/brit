@@ -1,31 +1,16 @@
-use std::borrow::Cow;
-
-use gix_object::bstr::BStr;
-
-fn bcow(input: &str) -> Cow<'_, BStr> {
-    Cow::Borrowed(input.into())
-}
-
 mod keys {
-    use std::borrow::Cow;
-
     use gix::config::tree::{Key, Section};
-    use gix_object::bstr::ByteSlice;
-
-    use crate::config::tree::bcow;
+    use gix_object::bstr::{BStr, ByteSlice};
 
     #[test]
     fn string() -> crate::Result {
-        assert_eq!(
-            gix::config::tree::Http::USER_AGENT.try_into_string(bcow("agent"))?,
-            "agent"
-        );
+        assert_eq!(gix::config::tree::Http::USER_AGENT.try_into_string("agent")?, "agent");
         assert!(gix::config::tree::Http::USER_AGENT.validate("agent".into()).is_ok());
 
         let invalid = b"\xF0\x80\x80".as_bstr();
         assert_eq!(
             gix::config::tree::Http::USER_AGENT
-                .try_into_string(Cow::Borrowed(invalid))
+                .try_into_string(invalid)
                 .unwrap_err()
                 .to_string(),
             "The utf-8 string at \"http.userAgent=���\" could not be decoded"
@@ -60,21 +45,60 @@ mod keys {
     }
 
     #[test]
+    fn default_values() {
+        for (key, expected) in [
+            (
+                &gix::config::tree::Clone::DEFAULT_REMOTE_NAME as &dyn Key,
+                BStr::new(b"origin"),
+            ),
+            (&gix::config::tree::Core::NOTES_REF, BStr::new(b"refs/notes/commits")),
+            (&gix::config::tree::Diff::ALGORITHM, BStr::new(b"myers")),
+            (&gix::config::tree::Gpg::FORMAT, BStr::new(b"openpgp")),
+            (&gix::config::tree::Gpg::PROGRAM, BStr::new(b"gpg")),
+            (&gix::config::tree::gpg::OpenPgp::PROGRAM, BStr::new(b"gpg")),
+            (&gix::config::tree::gpg::X509::PROGRAM, BStr::new(b"gpgsm")),
+            (&gix::config::tree::gpg::Ssh::PROGRAM, BStr::new(b"ssh-keygen")),
+            (&gix::config::tree::Commit::GPG_SIGN, BStr::new(b"false")),
+            (&gix::config::tree::gitoxide::Core::SHALLOW_FILE, BStr::new(b"shallow")),
+            (
+                &gix::config::tree::gitoxide::Objects::REPLACE_REF_BASE,
+                BStr::new(b"refs/replace/"),
+            ),
+        ] {
+            assert_eq!(key.default_value(), Some(expected), "default for {key:?}");
+            assert_eq!(key.default_value_or_panic(), expected, "default for {key:?}");
+        }
+        assert_eq!(gix::config::tree::Author::NAME.default_value(), None);
+    }
+
+    #[test]
+    #[should_panic(expected = "BUG: default value must be set")]
+    fn missing_default_panics() {
+        let _ = gix::config::tree::Author::NAME.default_value_or_panic();
+    }
+
+    #[test]
     fn remote_name() {
-        assert!(gix::config::tree::Remote::PUSH_DEFAULT
-            .validate("origin".into())
-            .is_ok());
-        assert!(gix::config::tree::Remote::PUSH_DEFAULT
-            .validate("https://github.com/byron/gitoxide".into())
-            .is_ok());
+        assert!(
+            gix::config::tree::Remote::PUSH_DEFAULT
+                .validate("origin".into())
+                .is_ok()
+        );
+        assert!(
+            gix::config::tree::Remote::PUSH_DEFAULT
+                .validate("https://github.com/byron/gitoxide".into())
+                .is_ok()
+        );
     }
 
     #[test]
     fn unsigned_integer() {
         for valid in [0, 1, 100_124] {
-            assert!(gix::config::tree::Core::DELTA_BASE_CACHE_LIMIT
-                .validate(valid.to_string().as_bytes().into())
-                .is_ok());
+            assert!(
+                gix::config::tree::Core::DELTA_BASE_CACHE_LIMIT
+                    .validate(valid.to_string().as_bytes().into())
+                    .is_ok()
+            );
         }
 
         for invalid in [-1, -100] {
@@ -98,15 +122,69 @@ mod keys {
     }
 }
 
-mod branch {
-    use gix::config::tree::{branch, Branch, Key};
+mod compression {
+    use gix::config::tree::Key;
 
-    use crate::config::tree::bcow;
+    #[test]
+    fn validate_and_convert() {
+        for key in [
+            &gix::config::tree::Core::COMPRESSION,
+            &gix::config::tree::Core::LOOSE_COMPRESSION,
+            &gix::config::tree::Pack::COMPRESSION,
+        ] {
+            for valid in -1..=9 {
+                assert!(key.validate(valid.to_string().as_str().into()).is_ok());
+            }
+            for invalid in [-2, 10, 100] {
+                assert!(key.validate(invalid.to_string().as_str().into()).is_err());
+            }
+        }
+
+        assert_eq!(
+            gix::config::tree::Core::COMPRESSION
+                .try_into_compression(Ok(Some(-1)))
+                .expect("git maps -1 to the zlib default"),
+            Some(gix::zlib::Compression::DEFAULT)
+        );
+        assert_eq!(
+            gix::config::tree::Core::COMPRESSION
+                .try_into_compression(Ok(Some(1)))
+                .unwrap(),
+            Some(gix::zlib::Compression::BEST_SPEED)
+        );
+        assert_eq!(
+            gix::config::tree::Pack::COMPRESSION
+                .try_into_compression(Ok(Some(9)))
+                .unwrap(),
+            Some(gix::zlib::Compression::BEST)
+        );
+        assert!(
+            gix::config::tree::Pack::COMPRESSION
+                .try_into_compression(Ok(Some(10)))
+                .is_err()
+        );
+    }
+}
+
+mod branch {
+    use gix::config::tree::{Branch, Key, branch};
 
     #[test]
     fn merge() {
-        assert!(branch::Merge::try_into_fullrefname(bcow("refs/heads/main")).is_ok());
-        assert!(branch::Merge::try_into_fullrefname(bcow("main")).is_err());
+        assert!(branch::Merge::try_into_fullrefname("refs/heads/main").is_ok());
+        assert!(branch::Merge::try_into_fullrefname("main").is_err());
+        assert!(
+            Branch::MERGE.validate("refs/heads/main".into()).is_ok(),
+            "a fully qualified merge reference is valid"
+        );
+        assert!(
+            Branch::MERGE.validate("main".into()).is_err(),
+            "a partial merge reference is invalid"
+        );
+        assert!(
+            Branch::MERGE.validate("".into()).is_err(),
+            "a merge reference cannot be empty"
+        );
 
         assert!(Branch::MERGE.full_name(None).is_err());
         assert_eq!(
@@ -124,7 +202,6 @@ mod ssh {
         use gix::config::tree::Ssh;
         use gix_protocol::transport::client::blocking_io::ssh::ProgramKind;
 
-        use crate::config::tree::bcow;
         for (actual, expected) in [
             ("auto", None),
             ("ssh", Some(ProgramKind::Ssh)),
@@ -133,11 +210,11 @@ mod ssh {
             ("putty", Some(ProgramKind::Putty)),
             ("tortoiseplink", Some(ProgramKind::TortoisePlink)),
         ] {
-            assert_eq!(Ssh::VARIANT.try_into_variant(bcow(actual))?, expected);
+            assert_eq!(Ssh::VARIANT.try_into_variant(actual)?, expected);
         }
 
         assert_eq!(
-            Ssh::VARIANT.try_into_variant(bcow("SSH")).unwrap_err().to_string(),
+            Ssh::VARIANT.try_into_variant("SSH").unwrap_err().to_string(),
             "The key \"ssh.variant=SSH\" (possibly from GIT_SSH_VARIANT) was invalid",
             "case-sensitive comparisons"
         );
@@ -149,8 +226,6 @@ mod ssh {
 mod status {
     use gix::{config::tree::Status, status::UntrackedFiles};
 
-    use crate::config::tree::bcow;
-
     #[test]
     fn default() -> crate::Result {
         for (actual, expected) in [
@@ -159,14 +234,14 @@ mod status {
             ("all", UntrackedFiles::Files),
         ] {
             assert_eq!(
-                Status::SHOW_UNTRACKED_FILES.try_into_show_untracked_files(bcow(actual))?,
+                Status::SHOW_UNTRACKED_FILES.try_into_show_untracked_files(actual)?,
                 expected
             );
         }
 
         assert_eq!(
             Status::SHOW_UNTRACKED_FILES
-                .try_into_show_untracked_files(bcow("NO"))
+                .try_into_show_untracked_files("NO")
                 .unwrap_err()
                 .to_string(),
             "The key \"status.showUntrackedFiles=NO\" was invalid",
@@ -179,8 +254,6 @@ mod status {
 mod push {
     use gix::{config::tree::Push, push};
 
-    use crate::config::tree::bcow;
-
     #[test]
     fn default() -> crate::Result {
         for (actual, expected) in [
@@ -191,11 +264,11 @@ mod push {
             ("simple", push::Default::Simple),
             ("matching", push::Default::Matching),
         ] {
-            assert_eq!(Push::DEFAULT.try_into_default(bcow(actual))?, expected);
+            assert_eq!(Push::DEFAULT.try_into_default(actual)?, expected);
         }
 
         assert_eq!(
-            Push::DEFAULT.try_into_default(bcow("Nothing")).unwrap_err().to_string(),
+            Push::DEFAULT.try_into_default("Nothing").unwrap_err().to_string(),
             "The key \"push.default=Nothing\" was invalid",
             "case-sensitive comparisons"
         );
@@ -213,8 +286,6 @@ mod fetch {
             remote::fetch::negotiate::Algorithm,
         };
 
-        use crate::config::tree::bcow;
-
         for (actual, expected) in [
             ("noop", Algorithm::Noop),
             ("consecutive", Algorithm::Consecutive),
@@ -222,14 +293,14 @@ mod fetch {
             ("default", Algorithm::Consecutive), // actually, default can be Skipping of `feature.experimental` is true, but we don't deal with that yet until we implement `skipping`
         ] {
             assert_eq!(
-                Fetch::NEGOTIATION_ALGORITHM.try_into_negotiation_algorithm(bcow(actual))?,
+                Fetch::NEGOTIATION_ALGORITHM.try_into_negotiation_algorithm(actual)?,
                 expected
             );
             assert!(Fetch::NEGOTIATION_ALGORITHM.validate(actual.into()).is_ok());
         }
         assert_eq!(
             Fetch::NEGOTIATION_ALGORITHM
-                .try_into_negotiation_algorithm(bcow("foo"))
+                .try_into_negotiation_algorithm("foo")
                 .unwrap_err()
                 .to_string(),
             "The key \"fetch.negotiationAlgorithm=foo\" was invalid"
@@ -252,15 +323,15 @@ mod fetch {
         ] {
             assert_eq!(
                 Fetch::RECURSE_SUBMODULES.try_into_recurse_submodules(
-                    gix_config::Boolean::try_from(actual.as_bytes().as_bstr()).map(|b| b.0)
+                    gix_config::Boolean::try_from(actual.as_bytes().as_bstr()).map(|b| Some(b.0))
                 )?,
-                expected
+                Some(expected)
             );
             assert!(Fetch::RECURSE_SUBMODULES.validate(actual.into()).is_ok());
         }
         assert_eq!(
             Fetch::RECURSE_SUBMODULES
-                .try_into_recurse_submodules(gix_config::Boolean::try_from(b"foo".as_bstr()).map(|b| b.0))
+                .try_into_recurse_submodules(gix_config::Boolean::try_from(b"foo".as_bstr()).map(|b| Some(b.0)))
                 .unwrap_err()
                 .to_string(),
             "The key \"fetch.recurseSubmodules=foo\" was invalid"
@@ -277,22 +348,23 @@ mod diff {
     };
     use gix_diff::blob::Algorithm;
 
-    use crate::config::tree::bcow;
-
     #[test]
     fn renames() -> crate::Result {
-        assert_eq!(Diff::RENAMES.try_into_renames(Ok(true))?, Tracking::Renames);
+        assert_eq!(Diff::RENAMES.try_into_renames(Ok(Some(true)))?, Some(Tracking::Renames));
         assert!(Diff::RENAMES.validate("1".into()).is_ok());
-        assert_eq!(Diff::RENAMES.try_into_renames(Ok(false))?, Tracking::Disabled);
+        assert_eq!(
+            Diff::RENAMES.try_into_renames(Ok(Some(false)))?,
+            Some(Tracking::Disabled)
+        );
         assert!(Diff::RENAMES.validate("0".into()).is_ok());
         assert_eq!(
             Diff::RENAMES.try_into_renames(Err(gix_config::value::Error::new("err", "copy")))?,
-            Tracking::RenamesAndCopies
+            Some(Tracking::RenamesAndCopies)
         );
         assert!(Diff::RENAMES.validate("copy".into()).is_ok());
         assert_eq!(
             Diff::RENAMES.try_into_renames(Err(gix_config::value::Error::new("err", "copies")))?,
-            Tracking::RenamesAndCopies
+            Some(Tracking::RenamesAndCopies)
         );
         assert!(Diff::RENAMES.validate("copies".into()).is_ok());
 
@@ -309,7 +381,7 @@ mod diff {
     #[test]
     fn driver_binary() -> crate::Result {
         assert_eq!(
-            Diff::DRIVER_BINARY.try_into_binary(Some(bcow("auto")))?,
+            Diff::DRIVER_BINARY.try_into_binary(Some("auto"))?,
             None,
             "this is as good as not setting it, but it's a valid value that would fail if it was just a boolean. It's undocumented though…"
         );
@@ -320,7 +392,7 @@ mod diff {
             (Some("false"), Some(false)),
             (None, Some(true)),
         ] {
-            assert_eq!(Diff::DRIVER_BINARY.try_into_binary(actual.map(bcow))?, expected);
+            assert_eq!(Diff::DRIVER_BINARY.try_into_binary(actual)?, expected);
             if let Some(value) = actual {
                 assert!(Diff::DRIVER_BINARY.validate(value.into()).is_ok());
             }
@@ -328,7 +400,7 @@ mod diff {
 
         assert_eq!(
             Diff::DRIVER_BINARY
-                .try_into_binary(Some(bcow("something")))
+                .try_into_binary(Some("something"))
                 .unwrap_err()
                 .to_string(),
             "The key \"diff.<driver>.binary=something\" was invalid",
@@ -347,18 +419,15 @@ mod diff {
             ("minimal", Algorithm::MyersMinimal),
             ("histogram", Algorithm::Histogram),
         ] {
-            assert_eq!(Diff::ALGORITHM.try_into_algorithm(bcow(actual))?, expected);
+            assert_eq!(Diff::ALGORITHM.try_into_algorithm(actual)?, expected);
             assert!(Diff::ALGORITHM.validate(actual.into()).is_ok());
         }
         assert_eq!(
-            Diff::ALGORITHM
-                .try_into_algorithm(bcow("patience"))
-                .unwrap_err()
-                .to_string(),
+            Diff::ALGORITHM.try_into_algorithm("patience").unwrap_err().to_string(),
             "The 'patience' algorithm is not yet implemented"
         );
         assert_eq!(
-            Diff::ALGORITHM.try_into_algorithm(bcow("foo")).unwrap_err().to_string(),
+            Diff::ALGORITHM.try_into_algorithm("foo").unwrap_err().to_string(),
             "Unknown diff algorithm named 'foo'"
         );
         Ok(())
@@ -370,8 +439,6 @@ mod merge {
     use gix::config::tree::{Key, Merge};
     use gix_merge::blob::builtin_driver::text::ConflictStyle;
 
-    use crate::config::tree::bcow;
-
     #[test]
     fn conflict_style() -> crate::Result {
         for (actual, expected) in [
@@ -379,12 +446,12 @@ mod merge {
             ("diff3", ConflictStyle::Diff3),
             ("zdiff3", ConflictStyle::ZealousDiff3),
         ] {
-            assert_eq!(Merge::CONFLICT_STYLE.try_into_conflict_style(bcow(actual))?, expected);
+            assert_eq!(Merge::CONFLICT_STYLE.try_into_conflict_style(actual)?, expected);
             assert!(Merge::CONFLICT_STYLE.validate(actual.into()).is_ok());
         }
         assert_eq!(
             Merge::CONFLICT_STYLE
-                .try_into_conflict_style(bcow("foo"))
+                .try_into_conflict_style("foo")
                 .unwrap_err()
                 .to_string(),
             "The key \"merge.conflictStyle=foo\" was invalid"
@@ -399,28 +466,81 @@ mod core {
     use gix::config::tree::{Core, Key};
     use gix_lock::acquire::Fail;
 
-    use crate::config::tree::bcow;
+    fn signed(value: i64) -> Result<Option<i64>, gix_config::value::Error> {
+        Ok(Some(value))
+    }
 
-    fn signed(value: i64) -> Result<i64, gix_config::value::Error> {
-        Ok(value)
+    #[test]
+    fn notes_ref_is_a_full_reference_or_empty() {
+        assert!(
+            Core::NOTES_REF.validate("refs/notes/review".into()).is_ok(),
+            "a fully qualified notes reference is valid"
+        );
+        assert!(
+            Core::NOTES_REF.validate("review".into()).is_err(),
+            "a partial notes reference is invalid"
+        );
+        assert!(
+            Core::NOTES_REF.validate("".into()).is_ok(),
+            "an empty value disables the default notes reference"
+        );
+    }
+
+    #[test]
+    fn shared_repository() -> crate::Result {
+        for (value, expected) in [
+            (None, 0o660),
+            (Some("umask"), 0),
+            (Some("false"), 0),
+            (Some("0"), 0),
+            (Some("group"), 0o660),
+            (Some("true"), 0o660),
+            (Some("1"), 0o660),
+            (Some("all"), 0o664),
+            (Some("world"), 0o664),
+            (Some("everybody"), 0o664),
+            (Some("2"), 0o664),
+            (Some("0640"), -0o640),
+        ] {
+            assert_eq!(
+                Core::SHARED_REPOSITORY.try_into_shared_repository(value)?,
+                expected,
+                "value {value:?}"
+            );
+            if let Some(value) = value {
+                assert!(Core::SHARED_REPOSITORY.validate(value.into()).is_ok());
+            }
+        }
+
+        for value in ["0400", "invalid"] {
+            assert_eq!(
+                Core::SHARED_REPOSITORY
+                    .try_into_shared_repository(Some(value))
+                    .unwrap_err()
+                    .to_string(),
+                format!("The key \"core.sharedRepository={value}\" was invalid")
+            );
+            assert!(Core::SHARED_REPOSITORY.validate(value.into()).is_err());
+        }
+        Ok(())
     }
 
     #[test]
     fn timeouts() -> crate::Result {
         assert_eq!(
-            Core::FILES_REF_LOCK_TIMEOUT.try_into_lock_timeout(Ok(0))?,
-            Fail::Immediately
+            Core::FILES_REF_LOCK_TIMEOUT.try_into_lock_timeout(Ok(Some(0)))?,
+            Some(Fail::Immediately)
         );
         assert!(Core::FILES_REF_LOCK_TIMEOUT.validate("0".into()).is_ok());
         assert_eq!(
-            Core::FILES_REF_LOCK_TIMEOUT.try_into_lock_timeout(Ok(-5))?,
-            Fail::AfterDurationWithBackoff(Duration::from_secs(u64::MAX))
+            Core::FILES_REF_LOCK_TIMEOUT.try_into_lock_timeout(Ok(Some(-5)))?,
+            Some(Fail::AfterDurationWithBackoff(Duration::from_secs(u64::MAX)))
         );
         assert!(Core::FILES_REF_LOCK_TIMEOUT.validate("-1".into()).is_ok());
 
         assert_eq!(
-            Core::FILES_REF_LOCK_TIMEOUT.try_into_lock_timeout(Ok(2500))?,
-            Fail::AfterDurationWithBackoff(Duration::from_millis(2500))
+            Core::FILES_REF_LOCK_TIMEOUT.try_into_lock_timeout(Ok(Some(2500)))?,
+            Some(Fail::AfterDurationWithBackoff(Duration::from_millis(2500)))
         );
         assert!(Core::FILES_REF_LOCK_TIMEOUT.validate("2500".into()).is_ok());
         assert_eq!(
@@ -445,15 +565,12 @@ mod core {
             ("treeish", Some(ObjectKindHint::Treeish)),
             ("blob", Some(ObjectKindHint::Blob)),
         ] {
-            assert_eq!(
-                Core::DISAMBIGUATE.try_into_object_kind_hint(bcow(value)).unwrap(),
-                expected
-            );
+            assert_eq!(Core::DISAMBIGUATE.try_into_object_kind_hint(value).unwrap(), expected);
             assert!(Core::DISAMBIGUATE.validate(value.into()).is_ok());
         }
         assert_eq!(
             Core::DISAMBIGUATE
-                .try_into_object_kind_hint(bcow("CommiT"))
+                .try_into_object_kind_hint("CommiT")
                 .unwrap_err()
                 .to_string(),
             "The key \"core.disambiguate=CommiT\" was invalid"
@@ -464,20 +581,16 @@ mod core {
     #[test]
     fn log_all_ref_updates() -> crate::Result {
         assert_eq!(
-            Core::LOG_ALL_REF_UPDATES.try_into_ref_updates(Some(Ok(true)))?,
+            Core::LOG_ALL_REF_UPDATES.try_into_ref_updates(Ok(Some(true)))?,
             Some(gix_ref::store::WriteReflog::Normal)
         );
         assert!(Core::LOG_ALL_REF_UPDATES.validate("true".into()).is_ok());
         assert_eq!(
-            Core::LOG_ALL_REF_UPDATES.try_into_ref_updates(Some(Ok(false)))?,
+            Core::LOG_ALL_REF_UPDATES.try_into_ref_updates(Ok(Some(false)))?,
             Some(gix_ref::store::WriteReflog::Disable)
         );
         assert!(Core::LOG_ALL_REF_UPDATES.validate("0".into()).is_ok());
-        let boolean = |value| {
-            gix_config::Boolean::try_from(bcow(value))
-                .map(|b| Some(b.0))
-                .transpose()
-        };
+        let boolean = |value| gix_config::Boolean::try_from(value).map(|b| Some(b.0));
         assert_eq!(
             Core::LOG_ALL_REF_UPDATES.try_into_ref_updates(boolean("always"))?,
             Some(gix_ref::store::WriteReflog::Always)
@@ -497,36 +610,36 @@ mod core {
     #[test]
     fn abbrev() -> crate::Result {
         let object_hash = gix_hash::Kind::Sha1;
-        assert_eq!(Core::ABBREV.try_into_abbreviation(bcow("4"), object_hash)?, Some(4));
-        assert_eq!(Core::ABBREV.try_into_abbreviation(bcow("auto"), object_hash)?, None);
+        assert_eq!(Core::ABBREV.try_into_abbreviation("4", object_hash)?, Some(4));
+        assert_eq!(Core::ABBREV.try_into_abbreviation("auto", object_hash)?, None);
         assert_eq!(
-            Core::ABBREV.try_into_abbreviation(bcow("AUto"), object_hash)?,
+            Core::ABBREV.try_into_abbreviation("AUto", object_hash)?,
             None,
             "case-insensitive"
         );
         assert_eq!(
-            Core::ABBREV.try_into_abbreviation(bcow("false"), object_hash)?,
+            Core::ABBREV.try_into_abbreviation("false", object_hash)?,
             Some(object_hash.len_in_hex()),
             "turns abbreviations off entirely"
         );
 
         assert_eq!(
             Core::ABBREV
-                .try_into_abbreviation(bcow("   "), object_hash)
+                .try_into_abbreviation("   ", object_hash)
                 .unwrap_err()
                 .to_string(),
             "Invalid value for 'core.abbrev' = '   '. It must be between 4 and 40"
         );
         for invalid in ["foo", "3", "41"] {
-            assert!(Core::ABBREV.try_into_abbreviation(bcow(invalid), object_hash).is_err());
+            assert!(Core::ABBREV.try_into_abbreviation(invalid, object_hash).is_err());
         }
         Ok(())
     }
 
     #[test]
     fn delta_base_cache_limit() -> crate::Result {
-        assert_eq!(Core::DELTA_BASE_CACHE_LIMIT.try_into_usize(signed(1))?, 1);
-        assert_eq!(Core::DELTA_BASE_CACHE_LIMIT.try_into_usize(signed(0))?, 0);
+        assert_eq!(Core::DELTA_BASE_CACHE_LIMIT.try_into_usize(signed(1))?, Some(1));
+        assert_eq!(Core::DELTA_BASE_CACHE_LIMIT.try_into_usize(signed(0))?, Some(0));
         assert!(Core::DELTA_BASE_CACHE_LIMIT.validate("0".into()).is_ok());
         assert!(Core::DELTA_BASE_CACHE_LIMIT.validate("1".into()).is_ok());
         assert_eq!(
@@ -542,13 +655,10 @@ mod core {
 
     #[test]
     fn check_stat() -> crate::Result {
-        assert!(Core::CHECK_STAT.try_into_checkstat(bcow("default"))?);
-        assert!(!Core::CHECK_STAT.try_into_checkstat(bcow("minimal"))?);
+        assert!(Core::CHECK_STAT.try_into_checkstat("default")?);
+        assert!(!Core::CHECK_STAT.try_into_checkstat("minimal")?);
         assert_eq!(
-            Core::CHECK_STAT
-                .try_into_checkstat(bcow("normal"))
-                .unwrap_err()
-                .to_string(),
+            Core::CHECK_STAT.try_into_checkstat("normal").unwrap_err().to_string(),
             "The key \"core.checkStat=normal\" was invalid"
         );
 
@@ -566,11 +676,11 @@ mod core {
             ("true", gix_filter::pipeline::CrlfRoundTripCheck::Fail),
             ("warn", gix_filter::pipeline::CrlfRoundTripCheck::Warn),
         ] {
-            assert_eq!(Core::SAFE_CRLF.try_into_safecrlf(bcow(value)).unwrap(), expected);
+            assert_eq!(Core::SAFE_CRLF.try_into_safecrlf(value).unwrap(), expected);
             assert!(Core::SAFE_CRLF.validate(value.into()).is_ok());
         }
         assert_eq!(
-            Core::SAFE_CRLF.try_into_safecrlf(bcow("WARN")).unwrap_err().to_string(),
+            Core::SAFE_CRLF.try_into_safecrlf("WARN").unwrap_err().to_string(),
             "The key \"core.safecrlf=WARN\" was invalid"
         );
         Ok(())
@@ -584,14 +694,11 @@ mod core {
             ("true", gix_filter::eol::AutoCrlf::Enabled),
             ("input", gix_filter::eol::AutoCrlf::Input),
         ] {
-            assert_eq!(Core::AUTO_CRLF.try_into_autocrlf(bcow(value)).unwrap(), expected);
+            assert_eq!(Core::AUTO_CRLF.try_into_autocrlf(value).unwrap(), expected);
             assert!(Core::AUTO_CRLF.validate(value.into()).is_ok());
         }
         assert_eq!(
-            Core::AUTO_CRLF
-                .try_into_autocrlf(bcow("Input"))
-                .unwrap_err()
-                .to_string(),
+            Core::AUTO_CRLF.try_into_autocrlf("Input").unwrap_err().to_string(),
             "The key \"core.autocrlf=Input\" was invalid"
         );
         Ok(())
@@ -605,11 +712,11 @@ mod core {
             ("crlf", gix_filter::eol::Mode::CrLf),
             ("native", gix_filter::eol::Mode::default()),
         ] {
-            assert_eq!(Core::EOL.try_into_eol(bcow(value)).unwrap(), expected);
+            assert_eq!(Core::EOL.try_into_eol(value).unwrap(), expected);
             assert!(Core::EOL.validate(value.into()).is_ok());
         }
         assert_eq!(
-            Core::EOL.try_into_eol(bcow("LF")).unwrap_err().to_string(),
+            Core::EOL.try_into_eol("LF").unwrap_err().to_string(),
             "The key \"core.eol=LF\" was invalid"
         );
         Ok(())
@@ -634,9 +741,7 @@ mod core {
             (None, &[gix_filter::encoding::SHIFT_JIS]),
         ] {
             assert_eq!(
-                Core::CHECK_ROUND_TRIP_ENCODING
-                    .try_into_encodings(value.map(bcow))
-                    .unwrap(),
+                Core::CHECK_ROUND_TRIP_ENCODING.try_into_encodings(value).unwrap(),
                 expected
             );
             if let Some(value) = value {
@@ -645,7 +750,7 @@ mod core {
         }
         assert_eq!(
             Core::CHECK_ROUND_TRIP_ENCODING
-                .try_into_encodings(Some(bcow("SOMETHING ELSE")))
+                .try_into_encodings(Some("SOMETHING ELSE"))
                 .unwrap_err()
                 .to_string(),
             "The encoding named 'SOMETHING' seen in key 'core.checkRoundTripEncoding=SOMETHING ELSE' is unsupported"
@@ -657,13 +762,11 @@ mod core {
 mod index {
     use gix::config::tree::{Index, Key};
 
-    use crate::config::tree::bcow;
-
     #[test]
     fn threads() {
         for (value, expected) in [("false", 1), ("true", 0), ("0", 0), ("1", 1), ("2", 2), ("12", 12)] {
             assert_eq!(
-                Index::THREADS.try_into_index_threads(bcow(value)).unwrap(),
+                Index::THREADS.try_into_index_threads(value).unwrap(),
                 expected,
                 "{value}"
             );
@@ -671,7 +774,7 @@ mod index {
         }
         assert_eq!(
             Index::THREADS
-                .try_into_index_threads(bcow("nothing"))
+                .try_into_index_threads("nothing")
                 .unwrap_err()
                 .to_string(),
             "The key \"index.threads=nothing\" was invalid"
@@ -682,27 +785,41 @@ mod index {
 mod extensions {
     use gix::config::tree::{Extensions, Key};
 
-    use crate::config::tree::bcow;
-
     #[test]
     fn object_format() -> crate::Result {
-        assert_eq!(
-            Extensions::OBJECT_FORMAT.try_into_object_format(bcow("sha1"))?,
-            gix_hash::Kind::Sha1
-        );
-        assert_eq!(
-            Extensions::OBJECT_FORMAT.try_into_object_format(bcow("SHA1"))?,
-            gix_hash::Kind::Sha1,
-            "case-insensitive"
-        );
+        #[cfg(feature = "sha1")]
+        {
+            assert_eq!(
+                Extensions::OBJECT_FORMAT.try_into_object_format("sha1")?,
+                gix_hash::Kind::Sha1
+            );
+            assert_eq!(
+                Extensions::OBJECT_FORMAT.try_into_object_format("SHA1")?,
+                gix_hash::Kind::Sha1,
+                "case-insensitive"
+            );
+            assert!(Extensions::OBJECT_FORMAT.validate("sha1".into()).is_ok());
+        }
+        #[cfg(feature = "sha256")]
+        {
+            assert_eq!(
+                Extensions::OBJECT_FORMAT.try_into_object_format("sha256")?,
+                gix_hash::Kind::Sha256
+            );
+            assert_eq!(
+                Extensions::OBJECT_FORMAT.try_into_object_format("SHA256")?,
+                gix_hash::Kind::Sha256,
+                "case-insensitive"
+            );
+            assert!(Extensions::OBJECT_FORMAT.validate("sha256".into()).is_ok());
+        }
         assert_eq!(
             Extensions::OBJECT_FORMAT
-                .try_into_object_format(bcow("invalid"))
+                .try_into_object_format("invalid")
                 .unwrap_err()
                 .to_string(),
             "The key \"extensions.objectFormat=invalid\" was invalid"
         );
-        assert!(Extensions::OBJECT_FORMAT.validate("sha1".into()).is_ok());
         assert!(Extensions::OBJECT_FORMAT.validate("invalid".into()).is_err());
         Ok(())
     }
@@ -711,19 +828,19 @@ mod extensions {
 mod checkout {
     use gix::config::tree::{Checkout, Key};
 
-    fn int(value: i64) -> Result<i64, gix_config::value::Error> {
-        Ok(value)
+    fn int(value: i64) -> Result<Option<i64>, gix_config::value::Error> {
+        Ok(Some(value))
     }
 
     #[test]
     fn workers() -> crate::Result {
         assert!(Checkout::WORKERS.validate("0".into()).is_ok());
-        assert_eq!(Checkout::WORKERS.try_from_workers(int(0))?, 0);
+        assert_eq!(Checkout::WORKERS.try_from_workers(int(0))?, Some(0));
         assert!(Checkout::WORKERS.validate("-1".into()).is_ok());
-        assert_eq!(Checkout::WORKERS.try_from_workers(int(-1))?, 0);
+        assert_eq!(Checkout::WORKERS.try_from_workers(int(-1))?, Some(0));
         assert!(Checkout::WORKERS.validate("-2".into()).is_ok());
         assert!(Checkout::WORKERS.validate("3".into()).is_ok());
-        assert_eq!(Checkout::WORKERS.try_from_workers(int(2))?, 2);
+        assert_eq!(Checkout::WORKERS.try_from_workers(int(2))?, Some(2));
         Ok(())
     }
 }
@@ -734,18 +851,23 @@ mod pack {
     #[test]
     fn index_version() -> crate::Result {
         assert_eq!(
-            Pack::INDEX_VERSION.try_into_index_version(Ok(1))?,
-            gix_pack::index::Version::V1
+            Pack::INDEX_VERSION.try_into_index_version(Ok(Some(1)))?,
+            Some(gix_pack::index::Version::V1)
         );
         assert!(Pack::INDEX_VERSION.validate("1".into()).is_ok());
         assert_eq!(
-            Pack::INDEX_VERSION.try_into_index_version(Ok(2))?,
-            gix_pack::index::Version::V2
+            Pack::INDEX_VERSION.try_into_index_version(Ok(Some(2)))?,
+            Some(gix_pack::index::Version::V2)
         );
         assert!(Pack::INDEX_VERSION.validate("2".into()).is_ok());
         assert_eq!(
+            Pack::INDEX_VERSION.try_into_index_version(Ok(None))?,
+            None,
+            "an unset key remains distinguishable from an explicitly configured version"
+        );
+        assert_eq!(
             Pack::INDEX_VERSION
-                .try_into_index_version(Ok(3))
+                .try_into_index_version(Ok(Some(3)))
                 .unwrap_err()
                 .to_string(),
             "The value of key \"pack.indexVersion\" was invalid"
@@ -764,8 +886,6 @@ mod protocol {
     fn allow() -> crate::Result {
         use gix::{config::tree::protocol, remote::url::scheme_permission::Allow};
 
-        use crate::config::tree::bcow;
-
         for (key, protocol_name_parameter) in [
             (&Protocol::ALLOW, None),
             (&protocol::NameParameter::ALLOW, Some("http")),
@@ -775,11 +895,11 @@ mod protocol {
                 ("never", Allow::Never),
                 ("user", Allow::User),
             ] {
-                assert_eq!(key.try_into_allow(bcow(input), protocol_name_parameter)?, expected);
+                assert_eq!(key.try_into_allow(input, protocol_name_parameter)?, expected);
                 assert!(key.validate(input.into()).is_ok());
             }
             assert_eq!(
-                key.try_into_allow(bcow("User"), protocol_name_parameter)
+                key.try_into_allow("User", protocol_name_parameter)
                     .unwrap_err()
                     .to_string(),
                 format!(
@@ -813,7 +933,7 @@ mod protocol {
             ] {
                 assert_eq!(
                     Protocol::VERSION
-                        .try_into_protocol_version(valid.map(Ok))
+                        .try_into_protocol_version(Ok(valid))
                         .expect("valid version"),
                     expected
                 );
@@ -821,10 +941,111 @@ mod protocol {
 
             assert_eq!(
                 Protocol::VERSION
-                    .try_into_protocol_version(Some(Ok(5)))
+                    .try_into_protocol_version(Ok(Some(5)))
                     .unwrap_err()
                     .to_string(),
                 "The key \"protocol.version=5\" was invalid"
+            );
+        }
+    }
+}
+
+mod gpg {
+    use gix::{
+        bstr::BStr,
+        config::tree::{Gpg, Key, Section, gpg},
+    };
+
+    #[test]
+    fn keys_and_subsections_are_registered() {
+        for (actual, expected) in [
+            (Gpg::FORMAT.logical_name(), "gpg.format"),
+            (Gpg::PROGRAM.logical_name(), "gpg.program"),
+            (Gpg::MIN_TRUST_LEVEL.logical_name(), "gpg.minTrustLevel"),
+            (gpg::OpenPgp::PROGRAM.logical_name(), "gpg.openpgp.program"),
+            (gpg::X509::PROGRAM.logical_name(), "gpg.x509.program"),
+            (gpg::Ssh::PROGRAM.logical_name(), "gpg.ssh.program"),
+            (
+                gpg::Ssh::DEFAULT_KEY_COMMAND.logical_name(),
+                "gpg.ssh.defaultKeyCommand",
+            ),
+            (
+                gpg::Ssh::ALLOWED_SIGNERS_FILE.logical_name(),
+                "gpg.ssh.allowedSignersFile",
+            ),
+            (gpg::Ssh::REVOCATION_FILE.logical_name(), "gpg.ssh.revocationFile"),
+        ] {
+            assert_eq!(actual, expected);
+        }
+        assert_eq!(
+            Gpg.sub_sections()
+                .iter()
+                .map(|section| section.name())
+                .collect::<Vec<_>>(),
+            ["openpgp", "x509", "ssh"]
+        );
+        for (key, expected) in [
+            (&Gpg::PROGRAM as &dyn Key, BStr::new(b"gpg")),
+            (&gpg::OpenPgp::PROGRAM, BStr::new(b"gpg")),
+            (&gpg::X509::PROGRAM, BStr::new(b"gpgsm")),
+            (&gpg::Ssh::PROGRAM, BStr::new(b"ssh-keygen")),
+        ] {
+            assert_eq!(key.default_value(), Some(expected), "default for {key:?}");
+        }
+        #[cfg(feature = "command")]
+        for valid in ["undefined", "NEVER", "Marginal", "fully", " ultimate "] {
+            assert!(
+                Gpg::MIN_TRUST_LEVEL.validate(valid.into()).is_ok(),
+                "Git accepts {valid:?} as a minimum trust level"
+            );
+        }
+        assert!(Gpg::MIN_TRUST_LEVEL.validate("unknown".into()).is_err());
+    }
+}
+
+mod notes {
+    use gix::config::tree::{Key, Notes};
+    use gix_object::bstr::BString;
+
+    #[test]
+    fn display_ref_metadata() {
+        assert_eq!(Notes::DISPLAY_REF.logical_name(), "notes.displayRef");
+        assert_eq!(
+            Notes::DISPLAY_REF.the_environment_override(),
+            "GIT_NOTES_DISPLAY_REF",
+            "the key declares its corresponding environment variable"
+        );
+    }
+
+    #[test]
+    fn display_ref_parsing() -> crate::Result {
+        assert_eq!(
+            Notes::DISPLAY_REF.try_into_display_refs(":refs/notes/review::refs/notes/*:")?,
+            vec![BString::from("refs/notes/review"), BString::from("refs/notes/*")],
+            "empty fields are ignored while literal and glob references retain their order"
+        );
+        Ok(())
+    }
+
+    #[test]
+    fn display_ref_validation() {
+        for valid in [
+            "",
+            "refs/notes/review",
+            "refs/notes/*",
+            "refs/notes/revie?",
+            "refs/notes/[rs]eview",
+            "refs/notes/review:refs/notes/*",
+        ] {
+            assert!(
+                Notes::DISPLAY_REF.validate(valid.into()).is_ok(),
+                "{valid:?} is a valid display-reference list"
+            );
+        }
+        for invalid in ["review", "refs/notes/review:security", r"refs/notes/review\literal"] {
+            assert!(
+                Notes::DISPLAY_REF.validate(invalid.into()).is_err(),
+                "{invalid:?} contains a reference that is neither fully qualified nor a glob"
             );
         }
     }
@@ -834,7 +1055,7 @@ mod gitoxide {
     mod http {
         use std::time::Duration;
 
-        use gix::config::tree::{gitoxide, Key};
+        use gix::config::tree::{Key, gitoxide};
 
         #[test]
         fn connect_timeout() -> crate::Result {
@@ -846,20 +1067,21 @@ mod gitoxide {
         }
     }
     mod allow {
-        use gix::config::tree::{gitoxide, Key};
+        use gix::config::tree::{Key, gitoxide};
 
         #[test]
         fn protocol_from_user() {
-            assert!(
-                gitoxide::Allow::PROTOCOL_FROM_USER.validate("1".into()).is_ok(),
-                "this really is the only valid value"
-            );
-            assert!(gitoxide::Allow::PROTOCOL_FROM_USER.validate("true".into()).is_err());
-            assert!(gitoxide::Allow::PROTOCOL_FROM_USER.validate("0".into()).is_err());
+            for value in ["1", "true", "yes", "0", "false", "no"] {
+                assert!(
+                    gitoxide::Allow::PROTOCOL_FROM_USER.validate(value.into()).is_ok(),
+                    "Git accepts {value:?} as a boolean"
+                );
+            }
+            assert!(gitoxide::Allow::PROTOCOL_FROM_USER.validate("invalid".into()).is_err());
         }
     }
     mod commit {
-        use gix::config::tree::{gitoxide, Key};
+        use gix::config::tree::{Key, gitoxide};
 
         #[test]
         fn author_and_committer_date() {
@@ -878,7 +1100,7 @@ mod gitoxide {
         }
     }
     mod author {
-        use gix::config::tree::{gitoxide, Key};
+        use gix::config::tree::{Key, gitoxide};
 
         #[test]
         fn name_and_email_fallback() {
@@ -897,7 +1119,7 @@ mod gitoxide {
         }
     }
     mod committer {
-        use gix::config::tree::{gitoxide, Key};
+        use gix::config::tree::{Key, gitoxide};
 
         #[test]
         fn name_and_email_fallback() {
@@ -915,6 +1137,27 @@ mod gitoxide {
             );
         }
     }
+    mod objects {
+        use gix::config::tree::{Key, gitoxide};
+
+        #[test]
+        fn alloc_limit() -> crate::Result {
+            assert_eq!(
+                gitoxide::Objects::ALLOC_LIMIT.validated_assignment("16m".into())?,
+                "gitoxide.objects.allocLimit=16m"
+            );
+            Ok(())
+        }
+
+        #[test]
+        fn alloc_limit_if_reduced_trust() -> crate::Result {
+            assert_eq!(
+                gitoxide::Objects::ALLOC_LIMIT_IF_REDUCED_TRUST.validated_assignment("16m".into())?,
+                "gitoxide.objects.allocLimitIfReducedTrust=16m"
+            );
+            Ok(())
+        }
+    }
 }
 
 #[cfg(any(
@@ -922,18 +1165,14 @@ mod gitoxide {
     feature = "blocking-http-transport-curl"
 ))]
 mod http {
-    use std::borrow::Cow;
-
     use gix::config::tree::{Http, Key};
     use gix_object::bstr::ByteSlice;
-
-    use crate::config::tree::bcow;
 
     #[test]
     fn follow_redirects() -> crate::Result {
         use gix_transport::client::blocking_io::http::options::FollowRedirects;
         assert_eq!(
-            Http::FOLLOW_REDIRECTS.try_into_follow_redirects(bcow("initial"), || unreachable!("no call"))?,
+            Http::FOLLOW_REDIRECTS.try_into_follow_redirects("initial", || unreachable!("no call"))?,
             FollowRedirects::Initial
         );
         for (actual, cb_val, expected) in [
@@ -943,7 +1182,7 @@ mod http {
             ("true", Ok(None), FollowRedirects::Initial),
         ] {
             assert_eq!(
-                Http::FOLLOW_REDIRECTS.try_into_follow_redirects(bcow(actual), || cb_val)?,
+                Http::FOLLOW_REDIRECTS.try_into_follow_redirects(actual, || cb_val)?,
                 expected
             );
             assert!(Http::FOLLOW_REDIRECTS.validate(actual.into()).is_ok());
@@ -951,9 +1190,7 @@ mod http {
 
         assert_eq!(
             Http::FOLLOW_REDIRECTS
-                .try_into_follow_redirects(bcow("something"), || Err(gix_config::value::Error::new(
-                    "invalid", "value"
-                )))
+                .try_into_follow_redirects("something", || Err(gix_config::value::Error::new("invalid", "value")))
                 .unwrap_err()
                 .to_string(),
             "The key \"http.followRedirects=something\" was invalid",
@@ -964,12 +1201,9 @@ mod http {
 
     #[test]
     fn extra_header() -> crate::Result {
+        assert_eq!(Http::EXTRA_HEADER.try_into_extra_header(vec!["a", "b"])?, ["a", "b"]);
         assert_eq!(
-            Http::EXTRA_HEADER.try_into_extra_header(vec![bcow("a"), bcow("b")])?,
-            ["a", "b"]
-        );
-        assert_eq!(
-            Http::EXTRA_HEADER.try_into_extra_header(vec![bcow("a"), bcow("b"), bcow(""), bcow("c"), bcow("d")])?,
+            Http::EXTRA_HEADER.try_into_extra_header(vec!["a", "b", "", "c", "d"])?,
             ["c", "d"]
         );
 
@@ -979,7 +1213,7 @@ mod http {
         assert!(Http::EXTRA_HEADER.validate(invalid.as_bstr()).is_err());
         assert_eq!(
             Http::EXTRA_HEADER
-                .try_into_extra_header(vec![Cow::Borrowed(invalid.as_bstr())])
+                .try_into_extra_header(vec![invalid.as_bstr()])
                 .unwrap_err()
                 .to_string(),
             "The utf-8 string at \"http.extraHeader=���\" could not be decoded"
@@ -992,15 +1226,12 @@ mod http {
         use gix_transport::client::blocking_io::http::options::HttpVersion;
 
         for (actual, expected) in [("HTTP/1.1", HttpVersion::V1_1), ("HTTP/2", HttpVersion::V2)] {
-            assert_eq!(Http::VERSION.try_into_http_version(bcow(actual))?, expected);
+            assert_eq!(Http::VERSION.try_into_http_version(actual)?, expected);
             assert!(Http::VERSION.validate(actual.into()).is_ok());
         }
 
         assert_eq!(
-            Http::VERSION
-                .try_into_http_version(bcow("invalid"))
-                .unwrap_err()
-                .to_string(),
+            Http::VERSION.try_into_http_version("invalid").unwrap_err().to_string(),
             "The key \"http.version=invalid\" was invalid"
         );
         assert!(Http::VERSION.validate("invalid".into()).is_err());
@@ -1022,13 +1253,13 @@ mod http {
             ("tlsv1.2", TlsV1_2),
             ("tlsv1.3", TlsV1_3),
         ] {
-            assert_eq!(Http::SSL_VERSION.try_into_ssl_version(bcow(actual))?, expected);
+            assert_eq!(Http::SSL_VERSION.try_into_ssl_version(actual)?, expected);
             assert!(Http::SSL_VERSION.validate(actual.into()).is_ok());
         }
 
         assert_eq!(
             Http::SSL_VERSION
-                .try_into_ssl_version(bcow("invalid"))
+                .try_into_ssl_version("invalid")
                 .unwrap_err()
                 .to_string(),
             "The ssl version at \"http.sslVersion=invalid\" (possibly from GIT_SSL_VERSION) was invalid"
@@ -1047,16 +1278,13 @@ mod http {
             ("negotiate", Negotiate),
             ("ntlm", Ntlm),
         ] {
-            assert_eq!(
-                Http::PROXY_AUTH_METHOD.try_into_proxy_auth_method(bcow(actual))?,
-                expected
-            );
+            assert_eq!(Http::PROXY_AUTH_METHOD.try_into_proxy_auth_method(actual)?, expected);
             assert!(Http::PROXY_AUTH_METHOD.validate(actual.into()).is_ok());
         }
 
         assert_eq!(
             Http::PROXY_AUTH_METHOD
-                .try_into_proxy_auth_method(bcow("invalid"))
+                .try_into_proxy_auth_method("invalid")
                 .unwrap_err()
                 .to_string(),
             "The key \"http.proxyAuthMethod=invalid\" was invalid"
@@ -1072,26 +1300,18 @@ mod remote {
         remote,
     };
 
-    use crate::config::tree::bcow;
-
     #[test]
     fn tag_opt() -> crate::Result {
-        assert_eq!(
-            Remote::TAG_OPT.try_into_tag_opt(bcow("--tags"))?,
-            remote::fetch::Tags::All
-        );
+        assert_eq!(Remote::TAG_OPT.try_into_tag_opt("--tags")?, remote::fetch::Tags::All);
         assert!(Remote::TAG_OPT.validate("--tags".into()).is_ok());
         assert_eq!(
-            Remote::TAG_OPT.try_into_tag_opt(bcow("--no-tags"))?,
+            Remote::TAG_OPT.try_into_tag_opt("--no-tags")?,
             remote::fetch::Tags::None
         );
         assert!(Remote::TAG_OPT.validate("--no-tags".into()).is_ok());
 
         assert_eq!(
-            Remote::TAG_OPT
-                .try_into_tag_opt(bcow("--unknown"))
-                .unwrap_err()
-                .to_string(),
+            Remote::TAG_OPT.try_into_tag_opt("--unknown").unwrap_err().to_string(),
             "The key \"remote.<name>.tagOpt=--unknown\" was invalid"
         );
         Ok(())
@@ -1099,11 +1319,11 @@ mod remote {
 
     #[test]
     fn url_and_push_url() {
-        assert!(Remote::URL.try_into_url(bcow("http://example.org")).is_ok());
+        assert!(Remote::URL.try_into_url("http://example.org").is_ok());
         assert!(Remote::URL.validate("http://example.org".into()).is_ok());
 
         assert_eq!(
-            Remote::URL.try_into_url(bcow("https://")).unwrap_err().to_string(),
+            Remote::URL.try_into_url("https://").unwrap_err().to_string(),
             "The url at \"remote.<name>.url=https://\" could not be parsed"
         );
         assert!(Remote::URL.validate("http://".into()).is_err());
@@ -1112,27 +1332,31 @@ mod remote {
     #[test]
     fn refspecs() {
         let fetch_spec = "+refs/heads/*:refs/remotes/origin/*";
-        assert!(Remote::FETCH
-            .try_into_refspec(bcow(fetch_spec), gix_refspec::parse::Operation::Fetch)
-            .is_ok());
+        assert!(
+            Remote::FETCH
+                .try_into_refspec(fetch_spec, gix_refspec::parse::Operation::Fetch)
+                .is_ok()
+        );
         assert!(Remote::FETCH.validate(fetch_spec.into()).is_ok());
 
         let push_spec = "HEAD:refs/heads/name";
-        assert!(Remote::PUSH
-            .try_into_refspec(bcow(push_spec), gix_refspec::parse::Operation::Push)
-            .is_ok());
+        assert!(
+            Remote::PUSH
+                .try_into_refspec(push_spec, gix_refspec::parse::Operation::Push)
+                .is_ok()
+        );
         assert!(Remote::PUSH.validate(push_spec.into()).is_ok());
 
         assert_eq!(
             Remote::FETCH
-                .try_into_refspec(bcow("*/*/*:refs/heads/*"), gix_refspec::parse::Operation::Fetch)
+                .try_into_refspec("*/*/*:refs/heads/*", gix_refspec::parse::Operation::Fetch)
                 .unwrap_err()
                 .to_string(),
             "The refspec at \"remote.<name>.fetch=*/*/*:refs/heads/*\" could not be parsed"
         );
         assert_eq!(
             Remote::PUSH
-                .try_into_refspec(bcow("*/*/*:refs/heads/*"), gix_refspec::parse::Operation::Push)
+                .try_into_refspec("*/*/*:refs/heads/*", gix_refspec::parse::Operation::Push)
                 .unwrap_err()
                 .to_string(),
             "The refspec at \"remote.<name>.push=*/*/*:refs/heads/*\" could not be parsed"

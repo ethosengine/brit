@@ -13,7 +13,7 @@ pub struct Outcome {
 
 /// The error returned by [`commit::merge_base()`](crate::commit::virtual_merge_base()).
 #[derive(Debug, thiserror::Error)]
-#[allow(missing_docs)]
+#[expect(missing_docs)]
 pub enum Error {
     #[error(transparent)]
     MergeTree(#[from] crate::tree::Error),
@@ -35,7 +35,7 @@ pub(super) mod function {
     use super::Error;
     use crate::{
         blob::builtin_driver,
-        tree::{treat_as_unresolved, TreatAsUnresolved},
+        tree::{TreatAsUnresolved, treat_as_unresolved},
     };
 
     /// Create a single virtual merge-base by merging `first_commit`, `second_commit` and `others` into one.
@@ -45,7 +45,7 @@ pub(super) mod function {
     /// The parameters `graph`, `diff_resource_cache`, `blob_merge`, `objects`, `abbreviate_hash` and `options` are passed
     /// directly to [`tree()`](crate::tree()) for merging the trees of two merge-bases at a time.
     /// Note that most of `options` are overwritten to match the requirements of a merge-base merge.
-    #[allow(clippy::too_many_arguments)]
+    #[expect(clippy::too_many_arguments)]
     pub fn virtual_merge_base<'objects>(
         first_commit: gix_hash::ObjectId,
         second_commit: gix_hash::ObjectId,

@@ -1,23 +1,21 @@
 #![allow(clippy::result_large_err)]
-use std::{collections::BTreeMap, path::PathBuf};
-
 use gix_object::Exists;
 use gix_ref::{
-    transaction::{Change, LogChange, PreviousValue, RefEdit, RefLog},
     Target, TargetRef,
+    transaction::{Change, PreviousValue, RefEdit},
 };
 
 use crate::{
+    Repository,
     ext::ObjectIdExt,
     remote::{
         fetch,
         fetch::{
+            RefLogMessage,
             refmap::Source,
             refs::update::{Mode, TypeChange},
-            RefLogMessage,
         },
     },
-    Repository,
 };
 
 ///
@@ -60,7 +58,7 @@ impl From<Mode> for Update {
 /// * …existing refs would not become 'unborn', i.e. point to a reference that doesn't exist and won't be created due to ref-specs
 ///
 /// With these safeguards in place, one can handle each naturally and implement mirrors or bare repos easily.
-#[allow(clippy::too_many_arguments)]
+#[expect(clippy::too_many_arguments)]
 pub(crate) fn update(
     repo: &Repository,
     message: RefLogMessage,
@@ -76,7 +74,15 @@ pub(crate) fn update(
     let mut updates = Vec::new();
     let mut edit_indices_to_validate = Vec::new();
 
-    let mut checked_out_branches = worktree_branches(repo)?;
+    let mut checked_out_branches = repo.checked_out_branches().map_err(|err| match err {
+        crate::repository::worktree::CheckedOutBranchesError::WorktreeListing(err) => {
+            update::Error::WorktreeListing(err)
+        }
+        crate::repository::worktree::CheckedOutBranchesError::OpenWorktreeRepo(err) => {
+            update::Error::OpenWorktreeRepo(err)
+        }
+        crate::repository::worktree::CheckedOutBranchesError::FollowSymref(err) => update::Error::FollowSymref(err),
+    })?;
     let implicit_tag_refspec = fetch_tags
         .to_refspec()
         .filter(|_| matches!(fetch_tags, crate::remote::fetch::Tags::Included));
@@ -98,18 +104,19 @@ pub(crate) fn update(
     ) {
         // `None` only if unborn.
         let remote_id = remote.as_id();
-        if matches!(dry_run, fetch::DryRun::No) && !remote_id.is_none_or(|id| repo.objects.exists(id)) {
-            if let Some(remote_id) = remote_id.filter(|id| !repo.objects.exists(id)) {
-                let update = if is_implicit_tag {
-                    Mode::ImplicitTagNotSentByRemote.into()
-                } else {
-                    // Assure the ODB is not to blame for the missing object.
-                    repo.try_find_object(remote_id)?;
-                    Mode::RejectedSourceObjectNotFound { id: remote_id.into() }.into()
-                };
-                updates.push(update);
-                continue;
-            }
+        if matches!(dry_run, fetch::DryRun::No)
+            && !remote_id.is_none_or(|id| repo.objects.exists(id))
+            && let Some(remote_id) = remote_id.filter(|id| !repo.objects.exists(id))
+        {
+            let update = if is_implicit_tag {
+                Mode::ImplicitTagNotSentByRemote.into()
+            } else {
+                // Assure the ODB is not to blame for the missing object.
+                repo.try_find_object(remote_id)?;
+                Mode::RejectedSourceObjectNotFound { id: remote_id.into() }.into()
+            };
+            updates.push(update);
+            continue;
         }
         let (mode, edit_index, type_change) = match local {
             Some(name) => {
@@ -234,12 +241,12 @@ pub(crate) fn update(
                             Mode::New,
                             reflog_msg,
                             name,
-                            PreviousValue::ExistingMustMatch(new_value_by_remote(repo, remote, mappings)?),
+                            PreviousValue::ExistingMustMatch(new_value_by_remote(remote)?),
                         )
                     }
                 };
 
-                let new = new_value_by_remote(repo, remote, mappings)?;
+                let new = new_value_by_remote(remote)?;
                 let type_change = match (&previous_value, &new) {
                     (
                         PreviousValue::ExistingMustMatch(Target::Object(_))
@@ -262,21 +269,9 @@ pub(crate) fn update(
                     let anticipated_update_index = updates.len();
                     edit_indices_to_validate.push((anticipated_update_index, edit_index));
                 }
-                let edit = RefEdit {
-                    change: Change::Update {
-                        log: LogChange {
-                            mode: RefLog::AndReference,
-                            force_create_reflog: false,
-                            message: message.compose(reflog_message),
-                        },
-                        expected: previous_value,
-                        new,
-                    },
-                    name,
-                    // We must not deref symrefs or we will overwrite their destination, which might be checked out
-                    // and we don't check for that case.
-                    deref: false,
-                };
+                // We must not deref symrefs or we will overwrite their destination, which might be checked out
+                // and we don't check for that case.
+                let edit = RefEdit::update(name, new, previous_value, message.compose(reflog_message));
                 edits.push(edit);
                 (mode, Some(edit_index), type_change)
             }
@@ -388,87 +383,26 @@ fn update_needs_adjustment_as_edits_symbolic_target_is_missing(
     }
 }
 
-fn new_value_by_remote(
-    repo: &Repository,
-    remote: &Source,
-    mappings: &[fetch::refmap::Mapping],
-) -> Result<Target, update::Error> {
+/// Convert the remote source into the value to write locally.
+///
+/// Born symbolic remote refs are written as direct refs to the advertised target object id.
+/// Unborn remote refs remain symbolic as there is no object id to write.
+fn new_value_by_remote(remote: &Source) -> Result<Target, update::Error> {
     let remote_id = remote.as_id();
     Ok(
         if let Source::Ref(
             gix_protocol::handshake::Ref::Symbolic { target, .. } | gix_protocol::handshake::Ref::Unborn { target, .. },
         ) = &remote
         {
-            match mappings.iter().find_map(|m| {
-                m.remote.as_name().and_then(|name| {
-                    (name == target)
-                        .then(|| m.local.as_ref().and_then(|local| local.try_into().ok()))
-                        .flatten()
-                })
-            }) {
-                // Map the target on the remote to the local branch name, which should be covered by refspecs.
-                Some(local_branch) => {
-                    // This is always safe because…
-                    // - the reference may exist already
-                    // - if it doesn't exist it will be created - we are here because it's in the list of mappings after all
-                    // - if it exists and is updated, and the update is rejected due to non-fastforward for instance, the
-                    //   target reference still exists and we can point to it.
-                    Target::Symbolic(local_branch)
-                }
-                None => {
-                    // If we can't map it, it's usually a an unborn branch causing this, or a the target isn't covered
-                    // by any refspec so we don't officially pull it in.
-                    match remote_id {
-                        Some(desired_id) => {
-                            if repo.try_find_reference(target)?.is_some() {
-                                // We are allowed to change a direct reference to a symbolic one, which may point to other objects
-                                // than the remote. The idea is that we are fine as long as the resulting refs are valid.
-                                Target::Symbolic(target.try_into()?)
-                            } else {
-                                // born branches that we don't have in our refspecs we create peeled. That way they can be used.
-                                Target::Object(desired_id.to_owned())
-                            }
-                        }
-                        // Unborn branches we create as such, with the location they point to on the remote which helps mirroring.
-                        None => Target::Symbolic(target.try_into()?),
-                    }
-                }
+            match remote_id {
+                Some(desired_id) => Target::Object(desired_id.to_owned()),
+                // Unborn branches we create as such, with the location they point to on the remote which helps mirroring.
+                None => Target::Symbolic(target.try_into()?),
             }
         } else {
             Target::Object(remote_id.expect("unborn case handled earlier").to_owned())
         },
     )
-}
-
-fn insert_head(
-    head: Option<crate::Head<'_>>,
-    out: &mut BTreeMap<gix_ref::FullName, Vec<PathBuf>>,
-) -> Result<(), update::Error> {
-    if let Some((head, wd)) = head.and_then(|head| head.repo.workdir().map(|wd| (head, wd))) {
-        out.entry("HEAD".try_into().expect("valid"))
-            .or_default()
-            .push(wd.to_owned());
-        let mut ref_chain = Vec::new();
-        let mut cursor = head.try_into_referent();
-        while let Some(ref_) = cursor {
-            ref_chain.push(ref_.name().to_owned());
-            cursor = ref_.follow().transpose()?;
-        }
-        for name in ref_chain {
-            out.entry(name).or_default().push(wd.to_owned());
-        }
-    }
-    Ok(())
-}
-
-fn worktree_branches(repo: &Repository) -> Result<BTreeMap<gix_ref::FullName, Vec<PathBuf>>, update::Error> {
-    let mut map = BTreeMap::new();
-    insert_head(repo.head().ok(), &mut map)?;
-    for proxy in repo.worktrees()? {
-        let repo = proxy.into_repo_with_possibly_inaccessible_worktree()?;
-        insert_head(repo.head().ok(), &mut map)?;
-    }
-    Ok(map)
 }
 
 #[cfg(test)]

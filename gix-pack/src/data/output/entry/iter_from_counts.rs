@@ -5,12 +5,12 @@ pub(crate) mod function {
         parallel,
         parallel::SequenceId,
         progress::{
-            prodash::{Count, DynNestedProgress},
             Progress,
+            prodash::{Count, DynNestedProgress},
         },
     };
 
-    use super::{reduce, util, Error, Mode, Options, Outcome, ProgressId};
+    use super::{Error, Mode, Options, Outcome, ProgressId, reduce, util};
     use crate::data::output;
 
     /// Given a known list of object `counts`, calculate entries ready to be put into a data pack.
@@ -52,16 +52,13 @@ pub(crate) mod function {
             allow_thin_pack,
             thread_limit,
             chunk_size,
+            compression,
         }: Options,
     ) -> impl Iterator<Item = Result<(SequenceId, Vec<output::Entry>), Error>>
-           + parallel::reduce::Finalize<Reduce = reduce::Statistics<Error>>
+    + parallel::reduce::Finalize<Reduce = reduce::Statistics<Error>>
     where
         Find: crate::Find + Send + Clone + 'static,
     {
-        assert!(
-            matches!(version, crate::data::Version::V2),
-            "currently we can only write version 2"
-        );
         let (chunk_size, thread_limit, _) =
             parallel::optimize_chunk_size_and_thread_limit(chunk_size, Some(counts.len()), thread_limit, None);
         {
@@ -169,10 +166,10 @@ pub(crate) mod function {
                             .and_then(|l| db.entry_by_location(l).map(|pe| (l, pe)))
                         {
                             Some((location, pack_entry)) => {
-                                if let Some((cached_pack_id, _)) = &pack_offsets_to_id {
-                                    if *cached_pack_id != location.pack_id {
-                                        pack_offsets_to_id = None;
-                                    }
+                                if let Some((cached_pack_id, _)) = &pack_offsets_to_id
+                                    && *cached_pack_id != location.pack_id
+                                {
+                                    pack_offsets_to_id = None;
                                 }
                                 let pack_range = counts_range_by_pack_id[counts_range_by_pack_id
                                     .binary_search_by_key(&location.pack_id, |e| e.0)
@@ -214,7 +211,7 @@ pub(crate) mod function {
                                     None => match db.try_find(&count.id, buf).map_err(Error::Find)? {
                                         Some((obj, _location)) => {
                                             stats.decoded_and_recompressed_objects += 1;
-                                            output::Entry::from_data(count, &obj)
+                                            output::Entry::from_data(count, &obj, compression)
                                         }
                                         None => {
                                             stats.missing_objects += 1;
@@ -226,7 +223,7 @@ pub(crate) mod function {
                             None => match db.try_find(&count.id, buf).map_err(Error::Find)? {
                                 Some((obj, _location)) => {
                                     stats.decoded_and_recompressed_objects += 1;
-                                    output::Entry::from_data(count, &obj)
+                                    output::Entry::from_data(count, &obj, compression)
                                 }
                                 None => {
                                     stats.missing_objects += 1;
@@ -385,6 +382,13 @@ mod types {
         pub chunk_size: usize,
         /// The pack data version to produce for each entry
         pub version: crate::data::Version,
+        /// The compression level to use for objects that are not copied from an existing pack,
+        /// but deflated from their object data.
+        ///
+        /// Defaults to [`Compression::DEFAULT`](gix_zlib::Compression::DEFAULT), which is
+        /// also the default that `git` uses when writing packs, unless configured otherwise
+        /// with `pack.compression`.
+        pub compression: gix_zlib::Compression,
     }
 
     impl Default for Options {
@@ -395,13 +399,14 @@ mod types {
                 allow_thin_pack: false,
                 chunk_size: 10,
                 version: Default::default(),
+                compression: gix_zlib::Compression::DEFAULT,
             }
         }
     }
 
     /// The error returned by the pack generation function [`iter_from_counts()`][crate::data::output::entry::iter_from_counts()].
     #[derive(Debug, thiserror::Error)]
-    #[allow(missing_docs)]
+    #[expect(missing_docs)]
     pub enum Error {
         #[error(transparent)]
         Find(gix_object::find::Error),

@@ -135,11 +135,11 @@ impl<S> DerefMut for Cache<S> {
 mod impls {
     use std::{cell::RefCell, io::Read, ops::DerefMut};
 
-    use gix_hash::{oid, ObjectId};
+    use gix_hash::{ObjectId, oid};
     use gix_object::{Data, Kind};
     use gix_pack::cache::Object;
 
-    use crate::{find::Header, pack::data::entry::Location, Cache};
+    use crate::{Cache, find::Header, pack::data::entry::Location};
 
     impl<S> gix_object::Write for Cache<S>
     where
@@ -152,6 +152,25 @@ mod impls {
             from: &mut dyn Read,
         ) -> Result<ObjectId, gix_object::write::Error> {
             self.inner.write_stream(kind, size, from)
+        }
+
+        fn write_buf_with_known_id(
+            &self,
+            kind: Kind,
+            from: &[u8],
+            id: ObjectId,
+        ) -> Result<ObjectId, gix_object::write::Error> {
+            self.inner.write_buf_with_known_id(kind, from, id)
+        }
+
+        fn write_stream_with_known_id(
+            &self,
+            kind: Kind,
+            size: u64,
+            from: &mut dyn Read,
+            id: ObjectId,
+        ) -> Result<ObjectId, gix_object::write::Error> {
+            self.inner.write_stream_with_known_id(kind, size, from, id)
         }
     }
 
@@ -216,10 +235,10 @@ mod impls {
             buffer: &'a mut Vec<u8>,
             pack_cache: &mut dyn gix_pack::cache::DecodeEntry,
         ) -> Result<Option<(Data<'a>, Option<gix_pack::data::entry::Location>)>, gix_object::find::Error> {
-            if let Some(mut obj_cache) = self.object_cache.as_ref().map(RefCell::borrow_mut) {
-                if let Some(kind) = obj_cache.get(&id.as_ref().to_owned(), buffer) {
-                    return Ok(Some((Data::new(buffer, kind, id.kind()), None)));
-                }
+            if let Some(mut obj_cache) = self.object_cache.as_ref().map(RefCell::borrow_mut)
+                && let Some(kind) = obj_cache.get(&id.as_ref().to_owned(), buffer)
+            {
+                return Ok(Some((Data::new(buffer, kind, id.kind()), None)));
             }
             let possibly_obj = self.inner.try_find_cached(id.as_ref(), buffer, pack_cache)?;
             if let (Some(mut obj_cache), Some((obj, _location))) =

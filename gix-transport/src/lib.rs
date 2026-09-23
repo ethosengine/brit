@@ -9,7 +9,7 @@
     doc = ::document_features::document_features!()
 )]
 #![cfg_attr(all(doc, feature = "document-features"), feature(doc_cfg))]
-#![deny(missing_docs, rust_2018_idioms)]
+#![deny(missing_docs)]
 #![forbid(unsafe_code)]
 
 #[cfg(feature = "async-trait")]
@@ -44,12 +44,19 @@ pub enum Service {
 }
 
 impl Service {
-    /// Render this instance as string recognized by the git transport layer.
+    /// Render this instance as a string recognized by the git transport layer, like `git-upload-pack`.
     pub fn as_str(&self) -> &'static str {
         match self {
             Service::ReceivePack => "git-receive-pack",
             Service::UploadPack => "git-upload-pack",
         }
+    }
+
+    /// Render this instance as a subcommand understood by the `git` program, like `upload-pack`.
+    pub fn as_git_subcommand(&self) -> &'static str {
+        self.as_str()
+            .strip_prefix("git-")
+            .expect("all services are 'git-*' subcommands")
     }
 }
 

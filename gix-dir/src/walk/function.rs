@@ -6,9 +6,8 @@ use std::{
 use bstr::{BStr, BString, ByteSlice};
 
 use crate::{
-    entry,
-    walk::{classify, readdir, Action, Context, Delegate, Error, ForDeletionMode, Options, Outcome},
-    EntryRef,
+    EntryRef, entry,
+    walk::{Action, Context, Delegate, Error, ForDeletionMode, Options, Outcome, classify, readdir},
 };
 
 /// A function to perform a git-style, unsorted, directory walk.
@@ -176,7 +175,6 @@ pub(super) fn can_recurse(
 }
 
 /// Possibly emit an entry to `for_each` in case the provided information makes that possible.
-#[allow(clippy::too_many_arguments)]
 pub(super) fn emit_entry(
     rela_path: Cow<'_, BStr>,
     info: classify::Outcome,

@@ -1,11 +1,11 @@
 use bstr::ByteSlice;
-#[cfg(feature = "async-client")]
-use gix_transport::client::git::async_io::Connection;
-#[cfg(feature = "blocking-client")]
-use gix_transport::client::git::blocking_io::Connection;
 use gix_transport::Protocol;
 
 use crate::fetch;
+#[cfg(all(feature = "async-client", not(feature = "blocking-client")))]
+use gix_transport::client::git::async_io::Connection;
+#[cfg(feature = "blocking-client")]
+use gix_transport::client::git::blocking_io::Connection;
 
 fn arguments_v1(features: impl IntoIterator<Item = &'static str>) -> fetch::Arguments {
     fetch::Arguments::new(Protocol::V1, features.into_iter().map(|n| (n, None)).collect(), false)
@@ -26,12 +26,11 @@ mod impls {
 
     use bstr::BStr;
     use gix_transport::{
-        client,
+        Protocol, Service, client,
         client::{
-            blocking_io::{RequestWriter, SetServiceResponse},
             Error, MessageKind, WriteMode,
+            blocking_io::{RequestWriter, SetServiceResponse},
         },
-        Protocol, Service,
     };
 
     use super::Transport;
@@ -81,19 +80,18 @@ mod impls {
     }
 }
 
-#[cfg(feature = "async-client")]
+#[cfg(all(feature = "async-client", not(feature = "blocking-client")))]
 mod impls {
     use std::borrow::Cow;
 
     use async_trait::async_trait;
     use bstr::BStr;
     use gix_transport::{
-        client::{
-            self,
-            async_io::{RequestWriter, SetServiceResponse},
-            Error, MessageKind, WriteMode,
-        },
         Protocol, Service,
+        client::{
+            self, Error, MessageKind, WriteMode,
+            async_io::{RequestWriter, SetServiceResponse},
+        },
     };
 
     use super::Transport;
@@ -168,7 +166,9 @@ mod v1 {
 
     use super::{arguments_v1, id, transport};
 
-    #[maybe_async::test(feature = "blocking-client", async(feature = "async-client", async_std::test))]
+    #[crate::bisync::bisync]
+    #[cfg_attr(feature = "blocking-client", test)]
+    #[cfg_attr(all(feature = "async-client", not(feature = "blocking-client")), async_std::test)]
     async fn include_tag() {
         let mut out = Vec::new();
         let mut t = transport(&mut out, true);
@@ -187,7 +187,9 @@ mod v1 {
         );
     }
 
-    #[maybe_async::test(feature = "blocking-client", async(feature = "async-client", async_std::test))]
+    #[crate::bisync::bisync]
+    #[cfg_attr(feature = "blocking-client", test)]
+    #[cfg_attr(all(feature = "async-client", not(feature = "blocking-client")), async_std::test)]
     async fn no_include_tag() {
         let mut out = Vec::new();
         let mut t = transport(&mut out, true);
@@ -206,7 +208,9 @@ mod v1 {
         );
     }
 
-    #[maybe_async::test(feature = "blocking-client", async(feature = "async-client", async_std::test))]
+    #[crate::bisync::bisync]
+    #[cfg_attr(feature = "blocking-client", test)]
+    #[cfg_attr(all(feature = "async-client", not(feature = "blocking-client")), async_std::test)]
     async fn haves_and_wants_for_clone() {
         let mut out = Vec::new();
         let mut t = transport(&mut out, true);
@@ -229,7 +233,9 @@ mod v1 {
         );
     }
 
-    #[maybe_async::test(feature = "blocking-client", async(feature = "async-client", async_std::test))]
+    #[crate::bisync::bisync]
+    #[cfg_attr(feature = "blocking-client", test)]
+    #[cfg_attr(all(feature = "async-client", not(feature = "blocking-client")), async_std::test)]
     async fn haves_and_wants_for_fetch_stateless() {
         let mut out = Vec::new();
         let mut t = transport(&mut out, false);
@@ -265,7 +271,9 @@ mod v1 {
         );
     }
 
-    #[maybe_async::test(feature = "blocking-client", async(feature = "async-client", async_std::test))]
+    #[crate::bisync::bisync]
+    #[cfg_attr(feature = "blocking-client", test)]
+    #[cfg_attr(all(feature = "async-client", not(feature = "blocking-client")), async_std::test)]
     async fn haves_and_wants_for_fetch_stateful() {
         let mut out = Vec::new();
         let mut t = transport(&mut out, true);
@@ -296,7 +304,9 @@ mod v2 {
 
     use super::{arguments_v2, id, transport};
 
-    #[maybe_async::test(feature = "blocking-client", async(feature = "async-client", async_std::test))]
+    #[crate::bisync::bisync]
+    #[cfg_attr(feature = "blocking-client", test)]
+    #[cfg_attr(all(feature = "async-client", not(feature = "blocking-client")), async_std::test)]
     async fn include_tag() {
         let mut out = Vec::new();
         let mut t = transport(&mut out, true);
@@ -307,20 +317,22 @@ mod v2 {
         arguments.want(id("ff333369de1221f9bfbbe03a3a13e9a09bc1ffff"));
         arguments.send(&mut t, true).await.expect("sending to buffer to work");
         assert_eq!(
-                out.as_bstr(),
-                b"0012command=fetch
+            out.as_bstr(),
+            b"0012command=fetch
 0001000ethin-pack
 000eofs-delta
 0010include-tag
 0032want ff333369de1221f9bfbbe03a3a13e9a09bc1ffff
 0009done
 0000"
-                    .as_bstr(),
-                "we filter features/capabilities without value as these apparently shouldn't be listed (remote dies otherwise)"
-            );
+                .as_bstr(),
+            "we filter features/capabilities without value as these apparently shouldn't be listed (remote dies otherwise)"
+        );
     }
 
-    #[maybe_async::test(feature = "blocking-client", async(feature = "async-client", async_std::test))]
+    #[crate::bisync::bisync]
+    #[cfg_attr(feature = "blocking-client", test)]
+    #[cfg_attr(all(feature = "async-client", not(feature = "blocking-client")), async_std::test)]
     async fn haves_and_wants_for_clone_stateful() {
         let mut out = Vec::new();
         let mut t = transport(&mut out, true);
@@ -335,8 +347,8 @@ mod v2 {
         arguments.want(id("ff333369de1221f9bfbbe03a3a13e9a09bc1ffff"));
         arguments.send(&mut t, true).await.expect("sending to buffer to work");
         assert_eq!(
-                out.as_bstr(),
-                b"0012command=fetch
+            out.as_bstr(),
+            b"0012command=fetch
 0001000ethin-pack
 000eofs-delta
 0010no-progress
@@ -346,12 +358,14 @@ mod v2 {
 0032want ff333369de1221f9bfbbe03a3a13e9a09bc1ffff
 0009done
 0000"
-                    .as_bstr(),
-                "we filter features/capabilities without value as these apparently shouldn't be listed (remote dies otherwise)"
-            );
+                .as_bstr(),
+            "we filter features/capabilities without value as these apparently shouldn't be listed (remote dies otherwise)"
+        );
     }
 
-    #[maybe_async::test(feature = "blocking-client", async(feature = "async-client", async_std::test))]
+    #[crate::bisync::bisync]
+    #[cfg_attr(feature = "blocking-client", test)]
+    #[cfg_attr(all(feature = "async-client", not(feature = "blocking-client")), async_std::test)]
     async fn haves_and_wants_for_fetch_stateless_and_stateful() {
         for is_stateful in &[false, true] {
             let mut out = Vec::new();
@@ -399,7 +413,9 @@ mod v2 {
         }
     }
 
-    #[maybe_async::test(feature = "blocking-client", async(feature = "async-client", async_std::test))]
+    #[crate::bisync::bisync]
+    #[cfg_attr(feature = "blocking-client", test)]
+    #[cfg_attr(all(feature = "async-client", not(feature = "blocking-client")), async_std::test)]
     async fn ref_in_want() {
         let mut out = Vec::new();
         let mut t = transport(&mut out, false);

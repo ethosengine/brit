@@ -15,19 +15,32 @@ fn file_name() {
 }
 #[test]
 fn shorten_and_category() {
-    for (input, expected, category, is_worktree_private) in [
-        ("refs/tags/tag-name", "tag-name", Category::Tag, false),
-        ("refs/heads/main", "main", Category::LocalBranch, false),
-        ("refs/remotes/origin/main", "origin/main", Category::RemoteBranch, false),
-        ("refs/notes/note-name", "notes/note-name", Category::Note, false),
-        ("HEAD", "HEAD", Category::PseudoRef, true),
-        ("FETCH_HEAD", "FETCH_HEAD", Category::PseudoRef, true),
-        ("main-worktree/HEAD", "HEAD", Category::MainPseudoRef, true),
-        ("main-worktree/FETCH_HEAD", "FETCH_HEAD", Category::MainPseudoRef, true),
+    for (input, expected, category, is_worktree_private, is_remote_tracking_branch) in [
+        ("refs/tags/tag-name", "tag-name", Category::Tag, false, false),
+        ("refs/heads/main", "main", Category::LocalBranch, false, false),
+        (
+            "refs/remotes/origin/main",
+            "origin/main",
+            Category::RemoteBranch,
+            false,
+            true,
+        ),
+        ("refs/notes/note-name", "notes/note-name", Category::Note, false, false),
+        ("HEAD", "HEAD", Category::PseudoRef, true, false),
+        ("FETCH_HEAD", "FETCH_HEAD", Category::PseudoRef, true, false),
+        ("main-worktree/HEAD", "HEAD", Category::MainPseudoRef, true, false),
+        (
+            "main-worktree/FETCH_HEAD",
+            "FETCH_HEAD",
+            Category::MainPseudoRef,
+            true,
+            false,
+        ),
         (
             "main-worktree/refs/heads/main",
             "refs/heads/main",
             Category::MainRef,
+            false,
             false,
         ),
         (
@@ -35,23 +48,27 @@ fn shorten_and_category() {
             "refs/notes/note",
             Category::MainRef,
             false,
+            false,
         ),
         (
             "worktrees/name/HEAD",
             "HEAD",
             Category::LinkedPseudoRef { name: "name".into() },
             true,
+            false,
         ),
         (
             "worktrees/name/FETCH_HEAD",
             "FETCH_HEAD",
             Category::LinkedPseudoRef { name: "name".into() },
             true,
+            false,
         ),
         (
             "worktrees/name/refs/heads/main",
             "refs/heads/main",
             Category::LinkedRef { name: "name".into() },
+            false,
             false,
         ),
         (
@@ -59,24 +76,34 @@ fn shorten_and_category() {
             "refs/notes/note",
             Category::LinkedRef { name: "name".into() },
             false,
+            false,
         ),
         (
             "worktrees/name/refs/heads/main",
             "refs/heads/main",
             Category::LinkedRef { name: "name".into() },
             false,
+            false,
         ),
-        ("refs/bisect/good", "bisect/good", Category::Bisect, true),
-        ("refs/rewritten/123456", "rewritten/123456", Category::Rewritten, true),
+        ("refs/bisect/good", "bisect/good", Category::Bisect, true, false),
+        (
+            "refs/rewritten/123456",
+            "rewritten/123456",
+            Category::Rewritten,
+            true,
+            false,
+        ),
         (
             "refs/worktree/private",
             "worktree/private",
             Category::WorktreePrivate,
             true,
+            false,
         ),
     ] {
         let name: gix_ref::FullName = input.try_into().unwrap();
         assert_eq!(category.is_worktree_private(), is_worktree_private);
+        assert_eq!(category.is_remote_tracking_branch(), is_remote_tracking_branch);
         let category = Some(category);
         assert_eq!(name.as_ref().shorten(), expected);
         assert_eq!(name.shorten(), expected);
@@ -92,8 +119,7 @@ fn shorten_and_category() {
                 let (cat, short_name) = cat_and_short_name.expect("we know it's set");
                 let actual = cat.to_full_name(short_name).expect("valid input = valid output");
                 assert_eq!(
-                    actual.as_ref().as_bstr(),
-                    input,
+                    actual, input,
                     "{input}: {cat:?}:{short_name}: categories and short-names can round-trip"
                 );
             }
@@ -120,15 +146,13 @@ fn shorten_and_category() {
 #[test]
 fn to_full_name() -> gix_testtools::Result {
     assert_eq!(
-        Category::LocalBranch.to_full_name("refs/heads/full")?.as_bstr(),
+        Category::LocalBranch.to_full_name("refs/heads/full")?,
         "refs/heads/full",
         "prefixes aren't duplicated"
     );
 
     assert_eq!(
-        Category::LocalBranch
-            .to_full_name("refs/remotes/origin/other")?
-            .as_bstr(),
+        Category::LocalBranch.to_full_name("refs/remotes/origin/other")?,
         "refs/heads/refs/remotes/origin/other",
         "full names with a different category will be prefixed, to support 'main-worktree' special cases"
     );
@@ -139,12 +163,12 @@ fn to_full_name() -> gix_testtools::Result {
 #[test]
 fn local_branch_head_is_representable_as_full_ref_name() -> gix_testtools::Result {
     assert_eq!(
-        Category::LocalBranch.to_full_name("HEAD")?.as_bstr(),
+        Category::LocalBranch.to_full_name("HEAD")?,
         "refs/heads/HEAD",
         "generic full-name construction accepts names that are invalid only in branch-specific contexts"
     );
     assert_eq!(
-        Category::LocalBranch.to_full_name("refs/heads/HEAD")?.as_bstr(),
+        Category::LocalBranch.to_full_name("refs/heads/HEAD")?,
         "refs/heads/HEAD",
         "fully qualified names keep their category prefix de-duplicated"
     );
@@ -155,21 +179,14 @@ fn local_branch_head_is_representable_as_full_ref_name() -> gix_testtools::Resul
 fn prefix_with_namespace_and_stripping() {
     let ns = gix_ref::namespace::expand("foo").unwrap();
     let mut name: gix_ref::FullName = "refs/heads/main".try_into().unwrap();
+    assert_eq!(name.prefix_namespace(&ns), "refs/namespaces/foo/refs/heads/main");
     assert_eq!(
-        name.prefix_namespace(&ns).as_bstr(),
-        "refs/namespaces/foo/refs/heads/main"
-    );
-    assert_eq!(
-        name.prefix_namespace(&ns).as_bstr(),
+        name.prefix_namespace(&ns),
         "refs/namespaces/foo/refs/heads/main",
         "idempotent prefixing"
     );
-    assert_eq!(name.strip_namespace(&ns).as_bstr(), "refs/heads/main");
-    assert_eq!(
-        name.strip_namespace(&ns).as_bstr(),
-        "refs/heads/main",
-        "idempotent stripping"
-    );
+    assert_eq!(name.strip_namespace(&ns), "refs/heads/main");
+    assert_eq!(name.strip_namespace(&ns), "refs/heads/main", "idempotent stripping");
 }
 
 #[test]

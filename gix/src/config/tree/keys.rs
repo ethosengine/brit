@@ -1,6 +1,5 @@
 #![allow(clippy::result_large_err)]
 use std::{
-    borrow::Cow,
     error::Error,
     fmt::{Debug, Formatter},
 };
@@ -8,7 +7,7 @@ use std::{
 use gix_config::KeyRef;
 
 use crate::{
-    bstr::BStr,
+    bstr::{BStr, ByteSlice},
     config,
     config::tree::{Key, Link, Note, Section, SubSectionRequirement},
 };
@@ -26,6 +25,8 @@ pub struct Any<T: Validate = validate::All> {
     pub link: Option<Link>,
     /// A note about this key.
     pub note: Option<Note>,
+    /// The value to use if this key is unset.
+    pub default_value: Option<&'static [u8]>,
     /// The way validation and transformation should happen.
     validate: T,
 }
@@ -48,6 +49,7 @@ impl<T: Validate> Any<T> {
             subsection_requirement: Some(SubSectionRequirement::Never),
             link: None,
             note: None,
+            default_value: None,
             validate,
         }
     }
@@ -69,9 +71,17 @@ impl<T: Validate> Any<T> {
         self
     }
 
-    /// Set a link to another key which serves as fallback to provide a value if this key is not set.
+    /// Record another key as fallback if this key is not set.
+    ///
+    /// This is descriptive metadata; consumers must apply the fallback during value resolution.
     pub const fn with_fallback(mut self, key: &'static dyn Key) -> Self {
         self.link = Some(Link::FallbackKey(key));
+        self
+    }
+
+    /// Set the value to use if this key is unset.
+    pub const fn with_default(mut self, value: &'static [u8]) -> Self {
+        self.default_value = Some(value);
         self
     }
 
@@ -93,18 +103,22 @@ impl<T: Validate> Any<T> {
     /// Try to convert `value` into a refspec suitable for the `op` operation.
     pub fn try_into_refspec(
         &'static self,
-        value: std::borrow::Cow<'_, BStr>,
+        value: impl gix_utils::AsBStr,
         op: gix_refspec::parse::Operation,
     ) -> Result<gix_refspec::RefSpec, config::refspec::Error> {
-        gix_refspec::parse(value.as_ref(), op)
+        let value = value.as_bstr();
+        gix_refspec::parse(value.as_bstr(), op)
             .map(|spec| spec.to_owned())
-            .map_err(|err| config::refspec::Error::from_value(self, value.into_owned()).with_source(err))
+            .map_err(|err| config::refspec::Error::from_value(self, value.into()).with_source(err))
     }
 
     /// Try to interpret `value` as UTF-8 encoded string.
-    pub fn try_into_string(&'static self, value: Cow<'_, BStr>) -> Result<std::string::String, config::string::Error> {
+    pub fn try_into_string(
+        &'static self,
+        value: impl gix_utils::AsBStr,
+    ) -> Result<std::string::String, config::string::Error> {
         use crate::bstr::ByteVec;
-        Vec::from(value.into_owned()).into_string().map_err(|err| {
+        Vec::from(value.as_bstr().to_owned()).into_string().map_err(|err| {
             let utf8_err = err.utf8_error().clone();
             config::string::Error::from_value(self, err.into_vec().into()).with_source(utf8_err)
         })
@@ -147,6 +161,10 @@ impl<T: Validate> Key for Any<T> {
     fn note(&self) -> Option<&Note> {
         self.note.as_ref()
     }
+
+    fn default_value(&self) -> Option<&BStr> {
+        self.default_value.map(BStr::new)
+    }
 }
 
 impl<T: Validate + Copy + Clone> gix_config::AsKey for Any<T> {
@@ -176,6 +194,9 @@ pub type Time = Any<validate::Time>;
 
 /// The `core.(filesRefLockTimeout|packedRefsTimeout)` keys, or any other lock timeout for that matter.
 pub type LockTimeout = Any<validate::LockTimeout>;
+
+/// The `core.compression`, `core.looseCompression` and `pack.compression` keys to validate compression values.
+pub type Compression = Any<validate::Compression>;
 
 /// Keys specifying durations in milliseconds.
 pub type DurationInMilliseconds = Any<validate::DurationInMilliseconds>;
@@ -225,7 +246,7 @@ mod duration {
 
     use crate::{
         config,
-        config::tree::{keys::DurationInMilliseconds, Section},
+        config::tree::{Section, keys::DurationInMilliseconds},
     };
 
     impl DurationInMilliseconds {
@@ -237,13 +258,15 @@ mod duration {
         /// Return a valid duration as parsed from an integer that is interpreted as milliseconds.
         pub fn try_into_duration(
             &'static self,
-            value: Result<i64, gix_config::value::Error>,
-        ) -> Result<std::time::Duration, config::duration::Error> {
-            let value = value.map_err(|err| config::duration::Error::from(self).with_source(err))?;
-            Ok(match value {
+            value: Result<Option<i64>, gix_config::value::Error>,
+        ) -> Result<Option<std::time::Duration>, config::duration::Error> {
+            let Some(value) = value.map_err(|err| config::duration::Error::from(self).with_source(err))? else {
+                return Ok(None);
+            };
+            Ok(Some(match value {
                 val if val < 0 => Duration::from_secs(u64::MAX),
                 val => Duration::from_millis(val.try_into().expect("i64 to u64 always works if positive")),
-            })
+            }))
         }
     }
 }
@@ -255,7 +278,7 @@ mod lock_timeout {
 
     use crate::{
         config,
-        config::tree::{keys::LockTimeout, Section},
+        config::tree::{Section, keys::LockTimeout},
     };
 
     impl LockTimeout {
@@ -267,24 +290,59 @@ mod lock_timeout {
         /// Return information on how long to wait for locked files.
         pub fn try_into_lock_timeout(
             &'static self,
-            value: Result<i64, gix_config::value::Error>,
-        ) -> Result<gix_lock::acquire::Fail, config::lock_timeout::Error> {
-            let value = value.map_err(|err| config::lock_timeout::Error::from(self).with_source(err))?;
-            Ok(match value {
+            value: Result<Option<i64>, gix_config::value::Error>,
+        ) -> Result<Option<gix_lock::acquire::Fail>, config::lock_timeout::Error> {
+            let Some(value) = value.map_err(|err| config::lock_timeout::Error::from(self).with_source(err))? else {
+                return Ok(None);
+            };
+            Ok(Some(match value {
                 val if val < 0 => Fail::AfterDurationWithBackoff(Duration::from_secs(u64::MAX)),
                 0 => Fail::Immediately,
                 val => Fail::AfterDurationWithBackoff(Duration::from_millis(
                     val.try_into().expect("i64 to u64 always works if positive"),
                 )),
-            })
+            }))
+        }
+    }
+}
+
+mod compression {
+    use crate::{
+        config,
+        config::tree::{Section, keys::Compression},
+    };
+
+    impl Compression {
+        /// Create a new instance.
+        pub const fn new_compression(name: &'static str, section: &'static dyn Section) -> Self {
+            Self::new_with_validate(name, section, super::validate::Compression)
+        }
+
+        /// Convert `value` into a zlib compression level, where `-1` is mapped to the
+        /// zlib default, just like `git` does.
+        pub fn try_into_compression(
+            &'static self,
+            value: Result<Option<i64>, gix_config::value::Error>,
+        ) -> Result<Option<gix_zlib::Compression>, config::key::GenericError> {
+            let Some(value) = value.map_err(|err| config::key::GenericError::from(self).with_source(err))? else {
+                return Ok(None);
+            };
+            match value {
+                -1 => Ok(Some(gix_zlib::Compression::DEFAULT)),
+                level => i32::try_from(level)
+                    .ok()
+                    .and_then(gix_zlib::Compression::new)
+                    .map(Some)
+                    .ok_or_else(|| config::key::GenericError::from(self)),
+            }
         }
     }
 }
 
 mod refspecs {
     use crate::config::tree::{
-        keys::{validate, FetchRefSpec, PushRefSpec},
         Section,
+        keys::{FetchRefSpec, PushRefSpec, validate},
     };
 
     impl PushRefSpec {
@@ -303,14 +361,12 @@ mod refspecs {
 }
 
 mod url {
-    use std::borrow::Cow;
-
     use crate::{
-        bstr::BStr,
+        bstr::ByteSlice,
         config,
         config::tree::{
-            keys::{validate, Url},
             Section,
+            keys::{Url, validate},
         },
     };
 
@@ -321,9 +377,10 @@ mod url {
         }
 
         /// Try to parse `value` as URL.
-        pub fn try_into_url(&'static self, value: Cow<'_, BStr>) -> Result<gix_url::Url, config::url::Error> {
-            gix_url::parse(value.as_ref())
-                .map_err(|err| config::url::Error::from_value(self, value.into_owned()).with_source(err))
+        pub fn try_into_url(&'static self, value: impl gix_utils::AsBStr) -> Result<gix_url::Url, config::url::Error> {
+            let value = value.as_bstr();
+            gix_url::parse(value.as_bstr())
+                .map_err(|err| config::url::Error::from_value(self, value.into()).with_source(err.into_error()))
         }
     }
 }
@@ -357,7 +414,7 @@ impl Path {
 }
 
 mod workers {
-    use crate::config::tree::{keys::UnsignedInteger, Section};
+    use crate::config::tree::{Section, keys::UnsignedInteger};
 
     impl UnsignedInteger {
         /// Create a new instance.
@@ -368,59 +425,59 @@ mod workers {
         /// Convert `value` into a `usize` or wrap it into a specialized error.
         pub fn try_into_usize(
             &'static self,
-            value: Result<i64, gix_config::value::Error>,
-        ) -> Result<usize, crate::config::unsigned_integer::Error> {
+            value: Result<Option<i64>, gix_config::value::Error>,
+        ) -> Result<Option<usize>, crate::config::unsigned_integer::Error> {
+            let value = value.map_err(|err| crate::config::unsigned_integer::Error::from(self).with_source(err))?;
             value
-                .map_err(|err| crate::config::unsigned_integer::Error::from(self).with_source(err))
-                .and_then(|value| {
+                .map(|value| {
                     value
                         .try_into()
                         .map_err(|_| crate::config::unsigned_integer::Error::from(self))
                 })
+                .transpose()
         }
 
         /// Convert `value` into a `u64` or wrap it into a specialized error.
         pub fn try_into_u64(
             &'static self,
-            value: Result<i64, gix_config::value::Error>,
-        ) -> Result<u64, crate::config::unsigned_integer::Error> {
+            value: Result<Option<i64>, gix_config::value::Error>,
+        ) -> Result<Option<u64>, crate::config::unsigned_integer::Error> {
+            let value = value.map_err(|err| crate::config::unsigned_integer::Error::from(self).with_source(err))?;
             value
-                .map_err(|err| crate::config::unsigned_integer::Error::from(self).with_source(err))
-                .and_then(|value| {
+                .map(|value| {
                     value
                         .try_into()
                         .map_err(|_| crate::config::unsigned_integer::Error::from(self))
                 })
+                .transpose()
         }
 
         /// Convert `value` into a `u32` or wrap it into a specialized error.
         pub fn try_into_u32(
             &'static self,
-            value: Result<i64, gix_config::value::Error>,
-        ) -> Result<u32, crate::config::unsigned_integer::Error> {
+            value: Result<Option<i64>, gix_config::value::Error>,
+        ) -> Result<Option<u32>, crate::config::unsigned_integer::Error> {
+            let value = value.map_err(|err| crate::config::unsigned_integer::Error::from(self).with_source(err))?;
             value
-                .map_err(|err| crate::config::unsigned_integer::Error::from(self).with_source(err))
-                .and_then(|value| {
+                .map(|value| {
                     value
                         .try_into()
                         .map_err(|_| crate::config::unsigned_integer::Error::from(self))
                 })
+                .transpose()
         }
     }
 }
 
 mod time {
-    use std::borrow::Cow;
-
-    use gix_error::Exn;
-
     use crate::{
-        bstr::{BStr, ByteSlice},
+        bstr::ByteSlice,
         config::tree::{
-            keys::{validate, Time},
             Section,
+            keys::{Time, validate},
         },
     };
+    use gix_error::Exn;
 
     impl Time {
         /// Create a new instance.
@@ -431,13 +488,15 @@ mod time {
         /// Convert the `value` into a date if possible, with `now` as reference time for relative dates.
         pub fn try_into_time(
             &self,
-            value: Cow<'_, BStr>,
-            now: Option<std::time::SystemTime>,
+            value: impl gix_utils::AsBStr,
+            now: Option<gix_date::Zoned>,
         ) -> Result<gix_date::Time, Exn<gix_date::Error>> {
+            let value = value.as_bstr();
             gix_date::parse(
-                value.as_ref().to_str().map_err(|_| {
-                    gix_date::Error::new_with_input("UTF8 conversion failed", value.clone().into_owned())
-                })?,
+                value
+                    .as_bstr()
+                    .to_str()
+                    .map_err(|_| gix_date::Error::new_with_input("UTF8 conversion failed", value))?,
                 now,
             )
         }
@@ -448,8 +507,8 @@ mod boolean {
     use crate::{
         config,
         config::tree::{
-            keys::{validate, Boolean},
             Section,
+            keys::{Boolean, validate},
         },
     };
 
@@ -464,20 +523,18 @@ mod boolean {
         /// `value` is expected to be provided by [`gix_config::File::boolean()`].
         pub fn enrich_error(
             &'static self,
-            value: Result<bool, gix_config::value::Error>,
-        ) -> Result<bool, config::boolean::Error> {
+            value: Result<Option<bool>, gix_config::value::Error>,
+        ) -> Result<Option<bool>, config::boolean::Error> {
             value.map_err(|err| config::boolean::Error::from(self).with_source(err))
         }
     }
 }
 
 mod remote_name {
-    use std::borrow::Cow;
-
     use crate::{
-        bstr::{BStr, BString},
+        bstr::BString,
         config,
-        config::tree::{keys::RemoteName, Section},
+        config::tree::{Section, keys::RemoteName},
     };
 
     impl RemoteName {
@@ -487,12 +544,11 @@ mod remote_name {
         }
 
         /// Try to validate `name` as symbolic remote name and return it.
-        #[allow(clippy::result_large_err)]
         pub fn try_into_symbolic_name(
             &'static self,
-            name: Cow<'_, BStr>,
+            name: impl gix_utils::AsBStr,
         ) -> Result<BString, config::remote::symbolic_name::Error> {
-            crate::remote::name::validated(name.into_owned())
+            crate::remote::name::validated(name.as_bstr().to_owned())
                 .map_err(|err| config::remote::symbolic_name::Error::from(self).with_source(err))
         }
     }
@@ -530,8 +586,7 @@ pub mod validate {
 
     impl Validate for Time {
         fn validate(&self, value: &BStr) -> Result<(), Box<dyn Error + Send + Sync + 'static>> {
-            gix_date::parse(value.to_str()?, std::time::SystemTime::now().into())
-                .map_err(gix_error::Exn::into_inner)?;
+            gix_date::parse(value.to_str()?, gix_date::Zoned::now().into()).map_err(gix_error::Exn::into_inner)?;
             Ok(())
         }
     }
@@ -559,6 +614,33 @@ pub mod validate {
     impl Validate for Boolean {
         fn validate(&self, value: &BStr) -> Result<(), Box<dyn Error + Send + Sync + 'static>> {
             gix_config::Boolean::try_from(value)?;
+            Ok(())
+        }
+    }
+
+    /// Values that are full reference names.
+    #[derive(Default, Clone, Copy)]
+    pub struct FullNameRef {
+        allow_empty: bool,
+    }
+
+    impl FullNameRef {
+        /// Create a validator that requires a full reference name.
+        pub const fn new() -> Self {
+            FullNameRef { allow_empty: false }
+        }
+
+        /// Create a validator that also accepts an empty value.
+        pub const fn or_empty() -> Self {
+            FullNameRef { allow_empty: true }
+        }
+    }
+
+    impl Validate for FullNameRef {
+        fn validate(&self, value: &BStr) -> Result<(), Box<dyn Error + Send + Sync + 'static>> {
+            if !self.allow_empty || !value.is_empty() {
+                gix_ref::FullName::try_from(value.to_owned())?;
+            }
             Ok(())
         }
     }
@@ -630,7 +712,20 @@ pub mod validate {
             let value = gix_config::Integer::try_from(value)?
                 .to_decimal()
                 .ok_or_else(|| format!("integer {value} cannot be represented as integer"));
-            super::super::Core::FILES_REF_LOCK_TIMEOUT.try_into_lock_timeout(Ok(value?))?;
+            super::super::Core::FILES_REF_LOCK_TIMEOUT.try_into_lock_timeout(Ok(Some(value?)))?;
+            Ok(())
+        }
+    }
+
+    /// A zlib compression level.
+    #[derive(Clone, Copy)]
+    pub struct Compression;
+    impl Validate for Compression {
+        fn validate(&self, value: &BStr) -> Result<(), Box<dyn std::error::Error + Send + Sync + 'static>> {
+            let value = gix_config::Integer::try_from(value)?
+                .to_decimal()
+                .ok_or_else(|| format!("integer {value} cannot be represented as integer"));
+            super::super::Core::COMPRESSION.try_into_compression(Ok(Some(value?)))?;
             Ok(())
         }
     }
@@ -643,7 +738,7 @@ pub mod validate {
             let value = gix_config::Integer::try_from(value)?
                 .to_decimal()
                 .ok_or_else(|| format!("integer {value} cannot be represented as integer"));
-            super::super::gitoxide::Http::CONNECT_TIMEOUT.try_into_duration(Ok(value?))?;
+            super::super::gitoxide::Http::CONNECT_TIMEOUT.try_into_duration(Ok(Some(value?)))?;
             Ok(())
         }
     }

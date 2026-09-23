@@ -29,9 +29,14 @@ REPO_ROOT="${GITHUB_WORKSPACE:-$(git rev-parse --show-toplevel)}"
 INDEX_BASE="https://nexus.ethosengine.com/repository/cargo-internal"
 
 # Topological order: dependencies before dependents.
+# Keep this the transitive normal/optional path-dep closure of the brit-*
+# crates: every fork crate in it needs `registry = "elohim"` on its intra-fork
+# [dependencies] (gix-object's optional gix-command/gix-tempfile pulled in
+# gix-fs, gix-quote, gix-command and gix-tempfile).
 CRATES=(
   gix-trace gix-utils gix-validate gix-error gix-path
   gix-features gix-hash gix-hashtable gix-date gix-actor
+  gix-fs gix-quote gix-command gix-tempfile
   gix-object
   brit-epr brit-graph brit-build-ref brit-cli
 )

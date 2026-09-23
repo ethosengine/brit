@@ -1,15 +1,13 @@
 pub(crate) mod convert_to_diffable {
 
     use gix_diff::blob::{
-        pipeline,
+        ResourceKind, pipeline,
         pipeline::{Options, WorktreeRoots},
-        ResourceKind,
     };
     use gix_filter::{eol, eol::AutoCrlf};
     use gix_object::{bstr::ByteSlice, tree::EntryKind};
-    use gix_worktree::stack::state::attributes;
 
-    use crate::util::ObjectDb;
+    use crate::util::{insert, object_db};
 
     #[test]
     fn simple() -> crate::Result {
@@ -70,9 +68,9 @@ pub(crate) mod convert_to_diffable {
             );
             drop(tmp);
 
-            let mut db = ObjectDb::default();
+            let db = object_db();
             let b_content = "b-content";
-            let id = db.insert(b_content)?;
+            let id = insert(&db, b_content)?;
 
             let out = filter.convert_to_diffable(
                 &id,
@@ -128,8 +126,8 @@ pub(crate) mod convert_to_diffable {
         assert_eq!(out.data, Some(pipeline::Data::Binary { size: 3 }), "detected in buffer");
         assert_eq!(buf.len(), 0, "it should avoid querying that data in the first place");
 
-        let mut db = ObjectDb::default();
-        let id = db.insert(large_content)?;
+        let db = object_db();
+        let id = insert(&db, large_content)?;
         let out = filter.convert_to_diffable(
             &id,
             EntryKind::Blob,
@@ -210,8 +208,8 @@ pub(crate) mod convert_to_diffable {
         }
         drop(tmp);
 
-        let mut db = ObjectDb::default();
-        let id = db.insert(large_content)?;
+        let db = object_db();
+        let id = insert(&db, large_content)?;
 
         let out = filter.convert_to_diffable(
             &id,
@@ -395,9 +393,9 @@ pub(crate) mod convert_to_diffable {
         }
         drop(tmp);
 
-        let mut db = ObjectDb::default();
+        let db = object_db();
         let b_content = "b-content\n";
-        let id = db.insert(b_content)?;
+        let id = insert(&db, b_content)?;
 
         let out = filter.convert_to_diffable(
             &id,
@@ -414,9 +412,9 @@ pub(crate) mod convert_to_diffable {
         assert_eq!(out.data, Some(pipeline::Data::Buffer { is_derived: false }));
         assert_eq!(buf.as_bstr(), "b-content\r\n", "LF to CRLF by worktree filtering");
 
-        let mut db = ObjectDb::default();
+        let db = object_db();
         let b_content = "b\n";
-        let id = db.insert(b_content)?;
+        let id = insert(&db, b_content)?;
         let out = filter.convert_to_diffable(
             &id,
             EntryKind::Blob,
@@ -436,21 +434,70 @@ pub(crate) mod convert_to_diffable {
     }
 
     #[test]
+    fn worktree_filter_skips_null_id_lookups() -> crate::Result {
+        let tmp = gix_testtools::tempfile::TempDir::new()?;
+        std::fs::write(tmp.path().join("a"), "worktree\r\n")?;
+        let mut filter = gix_diff::blob::Pipeline::new(
+            WorktreeRoots {
+                old_root: None,
+                new_root: Some(tmp.path().to_owned()),
+            },
+            gix_filter::Pipeline::new(
+                Default::default(),
+                gix_filter::pipeline::Options {
+                    eol_config: eol::Configuration {
+                        auto_crlf: AutoCrlf::Input,
+                        ..Default::default()
+                    },
+                    ..Default::default()
+                },
+            ),
+            vec![],
+            default_options(),
+        );
+        let objects = object_db();
+        let index_id = insert(&objects, "index\r\n")?;
+        let mut buf = Vec::new();
+        for mode in [pipeline::Mode::ToGit, pipeline::Mode::ToGitUnlessBinaryToTextIsPresent] {
+            for (id, expected) in [
+                (crate::fixture_hash_kind().null(), "worktree\n"),
+                (index_id, "worktree\r\n"),
+            ] {
+                let objects: &dyn gix_object::FindObjectOrHeader = if id.is_null() {
+                    &gix_object::find::Never::panic_on_access()
+                } else {
+                    &objects
+                };
+                let out = filter.convert_to_diffable(
+                    &id,
+                    EntryKind::Blob,
+                    "a".into(),
+                    ResourceKind::NewOrDestination,
+                    &mut |_, _| {},
+                    objects,
+                    mode,
+                    &mut buf,
+                )?;
+                assert_eq!(
+                    out.data,
+                    Some(pipeline::Data::Buffer { is_derived: false }),
+                    "worktree content remains available for diffing"
+                );
+                assert_eq!(
+                    buf.as_bstr(),
+                    expected,
+                    "only a known index object can prevent CRLF normalization"
+                );
+            }
+        }
+        Ok(())
+    }
+
+    #[test]
     fn binary_by_buffer_inspection() -> crate::Result {
         let tmp = gix_testtools::tempfile::TempDir::new()?;
-        let root = gix_testtools::scripted_fixture_read_only_standalone("make_blob_repo.sh")?;
-        let mut attributes = gix_worktree::Stack::new(
-            root,
-            gix_worktree::stack::State::AttributesStack(gix_worktree::stack::state::Attributes::new(
-                Default::default(),
-                None,
-                attributes::Source::WorktreeThenIdMapping,
-                Default::default(),
-            )),
-            gix_worktree::glob::pattern::Case::Sensitive,
-            Vec::new(),
-            Vec::new(),
-        );
+        let root = crate::scripted_fixture_read_only("make_blob_repo.sh")?;
+        let mut attributes = crate::blob::new_attributes_stack(root);
         let mut filter = gix_diff::blob::Pipeline::new(
             WorktreeRoots {
                 old_root: Some(tmp.path().to_owned()),
@@ -488,9 +535,9 @@ pub(crate) mod convert_to_diffable {
         // for good reason. Hard to test.
         drop(tmp);
 
-        let mut db = ObjectDb::default();
+        let db = object_db();
         let b_content = "b-co\0ntent\n";
-        let id = db.insert(b_content)?;
+        let id = insert(&db, b_content)?;
 
         let out = filter.convert_to_diffable(
             &id,
@@ -509,7 +556,7 @@ pub(crate) mod convert_to_diffable {
 
         let platform = attributes.at_entry("c", None, &gix_object::find::Never)?;
 
-        let id = db.insert("b")?;
+        let id = insert(&db, "b")?;
         let out = filter.convert_to_diffable(
             &id,
             EntryKind::Blob,
@@ -536,20 +583,9 @@ pub(crate) mod convert_to_diffable {
 
     #[test]
     fn with_driver() -> crate::Result {
-        let root = gix_testtools::scripted_fixture_read_only_standalone("make_blob_repo.sh")?;
+        let root = crate::scripted_fixture_read_only("make_blob_repo.sh")?;
         let command = "echo to-text; cat <";
-        let mut attributes = gix_worktree::Stack::new(
-            &root,
-            gix_worktree::stack::State::AttributesStack(gix_worktree::stack::state::Attributes::new(
-                Default::default(),
-                None,
-                attributes::Source::WorktreeThenIdMapping,
-                Default::default(),
-            )),
-            gix_worktree::glob::pattern::Case::Sensitive,
-            Vec::new(),
-            Vec::new(),
-        );
+        let mut attributes = crate::blob::new_attributes_stack(&root);
         let mut filter = gix_diff::blob::Pipeline::new(
             WorktreeRoots {
                 old_root: Some(root.clone()),
@@ -586,7 +622,7 @@ pub(crate) mod convert_to_diffable {
             default_options(),
         );
 
-        let mut db = ObjectDb::default();
+        let db = object_db();
         let null = gix_hash::Kind::Sha1.null();
         let mut buf = Vec::new();
         let platform = attributes.at_entry("a", None, &gix_object::find::Never)?;
@@ -638,7 +674,7 @@ pub(crate) mod convert_to_diffable {
         assert_eq!(out.data, Some(pipeline::Data::Buffer { is_derived: false }));
         assert_eq!(buf.as_bstr(), "a\n", "unconditionally use git according to mode");
 
-        let id = db.insert("a\n")?;
+        let id = insert(&db, "a\n")?;
         for mode in worktree_modes {
             let out = filter.convert_to_diffable(
                 &id,
@@ -714,7 +750,7 @@ pub(crate) mod convert_to_diffable {
             assert_eq!(buf.len(), 0, "always cleared");
 
             buf.push(1);
-            let id = db.insert("link-target")?;
+            let id = insert(&db, "link-target")?;
             let out = filter.convert_to_diffable(
                 &id,
                 EntryKind::Link,
@@ -761,7 +797,7 @@ pub(crate) mod convert_to_diffable {
             assert_eq!(buf.len(), 0, "it's always cleared before any potential use");
         }
 
-        let id = db.insert("b\n")?;
+        let id = insert(&db, "b\n")?;
         for mode in all_modes {
             buf.push(1);
             let out = filter.convert_to_diffable(
@@ -814,7 +850,7 @@ pub(crate) mod convert_to_diffable {
             );
         }
 
-        let id = db.insert("c\n")?;
+        let id = insert(&db, "c\n")?;
         for mode in worktree_modes {
             let out = filter.convert_to_diffable(
                 &id,
@@ -863,7 +899,7 @@ pub(crate) mod convert_to_diffable {
             assert_eq!(buf.len(), 0);
         }
 
-        let id = db.insert("unset\n")?;
+        let id = insert(&db, "unset\n")?;
         for mode in all_modes {
             let out = filter.convert_to_diffable(
                 &id,
@@ -890,7 +926,7 @@ pub(crate) mod convert_to_diffable {
         }
 
         let platform = attributes.at_entry("d", None, &gix_object::find::Never)?;
-        let id = db.insert("d-in-db")?;
+        let id = insert(&db, "d-in-db")?;
         for mode in worktree_modes {
             let out = filter.convert_to_diffable(
                 &null,
@@ -959,7 +995,7 @@ pub(crate) mod convert_to_diffable {
             "no text filter, so git conversion was applied for worktree source"
         );
 
-        let id = db.insert("e-in-db")?;
+        let id = insert(&db, "e-in-db")?;
         let out = filter.convert_to_diffable(
             &id,
             EntryKind::Blob,

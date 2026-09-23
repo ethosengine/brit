@@ -7,18 +7,21 @@ use std::{
 
 use bstr::BStr;
 use filetime::FileTime;
-use gix_features::parallel::{in_parallel_if, Reduce};
+use gix_features::parallel::{Reduce, in_parallel_if};
 use gix_filter::pipeline::convert::ToGitOutcome;
 use gix_object::FindExt;
 
+#[cfg(windows)]
+use crate::fscache::{FsCache, Metadata as FsCacheMetadata};
+use crate::index_as_worktree::types::ConflictIndexEntry;
 use crate::{
+    AtomicU64, SymlinkCheck,
     index_as_worktree::{
-        traits,
-        traits::{read_data::Stream, CompareBlobs, SubmoduleStatus},
-        types::{ConflictIndexEntry, Error, Options},
-        Change, Conflict, Context, EntryStatus, Outcome, VisitEntry,
+        Change, Conflict, Context, EntryStatus, Outcome, VisitEntry, traits,
+        traits::{CompareBlobs, SubmoduleStatus, read_data::Stream},
+        types::{Error, Options},
     },
-    is_dir_to_mode, AtomicU64, SymlinkCheck,
+    is_dir_to_mode,
 };
 
 /// Calculates the changes that need to be applied to an `index` to match the state of the `worktree` and makes them
@@ -48,7 +51,7 @@ use crate::{
 ///
 /// Thus, some care has to be taken to do the right thing when letting the index match the worktree by evaluating the changes observed
 /// by the `collector`.
-#[allow(clippy::too_many_arguments)]
+#[expect(clippy::too_many_arguments)]
 pub fn index_as_worktree<'index, T, U, Find, E>(
     index: &'index gix_index::State,
     worktree: &Path,
@@ -121,6 +124,8 @@ where
                     path_backing,
                     filter,
                     options,
+                    #[cfg(windows)]
+                    fscache: options.fscache.then(|| FsCache::new(worktree)),
 
                     skipped_by_pathspec,
                     skipped_by_entry_flags,
@@ -155,6 +160,14 @@ where
             let mut out = Vec::new();
             let mut idx = 0;
             while let Some(entry) = chunk_entries.get(idx) {
+                // Allow a cooperative early-out *within* a chunk: once `should_interrupt` is set
+                // (e.g. by a caller that only needs to know whether *any* change exists, like
+                // `Repository::is_dirty`), stop promptly instead of finishing the whole chunk.
+                // Without this, an in-flight chunk would run to completion (~several hundred entries)
+                // even after another worker already found the first change.
+                if should_interrupt.load(Ordering::Relaxed) {
+                    break;
+                }
                 let absolute_entry_index = entry_offset + idx;
                 if idx == 0 && entry.stage_raw() != 0 {
                     let offset = entry_offset.checked_sub(1).and_then(|prev_idx| {
@@ -227,6 +240,10 @@ struct State<'a, 'b> {
     filter: gix_filter::Pipeline,
     path_backing: &'b gix_index::PathStorageRef,
     options: &'a Options,
+    /// Optional lazy worktree stats cache for faster status checks on Windows.
+    /// Lookups happen before falling back to per-file syscalls.
+    #[cfg(windows)]
+    fscache: Option<FsCache>,
 
     skipped_by_pathspec: &'a AtomicUsize,
     skipped_by_entry_flags: &'a AtomicUsize,
@@ -242,7 +259,7 @@ struct State<'a, 'b> {
 type StatusResult<'index, T, U> = Result<(&'index gix_index::Entry, usize, &'index BStr, EntryStatus<T, U>), Error>;
 
 impl<'index> State<'_, 'index> {
-    #[allow(clippy::too_many_arguments)]
+    #[expect(clippy::too_many_arguments)]
     fn process<T, U, Find, E>(
         &mut self,
         entries: &'index [gix_index::Entry],
@@ -369,57 +386,78 @@ impl<'index> State<'_, 'index> {
             Ok(path) => path,
             Err(err) if crate::stack::is_symlink_step_error(&err) => return Ok(Some(Change::Removed.into())),
             Err(err) if gix_fs::io_err::is_not_found(err.kind(), err.raw_os_error()) => {
-                return Ok(Some(Change::Removed.into()))
+                return Ok(Some(Change::Removed.into()));
             }
-            Err(err) => return Err(Error::Io(err.into())),
+            Err(err) => return Err(Error::Io(err)),
         };
-        self.symlink_metadata_calls.fetch_add(1, Ordering::Relaxed);
-        let metadata = match gix_index::fs::Metadata::from_path_no_follow(worktree_path) {
-            Ok(metadata) if metadata.is_dir() => {
-                // index entries are normally only for files/symlinks
-                // if a file turned into a directory it was removed
-                // the only exception here are submodules which are
-                // part of the index despite being directories
-                if entry.mode.is_submodule() {
-                    let status = submodule
-                        .status(entry, rela_path)
-                        .map_err(|err| Error::SubmoduleStatus {
-                            rela_path: rela_path.into(),
-                            source: Box::new(err),
-                        })?;
-                    return Ok(status.map(|status| Change::SubmoduleModification(status).into()));
-                } else {
-                    return Ok(Some(Change::Removed.into()));
-                }
-            }
-            Ok(metadata) => metadata,
-            Err(err) if gix_fs::io_err::is_not_found(err.kind(), err.raw_os_error()) => {
-                return Ok(Some(Change::Removed.into()))
-            }
-            Err(err) => {
-                return Err(Error::Io(err.into()));
+
+        // Acquire metadata. On Windows we consult the precomputed stats first and
+        // only fall back to a syscall on miss; on other platforms per-file
+        // `lstat` is already fast, so we just do the syscall directly.
+        #[cfg(windows)]
+        let metadata = if let Some(cached) = self.fscache.as_mut().and_then(|c| c.get(rela_path)) {
+            FsCacheMetadata::Cached(cached)
+        } else {
+            self.symlink_metadata_calls.fetch_add(1, Ordering::Relaxed);
+            match live_metadata(worktree_path)? {
+                Some(md) => FsCacheMetadata::Live(md),
+                None => return Ok(Some(Change::Removed.into())),
             }
         };
+        #[cfg(not(windows))]
+        let metadata = {
+            self.symlink_metadata_calls.fetch_add(1, Ordering::Relaxed);
+            match live_metadata(worktree_path)? {
+                Some(md) => md,
+                None => return Ok(Some(Change::Removed.into())),
+            }
+        };
+
+        // Handle directory: index entries are normally only for files/symlinks.
+        // If a file turned into a directory it was removed.
+        // The only exception here are submodules which are part of the index despite being directories.
+        if metadata.is_dir() {
+            if entry.mode.is_submodule() {
+                let status = submodule
+                    .status(entry, rela_path)
+                    .map_err(|err| Error::SubmoduleStatus {
+                        rela_path: rela_path.into(),
+                        source: Box::new(err),
+                    })?;
+                return Ok(status.map(|status| Change::SubmoduleModification(status).into()));
+            } else {
+                return Ok(Some(Change::Removed.into()));
+            }
+        }
+
         if entry.flags.contains(gix_index::entry::Flags::INTENT_TO_ADD) {
             return Ok(Some(EntryStatus::IntentToAdd));
         }
+
+        #[cfg(windows)]
+        let new_stat = metadata.to_stat()?;
+        #[cfg(not(windows))]
         let new_stat = gix_index::entry::Stat::from_fs(&metadata)?;
-        let executable_bit_changed =
-            match entry
+
+        #[cfg(windows)]
+        let mode_change = metadata.mode_change(entry.mode, self.options.fs.symlink, self.options.fs.executable_bit);
+        #[cfg(not(windows))]
+        let mode_change =
+            entry
                 .mode
-                .change_to_match_fs(&metadata, self.options.fs.symlink, self.options.fs.executable_bit)
-            {
-                Some(gix_index::entry::mode::Change::Type { new_mode }) => {
-                    return Ok(Some(
-                        Change::Type {
-                            worktree_mode: new_mode,
-                        }
-                        .into(),
-                    ))
-                }
-                Some(gix_index::entry::mode::Change::ExecutableBit) => true,
-                None => false,
-            };
+                .change_to_match_fs(&metadata, self.options.fs.symlink, self.options.fs.executable_bit);
+        let executable_bit_changed = match mode_change {
+            Some(gix_index::entry::mode::Change::Type { new_mode }) => {
+                return Ok(Some(
+                    Change::Type {
+                        worktree_mode: new_mode,
+                    }
+                    .into(),
+                ));
+            }
+            Some(gix_index::entry::mode::Change::ExecutableBit) => true,
+            None => false,
+        };
 
         // We implement racy-git. See racy-git.txt in the git documentation for detailed documentation.
         //
@@ -569,7 +607,7 @@ where
         // TODO: what to do about precompose unicode and ignore_case for symlinks
         let out = if is_symlink && self.core_symlinks {
             let symlink_path = gix_path::to_unix_separators_on_windows(gix_path::into_bstr(
-                std::fs::read_link(self.path).map_err(gix_hash::io::Error::from)?,
+                std::fs::read_link(self.path).map_err(gix_hash::io::from_std_io)?,
             ));
             self.buf.extend_from_slice(&symlink_path);
             self.worktree_bytes.fetch_add(self.buf.len() as u64, Ordering::Relaxed);
@@ -583,8 +621,8 @@ where
             let platform = self
                 .attr_stack
                 .at_entry(self.rela_path, Some(self.entry.mode), &self.objects)
-                .map_err(gix_hash::io::Error::from)?;
-            let file = std::fs::File::open(self.path).map_err(gix_hash::io::Error::from)?;
+                .map_err(gix_hash::io::from_std_io)?;
+            let file = std::fs::File::open(self.path).map_err(gix_hash::io::from_std_io)?;
             let out = self
                 .filter
                 .convert_to_git(
@@ -595,7 +633,7 @@ where
                     },
                     &mut |buf| Ok(self.objects.find_blob(self.id, buf).map(|_| Some(()))?),
                 )
-                .map_err(|err| Error::Io(io::Error::other(err).into()))?;
+                .map_err(|err| Error::Io(io::Error::other(err)))?;
             let len = match out {
                 ToGitOutcome::Unchanged(_) => Some(self.file_len),
                 ToGitOutcome::Process(_) | ToGitOutcome::Buffer(_) => None,
@@ -629,13 +667,16 @@ impl<'a, T> Iterator for OffsetIter<'a, T> {
 }
 
 impl Conflict {
-    /// Given `entries` and `path_backing`, both values obtained from an [index](gix_index::State), use `start_index` and enumerate
-    /// all conflict stages that still match `entry_path` to produce a conflict description.
-    /// Also return the amount of extra-entries that were part of the conflict declaration (not counting the entry at `start_index`)
+    /// Given `entries` and `path_backing` obtained from an [index](gix_index::State), inspect up to three consecutive
+    /// conflict-stage entries starting at `start_index` whose path equals `entry_path`.
     ///
-    /// If for some reason entry at `start_index` isn't in conflicting state, `None` is returned.
+    /// Returns `(conflict, num_extra_entries, entries_by_stage)`, where:
     ///
-    /// Return `(Self, num_consumed_entries, three_possibly_entries)`.
+    /// * `conflict` describes the conflict formed by the matching stages (this instance).
+    /// * `num_extra_entries` is the number of matching entries after the one at `start_index`.
+    /// * `entries_by_stage` contains base, ours, and theirs at indexes 0, 1, and 2 respectively; absent stages are `None`.
+    ///
+    /// Returns `None` if no matching conflict entry is found at `start_index`.
     pub fn try_from_entry<'entry>(
         entries: &'entry [gix_index::Entry],
         path_backing: &gix_index::PathStorageRef,
@@ -647,11 +688,14 @@ impl Conflict {
         let mut seen: [Option<&gix_index::Entry>; 3] = Default::default();
 
         let mut num_consumed_entries = 0_usize;
-        for (stage, entry) in (start_index..(start_index + 3).min(entries.len())).filter_map(|idx| {
-            let entry = &entries[idx];
+        for entry in entries
+            .get(start_index..(start_index + 3).min(entries.len()))
+            .unwrap_or_default()
+        {
             let stage = entry.stage_raw();
-            (stage > 0 && entry.path_in(path_backing) == entry_path).then_some((stage, entry))
-        }) {
+            if stage == 0 || entry.path_in(path_backing) != entry_path {
+                break;
+            }
             // This could be `1 << (stage - 1)` but let's be specific.
             *mask.get_or_insert(0) |= match stage {
                 1 => 0b001,
@@ -659,9 +703,11 @@ impl Conflict {
                 3 => 0b100,
                 _ => 0,
             };
-            num_consumed_entries = stage as usize - 1;
-            seen[num_consumed_entries] = Some(entry);
+            seen[stage as usize - 1] = Some(entry);
+            num_consumed_entries += 1;
         }
+        // It's always assumed we consume one entry, so deduct it.
+        num_consumed_entries = num_consumed_entries.saturating_sub(1);
 
         mask.map(|mask| {
             (
@@ -679,5 +725,13 @@ impl Conflict {
                 seen,
             )
         })
+    }
+}
+
+fn live_metadata(worktree_path: &Path) -> Result<Option<gix_index::fs::Metadata>, Error> {
+    match gix_index::fs::Metadata::from_path_no_follow(worktree_path) {
+        Ok(md) => Ok(Some(md)),
+        Err(err) if gix_fs::io_err::is_not_found(err.kind(), err.raw_os_error()) => Ok(None),
+        Err(err) => Err(Error::Io(err)),
     }
 }

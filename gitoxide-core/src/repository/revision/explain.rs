@@ -1,15 +1,14 @@
 use anyhow::bail;
 use gix::{
+    Exn,
     bstr::{BStr, BString},
     revision::plumbing::{
         spec,
         spec::parse::{
-            delegate,
+            Delegate, delegate,
             delegate::{PeelTo, ReflogLookup, SiblingBranch, Traversal},
-            Delegate,
         },
     },
-    Exn,
 };
 
 pub fn explain(spec: std::ffi::OsString, mut out: impl std::io::Write) -> anyhow::Result<()> {
@@ -198,9 +197,10 @@ impl delegate::Navigate for Explain<'_> {
             path,
             stage,
             match stage {
-                0 => "base",
-                1 => "ours",
-                2 => "theirs",
+                0 => "unconflicted",
+                1 => "base",
+                2 => "ours",
+                3 => "theirs",
                 _ => unreachable!("BUG: parser assures of that"),
             }
         )

@@ -6,7 +6,7 @@ use std::{
 use bstr::BStr;
 use gix_filter::{
     driver::apply::{Delay, MaybeDelayed},
-    pipeline::convert::{ToGitOutcome, ToWorktreeOutcome},
+    pipeline::convert::{ToGitOutcome, ToWorktreeOutcome, to_worktree},
 };
 use gix_object::tree::EntryKind;
 
@@ -119,7 +119,7 @@ pub mod convert_to_mergeable {
 
     /// The error returned by [Pipeline::convert_to_mergeable()](super::Pipeline::convert_to_mergeable()).
     #[derive(Debug, thiserror::Error)]
-    #[allow(missing_docs)]
+    #[expect(missing_docs)]
     pub enum Error {
         #[error("Entry at '{rela_path}' must be regular file or symlink, but was {actual:?}")]
         InvalidEntryKind { rela_path: BString, actual: EntryKind },
@@ -145,23 +145,25 @@ impl Pipeline {
     /// Convert the object at `id`, `mode`, `rela_path` and `kind`, providing access to `attributes` and `objects`.
     /// The resulting merge-able data is written into `out`, if it's not too large.
     /// The returned [`Data`] contains information on how to use `out`, which will be cleared if it is `None`, indicating
-    /// that no object was found at the location *on disk* - it's always an error to provide an object ID that doesn't exist
-    /// in the object database.
+    /// that no object was found at the location *on disk*. If no worktree root is available, a non-null object ID
+    /// must exist in the object database.
     ///
     /// `attributes` must be returning the attributes at `rela_path` and is used for obtaining worktree filter settings,
     /// and `objects` must be usable if `kind` is a resource in the object database,
     /// i.e. if no worktree root is available. It's notable that if a worktree root is present for `kind`,
     /// then a `rela_path` is used to access it on disk.
     ///
-    /// If `id` [is null](gix_hash::ObjectId::is_null()) or the file in question doesn't exist in the worktree in case
-    /// [a root](WorktreeRoots) is present, then `out` will be left cleared and the output data will be `None`.
+    /// If a [worktree root](WorktreeRoots) is present, read the file from there. A non-null `id` may be used to look up
+    /// its index version for line-ending conversion. Null IDs are never looked up in `objects`.
+    /// If the worktree file doesn't exist, or no root is present and `id` [is null](gix_hash::ObjectId::is_null()),
+    /// then `out` will be left cleared and the output data will be `None`.
     /// This is useful to simplify the calling code as empty buffers signal that nothing is there.
     ///
     /// Note that `mode` is trusted, and we will not re-validate that the entry in the worktree actually is of that mode.
     /// Only blobs are allowed.
     ///
     /// Use `convert` to control what kind of the resource will be produced.
-    #[allow(clippy::too_many_arguments)]
+    #[expect(clippy::too_many_arguments)]
     pub fn convert_to_mergeable(
         &mut self,
         id: &gix_hash::oid,
@@ -215,7 +217,7 @@ impl Pipeline {
                                         gix_path::from_bstr(rela_path).as_ref(),
                                         attributes,
                                         &mut |buf| {
-                                            if convert == Mode::Renormalize {
+                                            if convert == Mode::Renormalize || id.is_null() {
                                                 Ok(None)
                                             } else {
                                                 objects.try_find(id, buf).map(|obj| obj.map(|_| ()))
@@ -277,9 +279,15 @@ impl Pipeline {
 
                         if convert == Mode::Renormalize {
                             {
-                                let res = self
-                                    .filter
-                                    .convert_to_worktree(out, rela_path, attributes, Delay::Forbid)?;
+                                let res = self.filter.convert_to_worktree(
+                                    out,
+                                    rela_path,
+                                    attributes,
+                                    to_worktree::Options {
+                                        can_delay: Delay::Forbid,
+                                        unknown_encoding: to_worktree::UnknownEncoding::Fail,
+                                    },
+                                )?;
 
                                 match res {
                                     ToWorktreeOutcome::Unchanged(_) => {}

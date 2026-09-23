@@ -1,14 +1,11 @@
 pub(crate) mod function {
+    use crate::OutputFormat;
+    use crate::repository::HexId;
+    use anyhow::{Context, bail};
+    use gix::odb::store::RefreshMode;
+    use gix::revision::plumbing::Spec;
+    use gix::{prelude::ObjectIdExt, revision::walk::Sorting};
     use std::{borrow::Cow, ffi::OsString};
-
-    use anyhow::{bail, Context};
-    use gix::{
-        odb::store::RefreshMode,
-        prelude::ObjectIdExt,
-        revision::{plumbing::Spec, walk::Sorting},
-    };
-
-    use crate::{repository::HexId, OutputFormat};
 
     pub fn list(
         mut repo: gix::Repository,

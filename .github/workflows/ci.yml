@@ -48,7 +48,7 @@ jobs:
         shell: bash # Use `bash` even in the Windows job.
 
     steps:
-      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           persist-credentials: false
       - uses: extractions/setup-just@53165ef7e734c5c07cb06b3c8e7b647c5aa16db3 # v4.0.0
@@ -87,7 +87,7 @@ jobs:
     runs-on: ubuntu-latest
 
     steps:
-      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           persist-credentials: false
       - uses: extractions/setup-just@53165ef7e734c5c07cb06b3c8e7b647c5aa16db3 # v4.0.0
@@ -104,7 +104,7 @@ jobs:
     container: debian:stable-slim
 
     steps:
-      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           persist-credentials: false
       - name: Prerequisites
@@ -146,7 +146,7 @@ jobs:
         continue-on-error: true
       - name: Check for unrecognized *-sys dependencies
         run: |
-          ! grep -qP '(?<!\b(linux-raw|aws-lc))-sys\b' tree.txt
+          ! grep -qP '(?<!\b(linux-raw|aws-lc|inotify|dirs))-sys\b' tree.txt
       - name: Wrap cc1 (and cc1plus if present) to record calls
         run: |
           set -o noclobber  # Catch any collisions with existing entries in /usr/local.
@@ -209,14 +209,14 @@ jobs:
     runs-on: ubuntu-latest
 
     steps:
-      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           persist-credentials: false
       - name: Install Rust
         run: |
           rustup update stable
           rustup default stable
-      - uses: Swatinem/rust-cache@c19371144df3bb44fab255c43d04cbc2ab54d1c4 # v2.9.1
+      - uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2.9.2
         with:
           save-if: ${{ github.ref == 'refs/heads/main' }}
       - name: Setup dependencies
@@ -224,7 +224,7 @@ jobs:
           sudo apt-get update
           sudo apt-get install -y --no-install-recommends liblzma-dev
       - uses: extractions/setup-just@53165ef7e734c5c07cb06b3c8e7b647c5aa16db3 # v4.0.0
-      - uses: taiki-e/install-action@6e4b50d359005dacdb018fa32c03bc35522c6616 # v2.75.12
+      - uses: taiki-e/install-action@b6ff580856c41316412a0b9b60540fbc6f8c82cc # v2.86.7
         with:
           tool: nextest
       # Use the committed fixture archives (like test-fast) rather than
@@ -232,20 +232,24 @@ jobs:
       # parity infrastructure this fork does not maintain (git-version-sensitive
       # gix-odb/gix-pack fixtures); archive-based runs still exercise the suite.
       - name: test
-        run: just ci-test
+        # brit runs against the committed fixture archives (no
+        # GIX_TEST_IGNORE_ARCHIVES): regenerating gix fixtures is git-version-
+        # sensitive upstream parity infrastructure the fork does not maintain.
+        # The lint job runs both documentation configurations.
+        run: just check unit-tests check-mode
 
   test-doc:
     runs-on: ubuntu-latest
 
     steps:
-      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           persist-credentials: false
       - name: Install Rust
         run: |
           rustup update stable
           rustup default stable
-      - uses: Swatinem/rust-cache@c19371144df3bb44fab255c43d04cbc2ab54d1c4 # v2.9.1
+      - uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2.9.2
         with:
           save-if: ${{ github.ref == 'refs/heads/main' }}
       - uses: extractions/setup-just@53165ef7e734c5c07cb06b3c8e7b647c5aa16db3 # v4.0.0
@@ -256,14 +260,14 @@ jobs:
     runs-on: ubuntu-latest
 
     steps:
-      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           persist-credentials: false
       - name: Install Rust
         run: |
           rustup update stable
           rustup default stable
-      - uses: Swatinem/rust-cache@c19371144df3bb44fab255c43d04cbc2ab54d1c4 # v2.9.1
+      - uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2.9.2
         with:
           save-if: ${{ github.ref == 'refs/heads/main' }}
       - uses: extractions/setup-just@53165ef7e734c5c07cb06b3c8e7b647c5aa16db3 # v4.0.0
@@ -282,11 +286,13 @@ jobs:
           - ubuntu-24.04-arm
         include:
           - test-args: ""
+          - os: windows-11-arm
+            test-args: "--skip performance --skip speed"
 
     runs-on: ${{ matrix.os }}
 
     steps:
-      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           persist-credentials: false
       - name: Install Rust
@@ -294,13 +300,13 @@ jobs:
         run: |
           rustup update stable
           rustup default stable
-      - uses: Swatinem/rust-cache@c19371144df3bb44fab255c43d04cbc2ab54d1c4 # v2.9.1
+      - uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2.9.2
         with:
           save-if: ${{ github.ref == 'refs/heads/main' }}
       - name: cargo check default features
         if: startsWith(matrix.os, 'windows')
         run: cargo check --workspace --bins --examples
-      - uses: taiki-e/install-action@6e4b50d359005dacdb018fa32c03bc35522c6616 # v2.75.12
+      - uses: taiki-e/install-action@b6ff580856c41316412a0b9b60540fbc6f8c82cc # v2.86.7
         with:
           tool: nextest
       - name: Test (nextest)
@@ -316,10 +322,12 @@ jobs:
         # It's tested individually.
         run: | # zizmor: ignore[template-injection]
           cargo nextest run --workspace --no-fail-fast --exclude gix-error -- ${{ matrix.test-args }}
-      - name: Check that tracked archives are up to date
+      - name: Check that generated archives are committed or ignored
+        shell: bash # This relies on `-e` and uses shell-specific features on all OSes.
         run: |
-          # If this fails, the fix is usually to commit a regenerated archive.
-          git diff --exit-code
+          # If this fails, the fix is usually to commit a regenerated or new archive.
+          git status --porcelain
+          test -z "$(git status --porcelain)"
       - name: Remove Git for Windows directories from PATH
         if: startsWith(matrix.os, 'windows')
         run: |
@@ -350,12 +358,12 @@ jobs:
         include:
           - test-args: ""
           - os: windows-11-arm
-            test-args: "--skip fuzzed-timeout --skip performance --skip speed"
+            test-args: "--skip performance --skip speed"
 
     runs-on: ${{ matrix.os }}
 
     steps:
-      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           persist-credentials: false
       - name: Install Rust
@@ -363,41 +371,21 @@ jobs:
         run: |
           rustup update stable
           rustup default stable
-      - uses: Swatinem/rust-cache@c19371144df3bb44fab255c43d04cbc2ab54d1c4 # v2.9.1
+      - uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2.9.2
         with:
-          save-if: ${{ github.ref == 'refs/heads/main' }}
-      - uses: taiki-e/install-action@6e4b50d359005dacdb018fa32c03bc35522c6616 # v2.75.12
+          # Reuse test-fast's dependency cache; the fixture mode only changes runtime behavior.
+          shared-key: test-fast
+          save-if: false
+      - uses: taiki-e/install-action@b6ff580856c41316412a0b9b60540fbc6f8c82cc # v2.86.7
         with:
           tool: nextest
       - name: Test (nextest)
-        id: nextest
         env:
           GIX_TEST_IGNORE_ARCHIVES: "1"
           TEST_ARGS: ${{ matrix.test-args }}
         run: |
-          cargo nextest --profile=with-xml run --workspace --no-fail-fast --exclude gix-error -- `
+          cargo nextest run --workspace --no-fail-fast --exclude gix-error -- `
             (-split $Env:TEST_ARGS)
-        continue-on-error: true
-      - name: Check for errors
-        run: |
-          [xml]$junit_xml = Get-Content -Path 'target/nextest/with-xml/junit.xml'
-          if ($junit_xml.testsuites.errors -ne 0) { exit 1 }
-      - name: Collect actual failures
-        run: |
-          [xml]$junit_xml = Get-Content -Path 'target/nextest/with-xml/junit.xml'
-
-          $actual_failures = $junit_xml.SelectNodes("//testcase[failure]") |
-            ForEach-Object { "$($_.classname) $($_.name)" } |
-            Sort-Object
-
-          Write-Output $actual_failures
-          Set-Content -Path 'actual-failures.txt' -Value $actual_failures
-      - name: Compare expected and actual failures
-        run: |
-          # Fail on any differences, even unexpectedly passing tests, so they can be investigated.
-          git --no-pager -c diff.color.old='magenta bold' -c diff.color.new='blue bold' `
-            diff --no-index --exit-code --unified=1000000 --color=always -- `
-            etc/test-fixtures-windows-expected-failures-see-issue-1358.txt actual-failures.txt
 
   test-32bit:
     strategy:
@@ -415,7 +403,7 @@ jobs:
 
     runs-on: ${{ matrix.runner-os }}
 
-    container: ${{ matrix.container-architecture }}/debian:bookworm-slim
+    container: ${{ matrix.container-architecture }}/debian:stable-slim
 
     steps:
       - name: Prerequisites
@@ -438,7 +426,7 @@ jobs:
           apt-get update
           apt-get install --no-install-recommends -y -- "${prerequisites[@]}"
         shell: bash # This step needs `bash`, and the default in container jobs is `sh`.
-      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           persist-credentials: false
       - name: Install Rust via Rustup
@@ -450,10 +438,10 @@ jobs:
             sh -s -- -y --default-host "$HOST_TRIPLE" --profile minimal
       - name: Add Rust tools to path
         run: echo "PATH=$HOME/.cargo/bin:$PATH" >> "$GITHUB_ENV"
-      - uses: Swatinem/rust-cache@c19371144df3bb44fab255c43d04cbc2ab54d1c4 # v2.9.1
+      - uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2.9.2
         with:
           save-if: ${{ github.ref == 'refs/heads/main' }}
-      - uses: taiki-e/install-action@6e4b50d359005dacdb018fa32c03bc35522c6616 # v2.75.12
+      - uses: taiki-e/install-action@b6ff580856c41316412a0b9b60540fbc6f8c82cc # v2.86.7
         with:
           tool: nextest
       - name: Make `system` scope nonempty for "GitInstallation" tests
@@ -470,7 +458,7 @@ jobs:
       TARGET: i686-pc-windows-msvc
 
     steps:
-      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           persist-credentials: false
       - name: Install Rust
@@ -479,10 +467,10 @@ jobs:
           rustup update stable
           rustup default stable
           rustup target add "$TARGET"
-      - uses: Swatinem/rust-cache@c19371144df3bb44fab255c43d04cbc2ab54d1c4 # v2.9.1
+      - uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2.9.2
         with:
           save-if: ${{ github.ref == 'refs/heads/main' }}
-      - uses: taiki-e/install-action@6e4b50d359005dacdb018fa32c03bc35522c6616 # v2.75.12
+      - uses: taiki-e/install-action@b6ff580856c41316412a0b9b60540fbc6f8c82cc # v2.86.7
         with:
           tool: nextest
       - name: Test data structure sizes (nextest)
@@ -494,7 +482,7 @@ jobs:
     runs-on: ubuntu-latest
 
     steps:
-      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           persist-credentials: false
       - name: Install Rust
@@ -503,7 +491,9 @@ jobs:
           rustup default stable
           rustup component add clippy rustfmt
       - name: Install cargo machete
-        run: cargo install cargo-machete --version 0.9.1 --locked
+        uses: taiki-e/install-action@b6ff580856c41316412a0b9b60540fbc6f8c82cc # v2.86.7
+        with:
+          tool: cargo-machete@0.9.1
       - uses: extractions/setup-just@53165ef7e734c5c07cb06b3c8e7b647c5aa16db3 # v4.0.0
       - name: Run cargo machete
         run: cargo machete
@@ -560,10 +550,10 @@ jobs:
     runs-on: ubuntu-latest
 
     steps:
-      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           persist-credentials: false
-      - uses: EmbarkStudios/cargo-deny-action@3fd3802e88374d3fe9159b834c7714ec57d6c979 # v2.0.15
+      - uses: EmbarkStudios/cargo-deny-action@3c6349835b2b7b196a839186cb8b78e02f7b5f25 # v2.1.1
         with:
           command: check advisories
           arguments: --workspace --all-features
@@ -572,10 +562,10 @@ jobs:
     runs-on: ubuntu-latest
 
     steps:
-      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           persist-credentials: false
-      - uses: EmbarkStudios/cargo-deny-action@3fd3802e88374d3fe9159b834c7714ec57d6c979 # v2.0.15
+      - uses: EmbarkStudios/cargo-deny-action@3c6349835b2b7b196a839186cb8b78e02f7b5f25 # v2.1.1
         with:
           command: check bans licenses sources
           arguments: --workspace --all-features
@@ -593,7 +583,7 @@ jobs:
       TARGET: ${{ matrix.target }}
 
     steps:
-      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           persist-credentials: false
       - name: Install Rust
@@ -601,7 +591,7 @@ jobs:
           rustup update stable
           rustup default stable
           rustup target add "$TARGET"
-      - uses: Swatinem/rust-cache@c19371144df3bb44fab255c43d04cbc2ab54d1c4 # v2.9.1
+      - uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2.9.2
         with:
           save-if: ${{ github.ref == 'refs/heads/main' }}
       - name: "WASI only: crates without feature toggle"
@@ -638,7 +628,7 @@ jobs:
       - name: features of gix-features
         run: |
           set -x
-          for feature in progress parallel io-pipe crc32 zlib cache-efficiency-debug; do
+          for feature in progress parallel io-pipe crc32 cache-efficiency-debug; do
             cargo build -p gix-features --features "$feature" --target "$TARGET"
           done
       - name: crates with 'sha1' and 'wasm' feature
@@ -674,7 +664,7 @@ jobs:
       GLOB: .github/workflows/*.@(yaml|yml)
 
     steps:
-      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           persist-credentials: false
           sparse-checkout: ".github/workflows"
@@ -725,7 +715,7 @@ jobs:
         run: |
           relative_workflow_with_ref="${GITHUB_WORKFLOW_REF#"$GITHUB_REPOSITORY/"}"
           echo "WORKFLOW_PATH=${relative_workflow_with_ref%@*}" >> "$GITHUB_ENV"
-      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           persist-credentials: false
           sparse-checkout: ${{ env.WORKFLOW_PATH }}

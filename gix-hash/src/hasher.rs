@@ -1,17 +1,7 @@
 /// The error returned by [`Hasher::try_finalize()`](crate::Hasher::try_finalize()).
-#[derive(Debug, thiserror::Error)]
-#[allow(missing_docs)]
-pub enum Error {
-    #[error("Detected SHA-1 collision attack with digest {digest}")]
-    CollisionAttack { digest: crate::ObjectId },
-}
+pub type Error = gix_error::CorruptionError;
 
 pub(super) mod _impl {
-    #[cfg(feature = "sha1")]
-    use sha1_checked::{CollisionResult, Digest};
-    #[cfg(all(not(feature = "sha1"), feature = "sha256"))]
-    use sha2::Digest;
-
     use crate::hasher::Error;
 
     /// Hash implementations that can be used once.
@@ -19,9 +9,9 @@ pub(super) mod _impl {
     pub enum Hasher {
         /// An implementation of the SHA1 hash.
         ///
-        /// We use [`sha1_checked`] to implement the same collision detection algorithm as Git.
+        /// We use [`sha1dc`] to implement the same collision detection algorithm as Git.
         #[cfg(feature = "sha1")]
-        Sha1(sha1_checked::Sha1),
+        Sha1(sha1dc::Hasher),
         /// An implementation of the SHA256 hash.
         #[cfg(feature = "sha256")]
         Sha256(sha2::Sha256),
@@ -35,13 +25,13 @@ pub(super) mod _impl {
             // the collision detection to bail out, rather than computing
             // alternate “safe hashes” for inputs where a collision attack
             // was detected.
-            Self::Sha1(sha1_checked::Builder::default().safe_hash(false).build())
+            Self::Sha1(sha1dc::Hasher::new())
         }
 
         /// Let's not make this public to force people to go through [`hasher()`].
         #[cfg(feature = "sha256")]
         fn new_sha256() -> Self {
-            Self::Sha256(sha2::Sha256::new())
+            Self::Sha256(sha2::Sha256::default())
         }
     }
 
@@ -52,7 +42,7 @@ pub(super) mod _impl {
                 #[cfg(feature = "sha1")]
                 Hasher::Sha1(sha1) => sha1.update(bytes),
                 #[cfg(feature = "sha256")]
-                Hasher::Sha256(sha256) => sha256.update(bytes),
+                Hasher::Sha256(sha256) => sha2::Digest::update(sha256, bytes),
             }
         }
 
@@ -66,28 +56,15 @@ pub(super) mod _impl {
         pub fn try_finalize(self) -> Result<crate::ObjectId, Error> {
             match self {
                 #[cfg(feature = "sha1")]
-                Hasher::Sha1(sha1) => match sha1.try_finalize() {
-                    CollisionResult::Ok(digest) => Ok(crate::ObjectId::Sha1(digest.into())),
-                    CollisionResult::Mitigated(_) => {
-                        // SAFETY: `CollisionResult::Mitigated` is only
-                        // returned when `safe_hash()` is on. `Hasher`’s field
-                        // is private, and we only construct the SHA-1 variant
-                        // via `Hasher::new_sha1()` (and thus through `hasher()`),
-                        // which configures the builder with `safe_hash(false)`.
-                        //
-                        // As of Rust 1.84.1, the compiler can’t figure out
-                        // this function cannot panic without this.
-                        #[allow(unsafe_code)]
-                        unsafe {
-                            std::hint::unreachable_unchecked()
-                        }
-                    }
-                    CollisionResult::Collision(digest) => Err(Error::CollisionAttack {
-                        digest: crate::ObjectId::Sha1(digest.into()),
-                    }),
+                Hasher::Sha1(sha1) => match sha1.finalize() {
+                    Ok(digest) => Ok(crate::ObjectId::Sha1(digest.into())),
+                    Err(collision) => Err(Error::new(format!(
+                        "Detected SHA-1 collision attack with digest {}",
+                        crate::ObjectId::Sha1(collision.digest().into())
+                    ))),
                 },
                 #[cfg(feature = "sha256")]
-                Hasher::Sha256(sha256) => Ok(crate::ObjectId::Sha256(sha256.finalize().into())),
+                Hasher::Sha256(sha256) => Ok(crate::ObjectId::Sha256(sha2::Digest::finalize(sha256).into())),
             }
         }
     }

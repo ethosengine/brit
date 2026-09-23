@@ -1,15 +1,15 @@
 #![allow(clippy::result_large_err)]
 
-use super::{util, Error};
+use super::{Error, util};
 use crate::config::{
     cache::util::{ApplyLeniency, ApplyLeniencyDefaultValue},
-    tree::{gitoxide, Core, Extensions},
+    tree::{Core, Extensions, gitoxide},
 };
 
 /// A utility to deal with the cyclic dependency between the ref store and the configuration. The ref-store needs the
 /// object hash kind, and the configuration needs the current branch name to resolve conditional includes with `onbranch`.
 pub(crate) struct StageOne {
-    pub git_dir_config: gix_config::File<'static>,
+    pub git_dir_config: gix_config::File,
     pub buf: Vec<u8>,
 
     pub is_bare: Option<bool>,
@@ -40,20 +40,16 @@ impl StageOne {
         )?;
 
         let is_bare = util::config_bool_opt(&config, &Core::BARE, "core.bare", lenient)?;
-        let repo_format_version = config
-            .integer("core.repositoryFormatVersion")
-            .map(|version| Core::REPOSITORY_FORMAT_VERSION.try_into_usize(version))
-            .transpose()?
+        let repo_format_version = Core::REPOSITORY_FORMAT_VERSION
+            .try_into_usize(config.integer("core.repositoryFormatVersion"))?
             .unwrap_or_default();
-        let object_hash = (repo_format_version != 1)
-            .then_some(Ok(gix_hash::Kind::Sha1))
-            .or_else(|| {
-                config
-                    .string(Extensions::OBJECT_FORMAT)
-                    .map(|format| Extensions::OBJECT_FORMAT.try_into_object_format(format))
-            })
-            .transpose()?
-            .unwrap_or(gix_hash::Kind::Sha1);
+        let object_hash = match (repo_format_version, config.string(Extensions::OBJECT_FORMAT)) {
+            // objectFormat is a repository format version 1 extension.
+            (1, Some(format)) => Extensions::OBJECT_FORMAT.try_into_object_format(format)?,
+            (0, Some(_)) => return Err(Error::ObjectFormatRequiresV1),
+            (0 | 1, None) => legacy_object_hash()?,
+            (version, _) => return Err(Error::UnsupportedRepositoryFormatVersion { version }),
+        };
 
         let extension_worktree = util::config_bool(
             &config,
@@ -71,24 +67,19 @@ impl StageOne {
                 lossy,
                 lenient,
             )?;
-            config.append(worktree_config);
+            config.append(worktree_config)?;
         }
-        let precompose_unicode = config
-            .boolean(Core::PRECOMPOSE_UNICODE)
-            .map(|v| Core::PRECOMPOSE_UNICODE.enrich_error(v))
-            .transpose()
+        let precompose_unicode = Core::PRECOMPOSE_UNICODE
+            .enrich_error(config.boolean(Core::PRECOMPOSE_UNICODE))
             .with_leniency(lenient)
             .map_err(Error::ConfigBoolean)?
             .unwrap_or_default();
 
         const IS_WINDOWS: bool = cfg!(windows);
         let protect_windows = gitoxide::Core::PROTECT_WINDOWS
-            .enrich_error(
-                config
-                    .boolean(gitoxide::Core::PROTECT_WINDOWS)
-                    .unwrap_or(Ok(IS_WINDOWS)),
-            )
-            .with_lenient_default_value(lenient, IS_WINDOWS)?;
+            .enrich_error(config.boolean(gitoxide::Core::PROTECT_WINDOWS))
+            .with_lenient_default_value(lenient, Some(IS_WINDOWS))?
+            .unwrap_or(IS_WINDOWS);
 
         let reflog = util::query_refupdates(&config, lenient)?;
         Ok(StageOne {
@@ -104,6 +95,22 @@ impl StageOne {
     }
 }
 
+/// Return the object hash for a repository that does not set `extensions.objectFormat`.
+///
+/// Git interprets a missing objectFormat as the original Sha1 layout, so we return
+/// gix_hash::Kind::Sha1 whenever this build can handle it.
+/// In Sha256-only builds we cannot open such a repository, so return an error instead.
+fn legacy_object_hash() -> Result<gix_hash::Kind, Error> {
+    #[cfg(feature = "sha1")]
+    {
+        Ok(gix_hash::Kind::Sha1)
+    }
+    #[cfg(not(feature = "sha1"))]
+    {
+        Err(Error::UnsupportedObjectFormat { name: "sha1".into() })
+    }
+}
+
 fn load_config(
     config_path: std::path::PathBuf,
     buf: &mut Vec<u8>,
@@ -111,7 +118,7 @@ fn load_config(
     git_dir_trust: gix_sec::Trust,
     lossy: bool,
     lenient: bool,
-) -> Result<gix_config::File<'static>, Error> {
+) -> Result<gix_config::File, Error> {
     let metadata = gix_config::file::Metadata::from(source)
         .at(&config_path)
         .with(git_dir_trust);

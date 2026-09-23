@@ -47,17 +47,18 @@
     doc = ::document_features::document_features!()
 )]
 #![cfg_attr(all(doc, feature = "document-features"), feature(doc_cfg))]
-#![deny(missing_docs, rust_2018_idioms, unsafe_code)]
+#![deny(missing_docs, unsafe_code)]
 
 use std::{
     cell::RefCell,
     path::PathBuf,
-    sync::{atomic::AtomicUsize, Arc},
+    sync::{Arc, atomic::AtomicUsize},
 };
 
 use arc_swap::ArcSwap;
-use gix_features::{threading::OwnShared, zlib::stream::deflate};
+use gix_features::threading::OwnShared;
 pub use gix_pack as pack;
+use gix_zlib::stream::deflate;
 
 mod store_impls;
 pub use store_impls::{dynamic as store, loose};
@@ -168,19 +169,26 @@ pub struct Store {
     use_multi_pack_index: bool,
     /// The hash kind to use for some operations
     object_hash: gix_hash::Kind,
+    /// The maximum size of a single allocation caused by user-controlled on-disk pack data.
+    alloc_limit_bytes: Option<usize>,
+    /// The compression level to use when writing loose objects.
+    loose_compression: gix_zlib::Compression,
 }
 
 /// Create a new cached handle to the object store with support for additional options.
 ///
+/// `object_hash` is the hash of contained objects and the hash used when writing objects.
 /// `replacements` is an iterator over pairs of old and new object ids for replacement support.
 /// This means that when asking for object `X`, one will receive object `X-replaced` given an iterator like `Some((X, X-replaced))`.
 pub fn at_opts(
     objects_dir: impl Into<PathBuf>,
+    object_hash: gix_hash::Kind,
     replacements: impl IntoIterator<Item = (gix_hash::ObjectId, gix_hash::ObjectId)>,
     options: store::init::Options,
 ) -> std::io::Result<Handle> {
     let handle = OwnShared::new(Store::at_opts(
         objects_dir.into(),
+        object_hash,
         &mut replacements.into_iter(),
         options,
     )?)
@@ -188,7 +196,8 @@ pub fn at_opts(
     Ok(Cache::from(handle))
 }
 
-/// Create a new cached handle to the object store.
-pub fn at(objects_dir: impl Into<PathBuf>) -> std::io::Result<Handle> {
-    at_opts(objects_dir, Vec::new(), Default::default())
+/// Create a new cached handle to the object store with `.git/objects` provided in `objects_dir`,
+/// with `object_hash` as the hash of contained objects to write.
+pub fn at(objects_dir: impl Into<PathBuf>, object_hash: gix_hash::Kind) -> std::io::Result<Handle> {
+    at_opts(objects_dir, object_hash, None, store::init::Options::default())
 }

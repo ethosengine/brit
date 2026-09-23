@@ -1,7 +1,7 @@
 use std::{collections::HashSet, io::Write, str::FromStr};
 
 use bstr::{BStr, BString, ByteVec};
-use gix_packetline::blocking_io::{encode, StreamingPeekableIter, Writer};
+use gix_packetline::blocking_io::{StreamingPeekableIter, Writer, encode};
 
 use crate::driver::{
     process,
@@ -12,7 +12,7 @@ use crate::driver::{
 pub mod handshake {
     /// The error returned by [Client::handshake()][super::Client::handshake()].
     #[derive(Debug, thiserror::Error)]
-    #[allow(missing_docs)]
+    #[expect(missing_docs)]
     pub enum Error {
         #[error("Failed to read or write to the process")]
         Io(#[from] std::io::Error),
@@ -27,7 +27,7 @@ pub mod handshake {
 pub mod invoke {
     /// The error returned by [Client::invoke()][super::Client::invoke()].
     #[derive(Debug, thiserror::Error)]
-    #[allow(missing_docs)]
+    #[expect(missing_docs)]
     pub enum Error {
         #[error("Failed to read or write to the process")]
         Io(#[from] std::io::Error),
@@ -37,7 +37,7 @@ pub mod invoke {
     pub mod without_content {
         /// The error returned by [Client::invoke_without_content()][super::super::Client::invoke_without_content()].
         #[derive(Debug, thiserror::Error)]
-        #[allow(missing_docs)]
+        #[expect(missing_docs)]
         pub enum Error {
             #[error("Failed to read or write to the process")]
             Io(#[from] std::io::Error),
@@ -92,23 +92,20 @@ impl Client {
             });
         }
 
-        let chosen_version;
         buf.clear();
         read.read_line_to_string(&mut buf)?;
-        match buf
+        let chosen_version = match buf
             .strip_prefix("version=")
             .and_then(|version| usize::from_str(version.trim_end()).ok())
         {
-            Some(version) => {
-                chosen_version = version;
-            }
+            Some(version) => version,
             None => {
                 return Err(handshake::Error::Protocol {
                     msg: "Needed 'version=<integer>', got ".into(),
                     actual: buf,
-                })
+                });
             }
-        }
+        };
 
         if !versions.contains(&chosen_version) {
             return Err(handshake::Error::Protocol {

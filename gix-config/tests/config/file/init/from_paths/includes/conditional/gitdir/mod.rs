@@ -2,7 +2,7 @@ mod util;
 
 use gix_testtools::Env;
 use serial_test::serial;
-use util::{assert_section_value, Condition, GitEnv};
+use util::{Condition, GitEnv, assert_section_value};
 
 use crate::file::init::from_paths::escape_backslashes;
 
@@ -28,6 +28,61 @@ fn relative_path_without_trailing_slash_and_dot_git_suffix_matches() -> crate::R
 fn tilde_slash_expands_the_current_user_home() -> crate::Result {
     let env = GitEnv::repo_name(std::path::Path::new("subdir").join("worktree"))?;
     assert_section_value(Condition::new("gitdir:~/subdir/worktree/"), env)
+}
+
+#[test]
+fn failed_user_expansion_matches_the_literal_pattern() -> crate::Result {
+    let temp = gix_testtools::tempfile::tempdir()?;
+    let name = format!(
+        "~gix-config-{}",
+        temp.path()
+            .file_name()
+            .expect("temporary directory has a name")
+            .to_string_lossy()
+    );
+    let git_dir = temp.path().join(&name);
+    super::git_init(&git_dir, true)?;
+    std::fs::write(git_dir.join("included.config"), "[section]\nvalue = included\n")?;
+    for condition in ["gitdir", "gitdir/i"] {
+        std::fs::write(
+            git_dir.join("config"),
+            format!(
+                r#"[core]
+bare = true
+[includeIf "{condition}:{name}"]
+path = included.config
+"#
+            ),
+        )?;
+        assert_eq!(
+            gix_testtools::git(&git_dir, "config --get section.value")?.trim_end(),
+            "included",
+            "Git matches the literal directory name when user expansion fails"
+        );
+        for strict in [false, true] {
+            let mut options = super::options_with_git_dir(&git_dir);
+            options.includes.interpolate.home_for_user = Some(|_| None);
+            options.includes.err_on_interpolation_failure = strict;
+            let result = gix_config::File::from_paths_metadata(
+                Some(gix_config::file::Metadata::try_from_path(
+                    git_dir.join("config"),
+                    gix_config::Source::Local,
+                )?),
+                options,
+            );
+            if strict {
+                assert!(result.is_err(), "strict mode still reports the failed lookup");
+            } else {
+                let config = result?.expect("the repository config exists");
+                assert_eq!(
+                    config.string("section.value"),
+                    Some(crate::file::bstring("included")),
+                    "{condition} preserves the original pattern when the user is unknown"
+                );
+            }
+        }
+    }
+    Ok(())
 }
 
 #[test]
@@ -88,15 +143,15 @@ fn dot_slash_path_is_replaced_with_directory_containing_the_including_config_fil
 #[test]
 #[serial]
 fn dot_slash_from_environment_causes_error() -> crate::Result {
+    let _isolated_environment = gix_testtools::isolate_git_environment()?;
     let env = GitEnv::repo_name("worktree")?;
+    // Only slashes can be used as matches, even on Windows.
+    let git_dir = env.git_dir().to_string_lossy().replace('\\', "/");
 
     {
         let _environment = Env::new()
             .set("GIT_CONFIG_COUNT", "1")
-            .set(
-                "GIT_CONFIG_KEY_0",
-                format!("includeIf.gitdir:{}.path", escape_backslashes(env.git_dir())),
-            )
+            .set("GIT_CONFIG_KEY_0", format!("includeIf.gitdir:{git_dir}.path"))
             .set("GIT_CONFIG_VALUE_0", "./include.path");
 
         let res = gix_config::File::from_env(env.to_init_options());
@@ -133,10 +188,7 @@ fn dot_slash_from_environment_causes_error() -> crate::Result {
     {
         let _environment = Env::new()
             .set("GIT_CONFIG_COUNT", "1")
-            .set(
-                "GIT_CONFIG_KEY_0",
-                format!("includeIf.gitdir:{}.path", escape_backslashes(env.git_dir())),
-            )
+            .set("GIT_CONFIG_KEY_0", format!("includeIf.gitdir:{git_dir}.path"))
             .set("GIT_CONFIG_VALUE_0", absolute_path);
 
         let res = gix_config::File::from_env(env.to_init_options());
@@ -245,9 +297,5 @@ fn dot_path_matching_symlink_with_icase() -> crate::Result {
 }
 
 fn original_value_on_windows(c: Condition) -> Condition {
-    if cfg!(windows) {
-        c.expect_original_value()
-    } else {
-        c
-    }
+    if cfg!(windows) { c.expect_original_value() } else { c }
 }

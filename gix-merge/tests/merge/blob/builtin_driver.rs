@@ -1,7 +1,6 @@
 use gix_merge::blob::{
-    builtin_driver,
+    Resolution, builtin_driver,
     builtin_driver::binary::{Pick, ResolveWith},
-    Resolution,
 };
 
 #[test]
@@ -27,16 +26,14 @@ fn binary() {
 }
 
 mod text {
-    use std::num::NonZero;
-
     use arbitrary::Arbitrary;
     use bstr::ByteSlice;
     use gix_merge::blob::{
-        builtin_driver,
-        builtin_driver::text::{Conflict, ConflictStyle},
-        Resolution,
+        Resolution, builtin_driver,
+        builtin_driver::text::{self, Conflict, ConflictStyle},
     };
     use pretty_assertions::assert_str_eq;
+    use std::num::NonZero;
 
     const DIVERGING: &[&str] = &[
         // Somehow, on in zdiff mode, it's different, and I wasn't able to figure out the rule properly.
@@ -143,74 +140,64 @@ mod text {
         }
     }
 
-    /// This test reproduces what the fuzzer does, allowing it to accept `Arbitrary` input produced by the fuzzer.
-    #[test]
-    fn clusterfuzz_timeout_regression() {
-        #[derive(Debug, Arbitrary)]
-        struct FuzzCtx<'a> {
-            base: &'a [u8],
-            ours: &'a [u8],
-            theirs: &'a [u8],
-            marker_size: NonZero<u8>,
-        }
-        fn run_fuzz_case(ours: &[u8], base: &[u8], theirs: &[u8], marker_size: NonZero<u8>) {
-            let mut out = Vec::new();
-            let mut input = imara_diff::InternedInput::default();
-            for diff_algorithm in [
-                imara_diff::Algorithm::Histogram,
-                imara_diff::Algorithm::Myers,
-                imara_diff::Algorithm::MyersMinimal,
-            ] {
-                let mut options = builtin_driver::text::Options {
-                    diff_algorithm,
-                    conflict: Default::default(),
-                };
-                for (left, right) in [(ours, theirs), (theirs, ours)] {
-                    let resolution = gix_merge::blob::builtin_driver::text(
-                        &mut out,
-                        &mut input,
-                        Default::default(),
-                        left,
-                        base,
-                        right,
-                        options,
-                    );
-                    if resolution == Resolution::Conflict {
-                        for conflict in [
-                            Conflict::ResolveWithOurs,
-                            Conflict::ResolveWithTheirs,
-                            Conflict::ResolveWithUnion,
-                            Conflict::Keep {
-                                style: ConflictStyle::Diff3,
-                                marker_size,
-                            },
-                            Conflict::Keep {
-                                style: ConflictStyle::ZealousDiff3,
-                                marker_size,
-                            },
-                        ] {
-                            options.conflict = conflict;
-                            gix_merge::blob::builtin_driver::text(
-                                &mut out,
-                                &mut input,
-                                Default::default(),
-                                left,
-                                base,
-                                right,
-                                options,
-                            );
-                        }
-                    }
+    #[derive(Debug, Arbitrary)]
+    struct FuzzCtx<'a> {
+        base: &'a [u8],
+        ours: &'a [u8],
+        theirs: &'a [u8],
+        marker_size: NonZero<u8>,
+    }
+
+    fn run_fuzz_case(ours: &[u8], base: &[u8], theirs: &[u8], marker_size: NonZero<u8>) {
+        let mut out = Vec::new();
+        let mut input = imara_diff::InternedInput::default();
+        // Keep this in sync with the fuzz target. Histogram remains enabled here because it is the
+        // diff algorithm we fuzz through gix-merge itself. Myers-family algorithms have
+        // pathological cases that are expensive enough under fuzz instrumentation to turn the
+        // target into a timeout reproducer for the diff backend instead of a useful gix-merge
+        // fuzz harness.
+        for (left, right) in [(ours, theirs), (theirs, ours)] {
+            input.clear();
+            let merge = text::Merge::new(&mut input, left, base, right, imara_diff::Algorithm::Histogram);
+            let resolution = merge.run(&mut out, Default::default(), Conflict::default());
+            if resolution == Resolution::Conflict {
+                for conflict in [
+                    Conflict::ResolveWithOurs,
+                    Conflict::ResolveWithTheirs,
+                    Conflict::ResolveWithUnion,
+                    Conflict::Keep {
+                        style: ConflictStyle::Diff3,
+                        marker_size,
+                    },
+                    Conflict::Keep {
+                        style: ConflictStyle::ZealousDiff3,
+                        marker_size,
+                    },
+                ] {
+                    merge.run(&mut out, Default::default(), conflict);
                 }
             }
         }
+    }
 
-        let ctx = FuzzCtx::arbitrary(&mut arbitrary::Unstructured::new(include_bytes!(
-            "../../fixtures/clusterfuzz-testcase-minimized-gix-merge-blob-6377298803884032"
-        )))
-        .expect("testcase matches the historical fuzz target input layout");
-
-        run_fuzz_case(ctx.ours, ctx.base, ctx.theirs, ctx.marker_size);
+    #[test]
+    fn clusterfuzz_timeout_regression() {
+        for (name, data) in [
+            (
+                "clusterfuzz-testcase-minimized-gix-merge-blob-6377298803884032",
+                include_bytes!("../../fixtures/clusterfuzz-testcase-minimized-gix-merge-blob-6377298803884032")
+                    .as_slice(),
+            ),
+            (
+                "clusterfuzz-testcase-minimized-gix-merge-blob-5577413097750528",
+                include_bytes!("../../fixtures/clusterfuzz-testcase-minimized-gix-merge-blob-5577413097750528")
+                    .as_slice(),
+            ),
+        ] {
+            let ctx = FuzzCtx::arbitrary(&mut arbitrary::Unstructured::new(data))
+                .unwrap_or_else(|_| panic!("{name}: testcase matches the historical fuzz target input layout"));
+            run_fuzz_case(ctx.ours, ctx.base, ctx.theirs, ctx.marker_size);
+        }
     }
 
     #[test]
@@ -370,8 +357,76 @@ mod text {
         }
     }
 
+    #[test]
+    fn adjacent_changes_conflict_while_changes_with_a_gap_merge_cleanly() {
+        let base = b"one\ntwo\nthree\nfour\nfive\n";
+        let ours = b"one\ntwo-ours\nthree\nfour\nfive\n";
+        let adjacent_theirs = b"one\ntwo\nthree-theirs\nfour\nfive\n";
+        let separated_theirs = b"one\ntwo\nthree\nfour-theirs\nfive\n";
+        let labels = text::Labels {
+            ancestor: Some("base".into()),
+            current: Some("current".into()),
+            other: Some("other".into()),
+        };
+        let options = text::Options {
+            conflict: Conflict::Keep {
+                style: ConflictStyle::Merge,
+                marker_size: NonZero::new(7).expect("seven is non-zero"),
+            },
+            ..Default::default()
+        };
+
+        for (name, current, other, expected) in [
+            (
+                "ours then theirs",
+                ours.as_slice(),
+                adjacent_theirs.as_slice(),
+                "one\n<<<<<<< current\ntwo-ours\nthree\n=======\ntwo\nthree-theirs\n>>>>>>> other\nfour\nfive\n",
+            ),
+            (
+                "theirs then ours",
+                adjacent_theirs.as_slice(),
+                ours.as_slice(),
+                "one\n<<<<<<< current\ntwo\nthree-theirs\n=======\ntwo-ours\nthree\n>>>>>>> other\nfour\nfive\n",
+            ),
+        ] {
+            let mut out = Vec::new();
+            let mut input = imara_diff::InternedInput::default();
+            let resolution = builtin_driver::text(&mut out, &mut input, labels, current, base, other, options);
+            assert_eq!(
+                resolution,
+                Resolution::Conflict,
+                "{name}: adjacent changes must conflict because no unchanged base line separates them"
+            );
+            assert_str_eq!(
+                out.as_bstr().to_str_lossy(),
+                expected,
+                "{name}: adjacent changes must be rendered as one conflict"
+            );
+        }
+
+        for (name, current, other) in [
+            ("ours then theirs", ours.as_slice(), separated_theirs.as_slice()),
+            ("theirs then ours", separated_theirs.as_slice(), ours.as_slice()),
+        ] {
+            let mut out = Vec::new();
+            let mut input = imara_diff::InternedInput::default();
+            let resolution = builtin_driver::text(&mut out, &mut input, labels, current, base, other, options);
+            assert_eq!(
+                resolution,
+                Resolution::Complete,
+                "{name}: changes separated by an unchanged base line must merge independently"
+            );
+            assert_str_eq!(
+                out.as_bstr().to_str_lossy(),
+                "one\ntwo-ours\nthree\nfour-theirs\nfive\n",
+                "{name}: a gap between changes must preserve both edits without conflict markers"
+            );
+        }
+    }
+
     mod false_conflict {
-        use gix_merge::blob::{builtin_driver, builtin_driver::text::Conflict, Resolution};
+        use gix_merge::blob::{Resolution, builtin_driver, builtin_driver::text::Conflict};
         use imara_diff::InternedInput;
 
         /// Minimal reproduction: Myers produces a false conflict where git merge-file resolves cleanly.

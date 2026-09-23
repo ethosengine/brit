@@ -13,7 +13,7 @@ pub mod integrity {
 
     /// Returned by [`index::File::verify_integrity()`][crate::index::File::verify_integrity()].
     #[derive(thiserror::Error, Debug)]
-    #[allow(missing_docs)]
+    #[expect(missing_docs)]
     pub enum Error {
         #[error("Reserialization of an object failed")]
         Io(#[from] std::io::Error),
@@ -108,15 +108,18 @@ pub enum Mode {
 }
 
 /// Information to allow verifying the integrity of an index with the help of its corresponding pack.
-pub struct PackContext<'a, F> {
+pub struct PackContext<'a, F, D = crate::MMap> {
     /// The pack data file itself.
-    pub data: &'a crate::data::File,
+    pub data: &'a crate::data::File<D>,
     /// The options further configuring the pack traversal and verification
     pub options: integrity::Options<F>,
 }
 
 /// Verify and validate the content of the index file
-impl index::File {
+impl<T> index::File<T>
+where
+    T: crate::FileData + Sync,
+{
     /// Returns the trailing hash stored at the end of this index file.
     ///
     /// It's a hash over all bytes of the index.
@@ -166,15 +169,16 @@ impl index::File {
     ///
     /// The given `progress` is inevitably consumed if there is an error, which is a tradeoff chosen to easily allow using `?` in the
     /// error case.
-    pub fn verify_integrity<C, F>(
+    pub fn verify_integrity<C, F, D>(
         &self,
-        pack: Option<PackContext<'_, F>>,
+        pack: Option<PackContext<'_, F, D>>,
         progress: &mut dyn DynNestedProgress,
         should_interrupt: &AtomicBool,
     ) -> Result<integrity::Outcome, index::traverse::Error<index::verify::integrity::Error>>
     where
         C: crate::cache::DecodeEntry,
         F: Fn() -> C + Send + Clone,
+        D: crate::FileData + Send + Sync,
     {
         if let Some(first_invalid) = crate::verify::fan(&self.fan) {
             return Err(index::traverse::Error::Processor(integrity::Error::Fan {
@@ -207,6 +211,7 @@ impl index::File {
                         traversal,
                         thread_limit,
                         check: index::traverse::SafetyCheck::All,
+                        alloc_limit_bytes: pack.alloc_limit_bytes,
                         make_pack_lookup_cache,
                     },
                 )
@@ -217,7 +222,7 @@ impl index::File {
             None => self
                 .verify_checksum(
                     &mut progress
-                        .add_child_with_id("Sha1 of index".into(), integrity::ProgressId::ChecksumBytes.into()),
+                        .add_child_with_id("checksum of index".into(), integrity::ProgressId::ChecksumBytes.into()),
                     should_interrupt,
                 )
                 .map_err(index::traverse::Error::IndexVerify)
@@ -228,7 +233,6 @@ impl index::File {
         }
     }
 
-    #[allow(clippy::too_many_arguments)]
     fn verify_entry(
         verify_mode: Mode,
         encode_buf: &mut Vec<u8>,

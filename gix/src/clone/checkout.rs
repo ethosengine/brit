@@ -1,14 +1,14 @@
-use crate::{clone::PrepareCheckout, Repository};
+use crate::{Repository, clone::PrepareCheckout};
 
 ///
 pub mod main_worktree {
     use std::{path::PathBuf, sync::atomic::AtomicBool};
 
-    use crate::{clone::PrepareCheckout, Progress, Repository};
+    use crate::{Progress, Repository, clone::PrepareCheckout};
 
     /// The error returned by [`PrepareCheckout::main_worktree()`].
     #[derive(Debug, thiserror::Error)]
-    #[allow(missing_docs)]
+    #[expect(missing_docs)]
     pub enum Error {
         #[error("Repository at \"{}\" is a bare repository and cannot have a main worktree checkout", git_dir.display())]
         BareRepository { git_dir: PathBuf },
@@ -171,7 +171,7 @@ impl PrepareCheckout {
 impl Drop for PrepareCheckout {
     fn drop(&mut self) {
         if let Some(repo) = self.repo.take() {
-            std::fs::remove_dir_all(repo.workdir().unwrap_or_else(|| repo.path())).ok();
+            super::cleanup_clone_destination_on_drop(&repo, self.remove_worktree_on_drop);
         }
     }
 }

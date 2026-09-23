@@ -1,21 +1,21 @@
+use crate::bisync::bisync;
 use gix_features::{progress, progress::Progress};
-use gix_transport::{client, Service};
-use maybe_async::maybe_async;
+use gix_transport::{Service, client};
 
 use super::Error;
-#[cfg(feature = "async-client")]
+use crate::Handshake;
+#[crate::bisync::only_async]
 use crate::transport::client::async_io::{SetServiceResponse, Transport};
-#[cfg(feature = "blocking-client")]
+#[crate::bisync::only_sync]
 use crate::transport::client::blocking_io::{SetServiceResponse, Transport};
-use crate::{credentials, handshake::refs, Handshake};
+use crate::{credentials, handshake::refs};
 
 /// Perform a handshake with the server on the other side of `transport`, with `authenticate` being used if authentication
 /// turns out to be required. `extra_parameters` are the parameters `(name, optional value)` to add to the handshake,
 /// each time it is performed in case authentication is required.
 /// `progress` is used to inform about what's currently happening.
 /// The `service` tells the server whether to be in 'send' or 'receive' mode.
-#[allow(clippy::result_large_err)]
-#[maybe_async]
+#[bisync]
 pub async fn handshake<AuthFn, T>(
     mut transport: T,
     service: Service,
@@ -47,12 +47,21 @@ where
         } = match result {
             Ok(v) => Ok(v),
             Err(client::Error::Io(ref err)) if err.kind() == std::io::ErrorKind::PermissionDenied => {
+                let www_authenticate = err
+                    .get_ref()
+                    .and_then(|err| err.downcast_ref::<client::AuthenticationRequired>())
+                    .map(|err| err.www_authenticate.clone())
+                    .unwrap_or_default();
                 drop(result); // needed to workaround this: https://github.com/rust-lang/rust/issues/76149
                 let url = transport.to_url().into_owned();
                 progress.set_name("authentication".into());
                 let credentials::protocol::Outcome { identity, next } =
-                    authenticate(credentials::helper::Action::get_for_url(url.clone()))?
-                        .ok_or(Error::EmptyCredentials)?;
+                    authenticate(credentials::helper::Action::Get(credentials::protocol::Context {
+                        url: Some(url.clone()),
+                        www_authenticate,
+                        ..Default::default()
+                    }))?
+                    .ok_or(Error::EmptyCredentials)?;
                 transport.set_identity(identity)?;
                 progress.step();
                 progress.set_name("handshake (authenticated)".into());

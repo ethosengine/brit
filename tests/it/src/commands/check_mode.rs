@@ -3,12 +3,12 @@ pub(super) mod function {
         ffi::{OsStr, OsString},
         io::{BufRead, BufReader, Read},
         process::{Command, Stdio},
-        sync::LazyLock,
     };
 
-    use anyhow::{bail, Context};
+    use anyhow::{Context, bail};
     use gix::bstr::ByteSlice;
     use regex::bytes::Regex;
+    use std::sync::LazyLock;
 
     pub fn check_mode() -> anyhow::Result<()> {
         let root = find_root()?;
@@ -38,7 +38,7 @@ pub(super) mod function {
 
     /// Find the top-level directory of the current repository working tree.
     fn find_root() -> anyhow::Result<OsString> {
-        let output = Command::new(gix::path::env::exe_invocation())
+        let output = gix_testtools::git_command(std::env::current_dir()?)
             .args(["rev-parse", "--show-toplevel"])
             .output()
             .context("Can't run `git` to find worktree root")?;
@@ -62,7 +62,7 @@ pub(super) mod function {
     /// where `git -C` will be able to use it, without alteration, regardless of the platform.
     /// (Otherwise, it may be preferable to set `root` as the `cwd` of the `git` process instead.)
     fn git_on(root: &OsStr) -> Command {
-        let mut cmd = Command::new(gix::path::env::exe_invocation());
+        let mut cmd = gix_testtools::git_command(".");
         cmd.arg("-C").arg(root);
         cmd
     }
@@ -83,9 +83,10 @@ pub(super) mod function {
             .to_os_str()
             .expect("oid field verified as hex digits, should be valid OsStr");
         let path = fields.get(3).expect("match should get path").as_bytes().as_bstr();
+        let is_in_fuzz_dir = path.split_str("/").any(|component| component == b"fuzz");
 
         match mode {
-            b"100644" if blob_has_shebang(root, oid)? => {
+            b"100644" if !is_in_fuzz_dir && blob_has_shebang(root, oid)? => {
                 println!("mode -x but has shebang: {path:?}");
                 Ok(true)
             }

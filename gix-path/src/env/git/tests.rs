@@ -3,14 +3,13 @@ use std::path::Path;
 #[cfg(windows)]
 mod locations {
     use std::{
-        ffi::{c_void, OsStr, OsString},
+        ffi::{OsStr, OsString, c_void},
         io::ErrorKind,
         os::windows::ffi::OsStringExt,
         path::{Path, PathBuf},
     };
 
     use windows::{
-        core::{Result as WindowsResult, BOOL, GUID, PWSTR},
         Win32::{
             System::{
                 Com::CoTaskMemFree,
@@ -18,13 +17,14 @@ mod locations {
             },
             UI::Shell::{
                 FOLDERID_LocalAppData, FOLDERID_ProgramFiles, FOLDERID_ProgramFilesX86, FOLDERID_UserProgramFiles,
-                SHGetKnownFolderPath, KF_FLAG_DEFAULT, KF_FLAG_DONT_VERIFY, KNOWN_FOLDER_FLAG,
+                KF_FLAG_DEFAULT, KF_FLAG_DONT_VERIFY, KNOWN_FOLDER_FLAG, SHGetKnownFolderPath,
             },
         },
+        core::{BOOL, GUID, PWSTR, Result as WindowsResult},
     };
     use winreg::{
-        enums::{HKEY_LOCAL_MACHINE, KEY_QUERY_VALUE},
         RegKey,
+        enums::{HKEY_LOCAL_MACHINE, KEY_QUERY_VALUE},
     };
 
     macro_rules! var_os_stub {
@@ -740,12 +740,110 @@ mod locations {
 }
 
 mod exe_info {
-    use std::path::{Path, PathBuf};
+    use bstr::ByteSlice;
+    use std::{
+        ffi::{OsStr, OsString},
+        path::{Path, PathBuf},
+    };
 
-    use gix_testtools::tempfile;
     use serial_test::serial;
 
-    use crate::env::git::{exe_info, NULL_DEVICE};
+    #[cfg(unix)]
+    use crate::env::git::{ConfigPaths, config_paths_from_executable_at};
+    use crate::env::{
+        git::{NULL_DEVICE, config_paths_from_executable},
+        tests::CurrentDir,
+    };
+
+    fn exe_info() -> Option<bstr::BString> {
+        config_paths_from_executable().installation
+    }
+
+    #[cfg(unix)]
+    fn fake_git(script: &str) -> (tempfile::TempDir, PathBuf) {
+        use std::os::unix::fs::PermissionsExt;
+
+        let tempdir = tempfile::tempdir().expect("can create fake Git directory");
+        let executable = tempdir.path().join("git");
+        std::fs::write(&executable, script).expect("can write fake Git");
+        let mut permissions = std::fs::metadata(&executable)
+            .expect("fake Git has metadata")
+            .permissions();
+        permissions.set_mode(0o755);
+        std::fs::set_permissions(&executable, permissions).expect("can make fake Git executable");
+        (tempdir, executable)
+    }
+
+    #[cfg(unix)]
+    fn invocations(executable: &Path) -> Vec<String> {
+        std::fs::read_to_string(executable.with_extension("log"))
+            .expect("invocation log exists")
+            .lines()
+            .map(ToOwned::to_owned)
+            .collect()
+    }
+
+    /// This is a copy from the respective type in `gix-testtools` - deduplicate if it can ever be a dependency again.
+    struct Env(Vec<(OsString, Option<OsString>)>);
+
+    impl Env {
+        fn new() -> Self {
+            Env(Vec::new())
+        }
+
+        fn set(mut self, key: impl AsRef<OsStr>, value: impl AsRef<OsStr>) -> Self {
+            let key = key.as_ref().to_owned();
+            self.0.push((key.clone(), std::env::var_os(&key)));
+            // SAFETY: All tests which mutate the process environment are serialized.
+            unsafe { std::env::set_var(key, value) };
+            self
+        }
+
+        fn unset(mut self, key: impl AsRef<OsStr>) -> Self {
+            let key = key.as_ref().to_owned();
+            self.0.push((key.clone(), std::env::var_os(&key)));
+            // SAFETY: All tests which mutate the process environment are serialized.
+            unsafe { std::env::remove_var(key) };
+            self
+        }
+    }
+
+    impl Drop for Env {
+        fn drop(&mut self) {
+            for (key, value) in self.0.drain(..).rev() {
+                // SAFETY: All tests which mutate the process environment are serialized.
+                unsafe {
+                    if let Some(value) = value {
+                        std::env::set_var(key, value);
+                    } else {
+                        std::env::remove_var(key);
+                    }
+                }
+            }
+        }
+    }
+
+    fn local_config_repo() -> tempfile::TempDir {
+        let repo = tempfile::tempdir().expect("can create repository directory");
+        initialize_repo_without_git(repo.path());
+        repo
+    }
+
+    /// Create just enough repository metadata for Git to discover its local configuration.
+    ///
+    /// This fixture is written directly so its setup remains independent of the ambient and
+    /// repository-local Git configuration whose influence the test is meant to detect.
+    fn initialize_repo_without_git(repo: &Path) {
+        let git_dir = repo.join(".git");
+        std::fs::create_dir_all(git_dir.join("objects")).expect("can create object directory");
+        std::fs::create_dir_all(git_dir.join("refs")).expect("can create references directory");
+        std::fs::write(git_dir.join("HEAD"), "ref: refs/heads/main\n").expect("can write repository HEAD");
+        std::fs::write(
+            git_dir.join("config"),
+            "[core]\n\trepositoryFormatVersion = 0\n\tbare = false\n[foo]\n\tbar = baz\n",
+        )
+        .expect("can write local test configuration");
+    }
 
     /// Wrapper for a valid path to a plausible location, kept from accidentally existing (until drop).
     #[derive(Debug)]
@@ -777,10 +875,10 @@ mod exe_info {
         }
     }
 
-    fn set_temp_env_vars<'a>(path: &Path) -> gix_testtools::Env<'a> {
+    fn set_temp_env_vars(path: &Path) -> Env {
         let path_str = path.to_str().expect("valid Unicode");
 
-        let env = gix_testtools::Env::new()
+        let env = Env::new()
             .set("TMPDIR", path_str) // Mainly for Unix.
             .set("TMP", path_str) // Mainly for Windows.
             .set("TEMP", path_str); // Mainly for Windows, too.
@@ -794,8 +892,8 @@ mod exe_info {
         env
     }
 
-    fn unset_windows_directory_vars<'a>() -> gix_testtools::Env<'a> {
-        gix_testtools::Env::new().unset("windir").unset("SystemRoot")
+    fn unset_windows_directory_vars() -> Env {
+        Env::new().unset("windir").unset("SystemRoot")
     }
 
     fn check_exe_info() {
@@ -803,10 +901,7 @@ mod exe_info {
             .map(crate::from_bstring)
             .expect("It is present in the test environment (nonempty config)");
 
-        assert!(
-            path.is_absolute(),
-            "It is absolute (unless overridden such as with GIT_CONFIG_SYSTEM)"
-        );
+        assert!(path.is_absolute(), "Git reports an absolute installation path");
         assert!(
             path.exists(),
             "It should exist on disk, since `git config` just found an entry there"
@@ -839,7 +934,7 @@ mod exe_info {
     #[test]
     #[serial]
     fn tolerates_git_config_env_var() {
-        let _env = gix_testtools::Env::new().set("GIT_CONFIG", NULL_DEVICE);
+        let _env = Env::new().set("GIT_CONFIG", NULL_DEVICE);
         check_exe_info();
     }
 
@@ -876,7 +971,7 @@ mod exe_info {
         let with_unmodified_env = exe_info();
 
         let with_git_config_env_var = {
-            let _env = gix_testtools::Env::new().set("GIT_CONFIG", NULL_DEVICE);
+            let _env = Env::new().set("GIT_CONFIG", NULL_DEVICE);
             exe_info()
         };
 
@@ -885,136 +980,157 @@ mod exe_info {
 
     #[test]
     #[serial]
-    #[cfg(not(target_os = "macos"))] // Assumes no higher "unknown" scope. The `nosystem` case works.
-    fn never_from_local_scope() {
-        let repo = gix_testtools::scripted_fixture_read_only("local_config.sh").expect("script succeeds");
-
-        let _cwd = gix_testtools::set_current_dir(repo).expect("can change to repo dir");
-        let _env = gix_testtools::Env::new()
-            .set("GIT_CONFIG_SYSTEM", NULL_DEVICE)
-            .set("GIT_CONFIG_GLOBAL", NULL_DEVICE);
-
-        let maybe_path = exe_info();
-        assert_eq!(
-            maybe_path, None,
-            "Should find no config path if the config would be local (empty system config)"
-        );
-    }
-
-    #[test]
-    #[serial]
-    fn never_from_local_scope_nosystem() {
-        let repo = gix_testtools::scripted_fixture_read_only("local_config.sh").expect("script succeeds");
-
-        let _cwd = gix_testtools::set_current_dir(repo).expect("can change to repo dir");
-        let _env = gix_testtools::Env::new()
+    fn configuration_query_ignores_ambient_config_and_local_repo() {
+        let expected = config_paths_from_executable();
+        let repo = local_config_repo();
+        let config_path = repo.path().join(".git").join("config");
+        let _cwd = CurrentDir::set(repo.path()).expect("can change to repo dir");
+        let _env = Env::new()
             .set("GIT_CONFIG_NOSYSTEM", "1")
-            .set("GIT_CONFIG_GLOBAL", NULL_DEVICE);
+            .set("GIT_CONFIG_SYSTEM", &config_path)
+            .set("GIT_CONFIG_GLOBAL", &config_path)
+            .set("GIT_CONFIG", &config_path)
+            .set("GIT_CONFIG_COUNT", "1")
+            .set("GIT_CONFIG_KEY_0", "include.path")
+            .set("GIT_CONFIG_VALUE_0", &config_path)
+            .set("GIT_CONFIG_PARAMETERS", "invalid");
 
-        let maybe_path = exe_info();
         assert_eq!(
-            maybe_path, None,
-            "Should find no config path if the config would be local (suppressed system config)"
+            config_paths_from_executable(),
+            expected,
+            "configuration discovery is independent of ambient overrides and repository-local configuration"
         );
     }
 
     #[test]
-    #[serial]
-    #[cfg(not(target_os = "macos"))] // Assumes no higher "unknown" scope. The `nosystem` case works.
-    fn never_from_local_scope_even_if_temp_is_here() {
-        let repo = gix_testtools::scripted_fixture_read_only("local_config.sh")
-            .expect("script succeeds")
-            .canonicalize()
-            .expect("repo path is valid and exists");
+    #[cfg(unix)]
+    fn one_scoped_query_finds_both_config_paths() {
+        let (_tempdir, executable) = fake_git(
+            r#"#!/bin/sh
+printf '%s\n' "$*" >> "${0}.log"
+printf 'unknown\000file:/installation/gitconfig\000core.one\000system\000file:/system/gitconfig\000core.two\000'
+"#,
+        );
 
-        let _cwd = gix_testtools::set_current_dir(&repo).expect("can change to repo dir");
-        let _env = set_temp_env_vars(&repo)
-            .set("GIT_CONFIG_SYSTEM", NULL_DEVICE)
-            .set("GIT_CONFIG_GLOBAL", NULL_DEVICE);
-
-        let maybe_path = exe_info();
+        let paths = config_paths_from_executable_at(executable.clone()).expect("fake Git can be queried");
         assert_eq!(
-            maybe_path, None,
-            "Should find no config path if the config would be local even in a `/tmp`-like dir (empty system config)"
+            paths,
+            ConfigPaths {
+                installation: Some("/installation/gitconfig".into()),
+                installation_is_system: false,
+                system: Some("/system/gitconfig".into()),
+            }
+        );
+        let invocations = invocations(&executable);
+        assert_eq!(
+            invocations.len(),
+            1,
+            "a successful scoped query obtains both paths in one invocation"
+        );
+        assert!(
+            invocations[0].contains("--no-includes"),
+            "included files must not be mistaken for top-level configuration paths"
         );
     }
 
     #[test]
-    #[serial]
-    fn never_from_local_scope_even_if_temp_is_here_nosystem() {
-        let repo = gix_testtools::scripted_fixture_read_only("local_config.sh")
-            .expect("script succeeds")
-            .canonicalize()
-            .expect("repo path is valid and exists");
+    #[cfg(unix)]
+    fn retries_without_scope_for_old_git() {
+        let (_tempdir, executable) = fake_git(
+            r#"#!/bin/sh
+printf '%s\n' "$*" >> "${0}.log"
+case " $* " in
+  *" --show-scope "*) exit 129 ;;
+esac
+printf 'file:/legacy/gitconfig\000core.one\000'
+"#,
+        );
 
-        let _cwd = gix_testtools::set_current_dir(&repo).expect("can change to repo dir");
-        let _env = set_temp_env_vars(&repo)
-            .set("GIT_CONFIG_NOSYSTEM", "1")
-            .set("GIT_CONFIG_GLOBAL", NULL_DEVICE);
-
-        let maybe_path = exe_info();
+        let paths = config_paths_from_executable_at(executable.clone()).expect("fake Git can be queried");
         assert_eq!(
-            maybe_path, None,
-            "Should find no config path if the config would be local even in a `/tmp`-like dir (suppressed system config)"
+            paths,
+            ConfigPaths {
+                installation: Some("/legacy/gitconfig".into()),
+                ..Default::default()
+            },
+            "the legacy query preserves installation-config discovery"
+        );
+        let invocations = invocations(&executable);
+        assert_eq!(invocations.len(), 2, "old Git is retried once");
+        assert!(
+            invocations.first().is_some_and(|line| line.contains("--show-scope")),
+            "the first query requests scopes"
+        );
+        assert!(
+            invocations.get(1).is_some_and(|line| !line.contains("--show-scope")),
+            "the fallback query omits unsupported scope reporting"
         );
     }
 
     #[test]
-    #[serial]
-    fn never_from_git_config_env_var() {
-        let repo = gix_testtools::scripted_fixture_read_only("local_config.sh").expect("script succeeds");
-
-        // Get an absolute path to a config file that is non-UNC if possible so any Git accepts it.
-        let config_path = std::env::current_dir()
-            .expect("got CWD")
-            .join(repo)
-            .join(".git")
-            .join("config")
-            .to_str()
-            .expect("valid UTF-8")
-            .to_owned();
-
-        let _env = gix_testtools::Env::new()
-            .set("GIT_CONFIG_NOSYSTEM", "1")
-            .set("GIT_CONFIG_GLOBAL", NULL_DEVICE)
-            .set("GIT_CONFIG", config_path);
-
-        let maybe_path = exe_info();
-        assert_eq!(
-            maybe_path, None,
-            "Should find no config path from GIT_CONFIG (even if nonempty)"
-        );
-    }
-
-    #[test]
-    fn first_file_from_config_with_origin() {
-        let macos =
-            "file:/Applications/Xcode.app/Contents/Developer/usr/share/git-core/gitconfig\0credential.helper\0file:/Users/byron/.gitconfig\0push.default\0";
-        let win_msys =
-            "file:C:/git-sdk-64/etc/gitconfig\0core.symlinks\0file:C:/git-sdk-64/etc/gitconfig\0core.autocrlf\0";
-        let win_cmd =
-            "file:C:/Program Files/Git/etc/gitconfig\0diff.astextplain.textconv\0file:C:/Program Files/Git/etc/gitconfig\0filter.lfs.clean\0";
-        let win_msys_old =
-            "file:C:\\ProgramData/Git/config\0diff.astextplain.textconv\0file:C:\\ProgramData/Git/config\0filter.lfs.clean\0";
-        let linux = "file:/home/parallels/.gitconfig\0core.excludesfile\0";
+    fn config_paths_from_config_with_origin() {
+        let macos = "unknown\0file:/Applications/Xcode.app/Contents/Developer/usr/share/git-core/gitconfig\0credential.helper\0global\0file:/Users/byron/.gitconfig\0push.default\0";
+        let win_msys = "system\0file:C:/git-sdk-64/etc/gitconfig\0core.symlinks\0system\0file:C:/git-sdk-64/etc/gitconfig\0core.autocrlf\0";
+        let win_cmd = "system\0file:C:/Program Files/Git/etc/gitconfig\0diff.astextplain.textconv\0system\0file:C:/Program Files/Git/etc/gitconfig\0filter.lfs.clean\0";
+        let win_cmd_with_system = "system\0file:C:/Program Files/Git/etc/gitconfig\0diff.astextplain.textconv\0system\0file:C:/ProgramData/Git/config\0core.autocrlf\0";
+        let win_msys_old = "system\0file:C:\\ProgramData/Git/config\0diff.astextplain.textconv\0system\0file:C:\\ProgramData/Git/config\0filter.lfs.clean\0";
+        let linux = "global\0file:/home/parallels/.gitconfig\0core.excludesfile\0";
         let bogus = "something unexpected";
         let empty = "";
 
         for (source, expected) in [
             (
                 macos,
-                Some("/Applications/Xcode.app/Contents/Developer/usr/share/git-core/gitconfig"),
+                (
+                    Some("/Applications/Xcode.app/Contents/Developer/usr/share/git-core/gitconfig"),
+                    false,
+                    None,
+                ),
             ),
-            (win_msys, Some("C:/git-sdk-64/etc/gitconfig")),
-            (win_msys_old, Some(r"C:\ProgramData/Git/config")),
-            (win_cmd, Some("C:/Program Files/Git/etc/gitconfig")),
-            (linux, Some("/home/parallels/.gitconfig")),
-            (bogus, None),
-            (empty, None),
+            (
+                win_msys,
+                (
+                    Some("C:/git-sdk-64/etc/gitconfig"),
+                    true,
+                    Some("C:/git-sdk-64/etc/gitconfig"),
+                ),
+            ),
+            (
+                win_msys_old,
+                (
+                    Some(r"C:\ProgramData/Git/config"),
+                    true,
+                    Some(r"C:\ProgramData/Git/config"),
+                ),
+            ),
+            (
+                win_cmd,
+                (
+                    Some("C:/Program Files/Git/etc/gitconfig"),
+                    true,
+                    Some("C:/Program Files/Git/etc/gitconfig"),
+                ),
+            ),
+            (
+                win_cmd_with_system,
+                (
+                    Some("C:/Program Files/Git/etc/gitconfig"),
+                    true,
+                    Some("C:/ProgramData/Git/config"),
+                ),
+            ),
+            (linux, (Some("/home/parallels/.gitconfig"), false, None)),
+            (bogus, (None, false, None)),
+            (empty, (None, false, None)),
         ] {
+            let actual = crate::env::git::config_paths_from_config_with_origin(source.into());
             assert_eq!(
-                crate::env::git::first_file_from_config_with_origin(source.into()),
-                expected.map(Into::into)
+                (
+                    actual.0.map(|path| path.to_str().expect("test paths are UTF-8")),
+                    actual.1,
+                    actual.2.map(|path| path.to_str().expect("test paths are UTF-8")),
+                ),
+                expected
             );
         }
     }

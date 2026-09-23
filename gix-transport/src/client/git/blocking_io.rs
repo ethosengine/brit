@@ -3,6 +3,7 @@ use std::{any::Any, borrow::Cow, error::Error, io::Write};
 use bstr::{BStr, BString, ByteVec};
 
 use crate::{
+    Protocol, Service,
     client::{
         self,
         blocking_io::{RequestWriter, SetServiceResponse},
@@ -10,10 +11,9 @@ use crate::{
         git::{self, ConnectionState},
     },
     packetline::{
-        blocking_io::{StreamingPeekableIter, Writer},
         PacketLineRef,
+        blocking_io::{StreamingPeekableIter, Writer},
     },
-    Protocol, Service,
 };
 
 /// A TCP connection to either a `git` daemon or a spawned `git` process.
@@ -87,7 +87,7 @@ where
                 &self.state.path,
                 self.state.virtual_host.as_ref(),
                 extra_parameters,
-            ))?;
+            )?)?;
             line_writer.flush()?;
         }
 
@@ -180,7 +180,7 @@ pub mod connect {
 
     /// The error used in [`connect()`].
     #[derive(Debug, thiserror::Error)]
-    #[allow(missing_docs)]
+    #[expect(missing_docs)]
     pub enum Error {
         #[error("An IO error occurred when connecting to the server")]
         Io(#[from] std::io::Error),

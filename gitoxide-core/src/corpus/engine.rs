@@ -4,7 +4,7 @@ use std::{
     time::{Duration, Instant},
 };
 
-use anyhow::{bail, Context};
+use anyhow::{Context, bail};
 use bytesize::ByteSize;
 use gix::{Count, NestedProgress, Progress};
 use rusqlite::params;
@@ -66,7 +66,7 @@ impl Engine {
 }
 
 impl Engine {
-    #[allow(clippy::too_many_arguments)]
+    #[expect(clippy::too_many_arguments)]
     fn perform_run(
         &mut self,
         corpus_path: &Path,

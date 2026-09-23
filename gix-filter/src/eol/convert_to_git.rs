@@ -28,7 +28,7 @@ pub enum RoundTripCheck<'a> {
 
 /// The error returned by [convert_to_git()][super::convert_to_git()].
 #[derive(Debug, thiserror::Error)]
-#[allow(missing_docs)]
+#[expect(missing_docs)]
 pub enum Error {
     #[error("{msg} in '{}'", path.display())]
     RoundTrip { msg: &'static str, path: PathBuf },
@@ -48,8 +48,8 @@ pub(crate) mod function {
     use crate::{
         clear_and_set_capacity,
         eol::{
-            convert_to_git::{Error, IndexObjectFn, Options, RoundTripCheck},
             AttributesDigest, Stats,
+            convert_to_git::{Error, IndexObjectFn, Options, RoundTripCheck},
         },
     };
 
@@ -115,9 +115,9 @@ pub(crate) mod function {
                         return Err(Error::RoundTrip {
                             msg: "CRLF would be replaced by LF",
                             path: rela_path.to_owned(),
-                        })
+                        });
                     }
-                    #[allow(unused_variables)]
+                    #[allow(unused_variables, reason = "Used when tracing is enabled at compile time.")]
                     RoundTripCheck::Warn { rela_path } => {
                         gix_trace::warn!(
                             "in the working copy of '{}', CRLF will be replaced by LF next time git touches it",
@@ -132,9 +132,9 @@ pub(crate) mod function {
                         return Err(Error::RoundTrip {
                             msg: "LF would be replaced by CRLF",
                             path: rela_path.to_owned(),
-                        })
+                        });
                     }
-                    #[allow(unused_variables)]
+                    #[allow(unused_variables, reason = "Used when tracing is enabled at compile time.")]
                     RoundTripCheck::Warn { rela_path } => {
                         gix_trace::warn!(
                             "in the working copy of '{}', LF will be replaced by CRLF next time git touches it",

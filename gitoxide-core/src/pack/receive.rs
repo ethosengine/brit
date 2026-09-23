@@ -1,15 +1,17 @@
 use std::{
     io,
     path::PathBuf,
-    sync::{atomic::AtomicBool, Arc},
+    sync::{Arc, atomic::AtomicBool},
 };
 
+use crate::{OutputFormat, net, pack::receive::protocol::fetch::negotiate};
 #[cfg(feature = "async-client")]
 use gix::protocol::transport::client::async_io::connect;
 #[cfg(feature = "blocking-client")]
 use gix::protocol::transport::client::blocking_io::connect;
-use gix::{config::tree::Key, protocol::maybe_async, remote::fetch::Error, DynNestedProgress};
+use gix::{DynNestedProgress, config::tree::Key, protocol::bisync, remote::fetch::Error};
 pub use gix::{
+    NestedProgress, Progress,
     hash::ObjectId,
     objs::bstr::{BString, ByteSlice},
     odb::pack,
@@ -20,10 +22,7 @@ pub use gix::{
         transport,
         transport::client::Capabilities,
     },
-    NestedProgress, Progress,
 };
-
-use crate::{net, pack::receive::protocol::fetch::negotiate, OutputFormat};
 
 pub const PROGRESS_RANGE: std::ops::RangeInclusive<u8> = 1..=3;
 pub struct Context<W> {
@@ -34,7 +33,7 @@ pub struct Context<W> {
     pub object_hash: gix::hash::Kind,
 }
 
-#[maybe_async::maybe_async]
+#[bisync::bisync]
 pub async fn receive<P, W>(
     protocol: Option<net::Protocol>,
     url: &str,
@@ -82,7 +81,7 @@ where
             gix::refspec::parse(ref_name.as_bstr(), gix::refspec::parse::Operation::Fetch).map(|r| r.to_owned())
         })
         .collect::<Result<_, _>>()?;
-    let user_agent = ("agent", Some(agent.clone().into()));
+    let user_agent = ("agent", Some(agent.clone()));
 
     let context = gix::protocol::fetch::refmap::init::Context {
         fetch_refspecs: fetch_refspecs.clone(),
@@ -243,7 +242,8 @@ fn print(out: &mut impl io::Write, res: pack::bundle::write::Outcome, refs: &[Re
 
 fn write_raw_refs(refs: &[Ref], directory: PathBuf) -> std::io::Result<()> {
     let assure_dir_exists = |path: &BString| {
-        assert!(!path.starts_with_str("/"), "no ref start with a /, they are relative");
+        gix::validate::reference::name(path.as_bstr())
+            .map_err(|err| io::Error::new(io::ErrorKind::InvalidInput, err))?;
         let path = directory.join(gix::path::from_byte_slice(path));
         std::fs::create_dir_all(path.parent().expect("multi-component path")).map(|_| path)
     };
@@ -272,7 +272,7 @@ fn write_raw_refs(refs: &[Ref], directory: PathBuf) -> std::io::Result<()> {
     Ok(())
 }
 
-#[allow(clippy::too_many_arguments)]
+#[expect(clippy::too_many_arguments)]
 fn receive_pack_blocking(
     mut directory: Option<PathBuf>,
     mut refs_directory: Option<PathBuf>,
@@ -289,7 +289,8 @@ fn receive_pack_blocking(
         thread_limit,
         index_version: pack::index::Version::V2,
         iteration_mode: pack::data::input::Mode::Verify,
-        object_hash,
+        alloc_limit_bytes: None,
+        compression: gix::zlib::Compression::BEST_SPEED,
     };
     let outcome = pack::Bundle::write_to_directory(
         &mut input,
@@ -297,6 +298,7 @@ fn receive_pack_blocking(
         progress,
         should_interrupt,
         None::<gix::objs::find::Never>,
+        object_hash,
         options,
     )
     .map_err(io::Error::other)?;

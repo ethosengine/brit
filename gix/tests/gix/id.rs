@@ -1,15 +1,11 @@
 use std::cmp::Ordering;
 
+use crate::util::hex_to_id;
 use gix::{
     config::tree::{Core, Key},
     prelude::ObjectIdExt,
 };
 use gix_object::bstr::BString;
-
-/// Convert a hexadecimal hash into its corresponding `ObjectId` or _panic_.
-fn hex_to_id(hex: &str) -> gix_hash::ObjectId {
-    gix_hash::ObjectId::from_hex(hex.as_bytes()).expect("40 bytes hex")
-}
 
 #[test]
 fn prefix() -> crate::Result {
@@ -57,21 +53,44 @@ fn prefix() -> crate::Result {
 
 #[test]
 fn display_and_debug() -> crate::Result {
+    let expected = match gix_testtools::object_hash() {
+        gix_hash::Kind::Sha1 => {
+            "3189cd3cb0af8586c39a838aa3e54fd72a872a41 Sha1(3189cd3cb0af8586c39a838aa3e54fd72a872a41)"
+        }
+        gix_hash::Kind::Sha256 => {
+            "735ec3eb1e74b0815da6d8aeca80ffbffdca25a2b624cc54d5d34caca9bc4dec Sha256(735ec3eb1e74b0815da6d8aeca80ffbffdca25a2b624cc54d5d34caca9bc4dec)"
+        }
+        _ => unimplemented!(),
+    };
+
     let repo = crate::basic_repo()?;
     let id = repo.head_id()?;
-    assert_eq!(
-        format!("{id} {id:?}"),
-        "3189cd3cb0af8586c39a838aa3e54fd72a872a41 Sha1(3189cd3cb0af8586c39a838aa3e54fd72a872a41)"
-    );
+    assert_eq!(format!("{id} {id:?}"), expected);
+    Ok(())
+}
+
+#[test]
+fn compares_with_text() -> crate::Result {
+    let repo = crate::basic_repo()?;
+    let id = repo.head_id()?;
+    let text = id.to_string();
+
+    assert_eq!(id, text.as_str(), "an attached ID matches str");
+    assert_eq!(text.as_str(), id, "str comparison is symmetric");
+    assert_eq!(id, text, "an attached ID matches String");
+    assert_eq!(text, id, "String comparison is symmetric");
+    assert_ne!(id, "not an object ID", "invalid text does not match an attached ID");
+    assert_ne!("not an object ID", id, "invalid-text comparison is symmetric");
     Ok(())
 }
 
 mod ancestors {
-    use crate::id::hex_to_id;
+    use crate::util::hex_to_id;
 
     #[test]
     fn all() -> crate::Result {
         let repo = crate::repo("make_repo_with_fork_and_dates.sh")?.to_thread_local();
+        let has_commit_graph = repo.commit_graph_if_enabled()?.is_some();
         for use_commit_graph in [false, true] {
             let head = repo.head()?.into_peeled_id()?;
             let commits_graph_order = head
@@ -81,6 +100,17 @@ mod ancestors {
                 .map(|c| c.map(gix::revision::walk::Info::detach))
                 .collect::<Result<Vec<_>, _>>()?;
             assert_eq!(commits_graph_order.len(), 4, "need a specific amount of commits");
+            if use_commit_graph && has_commit_graph {
+                assert!(
+                    commits_graph_order.iter().any(|commit| commit.generation.is_some()),
+                    "generation identifies commit-graph-backed commits"
+                );
+            } else {
+                assert!(
+                    commits_graph_order.iter().all(|commit| commit.generation.is_none()),
+                    "ODB commits have no generation"
+                );
+            }
 
             let commits_by_commit_date = head
                 .ancestors()
@@ -94,6 +124,17 @@ mod ancestors {
                 4,
                 "need a specific amount of commits, ordering doesn't affect that"
             );
+            if !use_commit_graph && has_commit_graph {
+                assert!(
+                    commits_by_commit_date.iter().any(|commit| commit.generation.is_some()),
+                    "generation is propagated for every sorting"
+                );
+            } else {
+                assert!(
+                    commits_by_commit_date.iter().all(|commit| commit.generation.is_none()),
+                    "ODB commits have no generation"
+                );
+            }
             assert_ne!(
                 commits_by_commit_date, commits_graph_order,
                 "these are ordered differently"

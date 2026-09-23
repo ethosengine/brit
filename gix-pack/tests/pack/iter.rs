@@ -21,10 +21,7 @@ mod new_from_header {
         pack::data::input::{EntryDataMode, Mode},
     };
 
-    use crate::{
-        fixture_path,
-        pack::{SMALL_PACK, V2_PACKS_AND_INDICES},
-    };
+    use crate::{SMALL_PACK, V2_PACKS_AND_INDICES, fixture_path};
 
     #[test]
     fn header_encode() -> Result<(), Box<dyn std::error::Error>> {
@@ -40,8 +37,7 @@ mod new_from_header {
 
                 let mut buf = Vec::<u8>::new();
                 entry.header.write_to(entry.decompressed_size, &mut buf)?;
-                let new_entry =
-                    pack::data::Entry::from_bytes(&buf, entry.pack_offset, gix_hash::Kind::Sha1.len_in_bytes())?;
+                let new_entry = pack::data::Entry::from_bytes(&buf, entry.pack_offset, gix_hash::Kind::Sha1)?;
 
                 assert_eq!(
                     new_entry.header_size(),
@@ -103,6 +99,30 @@ mod new_from_header {
                 }
             }
         }
+        Ok(())
+    }
+
+    #[test]
+    fn version_3_is_accepted() -> Result<(), Box<dyn std::error::Error>> {
+        let mut data = fs::read(fixture_path(SMALL_PACK))?;
+        data[4..8].copy_from_slice(&3u32.to_be_bytes());
+
+        let iter = pack::data::input::BytesToEntriesIter::new_from_header(
+            std::io::BufReader::new(data.as_slice()),
+            Mode::AsIs,
+            EntryDataMode::Ignore,
+            gix_hash::Kind::Sha1,
+        )?;
+        assert_eq!(
+            iter.version(),
+            pack::data::Version::V3,
+            "Git accepts pack version 3 with the version 2 entry layout"
+        );
+        assert_eq!(
+            iter.collect::<Result<Vec<_>, _>>()?.len(),
+            42,
+            "all entries should be readable"
+        );
         Ok(())
     }
 

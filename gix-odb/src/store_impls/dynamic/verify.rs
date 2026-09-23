@@ -23,7 +23,7 @@ pub mod integrity {
 
     /// Returned by [`Store::verify_integrity()`][crate::Store::verify_integrity()].
     #[derive(Debug, thiserror::Error)]
-    #[allow(missing_docs)]
+    #[expect(missing_docs)]
     pub enum Error {
         #[error(transparent)]
         MultiIndexIntegrity(#[from] pack::index::traverse::Error<pack::multi_index::verify::integrity::Error>),
@@ -56,7 +56,7 @@ pub mod integrity {
     #[derive(Debug, PartialEq, Eq, Hash, Ord, PartialOrd, Clone)]
     #[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
     /// Traversal statistics of packs governed by single indices or multi-pack indices.
-    #[allow(missing_docs)]
+    #[expect(missing_docs)]
     pub enum SingleOrMultiStatistics {
         Single(pack::index::traverse::Statistics),
         Multi(Vec<(PathBuf, pack::index::traverse::Statistics)>),
@@ -122,7 +122,7 @@ impl super::Store {
         let _span = gix_features::trace::coarse!("gix_odb:Store::verify_integrity()");
         let mut index = self.index.load();
         if !index.is_initialized() {
-            self.consolidate_with_disk_state(true, false)?;
+            self.consolidate_with_disk_state(true, false, self.loose_compression)?;
             index = self.index.load();
             assert!(
                 index.is_initialized(),
@@ -166,7 +166,8 @@ impl super::Store {
                         let data = match bundle.data.loaded() {
                             Some(pack) => pack.deref(),
                             None => {
-                                pack = pack::data::File::at(bundle.data.path(), self.object_hash)?;
+                                pack = pack::data::File::at(bundle.data.path(), self.object_hash)?
+                                    .with_alloc_limit_bytes(self.alloc_limit_bytes);
                                 &pack
                             }
                         };
@@ -197,7 +198,7 @@ impl super::Store {
                         let index = match bundle.multi_index.loaded() {
                             Some(index) => index.deref(),
                             None => {
-                                index = pack::multi_index::File::at(bundle.multi_index.path())?;
+                                index = pack::multi_index::File::at(bundle.multi_index.path(), self.alloc_limit_bytes)?;
                                 &index
                             }
                         };

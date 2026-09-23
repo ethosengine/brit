@@ -14,8 +14,8 @@ pub(super) mod function {
     use crate::{
         index_as_worktree::traits::{CompareBlobs, SubmoduleStatus},
         index_as_worktree_with_renames::{
-            function::rewrite::ModificationOrDirwalkEntry, Context, Entry, Error, Options, Outcome, RewriteSource,
-            VisitEntry,
+            Context, Entry, Error, Options, Outcome, RewriteSource, VisitEntry,
+            function::rewrite::ModificationOrDirwalkEntry,
         },
         is_dir_to_mode,
     };
@@ -44,7 +44,7 @@ pub(super) mod function {
     ///    -  Additional information that will be accessed during index modification checks and traversal.
     /// * `options`
     ///    - a way to configure both paths of the operation.
-    #[allow(clippy::too_many_arguments)]
+    #[expect(clippy::too_many_arguments)]
     pub fn index_as_worktree_with_renames<'index, T, U, Find, E>(
         index: &'index gix_index::State,
         worktree: &Path,
@@ -62,6 +62,8 @@ pub(super) mod function {
         E: std::error::Error + Send + Sync + 'static,
         Find: gix_object::Find + gix_object::FindHeader + Send + Clone,
     {
+        let mut tracked_file_modifications = options.tracked_file_modifications;
+        tracked_file_modifications.fscache = options.fscache;
         gix_features::parallel::threads(|scope| -> Result<Outcome, Error> {
             let (tx, rx) = std::sync::mpsc::channel();
             let walk_outcome = options
@@ -154,7 +156,7 @@ pub(super) mod function {
                                 filter,
                                 should_interrupt: ctx.should_interrupt,
                             },
-                            options.tracked_file_modifications,
+                            tracked_file_modifications,
                         )
                         .map_err(Error::TrackedFileModifications)
                     }
@@ -384,7 +386,7 @@ pub(super) mod function {
     mod dirwalk {
         use std::sync::atomic::{AtomicBool, Ordering};
 
-        use gix_dir::{entry::Status, walk::Action, EntryRef};
+        use gix_dir::{EntryRef, entry::Status, walk::Action};
 
         use super::Event;
 
@@ -411,22 +413,18 @@ pub(super) mod function {
     }
 
     mod rewrite {
-        use std::{
-            io::{ErrorKind, Read},
-            path::Path,
+        use crate::{
+            index_as_worktree::{Change, EntryStatus},
+            index_as_worktree_with_renames::{Entry, Error},
         };
-
         use bstr::BStr;
         use gix_diff::{rewrites::tracker::ChangeKind, tree::visit::Relation};
         use gix_dir::entry::Kind;
         use gix_filter::pipeline::convert::ToGitOutcome;
         use gix_hash::oid;
         use gix_object::tree::EntryMode;
-
-        use crate::{
-            index_as_worktree::{Change, EntryStatus},
-            index_as_worktree_with_renames::{Entry, Error},
-        };
+        use std::io::ErrorKind;
+        use std::{io::Read, path::Path};
 
         #[derive(Clone)]
         pub enum ModificationOrDirwalkEntry<'index, T, U>
@@ -503,7 +501,7 @@ pub(super) mod function {
 
         /// Note that for non-files, we always return a null-sha and assume that the rename-tracking
         /// does nothing for these anyway.
-        #[allow(clippy::too_many_arguments)]
+        #[expect(clippy::too_many_arguments)]
         pub(super) fn calculate_worktree_id(
             object_hash: gix_hash::Kind,
             worktree_root: &Path,
@@ -564,14 +562,16 @@ pub(super) mod function {
                             &mut gix_features::progress::Discard,
                             should_interrupt,
                         )
-                        .map_err(Error::HashFile)?,
+                        .map_err(|err| Error::HashFile(std::io::Error::other(err.into_error())))?,
                         ToGitOutcome::Buffer(buf) => gix_object::compute_hash(object_hash, gix_object::Kind::Blob, buf)
-                            .map_err(|err| Error::HashFile(err.into()))?,
+                            .map_err(gix_hash::io::from_hasher)
+                            .map_err(|err| Error::HashFile(std::io::Error::other(err.into_error())))?,
                         ToGitOutcome::Process(mut stream) => {
                             buf.clear();
-                            stream.read_to_end(buf).map_err(|err| Error::HashFile(err.into()))?;
+                            stream.read_to_end(buf).map_err(Error::HashFile)?;
                             gix_object::compute_hash(object_hash, gix_object::Kind::Blob, buf)
-                                .map_err(|err| Error::HashFile(err.into()))?
+                                .map_err(gix_hash::io::from_hasher)
+                                .map_err(|err| Error::HashFile(std::io::Error::other(err.into_error())))?
                         }
                     }
                 }
@@ -579,7 +579,8 @@ pub(super) mod function {
                     let path = worktree_root.join(gix_path::from_bstr(rela_path));
                     let target = gix_path::into_bstr(std::fs::read_link(path).map_err(Error::ReadLink)?);
                     gix_object::compute_hash(object_hash, gix_object::Kind::Blob, &target)
-                        .map_err(|err| Error::HashFile(err.into()))?
+                        .map_err(gix_hash::io::from_hasher)
+                        .map_err(|err| Error::HashFile(std::io::Error::other(err.into_error())))?
                 }
                 Kind::Directory | Kind::Repository => object_hash.null(),
             })

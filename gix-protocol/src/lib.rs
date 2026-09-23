@@ -15,7 +15,7 @@
     doc = ::document_features::document_features!()
 )]
 #![cfg_attr(all(doc, feature = "document-features"), feature(doc_cfg))]
-#![deny(missing_docs, rust_2018_idioms, unsafe_code)]
+#![deny(missing_docs, unsafe_code)]
 
 /// A function that performs a given credential action, trying to obtain credentials for an operation that needs it.
 ///
@@ -33,6 +33,19 @@ pub enum Command {
 }
 pub mod command;
 
+/// Attribute macros and mode flags for sharing async-shaped implementations between client modes.
+#[cfg(any(feature = "blocking-client", feature = "async-client"))]
+pub mod bisync {
+    #[cfg(all(feature = "async-client", not(feature = "blocking-client")))]
+    pub use gix_macros::{discard as only_sync, keep as bisync, keep as only_async};
+    #[cfg(feature = "blocking-client")]
+    pub use gix_macros::{discard as only_async, keep as only_sync, sync as bisync};
+
+    /// Whether the blocking implementation is selected.
+    pub const SYNC: bool = cfg!(feature = "blocking-client");
+    /// Whether the async implementation is selected.
+    pub const ASYNC: bool = !SYNC;
+}
 #[cfg(feature = "async-client")]
 pub use async_trait;
 #[cfg(feature = "async-client")]
@@ -43,7 +56,6 @@ pub use futures_lite;
 pub use gix_credentials as credentials;
 /// A convenience export allowing users of gix-protocol to use the transport layer without their own cargo dependency.
 pub use gix_transport as transport;
-pub use maybe_async;
 
 ///
 pub mod fetch;
@@ -52,9 +64,6 @@ pub use fetch::function::fetch;
 
 mod remote_progress;
 pub use remote_progress::RemoteProgress;
-
-#[cfg(all(feature = "blocking-client", feature = "async-client"))]
-compile_error!("Cannot set both 'blocking-client' and 'async-client' features as they are mutually exclusive");
 
 ///
 pub mod handshake;

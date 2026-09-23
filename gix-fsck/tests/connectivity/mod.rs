@@ -1,9 +1,8 @@
-use std::sync::LazyLock;
-
 use gix_fsck::Connectivity;
 use gix_hash::ObjectId;
 use gix_hashtable::HashMap;
 use gix_object::Kind;
+use std::sync::LazyLock;
 
 use crate::hex_to_id;
 
@@ -14,7 +13,7 @@ fn check_missing<'a>(repo_name: &str, commits: impl IntoIterator<Item = &'a Obje
             .join(repo_name)
             .join(".git")
             .join("objects");
-        let mut db = gix_odb::at(fixture_path).expect("valid odb");
+        let mut db = gix_odb::at(fixture_path, gix_testtools::object_hash()).expect("valid odb");
         db.refresh_never();
         db
     };

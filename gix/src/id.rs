@@ -2,9 +2,9 @@
 #![allow(clippy::empty_docs)]
 use std::ops::Deref;
 
-use gix_hash::{oid, ObjectId};
+use gix_hash::{ObjectId, oid};
 
-use crate::{object::find, Id, Object};
+use crate::{Id, Object, object::find};
 
 /// An [object id][ObjectId] infused with a [`Repository`][crate::Repository].
 impl<'repo> Id<'repo> {
@@ -72,7 +72,7 @@ fn calculate_auto_hex_len(num_packed_objects: u64) -> usize {
 pub mod shorten {
     /// Returned by [`Id::prefix()`][super::Id::shorten()].
     #[derive(Debug, thiserror::Error)]
-    #[allow(missing_docs)]
+    #[expect(missing_docs)]
     pub enum Error {
         #[error(transparent)]
         PackedObjectsCount(#[from] gix_odb::store::load_index::Error),
@@ -112,9 +112,25 @@ impl<'repo> Id<'repo> {
 mod impls {
     use std::{cmp::Ordering, hash::Hasher};
 
-    use gix_hash::{oid, ObjectId};
+    use gix_hash::{ObjectId, oid};
 
     use crate::{Id, Object, ObjectDetached};
+
+    macro_rules! impl_partial_eq_text {
+        ($text:ty) => {
+            impl PartialEq<$text> for Id<'_> {
+                fn eq(&self, other: &$text) -> bool {
+                    self.inner.eq(other)
+                }
+            }
+
+            impl<'repo> PartialEq<Id<'repo>> for $text {
+                fn eq(&self, other: &Id<'repo>) -> bool {
+                    self.eq(&other.inner)
+                }
+            }
+        };
+    }
 
     // Eq, Hash, Ord, PartialOrd,
 
@@ -147,6 +163,10 @@ mod impls {
             self == &other.inner
         }
     }
+
+    impl_partial_eq_text!(str);
+    impl_partial_eq_text!(&str);
+    impl_partial_eq_text!(String);
 
     impl PartialEq<oid> for Id<'_> {
         fn eq(&self, other: &oid) -> bool {

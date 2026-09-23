@@ -6,17 +6,13 @@ use std::{
 
 use bstr::{BStr, BString};
 
-#[derive(Debug)]
 /// The error type returned by [`into_bstr()`] and others may suffer from failed conversions from or to bytes.
-pub struct Utf8Error;
+pub type Utf8Error = gix_error::ValidationError;
 
-impl std::fmt::Display for Utf8Error {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        f.write_str("Could not convert to UTF8 or from UTF8 due to ill-formed input")
-    }
+#[cfg(not(unix))]
+fn utf8_error() -> Utf8Error {
+    Utf8Error::new("Could not convert to UTF8 or from UTF8 due to ill-formed input")
 }
-
-impl std::error::Error for Utf8Error {}
 
 /// Like [`into_bstr()`], but takes `OsStr` as input for a lossless, but fallible, conversion.
 pub fn os_str_into_bstr(path: &OsStr) -> Result<&BStr, Utf8Error> {
@@ -58,7 +54,7 @@ pub fn try_into_bstr<'a>(path: impl Into<Cow<'a, Path>>) -> Result<Cow<'a, BStr>
                 path.into_os_string().into_vec().into()
             };
             #[cfg(not(unix))]
-            let p: BString = path.into_os_string().into_string().map_err(|_| Utf8Error)?.into();
+            let p: BString = path.into_os_string().into_string().map_err(|_| utf8_error())?.into();
             p
         }),
         Cow::Borrowed(path) => Cow::Borrowed({
@@ -68,7 +64,7 @@ pub fn try_into_bstr<'a>(path: impl Into<Cow<'a, Path>>) -> Result<Cow<'a, BStr>
                 path.as_os_str().as_bytes().into()
             };
             #[cfg(not(unix))]
-            let p: &BStr = path.to_str().ok_or(Utf8Error)?.as_bytes().into();
+            let p: &BStr = path.to_str().ok_or_else(utf8_error)?.as_bytes().into();
             p
         }),
     };
@@ -102,7 +98,7 @@ pub fn try_from_byte_slice(input: &[u8]) -> Result<&Path, Utf8Error> {
         OsStr::from_bytes(input).as_ref()
     };
     #[cfg(not(unix))]
-    let p = Path::new(std::str::from_utf8(input).map_err(|_| Utf8Error)?);
+    let p = Path::new(std::str::from_utf8(input).map_err(|_| utf8_error())?);
     Ok(p)
 }
 
@@ -137,7 +133,7 @@ pub fn try_from_bstring(input: impl Into<BString>) -> Result<PathBuf, Utf8Error>
                 v
             }
             .into_string()
-            .map_err(|_| Utf8Error)?,
+            .map_err(|_| utf8_error())?,
         )
     };
     Ok(p)
@@ -260,6 +256,15 @@ pub fn to_windows_separators<'a>(path: impl Into<Cow<'a, BStr>>) -> Cow<'a, BStr
 /// can be exhausted by paths like `../../r`, `None` will be returned to indicate the inability to
 /// produce a logically consistent path.
 pub fn normalize<'a>(path: Cow<'a, Path>, current_dir: &Path) -> Option<Cow<'a, Path>> {
+    normalize_inner(path, current_dir, false)
+}
+
+/// Like [`normalize()`], but treats `..` components beyond the filesystem root as no-ops.
+pub fn normalize_saturating<'a>(path: Cow<'a, Path>, current_dir: &Path) -> Cow<'a, Path> {
+    normalize_inner(path, current_dir, true).expect("saturating normalization always produces a path")
+}
+
+fn normalize_inner<'a>(path: Cow<'a, Path>, current_dir: &Path, saturate_at_root: bool) -> Option<Cow<'a, Path>> {
     use std::path::Component::ParentDir;
 
     if !path.components().any(|c| matches!(c, ParentDir)) {
@@ -271,11 +276,13 @@ pub fn normalize<'a>(path: Cow<'a, Path>, current_dir: &Path) -> Option<Cow<'a, 
     let mut path = PathBuf::new();
     for component in components {
         if let ParentDir = component {
-            let path_was_dot = path == Path::new(".");
-            if path.as_os_str().is_empty() || path_was_dot {
+            while matches!(path.components().next_back(), Some(Component::CurDir)) {
+                path.pop();
+            }
+            if path.as_os_str().is_empty() {
                 path.push(current_dir_opt.take()?);
             }
-            if !path.pop() {
+            if !path.pop() && !saturate_at_root {
                 return None;
             }
         } else {
@@ -289,6 +296,44 @@ pub fn normalize<'a>(path: Cow<'a, Path>, current_dir: &Path) -> Option<Cow<'a, 
         path.into()
     }
     .into()
+}
+
+/// Like [`normalize()`], but also removes `.` components and duplicate or trailing separators.
+///
+/// If cleaning leaves no components, `current_dir` is returned. Already-clean borrowed paths remain borrowed.
+pub fn normalize_and_clean<'a>(path: Cow<'a, Path>, current_dir: &Path) -> Option<Cow<'a, Path>> {
+    fn needs_cleaning(path: &Path) -> bool {
+        use std::path::Component::CurDir;
+
+        if path.as_os_str().is_empty() || path.components().any(|component| matches!(component, CurDir)) {
+            return true;
+        }
+
+        let mut components = path
+            .as_os_str()
+            .as_encoded_bytes()
+            .split(|byte| std::path::is_separator(*byte as char));
+        let Some(first) = components.next() else { return true };
+        first == b"." || components.any(|component| component.is_empty() || component == b".")
+    }
+
+    let path = normalize(path, current_dir)?;
+    if !needs_cleaning(path.as_ref()) {
+        return Some(path);
+    }
+
+    let mut cleaned: PathBuf = path
+        .components()
+        .filter(|component| !matches!(component, Component::CurDir))
+        .collect();
+    if cleaned.as_os_str().is_empty() {
+        cleaned.push(current_dir);
+    }
+    if cleaned.as_os_str() == path.as_os_str() {
+        Some(path)
+    } else {
+        Some(Cow::Owned(cleaned))
+    }
 }
 
 /// Rebuild the worktree-relative `relative_path` to be relative to `prefix`, which is the
@@ -318,14 +363,12 @@ pub fn relativize_with_prefix<'a>(relative_path: &'a Path, prefix: &Path) -> Cow
     let mut rpc = relative_path.components().peekable();
     let mut equal_thus_far = true;
     for pcomp in prefix.components() {
-        if equal_thus_far {
-            if let (Component::Normal(pname), Some(Component::Normal(rpname))) = (pcomp, rpc.peek()) {
-                if &pname == rpname {
-                    rpc.next();
-                    continue;
-                } else {
-                    equal_thus_far = false;
-                }
+        if equal_thus_far && let (Component::Normal(pname), Some(Component::Normal(rpname))) = (pcomp, rpc.peek()) {
+            if &pname == rpname {
+                rpc.next();
+                continue;
+            } else {
+                equal_thus_far = false;
             }
         }
         buf.push(Component::ParentDir);

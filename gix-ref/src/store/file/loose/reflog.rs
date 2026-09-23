@@ -1,8 +1,8 @@
 use std::{io::Read, path::PathBuf};
 
 use crate::{
-    store_impl::{file, file::log},
     FullNameRef,
+    store_impl::{file, file::log},
 };
 
 impl file::Store {
@@ -91,13 +91,12 @@ pub mod create_or_update {
         path::{Path, PathBuf},
     };
 
-    use gix_hash::{oid, ObjectId};
+    use gix_hash::{ObjectId, oid};
     use gix_object::bstr::BStr;
 
     use crate::store_impl::{file, file::WriteReflog};
 
     impl file::Store {
-        #[allow(clippy::too_many_arguments)]
         pub(crate) fn reflog_create_or_append(
             &self,
             name: &FullNameRef,
@@ -153,7 +152,7 @@ pub mod create_or_update {
                     if let Some(mut file) = file_for_appending {
                         let committer = committer.ok_or(Error::MissingCommitter)?;
                         write!(file, "{} {} ", previous_oid.unwrap_or_else(|| new.kind().null()), new)
-                            .and_then(|_| committer.write_to(&mut file))
+                            .and_then(|_| committer.trim().write_to(&mut file))
                             .and_then(|_| {
                                 if !message.is_empty() {
                                     writeln!(file, "\t{message}")
@@ -207,7 +206,7 @@ pub mod create_or_update {
 
         /// The error returned when creating or appending to a reflog
         #[derive(Debug, thiserror::Error)]
-        #[allow(missing_docs)]
+        #[expect(missing_docs)]
         pub enum Error {
             #[error("Could create one or more directories in {reflog_directory:?} to contain reflog file")]
             CreateLeadingDirectories {
@@ -233,7 +232,7 @@ pub mod create_or_update {
 mod error {
     /// The error returned by [`crate::file::Store::reflog_iter()`].
     #[derive(Debug, thiserror::Error)]
-    #[allow(missing_docs)]
+    #[expect(missing_docs)]
     pub enum Error {
         #[error("The reflog name or path is not a valid ref name")]
         RefnameValidation(#[from] crate::name::Error),

@@ -3,11 +3,11 @@ use std::path::Path;
 
 pub use gix_discover::*;
 
-use crate::{bstr::BString, ThreadSafeRepository};
+use crate::{ThreadSafeRepository, bstr::BString};
 
 /// The error returned by [`crate::discover()`].
 #[derive(Debug, thiserror::Error)]
-#[allow(missing_docs)]
+#[expect(missing_docs)]
 pub enum Error {
     #[error(transparent)]
     Discover(#[from] upwards::Error),
@@ -27,10 +27,9 @@ impl ThreadSafeRepository {
     /// for instantiations.
     ///
     /// Note that [trust overrides](crate::open::Options::with()) in the `trust_map` are not effective here and we will
-    /// always override it with the determined trust value. This is a precaution as the API user is unable to actually know
-    /// if the directory that is discovered can indeed be trusted (or else they'd have to implement the discovery themselves
-    /// and be sure that no attacker ever gets access to a directory structure. The cost of this is a permission check, which
-    /// seems acceptable).
+    /// always override it with the determined trust value as per [gix_discover::upwards::Options::trust].
+    /// This value, however, can be set to [assume a given trust level](gix_discover::upwards::TrustPolicy::Assume) to let
+    /// callers control the trust level without re-determining it.
     pub fn discover_opts(
         directory: impl AsRef<Path>,
         options: upwards::Options<'_>,
@@ -43,7 +42,7 @@ impl ThreadSafeRepository {
         options.git_dir_trust = trust.into();
         // Note that we will adjust the `current_dir` later so it matches the value of `core.precomposeUnicode`.
         options.current_dir = Some(gix_fs::current_dir(false).map_err(upwards::Error::CurrentDir)?);
-        Self::open_from_paths(git_dir, worktree_dir, options).map_err(Into::into)
+        Self::open_from_paths(git_dir, worktree_dir, options, None).map_err(Into::into)
     }
 
     /// Try to open a git repository directly from the environment.
@@ -56,11 +55,23 @@ impl ThreadSafeRepository {
     }
 
     /// Try to open a git repository directly from the environment, which reads `GIT_DIR`
-    /// if it is set. If unset, discover upwards from `directory` until one is found,
-    /// while applying `options` with overrides from the environment which includes:
+    /// if it is set. Once selected, the repository also honors these primary environment
+    /// overrides if permitted by its options:
+    ///
+    /// - `GIT_WORK_TREE`
+    /// - `GIT_INDEX_FILE`
+    /// - `GIT_SHALLOW_FILE`
+    /// - `GIT_NAMESPACE`
+    ///
+    /// If `GIT_DIR` is unset, discover upwards from `directory` until one is found,
+    /// while applying `options` with discovery overrides from the environment which includes:
     ///
     /// - `GIT_DISCOVERY_ACROSS_FILESYSTEM`
     /// - `GIT_CEILING_DIRECTORIES`
+    ///
+    /// This is particularly useful for hooks, as Git exports repository-local environment variables
+    /// to them. Honoring these variables preserves the repository and worktree context established by
+    /// Git, including temporary overrides, instead of relying only on discovery from `directory`.
     ///
     /// Finally, use the `trust_map` to determine which of our own repository options to use
     /// based on the trust level of the effective repository directory.
@@ -80,10 +91,9 @@ impl ThreadSafeRepository {
 
             if let Some(cross_fs) = std::env::var_os("GIT_DISCOVERY_ACROSS_FILESYSTEM")
                 .and_then(|v| Vec::from_os_string(v).ok().map(BString::from))
+                && let Ok(b) = gix_config::Boolean::try_from(cross_fs)
             {
-                if let Ok(b) = gix_config::Boolean::try_from(cross_fs.as_ref()) {
-                    opts.cross_fs = b.into();
-                }
+                opts.cross_fs = b.into();
             }
             opts
         }

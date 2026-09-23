@@ -17,17 +17,15 @@ pub enum Format {
 pub const PROGRESS_RANGE: std::ops::RangeInclusive<u8> = 0..=2;
 
 pub(crate) mod function {
-    use anyhow::{bail, Context};
-    use gix::{hashtable::HashMap, odb::store::RefreshMode, revision::walk::Sorting, Progress};
+    use crate::repository::HexId;
+    use crate::{OutputFormat, repository::revision::list::Format};
+    use anyhow::{Context, bail};
+    use gix::odb::store::RefreshMode;
+    use gix::{Progress, hashtable::HashMap, revision::walk::Sorting};
     use layout::{
         backends::svg::SVGWriter,
         core::{base::Orientation, geometry::Point, style::StyleAttr},
         std_shapes::shapes::{Arrow, Element, ShapeKind},
-    };
-
-    use crate::{
-        repository::{revision::list::Format, HexId},
-        OutputFormat,
     };
 
     pub fn list(

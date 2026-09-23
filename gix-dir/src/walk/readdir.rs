@@ -7,23 +7,21 @@ use std::{
 use bstr::{BStr, BString, ByteSlice};
 
 use crate::{
-    entry,
+    Entry, EntryRef, entry,
     entry::{PathspecMatch, Status},
     walk,
     walk::{
-        classify,
-        function::{can_recurse, emit_entry},
         Action, CollapsedEntriesEmissionMode, Context, Delegate,
         EmissionMode::CollapseDirectory,
-        Error, ForDeletionMode, Options, Outcome,
+        Error, ForDeletionMode, Options, Outcome, classify,
+        function::{can_recurse, emit_entry},
     },
-    Entry, EntryRef,
 };
 
 /// ### Deviation
 ///
 /// Git mostly silently ignores IO errors and stops iterating seemingly quietly, while we error loudly.
-#[allow(clippy::too_many_arguments)]
+#[expect(clippy::too_many_arguments)]
 pub(super) fn recursive(
     may_collapse: bool,
     current: &mut PathBuf,
@@ -217,7 +215,7 @@ struct Mark {
 }
 
 impl Mark {
-    #[allow(clippy::too_many_arguments)]
+    #[expect(clippy::too_many_arguments)]
     fn reduce_held_entries(
         mut self,
         num_entries: usize,
@@ -289,7 +287,7 @@ impl Mark {
         std::ops::ControlFlow::Continue(())
     }
 
-    #[allow(clippy::too_many_arguments)]
+    #[expect(clippy::too_many_arguments)]
     fn try_collapse(
         &self,
         dir_rela_path: &BStr,
@@ -370,6 +368,22 @@ impl Mark {
                 // affects proper folding.
                 filter_dir_pathspec(dir_info.pathspec_match)
             });
+
+        // If every collapsed entry is itself an empty directory, the collapsed directory has no files
+        // to track. Keep the `EmptyDirectory` property so callers that skip empty directories by
+        // default (such as `gix status`) behave like Git, which treats a tree of only empty
+        // directories as clean. See https://github.com/GitoxideLabs/gitoxide/issues/2490.
+        //
+        // Restricted to untracked collapses in non-deletion walks: deletion has its own handling of
+        // empty directories, and an explicitly requested *ignored* directory must stay observable even
+        // when empty (it would otherwise be filtered out where empty directories aren't emitted).
+        let collapsed_property = (opts.for_deletion.is_none()
+            && matches!(dir_status, entry::Status::Untracked)
+            && state.on_hold[self.start_index..]
+                .iter()
+                .all(|entry| entry.property == Some(entry::Property::EmptyDirectory)))
+        .then_some(entry::Property::EmptyDirectory);
+
         let mut removed_without_emitting = 0;
         let mut action = std::ops::ControlFlow::Continue(());
         for entry in state.on_hold.drain(self.start_index..) {
@@ -396,6 +410,7 @@ impl Mark {
                 Cow::Borrowed(dir_rela_path),
                 classify::Outcome {
                     status: dir_status,
+                    property: dir_info.property.or(collapsed_property),
                     pathspec_match: dir_pathspec_match,
                     ..dir_info
                 },

@@ -2,13 +2,13 @@
 
 use std::path::{Path, PathBuf};
 
-use crate::{decode, extension, File, State};
+use crate::{File, State, decode, extension};
 
 mod error {
 
     /// The error returned by [File::at()][super::File::at()].
     #[derive(Debug, thiserror::Error)]
-    #[allow(missing_docs)]
+    #[expect(missing_docs)]
     pub enum Error {
         #[error("An IO error occurred while opening the index")]
         Io(#[from] std::io::Error),
@@ -61,10 +61,11 @@ impl File {
         let (data, mtime) = {
             let mut file = std::fs::File::open(&path)?;
             // SAFETY: we have to take the risk of somebody changing the file underneath. Git never writes into the same file.
-            #[allow(unsafe_code)]
+            #[expect(unsafe_code)]
             let data = unsafe { memmap2::MmapOptions::new().map_copy_read_only(&file)? };
 
-            if !skip_hash {
+            // Let the decoder report truncated files before trying to read their checksum.
+            if !skip_hash && data.len() >= object_hash.len_in_bytes() {
                 // Note that even though it's trivial to offload this into a thread, which is worth it for all but the smallest
                 // index files, we choose more safety here just like git does and don't even try to decode the index if the hashes
                 // don't match.
@@ -82,10 +83,12 @@ impl File {
                         &mut gix_features::progress::Discard,
                         &Default::default(),
                     )
-                    .map_err(|err| match err {
-                        gix_hash::io::Error::Io(err) => Error::Io(err),
-                        gix_hash::io::Error::Hasher(err) => Error::Decode(err.into()),
-                    })?
+                    .map_err(
+                        |err| match err.downcast_any_ref::<std::io::Error>().map(std::io::Error::kind) {
+                            Some(kind) => Error::Io(std::io::Error::new(kind, err.into_error())),
+                            None => Error::Decode(decode::Error::Hasher(std::io::Error::other(err.into_error()))),
+                        },
+                    )?
                     .verify(&expected)
                     .map_err(decode::Error::from)?;
                 }

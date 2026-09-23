@@ -1,6 +1,6 @@
 use std::path::Path;
 
-use crate::{search::Spec, MagicSignature, Pattern, Search};
+use crate::{MagicSignature, Pattern, Search, search::Spec};
 
 /// Create a new specification to support matches from `pathspec`, [normalizing](Pattern::normalize()) it with `prefix` and `root`.
 fn mapping_from_pattern(
@@ -132,6 +132,10 @@ impl Search {
             Ok(Search {
                 all_patterns_are_excluded: patterns.iter().all(|s| s.value.pattern.is_excluded()),
                 patterns,
+                match_all: Pattern {
+                    nil: true,
+                    ..Default::default()
+                },
                 source: None,
                 common_prefix_len,
             })

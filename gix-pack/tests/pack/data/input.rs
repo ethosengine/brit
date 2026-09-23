@@ -1,11 +1,11 @@
 mod lookup_ref_delta_objects {
     use std::sync::atomic::{AtomicUsize, Ordering};
 
-    use gix_hash::{oid, ObjectId};
-    use gix_object::{find::Error, Data};
+    use gix_hash::{ObjectId, oid};
+    use gix_object::{Data, find::Error};
     use gix_pack::data::{entry::Header, input, input::LookupRefDeltaObjectsIter};
 
-    use crate::pack::hex_to_id;
+    use crate::hex_to_id;
 
     const D_A: &[u8] = b"a";
     const D_B: &[u8] = b"bb";
@@ -32,10 +32,10 @@ mod lookup_ref_delta_objects {
     fn entry(header: Header, data: &'static [u8]) -> input::Entry {
         let obj = gix_object::Data {
             kind: header.as_kind().unwrap_or(gix_object::Kind::Blob),
-            hash_kind: gix_testtools::hash_kind_from_env().unwrap_or_default(),
+            object_hash: gix_testtools::object_hash(),
             data,
         };
-        let mut entry = input::Entry::from_data_obj(&obj, 0).expect("valid object");
+        let mut entry = input::Entry::from_data_obj(&obj, 0, gix_zlib::Compression::BEST_SPEED).expect("valid object");
         entry.header = header;
         entry.header_size = header.size(data.len() as u64) as u16;
         entry
@@ -86,7 +86,7 @@ mod lookup_ref_delta_objects {
                 buf.copy_from_slice(data);
                 Ok(Some(gix_object::Data {
                     kind: gix_object::Kind::Blob,
-                    hash_kind: id.kind(),
+                    object_hash: id.kind(),
                     data: buf.as_slice(),
                 }))
             } else {
@@ -99,8 +99,12 @@ mod lookup_ref_delta_objects {
     fn only_ref_deltas_are_handled() -> crate::Result {
         let input = compute_offsets(vec![entry(base(), D_A), entry(delta_ofs(100), D_B)]);
         let expected = input.clone();
-        let actual = LookupRefDeltaObjectsIter::new(into_results_iter(input), gix_object::find::Never)
-            .collect::<Result<Vec<_>, _>>()?;
+        let actual = LookupRefDeltaObjectsIter::new(
+            into_results_iter(input),
+            gix_object::find::Never,
+            gix_zlib::Compression::BEST_SPEED,
+        )
+        .collect::<Result<Vec<_>, _>>()?;
         assert_eq!(actual, expected, "it won't change the input at all");
         validate_pack_offsets(&actual);
         Ok(())
@@ -124,9 +128,12 @@ mod lookup_ref_delta_objects {
         let input_entries = into_results_iter(input);
         let actual_size = input_entries.size_hint();
         let db = FindData::new(inserted_data, &calls);
-        let iter = LookupRefDeltaObjectsIter::new(input_entries, &db);
-        assert_eq!(iter.size_hint(), (actual_size.0, actual_size.1.map(|s| s * 2)),
-                  "size hints are estimated and the upper bound reflects the worst-case scenario for the amount of possible objects");
+        let iter = LookupRefDeltaObjectsIter::new(input_entries, &db, gix_zlib::Compression::BEST_SPEED);
+        assert_eq!(
+            iter.size_hint(),
+            (actual_size.0, actual_size.1.map(|s| s * 2)),
+            "size hints are estimated and the upper bound reflects the worst-case scenario for the amount of possible objects"
+        );
         let actual = iter.collect::<Result<Vec<_>, _>>().unwrap();
 
         assert_eq!(calls.load(Ordering::Relaxed), 2, "there is only two objects to insert");
@@ -175,19 +182,46 @@ mod lookup_ref_delta_objects {
     }
 
     #[test]
-    fn lookup_errors_trigger_a_fuse_and_stop_iteration() {
-        let input = vec![entry(delta_ref(gix_hash::Kind::Sha1.null()), D_A), entry(base(), D_B)];
+    fn invalid_ofs_delta_base_distance_is_reported_after_base_insertion() {
+        for distance in [0, u64::MAX] {
+            let input = compute_offsets(vec![
+                entry(delta_ref(gix_hash::Kind::Sha1.null()), D_A),
+                entry(delta_ofs(distance), D_B),
+            ]);
+            let calls = AtomicUsize::default();
+            let db = FindData::new(D_D, &calls);
+
+            let result =
+                LookupRefDeltaObjectsIter::new(into_results_iter(input), &db, gix_zlib::Compression::BEST_SPEED)
+                    .collect::<Result<Vec<_>, _>>();
+
+            assert!(
+                matches!(
+                    result,
+                    Err(input::Error::InvalidBaseDistance {
+                        distance: actual,
+                        ..
+                    }) if actual == distance
+                ),
+                "zero and out-of-bounds base distances are rejected as corrupt pack data"
+            );
+        }
+    }
+
+    #[test]
+    fn missing_bases_are_left_for_in_pack_resolution() {
+        let input = compute_offsets(vec![
+            entry(delta_ref(gix_hash::Kind::Sha1.null()), D_A),
+            entry(base(), D_B),
+        ]);
+        let expected = input.clone();
         let calls = AtomicUsize::default();
         let db = FindData::new(None, &calls);
-        let mut result = LookupRefDeltaObjectsIter::new(into_results_iter(input), &db).collect::<Vec<_>>();
+        let result = LookupRefDeltaObjectsIter::new(into_results_iter(input), &db, gix_zlib::Compression::BEST_SPEED)
+            .collect::<Result<Vec<_>, _>>()
+            .expect("missing objects may be in the pack itself");
         assert_eq!(calls.load(Ordering::Relaxed), 1, "it tries to lookup the object");
-        assert_eq!(result.len(), 1, "the error stops iteration");
-        assert!(matches!(
-            result.pop().expect("one"),
-            Err(input::Error::NotFound {
-                object_id
-            }) if object_id == gix_hash::Kind::Sha1.null()
-        ));
+        assert_eq!(result, expected, "the unresolved ref-delta is unchanged");
     }
 
     #[test]
@@ -206,9 +240,39 @@ mod lookup_ref_delta_objects {
             }),
             Ok(entry(base(), D_B)),
         ];
-        let actual = LookupRefDeltaObjectsIter::new(input.into_iter(), gix_object::find::Never).collect::<Vec<_>>();
+        let actual = LookupRefDeltaObjectsIter::new(
+            input.into_iter(),
+            gix_object::find::Never,
+            gix_zlib::Compression::BEST_SPEED,
+        )
+        .collect::<Vec<_>>();
         for (actual, expected) in actual.into_iter().zip(expected) {
             assert_eq!(format!("{actual:?}"), format!("{expected:?}"));
         }
+    }
+
+    #[test]
+    fn size_hint_does_not_overflow() {
+        struct MaxSizeHint;
+
+        impl Iterator for MaxSizeHint {
+            type Item = Result<input::Entry, input::Error>;
+
+            fn next(&mut self) -> Option<Self::Item> {
+                None
+            }
+
+            fn size_hint(&self) -> (usize, Option<usize>) {
+                (usize::MAX, Some(usize::MAX))
+            }
+        }
+
+        let iter =
+            LookupRefDeltaObjectsIter::new(MaxSizeHint, gix_object::find::Never, gix_zlib::Compression::BEST_SPEED);
+        assert_eq!(
+            iter.size_hint(),
+            (usize::MAX, Some(usize::MAX)),
+            "doubling the upper bound must saturate"
+        );
     }
 }

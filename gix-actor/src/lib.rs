@@ -5,13 +5,13 @@
 //! ```
 //! use gix_actor::{IdentityRef, SignatureRef};
 //!
-//! let actor = IdentityRef::from_bytes::<()>(b" Taylor Example < taylor@example.com >")
+//! let actor = IdentityRef::from_bytes(b" Taylor Example < taylor@example.com >")
 //!     .unwrap()
 //!     .trim();
 //! assert_eq!(actor.name, "Taylor Example");
 //! assert_eq!(actor.email, "taylor@example.com");
 //!
-//! let signature = SignatureRef::from_bytes::<()>(b"Taylor Example <taylor@example.com> 1711398853 +0800")
+//! let signature = SignatureRef::from_bytes(b"Taylor Example <taylor@example.com> 1711398853 +0800")
 //!     .unwrap()
 //!     .trim();
 //! assert_eq!(signature.actor(), actor);
@@ -32,7 +32,7 @@
     doc = ::document_features::document_features!()
 )]
 #![cfg_attr(all(doc, feature = "document-features"), feature(doc_cfg))]
-#![deny(missing_docs, rust_2018_idioms, unsafe_code)]
+#![deny(missing_docs, unsafe_code)]
 
 /// The re-exported `bstr` crate.
 ///

@@ -4,9 +4,14 @@ use std::{
     ops::Deref,
 };
 
-use crate::{borrowed::oid, Kind};
+#[cfg(feature = "bstr")]
+use bstr::{BStr, BString, ByteSlice};
+
+use crate::{Kind, borrowed::oid};
+
 #[cfg(feature = "sha1")]
 use crate::{EMPTY_BLOB_SHA1, EMPTY_TREE_SHA1, SIZE_OF_SHA1_DIGEST};
+
 #[cfg(feature = "sha256")]
 use crate::{EMPTY_BLOB_SHA256, EMPTY_TREE_SHA256, SIZE_OF_SHA256_DIGEST};
 
@@ -29,32 +34,27 @@ pub enum ObjectId {
 // extremely unlikely to begin with so it doesn't matter.
 // This implementation matches the `Hash` implementation for `oid`
 // and allows the usage of custom Hashers that only copy a truncated ShaHash
-#[allow(clippy::derived_hash_with_manual_eq)]
 impl Hash for ObjectId {
     fn hash<H: Hasher>(&self, state: &mut H) {
         state.write(self.as_slice());
     }
 }
 
-#[allow(missing_docs)]
+#[expect(missing_docs)]
 pub mod decode {
     use std::str::FromStr;
 
     use crate::object_id::ObjectId;
+    use gix_error::ValidationError;
+
     #[cfg(feature = "sha1")]
     use crate::{SIZE_OF_SHA1_DIGEST, SIZE_OF_SHA1_HEX_DIGEST};
+
     #[cfg(feature = "sha256")]
     use crate::{SIZE_OF_SHA256_DIGEST, SIZE_OF_SHA256_HEX_DIGEST};
 
     /// An error returned by [`ObjectId::from_hex()`][crate::ObjectId::from_hex()]
-    #[derive(Debug, thiserror::Error)]
-    #[allow(missing_docs)]
-    pub enum Error {
-        #[error("A hash sized {0} hexadecimal characters is invalid")]
-        InvalidHexEncodingLength(usize),
-        #[error("Invalid character encountered")]
-        Invalid,
-    }
+    pub type Error = ValidationError;
 
     /// Hash decoding
     impl ObjectId {
@@ -70,7 +70,9 @@ pub mod decode {
                     ObjectId::Sha1({
                         let mut buf = [0; SIZE_OF_SHA1_DIGEST];
                         faster_hex::hex_decode(buffer, &mut buf).map_err(|err| match err {
-                            faster_hex::Error::InvalidChar | faster_hex::Error::Overflow => Error::Invalid,
+                            faster_hex::Error::InvalidChar | faster_hex::Error::Overflow => {
+                                Error::new("Invalid character encountered")
+                            }
                             faster_hex::Error::InvalidLength(_) => {
                                 unreachable!("BUG: This is already checked")
                             }
@@ -83,7 +85,9 @@ pub mod decode {
                     ObjectId::Sha256({
                         let mut buf = [0; SIZE_OF_SHA256_DIGEST];
                         faster_hex::hex_decode(buffer, &mut buf).map_err(|err| match err {
-                            faster_hex::Error::InvalidChar | faster_hex::Error::Overflow => Error::Invalid,
+                            faster_hex::Error::InvalidChar | faster_hex::Error::Overflow => {
+                                Error::new("Invalid character encountered")
+                            }
                             faster_hex::Error::InvalidLength(_) => {
                                 unreachable!("BUG: This is already checked")
                             }
@@ -91,7 +95,9 @@ pub mod decode {
                         buf
                     })
                 }),
-                len => Err(Error::InvalidHexEncodingLength(len)),
+                len => Err(Error::new(format!(
+                    "A hash sized {len} hexadecimal characters is invalid"
+                ))),
             }
         }
     }
@@ -337,6 +343,62 @@ impl Borrow<oid> for ObjectId {
 impl std::fmt::Display for ObjectId {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         write!(f, "{}", self.to_hex())
+    }
+}
+
+impl ObjectId {
+    fn eq_str(&self, other: &str) -> bool {
+        self.as_ref().eq_str(other)
+    }
+
+    #[cfg(feature = "bstr")]
+    fn eq_bstr(&self, other: &BStr) -> bool {
+        let mut hex = Kind::hex_buf();
+        self.as_ref().hex_to_buf(&mut hex).as_bytes() == other.as_bytes()
+    }
+}
+
+impl_partial_eq_str!(ObjectId);
+
+#[cfg(feature = "bstr")]
+impl PartialEq<BStr> for ObjectId {
+    fn eq(&self, other: &BStr) -> bool {
+        self.eq_bstr(other)
+    }
+}
+
+#[cfg(feature = "bstr")]
+impl PartialEq<&BStr> for ObjectId {
+    fn eq(&self, other: &&BStr) -> bool {
+        self.eq_bstr(other)
+    }
+}
+
+#[cfg(feature = "bstr")]
+impl PartialEq<BString> for ObjectId {
+    fn eq(&self, other: &BString) -> bool {
+        self.eq_bstr(other.as_bstr())
+    }
+}
+
+#[cfg(feature = "bstr")]
+impl PartialEq<ObjectId> for BStr {
+    fn eq(&self, other: &ObjectId) -> bool {
+        other.eq_bstr(self)
+    }
+}
+
+#[cfg(feature = "bstr")]
+impl PartialEq<ObjectId> for &BStr {
+    fn eq(&self, other: &ObjectId) -> bool {
+        other.eq_bstr(self)
+    }
+}
+
+#[cfg(feature = "bstr")]
+impl PartialEq<ObjectId> for BString {
+    fn eq(&self, other: &ObjectId) -> bool {
+        other.eq_bstr(self.as_bstr())
     }
 }
 

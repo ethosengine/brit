@@ -1,10 +1,10 @@
 /// Returned by [`BytesToEntriesIter::new_from_header()`][crate::data::input::BytesToEntriesIter::new_from_header()] and as part
 /// of `Item` of [`BytesToEntriesIter`][crate::data::input::BytesToEntriesIter].
 #[derive(thiserror::Error, Debug)]
-#[allow(missing_docs)]
+#[expect(missing_docs)]
 pub enum Error {
     #[error("An IO operation failed while streaming an entry")]
-    Io(#[from] gix_hash::io::Error),
+    Io(#[from] std::io::Error),
     #[error(transparent)]
     PackParse(#[from] crate::data::header::decode::Error),
     #[error("Failed to verify pack checksum in trailer")]
@@ -13,6 +13,14 @@ pub enum Error {
     IncompletePack { actual: u64, expected: u64 },
     #[error("The object {object_id} could not be decoded or wasn't found")]
     NotFound { object_id: gix_hash::ObjectId },
+    #[error("The OFS_DELTA base distance {distance} is invalid for pack offset {pack_offset}")]
+    InvalidBaseDistance { pack_offset: u64, distance: u64 },
+}
+
+impl From<gix_hash::io::Error> for Error {
+    fn from(err: gix_hash::io::Error) -> Self {
+        Error::Io(std::io::Error::other(err.into_error()))
+    }
 }
 
 /// Iteration Mode

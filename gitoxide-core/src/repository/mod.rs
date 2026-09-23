@@ -1,4 +1,5 @@
-use std::{fmt::Formatter, path::PathBuf};
+use std::fmt::Formatter;
+use std::path::PathBuf;
 
 use anyhow::{Context as AnyhowContext, Result};
 use gix::bstr::BString;
@@ -16,10 +17,13 @@ pub use credential::function as credential;
 pub mod attributes;
 #[cfg(feature = "clean")]
 pub mod clean;
-pub mod diff;
-pub mod dirty;
 #[cfg(feature = "clean")]
 pub use clean::function::clean;
+pub mod diff;
+pub mod dirty;
+pub mod dirwalk;
+mod editor;
+pub use editor::function as editor;
 #[cfg(feature = "blocking-client")]
 pub mod clone;
 pub mod exclude;

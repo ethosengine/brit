@@ -8,7 +8,7 @@
 //!
 //! This crate implements the building blocks in terms of applying and undoing filters, along with logic to decide whether
 //! or not to apply such a filter.
-#![deny(rust_2018_idioms, missing_docs, unsafe_code)]
+#![deny(missing_docs, unsafe_code)]
 
 use bstr::BString;
 /// A forwarding of the `encoding_rs` crate for its types and convenience.
@@ -66,10 +66,10 @@ pub struct Driver {
     pub smudge: Option<BString>,
     /// the long-running program that can typically handle both smudge and clean, and possibly delay processing as well.
     pub process: Option<BString>,
-    /// If `true`, the `clean` or `smudge` programs need to succeed in order to make their content usable. Otherwise their
-    /// exit code is ignored.
-    /// Note that this is more of a suggestion as we will always report errors as they happen as the driver API is streaming in nature,
-    /// which makes soft-failures impossible unless the caller takes precautions.
+    /// If `true`, the `clean` or `smudge` programs need to succeed in order to make their content usable. Otherwise a failed
+    /// single-file filter falls back to its original input. This requires buffering its output until the exit status is known.
+    ///
+    /// Note that this is more of a suggestion for long-running process filters as their API is streaming in nature.
     pub required: bool,
 }
 

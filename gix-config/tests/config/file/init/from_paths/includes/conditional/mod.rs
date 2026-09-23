@@ -1,12 +1,13 @@
 use std::{fs, path::Path, str::FromStr};
 
 use gix_config::{
+    File,
     file::{includes, init},
-    path, File,
+    path,
 };
 use gix_testtools::tempfile::tempdir;
 
-use crate::file::{cow_str, init::from_paths::escape_backslashes};
+use crate::file::{bstring, init::from_paths::escape_backslashes};
 
 mod gitdir;
 mod hasconfig;
@@ -91,14 +92,14 @@ fn include_and_includeif_correct_inclusion_order_and_delayed_resolve_include() -
         assert_eq!(
             config.strings_by("section", None, "value"),
             Some(vec![
-                cow_str("base"),
-                cow_str("first-incl-path"),
-                cow_str("first-incl-path"),
-                cow_str("base-past-first-include"),
-                cow_str("incl-if-path"),
-                cow_str("base-past-includeIf"),
-                cow_str("second-incl-path"),
-                cow_str("base-past-second-include"),
+                bstring("base"),
+                bstring("first-incl-path"),
+                bstring("first-incl-path"),
+                bstring("base-past-first-include"),
+                bstring("incl-if-path"),
+                bstring("base-past-includeIf"),
+                bstring("second-incl-path"),
+                bstring("base-past-second-include"),
             ]),
             "include order isn't changed also in relation to the root configuration, delayed_resolve = {delayed_resolve}",
         );
@@ -144,12 +145,8 @@ fn git_init(dir: impl AsRef<std::path::Path>, bare: bool) -> crate::Result {
     if bare {
         args.push("--bare");
     }
-    let output = std::process::Command::new(gix_path::env::exe_invocation())
-        .args(args)
-        .arg(dir)
-        .env_remove("GIT_CONFIG_COUNT")
-        .env_remove("XDG_CONFIG_HOME")
-        .output()?;
+    std::fs::create_dir_all(dir)?;
+    let output = gix_testtools::git_command(dir).args(args).output()?;
 
     assert!(output.status.success(), "{output:?}, {dir:?}");
     Ok(())

@@ -15,14 +15,15 @@
 //!     &shallow_file,
 //!     gix_lock::acquire::Fail::Immediately,
 //!     None,
-//! )?;
+//! )
+//! .map_err(|err| err.into_error())?;
 //! gix_shallow::write(lock, Some(shallow), &[gix_shallow::Update::Shallow(second)])?;
 //!
 //! let ids = gix_shallow::read(&shallow_file)?.unwrap().into_iter().collect::<Vec<_>>();
 //! assert_eq!(ids, vec![first, second]);
 //! # Ok(()) }
 //! ```
-#![deny(missing_docs, rust_2018_idioms)]
+#![deny(missing_docs)]
 #![forbid(unsafe_code)]
 
 /// An instruction on how to
@@ -88,10 +89,10 @@ pub mod write {
                 }
             }
             if shallow_commits.is_empty() {
-                if let Err(err) = std::fs::remove_file(file.resource_path()) {
-                    if err.kind() != std::io::ErrorKind::NotFound {
-                        return Err(err.into());
-                    }
+                if let Err(err) = std::fs::remove_file(file.resource_path())
+                    && err.kind() != std::io::ErrorKind::NotFound
+                {
+                    return Err(err.into());
                 }
                 drop(file);
                 return Ok(());
@@ -111,7 +112,7 @@ pub mod write {
 
     /// The error returned by [`write()`](crate::write()).
     #[derive(Debug, thiserror::Error)]
-    #[allow(missing_docs)]
+    #[expect(missing_docs)]
     pub enum Error {
         #[error(transparent)]
         Commit(#[from] gix_lock::commit::Error<gix_lock::File>),
@@ -127,7 +128,7 @@ pub use write::function::write;
 pub mod read {
     /// The error returned by [`read`](crate::read()).
     #[derive(Debug, thiserror::Error)]
-    #[allow(missing_docs)]
+    #[expect(missing_docs)]
     pub enum Error {
         #[error("Could not open shallow file for reading")]
         Io(#[from] std::io::Error),

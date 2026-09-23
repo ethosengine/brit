@@ -1,10 +1,10 @@
-use crate::{bstr, bstr::BStr, Commit, ObjectDetached, Tree};
+use crate::{Commit, ObjectDetached, Tree, bstr, bstr::BStr};
 
 mod error {
     use crate::object;
 
     #[derive(Debug, thiserror::Error)]
-    #[allow(missing_docs)]
+    #[expect(missing_docs)]
     pub enum Error {
         #[error(transparent)]
         FindExistingObject(#[from] object::find::existing::Error),
@@ -86,7 +86,7 @@ impl<'repo> Commit<'repo> {
     /// # Ok(()) }
     /// ```
     pub fn message_raw(&self) -> Result<&'_ BStr, gix_object::decode::Error> {
-        gix_object::CommitRefIter::from_bytes(&self.data).message()
+        gix_object::CommitRefIter::from_bytes(&self.data, self.id.kind()).message()
     }
     /// Obtain the message by using intricate knowledge about the encoding, which is fastest and
     /// can't fail at the expense of error handling.
@@ -101,7 +101,7 @@ impl<'repo> Commit<'repo> {
 
     /// Decode the commit and obtain the time at which the commit was created.
     ///
-    /// For the time at which it was authored, refer to `.decode()?.author()?.time()`.
+    /// For the time at which it was authored, refer to `.author()?.time()`.
     pub fn time(&self) -> Result<gix_date::Time, Error> {
         Ok(self.committer()?.time()?)
     }
@@ -114,24 +114,24 @@ impl<'repo> Commit<'repo> {
     /// used for successive calls to string-ish information to avoid decoding the object
     /// more than once.
     pub fn decode(&self) -> Result<gix_object::CommitRef<'_>, gix_object::decode::Error> {
-        gix_object::CommitRef::from_bytes(&self.data)
+        gix_object::CommitRef::from_bytes(&self.data, self.id.kind())
     }
 
     /// Return an iterator over tokens, representing this commit piece by piece.
     pub fn iter(&self) -> gix_object::CommitRefIter<'_> {
-        gix_object::CommitRefIter::from_bytes(&self.data)
+        gix_object::CommitRefIter::from_bytes(&self.data, self.id.kind())
     }
 
     /// Return the commits author, with surrounding whitespace trimmed.
     pub fn author(&self) -> Result<gix_actor::SignatureRef<'_>, gix_object::decode::Error> {
-        gix_object::CommitRefIter::from_bytes(&self.data)
+        gix_object::CommitRefIter::from_bytes(&self.data, self.id.kind())
             .author()
             .map(|s| s.trim())
     }
 
     /// Return the commits committer. with surrounding whitespace trimmed.
     pub fn committer(&self) -> Result<gix_actor::SignatureRef<'_>, gix_object::decode::Error> {
-        gix_object::CommitRefIter::from_bytes(&self.data)
+        gix_object::CommitRefIter::from_bytes(&self.data, self.id.kind())
             .committer()
             .map(|s| s.trim())
     }
@@ -147,13 +147,14 @@ impl<'repo> Commit<'repo> {
     /// let commit = repo.head_commit()?;
     /// let parent_ids: Vec<_> = commit.parent_ids().collect();
     ///
+    /// #[cfg(feature = "revision")]
     /// assert_eq!(parent_ids, vec![repo.rev_parse_single("HEAD~1")?]);
     /// # Ok(()) }
     /// ```
     pub fn parent_ids(&self) -> impl Iterator<Item = crate::Id<'repo>> + '_ {
         use crate::ext::ObjectIdExt;
         let repo = self.repo;
-        gix_object::CommitRefIter::from_bytes(&self.data)
+        gix_object::CommitRefIter::from_bytes(&self.data, self.id.kind())
             .parent_ids()
             .map(move |id| id.attach(repo))
     }
@@ -181,7 +182,7 @@ impl<'repo> Commit<'repo> {
 
     /// Parse the commit and return the tree id it points to.
     pub fn tree_id(&self) -> Result<crate::Id<'repo>, gix_object::decode::Error> {
-        gix_object::CommitRefIter::from_bytes(&self.data)
+        gix_object::CommitRefIter::from_bytes(&self.data, self.id.kind())
             .tree_id()
             .map(|id| crate::Id::from_id(id, self.repo))
     }
@@ -215,9 +216,29 @@ impl<'repo> Commit<'repo> {
     // TODO: make it possible to verify the signature, probably by wrapping `SignedData`. It's quite some work to do it properly.
     pub fn signature(
         &self,
-    ) -> Result<Option<(std::borrow::Cow<'_, BStr>, gix_object::commit::SignedData<'_>)>, gix_object::decode::Error>
+    ) -> Result<Option<(std::borrow::Cow<'_, BStr>, gix_object::signature::SignedData<'_>)>, gix_object::decode::Error>
     {
-        gix_object::CommitRefIter::signature(&self.data)
+        gix_object::CommitRefIter::signature(&self.data, self.id.kind())
+    }
+
+    /// Verify this commit's signature using Git-compatible configuration and external verification programs.
+    ///
+    /// Returns `Ok(None)` if the commit has no signature. If it is signed, the returned
+    /// [`Outcome`](crate::commit::verify::Outcome) describes the signature's format, cryptographic status, trust,
+    /// signer identity, and verifier output. A successful call does not necessarily mean that the signature is valid;
+    /// use [`Outcome::is_valid()`](crate::commit::verify::Outcome::is_valid) to determine whether Git would accept it.
+    #[cfg(feature = "command")]
+    pub fn verify_signature(&self) -> Result<Option<crate::commit::verify::Outcome>, crate::commit::verify::Error> {
+        crate::commit::verify::verify(self)
+    }
+
+    /// Write this commit with a Git-compatible signature added from repository configuration and return the attached commit,
+    /// after writing it to the object database.
+    ///
+    /// An existing signature for the repository's object format is replaced.
+    #[cfg(feature = "command")]
+    pub fn signed(&self) -> Result<Commit<'repo>, crate::commit::sign::Error> {
+        crate::commit::sign::sign(self)
     }
 }
 

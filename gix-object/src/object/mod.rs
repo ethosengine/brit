@@ -95,7 +95,10 @@ impl Object {
         }
     }
     /// Turns this instance into a [`Blob`] if it is one.
-    #[allow(clippy::result_large_err)]
+    #[expect(
+        clippy::result_large_err,
+        reason = "will be removed once `gix-error` is used consistently"
+    )]
     pub fn try_into_blob(self) -> Result<Blob, Self> {
         match self {
             Object::Blob(v) => Ok(v),
@@ -110,7 +113,10 @@ impl Object {
         }
     }
     /// Turns this instance into a [`Commit`] if it is one.
-    #[allow(clippy::result_large_err)]
+    #[expect(
+        clippy::result_large_err,
+        reason = "will be removed once `gix-error` is used consistently"
+    )]
     pub fn try_into_commit(self) -> Result<Commit, Self> {
         match self {
             Object::Commit(v) => Ok(v),
@@ -118,7 +124,10 @@ impl Object {
         }
     }
     /// Turns this instance into a [`Tree`] if it is one.
-    #[allow(clippy::result_large_err)]
+    #[expect(
+        clippy::result_large_err,
+        reason = "will be removed once `gix-error` is used consistently"
+    )]
     pub fn try_into_tree(self) -> Result<Tree, Self> {
         match self {
             Object::Tree(v) => Ok(v),
@@ -126,7 +135,10 @@ impl Object {
         }
     }
     /// Turns this instance into a [`Tag`] if it is one.
-    #[allow(clippy::result_large_err)]
+    #[expect(
+        clippy::result_large_err,
+        reason = "will be removed once `gix-error` is used consistently"
+    )]
     pub fn try_into_tag(self) -> Result<Tag, Self> {
         match self {
             Object::Tag(v) => Ok(v),
@@ -174,12 +186,11 @@ impl Object {
 }
 
 use crate::{
-    decode::{loose_header, Error as DecodeError, LooseHeaderDecodeError},
     BlobRef, CommitRef, Kind, ObjectRef, TagRef, TreeRef,
+    decode::{Error as DecodeError, LooseHeaderDecodeError, loose_header},
 };
 
 #[derive(Debug, thiserror::Error)]
-#[allow(missing_docs)]
 pub enum LooseDecodeError {
     #[error(transparent)]
     InvalidHeader(#[from] LooseHeaderDecodeError),
@@ -190,7 +201,7 @@ pub enum LooseDecodeError {
 }
 
 impl<'a> ObjectRef<'a> {
-    /// Deserialize an object from a loose serialisation given `data`, parsing with the provided `hash_kind`.
+    /// Deserialize an object from a loose serialisation given `data`, parsing with the provided `object_hash`.
     pub fn from_loose(data: &'a [u8], hash_kind: gix_hash::Kind) -> Result<ObjectRef<'a>, LooseDecodeError> {
         let (kind, size, offset) = loose_header(data)?;
 
@@ -203,7 +214,7 @@ impl<'a> ObjectRef<'a> {
         Ok(Self::from_bytes(body, kind, hash_kind)?)
     }
 
-    /// Deserialize an object of `kind` from the given `data`, using `hash_kind`.
+    /// Deserialize an object of `kind` from the given `data`, using `object_hash`.
     pub fn from_bytes(
         data: &'a [u8],
         kind: Kind,
@@ -212,8 +223,8 @@ impl<'a> ObjectRef<'a> {
         Ok(match kind {
             Kind::Tree => ObjectRef::Tree(TreeRef::from_bytes(data, hash_kind)?),
             Kind::Blob => ObjectRef::Blob(BlobRef { data }),
-            Kind::Commit => ObjectRef::Commit(CommitRef::from_bytes(data)?),
-            Kind::Tag => ObjectRef::Tag(TagRef::from_bytes(data)?),
+            Kind::Commit => ObjectRef::Commit(CommitRef::from_bytes(data, hash_kind)?),
+            Kind::Tag => ObjectRef::Tag(TagRef::from_bytes(data, hash_kind)?),
         })
     }
 

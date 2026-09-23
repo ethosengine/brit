@@ -1,13 +1,9 @@
-use std::path::PathBuf;
-
-use gix_hash::{oid, ObjectId};
+use crate::hex_to_id;
+use crate::util::{commit_graph, fixture, fixture_odb};
+use gix_hash::{ObjectId, oid};
 use gix_object::bstr::ByteSlice;
-use gix_traverse::commit::{topo, Parents};
-
-use crate::{
-    hex_to_id,
-    util::{commit_graph, fixture, fixture_odb},
-};
+use gix_traverse::commit::{Parents, topo};
+use std::path::PathBuf;
 
 fn odb() -> crate::Result<gix_odb::Handle> {
     fixture_odb("make_repo_for_topo.sh")
@@ -131,6 +127,19 @@ mod basic {
         let expected_strs: Vec<_> = expected.iter().map(std::string::ToString::to_string).collect();
         assert_eq!(expected_strs, baseline, "Baseline must match the expectation");
 
+        Ok(())
+    }
+
+    #[test]
+    fn duplicate_tips_are_ignored() -> crate::Result {
+        let odb = odb()?;
+        let tip = hex_to_id("62ed296d9986f50477e9f7b7e81cd0258939a43d");
+
+        for sorting in [topo::Sorting::TopoOrder, topo::Sorting::DateOrder] {
+            let expected = traverse_both([tip], [], &odb, sorting, Parents::All)?;
+            let actual = traverse_both([tip, tip], [], &odb, sorting, Parents::All)?;
+            assert_eq!(actual, expected, "duplicate tips must not affect the traversal");
+        }
         Ok(())
     }
 

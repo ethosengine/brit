@@ -2,18 +2,18 @@
 use std::path::{Path, PathBuf};
 
 use crate::{
+    Repository, ThreadSafeRepository,
     bstr::{BStr, BString, ByteSlice},
     worktree::Proxy,
-    Repository, ThreadSafeRepository,
 };
 
-#[allow(missing_docs)]
+#[expect(missing_docs)]
 pub mod into_repo {
     use std::path::PathBuf;
 
     /// The error returned by [`Proxy::into_repo()`][super::Proxy::into_repo()].
     #[derive(Debug, thiserror::Error)]
-    #[allow(missing_docs)]
+    #[expect(missing_docs)]
     pub enum Error {
         #[error(transparent)]
         Open(#[from] crate::open::Error),
@@ -43,18 +43,20 @@ impl<'repo> Proxy<'repo> {
 }
 
 impl Proxy<'_> {
-    /// Read the location of the checkout, the base of the work tree.
-    /// Note that the location might not exist.
-    pub fn base(&self) -> std::io::Result<PathBuf> {
+    fn dot_git(&self) -> std::io::Result<PathBuf> {
         let git_dir = self.git_dir.join("gitdir");
-        let base_dot_git = gix_discover::path::from_plain_file(&git_dir).ok_or_else(|| {
+        gix_discover::path::from_plain_file_relative_to_file(&git_dir).ok_or_else(|| {
             std::io::Error::new(
                 std::io::ErrorKind::NotFound,
                 format!("Required file '{}' does not exist", git_dir.display()),
             )
-        })??;
+        })?
+    }
 
-        Ok(gix_discover::path::without_dot_git_dir(base_dot_git))
+    /// Read the location of the checkout, the base of the work tree.
+    /// Note that the location might not exist.
+    pub fn base(&self) -> std::io::Result<PathBuf> {
+        Ok(gix_discover::path::without_dot_git_dir(self.dot_git()?))
     }
 
     /// The git directory for the work tree, typically contained within the parent git dir.
@@ -70,7 +72,18 @@ impl Proxy<'_> {
 
     /// Return true if the worktree cannot be pruned, moved or deleted, which is useful if it is located on an external storage device.
     pub fn is_locked(&self) -> bool {
-        self.git_dir.join("locked").is_file()
+        self.git_dir.join("locked").symlink_metadata().is_ok()
+    }
+
+    /// Return true if this worktree can be pruned without an expiry grace period.
+    ///
+    /// Locked worktrees are never prunable. Otherwise, an unreadable `gitdir` file or missing target
+    /// makes the worktree prunable.
+    pub fn is_prunable(&self) -> bool {
+        !self.is_locked()
+            && self
+                .dot_git()
+                .map_or(true, |dot_git| dot_git.symlink_metadata().is_err())
     }
 
     /// Provide a reason for the locking of this worktree, if it is locked at all.
@@ -91,7 +104,9 @@ impl Proxy<'_> {
     /// a lot of information if work tree access is avoided.
     pub fn into_repo_with_possibly_inaccessible_worktree(self) -> Result<Repository, crate::open::Error> {
         let base = self.base().ok();
-        let repo = ThreadSafeRepository::open_from_paths(self.git_dir, base, self.parent.options.clone())?;
+        let options = self.parent.options.clone().without_repository_environment_overrides();
+        let common_dir = self.parent.common_dir().to_owned();
+        let repo = ThreadSafeRepository::open_from_paths(self.git_dir, base, options, Some(common_dir))?;
         Ok(repo.into())
     }
 
@@ -104,7 +119,9 @@ impl Proxy<'_> {
         if !base.is_dir() {
             return Err(into_repo::Error::MissingWorktree { base });
         }
-        let repo = ThreadSafeRepository::open_from_paths(self.git_dir, base.into(), self.parent.options.clone())?;
+        let options = self.parent.options.clone().without_repository_environment_overrides();
+        let common_dir = self.parent.common_dir().to_owned();
+        let repo = ThreadSafeRepository::open_from_paths(self.git_dir, base.into(), options, Some(common_dir))?;
         Ok(repo.into())
     }
 }

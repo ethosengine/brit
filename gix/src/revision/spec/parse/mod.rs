@@ -1,7 +1,6 @@
+use crate::{Repository, bstr::BStr, revision::Spec};
 use gix_error::Exn;
 use gix_hash::ObjectId;
-
-use crate::{bstr::BStr, revision::Spec, Repository};
 
 mod types;
 pub use types::{ObjectKindHint, Options, RefsHint};
@@ -14,7 +13,7 @@ pub mod single {
 
     /// The error returned by [`crate::Repository::rev_parse_single()`].
     #[derive(Debug, thiserror::Error)]
-    #[allow(missing_docs)]
+    #[expect(missing_docs)]
     pub enum Error {
         #[error(transparent)]
         Parse(#[from] gix_error::Error),

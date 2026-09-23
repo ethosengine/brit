@@ -1,6 +1,6 @@
 use gix_revision::spec::parse::delegate::Traversal;
 
-use crate::spec::parse::{parse, try_parse, PeelToOwned as PeelTo};
+use crate::spec::parse::{PeelToOwned as PeelTo, parse, try_parse};
 
 #[test]
 fn single_is_first_parent() {
@@ -242,14 +242,24 @@ fn bad_escapes_can_cause_brace_mismatch() {
 }
 
 #[test]
-fn empty_top_revision_regex_are_skipped_as_they_match_everything() {
+fn empty_regex_is_passed_to_the_delegate() {
     let rec = parse("@^{/}");
 
     assert!(rec.kind.is_none());
     assert_eq!(rec.get_ref(0), "HEAD");
-    assert!(
-        rec.patterns.is_empty(),
-        "The delegate won't be called with empty regexes"
+    assert_eq!(
+        rec.patterns,
+        vec![("".into(), false)],
+        "empty regexes (will) match everything, so Git finds the anchor itself, peeled to a commit"
     );
-    assert_eq!(rec.calls, 1);
+    assert_eq!(rec.calls, 2);
+
+    let rec = parse("@^{/!-}");
+
+    assert_eq!(
+        rec.patterns,
+        vec![("".into(), true)],
+        "negated empty regexes (will) match nothing"
+    );
+    assert_eq!(rec.calls, 2);
 }

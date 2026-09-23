@@ -1,6 +1,7 @@
+pub use tracing::field;
+
 #[doc(hidden)]
 pub use tracing as __tracing;
-pub use tracing::field;
 
 /// An entered span which will exit on drop.
 pub struct Span {

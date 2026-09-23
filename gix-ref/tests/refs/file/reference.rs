@@ -48,11 +48,11 @@ mod reflog {
 
 mod peel {
     use gix_object::FindExt;
-    use gix_ref::{file::ReferenceExt, Reference};
+    use gix_ref::{Reference, file::ReferenceExt};
 
     use crate::{
         file,
-        file::{store_with_packed_refs, EmptyCommit},
+        file::{EmptyCommit, store_with_packed_refs},
         hex_to_id,
     };
 
@@ -136,7 +136,7 @@ mod peel {
 
         let commit = hex_to_id("134385f6d781b7e97062102c6a483440bfda2a03");
         assert_eq!(r.peel_to_id(&store, &EmptyCommit)?, commit);
-        assert_eq!(r.name.as_bstr(), "refs/remotes/origin/multi-link-target3");
+        assert_eq!(r, "refs/remotes/origin/multi-link-target3");
 
         let mut r: Reference = store.find_loose("dt1")?.into();
         assert_eq!(
@@ -145,7 +145,7 @@ mod peel {
             "points to a tag object without actual object lookup"
         );
 
-        let odb = gix_odb::at(store.git_dir().join("objects"))?;
+        let odb = crate::file::odb_at(store.git_dir().join("objects"))?;
         let mut r: Reference = store.find_loose("dt1")?.into();
         assert_eq!(r.peel_to_id(&store, &odb)?, commit, "points to the commit with lookup");
 
@@ -156,7 +156,7 @@ mod peel {
     fn to_id_long_jump() -> crate::Result {
         for packed in [None, Some("packed")] {
             let store = file::store_at_with_args("make_multi_hop_ref.sh", packed)?;
-            let odb = gix_odb::at(store.git_dir().join("objects"))?;
+            let odb = crate::file::odb_at(store.git_dir().join("objects"))?;
             let mut r: Reference = store.find("multi-hop")?;
             r.peel_to_id(&store, &odb)?;
 
@@ -189,13 +189,13 @@ mod peel {
         let store = file::store()?;
         let mut r: Reference = store.find_loose("loop-a")?.into();
         assert_eq!(r.kind(), gix_ref::Kind::Symbolic, "there is something to peel");
-        assert_eq!(r.name.as_bstr(), "refs/loop-a");
+        assert_eq!(r, "refs/loop-a");
 
         assert!(matches!(
             r.peel_to_id(&store, &gix_object::find::Never).unwrap_err(),
             gix_ref::peel::to_id::Error::FollowToObject(gix_ref::peel::to_object::Error::Cycle { .. })
         ));
-        assert_eq!(r.name.as_bstr(), "refs/loop-a", "the ref is not changed on error");
+        assert_eq!(r, "refs/loop-a", "the ref is not changed on error");
 
         let mut r: Reference = store.find_loose("loop-a")?.into();
         let err = r
@@ -215,29 +215,61 @@ mod parse {
                 #[test]
                 fn $name() {
                     use std::convert::TryInto;
-                    let err =
-                        Reference::try_from_path("HEAD".try_into().expect("this is a valid name"), $input).unwrap_err();
-                    assert_eq!(err.to_string(), $err);
+                    let err = Reference::try_from_path(
+                        "HEAD".try_into().expect("this is a valid name"),
+                        $input,
+                        gix_hash::Kind::Sha1,
+                    )
+                    .expect_err("the loose reference content is invalid or unsupported");
+                    assert_eq!(
+                        err.to_string(),
+                        $err,
+                        "the error identifies why decoding failed"
+                    );
                 }
             };
         }
 
         mktest!(hex_id, b"foobar", "\"foobar\" could not be parsed");
         mktest!(ref_tag, b"reff: hello", "\"reff: hello\" could not be parsed");
+        mktest!(
+            reftable_placeholder,
+            b"ref: refs/heads/.invalid\n",
+            "This reference uses an unsupported storage backend, such as reftable"
+        );
+        mktest!(
+            other_invalid_symbolic_target,
+            b"ref: refs/heads/.invalid-other\n",
+            "The path \"refs/heads/.invalid-other\" to a symbolic reference within a ref file is invalid"
+        );
+        mktest!(
+            sha256_sized_id_for_sha1,
+            b"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa\n",
+            "\"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa\\n\" could not be parsed"
+        );
+        mktest!(
+            trailing_garbage_after_id,
+            b"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaextra",
+            "\"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaextra\" could not be parsed"
+        );
     }
     mod valid {
         use gix_object::bstr::ByteSlice;
         use gix_ref::file::loose::Reference;
 
-        use crate::hex_to_id;
+        use crate::sha1_hex_to_id;
 
         macro_rules! mktest {
             ($name:ident, $input:literal, $kind:path, $id:expr, $ref:expr) => {
                 #[test]
                 fn $name() {
                     use std::convert::TryInto;
-                    let reference =
-                        Reference::try_from_path("HEAD".try_into().expect("valid static name"), $input).unwrap();
+                    let reference = Reference::try_from_path(
+                        "HEAD".try_into().expect("valid static name"),
+                        $input,
+                        gix_hash::Kind::Sha1,
+                    )
+                    .unwrap();
                     assert_eq!(reference.kind(), $kind);
                     assert_eq!(reference.target.to_ref().try_id(), $id);
                     assert_eq!(
@@ -252,7 +284,15 @@ mod parse {
             peeled,
             b"c5241b835b93af497cda80ce0dceb8f49800df1c\n",
             gix_ref::Kind::Object,
-            Some(hex_to_id("c5241b835b93af497cda80ce0dceb8f49800df1c").as_ref()),
+            Some(sha1_hex_to_id("c5241b835b93af497cda80ce0dceb8f49800df1c").as_ref()),
+            None
+        );
+
+        mktest!(
+            peeled_uppercase,
+            b"C5241B835B93AF497CDA80CE0DCEB8F49800DF1C\n",
+            gix_ref::Kind::Object,
+            Some(sha1_hex_to_id("c5241b835b93af497cda80ce0dceb8f49800df1c").as_ref()),
             None
         );
 
@@ -271,5 +311,44 @@ mod parse {
             None,
             Some(b"refs/foobar".as_bstr())
         );
+
+        #[test]
+        fn symbolic_ignores_nul_suffix_like_git() {
+            use std::convert::TryInto;
+
+            let reference = Reference::try_from_path(
+                "HEAD".try_into().expect("valid static name"),
+                b"ref: refs/heads/main\0hidden-head-metadata",
+                gix_hash::Kind::Sha1,
+            )
+            .expect("Git ignores bytes past the first NUL in symbolic ref files, so this parses as well");
+            assert_eq!(
+                reference.kind(),
+                gix_ref::Kind::Symbolic,
+                "the ref is still symbolic despite ignored trailing metadata"
+            );
+            assert_eq!(
+                reference.target.to_ref().try_name().map(gix_ref::FullNameRef::as_bstr),
+                Some(b"refs/heads/main".as_bstr()),
+                "only the target before the first NUL is used"
+            );
+        }
+
+        #[test]
+        fn peeled_sha256() {
+            use std::convert::TryInto;
+
+            let input = "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa";
+            let reference = Reference::try_from_path(
+                "HEAD".try_into().expect("valid static name"),
+                input.as_bytes(),
+                gix_hash::Kind::Sha256,
+            )
+            .unwrap();
+            assert_eq!(reference.kind(), gix_ref::Kind::Object);
+            let target_id = reference.target.to_ref().try_id().expect("non-symbolic").to_owned();
+            assert_eq!(target_id.kind(), gix_hash::Kind::Sha256);
+            assert_eq!(target_id, input);
+        }
     }
 }

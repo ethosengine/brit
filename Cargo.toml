@@ -5,10 +5,11 @@ name = "gitoxide"
 description = "A command-line application for interacting with git repositories"
 repository = "https://github.com/GitoxideLabs/gitoxide"
 authors = ["Sebastian Thiel <sebastian.thiel@icloud.com>"]
-edition = "2021"
+edition = "2024"
 license = "MIT OR Apache-2.0"
-version = "0.52.0"
-rust-version = "1.82"
+version = "0.58.0"
+# Rust 1.88 is required by `dua-core` 3.3, used for worktree removal.
+rust-version = "1.88"
 default-run = "brit"
 include = ["/src/**/*", "/build.rs", "/LICENSE-*", "/README.md"]
 resolver = "2"
@@ -55,12 +56,12 @@ max-pure = ["hashes", "max-control", "http-client-reqwest", "gitoxide-core-block
 
 ## Like `max`, but with more control for configuration. See the *Package Maintainers* headline for more information.
 ## Needs to chose its own hash(es).
-max-control = ["tracing", "fast", "pretty-cli", "gitoxide-core-tools", "prodash-render-line", "prodash-render-tui", "prodash/render-line-autoconfigure", "gix/revparse-regex"]
+max-control = ["tracing", "fast", "pretty-cli", "tix", "gitoxide-core-tools", "prodash-render-line", "prodash-render-tui", "prodash/render-line-autoconfigure", "gix/revparse-regex"]
 
 ## All the good stuff, with less fanciness for smaller binaries.
 ##
 ## As fast as possible, progress line rendering, all transports based on their most mature implementation (HTTP), all `ein` tools, CLI colors and local-time support, JSON output.
-lean = ["hashes", "fast", "tracing", "pretty-cli", "http-client-curl-openssl", "gitoxide-core-tools-query", "gitoxide-core-tools-corpus", "gitoxide-core-tools", "gitoxide-core-blocking-client", "prodash-render-line"]
+lean = ["hashes", "fast", "tracing", "pretty-cli", "tix", "http-client-curl-openssl", "gitoxide-core-tools-query", "gitoxide-core-tools-corpus", "gitoxide-core-tools", "gitoxide-core-blocking-client", "prodash-render-line"]
 
 ## The smallest possible build, best suitable for small single-core machines.
 ##
@@ -78,7 +79,7 @@ small = ["hashes", "pretty-cli", "prodash-render-line", "is-terminal"]
 ##
 ## Due to async client-networking not being implemented for most transports, this one supports only the 'git+tcp' and HTTP transport.
 ## It uses, however, a fully asynchronous networking implementation which can serve a real-world example on how to implement custom async transports.
-lean-async = ["hashes", "fast", "tracing", "pretty-cli", "gitoxide-core-tools", "gitoxide-core-tools-query", "gitoxide-core-tools-corpus", "gitoxide-core-async-client", "prodash-render-line"]
+lean-async = ["hashes", "fast", "tracing", "pretty-cli", "tix", "gitoxide-core-tools", "gitoxide-core-tools-query", "gitoxide-core-tools-corpus", "gitoxide-core-async-client", "prodash-render-line"]
 
 #! ### Package Maintainers
 #! `*-control` features leave it to you to configure C libraries, involving choices for HTTP transport implementation.
@@ -90,9 +91,14 @@ lean-async = ["hashes", "fast", "tracing", "pretty-cli", "gitoxide-core-tools", 
 #! Typical combinations of features of our dependencies, some of which are referred to in the `gitoxide` crate's code for conditional compilation.
 
 ## Provide support for all known hashes. If this isn't enabled, select an individual hash algorithms.
-hashes = ["sha1"]
+hashes = ["sha1", "sha256"]
 ## Enable support for the SHA-1 hash throughout the `gix` crate.
-sha1 = ["gix/sha1"]
+sha1 = ["gix/sha1", "gix-tix?/sha1"]
+## Enable support for the SHA-256 hash throughout the `gix` crate.
+sha256 = ["gix/sha256", "gix-tix?/sha256"]
+
+## Enable the interactive commit graph. This requires Rust 1.88 or newer.
+tix = ["dep:gix-tix"]
 
 ## Makes the crate execute as fast as possible by supporting parallel computation of otherwise long-running functions.
 ## If disabled, the binary will be visibly smaller.
@@ -164,9 +170,10 @@ gitoxide-core-async-client = ["gitoxide-core/async-client", "futures-lite"]
 [dependencies]
 anyhow = "1.0.98"
 
-gitoxide-core = { version = "^0.55.0", path = "gitoxide-core" }
-gix-features = { version = "^0.46.2", path = "gix-features" }
-gix = { version = "^0.81.0", path = "gix", default-features = false }
+gitoxide-core = { version = "^0.61.1", path = "gitoxide-core" }
+gix-features = { version = "^0.49.1", path = "gix-features" }
+gix = { version = "^0.87.1", path = "gix", default-features = false }
+gix-tix = { version = "^0.3.0", path = "gix-tix", default-features = false, optional = true }
 
 clap = { version = "4.5.42", features = ["derive", "cargo"] }
 clap_complete = "4.5.55"
@@ -197,7 +204,7 @@ gix-ref = { opt-level = 3 }
 gix-hash = { opt-level = 3 }
 gix-actor = { opt-level = 3 }
 gix-config = { opt-level = 3 }
-sha1-checked = { opt-level = 3 }
+sha1dc = { opt-level = 3 }
 zlib-rs = { opt-level = 3 }
 
 [profile.release]
@@ -234,6 +241,7 @@ members = [
     "gix-config-value",
     "gix-discover",
     "gix-features",
+    "gix-zlib",
     "gix-trace",
     "gix-commitgraph",
     "gix-chunk",
@@ -292,16 +300,6 @@ members = [
     "gix-fsck",
     "tests/tools",
     "tests/it",
-    "gix-diff/tests",
-    "gix-pack/tests",
-    "gix-odb/tests",
-    "gix-worktree-state/tests",
-    "gix-status/tests",
-    "gix-worktree/tests",
-    "gix-index/tests",
-    "gix-ref/tests",
-    "gix-config/tests",
-    "gix-traverse/tests",
     "gix-shallow",
     "brit-epr",
     "brit-verify",
@@ -343,6 +341,18 @@ broken_intra_doc_links = "allow"
 
 [workspace.lints.clippy]
 pedantic = { level = "warn", priority = -1 }
+
+## Maybe one day we can enable these, unwrap and expect shouldn't be needed.
+# unwrap_used      = "warn"
+# expect_used      = "warn"
+# panic            = "warn"
+## This is a tough one - parsers are relying on it, but they check bounds before.
+## Those can probably be rewritten to do the bounds-check via `get` and avoid len comparisons.
+# indexing_slicing = "warn"
+## This is about overflow/underflow and securing against this particularly with untrusted input.
+## Very noisy and needs special care, probably better to focus on fuzzers instead to not pre-empt complexity.
+# arithmetic_side_effects = "warn"
+
 #
 # Reviewed and allowed lints
 needless_continue = "allow"

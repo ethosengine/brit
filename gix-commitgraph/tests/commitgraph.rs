@@ -3,13 +3,28 @@ use std::{
     hash::BuildHasher,
     io::{BufRead, Cursor},
     path::Path,
-    process::Command,
 };
 
 use gix_commitgraph::{Graph, Position as GraphPosition};
 use gix_testtools::scripted_fixture_read_only;
 
 mod access;
+
+#[test]
+fn missing_path_keeps_io_error() -> gix_testtools::Result {
+    let dir = gix_testtools::tempfile::tempdir()?;
+    let err = gix_commitgraph::at(dir.path().join("missing"))
+        .err()
+        .expect("a missing path cannot contain a commit-graph");
+    assert_eq!(
+        err.downcast_any_ref::<std::io::Error>()
+            .expect("the filesystem error is preserved")
+            .kind(),
+        std::io::ErrorKind::NotFound,
+        "callers can distinguish a missing optional cache from other failures"
+    );
+    Ok(())
+}
 
 pub fn check_common(cg: &Graph, expected: &HashMap<String, RefInfo, impl BuildHasher>) {
     cg.verify_integrity(|_| Ok::<_, gix_error::Message>(()))
@@ -119,15 +134,12 @@ impl RefInfo {
 }
 
 fn inspect_refs(repo_dir: impl AsRef<Path>, refs: &[&'static str]) -> HashMap<String, RefInfo> {
-    let output = Command::new("git")
-        .arg("-C")
-        .arg(repo_dir.as_ref())
+    let output = gix_testtools::git_command(repo_dir)
         .arg("show")
         .arg("--no-patch")
         .arg("--pretty=format:%S %H %T %ct %P")
         .args(refs)
         .arg("--")
-        .env_remove("GIT_DIR")
         .output()
         .expect("failed to execute `git show`");
     // Output format: <refname> <id> <tree_id> <parent_ids>

@@ -2,7 +2,7 @@ use std::{env, ffi::OsStr, path::PathBuf};
 
 /// The error returned by [`gix_discover::upwards()`][crate::upwards()].
 #[derive(Debug, thiserror::Error)]
-#[allow(missing_docs)]
+#[expect(missing_docs)]
 pub enum Error {
     #[error("Could not obtain the current working directory")]
     CurrentDir(#[from] std::io::Error),
@@ -32,15 +32,34 @@ pub enum Error {
     },
 }
 
+/// How to obtain the trust level for a discovered repository.
+#[derive(Copy, Clone, Debug, Eq, PartialEq, Ord, PartialOrd, Hash)]
+pub enum TrustPolicy {
+    /// Determine trust from repository ownership and require it to be at least the given level.
+    Required(gix_sec::Trust),
+    /// Trust computation is skipped and the given trust level is assumed.
+    Assume(gix_sec::Trust),
+}
+
+impl Default for TrustPolicy {
+    fn default() -> Self {
+        TrustPolicy::Required(gix_sec::Trust::Reduced)
+    }
+}
+
 /// Options to help guide the [discovery][crate::upwards()] of repositories, along with their options
 /// when instantiated.
 pub struct Options<'a> {
-    /// When discovering a repository, assure it has at least this trust level or ignore it otherwise.
+    /// When discovering a repository, determine how trust should be obtained.
     ///
-    /// This defaults to [`Reduced`][gix_sec::Trust::Reduced] as our default settings are geared towards avoiding abuse.
-    /// Set it to `Full` to only see repositories that [are owned by the current user][gix_sec::Trust::from_path_ownership()].
-    pub required_trust: gix_sec::Trust,
+    /// This defaults to [`Required(Reduced)`][TrustPolicy::Required] as our default settings are geared towards avoiding abuse.
+    /// Set it to `Required(Full)` to only see repositories that [are owned by the current user][gix_sec::Trust::from_path_ownership()],
+    /// or [`TrustPolicy::Assume`] to skip trust computation and return the given trust level.
+    pub trust: TrustPolicy,
     /// When discovering a repository, ignore any repositories that are located in these directories or any of their parents.
+    ///
+    /// Entries are made absolute and lexically normalized, but symlinks are not resolved. They must therefore use the
+    /// physical, symlink-resolved spelling of the directory to match the path traversed during discovery.
     ///
     /// Note that we ignore ceiling directories if the search directory is directly on top of one, which by default is an error
     /// if `match_ceiling_dir_or_error` is true, the default.
@@ -73,7 +92,7 @@ pub struct Options<'a> {
 impl Default for Options<'_> {
     fn default() -> Self {
         Options {
-            required_trust: gix_sec::Trust::Reduced,
+            trust: TrustPolicy::default(),
             ceiling_dirs: vec![],
             match_ceiling_dir_or_error: true,
             cross_fs: false,
@@ -120,10 +139,8 @@ pub(crate) fn parse_ceiling_dirs(ceiling_dirs: &OsStr) -> Vec<PathBuf> {
         }
 
         let mut dir = ceiling_dir;
-        if should_normalize {
-            if let Ok(normalized) = gix_path::realpath(&dir) {
-                dir = normalized;
-            }
+        if should_normalize && let Ok(normalized) = gix_path::realpath(&dir) {
+            dir = normalized;
         }
         out.push(dir);
     }

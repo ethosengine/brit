@@ -1,13 +1,13 @@
 //! Pathspec plumbing and abstractions
 pub use gix_pathspec::*;
 
-use crate::{bstr::BStr, AttributeStack, Pathspec, PathspecDetached, Repository};
+use crate::{AttributeStack, Pathspec, PathspecDetached, Repository, bstr::BStr};
 
 ///
 pub mod init {
     /// The error returned by [`Pathspec::new()`](super::Pathspec::new()).
     #[derive(Debug, thiserror::Error)]
-    #[allow(missing_docs)]
+    #[expect(missing_docs)]
     pub enum Error {
         #[error(transparent)]
         MakeAttributes(#[from] Box<dyn std::error::Error + Send + Sync + 'static>),
@@ -15,9 +15,7 @@ pub mod init {
         Defaults(#[from] crate::repository::pathspec_defaults_ignore_case::Error),
         #[error(transparent)]
         ParseSpec(#[from] gix_pathspec::parse::Error),
-        #[error(
-            "Could not obtain the repository prefix as the relative path of the CWD as seen from the working tree"
-        )]
+        #[error("Could not obtain the repository prefix as the relative path of the CWD as seen from the working tree")]
         NormalizeSpec(#[from] gix_pathspec::normalize::Error),
         #[error(transparent)]
         RepoPrefix(#[from] gix_path::realpath::Error),

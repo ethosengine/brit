@@ -3,14 +3,13 @@ use std::process::Stdio;
 use bstr::{BStr, BString};
 
 use crate::{
-    driver,
-    driver::{process, substitute_f_parameter, Operation, Process, State},
-    Driver,
+    Driver, driver,
+    driver::{Operation, Process, State, process, substitute_f_parameter},
 };
 
 /// The error returned by [State::maybe_launch_process()][super::State::maybe_launch_process()].
 #[derive(Debug, thiserror::Error)]
-#[allow(missing_docs)]
+#[expect(missing_docs)]
 pub enum Error {
     #[error("Failed to spawn driver: {command:?}")]
     SpawnCommand {
@@ -105,7 +104,7 @@ fn spawn_driver(
             return Err(Error::SpawnCommand {
                 source: err,
                 command: cmd,
-            })
+            });
         }
     };
     Ok((child, cmd))

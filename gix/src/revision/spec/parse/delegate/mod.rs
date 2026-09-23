@@ -1,13 +1,12 @@
-use gix_error::{message, ErrorExt, Exn, ResultExt};
+use super::{Delegate, ObjectKindHint, error};
+use crate::{
+    Repository,
+    ext::{ObjectIdExt, ReferenceExt},
+};
+use gix_error::{ErrorExt, Exn, ResultExt, message};
 use gix_hash::ObjectId;
 use gix_revision::spec::{parse, parse::delegate};
 use smallvec::SmallVec;
-
-use super::{error, Delegate, ObjectKindHint};
-use crate::{
-    ext::{ObjectIdExt, ReferenceExt},
-    Repository,
-};
 
 type Replacements = SmallVec<[(ObjectId, ObjectId); 1]>;
 
@@ -223,8 +222,8 @@ impl Delegate<'_> {
     fn follow_refs_to_objects_if_needed_delay_errors(&mut self) {
         let repo = self.repo;
         for (r, obj) in self.refs.iter().zip(self.objs.iter_mut()) {
-            if let (Some(ref_), obj_opt @ None) = (r, obj) {
-                if let Some(id) = ref_.target.try_id().map(ToOwned::to_owned).or_else(|| {
+            if let (Some(ref_), obj_opt @ None) = (r, obj)
+                && let Some(id) = ref_.target.try_id().map(ToOwned::to_owned).or_else(|| {
                     match ref_.clone().attach(repo).peel_to_id() {
                         Err(err) => {
                             self.delayed_errors.push(
@@ -239,11 +238,11 @@ impl Delegate<'_> {
                         }
                         Ok(id) => Some(id.detach()),
                     }
-                }) {
-                    let objs = obj_opt.get_or_insert_with(Vec::new);
-                    if !objs.contains(&id) {
-                        objs.push(id);
-                    }
+                })
+            {
+                let objs = obj_opt.get_or_insert_with(Vec::new);
+                if !objs.contains(&id) {
+                    objs.push(id);
                 }
             }
         }

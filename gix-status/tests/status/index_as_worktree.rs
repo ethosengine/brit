@@ -1,28 +1,26 @@
 use std::sync::{
-    atomic::{AtomicBool, AtomicUsize, Ordering},
     Arc,
+    atomic::{AtomicBool, AtomicUsize, Ordering},
 };
 
 use bstr::BStr;
-use filetime::{set_file_mtime, FileTime};
+use filetime::{FileTime, set_file_mtime};
 use gix_filter::eol::AutoCrlf;
 use gix_index as index;
-use gix_index::{
-    entry,
-    entry::{Flags, Mode},
-    Entry,
-};
+use gix_index::{Entry, entry};
 use gix_status::{
     index_as_worktree,
     index_as_worktree::{
+        Change as WorktreeChange, Conflict, Context, EntryStatus as WorktreeEntryStatus, Options, Outcome, Record,
+        Recorder,
         traits::{CompareBlobs, FastEq, ReadData, SubmoduleStatus},
-        Change as WorktreeChange, Conflict, ConflictIndexEntry, Context, EntryStatus as WorktreeEntryStatus, Options,
-        Outcome, Record, Recorder,
     },
 };
-use pretty_assertions::assert_eq;
 
-use crate::{fixture_path, hex_to_id};
+use crate::{fixture_path, hex_to_id, odb_at};
+use gix_index::entry::{Flags, Mode};
+use gix_status::index_as_worktree::ConflictIndexEntry;
+use pretty_assertions::assert_eq;
 
 // since tests are fixtures a bunch of stat information (like inode number)
 // changes when extracting the data so we need to disable all advanced stat
@@ -43,6 +41,7 @@ fn fixture(name: &str, expected_status: &[Expectation<'_>]) -> Outcome {
     fixture_filtered(name, &[], expected_status)
 }
 
+#[cfg(unix)]
 fn nonfile_fixture(name: &str, expected_status: &[Expectation<'_>]) -> Outcome {
     fixture_filtered_detailed(
         "status_nonfile",
@@ -131,7 +130,7 @@ fn fixture_filtered(name: &str, pathspecs: &[&str], expected_status: &[Expectati
     )
 }
 
-#[allow(clippy::too_many_arguments)]
+#[expect(clippy::too_many_arguments)]
 fn fixture_filtered_detailed(
     name: &str,
     subdir: &str,
@@ -162,8 +161,8 @@ fn fixture_filtered_detailed(
 
     let worktree = fixture_path(name).join(subdir);
     let git_dir = worktree.join(".git");
-    let mut index =
-        gix_index::File::at(git_dir.join("index"), gix_hash::Kind::Sha1, false, Default::default()).unwrap();
+    let object_hash = gix_testtools::object_hash();
+    let mut index = gix_index::File::at(git_dir.join("index"), object_hash, false, Default::default()).unwrap();
     prepare_index(&mut index);
     let mut recorder = Recorder::default();
     let search = gix_pathspec::Search::from_specs(to_pathspecs(pathspecs), None, std::path::Path::new(""))
@@ -196,7 +195,7 @@ fn fixture_filtered_detailed(
         ..Options::default()
     };
     let outcome = if use_odb {
-        let odb = gix_odb::at(git_dir.join("objects")).unwrap().into_arc().unwrap();
+        let odb = odb_at(&git_dir, object_hash);
         index_as_worktree(
             &index,
             &worktree,
@@ -284,6 +283,47 @@ pub(super) fn to_pathspecs(input: &[&str]) -> Vec<gix_pathspec::Pattern> {
 
 fn status_removed() -> EntryStatus {
     Change::Removed.into()
+}
+
+#[test]
+fn hash_errors_preserve_io_kinds() {
+    use std::io::ErrorKind;
+
+    for (stream_len, interrupted, expected_kind) in
+        [(2, false, ErrorKind::UnexpectedEof), (1, true, ErrorKind::Interrupted)]
+    {
+        let err = gix_object::compute_stream_hash(
+            gix_testtools::object_hash(),
+            gix_object::Kind::Blob,
+            &mut &b"x"[..],
+            stream_len,
+            &mut gix_features::progress::Discard,
+            &AtomicBool::new(interrupted),
+        )
+        .expect_err("a short stream or requested interruption prevents hashing");
+        let index_as_worktree::Error::Io(err) = err.into() else {
+            panic!("hashing I/O failures must remain I/O errors");
+        };
+        assert_eq!(err.kind(), expected_kind, "callers must retain the native I/O kind");
+    }
+}
+
+#[test]
+fn hash_errors_without_io_causes_use_other() {
+    let err = gix_hash::io::from_hasher(gix_hash::hasher::Error::new("hash collision"));
+    let index_as_worktree::Error::Io(err) = err.into() else {
+        panic!("hashing failures must be represented by the I/O error variant");
+    };
+    assert_eq!(
+        err.kind(),
+        std::io::ErrorKind::Other,
+        "a hashing failure without an I/O cause has no native kind"
+    );
+    assert!(
+        std::iter::successors(std::error::Error::source(&err), |source| source.source())
+            .any(|source| source.to_string().contains("hash collision")),
+        "the original hashing failure remains available for diagnostics"
+    );
 }
 
 #[test]
@@ -590,6 +630,172 @@ fn conflict_both_deleted_and_added_by_them_and_added_by_us() {
             entries_processed: 3,
             ..Default::default()
         },
+    );
+}
+
+/// Extra entries `try_from_entry` tells the status worker to skip after `start_index`.
+/// This must be consecutive same-path conflict stages, not `stage - 1`.
+#[test]
+fn conflict_try_from_entry_skip_count_is_consecutive_same_path_stages() {
+    use Conflict::*;
+    use gix_index::entry::Stage::{Base, Ours, Theirs, Unconflicted};
+
+    fn assert_conflict_skip_count(
+        stages: &[(gix_index::entry::Stage, &str)],
+        (expected_conflict, expected_extra, diagnostic): (Conflict, usize, Option<&str>),
+    ) {
+        fn index_with_stages(stages: &[(gix_index::entry::Stage, &str)]) -> gix_index::State {
+            let object_hash = gix_testtools::object_hash();
+            let mut state = gix_index::State::new(object_hash);
+            let id = object_hash.null();
+            for &(stage, path) in stages {
+                state.dangerously_push_entry(
+                    Default::default(),
+                    id,
+                    Flags::from_stage(stage),
+                    Mode::FILE,
+                    BStr::new(path.as_bytes()),
+                );
+            }
+            state
+        }
+
+        let index = index_with_stages(stages);
+        let path = index.entry(0).path(&index);
+        let (actual_summary, actual_extra, _) =
+            Conflict::try_from_entry(index.entries(), index.path_backing(), 0, path)
+                .expect("the first entry is a conflict stage");
+        assert_eq!(
+            actual_summary,
+            expected_conflict,
+            "{}",
+            diagnostic.unwrap_or("conflict classification")
+        );
+        assert_eq!(
+            actual_extra, expected_extra,
+            "{expected_conflict:?} extra skip count must be consecutive same-path stages after start, not stage-1"
+        );
+    }
+
+    assert_conflict_skip_count(
+        &[(Theirs, "ua"), (Unconflicted, "next"), (Unconflicted, "next2")],
+        (AddedByThem, 0, None),
+    );
+    assert_conflict_skip_count(
+        &[(Ours, "au"), (Unconflicted, "next")],
+        (AddedByUs, 0, Some("an unconflicted entry terminates the conflict")),
+    );
+    assert_conflict_skip_count(
+        &[(Ours, "a"), (Theirs, "b")],
+        (
+            AddedByUs,
+            0,
+            Some("a conflict entry for another path terminates the current conflict"),
+        ),
+    );
+    assert_conflict_skip_count(&[(Base, "dd")], (BothDeleted, 0, None));
+    assert_conflict_skip_count(&[(Base, "dt"), (Ours, "dt")], (DeletedByThem, 1, None));
+    assert_conflict_skip_count(
+        &[(Base, "du"), (Theirs, "du"), (Unconflicted, "next")],
+        (DeletedByUs, 1, None),
+    );
+    assert_conflict_skip_count(
+        &[(Ours, "aa"), (Theirs, "aa"), (Unconflicted, "next")],
+        (BothAdded, 1, None),
+    );
+    assert_conflict_skip_count(&[(Base, "bm"), (Ours, "bm"), (Theirs, "bm")], (BothModified, 2, None));
+}
+
+#[test]
+fn conflict_added_by_them_does_not_skip_following_dirty_path_when_chunked() {
+    use Conflict::*;
+
+    fn pad_count_for_chunk_size_gt_one() -> usize {
+        // `optimize_chunk_size` uses `(n / (threads * 2)).clamp(1, 1000)`.
+        // Need `n >= threads * 6` so chunk_size >= 3 and the two paths after AddedByThem share its chunk.
+        let threads = std::thread::available_parallelism().map_or(1, std::num::NonZero::get);
+        threads.saturating_mul(6).max(32)
+    }
+    let pad = pad_count_for_chunk_size_gt_one();
+    assert_eq!(
+        fixture_filtered_detailed(
+            "conflicts",
+            "both-deleted",
+            &[],
+            &[
+                (
+                    BStr::new(b"added-by-them"),
+                    0,
+                    EntryStatus::Conflict {
+                        summary: AddedByThem,
+                        entries: Box::new([
+                            None,
+                            None,
+                            Some(ConflictIndexEntry {
+                                id: hex_to_id("9daeafb9864cf43055ae93beb0afd6c7d144bfa4"),
+                                flags: Flags::STAGE_MASK,
+                                mode: Mode::FILE,
+                            }),
+                        ])
+                    }
+                ),
+                (BStr::new(b"added-by-them-dirty"), 1, status_removed()),
+                (
+                    BStr::new(b"added-by-us"),
+                    2,
+                    EntryStatus::Conflict {
+                        summary: AddedByUs,
+                        entries: Box::new([
+                            None,
+                            Some(ConflictIndexEntry {
+                                id: hex_to_id("9daeafb9864cf43055ae93beb0afd6c7d144bfa4"),
+                                flags: Flags::from_bits_retain(0x2000),
+                                mode: Mode::FILE,
+                            }),
+                            None,
+                        ])
+                    }
+                ),
+                (
+                    BStr::new(b"file"),
+                    3,
+                    EntryStatus::Conflict {
+                        summary: BothDeleted,
+                        entries: Box::new([
+                            Some(ConflictIndexEntry {
+                                id: hex_to_id("9daeafb9864cf43055ae93beb0afd6c7d144bfa4"),
+                                flags: Flags::from_bits_retain(0x1000),
+                                mode: Mode::FILE,
+                            }),
+                            None,
+                            None,
+                        ])
+                    }
+                ),
+            ],
+            |index| {
+                let proto = index.entry(0);
+                let (stat, id, mode) = (proto.stat, proto.id, proto.mode);
+                index.dangerously_push_entry(stat, id, Flags::empty(), mode, BStr::new(b"added-by-them-dirty"));
+                for i in 0..pad {
+                    let path = format!("z-pad-{i:03}");
+                    index.dangerously_push_entry(stat, id, Flags::SKIP_WORKTREE, mode, BStr::new(path.as_bytes()));
+                }
+                index.sort_entries();
+            },
+            false,
+            Default::default(),
+            false,
+            None,
+        ),
+        Outcome {
+            entries_to_process: 4 + pad,
+            entries_processed: 4 + pad,
+            entries_skipped_by_entry_flags: pad,
+            symlink_metadata_calls: 1,
+            ..Default::default()
+        },
+        "every conflict and dirty entry must be processed; only SKIP_WORKTREE padding entries are skipped",
     );
 }
 
@@ -1004,12 +1210,12 @@ fn racy_git() {
     // we need a writable fixture because we have to mess with `mtimes` manually, because touch -d
     // respects the locale so the test wouldn't work depending on the timezone you
     // run your test in.
-    let dir = gix_testtools::scripted_fixture_writable_standalone("racy_git.sh").expect("script works");
+    let dir = crate::scripted_fixture_writable("racy_git.sh").expect("script works");
     let worktree = dir.path();
     let git_dir = worktree.join(".git");
     let fs = gix_fs::Capabilities::probe(&git_dir);
-    let mut index =
-        gix_index::File::at(git_dir.join("index"), gix_hash::Kind::Sha1, false, Default::default()).unwrap();
+    let object_hash = gix_testtools::object_hash();
+    let mut index = gix_index::File::at(git_dir.join("index"), object_hash, false, Default::default()).unwrap();
 
     #[derive(Clone)]
     struct CountCalls(Arc<AtomicUsize>, FastEq);

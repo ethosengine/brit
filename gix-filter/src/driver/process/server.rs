@@ -1,7 +1,7 @@
 use std::{collections::HashSet, io::Write, str::FromStr};
 
 use bstr::{BString, ByteSlice};
-use gix_packetline::blocking_io::{encode, StreamingPeekableIter, Writer};
+use gix_packetline::blocking_io::{StreamingPeekableIter, Writer, encode};
 
 use crate::driver::process::Server;
 
@@ -20,7 +20,7 @@ pub mod next_request {
 
     /// The error returned by [Server::next_request()][super::Server::next_request()].
     #[derive(Debug, thiserror::Error)]
-    #[allow(missing_docs)]
+    #[expect(missing_docs)]
     pub enum Error {
         #[error("Failed to read from the client")]
         Io(#[from] std::io::Error),
@@ -35,7 +35,7 @@ pub mod next_request {
 pub mod handshake {
     /// The error returned by [Server::handshake()][super::Server::handshake()].
     #[derive(Debug, thiserror::Error)]
-    #[allow(missing_docs)]
+    #[expect(missing_docs)]
     pub enum Error {
         #[error("Failed to read or write to the client")]
         Io(#[from] std::io::Error),
@@ -99,7 +99,7 @@ impl Server {
                         return Err(handshake::Error::Protocol {
                             msg: "Expected 'version=<integer>', got".into(),
                             actual: buf,
-                        })
+                        });
                     }
                 },
             );
@@ -170,7 +170,7 @@ impl Server {
                 return Err(next_request::Error::Protocol {
                     msg: "Wanted 'command=<name>', got ".into(),
                     actual: buf.into(),
-                })
+                });
             }
         };
 
@@ -210,11 +210,11 @@ impl Server {
 mod request {
     use std::io::Write;
 
-    use gix_packetline::blocking_io::{encode, Writer};
+    use gix_packetline::blocking_io::{Writer, encode};
 
     use crate::driver::{
         process,
-        process::{server::Request, PacketlineReader},
+        process::{PacketlineReader, server::Request},
     };
 
     impl Request<'_> {

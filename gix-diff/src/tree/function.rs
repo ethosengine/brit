@@ -1,10 +1,10 @@
 use std::{borrow::BorrowMut, collections::VecDeque};
 
-use gix_object::{tree::EntryRef, FindExt, TreeRefIter};
+use gix_object::{FindExt, TreeRefIter, tree::EntryRef};
 
 use crate::tree::{
-    visit::{Change, ChangeId, Relation},
     Error, State, TreeInfoTuple, Visit,
+    visit::{Change, ChangeId, Relation},
 };
 
 /// Calculate the changes that would need to be applied to `lhs` to get `rhs` using `objects` to obtain objects as needed for traversal.
@@ -120,12 +120,7 @@ where
 }
 
 fn compare(a: &EntryRef<'_>, b: &EntryRef<'_>) -> std::cmp::Ordering {
-    let common = a.filename.len().min(b.filename.len());
-    a.filename[..common].cmp(&b.filename[..common]).then_with(|| {
-        let a = a.filename.get(common).or_else(|| a.mode.is_tree().then_some(&b'/'));
-        let b = b.filename.get(common).or_else(|| b.mode.is_tree().then_some(&b'/'));
-        a.cmp(&b)
-    })
+    gix_object::tree::name_order(a.filename, a.mode.is_tree(), b.filename, b.mode.is_tree())
 }
 
 fn delete_entry_schedule_recursion(
@@ -425,7 +420,7 @@ mod tests {
 
     #[test]
     fn compare_select_samples() {
-        let null = gix_hash::ObjectId::null(gix_hash::Kind::Sha1);
+        let null = gix_testtools::object_hash().null();
         let actual = compare(
             &EntryRef {
                 mode: EntryKind::Blob.into(),

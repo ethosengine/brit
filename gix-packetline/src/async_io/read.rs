@@ -9,9 +9,8 @@ use futures_lite::AsyncReadExt;
 
 pub use super::sidebands::WithSidebands;
 use crate::{
-    decode,
+    MAX_LINE_LEN, PacketLineRef, U16_HEX_BYTES, decode,
     read::{ExhaustiveOutcome, ProgressAction, StreamingPeekableIterState},
-    PacketLineRef, MAX_LINE_LEN, U16_HEX_BYTES,
 };
 
 /// Read pack lines one after another, without consuming more than needed from the underlying
@@ -40,13 +39,23 @@ where
         reader: &mut T,
         buf: &'a mut [u8],
     ) -> io::Result<Result<PacketLineRef<'a>, decode::Error>> {
-        let (hex_bytes, data_bytes) = buf.split_at_mut(4);
+        if buf.len() < U16_HEX_BYTES {
+            return Ok(Err(decode::Error::NotEnoughData {
+                bytes_needed: U16_HEX_BYTES - buf.len(),
+            }));
+        }
+        let (hex_bytes, data_bytes) = buf.split_at_mut(U16_HEX_BYTES);
         reader.read_exact(hex_bytes).await?;
         let num_data_bytes = match decode::hex_prefix(hex_bytes) {
             Ok(decode::PacketLineOrWantedSize::Line(line)) => return Ok(Ok(line)),
             Ok(decode::PacketLineOrWantedSize::Wanted(additional_bytes)) => additional_bytes as usize,
             Err(err) => return Ok(Err(err)),
         };
+        if num_data_bytes > data_bytes.len() {
+            return Ok(Err(decode::Error::DataLengthLimitExceeded {
+                length_in_bytes: num_data_bytes + U16_HEX_BYTES,
+            }));
+        }
 
         let (data_bytes, _) = data_bytes.split_at_mut(num_data_bytes);
         reader.read_exact(data_bytes).await?;
@@ -73,7 +82,6 @@ where
                 Ok(Ok(line)) => {
                     if trace {
                         match line {
-                            #[allow(unused_variables)]
                             PacketLineRef::Data(d) => {
                                 gix_trace::trace!("<< {}", d.as_bstr().trim().as_bstr());
                             }
@@ -92,16 +100,14 @@ where
                         let stopped_at = delimiters.iter().find(|l| **l == line).copied();
                         buf.clear();
                         return (true, stopped_at, None);
-                    } else if fail_on_err_lines {
-                        if let Some(err) = line.check_error() {
-                            let err = err.0.as_bstr().to_owned();
-                            buf.clear();
-                            return (
-                                true,
-                                None,
-                                Some(Err(io::Error::other(crate::read::Error { message: err }))),
-                            );
-                        }
+                    } else if fail_on_err_lines && let Some(err) = line.check_error() {
+                        let err = err.0.as_bstr().to_owned();
+                        buf.clear();
+                        return (
+                            true,
+                            None,
+                            Some(Err(io::Error::other(crate::read::Error { message: err }))),
+                        );
                     }
                     let len = line.as_slice().map_or(U16_HEX_BYTES, |s| s.len() + U16_HEX_BYTES);
                     if buf_resize {
@@ -187,7 +193,7 @@ where
     /// Same as [`as_read_with_sidebands(…)`](StreamingPeekableIter::as_read_with_sidebands()), but for channels without side band support.
     ///
     /// Due to the preconfigured function type this method can be called without 'turbofish'.
-    #[allow(clippy::type_complexity)]
+    #[expect(clippy::type_complexity)]
     pub fn as_read(&mut self) -> WithSidebands<'_, T, fn(bool, &[u8]) -> ProgressAction> {
         WithSidebands::new(self)
     }

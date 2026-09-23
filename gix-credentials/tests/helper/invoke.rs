@@ -1,5 +1,8 @@
 use bstr::BString;
-use gix_credentials::{helper, protocol::Context};
+use gix_credentials::{
+    helper,
+    protocol::{Context, ContextOptions},
+};
 
 use crate::helper::script_helper;
 
@@ -26,6 +29,24 @@ fn get() {
 }
 
 #[test]
+fn get_uses_context_options_for_the_entire_exchange() {
+    let action = helper::Action::Get(Context::from_url(
+        "https://github.com/byron/gitoxide",
+        ContextOptions {
+            protect_protocol: false,
+        },
+    ));
+    let outcome = gix_credentials::helper::invoke(&mut script_helper("carriage-return"), &action)
+        .expect("CR is allowed")
+        .expect("mock provides credentials");
+
+    assert_eq!(outcome.username.as_deref(), Some("user\rname"));
+    let context: Context = (&outcome.next).try_into().expect("the next action retains its options");
+    assert_eq!(context.options, action.context().expect("get action").options);
+    assert_eq!(context.username.as_deref(), Some("user\rname"));
+}
+
+#[test]
 fn store_and_reject() {
     let ctx = Context {
         url: Some("https://github.com/byron/gitoxide".into()),
@@ -46,12 +67,18 @@ fn store_and_reject() {
 }
 
 mod program {
-    use gix_credentials::{helper, program::Kind, Program};
+    use gix_credentials::{Program, helper, program::Kind};
 
     use crate::helper::script_helper;
 
     #[test]
-    fn builtin() {
+    fn builtin() -> crate::Result {
+        // Other tests resolve fixture paths relative to the working directory, so change it only in a child.
+        if gix_testtools::run_in_isolated_process()? {
+            return Ok(());
+        }
+        let temp = gix_testtools::tempfile::tempdir()?;
+        let _cwd = gix_testtools::set_current_dir(temp.path())?;
         assert!(
             matches!(
                 gix_credentials::helper::invoke(
@@ -63,6 +90,7 @@ mod program {
             ),
             "this failure indicates we could launch the helper, even though it wasn't happy which is fine. It doesn't like the URL"
         );
+        Ok(())
     }
 
     #[test]
@@ -88,12 +116,12 @@ mod program {
 
     #[cfg(unix)] // needs executable bits to work
     #[test]
-    fn path_to_helper_script() -> crate::Result {
+    fn path_to_helper_script() -> gix_testtools::TestResult {
         assert_eq!(
             gix_credentials::helper::invoke(
                 &mut Program::from_custom_definition(
                     gix_path::into_bstr(gix_path::realpath(gix_testtools::fixture_path("custom-helper.sh"))?)
-                        .into_owned()
+                        .into_owned(),
                 ),
                 &helper::Action::get_for_url("/does/not/matter"),
             )?
@@ -114,7 +142,7 @@ mod program {
         assert_eq!(
             gix_credentials::helper::invoke(
                 &mut script_helper("custom-helper"),
-                &helper::Action::get_for_url("/does/not/matter")
+                &helper::Action::get_for_url("/does/not/matter"),
             )?
             .expect("present")
             .consume_identity()

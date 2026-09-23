@@ -1,4 +1,4 @@
-use anyhow::{anyhow, bail, Context};
+use anyhow::{Context, anyhow, bail};
 use gix::{
     bstr::{BString, ByteSlice},
     merge::tree::TreatAsUnresolved,
@@ -8,7 +8,6 @@ use gix::{
 use super::tree::Options;
 use crate::OutputFormat;
 
-#[allow(clippy::too_many_arguments)]
 pub fn commit(
     mut repo: gix::Repository,
     out: &mut dyn std::io::Write,
@@ -21,6 +20,8 @@ pub fn commit(
         tree_favor,
         in_memory,
         debug,
+        message: _,
+        update_head: _,
     }: Options,
 ) -> anyhow::Result<()> {
     if format != OutputFormat::Human {
@@ -70,7 +71,7 @@ pub fn commit(
     }
 
     if debug {
-        writeln!(err, "{:#?}", &res.conflicts)?;
+        writeln!(err, "{:#?}", res.conflicts)?;
     }
     if !has_conflicts {
         writeln!(err, "{} possibly resolved conflicts", res.conflicts.len())?;

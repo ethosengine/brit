@@ -2,7 +2,7 @@ use std::{collections::BTreeSet, path::PathBuf, sync::atomic::AtomicBool};
 
 use bstr::{BStr, BString};
 
-use crate::{entry, EntryRef};
+use crate::{EntryRef, entry};
 
 /// A type returned by the [`Delegate::emit()`] as passed to [`walk()`](function::walk()).
 ///
@@ -12,7 +12,7 @@ pub type Action = std::ops::ControlFlow<()>;
 
 /// Ready-made delegate implementations.
 pub mod delegate {
-    use crate::{entry, walk, walk::Action, Entry, EntryRef};
+    use crate::{Entry, EntryRef, entry, walk, walk::Action};
 
     type Entries = Vec<(Entry, Option<entry::Status>)>;
 
@@ -101,6 +101,8 @@ pub enum EmissionMode {
     ///
     /// Note that doing so is more expensive as it requires us to keep track of all entries in the directory structure
     /// until it's clear what to finally emit.
+    ///
+    /// Also note that empty *untracked* directories aren't empitted, also if these are nested (and empty)
     CollapseDirectory,
 }
 
@@ -273,7 +275,7 @@ pub struct Outcome {
 
 /// The error returned by [`walk()`](function::walk()).
 #[derive(Debug, thiserror::Error)]
-#[allow(missing_docs)]
+#[expect(missing_docs)]
 pub enum Error {
     #[error("Interrupted")]
     Interrupted,

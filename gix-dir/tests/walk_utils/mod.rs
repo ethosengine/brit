@@ -4,7 +4,7 @@ use std::{
 };
 
 use bstr::BStr;
-use gix_dir::{entry, walk, Entry};
+use gix_dir::{Entry, entry, walk};
 use gix_testtools::scripted_fixture_read_only;
 
 pub fn fixture_in(filename: &str, name: &str) -> PathBuf {
@@ -270,7 +270,7 @@ pub fn collect_filtered_with_cwd(
     (outcome, dlg.into_entries_by_path())
 }
 
-#[allow(clippy::too_many_arguments)]
+#[expect(clippy::too_many_arguments)]
 pub fn try_collect_filtered_opts(
     worktree_root: &Path,
     root: Option<&Path>,
@@ -287,12 +287,12 @@ pub fn try_collect_filtered_opts(
 ) -> Result<(walk::Outcome, PathBuf), walk::Error> {
     let git_dir = worktree_root.join(git_dir.unwrap_or(".git"));
     let mut index = std::fs::read(git_dir.join("index")).ok().map_or_else(
-        || gix_index::State::new(gix_index::hash::Kind::Sha1),
+        || gix_index::State::new(gix_testtools::object_hash()),
         |bytes| {
             gix_index::State::from_bytes(
                 &bytes,
                 std::time::UNIX_EPOCH.into(),
-                gix_index::hash::Kind::Sha1,
+                gix_testtools::object_hash(),
                 Default::default(),
             )
             .map(|t| t.0)

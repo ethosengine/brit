@@ -24,7 +24,7 @@ mod is_active_platform {
 
     fn assume_valid_active_state<'a>(
         module: &'a gix_submodule::File,
-        config: &'a gix_config::File<'static>,
+        config: &'a gix_config::File,
         defaults: gix_pathspec::Defaults,
     ) -> crate::Result<Vec<(&'a str, bool)>> {
         assume_valid_active_state_with_attrs(module, config, defaults, |_, _, _, _| {
@@ -34,15 +34,15 @@ mod is_active_platform {
 
     fn assume_valid_active_state_with_attrs<'a>(
         module: &'a gix_submodule::File,
-        config: &'a gix_config::File<'static>,
+        config: &'a gix_config::File,
         defaults: gix_pathspec::Defaults,
         mut attributes: impl FnMut(
-                &BStr,
-                gix_pathspec::attributes::glob::pattern::Case,
-                bool,
-                &mut gix_pathspec::attributes::search::Outcome,
-            ) -> bool
-            + 'a,
+            &BStr,
+            gix_pathspec::attributes::glob::pattern::Case,
+            bool,
+            &mut gix_pathspec::attributes::search::Outcome,
+        ) -> bool
+        + 'a,
     ) -> crate::Result<Vec<(&'a str, bool)>> {
         let mut platform = module.is_active_platform(config, defaults)?;
         Ok(module
@@ -175,7 +175,7 @@ mod path {
     #[test]
     fn valid() -> crate::Result {
         let module = submodule("[submodule.a]\n path = relative/path/submodule");
-        assert_eq!(module.path("a".into())?.as_ref(), "relative/path/submodule");
+        assert_eq!(module.path("a".into())?, "relative/path/submodule");
         Ok(())
     }
 
@@ -241,7 +241,7 @@ mod url {
 mod update {
     use std::str::FromStr;
 
-    use gix_submodule::config::{update::Error, Update};
+    use gix_submodule::config::{Update, update::Error};
 
     use crate::file::submodule;
 
@@ -274,7 +274,9 @@ mod update {
         let mut module = submodule("[submodule.a]\n update = merge");
         let repo_config = gix_config::File::from_str("[submodule.a]\n update = !dangerous")?;
         let prev_names = module.names().map(ToOwned::to_owned).collect::<Vec<_>>();
-        module.append_submodule_overrides(&repo_config);
+        module
+            .append_submodule_overrides(&repo_config)
+            .expect("the fixture fits into the backing buffer");
 
         assert_eq!(
             module.update("a".into())?.expect("present"),
@@ -300,6 +302,31 @@ mod update {
             ),
             "forbidden unless it's an override"
         );
+    }
+
+    /// Reproducer for GHSA-f26g-jm89-4g65 and GHSA-97pq-9mjg-9fcj: `.gitmodules` may carry
+    /// `submodule.<name>.update = !command`, while a same-named local section without the winning
+    /// `update` value makes `File::update()` treat the command as trusted and expose it as
+    /// `Update::Command`.
+    #[test]
+    fn modules_command_is_authorized_by_unrelated_same_named_override() -> crate::Result {
+        let mut module = submodule("[submodule.a]\n update = !dangerous");
+        let repo_config = gix_config::File::from_str("[submodule.a]\n url = trusted-local-override")?;
+        module
+            .append_submodule_overrides(&repo_config)
+            .expect("the fixture fits into the backing buffer");
+
+        assert!(
+            matches!(
+                module.update("a".into()),
+                Err(Error::CommandForbiddenInModulesConfiguration {
+                    actual,
+                    ..
+                }) if actual == "dangerous"
+            ),
+            "a same-named local section must not authorize a command that still originates from .gitmodules"
+        );
+        Ok(())
     }
 }
 
@@ -443,9 +470,12 @@ mod append_submodule_overrides {
     #[test]
     fn last_of_multiple_values_wins() -> crate::Result {
         let mut module = submodule("[submodule.a] url = from-module");
-        let repo_config =
-            gix_config::File::from_str("[submodule.a]\n url = a\n url = b\n ignore = x\n [submodule.a]\n url = c\n[submodule.b] url = not-relevant")?;
-        module.append_submodule_overrides(&repo_config);
+        let repo_config = gix_config::File::from_str(
+            "[submodule.a]\n url = a\n url = b\n ignore = x\n [submodule.a]\n url = c\n[submodule.b] url = not-relevant",
+        )?;
+        module
+            .append_submodule_overrides(&repo_config)
+            .expect("the fixture fits into the backing buffer");
         Ok(())
     }
 }
