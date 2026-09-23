@@ -11,16 +11,21 @@ fn graph_discover_outputs_json_with_manifests() {
     // Use the actual repo root (three levels up from brit-cli). This layout
     // (brit nested inside the elohim monorepo) is only present when brit is
     // checked out as part of the monorepo, not in a standalone checkout.
-    let repo_root = match std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR"))
-        .join("../../../")
-        .canonicalize()
-    {
+    let crate_dir = std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR"));
+    let repo_root = match crate_dir.join("../../../").canonicalize() {
         Ok(p) => p,
         Err(_) => {
             eprintln!("skipping: monorepo layout not present (standalone checkout)");
             return;
         }
     };
+    // Three levels up always exists; in a standalone checkout it is just the
+    // CI runner's work dir, which may hold unrelated manifests. Only treat it
+    // as the monorepo when brit really sits at <root>/elohim/brit.
+    if repo_root.join("elohim/brit/brit-cli").canonicalize().ok() != crate_dir.canonicalize().ok() {
+        eprintln!("skipping: monorepo layout not present (standalone checkout)");
+        return;
+    }
 
     let out = Command::new(rakia_binary())
         .args(["graph", "discover", "--repo"])
@@ -54,16 +59,21 @@ fn graph_discover_outputs_json_with_manifests() {
 
 #[test]
 fn fingerprint_emits_content_addressed_hex_for_real_manifest() {
-    let repo_root = match std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR"))
-        .join("../../../")
-        .canonicalize()
-    {
+    let crate_dir = std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR"));
+    let repo_root = match crate_dir.join("../../../").canonicalize() {
         Ok(p) => p,
         Err(_) => {
             eprintln!("skipping: monorepo layout not present (standalone checkout)");
             return;
         }
     };
+    // Three levels up always exists; in a standalone checkout it is just the
+    // CI runner's work dir, which may hold unrelated manifests. Only treat it
+    // as the monorepo when brit really sits at <root>/elohim/brit.
+    if repo_root.join("elohim/brit/brit-cli").canonicalize().ok() != crate_dir.canonicalize().ok() {
+        eprintln!("skipping: monorepo layout not present (standalone checkout)");
+        return;
+    }
 
     let manifest = repo_root.join("app/elohim-app/build-manifest.json");
     if !manifest.exists() {

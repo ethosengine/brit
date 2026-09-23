@@ -4,10 +4,14 @@
 Note: Frontmatter.get(key) returns default ("") for list values, so we access
 cites via fmeta.fields.get("cites", []) to get the raw list directly.
 """
-import json, os, sys
+import os, sys
 ORACLE = "/projects/elohim/.claude/scripts"
 if not os.path.isdir(ORACLE):
     sys.exit(3)
+# Imported only once the oracle is known present: minimal Pythons (e.g.
+# Debian's python3-minimal in the 32-bit CI containers) lack `json`, and the
+# absent-oracle skip must not depend on it.
+import json
 sys.path.insert(0, ORACLE)
 from _lib.cite_graph import build_slug_index, parse_cite, envelope_verdict
 from _lib.frontmatter import parse_file
