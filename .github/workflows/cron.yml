@@ -8,6 +8,14 @@ on:
 permissions:
   contents: read
 
+env:
+  # brit-cli depends on rakia-* from the `elohim` Nexus registry, which
+  # advertises auth-required — without a credential cargo cannot even resolve
+  # the workspace, so `make stress` dies building release-lean. Same read
+  # token and provider as ci.yml.
+  CARGO_REGISTRIES_ELOHIM_TOKEN: ${{ secrets.CARGO_REGISTRIES_ELOHIM_TOKEN }}
+  CARGO_REGISTRY_GLOBAL_CREDENTIAL_PROVIDERS: cargo:token
+
 jobs:
   stress:
     runs-on: ubuntu-latest
