@@ -36,7 +36,11 @@ allow = [
     "OpenSSL",
     "Zlib",
     "MPL-2.0",
-    "Unicode-3.0"
+    "Unicode-3.0",
+    # Elohim ecosystem crates (elohim-epr and friends, consumed from the Nexus
+    # `elohim` registry) are licensed under the Cryptographic Autonomy License,
+    # matching the Holochain substrate brit integrates with.
+    "CAL-1.0"
 ]
 # The confidence threshold for detecting a license from license text.
 # The higher the value, the more closely the license text must be to the
@@ -54,4 +58,11 @@ deny = [
     # Start range due to https://github.com/serde-rs/serde/issues/2538
     # end range due to https://github.com/serde-rs/serde/pull/2590
     { name = "serde_derive", version = ">1.0.171, <1.0.185" },
+]
+
+[sources]
+allow-registry = [
+    "https://github.com/rust-lang/crates.io-index",
+    "sparse+https://nexus.ethosengine.com/repository/cargo-internal/",
+    "sparse+https://nexus.ethosengine.com/repository/cargo/",
 ]

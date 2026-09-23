@@ -13,6 +13,11 @@ env:
   # advertises auth-required — without a credential cargo cannot even resolve
   # the workspace, so `make stress` dies building release-lean. Same read
   # token and provider as ci.yml.
+  # Also define the `elohim` registry by env, not only in .cargo/config.toml:
+  # cargo reads config from the *current directory*, and journey tests run
+  # `cargo run --manifest-path …/gix-tempfile/Cargo.toml` from outside the
+  # repo, where the registry would otherwise be unknown.
+  CARGO_REGISTRIES_ELOHIM_INDEX: sparse+https://nexus.ethosengine.com/repository/cargo-internal/
   CARGO_REGISTRIES_ELOHIM_TOKEN: ${{ secrets.CARGO_REGISTRIES_ELOHIM_TOKEN }}
   CARGO_REGISTRY_GLOBAL_CREDENTIAL_PROVIDERS: cargo:token
 
