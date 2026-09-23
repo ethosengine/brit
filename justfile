@@ -269,25 +269,25 @@ dbg: (query-meta '.target_directory + "/debug"')
 journey-tests:
     cargo build --features http-client-curl-rustls
     cargo build -p gix-testtools --bin jtt
-    dbg="$({{ j }} dbg)" && tests/journey.sh "$dbg/ein" "$dbg/gix" "$dbg/jtt" max
+    dbg="$({{ j }} dbg)" && tests/journey.sh "$dbg/ein" "$dbg/brit" "$dbg/jtt" max
 
 # Run journey tests (`max-pure`)
 journey-tests-pure:
     cargo build --no-default-features --features max-pure
     cargo build -p gix-testtools --bin jtt
-    dbg="$({{ j }} dbg)" && tests/journey.sh "$dbg/ein" "$dbg/gix" "$dbg/jtt" max-pure
+    dbg="$({{ j }} dbg)" && tests/journey.sh "$dbg/ein" "$dbg/brit" "$dbg/jtt" max-pure
 
 # Run journey tests (`small`)
 journey-tests-small:
     cargo build --no-default-features --features small
     cargo build -p gix-testtools
-    dbg="$({{ j }} dbg)" && tests/journey.sh "$dbg/ein" "$dbg/gix" "$dbg/jtt" small
+    dbg="$({{ j }} dbg)" && tests/journey.sh "$dbg/ein" "$dbg/brit" "$dbg/jtt" small
 
 # Run journey tests (`lean-async`)
 journey-tests-async:
     cargo build --no-default-features --features lean-async
     cargo build -p gix-testtools
-    dbg="$({{ j }} dbg)" && tests/journey.sh "$dbg/ein" "$dbg/gix" "$dbg/jtt" async
+    dbg="$({{ j }} dbg)" && tests/journey.sh "$dbg/ein" "$dbg/brit" "$dbg/jtt" async
 
 # Build a customized `cross` container image for testing
 cross-image target:
