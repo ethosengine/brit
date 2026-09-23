@@ -2,6 +2,6 @@ error: unrecognized subcommand 'remote'
 
   tip: some similar subcommands exist: 'r', 'merge', 'tree', 'free'
 
-Usage: gix [OPTIONS] <COMMAND>
+Usage: brit [OPTIONS] <COMMAND>
 
 For more information, try '--help'.
