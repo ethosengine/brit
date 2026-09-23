@@ -1341,7 +1341,7 @@ checksum = "48c757948c5ede0e46177b7add2e67155f70e33c07fea8284df6576da70b3719"
 [[package]]
 name = "elohim-epr"
 version = "0.1.0"
-source = "registry+https://github.com/rust-lang/crates.io-index"
+source = "sparse+https://nexus.ethosengine.com/repository/cargo-internal/"
 checksum = "85bd4b2604ef286089bf43b8dd8b4102efeef0fca06c4701030d3188feefb9e0"
 dependencies = [
  "chrono",
