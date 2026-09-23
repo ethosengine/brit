@@ -29,7 +29,7 @@ debug-small: always ## minimal dependencies, at cost of performance
 
 ##@ Development
 
-gix := $(shell cargo metadata --format-version 1 | jq -r .target_directory)/release/gix
+gix := $(shell cargo metadata --format-version 1 | jq -r .target_directory)/release/brit
 $(gix): always
 	cargo build --release --no-default-features --features small
 
