@@ -29,9 +29,9 @@ Identity is **CIDv1 · multicodec `0x71` dag-cbor · multihash `0x12` sha2-256**
 ## Dev-loop
 
 - `just test` = clippy + check + doc + unit-tests + doc-tests + journey-tests. `just check` = feature-matrix `cargo check`. `cargo nextest run -p <crate>` for a single crate.
-- Format: `cargo +nightly fmt -- --config-path rustfmt-nightly.toml` then `cargo +stable fmt --check`.
+- Format: `cargo +nightly fmt -p <brit-crate> -- --config-path rustfmt-nightly.toml` then `cargo +stable fmt --check`. Scope the nightly pass to the `brit-*` crates — never run it over the workspace: its import grouping rewrites upstream `gix-*` files, and every such diff becomes merge noise against gitoxide (the 2026-09 upstream merge had to reset 63 of them).
 - Lints: clippy `pedantic` via root `[workspace.lints.clippy]`; every brit crate opts in with `lints.workspace = true`.
 
 ## Integration
 
-brit is a submodule of the elohim monorepo at `elohim/brit`. Work lands on brit `main` once its GitHub CI (`ci.yml`: "Tests pass") is green; verify risky changes on a `run-ci/**` branch first, since `ci.yml` also runs there. The monorepo pins brit by its submodule pointer and is the integration surface. `gix-main` is the upstream mirror kept current by `sync-upstream.yml`; bring upstream in with a merge commit (brit's CLAUDE-documented policy: upstream-owned `gix-*` code stays byte-identical to upstream apart from `registry = "elohim"` tags on publish-set crates).
+brit is a submodule of the elohim monorepo at `elohim/brit`. Work lands on brit `main` once its GitHub CI (`ci.yml`: "Tests pass") is green; verify risky changes on a `run-ci/**` branch first, since `ci.yml` also runs there. The monorepo pins brit by its submodule pointer and is the integration surface. `gix-main` is the upstream mirror kept current by `sync-upstream.yml`; bring upstream in with a merge commit. Upstream-owned `gix-*` code stays byte-identical to upstream apart from `registry = "elohim"` tags on the publish-set crates listed in `scripts/ci/cargo-publish-brit.sh`.
