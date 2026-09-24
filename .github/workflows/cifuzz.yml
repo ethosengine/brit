@@ -20,6 +20,8 @@ permissions: {}  # The fuzzing actions don't use our github.token at all.
 
 jobs:
   Fuzzing:
+    # OSS-Fuzz builds the upstream `gitoxide` project; it cannot run in a fork.
+    if: github.repository == 'GitoxideLabs/gitoxide'
     runs-on: ubuntu-latest
 
     steps:
