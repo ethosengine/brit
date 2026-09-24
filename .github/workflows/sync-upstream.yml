@@ -79,19 +79,35 @@ jobs:
           fi
           git push "https://x-access-token:${GH_TOKEN}@github.com/${{ github.repository }}.git" HEAD:gix-main
 
-      # Tags are nice-to-have but not critical for our sync purposes.
-      # Upstream has 6000+ tags; a single collision or protected-tag rule
-      # would otherwise kill the whole run. Best-effort push, report in logs.
-      - name: Push mirrored tags (best effort)
-        if: steps.ff.outputs.changed == 'true'
+      # Tags are nice-to-have but not critical for our sync purposes, so this
+      # step is best-effort. Push only the tags the fork lacks, in batches:
+      # GitHub push protection secret-scans every pushed ref, and one push of
+      # the full upstream tag set (~3.5k refs) times out ("Timed out
+      # validating Secrets detected" -> GH013 repository rule violations).
+      # Runs even when gix-main did not move, so a tag backlog still drains.
+      - name: Push mirrored tags (best effort, batched)
         continue-on-error: true
         env:
           GH_TOKEN: ${{ secrets.GIX_SYNC_TOKEN }}
+          REPO: ${{ github.repository }}
         run: |
-          set +e
-          git push "https://x-access-token:${GH_TOKEN}@github.com/${{ github.repository }}.git" --tags 2>&1 | tee push-tags.log
-          status=${PIPESTATUS[0]}
-          if [ "$status" -ne 0 ]; then
-            echo "::warning::Tag mirror push exited with status $status; some tags may not have synced. See push-tags.log above."
+          set -u
+          remote="https://x-access-token:${GH_TOKEN}@github.com/${REPO}.git"
+          git ls-remote --tags --refs "$remote" | sed 's|.*refs/tags/||' | sort > remote-tags.txt
+          git tag -l | sort > local-tags.txt
+          comm -23 local-tags.txt remote-tags.txt > missing-tags.txt
+          total=$(wc -l < missing-tags.txt)
+          echo "Tags missing on the fork: $total"
+          failed=0
+          while mapfile -t -n 100 batch && [ "${#batch[@]}" -gt 0 ]; do
+            refs=()
+            for t in "${batch[@]}"; do refs+=("refs/tags/$t:refs/tags/$t"); done
+            if ! git push --no-verify "$remote" "${refs[@]}" > push-batch.log 2>&1; then
+              failed=$((failed + ${#batch[@]}))
+              grep -E "remote: +- |error:" push-batch.log | sort -u | head -5
+            fi
+          done < missing-tags.txt
+          if [ "$failed" -gt 0 ]; then
+            echo "::warning::$failed of $total missing tags did not push; they will be retried on the next run."
           fi
           exit 0
