@@ -34,4 +34,4 @@ Identity is **CIDv1 · multicodec `0x71` dag-cbor · multihash `0x12` sha2-256**
 
 ## Integration
 
-brit is a submodule of the elohim monorepo at `elohim/brit`. Work lands on `brit-dev` (commit-only here; the operator integrates). The monorepo is the integration surface.
+brit is a submodule of the elohim monorepo at `elohim/brit`. Work lands on brit `main` once its GitHub CI (`ci.yml`: "Tests pass") is green; verify risky changes on a `run-ci/**` branch first, since `ci.yml` also runs there. The monorepo pins brit by its submodule pointer and is the integration surface. `gix-main` is the upstream mirror kept current by `sync-upstream.yml`; bring upstream in with a merge commit (brit's CLAUDE-documented policy: upstream-owned `gix-*` code stays byte-identical to upstream apart from `registry = "elohim"` tags on publish-set crates).
