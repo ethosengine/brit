@@ -1,0 +1,44 @@
+{
+  "manifestVersion": "1.0",
+  "pipeline": "elohim-brit",
+  "manualOnly": true,
+  "triggersGenesis": false,
+  "cascades": false,
+  "dependsOn": [],
+  "description": "brit — covenantal git (gitoxide fork). Built, tested and attested by its own GitHub CI; the elohim monorepo consumes it as a submodule pin. The pin is the build input; the upstream attestation is the local gate.",
+  "steps": {
+    "brit-ci": {
+      "description": "brit's own CI at the pinned commit (ci.yml → 'Tests pass'); on main it also publishes the brit crate set to the elohim registry",
+      "inputs": {
+        "sources": ["elohim/brit", "elohim/brit/**"],
+        "buildProcess": ["elohim/brit/.github/workflows/ci.yml"]
+      },
+      "outputs": {
+        "artifacts": ["brit-crates"],
+        "verify": null
+      },
+      "depends": [],
+      "executor": {
+        "stage": "Tests pass",
+        "function": null
+      }
+    }
+  },
+  "gate": {
+    "projects": {
+      "brit": {
+        "dir": "elohim/brit",
+        "steps": ["brit-ci"],
+        "run": {
+          "kind": "attested",
+          "attestation": {
+            "provider": "github-checks",
+            "repo": "ethosengine/brit",
+            "check": "Tests pass"
+          }
+        }
+      }
+    }
+  },
+  "deployment": {}
+}
