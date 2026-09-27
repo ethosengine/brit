@@ -1,4 +1,3 @@
-#!/usr/bin/env bash
 # Must be sourced into tests/parity.sh or tests/journey.sh — see tests/parity.sh.
 #
 # Parity scaffold for `git restore` ↔ `gix restore`.
