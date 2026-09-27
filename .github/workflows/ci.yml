@@ -37,6 +37,21 @@ env:
   CARGO_REGISTRY_GLOBAL_CREDENTIAL_PROVIDERS: cargo:token
 
 jobs:
+  brit-release-package-contract:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - name: Validate Brit archive helper and receipt
+        run: |
+          bash -n scripts/ci/package-brit-release.sh scripts/ci/test-package-brit-release.sh
+          bash scripts/ci/test-package-brit-release.sh
+      - name: Validate publisher closure checks against a fake registry
+        run: env PYTHONDONTWRITEBYTECODE=1 python3 -m unittest discover -s scripts/ci -p 'test_publish_brit.py'
+      - name: Validate isolated registry-consumer checks without a registry
+        run: env PYTHONDONTWRITEBYTECODE=1 python3 -m unittest discover -s scripts/ci -p 'test_verify_brit_consumer.py'
+
   msrv:
     name: cargo check MSRV
 
@@ -204,7 +219,8 @@ jobs:
       - name: Build max-pure with limited dev tools and log cc1
         run: |
           . /usr/local/bin/set-display.sh
-          cargo install --debug --locked --no-default-features --features max-pure --path .
+          cargo install --debug --locked --no-default-features --features max-pure \
+            --path brit-cli --bin brit
       - name: Show logged C and C++ compilations (should be none)
         run: |
           ! cat /var/log/wrapper1.log
@@ -520,18 +536,22 @@ jobs:
         # than allows is no problem either if it comes to that.
         continue-on-error: true
 
-  # Publishes the brit crate set (brit-epr, brit-graph, brit-cli, brit-build-ref, brit-verify)
-  # to the internal Nexus `elohim` cargo registry. Only runs on pushes to `main`, after the
-  # core correctness gates (test, lint) have passed. Not required for PR auto-merge (PRs never
+  # Publishes the registry-eligible Brit crate closure to the internal Nexus
+  # `elohim` cargo registry. Only runs on pushes to `main`, after the
+  # core correctness and release-contract gates have passed. Not required for PR auto-merge (PRs never
   # target `main` as a push event), so it is declared in EXPECTED_NONBLOCKING_JOBS below.
   publish:
     name: Publish brit crates to Nexus (elohim registry)
 
-    needs: [test, lint]
+    needs: [tests-pass, test, lint, brit-release-package-contract]
 
     if: github.event_name == 'push' && github.ref == 'refs/heads/main'
 
     runs-on: ubuntu-latest
+
+    env:
+      CARGO_TARGET_DIR: ${{ runner.temp }}/brit-publish-target
+      RUSTFLAGS: ''
 
     steps:
       - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
@@ -548,6 +568,12 @@ jobs:
           # derives the write Bearer header from NEXUS_NPM_TOKEN (cargo-deployer).
           CARGO_REGISTRIES_ELOHIM_TOKEN: ""
         run: bash scripts/ci/cargo-publish-brit.sh
+      - name: Verify a clean registry-only Brit consumer
+        env:
+          CARGO_REGISTRIES_ELOHIM_TOKEN: ${{ secrets.CARGO_REGISTRIES_ELOHIM_TOKEN }}
+        run: |
+          version=$(python3 -c 'import tomllib; print(tomllib.load(open("brit-cli/Cargo.toml", "rb"))["package"]["version"])')
+          bash scripts/ci/verify-brit-consumer.sh "$version"
 
   # This job is not required for PR auto-merge, so that sudden announcement of a
   # new advisory does not keep otherwise OK pull requests from being integrated.
@@ -742,6 +768,7 @@ jobs:
     permissions: {}
 
     needs:
+      - brit-release-package-contract
       - msrv
       - msrv-badge
       - pure-rust-build

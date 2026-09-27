@@ -19,10 +19,10 @@ doctest = true
 parallel = ["gix-attributes/parallel"]
 
 [dependencies]
-gix-glob = { version = "^0.27.1", path = "../gix-glob" }
-gix-path = { version = "^0.12.6", path = "../gix-path" }
-gix-attributes = { version = "^0.35.0", path = "../gix-attributes" }
-gix-config-value = { version = "^0.19.1", path = "../gix-config-value" }
+gix-glob = { version = "^0.27.1", path = "../gix-glob", registry = "elohim" }
+gix-path = { version = "^0.12.6", path = "../gix-path", registry = "elohim" }
+gix-attributes = { version = "^0.35.0", path = "../gix-attributes", registry = "elohim" }
+gix-config-value = { version = "^0.19.1", path = "../gix-config-value", registry = "elohim" }
 
 bstr = { version = "1.12.0", default-features = false, features = ["std"] }
 bitflags = "2"

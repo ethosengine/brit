@@ -2,20 +2,29 @@ lints.workspace = true
 
 [package]
 name = "brit-cli"
-version = "0.1.1"
-description = "Rakia operator CLI — graph, affected, plan, fingerprint, baseline subcommands (will eventually fold into the unified brit binary)"
+version = "0.1.2"
+description = "Unified Brit Git and build CLI"
 repository = "https://github.com/ethosengine/brit"
 authors = ["Matthew Dowell <matthew@ethosengine.com>"]
 license = "MIT OR Apache-2.0"
 edition = "2021"
-rust-version = "1.82"
+rust-version = "1.88"
 
 [[bin]]
-name = "rakia"
+name = "brit"
 path = "src/main.rs"
 
+[features]
+default = ["max"]
+max = ["gitoxide/max"]
+max-pure = ["gitoxide/max-pure"]
+small = ["gitoxide/small"]
+lean = ["gitoxide/lean"]
+lean-async = ["gitoxide/lean-async"]
+
 [dependencies]
-brit-graph = { version = "0.1.1", registry = "elohim", path = "../brit-graph", features = ["repo"] }
+brit-graph = { version = "0.1.2", registry = "elohim", path = "../brit-graph", features = ["repo"] }
+gitoxide = { version = "0.58.0", registry = "elohim", path = "..", default-features = false }
 # rakia lives in a separate repo (ethosengine/rakia) and is published to the
 # internal Nexus registry by rakia's own pipeline. Consumed here as a registry
 # dependency so brit's standalone CI can resolve it. For monorepo development
@@ -30,3 +39,6 @@ petgraph = "0.7"
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
 thiserror = "2"
+
+[dev-dependencies]
+gix-testtools = { path = "../tests/tools", features = ["sha1"] }

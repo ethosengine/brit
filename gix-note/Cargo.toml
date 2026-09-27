@@ -29,9 +29,9 @@ sha1 = ["gix-hash/sha1", "gix-object/sha1"]
 sha256 = ["gix-hash/sha256", "gix-object/sha256"]
 
 [dependencies]
-gix-error = { version = "^0.3.2", path = "../gix-error" }
-gix-hash = { version = "^0.26.2", path = "../gix-hash" }
-gix-object = { version = "^0.64.1", path = "../gix-object" }
+gix-error = { version = "^0.3.2", path = "../gix-error", registry = "elohim" }
+gix-hash = { version = "^0.26.3", path = "../gix-hash", registry = "elohim" }
+gix-object = { version = "^0.64.2", path = "../gix-object", registry = "elohim" }
 
 [dev-dependencies]
 criterion = "0.8.2"

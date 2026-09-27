@@ -1,0 +1,368 @@
+"""Isolated contract tests for the Nexus publisher; never contacts Nexus."""
+
+import json
+import io
+import tarfile
+import tempfile
+import threading
+import unittest
+from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
+from pathlib import Path
+from unittest import mock
+
+import publish_brit
+
+
+def package(name, version, path, dependencies=()):
+    return {
+        "name": name,
+        "version": version,
+        "manifest_path": str(path / "Cargo.toml"),
+        "publish": None,
+        "dependencies": list(dependencies),
+    }
+
+
+def dependency(name, path, registry, kind=None, optional=False):
+    return {
+        "name": name,
+        "path": str(path),
+        "registry": registry,
+        "kind": kind,
+        "optional": optional,
+    }
+
+
+def crate_archive(name, version, files, executable=(), symlink=None, modes=None, directories=()):
+    output = io.BytesIO()
+    with tarfile.open(fileobj=output, mode="w:gz") as archive:
+        for directory in directories:
+            info = tarfile.TarInfo(f"{name}-{version}/{directory}/")
+            info.type = tarfile.DIRTYPE
+            info.mode = 0o755
+            archive.addfile(info)
+        for path, data in files.items():
+            info = tarfile.TarInfo(f"{name}-{version}/{path}")
+            info.size = len(data)
+            info.mode = modes[path] if modes and path in modes else (0o755 if path in executable else 0o644)
+            archive.addfile(info, io.BytesIO(data))
+        if symlink:
+            info = tarfile.TarInfo(f"{name}-{version}/{symlink}")
+            info.type = tarfile.SYMTYPE
+            info.linkname = "../outside"
+            archive.addfile(info)
+    return output.getvalue()
+
+
+class FakeRegistry:
+    def __init__(self):
+        self.records = {}
+        self.archives = {}
+        self.status = 200
+
+        outer = self
+
+        class Handler(BaseHTTPRequestHandler):
+            def do_GET(self):
+                if outer.status != 200:
+                    self.send_response(outer.status)
+                    self.end_headers()
+                    return
+                if self.path in outer.archives:
+                    self.send_response(200)
+                    self.end_headers()
+                    self.wfile.write(outer.archives[self.path])
+                    return
+                records = outer.records.get(self.path)
+                if records is None:
+                    self.send_response(404)
+                    self.end_headers()
+                    return
+                body = b"\n".join(json.dumps(record).encode() for record in records)
+                self.send_response(200)
+                self.end_headers()
+                self.wfile.write(body)
+
+            def log_message(self, *_args):
+                pass
+
+        self.server = ThreadingHTTPServer(("127.0.0.1", 0), Handler)
+        self.thread = threading.Thread(target=self.server.serve_forever, daemon=True)
+        self.thread.start()
+        self.url = f"http://127.0.0.1:{self.server.server_port}/"
+
+    def close(self):
+        self.server.shutdown()
+        self.server.server_close()
+        self.thread.join()
+
+
+class ClosureTests(unittest.TestCase):
+    def test_includes_optional_and_build_edges_in_dependency_order(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            registry = "sparse+https://example.invalid/"
+            metadata = {"packages": [
+                package("brit-cli", "0.1.2", root / "cli", [
+                    dependency("gitoxide", root / "engine", registry),
+                    dependency("optional", root / "optional", registry, optional=True),
+                    dependency("build", root / "build", registry, kind="build"),
+                    dependency("dev-only", root / "dev", None, kind="dev"),
+                ]),
+                package("gitoxide", "0.58.0", root / "engine"),
+                package("optional", "0.1.0", root / "optional"),
+                package("build", "0.1.0", root / "build"),
+                package("dev-only", "0.1.0", root / "dev"),
+                package("brit-build-ref", "0.1.1", root / "build-ref"),
+            ]}
+            order = publish_brit.publication_order(metadata, registry)
+            self.assertEqual([p["name"] for p in order], ["gitoxide", "optional", "build", "brit-cli", "brit-build-ref"])
+            cli_only = publish_brit.publication_order(metadata, registry, roots=("brit-cli",))
+            self.assertEqual([p["name"] for p in cli_only], ["gitoxide", "optional", "build", "brit-cli"])
+
+    def test_missing_registry_tag_refuses_before_publish(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            metadata = {"packages": [
+                package("brit-cli", "0.1.2", root / "cli", [
+                    dependency("gitoxide", root / "engine", None),
+                ]),
+                package("gitoxide", "0.58.0", root / "engine"),
+                package("brit-build-ref", "0.1.1", root / "build-ref"),
+            ]}
+            with self.assertRaisesRegex(publish_brit.PublishError, "registry.*gitoxide"):
+                publish_brit.publication_order(metadata, "sparse+https://example.invalid/")
+
+    def test_package_command_is_locked_and_uses_elohim_registry(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            archive = root / "target/package/brit-cli-0.1.2.crate"
+            archive.parent.mkdir(parents=True)
+            archive.write_bytes(b"test package")
+            package_data = package("brit-cli", "0.1.2", root / "cli")
+            with mock.patch.object(publish_brit.subprocess, "run") as cargo_run:
+                found, checksum = publish_brit.package_crate(root, package_data, {"CARGO_TARGET_DIR": str(root / "target")})
+            self.assertEqual(found, archive)
+            self.assertEqual(len(checksum), 64)
+            self.assertEqual(cargo_run.call_args.args[0], [
+                "cargo", "package", "--locked", "--registry", "elohim", "--no-verify", "-p", "brit-cli",
+            ])
+
+
+class RegistryTests(unittest.TestCase):
+    def setUp(self):
+        self.registry = FakeRegistry()
+
+    def tearDown(self):
+        self.registry.close()
+
+    def test_same_version_different_payload_is_collision_not_success(self):
+        path = publish_brit.sparse_path("brit-cli")
+        self.registry.records["/" + path] = [{
+            "name": "brit-cli", "vers": "0.1.1", "cksum": "0" * 64,
+        }]
+        with self.assertRaisesRegex(publish_brit.PublishError, "immutable.*collision"):
+            publish_brit.decide(self.registry.url, "brit-cli", "0.1.1", "1" * 64)
+
+    def test_exact_checksum_skips_and_missing_version_publishes(self):
+        path = publish_brit.sparse_path("brit-cli")
+        self.registry.records["/" + path] = [{
+            "name": "brit-cli", "vers": "0.1.1", "cksum": "1" * 64,
+        }]
+        self.assertEqual(publish_brit.decide(self.registry.url, "brit-cli", "0.1.1", "1" * 64), "skip")
+        self.assertEqual(publish_brit.decide(self.registry.url, "brit-cli", "0.1.2", "2" * 64), "publish")
+
+    def test_index_audit_counts_exact_versions_without_packaging(self):
+        self.registry.records["/" + publish_brit.sparse_path("brit-cli")] = [{
+            "name": "brit-cli", "vers": "0.1.1", "cksum": "1" * 64,
+        }]
+        ordered = [
+            {"name": "brit-cli", "version": "0.1.1"},
+            {"name": "gitoxide", "version": "0.58.0"},
+        ]
+        self.assertEqual(publish_brit.audit_index(self.registry.url, ordered), (1, 1))
+
+    def test_auth_or_server_error_is_not_absence(self):
+        for status in (401, 403, 500):
+            self.registry.status = status
+            with self.subTest(status=status), self.assertRaises(publish_brit.PublishError):
+                publish_brit.decide(self.registry.url, "brit-cli", "0.1.2", "2" * 64)
+
+    def test_registry_url_rejects_embedded_credentials_without_echoing_them(self):
+        with self.assertRaises(publish_brit.PublishError) as result:
+            publish_brit.validate_registry_url("sparse+https://secret@example.invalid/index?token=secret")
+        self.assertNotIn("secret", str(result.exception))
+
+    def test_download_endpoint_must_match_nexus_config(self):
+        self.registry.archives["/config.json"] = json.dumps({"dl": self.registry.url + "crates"}).encode()
+        publish_brit.assert_download_endpoint(self.registry.url)
+        self.registry.archives["/config.json"] = b'{"dl":"https://example.invalid/wrong"}'
+        with self.assertRaisesRegex(publish_brit.PublishError, "download endpoint differs"):
+            publish_brit.assert_download_endpoint(self.registry.url)
+
+    def test_only_vcs_receipt_may_differ_in_existing_payload(self):
+        base = {"Cargo.toml": b"[package]", "Cargo.toml.orig": b"[package]", "Cargo.lock": b"lock", "build.rs": b"fn main() {}", "src/main.rs": b"fn main() {}", ".cargo_vcs_info.json": b'{"sha1":"old"}'}
+        old = crate_archive("brit-cli", "0.1.1", base)
+        changed = dict(base, **{".cargo_vcs_info.json": b'{"sha1":"new"}'})
+        new = crate_archive("brit-cli", "0.1.1", changed)
+        self.assertTrue(publish_brit.payloads_equivalent(old, new, "brit-cli", "0.1.1"))
+        for path in ("Cargo.toml", "Cargo.toml.orig", "Cargo.lock", "build.rs", "src/main.rs"):
+            with self.subTest(path=path):
+                altered = dict(changed, **{path: b"different"})
+                self.assertFalse(publish_brit.payloads_equivalent(
+                    old, crate_archive("brit-cli", "0.1.1", altered), "brit-cli", "0.1.1"
+                ))
+
+    def test_existing_version_download_is_checksum_verified_before_equivalence(self):
+        old = crate_archive("brit-cli", "0.1.1", {
+            "Cargo.toml": b"manifest", "Cargo.lock": b"lock", ".cargo_vcs_info.json": b"old",
+        })
+        new = crate_archive("brit-cli", "0.1.1", {
+            "Cargo.toml": b"manifest", "Cargo.lock": b"lock", ".cargo_vcs_info.json": b"new",
+        })
+        checksum = publish_brit.hashlib.sha256(old).hexdigest()
+        self.registry.records["/" + publish_brit.sparse_path("brit-cli")] = [{
+            "name": "brit-cli", "vers": "0.1.1", "cksum": checksum,
+        }]
+        archive_path = "/crates/brit-cli/0.1.1/download"
+        self.registry.archives[archive_path] = old
+        self.assertEqual(publish_brit.existing_decision(self.registry.url, "brit-cli", "0.1.1", new), "skip-equivalent")
+        self.registry.archives[archive_path] = b"tampered"
+        with self.assertRaisesRegex(publish_brit.PublishError, "checksum mismatch"):
+            publish_brit.existing_decision(self.registry.url, "brit-cli", "0.1.1", new)
+
+    def test_executable_mode_and_unsafe_archive_entries_refuse(self):
+        files = {"Cargo.toml": b"manifest", "src/main.rs": b"main"}
+        old = crate_archive("brit-cli", "0.1.1", files)
+        executable = crate_archive("brit-cli", "0.1.1", files, executable=("src/main.rs",))
+        self.assertFalse(publish_brit.payloads_equivalent(old, executable, "brit-cli", "0.1.1"))
+        restricted = crate_archive("brit-cli", "0.1.1", files, modes={"src/main.rs": 0o600})
+        self.assertFalse(publish_brit.payloads_equivalent(old, restricted, "brit-cli", "0.1.1"))
+        extra_directory = crate_archive("brit-cli", "0.1.1", files, directories=("empty",))
+        self.assertFalse(publish_brit.payloads_equivalent(old, extra_directory, "brit-cli", "0.1.1"))
+        unsafe = crate_archive("brit-cli", "0.1.1", files, symlink="src/link")
+        with self.assertRaisesRegex(publish_brit.PublishError, "unsafe archive"):
+            publish_brit.payloads_equivalent(old, unsafe, "brit-cli", "0.1.1")
+
+    def test_failed_upload_must_refresh_to_equivalent_verified_payload(self):
+        path = publish_brit.sparse_path("brit-cli")
+        self.registry.records["/" + path] = [{
+            "name": "brit-cli", "vers": "0.1.2", "cksum": "2" * 64,
+        }]
+        remote = crate_archive("brit-cli", "0.1.2", {"Cargo.toml": b"manifest", "src/main.rs": b"main"})
+        altered = crate_archive("brit-cli", "0.1.2", {"Cargo.toml": b"changed", "src/main.rs": b"main"})
+        with mock.patch.object(publish_brit, "remote_archive", return_value=remote):
+            publish_brit.verify_conflict(self.registry.url, "brit-cli", "0.1.2", remote)
+            with self.assertRaisesRegex(publish_brit.PublishError, "immutable.*collision"):
+                publish_brit.verify_conflict(self.registry.url, "brit-cli", "0.1.2", altered)
+
+    def test_whole_graph_static_preflight_refuses_before_any_upload(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            (root / ".cargo").mkdir()
+            (root / ".cargo/config.toml").write_text(
+                f'[registries.elohim]\nindex = "sparse+{self.registry.url}"\n'
+            )
+            registry = "sparse+" + self.registry.url
+            metadata = {"packages": [
+                package("brit-cli", "0.1.2", root / "cli", [
+                    dependency("gitoxide", root / "engine", None),
+                ]),
+                package("gitoxide", "0.58.0", root / "engine"),
+                package("brit-build-ref", "0.1.1", root / "build-ref"),
+            ]}
+            with (
+                mock.patch.object(publish_brit, "validate_registry_url", return_value=self.registry.url),
+                mock.patch.object(publish_brit, "assert_download_endpoint"),
+                mock.patch.object(publish_brit, "cargo_metadata", return_value=metadata),
+                mock.patch.object(publish_brit, "package_crate") as packager,
+                mock.patch.object(publish_brit.subprocess, "run") as cargo_run,
+                mock.patch.dict("os.environ", {
+                    "CARGO_TARGET_DIR": str(root / "target"),
+                    "CARGO_REGISTRIES_ELOHIM_INDEX": registry,
+                    "CARGO_REGISTRIES_ELOHIM_TOKEN": "test-token",
+                }),
+            ):
+                with self.assertRaisesRegex(publish_brit.PublishError, "registry=elohim"):
+                    publish_brit.run(root, publish=True)
+                packager.assert_not_called()
+                cargo_run.assert_not_called()
+
+    def test_publish_interleaves_package_and_upload_in_topological_order(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            (root / ".cargo").mkdir()
+            (root / ".cargo/config.toml").write_text(
+                '[registries.elohim]\nindex = "sparse+https://example.invalid/"\n'
+            )
+            registry = "sparse+https://example.invalid/"
+            metadata = {"packages": [
+                package("brit-cli", "0.1.2", root / "cli", [
+                    dependency("gitoxide", root / "engine", registry),
+                ]),
+                package("gitoxide", "0.58.0", root / "engine"),
+                package("brit-build-ref", "0.1.1", root / "build-ref"),
+            ]}
+            events = []
+
+            def package_one(_repo, item, _env):
+                events.append(("package", item["name"]))
+                archive = root / f"{item['name']}.crate"
+                archive.write_bytes(item["name"].encode())
+                return archive, publish_brit.hashlib.sha256(archive.read_bytes()).hexdigest()
+
+            def publish_one(command, **_kwargs):
+                self.assertIn("--locked", command)
+                events.append(("publish", command[-1]))
+                return mock.Mock(returncode=0)
+
+            with (
+                mock.patch.object(publish_brit, "assert_download_endpoint"),
+                mock.patch.object(publish_brit, "cargo_metadata", return_value=metadata),
+                mock.patch.object(publish_brit, "package_crate", side_effect=package_one),
+                mock.patch.object(publish_brit, "existing_decision", return_value="publish"),
+                mock.patch.object(publish_brit, "decide", return_value="skip"),
+                mock.patch.object(publish_brit, "remote_archive", return_value=b"remote"),
+                mock.patch.object(publish_brit.subprocess, "run", side_effect=publish_one),
+                mock.patch.dict("os.environ", {
+                    "CARGO_TARGET_DIR": str(root / "target"),
+                    "CARGO_REGISTRIES_ELOHIM_INDEX": registry,
+                    "CARGO_REGISTRIES_ELOHIM_TOKEN": "test-token",
+                }),
+            ):
+                publish_brit.run(root, publish=True)
+            self.assertEqual(events, [
+                ("package", "gitoxide"), ("publish", "gitoxide"),
+                ("package", "brit-cli"), ("publish", "brit-cli"),
+                ("package", "brit-build-ref"), ("publish", "brit-build-ref"),
+            ])
+
+    def test_check_mode_never_invokes_cargo_publish(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            (root / ".cargo").mkdir()
+            (root / ".cargo/config.toml").write_text(
+                '[registries.elohim]\nindex = "sparse+https://example.invalid/"\n'
+            )
+            metadata = {"packages": [
+                package("brit-cli", "0.1.2", root / "cli"),
+                package("brit-build-ref", "0.1.1", root / "build-ref"),
+            ]}
+            (root / "archive").write_bytes(b"archive")
+            with (
+                mock.patch.object(publish_brit, "assert_download_endpoint"),
+                mock.patch.object(publish_brit, "cargo_metadata", return_value=metadata),
+                mock.patch.object(publish_brit, "package_crate", return_value=(root / "archive", "1" * 64)),
+                mock.patch.object(publish_brit, "existing_decision", return_value="publish"),
+                mock.patch.object(publish_brit.subprocess, "run") as cargo_run,
+                mock.patch.dict("os.environ", {
+                    "CARGO_TARGET_DIR": str(root / "target"),
+                    "CARGO_REGISTRIES_ELOHIM_INDEX": "sparse+https://example.invalid/",
+                }),
+            ):
+                publish_brit.run(root, publish=False)
+                cargo_run.assert_not_called()
+
+
+if __name__ == "__main__":
+    unittest.main()

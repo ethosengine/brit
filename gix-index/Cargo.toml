@@ -33,17 +33,17 @@ serde = ["dep:serde", "smallvec/serde", "gix-hash/serde"]
 parallel = ["gix-features/parallel"]
 
 [dependencies]
-gix-features = { version = "^0.49.1", path = "../gix-features", features = [
+gix-features = { version = "^0.49.1", path = "../gix-features", registry = "elohim", features = [
     "progress",
 ] }
-gix-hash = { version = "^0.26.1", path = "../gix-hash" }
-gix-bitmap = { version = "^0.4.0", path = "../gix-bitmap" }
-gix-object = { version = "^0.64.0", path = "../gix-object" }
-gix-validate = { version = "^0.11.4", path = "../gix-validate" }
-gix-traverse = { version = "^0.61.0", path = "../gix-traverse" }
-gix-lock = { version = "^24.0.0", path = "../gix-lock" }
-gix-fs = { version = "^0.22.1", path = "../gix-fs" }
-gix-utils = { version = "^0.3.6", path = "../gix-utils" }
+gix-hash = { version = "^0.26.3", path = "../gix-hash", registry = "elohim" }
+gix-bitmap = { version = "^0.4.0", path = "../gix-bitmap", registry = "elohim" }
+gix-object = { version = "^0.64.2", path = "../gix-object", registry = "elohim" }
+gix-validate = { version = "^0.11.4", path = "../gix-validate", registry = "elohim" }
+gix-traverse = { version = "^0.61.0", path = "../gix-traverse", registry = "elohim" }
+gix-lock = { version = "^24.0.0", path = "../gix-lock", registry = "elohim" }
+gix-fs = { version = "^0.22.1", path = "../gix-fs", registry = "elohim" }
+gix-utils = { version = "^0.3.6", path = "../gix-utils", registry = "elohim" }
 
 hashbrown = "0.17.1"
 fnv = "1.0.7"

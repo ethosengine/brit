@@ -24,6 +24,24 @@ pub struct Capture {
     pub status: ExitStatus,
 }
 
+/// Resolve the one required `brit` binary for journey tests.
+pub fn brit_bin() -> Option<PathBuf> {
+    let path = std::env::var_os("BRIT_BIN").map(PathBuf::from).unwrap_or_else(|| {
+        std::env::current_exe()
+            .expect("current test executable")
+            .parent()
+            .and_then(|deps| deps.parent())
+            .expect("Cargo target profile directory")
+            .join("brit")
+    });
+    Some(path.canonicalize().unwrap_or_else(|_| {
+        panic!(
+            "brit binary missing at {}; build `cargo build -p brit-cli --bin brit` or set BRIT_BIN",
+            path.display()
+        )
+    }))
+}
+
 impl BritInvocation {
     pub fn new<P: Into<PathBuf>>(program: P) -> Self {
         Self {
@@ -71,6 +89,8 @@ impl BritInvocation {
 
     pub fn run(self) -> Result<Capture> {
         let mut cmd = Command::new(&self.program);
+        let config_dir = tempfile::tempdir().context("create isolated Git configuration directory")?;
+        gix_testtools::configure_git_environment(&mut cmd, self.cwd.as_deref().unwrap_or(config_dir.path()));
         cmd.args(&self.args);
         for (k, v) in &self.env {
             cmd.env(k, v);

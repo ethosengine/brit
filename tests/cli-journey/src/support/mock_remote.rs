@@ -2,10 +2,7 @@
 //!
 //! Uses local file:// transport; no daemon, no network. Deterministic.
 
-use std::{
-    path::{Path, PathBuf},
-    process::Command,
-};
+use std::path::{Path, PathBuf};
 
 use anyhow::{anyhow, Context, Result};
 use tempfile::TempDir;
@@ -26,9 +23,8 @@ impl MockRemote {
         // The bare repo lives at <temp>/<label>.git
         let path = temp.path().join(format!("{label}.git"));
         std::fs::create_dir_all(&path).context("mkdir bare path")?;
-        let out = Command::new("git")
+        let out = gix_testtools::git_command(&path)
             .args(["init", "-q", "--bare"])
-            .current_dir(&path)
             .output()
             .context("git init --bare")?;
         if !out.status.success() {

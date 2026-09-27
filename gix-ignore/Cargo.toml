@@ -19,9 +19,9 @@ doctest = true
 serde = ["dep:serde", "bstr/serde", "gix-glob/serde"]
 
 [dependencies]
-gix-glob = { version = "^0.27.1", path = "../gix-glob" }
-gix-path = { version = "^0.12.6", path = "../gix-path" }
-gix-trace = { version = "^0.1.21", path = "../gix-trace" }
+gix-glob = { version = "^0.27.1", path = "../gix-glob", registry = "elohim" }
+gix-path = { version = "^0.12.6", path = "../gix-path", registry = "elohim" }
+gix-trace = { version = "^0.1.21", path = "../gix-trace", registry = "elohim" }
 
 bstr = { version = "1.12.0", default-features = false, features = ["std", "unicode"] }
 unicode-bom = { version = "2.0.3" }

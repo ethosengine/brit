@@ -19,7 +19,7 @@ use coverage::compute_coverage;
 use discover::{discover_subcommands, SubcommandPath};
 use format::{format_test_page, BinarySection, SubcommandCapture};
 
-const BINARIES: &[&str] = &["brit", "rakia", "brit-verify", "brit-build-ref"];
+const BINARIES: &[&str] = &["brit", "brit-verify", "brit-build-ref"];
 
 #[derive(Parser)]
 #[command(
@@ -94,7 +94,13 @@ fn run() -> Result<ExitCode> {
     let staging_dir = workspace.join("tests/.test-page-staging");
 
     for binary_name in BINARIES {
-        let binary_path = target_dir.join(binary_name);
+        let binary_path = if *binary_name == "brit" {
+            std::env::var_os("BRIT_BIN")
+                .map(PathBuf::from)
+                .unwrap_or_else(|| target_dir.join(binary_name))
+        } else {
+            target_dir.join(binary_name)
+        };
         if !binary_path.exists() {
             eprintln!(
                 "warning: {binary_name} not found at {}; skipping",

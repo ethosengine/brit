@@ -21,10 +21,10 @@ sha1 = ["gix-ref/sha1"]
 sha256 = ["gix-ref/sha256"]
 
 [dependencies]
-gix-sec = { version = "^0.14.2", path = "../gix-sec" }
-gix-path = { version = "^0.12.6", path = "../gix-path" }
-gix-ref = { version = "^0.67.0", path = "../gix-ref" }
-gix-fs = { version = "^0.22.1", path = "../gix-fs" }
+gix-sec = { version = "^0.14.2", path = "../gix-sec", registry = "elohim" }
+gix-path = { version = "^0.12.6", path = "../gix-path", registry = "elohim" }
+gix-ref = { version = "^0.67.0", path = "../gix-ref", registry = "elohim" }
+gix-fs = { version = "^0.22.1", path = "../gix-fs", registry = "elohim" }
 
 bstr = { version = "1.12.0", default-features = false, features = ["std", "unicode"] }
 thiserror = "2.0.18"

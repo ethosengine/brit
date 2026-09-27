@@ -163,28 +163,32 @@ dbg: (query-meta '.target_directory + "/debug"')
 # Run journey tests (`max`)
 [group('Tests')]
 journey-tests:
-    cargo build --features http-client-curl-rustls
+    cargo build -p gitoxide --bin ein --features http-client-curl-rustls
+    cargo build -p brit-cli --bin brit
     cargo build -p gix-testtools --bin jtt --features sha1
     dbg="$({{ j }} dbg)" && tests/journey.sh "$dbg/ein" "$dbg/brit" "$dbg/jtt" max
 
 # Run journey tests (`max-pure`)
 [group('Tests')]
 journey-tests-pure:
-    cargo build --no-default-features --features max-pure
+    cargo build -p gitoxide --bin ein --no-default-features --features max-pure
+    cargo build -p brit-cli --bin brit --no-default-features --features max-pure
     cargo build -p gix-testtools --bin jtt --features sha1
     dbg="$({{ j }} dbg)" && tests/journey.sh "$dbg/ein" "$dbg/brit" "$dbg/jtt" max-pure
 
 # Run journey tests (`small`)
 [group('Tests')]
 journey-tests-small:
-    cargo build --no-default-features --features small
+    cargo build -p gitoxide --bin ein --no-default-features --features small
+    cargo build -p brit-cli --bin brit --no-default-features --features small
     cargo build -p gix-testtools --features sha1
     dbg="$({{ j }} dbg)" && tests/journey.sh "$dbg/ein" "$dbg/brit" "$dbg/jtt" small
 
 # Run journey tests (`lean-async`)
 [group('Tests')]
 journey-tests-async:
-    cargo build --no-default-features --features lean-async
+    cargo build -p gitoxide --bin ein --no-default-features --features lean-async
+    cargo build -p brit-cli --bin brit --no-default-features --features lean-async
     cargo build -p gix-testtools --features sha1
     dbg="$({{ j }} dbg)" && tests/journey.sh "$dbg/ein" "$dbg/brit" "$dbg/jtt" async
 
@@ -286,7 +290,7 @@ fmt:
 # Look for yanked crates (cancel after the initial warnings)
 [group('Dependencies and SBOMs')]
 find-yanked:
-    cargo install --debug --locked --no-default-features --features max-pure --path .
+    cargo install --debug --locked --no-default-features --features max-pure --path brit-cli --bin brit
 
 # Check shell scripts' executable bits and shebangs
 [group('Maintenance')]

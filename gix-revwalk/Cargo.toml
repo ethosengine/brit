@@ -21,12 +21,12 @@ sha1 = ["gix-hash/sha1"]
 sha256 = ["gix-hash/sha256"]
 
 [dependencies]
-gix-hash = { version = "^0.26.1", path = "../gix-hash" }
-gix-error = { version = "^0.3.2", path = "../gix-error" }
-gix-object = { version = "^0.64.0", path = "../gix-object" }
-gix-date = { version = "^0.16.0", path = "../gix-date" }
-gix-hashtable = { version = "^0.16.0", path = "../gix-hashtable" }
-gix-commitgraph = { version = "^0.39.0", path = "../gix-commitgraph" }
+gix-hash = { version = "^0.26.3", path = "../gix-hash", registry = "elohim" }
+gix-error = { version = "^0.3.2", path = "../gix-error", registry = "elohim" }
+gix-object = { version = "^0.64.2", path = "../gix-object", registry = "elohim" }
+gix-date = { version = "^0.16.0", path = "../gix-date", registry = "elohim" }
+gix-hashtable = { version = "^0.16.1", path = "../gix-hashtable", registry = "elohim" }
+gix-commitgraph = { version = "^0.39.0", path = "../gix-commitgraph", registry = "elohim" }
 
 thiserror = "2.0.18"
 smallvec = "1.15.1"

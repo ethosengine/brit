@@ -27,8 +27,11 @@ defaults:
     shell: bash  # Use `bash` even in the Windows jobs.
 
 jobs:
-  # Create a draft release, initially with no binary assets attached.
+  # This is the inherited upstream gitoxide release path. Brit fork releases
+  # use brit-release.yml and brit-v* tags; never publish stale ein/gix assets
+  # from ethosengine/brit through this workflow.
   create-release:
+    if: github.repository == 'GitoxideLabs/gitoxide'
     runs-on: ubuntu-slim
 
     permissions:
@@ -518,6 +521,7 @@ jobs:
           }' -F discussionId="$DISCUSSION_ID" -F body="$comment_body"
 
   installation:
+    if: github.repository == 'GitoxideLabs/gitoxide'
     strategy:
       matrix:
         build: [ win-msvc, win-gnu, win32-msvc, win32-gnu ]

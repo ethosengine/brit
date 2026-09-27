@@ -4,6 +4,8 @@ use thiserror::Error;
 
 #[derive(Error, Debug)]
 pub enum CliError {
+    #[error("git operation failed: {0}")]
+    Git(String),
     #[error("repo not found at {path}: {source}")]
     RepoNotFound {
         path: String,

@@ -4,8 +4,7 @@
 //! branch list, commit describe/verify, clone (via file://), fetch,
 //! tag list, blame, cat.
 //!
-//! Note: `brit push` does not exist in this build of brit (gitoxide has not
-//! implemented push yet). It is listed as a concern in the test report.
+//! `brit push` is exercised against a disposable bare remote.
 //!
 //! Note: `brit commit` is NOT a "make a commit" command — it has subcommands:
 //!   verify, sign, describe. We cover describe and verify.
@@ -20,14 +19,13 @@
 //!   BRIT_TEST_PAGE_STAGING/rust/brit/commit/<leaf>.txt
 //!   BRIT_TEST_PAGE_STAGING/rust/brit/tag/<leaf>.txt
 
-use std::{fs, path::PathBuf, process::Command};
+use std::{fs, path::PathBuf};
 
-use cli_journey::support::{mock_remote::MockRemote, runner::BritInvocation, test_repo::TestRepo};
-
-fn brit_bin() -> Option<PathBuf> {
-    let p = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../../target/release/brit");
-    p.canonicalize().ok().filter(|p| p.exists())
-}
+use cli_journey::support::{
+    mock_remote::MockRemote,
+    runner::{brit_bin, BritInvocation},
+    test_repo::TestRepo,
+};
 
 /// Dump captured output to BRIT_TEST_PAGE_STAGING/rust/<path[0]>/<path[1]>/.../<last>.txt
 ///
@@ -211,11 +209,7 @@ fn tag_list_in_empty_repo() {
 fn tag_list_after_creating_a_tag() {
     let temp = TestRepo::new("tag-list-populated").expect("repo");
     temp.commit_file("file.txt", "data\n").expect("commit");
-    // Create a lightweight tag via raw git
-    let _ = Command::new("git")
-        .args(["tag", "v0.1.0"])
-        .current_dir(temp.path())
-        .output();
+    gix_testtools::git(temp.path(), "tag v0.1.0").expect("create lightweight tag");
     let Some(bin) = brit_bin() else {
         eprintln!("skipping: brit binary not built (run `cargo build -p gitoxide --bin brit --release`)");
         return;
@@ -240,11 +234,7 @@ fn tag_list_after_creating_a_tag() {
 fn commit_describe_with_annotated_tag() {
     let temp = TestRepo::new("commit-describe").expect("repo");
     let sha = temp.commit_file("file.txt", "v1\n").expect("commit");
-    // Create an annotated tag so describe has something to find
-    let _ = Command::new("git")
-        .args(["tag", "-a", "v1.0.0", "-m", "release v1.0.0", &sha])
-        .current_dir(temp.path())
-        .output();
+    gix_testtools::git(temp.path(), &format!("tag -a v1.0.0 -m 'release v1.0.0' {sha}")).expect("create annotated tag");
     let Some(bin) = brit_bin() else {
         eprintln!("skipping: brit binary not built (run `cargo build -p gitoxide --bin brit --release`)");
         return;
@@ -360,10 +350,15 @@ fn clone_from_mock_remote() {
     let seed = TestRepo::new("clone-seed").expect("seed");
     seed.commit_file("seed.txt", "initial content\n").expect("seed commit");
     // Push the seed repo's main branch to the bare upstream
-    let _ = Command::new("git")
+    let seed_push = gix_testtools::git_command(seed.path())
         .args(["push", "-q", &upstream.url(), "main"])
-        .current_dir(seed.path())
-        .output();
+        .output()
+        .expect("seed mock remote");
+    assert!(
+        seed_push.status.success(),
+        "seed push failed: {}",
+        String::from_utf8_lossy(&seed_push.stderr)
+    );
 
     // Destination: a fresh temp dir (not yet a repo)
     let dest_temp = tempfile::Builder::new()
@@ -397,10 +392,15 @@ fn fetch_from_mock_remote() {
     let upstream = MockRemote::new("fetch-test").expect("upstream");
     let seed = TestRepo::new("fetch-seed").expect("seed");
     seed.commit_file("v1.txt", "version 1\n").expect("v1");
-    let _ = Command::new("git")
+    let seed_push = gix_testtools::git_command(seed.path())
         .args(["push", "-q", &upstream.url(), "main"])
-        .current_dir(seed.path())
-        .output();
+        .output()
+        .expect("seed mock remote");
+    assert!(
+        seed_push.status.success(),
+        "seed push failed: {}",
+        String::from_utf8_lossy(&seed_push.stderr)
+    );
 
     let Some(bin) = brit_bin() else {
         eprintln!("skipping: brit binary not built (run `cargo build -p gitoxide --bin brit --release`)");
@@ -413,7 +413,7 @@ fn fetch_from_mock_remote() {
         .tempdir()
         .expect("mktemp local");
     let local_path = local_temp.path().join("local");
-    let clone_out = Command::new("git")
+    let clone_out = gix_testtools::git_command(local_temp.path())
         .args(["clone", "-q", &upstream.url()])
         .arg(&local_path)
         .output()
@@ -446,35 +446,30 @@ fn fetch_from_mock_remote() {
     );
 }
 
-// ─── push (not implemented in this build of brit) ────────────────────────────
-//
-// `brit push` returns "error: unrecognized subcommand 'push'" — gitoxide has
-// not implemented push yet. We document this gap with a --help-level capture
-// of the top-level brit help, which shows the implemented subcommand list.
-//
-// This is intentional: the test page runner will show the gap clearly.
+// ─── push ─────────────────────────────────────────────────────────────────────
 
 #[test]
-fn push_not_yet_implemented() {
-    // Invoke brit with no args to get the top-level help (which lists what IS
-    // available). This gives the test page a populated staging file for the
-    // push slot while honestly reflecting the gap.
+fn push_to_mock_remote() {
+    let local = TestRepo::new("push-local").expect("local repository");
+    let head = local
+        .commit_file("pushed.txt", "through brit\n")
+        .expect("commit to push");
+    let remote = MockRemote::new("push-remote").expect("bare remote");
     let Some(bin) = brit_bin() else {
-        eprintln!("skipping: brit binary not built (run `cargo build -p gitoxide --bin brit --release`)");
+        eprintln!("skipping: brit binary not built");
         return;
     };
     let cap = BritInvocation::new(bin)
-        .args(["--help"])
+        .args(["push", &remote.url(), "refs/heads/main:refs/heads/main"])
+        .current_dir(local.path())
         .normalize(true)
         .run()
-        .expect("invoke");
+        .expect("invoke push");
+    assert!(cap.status.success(), "push failed: {}", cap.stderr);
+    let pushed = fs::read_to_string(remote.path().join("refs/heads/main")).expect("remote main ref");
+    assert_eq!(pushed.trim(), head, "remote ref must match pushed commit");
     staging_dump_path(
         &["brit", "push"],
-        &format!(
-            "NOTE: brit push is not implemented in this build (gitoxide push is in progress).\n\
-             Captured brit --help output as a placeholder:\n\
-             {}\n---stderr---\n{}",
-            cap.stdout, cap.stderr
-        ),
+        &format!("{}\n---stderr---\n{}", cap.stdout, cap.stderr),
     );
 }

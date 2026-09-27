@@ -4,10 +4,7 @@
 //! `helpers.sh::set-static-git-environment`) so commits made within the
 //! test produce stable SHA values across runs and machines.
 
-use std::{
-    path::{Path, PathBuf},
-    process::Command,
-};
+use std::path::{Path, PathBuf};
 
 use anyhow::{anyhow, Context, Result};
 use tempfile::TempDir;
@@ -73,9 +70,8 @@ impl TestRepo {
 
     /// Get the HEAD commit SHA-1 hex (40 chars).
     pub fn head_id(&self) -> Result<String> {
-        let out = Command::new("git")
+        let out = gix_testtools::git_command(&self.path)
             .args(["rev-parse", "HEAD"])
-            .current_dir(&self.path)
             .envs(STATIC_ENV.iter().copied())
             .output()
             .context("git rev-parse")?;
@@ -89,9 +85,8 @@ impl TestRepo {
     }
 
     fn git(path: &Path, args: &[&str]) -> Result<()> {
-        let out = Command::new("git")
+        let out = gix_testtools::git_command(path)
             .args(args)
-            .current_dir(path)
             .envs(STATIC_ENV.iter().copied())
             .output()
             .with_context(|| format!("git {args:?}"))?;

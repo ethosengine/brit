@@ -1,9 +1,7 @@
 use std::process::Command;
 
-fn rakia_binary() -> std::path::PathBuf {
-    // Built + located by cargo/nextest for brit-cli's own integration tests
-    // (the `[[bin]]` named `rakia` is defined in this crate's Cargo.toml).
-    std::path::PathBuf::from(env!("CARGO_BIN_EXE_rakia"))
+fn brit_binary() -> std::path::PathBuf {
+    std::path::PathBuf::from(env!("CARGO_BIN_EXE_brit"))
 }
 
 #[test]
@@ -27,19 +25,16 @@ fn graph_discover_outputs_json_with_manifests() {
         return;
     }
 
-    let out = Command::new(rakia_binary())
-        .args(["graph", "discover", "--repo"])
+    let mut command = Command::new(brit_binary());
+    gix_testtools::configure_git_environment(&mut command, &repo_root);
+    let out = command
+        .args(["build", "graph", "discover", "--repo"])
         .arg(&repo_root)
         .output()
-        .expect("invoke rakia");
+        .expect("invoke brit build");
 
     if !out.status.success() {
-        eprintln!(
-            "skipping: monorepo layout not present (standalone checkout); exit {} stderr: {}",
-            out.status,
-            String::from_utf8_lossy(&out.stderr)
-        );
-        return;
+        panic!("brit build graph failed: {}", String::from_utf8_lossy(&out.stderr));
     }
     let stdout = String::from_utf8(out.stdout).expect("utf8 stdout");
     let v: serde_json::Value = serde_json::from_str(&stdout).expect("parse json");
@@ -82,12 +77,14 @@ fn fingerprint_emits_content_addressed_hex_for_real_manifest() {
         return;
     }
 
-    let out = std::process::Command::new(rakia_binary())
-        .args(["fingerprint"])
+    let mut command = std::process::Command::new(brit_binary());
+    gix_testtools::configure_git_environment(&mut command, &repo_root);
+    let out = command
+        .args(["build", "fingerprint"])
         .arg(&manifest)
         .args(["--step", "build-angular"])
         .output()
-        .expect("invoke rakia");
+        .expect("invoke brit build");
 
     assert!(
         out.status.success(),

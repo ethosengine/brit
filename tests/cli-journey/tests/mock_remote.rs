@@ -28,7 +28,7 @@ fn local_can_clone_from_mock_remote() {
     let local_path = local_temp.path().join("clone");
 
     // git clone <url> <local_path>
-    let status = std::process::Command::new("git")
+    let status = gix_testtools::git_command(local_temp.path())
         .args(["clone", "-q", &upstream.url()])
         .arg(&local_path)
         .status()

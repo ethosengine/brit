@@ -1,19 +1,17 @@
 # Must be sourced into the main journey test
-# Smoke tests for the rakia binary — proves it starts + emits help.
-# Detailed per-subcommand coverage lives in cli-journey/tests/rakia.rs (Rust).
+# Smoke tests for the build commands in the one brit executable.
 
-title rakia
-exe_rakia="${exe%/*}/rakia"
-[ -x "$exe_rakia" ] || { echo "  (skip: rakia binary not built at $exe_rakia)"; return 0; }
+title 'brit build'
+[ -x "$exe_plumbing" ] || { echo "missing brit binary at $exe_plumbing" >&2; return 1; }
 
-(when "running 'rakia --help'"
+(when "running 'brit build --help'"
   it "prints the top-level help" && {
-    expect_run $SUCCESSFULLY "$exe_rakia" --help
+    expect_run $SUCCESSFULLY "$exe_plumbing" build --help
   }
 )
 
-(when "running 'rakia' with no subcommand"
+(when "running 'brit build' with no subcommand"
   it "exits 2 (clap usage error)" && {
-    expect_run $WITH_CLAP_FAILURE "$exe_rakia"
+    expect_run $WITH_CLAP_FAILURE "$exe_plumbing" build
   }
 )

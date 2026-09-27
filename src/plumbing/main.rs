@@ -56,6 +56,16 @@ pub mod async_util {
 
 pub fn main() -> Result<()> {
     let args: Args = Args::parse_from(gix::env::args_os());
+    run(args)
+}
+
+/// Execute an already parsed plumbing command, allowing another CLI to compose its command tree.
+pub fn run(args: Args) -> Result<()> {
+    run_with_command(args, Args::command())
+}
+
+/// Execute a plumbing command with the public command tree used for generated completions.
+pub fn run_with_command(args: Args, command: clap::Command) -> Result<()> {
     let thread_limit = args.threads;
     let verbose = args.verbose;
     let format = args.format;
@@ -1869,7 +1879,7 @@ pub fn main() -> Result<()> {
             },
         ),
         Subcommands::Completions { shell, out_dir } => {
-            let mut app = Args::command();
+            let mut app = command;
 
             let shell = shell
                 .or_else(clap_complete::Shell::from_env)
