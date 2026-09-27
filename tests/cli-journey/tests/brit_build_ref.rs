@@ -18,7 +18,10 @@ use std::{fs, path::PathBuf};
 use cli_journey::support::{runner::BritInvocation, test_repo::TestRepo};
 
 fn brit_build_ref_bin() -> Option<PathBuf> {
-    let p = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../../target/release/brit-build-ref");
+    let p = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join(format!(
+        "../../target/release/brit-build-ref{}",
+        std::env::consts::EXE_SUFFIX
+    ));
     p.canonicalize().ok().filter(|p| p.exists())
 }
 

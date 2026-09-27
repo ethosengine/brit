@@ -15,7 +15,10 @@ use cli_journey::support::{runner::BritInvocation, test_repo::TestRepo};
 
 fn brit_verify_bin() -> Option<PathBuf> {
     // tests/cli-journey -> ../../target/release/brit-verify
-    let p = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../../target/release/brit-verify");
+    let p = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join(format!(
+        "../../target/release/brit-verify{}",
+        std::env::consts::EXE_SUFFIX
+    ));
     p.canonicalize().ok().filter(|p| p.exists())
 }
 

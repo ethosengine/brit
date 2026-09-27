@@ -2,7 +2,7 @@
 
 use std::{
     ffi::OsString,
-    path::PathBuf,
+    path::{Path, PathBuf},
     process::{Command, ExitStatus},
 };
 
@@ -27,12 +27,11 @@ pub struct Capture {
 /// Resolve the one required `brit` binary for journey tests.
 pub fn brit_bin() -> Option<PathBuf> {
     let path = std::env::var_os("BRIT_BIN").map(PathBuf::from).unwrap_or_else(|| {
-        std::env::current_exe()
-            .expect("current test executable")
-            .parent()
-            .and_then(|deps| deps.parent())
-            .expect("Cargo target profile directory")
-            .join("brit")
+        profile_binary(
+            &std::env::current_exe().expect("current test executable"),
+            "brit",
+            std::env::consts::EXE_SUFFIX,
+        )
     });
     Some(path.canonicalize().unwrap_or_else(|_| {
         panic!(
@@ -40,6 +39,14 @@ pub fn brit_bin() -> Option<PathBuf> {
             path.display()
         )
     }))
+}
+
+fn profile_binary(test_executable: &Path, name: &str, suffix: &str) -> PathBuf {
+    test_executable
+        .parent()
+        .and_then(|deps| deps.parent())
+        .expect("Cargo target profile directory")
+        .join(format!("{name}{suffix}"))
 }
 
 impl BritInvocation {
@@ -111,5 +118,23 @@ impl BritInvocation {
             stderr,
             status: out.status,
         })
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn profile_binary_uses_the_platform_executable_suffix() {
+        let test_executable = Path::new("target").join("debug").join("deps").join("journey-test.exe");
+        assert_eq!(
+            profile_binary(&test_executable, "brit", ".exe"),
+            Path::new("target").join("debug").join("brit.exe")
+        );
+        assert_eq!(
+            profile_binary(&test_executable, "brit", ""),
+            Path::new("target").join("debug").join("brit")
+        );
     }
 }
