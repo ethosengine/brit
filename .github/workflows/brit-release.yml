@@ -22,7 +22,6 @@ jobs:
     permissions:
       contents: write
     env:
-      CARGO_TARGET_DIR: ${{ runner.temp }}/brit-release-test-target
       RUSTFLAGS: ''
     outputs:
       source_sha: ${{ steps.source.outputs.source_sha }}
@@ -31,6 +30,8 @@ jobs:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           persist-credentials: false
+      - name: Set an external Cargo target for source tests
+        run: printf 'CARGO_TARGET_DIR=%s/brit-release-test-target\n' "$RUNNER_TEMP" >> "$GITHUB_ENV"
       - name: Validate the Brit tag and source checkout
         id: source
         env:
@@ -81,7 +82,6 @@ jobs:
     permissions:
       contents: write
     env:
-      CARGO_TARGET_DIR: ${{ runner.temp }}/brit-release-target
       RUSTFLAGS: ''
       FEATURE: max-pure
       PROFILE: release-github
@@ -95,6 +95,8 @@ jobs:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           persist-credentials: false
+      - name: Set an external Cargo target for this host
+        run: printf 'CARGO_TARGET_DIR=%s/brit-release-target\n' "$RUNNER_TEMP" >> "$GITHUB_ENV"
       - name: Verify this job received the validated source
         run: |
           set -euo pipefail

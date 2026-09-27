@@ -550,13 +550,14 @@ jobs:
     runs-on: ubuntu-latest
 
     env:
-      CARGO_TARGET_DIR: ${{ runner.temp }}/brit-publish-target
       RUSTFLAGS: ''
 
     steps:
       - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
         with:
           persist-credentials: false
+      - name: Set an external Cargo target for publication checks
+        run: printf 'CARGO_TARGET_DIR=%s/brit-publish-target\n' "$RUNNER_TEMP" >> "$GITHUB_ENV"
       - name: Install Rust
         run: |
           rustup update stable
