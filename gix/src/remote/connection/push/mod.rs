@@ -3,7 +3,7 @@
 //! Mirrors [`super::fetch`]. Flow:
 //!
 //! 1. [`super::super::Connection::prepare_push`] performs the handshake and
-//!    ref-advertisement, then returns a [`Prepare`] builder.
+//!    ref-advertisement, then returns a `Prepare` builder.
 //! 2. The builder accepts refspecs and options.
 //! 3. [`Prepare::transmit`] runs the revision walk, builds the pack, and
 //!    delegates to [`gix_protocol::send_pack`] to deliver it.
@@ -23,7 +23,7 @@ impl<'remote, 'auth, 'repo, T> Connection<'remote, 'auth, 'repo, T>
 where
     T: Transport,
 {
-    /// Perform a `ReceivePack` handshake with the remote and return a [`Prepare`] builder.
+    /// Perform a `ReceivePack` handshake with the remote and return a `Prepare` builder.
     ///
     /// For V0/V1 connections (the common case for `file://`, `ssh://`, and `git://` push),
     /// the ref advertisement is returned inline during the handshake.  No separate

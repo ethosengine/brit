@@ -22,8 +22,7 @@ pub struct RefStatus {
     pub new_oid: gix_hash::ObjectId,
 }
 
-/// Outcome of a
-/// [`Prepare::transmit`](crate::remote::connection::push::Prepare::transmit) call.
+/// Outcome of a `Prepare::transmit` call.
 #[derive(Debug, Clone)]
 pub struct Outcome {
     /// Per-ref status in the order the server reported.

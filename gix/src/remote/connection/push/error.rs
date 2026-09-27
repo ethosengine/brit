@@ -1,4 +1,4 @@
-/// Errors from [`super::Prepare::transmit`] and
+/// Errors from `Prepare::transmit` and
 /// [`Connection::prepare_push`](crate::remote::Connection::prepare_push).
 #[derive(Debug, thiserror::Error)]
 #[allow(missing_docs)]
