@@ -15,14 +15,13 @@
 
 use std::{fs, path::PathBuf};
 
-use cli_journey::support::{runner::BritInvocation, test_repo::TestRepo};
+use cli_journey::support::{
+    runner::{auxiliary_bin, BritInvocation},
+    test_repo::TestRepo,
+};
 
 fn brit_build_ref_bin() -> Option<PathBuf> {
-    let p = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join(format!(
-        "../../target/release/brit-build-ref{}",
-        std::env::consts::EXE_SUFFIX
-    ));
-    p.canonicalize().ok().filter(|p| p.exists())
+    auxiliary_bin("BRIT_BUILD_REF_BIN", "brit-build-ref")
 }
 
 /// Dump captured output to staging at a nested path.

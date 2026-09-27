@@ -96,7 +96,13 @@ enum BuildCmd {
         #[arg(long)]
         inputs_hash: String,
         /// Whether the build succeeded.
-        #[arg(long, default_value_t = true)]
+        #[arg(
+            long,
+            action = clap::ArgAction::Set,
+            num_args = 0..=1,
+            default_missing_value = "true",
+            default_value_t = true
+        )]
         success: bool,
         /// Hardware profile JSON.
         #[arg(long, default_value = "{}")]
@@ -315,5 +321,48 @@ fn main() -> anyhow::Result<()> {
             MetaCmd::Verify { cid } => meta_cmd::verify(&repo, &cid),
             MetaCmd::Status { dir } => meta_cmd::status(&repo, &dir),
         },
+    }
+}
+
+#[cfg(test)]
+mod cli_tests {
+    use super::*;
+
+    fn parsed_success(extra: &[&str]) -> Result<bool, clap::Error> {
+        let mut args = vec![
+            "brit-build-ref",
+            "build",
+            "put",
+            "--step",
+            "elohim",
+            "--manifest",
+            "bafkrei-example",
+            "--output",
+            "bafkrei-output",
+            "--inputs-hash",
+            "deadbeef",
+        ];
+        args.extend_from_slice(extra);
+        let cli = Cli::try_parse_from(args)?;
+        let TopCommand::Build {
+            cmd: BuildCmd::Put { success, .. },
+        } = cli.command
+        else {
+            unreachable!("test only parses build put")
+        };
+        Ok(success)
+    }
+
+    #[test]
+    fn build_put_success_accepts_omitted_bare_and_explicit_values() {
+        assert!(parsed_success(&[]).unwrap());
+        assert!(parsed_success(&["--success"]).unwrap());
+        assert!(parsed_success(&["--success", "true"]).unwrap());
+        assert!(!parsed_success(&["--success", "false"]).unwrap());
+    }
+
+    #[test]
+    fn build_put_success_rejects_invalid_value() {
+        assert!(parsed_success(&["--success", "not-a-bool"]).is_err());
     }
 }

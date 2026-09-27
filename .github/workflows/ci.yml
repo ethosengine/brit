@@ -294,6 +294,19 @@ jobs:
       - uses: extractions/setup-just@53165ef7e734c5c07cb06b3c8e7b647c5aa16db3 # v4.0.0
       - name: Run journey tests
         run: just ci-journey-tests
+      - name: Run auxiliary Brit CLI journeys against built binaries
+        run: |
+          set -euo pipefail
+          # Keep these as separate Cargo invocations: a combined build can
+          # supply brit-verify's gix features through brit-build-ref.
+          cargo build --locked -p brit-build-ref --bin brit-build-ref
+          cargo build --locked -p brit-verify --bin brit-verify
+          debug_dir="$(just dbg)"
+          test -x "$debug_dir/brit-build-ref"
+          test -x "$debug_dir/brit-verify"
+          BRIT_BUILD_REF_BIN="$debug_dir/brit-build-ref" \
+          BRIT_VERIFY_BIN="$debug_dir/brit-verify" \
+            cargo test --locked -p cli-journey --test brit_build_ref --test brit_verify
 
   test-fast:
     strategy:
@@ -725,8 +738,8 @@ jobs:
       # List all jobs that are intended NOT to block PR auto-merge here.
       # Non-gating jobs. Besides the originals (cargo-deny-advisories, publish,
       # wasm, tests-pass), this fork also declares the gitoxide platform/parity
-      # legs it does not maintain (Windows fixtures, QEMU-emulated 32-bit, and
-      # the upstream gix shell-journey) as non-blocking: they still run for
+      # legs it does not maintain (Windows fixtures and QEMU-emulated 32-bit)
+      # as non-blocking: they still run for
       # visibility but must not gate merge.
       EXPECTED_NONBLOCKING_JOBS: |-
         cargo-deny-advisories
@@ -734,7 +747,6 @@ jobs:
         wasm
         tests-pass
         test
-        test-journey
         test-fixtures-windows
         test-32bit
 
@@ -774,6 +786,7 @@ jobs:
       - msrv-badge
       - pure-rust-build
       - test-doc
+      - test-journey
       - test-fast
       - test-32bit-windows-size-doc
       - lint

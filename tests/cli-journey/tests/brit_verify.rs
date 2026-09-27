@@ -11,15 +11,13 @@
 
 use std::{fs, path::PathBuf};
 
-use cli_journey::support::{runner::BritInvocation, test_repo::TestRepo};
+use cli_journey::support::{
+    runner::{auxiliary_bin, BritInvocation},
+    test_repo::TestRepo,
+};
 
 fn brit_verify_bin() -> Option<PathBuf> {
-    // tests/cli-journey -> ../../target/release/brit-verify
-    let p = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join(format!(
-        "../../target/release/brit-verify{}",
-        std::env::consts::EXE_SUFFIX
-    ));
-    p.canonicalize().ok().filter(|p| p.exists())
+    auxiliary_bin("BRIT_VERIFY_BIN", "brit-verify")
 }
 
 /// Dump captured output to BRIT_TEST_PAGE_STAGING/rust/brit-verify.txt.

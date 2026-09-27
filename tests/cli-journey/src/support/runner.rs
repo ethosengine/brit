@@ -41,6 +41,24 @@ pub fn brit_bin() -> Option<PathBuf> {
     }))
 }
 
+/// Resolve an auxiliary binary. An explicit override is required to work;
+/// only the historical release-binary fallback may be absent and skip a test.
+pub fn auxiliary_bin(env_key: &str, name: &str) -> Option<PathBuf> {
+    if let Some(path) = std::env::var_os(env_key).map(PathBuf::from) {
+        let resolved = path
+            .canonicalize()
+            .unwrap_or_else(|_| panic!("{env_key} points to a missing {name} binary: {}", path.display()));
+        assert!(resolved.is_file(), "{env_key} is not a file: {}", resolved.display());
+        return Some(resolved);
+    }
+
+    PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+        .join(format!("../../target/release/{name}{}", std::env::consts::EXE_SUFFIX))
+        .canonicalize()
+        .ok()
+        .filter(|path| path.is_file())
+}
+
 fn profile_binary(test_executable: &Path, name: &str, suffix: &str) -> PathBuf {
     test_executable
         .parent()
@@ -98,6 +116,9 @@ impl BritInvocation {
         let mut cmd = Command::new(&self.program);
         let config_dir = tempfile::tempdir().context("create isolated Git configuration directory")?;
         gix_testtools::configure_git_environment(&mut cmd, self.cwd.as_deref().unwrap_or(config_dir.path()));
+        // gix treats the null device as an unreadable Git config, unlike Git's CLI.
+        // Keep the test isolated while giving both implementations an absent file.
+        cmd.env("GIT_CONFIG_GLOBAL", config_dir.path().join("missing.gitconfig"));
         cmd.args(&self.args);
         for (k, v) in &self.env {
             cmd.env(k, v);
