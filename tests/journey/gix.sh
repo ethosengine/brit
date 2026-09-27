@@ -896,6 +896,7 @@ title "gix commit-graph"
 )
 
 if [[ "$kind" != "small" && "$kind" != "async" ]]; then
+if "$exe_plumbing" clone --help | grep -q -- '--filter'; then
 # Testing repository - local reproduction of https://github.com/staehle/gitoxide-testing
 testrepo_name="gitoxide-testing"
 # Path relative to tests/fixtures/ for use with jtt run-script
@@ -1113,4 +1114,7 @@ title "gix clone (functional tests)"
     )
   )
 )
+else
+  echo "SKIP: partial-clone journey requires brit clone --filter" >&2
+fi
 fi

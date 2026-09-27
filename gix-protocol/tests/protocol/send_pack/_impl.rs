@@ -9,10 +9,10 @@
 use std::{any::Any, borrow::Cow, io::Cursor};
 
 use bstr::{BStr, ByteSlice as _};
-use gix_packetline::{blocking_io::StreamingPeekableIter, PacketLineRef};
+use gix_packetline::{PacketLineRef, blocking_io::StreamingPeekableIter};
 use gix_transport::client::{
-    blocking_io::{ExtendedBufRead, RequestWriter, SetServiceResponse},
     Error, MessageKind, TransportWithoutIO, WriteMode,
+    blocking_io::{ExtendedBufRead, RequestWriter, SetServiceResponse},
 };
 
 /// A mock blocking transport whose server-to-client bytes are replayed from

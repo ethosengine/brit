@@ -1,6 +1,6 @@
 use bstr::{BString, ByteSlice};
 use gix_hash::ObjectId;
-use gix_protocol::send_pack::{command_list::encode_into, Command, Request};
+use gix_protocol::send_pack::{Command, Request, command_list::encode_into};
 
 fn oid(hex: &str) -> ObjectId {
     // Accepts a short spec; pads with zeros to 40 chars (sha1 tests).
@@ -86,9 +86,10 @@ fn delete_only_uses_zero_new_oid() {
     };
     let mut out = Vec::new();
     encode_into(&req, gix_hash::Kind::Sha1, &mut out).unwrap();
-    assert!(out
-        .as_bstr()
-        .contains_str(format!(" {} refs/heads/gone", "0".repeat(40))));
+    assert!(
+        out.as_bstr()
+            .contains_str(format!(" {} refs/heads/gone", "0".repeat(40)))
+    );
 }
 
 #[test]

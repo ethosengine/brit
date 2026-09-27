@@ -9,7 +9,7 @@ fn empty_pack_has_header_and_trailer_sha1() {
     assert_eq!(&out[..4], b"PACK");
     assert_eq!(&out[4..8], &[0, 0, 0, 2]); // version 2
     assert_eq!(&out[8..12], &[0, 0, 0, 0]); // 0 objects
-                                            // Trailer must be the hash of the first 12 bytes.
+    // Trailer must be the hash of the first 12 bytes.
     let expected = {
         let mut h = gix_hash::hasher(gix_hash::Kind::Sha1);
         h.update(&out[..12]);

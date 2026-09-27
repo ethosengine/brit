@@ -1,5 +1,6 @@
 /// Verify the `Outcome` and `RefStatus` public types are accessible and have
 /// the expected fields without needing a live connection.
+#[cfg(feature = "blocking-network-client")]
 #[test]
 fn push_outcome_types_are_accessible() {
     use gix::bstr::BString;
@@ -88,8 +89,7 @@ fn setup_push_repos() -> (std::path::PathBuf, std::path::PathBuf) {
     let dst = tmp.path().join("dst.git");
 
     let run = |dir: &std::path::Path, args: &[&str]| {
-        let status = std::process::Command::new("git")
-            .current_dir(dir)
+        let status = gix_testtools::git_command(dir)
             .args(args)
             .status()
             .unwrap_or_else(|e| panic!("failed to spawn git {args:?}: {e}"));

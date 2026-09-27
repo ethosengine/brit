@@ -1,5 +1,5 @@
 use bstr::{BString, ByteSlice};
-use gix_packetline::{blocking_io::StreamingPeekableIter, PacketLineRef};
+use gix_packetline::{PacketLineRef, blocking_io::StreamingPeekableIter};
 use gix_protocol::send_pack::report::parse;
 
 #[test]

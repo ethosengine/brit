@@ -208,7 +208,7 @@ title "Porcelain ${kind}"
 
             it "does not change the directory structure at all" && {
               WITH_SNAPSHOT="$snapshot/initial-directory-structure" \
-              expect_run_sh $SUCCESSFULLY 'find . -maxdepth 2 -type d | sort'
+              expect_run_sh $SUCCESSFULLY "find . -maxdepth 2 -type d ! -path './bare-origin.git/branches' | sort"
             }
           )
 

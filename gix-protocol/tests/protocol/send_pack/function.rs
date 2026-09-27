@@ -7,9 +7,9 @@
 #[cfg(feature = "blocking-client")]
 mod blocking {
     use bstr::BString;
-    use gix_protocol::send_pack::{send_pack, Command, Options, Request};
+    use gix_protocol::send_pack::{Command, Options, Request, send_pack};
 
-    use crate::send_pack::_impl::{advertised_oid, sent_new_oid, MockTransport};
+    use crate::send_pack::_impl::{MockTransport, advertised_oid, sent_new_oid};
 
     /// Helper: read the post-handshake portion of the s2c fixture.
     ///

@@ -65,6 +65,13 @@ fn main() -> gix_testtools::Result {
             drop(config_dir);
             std::process::exit(status.code().unwrap_or(1));
         }
+        "run-script" => {
+            let root = PathBuf::from(args.next().ok_or("run-script requires a repository root")?);
+            let script = PathBuf::from(args.next().ok_or("run-script requires a fixture script")?);
+            std::env::set_current_dir(root)?;
+            let fixture = gix_testtools::scripted_fixture_read_only(script)?;
+            println!("{}", fixture.canonicalize()?.display());
+        }
         "bash-program" | "bp" => bash_program()?,
         "git-daemon" => git_daemon(PathBuf::from(args.next().expect("path to write the git:// URL to")))?,
         "mess-in-the-middle" => mess_in_the_middle(PathBuf::from(args.next().expect("path to file to mess with")))?,
