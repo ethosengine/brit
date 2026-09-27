@@ -126,6 +126,79 @@ def index_record(index_url: str, name: str, version: str) -> dict | None:
     return matches[0] if matches else None
 
 
+def validate_index_contract(record: dict, package: dict) -> None:
+    """Check Cargo's index view against the dependency names Cargo packaged.
+
+    Nexus can preserve the archive checksum while losing a renamed dependency's
+    `explicit_name_in_toml` mapping. Such a version is not resolvable by Cargo,
+    so archive identity alone is not a usable publication receipt. Dev edges
+    are omitted from the published index and are intentionally not checked.
+    """
+    name, version = package["name"], package["version"]
+    index_deps = record.get("deps", [])
+    if not isinstance(index_deps, list) or any(not isinstance(dep, dict) for dep in index_deps):
+        raise PublishError(f"invalid index dependencies for {name} {version}")
+    for dependency in package.get("dependencies", []):
+        kind = dependency.get("kind") or "normal"
+        if kind == "dev":
+            continue
+        alias = dependency.get("rename") or dependency["name"]
+        actual = dependency["name"]
+        if not any(
+            entry.get("name") == alias
+            and (entry.get("kind") or "normal") == kind
+            and (entry.get("package") or entry.get("name")) == actual
+            and entry.get("optional", False) is dependency.get("optional", False)
+            for entry in index_deps
+        ):
+            raise PublishError(
+                f"invalid index dependency for {name} {version}: "
+                f"expected name={alias} package={actual} kind={kind} "
+                f"optional={dependency.get('optional', False)}"
+            )
+    optional_names = {
+        entry.get("name") for entry in index_deps if entry.get("optional") is True
+    }
+    index_features: dict[str, list[str]] = {}
+    for field in ("features", "features2"):
+        features = record.get(field, {})
+        if not isinstance(features, dict):
+            raise PublishError(f"invalid index {field} for {name} {version}")
+        for feature, enabled in features.items():
+            if not isinstance(feature, str):
+                raise PublishError(f"invalid index {field} for {name} {version}")
+            if not isinstance(enabled, list):
+                raise PublishError(f"invalid index {field} for {name} {version}")
+            index_features.setdefault(feature, []).extend(enabled)
+            for value in enabled:
+                if not isinstance(value, str):
+                    raise PublishError(f"invalid index {field} for {name} {version}")
+                if value.startswith("dep:") and value[4:] not in optional_names:
+                    raise PublishError(
+                        f"invalid index feature for {name} {version}: "
+                        f"dep:{value[4:]} has no optional index dependency"
+                    )
+    source_features: dict | None = None
+    for feature, enabled in package.get("features", {}).items():
+        if feature not in index_features:
+            implicit_optional = (
+                enabled == [f"dep:{feature}"]
+                and feature in optional_names
+            )
+            if implicit_optional:
+                if source_features is None:
+                    try:
+                        source_features = tomllib.loads(Path(package["manifest_path"]).read_text()).get("features", {})
+                    except (OSError, ValueError) as error:
+                        raise PublishError(f"cannot read source features for {name} {version}") from error
+                if feature not in source_features:
+                    continue
+            raise PublishError(f"missing index feature for {name} {version}: {feature}")
+        expected_deps = {value for value in enabled if value.startswith("dep:")}
+        if not expected_deps.issubset(index_features[feature]):
+            raise PublishError(f"missing index dependency feature link for {name} {version}: {feature}")
+
+
 def archive_files(data: bytes, name: str, version: str) -> dict[str, tuple[str, str, int]]:
     """Map safe entries to (kind, content SHA-256, full permission bits)."""
     if len(data) > MAX_ARCHIVE_BYTES:
@@ -203,10 +276,11 @@ def remote_archive(index_url: str, name: str, version: str, checksum: str) -> by
     return data
 
 
-def existing_decision(index_url: str, name: str, version: str, local: bytes) -> str:
+def existing_decision(index_url: str, name: str, version: str, local: bytes, package: dict) -> str:
     record = index_record(index_url, name, version)
     if record is None:
         return "publish"
+    validate_index_contract(record, package)
     remote = remote_archive(index_url, name, version, record["cksum"])
     checksum = hashlib.sha256(local).hexdigest()
     if checksum == record["cksum"]:
@@ -219,10 +293,11 @@ def existing_decision(index_url: str, name: str, version: str, local: bytes) -> 
     )
 
 
-def decide(index_url: str, name: str, version: str, checksum: str) -> str:
+def decide(index_url: str, name: str, version: str, checksum: str, package: dict) -> str:
     record = index_record(index_url, name, version)
     if record is None:
         return "publish"
+    validate_index_contract(record, package)
     if record["cksum"] != checksum:
         raise PublishError(
             f"immutable version collision for {name} {version}: local crate SHA-256 "
@@ -231,9 +306,9 @@ def decide(index_url: str, name: str, version: str, checksum: str) -> str:
     return "skip"
 
 
-def verify_conflict(index_url: str, name: str, version: str, local: bytes) -> None:
+def verify_conflict(index_url: str, name: str, version: str, local: bytes, package: dict) -> None:
     """A failed upload succeeds only for a verified, equivalent existing payload."""
-    if existing_decision(index_url, name, version, local) == "publish":
+    if existing_decision(index_url, name, version, local, package) == "publish":
         raise PublishError(f"upload failed and {name} {version} is absent from the registry index")
 
 
@@ -294,10 +369,12 @@ def assert_download_endpoint(index_url: str) -> None:
 
 def audit_index(index_url: str, ordered: list[dict]) -> tuple[int, int]:
     """Read-only count of exact current-version index records, never uploads."""
-    present = sum(
-        index_record(index_url, package["name"], package["version"]) is not None
-        for package in ordered
-    )
+    present = 0
+    for package in ordered:
+        record = index_record(index_url, package["name"], package["version"])
+        if record is not None:
+            validate_index_contract(record, package)
+            present += 1
     absent = len(ordered) - present
     print(f"INDEX AUDIT: {present}/{len(ordered)} present; {absent}/{len(ordered)} absent")
     return present, absent
@@ -327,7 +404,7 @@ def run(repo: Path, publish: bool, audit: bool = False) -> None:
         name, version = package["name"], package["version"]
         archive, checksum = package_crate(repo, package, env)
         local = archive.read_bytes()
-        decision = existing_decision(index_url, name, version, local)
+        decision = existing_decision(index_url, name, version, local, package)
         print(f"{decision}: {name} {version}", flush=True)
         if decision.startswith("skip") or not publish:
             continue
@@ -343,13 +420,13 @@ def run(repo: Path, publish: bool, audit: bool = False) -> None:
         if result.returncode != 0:
             # Cargo may time out after a successful upload or report 409 after
             # a race. Neither is success until the full payload is verified.
-            verify_conflict(index_url, name, version, local)
+            verify_conflict(index_url, name, version, local, package)
             print(f"verified existing payload after failed upload: {name} {version}", flush=True)
             continue
         if hashlib.sha256(archive.read_bytes()).hexdigest() != checksum:
             raise PublishError(f"Cargo repackaged different bytes for {name} {version}")
         for _attempt in range(12):
-            if decide(index_url, name, version, checksum) == "skip":
+            if decide(index_url, name, version, checksum, package) == "skip":
                 remote_archive(index_url, name, version, checksum)
                 break
             time.sleep(5)

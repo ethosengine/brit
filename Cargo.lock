@@ -1993,7 +1993,7 @@ dependencies = [
  "gix-config 0.60.0",
  "gix-credentials",
  "gix-date 0.16.0",
- "gix-diff 0.67.1",
+ "gix-diff 0.67.2",
  "gix-dir 0.29.1",
  "gix-discover 0.55.0",
  "gix-error 0.3.2",
@@ -2194,7 +2194,7 @@ version = "0.17.1"
 dependencies = [
  "gix-commitgraph 0.39.0",
  "gix-date 0.16.0",
- "gix-diff 0.67.1",
+ "gix-diff 0.67.2",
  "gix-error 0.3.2",
  "gix-filter 0.34.0",
  "gix-fs 0.22.1",
@@ -2427,7 +2427,7 @@ dependencies = [
 
 [[package]]
 name = "gix-diff"
-version = "0.67.1"
+version = "0.67.2"
 dependencies = [
  "bstr",
  "criterion",
@@ -2935,7 +2935,7 @@ dependencies = [
  "criterion",
  "document-features",
  "gix-command 0.10.1",
- "gix-diff 0.67.1",
+ "gix-diff 0.67.2",
  "gix-filter 0.34.0",
  "gix-fs 0.22.1",
  "gix-hash 0.26.3",
@@ -3132,7 +3132,7 @@ dependencies = [
  "crossbeam-deque",
  "document-features",
  "gix-chunk 0.8.0",
- "gix-diff 0.67.1",
+ "gix-diff 0.67.2",
  "gix-error 0.3.2",
  "gix-features 0.49.1",
  "gix-hash 0.26.3",
@@ -3569,7 +3569,7 @@ dependencies = [
  "bstr",
  "document-features",
  "filetime",
- "gix-diff 0.67.1",
+ "gix-diff 0.67.2",
  "gix-dir 0.29.1",
  "gix-features 0.49.1",
  "gix-filter 0.34.0",

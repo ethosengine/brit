@@ -2,7 +2,7 @@ lints.workspace = true
 
 [package]
 name = "gix-diff"
-version = "0.67.1"
+version = "0.67.2"
 repository = "https://github.com/GitoxideLabs/gitoxide"
 license = "MIT OR Apache-2.0"
 description = "Calculate differences between various git objects"
@@ -19,7 +19,7 @@ sha1 = ["gix-hash/sha1"]
 sha256 = ["gix-hash/sha256"]
 ## Enable diffing of blobs using imara-diff.
 blob = [
-    "dep:imara-diff",
+    "dep:gix-imara-diff",
     "dep:gix-filter",
     "dep:gix-worktree",
     "dep:gix-path",
@@ -65,7 +65,7 @@ gix-fs = { version = "^0.22.1", path = "../gix-fs", registry = "elohim", optiona
 gix-tempfile = { version = "^24.0.0", path = "../gix-tempfile", registry = "elohim", optional = true }
 gix-trace = { version = "^0.1.21", path = "../gix-trace", registry = "elohim", optional = true }
 gix-traverse = { version = "^0.61.0", path = "../gix-traverse", registry = "elohim", optional = true }
-imara-diff = { package = "gix-imara-diff", version = "^0.2.5", optional = true, path = "../gix-imara-diff", registry = "elohim" }
+gix-imara-diff = { version = "^0.2.5", optional = true, path = "../gix-imara-diff", registry = "elohim" }
 
 thiserror = "2.0.18"
 serde = { version = "1.0.114", optional = true, default-features = false, features = ["derive"] }

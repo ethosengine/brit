@@ -1,4 +1,5 @@
 use gix_testtools::Result;
+extern crate gix_imara_diff as imara_diff;
 pub use gix_testtools::{normalize_debug_snapshot, scripted_fixture_read_only, scripted_fixture_read_only_with_args};
 use std::collections::HashMap;
 

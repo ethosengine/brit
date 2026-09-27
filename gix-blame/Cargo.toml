@@ -23,7 +23,7 @@ gix-commitgraph = { version = "^0.39.0", path = "../gix-commitgraph", registry =
 gix-revwalk = { version = "^0.35.0", path = "../gix-revwalk", registry = "elohim" }
 gix-trace = { version = "^0.1.21", path = "../gix-trace", registry = "elohim" }
 gix-date = { version = "^0.16.0", path = "../gix-date", registry = "elohim" }
-gix-diff = { version = "^0.67.1", path = "../gix-diff", registry = "elohim", default-features = false, features = ["blob"] }
+gix-diff = { version = "^0.67.2", path = "../gix-diff", registry = "elohim", default-features = false, features = ["blob"] }
 gix-object = { version = "^0.64.2", path = "../gix-object", registry = "elohim" }
 gix-hash = { version = "^0.26.3", path = "../gix-hash", registry = "elohim" }
 gix-worktree = { version = "^0.56.0", path = "../gix-worktree", registry = "elohim", default-features = false, features = ["attributes"] }

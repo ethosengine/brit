@@ -29,7 +29,7 @@ query = ["dep:rusqlite"]
 corpus = ["dep:rusqlite", "dep:sysinfo", "organize", "dep:crossbeam-channel", "dep:serde_json", "dep:tracing-forest", "dep:tracing-subscriber", "tracing", "dep:parking_lot"]
 
 ## The ability to create archives from virtual worktrees, similar to `git archive`.
-archive = ["dep:gix-archive-for-configuration-only", "gix/worktree-archive"]
+archive = ["dep:gix-archive", "gix/worktree-archive"]
 
 ## The ability to clean a repository, similar to `git clean`.
 clean = ["gix/dirwalk"]
@@ -41,7 +41,7 @@ clean = ["gix/dirwalk"]
 blocking-client = ["gix/blocking-network-client"]
 ## The client to connect to git servers will be async, while supporting only the 'git' transport itself.
 ## It's the most limited and can be seen as example on how to use custom transports for custom servers.
-async-client = ["gix/async-network-client-async-std", "gix-transport-configuration-only/async-std", "async-trait", "futures-io", "async-net", "async-io", "futures-lite", "blocking"]
+async-client = ["gix/async-network-client-async-std", "gix-transport/async-std", "async-trait", "futures-io", "async-net", "async-io", "futures-lite", "blocking"]
 
 #! ### Other
 ## Data structures implement `serde::Serialize` and `serde::Deserialize`.
@@ -50,13 +50,13 @@ serde = ["gix/serde", "dep:serde_json", "dep:serde", "bytesize/serde"]
 [dependencies]
 # deselect everything else (like "performance") as this should be controllable by the parent application.
 gix = { version = "^0.87.1", path = "../gix", registry = "elohim", default-features = false, features = ["merge", "blob-diff", "blame", "revision", "mailmap", "excludes", "attributes", "worktree-mutation", "credentials", "interrupt", "status", "dirwalk", "command"] }
-gix-pack-for-configuration-only = { package = "gix-pack", version = "^0.74.2", path = "../gix-pack", registry = "elohim", default-features = false, features = ["pack-cache-lru-dynamic", "pack-cache-lru-static", "generate", "streaming-input"] }
-gix-transport-configuration-only = { package = "gix-transport", version = "^0.59.2", path = "../gix-transport", registry = "elohim", default-features = false }
-gix-archive-for-configuration-only = { package = "gix-archive", version = "^0.36.1", path = "../gix-archive", registry = "elohim", optional = true, features = ["tar", "tar_gz"] }
+gix-pack = { version = "^0.74.2", path = "../gix-pack", registry = "elohim", default-features = false, features = ["pack-cache-lru-dynamic", "pack-cache-lru-static", "generate", "streaming-input"] }
+gix-transport = { version = "^0.59.2", path = "../gix-transport", registry = "elohim", default-features = false }
+gix-archive = { version = "^0.36.1", path = "../gix-archive", registry = "elohim", optional = true, features = ["tar", "tar_gz"] }
 gix-status = { version = "^0.34.1", path = "../gix-status", registry = "elohim" }
 gix-config-value = { version = "^0.19.1", path = "../gix-config-value", registry = "elohim" }
 gix-fsck = { version = "^0.25.1", path = "../gix-fsck", registry = "elohim" }
-gix-error-for-configuration-only = { package = "gix-error", version = "^0.3.2", path = "../gix-error", registry = "elohim", features = ["anyhow"] }
+gix-error = { version = "^0.3.2", path = "../gix-error", registry = "elohim", features = ["anyhow"] }
 serde = { version = "1.0.114", optional = true, default-features = false, features = ["derive"] }
 anyhow = "1.0.102"
 thiserror = "2.0.18"
@@ -123,13 +123,13 @@ ignored = [
     # Enabled through `async-client` feature wiring only.
     "futures-lite",
     # Configuration-only dependency selected by the `archive` feature.
-    "gix-archive-for-configuration-only",
+    "gix-archive",
     # Configuration-only dependency used to constrain global `gix-error` feature resolution.
-    "gix-error-for-configuration-only",
+    "gix-error",
     # Configuration-only dependency used to constrain global `gix-pack` feature resolution.
-    "gix-pack-for-configuration-only",
+    "gix-pack",
     # Configuration-only dependency selected by `async-client` feature wiring.
-    "gix-transport-configuration-only",
+    "gix-transport",
     # Imported as crate `layout`, which does not match the package name `layout-rs`.
     "layout-rs",
     # Enabled through `estimate-hours` feature wiring only.

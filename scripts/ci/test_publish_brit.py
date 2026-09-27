@@ -2,6 +2,7 @@
 
 import json
 import io
+import contextlib
 import tarfile
 import tempfile
 import threading
@@ -13,23 +14,25 @@ from unittest import mock
 import publish_brit
 
 
-def package(name, version, path, dependencies=()):
+def package(name, version, path, dependencies=(), features=None):
     return {
         "name": name,
         "version": version,
         "manifest_path": str(path / "Cargo.toml"),
         "publish": None,
         "dependencies": list(dependencies),
+        "features": features or {},
     }
 
 
-def dependency(name, path, registry, kind=None, optional=False):
+def dependency(name, path, registry, kind=None, optional=False, rename=None):
     return {
         "name": name,
         "path": str(path),
         "registry": registry,
         "kind": kind,
         "optional": optional,
+        "rename": rename,
     }
 
 
@@ -162,15 +165,153 @@ class RegistryTests(unittest.TestCase):
             "name": "brit-cli", "vers": "0.1.1", "cksum": "0" * 64,
         }]
         with self.assertRaisesRegex(publish_brit.PublishError, "immutable.*collision"):
-            publish_brit.decide(self.registry.url, "brit-cli", "0.1.1", "1" * 64)
+            publish_brit.decide(self.registry.url, "brit-cli", "0.1.1", "1" * 64, package("brit-cli", "0.1.1", Path("/fake")))
+
+    def test_index_alias_and_feature_contract_catches_nexus_name_loss(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            item = package("gix-diff", "0.67.1", root / "diff", [
+                dependency("gix-imara-diff", root / "imara", "elohim", optional=True, rename="imara-diff"),
+            ], features={"blob": ["dep:imara-diff"]})
+            good = {"deps": [{"name": "imara-diff", "package": "gix-imara-diff", "kind": "normal", "optional": True}],
+                    "features": {"blob": ["dep:imara-diff"]}}
+            publish_brit.validate_index_contract(good, item)
+            with self.assertRaisesRegex(publish_brit.PublishError, "invalid index features"):
+                publish_brit.validate_index_contract(
+                    {**good, "features": {"blob": ["dep:imara-diff", 42]}}, item
+                )
+            lost_alias = {"deps": [{"name": "gix-imara-diff", "kind": "normal", "optional": True}],
+                          "features": {"blob": ["dep:imara-diff"]}}
+            with self.assertRaisesRegex(publish_brit.PublishError, "index dependency.*imara-diff"):
+                publish_brit.validate_index_contract(lost_alias, item)
+            wrong_feature = {"deps": good["deps"], "features": {"blob": ["dep:gix-imara-diff"]}}
+            with self.assertRaisesRegex(publish_brit.PublishError, "index feature.*gix-imara-diff"):
+                publish_brit.validate_index_contract(wrong_feature, item)
+            missing_feature = {"deps": good["deps"], "features": {}}
+            with self.assertRaisesRegex(publish_brit.PublishError, "missing index feature.*blob"):
+                publish_brit.validate_index_contract(missing_feature, item)
+            missing_link = {"deps": good["deps"], "features": {"blob": []}}
+            with self.assertRaisesRegex(publish_brit.PublishError, "missing index dependency feature link.*blob"):
+                publish_brit.validate_index_contract(missing_link, item)
+            not_optional = {"deps": [{**good["deps"][0], "optional": False}], "features": good["features"]}
+            with self.assertRaisesRegex(publish_brit.PublishError, "index dependency.*imara-diff"):
+                publish_brit.validate_index_contract(not_optional, item)
+
+    def test_required_alias_is_checked_but_dev_alias_is_not_required(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            item = package("gitoxide-core", "0.61.1", root / "core", [
+                dependency("gix-pack", root / "pack", "elohim", rename="gix-pack-for-configuration-only"),
+                dependency("gix-archive", root / "archive", "elohim", kind="dev", rename="archive-test"),
+            ])
+            bad = {"deps": [{"name": "gix-pack", "kind": "normal"}], "features": {}}
+            with self.assertRaisesRegex(publish_brit.PublishError, "index dependency.*gix-pack-for-configuration-only"):
+                publish_brit.validate_index_contract(bad, item)
+            good = {"deps": [{"name": "gix-pack-for-configuration-only", "package": "gix-pack", "kind": "normal"}],
+                    "features": {}}
+            publish_brit.validate_index_contract(good, item)
+
+    def test_unrenamed_dependency_accepts_omitted_or_explicit_self_package(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            item = package("gix-diff", "0.67.2", root / "diff", [
+                dependency("gix-imara-diff", root / "imara", "elohim", optional=True),
+            ])
+            for entry in (
+                {"name": "gix-imara-diff", "optional": True},
+                {"name": "gix-imara-diff", "package": "gix-imara-diff", "optional": True},
+            ):
+                with self.subTest(entry=entry):
+                    publish_brit.validate_index_contract(
+                        {"deps": [entry], "features": {"blob": ["dep:gix-imara-diff"]}}, item
+                    )
+
+    def test_implicit_optional_feature_may_be_omitted_but_explicit_one_may_not(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            manifest = root / "Cargo.toml"
+            item = package("gix-error", "0.3.2", root, [
+                dependency("document-features", root / "document-features", "elohim", optional=True),
+            ], features={"document-features": ["dep:document-features"]})
+            index = {"deps": [{"name": "document-features", "optional": True}], "features": {}}
+            manifest.write_text('[package]\nname = "gix-error"\nversion = "0.3.2"\n')
+            publish_brit.validate_index_contract(index, item)
+            manifest.write_text('[features]\ndocument-features = ["dep:document-features"]\n')
+            with self.assertRaisesRegex(publish_brit.PublishError, "missing index feature.*document-features"):
+                publish_brit.validate_index_contract(index, item)
+
+    def test_matching_archive_cannot_skip_a_broken_index_entry(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            item = package("gix-diff", "0.67.1", root / "diff", [
+                dependency("gix-imara-diff", root / "imara", "elohim", optional=True, rename="imara-diff"),
+            ])
+            archive = crate_archive("gix-diff", "0.67.1", {"Cargo.toml": b"manifest"})
+            checksum = publish_brit.hashlib.sha256(archive).hexdigest()
+            self.registry.records["/" + publish_brit.sparse_path("gix-diff")] = [{
+                "name": "gix-diff", "vers": "0.67.1", "cksum": checksum,
+                "deps": [{"name": "gix-imara-diff", "kind": "normal", "optional": True}],
+                "features": {"blob": ["dep:imara-diff"]},
+            }]
+            self.registry.archives["/crates/gix-diff/0.67.1/download"] = archive
+            with self.assertRaisesRegex(publish_brit.PublishError, "index dependency.*imara-diff"):
+                publish_brit.existing_decision(self.registry.url, "gix-diff", "0.67.1", archive, item)
+
+    def test_successful_upload_with_broken_index_has_no_verified_receipt(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            (root / ".cargo").mkdir()
+            (root / ".cargo/config.toml").write_text(
+                '[registries.elohim]\nindex = "sparse+https://example.invalid/"\n'
+            )
+            item = package("brit-cli", "0.1.2", root / "cli", [{
+                "name": "gix-imara-diff", "path": None, "registry": None,
+                "kind": None, "optional": True, "rename": "imara-diff",
+            }])
+            metadata = {"packages": [item, package("brit-build-ref", "0.1.1", root / "build-ref")]}
+            uploads = []
+
+            def package_one(_repo, package_data, _env):
+                archive = root / f"{package_data['name']}.crate"
+                archive.write_bytes(package_data["name"].encode())
+                return archive, publish_brit.hashlib.sha256(archive.read_bytes()).hexdigest()
+
+            def publish_one(command, **_kwargs):
+                name = command[-1]
+                uploads.append(name)
+                checksum = publish_brit.hashlib.sha256(name.encode()).hexdigest()
+                self.registry.records["/" + publish_brit.sparse_path(name)] = [{
+                    "name": name, "vers": "0.1.2", "cksum": checksum,
+                    "deps": [{"name": "gix-imara-diff", "kind": "normal", "optional": True}],
+                    "features": {"blob": ["dep:imara-diff"]},
+                }]
+                return mock.Mock(returncode=0)
+
+            output = io.StringIO()
+            with (
+                mock.patch.object(publish_brit, "validate_registry_url", return_value=self.registry.url),
+                mock.patch.object(publish_brit, "assert_download_endpoint"),
+                mock.patch.object(publish_brit, "cargo_metadata", return_value=metadata),
+                mock.patch.object(publish_brit, "package_crate", side_effect=package_one),
+                mock.patch.object(publish_brit.subprocess, "run", side_effect=publish_one),
+                mock.patch.dict("os.environ", {
+                    "CARGO_TARGET_DIR": str(root / "target"),
+                    "CARGO_REGISTRIES_ELOHIM_TOKEN": "test-token",
+                }),
+                contextlib.redirect_stdout(output),
+            ):
+                with self.assertRaisesRegex(publish_brit.PublishError, "index dependency.*imara-diff"):
+                    publish_brit.run(root, publish=True)
+            self.assertEqual(uploads, ["brit-cli"])
+            self.assertNotIn("verified:", output.getvalue())
 
     def test_exact_checksum_skips_and_missing_version_publishes(self):
         path = publish_brit.sparse_path("brit-cli")
         self.registry.records["/" + path] = [{
             "name": "brit-cli", "vers": "0.1.1", "cksum": "1" * 64,
         }]
-        self.assertEqual(publish_brit.decide(self.registry.url, "brit-cli", "0.1.1", "1" * 64), "skip")
-        self.assertEqual(publish_brit.decide(self.registry.url, "brit-cli", "0.1.2", "2" * 64), "publish")
+        self.assertEqual(publish_brit.decide(self.registry.url, "brit-cli", "0.1.1", "1" * 64, package("brit-cli", "0.1.1", Path("/fake"))), "skip")
+        self.assertEqual(publish_brit.decide(self.registry.url, "brit-cli", "0.1.2", "2" * 64, package("brit-cli", "0.1.2", Path("/fake"))), "publish")
 
     def test_index_audit_counts_exact_versions_without_packaging(self):
         self.registry.records["/" + publish_brit.sparse_path("brit-cli")] = [{
@@ -186,7 +327,7 @@ class RegistryTests(unittest.TestCase):
         for status in (401, 403, 500):
             self.registry.status = status
             with self.subTest(status=status), self.assertRaises(publish_brit.PublishError):
-                publish_brit.decide(self.registry.url, "brit-cli", "0.1.2", "2" * 64)
+                publish_brit.decide(self.registry.url, "brit-cli", "0.1.2", "2" * 64, package("brit-cli", "0.1.2", Path("/fake")))
 
     def test_registry_url_rejects_embedded_credentials_without_echoing_them(self):
         with self.assertRaises(publish_brit.PublishError) as result:
@@ -226,10 +367,10 @@ class RegistryTests(unittest.TestCase):
         }]
         archive_path = "/crates/brit-cli/0.1.1/download"
         self.registry.archives[archive_path] = old
-        self.assertEqual(publish_brit.existing_decision(self.registry.url, "brit-cli", "0.1.1", new), "skip-equivalent")
+        self.assertEqual(publish_brit.existing_decision(self.registry.url, "brit-cli", "0.1.1", new, package("brit-cli", "0.1.1", Path("/fake"))), "skip-equivalent")
         self.registry.archives[archive_path] = b"tampered"
         with self.assertRaisesRegex(publish_brit.PublishError, "checksum mismatch"):
-            publish_brit.existing_decision(self.registry.url, "brit-cli", "0.1.1", new)
+            publish_brit.existing_decision(self.registry.url, "brit-cli", "0.1.1", new, package("brit-cli", "0.1.1", Path("/fake")))
 
     def test_executable_mode_and_unsafe_archive_entries_refuse(self):
         files = {"Cargo.toml": b"manifest", "src/main.rs": b"main"}
@@ -252,9 +393,9 @@ class RegistryTests(unittest.TestCase):
         remote = crate_archive("brit-cli", "0.1.2", {"Cargo.toml": b"manifest", "src/main.rs": b"main"})
         altered = crate_archive("brit-cli", "0.1.2", {"Cargo.toml": b"changed", "src/main.rs": b"main"})
         with mock.patch.object(publish_brit, "remote_archive", return_value=remote):
-            publish_brit.verify_conflict(self.registry.url, "brit-cli", "0.1.2", remote)
+            publish_brit.verify_conflict(self.registry.url, "brit-cli", "0.1.2", remote, package("brit-cli", "0.1.2", Path("/fake")))
             with self.assertRaisesRegex(publish_brit.PublishError, "immutable.*collision"):
-                publish_brit.verify_conflict(self.registry.url, "brit-cli", "0.1.2", altered)
+                publish_brit.verify_conflict(self.registry.url, "brit-cli", "0.1.2", altered, package("brit-cli", "0.1.2", Path("/fake")))
 
     def test_whole_graph_static_preflight_refuses_before_any_upload(self):
         with tempfile.TemporaryDirectory() as temporary:

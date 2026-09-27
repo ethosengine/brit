@@ -1,4 +1,5 @@
 use std::{fmt::Write, hint::black_box};
+extern crate gix_imara_diff as imara_diff;
 
 use criterion::{BatchSize, Criterion, criterion_group, criterion_main};
 

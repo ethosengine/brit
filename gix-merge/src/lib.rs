@@ -6,6 +6,10 @@
 #![deny(missing_docs)]
 #![forbid(unsafe_code)]
 
+// Keep the upstream-facing Rust API while the registry dependency key uses the
+// actual package name; Nexus does not preserve renamed dependency index fields.
+extern crate gix_imara_diff as imara_diff;
+
 ///
 pub mod blob;
 ///

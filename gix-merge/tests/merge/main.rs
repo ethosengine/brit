@@ -1,5 +1,6 @@
 use gix_hash::ObjectId;
 extern crate core;
+extern crate gix_imara_diff as imara_diff;
 
 mod blob;
 mod tree;
