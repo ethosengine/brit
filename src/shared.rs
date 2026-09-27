@@ -90,6 +90,10 @@ pub mod pretty {
             (_, true) => {
                 unreachable!("BUG: This branch can't be run without a TUI built-in")
             }
+            #[cfg(feature = "prodash-render-tui")]
+            (_, true) => {
+                anyhow::bail!("TUI progress is unavailable in a small build; omit --progress or build without small")
+            }
         }
     }
 

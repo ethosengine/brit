@@ -453,6 +453,7 @@ dependencies = [
 name = "brit-cli"
 version = "0.1.2"
 dependencies = [
+ "anyhow",
  "brit-graph",
  "clap",
  "gitoxide",

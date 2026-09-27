@@ -76,9 +76,12 @@ fn support_helpers_ignore_hostile_inherited_git_paths_and_user_config() -> gix_t
         capture.stderr
     );
     let mut lines = capture.stdout.lines();
+    let resolved_repo = std::fs::canonicalize(lines.next().expect("indirect Git prints a repository path"))?;
+    let target_repo = std::fs::canonicalize(repo.path())?;
+    let decoy_repo = std::fs::canonicalize(decoy.path())?;
+    assert_ne!(target_repo, decoy_repo, "fixture repositories must remain distinct");
     assert_eq!(
-        lines.next(),
-        Some(repo.path().to_str().expect("temporary repository path is UTF-8")),
+        resolved_repo, target_repo,
         "indirect Git resolves the target repository"
     );
     assert_eq!(lines.next(), Some("explicit"), "explicit invocation override wins");

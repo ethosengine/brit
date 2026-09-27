@@ -181,7 +181,16 @@ fn run() -> Result<()> {
         run_build(command)
     } else {
         let args = plumbing::Args::from_arg_matches(&matches).map_err(|e| error::CliError::Args(e.to_string()))?;
-        plumbing::run_with_command(args, command).map_err(|e| error::CliError::Git(format!("{e:#}")))
+        plumbing::run_with_command(args, command).map_err(error::CliError::Git)
+    }
+}
+
+fn diagnostic(error: &error::CliError) -> String {
+    match error {
+        // Match the old `fn main() -> anyhow::Result<()>` termination output,
+        // including anyhow's multi-cause Debug formatting.
+        error::CliError::Git(cause) => format!("Error: {cause:?}"),
+        _ => format!("error: {error}"),
     }
 }
 
@@ -189,7 +198,7 @@ fn main() -> ExitCode {
     match run() {
         Ok(()) => ExitCode::SUCCESS,
         Err(e) => {
-            eprintln!("error: {e}");
+            eprintln!("{}", diagnostic(&e));
             ExitCode::from(e.exit_code() as u8)
         }
     }
@@ -202,5 +211,28 @@ mod tests {
     #[test]
     fn combined_clap_tree_is_valid() {
         BuildNamespace::augment_subcommands(plumbing::Args::command()).debug_assert();
+    }
+
+    #[test]
+    fn git_errors_preserve_anyhow_main_diagnostics() {
+        use anyhow::Context;
+
+        let cause = Err::<(), _>(anyhow::anyhow!("root cause"))
+            .context("operation failed")
+            .expect_err("the synthetic Git failure must remain an error");
+        let diagnostic = diagnostic(&error::CliError::Git(cause));
+        assert_eq!(
+            diagnostic, "Error: operation failed\n\nCaused by:\n    root cause",
+            "Git errors must keep the old anyhow::Result main output, including causes"
+        );
+    }
+
+    #[test]
+    fn build_errors_keep_their_existing_format() {
+        assert_eq!(
+            diagnostic(&error::CliError::Args("bad option".into())),
+            "error: invalid arguments: bad option",
+            "build errors must not acquire the legacy Git prefix"
+        );
     }
 }

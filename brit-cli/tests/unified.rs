@@ -107,9 +107,11 @@ fn completions_include_build_namespace() {
 
 #[test]
 fn legacy_name_forwards_build_commands_with_a_warning() {
-    let temp = gix_testtools::tempfile::tempdir().expect("temporary executable link");
-    let legacy = temp.path().join("rakia");
-    std::fs::hard_link(env!("CARGO_BIN_EXE_brit"), &legacy).expect("link same executable");
+    let temp = gix_testtools::tempfile::tempdir().expect("temporary legacy executable");
+    let legacy = temp.path().join(format!("rakia{}", std::env::consts::EXE_SUFFIX));
+    // Test argv[0] dispatch without assuming Cargo's target and the fixture
+    // directory share a filesystem (CI containers may mount them separately).
+    std::fs::copy(env!("CARGO_BIN_EXE_brit"), &legacy).expect("copy same executable bytes");
     let mut command = Command::new(legacy);
     gix_testtools::configure_git_environment(&mut command, temp.path());
     let output = command.args(["graph", "--help"]).output().expect("legacy help");
