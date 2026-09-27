@@ -127,6 +127,7 @@ where
                         .boolean_filter("clone.rejectShallow", &mut repo.filter_config_section()),
                 )?
                 .unwrap_or(false),
+            filter: None,
         };
         let context = gix_protocol::fetch::Context {
             handshake: &mut handshake,

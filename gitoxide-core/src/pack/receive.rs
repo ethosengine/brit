@@ -133,6 +133,7 @@ where
             trace_packetlines,
         },
         gix::protocol::fetch::Options {
+            filter: None,
             shallow_file: "no shallow file required as we reject it to keep it simple".into(),
             shallow: &Default::default(),
             tags: Default::default(),

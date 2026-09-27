@@ -54,6 +54,7 @@ gix-pack-for-configuration-only = { package = "gix-pack", version = "^0.74.2", p
 gix-transport-configuration-only = { package = "gix-transport", version = "^0.59.2", path = "../gix-transport", default-features = false }
 gix-archive-for-configuration-only = { package = "gix-archive", version = "^0.36.1", path = "../gix-archive", optional = true, features = ["tar", "tar_gz"] }
 gix-status = { version = "^0.34.1", path = "../gix-status" }
+gix-config-value = { version = "^0.19.1", path = "../gix-config-value" }
 gix-fsck = { version = "^0.25.1", path = "../gix-fsck" }
 gix-error-for-configuration-only = { package = "gix-error", version = "^0.3.2", path = "../gix-error", features = ["anyhow"] }
 serde = { version = "1.0.114", optional = true, default-features = false, features = ["derive"] }

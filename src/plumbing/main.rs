@@ -709,6 +709,66 @@ pub fn main() -> Result<()> {
                 },
             )
         }
+        #[cfg(feature = "gitoxide-core-blocking-client")]
+        Subcommands::Push(p) => {
+            let opts = core::repository::push::Options {
+                format,
+                all: p.all,
+                mirror: p.mirror,
+                delete: p.delete,
+                tags: p.tags,
+                follow_tags: p.follow_tags,
+                dry_run: p.dry_run,
+                porcelain: p.porcelain,
+                force: p.force,
+                force_with_lease: p.force_with_lease,
+                force_if_includes: p.force_if_includes,
+                atomic: p.atomic,
+                prune: p.prune,
+                set_upstream: p.set_upstream,
+                progress: if p.progress {
+                    Some(true)
+                } else if p.no_progress {
+                    Some(false)
+                } else {
+                    None
+                },
+                thin: if p.thin {
+                    Some(true)
+                } else if p.no_thin {
+                    Some(false)
+                } else {
+                    None
+                },
+                no_verify: p.no_verify,
+                receive_pack: p.receive_pack,
+                signed_arg: p.signed,
+                push_options: p.push_option,
+                recurse_submodules_arg: p.recurse_submodules,
+                ipv4: p.ipv4,
+                ipv6: p.ipv6,
+                repo: p.repo,
+                remote: p.repository,
+                ref_specs: p.refspec,
+            };
+            prepare_and_run(
+                "push",
+                trace,
+                auto_verbose && !p.quiet,
+                progress,
+                progress_keep_open,
+                core::repository::push::PROGRESS_RANGE,
+                move |progress, out, err| {
+                    core::repository::push::push(
+                        repository(Mode::LenientWithGitInstallConfig)?,
+                        progress,
+                        out,
+                        err,
+                        opts,
+                    )
+                },
+            )
+        }
         Subcommands::ConfigTree => show_progress(),
         Subcommands::Credential(cmd) => core::repository::credential(
             repository(Mode::StrictWithGitInstallConfig).ok(),
@@ -1418,8 +1478,27 @@ pub fn main() -> Result<()> {
             None,
             move |_progress, out, _err| core::repository::cat(repository(Mode::Lenient)?, &revspec, out),
         ),
-        Subcommands::Commit(cmd) => match cmd {
-            commit::Subcommands::Verify { rev_spec } => prepare_and_run(
+        Subcommands::Commit(platform) => match platform.cmd {
+            None => prepare_and_run(
+                "commit",
+                trace,
+                auto_verbose,
+                progress,
+                progress_keep_open,
+                None,
+                move |_progress, out, _err| {
+                    core::repository::commit::create(
+                        repository(Mode::Lenient)?,
+                        out,
+                        core::repository::commit::CreateOptions {
+                            message: platform.message,
+                            allow_empty: platform.allow_empty,
+                            ..Default::default()
+                        },
+                    )
+                },
+            ),
+            Some(commit::Subcommands::Verify { rev_spec }) => prepare_and_run(
                 "commit-verify",
                 trace,
                 auto_verbose,
@@ -1430,7 +1509,7 @@ pub fn main() -> Result<()> {
                     core::repository::commit::verify(repository(Mode::Lenient)?, rev_spec.as_deref())
                 },
             ),
-            commit::Subcommands::Sign { rev_spec } => prepare_and_run(
+            Some(commit::Subcommands::Sign { rev_spec }) => prepare_and_run(
                 "commit-sign",
                 trace,
                 auto_verbose,
@@ -1441,7 +1520,7 @@ pub fn main() -> Result<()> {
                     core::repository::commit::sign(repository(Mode::Lenient)?, rev_spec.as_deref(), out)
                 },
             ),
-            commit::Subcommands::Describe {
+            Some(commit::Subcommands::Describe {
                 annotated_tags,
                 all_refs,
                 first_parent,
@@ -1451,7 +1530,7 @@ pub fn main() -> Result<()> {
                 max_candidates,
                 rev_spec,
                 dirty_suffix,
-            } => prepare_and_run(
+            }) => prepare_and_run(
                 "commit-describe",
                 trace,
                 verbose,

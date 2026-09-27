@@ -49,6 +49,10 @@ pub mod init;
 ///
 pub mod fetch;
 
+/// Push negotiation and result types for blocking remote connections.
+#[cfg(feature = "blocking-network-client")]
+pub mod push;
+
 ///
 #[cfg(any(feature = "async-network-client", feature = "blocking-network-client"))]
 pub mod connect;

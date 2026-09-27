@@ -66,6 +66,9 @@ async-client = [
     "pin-project-lite",
 ]
 
+## If set, blocking server-side transport support becomes available.
+blocking-server = ["gix-packetline/blocking-io"]
+
 #! ### Other
 ## Data structures implement `serde::Serialize` and `serde::Deserialize`.
 serde = ["dep:serde", "bstr/serde"]
@@ -89,6 +92,11 @@ required-features = ["http-client-reqwest"]
 name = "async-transport"
 path = "tests/async-transport.rs"
 required-features = ["async-client"]
+
+[[test]]
+name = "blocking-server"
+path = "tests/blocking-server.rs"
+required-features = ["blocking-server"]
 
 [dependencies]
 gix-command = { version = "^0.10.1", path = "../gix-command" }

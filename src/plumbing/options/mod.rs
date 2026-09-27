@@ -101,8 +101,7 @@ pub enum Subcommands {
     #[clap(subcommand)]
     Tree(tree::Subcommands),
     /// Interact with commit objects.
-    #[clap(subcommand)]
-    Commit(commit::Subcommands),
+    Commit(commit::Platform),
     /// Interact with tag objects.
     #[clap(visible_alias = "tags")]
     Tag(tag::Platform),
@@ -120,6 +119,9 @@ pub enum Subcommands {
     /// Fetch data from remotes and store it in the repository.
     #[cfg(feature = "gitoxide-core-blocking-client")]
     Fetch(fetch::Platform),
+    /// Update remote refs along with their reachable objects.
+    #[cfg(feature = "gitoxide-core-blocking-client")]
+    Push(push::Platform),
     /// Clone a repository into a new directory.
     #[cfg(feature = "gitoxide-core-blocking-client")]
     Clone(clone::Platform),
@@ -1011,6 +1013,19 @@ pub mod tree {
 }
 
 pub mod commit {
+    /// Create a commit, or inspect/sign an existing commit through a subcommand.
+    #[derive(Debug, clap::Parser)]
+    pub struct Platform {
+        #[clap(subcommand)]
+        pub cmd: Option<Subcommands>,
+        /// Commit message; only `--allow-empty` creation is currently supported.
+        #[clap(short = 'm', long = "message", action = clap::ArgAction::Append)]
+        pub message: Vec<String>,
+        /// Permit committing the current tree without a staged change.
+        #[clap(long)]
+        pub allow_empty: bool,
+    }
+
     #[derive(Debug, clap::Subcommand)]
     pub enum Subcommands {
         /// Verify the signature of a commit.
@@ -1338,3 +1353,6 @@ pub mod submodule {
 
 ///
 pub mod free;
+
+#[cfg(feature = "gitoxide-core-blocking-client")]
+pub mod push;

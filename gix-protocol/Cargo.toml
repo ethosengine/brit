@@ -53,6 +53,17 @@ fetch = [
     "dep:gix-trace",
 ]
 
+#! ### _Server_
+#! The _server_ portion uses `gix-transport` to communicate with a client.
+
+## If set, blocking server-side protocol implementations are available.
+blocking-server = [
+    "gix-transport/blocking-server",
+    "serve",
+]
+## Add implementations for serving (upload-pack).
+serve = []
+
 #! ### Other
 ## Enable support for the SHA-1 hash by enabling the respective feature in the `gix-hash` crate.
 sha1 = ["gix-hash/sha1"]
@@ -71,6 +82,11 @@ name = "async"
 path = "tests/async-protocol.rs"
 required-features = ["async-client"]
 
+[[test]]
+name = "blocking-server"
+path = "tests/blocking-server.rs"
+required-features = ["blocking-server"]
+
 [dependencies]
 gix-features = { version = "^0.49.1", path = "../gix-features", features = [
     "progress",
@@ -81,6 +97,7 @@ gix-shallow = { version = "^0.13.0", path = "../gix-shallow" }
 gix-date = { version = "^0.16.0", path = "../gix-date" }
 gix-utils = { version = "^0.3.6", path = "../gix-utils" }
 gix-ref = { version = "^0.67.1", path = "../gix-ref" }
+gix-pack = { version = "^0.74.2", path = "../gix-pack", default-features = false, features = ["generate"] }
 gix-macros = { version = "^0.1.6", path = "../gix-macros" }
 
 gix-trace = { version = "^0.1.21", path = "../gix-trace", optional = true }

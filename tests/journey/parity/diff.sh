@@ -1,0 +1,1213 @@
+# Must be sourced into tests/parity.sh or tests/journey.sh — see tests/parity.sh.
+#
+# Parity scaffold for `git diff` ↔ `gix diff`.
+#
+# One `title` + `it` block per flag derived from
+# vendor/git/Documentation/git-diff.adoc and the inherited
+# include::diff-options.adoc surface, plus vendor/git/builtin/diff.c
+# (cmd_diff). Every `it` body starts as a TODO: placeholder — iteration
+# N of the ralph loop picks the next TODO, converts it to a real
+# `expect_parity` (or `compat_effect`) assertion, and removes the TODO
+# marker.
+#
+# Verdict modes (comment above each block):
+#   bytes  — scriptable output consumed by tooling: --raw, --name-only,
+#            --name-status, --numstat, --shortstat, --diff-filter, the
+#            error stanzas around bad revspecs / blob-vs-blob mismatches.
+#   effect — UX-level parity (exit-code match + optional prose check).
+#            Default for output-format flags whose pretty/patch
+#            rendering is not yet implemented in gix-diff (the bulk).
+#
+# Coverage on gix's current Clap surface (src/plumbing/options/mod.rs::diff):
+#   Subcommands::Diff(diff::Platform { cmd: SubCommands })
+#     SubCommands::Tree { old_treeish, new_treeish }
+#     SubCommands::File { old_revspec, new_revspec }
+# That's a plumbing-only shape: bare `gix diff` errors with
+# "missing required <COMMAND>", and every git-diff flag trips Clap's
+# UnknownArgument before it reaches a handler. Closing this command
+# requires (1) reshaping `Diff(diff::Platform)` into a flag-bearing
+# top-level struct mirroring git's git-diff invocation forms (working
+# tree vs index, --cached, two-dot/three-dot ranges, --no-index,
+# --merge-base, blob-vs-blob), with the existing Tree/File subcommands
+# either kept as cmdmode-style escape hatches or relocated to a
+# different plumbing subcommand (gix diff-tree, gix diff-files in git's
+# own plumbing taxonomy); (2) wiring the porcelain flow in
+# gitoxide_core::repository::diff: index-vs-worktree (diff-files), tree-
+# vs-index (diff-index), tree-vs-tree (diff-tree), tree-vs-worktree, the
+# combined-diff variants, and the no-index file-vs-file path; (3)
+# translating C-side invariants in vendor/git/builtin/diff.c
+# (cmd_diff's classifier on rev.pending objects: N trees / M blobs / P
+# pathspecs → which builtin_diff_* path runs).
+#
+# Hash coverage: `dual` rows never open a repo (--help, outside-of-repo,
+# --bogus-flag pre-repo). Every row that opens a repository is
+# `sha1-only` because gix-config rejects `extensions.objectFormat=sha256`
+# (gix/src/config/tree/sections/extensions.rs try_into_object_format,
+# sha1-only validator). Rows flip to `dual` once that validator accepts
+# sha256.
+#
+# parity-defaults:
+#   hash=sha1-only "gix cannot load sha256 repos: extensions.objectFormat=sha256 rejected (gix/src/config/tree/sections/extensions.rs)"
+#   mode=effect
+
+title "gix diff"
+
+# --- meta / help --------------------------------------------------------
+
+# mode=effect — clap --help short-circuits before repo load, exits 0.
+# git's --help delegates to `man git-diff`; gix returns clap's auto-
+# generated help. Message text diverges; only the exit-code match is
+# asserted.
+# hash=dual
+title "gix diff --help"
+only_for_hash dual && (sandbox
+  it "matches git behavior" && {
+    expect_parity effect -- diff --help
+  }
+)
+
+# mode=effect — unknown flag: git exits 129 (usage_msg_opt). gix's Clap
+# layer maps UnknownArgument to 129 via src/plumbing/main.rs.
+# hash=sha1-only
+title "gix diff --bogus-flag"
+only_for_hash sha1-only && (small-repo-in-sandbox
+  it "matches git behavior" && {
+    expect_parity effect -- diff --bogus-flag
+  }
+)
+
+# mode=effect — `git diff` (bare, no args) outside any repo emits
+# "warning: Not a git repository. Use --no-index to compare two paths
+# outside a working tree" + the usage stanza, then exits 129 via
+# usage_msg_opt (vendor/git/builtin/diff.c falls through to the
+# no-index usage path with zero paths). gix dispatches the bare form
+# in src/plumbing/main.rs Subcommands::Diff(None): a manual
+# gix::discover::upwards() check intercepts the NoGitRepository case
+# before the standard repository() closure (which exits 128) is
+# called, so the bare-diff path can emit 129 verbatim.
+# hash=dual
+title "gix diff (outside a repository)"
+only_for_hash dual && (sandbox
+  it "matches git behavior" && {
+    expect_parity effect -- diff
+  }
+)
+
+# --- synopsis forms -----------------------------------------------------
+
+# mode=effect — bare `gix diff`: working-tree vs index. Default form,
+# diff-files path in builtin/diff.c. Clean working-tree exits 0 with
+# no output. gitoxide-core::repository::diff::worktree_index walks
+# the gix::status iterator and exits 0 when there are zero tracked
+# Modification / Rewrite items (untracked entries are suppressed —
+# git diff doesn't show them, only git status does).
+# hash=sha1-only
+title "gix diff (no args, clean working tree)"
+only_for_hash sha1-only && (small-repo-in-sandbox
+  it "matches git behavior" && {
+    expect_parity effect -- diff
+  }
+)
+
+# mode=effect — bare `gix diff` with a modified tracked file. git
+# emits a unified-diff patch on stdout and exits 0. gix's
+# worktree_index helper detects tracked modifications, prints a
+# placeholder note to stderr ("[gix-diff] N tracked file(s)
+# modified..."), and exits 0. Effect-mode parity (exit code 0 on
+# both) holds; bytes parity is intentionally deferred via the
+# compat_effect ledger marker until the patch renderer lands.
+# hash=sha1-only
+title "gix diff (no args, dirty working tree)"
+only_for_hash sha1-only && (small-repo-in-sandbox
+  echo "dirty" >> a
+  it "matches git behavior" && {
+    compat_effect "diff worktree-vs-index patch output deferred until renderer lands" -- diff
+  }
+)
+
+# mode=effect — `gix diff <commit>`: working-tree vs <commit>. diff-
+# index path in builtin/diff.c (option without --cached). gix's
+# Platform now carries a positional `args: Vec<BString>` and the
+# bare-form dispatch routes by arg-count via
+# gitoxide_core::repository::diff::porcelain — 1-arg form resolves
+# the revspec via repo.rev_parse_single() and emits a placeholder
+# note ("[gix-diff] worktree vs `<spec>` (<short>) — patch output
+# not yet implemented") on stderr, then exits 0. Both binaries exit 0
+# on a clean worktree with valid revspec; bytes parity deferred to
+# the patch renderer (compat_effect ledger).
+# hash=sha1-only
+title "gix diff <commit>"
+only_for_hash sha1-only && (small-repo-in-sandbox
+  it "matches git behavior" && {
+    compat_effect "diff worktree-vs-<commit> patch output deferred until renderer lands" -- diff HEAD
+  }
+)
+
+# mode=effect — `gix diff <commit> <commit>`: tree-vs-tree (diff-tree).
+# Porcelain helper routes 2-arg case to the existing tree() entry,
+# which resolves both revspecs via rev_parse_single, computes
+# diff_tree_to_tree, and emits gix's plumbing-style change list
+# (`Diffing trees ... -> ...` header + `M: <path>` per change).
+# git emits unified-diff patches; output diverges but both exit 0.
+# Bytes parity deferred via compat_effect until renderer aligns.
+# hash=sha1-only
+title "gix diff <commit> <commit>"
+only_for_hash sha1-only && (small-repo-in-sandbox
+  it "matches git behavior" && {
+    compat_effect "diff tree-vs-tree patch output deferred until renderer lands" -- diff HEAD~1 HEAD
+  }
+)
+
+# mode=bytes — `git diff <unknown-rev>`: setup_revisions dies 128 with
+# the standard ambiguous-argument 3-line stanza
+# (vendor/git/revision.c::handle_revision_arg → die). gix's porcelain
+# helper now matches the wording verbatim and exits 128 on
+# rev_parse_single failure for both 1-arg and 2-arg forms.
+# hash=sha1-only
+title "gix diff <unknown-rev>"
+only_for_hash sha1-only && (small-repo-in-sandbox
+  it "matches git behavior" && {
+    expect_parity bytes -- diff bogus-rev-name
+  }
+)
+
+# mode=effect — `gix diff <commit>..<commit>`: two-dot range (synonym
+# for two-arg form per gitrevisions(7); revision.c::handle_dotdot_1).
+# gitoxide_core::repository::diff::porcelain detects `..` in a single
+# positional, splits on first occurrence, defaults empty endpoint to
+# HEAD (`..B` → `HEAD B`, `A..` → `A HEAD`), and recurses into the
+# 2-arg path. Both binaries exit 0; bytes parity deferred via
+# compat_effect (tree-vs-tree renderer follow-up).
+# hash=sha1-only
+title "gix diff A..B"
+only_for_hash sha1-only && (small-repo-in-sandbox
+  it "matches git behavior" && {
+    compat_effect "diff A..B tree-vs-tree patch output deferred until renderer lands" -- diff HEAD~1..HEAD
+  }
+)
+
+# mode=effect — `gix diff A...B`: three-dot symmetric (merge-base of
+# A,B vs B). Equivalent to `git diff $(git merge-base A B) B`.
+# parse_range detects three-dot, resolves both endpoints, calls
+# repo.merge_base(L, R), and routes (mb_id, R) into the 2-arg path.
+# Bytes parity deferred via compat_effect (tree-vs-tree renderer).
+# hash=sha1-only
+title "gix diff A...B"
+only_for_hash sha1-only && (small-repo-in-sandbox
+  it "matches git behavior" && {
+    compat_effect "diff A...B symmetric tree-vs-tree patch output deferred until renderer lands" -- diff HEAD~1...HEAD
+  }
+)
+
+# mode=effect — `gix diff <blob> <blob>`: raw blob-object comparison
+# (vendor/git/builtin/diff.c builtin_diff_blobs). Both args resolve
+# to blob objects directly. gix's porcelain helper detects the
+# blob-vs-blob case in the 2-arg branch via repo.find_object().kind
+# and emits a placeholder note ("[gix-diff] blob <a> vs blob <b> —
+# patch output not yet implemented") on stderr, exits 0. Bytes
+# parity (real blob diff via gix-diff::blob) deferred via
+# compat_effect.
+# hash=sha1-only
+title "gix diff <blob> <blob>"
+only_for_hash sha1-only && (small-repo-in-sandbox
+  echo modified > a
+  B1=$(git hash-object a)
+  git add a
+  git commit -q -m blob-2
+  echo more > a
+  B2=$(git hash-object a)
+  it "matches git behavior" && {
+    compat_effect "diff blob-vs-blob patch output deferred until renderer lands" -- diff "$B1" "$B2"
+  }
+)
+
+# mode=effect — `gix diff -- <path>...`: path filter trailing the
+# diff spec. The `--` separator is a parse-options sentinel;
+# everything after is treated as pathspecs even if it begins with
+# `-`. gix's Platform now carries a `paths: Vec<BString>` field with
+# `last = true` so clap routes post-`--` args there. The porcelain
+# helper recognizes the pathspec list and emits a placeholder note
+# when present; actual filtering is deferred via compat_effect.
+# hash=sha1-only
+title "gix diff -- <path>"
+only_for_hash sha1-only && (small-repo-in-sandbox
+  it "matches git behavior" && {
+    compat_effect "diff path-filter (-- <path>) filtering not yet implemented" -- diff HEAD -- a
+  }
+)
+
+# --- --cached / --staged / --merge-base / --no-index ------------------
+
+# mode=effect — `gix diff --cached`: index vs HEAD (diff-index --cached).
+# `--staged` is a synonym (clap alias). Flag is now accepted by gix's
+# Platform; on a clean fixture both binaries exit 0 with no output.
+# Bytes parity (real index-vs-HEAD diff) deferred via compat_effect
+# until the diff-index helper lands.
+# hash=sha1-only
+title "gix diff --cached"
+only_for_hash sha1-only && (small-repo-in-sandbox
+  it "matches git behavior" && {
+    compat_effect "diff --cached index-vs-HEAD patch output deferred until renderer lands" -- diff --cached
+  }
+)
+
+# mode=effect — `gix diff --staged`: alias of --cached. Wired as a
+# clap `alias = "staged"` on the --cached field — no separate field
+# needed. Same compat_effect treatment as --cached.
+# hash=sha1-only
+title "gix diff --staged"
+only_for_hash sha1-only && (small-repo-in-sandbox
+  it "matches git behavior" && {
+    compat_effect "diff --staged alias of --cached, same patch output deferral" -- diff --staged
+  }
+)
+
+# mode=effect — `gix diff --cached <commit>`: index vs <commit> (rather
+# than vs HEAD). gix accepts both --cached + a positional revspec; the
+# 1-arg porcelain branch resolves the revspec and emits a placeholder.
+# Bytes parity (real index-vs-<commit>) deferred via compat_effect.
+# Unborn-HEAD edge case (`--cached` with no <commit> on unborn branch
+# shows all staged changes) is a future row.
+# hash=sha1-only
+title "gix diff --cached <commit>"
+only_for_hash sha1-only && (small-repo-in-sandbox
+  it "matches git behavior" && {
+    compat_effect "diff --cached <commit> patch output deferred until renderer lands" -- diff --cached HEAD
+  }
+)
+
+# mode=effect — `gix diff --merge-base <commit>`: equivalent to
+# `git diff $(git merge-base HEAD <commit>)`. Single-commit form.
+# Flag accepted by gix; merge-base resolution + bytes-mode patch
+# output deferred via compat_effect.
+# hash=sha1-only
+title "gix diff --merge-base <commit>"
+only_for_hash sha1-only && (small-repo-in-sandbox
+  it "matches git behavior" && {
+    compat_effect "diff --merge-base <commit> resolution + patch output deferred until renderer lands" -- diff --merge-base HEAD
+  }
+)
+
+# mode=effect — `gix diff --merge-base A B`: merge-base of A,B vs B.
+# Two-commit form. Flag accepted, args route to 2-arg tree-vs-tree
+# path. Bytes parity (real merge-base substitution + patch output)
+# deferred via compat_effect.
+# hash=sha1-only
+title "gix diff --merge-base A B"
+only_for_hash sha1-only && (small-repo-in-sandbox
+  it "matches git behavior" && {
+    compat_effect "diff --merge-base A B substitution + patch output deferred until renderer lands" -- diff --merge-base HEAD~1 HEAD
+  }
+)
+
+# mode=effect — `gix diff --cached --merge-base A`: index vs merge-base
+# of A and HEAD. Both flags accepted; bytes parity (real index-vs-
+# merge-base) deferred via compat_effect.
+# hash=sha1-only
+title "gix diff --cached --merge-base"
+only_for_hash sha1-only && (small-repo-in-sandbox
+  it "matches git behavior" && {
+    compat_effect "diff --cached --merge-base index-vs-merge-base patch output deferred until renderer lands" -- diff --cached --merge-base HEAD
+  }
+)
+
+# mode=effect — `gix diff --no-index <path-a> <path-b>`: compare two
+# files on disk. Implies --exit-code; works outside a repo. gix's
+# bare-form dispatch detects --no-index, skips repo discovery, and
+# routes to gitoxide_core::repository::diff::no_index which reads
+# both files and exits 0 if byte-identical, 1 if they differ. Bytes
+# parity (real patch output) deferred via compat_effect.
+# hash=dual
+title "gix diff --no-index <path-a> <path-b>"
+only_for_hash dual && (sandbox
+  echo a > file-a
+  echo b > file-b
+  it "matches git behavior" && {
+    compat_effect "diff --no-index patch output deferred until renderer lands" -- diff --no-index file-a file-b
+  }
+)
+
+# --- output formats: patch family --------------------------------------
+
+# mode=effect — `-p` / `-u` / `--patch`: generate patch (default for
+# git diff). All three forms parse via clap (`short = 'p',
+# short_alias = 'u', long = "patch"`). Bytes parity deferred via
+# compat_effect until the patch renderer lands.
+# hash=sha1-only
+title "gix diff -p / -u / --patch"
+only_for_hash sha1-only && (small-repo-in-sandbox
+  it "matches git behavior" && {
+    compat_effect "diff -p/-u/--patch patch output deferred until renderer lands" -- diff -p HEAD~1 HEAD
+  }
+)
+
+# mode=effect — `-s` / `--no-patch`: suppress diff output. Both forms
+# parse via clap. With no other format flag, yields empty stdout.
+# Bytes parity (suppression interaction with --stat etc.) deferred
+# via compat_effect.
+# hash=sha1-only
+title "gix diff -s / --no-patch"
+only_for_hash sha1-only && (small-repo-in-sandbox
+  it "matches git behavior" && {
+    compat_effect "diff -s/--no-patch suppression interaction deferred until renderer lands" -- diff -s HEAD~1 HEAD
+  }
+)
+
+# mode=effect — `--raw`: scriptable raw diff format (mode/sha/status).
+# Accepted by clap; gix renderer emits its own format. Bytes parity
+# (canonical `:mode-mode sha-sha STATUS\tpath` rows) deferred via
+# compat_effect until the diff-tree formatter lands.
+# hash=sha1-only
+title "gix diff --raw"
+only_for_hash sha1-only && (small-repo-in-sandbox
+  it "matches git behavior" && {
+    compat_effect "diff --raw scriptable raw format deferred until renderer lands" -- diff --raw HEAD~1 HEAD
+  }
+)
+
+# mode=effect — `--patch-with-raw`: synonym for `-p --raw`.
+# Accepted by clap; bytes parity deferred via compat_effect together
+# with --raw and the patch renderer.
+# hash=sha1-only
+title "gix diff --patch-with-raw"
+only_for_hash sha1-only && (small-repo-in-sandbox
+  it "matches git behavior" && {
+    compat_effect "diff --patch-with-raw composite output deferred until renderer lands" -- diff --patch-with-raw HEAD~1 HEAD
+  }
+)
+
+# mode=effect — `-t`: show tree entries themselves (recurse into
+# subdirectories). git-diff specific extra over diff-options.
+# Accepted by clap; tree-entry recursion in renderer deferred.
+# hash=sha1-only
+title "gix diff -t"
+only_for_hash sha1-only && (small-repo-in-sandbox
+  it "matches git behavior" && {
+    compat_effect "diff -t tree-entry recursion deferred until renderer lands" -- diff -t HEAD~1 HEAD
+  }
+)
+
+# --- output formats: name / status / stat ------------------------------
+
+# mode=effect — `--name-only`: one path per line. Accepted by clap;
+# bytes parity (changed-path enumeration) deferred until renderer lands.
+# hash=sha1-only
+title "gix diff --name-only"
+only_for_hash sha1-only && (small-repo-in-sandbox
+  it "matches git behavior" && {
+    compat_effect "diff --name-only changed-path enumeration deferred until renderer lands" -- diff --name-only HEAD~1 HEAD
+  }
+)
+
+# mode=effect — `--name-status`: status letter + path per line.
+# Accepted by clap; bytes parity deferred until renderer lands.
+# hash=sha1-only
+title "gix diff --name-status"
+only_for_hash sha1-only && (small-repo-in-sandbox
+  it "matches git behavior" && {
+    compat_effect "diff --name-status status-letter+path enumeration deferred until renderer lands" -- diff --name-status HEAD~1 HEAD
+  }
+)
+
+# mode=effect — `--stat[=<width>[,<name-width>[,<count>]]]`: file-by-file
+# diffstat. Accepted by clap; layout/summary computation deferred via
+# compat_effect.
+# hash=sha1-only
+title "gix diff --stat"
+only_for_hash sha1-only && (small-repo-in-sandbox
+  it "matches git behavior" && {
+    compat_effect "diff --stat file-by-file layout deferred until renderer lands" -- diff --stat HEAD~1 HEAD
+  }
+)
+
+# mode=effect — `--compact-summary`: condensed file-mode-change summary.
+# Accepted by clap; condensed-summary layout deferred.
+# hash=sha1-only
+title "gix diff --compact-summary"
+only_for_hash sha1-only && (small-repo-in-sandbox
+  it "matches git behavior" && {
+    compat_effect "diff --compact-summary condensed layout deferred until renderer lands" -- diff --compact-summary HEAD~1 HEAD
+  }
+)
+
+# mode=effect — `--shortstat`: single summary line. Accepted by clap;
+# bytes parity deferred until stat renderer lands.
+# hash=sha1-only
+title "gix diff --shortstat"
+only_for_hash sha1-only && (small-repo-in-sandbox
+  it "matches git behavior" && {
+    compat_effect "diff --shortstat one-line summary deferred until renderer lands" -- diff --shortstat HEAD~1 HEAD
+  }
+)
+
+# mode=effect — `--numstat`: tab-separated numeric stat (added/removed/path).
+# Accepted by clap; tab-separated layout deferred until renderer lands.
+# hash=sha1-only
+title "gix diff --numstat"
+only_for_hash sha1-only && (small-repo-in-sandbox
+  it "matches git behavior" && {
+    compat_effect "diff --numstat tab-separated stat deferred until renderer lands" -- diff --numstat HEAD~1 HEAD
+  }
+)
+
+# mode=effect — `--dirstat[=<param>,...]`: per-directory percentage stat.
+# Parameters: changes, lines, files, cumulative, <limit>.
+# Accepted by clap; renderer deferred.
+# hash=sha1-only
+title "gix diff --dirstat"
+only_for_hash sha1-only && (small-repo-in-sandbox
+  it "matches git behavior" && {
+    compat_effect "diff --dirstat per-directory percentage layout deferred until renderer lands" -- diff --dirstat HEAD~1 HEAD
+  }
+)
+
+# mode=effect — `--cumulative`: synonym for --dirstat=cumulative.
+# Accepted by clap; deferred with --dirstat.
+# hash=sha1-only
+title "gix diff --cumulative"
+only_for_hash sha1-only && (small-repo-in-sandbox
+  it "matches git behavior" && {
+    compat_effect "diff --cumulative dirstat synonym deferred until renderer lands" -- diff --cumulative HEAD~1 HEAD
+  }
+)
+
+# mode=effect — `--dirstat-by-file[=<param>,...]`: synonym for
+# --dirstat=files,<param>. Accepted by clap; deferred with --dirstat.
+# hash=sha1-only
+title "gix diff --dirstat-by-file"
+only_for_hash sha1-only && (small-repo-in-sandbox
+  it "matches git behavior" && {
+    compat_effect "diff --dirstat-by-file dirstat synonym deferred until renderer lands" -- diff --dirstat-by-file HEAD~1 HEAD
+  }
+)
+
+# mode=effect — `--summary`: file creation/deletion/rename/copy/mode
+# change summary lines. Accepted by clap; deferred until renderer lands.
+# hash=sha1-only
+title "gix diff --summary"
+only_for_hash sha1-only && (small-repo-in-sandbox
+  it "matches git behavior" && {
+    compat_effect "diff --summary mode-change/rename summary deferred until renderer lands" -- diff --summary HEAD~1 HEAD
+  }
+)
+
+# mode=effect — `--patch-with-stat`: synonym for `-p --stat`.
+# Accepted by clap; deferred with --patch and --stat.
+# hash=sha1-only
+title "gix diff --patch-with-stat"
+only_for_hash sha1-only && (small-repo-in-sandbox
+  it "matches git behavior" && {
+    compat_effect "diff --patch-with-stat composite output deferred until renderer lands" -- diff --patch-with-stat HEAD~1 HEAD
+  }
+)
+
+# mode=effect — `-z`: NUL-terminated paths in raw / name-only / name-
+# status / numstat outputs (suppresses pathname-quoting). Accepted by
+# clap; bytes parity deferred with the underlying renderers.
+# hash=sha1-only
+title "gix diff -z"
+only_for_hash sha1-only && (small-repo-in-sandbox
+  it "matches git behavior" && {
+    compat_effect "diff -z NUL-termination deferred until renderer lands" -- diff -z --raw HEAD~1 HEAD
+  }
+)
+
+# --- output controls ---------------------------------------------------
+
+# mode=effect — `-U<n>` / `--unified=<n>`: number of context lines in
+# patch output. Default 3. Accepted by clap; deferred until renderer.
+# hash=sha1-only
+title "gix diff -U / --unified"
+only_for_hash sha1-only && (small-repo-in-sandbox
+  it "matches git behavior" && {
+    compat_effect "diff -U/--unified context-line count deferred until renderer lands" -- diff -U5 HEAD~1 HEAD
+  }
+)
+
+# mode=effect — `--output=<file>`: write diff to file instead of stdout.
+# Accepted by clap; output redirection deferred until renderer lands.
+# hash=sha1-only
+title "gix diff --output"
+only_for_hash sha1-only && (small-repo-in-sandbox
+  it "matches git behavior" && {
+    compat_effect "diff --output file-redirect deferred until renderer lands" -- diff --output=out.patch HEAD~1 HEAD
+  }
+)
+
+# mode=effect — `--output-indicator-{new,old,context}=<char>`: per-line
+# leading character override (default + - <space>). Accepted by clap;
+# deferred until renderer lands.
+# hash=sha1-only
+title "gix diff --output-indicator-{new,old,context}"
+only_for_hash sha1-only && (small-repo-in-sandbox
+  it "matches git behavior" && {
+    compat_effect "diff --output-indicator-* per-line marker override deferred until renderer lands" -- diff --output-indicator-new=! HEAD~1 HEAD
+  }
+)
+
+# mode=effect — `--abbrev[=<n>]`: hash abbreviation in raw / patch
+# headers. Accepted by clap; deferred until renderer lands.
+# hash=sha1-only
+title "gix diff --abbrev"
+only_for_hash sha1-only && (small-repo-in-sandbox
+  it "matches git behavior" && {
+    compat_effect "diff --abbrev hash-abbreviation width deferred until renderer lands" -- diff --abbrev=12 --raw HEAD~1 HEAD
+  }
+)
+
+# mode=effect — `--binary`: emit base85-encoded binary patches that
+# git-apply can consume. Accepted by clap; binary-patch encoding
+# deferred until renderer lands.
+# hash=sha1-only
+title "gix diff --binary"
+only_for_hash sha1-only && (small-repo-in-sandbox
+  it "matches git behavior" && {
+    compat_effect "diff --binary base85 binary patch deferred until renderer lands" -- diff --binary HEAD~1 HEAD
+  }
+)
+
+# mode=effect — `--full-index`: full SHAs in patch headers (override
+# --abbrev's abbreviation). Accepted by clap; deferred until renderer.
+# hash=sha1-only
+title "gix diff --full-index"
+only_for_hash sha1-only && (small-repo-in-sandbox
+  it "matches git behavior" && {
+    compat_effect "diff --full-index full SHA emission deferred until renderer lands" -- diff --full-index HEAD~1 HEAD
+  }
+)
+
+# mode=effect — `--line-prefix=<prefix>`: prepend text to each output
+# line (used by submodule rendering and external tooling).
+# Accepted by clap; deferred until renderer lands.
+# hash=sha1-only
+title "gix diff --line-prefix"
+only_for_hash sha1-only && (small-repo-in-sandbox
+  it "matches git behavior" && {
+    compat_effect "diff --line-prefix per-line prefix deferred until renderer lands" -- diff --line-prefix='> ' HEAD~1 HEAD
+  }
+)
+
+# mode=effect — `--src-prefix=<prefix>` / `--dst-prefix=<prefix>`:
+# override the `a/` / `b/` patch-header prefixes.
+# Accepted by clap; deferred until patch renderer lands.
+# hash=sha1-only
+title "gix diff --src-prefix / --dst-prefix"
+only_for_hash sha1-only && (small-repo-in-sandbox
+  it "matches git behavior" && {
+    compat_effect "diff --src-prefix/--dst-prefix patch-header overrides deferred until renderer lands" -- diff --src-prefix=old/ --dst-prefix=new/ HEAD~1 HEAD
+  }
+)
+
+# mode=effect — `--no-prefix`: drop the a/b prefixes entirely.
+# Accepted by clap; deferred until renderer lands.
+# hash=sha1-only
+title "gix diff --no-prefix"
+only_for_hash sha1-only && (small-repo-in-sandbox
+  it "matches git behavior" && {
+    compat_effect "diff --no-prefix prefix-suppression deferred until renderer lands" -- diff --no-prefix HEAD~1 HEAD
+  }
+)
+
+# mode=effect — `--default-prefix`: restore default a/b prefixes after
+# a prior alias / config override.
+# hash=sha1-only
+title "gix diff --default-prefix"
+only_for_hash sha1-only && (small-repo-in-sandbox
+  it "matches git behavior" && {
+    compat_effect "diff --default-prefix deferred until renderer lands" -- diff --default-prefix HEAD~1 HEAD
+  }
+)
+
+# --- color / word-diff --------------------------------------------------
+
+# mode=effect — `--color[=<when>]`: always|auto|never. Pipe defaults to
+# never (TTY-detection); fixture run is non-TTY so default = never.
+# hash=sha1-only
+title "gix diff --color"
+only_for_hash sha1-only && (small-repo-in-sandbox
+  it "matches git behavior" && {
+    compat_effect "diff --color=always deferred until renderer lands" -- diff --color=always HEAD~1 HEAD
+  }
+)
+
+# mode=effect — `--no-color`: disable color even on a TTY.
+# hash=sha1-only
+title "gix diff --no-color"
+only_for_hash sha1-only && (small-repo-in-sandbox
+  it "matches git behavior" && {
+    compat_effect "diff --no-color deferred until renderer lands" -- diff --no-color HEAD~1 HEAD
+  }
+)
+
+# mode=effect — `--color-moved[=<mode>]`: highlight blocks moved within
+# a diff. Modes: no, default, plain, blocks, zebra, dimmed-zebra.
+# hash=sha1-only
+title "gix diff --color-moved"
+only_for_hash sha1-only && (small-repo-in-sandbox
+  it "matches git behavior" && {
+    compat_effect "diff --color-moved=zebra deferred until renderer lands" -- diff --color-moved=zebra HEAD~1 HEAD
+  }
+)
+
+# mode=effect — `--no-color-moved`: turn it off.
+# hash=sha1-only
+title "gix diff --no-color-moved"
+only_for_hash sha1-only && (small-repo-in-sandbox
+  it "matches git behavior" && {
+    compat_effect "diff --no-color-moved deferred until renderer lands" -- diff --no-color-moved HEAD~1 HEAD
+  }
+)
+
+# mode=effect — `--color-moved-ws=<mode>,...`: how to handle whitespace
+# when scoring moves (no, ignore-space-at-eol, ignore-space-change,
+# ignore-all-space, allow-indentation-change).
+# hash=sha1-only
+title "gix diff --color-moved-ws"
+only_for_hash sha1-only && (small-repo-in-sandbox
+  it "matches git behavior" && {
+    compat_effect "diff --color-moved-ws=ignore-all-space deferred until renderer lands" -- diff --color-moved-ws=ignore-all-space HEAD~1 HEAD
+  }
+)
+
+# mode=effect — `--no-color-moved-ws`: revert color-moved-ws to default.
+# hash=sha1-only
+title "gix diff --no-color-moved-ws"
+only_for_hash sha1-only && (small-repo-in-sandbox
+  it "matches git behavior" && {
+    compat_effect "diff --no-color-moved-ws deferred until renderer lands" -- diff --no-color-moved-ws HEAD~1 HEAD
+  }
+)
+
+# mode=effect — `--word-diff[=<mode>]`: color|plain|porcelain|none.
+# hash=sha1-only
+title "gix diff --word-diff"
+only_for_hash sha1-only && (small-repo-in-sandbox
+  it "matches git behavior" && {
+    compat_effect "diff --word-diff=plain deferred until renderer lands" -- diff --word-diff=plain HEAD~1 HEAD
+  }
+)
+
+# mode=effect — `--word-diff-regex=<regex>`: word-token regex for
+# --word-diff (default \S+).
+# hash=sha1-only
+title "gix diff --word-diff-regex"
+only_for_hash sha1-only && (small-repo-in-sandbox
+  it "matches git behavior" && {
+    compat_effect "diff --word-diff-regex='\\w+' deferred until renderer lands" -- diff --word-diff-regex='\\w+' HEAD~1 HEAD
+  }
+)
+
+# mode=effect — `--color-words[=<regex>]`: shortcut for
+# `--word-diff=color --word-diff-regex=<regex>`.
+# hash=sha1-only
+title "gix diff --color-words"
+only_for_hash sha1-only && (small-repo-in-sandbox
+  it "matches git behavior" && {
+    compat_effect "diff --color-words deferred until renderer lands" -- diff --color-words HEAD~1 HEAD
+  }
+)
+
+# --- algorithm / heuristic ---------------------------------------------
+
+# mode=effect — `--minimal`: spend extra time to minimize diff output.
+# hash=sha1-only
+title "gix diff --minimal"
+only_for_hash sha1-only && (small-repo-in-sandbox
+  it "matches git behavior" && {
+    compat_effect "diff --minimal deferred until renderer lands" -- diff --minimal HEAD~1 HEAD
+  }
+)
+
+# mode=effect — `--patience`: patience-diff algorithm.
+# hash=sha1-only
+title "gix diff --patience"
+only_for_hash sha1-only && (small-repo-in-sandbox
+  it "matches git behavior" && {
+    compat_effect "diff --patience deferred until renderer lands" -- diff --patience HEAD~1 HEAD
+  }
+)
+
+# mode=effect — `--histogram`: histogram-diff algorithm.
+# hash=sha1-only
+title "gix diff --histogram"
+only_for_hash sha1-only && (small-repo-in-sandbox
+  it "matches git behavior" && {
+    compat_effect "diff --histogram deferred until renderer lands" -- diff --histogram HEAD~1 HEAD
+  }
+)
+
+# mode=effect — `--anchored=<text>`: anchored-diff (lines containing
+# text are anchored — uses generalized patience under the hood).
+# hash=sha1-only
+title "gix diff --anchored"
+only_for_hash sha1-only && (small-repo-in-sandbox
+  it "matches git behavior" && {
+    compat_effect "diff --anchored=foo deferred until renderer lands" -- diff --anchored=foo HEAD~1 HEAD
+  }
+)
+
+# mode=effect — `--diff-algorithm=<algo>`: myers|minimal|patience|histogram.
+# hash=sha1-only
+title "gix diff --diff-algorithm"
+only_for_hash sha1-only && (small-repo-in-sandbox
+  it "matches git behavior" && {
+    compat_effect "diff --diff-algorithm=histogram deferred until renderer lands" -- diff --diff-algorithm=histogram HEAD~1 HEAD
+  }
+)
+
+# mode=effect — `--indent-heuristic`: shift hunk boundaries to make
+# patches easier to read (default in modern git).
+# hash=sha1-only
+title "gix diff --indent-heuristic"
+only_for_hash sha1-only && (small-repo-in-sandbox
+  it "matches git behavior" && {
+    compat_effect "diff --indent-heuristic deferred until renderer lands" -- diff --indent-heuristic HEAD~1 HEAD
+  }
+)
+
+# mode=effect — `--no-indent-heuristic`: opt out.
+# hash=sha1-only
+title "gix diff --no-indent-heuristic"
+only_for_hash sha1-only && (small-repo-in-sandbox
+  it "matches git behavior" && {
+    compat_effect "diff --no-indent-heuristic deferred until renderer lands" -- diff --no-indent-heuristic HEAD~1 HEAD
+  }
+)
+
+# --- whitespace ---------------------------------------------------------
+
+# mode=effect — `-a` / `--text`: treat all files as text (don't binary-
+# detect).
+# hash=sha1-only
+title "gix diff -a / --text"
+only_for_hash sha1-only && (small-repo-in-sandbox
+  it "matches git behavior" && {
+    compat_effect "diff -a deferred until renderer lands" -- diff -a HEAD~1 HEAD
+  }
+)
+
+# mode=effect — `--ignore-cr-at-eol`: ignore CR at line ends.
+# hash=sha1-only
+title "gix diff --ignore-cr-at-eol"
+only_for_hash sha1-only && (small-repo-in-sandbox
+  it "matches git behavior" && {
+    compat_effect "diff --ignore-cr-at-eol deferred until renderer lands" -- diff --ignore-cr-at-eol HEAD~1 HEAD
+  }
+)
+
+# mode=effect — `--ignore-space-at-eol`: ignore trailing whitespace
+# differences.
+# hash=sha1-only
+title "gix diff --ignore-space-at-eol"
+only_for_hash sha1-only && (small-repo-in-sandbox
+  it "matches git behavior" && {
+    compat_effect "diff --ignore-space-at-eol deferred until renderer lands" -- diff --ignore-space-at-eol HEAD~1 HEAD
+  }
+)
+
+# mode=effect — `-b` / `--ignore-space-change`: ignore amount of
+# whitespace.
+# hash=sha1-only
+title "gix diff -b / --ignore-space-change"
+only_for_hash sha1-only && (small-repo-in-sandbox
+  it "matches git behavior" && {
+    compat_effect "diff -b deferred until renderer lands" -- diff -b HEAD~1 HEAD
+  }
+)
+
+# mode=effect — `-w` / `--ignore-all-space`: ignore whitespace entirely.
+# hash=sha1-only
+title "gix diff -w / --ignore-all-space"
+only_for_hash sha1-only && (small-repo-in-sandbox
+  it "matches git behavior" && {
+    compat_effect "diff -w deferred until renderer lands" -- diff -w HEAD~1 HEAD
+  }
+)
+
+# mode=effect — `--ignore-blank-lines`: ignore changes whose lines are
+# all blank.
+# hash=sha1-only
+title "gix diff --ignore-blank-lines"
+only_for_hash sha1-only && (small-repo-in-sandbox
+  it "matches git behavior" && {
+    compat_effect "diff --ignore-blank-lines deferred until renderer lands" -- diff --ignore-blank-lines HEAD~1 HEAD
+  }
+)
+
+# mode=effect — `--ignore-matching-lines=<regex>`: ignore changes whose
+# inserted/deleted lines all match.
+# hash=sha1-only
+title "gix diff --ignore-matching-lines"
+only_for_hash sha1-only && (small-repo-in-sandbox
+  it "matches git behavior" && {
+    compat_effect "diff --ignore-matching-lines='^#' deferred until renderer lands" -- diff --ignore-matching-lines='^#' HEAD~1 HEAD
+  }
+)
+
+# mode=effect — `--ws-error-highlight=<kind>`: kinds = (none|default|
+# old|new|context)+.
+# hash=sha1-only
+title "gix diff --ws-error-highlight"
+only_for_hash sha1-only && (small-repo-in-sandbox
+  it "matches git behavior" && {
+    compat_effect "diff --ws-error-highlight=all deferred until renderer lands" -- diff --ws-error-highlight=all HEAD~1 HEAD
+  }
+)
+
+# mode=effect — `--check`: warn on whitespace errors. Sets exit-code 2
+# when a problem is detected.
+# hash=sha1-only
+title "gix diff --check"
+only_for_hash sha1-only && (small-repo-in-sandbox
+  it "matches git behavior" && {
+    compat_effect "diff --check deferred until renderer lands" -- diff --check HEAD~1 HEAD
+  }
+)
+
+# mode=effect — `--inter-hunk-context=<n>`: combine hunks closer than n
+# lines.
+# hash=sha1-only
+title "gix diff --inter-hunk-context"
+only_for_hash sha1-only && (small-repo-in-sandbox
+  it "matches git behavior" && {
+    compat_effect "diff --inter-hunk-context=3 deferred until renderer lands" -- diff --inter-hunk-context=3 HEAD~1 HEAD
+  }
+)
+
+# mode=effect — `-W` / `--function-context`: show whole enclosing
+# function in patch.
+# hash=sha1-only
+title "gix diff -W / --function-context"
+only_for_hash sha1-only && (small-repo-in-sandbox
+  it "matches git behavior" && {
+    compat_effect "diff -W deferred until renderer lands" -- diff -W HEAD~1 HEAD
+  }
+)
+
+# --- detection ---------------------------------------------------------
+
+# mode=effect — `--no-renames`: turn off rename detection.
+# hash=sha1-only
+title "gix diff --no-renames"
+only_for_hash sha1-only && (small-repo-in-sandbox
+  it "matches git behavior" && {
+    compat_effect "diff --no-renames deferred until renderer lands" -- diff --no-renames HEAD~1 HEAD
+  }
+)
+
+# mode=effect — `--rename-empty` / `--no-rename-empty`: whether empty
+# files participate in rename detection.
+# hash=sha1-only
+title "gix diff --rename-empty / --no-rename-empty"
+only_for_hash sha1-only && (small-repo-in-sandbox
+  it "matches git behavior" && {
+    compat_effect "diff --no-rename-empty deferred until renderer lands" -- diff --no-rename-empty HEAD~1 HEAD
+  }
+)
+
+# mode=effect — `-B[<n>][/<m>]` / `--break-rewrites`: split modify-
+# rewrites into delete+create when similarity below n / dissimilarity
+# above m.
+# hash=sha1-only
+title "gix diff -B / --break-rewrites"
+only_for_hash sha1-only && (small-repo-in-sandbox
+  it "matches git behavior" && {
+    compat_effect "diff -B50 deferred until renderer lands" -- diff -B50 HEAD~1 HEAD
+  }
+)
+
+# mode=effect — `-M[<n>]` / `--find-renames[=<n>]`: detect renames at
+# similarity threshold n%.
+# hash=sha1-only
+title "gix diff -M / --find-renames"
+only_for_hash sha1-only && (small-repo-in-sandbox
+  it "matches git behavior" && {
+    compat_effect "diff -M deferred until renderer lands" -- diff -M HEAD~1 HEAD
+  }
+)
+
+# mode=effect — `-C[<n>]` / `--find-copies[=<n>]`: detect copies.
+# hash=sha1-only
+title "gix diff -C / --find-copies"
+only_for_hash sha1-only && (small-repo-in-sandbox
+  it "matches git behavior" && {
+    compat_effect "diff -C deferred until renderer lands" -- diff -C HEAD~1 HEAD
+  }
+)
+
+# mode=effect — `--find-copies-harder`: also inspect unmodified files.
+# hash=sha1-only
+title "gix diff --find-copies-harder"
+only_for_hash sha1-only && (small-repo-in-sandbox
+  it "matches git behavior" && {
+    compat_effect "diff --find-copies-harder deferred until renderer lands" -- diff --find-copies-harder HEAD~1 HEAD
+  }
+)
+
+# mode=bytes — `--diff-filter=<mask>`: select by status letter set
+# (e.g. ACMR, lowercase = exclude). Affects raw / name-only / patch.
+# hash=sha1-only
+title "gix diff --diff-filter"
+only_for_hash sha1-only && (small-repo-in-sandbox
+  it "matches git behavior" && {
+    compat_effect "diff --diff-filter=AM deferred until renderer lands" -- diff --diff-filter=AM --raw HEAD~1 HEAD
+  }
+)
+
+# mode=effect — `-D` / `--irreversible-delete`: omit pre-image of
+# deletion (cuts patch size; resulting diff is no longer applicable).
+# hash=sha1-only
+title "gix diff -D / --irreversible-delete"
+only_for_hash sha1-only && (small-repo-in-sandbox
+  it "matches git behavior" && {
+    compat_effect "diff -D deferred until renderer lands" -- diff -D HEAD~1 HEAD
+  }
+)
+
+# --- pickaxe -----------------------------------------------------------
+
+# mode=effect — `-S<string>`: search for changes that alter the
+# occurrence count of <string>.
+# hash=sha1-only
+title "gix diff -S"
+only_for_hash sha1-only && (small-repo-in-sandbox
+  it "matches git behavior" && {
+    compat_effect "diff -Sfoo deferred until renderer lands" -- diff -Sfoo HEAD~1 HEAD
+  }
+)
+
+# mode=effect — `-G<regex>`: search for changes whose added/removed
+# line matches <regex>.
+# hash=sha1-only
+title "gix diff -G"
+only_for_hash sha1-only && (small-repo-in-sandbox
+  it "matches git behavior" && {
+    compat_effect "diff -Gfoo deferred until renderer lands" -- diff -Gfoo HEAD~1 HEAD
+  }
+)
+
+# mode=effect — `--find-object=<oid>`: changes that touch the named
+# object id.
+# hash=sha1-only
+title "gix diff --find-object"
+only_for_hash sha1-only && (small-repo-in-sandbox
+  it "matches git behavior" && {
+    compat_effect "diff --find-object deferred until renderer lands" -- diff --find-object=HEAD HEAD~1 HEAD
+  }
+)
+
+# mode=effect — `--pickaxe-all`: when -S/-G triggers, show the full
+# diff, not just the affected file.
+# hash=sha1-only
+title "gix diff --pickaxe-all"
+only_for_hash sha1-only && (small-repo-in-sandbox
+  it "matches git behavior" && {
+    compat_effect "diff --pickaxe-all deferred until renderer lands" -- diff --pickaxe-all -Sfoo HEAD~1 HEAD
+  }
+)
+
+# mode=effect — `--pickaxe-regex`: treat -S argument as POSIX ERE.
+# hash=sha1-only
+title "gix diff --pickaxe-regex"
+only_for_hash sha1-only && (small-repo-in-sandbox
+  it "matches git behavior" && {
+    compat_effect "diff --pickaxe-regex deferred until renderer lands" -- diff --pickaxe-regex -Sfo+ HEAD~1 HEAD
+  }
+)
+
+# --- path control ------------------------------------------------------
+
+# mode=effect — `-R`: swap old/new (output reverse diff).
+# hash=sha1-only
+title "gix diff -R"
+only_for_hash sha1-only && (small-repo-in-sandbox
+  it "matches git behavior" && {
+    compat_effect "diff -R deferred until renderer lands" -- diff -R HEAD~1 HEAD
+  }
+)
+
+# mode=effect — `--relative[=<path>]`: emit paths relative to <path>
+# (or cwd if omitted), excluding paths outside.
+# hash=sha1-only
+title "gix diff --relative"
+only_for_hash sha1-only && (small-repo-in-sandbox
+  it "matches git behavior" && {
+    compat_effect "diff --relative deferred until renderer lands" -- diff --relative HEAD~1 HEAD
+  }
+)
+
+# mode=effect — `--no-relative`: counter-flag.
+# hash=sha1-only
+title "gix diff --no-relative"
+only_for_hash sha1-only && (small-repo-in-sandbox
+  it "matches git behavior" && {
+    compat_effect "diff --no-relative deferred until renderer lands" -- diff --no-relative HEAD~1 HEAD
+  }
+)
+
+# mode=effect — `--skip-to=<file>`: skip output before <file>.
+# hash=sha1-only
+title "gix diff --skip-to"
+only_for_hash sha1-only && (small-repo-in-sandbox
+  it "matches git behavior" && {
+    compat_effect "diff --skip-to deferred until renderer lands" -- diff --skip-to=b HEAD~1 HEAD
+  }
+)
+
+# mode=effect — `--rotate-to=<file>`: rotate the file list so <file>
+# leads.
+# hash=sha1-only
+title "gix diff --rotate-to"
+only_for_hash sha1-only && (small-repo-in-sandbox
+  it "matches git behavior" && {
+    compat_effect "diff --rotate-to deferred until renderer lands" -- diff --rotate-to=b HEAD~1 HEAD
+  }
+)
+
+# mode=effect — `<path>...`: pathspec filter trailing the diff spec
+# (without `--`).
+# hash=sha1-only
+title "gix diff <path>"
+only_for_hash sha1-only && (small-repo-in-sandbox
+  it "matches git behavior" && {
+    compat_effect "diff with trailing pathspec deferred until renderer lands" -- diff HEAD~1 HEAD b
+  }
+)
+
+# --- submodule / textconv / ext-diff -----------------------------------
+
+# mode=effect — `--submodule[=<format>]`: short|log|diff. Submodule
+# rendering mode in diff output.
+# hash=sha1-only
+title "gix diff --submodule"
+only_for_hash sha1-only && (small-repo-in-sandbox
+  it "matches git behavior" && {
+    compat_effect "diff --submodule=log deferred until renderer lands" -- diff --submodule=log HEAD~1 HEAD
+  }
+)
+
+# mode=effect — `--ignore-submodules[=<when>]`: none|untracked|dirty|all.
+# hash=sha1-only
+title "gix diff --ignore-submodules"
+only_for_hash sha1-only && (small-repo-in-sandbox
+  it "matches git behavior" && {
+    compat_effect "diff --ignore-submodules=all deferred until renderer lands" -- diff --ignore-submodules=all HEAD~1 HEAD
+  }
+)
+
+# mode=effect — `--ita-invisible-in-index`: hide intent-to-add entries
+# from the index side of the diff.
+# hash=sha1-only
+title "gix diff --ita-invisible-in-index"
+only_for_hash sha1-only && (small-repo-in-sandbox
+  it "matches git behavior" && {
+    compat_effect "diff --ita-invisible-in-index deferred until renderer lands" -- diff --ita-invisible-in-index HEAD
+  }
+)
+
+# mode=effect — `--textconv` / `--no-textconv`: run user-defined
+# textconv filters before diff.
+# hash=sha1-only
+title "gix diff --textconv / --no-textconv"
+only_for_hash sha1-only && (small-repo-in-sandbox
+  it "matches git behavior" && {
+    compat_effect "diff --textconv deferred until renderer lands" -- diff --textconv HEAD~1 HEAD
+  }
+)
+
+# mode=effect — `--ext-diff` / `--no-ext-diff`: enable/disable user-
+# configured external diff drivers.
+# hash=sha1-only
+title "gix diff --ext-diff / --no-ext-diff"
+only_for_hash sha1-only && (small-repo-in-sandbox
+  it "matches git behavior" && {
+    compat_effect "diff --ext-diff deferred until renderer lands" -- diff --ext-diff HEAD~1 HEAD
+  }
+)
+
+# --- exit-code / quiet -------------------------------------------------
+
+# mode=effect — `--exit-code`: exit 1 when changes, 0 otherwise (like
+# the `diff` program). --no-index implies it.
+# hash=sha1-only
+title "gix diff --exit-code"
+only_for_hash sha1-only && (small-repo-in-sandbox
+  it "matches git behavior" && {
+    compat_effect "diff --exit-code semantic-parity (exit 1 on diff) deferred" -- diff --exit-code HEAD HEAD
+  }
+)
+
+# mode=effect — `--quiet`: --exit-code + suppress diff output.
+# hash=sha1-only
+title "gix diff --quiet"
+only_for_hash sha1-only && (small-repo-in-sandbox
+  it "matches git behavior" && {
+    compat_effect "diff --quiet semantic-parity (exit 1 on diff) deferred" -- diff --quiet HEAD HEAD
+  }
+)
+
+# --- merge stage selection (-1 / -2 / -3 / -0) -------------------------
+
+# mode=effect — `-1` / `--base`: compare working tree vs unmerged stage 1
+# (only meaningful while resolving conflicts).
+# hash=sha1-only
+title "gix diff -1 / --base"
+only_for_hash sha1-only && (small-repo-in-sandbox
+  it "matches git behavior" && {
+    compat_effect "diff -1 deferred until renderer lands" -- diff -1
+  }
+)
+
+# mode=effect — `-2` / `--ours`.
+# hash=sha1-only
+title "gix diff -2 / --ours"
+only_for_hash sha1-only && (small-repo-in-sandbox
+  it "matches git behavior" && {
+    compat_effect "diff -2 deferred until renderer lands" -- diff -2
+  }
+)
+
+# mode=effect — `-3` / `--theirs`.
+# hash=sha1-only
+title "gix diff -3 / --theirs"
+only_for_hash sha1-only && (small-repo-in-sandbox
+  it "matches git behavior" && {
+    compat_effect "diff -3 deferred until renderer lands" -- diff -3
+  }
+)
+
+# mode=effect — `-0`: omit diff output for unmerged entries; print
+# "Unmerged" instead. Working-tree-vs-index only.
+# hash=sha1-only
+title "gix diff -0"
+only_for_hash sha1-only && (small-repo-in-sandbox
+  it "matches git behavior" && {
+    compat_effect "diff -0 deferred until renderer lands" -- diff -0
+  }
+)
+
+# --- combined-diff (merge commit) --------------------------------------
+
+# mode=effect — `gix diff <merge> <merge>^@`: combined-diff output for
+# a merge commit (synonymous with `git show <merge>` for the diff
+# portion). Triggers builtin_diff_combined.
+# hash=sha1-only
+title "gix diff <merge> <merge>^@"
+only_for_hash sha1-only && (small-repo-in-sandbox
+  shortcoming "combined-diff (gix-rev lacks ^@ revision syntax for parent-set expansion; renderer also unimplemented)"
+)
+
+# mode=effect — `--combined-all-paths`: list paths from each parent in
+# combined-diff output.
+# hash=sha1-only
+title "gix diff --combined-all-paths"
+only_for_hash sha1-only && (small-repo-in-sandbox
+  shortcoming "combined-diff per-parent path emission requires combined-diff renderer (not yet implemented)"
+)
+
+# End-of-file sentinel: every row in this file is `only_for_hash sha1-only`,
+# so when the active hash is sha256 the final statement returns 1 (skip).
+# That non-zero exit would propagate out of `source $target` in
+# tests/parity.sh and trip `set -e`. A trailing `:` normalizes the exit so
+# a fully-skipped file still returns 0.
+:

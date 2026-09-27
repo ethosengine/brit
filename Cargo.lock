@@ -1215,7 +1215,7 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "ccc2776f0c61eca1ca32528f85548abd1a4be8fb53d1b21c013e4f18da1e7090"
 dependencies = [
  "data-encoding",
- "syn 1.0.109",
+ "syn 2.0.118",
 ]
 
 [[package]]
@@ -1892,6 +1892,7 @@ dependencies = [
  "futures-lite",
  "gix 0.87.1",
  "gix-archive 0.36.1",
+ "gix-config-value 0.19.1",
  "gix-error 0.3.2",
  "gix-fsck",
  "gix-pack 0.74.2",
@@ -3290,6 +3291,7 @@ dependencies = [
  "gix-macros",
  "gix-negotiate 0.35.1",
  "gix-object 0.64.1",
+ "gix-pack 0.74.2",
  "gix-packetline 0.22.2",
  "gix-protocol 0.65.1",
  "gix-ref 0.67.1",

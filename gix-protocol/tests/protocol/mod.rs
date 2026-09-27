@@ -10,6 +10,8 @@ pub mod fetch;
 mod handshake;
 pub use fetch::_impl::{FetchConnection, fetch};
 pub mod remote_progress;
+#[cfg(feature = "blocking-client")]
+pub mod send_pack;
 
 #[gix_protocol::bisync::bisync]
 #[cfg_attr(feature = "blocking-client", test)]
