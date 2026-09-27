@@ -428,8 +428,8 @@ document-features = { version = "0.2.0", optional = true }
 gix = { path = ".", default-features = false, features = [
     "merge", "tree-error", "sha1", "sha256"
 ] }
-gix-hash = { version = "^0.26.2", path = "../gix-hash" }
-gix-pack = { version = "^0.74.2", path = "../gix-pack", default-features = false, features = [
+gix-hash = { version = "^0.26.3", path = "../gix-hash", registry = "elohim" }
+gix-pack = { version = "^0.74.2", path = "../gix-pack", registry = "elohim", default-features = false, features = [
     "generate",
     "streaming-input",
 ] }

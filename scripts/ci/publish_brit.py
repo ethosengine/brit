@@ -46,6 +46,56 @@ def sparse_path(name: str) -> str:
     return f"{name[:2]}/{name[2:4]}/{name}"
 
 
+def validate_canonical_sources(package: dict) -> None:
+    """Catch explicit-version local dependency source splits before any upload.
+
+    Cargo removes path-only dev dependencies from a published manifest, but
+    retains explicitly versioned dev/target dependencies. Inspect the source
+    manifest to distinguish those cases; metadata reports both as local paths.
+    Cargo package remains the final authority on package normalization.
+    """
+    local_names: dict[str, int] = {}
+    for edge in package["dependencies"]:
+        if edge.get("path") is not None:
+            local_names[edge["name"]] = local_names.get(edge["name"], 0) + 1
+    if not any(count > 1 for count in local_names.values()):
+        return
+
+    path = Path(package["manifest_path"])
+    try:
+        manifest = tomllib.loads(path.read_text())
+    except (OSError, ValueError) as error:
+        raise PublishError(f"cannot read source dependencies for {package['name']}") from error
+    sources: dict[str, set[tuple[str, str | None]]] = {}
+
+    def collect(table: dict) -> None:
+        for section in ("dependencies", "build-dependencies", "dev-dependencies"):
+            for key, spec in table.get(section, {}).items():
+                if not isinstance(spec, dict):
+                    continue
+                actual = spec.get("package", key)
+                if local_names.get(actual, 0) < 2:
+                    continue
+                if spec.get("workspace") is True:
+                    raise PublishError(f"workspace-inherited local dependency source needs review: {package['name']} -> {actual}")
+                if "path" not in spec:
+                    continue
+                if "version" not in spec:
+                    continue  # Cargo omits path-only dev dependencies from the package.
+                source = (str((path.parent / spec["path"]).resolve()), spec.get("registry"))
+                sources.setdefault(actual, set()).add(source)
+
+    collect(manifest)
+    for target in manifest.get("target", {}).values():
+        collect(target)
+    for name, variants in sources.items():
+        if len(variants) > 1:
+            raise PublishError(
+                f"{package['name']} has no single canonical source for {name} "
+                "across explicitly versioned dependency occurrences"
+            )
+
+
 def publication_order(metadata: dict, registry: str, roots: tuple[str, ...] = ROOTS) -> list[dict]:
     """Return the complete local normal/optional/build closure, dependencies first."""
     packages = metadata["packages"]
@@ -92,6 +142,8 @@ def publication_order(metadata: dict, registry: str, roots: tuple[str, ...] = RO
             f"{len(missing_tags)} local dependency edges lack registry=elohim "
             f"({sample}); refusing publication before packaging/upload"
         )
+    for package in ordered:
+        validate_canonical_sources(package)
     return ordered
 
 

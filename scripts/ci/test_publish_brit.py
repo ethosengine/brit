@@ -136,6 +136,40 @@ class ClosureTests(unittest.TestCase):
             with self.assertRaisesRegex(publish_brit.PublishError, "registry.*gitoxide"):
                 publish_brit.publication_order(metadata, "sparse+https://example.invalid/")
 
+    def test_explicit_version_dev_or_target_source_must_match_normal_source(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            crate = root / "gix"
+            crate.mkdir()
+            manifest = crate / "Cargo.toml"
+            registry = "sparse+https://example.invalid/"
+            normal = dependency("gix-hash", root / "gix-hash", registry)
+            dev = dependency("gix-hash", root / "gix-hash", None, kind="dev")
+            item = package("gix", "0.87.1", crate, [normal, dev])
+            manifest.write_text(
+                '[dependencies]\ngix-hash = { path = "../gix-hash", version = "^0.26.3", registry = "elohim" }\n'
+                '[target.\'cfg(unix)\'.dev-dependencies]\n'
+                'gix-hash = { path = "../gix-hash", version = "*" }\n'
+            )
+            with self.assertRaisesRegex(publish_brit.PublishError, "canonical source.*gix-hash"):
+                publish_brit.validate_canonical_sources(item)
+            manifest.write_text(
+                '[dependencies]\ngix-hash = { path = "../gix-hash", version = "^0.26.3", registry = "elohim" }\n'
+                '[dev-dependencies]\ngix-hash = { path = "../gix-hash" }\n'
+            )
+            publish_brit.validate_canonical_sources(item)
+            manifest.write_text(
+                '[dependencies]\ngix-hash = { path = "../gix-hash", version = "^0.26.3", registry = "elohim" }\n'
+                '[dev-dependencies]\ngix-hash = { path = "../gix-hash", version = "^0.26.3", registry = "elohim" }\n'
+            )
+            publish_brit.validate_canonical_sources(item)
+            manifest.write_text(
+                '[dependencies]\ngix-hash = { path = "../gix-hash", version = "^0.26.3", registry = "elohim" }\n'
+                '[dev-dependencies]\ngix-hash = { workspace = true }\n'
+            )
+            with self.assertRaisesRegex(publish_brit.PublishError, "workspace-inherited local dependency source"):
+                publish_brit.validate_canonical_sources(item)
+
     def test_package_command_is_locked_and_uses_elohim_registry(self):
         with tempfile.TemporaryDirectory() as temporary:
             root = Path(temporary)
@@ -425,6 +459,47 @@ class RegistryTests(unittest.TestCase):
                 }),
             ):
                 with self.assertRaisesRegex(publish_brit.PublishError, "registry=elohim"):
+                    publish_brit.run(root, publish=True)
+                packager.assert_not_called()
+                cargo_run.assert_not_called()
+
+    def test_mixed_explicit_dependency_sources_refuse_before_any_package_or_upload(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            (root / ".cargo").mkdir()
+            (root / ".cargo/config.toml").write_text(
+                '[registries.elohim]\nindex = "sparse+https://example.invalid/"\n'
+            )
+            (root / "engine").mkdir()
+            (root / "engine/Cargo.toml").write_text(
+                '[dependencies]\ngix-hash = { path = "../hash", version = "^0.26.3", registry = "elohim" }\n'
+                '[dev-dependencies]\ngix-hash = { path = "../hash", version = "^0.26.2" }\n'
+            )
+            registry = "sparse+https://example.invalid/"
+            metadata = {"packages": [
+                package("brit-cli", "0.1.2", root / "cli", [
+                    dependency("gitoxide", root / "engine", registry),
+                ]),
+                package("gitoxide", "0.58.0", root / "engine", [
+                    dependency("gix-hash", root / "hash", registry),
+                    dependency("gix-hash", root / "hash", None, kind="dev"),
+                ]),
+                package("gix-hash", "0.26.3", root / "hash"),
+                package("brit-build-ref", "0.1.1", root / "build-ref"),
+            ]}
+            with (
+                mock.patch.object(publish_brit, "validate_registry_url", return_value=self.registry.url),
+                mock.patch.object(publish_brit, "assert_download_endpoint"),
+                mock.patch.object(publish_brit, "cargo_metadata", return_value=metadata),
+                mock.patch.object(publish_brit, "package_crate") as packager,
+                mock.patch.object(publish_brit.subprocess, "run") as cargo_run,
+                mock.patch.dict("os.environ", {
+                    "CARGO_TARGET_DIR": str(root / "target"),
+                    "CARGO_REGISTRIES_ELOHIM_INDEX": registry,
+                    "CARGO_REGISTRIES_ELOHIM_TOKEN": "test-token",
+                }),
+            ):
+                with self.assertRaisesRegex(publish_brit.PublishError, "canonical source.*gix-hash"):
                     publish_brit.run(root, publish=True)
                 packager.assert_not_called()
                 cargo_run.assert_not_called()
