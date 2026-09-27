@@ -232,12 +232,23 @@ where
             Some(v) => format!("{agent_key}={v}").into(),
             None => BString::from(agent_key.as_bytes()),
         };
-        let capabilities: Vec<BString> = vec![
+        let mut capabilities: Vec<BString> = vec![
             b"report-status".as_slice().into(),
             b"side-band-64k".as_slice().into(),
             b"ofs-delta".as_slice().into(),
             agent_cap,
         ];
+        // Echo the negotiated object format when the server advertises it.
+        // Without this, a SHA-256 receive-pack rejects the command list and
+        // closes the connection before it can report a ref status.
+        if self
+            .connection
+            .handshake
+            .as_ref()
+            .is_some_and(|h| h.capabilities.contains("object-format"))
+        {
+            capabilities.push(format!("object-format={hash_kind}").into());
+        }
 
         let request = gix_protocol::send_pack::Request {
             commands: commands.clone(),
