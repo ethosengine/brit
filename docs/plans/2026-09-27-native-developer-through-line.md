@@ -237,6 +237,17 @@ passed 10/10, CLI tests 15/15, the public shared-tree journey 2/2, and the CLI
 build and strict Clippy passed. This is registry-backed dependency consumption,
 not a published Brit consumer install. Brit CI and immutable package comparison
 remain next. The currently installed developer tools are unchanged.
+The existing MSRV job checks `gix` rather than the `brit-cli` frontend; the
+frontend's declared MSRV and non-Linux release hosts remain unqualified by this
+local Linux run. The release workflow's source test now includes the shared-tree
+journey before creating a draft release.
+The no-upload publisher `--check` validated 69 local crates and registry-routed
+edges, found existing packages equivalent, and prepared `brit-bridge 0.1.0`
+and `gitoxide 0.58.1` as unpublished. It stopped when packaging `brit-cli
+0.1.3` because its `brit-bridge` predecessor is not yet in the registry. No
+archive was uploaded and the incomplete dry run is not a full immutable
+comparison or clean-consumer receipt; it gave no collision evidence warranting
+another version bump.
 
 Parent source is now `bca121bdc8795a40fafa01829552b6491555b6c0`, fast-forwarded
 onto `dev` and pushed normally. All five pre-push gates passed in 1,090 seconds:

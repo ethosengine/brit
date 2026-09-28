@@ -56,7 +56,7 @@ jobs:
           cargo test --locked -p brit-cli --no-default-features --features max-pure
           cargo build --locked -p brit-cli --bin brit --no-default-features --features max-pure
           BRIT_BIN="$CARGO_TARGET_DIR/debug/brit" cargo test --locked -p cli-journey \
-            --test brit --test rakia --test inherited_git_environment
+            --test brit --test rakia --test inherited_git_environment --test shared_tree
           test -z "$(git status --porcelain --untracked-files=all)"
       - name: Create a draft release after source tests
         env:
