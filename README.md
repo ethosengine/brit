@@ -1,162 +1,214 @@
 # brit
 
-[![Contribute](https://www.eclipse.org/che/contribute.svg)](https://code.ethosengine.com/#https://github.com/ethosengine/brit)
+**Brit** (בְּרִית, “covenant”) is a Git-compatible developer tool for the
+[Elohim Protocol](https://github.com/ethosengine/elohim), built on
+[gitoxide](https://github.com/GitoxideLabs/gitoxide). One `brit` executable brings
+together Git operations, build planning and verified, content-addressed source
+snapshots.
 
-**Brit** (בְּרִית, "covenant") is an expansion of [gitoxide](https://github.com/GitoxideLabs/gitoxide) — a pure-Rust implementation of git — that integrates protocol-level primitives for tracking who built code, what value it creates, and who governs it. Every commit in a brit repo is a covenant: a witnessed agreement whose terms travel with the code, no matter where it goes.
+The ambition is bigger than a different Git client: connect what a developer
+intended, the exact source they changed, who reviewed it, what was built, and what
+another person can retrieve and verify. **The model composes; the record proves.**
+That complete governed delivery journey is the direction, not a claim that every
+commit already has it.
 
-The name rhymes with *git* on purpose. Git is the substrate. Brit is the covenant laid on top.
+## Why a covenant?
 
-A brit repo is a valid git repo. You can `git clone` it from GitHub. You can push it to GitLab, Codeberg, sourcehut. Everything works. But inside the [Elohim Protocol](https://github.com/ethosengine/elohim) network, the same repo resolves to a richer view: provenance, economic events, governance context, and content-addressed links that know where your code is running.
+Code carries knowledge, contributors create value, and maintainers exercise
+governance. Conventional version control records content and authorship but does
+not establish the relationships between those three concerns. Elohim names them
+**lamad** (knowledge), **shefa** (value) and **qahal** (governance).
 
-## Why this exists
+Brit aims to make attributable work and verifiable evidence part of finishing
+development—not paperwork attached afterward. The distinctive goal is a chain
+from source-tree CID through reproducible build and authorized release to
+verified bytes on another peer. A CID proves content identity; it does **not**
+by itself prove authorship, permission, elected-head authority or availability.
 
-### The problem: power is siloed
+## What works today
 
-The world has three forms of power, and today they're separated:
+| Surface | Current capability |
+| --- | --- |
+| Git | Inspection and operations including status, diff, log, clone, fetch and push; use each command's help for its actual contract. |
+| `brit build` | Build graph discovery, affected-step analysis, plans, fingerprints and baseline refs. This namespace plans builds; it is not a complete build/release executor. |
+| `brit snapshot` | Seal a selected Git tree into an explicit local content store, verify its closure, restore supported content to a fresh directory, or export its exact Git tree into another object database. |
+| `brit-epr` / `brit-verify` | Covenant trailer parsing and structural pillar validation. These do not automatically authorize publication. |
+| `brit-build-ref` | Separate supporting executable for build evidence and metadata operations; not a synonym for `brit verify`. |
 
-- **Economic power** — money, wealth, capital. Concentrated in institutions that extract value from the systems they control.
-- **Informational power** — knowledge, data, distribution. Concentrated in platforms that control what you see and who sees you.
-- **Social and network power** — trust, governance, collective decision-making. Concentrated in corporations and governments that make rules for everyone while being accountable to almost no one.
+The public executable is **`brit`**, built by package **`brit-cli`**. The root
+package `gitoxide` supplies linked Git CLI functionality and the auxiliary `ein`
+binary. Rakia remains a separately owned build/release concern; Brit consumes its
+published libraries. The old invocation name `rakia` has a deprecated
+compatibility path, but installation does not require renaming binaries or
+replacing a standalone Rakia installation.
 
-These silos aren't accidental. They're profitable. When economic power is decoupled from the knowledge it was built on, you get proprietary lock-in. When informational power is decoupled from governance, you get surveillance capitalism. When social power is decoupled from economic accountability, you get institutions that privatize gains and socialize costs.
+### Not yet a drop-in daily driver
 
-Every open-source project lives at the intersection of all three — code is knowledge (informational), contributors create value (economic), and maintainers make decisions for everyone who depends on them (governance) — but git, the tool that tracks it all, knows about exactly *none* of it. Git tracks content. It doesn't track value. It doesn't track governance. It doesn't even reliably track who contributed what, beyond a name and email in a commit header.
+Command names are not a promise of Git porcelain parity. In particular, current
+`brit commit` creation supports `--allow-empty`, not the ordinary staged-change
+commit journey. The complete path-scoped stage/review/commit, worktree recovery,
+required-evidence enforcement and fast-forward integration story still needs
+qualification. Keep stock Git available; do not alias `git` to `brit`.
 
-### The solution: couple them at the protocol level
+Two milestones remain distinct:
 
-The [Elohim Protocol](https://github.com/ethosengine/elohim) introduces three coupled primitives — **lamad** (knowledge), **shefa** (value), and **qahal** (governance) — and requires that every notarized artifact in the network carries all three. You cannot create a content-addressed artifact that declares what it is without also declaring who stewards it and what governance applies. The architecture makes it structurally difficult to circulate knowledge without recognizing its stewards, and structurally easy to honor their care.
+- **Developer entry point:** Brit owns the accountable development journey;
+  explicitly identified Git bridge operations may remain underneath.
+- **Canonical authority:** native content/history and peer-held evidence become
+  authoritative, with Git as an interoperability projection. This additionally
+  requires history/head semantics, authorized release, peer retrieval and a
+  fresh-peer restore—not merely a successful local snapshot.
 
-Brit brings this coupling to version control.
+See the [active through-line plan](docs/plans/2026-09-27-native-developer-through-line.md)
+for acceptance checks, ownership, evidence and remaining work. Older phase
+roadmaps are historical context, not a current capability inventory.
 
-## What this means for code
+## Install from this checkout
 
-### 1. A way to pay the open source contributor, built in
+Standalone Brit consumes published Elohim, EPRFS and Rakia crates; no Elohim
+monorepo build or sibling checkout is required. You need Rust/Cargo, Git, and a
+read credential for the private `elohim` Cargo registry configured in
+[`.cargo/config.toml`](.cargo/config.toml). Provision credentials through secure
+local storage or the process environment; never put tokens in tracked files.
+Cargo also needs a credential provider such as `cargo:token`.
 
-Today, open source runs on unpaid labor. Contributions are tracked by git (author, committer), but the economic relationship between contribution and value is invisible to the tooling. Payment is an afterthought — a GitHub Sponsors button, a Patreon link, a corporate donation. None of it is wired into the act of building.
+The frontend declares Rust 1.88, but the dedicated MSRV CI job currently checks
+`gix`, not the whole frontend. The shared-tree local qualification used Rust 1.98;
+use that qualified toolchain or verify your chosen toolchain independently.
 
-In a brit repo, every commit carries a **shefa** trailer that declares the economic event: who contributed, what kind of work it was, what stewardship changed. When someone builds your package, the protocol's economic layer records a recognition event — not a financial transaction, but a protocol-level acknowledgment that serving knowledge generates value for those who care for it. Recognition flows proportionally to stewards based on their allocation.
-
-This isn't "add a token to npm." This is the substrate knowing, at the commit level, that contribution has value and tracking it the same way git tracks authorship: as a first-class primitive that travels with the code.
-
-### 2. Provenance-aware code — choose who you trust, not just what you run
-
-Here's a thought experiment. Imagine there's a critical piece of infrastructure — call it a cloud platform — built by a large corporation. The code is open source. You can read every line. But the corporation starts doing things you disagree with: surveillance, labor violations, environmental harm. You want to keep using the code, but you don't want your usage to legitimize their stewardship.
-
-Today, you fork the repo on GitHub and hope people notice. The fork has no formal relationship to the original. No one can tell, from the code alone, whether your fork is a legitimate community effort or a fly-by-night copy.
-
-With brit, a fork is a **first-class covenant** — a new `ForkContentNode` with its own stewardship, its own attestations, its own peers. The code is the same; the stewardship graph is different. When you choose to depend on Coop AWS instead of Amazon AWS, that choice is visible on the protocol's content graph. Your dependency isn't just a semver string in a lockfile — it's an EPR reference that points at specific stewards, specific attestations, specific governance. Everyone on the graph can see which collective you're trusting, and every steward can independently attest that the tags and branches they serve have the integrity needed for deployment.
-
-Provenance isn't metadata bolted on after the fact. It's the address.
-
-### 3. Deployment-aware code — links that know where they're running
-
-Have you ever thought it would be nice if a config reference could resolve differently depending on which environment you're in? Or if a link in your documentation could point at staging when you're on the `dev` branch and production when you're on `main`?
-
-With an Elohim Protocol Reference (EPR) link, now it can. An EPR is a content address that carries context: `epr:my-service[@v2.1.0][/head][?via=doorway.example.org]`. The same link, in a brit repo, resolves differently based on:
-
-- **Which branch you're on** — each branch has a reach level (`private`, `self`, `trusted`, `familiar`, `community`, `public`, `commons`) that determines who sees it and what it resolves to.
-- **Which doorway you're connected to** — a doorway is a gateway node that bridges web2 (GitHub, GitLab) and the protocol network. Your doorway knows your environment.
-- **Who's asking** — the protocol's context-aware resolution adapts to the requester's position in the knowledge graph.
-
-Code is no longer limited to a SHA graph address. It's a living artifact in a network that knows what it is, who built it, and where it's running.
-
-### 4. A fully distributed landing — not just another crypto project
-
-Under the hood, brit uses [IPFS/IPLD](https://ipld.io/) primitives through [rust-ipfs](https://github.com/ethosengine/rust-ipfs) to take the actual blobs of a codebase and place them on a distributed content-addressed graph. Every tree, every blob, every commit object gets a CID (content identifier) that any peer can resolve. The codebase isn't hosted on a server you hope stays up — it's distributed across a network of peers who can independently verify every byte.
-
-Other P2P and crypto projects do this too. IPFS, Radicle, and various blockchain-based package registries all make code content-addressed and peer-distributed.
-
-What makes brit different is *where the code lands*.
-
-Most distributed code projects land in a network optimized for financial incentives — mine tokens, stake coins, speculate on protocol value. The network exists to create economic returns for participants. Code is the payload; speculation is the purpose.
-
-Brit lands in the Elohim Protocol network — a network designed to scale **wisdom and care**: the human capacity to steward shared resources responsibly. The three pillars (knowledge, value, governance) are coupled at the substrate level specifically so that code can't circulate without acknowledging who cares for it, and stewardship can't accumulate without the community's consent. The network exists to serve the humans who depend on the code, not to create returns for token holders.
-
-This is not a philosophical distinction. It's an architectural one. The same content-addressing that makes code distributed also makes stewardship trackable, governance enforceable, and value flows transparent — but only if the network those primitives land in is *designed for care rather than extraction*. A content-addressed blob on a speculation-optimized network is still a blob someone will try to rent-seek from. A content-addressed blob on a care-optimized network is a shared resource the community can actually govern.
-
-## How it works
-
-### Commit trailers — the protocol surface
-
-Every brit commit carries three trailer lines in its message, using the same RFC-822 format as `Signed-off-by:`:
-
-```
-feat: add two-factor auth to login flow
-
-Implements TOTP-based 2FA with QR code provisioning and backup codes.
-
-Signed-off-by: Dan <dan@example.org>
-Lamad: teaches two-factor-auth pattern; advances auth learning path
-Shefa: human contributor | effort=medium | stewards=dan,sofia
-Qahal: steward | mechanism=self-review | ref=refs/heads/dev
-```
-
-Stock git reads this commit just fine. GitHub renders it. `git log` prints it. Nothing breaks. But a brit-aware tool (or an LLM agent with a brit skill) knows that this commit teaches something (`Lamad`), that Dan and Sofia steward the value it creates (`Shefa`), and that it was self-reviewed for merge to `dev` (`Qahal`).
-
-### Backward-compatible with every git host
-
-A brit repo is a git repo. `git clone https://github.com/your-org/your-brit-repo` works from any machine with stock git. Outside the Elohim Protocol network, you get the full commit history with the trailer lines — readable, diffable, `git log --format=fuller` compatible. You lose the EPR resolution (linked ContentNodes, rich provenance graph, deployment-aware links) because those live on the protocol network, but nothing is broken. The code works. The trailers are there. The provenance is readable.
-
-Inside the network, a file called `.brit/doorway.toml` in the repo points at the primary steward's doorway node. That doorway resolves the full EPR view — linked ContentNodes for each commit, per-branch README ContentNodes, attestation graphs, economic event streams, and context-aware link resolution.
-
-### Engine and app schema — pluggable by design
-
-The `brit-epr` crate has two layers:
-
-- **Engine** (unconditional) — a generic covenant engine that parses trailer blocks, validates them against an `AppSchema` trait, and manages `TrailerSet` types. Knows nothing about Lamad, Shefa, or Qahal specifically.
-- **Elohim Protocol schema** (feature-gated, default on) — the first-party implementation of `AppSchema` for the Elohim Protocol's three pillars.
-
-A downstream project could disable the `elohim-protocol` feature and plug in a different schema — a carbon-accounting protocol, a biological-sequence protocol, a music-composition protocol — without forking brit. The engine is the covenant substrate; the schema is the vocabulary.
-
-## Current status
-
-**Phase 1 complete** (trailer foundation):
-
-- `brit-epr` crate with engine/elohim feature split
-- `AppSchema` trait — the dispatch contract for app schemas
-- `TrailerSet` type and `parse_trailer_block` via gitoxide's `gix-object`
-- `ElohimProtocolSchema` implementing `AppSchema` with closed Lamad/Shefa/Qahal vocabulary
-- `parse_pillar_trailers` and `validate_pillar_trailers` convenience functions
-- `brit-verify` binary — verifies pillar trailers on a commit, exits 0/1
-- 9 tests passing; engine compiles cleanly with `--no-default-features`
-
-**Phases 2-6** (planned, not yet implemented): ContentNode adapter, libp2p transport, per-branch READMEs, DHT peer discovery, merge-as-reach-elevation with async consent, fork-as-governance. See [docs/plans/README.md](docs/plans/README.md) for the roadmap.
-
-## Quick start
+From the repository root, choose an **unused** install prefix and an external
+target directory. In an Elohim workspace, follow its Cargo pool policy instead
+of creating another build cache.
 
 ```bash
-# Build
-cargo build -p brit-verify
+export RUSTFLAGS=""
+export CARGO_TARGET_DIR="${XDG_CACHE_HOME:-$HOME/.cache}/brit/target"
+export BRIT_INSTALL_ROOT="${XDG_DATA_HOME:-$HOME/.local/share}/brit-dev-0.1.3"
+export CARGO_REGISTRY_GLOBAL_CREDENTIAL_PROVIDERS=cargo:token
 
-# Verify a commit's pillar trailers
-cargo run -p brit-verify -- HEAD
-
-# Expected (on a brit-aware commit):
-# ✓ pillar trailers valid for abc1234
-#   Lamad: teaches two-factor-auth pattern
-#   Shefa: human contributor | effort=medium | stewards=dan,sofia
-#   Qahal: steward | mechanism=self-review | ref=refs/heads/dev
-
-# Expected (on a stock gitoxide commit):
-# ✗ pillar validation failed for abc1234: required pillar trailer missing: Lamad
+cargo install --locked --path brit-cli --bin brit --root "$BRIT_INSTALL_ROOT"
+export PATH="$BRIT_INSTALL_ROOT/bin:$PATH"
+brit --version --verbose
+brit --help
+brit build --help
+brit snapshot --help
 ```
 
-## Relationship to gitoxide
+The default frontend feature preset is `max`; other presets include `max-pure`,
+`small` and `lean-async`. Source version output is diagnostic, not an attestation
+of clean or authorized source. Install auxiliary tools only if you need them:
 
-Brit is a fork of [gitoxide](https://github.com/GitoxideLabs/gitoxide) by Sebastian Thiel and contributors. Gitoxide is an excellent pure-Rust git implementation with a clean modular design — each concern lives in its own `gix-*` crate and swaps independently. Brit builds on that modularity.
+```bash
+cargo install --locked --path brit-build-ref --root "$BRIT_INSTALL_ROOT"
+cargo install --locked --path brit-verify --root "$BRIT_INSTALL_ROOT"
+brit-verify HEAD
+```
 
-**What brit adds:** new crates (`brit-epr`, `brit-verify`, and future `brit-cli`, `brit-transport`, `brit-store`) that layer protocol semantics onto gitoxide's object model. Zero modifications to existing `gix-*` crates. The goal is to remain upstream-rebaseable: bug fixes and additive extension points are proposed upstream where possible; protocol-specific divergence earns its own crate.
+`brit-verify HEAD` checks pillar trailers and may correctly reject an ordinary
+Git commit. `brit verify` instead checks repository/object integrity.
 
-**What brit does not change:** gitoxide's core — object storage, pack format, protocol negotiation, ref management, diff, blame, worktree. Brit consumes these; it doesn't rewrite them.
+## Try a verified local snapshot
+
+Run against a disposable repository first. Sealing reads the selected committed
+tree; it does not collect unstaged or staged changes absent from that revision.
+The following creates a new private store outside the source checkout:
+
+```bash
+snapshot_demo=$(mktemp -d)
+brit snapshot seal --repo . --revision HEAD --store "$snapshot_demo/store"
+```
+
+The JSON result contains `root` (the tree CID), `gitTree` (the original Git tree
+OID), and `published: false`. Copy the returned values into these variables:
+
+```bash
+tree_cid='<root from seal>'
+git_tree='<gitTree from seal>'
+brit snapshot verify --root "$tree_cid" --store "$snapshot_demo/store"
+
+# Linux: restore into an absent directory; existing destinations are refused.
+brit snapshot restore --root "$tree_cid" --store "$snapshot_demo/store" \
+  --destination "$snapshot_demo/restored"
+
+# Use the source repository's object format (sha1 or sha256).
+git init --bare --object-format=sha1 "$snapshot_demo/export.git"
+brit snapshot export-git --root "$tree_cid" --store "$snapshot_demo/store" \
+  --repo "$snapshot_demo/export.git" --expected-tree "$git_tree"
+```
+
+This preserves tree content and Git tree identity, **not commit history**. Export
+writes objects, not refs or the index. Stock Git can inspect the exported tree.
+Verification reports local closure integrity separately from authority.
+
+Important boundaries:
+
+- Tree nodes use CIDv1 DAG-CBOR with SHA-256; file bytes use raw-codec CIDs.
+  Shared EPRFS crates own encoding, byte custody and safe local restore;
+  `brit-bridge` owns Git translation. There is no second Brit storage protocol.
+- Git round trips cover binary content, byte-oriented names, executable modes,
+  symlinks and SHA-1/SHA-256 object formats. Submodule pins are opaque external
+  boundaries: sealing preserves them but does not fetch their content.
+- Filesystem restore currently requires Linux, an absent destination under a
+  trusted parent, and no external boundaries. Git can hold names a particular
+  host cannot materialize. Restore does not promise power-loss durability or
+  protection from a hostile process replacing the trusted parent.
+- Verification and expansion are bounded. Current defaults include 1 GiB of
+  expanded content and a 64 MiB per-object limit in the local store. The source
+  Git object database is trusted for decompressor resource safety.
+- These commands do not elect heads, distribute content to peers, publish
+  releases or confer governance authority. They do not start an IPFS/libp2p
+  service. Peer delivery belongs to the existing Elohim transport architecture.
+
+## Covenant metadata
+
+`brit-epr` separates a generic covenant engine (`AppSchema`, trailer parsing and
+validation) from the feature-gated Elohim vocabulary (`elohim-protocol`, enabled
+by default). Lamad/Shefa/Qahal trailers remain ordinary Git commit-message text;
+they are not automatically added to every commit. Structural validity is not
+proof that a claim is true or that its signer has authority.
+
+Git objects and refs remain interoperable with stock Git. Additional build or
+evidence refs need explicit transport; an ordinary clone does not automatically
+carry every custom notes ref. Environment-aware EPR resolution, governed forks
+and automatic economic recognition are aspirations, not guaranteed behavior of
+the installed CLI.
+
+## Development and delivery
+
+With the registry credential and external native target configured:
+
+```bash
+cargo test --locked -p brit-bridge -p brit-cli
+cargo build --locked -p brit-cli --bin brit
+BRIT_BIN="$CARGO_TARGET_DIR/debug/brit" \
+  cargo test --locked -p cli-journey --test shared_tree
+```
+
+Reuse the isolated fixtures in `tests/cli-journey` and `gix-testtools`; never run
+write/recovery probes against a developer's live checkout. See [AGENTS.md](AGENTS.md)
+for repository instructions and `just --list` for the broader feature matrix.
+
+Brit's [own CI](https://github.com/ethosengine/brit/actions/workflows/ci.yml)
+qualifies changes on `run-ci/**` before integration into `main`. Main publication
+to Nexus, its fresh registry-consumer check, and tagged binary releases are
+separate delivery steps. At source `f8a0e14cd`, the
+[main CI and Nexus publication](https://github.com/ethosengine/brit/actions/runs/36458363380)
+passed, including the repaired macOS fixtures and Windows ARM tests. That receipt
+does not declare the full developer cutover or native authority complete.
+
+`gix-main` is the maintained upstream mirror, not a tested Brit integration.
+First-party composition lives in `brit-*` crates; upstream `gix-*` maintenance
+and Git parity remain distinct from native Elohim workflow work.
 
 ## Further reading
 
-- **[EPR-git roadmap](docs/plans/README.md)** — seven-phase plan from trailer foundation through fork-as-governance
-- **[App-level schema design](docs/schemas/elohim-protocol-manifest.md)** — the normative reference for ContentNode types, trailer grammar, signal catalog, and the engine/app-schema boundary
-- **[Merge consent critique](docs/schemas/reviews/2026-04-11-merge-consent-critique.md)** — pressure test of async-default merge design against distributed stewardship scenarios
-- **[Elohim Protocol](https://github.com/ethosengine/elohim)** — the parent protocol repository
-- **[gitoxide](https://github.com/GitoxideLabs/gitoxide)** — the upstream Rust git implementation brit is built on
+- [Native developer through-line](docs/plans/2026-09-27-native-developer-through-line.md)
+- [Canonical EPR metadata and Git bridge design](docs/specs/2026-06-29-canonical-epr-meta-git-bridge-design.md)
+- [Composition snapshots and canonical citations](docs/specs/2026-06-29-epr-meta-composition-snapshot-canonical-cites-design.md)
+- [Elohim schema and trailer vocabulary](docs/schemas/elohim-protocol-manifest.md)
+- [Historical roadmap](docs/plans/README.md)
 
 ## License
 
-MIT OR Apache-2.0, following gitoxide's dual license.
+MIT OR Apache-2.0, following gitoxide's dual license. Brit builds on the work of
+Sebastian Thiel and the gitoxide contributors.
