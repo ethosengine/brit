@@ -294,6 +294,13 @@ jobs:
       - uses: extractions/setup-just@53165ef7e734c5c07cb06b3c8e7b647c5aa16db3 # v4.0.0
       - name: Run journey tests
         run: just ci-journey-tests
+      - name: Prove shared trees through the public Brit executable
+        run: |
+          set -euo pipefail
+          cargo build --locked -p brit-cli --bin brit
+          cargo test --locked -p brit-bridge
+          debug_dir="$(just dbg)"
+          BRIT_BIN="$debug_dir/brit" cargo test --locked -p cli-journey --test shared_tree
       - name: Run auxiliary Brit CLI journeys against built binaries
         run: |
           set -euo pipefail

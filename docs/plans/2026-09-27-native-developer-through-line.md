@@ -113,10 +113,138 @@ release versions/year at one daily release per channel, plus evidence. Measure
 retention/verification cost before broadening. This does not establish native
 source-history authority, browser resolver consolidation or JIT UI.
 
+### Station 3 implementation boundary — 2026-09-28
+
+EPRFS 0.1.1 publication supplied `BlobLink` and individual-blob integrity, not
+the recursive tree. Station 3 therefore needs additive shared APIs, intended
+for EPRFS 0.1.2, before Brit can consume them from the registry.
+
+- `eprfs-core::tree` owns version-1 DAG-CBOR nodes, byte names, tag-42 links,
+  regular/executable files, directories, symlink target bytes, and opaque external
+  boundaries. It validates canonical encoding and verifies a bounded closure.
+  Existing `BlobCid` serialization and Brit EprMeta v1 are unchanged.
+- `eprfs-storage::DirectoryStorage` provides an explicitly selected local CAS;
+  it neither publishes nor resolves elected names. The shared storage trait gains
+  an additive, verified explicit-CID put operation; unsupported adapters refuse.
+- `eprfs-local::restore_exact_tree` stages a fully verified tree before an atomic
+  no-replace promotion. The initial pilot is Linux, an absent destination under
+  a trusted parent, with no external boundaries. Existing destinations, unsupported
+  host semantics and incomplete/corrupt content refuse. This does not promise
+  power-loss durability or protection against a hostile process replacing the
+  trusted parent during staging. It is not an in-place checkout operation.
+- `brit-bridge` alone interprets Git modes and opaque submodule OIDs. It seals
+  a committed Git tree and exports the verified closure to a Git object database
+  without changing refs or the index. It must prove the exact original Git tree
+  OID, including binary bytes, non-UTF-8 names, executable bits and symlink targets.
+  Source object headers are preflighted against size/kind budgets before loading;
+  loaded bytes must still match their declared size and Git OID. This is not a
+  hard allocation cap on a lying or concurrently changed object database: the
+  source Git database is trusted for decompressor resource safety. Shared-CAS
+  reads have their own bounded-file adapter. Neither boundary claims a timeout.
+- `brit snapshot seal|verify|restore|export-git` composes those interfaces in the
+  existing executable. The store is explicit; sealing ignores dirty/index changes
+  not present in the selected revision. Gitlinks preserve pins but do not prove
+  retrieval of submodule content. Filesystem restore refuses them.
+  The pre-existing `brit tree` namespace remains Git-object plumbing; the
+  combined command parser must reject accidental namespace collisions in tests.
+
+P2P classification for this increment: explicitly selected local payloads are
+private (B); later release linkage is an attribute of existing authority, not a
+new notarized file entity. No identity, DHT entry, coordinator, route, transport,
+elected head or recurring head-plane cost is added (zero at seed and one year).
+The content CID is integrity; runtime witnessing and authorization remain later
+stations. No automatic publication, execution, collection of drafts or inferred
+consent is introduced. C0–C14 decisions and honest partials belong in the shared
+crates' existing seam registries, not a parallel readiness register.
+
+Qualification sequence: focused shared tests and independent safety review;
+Brit bridge/public executable journeys using a temporary external development
+override; owning EPRFS gates and normal immutable publication; remove that
+override and regenerate the registry-backed Brit lock; repeat locked consumer
+tests; then Brit's `run-ci/**` workflow. A development override or local test is
+not evidence of standalone delivery. Station 3 remains incomplete until these
+boundaries are qualified; stations 4–7 are not implied by a tree round-trip.
+
+Story-graph refinement (station 3, between verified stored closure → exact
+materialization): **logical expansion is bounded independently of deduplication**.
+Regression story: given two paths referencing the same large raw leaf, when the
+expanded output exceeds the declared byte budget, verification refuses before
+materialization even though the unique stored bytes fit. The executable node is
+`eprfs-core::tree::tests::repeated_leaf_links_consume_expanded_byte_budget`;
+the local materializer also preflights expanded output before staging. Default
+limits are explicit implementation bounds, not measured device capacity: 1 GiB
+closure/expanded bytes, depth 128, 4 MiB encoded node, 4096-byte paths and a
+4096-entry pending frontier; the directory adapter separately caps an object at
+64 MiB. Broader device presets and streaming large artifacts remain unmeasured.
+Suggested future a2o placement: the existing developer through-line story's
+restore station, as a regression, not a new acceptance register.
+
 ## Execution evidence
 
 Implementation in progress. No station is declared complete by this document.
 The existing untracked draft and unrelated working-tree changes are preserved.
+
+### Station 3 local qualification checkpoint (2026-09-28)
+
+The shared tree and `brit snapshot` composition are implemented in the working
+trees. These are development-override results, not published-consumer evidence:
+
+- Full EPRFS owning gate: formatting, workspace/all-targets strict Clippy and
+  workspace tests passed (exit 0), including recursive closure, canonical wire,
+  expanded-byte limits, private local store and no-replace restore regressions.
+- Brit CLI tests: 15 passed; selected executable journeys: 27 passed (16 Git,
+  8 build, 1 inherited-environment isolation and 2 shared-tree journeys).
+  The shared-tree journey removes its original repository before retrieval,
+  exports the exact Git tree into a new object database, and checks dirty-file
+  preservation and overwrite refusal. This is local custody, not peer retrieval.
+- Jenkins bridge consumer: format, strict workspace/all-targets Clippy and
+  workspace tests passed (19 passed, 1 explicit manual-receipt test ignored).
+- Genesis owning gate: 3,466 seed files valid, typecheck passed, 689 tests passed
+  with 9 skipped; validation only, no seed application.
+- Publisher safety tests: 16 passed; Cargo coverage and governance manifest
+  validation passed. The full affected storage gate passed (exit 0, 19 minutes,
+  over its existing 600-second soft ceiling; no generated drift).
+- Final review added Git object-header preflight and bounded commit/tag peeling,
+  avoiding an early root-tree load in CLI revision selection. Ten bridge tests
+  and strict Clippy passed after this repair. HEAD, valid ref names (including
+  `feature@foo`), full OIDs and annotated tags are supported; revision-expression
+  operators are deliberately outside this new snapshot interface. SHA-1 and
+  SHA-256 exact Git round-trips passed. Legacy engine tests passed 32/32 without
+  default features and protocol CID conformance passed 2/2 with its required
+  feature. A non-Linux cfg cleanup in local passed focused strict Clippy and
+  16 unit plus 6 integration tests; actual macOS/Windows execution is unrun.
+- After the review fixes, the CLI build, strict Clippy, 15 CLI tests and all
+  27 selected executable journeys passed again. `--no-default-features` checks
+  with each of `small`, `lean-async` and `max-pure` passed. These used Rust 1.98,
+  one build/test worker, disabled debug information/incremental compilation and
+  the external development override; they do not qualify a registry install.
+- Remaining first-party regressions passed 98/98 (`brit-epr` 68, `brit-graph` 23,
+  `brit-build-ref` 7; `brit-verify` has no unit tests). Both auxiliary binaries
+  were then built and explicitly selected by their existing journeys:
+  build-ref 11/11 and verify 3/3 passed with no internal skips. No new harness.
+
+The initial combined parser exposed a duplicate `tree` command and failed the
+public journey. The new operations now use `snapshot`; the old `tree` command
+remains intact and both help paths plus the public journeys passed on rerun.
+This is why parser-only compilation is insufficient evidence of composition.
+
+EPRFS 0.1.2 publication is complete: [CI #41](https://jenkins.ethosengine.com/job/elohim-eprfs/job/dev/41/)
+passed for parent `bca121bdc8795a40fafa01829552b6491555b6c0`, and all five
+0.1.2 archives were verified in Nexus. Brit's lock now records registry sources
+and checksums for its four EPRFS dependencies, with no development path override.
+Without the override, locked metadata resolved all four from Nexus; bridge tests
+passed 10/10, CLI tests 15/15, the public shared-tree journey 2/2, and the CLI
+build and strict Clippy passed. This is registry-backed dependency consumption,
+not a published Brit consumer install. Brit CI and immutable package comparison
+remain next. The currently installed developer tools are unchanged.
+
+Parent source is now `bca121bdc8795a40fafa01829552b6491555b6c0`, fast-forwarded
+onto `dev` and pushed normally. All five pre-push gates passed in 1,090 seconds:
+Jenkins bridge 34s, EPRFS 242s, storage 792s, Genesis 21s, Cargo coverage 1s.
+No hook bypass was used. The current source-built `epr ready --target origin/dev`
+passed before push; the older installed `epr` still reports the already-fixed
+policy-registry size limit and was not replaced. CI #41 above supersedes the
+earlier pending-publication report; EPRFS #40 proved only the 0.1.1 release.
 
 ### Local increment: executable composition and integrity floor
 

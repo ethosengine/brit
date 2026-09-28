@@ -17,4 +17,5 @@ tempfile = "3"
 anyhow = "1"
 
 [dev-dependencies]
+serde_json = "1"
 # Self-tests for the support modules

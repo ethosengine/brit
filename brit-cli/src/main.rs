@@ -9,6 +9,7 @@ use gitoxide::plumbing;
 mod commands;
 mod error;
 mod output;
+mod tree;
 
 use error::Result;
 
@@ -54,6 +55,9 @@ enum BuildNamespace {
     /// Build graph, affected steps, plans, fingerprints and baselines.
     #[command(subcommand)]
     Build(Command),
+    /// Seal, verify and restore immutable source trees (no publication or head election).
+    #[command(subcommand)]
+    Snapshot(tree::TreeCommand),
 }
 
 #[derive(Subcommand)]
@@ -167,18 +171,21 @@ fn run() -> Result<()> {
         .version(env!("CARGO_PKG_VERSION"))
         .long_version(VERSION_DETAIL);
     let matches = command.clone().get_matches_from(args);
-    if matches.subcommand_name() == Some("build") {
+    if matches!(matches.subcommand_name(), Some("build" | "snapshot")) {
+        let namespace = matches.subcommand_name().unwrap_or("native");
         if let Some(option) = matches
             .ids()
             .find(|id| matches.value_source(id.as_str()) == Some(ValueSource::CommandLine))
         {
             return Err(error::CliError::Args(format!(
-                "global Git option `{option}` does not apply to `build`; use the build command's `--repo` option"
+                "global Git option `{option}` does not apply to `{namespace}`; use the {namespace} command's `--repo` option"
             )));
         }
         let build = BuildNamespace::from_arg_matches(&matches).map_err(|e| error::CliError::Args(e.to_string()))?;
-        let BuildNamespace::Build(command) = build;
-        run_build(command)
+        match build {
+            BuildNamespace::Build(command) => run_build(command),
+            BuildNamespace::Snapshot(command) => tree::run(command).map_err(error::CliError::Git),
+        }
     } else {
         let args = plumbing::Args::from_arg_matches(&matches).map_err(|e| error::CliError::Args(e.to_string()))?;
         plumbing::run_with_command(args, command).map_err(error::CliError::Git)
