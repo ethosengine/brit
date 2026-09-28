@@ -92,20 +92,9 @@ fn fixture_with_format(object_format: &str) -> Result<(tempfile::TempDir, gix::O
     fs::write(dir.path().join("run.sh"), b"#!/bin/sh\nexit 0\n")?;
     #[cfg(unix)]
     {
-        use std::{
-            ffi::OsString,
-            os::unix::{ffi::OsStringExt, fs::PermissionsExt},
-        };
+        use std::os::unix::fs::PermissionsExt;
         fs::set_permissions(dir.path().join("run.sh"), fs::Permissions::from_mode(0o755))?;
         std::os::unix::fs::symlink("nested/binary", dir.path().join("shortcut"))?;
-        let name = OsString::from_vec(vec![b'n', 0xff, b'm']);
-        fs::write(dir.path().join(&name), b"byte name\n")?;
-        let output = git_command(dir.path()).arg("add").arg(name).output()?;
-        assert!(
-            output.status.success(),
-            "stage byte name: {}",
-            String::from_utf8_lossy(&output.stderr)
-        );
         git(dir.path(), "add shortcut")?;
     }
     git(dir.path(), "add nested/binary run.sh")?;
@@ -113,7 +102,20 @@ fn fixture_with_format(object_format: &str) -> Result<(tempfile::TempDir, gix::O
         dir.path(),
         &format!("update-index --add --cacheinfo 160000,{},submodule", commit_id.trim()),
     )?;
-    let tree_id = gix::ObjectId::from_hex(git(dir.path(), "write-tree")?.trim().as_bytes())?;
+    // The byte-name object exists only in Git's object database, not the host
+    // filesystem or index. macOS refuses an invalid-UTF-8 path with EILSEQ;
+    // keeping it uncommitted also lets the linked-worktree test check out HEAD.
+    let indexed_tree_id = gix::ObjectId::from_hex(git(dir.path(), "write-tree")?.trim().as_bytes())?;
+    let repo = open(dir.path())?;
+    let byte_name_blob_id = repo.write_blob(b"byte name\n")?.detach();
+    let mut tree = repo.find_tree(indexed_tree_id)?.decode()?.to_owned();
+    tree.entries.push(gix::objs::tree::Entry {
+        mode: gix::objs::tree::EntryMode::try_from(0o100644u32).expect("file mode"),
+        filename: b"n\xffm".as_slice().into(),
+        oid: byte_name_blob_id,
+    });
+    tree.entries.sort();
+    let tree_id = repo.write_object(tree)?.detach();
     Ok((dir, tree_id))
 }
 
@@ -132,17 +134,19 @@ fn revision_resolution_peels_head_ref_oid_and_annotated_tag_without_loading_tree
     let branch = git(source.path(), "symbolic-ref HEAD")?;
     let commit = git(source.path(), "rev-parse HEAD")?;
     let repo = open(source.path())?;
+    let committed_tree_id = repo.head_tree_id()?.detach();
     let limits = TreeLimits::default();
     for revision in [
         "HEAD".to_string(),
         branch.trim().to_string(),
         commit.trim().to_string(),
-        tree_id.to_string(),
         "refs/tags/snapshot".to_string(),
         "refs/heads/feature@foo".to_string(),
     ] {
-        assert_eq!(resolve_tree_revision(&repo, &revision, &limits)?, tree_id);
+        assert_eq!(resolve_tree_revision(&repo, &revision, &limits)?, committed_tree_id);
     }
+    assert_ne!(tree_id, committed_tree_id, "raw byte-name tree is not checked out");
+    assert_eq!(resolve_tree_revision(&repo, &tree_id.to_string(), &limits)?, tree_id);
     let error = resolve_tree_revision(&repo, "HEAD^{tree}", &limits).unwrap_err();
     assert!(error.to_string().contains("simple ref"));
     Ok(())
@@ -237,7 +241,6 @@ fn committed_tree_restores_exact_git_oid_with_binary_modes_and_gitlink() -> Resu
         .stdout
         .windows(b"160000 commit".len())
         .any(|w| w == b"160000 commit"));
-    #[cfg(unix)]
     assert!(listing.stdout.windows(b"n\xffm".len()).any(|w| w == b"n\xffm"));
     Ok(())
 }

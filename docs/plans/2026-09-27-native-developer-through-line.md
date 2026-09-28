@@ -184,6 +184,30 @@ restore station, as a regression, not a new acceptance register.
 Implementation in progress. No station is declared complete by this document.
 The existing untracked draft and unrelated working-tree changes are preserved.
 
+### Station 3 cross-platform fixture checkpoint (2026-09-28)
+
+At `9db33e248`, [Brit CI 36437983656](https://github.com/ethosengine/brit/actions/runs/36437983656)
+failed its aggregate. The public snapshot journey, Linux tests, lint and package
+contracts passed. The macOS workspace run passed 4,482 tests but failed six
+`brit-bridge` tests with OS error 92, `Illegal byte sequence`; all six use a
+fixture that writes the non-UTF-8 filename `n\xffm` onto the host filesystem.
+Windows ARM was cancelled, not qualified. Publication was skipped on this
+`run-ci/**` branch. Neither main integration nor a new installation is claimed.
+
+Story-graph refinement: chain `station 3 exact Git round-trip` / between
+`Git preserves byte-oriented tree entries` -> `host materializes a tree` /
+missing node `object-level portability is independent of host filename support`.
+Regression skeleton: Given a committed Git tree whose filename contains byte
+`0xff`, when Brit seals and exports it on a host that cannot create that filename,
+then the tree bytes and Git OID remain identical without checking out the file.
+The existing `brit-bridge` round-trip tests are the probe; this is not permission
+to skip byte-name coverage or to claim exact filesystem restore on macOS.
+The repaired fixture writes that leaf directly into Git's object database and
+asserts the raw filename in the exported tree on every platform. The index and
+linked-worktree checkout retain only host-safe names. Local bridge tests passed
+10/10; focused format, all-targets strict Clippy and diff checks exited 0.
+Current state: local repair green; macOS confirmation and replacement CI pending.
+
 ### Station 3 local qualification checkpoint (2026-09-28)
 
 The shared tree and `brit snapshot` composition are implemented in the working
