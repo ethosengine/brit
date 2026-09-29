@@ -54,7 +54,9 @@ pub(super) fn run_hook(repo: &gix::Repository, name: &str, args: &[OsString]) ->
     context.worktree_dir = repo.workdir().map(|path| absolute(repo, path));
     // Keep the path in argv, never in shell source (including hooks with no
     // arguments). The shell also provides Git's fallback for shebang-less hooks.
-    let mut command: std::process::Command = gix::command::prepare("\"$@\"")
+    // A command word before the quoted expansion keeps Windows shell shims from
+    // treating the leading quote as a command-line delimiter during forwarding.
+    let mut command: std::process::Command = gix::command::prepare("exec \"$@\"")
         .with_shell()
         .with_context(context)
         .arg(path.into_os_string())
