@@ -1018,12 +1018,15 @@ pub mod commit {
     pub struct Platform {
         #[clap(subcommand)]
         pub cmd: Option<Subcommands>,
-        /// Commit message; only `--allow-empty` creation is currently supported.
+        /// Commit message for the staged index.
         #[clap(short = 'm', long = "message", action = clap::ArgAction::Append)]
         pub message: Vec<String>,
         /// Permit committing the current tree without a staged change.
         #[clap(long)]
         pub allow_empty: bool,
+        /// Explicitly bypass pre-commit and commit-msg hooks.
+        #[clap(short = 'n', long)]
+        pub no_verify: bool,
     }
 
     #[derive(Debug, clap::Subcommand)]

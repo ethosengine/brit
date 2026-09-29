@@ -4,6 +4,8 @@ use thiserror::Error;
 
 #[derive(Error, Debug)]
 pub enum CliError {
+    #[error("epr context exited with status {0}")]
+    ContextExit(i32),
     #[error(transparent)]
     Git(#[from] anyhow::Error),
     #[error("repo not found at {path}: {source}")]

@@ -1,0 +1,5 @@
+{
+  "version": 1,
+  "description": "Authored boundary decisions for the pinned Git command census. No intentional nonimplementation is inferred from absent code. Every decision remains in the reference denominator. Populate commands only when a boundary has an explicit owner, rationale, alternative and reconsideration condition; proposed decisions do not terminate a node.",
+  "commands": []
+}

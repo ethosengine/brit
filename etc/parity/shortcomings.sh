@@ -94,6 +94,14 @@ for f in "$repo_root"/tests/journey/parity/*.sh; do
   echo >> "$tmp"
 done
 
+# Keep the generated Markdown canonical: one terminal newline, no blank EOF row.
+python3 - "$tmp" <<'PYTHON'
+from pathlib import Path
+import sys
+p = Path(sys.argv[1])
+p.write_text(p.read_text().rstrip('\n') + '\n')
+PYTHON
+
 if [[ $check_mode -eq 1 ]]; then
   if ! diff -u "$out" "$tmp" >&2; then
     echo "shortcomings.sh --check: $out is stale — re-run without --check to regenerate" >&2

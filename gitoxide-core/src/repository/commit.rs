@@ -154,6 +154,8 @@ pub struct CreateOptions {
     pub allow_empty_message: bool,
     /// `-q`/`--quiet`: suppress the post-commit summary line.
     pub quiet: bool,
+    /// Skip pre-commit and commit-msg only, as an explicit user choice.
+    pub no_verify: bool,
     /// `--reset-author`: requires -C/-c/--amend per git's precondition;
     /// gix mirrors the exit-128 rejection until those flags are wired.
     pub reset_author: bool,
@@ -214,10 +216,7 @@ pub struct CreateOptions {
     pub only: bool,
 }
 
-/// Porcelain `git commit` entry point. Currently only the
-/// `--allow-empty -m <msg>` happy path is implemented — other flag
-/// combinations bail with an explicit not-yet-implemented error so the
-/// boundary stays grep-able as parity rows close.
+/// Create a Git commit from the index, honoring repository commit hooks.
 pub fn create(
     repo: gix::Repository,
     mut out: impl std::io::Write,
@@ -226,6 +225,7 @@ pub fn create(
         allow_empty,
         allow_empty_message,
         quiet,
+        no_verify,
         reset_author,
         file,
         gpg_sign,
@@ -297,12 +297,19 @@ pub fn create(
         );
         std::process::exit(128);
     }
-    let _ = pathspec; // index→tree path consumes pathspec; gated rows above use clean fixtures.
-
-    if !allow_empty && !amend {
-        bail!(
-            "gix commit without --allow-empty not yet implemented (index→tree pending; see tests/journey/parity/commit.sh)"
-        );
+    if !pathspec.is_empty() || include || only {
+        bail!("path-scoped commit is not yet supported; stage explicit paths and inspect the index, or use git commit");
+    }
+    if let Some(state) = repo.state() {
+        bail!("commit during {state:?} is not yet supported; use git commit");
+    }
+    let original_head = repo.head()?;
+    let head_id = original_head.id();
+    let head_commit = head_id
+        .map(|id| -> Result<_> { Ok(id.object()?.try_into_commit()?) })
+        .transpose()?;
+    if amend && head_commit.is_none() {
+        bail!("HEAD must point at a commit for --amend");
     }
 
     // Resolve the per-flag message-source modes. git's
@@ -428,10 +435,6 @@ pub fn create(
             .to_string();
     }
 
-    if composed.is_empty() && !allow_empty_message {
-        bail!("Aborting commit due to empty commit message.");
-    }
-
     // --dry-run short-circuit: git's `--dry-run` reports what would
     // be committed and returns 0 without writing the commit object.
     // Bytes parity on the dry-run rendering rides the index→tree
@@ -441,24 +444,60 @@ pub fn create(
         return Ok(());
     }
 
-    // For --allow-empty / --amend we reuse the parent's tree verbatim.
-    // head_id() errors on an unborn HEAD; that path needs a separate
-    // code arm (initial commit) which is not exercised by current
-    // parity rows.
-    let head_id = repo
-        .head_id()
-        .context("HEAD must exist for --allow-empty / --amend commit")?;
-    let head_commit = repo
-        .head_commit()
-        .context("HEAD must point at a commit for --allow-empty / --amend")?;
-    let tree_id = head_commit.tree_id().context("HEAD commit must have a tree")?;
+    if !no_verify {
+        super::authoring::run_hook(&repo, "pre-commit", &[])?;
+    }
+    let message_path = repo.current_dir().join(repo.git_dir()).join("COMMIT_EDITMSG");
+    std::fs::write(&message_path, format!("{composed}\n"))?;
+    let mut prepare_args = vec![message_path.clone().into_os_string()];
+    if !message.is_empty() || file.is_some() {
+        prepare_args.push("message".into());
+    } else if let Some(spec) = reuse_message.as_ref().or(reedit_message.as_ref()) {
+        prepare_args.extend(["commit".into(), spec.into()]);
+    } else if amend {
+        prepare_args.extend(["commit".into(), "HEAD".into()]);
+    }
+    super::authoring::run_hook(&repo, "prepare-commit-msg", &prepare_args)?;
+    if !no_verify {
+        super::authoring::run_hook(&repo, "commit-msg", &[message_path.clone().into_os_string()])?;
+    }
+    composed = std::fs::read_to_string(&message_path).context("read hook-edited commit message")?;
+    if cleanup_mode != "verbatim" {
+        composed = composed
+            .trim_matches(|c: char| c == '\n' || c == ' ' || c == '\t')
+            .to_owned();
+    }
+    if composed.is_empty() && !allow_empty_message {
+        bail!("Aborting commit due to empty commit message.");
+    }
+    // Read after hooks, which may stage changes. Never substitute worktree bytes.
+    let tree_id = super::authoring::index_tree(&repo)?;
+    let previous_tree = head_commit
+        .as_ref()
+        .map(|commit| commit.tree_id().map(|id| id.detach()))
+        .transpose()?;
+    if !allow_empty
+        && !amend
+        && previous_tree.unwrap_or_else(|| gix::ObjectId::empty_tree(repo.object_hash())) == tree_id
+    {
+        bail!("nothing to commit (no staged changes)");
+    }
+    let current_head = repo.head()?;
+    if current_head.id() != original_head.id() || current_head.referent_name() != original_head.referent_name() {
+        bail!("HEAD changed while commit hooks ran; retry after inspecting the repository");
+    }
     // For --amend, the new commit's parents are HEAD's parents (we
     // replace HEAD itself). For --allow-empty, the new commit's
     // parent is HEAD.
     let parent_ids: Vec<gix::ObjectId> = if amend {
-        head_commit.parent_ids().map(gix::Id::detach).collect()
+        head_commit
+            .as_ref()
+            .context("amend requires HEAD")?
+            .parent_ids()
+            .map(gix::Id::detach)
+            .collect()
     } else {
-        vec![head_id.detach()]
+        head_id.into_iter().map(gix::Id::detach).collect()
     };
 
     // Resolve the author signature. For --amend without --reset-author
@@ -467,6 +506,8 @@ pub fn create(
     // override either base.
     let mut author_sig: gix::actor::Signature = if amend {
         head_commit
+            .as_ref()
+            .context("amend requires HEAD")?
             .author()
             .context("HEAD commit author could not be decoded")?
             .to_owned()?
@@ -505,7 +546,7 @@ pub fn create(
         };
         let commit_obj = gix::objs::Commit {
             message: composed.as_str().into(),
-            tree: tree_id.detach(),
+            tree: tree_id,
             author: author_sig.clone(),
             committer: committer_sig.clone(),
             encoding: None,
@@ -521,7 +562,9 @@ pub fn create(
                     force_create_reflog: false,
                     message: log_message,
                 },
-                expected: PreviousValue::MustExistAndMatch(Target::Object(head_id.detach())),
+                expected: PreviousValue::MustExistAndMatch(Target::Object(
+                    head_id.context("amend requires HEAD")?.detach(),
+                )),
                 new: Target::Object(new_id.detach()),
             },
             name: "HEAD".try_into().expect("HEAD is a valid ref name"),
@@ -548,6 +591,10 @@ pub fn create(
         .context("writing the commit object failed")?
     };
 
+    // Post-commit cannot undo an already-created commit; report its failure as a warning.
+    if let Err(err) = super::authoring::run_hook(&repo, "post-commit", &[]) {
+        eprintln!("warning: commit {new_id} succeeded, but {err:#}");
+    }
     if !quiet {
         // Minimal summary. git's wording is `[<branch> <abbrev>] <subject>`;
         // bytes parity is out of scope for the first iteration since

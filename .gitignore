@@ -27,3 +27,10 @@ $**/fuzz/Cargo.lock
 
 # Worktrees for isolated development
 .worktrees/
+
+# Private native flow/recall packets and local qualifier bytecode.
+.eprfs/
+/scripts/ci/__pycache__/
+
+# Derived local parity comparison captures
+/etc/parity/__pycache__/

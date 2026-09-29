@@ -6,8 +6,8 @@
 //!
 //! `brit push` is exercised against a disposable bare remote.
 //!
-//! Note: `brit commit` is NOT a "make a commit" command — it has subcommands:
-//!   verify, sign, describe. We cover describe and verify.
+//! `brit commit` creates staged commits and also has verify, sign and describe
+//! subcommands. Authoring and hook safety live in the `authoring` journey.
 //!
 //! Existing gix.sh journey tests test internal gitoxide crates (gix-tempfile,
 //! gix, etc.); this Rust file tests the BRIT CLI SURFACE specifically.

@@ -1,0 +1,70 @@
+# Brit-local Middot. Explicitly consumed by epr flow note --measures .epr-meta/measures.yaml.
+# No acceptance watermark or policy teeth are declared here.
+version: 1
+measures:
+  - id: brit-parity-source-rows
+    version: 1
+    family: git-compatibility
+    unit: rows
+    default-authority: observation
+    status: active
+    env-sensitivity: exact-reference-method-binaries-and-runtime
+    procedure: "etc/parity/reconcile.py counts.sourceRows; recorded by etc/parity/observe.py"
+    description: "Explicit static test rows; not assertions or tested capabilities."
+  - id: brit-parity-source-lanes
+    version: 1
+    family: git-compatibility
+    unit: row-lanes
+    default-authority: observation
+    status: active
+    env-sensitivity: exact-reference-method-binaries-and-runtime
+    procedure: "etc/parity/reconcile.py counts.sourceLanes; recorded by etc/parity/observe.py"
+    description: "Source rows crossed with declared SHA-1 and SHA-256 execution lanes."
+  - id: brit-parity-unexecuted-source-lanes
+    version: 1
+    family: git-compatibility
+    unit: row-lanes
+    default-authority: observation
+    status: active
+    env-sensitivity: exact-reference-method-binaries-and-runtime
+    procedure: "etc/parity/reconcile.py counts.unexecutedSourceLanes; recorded by etc/parity/observe.py"
+    description: "Source lanes with no admitted execution evidence; never counted as pass."
+  - id: brit-parity-matched-observations
+    version: 1
+    family: git-compatibility
+    unit: assertions
+    default-authority: observation
+    status: active
+    env-sensitivity: exact-reference-method-binaries-and-runtime
+    procedure: "etc/parity/reconcile.py counts.matchedObservations; recorded by etc/parity/observe.py"
+    description: "Runtime observations associated with a current static source row; not row-completion evidence."
+  - id: brit-parity-unmatched-observations
+    version: 1
+    family: git-compatibility
+    unit: assertions
+    default-authority: observation
+    status: active
+    env-sensitivity: exact-reference-method-binaries-and-runtime
+    procedure: "etc/parity/reconcile.py counts.unmatchedObservations; recorded by etc/parity/observe.py"
+    description: "Runtime observations without an admitted static source-row association."
+  - id: brit-parity-stale-observations
+    version: 1
+    family: git-compatibility
+    unit: assertions
+    default-authority: observation
+    status: active
+    env-sensitivity: exact-reference-method-binaries-and-runtime
+    procedure: "etc/parity/reconcile.py counts.staleObservations; recorded by etc/parity/observe.py"
+    description: "Source-associated observations with stale or unverified provenance; not admitted as fresh evidence."
+  - id: brit-parity-assertion-outcomes
+    version: 1
+    family: git-compatibility
+    unit: assertions
+    default-authority: observation
+    status: active
+    env-sensitivity: exact-reference-method-binaries-and-runtime
+    procedure: "etc/parity/reconcile.py assertionOutcomes; recorded by etc/parity/observe.py"
+    description: "Disjoint observations by strength, status and freshness, carried as environment dimensions; never sum different strengths into parity."
+lenses: []
+# The proposed Mishpat lens is documented at docs/parity/compatibility-measure-lens.md.
+# Recording an observation does not adopt a lens or qualify daily-driver readiness.

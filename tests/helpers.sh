@@ -1,3 +1,5 @@
+# Helpers also support callers which source them without the journey utilities.
+declare -F _parity_emit >/dev/null || function _parity_emit() { return 0; }
 # Must be sourced into the main journey test
 
 function set-static-git-environment() {
@@ -125,6 +127,7 @@ function only_for_hash() {
       if [[ "$have" == "sha1" ]]; then
         return 0
       else
+        _parity_emit skip only_for_hash "" skipped "" "" "" "row coverage: sha1-only" "$want"
         echo 1>&2 "${YELLOW}  [hash=$have] skipped (row coverage: sha1-only)"
         return 1
       fi
@@ -150,6 +153,7 @@ function expect_parity() {
   [[ "${1:-}" == "--" ]] && shift
 
   local git_out git_exit gix_out gix_exit
+  _parity_emit assertion-start expect_parity "$mode" started "" "" "" "" "$@"
   # Both sides may legitimately exit non-zero (e.g. "git push" with no remote
   # dies 128). Under `set -e` + bash's inherit_errexit, a failing $(...) in a
   # subshell aborts the enclosing block before we capture the exit code. Toggle
@@ -177,6 +181,7 @@ function expect_parity() {
     echo 1>&2 "${WHITE}\$ git $*"
     echo 1>&2 "--- git ---"; echo 1>&2 "$git_out"
     echo 1>&2 "--- gix ---"; echo 1>&2 "$gix_out"
+    _parity_emit assertion-end expect_parity "$mode" fail "$gix_exit" "$git_exit" "" "comparison divergence" "$@"
     return 1
   fi
 
@@ -184,6 +189,7 @@ function expect_parity() {
     echo 1>&2 "${RED} - FAIL (byte-level output divergence, exit=$git_exit)"
     echo 1>&2 "${WHITE}\$ $*"
     diff <(echo "$git_out") <(echo "$gix_out") 1>&2 || true
+    _parity_emit assertion-end expect_parity "$mode" fail "$gix_exit" "$git_exit" "" "comparison divergence" "$@"
     return 1
   fi
 
@@ -193,6 +199,7 @@ function expect_parity() {
   fi
 
   local active_hash="${GIX_TEST_FIXTURE_HASH:-sha1}"
+  _parity_emit assertion-end expect_parity "$mode" pass "$gix_exit" "$git_exit" "" "" "$@"
   echo 1>&2 "${GREEN} - OK ($mode parity, hash=$active_hash, exit=$git_exit)"
   return 0
 }
@@ -219,19 +226,20 @@ function expect_parity_reset() {
     return 2
   fi
 
+  _parity_emit assertion-start expect_parity_reset "$mode" started "" "" "" "" "$@"
   local root git_wd gix_wd
   root="$(mktemp -d -t parity-reset.XXXXXX)"
   git_wd="$root/git"
   gix_wd="$root/gix"
   mkdir -p "$git_wd" "$gix_wd"
 
-  local git_out git_exit gix_out gix_exit
+  local git_out git_exit gix_out gix_exit git_setup_exit gix_setup_exit
   local _saved_errexit=0; [[ "$-" == *e* ]] && _saved_errexit=1
   set +e
-  ( cd "$git_wd" && "$setup" >/dev/null 2>&1 )
+  ( cd "$git_wd" && "$setup" >/dev/null 2>&1 ); git_setup_exit=$?
   git_out="$(cd "$git_wd" && git "$@" 2>&1)"; git_exit=$?
 
-  ( cd "$gix_wd" && "$setup" >/dev/null 2>&1 )
+  ( cd "$gix_wd" && "$setup" >/dev/null 2>&1 ); gix_setup_exit=$?
   gix_out="$(cd "$gix_wd" && "$exe_plumbing" "$@" 2>&1)"; gix_exit=$?
   [[ "$_saved_errexit" == "1" ]] && set -e || true
 
@@ -250,6 +258,7 @@ function expect_parity_reset() {
     echo 1>&2 "${WHITE}\$ (reset=$setup) $*"
     echo 1>&2 "--- git ---"; echo 1>&2 "$git_out"
     echo 1>&2 "--- gix ---"; echo 1>&2 "$gix_out"
+    _parity_emit assertion-end expect_parity_reset "$mode" fail "$gix_exit" "$git_exit" "" "comparison divergence" "$@"
     return 1
   fi
 
@@ -257,10 +266,17 @@ function expect_parity_reset() {
     echo 1>&2 "${RED} - FAIL (byte-level output divergence, exit=$git_exit)"
     echo 1>&2 "${WHITE}\$ (reset=$setup) $*"
     diff <(echo "$git_out") <(echo "$gix_out") 1>&2 || true
+    _parity_emit assertion-end expect_parity_reset "$mode" fail "$gix_exit" "$git_exit" "" "comparison divergence" "$@"
     return 1
   fi
 
+  local receipt_status=pass receipt_reason=""
+  if [[ "$git_setup_exit" != 0 || "$gix_setup_exit" != 0 ]]; then
+    receipt_status=invalid-fixture
+    receipt_reason="setup failed: git=$git_setup_exit brit=$gix_setup_exit"
+  fi
   local active_hash="${GIX_TEST_FIXTURE_HASH:-sha1}"
+  _parity_emit assertion-end expect_parity_reset "$mode" "$receipt_status" "$gix_exit" "$git_exit" "" "$receipt_reason" "$@"
   echo 1>&2 "${GREEN} - OK ($mode parity via reset=$setup, hash=$active_hash, exit=$git_exit)"
   return 0
 }
@@ -287,7 +303,7 @@ function compat_effect() {
   # state and abort the caller before they can capture $?.
   local _saved_errexit=0; [[ "$-" == *e* ]] && _saved_errexit=1
   set +e
-  ( expect_parity effect -- "$@" )
+  ( _PARITY_HELPER=compat_effect _PARITY_COMPAT_REASON="$reason" expect_parity effect -- "$@" )
   local rc=$?
   if [[ "$_saved_errexit" == "1" ]]; then set -e; else set +e; fi
 

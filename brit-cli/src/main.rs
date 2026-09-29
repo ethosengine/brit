@@ -7,8 +7,10 @@ use clap::{CommandFactory, FromArgMatches, Parser, Subcommand};
 use gitoxide::plumbing;
 
 mod commands;
+mod context;
 mod error;
 mod output;
+mod surface;
 mod tree;
 
 use error::Result;
@@ -52,6 +54,11 @@ enum Command {
 
 #[derive(Subcommand)]
 enum BuildNamespace {
+    /// Reconcile feature work through the installed epr; accepts epr flow context arguments.
+    Context {
+        #[arg(required = true, trailing_var_arg = true, allow_hyphen_values = true)]
+        args: Vec<std::ffi::OsString>,
+    },
     /// Build graph, affected steps, plans, fingerprints and baselines.
     #[command(subcommand)]
     Build(Command),
@@ -156,6 +163,19 @@ fn run_build(command: Command) -> Result<()> {
     }
 }
 
+fn public_command() -> clap::Command {
+    BuildNamespace::augment_subcommands(plumbing::Args::command())
+        .version(env!("CARGO_PKG_VERSION"))
+        .long_version(VERSION_DETAIL)
+        .arg(
+            clap::Arg::new("cli-surface-json")
+                .long("cli-surface-json")
+                .help("Print the compiled parser surface as JSON; no behavior or acceptance claim")
+                .action(clap::ArgAction::SetTrue)
+                .exclusive(true),
+        )
+}
+
 fn run() -> Result<()> {
     let args: Vec<_> = plumbing::args_os().collect();
     let invoked_as_rakia = args
@@ -167,22 +187,36 @@ fn run() -> Result<()> {
         return run_build(Cli::parse_from(args).command);
     }
 
-    let command = BuildNamespace::augment_subcommands(plumbing::Args::command())
-        .version(env!("CARGO_PKG_VERSION"))
-        .long_version(VERSION_DETAIL);
+    let command = public_command();
+    // Introspection is deliberately standalone. Never dispatch a Git/native command
+    // when the caller combines a census request with work-performing arguments.
+    if args.get(1).is_some_and(|arg| arg == "--cli-surface-json") {
+        if args.len() != 2 {
+            return Err(error::CliError::Args("--cli-surface-json must be used alone".into()));
+        }
+        let stdout = std::io::stdout();
+        serde_json::to_writer_pretty(stdout.lock(), &surface::introspect(command)).map_err(anyhow::Error::from)?;
+        println!();
+        return Ok(());
+    }
     let matches = command.clone().get_matches_from(args);
-    if matches!(matches.subcommand_name(), Some("build" | "snapshot")) {
+    if matches.get_flag("cli-surface-json") {
+        return Err(error::CliError::Args("--cli-surface-json must be used alone".into()));
+    }
+    if matches!(matches.subcommand_name(), Some("build" | "snapshot" | "context")) {
         let namespace = matches.subcommand_name().unwrap_or("native");
         if let Some(option) = matches
             .ids()
             .find(|id| matches.value_source(id.as_str()) == Some(ValueSource::CommandLine))
         {
+            let root_option = if namespace == "context" { "--root" } else { "--repo" };
             return Err(error::CliError::Args(format!(
-                "global Git option `{option}` does not apply to `{namespace}`; use the {namespace} command's `--repo` option"
+                "global Git option `{option}` does not apply to `{namespace}`; use the {namespace} command's `{root_option}` option"
             )));
         }
         let build = BuildNamespace::from_arg_matches(&matches).map_err(|e| error::CliError::Args(e.to_string()))?;
         match build {
+            BuildNamespace::Context { args } => context::run(args),
             BuildNamespace::Build(command) => run_build(command),
             BuildNamespace::Snapshot(command) => tree::run(command).map_err(error::CliError::Git),
         }
@@ -204,6 +238,7 @@ fn diagnostic(error: &error::CliError) -> String {
 fn main() -> ExitCode {
     match run() {
         Ok(()) => ExitCode::SUCCESS,
+        Err(error::CliError::ContextExit(code)) => std::process::exit(code),
         Err(e) => {
             eprintln!("{}", diagnostic(&e));
             ExitCode::from(e.exit_code() as u8)
@@ -217,7 +252,7 @@ mod tests {
 
     #[test]
     fn combined_clap_tree_is_valid() {
-        BuildNamespace::augment_subcommands(plumbing::Args::command()).debug_assert();
+        public_command().debug_assert();
     }
 
     #[test]

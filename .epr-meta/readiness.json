@@ -1,0 +1,138 @@
+{
+  "version": 1,
+  "repository": "ethosengine/brit",
+  "workflow": ".github/workflows/ci.yml",
+  "milestones": {
+    "inherited-ci": {
+      "status": "wired",
+      "required": [
+        {
+          "job": "brit-release-package-contract",
+          "name": "brit-release-package-contract",
+          "steps": []
+        },
+        {
+          "job": "brit-readiness-contract",
+          "name": "brit-readiness-contract",
+          "steps": []
+        },
+        {
+          "job": "msrv-badge",
+          "name": "Check MSRV badge",
+          "steps": []
+        },
+        {
+          "job": "pure-rust-build",
+          "name": "pure-rust-build",
+          "steps": [
+            "Build standalone CLI without C tools"
+          ]
+        },
+        {
+          "job": "test-doc",
+          "name": "test-doc",
+          "steps": []
+        },
+        {
+          "job": "test-journey",
+          "name": "test-journey",
+          "steps": [
+            "Run journey tests",
+            "Prove shared trees through the public Brit executable",
+            "Run auxiliary Brit CLI journeys against built binaries",
+            "Measure legacy parity assertions (observation only)"
+          ]
+        },
+        {
+          "job": "test-32bit-windows-size-doc",
+          "name": "test-32bit-windows-size-doc",
+          "steps": []
+        },
+        {
+          "job": "lint",
+          "name": "lint",
+          "steps": []
+        },
+        {
+          "job": "cargo-deny",
+          "name": "cargo-deny",
+          "steps": []
+        },
+        {
+          "job": "check-no-persist-credentials",
+          "name": "check-no-persist-credentials",
+          "steps": []
+        },
+        {
+          "job": "check-blocking",
+          "name": "check-blocking",
+          "steps": []
+        },
+        {
+          "job": "msrv",
+          "name": "cargo check MSRV (windows-2025)",
+          "steps": []
+        },
+        {
+          "job": "msrv",
+          "name": "cargo check MSRV (ubuntu-latest)",
+          "steps": []
+        },
+        {
+          "job": "test-fast",
+          "name": "test-fast (macos-latest)",
+          "steps": [
+            "Test (nextest)"
+          ]
+        },
+        {
+          "job": "test-fast",
+          "name": "test-fast (ubuntu-latest)",
+          "steps": [
+            "Test (nextest)"
+          ]
+        },
+        {
+          "job": "test-fast",
+          "name": "test-fast (ubuntu-24.04-arm)",
+          "steps": [
+            "Test (nextest)"
+          ]
+        },
+        {
+          "job": "test-fast",
+          "name": "test-fast (windows-11-arm)",
+          "steps": [
+            "Test (nextest)"
+          ]
+        },
+        {
+          "job": "brit-feature-census",
+          "name": "brit-feature-census",
+          "steps": [
+            "Test census and boundary semantics",
+            "Verify pinned census freshness",
+            "Verify legacy shortcomings freshness"
+          ]
+        }
+      ],
+      "deferred": [
+        "test",
+        "test-fixtures-windows",
+        "test-32bit",
+        "wasm",
+        "cargo-deny-advisories",
+        "publish"
+      ],
+      "meaning": "Inherited blocking matrix plus Brit journeys and successful parity measurement production. Legacy assertion failures remain observed outcomes, not parity acceptance. Excludes publication and native daily-driver acceptance."
+    },
+    "native-daily-driver": {
+      "status": "unwired",
+      "reason": "Hook enforcement, target-bound independent acceptance, recovery and install/rollback habit evidence remain incomplete."
+    },
+    "git-compatibility": {
+      "status": "unwired",
+      "reason": "Pinned vendor/git v2.54.0 is a comparison horizon; exhaustive behavior probes are not implemented."
+    }
+  }
+}

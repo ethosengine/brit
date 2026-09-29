@@ -34,3 +34,7 @@ sibling directory. Source scope must
 protect unrelated staged and dirty files, submodule pins and interruption
 recovery. These are acceptance targets; the rule above only detects the current
 legacy binary declaration.
+
+`brit context <path|cid> [options]` transports arguments to installed `epr flow context`
+with inherited stdio and exit status. epr owns reconciliation, ranking and flow state.
+Missing epr refuses; there is no sibling-directory fallback or automatic claim.

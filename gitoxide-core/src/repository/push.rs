@@ -156,6 +156,11 @@ pub(crate) mod function {
         P: gix::NestedProgress,
         P::SubProgress: 'static,
     {
+        if !opts.no_verify && super::super::authoring::hook_path(&repo, "pre-push")?.is_some() {
+            anyhow::bail!(
+                "Brit cannot yet execute pre-push with resolved ref updates; use git push to run the repository gate"
+            );
+        }
         // Mirror git_config_bool's die shape (vendor/git/config.c):
         //     fatal: bad boolean config value '<v>' for '<key-lower>'
         // Keys come in as mixed-case (push.followTags) but git lowercases

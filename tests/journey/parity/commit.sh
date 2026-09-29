@@ -365,9 +365,8 @@ only_for_hash sha1-only && (small-repo-in-sandbox
 )
 
 # mode=effect — `-n` / `--no-verify` bypasses pre-commit + commit-msg hooks.
-# `--verify` is the default. gix has no hook execution path today, so
-# both forms are clap-accepted no-ops. Effect-mode parity holds; bytes
-# parity is moot until hooks land.
+# Verification is the default. These fixtures have no hooks; executable-hook
+# behavior and explicit bypass are proved in tests/cli-journey/tests/authoring.rs.
 # hash=sha1-only
 title "gix commit -n / --no-verify"
 only_for_hash sha1-only && (small-repo-in-sandbox

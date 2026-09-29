@@ -50,7 +50,8 @@ fi
 # Run the target file under each hash kind. Per-row skipping (for rows
 # marked `# hash=sha1-only`) is enforced inside the target via the
 # only_for_hash helper.
-for hash_kind in sha1 sha256; do
+for hash_kind in ${PARITY_HASH_KINDS:-sha1 sha256}; do
+  [[ "$hash_kind" == sha1 || "$hash_kind" == sha256 ]] || { echo "invalid hash lane" >&2; exit 2; }
   echo "${WHITE}====================================================="
   echo "${GREEN}HASH = $hash_kind"
   echo "${WHITE}====================================================="

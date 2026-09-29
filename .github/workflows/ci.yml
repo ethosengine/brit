@@ -37,6 +37,41 @@ env:
   CARGO_REGISTRY_GLOBAL_CREDENTIAL_PROVIDERS: cargo:token
 
 jobs:
+  brit-feature-census:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - name: Read governed Git reference
+        id: git-reference
+        run: python3 -c 'import json,os; r=json.load(open("docs/parity/git-reference.json")); print("revision="+r["revision"], file=open(os.environ["GITHUB_OUTPUT"],"a"))'
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          repository: git/git
+          ref: ${{ steps.git-reference.outputs.revision }}
+          path: vendor/git
+          persist-credentials: false
+      - name: Test census and boundary semantics
+        run: env PYTHONDONTWRITEBYTECODE=1 python3 -m unittest discover -s etc/parity -p 'test_*.py'
+      - name: Verify pinned census freshness
+        run: bash etc/parity/enumerate.sh --check
+      - name: Install legacy ledger generator dependency
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y gawk
+      - name: Verify legacy shortcomings freshness
+        run: bash etc/parity/shortcomings.sh --check
+
+  brit-readiness-contract:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - name: Validate readiness evidence qualification
+        run: env PYTHONDONTWRITEBYTECODE=1 python3 -m unittest discover -s scripts/ci -p 'test_qualify_readiness.py'
+
   brit-release-package-contract:
     runs-on: ubuntu-latest
     steps:
@@ -53,7 +88,7 @@ jobs:
         run: env PYTHONDONTWRITEBYTECODE=1 python3 -m unittest discover -s scripts/ci -p 'test_verify_brit_consumer.py'
 
   msrv:
-    name: cargo check MSRV
+    name: cargo check MSRV (${{ matrix.os }})
 
     strategy:
       matrix:
@@ -216,7 +251,7 @@ jobs:
 
           find /usr/lib/gcc \( -name cc1 -o -name cc1plus \) \
             -print -exec /usr/local/bin/wrap1 {} \;
-      - name: Build max-pure with limited dev tools and log cc1
+      - name: Build standalone CLI without C tools
         run: |
           . /usr/local/bin/set-display.sh
           cargo install --debug --locked --no-default-features --features max-pure \
@@ -300,7 +335,24 @@ jobs:
           cargo build --locked -p brit-cli --bin brit
           cargo test --locked -p brit-bridge
           debug_dir="$(just dbg)"
-          BRIT_BIN="$debug_dir/brit" cargo test --locked -p cli-journey --test shared_tree
+          BRIT_BIN="$debug_dir/brit" cargo test --locked -p cli-journey --test shared_tree --test authoring --test context --test cli_surface
+      - name: Measure legacy parity assertions (observation only)
+        run: |
+          set -euo pipefail
+          debug_dir="$(just dbg)"
+          output=.eprfs/status/parity/ci
+          python3 etc/parity/run.py --brit "$debug_dir/brit" --ein "$debug_dir/ein" --jtt "$debug_dir/jtt" --git "$(command -v git)" --timeout 45 --output "$output/receipt.json"
+          python3 etc/parity/reconcile.py --receipt "$output/receipt.json" > "$output/reconciliation.json"
+          python3 etc/parity/reconcile.py --receipt "$output/receipt.json" --markdown > "$output/reconciliation.md"
+          cat "$output/reconciliation.md"
+      - name: Preserve parity observations
+        if: always()
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: brit-parity-observations
+          path: .eprfs/status/parity/ci/
+          include-hidden-files: true
+          if-no-files-found: warn
       - name: Run auxiliary Brit CLI journeys against built binaries
         run: |
           set -euo pipefail
@@ -316,6 +368,7 @@ jobs:
             cargo test --locked -p cli-journey --test brit_build_ref --test brit_verify
 
   test-fast:
+    name: test-fast (${{ matrix.os }})
     strategy:
       matrix:
         # Windows legs dropped: this fork of gitoxide does not maintain Windows
@@ -789,6 +842,8 @@ jobs:
 
     needs:
       - brit-release-package-contract
+      - brit-readiness-contract
+      - brit-feature-census
       - msrv
       - msrv-badge
       - pure-rust-build
@@ -806,8 +861,8 @@ jobs:
     runs-on: ubuntu-slim
 
     steps:
-      - name: Fail if ANY dependency has failed or cancelled
-        if: contains(needs.*.result, 'failure') || contains(needs.*.result, 'cancelled')
+      - name: Fail if ANY dependency failed, was cancelled, or was skipped
+        if: contains(needs.*.result, 'failure') || contains(needs.*.result, 'cancelled') || contains(needs.*.result, 'skipped')
         run: exit 1
       - name: OK
         run: exit 0

@@ -1,3 +1,9 @@
+# Runtime evidence is opt-in; ordinary journey semantics remain unchanged.
+if [[ -n "${PARITY_EVENTS:-}" ]]; then
+  source "${PARITY_RUNTIME_HELPER:?}"
+else
+  function _parity_emit() { return 0; }
+fi
 # Must be sourced into the main journey test
 
 WHITE="$(tput setaf 9 2>/dev/null || echo -n '')"
@@ -10,12 +16,15 @@ STEP="  "
 function on_ci () {
   [ -n "${CI-}" ] || {
     function expect_run () {
+      _parity_emit skip "${FUNCNAME[0]}" "" skipped "" "" "" "runs only on CI" "$@"
       echo 1>&2 "${WHITE} - skipped (runs only on CI)"
     }
     function expect_run_sh () {
+      _parity_emit skip "${FUNCNAME[0]}" "" skipped "" "" "" "runs only on CI" "$@"
       echo 1>&2 "${WHITE} - skipped (runs only on CI)"
     }
     function expect_run_sh_no_pipefail () {
+      _parity_emit skip "${FUNCNAME[0]}" "" skipped "" "" "" "runs only on CI" "$@"
       echo 1>&2 "${WHITE} - skipped (runs only on CI)"
     }
   }
@@ -24,18 +33,22 @@ function on_ci () {
 function not_on_ci () {
   [ -z "${CI-}" ] || {
     function expect_run () {
+      _parity_emit skip "${FUNCNAME[0]}" "" skipped "" "" "" "runs only locally" "$@"
       echo 1>&2 "${WHITE} - skipped (runs only locally)"
     }
     function expect_run_sh () {
+      _parity_emit skip "${FUNCNAME[0]}" "" skipped "" "" "" "runs only locally" "$@"
       echo 1>&2 "${WHITE} - skipped (runs only locally)"
     }
     function expect_run_sh_no_pipefail () {
+      _parity_emit skip "${FUNCNAME[0]}" "" skipped "" "" "" "runs only locally" "$@"
       echo 1>&2 "${WHITE} - skipped (runs only locally)"
     }
   }
 }
 
 function title () {
+  export PARITY_TITLE="$*" PARITY_IT=""
   echo "$WHITE-----------------------------------------------------"
   echo "${GREEN}$*"
   echo "$WHITE-----------------------------------------------------"
@@ -72,6 +85,7 @@ function _note () {
 }
 
 function it () {
+  export PARITY_IT="$*"
   _note it "${GREEN}" "$*"
 }
 
@@ -80,6 +94,7 @@ function precondition () {
 }
 
 function shortcoming () {
+  _parity_emit deferred shortcoming "" deferred "" "" "" "$*"
   _note shortcoming "${RED}" "$*"
 }
 
@@ -128,7 +143,9 @@ function expect_run_sh_no_pipefail () {
 function expect_snapshot () {
   local expected=${1:?}
   local actual=${2:?}
+  local PARITY_SNAPSHOT_CREATED=""
   if ! [ -e "$expected" ]; then
+    PARITY_SNAPSHOT_CREATED=1
     mkdir -p "${expected%/*}"
     cp -R "$actual" "$expected"
   fi
@@ -139,6 +156,11 @@ function expect_run () {
   local expected_exit_code=$1
   shift
   local output=
+  local receipt_mode=exit
+  [[ -n "${WITH_SNAPSHOT:-}" ]] && receipt_mode=snapshot
+  [[ -n "${SNAPSHOT_FILTER:-}" ]] && receipt_mode=filtered-exit
+  [[ -n "${PARITY_SNAPSHOT_CREATED:-}" ]] && receipt_mode=snapshot-bootstrap
+  _parity_emit assertion-start expect_run "$receipt_mode" started "" "" "$expected_exit_code" "" "$@"
   set +e
   if [[ -n "${SNAPSHOT_FILTER-}" ]]; then
     output="$("$@" 2>&1 | "$SNAPSHOT_FILTER")"
@@ -153,8 +175,10 @@ function expect_run () {
       if ! [ -f "$expected" ]; then
         mkdir -p "${expected%/*}"
         echo -n "$output" > "$expected" || exit 1
+        receipt_mode=snapshot-bootstrap
       fi
       if ! diff "$expected" <(echo -n "$output"); then
+        _parity_emit assertion-end expect_run "$receipt_mode" fail "$actual_exit_code" "" "$expected_exit_code" "snapshot divergence" "$@"
         echo 1>&2 "${RED} - FAIL"
         echo 1>&2 "${WHITE}\$ $*"
         echo 1>&2 "Output snapshot did not match snapshot at '$expected'"
@@ -165,8 +189,10 @@ function expect_run () {
         exit 1
       fi
     fi
+    _parity_emit assertion-end expect_run "$receipt_mode" pass "$actual_exit_code" "" "$expected_exit_code" "" "$@"
     echo 1>&2
   else
+    _parity_emit assertion-end expect_run "$receipt_mode" fail "$actual_exit_code" "" "$expected_exit_code" "exit divergence" "$@"
     echo 1>&2 "${RED} - FAIL"
     echo 1>&2 "${WHITE}\$ $*"
     echo 1>&2 "${RED}Expected actual status $actual_exit_code to be $expected_exit_code"

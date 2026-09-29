@@ -35,3 +35,20 @@ packaging.
 The more specific manifests below carry the edit-time signals. This root is a
 standalone anchor and human guide, not a copy of the parent repository's policy
 registry or hook implementation.
+
+## Managed responsibility
+
+This root manages Brit's developer composition and readiness, including its public
+CLI, fork integration, delivery evidence and local work declarations. It consumes
+gix discipline without claiming authority over upstream maintainers. The preserved
+gix crate catalog (`crate-status.md`) describes engine capability; public command
+qualification belongs to `docs/parity/`. The pinned `vendor/git` source defines a
+comparison horizon, not a replacement implementation mandate.
+
+Repository identity is declared in `repository.yaml`. Native context reads local
+habit declarations; `recipes.yaml` binds the existing flow projector to Brit docs.
+Run `epr flow project --root . --recipes .epr-meta/recipes.yaml`, then
+`brit context docs/plans/2026-09-28-governed-readiness.md --root .`.
+These commands require installed epr. No sibling checkout or copied governance
+engine is an installation dependency. Context and readiness are derived views;
+private recall packets never become acceptance or habit evidence by themselves.
