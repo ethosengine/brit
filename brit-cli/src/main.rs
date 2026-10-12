@@ -269,6 +269,35 @@ mod tests {
     }
 
     #[test]
+    fn broader_staging_requires_literal_paths_or_a_repository_wide_flag() {
+        for args in [
+            vec!["brit", "add", "--", "file", "directory/"],
+            vec!["brit", "add", "-u"],
+            vec!["brit", "add", "-A"],
+            vec!["brit", "add", "--update", "--", "directory"],
+            vec!["brit", "add", "--all", "--", "-literal"],
+        ] {
+            assert!(
+                public_command().try_get_matches_from(&args).is_ok(),
+                "supported staging arguments: {args:?}"
+            );
+        }
+        for args in [
+            vec!["brit", "add"],
+            vec!["brit", "add", "file"],
+            vec!["brit", "add", "-u", "-A"],
+            vec!["brit", "add", "-f", "--", "file"],
+            vec!["brit", "add", "-p"],
+            vec!["brit", "restore", "--worktree"],
+        ] {
+            assert!(
+                public_command().try_get_matches_from(&args).is_err(),
+                "deferred or ambiguous staging arguments: {args:?}"
+            );
+        }
+    }
+
+    #[test]
     fn git_errors_preserve_anyhow_main_diagnostics() {
         use anyhow::Context;
 

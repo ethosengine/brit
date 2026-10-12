@@ -73,7 +73,7 @@ fn unsupported_public_mutations_refuse_and_preserve_all_bytes() -> Result<()> {
     fs::write(repo.path().join("untracked"), "keep")?;
     let before = state(repo.path())?;
     for args in [
-        vec!["add", "-A"],
+        vec!["add", "--force", "-A"],
         vec!["restore", "--staged", "--worktree", "--", "tracked"],
         vec!["reset", "--hard", "HEAD"],
         vec!["rm", "--force", "tracked"],

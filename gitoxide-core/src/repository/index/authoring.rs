@@ -1,4 +1,4 @@
-//! Bounded literal-file authoring. All index mutations hold the lock from read through publication.
+//! Literal-file helpers and bounded staged restoration. All index mutations hold the lock from read through publication.
 use std::{borrow::Cow, io::Read};
 
 use gix::{
@@ -168,14 +168,17 @@ fn executable_mode(_: &std::fs::Metadata) -> Mode {
     Mode::FILE
 }
 
-/// Stage exactly the named files, including deletions, under one index transaction.
+/// Stage the named literal files or directories, including deletions, under one index transaction.
 pub fn add_paths(repo: gix::Repository, paths: &[BString]) -> Result<()> {
-    mutate(repo, paths, false)
+    if paths.is_empty() {
+        bail!("At least one explicit path is required".validation());
+    }
+    super::staging::stage_paths(repo, paths, false)
 }
 
 /// Restore only named index entries from HEAD, without writing worktree files.
 pub fn restore_staged(repo: gix::Repository, paths: &[BString]) -> Result<()> {
-    mutate(repo, paths, true)
+    restore_index_paths(repo, paths)
 }
 
 /// Read the original index form, refusing split-index expansion and special files.
@@ -202,7 +205,7 @@ pub(crate) fn read_index(repo: &gix::Repository) -> Result<gix::index::File> {
     Ok(index)
 }
 
-fn mutate(repo: gix::Repository, paths: &[BString], restore: bool) -> Result<()> {
+fn restore_index_paths(repo: gix::Repository, paths: &[BString]) -> Result<()> {
     let mut lock =
         gix::lock::File::acquire_to_update_resource(repo.index_path(), gix::lock::acquire::Fail::Immediately, None, 0)
             .or_error()?;
@@ -229,13 +232,8 @@ fn mutate(repo: gix::Repository, paths: &[BString], restore: bool) -> Result<()>
         bail!("Unicode precomposition requires Git for non-ASCII paths".unsupported());
     }
 
-    let head = if restore {
-        Some(repo.index_from_tree(&repo.head_commit()?.tree_id()?)?)
-    } else {
-        None
-    };
+    let head = repo.index_from_tree(&repo.head_commit()?.tree_id()?)?;
     let mut replacements = Vec::new();
-    let mut ignores = repo.excludes(&index, None, Default::default())?;
     for path in &paths {
         let existing = index.entry_by_path(path.as_bstr());
         if existing.is_some_and(|entry| entry.mode == Mode::COMMIT) || index.path_is_directory(path.as_bstr()) {
@@ -247,32 +245,14 @@ fn mutate(repo: gix::Repository, paths: &[BString], restore: bool) -> Result<()>
         }) {
             bail!("Replacing an indexed ancestor requires Git".unsupported());
         }
-        let replacement = if let Some(head) = &head {
-            let source = head.entry_by_path(path.as_bstr());
-            if head.path_is_directory(path.as_bstr()) || source.is_some_and(|entry| entry.mode == Mode::COMMIT) {
-                bail!("Restoring directories and submodules requires Git".unsupported());
-            }
-            if source.is_none() && existing.is_none() {
-                bail!("Path is absent from both HEAD and the index: {path}".validation());
-            }
-            source.map(|entry| (entry.mode, entry.id))
-        } else {
-            match worktree_entry(&repo, &index, path)? {
-                None if existing.is_none() => bail!("Path is absent from both worktree and index: {path}".validation()),
-                None => None,
-                Some((mode, bytes)) => {
-                    if existing.is_none()
-                        && ignores
-                            .at_entry(path.as_bstr(), Some(mode))?
-                            .matching_exclude_pattern()
-                            .is_some_and(|m| !m.pattern.is_negative())
-                    {
-                        bail!("Ignored untracked path requires an explicit Git override: {path}".validation());
-                    }
-                    Some((mode, repo.write_blob(bytes)?.detach()))
-                }
-            }
-        };
+        let source = head.entry_by_path(path.as_bstr());
+        if head.path_is_directory(path.as_bstr()) || source.is_some_and(|entry| entry.mode == Mode::COMMIT) {
+            bail!("Restoring directories and submodules requires Git".unsupported());
+        }
+        if source.is_none() && existing.is_none() {
+            bail!("Path is absent from both HEAD and the index: {path}".validation());
+        }
+        let replacement = source.map(|entry| (entry.mode, entry.id));
         replacements.push((path, replacement));
     }
     // Rebuild to drop TREE, FSMN, UNTR, REUC and other caches invalidated by entry changes.

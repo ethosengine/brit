@@ -166,10 +166,16 @@ pub enum Subcommands {
         /// Paths to open, or none to start the editor without a file.
         paths: Vec<PathBuf>,
     },
-    /// Stage only the explicitly named literal files or tracked deletions.
+    /// Stage literal files or directories in one index transaction.
     Add {
-        /// Literal file paths; directories and pathspec patterns are unsupported.
-        #[clap(last = true, required = true, value_parser = crate::shared::AsBString)]
+        /// Stage tracked modifications and deletions; without paths, select the entire repository.
+        #[clap(short = 'u', long, conflicts_with = "all")]
+        update: bool,
+        /// Include additions, modifications and deletions; without paths, select the entire repository.
+        #[clap(short = 'A', long)]
+        all: bool,
+        /// Literal file or directory paths. Pathspec patterns are unsupported.
+        #[clap(last = true, required_unless_present_any = ["update", "all"], value_parser = crate::shared::AsBString)]
         paths: Vec<BString>,
     },
     /// Restore literal files in either the index or the worktree.

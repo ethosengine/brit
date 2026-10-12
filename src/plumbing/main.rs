@@ -236,9 +236,11 @@ pub fn run_with_command(args: Args, command: clap::Command) -> Result<()> {
                 core::repository::merge_base(repository(Mode::Lenient)?, first, others, out, format)
             })
         }
-        Subcommands::Add { paths } => prepare_and_run("add", verbose, None, move |_progress, _out, _err| {
-            core::repository::index::add_paths(repository(Mode::Strict)?, &paths)
-        }),
+        Subcommands::Add { paths, update, all: _ } => {
+            prepare_and_run("add", verbose, None, move |_progress, _out, _err| {
+                core::repository::index::stage_paths(repository(Mode::Strict)?, &paths, update)
+            })
+        }
         Subcommands::Restore {
             staged,
             worktree: _,
