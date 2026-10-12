@@ -576,14 +576,14 @@ UNWIRED for its complete invariant.
 
 ## Ordered local daily-driver backlog — 2026-10-12
 
-Stations 1 and 2 have completed bounded local proof. Stations 3–5c remain
+Stations 1–3 have completed bounded local proof. Stations 4–5c remain
 queued; refresh each handoff against its predecessor's actual result before work. All stations serve `brit-native-daily-driver`; its full
 invariant remains unqualified. Station numbers live in checkbox labels because
 the existing native recipe extracts bullet checkboxes.
 
 - [x] 1. [Commit amendment and recovery proof](#handoff-1-commit-amendment). Serves brit-native-daily-driver.
 - [x] 2. [Scoped worktree restore](#handoff-2-scoped-worktree-restore). Serves brit-native-daily-driver.
-- [ ] 3. [Broader staging](#handoff-3-broader-staging). Serves brit-native-daily-driver.
+- [x] 3. [Broader staging](#handoff-3-broader-staging). Serves brit-native-daily-driver.
 - [ ] 4. [Explicit lease protection](#handoff-4-explicit-lease-protection). Serves brit-native-daily-driver.
 - [ ] 5a. [Safe branch switching](#handoff-5a-safe-branch-switching). Serves brit-native-daily-driver.
 - [ ] 5b. [Fast-forward pull](#handoff-5b-fast-forward-pull). Serves brit-native-daily-driver.
@@ -670,12 +670,39 @@ No push or publication; full habit remains UNWIRED.
 
 ### Handoff 3: Broader staging
 
-Prerequisite: refreshed station-2 result. Public behavior: directory selection,
-`add -u`, `add -A`. Boundary: existing ignore/path traversal and index publication;
-resolve the whole selection before one index publication. Exclude interactive
-staging. Acceptance: Git-oracle journey for additions, deletions, ignored files,
-nested repositories and dirty neighbors. Independent reviewer: separate index
-and traversal reviewer. Evidence: pinned source/binary, tests, review and DELTA.
+Prerequisite refreshed from station 2: clean source
+`f597a9365261bc80ab2793fd00c3da097bd4cdfe`, 109 passing public journeys,
+independent review and passing native readiness. Clean rebuilt executable SHA-256:
+`6e1b1c2a8c417a83c473f32e55052fd0ef24c2357e2ea34283123a1d2828c533`.
+Receipt: `/projects/elohim/genesis/local-dev/brit-readiness/worktree-restore/verification.json`.
+Station 3 starts from that source on isolated branch
+`sprint/broader-staging-2026-10-12`; stations 4–5c remain queued.
+
+Public behavior: `add -- <literal-files-or-directories>`, `add -u [-- <paths>]`
+and `add -A [-- <paths>]`. Directories select additions, modifications and
+deletions; `-u` selects tracked modifications/deletions. Either flag without
+paths selects the entire repository, including when invoked from a subdirectory.
+Reuse native traversal, ignores, filters and index primitives. Skip discovered
+ignored untracked files; refuse explicitly selected ignored files, selected nested
+repositories and submodules. Never traverse directory symlinks or nested repos.
+
+Resolve and validate the complete selection under the existing index lock before
+one atomic index publication. Preserve working files and unselected index entries;
+invalidate affected index caches. Cancellation or failure before publication keeps
+the original index; report publication honestly afterward. Interactive staging,
+force-add, pathspec patterns and unsupported index/filter forms stay deferred.
+Restore retains its literal-file boundary.
+
+Acceptance: stock-Git-oracle journeys for selection scope, ignores, deletions,
+file/directory transitions, symlinks, modes, nested repositories, dirty neighbors,
+linked worktrees, alternate indexes, locks, failures and interruption. Separate
+implementation/test agents, one Cargo runner, independent index/traversal review.
+Wire source-CI/release selectors; rerun all 109 previous journeys, package/parser
+tests, scoped strict Clippy, formatting and small/lean-async/max-pure checks.
+Finish with scoped local commits, clean-source rebuilt executable, durable receipts
+under `/projects/elohim/genesis/local-dev/brit-readiness/broader-staging/`,
+station evidence, habit DELTA, recipe projection and native readiness against the
+sprint base. No push or publication; full habit remains UNWIRED.
 
 ### Handoff 4: Explicit lease protection
 
@@ -874,4 +901,77 @@ no second Cargo runner was used. Direct shell reads supplied source and prior
 receipt context; no memory curation or remote acceptance occurred. No push,
 publication, remote platform qualification or human acceptance is claimed.
 The full `brit-native-daily-driver` habit remains UNWIRED. Stations 3–5c remain
-queued; broader staging is next, with its handoff to be refreshed before work.
+queued at that handoff; station 3's subsequent evidence follows below.
+
+
+### Broader staging boundary and recovery stations
+
+Staging remains an on-device Git bridge operation over the existing index and
+Git content-addressed object store. No protocol entity, HTTP route, DHT head,
+shared pool or additional authority is introduced. A separate person or device
+sees only deliberately transferred commits. Working files remain untouched.
+
+Chain: literal scope → native traversal → complete preparation → index publication.
+Between scope and traversal, a tracked file or directory may have become a nested
+repository. The walker's tracked-directory fast path and disk/index kind mismatch
+must not authorize reading through that boundary. The nested-conversion journey
+checks both transitions and original-index preservation. Discovered untracked
+nested repositories are skipped; explicitly selected repositories or descendants,
+selected gitlinks, and tracked paths converted to repositories refuse.
+
+Between preparation and publication, all candidates share the index lock and
+unsupported inputs or object-write failure must leave the original index bytes
+unchanged. Real signal interruption after lock acquisition exercises that same
+boundary. The resulting index is published by one native lock-file rename;
+there is no multi-file worktree publication or rollback claim. Object preparation
+can leave unreachable blobs on refusal, as Git's object store permits. Success
+means index publication completed; cancellation cannot undo that publication.
+Restore keeps its prior explicit literal-file boundary.
+
+The Git oracle also distinguishes a repository-wide tracked-only selection from
+an explicit unmatched scope: `add -u` can select nothing, but `add -u --` naming
+an untracked file or empty directory refuses. The retained mixed-batch oracle
+requires the same unchanged index even when another selected path is valid.
+Directory syntax remains meaningful before normalization: a trailing slash or
+`/.` on a file or symlink refuses rather than silently staging its normalized name.
+
+
+### Broader staging local verification — 2026-10-12
+
+Station 3 has bounded local technical proof. All 109 prior public journeys and
+15 broader-staging journeys pass (124 total, none ignored). The new suite covers
+literal directories, repository-wide flags from subdirectories, tracked-only
+scope, ignored discovery and explicit refusal, deletions and file/directory
+transitions, symlinks, modes, nested boundaries, dirty neighbors, linked worktrees,
+alternate indexes, lock contention, object-write failure and real interruption.
+The interruption fixture uses a 256 MiB file and observes the owned index lock,
+stops the process, checks the unchanged original index, then delivers SIGINT.
+Old refusal assertions now test still-deferred options; restore remains bounded.
+
+All 17 Brit package tests, eight Gitoxide CLI library tests, strict scoped
+all-target Clippy, workspace formatting, and small/lean-async/max-pure checks
+pass. The source-CI and installed-release selectors include the new journey.
+Separate agents owned implementation and tests; one Cargo runner performed checks.
+Independent index/traversal review found no remaining blocking source issues.
+Its findings became regressions for tracked paths becoming nested repositories,
+ignored nested replacements, directory syntax before normalization, and unmatched
+tracked-only scopes. This is agent technical review, not human acceptance.
+
+Source base: `f597a9365261bc80ab2793fd00c3da097bd4cdfe`; implementation commit:
+`15a2b34ca`. Isolated branch: `sprint/broader-staging-2026-10-12`.
+Durable commands, full logs, independent review, clean-source executable and
+revision/hash receipt live under
+`/projects/elohim/genesis/local-dev/brit-readiness/broader-staging/`.
+`verification.json` pins the final source and artifact outside this document;
+`finish-verify.sh` rebuilds clean committed source, runs all 124 journeys against
+the copied executable and rehearses `epr ready` against the sprint base.
+The existing `.epr-meta/recipes.yaml` remains the recipe projection authority.
+
+Evidence is local Linux x86_64, Rust 1.99.0 and Git 2.52.0, empty RUSTFLAGS,
+two compiler workers and the existing external Cargo target. Berth claims used
+the documented exit-4 unleased fallback. Source inspection used direct shell
+reads outside the private recall executor; no memory edges were reconciled.
+No push, publication, remote platform matrix, power-loss durability or hostile
+concurrent-directory-rename isolation is claimed. The full habit remains UNWIRED.
+Next: station 4 explicit leases, then safe branch switching, fast-forward pull
+and rebase/conflict recovery design, one locally verified station per fresh context.
