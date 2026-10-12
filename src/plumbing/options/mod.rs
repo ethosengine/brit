@@ -1087,6 +1087,12 @@ pub mod commit {
         /// Explicitly bypass pre-commit and commit-msg hooks.
         #[clap(short = 'n', long)]
         pub no_verify: bool,
+        /// Replace HEAD while preserving its author and parents; requires an explicit message source.
+        #[clap(long)]
+        pub amend: bool,
+        /// Reuse HEAD's message without launching an editor.
+        #[clap(long, requires = "amend", conflicts_with_all = ["message", "file"])]
+        pub no_edit: bool,
     }
 
     #[derive(Debug, clap::Subcommand)]

@@ -1206,6 +1206,8 @@ pub fn run_with_command(args: Args, command: clap::Command) -> Result<()> {
                         file: platform.file,
                         cleanup: platform.cleanup,
                         no_verify: platform.no_verify,
+                        amend: platform.amend,
+                        no_edit: platform.no_edit,
                         ..Default::default()
                     },
                 )
@@ -1517,6 +1519,28 @@ fn anyhow_to_gix(error: anyhow::Error) -> gix::error::Error {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn amend_message_options() {
+        use clap::Parser;
+        for args in [
+            vec!["brit", "commit", "--amend", "--no-edit"],
+            vec!["brit", "commit", "--amend", "-m", ""],
+            vec!["brit", "commit", "--amend", "-F", "-"],
+        ] {
+            assert!(Args::try_parse_from(&args).is_ok(), "valid amendment options: {args:?}");
+        }
+        for args in [
+            vec!["brit", "commit", "--no-edit"],
+            vec!["brit", "commit", "--amend", "--no-edit", "-m", "replacement"],
+            vec!["brit", "commit", "--amend", "--no-edit", "-F", "message.txt"],
+        ] {
+            assert!(
+                Args::try_parse_from(&args).is_err(),
+                "invalid amendment options: {args:?}"
+            );
+        }
+    }
 
     #[test]
     fn clap() {

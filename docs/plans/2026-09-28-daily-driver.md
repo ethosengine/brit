@@ -573,3 +573,209 @@ exact-error-output test otherwise includes the workspace's enabled backtrace.
 This is Linux local evidence; it does not stand in for a remote platform matrix,
 published upgrade or actual two-person acceptance. The owning habit remains
 UNWIRED for its complete invariant.
+
+## Ordered local daily-driver backlog — 2026-10-12
+
+Only station 1 starts now. Later handoffs must be refreshed against the preceding
+station's actual result. All stations serve `brit-native-daily-driver`; its full
+invariant remains unqualified. Station numbers live in checkbox labels because
+the existing native recipe extracts bullet checkboxes.
+
+- [x] 1. [Commit amendment and recovery proof](#handoff-1-commit-amendment). Serves brit-native-daily-driver.
+- [ ] 2. [Scoped worktree restore](#handoff-2-scoped-worktree-restore). Serves brit-native-daily-driver.
+- [ ] 3. [Broader staging](#handoff-3-broader-staging). Serves brit-native-daily-driver.
+- [ ] 4. [Explicit lease protection](#handoff-4-explicit-lease-protection). Serves brit-native-daily-driver.
+- [ ] 5a. [Safe branch switching](#handoff-5a-safe-branch-switching). Serves brit-native-daily-driver.
+- [ ] 5b. [Fast-forward pull](#handoff-5b-fast-forward-pull). Serves brit-native-daily-driver.
+- [ ] 5c. [Rebase/conflict recovery design](#handoff-5c-rebaseconflict-recovery-design). Serves brit-native-daily-driver.
+
+### Handoff 1: Commit amendment
+
+Prerequisite: native-authoring source `c6aa6b1d28a157d1ef6b3c099e8bc6d9ed6ff0a2`
+and its 77 passing CLI journeys. Work in an isolated branch; no push or upgrade.
+Public behavior: `commit --amend --no-edit`, `--amend -m MESSAGE`, and
+`--amend -F FILE` (including stdin). Bare amend refuses without launching an
+editor. `--no-edit` requires amend and conflicts with message inputs. Explicit
+empty input never implicitly reuses HEAD. Existing cleanup, allow-empty-message
+and bypass behavior applies; `--cleanup=verbatim` preserves reused message bytes.
+
+Implementation boundary: compiled commit engine in
+`gitoxide-core/src/repository/commit.rs`, native helpers in
+`gitoxide-core/src/repository/authoring/mod.rs`, parser and dispatch in
+`src/plumbing/options/mod.rs` and `src/plumbing/main.rs`. No Git subprocess
+implementation. Preserve staged tree, all parents and original author/time;
+use current committer. Support root, ordinary, merge, detached HEAD and linked
+worktrees and match Git empty-commit rules, including removing the original change.
+Refuse before hooks: non-UTF-8 messages, encoding headers or explicit
+`i18n.commitEncoding`, extra headers/signatures, required signing, enabled notes
+rewriting and active unsupported operations.
+
+Retain pre-commit, prepare-commit-msg and commit-msg semantics. Run post-commit,
+then post-rewrite with argument `amend` and exact `old-oid new-oid\n` input via
+the existing hook-input helper, even if post-commit fails. Post-hook failures
+warn and cannot imply rollback. One native transaction guards original symbolic
+HEAD attachment and old commit while updating its pinned direct branch; detached
+HEAD uses a guarded direct update. Symbolic branch chains refuse. Check interruption
+after hooks and before publication; after publication report honestly. Preserve
+user index/worktree bytes and intentional hook side effects.
+
+Runnable acceptance: dedicated `cli-journey` amendment suite with stock Git as
+oracle in disposable repositories; fixed-time object/reflog comparisons for root,
+ordinary, merge and detached commits; message and staged-content amendments;
+message sources, cleanup, explicit empty and verbatim reuse; hook order, args,
+mapping, rejection, edited messages, staged changes, bypass and warnings;
+unborn/metadata/policy/operation/option refusals; dirty neighbors, alternate
+indexes, linked worktrees; locks, moved HEAD, same-OID branch switch and interrupts
+both during a waiting hook and after publication. Wire CI/release selectors.
+Run existing 77 journeys, CLI package tests, strict scoped Clippy, formatting and
+small/lean-async/max-pure checks with one Cargo runner. Independent reviewer:
+a separate agent after integration, focused on preservation, HEAD races,
+cancellation and hook semantics. Evidence: durable logs and revision/binary pins
+under `genesis/local-dev/brit-readiness/commit-amend/`, scoped local commits,
+clean-source rebuilt executable, reviewer verdict, habit DELTA and `epr ready`
+against sprint base. Published upgrade and human acceptance are excluded.
+
+### Handoff 2: Scoped worktree restore
+
+Prerequisite: refreshed station-1 evidence. Public behavior: literal selected
+files restored from index by `restore --worktree --`, or HEAD by `--source=HEAD`.
+Preserve index and unselected files. Boundary: existing native restore/path and
+safe file replacement helpers. Exclude combined staged/worktree restoration.
+Acceptance: disposable Git-oracle CLI journey proving source selection, preflight
+refusal, safe replacement and truthful partial progress after interruption.
+Independent reviewer: separate preservation/recovery reviewer. Evidence: exact
+source/binary, journey logs, review and habit DELTA before station 3 starts.
+
+### Handoff 3: Broader staging
+
+Prerequisite: refreshed station-2 result. Public behavior: directory selection,
+`add -u`, `add -A`. Boundary: existing ignore/path traversal and index publication;
+resolve the whole selection before one index publication. Exclude interactive
+staging. Acceptance: Git-oracle journey for additions, deletions, ignored files,
+nested repositories and dirty neighbors. Independent reviewer: separate index
+and traversal reviewer. Evidence: pinned source/binary, tests, review and DELTA.
+
+### Handoff 4: Explicit lease protection
+
+Prerequisite: refreshed station-3 result. Public behavior:
+`--force-with-lease=<full-ref>:<expected-oid>` for one branch update. Boundary:
+existing push resolver/transport; compare advertised remote value while retaining
+transport race protection. Exclude implicit leases and force-if-includes.
+Acceptance: disposable local bare remote journey, including stale lease and race
+refusals with unchanged remote. Independent reviewer: separate transport reviewer.
+Evidence: exact revisions, executable, test logs, review and habit DELTA.
+
+### Handoff 5a: Safe branch switching
+
+Prerequisite: refreshed station-4 result. Public behavior: switch existing local
+branches, refusing dirty/untracked overwrites and branches occupied by another
+worktree. Boundary: native checkout/ref/worktree primitives. Exclude branch
+creation and exposing unproven sequencing code. Acceptance: Git-oracle journey
+and interruption/recovery probes before exposing command. Independent reviewer:
+separate checkout/recovery reviewer. Evidence: pinned tests, review and DELTA.
+
+### Handoff 5b: Fast-forward pull
+
+Prerequisite: refreshed 5a result. Public behavior: fetch and integrate explicitly
+selected remote branch only with proven fast-forward; divergence preserves branch
+and files. Boundary: native fetch and proven checkout/ref publication primitives.
+Exclude merge/rebase pull. Acceptance: disposable local remote journey for fast
+forward, divergence, dirty neighbors and recovery. Independent reviewer: separate
+integration reviewer. Evidence: pinned binary/source, tests, review and DELTA.
+
+### Handoff 5c: Rebase/conflict recovery design
+
+Prerequisite: refreshed 5b result. Deliver a decision-complete design for sequencing,
+conflict state, continue/abort and crash recovery. Boundary: existing native
+sequencer capabilities assessed against Git oracle; no public dormant command.
+Acceptance: runnable disposable Git characterization scripts and a complete
+state/recovery matrix. Independent reviewer: separate recovery design reviewer.
+Evidence: design, characterization results and explicit review before any exposure.
+
+### Amendment local-first and data boundary
+
+Alone, a developer can amend staged bytes and retain the original author and
+parents entirely on-device. Protocol key location (device, doorway or absent)
+does not participate in unsigned local Git authoring. The working version is the
+author's index/worktree; Git objects and refs retain committed state. No passing
+state or shared draft is introduced. Another device or person adds a Git copy
+and sees only deliberately transferred commits; removing it leaves local work
+unchanged. No always-on host, doorway or pool is needed, and no step waits on one.
+Closing during hooks preserves the prior ref unless the hook itself changes it;
+after publication the new commit remains local and is recoverable from reflogs.
+The CLI distinguishes refusal from a completed amendment with post-hook warnings.
+Signing-required repositories refuse because this bounded path cannot sign.
+
+P2P design gate: there is no new protocol entity or authority predicate. Git
+objects retain their external content-derived OIDs, refs their native names,
+and the Git object/ref stores remain the source of truth for this bridge.
+Diagnostic output is Ephemeral (C); DHT classification and entry-type lookup,
+integrity/coordinator zomes, signals, HTTP routes, SQLite/Automerge projections,
+transport affinity and reach tiers do not apply. Protocol head count at seed and
+one year is unchanged (zero added), with no quiesce cost or DNA hash change.
+A local filesystem holder can already read/change this repository; this adds no
+aggregator, cross-person ledger or identity correlation. Existing native ref
+locking bounds publication; no parallel governance authority is introduced.
+
+### Amendment recovery constraints captured by the journeys
+
+Chain: prepared amendment → guarded local publication → recovery evidence.
+Between preparation and publication, acquiring a ref lock is a waiting step:
+an interrupt while waiting must be checked again after all locks are held.
+The `interruption_while_waiting_for_ref_lock_prevents_publication` journey is
+that station's probe. A branch switch to the same OID while waiting must also
+refuse; `attachment_cas_is_checked_after_waiting_for_the_branch_lock` checks
+the attachment guard separately from the earlier hook-time HEAD reread.
+
+Between a successful amendment and reflog recovery, unchanged object bytes
+still carry an action. The Git oracle shows an identical-OID amendment appends
+HEAD's reflog only when HEAD is attached; it appends neither the direct branch
+log nor a detached HEAD log. `identical_oid_success_records_the_same_reflog_as_git`
+compares entire logs. Native plumbing now has an opt-in named-ref log policy,
+with existing callers unchanged and all amendment locks retained through commit.
+An identical OID is not proof of publication after an error; the lock-refusal
+journey verifies that no post-hook or success claim follows a failed prepare.
+
+The native ref transaction can fail after the direct branch update but before
+HEAD's reflog completes. Brit reports a witnessed published OID as published
+with a warning and continues post hooks; an unobservable outcome remains
+uncertain and calls for inspecting refs/reflogs. It does not promise atomic
+multi-file reflogs or roll back intentional hook effects. The interrupt flag
+is checked immediately before entering commit; it cannot undo a publication
+already in progress, and post-publication cancellation is explicitly reported.
+
+
+### Amendment local verification — 2026-10-12
+
+Station 1 has bounded local technical proof: the original 77 CLI journeys and
+18 amendment journeys pass against the rebuilt public executable. The full
+native ref suite passes 207 tests with two pre-existing ignored cases; both
+new transaction regressions pass. All 16 Brit package tests and all eight
+Gitoxide CLI library tests pass. Strict all-target Clippy covers `brit-cli`,
+`gitoxide`, `gitoxide-core`, `cli-journey` and local `gix-ref@0.69.0`.
+Workspace formatting and `small`, `lean-async`, `max-pure` checks pass.
+The amendment journey is in the existing source CI and installed-release selectors.
+
+Independent agent review examined preservation, attachment/OID guards, lock-wait
+cancellation, hook delivery and partial publication. Its findings became retained
+regressions. This is agent technical review, not two-human acceptance. The source
+base is `c6aa6b1d28a157d1ef6b3c099e8bc6d9ed6ff0a2`; the isolated branch is
+`sprint/commit-amend-2026-10-12`. Durable commands, logs, reviewer verdict,
+clean-source executable and exact revision/hash receipt live under
+`/projects/elohim/genesis/local-dev/brit-readiness/commit-amend/`.
+The external `verification.json` pins the final committed source without a
+self-referential commit hash in this document. Native readiness is rehearsed
+against the named sprint base after commit; its receipt is `epr-ready.log`.
+
+The reflog-failure journey uses a nonempty directory obstruction: the native
+writer deliberately recovers from an empty directory, so an empty obstruction
+would not test failure. Both the obstructing user's bytes and unrelated draft
+bytes survive. Failure before publication refuses; failure after the pinned
+branch moves reports the published commit and still delivers post hooks.
+
+Evidence is local Linux x86_64 with Rust 1.99.0 and Git 2.52.0, empty `RUSTFLAGS`,
+two compiler workers and the existing disposable external target. No push,
+remote platform matrix, published upgrade or human acceptance is claimed.
+The full `brit-native-daily-driver` habit remains UNWIRED. Stations 2–5c stay
+queued; refresh each handoff against its predecessor's actual result before
+starting implementation.

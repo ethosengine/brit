@@ -77,7 +77,11 @@ impl Transaction<'_, '_> {
                             }
                         };
                         if let Some((previous, new_oid)) = log_update {
-                            let do_update = previous.as_ref() != Some(new_oid);
+                            let do_update = self
+                                .reflog_updates_for_noop
+                                .as_ref()
+                                .is_some_and(|names| names.contains(&change.update.name))
+                                || previous.as_ref() != Some(new_oid);
                             if do_update {
                                 self.store
                                     .reflog_create_or_append(

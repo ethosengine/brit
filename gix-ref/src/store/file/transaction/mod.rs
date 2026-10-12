@@ -73,11 +73,24 @@ impl file::Store {
             packed_transaction: None,
             updates: None,
             packed_refs: PackedRefs::default(),
+            reflog_updates_for_noop: None,
         }
     }
 }
 
 impl<'p> Transaction<'_, 'p> {
+    /// Append reflog entries for `names` even when their updates keep the same object ID.
+    ///
+    /// This retains all update locks through commit, including unchanged direct
+    /// references that guard the selected logs' old values. An empty selection
+    /// retains locks without appending unchanged logs. Explicit authoring operations
+    /// may record an action in HEAD's log even when deterministic object bytes
+    /// leave its ID unchanged, while the branch's log remains unchanged.
+    pub fn reflog_updates_for_noop(mut self, names: impl IntoIterator<Item = crate::FullName>) -> Self {
+        self.reflog_updates_for_noop = Some(names.into_iter().collect());
+        self
+    }
+
     /// Configure the way packed refs are handled during the transaction
     pub fn packed_refs(mut self, packed_refs: PackedRefs<'p>) -> Self {
         self.packed_refs = packed_refs;

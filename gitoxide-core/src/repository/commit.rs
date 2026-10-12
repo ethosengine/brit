@@ -171,11 +171,10 @@ pub struct CreateOptions {
     /// any commit-object write so --allow-empty + --dry-run is
     /// observably "no commit advance".
     pub dry_run: bool,
-    /// `--amend`: replace HEAD with a new commit that has the same
-    /// parents as the current tip. Without -m the message is reused
-    /// from the original commit (effective --no-edit semantics under
-    /// EDITOR=true).
+    /// Replace HEAD while preserving its parents and author.
     pub amend: bool,
+    /// Explicitly reuse HEAD's message without an editor.
+    pub no_edit: bool,
     /// `-i`/`--include`: stage listed pathspecs in addition to staged
     /// content. With no pathspec this errors 128 ("fatal: No paths
     /// with --include/--only does not make sense.") mirroring git.
@@ -209,6 +208,7 @@ pub fn create(
         fixup,
         dry_run,
         amend,
+        no_edit,
         include,
         only,
     }: CreateOptions,
@@ -278,13 +278,49 @@ pub fn create(
     if let Some(state) = repo.state() {
         bail!("commit during {state:?} is not yet supported; use git commit");
     }
+    if no_edit && (!amend || !message.is_empty() || file.is_some()) {
+        bail!("--no-edit requires --amend and conflicts with -m/-F");
+    }
+    if amend && !no_edit && message.is_empty() && file.is_none() {
+        bail!("--amend requires --no-edit, -m, or -F; no editor is launched");
+    }
+    if amend && repo.git_dir().join("sequencer").exists() {
+        bail!("commit amendment during an active sequencer operation is not supported; finish or abort it first");
+    }
     let original_head = repo.head()?;
+    if amend {
+        if let Some(name) = original_head.referent_name()
+            && repo.find_reference(name)?.target().try_id().is_none()
+        {
+            bail!("amend does not support symbolic branch chains");
+        }
+        let config = repo.config_snapshot();
+        if config.try_boolean("commit.gpgSign")?.unwrap_or(false) {
+            bail!("amend does not support required signing (commit.gpgSign)");
+        }
+        if config.try_boolean("notes.rewrite.amend")?.unwrap_or(true)
+            && (config.string("notes.rewriteRef").is_some() || std::env::var_os("GIT_NOTES_REWRITE_REF").is_some())
+        {
+            bail!("amend does not support enabled notes rewriting");
+        }
+        if config.string("i18n.commitEncoding").is_some() {
+            bail!("amend does not support explicit commit encoding configuration");
+        }
+    }
     let head_id = original_head.id();
     let head_commit = head_id
         .map(|id| -> Result<_> { Ok(id.object()?.try_into_commit()?) })
         .transpose()?;
     if amend && head_commit.is_none() {
         bail!("HEAD must point at a commit for --amend");
+    }
+
+    if amend {
+        let decoded = head_commit.as_ref().context("amend requires HEAD")?.decode()?;
+        std::str::from_utf8(decoded.message).context("amend does not support non-UTF-8 commit messages")?;
+        if decoded.encoding.is_some() || !decoded.extra_headers.is_empty() {
+            bail!("amend does not support encoding or extra commit headers (including signatures)");
+        }
     }
 
     // Resolve the per-flag message-source modes. git's
@@ -320,14 +356,18 @@ pub fn create(
         let cm = id.object()?.try_into_commit()?;
         let msg = cm.message_raw()?;
         let subject = msg.lines().next().unwrap_or(b"");
-        Ok(String::from_utf8_lossy(subject).into_owned())
+        Ok(std::str::from_utf8(subject)
+            .context("commit subject is not UTF-8")?
+            .to_owned())
     };
 
     let load_full_message = |spec: &str| -> Result<String> {
         let id = repo.rev_parse_single(spec)?;
         let cm = id.object()?.try_into_commit()?;
         let msg = cm.message_raw()?;
-        Ok(String::from_utf8_lossy(msg).into_owned())
+        Ok(std::str::from_utf8(msg)
+            .context("commit message is not UTF-8")?
+            .to_owned())
     };
 
     if let Some(spec) = reuse_message.as_deref().or(reedit_message.as_deref()) {
@@ -394,15 +434,9 @@ pub fn create(
         composed.push('\n');
     }
 
-    // --amend without an explicit message reuses HEAD's message
-    // (effective --no-edit semantics under EDITOR=true). Mirrors
-    // builtin/commit.c prepare_to_commit: when no message source is
-    // active and amend is set, the original commit message is read
-    // and used as the base.
-    if amend && composed.is_empty() {
-        let head_commit = repo.head_commit().context("HEAD must point at a commit for --amend")?;
-        let raw = head_commit.message_raw()?;
-        composed = String::from_utf8_lossy(raw).into_owned();
+    if no_edit {
+        std::str::from_utf8(head_commit.as_ref().context("amend requires HEAD")?.message_raw()?)?
+            .clone_into(&mut composed);
     }
 
     // No editor is launched by this authoring path: Git maps both default and
@@ -477,15 +511,36 @@ pub fn create(
     }
     // Read after hooks, which may stage changes. Never substitute worktree bytes.
     let tree_id = super::authoring::index_tree(&repo)?;
-    let previous_tree = head_commit
+    let comparison_commit = if amend {
+        head_commit
+            .as_ref()
+            .context("amend requires HEAD")?
+            .parent_ids()
+            .next()
+            .map(|id| -> Result<_> { Ok(id.object()?.try_into_commit()?) })
+            .transpose()?
+    } else {
+        head_commit.clone()
+    };
+    let previous_tree = comparison_commit
         .as_ref()
         .map(|commit| commit.tree_id().map(|id| id.detach()))
         .transpose()?;
+    let is_merge = amend
+        && head_commit
+            .as_ref()
+            .context("amend requires HEAD")?
+            .parent_ids()
+            .count()
+            > 1;
     if !allow_empty
-        && !amend
+        && !is_merge
         && previous_tree.unwrap_or_else(|| gix::ObjectId::empty_tree(repo.object_hash())) == tree_id
     {
-        bail!("nothing to commit (no staged changes)");
+        bail!("nothing to commit (no staged changes; use --allow-empty to preserve an empty commit)");
+    }
+    if gix::interrupt::is_triggered() {
+        bail!("commit cancelled before publication; HEAD was not updated by Brit");
     }
     let current_head = repo.head()?;
     if current_head.id() != original_head.id() || current_head.referent_name() != original_head.referent_name() {
@@ -559,22 +614,110 @@ pub fn create(
             extra_headers: Default::default(),
         };
         let new_id = repo.write_object(&commit_obj)?;
-        let log_message = gix::reference::log::message("commit (amend)", commit_obj.message.as_ref(), parent_ids.len());
-        repo.edit_reference(RefEdit {
-            change: Change::Update {
-                log: LogChange {
-                    mode: RefLog::AndReference,
-                    force_create_reflog: false,
-                    message: log_message,
+        // Git's amendment reflog uses the first physical message line, even
+        // when it is blank, and normalizes whitespace in the resulting entry.
+        let log_line = format!("commit (amend): {}", composed.split('\n').next().unwrap_or(""));
+        let log_message: gix::bstr::BString = log_line
+            .split([' ', '\t', '\r', '\n'])
+            .filter(|part| !part.is_empty())
+            .collect::<Vec<_>>()
+            .join(" ")
+            .into();
+        let old_id = head_id.context("amend requires HEAD")?.detach();
+        let mut edits = Vec::new();
+        if let Some(branch) = original_head.referent_name() {
+            // Publish the pinned branch first while the HEAD guard's lock remains held.
+            // Neither edit dereferences HEAD, even if another writer changes its attachment.
+            edits.push(RefEdit {
+                change: Change::Update {
+                    log: LogChange {
+                        mode: RefLog::AndReference,
+                        force_create_reflog: false,
+                        message: log_message.clone(),
+                    },
+                    expected: PreviousValue::MustExistAndMatch(Target::Object(old_id)),
+                    new: Target::Object(new_id.detach()),
                 },
-                expected: PreviousValue::MustExistAndMatch(Target::Object(
-                    head_id.context("amend requires HEAD")?.detach(),
-                )),
-                new: Target::Object(new_id.detach()),
-            },
-            name: "HEAD".try_into().expect("HEAD is a valid ref name"),
-            deref: true,
-        })?;
+                name: branch.to_owned(),
+                deref: false,
+            });
+            edits.push(RefEdit {
+                change: Change::Update {
+                    log: LogChange {
+                        mode: RefLog::Only,
+                        force_create_reflog: false,
+                        message: log_message,
+                    },
+                    expected: PreviousValue::MustExistAndMatch(Target::Symbolic(branch.to_owned())),
+                    new: Target::Object(new_id.detach()),
+                },
+                name: "HEAD".try_into().expect("HEAD is a valid ref name"),
+                deref: false,
+            });
+        } else {
+            edits.push(RefEdit {
+                change: Change::Update {
+                    log: LogChange {
+                        mode: RefLog::AndReference,
+                        force_create_reflog: false,
+                        message: log_message,
+                    },
+                    expected: PreviousValue::MustExistAndMatch(Target::Object(old_id)),
+                    new: Target::Object(new_id.detach()),
+                },
+                name: "HEAD".try_into().expect("HEAD is a valid ref name"),
+                deref: false,
+            });
+        }
+        if gix::interrupt::is_triggered() {
+            bail!("commit cancelled before publication; HEAD was not updated by Brit");
+        }
+        let config = repo.config_snapshot();
+        let file_timeout = gix::config::tree::Core::FILES_REF_LOCK_TIMEOUT
+            .try_into_lock_timeout(config.try_integer("core.filesRefLockTimeout"))?
+            .unwrap_or(gix::lock::acquire::Fail::AfterDurationWithBackoff(
+                std::time::Duration::from_millis(100),
+            ));
+        let packed_timeout = gix::config::tree::Core::PACKED_REFS_TIMEOUT
+            .try_into_lock_timeout(config.try_integer("core.packedRefsTimeout"))?
+            .unwrap_or(gix::lock::acquire::Fail::AfterDurationWithBackoff(
+                std::time::Duration::from_millis(1000),
+            ));
+        let transaction = repo
+            .refs
+            .transaction()
+            .reflog_updates_for_noop(
+                original_head
+                    .referent_name()
+                    .map(|_| "HEAD".try_into().expect("valid HEAD")),
+            )
+            .prepare(edits, file_timeout, packed_timeout)?;
+        if gix::interrupt::is_triggered() {
+            bail!("commit cancelled before publication; HEAD was not updated by Brit");
+        }
+        let mut committer_buf = gix::date::parse::TimeBuf::default();
+        if let Err(err) = transaction.commit(committer_sig.to_ref(&mut committer_buf)) {
+            let published_name = original_head
+                .referent_name()
+                .unwrap_or("HEAD".try_into().expect("valid HEAD"));
+            match repo.find_reference(published_name) {
+                Ok(reference) if new_id.detach() != old_id && reference.target().try_id() == Some(new_id.as_ref()) => {
+                    eprintln!(
+                        "warning: commit {new_id} was published, but reference/reflog completion failed: {err}; no rollback was attempted"
+                    );
+                }
+                Ok(_) => {
+                    return Err(anyhow::anyhow!(
+                        "commit publication failed: {err}; inspect refs and reflogs before retrying"
+                    ));
+                }
+                Err(inspect) => {
+                    return Err(anyhow::anyhow!(
+                        "commit publication outcome is uncertain: {err}; could not inspect the pinned reference: {inspect}; no rollback was attempted"
+                    ));
+                }
+            }
+        }
         new_id
     } else {
         // Non-amend: route through commit_as for both override and
@@ -599,6 +742,17 @@ pub fn create(
     // Post-commit cannot undo an already-created commit; report its failure as a warning.
     if let Err(err) = super::authoring::run_hook(&repo, "post-commit", &[]) {
         eprintln!("warning: commit {new_id} succeeded, but {err:#}");
+    }
+    if amend {
+        let mapping = format!("{} {}\n", head_id.context("amend requires HEAD")?, new_id);
+        if let Err(err) =
+            super::authoring::run_hook_with_input(&repo, "post-rewrite", &["amend".into()], Some(mapping.as_bytes()))
+        {
+            eprintln!("warning: commit {new_id} succeeded, but {err:#}");
+        }
+    }
+    if gix::interrupt::is_triggered() {
+        eprintln!("warning: commit {new_id} was published before cancellation; it was not rolled back");
     }
     if !quiet {
         // Minimal summary. git's wording is `[<branch> <abbrev>] <subject>`;

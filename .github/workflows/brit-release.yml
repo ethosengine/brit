@@ -47,7 +47,7 @@ jobs:
           cargo build --locked -p brit-cli --bin brit --no-default-features --features max-pure
           BRIT_BIN="$CARGO_TARGET_DIR/debug/brit" cargo test --locked -p cli-journey \
             --test brit --test rakia --test inherited_git_environment --test shared_tree \
-            --test authoring --test pre_push --test commit_cleanup --test daily_driver --test native_authoring
+            --test authoring --test pre_push --test commit_cleanup --test commit_amend --test daily_driver --test native_authoring
           test -z "$(git status --porcelain --untracked-files=all)"
 
   build:
@@ -139,7 +139,7 @@ jobs:
           installed="$RUNNER_TEMP/brit-installed-qualification/install/bin/brit"
           bash scripts/ci/verify-installed-brit.sh "$installed"
           BRIT_BIN="$installed" cargo test --locked -p cli-journey \
-            --test authoring --test pre_push --test commit_cleanup --test daily_driver --test native_authoring --test shared_tree
+            --test authoring --test pre_push --test commit_cleanup --test commit_amend --test daily_driver --test native_authoring --test shared_tree
       - name: Prove Unix installer interruption and rollback mechanics
         if: runner.os != 'Windows'
         run: |
