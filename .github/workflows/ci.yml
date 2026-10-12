@@ -87,6 +87,10 @@ jobs:
         run: |
           bash -n scripts/ci/package-brit-release.sh scripts/ci/test-package-brit-release.sh
           bash scripts/ci/test-package-brit-release.sh
+      - name: Validate nonpublishing candidate delivery and release guards
+        run: |
+          bash -n scripts/ci/validate-brit-delivery-source.sh scripts/ci/test-brit-delivery-source.sh
+          bash scripts/ci/test-brit-delivery-source.sh
       - name: Validate atomic Unix installation and rollback
         run: |
           bash -n scripts/ci/install-brit-release.sh scripts/ci/test-install-brit-release.sh scripts/ci/verify-installed-brit.sh scripts/ci/verify-brit-upgrade.sh
