@@ -189,7 +189,7 @@ fn linked_worktree_uses_shared_hook_and_its_own_context() -> Result<()> {
     )?;
     hook(
         repo.path(),
-        "pwd >hook-cwd; git rev-parse --absolute-git-dir >hook-git-dir; cat >hook-input",
+        "(pwd -W 2>/dev/null || pwd) >hook-cwd; git rev-parse --absolute-git-dir >hook-git-dir; cat >hook-input",
     )?;
     fs::copy(
         repo.path().join("hooks with spaces/pre-push"),
@@ -199,6 +199,7 @@ fn linked_worktree_uses_shared_hook_and_its_own_context() -> Result<()> {
     fs::create_dir(linked.path().join("nested"))?;
     let output = brit(&linked.path().join("nested"), &["push", "origin", "linked:linked"])?;
     ensure!(output.status.success(), "{}", output.stderr);
+    // pwd -W records a native path under Git for Windows; other shells use pwd.
     // macOS may spell the same temporary directory /var or /private/var.
     // Resolve aliases while still requiring the exact worktree and Git directory.
     assert_eq!(
