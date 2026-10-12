@@ -297,14 +297,17 @@ extracted Brit package and independently obtained source/hash pins:
 bash scripts/ci/install-brit-epr.sh \
   "$BRIT_PACKAGE" "$BRIT_SOURCE" "$BRIT_SHA256" \
   "$EPR_BINARY" "$EPR_SOURCE" "$EPR_SHA256" "$PRIVATE_PREFIX"
-export PATH="$PRIVATE_PREFIX/current/bin:$PATH"
+PAIR_BIN=$(cd "$PRIVATE_PREFIX/current/bin" && pwd -P)
+export PATH="$PAIR_BIN:$PATH"
 brit --version
 epr doctor
 ```
 
 The helper copies both tools into a unique generation, verifies their bytes,
 checks the required EPR command interfaces and atomically activates the pair.
-Repeat with the previous pins to roll back. It never modifies the user's default
+Repeat with the previous pins to roll back. Resolving the generation once per
+shell keeps Brit and its EPR child on that generation during an upgrade; reselect
+the pair when ready to use the new version. It never modifies the user's default
 PATH or installed commands. Existing generations are retained. An interrupted or
 failed activation may leave an inactive generation, deliberately preserving any
 possibly activated rollback candidate. Linux is exercised locally; macOS's rename
@@ -316,7 +319,8 @@ Interface smoke alone does not establish workflow compatibility or acceptance.
 The tested local pair is available at:
 
 ```sh
-export PATH=/projects/elohim/genesis/local-dev/brit-readiness/acceptance-sprint/tool-pair/current/bin:$PATH
+PAIR_BIN=$(cd /projects/elohim/genesis/local-dev/brit-readiness/acceptance-sprint/tool-pair/current/bin && pwd -P)
+export PATH="$PAIR_BIN:$PATH"
 ```
 
 It contains the prior final Brit artifact (`d6cb92865`, binary SHA-256
@@ -476,3 +480,11 @@ unchanged original assertions in `original-file-pack.log`; the detailed receipt 
 The complete inherited journey was attempted again but the current sandbox
 refuses the Git daemon's local TCP listener with `EPERM`. This is a distinct
 execution restriction, not a full-suite pass or a remaining pack defect.
+
+The reviewed sprint is committed on local branch
+`run-ci/daily-driver-acceptance-2026-10-12` in the separate checkout
+`/projects/elohim/.worktrees/brit-acceptance-sprint`. Native setup/readiness passes
+against `eff40d6ab`; the shared checkout and its unrelated changes were preserved.
+GitHub API access and Git remote discovery currently fail DNS/network resolution,
+so no new push, remote matrix or publication is claimed. The isolated EPR branch
+`feat/brit-daily-driver-epr-2026-10-12` remains local as well.
