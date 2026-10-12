@@ -180,8 +180,47 @@ optimized build took 17 minutes, including about eight minutes of final LTO;
 future package runs should follow the complete inherited gate to avoid repeated
 optimization while source corrections are still arriving.
 
-Brit's own checkout has no checked-in reach hook activated yet. First-push and
-multi-source push policy must be resolved before calling that checkout's native
-reach boundary ready. No published Brit release was available on 2026-10-12 for
-a genuine released-version A-to-B-to-A upgrade exercise. Neither absence is
-replaced by synthetic green evidence.
+No published Brit release was available on 2026-10-12 for a genuine
+released-version A-to-B-to-A upgrade exercise. Synthetic installation fixtures
+do not establish that qualification.
+
+### Activating the bounded native reach gate
+
+The Unix `.githooks/pre-push` adapter invokes installed `epr`; it contains no
+copied governance evaluator. After committing the adapter, run `epr setup` and
+`epr doctor` in each clone. Setup changes only local `core.hooksPath` and preserves
+an existing explicit hook configuration. An incompatible or missing evaluator
+must be upgraded before this gate can pass. The shared development checkout is
+not activated automatically by the tests.
+
+The adapter permits one named branch update whose source is the checked-out
+HEAD. The advertised existing remote commit must exist locally and be an
+ancestor of HEAD. Deletions, tags, detached or other source refs, multiple updates,
+and unknown or non-ancestor baselines fail before remote mutation. A no-op with
+no update tuples succeeds. First publication requires a reviewed, explicit
+baseline, configured as a full commit object ID:
+
+```sh
+git config --local branch.<branch-name>.britReachBase <full-baseline-commit-oid>
+```
+
+That commit must exist locally, precede HEAD, and be its ancestor. No upstream
+or remote-tracking baseline is inferred. This local declaration selects the
+comparison; it does not manufacture an acceptance record. Once the remote
+branch exists, its advertised commit replaces the configured first-push base.
+
+The index, tracked files, and untracked files must be clean before and after
+evaluation because native policy resolution also reads worktree authority.
+Ignored private state is allowed. Refusal preserves the worktree: the hook never
+stashes, resets, or cleans files. Source ref, HEAD, and any first-push baseline
+are checked again after evaluation. Index `assume-unchanged` and `skip-worktree`
+flags are refused because they can conceal tracked authority edits. These checks
+detect observed changes; they
+are not an atomic lock against every concurrent writer. Native governance
+readiness does not replace the required GitHub `Tests pass` result before main.
+
+`bash scripts/ci/test-brit-reach-hook.sh` proves adapter mechanics with an isolated
+fake evaluator. Set `EPR_TEST_BIN=/absolute/path/to/epr` to additionally prove real
+setup, doctor, readiness, and an invalid-governance push refusing without moving
+the remote. CI runs the explicitly labeled fixture lane; the real installed
+evaluator and human daily-driving qualification remain separate evidence.

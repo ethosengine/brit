@@ -71,6 +71,11 @@ jobs:
           persist-credentials: false
       - name: Validate readiness evidence qualification
         run: env PYTHONDONTWRITEBYTECODE=1 python3 -m unittest discover -s scripts/ci -p 'test_qualify_readiness.py'
+      - name: Validate bounded reach adapter with isolated evaluator fixtures
+        run: |
+          sh -n .githooks/pre-push
+          bash -n scripts/ci/test-brit-reach-hook.sh
+          bash scripts/ci/test-brit-reach-hook.sh
 
   brit-release-package-contract:
     runs-on: ubuntu-latest

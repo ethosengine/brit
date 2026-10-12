@@ -1,0 +1,63 @@
+#!/bin/sh
+# A bounded adapter to the installed native evaluator, not a governance engine.
+set -eu
+
+refuse() { printf 'Brit reach refused: %s\n' "$*" >&2; exit 1; }
+oid_valid() {
+    case "$1" in ''|*[!0-9a-f]*) return 1 ;; esac
+    case "${#1}" in 40|64) return 0 ;; *) return 1 ;; esac
+}
+oid_zero() { case "$1" in *[!0]*) return 1 ;; *) return 0 ;; esac; }
+
+count=0
+while read -r local_ref local_oid remote_ref remote_oid extra || [ -n "${local_ref:-}" ]; do
+    count=$((count + 1))
+    [ "$count" -eq 1 ] || refuse 'multiple updates need a source-aware evaluator; push one checked-out branch at a time'
+    [ -n "$remote_oid" ] && [ -z "$extra" ] || refuse 'malformed pre-push update'
+    oid_valid "$local_oid" && oid_valid "$remote_oid" || refuse 'update object IDs must be full hexadecimal IDs'
+    oid_zero "$local_oid" && refuse 'branch deletion is outside this reach adapter'
+    case "$local_ref" in refs/heads/*) ;; *) refuse 'only a named local branch is supported' ;; esac
+    case "$remote_ref" in refs/heads/*) ;; *) refuse 'only a remote branch is supported' ;; esac
+    source_ref=$local_ref
+    source_oid=$local_oid
+    target_oid=$remote_oid
+done
+# Git can invoke the hook when every requested ref is already up to date.
+[ "$count" -ne 0 ] || exit 0
+
+root=$(git rev-parse --show-toplevel) || refuse 'a working tree is required'
+cd "$root"
+git cat-file -e HEAD:.githooks/pre-push 2>/dev/null || refuse 'commit the checked-in reach adapter before requesting reach'
+
+check_source() {
+    current_ref=$(git symbolic-ref -q HEAD) || refuse 'detached HEAD is outside this reach adapter'
+    [ "$current_ref" = "$source_ref" ] || refuse 'the pushed branch must be the checked-out branch'
+    current_oid=$(git rev-parse --verify HEAD) || refuse 'HEAD must exist'
+    [ "$current_oid" = "$source_oid" ] || refuse 'the pushed source no longer matches HEAD'
+    index_flags=$(git ls-files -v) || refuse 'cannot inspect index visibility flags'
+    if printf '%s\n' "$index_flags" | LC_ALL=C grep -q '^[a-zS]'; then
+        refuse 'assume-unchanged and skip-worktree flags can hide authority edits; clear those index flags before requesting reach'
+    fi
+    clean=$(git status --porcelain=v1 --untracked-files=all) || refuse 'cannot inspect working-tree authority'
+    [ -z "$clean" ] || refuse 'index, tracked files, and untracked files must be clean; preserve or commit your work before retrying (ignored private state is allowed)'
+}
+check_source
+
+base_key="branch.${source_ref#refs/heads/}.britReachBase"
+first_push=0
+if oid_zero "$target_oid"; then
+    first_push=1
+    target_oid=$(git config --get "$base_key") || refuse "first push needs an explicit reviewed baseline: git config --local '$base_key' <full-commit-oid>"
+    oid_valid "$target_oid" && ! oid_zero "$target_oid" || refuse 'first-push baseline must be one full nonzero commit ID'
+    [ "$target_oid" != "$source_oid" ] || refuse 'first-push baseline cannot equal HEAD'
+fi
+resolved=$(git rev-parse --verify "$target_oid^{commit}" 2>/dev/null) || refuse 'the advertised remote commit or explicit baseline must exist locally; fetch or review the baseline first'
+[ "$resolved" = "$target_oid" ] || refuse 'baseline must name a commit directly'
+git merge-base --is-ancestor "$target_oid" "$source_oid" || refuse 'baseline must be an ancestor of the pushed source; non-fast-forward reach is unsupported'
+command -v epr >/dev/null 2>&1 || refuse 'install the standalone epr evaluator and run epr setup in this clone'
+epr --repo "$root" ready --target "$target_oid" || refuse 'native readiness did not pass; repair its findings before retrying'
+check_source
+if [ "$first_push" -eq 1 ]; then
+    current_base=$(git config --get "$base_key") || refuse 'first-push baseline changed during evaluation'
+    [ "$current_base" = "$target_oid" ] || refuse 'first-push baseline changed during evaluation'
+fi
