@@ -142,11 +142,13 @@ jobs:
             --test authoring --test pre_push --test commit_cleanup --test daily_driver --test shared_tree
       - name: Prove Unix installer interruption and rollback mechanics
         if: runner.os != 'Windows'
-        run: bash scripts/ci/test-install-brit-release.sh
+        run: |
+          bash scripts/ci/test-install-brit-release.sh
+          bash scripts/ci/test-install-brit-epr.sh
       - name: Retain checksummed delivery candidate
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         with:
-          name: brit-delivery-${{ env.SOURCE_SHA }}-${{ matrix.target }}
+          name: brit-delivery-${{ env.SOURCE_SHA }}-${{ github.run_attempt }}-${{ matrix.target }}
           path: |
             ${{ env.ASSET }}
             ${{ env.ASSET_SUM }}
@@ -169,7 +171,7 @@ jobs:
         run: |
           set -euo pipefail
           for target in x86_64-unknown-linux-gnu x86_64-apple-darwin aarch64-apple-darwin x86_64-pc-windows-msvc; do
-            gh run download "$GITHUB_RUN_ID" --name "brit-delivery-$SOURCE_SHA-$target" --dir .
+            gh run download "$GITHUB_RUN_ID" --name "brit-delivery-$SOURCE_SHA-$GITHUB_RUN_ATTEMPT-$target" --dir .
           done
           count=$(find . -maxdepth 1 -name 'brit-*.sha256' -type f | wc -l)
           test "$count" -eq 4
