@@ -96,8 +96,8 @@ bridges remain part of the supported workflow; exhaustive porcelain parity is a
 separate milestone. The earlier hook/cleanup sprint is complete local work.
 
 - [x] Prove scoped authoring in a separate linked worktree, preserving neighboring staged, unstaged and untracked bytes through hook rejection and interruption before and after ref publication; prove resume and explicit Git abort. Serves brit-native-daily-driver.
-- [ ] Make the installed native gate honor standalone repository authority without weakening the parent package/projection floor; removing governing files cannot opt out. Serves brit-native-daily-driver.
-- [ ] Integrate only the exact independently accepted source into its pinned target, after bounded approved gates; changed source/target/evidence or contrary evidence refuses without ref mutation. Serves brit-native-daily-driver.
+- [x] Make the installed native gate honor standalone repository authority without weakening the parent package/projection floor; removing governing files cannot opt out. Serves brit-native-daily-driver.
+- [x] Integrate only the exact independently accepted source into its pinned target, after bounded approved gates; changed source/target/evidence or contrary evidence refuses without ref mutation. Serves brit-native-daily-driver.
 - [ ] Qualify an installed Unix executable and atomic upgrade/rollback, including corrupt and interrupted installs; bind automated evidence to exact source and keep synthetic fixtures distinct from real delivery. Serves brit-native-daily-driver.
 - [ ] Run the complete installed workflow with two actual developers and record their experiential acceptance through the existing native flow; agent fixtures alone cannot complete this station. Serves brit-native-daily-driver.
 
@@ -152,13 +152,33 @@ qualification tests passed 12/12. These are local source and mechanism proofs,
 not released-version upgrade or human acceptance.
 
 The native evaluator's standalone governance tests passed 8/8 and integration
-tests passed 5/5 on Rust 1.96.1. Independent review found and corrected stale
+tests passed 6/6 on Rust 1.96.1. Independent review found and corrected stale
 hook configuration after an approved gate and a flow-lock/reference-hook
 deadlock. Integration refuses executable reference-transaction hooks; its
 bounded Git transaction reports uncertain outcomes on timeout rather than
-claiming rollback. Arbitrary background descendants of successful commands
-remain outside complete process-tree supervision. Full workspace gates and
-the combined private-install exercise remain separate evidence.
+claiming rollback. A final race regression verifies that replacing the target
+with a symbolic ref cannot redirect the write into another branch; global
+`update-ref --no-deref` covers both transaction operations. Arbitrary background
+descendants of successful commands remain outside complete process-tree
+supervision. The full EPR workspace passed 1,194 tests with no failures or
+ignored tests, strict workspace Clippy and formatting. The EPR changes are
+committed separately as `7fd1c3a45` on `feat/brit-daily-driver-epr-2026-10-12`.
+
+Clean source `a114c15d3e0578a78fc0af019d380e523f00a78c` produced an actual Linux
+`max-pure` / `release-github` archive. Its checksum was verified, it was extracted
+and installed into a private prefix, and the installed binary passed the
+source-free operational probe and all 60 journeys. With installed epr it passed
+all six integration tests, including a separately declared repository identity.
+Candidate binary SHA-256:
+`76e72d279781ce55551c216f50944c9bce2f8fe4115fa1cafe20b825f79f79ef`;
+epr SHA-256:
+`ac874f5ed678bb6c2b37e8b41bd53ded53db56d2667de816aa9872aebefa60c4`.
+This candidate is not release-qualified: its exact-source remote CI exposed
+helper placement, an inherited diagnostic snapshot and a macOS path-alias test
+failure. Those findings require a corrected candidate and green CI. The first
+optimized build took 17 minutes, including about eight minutes of final LTO;
+future package runs should follow the complete inherited gate to avoid repeated
+optimization while source corrections are still arriving.
 
 Brit's own checkout has no checked-in reach hook activated yet. First-push and
 multi-source push policy must be resolved before calling that checkout's native

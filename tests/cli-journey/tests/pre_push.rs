@@ -199,13 +199,15 @@ fn linked_worktree_uses_shared_hook_and_its_own_context() -> Result<()> {
     fs::create_dir(linked.path().join("nested"))?;
     let output = brit(&linked.path().join("nested"), &["push", "origin", "linked:linked"])?;
     ensure!(output.status.success(), "{}", output.stderr);
+    // macOS may spell the same temporary directory /var or /private/var.
+    // Resolve aliases while still requiring the exact worktree and Git directory.
     assert_eq!(
-        fs::read_to_string(linked.path().join("hook-cwd"))?.trim(),
-        linked.path().to_str().expect("temp path")
+        fs::canonicalize(fs::read_to_string(linked.path().join("hook-cwd"))?.trim())?,
+        fs::canonicalize(linked.path())?
     );
     assert_eq!(
-        fs::read_to_string(linked.path().join("hook-git-dir"))?.trim(),
-        git(linked.path(), &["rev-parse", "--absolute-git-dir"])?
+        fs::canonicalize(fs::read_to_string(linked.path().join("hook-git-dir"))?.trim())?,
+        fs::canonicalize(git(linked.path(), &["rev-parse", "--absolute-git-dir"])?)?
     );
     ensure!(!repo.path().join("hook-input").exists());
     assert_eq!(git(remote.path(), &["rev-parse", "linked"])?, repo.head_id()?);

@@ -1499,6 +1499,10 @@ fn verify_mode(decode: bool, re_encode: bool) -> verify::Mode {
     }
 }
 
+fn anyhow_to_gix(error: anyhow::Error) -> gix::error::Error {
+    gix::error::Error::from_boxed(error.into_boxed_dyn_error())
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -1589,8 +1593,4 @@ mod tests {
         }
         Ok(())
     }
-}
-
-fn anyhow_to_gix(error: anyhow::Error) -> gix::error::Error {
-    gix::error::Error::from_boxed(error.into_boxed_dyn_error())
 }
