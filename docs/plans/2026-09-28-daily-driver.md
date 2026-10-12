@@ -576,13 +576,13 @@ UNWIRED for its complete invariant.
 
 ## Ordered local daily-driver backlog — 2026-10-12
 
-Only station 1 starts now. Later handoffs must be refreshed against the preceding
-station's actual result. All stations serve `brit-native-daily-driver`; its full
+Stations 1 and 2 have completed bounded local proof. Stations 3–5c remain
+queued; refresh each handoff against its predecessor's actual result before work. All stations serve `brit-native-daily-driver`; its full
 invariant remains unqualified. Station numbers live in checkbox labels because
 the existing native recipe extracts bullet checkboxes.
 
 - [x] 1. [Commit amendment and recovery proof](#handoff-1-commit-amendment). Serves brit-native-daily-driver.
-- [ ] 2. [Scoped worktree restore](#handoff-2-scoped-worktree-restore). Serves brit-native-daily-driver.
+- [x] 2. [Scoped worktree restore](#handoff-2-scoped-worktree-restore). Serves brit-native-daily-driver.
 - [ ] 3. [Broader staging](#handoff-3-broader-staging). Serves brit-native-daily-driver.
 - [ ] 4. [Explicit lease protection](#handoff-4-explicit-lease-protection). Serves brit-native-daily-driver.
 - [ ] 5a. [Safe branch switching](#handoff-5a-safe-branch-switching). Serves brit-native-daily-driver.
@@ -637,14 +637,36 @@ against sprint base. Published upgrade and human acceptance are excluded.
 
 ### Handoff 2: Scoped worktree restore
 
-Prerequisite: refreshed station-1 evidence. Public behavior: literal selected
-files restored from index by `restore --worktree --`, or HEAD by `--source=HEAD`.
-Preserve index and unselected files. Boundary: existing native restore/path and
-safe file replacement helpers. Exclude combined staged/worktree restoration.
-Acceptance: disposable Git-oracle CLI journey proving source selection, preflight
-refusal, safe replacement and truthful partial progress after interruption.
-Independent reviewer: separate preservation/recovery reviewer. Evidence: exact
-source/binary, journey logs, review and habit DELTA before station 3 starts.
+Prerequisite refreshed from station 1's completed receipt: clean source
+`806084bf33b4c7670f90242ba4c0a5ea134b2346`, 95 passing journeys, independent
+technical review and passing native readiness. Its executable SHA-256 is
+`7d38079d13bdadde11cb04ccfe749d448cc3df3c1578557045b36d080956a35b`;
+receipt: `/projects/elohim/genesis/local-dev/brit-readiness/commit-amend/verification.json`.
+Station 2 starts from that commit on isolated branch
+`sprint/worktree-restore-2026-10-12`; stations 3–5c remain queued.
+
+Public behavior: literal selected files restored from index by
+`restore --worktree --`, or HEAD by `--worktree --source=HEAD --`.
+Preserve index bytes and unselected files; retain index-only `--staged`.
+Resolve and validate the entire selection before writing. Support regular files,
+executable modes, symlinks and tracked deletions; refuse unsupported index forms,
+directories, pathspecs, submodules and external filters. Reuse native path,
+object/filter and filesystem primitives; the porcelain stub is not an engine.
+Use safe per-file replacement. Cancellation before publication changes nothing;
+interruption after completed files names completed and remaining paths without
+claiming rollback. Combined staged/worktree restoration remains deferred.
+
+Acceptance: disposable stock-Git-oracle CLI journeys cover both sources, dirty
+neighbors, deletions, modes, symlinks, linked worktrees, alternate indexes,
+preflight refusals, write failures and interruption. Existing CI/release selectors
+must include the journey. One Cargo runner reruns all 95 previous journeys,
+package/parser tests, scoped strict Clippy, formatting and feature checks.
+Separate implementation/test agents and independent preservation/recovery review
+supply local technical evidence. Finish with scoped local commits, clean-source
+rebuilt executable, durable receipts under
+`/projects/elohim/genesis/local-dev/brit-readiness/worktree-restore/`, station
+proof, habit DELTA, recipe projection and `epr ready` against the sprint base.
+No push or publication; full habit remains UNWIRED.
 
 ### Handoff 3: Broader staging
 
@@ -776,6 +798,80 @@ branch moves reports the published commit and still delivers post hooks.
 Evidence is local Linux x86_64 with Rust 1.99.0 and Git 2.52.0, empty `RUSTFLAGS`,
 two compiler workers and the existing disposable external target. No push,
 remote platform matrix, published upgrade or human acceptance is claimed.
-The full `brit-native-daily-driver` habit remains UNWIRED. Stations 2–5c stay
-queued; refresh each handoff against its predecessor's actual result before
-starting implementation.
+The full `brit-native-daily-driver` habit remains UNWIRED. At the amendment
+handoff stations 2–5c were queued; station 2's subsequent evidence follows below.
+
+
+### Scoped restore boundary and recovery stations
+
+Restoration is an on-device Git bridge operation. The selected source is a
+snapshot of the current index or HEAD; no protocol identity, DHT entity, shared
+pool, network route or additional protocol head is introduced. Another person
+or device sees only deliberately transferred Git commits. The author's index
+and unselected working files remain outside this operation's write set.
+The existing Git object/filter and filesystem primitives own conversion and
+publication; combined staged/worktree restoration remains deferred.
+
+Chain: selected source → complete preflight → per-file publication → recovery.
+Between source selection and publication, attribute selection is a distinct
+assertion: restoring `.gitattributes` with a file must convert that file as Git
+would after the selected attributes are restored, without writing either file
+before full preflight succeeds. Unselected dirty attributes and index fallback
+remain separate inputs. The Git-oracle attribute journey measures this boundary.
+
+Between preparation and safe publication, permissions must respect the process
+umask and cancellation must discard temporary files. Between partial publication
+and recovery, the command must name completed and remaining paths; it cannot
+promise rollback across multiple files. The real-signal journey stops the process
+while preparing a 128 MiB temporary file, then tests cancellation before any
+publication and after a smaller selected file has completed. The I/O-failure
+journey installs a nonempty destination obstruction during that same boundary
+and checks that the other writer's bytes survive. These are executable recovery
+stations, not a claim of power-loss durability or isolation from hostile
+concurrent directory renames. Cleanup may remove only empty directories actually
+created by this invocation.
+
+
+### Scoped restore local verification — 2026-10-12
+
+Station 2 has bounded local technical proof. All 95 prior public journeys and
+14 new worktree-restore journeys pass (109 total, none ignored). The attribute
+journey includes 25 stock-Git cases distinguishing selected source attributes,
+unselected dirty attributes, absent attributes and index fallback under both
+sources. The suite also proves unchanged index bytes, dirty neighbors, linked
+worktrees, alternate indexes, tracked deletions, executable modes, native and
+configured emulated symlinks, restrictive umask, special-index/filter refusals,
+preflight rejection and real-signal cancellation before and after publication.
+I/O failures report completed and remaining paths and preserve the obstruction.
+The existing source-CI and installed-release selectors now include this suite;
+two earlier refusal tests now exercise the still-deferred combined mode.
+
+All 16 Brit package tests, eight Gitoxide CLI library tests, strict scoped
+all-target Clippy, workspace formatting, and `small`, `lean-async`, `max-pure`
+feature checks pass. Implementation and tests had separate agents; one Cargo
+runner performed verification. Independent preservation/recovery review checked
+whole-selection preflight, source/attribute resolution, private object-memory
+writes, index preservation, symlink traversal, umask, temporary-file ownership,
+and truthful partial completion. The final clean-source artifact and rerun bind
+the late PersistError cleanup correction as well: release the temporary file
+before removing newly created empty ancestors.
+
+Source base: `806084bf33b4c7670f90242ba4c0a5ea134b2346`; implementation commit:
+`042a9b6ce`. Isolated branch: `sprint/worktree-restore-2026-10-12`.
+Durable commands, complete logs, independent review, clean-source executable,
+revision/hash receipt and native readiness rehearsal live under
+`/projects/elohim/genesis/local-dev/brit-readiness/worktree-restore/`.
+`verification.json` binds the final committed source and executable without a
+self-referential revision in this document. `finish-verify.sh` rebuilds from a
+clean source, reruns all 109 journeys against the copied executable, and runs
+`epr ready --target 806084bf33b4c7670f90242ba4c0a5ea134b2346`.
+The existing `.epr-meta/recipes.yaml` remains the recipe projection authority.
+
+Evidence is local Linux x86_64, Rust 1.99.0, Git 2.52.0, empty `RUSTFLAGS` and
+two compiler workers sharing the existing external Cargo target. Berth access
+returned its documented exit-4 unleased fallback because the store was read-only;
+no second Cargo runner was used. Direct shell reads supplied source and prior
+receipt context; no memory curation or remote acceptance occurred. No push,
+publication, remote platform qualification or human acceptance is claimed.
+The full `brit-native-daily-driver` habit remains UNWIRED. Stations 3–5c remain
+queued; broader staging is next, with its handoff to be refreshed before work.
