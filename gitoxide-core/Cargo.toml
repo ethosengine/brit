@@ -55,10 +55,9 @@ serde = ["gix/serde", "dep:serde_json", "dep:serde", "bytesize/serde"]
 
 [dependencies]
 anyhow = "1.0.102"
-gix-error = { version = "^0.5.1", path = "../gix-error", registry = "elohim", features = ["anyhow"] }
 gix-config-value = { version = "^0.21.0", path = "../gix-config-value", registry = "elohim" }
 # deselect everything else (like "performance") as this should be controllable by the parent application.
-gix = { version = "^0.89.0", path = "../gix", registry = "elohim", default-features = false, features = ["merge", "blob-diff", "blame", "revision", "mailmap", "excludes", "attributes", "worktree-mutation", "credentials", "interrupt", "status", "dirwalk", "command"] }
+gix = { version = "^0.89.0", path = "../gix", registry = "elohim", default-features = false, features = ["anyhow", "merge", "blob-diff", "blame", "revision", "mailmap", "excludes", "attributes", "worktree-mutation", "credentials", "interrupt", "status", "dirwalk", "command"] }
 gix-pack = { version = "^0.76.0", path = "../gix-pack", registry = "elohim", default-features = false, features = ["pack-cache-lru-dynamic", "pack-cache-lru-static", "generate", "streaming-input"] }
 gix-transport = { version = "^0.61.0", path = "../gix-transport", registry = "elohim", default-features = false }
 gix-archive = { version = "^0.38.0", path = "../gix-archive", registry = "elohim", optional = true, features = ["tar", "tar_gz"] }

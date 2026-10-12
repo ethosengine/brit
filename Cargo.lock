@@ -1967,7 +1967,6 @@ dependencies = [
  "gix 0.89.0",
  "gix-archive 0.38.0",
  "gix-config-value 0.21.0",
- "gix-error 0.5.1",
  "gix-fsck",
  "gix-pack 0.76.0",
  "gix-status 0.36.0",
