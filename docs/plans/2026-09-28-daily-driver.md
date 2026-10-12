@@ -224,3 +224,52 @@ fake evaluator. Set `EPR_TEST_BIN=/absolute/path/to/epr` to additionally prove r
 setup, doctor, readiness, and an invalid-governance push refusing without moving
 the remote. CI runs the explicitly labeled fixture lane; the real installed
 evaluator and human daily-driving qualification remain separate evidence.
+
+### Final installed candidate and handoff
+
+The clean Linux candidate is source `d6cb92865e707015108d197f8eed418119600921`,
+with binary SHA-256
+`48ebeceb12d223c1299d87267f3a0d7470a2c7df3ba898cf2b082c68ba80cddc`
+and archive SHA-256
+`a6c6da000413d33890485b8f22163927fb1dcae023868c142d15be11e8a0fa3a`.
+The packaged, extracted and installed executable passed all 60 public journeys
+and all six real installed-evaluator integration tests. Actual source candidates
+A-to-B-to-A-to-B passed checksum, embedded-source and operational checks at every
+activation. Both candidates are version 0.1.5; this proves candidate replacement
+and rollback, not an upgrade between published versions.
+
+The separate hook-only revision `eff40d6ab353687bd7e40178066d2baf150290e8`
+passed 27 mechanics checks and an independent real-EPR probe. Its own push from
+a clean linked worktree ran the activated hook and native readiness successfully,
+evaluating all five changed paths. A final combined disposable-repository probe
+used the installed candidate, this hook and the pinned EPR executable: valid
+governance published the exact source, then invalid governance refused without
+changing the remote. No bypass was used. The clone's `core.hooksPath` is now
+`.githooks`; the original shared worktree's unrelated edits were preserved.
+
+In this workspace, the private installation and durable proof live under
+`genesis/local-dev/brit-readiness/` in the parent Elohim checkout. The default
+workspace EPR executable has not been replaced. Select the tested binaries in
+the current shell before operating the activated hook:
+
+```sh
+export PATH=/projects/elohim/genesis/local-dev/brit-readiness/release-install/bin:/projects/elohim/genesis/local-dev/brit-readiness/private-install/bin:$PATH
+brit --version
+epr doctor
+```
+
+Machine-readable artifact evidence is `release-candidate-final/candidate-evidence.json`;
+the combined push proof is `installed-native-reach.log` within that evidence
+directory's parent. Remote CI is tracked separately for the binary source and
+hook revision. The binary source's [CI run 38259066507](https://github.com/ethosengine/brit/actions/runs/38259066507)
+completed successfully with 29 successful jobs and publication skipped by its
+branch condition; CodeQL and workflow-security checks also passed. The hook
+revision's [CI run 38260354830](https://github.com/ethosengine/brit/actions/runs/38260354830)
+also completed successfully with 29 successful jobs, publication skipped, and
+both security workflows green. Exact-revision CI receipts are saved alongside
+the artifact evidence as `ci-d6cb.json` and `ci-eff40.json`. The full
+local inherited shell journey still fails on unchanged
+pack hashes; its cause is unresolved, while that original journey job passed
+remotely for the binary source. Expected hashes and assertions were not weakened.
+Actual two-developer acceptance and a genuine published-version upgrade remain
+open. The overall daily-driver habit remains unqualified.
