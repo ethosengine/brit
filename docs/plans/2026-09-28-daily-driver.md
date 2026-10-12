@@ -268,8 +268,211 @@ revision's [CI run 38260354830](https://github.com/ethosengine/brit/actions/runs
 also completed successfully with 29 successful jobs, publication skipped, and
 both security workflows green. Exact-revision CI receipts are saved alongside
 the artifact evidence as `ci-d6cb.json` and `ci-eff40.json`. The full
-local inherited shell journey still fails on unchanged
-pack hashes; its cause is unresolved, while that original journey job passed
-remotely for the binary source. Expected hashes and assertions were not weakened.
+local inherited shell journey at that handoff failed on unchanged
+pack hashes, while that original journey job passed remotely for the binary
+source. The later acceptance sprint below resolves the compression cause. Expected hashes and assertions were not weakened.
 Actual two-developer acceptance and a genuine published-version upgrade remain
 open. The overall daily-driver habit remains unqualified.
+
+## Installed acceptance sprint — 2026-10-12
+
+This sprint closes delivery and handoff prerequisites. The overall habit remains
+unqualified until the platform matrix, genuine released-version upgrade and two
+actual developers supply their separate evidence.
+
+- [x] Install independently pinned Brit and EPR binaries as one private generation; failed checks and interrupted activation preserve the previous pair, and overlapping installers retain rollback generations. Probe: `bash scripts/ci/test-install-brit-epr.sh`. Serves brit-native-daily-driver.
+- [x] Prepare the existing installed-platform matrix for manual branch qualification without creating a tag, draft or release. Probe: `bash scripts/ci/test-brit-delivery-source.sh`; actual remote matrix remains pending. Serves brit-native-daily-driver.
+- [x] Exercise the public native claim, fulfillment, independent appointment/review, pinned acceptance and integration commands with installed binaries in a disposable agent fixture; replay refuses. This proves handoff syntax, not human acceptance. Serves brit-native-daily-driver.
+- [ ] Capture a green exact-source manual `brit release` workflow run and qualify `installed-unix`; Linux and both Mac architectures are required. Serves brit-native-daily-driver.
+- [ ] Deliver the native EPR integration revision and final Brit evidence to their remotes, then bind the available artifacts to those revisions. Serves brit-native-daily-driver.
+- [ ] Exercise two distinct published versions through `verify-brit-upgrade.sh`, preserving repository bytes through upgrade and rollback. Serves brit-native-daily-driver.
+- [ ] Two actual developers each author and independently accept one scoped loop with the installed pair, recording failures, recoveries and experiential judgments. Serves brit-native-daily-driver.
+
+### Installing the pair
+
+Run the helper from a checkout containing this sprint, supplying a verified,
+extracted Brit package and independently obtained source/hash pins:
+
+```sh
+bash scripts/ci/install-brit-epr.sh \
+  "$BRIT_PACKAGE" "$BRIT_SOURCE" "$BRIT_SHA256" \
+  "$EPR_BINARY" "$EPR_SOURCE" "$EPR_SHA256" "$PRIVATE_PREFIX"
+export PATH="$PRIVATE_PREFIX/current/bin:$PATH"
+brit --version
+epr doctor
+```
+
+The helper copies both tools into a unique generation, verifies their bytes,
+checks the required EPR command interfaces and atomically activates the pair.
+Repeat with the previous pins to roll back. It never modifies the user's default
+PATH or installed commands. Existing generations are retained. An interrupted or
+failed activation may leave an inactive generation, deliberately preserving any
+possibly activated rollback candidate. Linux is exercised locally; macOS's rename
+behavior still needs the real platform job. The pair receipt explicitly identifies
+EPR's source as caller-declared: this EPR binary does not embed its commit ID, so
+its checksum binds the supplied bytes without manufacturing build provenance.
+Interface smoke alone does not establish workflow compatibility or acceptance.
+
+The tested local pair is available at:
+
+```sh
+export PATH=/projects/elohim/genesis/local-dev/brit-readiness/acceptance-sprint/tool-pair/current/bin:$PATH
+```
+
+It contains the prior final Brit artifact (`d6cb92865`, binary SHA-256
+`48ebeceb12d223c1299d87267f3a0d7470a2c7df3ba898cf2b082c68ba80cddc`)
+and EPR (`7fd1c3a4516e4b47888c70d0b70999052e73e204`, binary SHA-256
+`ac874f5ed678bb6c2b37e8b41bd53ded53db56d2667de816aa9872aebefa60c4`).
+The new installer does not imply either artifact was rebuilt from this sprint.
+Local pair evidence lives in `acceptance-sprint/pair-{install,operational,reach,fault-fixtures}.log`
+under the existing parent campaign directory. Source-free Brit operations and the
+27 reach-hook mechanics plus real EPR governance/refusal probes pass.
+
+### Qualifying a candidate without publication
+
+After pushing this sprint to a branch, manually dispatch `.github/workflows/brit-release.yml`
+against that exact branch. Manual dispatch is candidate-only: source validation
+requires the branch commit to match HEAD; prepare and build have read-only contents
+permissions; the release-writing job is skipped. The same four-target build and
+Unix installed tests produce checksummed Actions artifacts named with source,
+run attempt and target. Capture the completed exact run for the existing
+`installed-unix` qualifier. Local workflow fixtures are preparation, not that
+remote result. A `brit-v*` tag push retains the release path and publishes only
+after all targets pass; do not push a release tag merely to obtain a measurement.
+
+### Two-developer procedure
+
+Start with a disposable clean clone containing the root governance files, recipes
+and checked-in hook, and use the tested pair. Run `epr setup` then `epr doctor`
+before the ceremony. An arbitrary empty `git init` repository lacks those inputs.
+Repeat in the selected real repository only after its preceding readiness stations
+are accepted.
+Both people use the same candidate checkout and native sidecar with distinct
+sessions for this first exercise. The procedure does not promise record transfer
+between independent clones. Each person issues their own identity and acceptance
+commands; an agent must not claim a human identity or fill in an experiential
+verdict on their behalf. Run the loop twice with the roles reversed.
+
+The author selects one eligible intent from installed context. Choose a fresh
+session name and actual human handle, then claim it (do not supersede another
+owner). Commands below use `jq` to read returned IDs, never invented CIDs:
+
+```sh
+mkdir -p .eprfs/status/daily-driver
+epr flow project --root . --recipes .epr-meta/recipes.yaml
+brit context docs/plans/2026-09-28-daily-driver.md --root . --json
+epr actor claim --as "human:$AUTHOR" --session "$AUTHOR_SESSION" --json \
+  > .eprfs/status/daily-driver/author.json
+epr flow claim --on "$INTENT_CID" --session "$AUTHOR_SESSION" \
+  --brief "$BRIEF_PATH" --json > .eprfs/status/daily-driver/claim.json
+COMMITMENT=$(jq -er .commitment_cid .eprfs/status/daily-driver/claim.json)
+```
+
+In the disposable exercise each person uses scoped staging through stock Git,
+commits with Brit, experiences a pre-push rejection without remote movement,
+recovers an interrupted operation, and successfully pushes through the installed
+native hook. Compare staged, unstaged and untracked neighboring bytes with stock
+Git. Write the observations, exact commands, binary pins and limitations in a
+UTF-8 author report under `.eprfs/status/daily-driver/`; failures remain evidence.
+For the selected candidate, pin the checked-out source branch and an explicitly
+named, unchecked-out target branch after all source changes are committed. Ensure
+both the tracked tree and untracked tree are clean (private `.eprfs/` is ignored).
+Then fulfill only the work actually completed:
+
+```sh
+SOURCE_REF=$(git symbolic-ref HEAD)
+SOURCE_COMMIT=$(git rev-parse "$SOURCE_REF")
+TARGET_COMMIT=$(git rev-parse "$TARGET_REF")
+epr flow fulfill --on "$COMMITMENT" --report "$AUTHOR_REPORT" \
+  --status DONE_WITH_CONCERNS --commit "$SOURCE_COMMIT" \
+  --session "$AUTHOR_SESSION" --json > .eprfs/status/daily-driver/fulfillment.json
+```
+
+The reviewer registers their own distinct identity. The appointing person records
+that reviewer for this commitment; the reviewer independently examines the exact
+candidate and records a technical verdict. Use `changes-requested` if warranted:
+
+```sh
+epr actor claim --as "human:$REVIEWER" --session "$REVIEWER_SESSION" --json \
+  > .eprfs/status/daily-driver/reviewer.json
+REVIEWER_CLAIM=$(jq -er .recordCid .eprfs/status/daily-driver/reviewer.json)
+epr flow note --on "$COMMITMENT" --kind ruling --appoint "$REVIEWER_CLAIM" \
+  --reason "$APPOINTMENT_REASON" --session "$AUTHOR_SESSION" --json \
+  > .eprfs/status/daily-driver/appointment.json
+epr flow note --on "$COMMITMENT" --kind verdict --verdict approved \
+  --reason "$TECHNICAL_REVIEW" --session "$REVIEWER_SESSION" --json \
+  > .eprfs/status/daily-driver/review.json
+```
+
+The reviewer next actually uses the installed workflow and writes an acceptance
+JSON report. Run mutating rejection/recovery exercises in disposable sibling
+repositories, preserving the selected candidate HEAD, tree and pinned evidence.
+If the candidate changes, repin it and repeat review before acceptance. Required fields are `intent`, `revision` (exact source commit),
+`environment`, nonempty `actions` and `observations` arrays, an explicit
+`limitations` array, and `evidence` entries with repository-relative `path` and
+`cid`. One evidence entry must name the unchanged author report and the exact
+`.evidence` CID returned by fulfillment. For integration, add:
+
+```json
+{
+  "integration": {
+    "sourceRef": "<full refs/heads/ source>",
+    "sourceCommit": "<pinned source commit>",
+    "targetRef": "<full refs/heads/ target>",
+    "targetCommit": "<pinned target commit>",
+    "gate": ["<approved executable>", "<argument>"],
+    "gateTimeoutSeconds": 1800
+  }
+}
+```
+
+This is the integration portion, not a complete report. Choose the real owning
+quality gate and its argv with the reviewer; do not use a no-op to pass the
+ceremony. Keep all reports and pinned evidence inside the repository. Record
+experiential approval only after the reviewer concludes the scoped assertion is
+met, with limitations explicit:
+
+```sh
+APPOINTMENT=$(jq -er .record_cid .eprfs/status/daily-driver/appointment.json)
+FULFILLMENT=$(jq -er .record_cid .eprfs/status/daily-driver/fulfillment.json)
+REVIEW=$(jq -er .record_cid .eprfs/status/daily-driver/review.json)
+epr flow note --on "$COMMITMENT" --kind verdict --verdict approved \
+  --purpose acceptance --appointment "$APPOINTMENT" --fulfillment "$FULFILLMENT" \
+  --review "$REVIEW" --report "$ACCEPTANCE_REPORT" --reason "$ACTUAL_JUDGMENT" \
+  --session "$REVIEWER_SESSION" --json > .eprfs/status/daily-driver/accepted.json
+ACCEPTANCE=$(jq -er .record_cid .eprfs/status/daily-driver/accepted.json)
+brit integrate --acceptance "$ACCEPTANCE"
+```
+
+A moved source/target, changed evidence, failed gate or contrary finding must
+refuse. Inspect the target afterwards; integration is local and does not push.
+Preserve each loop's reports and records before starting the reverse-role loop:
+use a different evidence directory and session names so old pins do not change.
+The actor response uses `recordCid`; flow notes and fulfillments use `record_cid`.
+These commands were exercised with two explicitly agent-only identities and the
+installed binaries: integration succeeded, the tree stayed clean, and replay
+refused. `acceptance-sprint/native-ceremony.log` records that syntax proof;
+actual two-person qualification remains open.
+
+### Pack snapshot finding resolved
+
+The former unexplained local pack hash is a producer-compression difference.
+Holding Git 2.52, the nine fixture objects and the installed Brit binary fixed,
+system zlib `1.3.1.zlib-ng` produces pack `9380796d…` / index `c02d9…`;
+standard zlib `1.3.2` produces the exact expected pack `24d2f055…` / index
+`8e484…`. Git 2.54 reproduces both outcomes. Object order, headers and all nine
+inflated objects agree; four compressed streams differ. Brit receives the valid
+pack produced by Git in either case. All ten original `file://` receive assertions
+pass with standard zlib and unchanged snapshots. No production or snapshot fix
+was needed. Use a reference-compatible Git compression implementation for these
+byte-sensitive fixtures; diagnostic library paths are not installation dependencies.
+
+Story constraint: between installing the pinned executable and reproducing
+byte-sensitive interoperability snapshots, declare the producer's compression
+implementation. The probe is `acceptance-sprint/probe-pack-producer.sh` plus the
+unchanged original assertions in `original-file-pack.log`; the detailed receipt is
+`pack-producer-evidence.json` (SHA-256
+`b2bcbc0ad27795dd4d813ae2658f52b1c88cd4c913ca9f387be07a1cec75c0b0`).
+The complete inherited journey was attempted again but the current sandbox
+refuses the Git daemon's local TCP listener with `EPERM`. This is a distinct
+execution restriction, not a full-suite pass or a remaining pack defect.
