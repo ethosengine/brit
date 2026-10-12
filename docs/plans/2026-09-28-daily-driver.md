@@ -585,7 +585,7 @@ the existing native recipe extracts bullet checkboxes.
 - [x] 2. [Scoped worktree restore](#handoff-2-scoped-worktree-restore). Serves brit-native-daily-driver.
 - [x] 3. [Broader staging](#handoff-3-broader-staging). Serves brit-native-daily-driver.
 - [x] 4. [Explicit lease protection](#handoff-4-explicit-lease-protection). Serves brit-native-daily-driver.
-- [ ] 5a. [Safe branch switching](#handoff-5a-safe-branch-switching). Serves brit-native-daily-driver.
+- [x] 5a. [Safe branch switching](#handoff-5a-safe-branch-switching). Serves brit-native-daily-driver.
 - [ ] 5b. [Fast-forward pull](#handoff-5b-fast-forward-pull). Serves brit-native-daily-driver.
 - [ ] 5c. [Rebase/conflict recovery design](#handoff-5c-rebaseconflict-recovery-design). Serves brit-native-daily-driver.
 
@@ -780,12 +780,15 @@ Finish with scoped local commits, clean rebuilt artifact, retained journeys,
 parser/package/ref/recovery tests, strict lint, feature checks and readiness against
 the exact base. Durable receipts:
 `/projects/elohim/genesis/local-dev/brit-readiness/safe-switch/`.
-Station 5a remains unchecked until switching and durable recovery both pass.
+Station 5a is locally complete: switching and durable recovery both pass, including
+clean committed artifact qualification. See the verification evidence below.
 No push, publication or parent pin change; full habit remains UNWIRED.
 
 ### Handoff 5b: Fast-forward pull
 
-Prerequisite: refreshed 5a result. Public behavior: fetch and integrate explicitly
+Prerequisite: station 5a source `1ffde6e22`, clean copied artifact, 149 ordinary
+journeys, 25 switch/recovery journeys, independent approval and native readiness.
+Public behavior: fetch and integrate explicitly
 selected remote branch only with proven fast-forward; divergence preserves branch
 and files. Boundary: native fetch and proven checkout/ref publication primitives.
 Exclude merge/rebase pull. Acceptance: disposable local remote journey for fast
@@ -1137,18 +1140,76 @@ Review discovered three missing stations between preparation and completion:
 
 - Chain 5a / between preparation → ordinary lock acquisition / missing node:
   durable ownership intent must precede each initial or recovered lock link.
-  Probe: real SIGKILL at `lock-intent` and `lock-acquired`, then explicit recovery.
+  Probe: real SIGKILL at `lock-intent` and `lock-acquired`, then explicit recovery. Current state: locally green.
 - Chain 5a / between desired file bytes → commit decision / missing node:
   matching bytes after interruption must still be synchronized before deciding.
   Probe: the actual-engine synchronization trace loses every unsynchronized byte
   and namespace change at each boundary; negative controls must fail.
+  Current state: locally green.
 - Chain 5a / between metadata publication → hook / missing node:
   release ordinary Git guards durably while retaining the private journal fence.
   Probe: `post-checkout` successfully stages its changes through Git; interrupted
   hooks preserve those changes and are never automatically replayed.
+  Current state: locally green.
 
 The Git oracle also established that a hook exiting 7 makes `git switch` exit 1.
 Brit preserves that failure status and the committed switch. A durable hook-start
 without a recorded outcome reports uncertainty. Directory transitions preserve
 original directory identity/modes through private renames; affected nested
 repositories and gitlinks remain outside this station's supported boundary.
+
+
+### Safe switch local verification — 2026-10-12
+
+Station 5a has bounded local technical proof including crash-durable explicit
+recovery. All 134 retained journeys, 14 normal switch journeys and one inherited
+Git-environment isolation test pass (149 total). A separately built fault-test
+executable passes 25 switch journeys: the same 14 ordinary cases plus 11 recovery
+cases, including real SIGINT/SIGKILL at deterministic checkpoints, interrupted
+abort, lock ownership windows, corrupt journals, foreign resource changes and
+running hooks. These are test counts, not a count of individual fault cases.
+
+The separate durability model executes one test across four actual filesystem
+shapes (regular file, symlink, file-to-directory and directory-to-file). It models
+loss of unsynchronized bytes and namespace changes at every engine sync boundary
+and checks negative controls. This is not hardware power-cut qualification.
+
+All 18 Brit package tests, eight Gitoxide CLI parser tests, 207 native ref tests
+(two inherited ignored), two feature-enabled lease tests, strict scoped all-target
+Clippy with and without fault features, workspace formatting and
+small/lean-async/max-pure checks pass. Source CI, release-source qualification and
+installed-release selectors include the applicable switch tests; Linux fault tests
+use an explicit test-only feature. Unsupported-platform refusal has its own test;
+no remote or non-Linux execution is claimed here.
+
+Separate implementation and journey agents, one Cargo runner and an independent
+checkout/recovery reviewer completed this station. Review approved preservation,
+journal privacy, synchronization ordering, retry idempotence, lock ownership,
+resource conflicts and truthful partial outcomes. The clean-source copied normal
+artifact reran all 149 journeys, and its separate fault artifact reran all 25
+switch/recovery journeys. The full habit remains UNWIRED.
+
+Source base: `e4d631d78eb8c563df61c501d05705e0dbe59594`; implementation source:
+`1ffde6e22a73554d1d98b50648df5eb9520a7086`; isolated branch:
+`sprint/safe-switch-2026-10-12`. Normal executable SHA-256:
+`601c776c41f2f1c72adc6e0501b6c928fa361c6ac8bf784049569590c7128109`.
+Fault executable SHA-256:
+`8186f25620210b3464f41e0e954ea773087413bb60b1fe934107f62111136fca`.
+The evidence-only follow-up commit does not change executable source.
+
+Durable commands, logs, fault matrix, independent review, copied executables and
+revision/hash bindings live under
+`/projects/elohim/genesis/local-dev/brit-readiness/safe-switch/`.
+`verify.sh` describes source verification; `finish-verify.sh` requires clean
+committed source before rebuilding and copying both artifacts. `verification.json`
+binds the source, artifacts and final evidence revision. Native readiness passed
+against the exact base; the final evidence revision is rehearsed with the same
+`epr ready --target e4d631d78eb8c563df61c501d05705e0dbe59594` command. The existing
+`.epr-meta/recipes.yaml` remains the recipe projection authority.
+
+Evidence is local Linux x86_64, Rust 1.99.0 and Git 2.52.0, empty RUSTFLAGS,
+two Cargo workers and the existing external target. Berth used its documented
+exit-4 unleased fallback. Direct source and prior-receipt reads occurred outside
+the private recall executor; no memory curation occurred. No push, publication,
+parent-submodule pin change, remote qualification or human acceptance is claimed.
+Next queued: 5b fast-forward pull, then 5c rebase/conflict recovery design.
