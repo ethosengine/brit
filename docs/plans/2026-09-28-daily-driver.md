@@ -584,7 +584,7 @@ the existing native recipe extracts bullet checkboxes.
 - [x] 1. [Commit amendment and recovery proof](#handoff-1-commit-amendment). Serves brit-native-daily-driver.
 - [x] 2. [Scoped worktree restore](#handoff-2-scoped-worktree-restore). Serves brit-native-daily-driver.
 - [x] 3. [Broader staging](#handoff-3-broader-staging). Serves brit-native-daily-driver.
-- [ ] 4. [Explicit lease protection](#handoff-4-explicit-lease-protection). Serves brit-native-daily-driver.
+- [x] 4. [Explicit lease protection](#handoff-4-explicit-lease-protection). Serves brit-native-daily-driver.
 - [ ] 5a. [Safe branch switching](#handoff-5a-safe-branch-switching). Serves brit-native-daily-driver.
 - [ ] 5b. [Fast-forward pull](#handoff-5b-fast-forward-pull). Serves brit-native-daily-driver.
 - [ ] 5c. [Rebase/conflict recovery design](#handoff-5c-rebaseconflict-recovery-design). Serves brit-native-daily-driver.
@@ -706,13 +706,37 @@ sprint base. No push or publication; full habit remains UNWIRED.
 
 ### Handoff 4: Explicit lease protection
 
-Prerequisite: refreshed station-3 result. Public behavior:
-`--force-with-lease=<full-ref>:<expected-oid>` for one branch update. Boundary:
-existing push resolver/transport; compare advertised remote value while retaining
-transport race protection. Exclude implicit leases and force-if-includes.
-Acceptance: disposable local bare remote journey, including stale lease and race
-refusals with unchanged remote. Independent reviewer: separate transport reviewer.
-Evidence: exact revisions, executable, test logs, review and habit DELTA.
+Prerequisite refreshed from station 3: clean source
+`6a945992b4016bdbb391efcf0139376d879ffc9f`, 124 passing public journeys,
+independent review and passing native readiness. Clean rebuilt executable SHA-256:
+`2f931512704f7f762ef33d71234a99623932b39c9ceb0890532bbcd3bfaf8997`.
+Receipt: `/projects/elohim/genesis/local-dev/brit-readiness/broader-staging/verification.json`.
+Station 4 starts from that source on isolated branch
+`sprint/explicit-leases-2026-10-12`; stations 5a–5c remain queued.
+
+Public behavior: `brit push --force-with-lease=refs/heads/<branch>:<full-expected-oid>
+<remote> <source>:refs/heads/<branch>` for one explicitly selected existing remote
+branch. Require a full branch ref and full hexadecimal expected OID; the expected
+object need not exist locally. Reuse the existing resolved-update callback to
+validate destination and advertised old OID before hooks or transmission, including
+otherwise unchanged updates. A matching lease permits non-fast-forward replacement.
+Retain the advertised old OID in the transport command so a later remote change
+causes server rejection; no separate preflight lookup. `--no-verify` bypasses hooks
+only, and `--force` cannot override a stale lease. Ordinary push remains unchanged.
+Implicit leases, empty expectations/creation, deletion, tags, multiple destinations
+and `--force-if-includes` remain deferred.
+
+Acceptance: disposable stock-Git-oracle journeys for matching/stale leases,
+missing local expected objects, destination mismatch, unsupported forms,
+dry-run/no-op, hook rejection/bypass and remote movement during pre-push.
+Refusal preserves remote state except the deliberate competing writer's change.
+Separate implementation/test agents, one Cargo runner, independent transport review.
+Wire source-CI/release selectors; rerun all 124 prior journeys, package/parser tests,
+scoped strict Clippy, formatting and small/lean-async/max-pure feature checks.
+Finish with scoped local commits, clean-source rebuilt executable, durable receipts
+under `/projects/elohim/genesis/local-dev/brit-readiness/explicit-leases/`, station
+evidence, habit DELTA, recipe projection and native readiness against the sprint base.
+No push or publication; full habit remains UNWIRED.
 
 ### Handoff 5a: Safe branch switching
 
@@ -975,3 +999,79 @@ No push, publication, remote platform matrix, power-loss durability or hostile
 concurrent-directory-rename isolation is claimed. The full habit remains UNWIRED.
 Next: station 4 explicit leases, then safe branch switching, fast-forward pull
 and rebase/conflict recovery design, one locally verified station per fresh context.
+
+
+### Explicit lease boundary and transport stations
+
+Lease expectations are on-device Git bridge inputs over existing ref names and
+Git OIDs. They create no protocol entity, shared ledger, HTTP route or recurring
+head. The receiver's advertised ref is the comparison source; a remote-tracking
+ref or a separate lookup cannot authorize the push. A matching expectation permits
+replacement without requiring the old object in the local object store.
+
+Chain: explicit scope → advertisement authorization → hook → receiver transaction.
+Between authorization and receiver transaction, the advertised old OID must remain
+in the transport command even if the hook moves the remote. The competing-writer
+journey compares stock Git and requires a receiver CAS refusal with only the
+competing writer's new state remaining. Hook bypass removes only the hook step.
+Between advertisement and authorization, unchanged updates still carry a lease
+assertion. Brit checks it before invoking any hook, even when no ref needs moving.
+The Git 2.52.0 oracle permits stale no-ops and lets global `--force` override a
+stale lease. Brit deliberately refuses both under this station's explicit safety
+contract; the journeys retain these differences rather than claim parity.
+
+Between authorization and pack creation, an advertised old object absent locally
+cannot seed the local exclusion walk. Pack traversal omits only that unavailable
+exclusion; the transport retains its original old OID. The absent-object journey
+uses several unsent local commits and checks the remote object graph after receipt.
+This distinction preserves both complete object delivery and receiver race safety.
+
+
+### Explicit leases local verification — 2026-10-12
+
+Station 4 has bounded local technical proof. All 124 retained public journeys
+and 10 explicit-lease journeys pass (134 total, none ignored). The new suite
+covers matching non-fast-forward replacement, stale expectations under force,
+hook bypass and dry-run, expected objects absent locally, complete multi-commit
+pack delivery, destination mismatch, unsupported forms, matching/stale no-ops,
+hook rejection and competing remote movement during the pre-push hook. Refusal
+preserves every remote ref except the deliberate competing writer's change.
+The receiver's CAS diagnostic is asserted separately from the final ref state.
+
+All 17 Brit package tests, eight Gitoxide CLI library tests, two feature-enabled
+lease unit tests, strict scoped all-target Clippy, workspace formatting and
+small/lean-async/max-pure checks pass. The two unit tests require
+`cargo test --locked -p gitoxide-core --features blocking-client --lib explicit_lease`;
+the default package feature set excludes the push module and proves none of them.
+The first actual unit run caught two malformed 42-character fixture IDs; corrected
+40-character fixtures pass without production changes. An inherited pre-push
+assertion now expects the explicit-lease syntax diagnostic for implicit leases,
+retaining its refusal and unchanged-remote checks. Source CI and both release
+qualification selectors include the new journey.
+
+Separate agents owned implementation and journeys; one Cargo runner performed
+verification. Independent transport review checked advertisement binding, no-op
+validation, hook ordering, missing-object pack traversal and unchanged receiver
+compare-and-swap input. Review and oracle corrections preserved the stricter Brit
+contract rather than weakening it to stock Git's force and no-op behavior.
+This is agent technical review, not human acceptance.
+
+Source base: `6a945992b4016bdbb391efcf0139376d879ffc9f`; implementation commit:
+`4701b8f4a`. Isolated branch: `sprint/explicit-leases-2026-10-12`.
+Durable commands, full logs, independent review, clean-source executable and
+revision/hash receipt live under
+`/projects/elohim/genesis/local-dev/brit-readiness/explicit-leases/`.
+`verification.json` pins the final committed source and artifact outside this
+document. `finish-verify.sh` rebuilds clean committed source, reruns all 134
+journeys against the copied executable, and runs `epr ready --target
+6a945992b4016bdbb391efcf0139376d879ffc9f`. The existing
+`.epr-meta/recipes.yaml` remains the recipe projection authority.
+
+Evidence is local Linux x86_64, Rust 1.99.0 and Git 2.52.0, empty RUSTFLAGS,
+two compiler workers and the existing external Cargo target. Berth claims used
+the documented exit-4 unleased fallback. Direct shell reads supplied source and
+prior receipt context outside the private recall executor; no memory curation
+occurred. No push, publication, remote platform qualification, parent pin change
+or human acceptance is claimed. The full habit remains UNWIRED.
+Next: safe branch switching → fast-forward pull → rebase/conflict recovery design,
+one locally verified station per fresh context.
