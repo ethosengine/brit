@@ -239,11 +239,19 @@ pub fn run_with_command(args: Args, command: clap::Command) -> Result<()> {
         Subcommands::Add { paths } => prepare_and_run("add", verbose, None, move |_progress, _out, _err| {
             core::repository::index::add_paths(repository(Mode::Strict)?, &paths)
         }),
-        Subcommands::Restore { staged: _, paths } => {
-            prepare_and_run("restore-staged", verbose, None, move |_progress, _out, _err| {
-                core::repository::index::restore_staged(repository(Mode::Strict)?, &paths)
-            })
-        }
+        Subcommands::Restore {
+            staged,
+            worktree: _,
+            source,
+            paths,
+        } => prepare_and_run("restore", verbose, None, move |_progress, _out, _err| {
+            let repo = repository(Mode::Strict)?;
+            if staged {
+                core::repository::index::restore_staged(repo, &paths)
+            } else {
+                core::repository::index::restore_worktree(repo, &paths, source.is_some())
+            }
+        }),
         Subcommands::Diff(crate::plumbing::options::diff::Platform { cmd, cached, paths }) => match cmd {
             None => prepare_and_run("diff", verbose, None, move |_progress, out, _err| {
                 core::repository::diff::working(repository(Mode::Strict)?, out, cached, &paths)

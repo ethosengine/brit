@@ -102,3 +102,6 @@ pub use entries::function::entries;
 
 pub mod authoring;
 pub use authoring::{add_paths, restore_staged};
+
+mod worktree_restore;
+pub use worktree_restore::restore_worktree;

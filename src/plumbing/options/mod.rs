@@ -172,12 +172,18 @@ pub enum Subcommands {
         #[clap(last = true, required = true, value_parser = crate::shared::AsBString)]
         paths: Vec<BString>,
     },
-    /// Restore selected index entries from HEAD, leaving working files untouched.
+    /// Restore literal files in either the index or the worktree.
     Restore {
-        /// Select index-only restoration. Worktree restoration is unsupported.
-        #[clap(long, required = true)]
+        /// Restore the index from HEAD, leaving working files untouched.
+        #[clap(long, required_unless_present = "worktree", conflicts_with = "worktree")]
         staged: bool,
-        /// Literal file paths to unstage.
+        /// Restore working files, leaving the index untouched.
+        #[clap(long, required_unless_present = "staged")]
+        worktree: bool,
+        /// Worktree source: HEAD; defaults to the index when omitted.
+        #[clap(long, requires = "worktree", value_parser = ["HEAD"])]
+        source: Option<String>,
+        /// Literal file paths; directories and pathspec patterns are unsupported.
         #[clap(last = true, required = true, value_parser = crate::shared::AsBString)]
         paths: Vec<BString>,
     },

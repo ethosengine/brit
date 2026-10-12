@@ -109,7 +109,7 @@ fn invalid_batches_and_lock_contention_preserve_index_and_worktree() -> Result<(
         vec!["add", "--", "*.txt"],
         vec!["add", "-A"],
         vec!["add", "selected"],
-        vec!["restore", "--worktree", "--", "selected"],
+        vec!["restore", "--staged", "--worktree", "--", "selected"],
         vec!["restore", "--", "selected"],
     ] {
         ensure!(!brit(repo.path(), &args)?.status.success(), "must refuse {args:?}");

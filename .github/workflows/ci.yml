@@ -375,7 +375,7 @@ jobs:
           cargo build --locked -p brit-cli --bin brit
           cargo test --locked -p brit-bridge
           debug_dir="$(just dbg)"
-          BRIT_BIN="$debug_dir/brit" cargo test --locked -p cli-journey --test shared_tree --test authoring --test pre_push --test commit_cleanup --test commit_amend --test daily_driver --test native_authoring --test context --test cli_surface
+          BRIT_BIN="$debug_dir/brit" cargo test --locked -p cli-journey --test shared_tree --test authoring --test pre_push --test commit_cleanup --test commit_amend --test worktree_restore --test daily_driver --test native_authoring --test context --test cli_surface
       - name: Prove generic engine without protocol features
         run: cargo test --locked -p brit-epr --no-default-features
       - name: Measure legacy parity assertions (observation only)

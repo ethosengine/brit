@@ -19,7 +19,8 @@ pub fn literal_paths(repo: &gix::Repository, paths: &[BString]) -> Result<Vec<BS
     let mut out = Vec::new();
     for input in paths {
         let raw = input.as_bytes();
-        if raw.is_empty() || raw[0] == b':' || raw.iter().any(|b| b"*?[]\\\0".contains(b)) {
+        if raw.is_empty() || raw.last() == Some(&b'/') || raw[0] == b':' || raw.iter().any(|b| b"*?[]\\\0".contains(b))
+        {
             bail!("Only literal file paths are supported; use Git for pathspecs".unsupported());
         }
         let input_path = gix::path::from_bstr(Cow::Borrowed(input.as_bstr()))?;
@@ -46,7 +47,7 @@ pub fn literal_paths(repo: &gix::Repository, paths: &[BString]) -> Result<Vec<BS
     Ok(out)
 }
 
-fn component_options() -> gix::validate::path::component::Options {
+pub(crate) fn component_options() -> gix::validate::path::component::Options {
     gix::validate::path::component::Options {
         protect_windows: cfg!(windows),
         // Protect Git metadata aliases on every platform without imposing Windows filename rules.
@@ -55,7 +56,7 @@ fn component_options() -> gix::validate::path::component::Options {
     }
 }
 
-fn validate_relative_path(root: &std::path::Path, path: &gix::bstr::BStr) -> Result<()> {
+pub(crate) fn validate_relative_path(root: &std::path::Path, path: &gix::bstr::BStr) -> Result<()> {
     let mut current = root.to_owned();
     let components: Vec<_> = path.split(|b| *b == b'/').collect();
     for (position, component) in components.iter().enumerate() {
@@ -177,11 +178,8 @@ pub fn restore_staged(repo: gix::Repository, paths: &[BString]) -> Result<()> {
     mutate(repo, paths, true)
 }
 
-fn mutate(repo: gix::Repository, paths: &[BString], restore: bool) -> Result<()> {
-    let mut lock =
-        gix::lock::File::acquire_to_update_resource(repo.index_path(), gix::lock::acquire::Fail::Immediately, None, 0)
-            .or_error()?;
-    // Do not consult the repository's cached index: the lock must precede the read.
+/// Read the original index form, refusing split-index expansion and special files.
+pub(crate) fn read_index(repo: &gix::Repository) -> Result<gix::index::File> {
     let index = match std::fs::symlink_metadata(repo.index_path()) {
         Ok(meta) if meta.is_file() => {
             let index = repo.open_index()?;
@@ -201,6 +199,15 @@ fn mutate(repo: gix::Repository, paths: &[BString], restore: bool) -> Result<()>
         Err(err) => return Err(err).or_error(),
     };
     validate_index(&index)?;
+    Ok(index)
+}
+
+fn mutate(repo: gix::Repository, paths: &[BString], restore: bool) -> Result<()> {
+    let mut lock =
+        gix::lock::File::acquire_to_update_resource(repo.index_path(), gix::lock::acquire::Fail::Immediately, None, 0)
+            .or_error()?;
+    // Do not consult the repository's cached index: the lock must precede the read.
+    let index = read_index(&repo)?;
     let paths = literal_paths(&repo, paths)?;
     if repo.config_snapshot().try_boolean("core.ignorecase")? == Some(true) {
         for path in &paths {
