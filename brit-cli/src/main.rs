@@ -222,7 +222,7 @@ fn run() -> Result<()> {
         }
     } else {
         let args = plumbing::Args::from_arg_matches(&matches).map_err(|e| error::CliError::Args(e.to_string()))?;
-        plumbing::run_with_command(args, command).map_err(error::CliError::Git)
+        plumbing::run_with_command(args, command).map_err(|err| error::CliError::Git(err.into()))
     }
 }
 

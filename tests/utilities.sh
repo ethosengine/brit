@@ -66,7 +66,7 @@ function step () {
 }
 
 function stepn () {
-  step "$*" $'\n'
+  step "$*"
 }
 
 function with () {
@@ -81,7 +81,7 @@ function _note () {
   local name="${1:?}"
   local color="${2:-}"
   shift 2
-  echo 1>&2 -n "${OFFSET[*]:-}${color}[$name] ${*//  /}"
+  echo 1>&2 "${OFFSET[*]:-}${color}[$name] ${*//  /}"
 }
 
 function it () {
@@ -103,7 +103,7 @@ function step () {
 }
 
 function stepn () {
-  step "$*" $'\n'
+  step "$*"
 }
 
 function fail () {
@@ -171,6 +171,10 @@ function expect_run () {
   local actual_exit_code=$?
   if [[ "$actual_exit_code" == "$expected_exit_code" ]]; then
     if [[ -n "${WITH_SNAPSHOT-}" ]]; then
+      if [[ "$expected_exit_code" != 0 ]]; then
+        # Error reports capture source locations, which move independently of the diagnostic.
+        output="$(printf '%s' "$output" | sed -E 's/, at [^,]*\.rs:[0-9]+$//')"
+      fi
       local expected="$WITH_SNAPSHOT"
       if ! [ -f "$expected" ]; then
         mkdir -p "${expected%/*}"

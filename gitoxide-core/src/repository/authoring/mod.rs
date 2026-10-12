@@ -66,7 +66,7 @@ pub(super) fn run_hook(repo: &gix::Repository, name: &str, args: &[OsString]) ->
         .stdin(Stdio::null())
         .stdout(Stdio::inherit())
         .stderr(Stdio::inherit())
-        .into();
+        .try_into()?;
     command.current_dir(absolute(repo, repo.workdir().unwrap_or(repo.git_dir())));
     let status = command
         .status()

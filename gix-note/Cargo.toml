@@ -2,7 +2,7 @@ lints.workspace = true
 
 [package]
 name = "gix-note"
-version = "0.1.1"
+version = "0.3.0"
 repository = "https://github.com/GitoxideLabs/gitoxide"
 license = "MIT OR Apache-2.0"
 description = "A crate of the gitoxide project dealing with git notes"
@@ -29,11 +29,12 @@ sha1 = ["gix-hash/sha1", "gix-object/sha1"]
 sha256 = ["gix-hash/sha256", "gix-object/sha256"]
 
 [dependencies]
-gix-error = { version = "^0.3.2", path = "../gix-error", registry = "elohim" }
-gix-hash = { version = "^0.26.3", path = "../gix-hash", registry = "elohim" }
-gix-object = { version = "^0.64.2", path = "../gix-object", registry = "elohim" }
+gix-error = { version = "^0.5.1", path = "../gix-error", registry = "elohim" }
+gix-hash = { version = "^0.28.0", path = "../gix-hash", registry = "elohim" }
+gix-object = { version = "^0.66.0", path = "../gix-object", registry = "elohim" }
 
 [dev-dependencies]
+insta = "1.46.3"
 criterion = "0.8.2"
 gix-note = { path = ".", features = ["sha1", "sha256"] }
 gix-odb = { path = "../gix-odb" }

@@ -61,3 +61,55 @@ daily-driver and compatibility contracts remain unwired and cannot qualify.
 The parent consumes pinned evidence through its attested gate; it does not import
 Brit's habits as duplicate authority. Standalone habit attention does not expand the
 operator's shared two-active-habit budget.
+
+## Backlog assessment — 2026-10-12 upstream integration
+
+The declaration order in `.epr-meta/habits-covenant.md` remains the priority.
+Implementation progress and station acceptance must be reconciled separately:
+
+1. **Feature reconciliation:** the nine standalone fixture checks and measured
+   0.278s first entry / 0.272s warm median are recorded in the owning habit.
+   Finish the repository-local bounded memory bootstrap and independent operational
+   acceptance, then measure a second developer resuming from installed interfaces.
+   Do not repeat the already implemented Brit-to-epr dispatch.
+2. **Inherited CI:** baseline `e3de7c0c046049c4e625b38d28c9e1b634f82dcf`
+   qualifies against its existing contract using Actions run `36514749389`,
+   attempt 1. This supplies the remote evidence missing from the September ledger;
+   it does not qualify the upstream integration revision. Upstream adds the
+   `cargo-auditable build` job: it is now required by both the aggregate and exact-run
+   qualifier. Re-run inherited and first-party checks on the merged revision.
+3. **Daily driver:** ordinary staged commit creation and commit hooks have local
+   regression coverage; the README's earlier allow-empty-only description is stale.
+   The next transport prerequisite is exact resolved pre-push updates, including
+   create/update/delete, with hook rejection preventing every remote update.
+   Current configured-hook refusal safely requires the stock Git bridge. Scoped
+   temporary-index authoring, interruption recovery, target-bound independent
+   integration, installed upgrade/rollback and two-developer qualification stay open.
+4. **Git compatibility:** the pinned census, parser overlay and legacy assertion
+   reconciliation are implemented and tested. Unchecked plan stations do not mean
+   those implementations are absent. Remaining work is source-bound runtime proof,
+   state equivalence beyond exit/output comparison, public conformance selectors
+   and governed adoption of intentional differences. Do not use parser coverage as
+   a behavior-completion percentage.
+
+The upstream comparison target is `09f85be4e3fda42f3e8fd19c53a63758fdf6fb3d`
+(332 commits not previously reachable from Brit). It brings gix 0.89, gix-error
+0.5, gix-features replacement by gix-parallel/gix-utils, linked-worktree and
+byte-name fixes, configurable HTTP clients and Tix recovery changes. These reduce
+engine work but do not establish Brit workflow acceptance or pre-push semantics.
+The Git v2.54.0 census comparison horizon remains unchanged.
+
+Historical phase summaries and `docs/plans/README.md` are vision/context; this
+plan, the owning habit atoms and their runnable checks are the current work floor.
+
+Native projection on this checkout produces 18 recipe intents. The readiness
+context ranks its three unaccepted feature-entry assertions in covenant order:
+standalone reconciliation, fast feature entry, bounded memory bootstrap. None has
+an owner or independent acceptance record in this local sidecar. Existing fixture
+proof should be carried into review rather than treating these as blank implementations.
+
+The feature-disabled engine matrix exposed protocol-specific integration targets
+without feature requirements. Their declarations now require `elohim-protocol`;
+the inherited journey lane explicitly runs the remaining generic engine suite with
+`--no-default-features`. Both configurations must pass; this preserves the generic
+engine boundary without silently dropping protocol tests from the default suite.

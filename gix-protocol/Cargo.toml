@@ -2,7 +2,7 @@ lints.workspace = true
 
 [package]
 name = "gix-protocol"
-version = "0.65.1"
+version = "0.67.0"
 repository = "https://github.com/GitoxideLabs/gitoxide"
 license = "MIT OR Apache-2.0"
 description = "A crate of the gitoxide project for implementing git protocols"
@@ -15,6 +15,9 @@ rust-version = "1.88"
 doctest = false
 
 [features]
+# Fork server-side transport support.
+blocking-server = ["gix-transport/blocking-server", "serve"]
+serve = []
 
 #! ### Client I/O modes
 #! The _client_ portion of the protocol uses `gix-transport` to communicate to a server. For it to be available, one of the following features must
@@ -53,17 +56,6 @@ fetch = [
     "dep:gix-trace",
 ]
 
-#! ### _Server_
-#! The _server_ portion uses `gix-transport` to communicate with a client.
-
-## If set, blocking server-side protocol implementations are available.
-blocking-server = [
-    "gix-transport/blocking-server",
-    "serve",
-]
-## Add implementations for serving (upload-pack).
-serve = []
-
 #! ### Other
 ## Enable support for the SHA-1 hash by enabling the respective feature in the `gix-hash` crate.
 sha1 = ["gix-hash/sha1"]
@@ -82,33 +74,26 @@ name = "async"
 path = "tests/async-protocol.rs"
 required-features = ["async-client"]
 
-[[test]]
-name = "blocking-server"
-path = "tests/blocking-server.rs"
-required-features = ["blocking-server"]
-
 [dependencies]
-gix-features = { version = "^0.49.1", path = "../gix-features", registry = "elohim", features = [
-    "progress",
-] }
-gix-transport = { version = "^0.59.2", path = "../gix-transport", registry = "elohim" }
-gix-hash = { version = "^0.26.3", path = "../gix-hash", registry = "elohim" }
-gix-shallow = { version = "^0.13.0", path = "../gix-shallow", registry = "elohim" }
-gix-date = { version = "^0.16.0", path = "../gix-date", registry = "elohim" }
-gix-utils = { version = "^0.3.6", path = "../gix-utils", registry = "elohim" }
-gix-ref = { version = "^0.67.1", path = "../gix-ref", registry = "elohim" }
-gix-pack = { version = "^0.74.2", path = "../gix-pack", registry = "elohim", default-features = false, features = ["generate"] }
-gix-macros = { version = "^0.1.6", path = "../gix-macros", registry = "elohim" }
-
-gix-trace = { version = "^0.1.21", path = "../gix-trace", registry = "elohim", optional = true }
-gix-negotiate = { version = "^0.35.1", path = "../gix-negotiate", registry = "elohim", optional = true }
-gix-object = { version = "^0.64.2", path = "../gix-object", registry = "elohim", optional = true }
-gix-revwalk = { version = "^0.35.0", path = "../gix-revwalk", registry = "elohim", optional = true }
-gix-credentials = { version = "^0.40.0", path = "../gix-credentials", registry = "elohim", optional = true }
-gix-refspec = { version = "^0.45.1", path = "../gix-refspec", registry = "elohim", optional = true }
-gix-lock = { version = "^24.0.0", path = "../gix-lock", registry = "elohim", optional = true }
-
+gix-pack = { version = "^0.76.0", path = "../gix-pack", registry = "elohim", default-features = false, features = ["generate"] }
 thiserror = "2.0.18"
+gix-error = { version = "^0.5.1", path = "../gix-error", registry = "elohim" }
+gix-transport = { version = "^0.61.0", path = "../gix-transport", registry = "elohim" }
+gix-hash = { version = "^0.28.0", path = "../gix-hash", registry = "elohim" }
+gix-shallow = { version = "^0.15.0", path = "../gix-shallow", registry = "elohim" }
+gix-date = { version = "^0.18.0", path = "../gix-date", registry = "elohim" }
+gix-utils = { version = "^0.5.1", path = "../gix-utils", registry = "elohim", features = ["progress"] }
+gix-ref = { version = "^0.69.0", path = "../gix-ref", registry = "elohim" }
+gix-macros = { version = "^0.2.0", path = "../gix-macros", registry = "elohim" }
+
+gix-trace = { version = "^0.3.0", path = "../gix-trace", registry = "elohim", optional = true }
+gix-negotiate = { version = "^0.37.0", path = "../gix-negotiate", registry = "elohim", optional = true }
+gix-object = { version = "^0.66.0", path = "../gix-object", registry = "elohim", optional = true }
+gix-revwalk = { version = "^0.37.0", path = "../gix-revwalk", registry = "elohim", optional = true }
+gix-credentials = { version = "^0.42.0", path = "../gix-credentials", registry = "elohim", optional = true }
+gix-refspec = { version = "^0.47.0", path = "../gix-refspec", registry = "elohim", optional = true }
+gix-lock = { version = "^26.0.0", path = "../gix-lock", registry = "elohim", optional = true }
+
 nonempty = "0.12.0"
 serde = { version = "1.0.114", optional = true, default-features = false, features = [
     "derive",
@@ -126,9 +111,16 @@ futures-lite = { version = "2.1.0", optional = true }
 document-features = { version = "0.2.0", optional = true }
 
 [dev-dependencies]
+gix-testtools = { path = "../tests/tools", default-features = false, features = ["sha1"] }
+insta = "1.46.3"
 async-std = { version = "1.9.0", features = ["attributes"] }
-gix-packetline = { path = "../gix-packetline", version = "^0.22.2" }
+gix-packetline = { path = "../gix-packetline", registry = "elohim", version = "^0.24.0" }
 gix-protocol = { path = "../gix-protocol", features = ["sha1"] }
 
 [package.metadata.docs.rs]
 features = ["sha1", "blocking-client", "document-features", "serde"]
+
+[[test]]
+name = "blocking-server"
+path = "tests/blocking-server.rs"
+required-features = ["blocking-server"]

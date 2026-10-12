@@ -2,7 +2,7 @@ lints.workspace = true
 
 [package]
 name = "brit-epr"
-version = "0.1.2"
+version = "0.1.3"
 description = "Elohim Protocol primitives (pillar trailers, dispatch trait, validation) for brit — an expansion of gitoxide with covenant semantics"
 repository = "https://github.com/ethosengine/brit"
 authors = ["Matthew Dowell <matthew@ethosengine.com>"]
@@ -23,7 +23,7 @@ default = ["elohim-protocol"]
 elohim-protocol = ["dep:elohim-epr"]
 
 [dependencies]
-gix-object = { version = "^0.64.2", path = "../gix-object", registry = "elohim", features = ["sha1"] }
+gix-object = { version = "^0.66.0", path = "../gix-object", registry = "elohim", features = ["sha1"] }
 thiserror = "2.0"
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
@@ -37,3 +37,28 @@ hex = "0.4"
 
 [dev-dependencies]
 tempfile = "3"
+
+[[test]]
+name = "attestation_roundtrip"
+path = "tests/attestation_roundtrip.rs"
+required-features = ["elohim-protocol"]
+
+[[test]]
+name = "elohim_parse"
+path = "tests/elohim_parse.rs"
+required-features = ["elohim-protocol"]
+
+[[test]]
+name = "elohim_validate"
+path = "tests/elohim_validate.rs"
+required-features = ["elohim-protocol"]
+
+[[test]]
+name = "reach_computation"
+path = "tests/reach_computation.rs"
+required-features = ["elohim-protocol"]
+
+[[test]]
+name = "ref_management"
+path = "tests/ref_management.rs"
+required-features = ["elohim-protocol"]

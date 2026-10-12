@@ -1,6 +1,9 @@
+use gix_error::Result;
 use std::sync::atomic::AtomicBool;
 
-use gix_features::{interrupt, parallel::in_parallel_with_finalize};
+use gix_error::{ResultExt, message};
+use gix_parallel::in_parallel_with_finalize;
+use gix_utils::interrupt;
 use gix_worktree::{Stack, stack};
 
 use crate::checkout::chunk;
@@ -19,11 +22,11 @@ pub fn checkout<Find>(
     index: &mut gix_index::State,
     dir: impl Into<std::path::PathBuf>,
     objects: Find,
-    files: &dyn gix_features::progress::Count,
-    bytes: &dyn gix_features::progress::Count,
+    files: &dyn gix_utils::progress::Count,
+    bytes: &dyn gix_utils::progress::Count,
     should_interrupt: &AtomicBool,
     options: crate::checkout::Options,
-) -> Result<crate::checkout::Outcome, crate::checkout::Error>
+) -> Result<crate::checkout::Outcome>
 where
     Find: gix_object::Find + Send + Clone,
 {
@@ -39,21 +42,21 @@ fn checkout_inner<Find>(
     paths: &gix_index::PathStorage,
     dir: impl Into<std::path::PathBuf>,
     objects: Find,
-    files: &dyn gix_features::progress::Count,
-    bytes: &dyn gix_features::progress::Count,
+    files: &dyn gix_utils::progress::Count,
+    bytes: &dyn gix_utils::progress::Count,
     should_interrupt: &AtomicBool,
     mut options: crate::checkout::Options,
-) -> Result<crate::checkout::Outcome, crate::checkout::Error>
+) -> Result<crate::checkout::Outcome>
 where
     Find: gix_object::Find + Send + Clone,
 {
     let num_files = files.counter();
     let num_bytes = bytes.counter();
     let dir = dir.into();
-    let (chunk_size, thread_limit, num_threads) = gix_features::parallel::optimize_chunk_size_and_thread_limit(
+    let (chunk_size, thread_limit, num_threads) = gix_parallel::optimize_chunk_size_and_thread_limit(
         100,
         index.entries().len().into(),
-        options.thread_limit,
+        options.thread_limit(),
         None,
     );
 
@@ -102,7 +105,7 @@ where
     } else {
         let entries_with_paths = interrupt::Iter::new(index.entries_mut_with_paths_in(paths), should_interrupt);
         in_parallel_with_finalize(
-            gix_features::iter::Chunks {
+            gix_utils::iter::Chunks {
                 inner: entries_with_paths,
                 size: chunk_size,
             },
@@ -126,7 +129,7 @@ where
                 ctx.filters
                     .driver_state_mut()
                     .shutdown(gix_filter::driver::shutdown::Mode::WaitForProcesses)
-                    .map_err(crate::checkout::Error::FilterShutdownIo)?;
+                    .or_raise(|| message("Could not shut down filter processes"))?;
                 Ok(out)
             },
             chunk::Reduce {
@@ -153,7 +156,7 @@ where
     ctx.filters
         .driver_state_mut()
         .shutdown(gix_filter::driver::shutdown::Mode::WaitForProcesses)
-        .map_err(crate::checkout::Error::FilterShutdownIo)?;
+        .or_raise(|| message("Could not shut down filter processes"))?;
 
     Ok(crate::checkout::Outcome {
         files_updated,

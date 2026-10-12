@@ -8,9 +8,11 @@
 // TODO: Rewrite this based on what Git actually this, as long as there are test-cases for any 'complication'.
 //       In practice, even this simplified version seems to have worked pretty well.
 
+use gix_error::{Result, message};
 use std::ops::Range;
 
 use bstr::{BStr, ByteSlice};
+use gix_error::ResultExt;
 use gix_object::tree::{EntryKind, EntryMode};
 
 use crate::{
@@ -133,23 +135,6 @@ pub mod visit {
     }
 }
 
-///
-pub mod emit {
-    /// The error returned by [Tracker::emit()](super::Tracker::emit()).
-    #[derive(Debug, thiserror::Error)]
-    #[expect(missing_docs)]
-    pub enum Error {
-        #[error("Could not find blob for similarity checking")]
-        FindExistingBlob(#[from] gix_object::find::existing_object::Error),
-        #[error("Could not obtain exhaustive item set to use as possible sources for copy detection")]
-        GetItemsForExhaustiveCopyDetection(#[source] Box<dyn std::error::Error + Send + Sync>),
-        #[error(transparent)]
-        SetResource(#[from] crate::blob::platform::set_resource::Error),
-        #[error(transparent)]
-        PrepareDiff(#[from] crate::blob::platform::prepare_diff::Error),
-    }
-}
-
 /// Lifecycle
 impl<T: Change> Tracker<T> {
     /// Create a new instance with `rewrites` configuration.
@@ -220,9 +205,9 @@ impl<T: Change> Tracker<T> {
         diff_cache: &mut crate::blob::Platform,
         objects: &impl gix_object::FindObjectOrHeader,
         mut push_source_tree: PushSourceTreeFn,
-    ) -> Result<Outcome, emit::Error>
+    ) -> Result<Outcome>
     where
-        PushSourceTreeFn: FnMut(&mut dyn FnMut(T, &BStr)) -> Result<(), E>,
+        PushSourceTreeFn: FnMut(&mut dyn FnMut(T, &BStr)) -> std::result::Result<(), E>,
         E: std::error::Error + Send + Sync + 'static,
     {
         fn is_parent(change: &impl Change) -> bool {
@@ -307,7 +292,11 @@ impl<T: Change> Tracker<T> {
                                 self.items.last_mut().expect("just pushed").emitted = true;
                             }
                         })
-                        .map_err(|err| emit::Error::GetItemsForExhaustiveCopyDetection(Box::new(err)))?;
+                        .or_raise(|| {
+                            message(
+                                "Could not obtain exhaustive item set to use as possible sources for copy detection",
+                            )
+                        })?;
                         self.sort_items_by_id_and_location();
 
                         self.match_pairs_of_kind(
@@ -373,7 +362,7 @@ impl<T: Change> Tracker<T> {
         diff_cache: &mut crate::blob::Platform,
         objects: &impl gix_object::FindObjectOrHeader,
         filter: Option<fn(&T) -> bool>,
-    ) -> Result<(), emit::Error> {
+    ) -> Result {
         // we try to cheaply reduce the set of possibilities first, before possibly looking more exhaustively.
         let needs_second_pass = !needs_exact_match(percentage);
 
@@ -424,7 +413,7 @@ impl<T: Change> Tracker<T> {
         diff_cache: &mut crate::blob::Platform,
         objects: &impl gix_object::FindObjectOrHeader,
         filter: Option<fn(&T) -> bool>,
-    ) -> Result<Action, emit::Error> {
+    ) -> Result<Action> {
         let mut dest_ofs = 0;
         let mut num_checks = 0;
         let max_checks = {
@@ -535,7 +524,7 @@ impl<T: Change> Tracker<T> {
         kind: visit::SourceKind,
         src_parent_id: ChangeId,
         dst_parent_id: ChangeId,
-    ) -> Result<Action, emit::Error> {
+    ) -> Result<Action> {
         debug_assert_ne!(
             src_parent_id, dst_parent_id,
             "src and destination directories must be distinct"
@@ -598,7 +587,7 @@ impl<T: Change> Tracker<T> {
     fn match_renamed_directories(
         &mut self,
         cb: &mut impl FnMut(visit::Destination<'_, T>, Option<visit::Source<'_, T>>) -> Action,
-    ) -> Result<(), emit::Error> {
+    ) -> Result {
         fn unemitted_directory_matching_relation_id<T: Change>(items: &[Item<T>], child_id: ChangeId) -> Option<usize> {
             items.iter().position(|i| {
                 !i.emitted && matches!(i.change.relation(), Some(Relation::Parent(pid)) if pid == child_id)
@@ -704,7 +693,7 @@ fn find_match<'a, T: Change>(
     diff_cache: &mut crate::blob::Platform,
     path_backing: &[u8],
     num_checks: &mut usize,
-) -> Result<Option<SourceTuple<'a, T>>, emit::Error> {
+) -> Result<Option<SourceTuple<'a, T>>> {
     let (item_id, item_mode) = item.change.id_and_entry_mode();
     // Symlinks and gitlinks only participate in exact-ID matching; neither has meaningful blob similarity here.
     if needs_exact_match(percentage) || item_mode.is_link() || item_mode.is_commit() {
@@ -755,24 +744,30 @@ fn find_match<'a, T: Change>(
             .filter(|(src_idx, src)| *src_idx != item_idx && src.is_source_for_destination_of(kind, item_mode))
         {
             if !has_new {
-                diff_cache.set_resource(
-                    item_id.to_owned(),
-                    item_mode.kind(),
-                    item.location(path_backing),
-                    ResourceKind::NewOrDestination,
-                    objects,
-                )?;
+                diff_cache
+                    .set_resource(
+                        item_id.to_owned(),
+                        item_mode.kind(),
+                        item.location(path_backing),
+                        ResourceKind::NewOrDestination,
+                        objects,
+                    )
+                    .or_raise(|| message("Could not set destination for similarity checking"))?;
                 has_new = true;
             }
             let (src_id, src_mode) = src.change.id_and_entry_mode();
-            diff_cache.set_resource(
-                src_id.to_owned(),
-                src_mode.kind(),
-                src.location(path_backing),
-                ResourceKind::OldOrSource,
-                objects,
-            )?;
-            let prep = diff_cache.prepare_diff()?;
+            diff_cache
+                .set_resource(
+                    src_id.to_owned(),
+                    src_mode.kind(),
+                    src.location(path_backing),
+                    ResourceKind::OldOrSource,
+                    objects,
+                )
+                .or_raise(|| message("Could not set source for similarity checking"))?;
+            let prep = diff_cache
+                .prepare_diff()
+                .or_raise(|| message("Could not prepare resources for similarity checking"))?;
             stats.num_similarity_checks += 1;
             *num_checks += 1;
             match prep.operation {

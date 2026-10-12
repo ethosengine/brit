@@ -37,15 +37,15 @@ where
     /// # let remote = repo.find_remote("origin")?;
     /// let outcome = remote
     ///     .connect(gix::remote::Direction::Push)?
-    ///     .prepare_push(gix_features::progress::Discard)?
+    ///     .prepare_push(gix::progress::Discard)?
     ///     .with_refspecs(["refs/heads/main:refs/heads/main"])
-    ///     .transmit(gix_features::progress::Discard, &Default::default())?;
+    ///     .transmit(gix::progress::Discard, &Default::default())?;
     /// # Ok(())
     /// # }
     /// ```
     pub fn prepare_push(
         mut self,
-        mut progress: impl gix_features::progress::Progress,
+        mut progress: impl crate::progress::Progress,
     ) -> Result<Prepare<'remote, 'auth, 'repo, T>, Error> {
         let _span = gix_trace::coarse!("remote::Connection::prepare_push()");
 
@@ -72,21 +72,22 @@ where
 
         // Build the credentials callback the same way `ref_map_by_ref` does.
         let mut credentials_storage;
-        let authenticate: &mut dyn FnMut(gix_credentials::helper::Action) -> gix_credentials::protocol::Result =
-            match self.authenticate.as_mut() {
-                Some(f) => f,
-                None => {
-                    let url = self.remote.url(Direction::Push).map_or_else(
-                        || {
-                            gix_url::parse(crate::bstr::ByteSlice::as_bstr(url_owned.as_slice()))
-                                .expect("valid URL to be provided by transport")
-                        },
-                        ToOwned::to_owned,
-                    );
-                    credentials_storage = self.configured_credentials(url)?;
-                    &mut credentials_storage
-                }
-            };
+        let authenticate: &mut dyn FnMut(
+            gix_credentials::helper::Action,
+        ) -> gix_error::Result<Option<gix_credentials::protocol::Outcome>> = match self.authenticate.as_mut() {
+            Some(f) => f,
+            None => {
+                let url = self.remote.url(Direction::Push).map_or_else(
+                    || {
+                        gix_url::parse(crate::bstr::ByteSlice::as_bstr(url_owned.as_slice()))
+                            .expect("valid URL to be provided by transport")
+                    },
+                    ToOwned::to_owned,
+                );
+                credentials_storage = self.configured_credentials(url).map_err(Error::ConfigureCredentials)?;
+                &mut credentials_storage
+            }
+        };
 
         // Perform the handshake for `receive-pack`.
         // V0/V1: server advertises refs inline.
@@ -97,7 +98,8 @@ where
             authenticate,
             Vec::new(), // no extra handshake parameters for push
             &mut progress,
-        )?;
+        )
+        .map_err(Error::Handshake)?;
 
         self.handshake = Some(handshake);
         Ok(Prepare::new(self))

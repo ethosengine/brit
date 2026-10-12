@@ -25,7 +25,7 @@ where
     /// (the entire `push` module is gated behind that feature).
     pub fn transmit(
         mut self,
-        _progress: impl gix_features::progress::NestedProgress,
+        _progress: impl crate::progress::NestedProgress,
         should_interrupt: &AtomicBool,
     ) -> Result<Outcome, Error> {
         use crate::bstr::BString;
@@ -75,13 +75,20 @@ where
             .refspecs
             .iter()
             .map(|s| gix_refspec::parse(s.as_slice().into(), Operation::Push).map(|r| r.to_owned()))
-            .collect::<Result<_, _>>()?;
+            .collect::<Result<_, _>>()
+            .map_err(Error::ParseRefspec)?;
 
         // ── Step 2: Enumerate local refs ──────────────────────────────────────
         let repo = self.connection.remote.repo;
         let hash_kind = repo.object_hash();
 
-        let local_refs: Vec<crate::Reference<'_>> = repo.references()?.all()?.filter_map(Result::ok).collect();
+        let local_refs: Vec<crate::Reference<'_>> = repo
+            .references()
+            .map_err(Error::ReferencesInit)?
+            .all()
+            .map_err(Error::References)?
+            .filter_map(Result::ok)
+            .collect();
 
         // ── Step 3: MatchGroup::match_push ────────────────────────────────────
         // Build `Item` from direct (non-symbolic) local refs only.
@@ -100,7 +107,10 @@ where
             .collect();
 
         let group = MatchGroup::from_push_specs(parsed_refspecs.iter().map(|s| s.to_ref()));
-        let (push_outcome, _fixes) = group.match_push(items.iter().copied()).validated()?;
+        let (push_outcome, _fixes) = group
+            .match_push(items.iter().copied())
+            .validated()
+            .map_err(Error::RefspecConflict)?;
         let mappings = push_outcome.mappings;
 
         if mappings.is_empty() {
@@ -391,12 +401,10 @@ fn build_pack_entries(
     // a `&Cache<Handle<Arc<Store>>>` which implements `gix_pack::Find`.
     let odb_pack: &dyn gix_pack::Find = repo.objects.deref();
 
-    let progress_discard = gix_features::progress::Discard;
+    let progress_discard = crate::progress::Discard;
     let (counts, _) = gix_pack::data::output::count::objects_unthreaded(
         odb_pack,
-        &mut commit_ids
-            .iter()
-            .map(|id| Ok::<_, Box<dyn std::error::Error + Send + Sync + 'static>>(*id)),
+        &mut commit_ids.iter().map(|id| Ok::<_, gix_error::Error>(*id)),
         &progress_discard,
         should_interrupt,
         ObjectExpansion::TreeAdditionsComparedToAncestor,

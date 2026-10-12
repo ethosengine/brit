@@ -38,6 +38,7 @@
           "name": "test-journey",
           "steps": [
             "Run journey tests",
+            "Prove generic engine without protocol features",
             "Prove shared trees through the public Brit executable",
             "Run auxiliary Brit CLI journeys against built binaries",
             "Measure legacy parity assertions (observation only)"
@@ -113,6 +114,13 @@
             "Test census and boundary semantics",
             "Verify pinned census freshness",
             "Verify legacy shortcomings freshness"
+          ]
+        },
+        {
+          "job": "auditable",
+          "name": "cargo-auditable build",
+          "steps": [
+            "Check metadata-based auditable builds on stable Rust"
           ]
         }
       ],

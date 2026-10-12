@@ -45,8 +45,10 @@ replacing a standalone Rakia installation.
 ### Not yet a drop-in daily driver
 
 Command names are not a promise of Git porcelain parity. In particular, current
-`brit commit` creation supports `--allow-empty`, not the ordinary staged-change
-commit journey. The complete path-scoped stage/review/commit, worktree recovery,
+`brit commit` creates commits from the persisted index and runs commit hooks,
+with regression coverage for staged bytes and linked worktrees. Path-scoped
+commit authoring still refuses; configured pre-push hooks require the stock Git
+bridge. The complete path-scoped stage/review/commit, worktree recovery,
 required-evidence enforcement and fast-forward integration story still needs
 qualification. Keep stock Git available; do not alias `git` to `brit`.
 
@@ -83,7 +85,7 @@ of creating another build cache.
 ```bash
 export RUSTFLAGS=""
 export CARGO_TARGET_DIR="${XDG_CACHE_HOME:-$HOME/.cache}/brit/target"
-export BRIT_INSTALL_ROOT="${XDG_DATA_HOME:-$HOME/.local/share}/brit-dev-0.1.3"
+export BRIT_INSTALL_ROOT="${XDG_DATA_HOME:-$HOME/.local/share}/brit-dev-0.1.5"
 export CARGO_REGISTRY_GLOBAL_CREDENTIAL_PROVIDERS=cargo:token
 
 cargo install --locked --path brit-cli --bin brit --root "$BRIT_INSTALL_ROOT"

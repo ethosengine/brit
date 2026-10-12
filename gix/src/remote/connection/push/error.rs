@@ -7,21 +7,21 @@ pub enum Error {
     #[error("failed to configure the transport before connecting to {url:?}")]
     GatherTransportConfig {
         url: crate::bstr::BString,
-        source: crate::config::transport::Error,
+        source: gix_error::Error,
     },
     #[error("failed to configure the transport layer")]
-    ConfigureTransport(#[from] Box<dyn std::error::Error + Send + Sync + 'static>),
+    ConfigureTransport(#[from] gix_error::Error),
     #[error(transparent)]
-    Handshake(#[from] gix_protocol::handshake::Error),
+    Handshake(gix_error::Error),
     #[error(transparent)]
-    ConfigureCredentials(#[from] crate::config::credential_helpers::Error),
+    ConfigureCredentials(gix_error::Error),
     // ── transmit errors ───────────────────────────────────────────────────
     #[error("parse refspec")]
-    ParseRefspec(#[from] gix_refspec::parse::Error),
+    ParseRefspec(#[source] gix_error::Error),
     #[error("enumerate local refs")]
-    References(#[from] crate::reference::iter::Error),
+    References(#[source] gix_error::Error),
     #[error("initialize local-ref iterator")]
-    ReferencesInit(#[from] crate::reference::iter::init::Error),
+    ReferencesInit(#[source] gix_error::Error),
     #[error("resolve local ref to object id")]
     Resolve(#[source] Box<dyn std::error::Error + Send + Sync + 'static>),
     #[error("revision walk: {0}")]

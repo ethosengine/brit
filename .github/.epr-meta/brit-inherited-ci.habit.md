@@ -27,3 +27,32 @@ DELTA 2026-09-28 (qualification verification; RED preserved): Nine qualifier tes
 and all 47 CI-helper tests passed locally. Real captured run 36458363380 at
 f8a0e14cd7dc55a9b5ddd3d554fd41def8708a11 fails this new contract as expected; it
 predates the new required check. New remote integration evidence remains absent.
+
+DELTA 2026-10-12 (upstream reconciliation; RED preserved): Captured Actions run
+36514749389 attempt 1 at e3de7c0c046049c4e625b38d28c9e1b634f82dcf qualifies all
+18 required jobs under that revision's contract. The 332-commit gitoxide integration
+at 09f85be4e3fda42f3e8fd19c53a63758fdf6fb3d adds cargo-auditable to the aggregate
+and qualifier. Nine qualifier tests and 47 CI-helper tests pass locally; new
+exact-revision remote matrix evidence remains required. Backlog assessment lives
+in docs/plans/2026-09-28-governed-readiness.md; no habit acceptance is inferred.
+
+DELTA 2026-10-12 (local integration proof; RED preserved): The built public CLI
+passes 39 journeys and CLI/core passes 31 tests. Generic `brit-epr` passes 42
+tests without protocol features; the default engine/bridge suites also pass.
+Protocol-only test targets now declare their feature requirement, and the journey
+qualification requires the feature-disabled engine step. Formatting and all 47
+CI-helper tests pass. These local checks do not replace the new revision's remote
+matrix or independent workflow acceptance.
+
+DELTA 2026-10-12 (fork transport proof; RED preserved): Twelve send-pack tests,
+eight repository push checks and 37 server tests pass against the merged engine.
+The server extensions retain their feature declarations and migrate packet decode
+errors to gix-error; their existing tests prove both upload-pack versions and daemon
+connect parsing. The baseline exact-run evidence remains revision-bound.
+
+DELTA 2026-10-12 (focused lint proof; RED preserved): CLI/core/journey clippy
+passes all targets using the inherited CI `--no-deps -D warnings -A unknown-lints`
+contract on Rust 1.96.1. Two inherited attribute-baseline iterator expressions were
+updated to equivalent `collect` calls. Full workspace formatting and the 69-package
+registry dependency closure pass; cross-platform and alternate-feature matrix
+qualification remains the exact-revision remote lane.

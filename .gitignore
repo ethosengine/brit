@@ -34,3 +34,7 @@ $**/fuzz/Cargo.lock
 
 # Derived local parity comparison captures
 /etc/parity/__pycache__/
+# Share Zed tasks even when editor files are ignored globally; keep other Zed settings local.
+!/.zed/
+/.zed/*
+!/.zed/tasks.json

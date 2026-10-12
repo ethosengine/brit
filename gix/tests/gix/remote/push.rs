@@ -47,16 +47,13 @@ fn fast_forward_to_bare_file_remote_smoke() {
         .expect("connect to bare dst");
 
     let prepare = conn
-        .prepare_push(gix_features::progress::Discard)
+        .prepare_push(gix::progress::Discard)
         .expect("prepare_push: handshake with bare dst");
 
     // Transmit the branch.
     let outcome = prepare
         .with_refspecs(["refs/heads/main:refs/heads/main"])
-        .transmit(
-            gix_features::progress::Discard,
-            &std::sync::atomic::AtomicBool::new(false),
-        )
+        .transmit(gix::progress::Discard, &std::sync::atomic::AtomicBool::new(false))
         .expect("transmit");
 
     // Verify the server acknowledged the ref update.

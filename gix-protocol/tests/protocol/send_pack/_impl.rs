@@ -52,7 +52,7 @@ impl TransportWithoutIO for MockTransport {
         true
     }
 
-    fn configure(&mut self, _config: &dyn Any) -> Result<(), Box<dyn std::error::Error + Send + Sync + 'static>> {
+    fn configure(&mut self, _config: &dyn Any) -> gix_error::Result<()> {
         Ok(())
     }
 }

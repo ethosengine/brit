@@ -2,7 +2,7 @@ lints.workspace = true
 
 [package]
 name = "brit-bridge"
-version = "0.1.0"
+version = "0.1.1"
 description = "Lossless Git tree bridge for canonical EPRFS content closures"
 repository = "https://github.com/ethosengine/brit"
 authors = ["Matthew Dowell <matthew@ethosengine.com>"]
@@ -14,7 +14,7 @@ rust-version = "1.88"
 anyhow = "1"
 bytes = "1"
 eprfs-core = { version = "0.1.2", registry = "elohim" }
-gix = { version = "^0.87.1", path = "../gix", registry = "elohim", default-features = false, features = ["basic", "sha1", "sha256"] }
+gix = { version = "^0.89.0", path = "../gix", registry = "elohim", default-features = false, features = ["basic", "sha1", "sha256"] }
 hex = "0.4"
 
 [dev-dependencies]

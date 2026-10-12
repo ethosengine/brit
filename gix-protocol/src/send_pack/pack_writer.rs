@@ -32,7 +32,7 @@ where
 
     // FromEntriesIter expects chunks: Iterator<Item = Result<Vec<Entry>, E>>.
     // We hand it a single-chunk Ok(entries).
-    let chunk_iter = std::iter::once(Ok::<Vec<Entry>, std::convert::Infallible>(entries));
+    let chunk_iter = std::iter::once(Ok::<Vec<Entry>, gix_error::Error>(entries));
 
     let mut iter = gix_pack::data::output::bytes::FromEntriesIter::new(
         chunk_iter,

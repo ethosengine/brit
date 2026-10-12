@@ -1,3 +1,4 @@
+use gix_error::Result;
 use std::sync::{
     Arc,
     atomic::{AtomicBool, AtomicUsize, Ordering},
@@ -179,6 +180,7 @@ fn fixture_filtered_detailed(
         stack,
         filter: gix_filter::Pipeline::new(
             Default::default(),
+            gix_testtools::object_hash(),
             gix_filter::pipeline::Options {
                 eol_config: gix_filter::eol::Configuration {
                     auto_crlf,
@@ -203,7 +205,7 @@ fn fixture_filtered_detailed(
             FastEq,
             SubmoduleStatusMock { dirty: submodule_dirty },
             odb,
-            &mut gix_features::progress::Discard,
+            &mut gix_utils::progress::Discard,
             ctx,
             options,
         )
@@ -216,7 +218,7 @@ fn fixture_filtered_detailed(
             FastEq,
             SubmoduleStatusMock { dirty: submodule_dirty },
             &odb,
-            &mut gix_features::progress::Discard,
+            &mut gix_utils::progress::Discard,
             ctx,
             options,
         )
@@ -267,9 +269,8 @@ pub(super) struct SubmoduleStatusMock {
 
 impl SubmoduleStatus for SubmoduleStatusMock {
     type Output = ();
-    type Error = std::convert::Infallible;
 
-    fn status(&mut self, _entry: &Entry, _rela_path: &BStr) -> Result<Option<Self::Output>, Self::Error> {
+    fn status(&mut self, _entry: &Entry, _rela_path: &BStr) -> Result<Option<Self::Output>> {
         Ok(self.dirty.then_some(()))
     }
 }
@@ -287,6 +288,7 @@ fn status_removed() -> EntryStatus {
 
 #[test]
 fn hash_errors_preserve_io_kinds() {
+    let mut diagnostics = Vec::new();
     use std::io::ErrorKind;
 
     for (stream_len, interrupted, expected_kind) in
@@ -297,33 +299,41 @@ fn hash_errors_preserve_io_kinds() {
             gix_object::Kind::Blob,
             &mut &b"x"[..],
             stream_len,
-            &mut gix_features::progress::Discard,
+            &mut gix_utils::progress::Discard,
             &AtomicBool::new(interrupted),
         )
         .expect_err("a short stream or requested interruption prevents hashing");
-        let index_as_worktree::Error::Io(err) = err.into() else {
-            panic!("hashing I/O failures must remain I/O errors");
-        };
+        diagnostics.push(gix_testtools::redact_debug_snapshot(&err, &[]));
+        let err = err
+            .downcast_any_ref::<std::io::Error>()
+            .expect("hashing I/O failures must remain I/O errors");
         assert_eq!(err.kind(), expected_kind, "callers must retain the native I/O kind");
     }
+    insta::assert_debug_snapshot!(diagnostics, "stream hashing retains premature EOF and interruption diagnostics", @"
+    [
+        failed to fill whole buffer,
+        I/O error (Interrupted)
+        
+        Caused by:
+            0: Interrupted,
+    ]
+    ");
 }
 
 #[test]
-fn hash_errors_without_io_causes_use_other() {
-    let err = gix_hash::io::from_hasher(gix_hash::hasher::Error::new("hash collision"));
-    let index_as_worktree::Error::Io(err) = err.into() else {
-        panic!("hashing failures must be represented by the I/O error variant");
-    };
-    assert_eq!(
-        err.kind(),
-        std::io::ErrorKind::Other,
+fn hash_errors_without_io_causes_preserve_hashing_failure() {
+    let err = gix_hash::io::from_hasher(gix_error::message("hash collision").corrupted_error());
+    assert!(err.is_corrupted(), "the hashing failure retains its corruption class");
+    assert!(
+        err.downcast_any_ref::<std::io::Error>().is_none(),
         "a hashing failure without an I/O cause has no native kind"
     );
-    assert!(
-        std::iter::successors(std::error::Error::source(&err), |source| source.source())
-            .any(|source| source.to_string().contains("hash collision")),
-        "the original hashing failure remains available for diagnostics"
-    );
+    insta::assert_debug_snapshot!(err, "the original hashing failure remains available for diagnostics", @"
+    Failed to hash data
+
+    Caused by:
+        0: hash collision
+    ");
 }
 
 #[test]
@@ -1205,17 +1215,17 @@ fn modified() {
 }
 
 #[test]
-fn racy_git() {
+fn racy_git() -> gix_testtools::TestResult {
     let timestamp = 940040400;
     // we need a writable fixture because we have to mess with `mtimes` manually, because touch -d
     // respects the locale so the test wouldn't work depending on the timezone you
     // run your test in.
-    let dir = crate::scripted_fixture_writable("racy_git.sh").expect("script works");
+    let dir = crate::scripted_fixture_writable("racy_git.sh")?;
     let worktree = dir.path();
     let git_dir = worktree.join(".git");
     let fs = gix_fs::Capabilities::probe(&git_dir);
     let object_hash = gix_testtools::object_hash();
-    let mut index = gix_index::File::at(git_dir.join("index"), object_hash, false, Default::default()).unwrap();
+    let mut index = gix_index::File::at(git_dir.join("index"), object_hash, false, Default::default())?;
 
     #[derive(Clone)]
     struct CountCalls(Arc<AtomicUsize>, FastEq);
@@ -1228,7 +1238,7 @@ fn racy_git() {
             worktree_file_size: u64,
             data: impl ReadData<'a>,
             buf: &mut Vec<u8>,
-        ) -> Result<Option<Self::Output>, gix_status::index_as_worktree::Error> {
+        ) -> Result<Option<Self::Output>> {
             self.0.fetch_add(1, Ordering::Relaxed);
             self.1.compare_blobs(entry, worktree_file_size, data, buf)
         }
@@ -1244,8 +1254,7 @@ fn racy_git() {
     set_file_mtime(
         worktree.join("content"),
         FileTime::from_unix_time(i64::from(timestamp), 0),
-    )
-    .expect("changing filetime works");
+    )?;
     let mut recorder = Recorder::default();
 
     let count = Arc::new(AtomicUsize::new(0));
@@ -1260,7 +1269,7 @@ fn racy_git() {
     let ctx = Context {
         pathspec: default_pathspec(),
         stack,
-        filter: Default::default(),
+        filter: gix_filter::Pipeline::new(Default::default(), gix_testtools::object_hash(), Default::default()),
         should_interrupt: &AtomicBool::default(),
     };
     let out = index_as_worktree(
@@ -1270,15 +1279,14 @@ fn racy_git() {
         counter.clone(),
         SubmoduleStatusMock { dirty: false },
         gix_object::find::Never,
-        &mut gix_features::progress::Discard,
+        &mut gix_utils::progress::Discard,
         ctx.clone(),
         Options {
             fs,
             stat: TEST_OPTIONS,
             ..Options::default()
         },
-    )
-    .unwrap();
+    )?;
     assert_eq!(
         out,
         Outcome {
@@ -1307,15 +1315,14 @@ fn racy_git() {
         counter,
         SubmoduleStatusMock { dirty: false },
         gix_object::find::Never,
-        &mut gix_features::progress::Discard,
+        &mut gix_utils::progress::Discard,
         ctx,
         Options {
             fs,
             stat: TEST_OPTIONS,
             ..Options::default()
         },
-    )
-    .unwrap();
+    )?;
     assert_eq!(
         out,
         Outcome {
@@ -1347,6 +1354,7 @@ fn racy_git() {
         )],
         "racy change is correctly detected"
     );
+    Ok(())
 }
 
 fn default_pathspec() -> gix_pathspec::Search {

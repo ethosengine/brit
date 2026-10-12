@@ -1,3 +1,4 @@
+use crate::TestResult;
 use std::cell::RefCell;
 
 use gix_negotiate::Algorithm;
@@ -5,7 +6,7 @@ use gix_object::{FindExt, bstr, bstr::ByteSlice};
 use gix_ref::{file::ReferenceExt, store::WriteReflog};
 
 #[test]
-fn run() -> crate::Result {
+fn run() -> TestResult {
     let root = gix_testtools::scripted_fixture_read_only("make_repos.sh")?;
     for case in [
         "no_parents",
@@ -73,8 +74,8 @@ fn run() -> crate::Result {
                 // }
                 for tip in lookup_names(&["HEAD"]).into_iter().chain(
                     refs.iter()?
-                        .prefixed(b"refs/heads".try_into().unwrap())?
-                        .filter_map(Result::ok)
+                        .prefixed(b"refs/heads".try_into()?)?
+                        .filter_map(std::result::Result::ok)
                         .map(|r| r.target.into_id()),
                 ) {
                     if debug {
@@ -113,7 +114,7 @@ fn run() -> crate::Result {
                             };
                             haves = lookup_names(&["c2side", "c5", "origin/main"])
                                 .into_iter()
-                                .chain(Some(gix_hash::ObjectId::from_hex(id.as_bytes()).unwrap()))
+                                .chain(Some(gix_hash::ObjectId::from_hex(id.as_bytes())?))
                                 .collect();
                         }
                     }

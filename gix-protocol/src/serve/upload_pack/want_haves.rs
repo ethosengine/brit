@@ -39,7 +39,7 @@ pub enum Error {
     #[error("Invalid object ID: {hex}")]
     InvalidObjectId { hex: BString },
     #[error("Packetline decode error")]
-    PacketlineDecode(#[from] crate::transport::packetline::decode::Error),
+    PacketlineDecode(#[from] gix_error::Error),
     #[error("Unexpected line: {line}")]
     UnexpectedLine { line: BString },
 }

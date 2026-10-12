@@ -19,7 +19,7 @@ pub enum Error {
     #[error("Failed to parse client wants/haves")]
     WantHaves(#[from] want_haves::Error),
     #[error("Packetline decode error")]
-    PacketlineDecode(#[from] crate::transport::packetline::decode::Error),
+    PacketlineDecode(#[from] gix_error::Error),
     #[error("Unexpected line: {line}")]
     UnexpectedLine { line: bstr::BString },
 }

@@ -2,7 +2,7 @@ lints.workspace = true
 
 [package]
 name = "gix-worktree-state"
-version = "0.34.1"
+version = "0.36.0"
 repository = "https://github.com/GitoxideLabs/gitoxide"
 license = "MIT OR Apache-2.0"
 description = "A crate of the gitoxide project implementing setting the worktree to a particular state"
@@ -19,23 +19,24 @@ doctest = false
 sha1 = ["gix-index/sha1"]
 ## Enable support for the SHA-256 hash by forwarding the feature to dependencies.
 sha256 = ["gix-index/sha256"]
-## Enable support for thread-safety.
-parallel = ["gix-features/parallel"]
 
 [dependencies]
-gix-worktree = { version = "^0.56.0", path = "../gix-worktree", registry = "elohim", default-features = false, features = ["attributes"] }
-gix-index = { version = "^0.55.0", path = "../gix-index", registry = "elohim" }
-gix-fs = { version = "^0.22.1", path = "../gix-fs", registry = "elohim" }
-gix-object = { version = "^0.64.2", path = "../gix-object", registry = "elohim" }
-gix-path = { version = "^0.12.6", path = "../gix-path", registry = "elohim" }
-gix-features = { version = "^0.49.1", path = "../gix-features", registry = "elohim" }
-gix-filter = { version = "^0.34.0", path = "../gix-filter", registry = "elohim" }
+gix-trace = { version = "^0.3.0", path = "../gix-trace", registry = "elohim" }
+gix-utils = { version = "^0.5.1", path = "../gix-utils", registry = "elohim", features = ["interrupt", "progress"] }
+gix-parallel = { version = "^0.50.0", path = "../gix-parallel", registry = "elohim" }
+gix-worktree = { version = "^0.58.0", path = "../gix-worktree", registry = "elohim", default-features = false, features = ["attributes"] }
+gix-index = { version = "^0.57.0", path = "../gix-index", registry = "elohim" }
+gix-fs = { version = "^0.24.0", path = "../gix-fs", registry = "elohim" }
+gix-object = { version = "^0.66.0", path = "../gix-object", registry = "elohim" }
+gix-error = { version = "^0.5.1", path = "../gix-error", registry = "elohim", features = ["bstr"] }
+gix-path = { version = "^0.14.0", path = "../gix-path", registry = "elohim" }
+gix-filter = { version = "^0.36.0", path = "../gix-filter", registry = "elohim" }
 
 io-close = "0.3.7"
-thiserror = "2.0.18"
 bstr = { version = "1.12.0", default-features = false }
 
 [dev-dependencies]
+insta = "1.46.3"
 gix-worktree-state = { path = ".", features = ["sha1", "sha256"] }
 gix-object = { path = "../gix-object" }
 gix-filter = { path = "../gix-filter" }
