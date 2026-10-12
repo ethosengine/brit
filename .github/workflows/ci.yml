@@ -95,6 +95,10 @@ jobs:
         run: |
           bash -n scripts/ci/install-brit-release.sh scripts/ci/test-install-brit-release.sh scripts/ci/verify-installed-brit.sh scripts/ci/verify-brit-upgrade.sh
           bash scripts/ci/test-install-brit-release.sh
+      - name: Validate pinned Brit and EPR pair installation with synthetic fixtures
+        run: |
+          bash -n scripts/ci/install-brit-epr.sh scripts/ci/test-install-brit-epr.sh
+          bash scripts/ci/test-install-brit-epr.sh
       - name: Validate publisher closure checks against a fake registry
         run: env PYTHONDONTWRITEBYTECODE=1 python3 -m unittest discover -s scripts/ci -p 'test_publish_brit.py'
       - name: Validate isolated registry-consumer checks without a registry
