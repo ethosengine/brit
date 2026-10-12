@@ -113,3 +113,10 @@ without feature requirements. Their declarations now require `elohim-protocol`;
 the inherited journey lane explicitly runs the remaining generic engine suite with
 `--no-default-features`. Both configurations must pass; this preserves the generic
 engine boundary without silently dropping protocol tests from the default suite.
+
+The merge reach rehearsal at `9e86ed425a58d0fe5299d442782aff9cbf92b002` is
+**NOT READY**: the installed evaluator requires a package root and activated Git
+hooks, and its package projection verification fails in the standalone checkout.
+Reconcile the standalone governance boundary with the native evaluator before
+reach. This is an additional qualification prerequisite; local checks and captured
+baseline CI do not override it.

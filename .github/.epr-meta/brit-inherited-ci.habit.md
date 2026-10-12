@@ -56,3 +56,9 @@ contract on Rust 1.96.1. Two inherited attribute-baseline iterator expressions w
 updated to equivalent `collect` calls. Full workspace formatting and the 69-package
 registry dependency closure pass; cross-platform and alternate-feature matrix
 qualification remains the exact-revision remote lane.
+
+DELTA 2026-10-12 (reach rehearsal; RED preserved): `epr ready --target origin/main`
+at merge 9e86ed425a58d0fe5299d442782aff9cbf92b002 reports NOT READY: missing
+`.epr-meta/elohim/packages`, inactive Git hooks, and package projection verification
+failure. The standalone boundary must reconcile these evaluator expectations before
+reach; local check success is insufficient. No push or parent pin promotion occurred.
