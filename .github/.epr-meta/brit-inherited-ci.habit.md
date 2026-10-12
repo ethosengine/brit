@@ -62,3 +62,13 @@ at merge 9e86ed425a58d0fe5299d442782aff9cbf92b002 reports NOT READY: missing
 `.epr-meta/elohim/packages`, inactive Git hooks, and package projection verification
 failure. The standalone boundary must reconcile these evaluator expectations before
 reach; local check success is insufficient. No push or parent pin promotion occurred.
+
+DELTA 2026-10-12 (CI-branch reach scope; RED preserved): Source inspection of
+`elohim/eprfs/epr-cli/src/{doctor,ready}.rs` in the parent confirms the installed
+evaluator unconditionally requires the parent package root and invokes its fixed
+`elohim/sdk/domains/elohim-agent/scripts/package-projections.mjs` path. Brit's
+root manifest terminates that parent cascade and does not copy its hooks. Brit's
+CLAUDE.md requires risky integration to reach `run-ci/**` first; the passing local
+checks support that CI-only push. Main integration and parent pin promotion still
+require exact-revision `Tests pass` evidence. The generic standalone evaluator
+incompatibility remains recorded rather than treated as package drift in Brit.

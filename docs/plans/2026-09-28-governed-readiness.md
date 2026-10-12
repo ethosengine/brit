@@ -120,3 +120,12 @@ hooks, and its package projection verification fails in the standalone checkout.
 Reconcile the standalone governance boundary with the native evaluator before
 reach. This is an additional qualification prerequisite; local checks and captured
 baseline CI do not override it.
+
+Inspection on 2026-10-12 locates those rehearsal failures in the evaluator's
+unconditional monorepo assumptions: `doctor.rs` requires the parent package tree,
+and `ready.rs` executes a fixed parent projection-verifier path. Brit's root
+manifest terminates the parent cascade and expressly avoids copying its hook
+implementation. This evaluator result needs a standalone-aware implementation;
+it does not diagnose Brit package drift. The repository's declared route is a
+locally verified `run-ci/**` push, followed by exact-revision remote CI acceptance
+before main integration or parent pin promotion.
