@@ -33,7 +33,8 @@ where
 
     /// Resolve updates once, then let the caller authorize them before packing or sending.
     ///
-    /// The callback also runs for dry runs. Returning an error prevents all transmission.
+    /// The callback also runs for dry runs and includes unchanged updates so leases can be checked.
+    /// Returning an error prevents all transmission.
     pub fn transmit_with_before_send(
         mut self,
         _progress: impl crate::progress::NestedProgress,
@@ -259,7 +260,6 @@ where
         let updates: Vec<_> = commands
             .iter()
             .zip(&name_pairs)
-            .filter(|(command, _)| command.old_oid != command.new_oid)
             .map(|(command, (local, remote))| crate::remote::push::Update {
                 local: local.clone(),
                 remote: remote.clone(),
@@ -397,9 +397,11 @@ fn build_pack_entries(
         return Ok(Vec::new());
     }
 
+    // An explicit lease may name advertised history absent from this clone.
+    // Such history cannot prune our walk; send all reachable local objects instead.
     let hides: Vec<gix_hash::ObjectId> = commands
         .iter()
-        .filter(|c| !c.old_oid.is_null())
+        .filter(|c| !c.old_oid.is_null() && repo.has_object(c.old_oid))
         .map(|c| c.old_oid)
         .collect();
 

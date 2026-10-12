@@ -51,8 +51,8 @@ pub struct Platform {
 
     /// Require the remote ref's current value to match before updating.
     ///
-    /// Accepts an optional `[<refname>[:<expect>]]`. Passing just the flag
-    /// compares against the locally-recorded remote-tracking branch.
+    /// Supports `refs/heads/<branch>:<full-expected-oid>` for one explicitly
+    /// selected existing branch. Implicit leases and creation are not supported.
     ///
     /// `require_equals = true` so that `--force-with-lease` on its own
     /// doesn't greedily consume the next positional argument — git's
