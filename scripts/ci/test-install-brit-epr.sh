@@ -88,10 +88,38 @@ kill -TERM "$installer_pid"
 touch "$fixture/block/continue"
 if wait "$installer_pid"; then echo 'interrupted pair install succeeded' >&2; exit 1; fi
 retained
+# A second activation may occur after our rename but before EXIT cleanup.
+# Model that exact interleaving without timing-dependent background installers.
+mkdir "$fixture/shims"
+real_mv=$(command -v mv)
+cat > "$fixture/shims/mv" <<'SCRIPT'
+#!/usr/bin/env bash
+set -euo pipefail
+"$PAIR_REAL_MV" "$@"
+destination=${!#}
+if [ "$destination" = "$PAIR_CURRENT" ]; then
+  readlink "$destination" > "$PAIR_ACTIVATED"
+  ln -s "$PAIR_PREVIOUS" "$PAIR_REPLACEMENT"
+  case "$(uname -s)" in Linux) option=-T ;; Darwin) option=-h ;; esac
+  "$PAIR_REAL_MV" -f "$option" -- "$PAIR_REPLACEMENT" "$destination"
+fi
+SCRIPT
+chmod +x "$fixture/shims/mv"
+PATH="$fixture/shims:$PATH" PAIR_REAL_MV="$real_mv" PAIR_CURRENT="$prefix/current" \
+  PAIR_ACTIVATED="$fixture/activated" PAIR_PREVIOUS="$active" PAIR_REPLACEMENT="$prefix/replacement" \
+  install "$fixture/epr b" "$source_b" "$epr_b_hash"
+retained
+test -x "$(cat "$fixture/activated")/bin/epr"
+test "$(sha256_file "$(cat "$fixture/activated")/bin/epr")" = "$epr_b_hash"
 mkdir "$fixture/unmanaged"
 mkdir "$fixture/foreign prefix"
 ln -s "$fixture/unmanaged" "$fixture/foreign prefix/current"
 prefix="$fixture/foreign prefix"
 if install "$fixture/epr a" "$source_a" "$epr_a_hash" >/dev/null 2>&1; then exit 1; fi
 test "$(readlink "$prefix/current")" = "$fixture/unmanaged"
-printf 'pair-install-fixtures=passed (pins, rollback, refusal, interruption, spaced paths; synthetic, no human acceptance)\n'
+rm "$prefix/current"
+mkdir -p "$prefix/releases"
+ln -s "$prefix/releases/../../unmanaged" "$prefix/current"
+if install "$fixture/epr a" "$source_a" "$epr_a_hash" >/dev/null 2>&1; then exit 1; fi
+test "$(readlink "$prefix/current")" = "$prefix/releases/../../unmanaged"
+printf 'pair-install-fixtures=passed (pins, rollback, refusal, interruption, concurrent activation, spaced paths; synthetic, no human acceptance)\n'

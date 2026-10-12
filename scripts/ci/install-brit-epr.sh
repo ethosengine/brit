@@ -31,13 +31,22 @@ mkdir -p -- "$prefix/releases"
 check_active() {
   [ ! -e "$prefix/current" ] || [ -L "$prefix/current" ] || fail 'refusing to replace an unmanaged current path'
   if [ -L "$prefix/current" ]; then
-    case "$(readlink "$prefix/current")" in "$prefix/releases/"*) ;; *) fail 'current link is not a managed generation' ;; esac
+    local generation
+    generation=$(readlink "$prefix/current")
+    case "$generation" in "$prefix/releases/"*) ;; *) fail 'current link is not a managed generation' ;; esac
+    generation=${generation#"$prefix/releases/"}
+    [[ "$generation" =~ ^pair\.[A-Za-z0-9]+$ ]] || fail 'current must name one immediate generation'
+    [ -d "$prefix/releases/$generation" ] && [ ! -L "$prefix/releases/$generation" ] || fail 'current generation must be a regular directory'
   fi
 }
 check_active
 stage=$(mktemp -d "$prefix/releases/pair.XXXXXXXX")
+activation_attempted=false
 cleanup() {
-  if [ "$(readlink "$prefix/current" 2>/dev/null || true)" != "$stage" ]; then rm -rf -- "$stage"; fi
+  # Another installer can replace current immediately after our rename. Once
+  # activation is attempted, preserve this generation even if rename's outcome
+  # is interrupted or ambiguous; it may already be somebody's rollback target.
+  if [ "$activation_attempted" = false ]; then rm -rf -- "$stage"; fi
 }
 trap cleanup EXIT
 trap 'exit 130' INT
@@ -55,5 +64,6 @@ check_active
 ln -s "$stage" "$stage/activate"
 # Plain mv follows directory symlinks; explicit no-follow replacement is vital.
 # The unique source and destination share a filesystem, making rename atomic.
+activation_attempted=true
 mv -f "$rename_option" -- "$stage/activate" "$prefix/current"
 printf 'installed_pair=%s/current/bin\nbrit_source=%s\nepr_source_declared=%s\ninterface_smoke=passed\nworkflow_acceptance=not-established\n' "$prefix" "$brit_source" "$epr_source"
