@@ -58,6 +58,16 @@ pub fn run(command: TreeCommand) -> Result<()> {
 }
 
 async fn run_async(command: TreeCommand) -> Result<()> {
+    let mut guards = gitoxide::plumbing::MutationGuards::default();
+    let destination = match &command {
+        TreeCommand::Seal { store, .. } => Some(store),
+        TreeCommand::Restore { destination, .. } => Some(destination),
+        TreeCommand::ExportGit { repo, .. } => Some(repo),
+        TreeCommand::Verify { .. } => None,
+    };
+    if let Some(destination) = destination {
+        guards.path(destination).map_err(anyhow::Error::from)?;
+    }
     let limits = TreeLimits::default();
     match command {
         TreeCommand::Seal { repo, revision, store } => {

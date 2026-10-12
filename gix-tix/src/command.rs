@@ -281,6 +281,23 @@ impl Invocation {
 }
 
 impl Platform {
+    /// Explicit destination outside the discovered repository, if this command writes one.
+    /// Hosting command adapters can guard this path before executing the operation.
+    pub fn output_path(&self) -> Option<&std::path::Path> {
+        match &self.command {
+            Some(Command::Transplant(args)) => args
+                .materialize_conflicts
+                .as_ref()
+                .and_then(|path| path.as_deref())
+                .filter(|path| *path != std::path::Path::new("-")),
+            Some(Command::Rebase(command)) => command.output_path(),
+            Some(Command::Worktrunk {
+                command: Some(WorktrunkCommand::Switch { path, .. }),
+            }) => path.as_deref(),
+            _ => None,
+        }
+    }
+
     /// Return whether running this command requires repository discovery.
     pub fn requires_repository(&self) -> bool {
         !matches!(

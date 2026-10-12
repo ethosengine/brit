@@ -1,0 +1,74 @@
+seamRegistryVersion: 1
+crate: gitoxide-core
+crateRoot: gitoxide-core
+seamLocus: Private external-Git switch recovery; no Elohim authority or protocol heads.
+decisionPoints:
+  - name: recover
+    kind: state-transition
+    sourceLocation:
+      file: src/repository/switch/linux.rs
+      modulePath: repository::switch::recover
+    summary: Explicit recovery either restores a pre-decision switch or rolls forward a committed switch without replacing unexpected state.
+    concernIds:
+      - id: C0
+        status: partial
+        justification: Private Git bridge state; protocol truth, audience and head election are unchanged. Local switching and recovery journeys exercise preservation.
+      - id: C1
+        status: n-a
+        justification: No actor or peer self-election exists in this external Git operation.
+      - id: C2
+        status: n-a
+        justification: No protocol canonical head or authority moves; Git branch tips are pinned and unchanged.
+      - id: C3
+        status: partial
+        justification: Explicit continue/abort are the recovery path; corrupt or foreign state deliberately retains evidence and refuses.
+      - id: C4
+        status: partial
+        justification: No-journal and corrupt-journal outcomes must remain distinct; corruption and foreign-journal journeys retain evidence.
+      - id: C5
+        status: n-a
+        justification: Checksums detect damaged private bytes and confer no protocol authority.
+      - id: C6a
+        status: partial
+        justification: One active operation per worktree with no recurring sweep; preparation memory scales with the selected transition, without a fixed byte quota.
+      - id: C6b
+        status: partial
+        justification: Before/after comparisons and durable hook-start support retry without duplicate effects; real process-interruption journeys exercise explicit retries.
+      - id: C7
+        status: partial
+        justification: The public CLI exposes only existing-branch switch and explicit recovery; unsupported forms and platforms must refuse before mutation.
+      - id: C8
+        status: partial
+        justification: CLI status and retained journal provide local outcomes; no metrics counter service is introduced for this offline command.
+      - id: C9
+        status: n-a
+        justification: No agent keys or lineage change; repository and worktree identities are validated locally.
+      - id: C10
+        status: partial
+        justification: Versioned private manifest must reject unsupported or corrupt state; unknown fields, checksum and semantic corruption are refused in journeys.
+      - id: C11
+        status: n-a
+        justification: No remotely driven input rate; cooperating local writer contention refuses rather than queues.
+      - id: C12
+        status: n-a
+        justification: Local filesystem access and explicit CLI invocation authorize an external Git action; no notarized grant plane applies.
+      - id: C13
+        status: n-a
+        justification: No social-tier authority scaffold or graduation is created.
+      - id: C14
+        status: partial
+        justification: Unexpected filesystem or metadata states retain private evidence with diagnostics; reviewed recovery paths preserve private evidence on conflict.
+    contractTests:
+      - path: tests/cli-journey/tests/switch.rs
+        testName: real_kill_and_interrupt_at_each_publication_boundary_continue_explicitly
+        kind: integration
+      - path: tests/cli-journey/tests/switch.rs
+        testName: abort_restores_exact_original_state_and_interrupted_abort_is_restartable
+        kind: integration
+      - path: tests/cli-journey/tests/switch.rs
+        testName: foreign_worktree_index_and_branch_updates_are_never_overwritten
+        kind: integration
+      - path: gitoxide-core/src/repository/switch/durability.rs
+        testName: power_loss_drops_unsynchronized_bytes_and_names_at_every_real_sync_boundary
+        kind: unit
+    notes: Local Linux synchronization and interruption proof; not hardware power-cut or remote platform qualification.

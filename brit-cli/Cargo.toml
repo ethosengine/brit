@@ -21,6 +21,7 @@ max-pure = ["gitoxide/max-pure"]
 small = ["gitoxide/small"]
 lean = ["gitoxide/lean"]
 lean-async = ["gitoxide/lean-async"]
+switch-test-faults = ["gitoxide/switch-test-faults"]
 
 [dependencies]
 anyhow = "1.0.98"

@@ -269,6 +269,41 @@ mod tests {
     }
 
     #[test]
+    fn switch_exposes_only_existing_branch_and_explicit_recovery() {
+        for args in [
+            vec!["brit", "switch", "main"],
+            vec!["brit", "switch", "refs/heads/topic"],
+            vec!["brit", "switch", "--status"],
+            vec!["brit", "switch", "--continue"],
+            vec!["brit", "switch", "--abort"],
+        ] {
+            assert!(
+                public_command().try_get_matches_from(&args).is_ok(),
+                "supported switch: {args:?}"
+            );
+        }
+        for args in [
+            vec!["brit", "switch"],
+            vec!["brit", "switch", "one", "two"],
+            vec!["brit", "switch", "main", "--status"],
+            vec!["brit", "switch", "--continue", "--abort"],
+            vec!["brit", "switch", "--status", "--continue"],
+            vec!["brit", "switch", "--status", "--abort"],
+            vec!["brit", "switch", "-c", "new"],
+            vec!["brit", "switch", "--force", "main"],
+            vec!["brit", "switch", "--detach", "main"],
+            vec!["brit", "switch", "--track", "main"],
+            vec!["brit", "switch", "--guess", "main"],
+            vec!["brit", "switch", "--recurse-submodules", "main"],
+        ] {
+            assert!(
+                public_command().try_get_matches_from(&args).is_err(),
+                "deferred or ambiguous switch: {args:?}"
+            );
+        }
+    }
+
+    #[test]
     fn broader_staging_requires_literal_paths_or_a_repository_wide_flag() {
         for args in [
             vec!["brit", "add", "--", "file", "directory/"],

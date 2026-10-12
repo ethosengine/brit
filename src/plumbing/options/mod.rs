@@ -193,6 +193,21 @@ pub enum Subcommands {
         #[clap(last = true, required = true, value_parser = crate::shared::AsBString)]
         paths: Vec<BString>,
     },
+    /// Switch to an existing local branch, or explicitly recover an interrupted switch.
+    Switch {
+        /// Existing local branch, short name or refs/heads/name.
+        #[clap(required_unless_present_any = ["status", "continue_switch", "abort"], conflicts_with_all = ["status", "continue_switch", "abort"], value_parser = crate::shared::AsBString)]
+        branch: Option<BString>,
+        /// Inspect the private recovery journal without changing repository state.
+        #[clap(long, conflicts_with_all = ["continue_switch", "abort"])]
+        status: bool,
+        /// Explicitly continue the interrupted switch.
+        #[clap(long = "continue", conflicts_with = "abort")]
+        continue_switch: bool,
+        /// Restore the original state before a durable commit decision.
+        #[clap(long)]
+        abort: bool,
+    },
     Diff(diff::Platform),
     Log(log::Platform),
     /// Interactively browse commits and their graph.

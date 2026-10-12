@@ -88,6 +88,21 @@ pub(super) struct Continue {
     materialize_conflicts: Option<Option<PathBuf>>,
 }
 
+impl Command {
+    pub(super) fn output_path(&self) -> Option<&Path> {
+        let destination = match self {
+            Self::Todo(args) => &args.materialize_conflicts,
+            Self::Apply(args) => &args.materialize_conflicts,
+            Self::Continue(args) => &args.materialize_conflicts,
+            _ => return None,
+        };
+        destination
+            .as_ref()
+            .and_then(|path| path.as_deref())
+            .filter(|path| *path != Path::new("-"))
+    }
+}
+
 pub(super) fn run(repo: gix::Repository, command: Command) -> Result<()> {
     match command {
         Command::Todo(args) => todo(repo, args),

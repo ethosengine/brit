@@ -44,6 +44,8 @@ pub fn read(repo: &Path, pipeline: &str) -> Result<()> {
 }
 
 pub fn write(repo: &Path, pipeline: &str, commit: &str) -> Result<()> {
+    let mut guards = gitoxide::plumbing::MutationGuards::default();
+    guards.path(repo).map_err(|err| CliError::Git(err.into()))?;
     let repo = repo.canonicalize().map_err(|source| CliError::RepoNotFound {
         path: repo.display().to_string(),
         source,
@@ -59,6 +61,8 @@ pub fn write(repo: &Path, pipeline: &str, commit: &str) -> Result<()> {
 }
 
 pub fn migrate(repo: &Path, json_path: &Path) -> Result<()> {
+    let mut guards = gitoxide::plumbing::MutationGuards::default();
+    guards.path(repo).map_err(|err| CliError::Git(err.into()))?;
     let repo = repo.canonicalize().map_err(|source| CliError::RepoNotFound {
         path: repo.display().to_string(),
         source,

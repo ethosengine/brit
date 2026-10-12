@@ -740,12 +740,48 @@ No push or publication; full habit remains UNWIRED.
 
 ### Handoff 5a: Safe branch switching
 
-Prerequisite: refreshed station-4 result. Public behavior: switch existing local
-branches, refusing dirty/untracked overwrites and branches occupied by another
-worktree. Boundary: native checkout/ref/worktree primitives. Exclude branch
-creation and exposing unproven sequencing code. Acceptance: Git-oracle journey
-and interruption/recovery probes before exposing command. Independent reviewer:
-separate checkout/recovery reviewer. Evidence: pinned tests, review and DELTA.
+Refreshed prerequisite: station 4 source `e4d631d78eb8c563df61c501d05705e0dbe59594`,
+134 passing journeys, independent approval, clean rebuilt executable and readiness.
+Station 5a starts from that clean source on `sprint/safe-switch-2026-10-12`.
+The retained station-4 executable also passed all 134 journeys in this fresh context.
+
+Public behavior: switch an existing local branch (short or `refs/heads/` name),
+or explicitly inspect/continue/abort a private interrupted operation. Preserve
+unrelated staged, unstaged, untracked and ignored bytes; refuse overlaps and
+overwrites, including ancestor/descendant conflicts. Reuse native worktree
+occupancy and rebase/bisect reservations. Creation, reset, remote guessing,
+previous-branch shorthand, detach, force, merge, tracking and submodule recursion
+remain deferred. Unborn, unresolved, sparse, split and alternate indexes, external
+filters and affected nested repositories/gitlinks refuse before mutation.
+
+The user expanded this station to crash-durable recovery. A versioned private
+journal holds exact index bytes, before/after file states and checksummed backups
+in the owning worktree's private Git directory. Successful file and directory
+synchronization is the durability boundary; storage that violates these primitives
+is outside the claim. Before the durable commit decision, continue resumes and
+abort restores; afterward recovery rolls forward only. Recovery never starts
+automatically, never overwrites unexpected third states, and never removes an
+unproven lock. Hook-start is durable; interrupted hook outcomes remain unknown
+and are not replayed. Pending recovery blocks new Brit mutations while inspection
+remains available; arbitrary external Git writers are detected, not isolated.
+
+Design gate, before implementation: this journal is private external-Git bridge
+state analogous to Private (B), not a protocol entity or source-chain record.
+Identity is the owning Git/worktree location plus pinned Git OIDs; checksums only
+detect damaged private bytes. No DHT type, coordinator, HTTP route, Automerge
+projection, transport affinity or new recurring head applies (zero at one year).
+It works offline independently of protocol-key custody. It confers no peer
+authority and never exports backups into the object database or shared store.
+
+Acceptance: independent checkout/recovery review, Git-oracle journeys, real
+SIGINT/SIGKILL checkpoints and a separate loss-of-unsynchronized-writes model.
+The engine and recovery probes passed before enabling the four public forms.
+Finish with scoped local commits, clean rebuilt artifact, retained journeys,
+parser/package/ref/recovery tests, strict lint, feature checks and readiness against
+the exact base. Durable receipts:
+`/projects/elohim/genesis/local-dev/brit-readiness/safe-switch/`.
+Station 5a remains unchecked until switching and durable recovery both pass.
+No push, publication or parent pin change; full habit remains UNWIRED.
 
 ### Handoff 5b: Fast-forward pull
 
@@ -1075,3 +1111,44 @@ occurred. No push, publication, remote platform qualification, parent pin change
 or human acceptance is claimed. The full habit remains UNWIRED.
 Next: safe branch switching → fast-forward pull → rebase/conflict recovery design,
 one locally verified station per fresh context.
+
+### Safe switch recovery constraints — 2026-10-12
+
+Station 5a exposes only `switch <existing-local-branch>`, `switch --status`,
+`switch --continue` and `switch --abort`. The Linux engine supports ordinary
+files, symlinks, executable modes and built-in conversions. Other platforms
+refuse switching before mutation because this implementation has not established
+their synchronization and crash-released locking contract. They retain existing
+authoring behavior and refuse a pending journal brought from Linux.
+Cross-filesystem publication refuses during preflight; journal-backed atomic
+replacement requires the private Git directory and affected paths on one filesystem.
+
+The private Git-directory journal records exact before/after bytes, index and
+HEAD/reflog states, branch pins, path bytes, filesystem identities and owned
+lock inodes. Its checksums detect corruption; they are not protocol addresses.
+Preparation and resource intent are synchronized before live mutation. Files
+are synchronized before the commit decision; the decision precedes index, HEAD
+and reflog publication. Recovery can abort only before that decision and never
+overwrites an unexpected third state. Pending state fences cooperating Brit
+mutations throughout the shared repository, including explicit output paths.
+External Git remains outside this serialization boundary.
+
+Review discovered three missing stations between preparation and completion:
+
+- Chain 5a / between preparation → ordinary lock acquisition / missing node:
+  durable ownership intent must precede each initial or recovered lock link.
+  Probe: real SIGKILL at `lock-intent` and `lock-acquired`, then explicit recovery.
+- Chain 5a / between desired file bytes → commit decision / missing node:
+  matching bytes after interruption must still be synchronized before deciding.
+  Probe: the actual-engine synchronization trace loses every unsynchronized byte
+  and namespace change at each boundary; negative controls must fail.
+- Chain 5a / between metadata publication → hook / missing node:
+  release ordinary Git guards durably while retaining the private journal fence.
+  Probe: `post-checkout` successfully stages its changes through Git; interrupted
+  hooks preserve those changes and are never automatically replayed.
+
+The Git oracle also established that a hook exiting 7 makes `git switch` exit 1.
+Brit preserves that failure status and the committed switch. A durable hook-start
+without a recorded outcome reports uncertainty. Directory transitions preserve
+original directory identity/modes through private renames; affected nested
+repositories and gitlinks remain outside this station's supported boundary.
