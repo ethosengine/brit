@@ -488,3 +488,88 @@ against `eff40d6ab`; the shared checkout and its unrelated changes were preserve
 GitHub API access and Git remote discovery currently fail DNS/network resolution,
 so no new push, remote matrix or publication is claimed. The isolated EPR branch
 `feat/brit-daily-driver-epr-2026-10-12` remains local as well.
+
+## Native authoring sprint — 2026-10-12
+
+Objective: perform the local stage → inspect → unstage → commit loop through the
+public executable. This sprint requires no push or remote acceptance. Stock Git
+is the byte/state oracle in disposable repositories.
+
+- [x] Stage explicitly named literal files, including additions, modifications and deletions, without changing unrelated staged entries or worktree bytes. Validate the entire batch before publishing an index update. Serves brit-native-daily-driver.
+- [x] Inspect HEAD-to-index (`diff --cached`, alias `--staged`) and index-to-worktree changes as readable patches without writing the index, worktree or object database; preserve existing tree/file comparison commands. Serves brit-native-daily-driver.
+- [x] Restore explicitly selected index entries from HEAD with `restore --staged`, leaving every worktree byte unchanged; prove refusal and lock contention preserve the prior index. Serves brit-native-daily-driver.
+- [x] Verify the combined public loop against stock Git with dirty neighbors, linked worktrees, deletions, symlinks and executable modes; independently review index publication and failure behavior. Serves brit-native-daily-driver.
+
+Scope starts with explicit literal file paths, not recursive directories, wildcard
+pathspecs or interactive hunk selection. Unsupported forms must refuse clearly.
+Existing compatibility placeholder drivers are not implementations and will not
+be exposed by changing parser wiring alone. The core operations reuse the native
+Git object/index/filter/lock libraries; no subprocess Git fallback performs work.
+The integration tests use stock Git only as their independent oracle.
+
+Local-first reading: one device can stage, inspect, unstage and retain its source
+bytes with no other person or service present. These unsigned local Git operations
+do not depend on whether a protocol key is local, hosted or absent. The worktree
+and index retain the author's working version; this sprint adds no shared draft
+or publication. Other devices and collaborators receive only what the person
+subsequently chooses to transfer through existing Git operations; their absence
+does not change local behavior. Closing the process before index publication
+leaves the prior index; successful publication is a Git lock-file transaction.
+The UI shows a patch or explicit refusal, not remote acceptance or sync standing.
+
+P2P design gate: no new protocol entity, verdict schema, route, coordinator,
+notarized type, sync message or recurring head is introduced. Mutable Git index
+entries and content-derived Git object IDs remain the existing external bridge's
+source of truth; they are not new EPR CIDs, private-chain entries or DHT facts.
+Diff output is an ephemeral local view of those bytes. There is no SQLite or
+Automerge projection, transport affinity, DNA-hash change or additional head-plane
+cost at one year. Existing local filesystem access bounds who can read the draft;
+no aggregator, cross-person activity store or new identity claim is created.
+
+The public local loop is:
+
+```sh
+brit add -- src/example.rs README.md
+brit diff --cached
+brit diff -- src/example.rs
+brit restore --staged -- README.md
+brit commit -m "Describe the staged change"
+```
+
+Paths are relative to the current repository directory and must follow `--`.
+`diff --staged` aliases `diff --cached`; the existing `diff tree` and `diff file`
+commands remain available. New untracked files appear in cached diff after staging.
+Restore requires an existing HEAD; an unborn repository can stage and inspect its
+first commit but cannot restore from a commit that does not exist.
+
+This bounded implementation refuses recursive directories, wildcard/pathspec
+magic, interactive staging, selected submodules, external clean filters, special
+index flags and conflicted indexes. Mutations also refuse split/sparse indexes
+and unsupported case aliases or Unicode precomposition. Diff refuses custom diff
+attributes/external drivers and submodule patches; explicitly selecting ordinary
+files works alongside unrelated submodules. Text patches use Myers with three
+context lines, without rename detection or function-context headers. These are
+explicit compatibility limits, not complete Git CLI parity.
+
+Story constraint: between staging changed bytes and committing the resulting
+tree, stale index TREE caches must be invalidated. The runnable station is
+`staged_changes_invalidate_cached_tree_before_commit` in the native authoring
+journey: prime a real TREE extension, stage new content through Brit, commit, and
+compare the committed tree with stock Git. Between inspecting a draft and
+continuing to edit, diff must preserve the raw index and object inventory; the
+`patches_match_git_and_leave_index_and_objects_unchanged` station checks both
+immediately around Brit, separately from Git's optional stat-cache refresh.
+
+Local verification: all 17 native-authoring journeys and the existing 60 public
+CLI journeys passed against the rebuilt executable. Strict Clippy for `brit-cli`,
+`gitoxide-core` and `cli-journey` (all targets), workspace formatting, and the
+census unit suite passed. Independent agents reviewed index publication,
+read-only diff and parser/fixture integration. The new journey is selected by the
+existing source CI and installed-release qualification jobs. Logs are retained
+under `/projects/elohim/genesis/local-dev/brit-readiness/native-authoring/`.
+The `small`, `lean-async` and `max-pure` frontend feature checks also pass, as do
+all 16 CLI package tests with `RUST_BACKTRACE=0 RUST_LIB_BACKTRACE=0`; an existing
+exact-error-output test otherwise includes the workspace's enabled backtrace.
+This is Linux local evidence; it does not stand in for a remote platform matrix,
+published upgrade or actual two-person acceptance. The owning habit remains
+UNWIRED for its complete invariant.

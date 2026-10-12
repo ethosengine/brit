@@ -99,3 +99,6 @@ pub fn from_list(
 
 pub mod entries;
 pub use entries::function::entries;
+
+pub mod authoring;
+pub use authoring::{add_paths, restore_staged};

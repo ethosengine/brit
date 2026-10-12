@@ -166,6 +166,21 @@ pub enum Subcommands {
         /// Paths to open, or none to start the editor without a file.
         paths: Vec<PathBuf>,
     },
+    /// Stage only the explicitly named literal files or tracked deletions.
+    Add {
+        /// Literal file paths; directories and pathspec patterns are unsupported.
+        #[clap(last = true, required = true, value_parser = crate::shared::AsBString)]
+        paths: Vec<BString>,
+    },
+    /// Restore selected index entries from HEAD, leaving working files untouched.
+    Restore {
+        /// Select index-only restoration. Worktree restoration is unsupported.
+        #[clap(long, required = true)]
+        staged: bool,
+        /// Literal file paths to unstage.
+        #[clap(last = true, required = true, value_parser = crate::shared::AsBString)]
+        paths: Vec<BString>,
+    },
     Diff(diff::Platform),
     Log(log::Platform),
     /// Interactively browse commits and their graph.
@@ -618,11 +633,18 @@ pub mod merge {
 pub mod diff {
     use gix::bstr::BString;
 
-    /// Print all changes between two objects.
+    /// Show unstaged changes, staged changes, or compare two objects.
     #[derive(Debug, clap::Parser)]
+    #[clap(args_conflicts_with_subcommands = true)]
     pub struct Platform {
+        /// Compare the index with HEAD instead of working files with the index.
+        #[clap(long, visible_alias = "staged")]
+        pub cached: bool,
+        /// Restrict changes to these literal file paths.
+        #[clap(last = true, value_parser = crate::shared::AsBString)]
+        pub paths: Vec<BString>,
         #[clap(subcommand)]
-        pub cmd: SubCommands,
+        pub cmd: Option<SubCommands>,
     }
 
     #[derive(Debug, clap::Subcommand)]

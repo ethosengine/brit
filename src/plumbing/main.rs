@@ -236,17 +236,28 @@ pub fn run_with_command(args: Args, command: clap::Command) -> Result<()> {
                 core::repository::merge_base(repository(Mode::Lenient)?, first, others, out, format)
             })
         }
-        Subcommands::Diff(crate::plumbing::options::diff::Platform { cmd }) => match cmd {
-            crate::plumbing::options::diff::SubCommands::Tree {
+        Subcommands::Add { paths } => prepare_and_run("add", verbose, None, move |_progress, _out, _err| {
+            core::repository::index::add_paths(repository(Mode::Strict)?, &paths)
+        }),
+        Subcommands::Restore { staged: _, paths } => {
+            prepare_and_run("restore-staged", verbose, None, move |_progress, _out, _err| {
+                core::repository::index::restore_staged(repository(Mode::Strict)?, &paths)
+            })
+        }
+        Subcommands::Diff(crate::plumbing::options::diff::Platform { cmd, cached, paths }) => match cmd {
+            None => prepare_and_run("diff", verbose, None, move |_progress, out, _err| {
+                core::repository::diff::working(repository(Mode::Strict)?, out, cached, &paths)
+            }),
+            Some(crate::plumbing::options::diff::SubCommands::Tree {
                 old_treeish,
                 new_treeish,
-            } => prepare_and_run("diff-tree", verbose, None, move |_progress, out, _err| {
+            }) => prepare_and_run("diff-tree", verbose, None, move |_progress, out, _err| {
                 core::repository::diff::tree(repository(Mode::Lenient)?, out, old_treeish, new_treeish)
             }),
-            crate::plumbing::options::diff::SubCommands::File {
+            Some(crate::plumbing::options::diff::SubCommands::File {
                 old_revspec,
                 new_revspec,
-            } => prepare_and_run("diff-file", verbose, None, move |_progress, out, _err| {
+            }) => prepare_and_run("diff-file", verbose, None, move |_progress, out, _err| {
                 core::repository::diff::file(repository(Mode::Lenient)?, out, old_revspec, new_revspec)
             }),
         },
