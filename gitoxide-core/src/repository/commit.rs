@@ -245,6 +245,11 @@ pub fn create(
     // tree/parent work so the message-mode check can short-circuit
     // even on flag combos that would otherwise bail later (e.g.
     // without --allow-empty).
+    let configured_cleanup = repo
+        .config_snapshot()
+        .string("commit.cleanup")
+        .map(|value| value.to_string());
+    let cleanup = cleanup.or(configured_cleanup);
     if let Some(mode) = cleanup.as_deref() {
         match mode {
             "strip" | "whitespace" | "verbatim" | "scissors" | "default" => {}
@@ -298,7 +303,16 @@ pub fn create(
     // applies them in the documented precedence and lets the last one
     // win (the test rows exercise one at a time so this is moot for
     // effect-mode parity today).
-    let mut composed = message.join("\n\n");
+    let mut composed = String::new();
+    for paragraph in &message {
+        if !composed.is_empty() {
+            composed.push('\n');
+        }
+        composed.push_str(paragraph);
+        if !composed.is_empty() && !composed.ends_with('\n') {
+            composed.push('\n');
+        }
+    }
 
     let prefix_commit_subject = |spec: &str| -> Result<String> {
         use gix::bstr::ByteSlice;
@@ -322,11 +336,8 @@ pub fn create(
 
     if let Some(spec) = squash.as_deref() {
         let subject = prefix_commit_subject(spec)?;
-        let mut s = format!("squash! {subject}");
-        if !composed.is_empty() {
-            s.push_str("\n\n");
-            s.push_str(&composed);
-        }
+        let mut s = format!("squash! {subject}\n\n");
+        s.push_str(&composed);
         composed = s;
     }
 
@@ -338,7 +349,7 @@ pub fn create(
         };
         let subject = prefix_commit_subject(target)?;
         composed = match mode {
-            "fixup" => format!("fixup! {subject}"),
+            "fixup" => format!("fixup! {subject}\n\n"),
             "amend" => {
                 let original = load_full_message(target)?;
                 format!("amend! {subject}\n\n{original}")
@@ -352,6 +363,9 @@ pub fn create(
             }
             _ => unreachable!("split arms exhausted"),
         };
+        if !composed.ends_with('\n') {
+            composed.push('\n');
+        }
     }
     if let Some(path) = file.as_ref() {
         let body = if path.as_os_str() == "-" {
@@ -391,18 +405,34 @@ pub fn create(
         composed = String::from_utf8_lossy(raw).into_owned();
     }
 
-    // Apply cleanup. Bytes parity on the precise normalization rules
-    // (git's clean_message in commit.c) is out of scope for the first
-    // iteration since both git and gix paths exit 0 either way for
-    // effect-mode rows; deeper bytes-parity rides a follow-up row.
-    // verbatim leaves the message untouched. The other modes trim
-    // outer whitespace so identity rules (no trailing space, no empty
-    // leading/trailing lines) match git for typical -m inputs.
+    // No editor is launched by this authoring path: Git maps both default and
+    // scissors to whitespace cleanup for non-interactive message sources.
     let cleanup_mode = cleanup.as_deref().unwrap_or("default");
+    // These names are aliases: the last occurrence across both wins, including
+    // command-line config appended after repository configuration.
+    let mut comment_prefix = "#".to_owned();
+    if let Some(sections) = repo.config_snapshot().plumbing().sections_by_name("core") {
+        for section in sections {
+            if section.header().subsection_name().is_some() {
+                continue;
+            }
+            if let Some(name) = section
+                .value_names()
+                .filter(|name| name.eq_ignore_ascii_case("commentString") || name.eq_ignore_ascii_case("commentChar"))
+                .last()
+                && let Some(value) = section.value(&name)
+            {
+                comment_prefix = value.to_string();
+            }
+        }
+    }
+    if cleanup_mode == "strip" && (comment_prefix == "auto" || comment_prefix.is_empty()) {
+        bail!("commit cleanup with an automatic or empty comment prefix is not yet supported; use git commit");
+    }
+    // Git cleans whitespace before message hooks, but removes comments only
+    // after hooks have supplied or validated the message.
     if cleanup_mode != "verbatim" {
-        composed = composed
-            .trim_matches(|c: char| c == '\n' || c == ' ' || c == '\t')
-            .to_string();
+        composed = clean_message(&composed, None);
     }
 
     // --dry-run short-circuit: git's `--dry-run` reports what would
@@ -418,7 +448,7 @@ pub fn create(
         super::authoring::run_hook(&repo, "pre-commit", &[])?;
     }
     let message_path = repo.current_dir().join(repo.git_dir()).join("COMMIT_EDITMSG");
-    std::fs::write(&message_path, format!("{composed}\n"))?;
+    std::fs::write(&message_path, &composed)?;
     let mut prepare_args = vec![message_path.clone().into_os_string()];
     if !message.is_empty() || file.is_some() {
         prepare_args.push("message".into());
@@ -433,11 +463,16 @@ pub fn create(
     }
     composed = std::fs::read_to_string(&message_path).context("read hook-edited commit message")?;
     if cleanup_mode != "verbatim" {
-        composed = composed
-            .trim_matches(|c: char| c == '\n' || c == ' ' || c == '\t')
-            .to_owned();
+        composed = clean_message(&composed, (cleanup_mode == "strip").then_some(comment_prefix.as_str()));
     }
-    if composed.is_empty() && !allow_empty_message {
+    let empty_message = if cleanup_mode == "verbatim" {
+        composed.is_empty()
+    } else {
+        composed.lines().all(|line| {
+            line.starts_with("Signed-off-by: ") || line.bytes().all(|byte| matches!(byte, b' ' | b'\t' | b'\n' | b'\r'))
+        })
+    };
+    if empty_message && !allow_empty_message {
         bail!("Aborting commit due to empty commit message.");
     }
     // Read after hooks, which may stage changes. Never substitute worktree bytes.
@@ -577,4 +612,29 @@ pub fn create(
     }
 
     Ok(())
+}
+
+/// Git's stripspace: preserve indentation, trim ASCII whitespace at each line's
+/// end, collapse blank lines, and terminate a nonempty message with one newline.
+/// Git's sane_ctype whitespace is space/tab/LF/CR; VT and FF are content.
+fn clean_message(message: &str, comment_prefix: Option<&str>) -> String {
+    let mut result = String::with_capacity(message.len());
+    let mut blank = false;
+    for line in message.split('\n') {
+        if comment_prefix.is_some_and(|prefix| line.starts_with(prefix)) {
+            continue;
+        }
+        let line = line.trim_end_matches([' ', '\t', '\n', '\r']);
+        if line.is_empty() {
+            blank = true;
+        } else {
+            if blank && !result.is_empty() {
+                result.push('\n');
+            }
+            result.push_str(line);
+            result.push('\n');
+            blank = false;
+        }
+    }
+    result
 }

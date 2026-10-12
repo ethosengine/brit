@@ -80,9 +80,10 @@ Implementation progress and station acceptance must be reconciled separately:
    qualifier. Re-run inherited and first-party checks on the merged revision.
 3. **Daily driver:** ordinary staged commit creation and commit hooks have local
    regression coverage; the README's earlier allow-empty-only description is stale.
-   The next transport prerequisite is exact resolved pre-push updates, including
-   create/update/delete, with hook rejection preventing every remote update.
-   Current configured-hook refusal safely requires the stock Git bridge. Scoped
+   The October 12 sprint in `2026-09-28-daily-driver.md` implements exact resolved
+   pre-push updates, including create/update/delete, with hook rejection preventing
+   every remote update. Its local evidence and remaining transport limitations are
+   recorded there; this does not establish full push qualification. Scoped
    temporary-index authoring, interruption recovery, target-bound independent
    integration, installed upgrade/rollback and two-developer qualification stay open.
 4. **Git compatibility:** the pinned census, parser overlay and legacy assertion

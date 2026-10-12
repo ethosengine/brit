@@ -54,6 +54,11 @@ enum Command {
 
 #[derive(Subcommand)]
 enum BuildNamespace {
+    /// Integrate one locally approved acceptance through installed epr; never pushes.
+    Integrate {
+        #[arg(required = true, trailing_var_arg = true, allow_hyphen_values = true)]
+        args: Vec<std::ffi::OsString>,
+    },
     /// Reconcile feature work through the installed epr; accepts epr flow context arguments.
     Context {
         #[arg(required = true, trailing_var_arg = true, allow_hyphen_values = true)]
@@ -203,19 +208,27 @@ fn run() -> Result<()> {
     if matches.get_flag("cli-surface-json") {
         return Err(error::CliError::Args("--cli-surface-json must be used alone".into()));
     }
-    if matches!(matches.subcommand_name(), Some("build" | "snapshot" | "context")) {
+    if matches!(
+        matches.subcommand_name(),
+        Some("build" | "snapshot" | "context" | "integrate")
+    ) {
         let namespace = matches.subcommand_name().unwrap_or("native");
         if let Some(option) = matches
             .ids()
             .find(|id| matches.value_source(id.as_str()) == Some(ValueSource::CommandLine))
         {
-            let root_option = if namespace == "context" { "--root" } else { "--repo" };
+            let root_option = if matches!(namespace, "context" | "integrate") {
+                "--root"
+            } else {
+                "--repo"
+            };
             return Err(error::CliError::Args(format!(
                 "global Git option `{option}` does not apply to `{namespace}`; use the {namespace} command's `{root_option}` option"
             )));
         }
         let build = BuildNamespace::from_arg_matches(&matches).map_err(|e| error::CliError::Args(e.to_string()))?;
         match build {
+            BuildNamespace::Integrate { args } => context::integrate(args),
             BuildNamespace::Context { args } => context::run(args),
             BuildNamespace::Build(command) => run_build(command),
             BuildNamespace::Snapshot(command) => tree::run(command).map_err(error::CliError::Git),

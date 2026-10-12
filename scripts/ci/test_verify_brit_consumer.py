@@ -229,7 +229,12 @@ class ConsumerRunTests(unittest.TestCase):
             self.assertEqual(install[install.index("--registry") + 1], "elohim")
             self.assertEqual(options["env"]["RUSTFLAGS"], "")
             self.assertNotEqual(options["env"]["CARGO_HOME"], os.environ.get("CARGO_HOME"))
-            self.assertEqual(len(calls), 4)  # install plus three smoke commands
+            self.assertEqual(len(calls), 5)  # install, three smoke commands, operational fixture
+            probe, probe_options = calls[-1]
+            self.assertEqual(probe[0], "bash")
+            self.assertTrue(probe[1].endswith("scripts/ci/verify-installed-brit.sh"))
+            self.assertEqual(Path(probe[2]).parent.name, "bin")
+            self.assertEqual(probe_options["cwd"], options["cwd"])
 
     def test_nexus_token_fallback_is_passed_only_as_cargo_token(self):
         for source_name in ("NEXUS_NPM_TOKEN", "NPM_TOKEN"):

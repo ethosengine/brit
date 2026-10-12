@@ -46,10 +46,17 @@ replacing a standalone Rakia installation.
 
 Command names are not a promise of Git porcelain parity. In particular, current
 `brit commit` creates commits from the persisted index and runs commit hooks,
-with regression coverage for staged bytes and linked worktrees. Path-scoped
-commit authoring still refuses; configured pre-push hooks require the stock Git
-bridge. The complete path-scoped stage/review/commit, worktree recovery,
-required-evidence enforcement and fast-forward integration story still needs
+with regression coverage for staged bytes and linked worktrees. Noninteractive
+message cleanup is selectable with `--cleanup`, and `-F` reads a message file.
+Path-scoped commit authoring still refuses. `brit push` executes pre-push hooks
+with transport-resolved updates; hook rejection stops transmission. Unproven
+fast-forward updates and unsupported lease protections refuse with a stock Git
+fallback. Scoped staging and worktree creation use explicit stock Git commands.
+`brit integrate --acceptance <CID> --root <repo>` delegates to installed `epr`:
+the accepted report must pin both branch tips and the quality command, and the
+target must be a fast-forward branch that no worktree has checked out. This local
+adapter requires an epr version supporting `integrate`; it never pushes.
+Installed release delivery and the complete two-developer workflow still need
 qualification. Keep stock Git available; do not alias `git` to `brit`.
 
 Two milestones remain distinct:

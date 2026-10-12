@@ -136,11 +136,64 @@
     },
     "native-daily-driver": {
       "status": "unwired",
-      "reason": "Hook enforcement, target-bound independent acceptance, recovery and install/rollback habit evidence remain incomplete."
+      "reason": "Automated authoring, transport, recovery and Unix installed-delivery slices have runnable probes. Exact-revision remote evidence, real released-version upgrade/rollback, installed epr integration and independently accepted two-human operation remain required; CI fixtures cannot establish human acceptance.",
+      "evidence_scope": "human-operational-acceptance",
+      "automated_milestones": [
+        "inherited-ci",
+        "installed-unix"
+      ]
     },
     "git-compatibility": {
       "status": "unwired",
       "reason": "Pinned vendor/git v2.54.0 is a comparison horizon; exhaustive behavior probes are not implemented."
+    },
+    "installed-unix": {
+      "status": "wired",
+      "workflow": ".github/workflows/brit-release.yml",
+      "evidence_scope": "automated-installed-fixture",
+      "required": [
+        {
+          "job": "prepare",
+          "name": "prepare",
+          "steps": [
+            "Test the exact source before creating a release"
+          ]
+        },
+        {
+          "job": "build",
+          "name": "installed delivery (x86_64-unknown-linux-gnu)",
+          "steps": [
+            "Verify this job received the validated source",
+            "Package one binary, receipt, and checksum",
+            "Qualify extracted Unix installation and operational journeys",
+            "Prove source-free installed authoring and recovery",
+            "Prove Unix installer interruption and rollback mechanics"
+          ]
+        },
+        {
+          "job": "build",
+          "name": "installed delivery (x86_64-apple-darwin)",
+          "steps": [
+            "Verify this job received the validated source",
+            "Package one binary, receipt, and checksum",
+            "Qualify extracted Unix installation and operational journeys",
+            "Prove source-free installed authoring and recovery",
+            "Prove Unix installer interruption and rollback mechanics"
+          ]
+        },
+        {
+          "job": "build",
+          "name": "installed delivery (aarch64-apple-darwin)",
+          "steps": [
+            "Verify this job received the validated source",
+            "Package one binary, receipt, and checksum",
+            "Qualify extracted Unix installation and operational journeys",
+            "Prove source-free installed authoring and recovery",
+            "Prove Unix installer interruption and rollback mechanics"
+          ]
+        }
+      ],
+      "meaning": "Exact-source Unix release installation and installed-binary fixture behavior, plus synthetic installer fault/rollback mechanics. Excludes actual two-version release upgrade, Windows upgrade, installed epr and human acceptance."
     }
   }
 }

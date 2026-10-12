@@ -28,6 +28,36 @@ mod unix {
         );
         assert_eq!(result.stderr, "unresolved review\n");
     }
+
+    #[test]
+    fn integration_delegates_the_accepted_cid_and_preserves_refusal() {
+        let fixture = tempfile::tempdir().expect("isolated evaluator");
+        let epr = fixture.path().join("epr");
+        std::fs::write(
+            &epr,
+            b"#!/bin/sh\nprintf '%s\\n' \"$@\"\nprintf 'target moved\\n' >&2\nexit 9\n",
+        )
+        .expect("fake evaluator");
+        std::fs::set_permissions(&epr, std::fs::Permissions::from_mode(0o755)).expect("executable");
+        let result = BritInvocation::new(brit_bin().expect("public executable"))
+            .args([
+                "integrate",
+                "--acceptance",
+                "accepted-cid",
+                "--root",
+                "repo with spaces",
+            ])
+            .env("PATH", fixture.path())
+            .current_dir(fixture.path())
+            .run()
+            .expect("invoke integration");
+        assert_eq!(result.status.code(), Some(9));
+        assert_eq!(
+            result.stdout,
+            "integrate\n--acceptance\naccepted-cid\n--root\nrepo with spaces\n"
+        );
+        assert_eq!(result.stderr, "target moved\n");
+    }
 }
 
 use cli_journey::support::runner::{brit_bin, BritInvocation};

@@ -215,6 +215,10 @@ def run(version: str) -> None:
         binary = bin_dir / expected_binary
         for arguments in (["--help"], ["build", "--help"], ["--version"]):
             subprocess.run([str(binary), *arguments], cwd=root, env=env, check=True, stdout=subprocess.DEVNULL)
+        subprocess.run(
+            ["bash", str(repo / "scripts/ci/verify-installed-brit.sh"), str(binary)],
+            cwd=root, env=env, check=True,
+        )
     print(f"verified isolated elohim consumer: brit-cli {version}, one brit binary, locked fork sources")
 
 

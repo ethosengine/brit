@@ -3,6 +3,8 @@
 #[derive(Debug, thiserror::Error)]
 #[allow(missing_docs)]
 pub enum Error {
+    #[error("push rejected before transmission")]
+    BeforeSend(#[source] Box<dyn std::error::Error + Send + Sync + 'static>),
     // ── prepare_push (handshake) errors ───────────────────────────────────
     #[error("failed to configure the transport before connecting to {url:?}")]
     GatherTransportConfig {

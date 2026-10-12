@@ -77,6 +77,46 @@ class ReadinessTests(unittest.TestCase):
         for marker in ('native-daily-driver', 'git-compatibility'):
             self.assertFalse(self.result(marker)['qualified'])
 
+    def test_installed_release_requires_its_own_exact_workflow_and_steps(self):
+        marker = self.contract['milestones']['installed-unix']
+        self.run['path'] = marker['workflow']
+        self.jobs = {'jobs': [
+            {'id': n, 'name': leg['name'], 'run_id': 42, 'run_attempt': 2,
+             'head_sha': self.sha, 'status': 'completed', 'conclusion': 'success',
+             'steps': [{'name': step, 'status': 'completed', 'conclusion': 'success'}
+                       for step in leg['steps']]}
+            for n, leg in enumerate(marker['required'], 1)]}
+        self.jobs['total_count'] = len(self.jobs['jobs'])
+        result = self.result('installed-unix')
+        self.assertTrue(result['qualified'])
+        self.assertEqual(result['evidence_scope'], 'automated-installed-fixture')
+        self.assertFalse(result['establishes_human_acceptance'])
+        self.run['path'] = self.contract['workflow']
+        self.assertFalse(self.result('installed-unix')['qualified'])
+        self.run['path'] = marker['workflow']
+        self.jobs['jobs'][1]['steps'][-1]['conclusion'] = 'skipped'
+        self.assertFalse(self.result('installed-unix')['qualified'])
+
+    def test_human_acceptance_cannot_be_synthesized_by_wiring_a_ci_marker(self):
+        marker = self.contract['milestones']['native-daily-driver']
+        marker['status'] = 'wired'
+        marker['required'] = self.contract['milestones']['inherited-ci']['required']
+        result = self.result('native-daily-driver')
+        self.assertFalse(result['qualified'])
+        self.assertFalse(result['establishes_human_acceptance'])
+        self.assertIn('human operation', result['issues'][0])
+
+    def test_installed_contract_steps_exist_on_each_unix_release_target(self):
+        marker = self.contract['milestones']['installed-unix']
+        workflow = (Path(__file__).resolve().parents[2] / marker['workflow']).read_text()
+        for leg in marker['required']:
+            for step in leg['steps']:
+                self.assertIn('- name: ' + step, workflow)
+            if leg['job'] == 'build':
+                self.assertIn('target: ' + leg['name'].split('(', 1)[1].rstrip(')'), workflow)
+        self.assertIn("if: runner.os != 'Windows'", workflow)
+        self.assertIn('--test daily_driver', workflow)
+
     def test_contract_tracks_blocking_jobs_and_real_step_selectors(self):
         workflow = (Path(__file__).resolve().parents[2] / '.github/workflows/ci.yml').read_text()
         blocks = dict(re.findall(r'^  ([a-z][\w-]*):\n(.*?)(?=^  [a-z][\w-]*:|\Z)', workflow, re.M | re.S))

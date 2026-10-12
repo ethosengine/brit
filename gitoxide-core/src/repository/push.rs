@@ -156,11 +156,6 @@ pub(crate) mod function {
         P: gix::NestedProgress,
         P::SubProgress: 'static,
     {
-        if !opts.no_verify && super::super::authoring::hook_path(&repo, "pre-push")?.is_some() {
-            anyhow::bail!(
-                "Brit cannot yet execute pre-push with resolved ref updates; use git push to run the repository gate"
-            );
-        }
         // Mirror git_config_bool's die shape (vendor/git/config.c):
         //     fatal: bad boolean config value '<v>' for '<key-lower>'
         // Keys come in as mixed-case (push.followTags) but git lowercases
@@ -355,9 +350,8 @@ pub(crate) mod function {
         //                 it doesn't, git dies via parse-options.c's
         //                 callback-error path — `error: ...` then exit 129.
         //
-        // Only the last case (invalid expect OID) needs an early die.
-        // The other three are structural parsing that the send-pack path
-        // will consume later; for now we validate-and-drop.
+        // Preserve Git's malformed-expect diagnostic, then refuse unsupported
+        // lease enforcement rather than accepting a protection we cannot apply.
         if let Some((_refname, expect)) = opts
             .force_with_lease
             .as_deref()
@@ -373,6 +367,10 @@ pub(crate) mod function {
             // to usage_with_options, which exits 129 without a usage banner.
             std::process::exit(129);
         }
+        anyhow::ensure!(
+            opts.force_with_lease.is_none() && !opts.force_if_includes,
+            "Brit cannot yet enforce --force-with-lease or --force-if-includes; use git push for these protections"
+        );
 
         // Mirrors the `die_for_incompatible_opt4` call at the top of cmd_push
         // in vendor/git/builtin/push.c (after the repo_config + parse_options
@@ -643,7 +641,56 @@ pub(crate) mod function {
                 .with_prune(opts.prune)
                 .with_push_options(push_opt_bytes)
                 .with_sign_mode(sign_mode)
-                .transmit(gix::progress::Discard, &std::sync::atomic::AtomicBool::new(false));
+                .transmit_with_before_send(
+                    gix::progress::Discard,
+                    &std::sync::atomic::AtomicBool::new(false),
+                    |updates| {
+                        // Until push status/lease negotiation is complete, prove safe branch
+                        // advancement locally. Hook bypass never bypasses this protection.
+                        if !opts.force {
+                            for update in updates {
+                                if update.old_oid.is_null() || update.new_oid.is_null() {
+                                    continue;
+                                }
+                                let fast_forward = update.remote.starts_with(b"refs/heads/")
+                                    && repo
+                                        .merge_base(update.old_oid, update.new_oid)
+                                        .ok()
+                                        .flatten()
+                                        .is_some_and(|base| base.as_ref() == update.old_oid.as_ref());
+                                if !fast_forward {
+                                    return Err(std::io::Error::other(format!(
+                                        "refusing unverified fast-forward update of {}; fetch remote history and retry, or use git push for force/refspec policy",
+                                        update.remote
+                                    ))
+                                    .into());
+                                }
+                            }
+                        }
+                        if opts.no_verify {
+                            return Ok(());
+                        }
+                        let mut input = Vec::new();
+                        for update in updates {
+                            input.extend_from_slice(if update.local.is_empty() {
+                                b"(delete)"
+                            } else {
+                                &update.local
+                            });
+                            write!(input, " {} ", update.new_oid)?;
+                            input.extend_from_slice(&update.remote);
+                            writeln!(input, " {}", update.old_oid)?;
+                        }
+                        let args = [
+                            gix::path::from_bstr(remote_name)?.into_owned().into_os_string(),
+                            gix::path::from_bstr(display_url.as_bstr())?
+                                .into_owned()
+                                .into_os_string(),
+                        ];
+                        super::super::authoring::run_hook_with_input(&repo, "pre-push", &args, Some(&input))
+                            .map_err(Into::into)
+                    },
+                );
             // Mirror git's `send-pack.c::check_push_options` / signed-push
             // capability checks: when the receiver hasn't advertised the
             // required capability, both binaries print the `fatal:` line and

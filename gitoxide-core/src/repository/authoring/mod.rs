@@ -46,6 +46,15 @@ pub(super) fn hook_path(repo: &gix::Repository, name: &str) -> Result<Option<Pat
 }
 
 pub(super) fn run_hook(repo: &gix::Repository, name: &str, args: &[OsString]) -> Result<()> {
+    run_hook_with_input(repo, name, args, None)
+}
+
+pub(super) fn run_hook_with_input(
+    repo: &gix::Repository,
+    name: &str,
+    args: &[OsString],
+    input: Option<&[u8]>,
+) -> Result<()> {
     let Some(path) = hook_path(repo, name)? else {
         return Ok(());
     };
@@ -63,14 +72,30 @@ pub(super) fn run_hook(repo: &gix::Repository, name: &str, args: &[OsString]) ->
         .args(args.iter().cloned())
         .env("GIT_INDEX_FILE", absolute(repo, &repo.index_path()).into_os_string())
         .env("GIT_EDITOR", ":")
-        .stdin(Stdio::null())
+        .stdin(if input.is_some() { Stdio::piped() } else { Stdio::null() })
         .stdout(Stdio::inherit())
         .stderr(Stdio::inherit())
         .try_into()?;
     command.current_dir(absolute(repo, repo.workdir().unwrap_or(repo.git_dir())));
-    let status = command
-        .status()
+    let mut child = command
+        .spawn()
         .with_context(|| format!("could not execute {name} hook"))?;
+    let write_result = if let Some(input) = input {
+        use std::io::Write;
+        let mut stdin = child.stdin.take().context("hook stdin was not piped")?;
+        stdin.write_all(input)
+    } else {
+        Ok(())
+    };
+    // Always reap the child, even when it closes stdin before reading every ref.
+    let status = child
+        .wait()
+        .with_context(|| format!("could not wait for {name} hook"))?;
+    if let Err(err) = write_result
+        && err.kind() != std::io::ErrorKind::BrokenPipe
+    {
+        return Err(err).with_context(|| format!("could not write {name} hook input"));
+    }
     ensure!(status.success(), "{name} hook rejected the operation ({status})");
     Ok(())
 }

@@ -35,8 +35,13 @@ def qualify(contract, milestone, sha, run, payload):
     marker = contract['milestones'][milestone]
     result = {'milestone': milestone, 'head_sha': sha, 'qualified': False,
               'evidence_kind': 'captured-actions-evidence-not-attestation',
-              'issues': [], 'jobs': [], 'deferred': marker.get('deferred', [])}
+              'issues': [], 'jobs': [], 'deferred': marker.get('deferred', []),
+              'evidence_scope': marker.get('evidence_scope', 'automated-ci'),
+              'establishes_human_acceptance': False}
     issues = result['issues']
+    if marker.get('evidence_scope') == 'human-operational-acceptance':
+        issues.append('CI fixture evidence cannot establish independently accepted human operation')
+        return result
     if marker.get('status') != 'wired':
         issues.append('unwired: ' + marker.get('reason', 'no required evidence contract'))
         return result
@@ -47,7 +52,7 @@ def qualify(contract, milestone, sha, run, payload):
         raise ValueError('expected full lowercase source object ID')
     if run.get('repository', {}).get('full_name') != contract['repository']:
         issues.append('repository does not match governed boundary')
-    if run.get('path') != contract['workflow']:
+    if run.get('path') != marker.get('workflow', contract['workflow']):
         issues.append('workflow does not match governed CI source')
     if run.get('head_sha') != sha or run.get('status') != 'completed':
         issues.append('run is incomplete or names a different source revision')

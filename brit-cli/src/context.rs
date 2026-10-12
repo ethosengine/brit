@@ -5,15 +5,20 @@ use std::{ffi::OsString, process::Command};
 use crate::error::{CliError, Result};
 
 pub(crate) fn run(args: Vec<OsString>) -> Result<()> {
-    let status = Command::new("epr")
-        .args(["flow", "context"])
-        .args(args)
-        .status()
-        .map_err(|err| {
-            CliError::Git(anyhow::anyhow!(
-                "could not run installed `epr flow context`: {err}; install epr and make it available on PATH"
-            ))
-        })?;
+    installed(&["flow", "context"], args)
+}
+
+pub(crate) fn integrate(args: Vec<OsString>) -> Result<()> {
+    installed(&["integrate"], args)
+}
+
+fn installed(prefix: &[&str], args: Vec<OsString>) -> Result<()> {
+    let status = Command::new("epr").args(prefix).args(args).status().map_err(|err| {
+        CliError::Git(anyhow::anyhow!(
+            "could not run installed `epr {}`: {err}; install epr and make it available on PATH",
+            prefix.join(" ")
+        ))
+    })?;
     if status.success() {
         Ok(())
     } else {

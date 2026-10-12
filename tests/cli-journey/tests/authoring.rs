@@ -153,7 +153,7 @@ fn push_refuses_to_silently_skip_a_gate() -> Result<()> {
     let output = brit(repo.path(), &["push", "origin", "main:main"])?;
     ensure!(!output.status.success(), "must refuse when a pre-push gate exists");
     ensure!(
-        output.stderr.contains("pre-push") && output.stderr.contains("git push"),
+        output.stderr.contains("pre-push") && output.stderr.contains("should-not-be-skipped"),
         "{}",
         output.stderr
     );

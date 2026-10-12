@@ -3,6 +3,19 @@ use crate::bstr::BString;
 #[cfg(feature = "blocking-network-client")]
 pub use super::connection::push::{Error, SignMode};
 
+/// An update resolved from the refspecs and the remote advertisement, before transmission.
+#[derive(Debug, Clone)]
+pub struct Update {
+    /// Local source name, or empty for deletion.
+    pub local: BString,
+    /// Destination ref name on the remote.
+    pub remote: BString,
+    /// Advertised destination value, or null for creation.
+    pub old_oid: gix_hash::ObjectId,
+    /// Resolved source value, or null for deletion.
+    pub new_oid: gix_hash::ObjectId,
+}
+
 /// Per-ref status from a completed push.
 #[derive(Debug, Clone)]
 pub struct RefStatus {

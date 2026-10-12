@@ -1053,6 +1053,15 @@ pub mod commit {
         /// Permit committing the current tree without a staged change.
         #[clap(long)]
         pub allow_empty: bool,
+        /// Permit an empty message after cleanup.
+        #[clap(long)]
+        pub allow_empty_message: bool,
+        /// Read the message from a file, or standard input with '-'.
+        #[clap(short = 'F', long, conflicts_with = "message")]
+        pub file: Option<std::path::PathBuf>,
+        /// Message cleanup; default and scissors use whitespace cleanup without an editor.
+        #[clap(long, value_parser = ["default", "strip", "whitespace", "scissors", "verbatim"])]
+        pub cleanup: Option<String>,
         /// Explicitly bypass pre-commit and commit-msg hooks.
         #[clap(short = 'n', long)]
         pub no_verify: bool,

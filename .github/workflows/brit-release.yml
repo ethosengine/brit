@@ -56,7 +56,8 @@ jobs:
           cargo test --locked -p brit-cli --no-default-features --features max-pure
           cargo build --locked -p brit-cli --bin brit --no-default-features --features max-pure
           BRIT_BIN="$CARGO_TARGET_DIR/debug/brit" cargo test --locked -p cli-journey \
-            --test brit --test rakia --test inherited_git_environment --test shared_tree
+            --test brit --test rakia --test inherited_git_environment --test shared_tree \
+            --test authoring --test pre_push --test commit_cleanup --test daily_driver
           test -z "$(git status --porcelain --untracked-files=all)"
       - name: Create a draft release after source tests
         env:
@@ -65,6 +66,7 @@ jobs:
         run: gh release create "$VERSION_TAG" --title "$VERSION_TAG" --draft --verify-tag
 
   build:
+    name: installed delivery (${{ matrix.target }})
     needs: prepare
     strategy:
       fail-fast: false
@@ -136,6 +138,28 @@ jobs:
             "$build_root/$TARGET/$PROFILE/$binary" . "$archive" \
             "$VERSION_TAG" "$FEATURE" "$TARGET" "$PROFILE" "$SOURCE_SHA" \
             >> "$GITHUB_ENV"
+      - name: Qualify extracted Unix installation and operational journeys
+        if: runner.os != 'Windows'
+        run: |
+          set -euo pipefail
+          binary_sha=$(awk -F= '$1 == "binary_sha256" { print $2 }' "${ASSET%.tar.gz}/BUILD-INFO.txt")
+          isolated="$RUNNER_TEMP/brit-installed-qualification"
+          mkdir -p "$isolated/extracted"
+          shasum -a 256 -c "$ASSET_SUM"
+          tar -xzf "$ASSET" -C "$isolated/extracted"
+          package="$isolated/extracted/${ASSET%.tar.gz}"
+          bash scripts/ci/install-brit-release.sh "$package" "$isolated/install" "$SOURCE_SHA" "$binary_sha"
+      - name: Prove source-free installed authoring and recovery
+        if: runner.os != 'Windows'
+        run: |
+          set -euo pipefail
+          installed="$RUNNER_TEMP/brit-installed-qualification/install/bin/brit"
+          bash scripts/ci/verify-installed-brit.sh "$installed"
+          BRIT_BIN="$installed" cargo test --locked -p cli-journey \
+            --test authoring --test pre_push --test commit_cleanup --test daily_driver --test shared_tree
+      - name: Prove Unix installer interruption and rollback mechanics
+        if: runner.os != 'Windows'
+        run: bash scripts/ci/test-install-brit-release.sh
       - name: Upload the checksummed archive to the draft release
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}

@@ -1191,6 +1191,9 @@ pub fn run_with_command(args: Args, command: clap::Command) -> Result<()> {
                     core::repository::commit::CreateOptions {
                         message: platform.message,
                         allow_empty: platform.allow_empty,
+                        allow_empty_message: platform.allow_empty_message,
+                        file: platform.file,
+                        cleanup: platform.cleanup,
                         no_verify: platform.no_verify,
                         ..Default::default()
                     },

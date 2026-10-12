@@ -24,9 +24,21 @@ where
     /// This method is only available when the `blocking-network-client` feature is enabled
     /// (the entire `push` module is gated behind that feature).
     pub fn transmit(
+        self,
+        progress: impl crate::progress::NestedProgress,
+        should_interrupt: &AtomicBool,
+    ) -> Result<Outcome, Error> {
+        self.transmit_with_before_send(progress, should_interrupt, |_| Ok(()))
+    }
+
+    /// Resolve updates once, then let the caller authorize them before packing or sending.
+    ///
+    /// The callback also runs for dry runs. Returning an error prevents all transmission.
+    pub fn transmit_with_before_send(
         mut self,
         _progress: impl crate::progress::NestedProgress,
         should_interrupt: &AtomicBool,
+        before_send: impl FnOnce(&[crate::remote::push::Update]) -> Result<(), Box<dyn std::error::Error + Send + Sync>>,
     ) -> Result<Outcome, Error> {
         use crate::bstr::BString;
         use gix_refspec::{
@@ -189,6 +201,14 @@ where
                 old_oid,
                 new_oid,
             });
+            // Matching a literal OID may identify a local ref holding that object.
+            // Preserve the user's source spelling for pre-push and porcelain output.
+            let local_name = parsed_refspecs[mapping.spec_index]
+                .to_ref()
+                .source()
+                .filter(|source| gix_hash::ObjectId::from_hex(source).is_ok())
+                .map(BString::from)
+                .unwrap_or(local_name);
             name_pairs.push((local_name, remote_name));
         }
 
@@ -235,6 +255,19 @@ where
         if commands.is_empty() {
             return Err(Error::NoRefspecs);
         }
+
+        let updates: Vec<_> = commands
+            .iter()
+            .zip(&name_pairs)
+            .filter(|(command, _)| command.old_oid != command.new_oid)
+            .map(|(command, (local, remote))| crate::remote::push::Update {
+                local: local.clone(),
+                remote: remote.clone(),
+                old_oid: command.old_oid,
+                new_oid: command.new_oid,
+            })
+            .collect();
+        before_send(&updates).map_err(Error::BeforeSend)?;
 
         // ── Step 5: Build the Request ─────────────────────────────────────────
         let (agent_key, agent_val) = repo.config.user_agent_tuple();
