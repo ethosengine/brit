@@ -13,7 +13,7 @@ scheduler. Use native context for observed environment and citation blockers.
 - [ ] Safe scoped authoring and recovery: public executable proves staged-byte scope, hook execution/refusal, dirty-neighbor preservation, linked-worktree safety and interruption recovery against stock Git. Local safe-authoring sprint is evidence, not complete station acceptance. Serves brit-native-daily-driver.
 - [ ] Native gates and independent integration: exact target/source revision binds gate results and independent review; concurrent target movement or contrary evidence refuses integration; pre-push cannot be silently skipped. Requires scoped recovery and inherited discipline; serves brit-native-daily-driver.
 - [ ] Installed delivery: fresh standalone install, feature/platform matrix, upgrade and rollback prove the executable and installed epr interface; package publication and clean consumer tests identify exact source revisions. Requires native integration; serves brit-native-daily-driver.
-- [ ] Two-developer qualification: disposable fixture then two developers complete the loop, preserve Git interoperability and recover interrupted work; operator admits selected Elohim work only after all preceding readiness stations have independent acceptance. Serves brit-native-daily-driver.
+- [ ] Operational qualification through our own ongoing development across workspaces: complete the loop, preserve Git interoperability and recover interrupted work, recording actual outcomes as we daily-drive Brit. Cross-workspace verification follows this integration pass; scripted identities do not establish it. Serves brit-native-daily-driver.
 
 ## Sprint — 2026-10-12
 
@@ -1747,3 +1747,42 @@ occurred. The bounded staging implementation rejects configured external filters
 even when selected source paths do not use LFS; use explicit path-scoped `git add`
 in that environment, then Brit for supported subsequent operations. We did not
 remove or override the workspace's filter configuration to claim native staging.
+
+Continued integration at `e0773f57e` exposed four further boundaries:
+
+- The small CLI's inherited typo-suggestion snapshot needed the now-supported
+  `restore` command. macOS hook observations needed numeric comparisons for
+  BSD `wc`'s padded counts, preserving the exact expected mapping counts.
+- The i386 synchronization-loss probe encountered Linux `ESRCH` while reading
+  an unrelated exiting process during the hook-group scan. Opening a process's
+  stat file, terminating/reaping that process and reading the open file reproduced
+  errno 3 locally. Treat this vanished-process result like `ENOENT`; live group
+  members and reused identities still prevent recovery.
+- Real native HTTPS push waited on Che's askpass child. The configured shell
+  credential helper contains an inner `"$@"`, which caused the generic command
+  launcher to omit the operation on its final function call. Append the helper
+  operation to the script as Git does. The isolated synthetic regression failed
+  before the fix; all 71 credential integration tests then passed. No credentials
+  were printed or copied into test fixtures. Git transport completed the earlier
+  push after the stalled native process was stopped and remote state checked.
+- Candidate run 38378712945 compiled Linux successfully but packaging received
+  an empty version: GitHub explicitly suppressed the `version_tag` job output
+  because of secret masking. Each build now derives this public version from
+  its exact validated source. Manual dispatch still cannot publish a release.
+
+Maintainer nodes: between helper configuration and authenticated transport,
+the helper's final call must receive its operation (synthetic function-forwarding
+probe); between process enumeration and recovery permission, disappearance during
+an open proc-file read must remain distinguishable from a live owned group
+(Linux proc read and existing synchronization-loss probes); between validated
+source and package identity, the public version must be available independently
+of cross-job output masking (candidate packaging). These discoveries come from
+integration and real use; cross-workspace operational verification remains future
+work in our own development.
+
+Local follow-up: the rebuilt `max-pure` executable completed an authenticated
+GitHub push of the already-advertised integration head with the existing system
+credential helper and prompting disabled (exit 0). The complete real replay
+synchronization-loss test passed in 340.55 seconds, all 40 Git rebase observations
+passed, and the small-mode typo snapshot matched exactly. These are bounded
+integration observations, not cross-workspace acceptance.

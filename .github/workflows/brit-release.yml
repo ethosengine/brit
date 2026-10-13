@@ -24,7 +24,6 @@ jobs:
       RUSTFLAGS: ''
     outputs:
       source_sha: ${{ steps.source.outputs.source_sha }}
-      version_tag: ${{ steps.source.outputs.version_tag }}
       publish: ${{ steps.source.outputs.publish }}
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
@@ -78,7 +77,6 @@ jobs:
       FEATURE: max-pure
       PROFILE: release-github
       SOURCE_SHA: ${{ needs.prepare.outputs.source_sha }}
-      VERSION_TAG: ${{ needs.prepare.outputs.version_tag }}
       TARGET: ${{ matrix.target }}
     defaults:
       run:
@@ -90,10 +88,19 @@ jobs:
       - name: Set an external Cargo target for this host
         run: printf 'CARGO_TARGET_DIR=%s/brit-release-target\n' "$RUNNER_TEMP" >> "$GITHUB_ENV"
       - name: Verify this job received the validated source
+        env:
+          DELIVERY_EVENT: ${{ github.event_name }}
+          DELIVERY_REF: ${{ github.ref }}
         run: |
           set -euo pipefail
           test "$(git rev-parse HEAD)" = "$SOURCE_SHA"
           test -z "$(git status --porcelain --untracked-files=normal)"
+          # Derive the public version from this validated checkout. GitHub may
+          # suppress a job output when its value overlaps a masked secret.
+          delivery=$(bash scripts/ci/validate-brit-delivery-source.sh . "$DELIVERY_EVENT" "$DELIVERY_REF" "$SOURCE_SHA")
+          version_tag=$(printf '%s\n' "$delivery" | sed -n 's/^version_tag=//p')
+          test -n "$version_tag"
+          printf 'VERSION_TAG=%s\n' "$version_tag" >> "$GITHUB_ENV"
       - name: Install the target toolchain
         run: |
           rustup update stable
@@ -195,7 +202,7 @@ jobs:
       contents: write
       actions: read
     env:
-      VERSION_TAG: ${{ needs.prepare.outputs.version_tag }}
+      VERSION_TAG: ${{ github.ref_name }}
       SOURCE_SHA: ${{ needs.prepare.outputs.source_sha }}
       GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
       GH_REPO: ${{ github.repository }}

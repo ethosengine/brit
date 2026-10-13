@@ -7,6 +7,24 @@ use gix_credentials::{
 use crate::helper::script_helper;
 
 #[test]
+fn shell_function_receives_action_when_its_body_forwards_arguments() -> gix_testtools::TestResult {
+    if gix_testtools::run_in_isolated_process()? {
+        return Ok(());
+    }
+    let mut helper = gix_credentials::Program::from_custom_definition(
+        "!reply() { test \"$1\" = get && printf 'username=fixture\\npassword=fixture\\n'; }; f() { reply \"$@\"; }; f",
+    )?;
+    let outcome = gix_credentials::helper::invoke(
+        &mut helper,
+        &helper::Action::get_for_url("https://example.invalid/repo"),
+    )?
+    .expect("the action reaches the helper despite an inner function's argument expansion");
+    assert_eq!(outcome.username.as_deref(), Some("fixture"));
+    assert_eq!(outcome.password.as_deref(), Some("fixture"));
+    Ok(())
+}
+
+#[test]
 fn get() -> gix_testtools::TestResult {
     let mut outcome = gix_credentials::helper::invoke(
         &mut script_helper("last-pass"),

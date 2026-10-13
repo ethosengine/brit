@@ -1,6 +1,6 @@
 error: unrecognized subcommand 'remote'
 
-  tip: some similar subcommands exist: 'r', 'merge', 'tree', 'free'
+  tip: some similar subcommands exist: 'r', 'merge', 'tree', 'free', 'restore'
 
 Usage: brit [OPTIONS] <COMMAND>
 

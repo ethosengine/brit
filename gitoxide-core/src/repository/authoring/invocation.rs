@@ -95,7 +95,14 @@ fn read<T: serde::de::DeserializeOwned>(dir: &Path, name: &str) -> Result<T> {
 fn stat(pid: u32) -> Result<Option<(String, u32, String)>> {
     let text = match fs::read_to_string(format!("/proc/{pid}/stat")) {
         Ok(text) => text,
-        Err(e) if e.kind() == std::io::ErrorKind::NotFound => return Ok(None),
+        // A process can disappear between opening and reading its proc entry.
+        // Linux reports ESRCH for that race, instead of ENOENT from open.
+        Err(e)
+            if e.kind() == std::io::ErrorKind::NotFound
+                || e.raw_os_error() == Some(nix::errno::Errno::ESRCH as i32) =>
+        {
+            return Ok(None);
+        }
         Err(e) => return Err(e.into()),
     };
     let fields: Vec<_> = text

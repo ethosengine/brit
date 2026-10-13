@@ -221,7 +221,7 @@ hooks|hook_failures|hooks_reword|hooks_squash|hooks_conflict)
     esac
     grep -q '^pre-rebase:main$'  .git/hooks.log
     grep -q '^post-rewrite:rebase$' .git/hooks.log
-    test "$(wc -l < .git/mapping-rebase)" = 2
+    test "$(wc -l < .git/mapping-rebase)" -eq 2
     test "$(awk 'NF != 2 {n++} END {print n+0}' .git/mapping-rebase)" = 0
     test "$(git rev-parse topic)" = "$(head)"
     if test "$1" = hooks_reword; then
@@ -229,11 +229,11 @@ hooks|hook_failures|hooks_reword|hooks_squash|hooks_conflict)
         grep -q '^prepare-commit-msg:.git/COMMIT_EDITMSG commit HEAD$' .git/hooks.log
         test "$(grep -c '^commit-msg:.git/COMMIT_EDITMSG$' .git/hooks.log)" = 1
         test "$(grep -c '^post-commit:$' .git/hooks.log)" = 3
-        test "$(wc -l < .git/mapping-amend)" = 1
+        test "$(wc -l < .git/mapping-amend)" -eq 1
     elif test "$1" = hooks_squash; then
         test "$(grep -c '^commit-msg:' .git/hooks.log || true)" = 0
-        test "$(wc -l < .git/mapping-amend)" = 1
-        test "$(awk '{print $2}' .git/mapping-rebase | sort -u | wc -l)" = 1
+        test "$(wc -l < .git/mapping-amend)" -eq 1
+        test "$(awk '{print $2}' .git/mapping-rebase | sort -u | wc -l)" -eq 1
     fi
     if test "$1" != hooks_reword; then
     test "$(grep -c '^pre-commit:' .git/hooks.log || true)" = 0
