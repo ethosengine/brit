@@ -51,8 +51,11 @@ fn script_with_dollar_at() -> TestResult {
 
 #[test]
 fn direct_command_execution_searches_in_path() -> TestResult {
+    let directory = gix_testtools::tempfile::tempdir()?;
+    std::fs::write(directory.path().join("listed.txt"), "stable entry")?;
     assert!(
-        gix_command::prepare(if cfg!(unix) { "ls" } else { "attrib.exe" })
+        std::process::Command::try_from(gix_command::prepare(if cfg!(unix) { "ls" } else { "attrib.exe" }))?
+            .current_dir(directory.path())
             .spawn()?
             .wait()?
             .success()
@@ -73,13 +76,19 @@ mod with_shell {
 
     #[test]
     fn command_in_path_with_args() -> TestResult {
-        // `ls` is occasionaly a builtin, as in busybox ash, but it is usually external.
+        // Other tests create and remove entries in the shared working directory.
+        // Keep the listing stable while still resolving the command through PATH.
+        let directory = gix_testtools::tempfile::tempdir()?;
+        std::fs::write(directory.path().join("listed.txt"), "stable entry")?;
+        // `ls` is occasionally a builtin, as in busybox ash, but it is usually external.
         assert!(
-            gix_command::prepare(if cfg!(unix) { "ls -l" } else { "attrib.exe /d" })
-                .command_may_be_shell_script()
-                .spawn()?
-                .wait()?
-                .success()
+            std::process::Command::try_from(
+                gix_command::prepare(if cfg!(unix) { "ls -l" } else { "attrib.exe /d" }).command_may_be_shell_script()
+            )?
+            .current_dir(directory.path())
+            .spawn()?
+            .wait()?
+            .success()
         );
         Ok(())
     }

@@ -1814,3 +1814,23 @@ shim compared it to the `/var` spelling rather than `/private/var`. A symlinked
 `TMPDIR` reproduced the failure on Linux. Canonicalizing the fixture root makes
 both alias and physical-directory runs pass, with rollback/interruption/concurrent
 activation assertions unchanged. The next candidate must confirm this on macOS.
+
+Revision `1d055172ac43861a413614a7a501bc582c1377a7` passed the entire
+integration CI run 38386962091 and all four delivery platforms in run
+38386981865. Both strict readiness qualifiers passed without issues. Its Linux
+artifact is installed in the private daily-driver prefix and passed the local
+installed smoke fixture; it also performed the real main fast-forward push
+through the EPR reach hook (1,584 paths, ready).
+
+The post-landing run 38391282996 exposed a concurrent fixture race on i386:
+`command_in_path_with_args` listed a shared working directory while the relative
+shell-path test removed its temporary `$HOME…` entry. Of 5,565 tests, only that
+listing failed. The two listing probes now use their own stable directories,
+preserving real command lookup and argument execution.
+The corrected command suite also passed 100 runs at 16 test threads (6,100
+integration test executions), plus strict scoped Clippy and formatting.
+The main run was cancelled before publication; no registry delivery is claimed.
+Maintainer node: between
+parallel fixture creation and command-success assertions, the listing's directory
+must remain owned by that test (isolated listing probes). Cross-workspace
+operational acceptance still belongs to our ongoing development.

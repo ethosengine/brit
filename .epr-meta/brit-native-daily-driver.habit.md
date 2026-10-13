@@ -12,6 +12,7 @@ retire-when: >
   when the full native workflow is the continuously verified release and integration floor
   and this separate cutover marker adds no information
 ---
+DELTA 2026-10-13: UNWIRED preserved. Revision 1d055172 passed full integration CI 38386962091 and all four candidate delivery platforms 38386981865, with both strict qualifiers green; its installed Linux binary pushed main through the native reach hook. Main CI then exposed one shared-directory listing race among 5,565 i386 tests. Isolated listing fixtures pass all 61 command integration tests, three unit tests, one doctest and strict Clippy; main publication was cancelled before upload pending the correction. Our own cross-workspace use remains the operational verification.
 DELTA 2026-09-28: Declared, unqualified. Local staged-authoring tests and shared-tree
 proof do not establish pre-push enforcement, independent target-bound acceptance,
 recovery across interrupted operations, or installed release delivery. Git remains
