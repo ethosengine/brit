@@ -92,7 +92,7 @@ fn read<T: serde::de::DeserializeOwned>(dir: &Path, name: &str) -> Result<T> {
     );
     Ok(serde_json::from_slice(&envelope.payload)?)
 }
-fn stat(pid: u32) -> Result<Option<(String, u32, String)>> {
+fn stat(pid: u32) -> Result<Option<(String, i32, String)>> {
     let text = match fs::read_to_string(format!("/proc/{pid}/stat")) {
         Ok(text) => text,
         // A process can disappear between opening and reading its proc entry.
@@ -105,6 +105,9 @@ fn stat(pid: u32) -> Result<Option<(String, u32, String)>> {
         }
         Err(e) => return Err(e.into()),
     };
+    parse_stat(&text).map(Some)
+}
+fn parse_stat(text: &str) -> Result<(String, i32, String)> {
     let fields: Vec<_> = text
         .rsplit_once(')')
         .context("malformed process identity")?
@@ -112,8 +115,44 @@ fn stat(pid: u32) -> Result<Option<(String, u32, String)>> {
         .split_whitespace()
         .collect();
     ensure!(fields.len() > 19, "incomplete process identity");
-    Ok(Some((fields[19].into(), fields[2].parse()?, fields[0].into())))
+    // Linux emits signed pid_t fields; pgrp remains -1 if the task's signal
+    // state disappears during do_task_stat(). It must never match an owned PID.
+    let group: i32 = fields[2].parse().context("malformed process group identity")?;
+    ensure!(group >= -1, "invalid process group identity");
+    Ok((fields[19].into(), group, fields[0].into()))
 }
+
+#[cfg(test)]
+mod process_stat_tests {
+    use super::parse_stat;
+
+    fn record(state: &str, group: &str) -> String {
+        format!("123 (command with ) spaces) {state} 1 {group} -1 0 -1 0 0 0 0 0 0 0 0 0 20 0 1 0 4242 0 0\n")
+    }
+
+    #[test]
+    fn signed_process_group_preserves_exit_identity() {
+        for state in ["R", "Z", "X"] {
+            assert_eq!(
+                parse_stat(&record(state, "-1")).unwrap(),
+                ("4242".into(), -1, state.into())
+            );
+        }
+        assert_eq!(
+            parse_stat(&record("S", "123")).unwrap(),
+            ("4242".into(), 123, "S".into())
+        );
+    }
+
+    #[test]
+    fn malformed_process_groups_remain_errors() {
+        for group in ["not-a-pid", "-2", "2147483648", "4294967295"] {
+            assert!(parse_stat(&record("R", group)).is_err(), "{group}");
+        }
+        assert!(parse_stat("123 (short) X 1 -1").is_err());
+    }
+}
+
 fn identity(pid: u32) -> Result<Identity> {
     Ok(Identity {
         pid,
@@ -136,7 +175,7 @@ fn group_quiescent(child: &Identity) -> Result<()> {
         };
         if let Some((_, group, state)) = stat(pid)? {
             ensure!(
-                group != child.pid || state == "Z" || state == "X",
+                u32::try_from(group).ok() != Some(child.pid) || state == "Z" || state == "X",
                 "hook process group {} is still live; no recovery mutation allowed",
                 child.pid
             );
@@ -336,7 +375,7 @@ impl Interrupt {
         if gix::interrupt::is_triggered() && self.sent.is_none() {
             if let Some((start, group, _)) = stat(child.pid)? {
                 ensure!(
-                    start == child.start && group == child.pid,
+                    start == child.start && u32::try_from(group).ok() == Some(child.pid),
                     "invocation process ownership changed"
                 );
                 match nix::sys::signal::killpg(

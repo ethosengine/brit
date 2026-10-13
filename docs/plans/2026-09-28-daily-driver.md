@@ -1834,3 +1834,20 @@ Maintainer node: between
 parallel fixture creation and command-success assertions, the listing's directory
 must remain owned by that test (isolated listing probes). Cross-workspace
 operational acceptance still belongs to our ongoing development.
+
+Follow-up CI 38393588588 exposed a separate ARM32 replay failure: the invocation
+scanner parsed Linux's signed process-group field as `u32`, producing an invalid
+digit error during `rebase --continue`. Linux `do_task_stat()` can retain a `-1`
+group during task teardown. A local real-process exit probe observed state `X`
+and group `-1` after 101 attempts. The parser now retains a signed group and uses
+checked conversion when comparing it to an owned PID, so the sentinel cannot
+authorize a signal or impersonate the owned group. Malformed values still refuse.
+Maintainer node: between process exit and quiescence inspection, kernel teardown
+sentinels must be readable without becoming process ownership (signed-record
+regressions and the live proc exit probe). Kernel reference:
+https://github.com/torvalds/linux/blob/v6.12/fs/proc/array.c#L450-L510.
+
+Local validation of the signed-field correction: two parser regressions, 28
+interactive replay tests, two invocation tests, 11 preservation/recovery matrix
+tests, all six public rebase journeys using the rebuilt CLI, strict scoped
+Clippy and formatting passed. Remote confirmation remains pending.
