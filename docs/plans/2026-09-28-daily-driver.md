@@ -576,8 +576,8 @@ UNWIRED for its complete invariant.
 
 ## Ordered local daily-driver backlog — 2026-10-12
 
-Stations 1–3 have completed bounded local proof. Stations 4–5c remain
-queued; refresh each handoff against its predecessor's actual result before work. All stations serve `brit-native-daily-driver`; its full
+Stations 1–5a have completed bounded local proof. Station 5b is in verification;
+5c remains queued. Refresh each handoff against its predecessor's actual result before work. All stations serve `brit-native-daily-driver`; its full
 invariant remains unqualified. Station numbers live in checkbox labels because
 the existing native recipe extracts bullet checkboxes.
 
@@ -794,6 +794,73 @@ and files. Boundary: native fetch and proven checkout/ref publication primitives
 Exclude merge/rebase pull. Acceptance: disposable local remote journey for fast
 forward, divergence, dirty neighbors and recovery. Independent reviewer: separate
 integration reviewer. Evidence: pinned binary/source, tests, review and DELTA.
+
+Sprint scope (2026-10-12): start from clean station-5a evidence commit
+`bff8b4f532146fde1ea40a70496548db8404a93c` on isolated branch
+`sprint/fast-forward-pull-2026-10-12`. Expose only
+`pull --ff-only <remote-name-or-url-or-path> <branch>` and explicit
+`pull --status|--continue|--abort`. Include attached and detached HEAD; defer
+unborn repositories, implicit upstreams, merge/rebase, autostash and arbitrary
+refspecs. Preserve unrelated staged/unstaged edits and untracked/ignored files.
+Completed fetch results survive integration refusal or abort. Fetch publication
+and integration have separate durable decisions; recovery after durable fetch
+completion works offline. Reuse private switch recovery and retain version-1
+journal compatibility. Linux file/directory synchronization is the durability
+boundary, not hardware power-cut qualification. The full habit stays UNWIRED;
+no push, publication or parent submodule pin change belongs to this sprint.
+Durable proof lives under the owning workspace's
+`genesis/local-dev/brit-readiness/fast-forward-pull/`; completion requires the
+retained 149 ordinary and 25 switch/recovery journeys, new pull journeys,
+independent review and clean rebuilt artifact bindings.
+
+The bounded command contract is:
+
+```sh
+brit pull --ff-only origin main
+brit pull --ff-only /path/to/repository refs/heads/main
+brit pull --status
+brit pull --continue
+brit pull --abort
+```
+
+A configured remote may update the selected branch's single mapping under
+`refs/remotes/`; a URL/path creates no tracking ref. Automatic tags are disabled.
+Equal or older remote tips leave HEAD, index and worktree unchanged and write
+`ORIG_HEAD`, matching the characterized Git no-op. A successful fast-forward
+runs `post-merge 0`; hook failure reports a warning without undoing the pull.
+Recovery never replays a hook whose start was recorded but whose result is unknown.
+
+Before the fetch decision, explicit continue may reconnect only to the pinned
+remote target with unchanged URL/mapping configuration. After that decision,
+continue or abort finishes the decided fetch metadata. Abort before the
+integration decision restores integration resources while keeping completed
+fetch results. After the integration decision, abort refuses and continue finishes
+publication. A pending journal blocks other Brit mutations; read-only inspection
+remains available. External Git is not journal-aware, so unexpected resources
+refuse recovery and retain evidence. Legacy version-1 switch journals remain
+recoverable. Private recovery data adds no protocol entity or recurring head;
+durable-fetch recovery is offline and independent of protocol key custody.
+
+Discovered stations (story harvest; final run state belongs to the sprint receipt):
+
+- Chain 5b / between object lookup → durable object receipt / missing node:
+  decompression alone does not prove that existing bytes match their requested
+  Git object ID. Verify every reachable object's native content hash before the
+  fetch decision. Probe:
+  `corrupt_existing_loose_object_refuses_no_pack_pull_without_integration`.
+- Chain 5b / between received objects → fetch publication / missing node:
+  required objects are durable even when the fetch receives no new pack.
+  Probe: `pull_power_loss_preserves_objects_before_both_durable_decisions`
+  exercises actual sync events for pack and no-pack fetches with omission controls.
+- Chain 5b / between interrupted receive → cleanup / missing node:
+  a pre-existing pack keep is preserved and never claimed; a new keep carries
+  creation identity before deletion is authorized. Probe:
+  `a_foreign_keep_is_never_truncated_or_claimed` and the raw-receive signal cases.
+  An unrecorded orphan keep is intentionally retained after an abrupt receive.
+- Chain 5b / between completed fetch → integration publication / missing node:
+  external Git changes to completed fetch metadata must refuse recovery without
+  overwriting that third state. Probe:
+  `foreign_completed_fetch_metadata_refuses_continue_and_abort`.
 
 ### Handoff 5c: Rebase/conflict recovery design
 

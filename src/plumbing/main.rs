@@ -76,6 +76,8 @@ fn requires_mutation_guard(cmd: &Subcommands) -> bool {
             cmd: worktree::SubCommands::List,
         }) => false,
         Subcommands::Switch { .. } => false,
+        #[cfg(feature = "gitoxide-core-blocking-client")]
+        Subcommands::Pull { .. } => false,
         #[cfg(any(feature = "gitoxide-core-async-client", feature = "gitoxide-core-blocking-client"))]
         Subcommands::Remote(_) => false,
         _ => true,
@@ -414,6 +416,23 @@ pub fn run_with_command(args: Args, command: clap::Command) -> Result<()> {
                 core::repository::switch::execute(repo, branch.as_ref()).map_err(anyhow_to_gix)
             } else {
                 core::repository::switch::recover(repo, abort).map_err(anyhow_to_gix)
+            }
+        }),
+        #[cfg(feature = "gitoxide-core-blocking-client")]
+        Subcommands::Pull {
+            remote,
+            branch,
+            status,
+            abort,
+            ..
+        } => prepare_and_run("pull", verbose, None, move |_progress, out, _err| {
+            let repo = repository(Mode::Strict)?;
+            if status {
+                core::repository::pull::status(&repo, out).map_err(anyhow_to_gix)
+            } else if let (Some(remote), Some(branch)) = (remote, branch) {
+                core::repository::pull::execute(repo, &remote, branch.as_ref()).map_err(anyhow_to_gix)
+            } else {
+                core::repository::pull::recover(repo, abort).map_err(anyhow_to_gix)
             }
         }),
         Subcommands::Diff(crate::plumbing::options::diff::Platform { cmd, cached, paths }) => match cmd {

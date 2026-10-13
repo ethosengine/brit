@@ -117,6 +117,28 @@ pub enum Subcommands {
     /// Fetch data from remotes and store it in the repository.
     #[cfg(feature = "gitoxide-core-blocking-client")]
     Fetch(fetch::Platform),
+    /// Fetch one explicit remote branch and integrate only a fast-forward, with explicit recovery.
+    #[cfg(feature = "gitoxide-core-blocking-client")]
+    Pull {
+        /// Require fast-forward-only integration.
+        #[clap(long, required_unless_present_any = ["status", "continue_pull", "abort"], conflicts_with_all = ["status", "continue_pull", "abort"], requires_all = ["remote", "branch"])]
+        ff_only: bool,
+        /// Configured remote, URL, or filesystem path.
+        #[clap(requires_all = ["ff_only", "branch"], conflicts_with_all = ["status", "continue_pull", "abort"])]
+        remote: Option<String>,
+        /// Remote branch, short name or refs/heads/name.
+        #[clap(requires_all = ["ff_only", "remote"], conflicts_with_all = ["status", "continue_pull", "abort"], value_parser = crate::shared::AsBString)]
+        branch: Option<BString>,
+        /// Inspect any pending switch or pull without changing it.
+        #[clap(long, conflicts_with_all = ["continue_pull", "abort"])]
+        status: bool,
+        /// Explicitly continue an interrupted pull.
+        #[clap(long = "continue", conflicts_with = "abort")]
+        continue_pull: bool,
+        /// Abort integration before its durable commit decision; retain completed fetch results.
+        #[clap(long)]
+        abort: bool,
+    },
     /// Update remote refs along with their reachable objects.
     #[cfg(feature = "gitoxide-core-blocking-client")]
     Push(push::Platform),

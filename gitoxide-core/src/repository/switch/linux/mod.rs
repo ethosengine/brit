@@ -15,7 +15,12 @@ use std::{
 };
 
 const JOURNAL: &str = "brit-switch";
-const VERSION: u32 = 1;
+const VERSION: u32 = 2;
+
+#[cfg(feature = "blocking-client")]
+mod pull;
+#[cfg(feature = "blocking-client")]
+pub use pull::{execute as pull_execute, recover as pull_recover};
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
@@ -44,6 +49,8 @@ struct Lock {
 #[serde(deny_unknown_fields)]
 struct Manifest {
     version: u32,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pull: Option<Pull>,
     git_dir: Vec<u8>,
     root: Vec<u8>,
     common: Vec<u8>,
@@ -67,6 +74,27 @@ struct Manifest {
     decision: bool,
     aborting: bool,
     hook: String,
+}
+/// Private external-Git state, never a protocol entity or object-database backup.
+#[derive(Clone, Debug, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+struct Pull {
+    remote: String,
+    remote_url: Vec<u8>,
+    tracking: Option<(Vec<u8>, bool)>,
+    tracking_oid: Option<String>,
+    branch: Vec<u8>,
+    branch_argument: Vec<u8>,
+    pinned: bool,
+    fetched: bool,
+    no_op: bool,
+    fetch_decision: bool,
+    fetch_done: bool,
+    fetch_metadata: Vec<Change>,
+    metadata: Vec<Change>,
+    directories: Vec<Change>,
+    objects: Vec<(Vec<u8>, String)>,
+    keeps: Vec<Lock>,
 }
 #[derive(Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
@@ -152,7 +180,7 @@ pub fn ensure_no_pending(repo: &gix::Repository) -> Result<()> {
         let worktree = worktree?;
         ensure!(
             !present(&journal(&worktree))?,
-            "pending switch in {}; use brit switch --status, --continue or --abort there",
+            "pending switch or pull in {}; use brit switch --status or brit pull --status, then the named --continue or --abort command",
             worktree.git_dir().display()
         );
     }
@@ -184,17 +212,37 @@ fn shared_guard(repo: &gix::Repository) -> Result<fs::File> {
 /// Inspect without mutating or automatically resuming an interrupted operation.
 pub fn status(repo: &gix::Repository, out: &mut dyn Write) -> Result<()> {
     if !present(&journal(repo))? {
-        writeln!(out, "No switch recovery pending")?;
+        writeln!(out, "No switch or pull recovery pending")?;
         return Ok(());
     }
     let state = load(repo)?;
+    if let Some(pull) = &state.pull {
+        writeln!(
+            out,
+            "Fetch: {}; integration recovery keeps published fetch results",
+            if pull.fetch_done {
+                "durably completed; continuation is offline"
+            } else if pull.fetch_decision {
+                "publication decision durable; completion required"
+            } else if pull.fetched {
+                "objects durable; publication not decided"
+            } else {
+                "incomplete; explicit continuation may reconnect"
+            }
+        )?;
+    }
     writeln!(
         out,
-        "Switch recovery pending: {} -> {}; {}; hook {}; use brit switch --continue{}",
+        "{} recovery pending: {} -> {}; {}; hook {}; use brit {} --continue{}",
+        if state.pull.is_some() { "Pull" } else { "Switch" },
         state.source_oid,
         state.target_oid,
         if state.decision && state.hook != "not-started" {
-            "switch committed; roll forward only"
+            if state.pull.is_some() {
+                "pull committed; roll forward only"
+            } else {
+                "switch committed; roll forward only"
+            }
         } else if state.decision {
             "commit decision durable; roll forward only"
         } else if state.aborting {
@@ -203,6 +251,7 @@ pub fn status(repo: &gix::Repository, out: &mut dyn Write) -> Result<()> {
             "prepared; abort available"
         },
         state.hook,
+        if state.pull.is_some() { "pull" } else { "switch" },
         if state.decision { "" } else { " or --abort" }
     )?;
     Ok(())
@@ -312,7 +361,10 @@ fn load(repo: &gix::Repository) -> Result<Manifest> {
         "corrupt switch journal checksum; evidence retained"
     );
     let state: Manifest = serde_json::from_slice(&envelope.payload)?;
-    ensure!(state.version == VERSION, "unsupported switch journal version");
+    ensure!(
+        (state.version == 1 && state.pull.is_none()) || state.version == VERSION,
+        "unsupported recovery journal version"
+    );
     ensure!(
         state.git_dir == raw(&fs::canonicalize(repo.git_dir())?)?
             && state.common == raw(&fs::canonicalize(repo.common_dir())?)?
@@ -360,6 +412,9 @@ fn load(repo: &gix::Repository) -> Result<Manifest> {
         "foreign journal metadata path"
     );
     ensure!(state.target.starts_with(b"refs/heads/"), "invalid journal branch");
+    if let Some(pull) = &state.pull {
+        validate_pull(repo, &state, pull)?;
+    }
     ensure!(
         state.log_directory.path == raw(&absolute(repo, repo.git_dir()).join("logs"))?,
         "foreign reflog directory path"
@@ -369,6 +424,13 @@ fn load(repo: &gix::Repository) -> Result<Manifest> {
         .map(|name| name.as_bytes().to_vec())
         .collect();
     let mut directory_states = BTreeMap::new();
+    if let Some(pull) = &state.pull {
+        for (i, change) in pull.directories.iter().enumerate() {
+            let name = format!("metadata-dir-{i}").into_bytes();
+            allowed.insert(name.clone());
+            directory_states.insert(name, &change.after);
+        }
+    }
     for change in &state.changes {
         for (prefix, desired) in [("new-dir-", &change.after), ("saved-dir-", &change.before)] {
             let name = format!("{prefix}{}", digest(&change.path)?).into_bytes();
@@ -461,6 +523,36 @@ fn occupancy(repo: &gix::Repository, branch: &[u8]) -> Result<()> {
     Ok(())
 }
 fn refs_match(repo: &gix::Repository, state: &Manifest) -> Result<()> {
+    if let Some(pull) = &state.pull {
+        if pull.fetch_done {
+            for change in &pull.fetch_metadata {
+                ensure!(
+                    snapshot(&path(&change.path)?)? == change.after,
+                    "completed fetch metadata changed; recovery evidence retained"
+                );
+            }
+            if let Some((name, _)) = &pull.tracking {
+                ensure!(
+                    branch_oid(repo, name)? == state.target_oid,
+                    "completed tracking reference changed; recovery evidence retained"
+                );
+            }
+        }
+        let actual_head = snapshot(&path(&state.head.path)?)?;
+        ensure!(
+            actual_head == state.head.before || (state.decision && actual_head == state.head.after),
+            "HEAD attachment changed; recovery evidence retained"
+        );
+        if let Some(source) = &state.source {
+            let actual = branch_oid(repo, source)?;
+            ensure!(
+                actual == state.source_oid || (state.decision && actual == state.target_oid),
+                "source branch changed; recovery evidence retained"
+            );
+            occupancy(repo, source)?;
+        }
+        return Ok(());
+    }
     ensure!(
         branch_oid(repo, &state.target)? == state.target_oid,
         "target branch changed; recovery evidence retained"
@@ -507,8 +599,13 @@ fn resources(repo: &gix::Repository, state: &Manifest) -> Result<Vec<PathBuf>> {
         repo.git_dir().join("HEAD"),
         repo.common_dir().join("packed-refs"),
     ];
-    for name in state.source.iter().chain(std::iter::once(&state.target)) {
+    for name in state.source.iter().chain(state.pull.is_none().then_some(&state.target)) {
         resources.push(repo.common_dir().join(path(name)?));
+    }
+    if let Some(pull) = &state.pull {
+        for change in pull.fetch_metadata.iter().chain(&pull.metadata) {
+            resources.push(path(&change.path)?);
+        }
     }
     let mut resources: Vec<_> = resources.into_iter().map(|name| absolute(repo, &name)).collect();
     resources.sort();
@@ -518,6 +615,12 @@ fn resources(repo: &gix::Repository, state: &Manifest) -> Result<Vec<PathBuf>> {
 fn lock_resources(repo: &gix::Repository, state: &mut Manifest) -> Result<Vec<HeldLock>> {
     use std::os::unix::fs::MetadataExt;
     let mut locks = Vec::new();
+    #[cfg(feature = "blocking-client")]
+    if state.pull.is_some() {
+        for resource in resources(repo, state)? {
+            pull::validate_metadata_ancestors(repo, &resource)?;
+        }
+    }
     for (position, resource) in resources(repo, state)?.into_iter().enumerate() {
         let anchor_resource = journal(repo).join(format!("guard-{position}"));
         let mut native = gix::lock::File::acquire_to_update_resource(
@@ -649,7 +752,12 @@ fn execute_locked(repo: gix::Repository, branch: &BStr, _shared: fs::File, pinne
         [b"refs/heads/".as_slice(), branch.as_bytes()].concat()
     };
     let _: gix::refs::FullName = target.as_bstr().try_into()?;
-    let target_oid = branch_oid(&repo, &target)?;
+    let pulling = pinned.as_ref().is_some_and(|state| state.pull.is_some());
+    let target_oid = if pulling {
+        pinned.as_ref().context("pull state")?.target_oid.clone()
+    } else {
+        branch_oid(&repo, &target)?
+    };
     let head = repo.head()?;
     let source = head.referent_name().map(|name| name.as_bstr().to_vec());
     if let Some(source) = &source {
@@ -670,18 +778,22 @@ fn execute_locked(repo: gix::Repository, branch: &BStr, _shared: fs::File, pinne
         );
         ensure!(
             snapshot(&repo.index_path())? == previous.index.before
-                && snapshot(&repo.git_dir().join("HEAD"))? == previous.head.before,
+                && snapshot(&repo.git_dir().join("HEAD"))? == previous.head.before
+                && snapshot(&repo.git_dir().join("logs/HEAD"))? == previous.reflog.before,
             "pinned metadata changed during preparation recovery"
         );
     }
-    occupancy(&repo, &target)?;
+    if !pulling {
+        occupancy(&repo, &target)?;
+    }
     ensure!(
         gix::filter::Pipeline::options(&repo)?.drivers.is_empty(),
         "external filters require Git"
     );
-    super::super::authoring::hook_path(&repo, "post-checkout")?;
+    super::super::authoring::hook_path(&repo, if pulling { "post-merge" } else { "post-checkout" })?;
     let mut state = Manifest {
         version: VERSION,
+        pull: pinned.as_ref().and_then(|state| state.pull.clone()),
         git_dir: raw(&fs::canonicalize(git_dir)?)?,
         root: raw(&fs::canonicalize(root)?)?,
         common: raw(&fs::canonicalize(repo.common_dir())?)?,
@@ -993,6 +1105,9 @@ fn execute_locked(repo: gix::Repository, branch: &BStr, _shared: fs::File, pinne
     } else {
         state.reflog.after = State::Absent;
     }
+    if pulling {
+        prepare_pull_metadata(&repo, &mut state)?;
+    }
     // Prove directory fsync support before creating any durable live transition.
     sync_dir(root)?;
     sync_dir(git_dir)?;
@@ -1280,6 +1395,8 @@ fn apply_files(repo: &gix::Repository, state: &mut Manifest) -> Result<()> {
 fn publish_metadata(repo: &gix::Repository, change: &Change, locks: &mut [HeldLock]) -> Result<()> {
     use std::os::unix::fs::PermissionsExt;
     let resource = path(&change.path)?;
+    #[cfg(feature = "blocking-client")]
+    pull::validate_metadata_ancestors(repo, &resource)?;
     let actual = snapshot(&resource)?;
     ensure!(
         actual == change.before || actual == change.after,
@@ -1328,6 +1445,10 @@ fn publish_metadata(repo: &gix::Repository, change: &Change, locks: &mut [HeldLo
 
 fn cleanup(repo: &gix::Repository, state: &Manifest) -> Result<()> {
     checkpoint("cleanup")?;
+    #[cfg(feature = "blocking-client")]
+    if let Some(pull) = &state.pull {
+        pull::check_keeps(repo, pull)?;
+    }
     let active = journal(repo);
     let completed = repo.git_dir().join(format!("brit-switch-completed-{}", state.pid));
     ensure!(
@@ -1336,6 +1457,21 @@ fn cleanup(repo: &gix::Repository, state: &Manifest) -> Result<()> {
     );
     fs::rename(&active, &completed)?;
     sync_dir(repo.git_dir())?;
+    if let Some(pull) = &state.pull {
+        #[cfg(feature = "blocking-client")]
+        pull::cleanup_keeps(repo, pull)?;
+        for change in pull.directories.iter().rev() {
+            let directory = path(&change.path)?;
+            if change.after != State::Absent
+                && snapshot(&directory)? == change.after
+                && fs::read_dir(&directory)?.next().is_none()
+            {
+                fs::remove_dir(&directory)?;
+                sync_dir(directory.parent().context("metadata parent")?)?;
+            }
+        }
+    }
+    checkpoint("keeps-cleaned")?;
     // Once the rename is durable, partial garbage collection is never mistaken for an active journal.
     fs::remove_file(completed.join("manifest.json"))?;
     for name in ["manifest.next", "publication"] {
@@ -1353,6 +1489,14 @@ fn cleanup(repo: &gix::Repository, state: &Manifest) -> Result<()> {
     }
     if present(&completed.join("log-directory"))? {
         fs::remove_dir(completed.join("log-directory"))?;
+    }
+    if let Some(pull) = &state.pull {
+        for (i, _) in pull.directories.iter().enumerate() {
+            let directory = completed.join(format!("metadata-dir-{i}"));
+            if present(&directory)? {
+                fs::remove_dir(directory)?;
+            }
+        }
     }
     fs::remove_dir(&completed)?;
     sync_dir(repo.git_dir())
@@ -1388,24 +1532,34 @@ fn finish(repo: &gix::Repository, state: &mut Manifest, locks: &mut Vec<HeldLock
     verify_locks(locks)?;
     if state.hook != "not-started" {
         if state.hook.starts_with("started") {
-            eprintln!("switch committed; hook outcome unknown; hook was not replayed");
+            eprintln!(
+                "{} committed; hook outcome unknown; hook was not replayed",
+                if state.pull.is_some() { "pull" } else { "switch" }
+            );
         }
         release_locks(repo, locks)?;
         cleanup(repo, state)?;
         ensure!(
-            state.hook != "failed",
+            state.pull.is_some() || state.hook != "failed",
             "switch committed; post-checkout hook failed; hook was not replayed"
         );
         return Ok(());
     }
     refs_match(repo, state)?;
-    for change in [&state.index, &state.head, &state.reflog] {
+    for change in [&state.index, &state.head, &state.reflog]
+        .into_iter()
+        .chain(state.pull.iter().flat_map(|pull| pull.metadata.iter()))
+    {
         let actual = snapshot(&path(&change.path)?)?;
         ensure!(
             actual == change.before || (state.decision && actual == change.after),
             "foreign metadata state at {}",
             change.path.as_bstr()
         );
+    }
+    #[cfg(feature = "blocking-client")]
+    if let Some(pull) = &state.pull {
+        pull::validate_objects(repo, pull)?;
     }
     apply_files(repo, state)?;
     if state.aborting {
@@ -1420,6 +1574,10 @@ fn finish(repo: &gix::Repository, state: &mut Manifest, locks: &mut Vec<HeldLock
         save(repo, state)?;
     }
     checkpoint("commit-decision")?;
+    #[cfg(feature = "blocking-client")]
+    if let Some(pull) = &state.pull {
+        pull::validate_objects(repo, pull)?;
+    }
     refs_match(repo, state)?;
     publish_metadata(repo, &state.index, locks)?;
     checkpoint("index-published")?;
@@ -1447,40 +1605,79 @@ fn finish(repo: &gix::Repository, state: &mut Manifest, locks: &mut Vec<HeldLock
         sync_dir(&journal(repo))?;
     }
     publish_metadata(repo, &state.reflog, locks)?;
+    if let Some(pull) = &state.pull {
+        for change in &pull.metadata {
+            refs_match(repo, state)?;
+            verify_locks(locks)?;
+            publish_metadata(repo, change, locks)?;
+            checkpoint(if change.path.ends_with(b"ORIG_HEAD") {
+                "orig-head-published"
+            } else if change.path.windows(5).any(|part| part == b"logs/") {
+                "branch-reflog-published"
+            } else {
+                "branch-published"
+            })?;
+        }
+    }
     checkpoint("reflog-published")?;
     refs_match(repo, state)?;
     verify_locks(locks)?;
     sync_dir(repo.git_dir())?;
-    let hook_result = if state.hook == "not-started" {
+    let hook_result = if state.pull.as_ref().is_some_and(|pull| pull.no_op) {
+        state.hook = "succeeded".into();
+        save(repo, state)?;
+        Ok(())
+    } else if state.hook == "not-started" {
         state.hook = "started; outcome unknown".into();
         save(repo, state)?;
         release_locks(repo, locks)?;
         checkpoint("hook-started")?;
         let result = super::super::authoring::run_hook(
             repo,
-            "post-checkout",
-            &[
-                state.source_oid.clone().into(),
-                state.target_oid.clone().into(),
-                "1".into(),
-            ],
+            if state.pull.is_some() {
+                "post-merge"
+            } else {
+                "post-checkout"
+            },
+            &if state.pull.is_some() {
+                vec!["0".into()]
+            } else {
+                vec![
+                    state.source_oid.clone().into(),
+                    state.target_oid.clone().into(),
+                    "1".into(),
+                ]
+            },
         );
         state.hook = if result.is_ok() { "succeeded" } else { "failed" }.into();
         save(repo, state)?;
         result
     } else {
         if state.hook.starts_with("started") {
-            eprintln!("switch committed; hook outcome unknown; hook was not replayed");
+            eprintln!(
+                "{} committed; hook outcome unknown; hook was not replayed",
+                if state.pull.is_some() { "pull" } else { "switch" }
+            );
         }
         Ok(())
     };
     release_locks(repo, locks)?;
     cleanup(repo, state)?;
-    hook_result.context("switch committed; post-checkout hook failed")
+    if state.pull.is_some() {
+        if let Err(error) = hook_result {
+            eprintln!("pull committed; post-merge hook failed: {error}");
+        }
+        Ok(())
+    } else {
+        hook_result.context("switch committed; post-checkout hook failed")
+    }
 }
 
 /// Explicitly continue or abort an interrupted switch. A durable decision only rolls forward.
 pub fn recover(repo: gix::Repository, abort: bool) -> Result<()> {
+    recover_operation(repo, abort, false)
+}
+fn recover_operation(repo: gix::Repository, abort: bool, pulling: bool) -> Result<()> {
     use std::os::unix::fs::MetadataExt;
     ensure!(cfg!(target_os = "linux"), "durable switch recovery requires Linux");
     let _shared = shared_guard(&repo)?;
@@ -1488,6 +1685,12 @@ pub fn recover(repo: gix::Repository, abort: bool) -> Result<()> {
         bail!("no switch recovery pending");
     }
     let mut state = load(&repo)?;
+    ensure!(
+        state.pull.is_some() == pulling,
+        "pending {} operation; use brit {} --continue or --abort",
+        if state.pull.is_some() { "pull" } else { "switch" },
+        if state.pull.is_some() { "pull" } else { "switch" }
+    );
     if abort {
         ensure!(
             !state.decision,
@@ -1545,6 +1748,19 @@ pub fn recover(repo: gix::Repository, abort: bool) -> Result<()> {
             fs::remove_file(entry.path())?;
         }
     }
+    state.aborting |= abort;
+    if state.aborting {
+        save(&repo, &state)?;
+    }
+    let abort = state.aborting;
+    #[cfg(feature = "blocking-client")]
+    if state.pull.as_ref().is_some_and(|pull| !pull.fetch_done) {
+        state.pid = std::process::id();
+        state.process = process(state.pid)?;
+        state.locks.clear();
+        save(&repo, &state)?;
+        return pull::resume_fetch(repo, state, _shared, abort);
+    }
     if state.preparing {
         for change in [&state.index, &state.head, &state.reflog] {
             ensure!(
@@ -1567,6 +1783,10 @@ pub fn recover(repo: gix::Repository, abort: bool) -> Result<()> {
             fs::remove_dir(journal(&repo).join("log-directory"))?;
         }
         sync_dir(&journal(&repo))?;
+        #[cfg(feature = "blocking-client")]
+        if state.pull.is_some() {
+            return pull::integrate(repo, state, _shared, false);
+        }
         let target = BString::from(state.target.clone());
         return execute_locked(repo, target.as_bstr(), _shared, Some(state));
     }
@@ -1580,5 +1800,16 @@ pub fn recover(repo: gix::Repository, abort: bool) -> Result<()> {
 }
 
 #[cfg(test)]
-#[path = "durability.rs"]
+#[path = "../durability.rs"]
 mod durability;
+
+#[cfg(feature = "blocking-client")]
+use pull::{prepare_pull_metadata, validate_pull};
+#[cfg(not(feature = "blocking-client"))]
+fn validate_pull(_: &gix::Repository, _: &Manifest, _: &Pull) -> Result<()> {
+    bail!("pull recovery requires blocking-client support")
+}
+#[cfg(not(feature = "blocking-client"))]
+fn prepare_pull_metadata(_: &gix::Repository, _: &mut Manifest) -> Result<()> {
+    bail!("pull recovery requires blocking-client support")
+}

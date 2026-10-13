@@ -7,7 +7,7 @@ use std::{
     sync::{Arc, atomic::AtomicBool},
 };
 
-use gix_error::{ResultExt, message};
+use gix_error::{ResultExt, bail, message};
 use gix_tempfile::{AutoRemove, ContainingDirectory};
 use gix_utils::interrupt;
 use gix_utils::progress;
@@ -146,6 +146,7 @@ impl crate::Bundle {
             data_path,
             index_path,
             keep_path,
+            keep_identity,
         } = crate::Bundle::inner_write(
             directory,
             progress,
@@ -164,6 +165,7 @@ impl crate::Bundle {
             data_path,
             index_path,
             keep_path,
+            keep_identity,
         })
     }
 
@@ -251,6 +253,7 @@ impl crate::Bundle {
             data_path,
             index_path,
             keep_path,
+            keep_identity,
         } = crate::Bundle::inner_write(
             directory,
             progress,
@@ -269,6 +272,7 @@ impl crate::Bundle {
             data_path,
             index_path,
             keep_path,
+            keep_identity,
         })
     }
 
@@ -322,10 +326,15 @@ impl crate::Bundle {
                         data_path: None,
                         index_path: None,
                         keep_path: None,
+                        keep_identity: None,
                     }
                 } else {
                     let data_path = directory.join(format!("pack-{}.pack", outcome.data_hash.to_hex()));
                     let index_path = data_path.with_extension("idx");
+                    #[cfg(unix)]
+                    let mut keep_identity = None;
+                    #[cfg(not(unix))]
+                    let keep_identity = None;
                     let keep_path = if data_path.is_file() {
                         // avoid trying to overwrite existing files, we know they have the same content
                         // and this is likely to fail on Windows as negotiation opened the pack.
@@ -333,7 +342,34 @@ impl crate::Bundle {
                     } else {
                         let keep_path = data_path.with_extension("keep");
 
-                        std::fs::write(&keep_path, b"").or_raise(|| message("Could not create pack keep file"))?;
+                        // A pre-existing keep belongs to another writer, even when its pack is not
+                        // visible yet. Never truncate it or return ownership of it to our caller.
+                        let keep = match std::fs::OpenOptions::new()
+                            .write(true)
+                            .create_new(true)
+                            .open(&keep_path)
+                        {
+                            Ok(file) => Some(file),
+                            Err(err) if err.kind() == std::io::ErrorKind::AlreadyExists => {
+                                let metadata = std::fs::symlink_metadata(&keep_path).or_error()?;
+                                if !metadata.is_file() {
+                                    bail!(message("Existing pack keep is not a regular file"));
+                                }
+                                None
+                            }
+                            Err(err) => {
+                                return Err(err).or_raise(|| message("Could not exclusively create pack keep file"));
+                            }
+                        };
+                        #[cfg(unix)]
+                        {
+                            use std::os::unix::fs::MetadataExt;
+                            if let Some(keep) = &keep {
+                                let metadata = keep.metadata().or_error()?;
+                                keep_identity = Some((metadata.dev(), metadata.ino()));
+                            }
+                        }
+                        let owned = keep.is_some();
                         Arc::try_unwrap(data_file)
                             .expect("only one handle left after pack was consumed")
                             .into_inner()
@@ -341,7 +377,7 @@ impl crate::Bundle {
                             .or_error()?
                             .persist(&data_path)
                             .or_raise(|| message("Could not persist pack file"))?;
-                        Some(keep_path)
+                        owned.then_some(keep_path)
                     };
                     if !index_path.is_file() {
                         index_file
@@ -356,6 +392,7 @@ impl crate::Bundle {
                         data_path: Some(data_path),
                         index_path: Some(index_path),
                         keep_path,
+                        keep_identity,
                     }
                 }
             }
@@ -375,6 +412,7 @@ impl crate::Bundle {
                 data_path: None,
                 index_path: None,
                 keep_path: None,
+                keep_identity: None,
             },
         })
     }
@@ -402,4 +440,5 @@ struct WriteOutcome {
     data_path: Option<PathBuf>,
     index_path: Option<PathBuf>,
     keep_path: Option<PathBuf>,
+    keep_identity: Option<(u64, u64)>,
 }

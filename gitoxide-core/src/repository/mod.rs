@@ -50,6 +50,8 @@ mod merge_base;
 pub use merge_base::merge_base;
 pub mod merge;
 pub mod odb;
+#[cfg(feature = "blocking-client")]
+pub mod pull;
 pub mod remote;
 pub mod revision;
 pub mod status;

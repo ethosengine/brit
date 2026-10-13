@@ -1,14 +1,14 @@
 seamRegistryVersion: 1
 crate: gitoxide-core
 crateRoot: gitoxide-core
-seamLocus: Private external-Git switch recovery; no Elohim authority or protocol heads.
+seamLocus: Private external-Git switch and fast-forward pull recovery; no Elohim authority or protocol heads.
 decisionPoints:
   - name: recover
     kind: state-transition
     sourceLocation:
-      file: src/repository/switch/linux.rs
+      file: src/repository/switch/linux/mod.rs
       modulePath: repository::switch::recover
-    summary: Explicit recovery either restores a pre-decision switch or rolls forward a committed switch without replacing unexpected state.
+    summary: Explicit recovery restores pre-decision integration or rolls forward committed switch/pull publication without replacing unexpected state; completed fetch results are retained.
     concernIds:
       - id: C0
         status: partial
@@ -18,7 +18,7 @@ decisionPoints:
         justification: No actor or peer self-election exists in this external Git operation.
       - id: C2
         status: n-a
-        justification: No protocol canonical head or authority moves; Git branch tips are pinned and unchanged.
+        justification: No protocol canonical head or authority moves; switch pins branch tips and pull advances only a proven fast-forward through guarded native Git publication.
       - id: C3
         status: partial
         justification: Explicit continue/abort are the recovery path; corrupt or foreign state deliberately retains evidence and refuses.
@@ -36,7 +36,7 @@ decisionPoints:
         justification: Before/after comparisons and durable hook-start support retry without duplicate effects; real process-interruption journeys exercise explicit retries.
       - id: C7
         status: partial
-        justification: The public CLI exposes only existing-branch switch and explicit recovery; unsupported forms and platforms must refuse before mutation.
+        justification: The public CLI exposes existing-branch switch, explicitly selected fast-forward pull and recovery; unsupported forms and platforms refuse before mutation.
       - id: C8
         status: partial
         justification: CLI status and retained journal provide local outcomes; no metrics counter service is introduced for this offline command.
@@ -48,7 +48,7 @@ decisionPoints:
         justification: Versioned private manifest must reject unsupported or corrupt state; unknown fields, checksum and semantic corruption are refused in journeys.
       - id: C11
         status: n-a
-        justification: No remotely driven input rate; cooperating local writer contention refuses rather than queues.
+        justification: Fetch is explicitly requested by the local user through existing transport primitives; no recurring protocol subscription or remote-triggered worker is introduced.
       - id: C12
         status: n-a
         justification: Local filesystem access and explicit CLI invocation authorize an external Git action; no notarized grant plane applies.
@@ -70,5 +70,14 @@ decisionPoints:
         kind: integration
       - path: gitoxide-core/src/repository/switch/durability.rs
         testName: power_loss_drops_unsynchronized_bytes_and_names_at_every_real_sync_boundary
+        kind: unit
+      - path: tests/cli-journey/tests/pull.rs
+        testName: divergence_preserves_integration_and_keeps_completed_fetch
+        kind: integration
+      - path: tests/cli-journey/tests/pull.rs
+        testName: attached_and_detached_fast_forward_match_git
+        kind: integration
+      - path: gitoxide-core/src/repository/switch/durability.rs
+        testName: pull_power_loss_preserves_objects_before_both_durable_decisions
         kind: unit
     notes: Local Linux synchronization and interruption proof; not hardware power-cut or remote platform qualification.

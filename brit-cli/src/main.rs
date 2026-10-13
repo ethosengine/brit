@@ -303,6 +303,41 @@ mod tests {
         }
     }
 
+    #[cfg(any(feature = "max", feature = "max-pure", feature = "lean"))]
+    #[test]
+    fn pull_requires_explicit_fast_forward_selection_or_recovery() {
+        for args in [
+            vec!["brit", "pull", "--ff-only", "origin", "main"],
+            vec!["brit", "pull", "--ff-only", "../remote", "refs/heads/main"],
+            vec!["brit", "pull", "--ff-only", "https://example.test/repo", "main"],
+            vec!["brit", "pull", "--status"],
+            vec!["brit", "pull", "--continue"],
+            vec!["brit", "pull", "--abort"],
+        ] {
+            assert!(
+                public_command().try_get_matches_from(&args).is_ok(),
+                "supported pull: {args:?}"
+            );
+        }
+        for args in [
+            vec!["brit", "pull"],
+            vec!["brit", "pull", "origin", "main"],
+            vec!["brit", "pull", "--ff-only"],
+            vec!["brit", "pull", "--ff-only", "origin"],
+            vec!["brit", "pull", "--ff-only", "origin", "main", "other"],
+            vec!["brit", "pull", "--status", "--continue"],
+            vec!["brit", "pull", "--continue", "--abort"],
+            vec!["brit", "pull", "--status", "--ff-only", "origin", "main"],
+            vec!["brit", "pull", "--rebase", "origin", "main"],
+            vec!["brit", "pull", "--ff-only", "--autostash", "origin", "main"],
+        ] {
+            assert!(
+                public_command().try_get_matches_from(&args).is_err(),
+                "unsupported pull: {args:?}"
+            );
+        }
+    }
+
     #[test]
     fn broader_staging_requires_literal_paths_or_a_repository_wide_flag() {
         for args in [

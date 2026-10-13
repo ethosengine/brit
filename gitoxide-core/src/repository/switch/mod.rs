@@ -3,6 +3,8 @@
 mod linux;
 #[cfg(target_os = "linux")]
 pub use linux::{ensure_no_pending, execute, mutation_guard, recover, status};
+#[cfg(all(target_os = "linux", feature = "blocking-client"))]
+pub use linux::{pull_execute, pull_recover};
 
 #[cfg(not(target_os = "linux"))]
 mod unavailable {
@@ -41,7 +43,7 @@ mod unavailable {
         if journal_present(&repo.git_dir().join("brit-switch"))? {
             writeln!(out, "Switch recovery pending; recover on Linux")?;
         } else {
-            writeln!(out, "No switch recovery pending")?;
+            writeln!(out, "No switch or pull recovery pending")?;
         }
         Ok(())
     }
