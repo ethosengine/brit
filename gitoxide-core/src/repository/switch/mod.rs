@@ -2,6 +2,8 @@
 #[cfg(target_os = "linux")]
 mod linux;
 #[cfg(target_os = "linux")]
+pub(crate) use linux::shared_guard;
+#[cfg(target_os = "linux")]
 pub use linux::{ensure_no_pending, execute, mutation_guard, recover, status};
 #[cfg(all(target_os = "linux", feature = "blocking-client"))]
 pub use linux::{pull_execute, pull_recover};
@@ -19,8 +21,13 @@ mod unavailable {
     /// Refuse mutation while a Linux-created switch journal is pending.
     pub fn ensure_no_pending(repo: &gix::Repository) -> Result<()> {
         for worktree in repo.worktrees_including_main()? {
+            let worktree = worktree?;
             ensure!(
-                !journal_present(&worktree?.git_dir().join("brit-switch"))?,
+                !journal_present(&worktree.git_dir().join("brit-authoring"))?,
+                "conflict authoring recovery requires Linux"
+            );
+            ensure!(
+                !journal_present(&worktree.git_dir().join("brit-switch"))?,
                 "switch recovery pending; recover on a supported Linux filesystem"
             );
         }

@@ -179,6 +179,11 @@ pub fn ensure_no_pending(repo: &gix::Repository) -> Result<()> {
     for worktree in repo.worktrees_including_main()? {
         let worktree = worktree?;
         ensure!(
+            !present(&absolute(&worktree, worktree.git_dir()).join("brit-authoring"))?,
+            "pending conflict authoring in {}; recover its internal session",
+            worktree.git_dir().display()
+        );
+        ensure!(
             !present(&journal(&worktree))?,
             "pending switch or pull in {}; use brit switch --status or brit pull --status, then the named --continue or --abort command",
             worktree.git_dir().display()
@@ -194,7 +199,7 @@ pub fn mutation_guard(repo: &gix::Repository) -> Result<fs::File> {
     ensure_no_pending(repo)?;
     Ok(lock)
 }
-fn shared_guard(repo: &gix::Repository) -> Result<fs::File> {
+pub(crate) fn shared_guard(repo: &gix::Repository) -> Result<fs::File> {
     use std::os::unix::fs::OpenOptionsExt;
     let file = fs::OpenOptions::new()
         .read(true)
