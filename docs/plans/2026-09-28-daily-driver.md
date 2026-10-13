@@ -1691,3 +1691,59 @@ Qualification covers Linux fsync/rename behavior and a separate loss-of-unsynchr
 writes model; it does not establish physical power-cut safety or hostile-writer
 isolation. No push, publication, parent submodule-pin change, remote CI execution
 or full daily-driver acceptance is claimed.
+
+## Integration and dogfooding — 2026-10-13
+
+The integration candidate includes the complete implementation sequence through
+5g, evidence commit `947bf313905383c0dcf8f62a72ce52b008f3ebb9`, on
+`run-ci/daily-driver-integration-2026-10-13`. The parent submodule checkout was
+behind this separate worktree sequence; it was not the integration source.
+
+Operator clarification: operational verification will happen through our own
+ongoing development with Brit, including handoffs between workspaces. A separate
+two-human ceremony or two scripted local identities is not this pass's finish
+line. Land the tested implementation and make the candidate usable now; record
+real dogfooding outcomes as they occur. Cross-workspace operation has not yet
+been exercised, and fixtures or green CI must not claim that evidence. The
+habit remains UNWIRED until its workflow assertion is actually established.
+
+The installed 5g development artifact (`b09a6090`, checksum recorded above) was
+used for real status inspection and fetching this integration branch from GitHub.
+Its fetch matched the advertised `947bf3139` source without stock-Git transport.
+This is a bounded real-use observation, not cross-workspace qualification.
+
+GitHub CI run [38376775271](https://github.com/ethosengine/brit/actions/runs/38376775271)
+exposed integration gaps that the scoped Linux proofs did not cover:
+
+- The pack command serialized its new device/inode ownership witness, changing
+  an inherited JSON snapshot. `keep_identity` is now excluded from serialization
+  and deserialization: local ownership cannot be transported as output data.
+  The original pack JSON snapshot passes without changing expected bytes.
+- Git rebase characterization editors used GNU-only `sed` forms. The fixtures
+  now use BSD/GNU-compatible backup suffixes and a portable break insertion.
+  All 40 characterization cases still pass locally.
+- The broader-staging alias fixture wrote over the existing lowercase file on
+  case-insensitive filesystems. It now renames through a distinct temporary
+  name so the directory entry actually differs from the index spelling.
+  All 15 broader-staging tests pass locally; macOS CI verifies that platform.
+
+Maintainer nodes: between scoped authoring proof and portable CI, the fixture
+must create the same intended state on each filesystem; between pack custody
+and JSON output, a local ownership witness must remain local. Existing staging,
+characterization and pack snapshot tests are the probes. No assertion was
+removed or weakened. Private logs live under the parent workspace's
+`genesis/local-dev/brit-readiness/integration-2026-10-13/`.
+
+The 32-bit Debian lane additionally lacked Python's `pty` standard-library
+module (`python3-minimal`); its prerequisite is now `python3`, keeping the terminal
+recovery test enabled. Its Git server reports a failed compare-and-swap as
+`failed to update ref`; the lease probe accepts that diagnostic while still
+requiring rejection, the hook's advertised old OID, and the competitor's exact
+remote ref to survive. Those behavioral assertions remain unchanged.
+
+Real-use boundary: `brit add` refused the integration worktree because system and
+user Git configuration declare Git LFS clean/process filters. No index change
+occurred. The bounded staging implementation rejects configured external filters
+even when selected source paths do not use LFS; use explicit path-scoped `git add`
+in that environment, then Brit for supported subsequent operations. We did not
+remove or override the workspace's filter configuration to claim native staging.

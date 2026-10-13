@@ -15,7 +15,8 @@ commit() { git add -A; git commit -qm "$1"; }
 head() { git rev-parse HEAD; }
 subject() { git log -1 --format=%s; }
 count() { git rev-list --count main..HEAD; }
-# Fixture scripts live in private .git, outside commits and collision surfaces.
+# Fixture scripts and sed backups live in private .git, outside commits and collision surfaces.
+# An attached backup suffix works with both BSD and GNU sed.
 editor() { printf '#!/bin/sh\n%s\n' "$2" > ".git/$1"; chmod +x ".git/$1"; }
 linear() {
     echo base > base; echo original > neighbor; commit base
@@ -63,7 +64,7 @@ empty_and_equivalent)
     ;;
 newly_empty)
     linear
-    editor todo 'sed -i "2s/^pick /fixup /" "$1"'
+    editor todo 'sed -i.bak "2s/^pick /fixup /" "$1"'
     # Reapplying an exact patch retained explicitly becomes empty and is dropped.
     git switch -q main; git cherry-pick topic~1
     git switch -q topic; git rebase --reapply-cherry-picks main
@@ -79,7 +80,7 @@ merge_history)
 reword|squash|fixup)
     linear
     if test "$1" = reword; then action='1s/^pick /reword /'; else action="2s/^pick /$1 /"; fi
-    editor todo "sed -i '$action' \"\$1\""
+    editor todo "sed -i.bak '$action' \"\$1\""
     editor message 'printf "edited message\n" > "$1"'
     GIT_SEQUENCE_EDITOR="$PWD/.git/todo" GIT_EDITOR="$PWD/.git/message" git rebase -i main
     if test "$1" = reword; then test "$(git log -1 --format=%s HEAD~1)" = 'edited message'; test "$(count)" = 2
@@ -92,13 +93,13 @@ reorder_drop)
     editor todo '{ sed -n "2p" "$1"; sed -n "1p" "$1"; } > "$1.new"; mv "$1.new" "$1"'
     GIT_SEQUENCE_EDITOR="$PWD/.git/todo" git rebase -i main
     test "$(git log --reverse --format=%s main..HEAD)" = $'two\none'
-    editor todo 'sed -i "1s/^pick /drop /" "$1"'
+    editor todo 'sed -i.bak "1s/^pick /drop /" "$1"'
     GIT_SEQUENCE_EDITOR="$PWD/.git/todo" git rebase -i main
     test "$(count)" = 1; test ! -f two
     ;;
 edit_amend|edit_split)
     linear
-    editor todo 'sed -i "1s/^pick /edit /" "$1"'
+    editor todo 'sed -i.bak "1s/^pick /edit /" "$1"'
     GIT_SEQUENCE_EDITOR="$PWD/.git/todo" git rebase -i main
     test "$(git rev-parse topic)" = "$original"
     if test "$1" = edit_amend; then echo amended >> one; git add one; git commit -q --amend -m amended
@@ -108,7 +109,7 @@ edit_amend|edit_split)
     else test "$(count)" = 3; fi
     ;;
 break_stop)
-    linear; editor todo 'sed -i "1i break" "$1"'
+    linear; editor todo '{ printf "break\n"; cat "$1"; } > "$1.new"; mv "$1.new" "$1"'
     GIT_SEQUENCE_EDITOR="$PWD/.git/todo" git rebase -i main
     test "$(head)" = "$upstream"; test -d .git/rebase-merge
     git rebase --show-current-patch > .git/patch 2>/dev/null || true
@@ -127,7 +128,7 @@ invalid_todo)
 failed_editors)
     linear; fail env GIT_SEQUENCE_EDITOR=false git rebase -i main
     test "$(head)" = "$original"; test ! -d .git/rebase-merge
-    editor todo 'sed -i "1s/^pick /reword /" "$1"'
+    editor todo 'sed -i.bak "1s/^pick /reword /" "$1"'
     fail env GIT_SEQUENCE_EDITOR="$PWD/.git/todo" GIT_EDITOR=false git rebase -i main
     test -d .git/rebase-merge; git rebase --abort
     test "$(head)" = "$original"
@@ -205,12 +206,12 @@ hooks|hook_failures|hooks_reword|hooks_squash|hooks_conflict)
     if test "$1" = hook_failures; then
         echo 'exit 1' >> .git/hooks/pre-rebase; fail git rebase main
         test "$(head)" = "$original"; test ! -d .git/rebase-merge
-        sed -i '$d' .git/hooks/pre-rebase; echo 'exit 1' >> .git/hooks/post-rewrite
+        sed -i.bak '$d' .git/hooks/pre-rebase; echo 'exit 1' >> .git/hooks/post-rewrite
     fi
     case "$1" in
     hooks_reword|hooks_squash)
         if test "$1" = hooks_reword; then change='1s/^pick /reword /'; else change='2s/^pick /squash /'; fi
-        editor todo "sed -i '$change' \"\$1\""
+        editor todo "sed -i.bak '$change' \"\$1\""
         GIT_SEQUENCE_EDITOR="$PWD/.git/todo" git rebase -i main;;
     hooks_conflict)
         git switch -q main; echo conflict > one; commit conflict
@@ -249,7 +250,7 @@ interruption_editor|interruption_hook)
         editor interrupt 'printf reached > .git/interrupt-marker; kill -KILL "$PPID"; exit 1'
         fail env GIT_SEQUENCE_EDITOR="$PWD/.git/interrupt" git rebase -i main
     else
-        editor todo 'sed -i "1s/^pick /reword /" "$1"'
+        editor todo 'sed -i.bak "1s/^pick /reword /" "$1"'
         printf '#!/bin/sh\nprintf reached > .git/interrupt-marker\nkill -KILL "$PPID"\nexit 1\n' > .git/hooks/prepare-commit-msg
         chmod +x .git/hooks/prepare-commit-msg
         fail env GIT_SEQUENCE_EDITOR="$PWD/.git/todo" git rebase -i main

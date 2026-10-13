@@ -271,6 +271,7 @@ fn competing_writer_during_hook_is_rejected_by_transport() -> Result<()> {
         ensure!(
             stderr.contains("cannot lock ref")
                 || stderr.contains("incorrect old value provided")
+                || stderr.contains("failed to update ref")
                 || (stderr.contains("is at") && stderr.contains("expected")),
             "race must fail at server CAS: {stderr}"
         );

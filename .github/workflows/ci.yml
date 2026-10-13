@@ -577,7 +577,7 @@ jobs:
             libssl-dev
             "libstdc++6:$RUNNER_ARCHITECTURE"  # To support external 64-bit Node.js for actions.
             pkgconf
-            python3-minimal
+            python3  # Terminal recovery tests require the standard-library pty module.
           )
           dpkg --add-architecture "$RUNNER_ARCHITECTURE"
           apt-get update

@@ -320,6 +320,16 @@ fn locks_filters_and_case_aliases_refuse_atomically() -> Result<()> {
     fs::remove_file(repo.path().join("scope/.gitattributes"))?;
     git(repo.path(), &["config", "--remove-section", "filter.external"])?;
     git(repo.path(), &["config", "core.ignorecase", "true"])?;
+    // Force a different directory-entry spelling even on case-insensitive filesystems.
+    // Writing `Modified` alone there only overwrites the existing lowercase file.
+    fs::rename(
+        repo.path().join("scope/modified"),
+        repo.path().join("scope/case-change"),
+    )?;
+    fs::rename(
+        repo.path().join("scope/case-change"),
+        repo.path().join("scope/Modified"),
+    )?;
     fs::write(repo.path().join("scope/Modified"), "alias\n")?;
     let alias = brit(repo.path(), &["add", "--", "scope"])?;
     ensure!(

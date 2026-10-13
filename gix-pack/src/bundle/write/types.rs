@@ -63,6 +63,8 @@ pub struct Outcome {
     pub keep_path: Option<PathBuf>,
     /// Device and inode captured from the exclusively created keep file on Unix.
     /// Callers must compare this identity before removing the path; `None` conveys no ownership proof.
+    /// This process-local ownership proof cannot be restored from serialized output.
+    #[cfg_attr(feature = "serde", serde(skip))]
     pub keep_identity: Option<(u64, u64)>,
 }
 
