@@ -1786,3 +1786,16 @@ credential helper and prompting disabled (exit 0). The complete real replay
 synchronization-loss test passed in 340.55 seconds, all 40 Git rebase observations
 passed, and the small-mode typo snapshot matched exactly. These are bounded
 integration observations, not cross-workspace acceptance.
+
+The full inherited lane also found missing executable bits on the delivery-source
+scripts and Git rebase fixture; `just check-mode` passes after correcting them.
+Publication preflight found the new `gitoxide-core` → `gix-sequencer` edge lacked
+its version/registry declaration. The corrected graph validates all 70 local
+crates; the read-only index audit found all 70 exact versions absent. No-upload
+packaging reaches the expected bootstrap boundary when a later package needs an
+earlier, not-yet-published dependency. Actual publication remains the main-only
+CI lane's responsibility.
+
+GitHub masking also replaces hyphens in runner-reported step names. Three public
+readiness labels now use spaces in both workflow and contract, retaining exact
+matching and the same commands instead of weakening the evidence check.

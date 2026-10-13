@@ -165,7 +165,7 @@ jobs:
             test "$(shasum -a 256 "$isolated/bin/$helper_name" | awk '{print $1}')" = "$helper_sha"
             "$isolated/bin/$helper_name" --help >/dev/null
           fi
-      - name: Prove source-free installed authoring and recovery
+      - name: Prove source free installed authoring and recovery
         if: runner.os != 'Windows'
         run: |
           set -euo pipefail
@@ -173,7 +173,7 @@ jobs:
           bash scripts/ci/verify-installed-brit.sh "$installed"
           BRIT_BIN="$installed" cargo test --locked -p cli-journey \
             --test authoring --test pre_push --test explicit_leases --test commit_cleanup --test commit_amend --test worktree_restore --test switch --test pull --test broader_staging --test daily_driver --test native_authoring --test shared_tree
-      - name: Qualify installed Linux rebase and retained-copy recovery
+      - name: Qualify installed Linux rebase and retained copy recovery
         if: runner.os == 'Linux'
         run: |
           set -euo pipefail

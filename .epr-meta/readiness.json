@@ -120,7 +120,7 @@
           "job": "auditable",
           "name": "cargo-auditable build",
           "steps": [
-            "Check metadata-based auditable builds on stable Rust"
+            "Check metadata based auditable builds on stable Rust"
           ]
         }
       ],
@@ -166,9 +166,9 @@
             "Verify this job received the validated source",
             "Package binaries, receipt, and checksum",
             "Qualify extracted Unix installation and operational journeys",
-            "Prove source-free installed authoring and recovery",
+            "Prove source free installed authoring and recovery",
             "Prove Unix installer interruption and rollback mechanics",
-            "Qualify installed Linux rebase and retained-copy recovery"
+            "Qualify installed Linux rebase and retained copy recovery"
           ]
         },
         {
@@ -178,7 +178,7 @@
             "Verify this job received the validated source",
             "Package binaries, receipt, and checksum",
             "Qualify extracted Unix installation and operational journeys",
-            "Prove source-free installed authoring and recovery",
+            "Prove source free installed authoring and recovery",
             "Prove Unix installer interruption and rollback mechanics"
           ]
         },
@@ -189,7 +189,7 @@
             "Verify this job received the validated source",
             "Package binaries, receipt, and checksum",
             "Qualify extracted Unix installation and operational journeys",
-            "Prove source-free installed authoring and recovery",
+            "Prove source free installed authoring and recovery",
             "Prove Unix installer interruption and rollback mechanics"
           ]
         }
