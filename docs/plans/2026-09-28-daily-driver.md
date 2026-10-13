@@ -1799,3 +1799,18 @@ CI lane's responsibility.
 GitHub masking also replaces hyphens in runner-reported step names. Three public
 readiness labels now use spaces in both workflow and contract, retaining exact
 matching and the same commands instead of weakening the evidence check.
+
+At `49c226115fa5c8eda635c39141c5d7928f31f4e2`, GitHub's `Tests pass`
+gate is green (run 38383733374). Candidate 38383774189 passed Linux and
+Windows delivery. The Linux archive was checksummed and installed privately at
+`genesis/local-dev/brit-readiness/daily-driver/bin` in the owning workspace;
+its source-free local fixture and real checkout status inspection pass.
+This install and real native commits/fetches/pushes are development observations,
+not cross-workspace operational acceptance.
+
+The macOS candidate passed installed commands, then found a fault-fixture path
+alias: the pair installer canonicalizes its prefix, while the concurrent-activation
+shim compared it to the `/var` spelling rather than `/private/var`. A symlinked
+`TMPDIR` reproduced the failure on Linux. Canonicalizing the fixture root makes
+both alias and physical-directory runs pass, with rollback/interruption/concurrent
+activation assertions unchanged. The next candidate must confirm this on macOS.

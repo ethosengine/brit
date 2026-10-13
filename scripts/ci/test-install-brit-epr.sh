@@ -3,6 +3,9 @@
 set -euo pipefail
 script_dir=$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd -P)
 fixture=$(mktemp -d)
+# The installer canonicalizes its prefix; compare the same spelling when TMPDIR
+# is a symlink (for example, /var -> /private/var on macOS).
+fixture=$(cd -- "$fixture" && pwd -P)
 trap 'rm -rf -- "$fixture"' EXIT
 sha256_file() {
   if command -v sha256sum >/dev/null 2>&1; then sha256sum "$1" | awk '{print $1}';
