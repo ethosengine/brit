@@ -57,7 +57,7 @@ tracing-cpu-time = ["tracing", "gix-trace/forest-cpu-time"]
 serde = ["gix/serde", "bytesize/serde"]
 
 [dependencies]
-gix-sequencer = { path = "../gix-sequencer", features = ["serde"] }
+gix-sequencer = { version = "0.0.0", path = "../gix-sequencer", features = ["serde"], registry = "elohim" }
 anyhow = "1.0.102"
 gix-config-value = { version = "^0.21.0", path = "../gix-config-value", registry = "elohim" }
 # deselect everything else (like "performance") as this should be controllable by the parent application.
