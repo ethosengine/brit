@@ -209,10 +209,110 @@ pub fn prepare(dir: &Path) -> Result<PreparedInvocation> {
 
 /// Execute only a prepared, leased invocation, releasing the child after its
 /// durable PID/start/group receipt. No path can reopen and rerun a prepared ID.
-pub(super) fn run(
+pub(super) fn run(command: Command, input: Option<&[u8]>, prepared: PreparedInvocation) -> Result<InvocationOutcome> {
+    run_owned(command, input, prepared, false)
+}
+
+/// Editors use the same launch barrier, lease and quiescence receipts as hooks.
+pub(crate) fn run_editor(command: Command, prepared: PreparedInvocation, terminal: bool) -> Result<InvocationOutcome> {
+    run_owned(command, None, prepared, terminal)
+}
+
+struct Terminal {
+    file: fs::File,
+    original: rustix::process::Pid,
+    restored: bool,
+}
+impl Terminal {
+    fn handoff(pid: u32) -> Result<Self> {
+        let file = fs::OpenOptions::new().read(true).write(true).open("/dev/tty")?;
+        let original = rustix::termios::tcgetpgrp(&file)?;
+        ensure!(
+            original == rustix::process::getpgrp(),
+            "editor supervisor is not in the foreground"
+        );
+        Self::set(
+            &file,
+            rustix::process::Pid::from_raw(i32::try_from(pid)?).context("invalid editor PID")?,
+        )?;
+        Ok(Self {
+            file,
+            original,
+            restored: false,
+        })
+    }
+    fn set(file: &fs::File, group: rustix::process::Pid) -> Result<()> {
+        use nix::sys::signal::{SigSet, SigmaskHow, Signal};
+        let mut blocked = SigSet::empty();
+        blocked.add(Signal::SIGTTOU);
+        let previous = blocked.thread_swap_mask(SigmaskHow::SIG_BLOCK)?;
+        let result = rustix::termios::tcsetpgrp(file, group);
+        previous.thread_set_mask()?;
+        Ok(result?)
+    }
+    fn restore(&mut self) -> Result<()> {
+        Self::set(&self.file, self.original)?;
+        self.restored = true;
+        Ok(())
+    }
+    fn wait(&mut self, child: &mut std::process::Child) -> Result<std::process::ExitStatus> {
+        use nix::{
+            sys::{
+                signal::{Signal, killpg, raise},
+                wait::{WaitPidFlag, WaitStatus, waitpid},
+            },
+            unistd::Pid,
+        };
+        use std::os::unix::process::ExitStatusExt;
+        let pid = Pid::from_raw(i32::try_from(child.id())?);
+        loop {
+            match waitpid(pid, Some(WaitPidFlag::WUNTRACED)) {
+                Ok(WaitStatus::Exited(_, code)) => return Ok(std::process::ExitStatus::from_raw(code << 8)),
+                Ok(WaitStatus::Signaled(_, signal, core)) => {
+                    return Ok(std::process::ExitStatus::from_raw(
+                        signal as i32 | if core { 128 } else { 0 },
+                    ));
+                }
+                Ok(WaitStatus::Stopped(_, _)) => {
+                    // Restore the caller's terminal and suspend this supervisor
+                    // so the shell can implement Ctrl-Z/fg normally. The lease
+                    // remains held across suspension; no recovery may race it.
+                    self.restore()?;
+                    // Stop the calling thread synchronously. A process-directed
+                    // kill may reach another thread while this one keeps running
+                    // and wrongly resumes the editor before the group stops.
+                    raise(Signal::SIGSTOP)?;
+                    while rustix::termios::tcgetpgrp(&self.file)? != self.original {
+                        // `bg` must not steal the terminal from the shell.
+                        raise(Signal::SIGSTOP)?;
+                    }
+                    Self::set(
+                        &self.file,
+                        rustix::process::Pid::from_raw(pid.as_raw()).context("editor PID")?,
+                    )?;
+                    self.restored = false;
+                    killpg(pid, Signal::SIGCONT)?;
+                }
+                Err(nix::errno::Errno::EINTR) => continue,
+                Err(error) => return Err(error.into()),
+                _ => continue,
+            }
+        }
+    }
+}
+impl Drop for Terminal {
+    fn drop(&mut self) {
+        if !self.restored {
+            let _ = self.restore();
+        }
+    }
+}
+
+fn run_owned(
     mut command: Command,
     input: Option<&[u8]>,
     prepared: PreparedInvocation,
+    interactive_terminal: bool,
 ) -> Result<InvocationOutcome> {
     let dir = prepared.directory.as_path();
     checkpoint(dir, "after-start")?;
@@ -232,13 +332,24 @@ pub(super) fn run(
         }
     };
     checkpoint(dir, "after-launch")?;
+    let mut terminal = if interactive_terminal {
+        Some(Terminal::handoff(child.id())?)
+    } else {
+        None
+    };
     let mut stdin = child.stdin.take().context("gated hook requires piped stdin")?;
     let input_result = stdin
         .write_all(b"go\n")
         .and_then(|()| stdin.write_all(input.unwrap_or_default()));
     drop(stdin);
     checkpoint(dir, "after-release")?;
-    let status = child.wait().context("wait for hook child")?;
+    let status = match &mut terminal {
+        Some(terminal) => terminal.wait(&mut child)?,
+        None => child.wait().context("wait for hook child")?,
+    };
+    if let Some(terminal) = &mut terminal {
+        terminal.restore()?;
+    }
     group_quiescent(&child_identity)?;
     checkpoint(dir, "after-wait")?;
     let outcome = if status.success()

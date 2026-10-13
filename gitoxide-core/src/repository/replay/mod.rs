@@ -351,27 +351,39 @@ impl Step {
     /// than call this function again. The original raw author and encoding are
     /// preserved; signatures and other old extra headers are not copied.
     pub fn propose(&self, repo: &gix::Repository) -> Result<Proposal> {
+        self.propose_message(repo, self.original, self.parent, None)
+    }
+
+    /// Compose an interactive proposal with the group's original author and
+    /// parent, while retaining arbitrary message bytes without UTF-8 conversion.
+    pub(crate) fn propose_message(
+        &self,
+        repo: &gix::Repository,
+        author_source: gix::ObjectId,
+        parent: gix::ObjectId,
+        message: Option<&[u8]>,
+    ) -> Result<Proposal> {
         use gix::objs::WriteTo;
         ensure!(self.conflicts.is_empty(), "unresolved replay conflicts");
         ensure!(
             !repo.config_snapshot().try_boolean("commit.gpgSign")?.unwrap_or(false),
             "required signing is unsupported"
         );
-        let original = repo.find_commit(self.original)?;
+        let original = repo.find_commit(author_source)?;
         let original = original.decode()?;
         let mut committer = Vec::new();
         repo.committer()
             .context("committer identity required")??
             .write_to(&mut committer)?;
         let tree = self.tree.to_string();
-        let parent = self.parent.to_string();
+        let parent = parent.to_string();
         let commit = gix::objs::CommitRef {
             tree: tree.as_bytes().as_bstr(),
             parents: [parent.as_bytes().as_bstr()].into_iter().collect(),
             author: original.author,
             committer: committer.as_bstr(),
             encoding: original.encoding,
-            message: original.message,
+            message: message.map_or(original.message, ByteSlice::as_bstr),
             extra_headers: Vec::new(),
         };
         let mut bytes = Vec::new();
@@ -390,7 +402,9 @@ pub struct Proposal {
 #[cfg(target_os = "linux")]
 pub use journal::{Advance, Session};
 #[cfg(target_os = "linux")]
-pub(crate) use journal::{ChildAuthorization, active_nonce, validate_accepted_child, validate_child_binding};
+pub(crate) use journal::{
+    ChildAuthorization, active_nonce, protect_child_commit, validate_accepted_child, validate_child_binding,
+};
 
 #[cfg(target_os = "linux")]
 mod journal;
@@ -399,5 +413,7 @@ mod transition;
 
 #[cfg(target_os = "linux")]
 mod cleanup;
+#[cfg(target_os = "linux")]
+pub mod editors;
 #[cfg(target_os = "linux")]
 pub(crate) use cleanup::ensure_cleanup_retired;

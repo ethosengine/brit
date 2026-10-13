@@ -240,7 +240,10 @@ fn replay_steps_final_abort_and_cleanup_power_loss_follow_real_sync_boundaries()
     if gix_testtools::run_in_isolated_process()? {
         return Ok(());
     }
-    for abort in [false, true] {
+    for (mode, abort) in ["linear", "reword", "squash", "fixup", "drop", "break"]
+        .into_iter()
+        .flat_map(|mode| [false, true].map(|abort| (mode, abort)))
+    {
         let fixture = tempfile::tempdir()?;
         let root = fixture.path();
         for command in [
@@ -263,6 +266,17 @@ fn replay_steps_final_abort_and_cleanup_power_loss_follow_real_sync_boundaries()
         for command in ["add selected", "commit -m topic"] {
             gix_testtools::git(root, command)?;
         }
+        let first = gix::open(root)?.head_id()?.to_string();
+        let second = if mode != "linear" {
+            fs::write(root.join("second"), b"second topic\n")?;
+            for command in ["add second", "commit -m second"] {
+                gix_testtools::git(root, command)?;
+            }
+            Some(gix::open(root)?.head_id()?.to_string())
+        } else {
+            None
+        };
+        let _editor = gix_testtools::Env::new().set("GIT_EDITOR", ":");
         fs::write(root.join("neighbor"), b"staged neighbor\n")?;
         gix_testtools::git(root, "add neighbor")?;
         fs::write(root.join("neighbor"), b"unstaged neighbor\n")?;
@@ -290,10 +304,27 @@ fn replay_steps_final_abort_and_cleanup_power_loss_follow_real_sync_boundaries()
         TRACE.with(|trace| *trace.borrow_mut() = Some(Vec::new()));
         baseline(root)?;
         proof.baseline_len = TRACE.with(|trace| trace.borrow().as_ref().expect("trace enabled").len());
-        let mut session = Session::prepare(&repo, b"upstream".as_bstr())?.expect("divergence");
+        let mut session = if let Some(second) = second {
+            let mut session = Session::prepare_interactive(&repo, b"upstream".as_bstr())?.expect("interactive");
+            let todo = if mode == "break" {
+                format!("pick {first}\nbreak\npick {second}\n")
+            } else {
+                format!("pick {first}\n{mode} {second}\n")
+            };
+            session.accept_todo(&repo, todo.as_bytes())?;
+            session
+        } else {
+            Session::prepare(&repo, b"upstream".as_bstr())?.expect("divergence")
+        };
         assert_eq!(session.advance(&repo)?, Advance::Started);
         assert!(matches!(session.advance(&repo)?, Advance::Step { .. }));
-        assert_eq!(session.advance(&repo)?, Advance::ReadyFinal);
+        loop {
+            match session.advance(&repo)? {
+                Advance::ReadyFinal => break,
+                Advance::Step { .. } | Advance::Dropped | Advance::Break => {}
+                other => panic!("unexpected {mode} model stop: {other:?}"),
+            }
+        }
         if abort {
             session.abort(&repo)?;
         } else {

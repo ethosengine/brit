@@ -2518,7 +2518,17 @@ fn accepted_child_archive_requires_every_decision_and_canonical_member_names() -
         }
         assert!(matches!(session.continue_conflict(&repo)?, Advance::Step { .. }));
         session.abort(&repo)?;
-        let archive = session.directory().join("child-0-accepted");
+        let archives = fs::read_dir(session.directory())?
+            .filter_map(|entry| entry.ok())
+            .filter(|entry| {
+                entry.path().is_dir()
+                    && entry.file_name().to_string_lossy().starts_with("child-")
+                    && entry.file_name().to_string_lossy().ends_with("-accepted")
+            })
+            .map(|entry| entry.path())
+            .collect::<Vec<_>>();
+        assert_eq!(archives.len(), 1, "one accepted child archive");
+        let archive = archives[0].clone();
         assert!(archive.join("child-1.json").is_file());
         assert!(archive.join("child-2.json").is_file());
         match damage {
@@ -2568,9 +2578,23 @@ fn child_directory_before_recipe_can_abort_with_orphan_evidence_left_for_cleanup
     kill_at_lifecycle_checkpoint(root, "replay-child-preparation-directory-created", "conflict")?;
     let repo = gix::open(root)?;
     let mut session = Session::open(&repo)?;
-    let orphan = session.directory().join("child-0-preparing");
-    assert!(orphan.is_dir());
-    assert!(!session.directory().join("child-0-prepare.json").exists());
+    let orphans = fs::read_dir(session.directory())?
+        .filter_map(|entry| entry.ok())
+        .filter(|entry| {
+            entry.path().is_dir()
+                && entry.file_name().to_string_lossy().starts_with("child-")
+                && entry.file_name().to_string_lossy().ends_with("-preparing")
+        })
+        .map(|entry| entry.path())
+        .collect::<Vec<_>>();
+    assert_eq!(orphans.len(), 1, "one unaccepted child directory");
+    let orphan = orphans[0].clone();
+    let name = orphan.file_name().expect("child directory name").to_string_lossy();
+    let recipe = format!(
+        "{}-prepare.json",
+        name.strip_suffix("-preparing").expect("child preparation suffix")
+    );
+    assert!(!session.directory().join(recipe).exists());
     fs::write(orphan.join("interrupted-evidence"), b"unaccepted child evidence\n")?;
     let before = snapshot(&orphan)?;
     let receipt = session.abort(&repo)?;

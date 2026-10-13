@@ -203,6 +203,42 @@ struct State {
     children: usize,
     invocation: usize,
     pending_hook: Option<(usize, bool)>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    author_message: Option<AuthorMessage>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    post_hooks: Option<PostHooks>,
+}
+#[derive(Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(deny_unknown_fields)]
+struct PostHooks {
+    old: Option<String>,
+    commit: String,
+    rewrite: bool,
+}
+fn consume_post_hook(state: &mut State, name: &str) -> Result<()> {
+    if let Some(pending) = &mut state.post_hooks {
+        ensure!(
+            name == if pending.rewrite { "post-rewrite" } else { "post-commit" },
+            "post-hook queue changed"
+        );
+        if !pending.rewrite && pending.old.is_some() {
+            pending.rewrite = true;
+        } else {
+            state.post_hooks = None;
+        }
+    }
+    Ok(())
+}
+#[derive(Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(deny_unknown_fields)]
+struct AuthorMessage {
+    amend: bool,
+    invocation: usize,
+    plan: super::super::replay::editors::Plan,
+    work: String,
+    accepted: bool,
+    commit_msg_done: bool,
+    checked_message: Option<String>,
 }
 #[derive(Clone, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
@@ -238,17 +274,25 @@ pub struct Outcome {
 /// A checked handoff to the replay parent, not permission to remove the child.
 /// The parent must durably accept the binding and receipt before retirement.
 pub(crate) struct OwnedCompletion {
+    pub(crate) decisions: usize,
     pub(crate) binding: ParentBinding,
     pub(crate) receipt: String,
     pub(crate) private: gix::index::State,
     pub(crate) head: gix::ObjectId,
     pub(crate) active: Vec<BString>,
+    pub(crate) chain: Vec<gix::ObjectId>,
+    pub(crate) objects: BTreeSet<gix::ObjectId>,
+    pub(crate) work: Vec<super::super::switch::Change>,
 }
 pub(crate) struct OwnedRetention {
+    pub(crate) queued_post_hooks: bool,
+    pub(crate) decisions: usize,
     pub(crate) binding: ParentBinding,
     pub(crate) receipt: String,
     pub(crate) objects: BTreeSet<gix::ObjectId>,
     pub(crate) pending_hook: Option<(usize, bool)>,
+    pub(crate) head: gix::ObjectId,
+    pub(crate) work: Vec<super::super::switch::Change>,
 }
 fn raw(path: &Path) -> Result<Vec<u8>> {
     Ok(gix::path::into_bstr(path)?.as_bytes().to_vec())
@@ -367,9 +411,22 @@ fn persist(path: &Path, data: &[u8]) -> Result<()> {
         options.mode(0o600);
     }
     let mut file = options.open(&temp)?;
+    let object_receipt = path.parent().and_then(Path::file_name) == Some(std::ffi::OsStr::new("objects"));
+    if object_receipt {
+        super::super::switch::checkpoint("replay-child-object-temp-created")?;
+    }
     file.write_all(data)?;
+    if object_receipt {
+        super::super::switch::checkpoint("replay-child-object-temp-written")?;
+    }
     super::super::switch::sync_file(&file, &temp)?;
+    if object_receipt {
+        super::super::switch::checkpoint("replay-child-object-temp-synced")?;
+    }
     fs::rename(temp, path)?;
+    if object_receipt {
+        super::super::switch::checkpoint("replay-child-object-renamed")?;
+    }
     super::super::switch::sync_dir(path.parent().context("parent")?)?;
     Ok(())
 }
@@ -450,6 +507,8 @@ impl Session {
             children: 0,
             invocation: 0,
             pending_hook: None,
+            author_message: None,
+            post_hooks: None,
         };
         let session = Self { directory, state };
         persist(&session.directory.join("index.original"), preservation.original_index())?;
@@ -548,6 +607,8 @@ impl Session {
             children: 0,
             invocation: 0,
             pending_hook: None,
+            author_message: None,
+            post_hooks: None,
         };
         let recipe = OwnedPreparation {
             version: 1,
@@ -683,6 +744,12 @@ impl Session {
         );
         let mut after = self.state.clone();
         after.pending_hook = None;
+        let name = if after.post_hooks.as_ref().is_some_and(|pending| pending.rewrite) {
+            "post-rewrite"
+        } else {
+            "post-commit"
+        };
+        consume_post_hook(&mut after, name)?;
         after.private = next;
         after.public = overlay(&after.private, &after.original, &after.preserved);
         self.transition(repo, after)
@@ -784,6 +851,8 @@ impl Session {
                         | "objects"
                 ) || numbered("child-", ".json")
                     || numbered("child-", ".new")
+                    || numbered("child-", "-proposed.json")
+                    || numbered("child-", "-proposed.new")
                     || numbered("invocation-", ""),
                 "foreign journal member"
             );
@@ -933,6 +1002,35 @@ impl Session {
                 for member in fs::read_dir(&path)? {
                     owned.insert(raw(member?.path().strip_prefix(&parent)?)?);
                 }
+            } else if let Some(number) = name
+                .strip_prefix("child-")
+                .and_then(|n| n.strip_suffix("-proposed.json"))
+            {
+                let number: usize = number.parse()?;
+                ensure!(
+                    (1..=session.state.children + 1).contains(&number)
+                        && name == format!("child-{number}-proposed.json"),
+                    "unowned child proposal"
+                );
+                let proposal: Decision = load(&path)?;
+                ensure!(
+                    proposal.before.replay_parent.as_ref() == Some(binding)
+                        && proposal.after.replay_parent.as_ref() == Some(binding)
+                        && proposal.before.children + 1 == number
+                        && proposal.after.children == number,
+                    "foreign child proposal"
+                );
+                if number <= session.state.children {
+                    ensure!(
+                        fs::read(&path)? == fs::read(session.directory.join(format!("child-{number}.json")))?,
+                        "proposal differs from decided child"
+                    );
+                } else {
+                    ensure!(
+                        proposal.before == session.state,
+                        "pending proposal differs from accepted child state"
+                    );
+                }
             } else if let Some(number) = name.strip_prefix("child-").and_then(|n| n.strip_suffix(".json")) {
                 let number: usize = number.parse()?;
                 ensure!(
@@ -991,6 +1089,13 @@ impl Session {
             self.state.pending_hook.is_none(),
             "unknown hook outcome: inspect invocation; never automatically retry"
         );
+        ensure!(
+            !self
+                .directory
+                .join(format!("child-{}-proposed.json", self.state.children + 1))
+                .exists(),
+            "durable child proposal pending; recover the fixed proposal before authoring"
+        );
         self.validate_observed(repo, active)
     }
     fn validate_observed(&self, repo: &gix::Repository, active: &[Vec<u8>]) -> Result<()> {
@@ -1037,6 +1142,14 @@ impl Session {
         self.transition(repo, after)
     }
     pub fn stage(&mut self, repo: &gix::Repository, paths: &[BString], expand: bool) -> Result<()> {
+        ensure!(
+            self.state.post_hooks.is_none(),
+            "finish pending post-authoring hooks before staging"
+        );
+        ensure!(
+            self.state.author_message.is_none(),
+            "accept the pending author message before staging"
+        );
         let paths = super::super::index::authoring::literal_paths(repo, paths)?;
         let mut after = self.state.clone();
         for p in &paths {
@@ -1108,6 +1221,10 @@ impl Session {
         }
     }
     pub fn import_external(&mut self, repo: &gix::Repository) -> Result<()> {
+        ensure!(
+            self.state.post_hooks.is_none(),
+            "finish pending post-authoring hooks before authoring"
+        );
         self.validate(repo)?;
         let current = read_public(repo)?;
         validate_public(&current)?;
@@ -1138,6 +1255,14 @@ impl Session {
     }
     /// Check the clean, linear authored chain before a future sequencer accepts this stop.
     pub fn validate_completion(&self, repo: &gix::Repository) -> Result<()> {
+        ensure!(
+            self.state.post_hooks.is_none(),
+            "finish pending post-authoring hooks before continuing"
+        );
+        ensure!(
+            self.state.author_message.is_none(),
+            "accept the pending author message before continuing"
+        );
         self.validate(repo)?;
         ensure!(
             changed(&self.state.public, &entries(&*read_public(repo)?)).is_empty(),
@@ -1170,6 +1295,7 @@ impl Session {
             "foreign replay child completion"
         );
         self.validate_completion(repo)?;
+        self.restore_owned_objects(repo)?;
         ensure!(
             !self
                 .directory
@@ -1183,12 +1309,111 @@ impl Session {
             "private child index differs from its accepted state"
         );
         Ok(OwnedCompletion {
+            decisions: self.state.children,
             binding: authorization.binding(),
             receipt: digest(&fs::read(self.directory.join("state.json"))?)?,
             private,
             head: gix::ObjectId::from_hex(self.state.head.as_bytes())?,
             active: self.state.active.iter().cloned().map(Into::into).collect(),
+            chain: self.receipted_chain(repo)?,
+            objects: self.receipted_heads(repo)?,
+            work: self.owned_work(repo)?,
         })
+    }
+    fn owned_work(&self, repo: &gix::Repository) -> Result<Vec<super::super::switch::Change>> {
+        use super::super::switch::{Change, State};
+        let convert = |value: Option<Image>| match value {
+            None => State::Absent,
+            Some(Image::File(bytes, mode)) => State::File { bytes, mode },
+            Some(Image::Link(bytes)) => State::Symlink(bytes),
+        };
+        let root = repo.workdir().context("worktree required")?;
+        self.state
+            .active
+            .iter()
+            .map(|path| {
+                Ok(Change {
+                    path: path.clone(),
+                    before: convert(
+                        self.state
+                            .before
+                            .get(path)
+                            .context("missing child before image")?
+                            .clone(),
+                    ),
+                    after: convert(image(root, path)?),
+                })
+            })
+            .collect()
+    }
+    /// Prove the final chain from durable child decisions, not merely ancestry.
+    fn receipted_heads(&self, repo: &gix::Repository) -> Result<BTreeSet<gix::ObjectId>> {
+        let binding = self.state.replay_parent.as_ref().context("owned child required")?;
+        let recipe: OwnedPreparation = load(
+            &repo
+                .git_dir()
+                .join("brit-rebase")
+                .join(format!("child-{}-prepare.json", binding.step)),
+        )?;
+        ensure!(
+            recipe.version == 1
+                && recipe.binding == *binding
+                && recipe.state.replay_parent.as_ref() == Some(binding)
+                && recipe.state.identities == self.state.identities
+                && digest(&recipe.original)? == self.state.original_index
+                && recipe.private == bytes(repo, &recipe.state.private)?,
+            "child preparation receipt changed"
+        );
+        let mut previous = recipe.state;
+        let mut authored = BTreeSet::from([previous.head.clone()]);
+        for number in 1..=self.state.children {
+            let decision: Decision = load(&self.directory.join(format!("child-{number}.json")))?;
+            ensure!(
+                decision.before.replay_parent.as_ref() == Some(binding)
+                    && decision.after.replay_parent.as_ref() == Some(binding)
+                    && decision.before.children + 1 == number
+                    && decision.after.children == number
+                    && decision.before.head == previous.head
+                    && decision.before.private == previous.private
+                    && decision.before.public == previous.public
+                    && decision.before.children == previous.children,
+                "child decision chain is incomplete"
+            );
+            authored.insert(decision.after.head.clone());
+            previous = decision.after;
+        }
+        ensure!(
+            self.state.head == previous.head
+                && self.state.private == previous.private
+                && self.state.public == previous.public
+                && self.state.children == previous.children,
+            "child state differs from decision chain"
+        );
+        authored
+            .into_iter()
+            .map(|head| gix::ObjectId::from_hex(head.as_bytes()).map_err(Into::into))
+            .collect()
+    }
+    fn receipted_chain(&self, repo: &gix::Repository) -> Result<Vec<gix::ObjectId>> {
+        let mut authored = self.receipted_heads(repo)?;
+        if self.state.kind != StopKind::Edit {
+            return Ok(Vec::new());
+        }
+        let mut current = self.state.head.clone();
+        let mut chain = Vec::new();
+        while current != self.state.parent {
+            let id = gix::ObjectId::from_hex(current.as_bytes())?;
+            ensure!(
+                authored.remove(&id),
+                "authored commit lacks a unique child decision receipt"
+            );
+            let commit = repo.find_commit(id)?;
+            ensure!(commit.parent_ids().count() == 1, "authored chain must remain linear");
+            chain.push(id);
+            current = commit.parent_ids().next().context("linear parent")?.to_string();
+        }
+        chain.reverse();
+        Ok(chain)
     }
     /// Capture an unresolved child for skip/abort without requiring its active
     /// work to be clean. Caller holds the parent guard through retained capture.
@@ -1258,17 +1483,34 @@ impl Session {
                 "child staging changed outside active retention scope"
             );
         }
-        let objects = private
+        let mut objects: BTreeSet<_> = private
             .entries()
             .iter()
             .chain(public.entries())
             .map(|entry| entry.id)
             .collect();
+        objects.extend(self.receipted_heads(repo)?);
+        objects.extend(self.restore_owned_objects(repo)?);
+        let proposal_path = self
+            .directory
+            .join(format!("child-{}-proposed.json", self.state.children + 1));
+        if proposal_path.exists() {
+            let proposal: Decision = load(&proposal_path)?;
+            ensure!(
+                proposal.before == self.state && proposal.after.children == self.state.children + 1,
+                "foreign pending proposal"
+            );
+            objects.insert(gix::ObjectId::from_hex(proposal.after.head.as_bytes())?);
+        }
         Ok(OwnedRetention {
+            queued_post_hooks: self.state.post_hooks.is_some(),
+            decisions: self.state.children,
             binding: authorization.binding(),
             receipt: digest(&fs::read(self.directory.join("state.json"))?)?,
             objects,
             pending_hook: self.state.pending_hook,
+            head: gix::ObjectId::from_hex(self.state.head.as_bytes())?,
+            work: self.owned_work(repo)?,
         })
     }
     pub fn private_tree(&self, repo: &gix::Repository) -> Result<gix::ObjectId> {
@@ -1329,6 +1571,22 @@ impl Session {
             old_log,
             new_log,
         };
+        if after.head != self.state.head
+            && let Some(binding) = &self.state.replay_parent
+        {
+            self.retain_objects_with(repo, std::slice::from_ref(&after.head))?;
+            persist(
+                &self.directory.join(format!("child-{}-proposed.json", after.children)),
+                &sealed(&decision)?,
+            )?;
+            super::super::switch::checkpoint("replay-child-proposal-durable")?;
+            super::super::replay::protect_child_commit(
+                repo,
+                binding,
+                after.children,
+                gix::ObjectId::from_hex(after.head.as_bytes())?,
+            )?;
+        }
         persist(
             &self.directory.join(format!("child-{}.json", after.children)),
             &sealed(&decision)?,
@@ -1426,6 +1684,34 @@ impl Session {
     fn recover_pending(mut self, repo: &gix::Repository) -> Result<Self> {
         let s = &mut self;
         let next = s.directory.join(format!("child-{}.json", s.state.children + 1));
+        let proposal = s
+            .directory
+            .join(format!("child-{}-proposed.json", s.state.children + 1));
+        if !next.exists() && proposal.exists() {
+            let d: Decision = load(&proposal)?;
+            ensure!(
+                d.before == s.state
+                    && d.after.children == s.state.children + 1
+                    && d.after.replay_parent == s.state.replay_parent,
+                "foreign proposed child decision"
+            );
+            s.validate_scope_work(repo, &d.after.active)?;
+            s.validate_decision_resources(repo, &d)?;
+            ensure!(
+                fs::read(repo.index_path())? == d.old_index
+                    && fs::read(repo.git_dir().join("HEAD"))? == d.old_head
+                    && read_optional(&repo.git_dir().join("logs/HEAD"))? == d.old_log,
+                "predecision resources changed"
+            );
+            s.restore_owned_objects(repo)?;
+            super::super::replay::protect_child_commit(
+                repo,
+                s.state.replay_parent.as_ref().context("owned proposal required")?,
+                d.after.children,
+                gix::ObjectId::from_hex(d.after.head.as_bytes())?,
+            )?;
+            persist(&next, &sealed(&d)?)?;
+        }
         if next.exists() {
             let d: Decision = load(&next)?;
             ensure!(d.before == s.state, "foreign child decision");
@@ -1562,12 +1848,50 @@ impl Session {
         Ok(retained)
     }
     fn retain_objects(&self, repo: &gix::Repository) -> Result<()> {
+        self.retain_objects_with(repo, &[])
+    }
+    fn restore_owned_objects(&self, repo: &gix::Repository) -> Result<BTreeSet<gix::ObjectId>> {
+        let directory = self.directory.join("objects");
+        let mut roots = BTreeSet::new();
+        if !directory.exists() {
+            return Ok(roots);
+        }
+        for entry in fs::read_dir(&directory)? {
+            let entry = entry?;
+            ensure!(entry.file_type()?.is_file(), "unsafe authored object receipt");
+            if let Some(stem) = entry.file_name().to_str().and_then(|name| name.strip_suffix(".new")) {
+                gix::ObjectId::from_hex(stem.as_bytes()).context("unowned partial object receipt")?;
+                // Never adopt or erase an interrupted private write. The parent
+                // retained copy carries it; exact cleanup inventory still refuses.
+                continue;
+            }
+            let object: RetainedObject = load(&entry.path())?;
+            let id = gix::ObjectId::from_hex(object.id.as_bytes())?;
+            let kind = gix::objs::Kind::from_bytes(object.kind.as_bytes())?;
+            ensure!(
+                entry.file_name().as_encoded_bytes() == object.id.as_bytes()
+                    && gix::objs::compute_hash(id.kind(), kind, &object.data)? == id,
+                "corrupt authored object receipt"
+            );
+            ensure!(
+                repo.write_object(&gix::objs::ObjectRef::from_bytes(&object.data, kind, id.kind())?)?
+                    .detach()
+                    == id,
+                "restored authored object changed identity"
+            );
+            roots.insert(id);
+        }
+        sync_objects(&repo.common_dir().join("objects"))?;
+        Ok(roots)
+    }
+    fn retain_objects_with(&self, repo: &gix::Repository, extra: &[String]) -> Result<()> {
         let directory = self.directory.join("objects");
         if !directory.exists() {
             use std::os::unix::fs::DirBuilderExt;
             fs::DirBuilder::new().mode(0o700).create(&directory)?;
         }
         let mut stack = self.state.private.iter().map(|e| e.id.clone()).collect::<Vec<_>>();
+        stack.extend_from_slice(extra);
         stack.extend(read_public(repo)?.entries().iter().map(|e| e.id.to_string()));
         let staged = gix::index::File::at(
             self.directory.join("index.private"),
@@ -1629,6 +1953,10 @@ impl Session {
         Ok(())
     }
     pub fn begin_split(&mut self, repo: &gix::Repository) -> Result<()> {
+        ensure!(
+            self.state.author_message.is_none(),
+            "accept the pending author message before splitting"
+        );
         self.import_external(repo)?;
         ensure!(
             self.state.kind == StopKind::Edit && !self.state.split,
@@ -1649,6 +1977,9 @@ impl Session {
         self.transition(repo, after)
     }
     pub fn amend(&mut self, repo: &gix::Repository, message: &str) -> Result<Outcome> {
+        self.amend_bytes(repo, message.as_bytes())
+    }
+    pub fn amend_bytes(&mut self, repo: &gix::Repository, message: &[u8]) -> Result<Outcome> {
         ensure!(
             self.state.kind == StopKind::Edit && !self.state.split,
             "amend requires unsplit edit stop"
@@ -1656,21 +1987,28 @@ impl Session {
         self.author(repo, message, true)
     }
     pub fn commit_split(&mut self, repo: &gix::Repository, message: &str) -> Result<Outcome> {
+        self.commit_split_bytes(repo, message.as_bytes())
+    }
+    pub fn commit_split_bytes(&mut self, repo: &gix::Repository, message: &[u8]) -> Result<Outcome> {
         ensure!(
             self.state.kind == StopKind::Edit && self.state.split,
             "split has not started"
         );
         self.author(repo, message, false)
     }
-    fn author(&mut self, repo: &gix::Repository, message: &str, amend: bool) -> Result<Outcome> {
+    fn author(&mut self, repo: &gix::Repository, message: &[u8], amend: bool) -> Result<Outcome> {
+        ensure!(
+            self.state.author_message.is_none(),
+            "accept the pending author message without rerunning its editor"
+        );
         self.import_external(repo)?;
-        ensure!(!message.trim().is_empty(), "empty message");
+        ensure!(!message.iter().all(u8::is_ascii_whitespace), "empty message");
         ensure!(
             !repo.config_snapshot().try_boolean("commit.gpgSign")?.unwrap_or(false),
             "required signing unsupported"
         );
         let message_path = self.directory.join("message");
-        persist(&message_path, message.as_bytes())?;
+        persist(&message_path, message)?;
         self.hook(repo, "pre-commit", &[], None, false)?;
         let mut args = vec![message_path.clone().into_os_string()];
         if amend {
@@ -1679,9 +2017,201 @@ impl Session {
             args.push("message".into());
         }
         self.hook(repo, "prepare-commit-msg", &args, None, false)?;
-        self.hook(repo, "commit-msg", &[message_path.into_os_string()], None, false)?;
+        self.author_prepared(repo, amend)
+    }
+    /// Start an explicit amend with the normal message editor contract.
+    pub fn amend_edit(&mut self, repo: &gix::Repository) -> Result<Outcome> {
+        self.author_edit(repo, true)
+    }
+    /// Start an explicit split commit with the normal message editor contract.
+    pub fn commit_split_edit(&mut self, repo: &gix::Repository) -> Result<Outcome> {
+        self.author_edit(repo, false)
+    }
+    pub fn has_pending_author_message(&self) -> bool {
+        self.state.author_message.is_some()
+    }
+    pub fn has_pending_post_hook(&self) -> bool {
+        self.state.pending_hook.is_some_and(|(_, post)| post)
+    }
+    pub fn has_pending_post_hooks(&self) -> bool {
+        self.state.post_hooks.is_some()
+    }
+    /// Run notifications durably queued with the commit decision. Unknown
+    /// invocations require acknowledgement before advancing this queue.
+    pub fn resume_post_hooks(&mut self, repo: &gix::Repository) -> Result<Vec<String>> {
+        let mut warnings = Vec::new();
+        while let Some(pending) = self.state.post_hooks.clone() {
+            ensure!(
+                self.state.pending_hook.is_none(),
+                "unknown post-hook requires explicit acknowledgement"
+            );
+            ensure!(self.state.head == pending.commit, "post-hook commit changed");
+            let (name, args, input) = if pending.rewrite {
+                (
+                    "post-rewrite",
+                    vec!["amend".into()],
+                    Some(
+                        format!(
+                            "{} {}\n",
+                            pending.old.context("missing amendment mapping")?,
+                            pending.commit
+                        )
+                        .into_bytes(),
+                    ),
+                )
+            } else {
+                ("post-commit", Vec::new(), None)
+            };
+            if let Err(error) = self.hook(repo, name, &args, input.as_deref(), true) {
+                warnings.push(format!("commit {} published; {error:#}", pending.commit));
+                if self.state.pending_hook.is_some() {
+                    break;
+                }
+                // A pre-launch error must not loop or silently consume an item.
+                if self
+                    .state
+                    .post_hooks
+                    .as_ref()
+                    .is_some_and(|item| item.rewrite == pending.rewrite)
+                {
+                    break;
+                }
+            }
+        }
+        Ok(warnings)
+    }
+    fn author_edit(&mut self, repo: &gix::Repository, amend: bool) -> Result<Outcome> {
+        ensure!(
+            self.state.author_message.is_none(),
+            "pending editor output requires explicit acceptance"
+        );
+        ensure!(
+            self.state.kind == StopKind::Edit && self.state.split != amend,
+            "invalid edit authoring action"
+        );
+        self.import_external(repo)?;
+        ensure!(
+            !repo.config_snapshot().try_boolean("commit.gpgSign")?.unwrap_or(false),
+            "required signing unsupported"
+        );
+        let path = self.directory.join("message");
+        let initial = if amend {
+            repo.head_commit()?.decode()?.message.to_vec()
+        } else {
+            Vec::new()
+        };
+        persist(&path, &initial)?;
+        // Refuse missing/untrusted editor configuration before running hooks.
+        super::super::replay::editors::resolve(repo, super::super::replay::editors::Kind::Message, &path)?;
+        self.hook(repo, "pre-commit", &[], None, false)?;
+        let mut args = vec![path.clone().into_os_string()];
+        if amend {
+            args.extend(["commit".into(), self.state.head.clone().into()]);
+        }
+        self.hook(repo, "prepare-commit-msg", &args, None, false)?;
+        let plan = super::super::replay::editors::resolve(repo, super::super::replay::editors::Kind::Message, &path)?;
+        let number = self.state.invocation + 1;
+        let directory = self.directory.join(format!("invocation-{number}"));
+        let index = self.directory.join("index.private");
+        let outcome = super::super::replay::editors::run(repo, &directory, &plan, &index, || {
+            let _guard = super::super::switch::shared_guard(repo)?;
+            self.validate(repo)?;
+            ensure!(self.state.author_message.is_none(), "editor launch authority changed");
+            self.state.invocation = number;
+            self.state.author_message = Some(AuthorMessage {
+                amend,
+                invocation: number,
+                plan: plan.clone(),
+                work: worktree_witness(repo, &[])?,
+                accepted: false,
+                commit_msg_done: false,
+                checked_message: None,
+            });
+            self.save(repo)
+        })?;
+        use std::os::unix::fs::MetadataExt;
+        let metadata = fs::symlink_metadata(&path)?;
+        ensure!(
+            metadata.is_file() && metadata.uid() == fs::metadata(&self.directory)?.uid(),
+            "unsafe message editor output"
+        );
+        super::super::switch::sync_path(&path)?;
+        super::super::switch::sync_dir(&self.directory)?;
+        ensure!(
+            outcome.success(),
+            "author message editor failed or has unknown outcome; saved output requires explicit acceptance"
+        );
+        self.accept_author_message(repo)
+    }
+    /// Accept saved bytes after a failed or interrupted editor; never relaunch it.
+    pub fn accept_author_message(&mut self, repo: &gix::Repository) -> Result<Outcome> {
+        let pending = self.state.author_message.clone().context("no pending author message")?;
+        {
+            let _guard = super::super::switch::shared_guard(repo)?;
+            self.validate(repo)?;
+            super::invocation::inspect(&self.directory.join(format!("invocation-{}", pending.invocation)))?;
+            ensure!(
+                worktree_witness(repo, &[])? == pending.work,
+                "editor changed working files"
+            );
+            ensure!(
+                changed(&self.state.public, &entries(&*read_public(repo)?)).is_empty()
+                    && fs::read(self.directory.join("index.private"))? == bytes(repo, &self.state.private)?,
+                "editor changed staging"
+            );
+            let path = self.directory.join("message");
+            use std::os::unix::fs::MetadataExt;
+            let metadata = fs::symlink_metadata(&path)?;
+            ensure!(
+                metadata.is_file() && metadata.uid() == fs::metadata(&self.directory)?.uid(),
+                "unsafe message output"
+            );
+            let message = fs::read(&path)?;
+            ensure!(
+                !message.iter().all(u8::is_ascii_whitespace) && !message.contains(&0),
+                "invalid empty or NUL message"
+            );
+            if let Some(checked) = &pending.checked_message {
+                ensure!(
+                    digest(&message)? == *checked,
+                    "message changed after commit-msg validation"
+                );
+            }
+            super::super::switch::sync_path(&path)?;
+            super::super::switch::sync_dir(&self.directory)?;
+            self.state.author_message.as_mut().context("pending message")?.accepted = true;
+            self.save(repo)?;
+        }
+        self.author_prepared(repo, pending.amend)
+    }
+    fn author_prepared(&mut self, repo: &gix::Repository, amend: bool) -> Result<Outcome> {
+        if !self
+            .state
+            .author_message
+            .as_ref()
+            .is_some_and(|message| message.commit_msg_done)
+        {
+            self.hook(
+                repo,
+                "commit-msg",
+                &[self.directory.join("message").into_os_string()],
+                None,
+                false,
+            )?;
+        }
         let message = fs::read(self.directory.join("message"))?;
         ensure!(!message.iter().all(u8::is_ascii_whitespace), "empty hook message");
+        if let Some(checked) = self
+            .state
+            .author_message
+            .as_ref()
+            .and_then(|pending| pending.checked_message.as_ref())
+        {
+            ensure!(
+                digest(&message)? == *checked,
+                "message changed after commit-msg validation"
+            );
+        }
         let previous = repo.head_commit()?;
         let author = if amend {
             previous.author()?.to_owned()?
@@ -1702,7 +2232,11 @@ impl Session {
                 author,
                 committer,
                 message: message.into(),
-                encoding: None,
+                encoding: if amend {
+                    previous.decode()?.encoding.map(ToOwned::to_owned)
+                } else {
+                    None
+                },
                 extra_headers: Default::default(),
             })?
             .detach();
@@ -1711,6 +2245,12 @@ impl Session {
         let old = self.state.head.clone();
         let mut after = self.state.clone();
         after.head = commit.to_string();
+        after.author_message = None;
+        after.post_hooks = Some(PostHooks {
+            old: amend.then_some(old),
+            commit: commit.to_string(),
+            rewrite: false,
+        });
         if let Err(error) = self.transition(repo, after) {
             let state = repo.head();
             return match state {
@@ -1730,16 +2270,7 @@ impl Session {
                 ))),
             };
         }
-        let mut warnings = Vec::new();
-        if let Err(e) = self.hook(repo, "post-commit", &[], None, true) {
-            warnings.push(format!("commit {commit} published; {e:#}"));
-        }
-        if amend && self.state.pending_hook.is_none() {
-            let mapping = format!("{old} {commit}\n");
-            if let Err(e) = self.hook(repo, "post-rewrite", &["amend".into()], Some(mapping.as_bytes()), true) {
-                warnings.push(format!("commit {commit} published; {e:#}"));
-            }
-        }
+        let warnings = self.resume_post_hooks(repo)?;
         Ok(Outcome { commit, warnings })
     }
     fn hook(
@@ -1751,6 +2282,20 @@ impl Session {
         post: bool,
     ) -> Result<()> {
         if super::hook_path(repo, name)?.is_none() {
+            let _guard = super::super::switch::shared_guard(repo)?;
+            self.validate(repo)?;
+            if post {
+                consume_post_hook(&mut self.state, name)?;
+                self.save(repo)?;
+            }
+            if name == "commit-msg"
+                && let Some(message) = &mut self.state.author_message
+            {
+                ensure!(message.accepted, "author message is not accepted");
+                message.commit_msg_done = true;
+                message.checked_message = Some(digest(&fs::read(self.directory.join("message"))?)?);
+                self.save(repo)?;
+            }
             return Ok(());
         }
         let prepared = {
@@ -1788,6 +2333,20 @@ impl Session {
         }
         let mut after = self.state.clone();
         after.pending_hook = None;
+        if post {
+            consume_post_hook(&mut after, name)?;
+        }
+        if name == "commit-msg"
+            && let Some(message) = &mut after.author_message
+        {
+            ensure!(message.accepted, "author message is not accepted");
+            message.commit_msg_done = outcome.success();
+            message.checked_message = outcome
+                .success()
+                .then(|| digest(&fs::read(self.directory.join("message"))?))
+                .transpose()?;
+            message.work = worktree_witness(repo, &[])?;
+        }
         after.private = next;
         after.public = overlay(&after.private, &after.original, &after.preserved);
         self.transition(repo, after)?;

@@ -1,6 +1,9 @@
 use super::*;
+#[path = "interactive.rs"]
+mod interactive;
 use crate::repository::authoring::conflict::ParentBinding;
 use crate::repository::{authoring::conflict::Preservation, switch};
+use gix_sequencer::Command;
 use serde::{Deserialize, Serialize};
 use std::{
     fs,
@@ -118,6 +121,8 @@ struct ParentState {
     stop_tree: Option<String>,
     policy: String,
     post_outcome: Option<crate::repository::authoring::invocation::InvocationOutcome>,
+    #[serde(default)]
+    interactive: Option<interactive::Interactive>,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -127,6 +132,10 @@ pub enum Advance {
     Empty,
     Conflict,
     ReadyFinal,
+    Edit,
+    Break,
+    Message,
+    Dropped,
 }
 
 #[derive(Serialize, Deserialize)]
@@ -152,9 +161,17 @@ impl Session {
     /// commands, and protect both pinned histories against local object pruning.
     /// A no-op returns no session and changes no metadata.
     pub fn prepare(repo: &gix::Repository, argument: &BStr) -> Result<Option<Self>> {
+        Self::prepare_mode(repo, argument, false)
+    }
+
+    pub fn prepare_interactive(repo: &gix::Repository, argument: &BStr) -> Result<Option<Self>> {
+        Self::prepare_mode(repo, argument, true)
+    }
+
+    fn prepare_mode(repo: &gix::Repository, argument: &BStr, interactive: bool) -> Result<Option<Self>> {
         use std::{io::Read, os::unix::fs::DirBuilderExt};
         let selection = Selection::prepare(repo, argument)?;
-        if selection.kind == SelectionKind::Noop {
+        if selection.kind == SelectionKind::Noop && (!interactive || selection.candidates.is_empty()) {
             return Ok(None);
         }
         ensure!(
@@ -290,6 +307,9 @@ impl Session {
             stop_tree: None,
             policy: super::hooks::policy(repo)?,
             post_outcome: None,
+            interactive: (interactive && !selection.candidates.is_empty())
+                .then(|| interactive::Interactive::new(&selection.candidates))
+                .transpose()?,
         };
         let mut session = Self { directory, state };
         session.validate_branch(repo, None)?;
@@ -360,6 +380,7 @@ impl Session {
     }
 
     fn validate_current(&self, repo: &gix::Repository) -> Result<()> {
+        self.inspect_editor()?;
         super::validate_execution_policy(repo)?;
         ensure!(
             super::hooks::policy(repo)? == self.state.policy,
@@ -386,11 +407,25 @@ impl Session {
             )
             .then_some(self.state.tip.as_str()),
         )?;
-        let excluded = self.state.work.iter().map(|c| c.path.clone()).collect::<Vec<_>>();
-        ensure!(
-            crate::repository::authoring::conflict::worktree_witness(repo, &excluded)? == self.state.witness,
-            "worktree changed outside replay scope"
-        );
+        if self
+            .state
+            .interactive
+            .as_ref()
+            .is_some_and(|interactive| interactive.edit.is_some())
+            && self.state.phase == "authoring"
+            && repo.git_dir().join("brit-authoring").exists()
+        {
+            // A child-owned scope expansion is recorded in its immutable parent
+            // binding and child decisions; validate that ledger until acceptance.
+            let authorization = self.child_authorization()?;
+            crate::repository::authoring::conflict::Session::open_owned(repo, &authorization)?.validate(repo)?;
+        } else {
+            let excluded = self.state.work.iter().map(|c| c.path.clone()).collect::<Vec<_>>();
+            ensure!(
+                crate::repository::authoring::conflict::worktree_witness(repo, &excluded)? == self.state.witness,
+                "worktree changed outside replay scope"
+            );
+        }
         self.state.preservation.validate_observed(repo, &*repo.open_index()?)?;
         Ok(())
     }
@@ -399,6 +434,17 @@ impl Session {
     /// separate so callers can still abort every completed step before final
     /// publication is decided.
     pub fn advance(&mut self, repo: &gix::Repository) -> Result<Advance> {
+        if self.is_edit_stop() {
+            if self
+                .state
+                .interactive
+                .as_ref()
+                .is_some_and(|interactive| interactive.editors.last().is_some_and(|editor| !editor.accepted))
+            {
+                self.accept_editor(repo)?;
+            }
+            return self.continue_edit(repo);
+        }
         if self.state.phase == "prepared" {
             {
                 let _guard = switch::shared_guard(repo)?;
@@ -433,6 +479,25 @@ impl Session {
                 .into_os_string();
             let index = self.directory.join("index.pre-rebase");
             let outcome = super::hooks::run(repo, &directory, "pre-rebase", &[argument], None, &index, || {
+                let _guard = switch::shared_guard(repo)?;
+                self.validate_current(repo)?;
+                ensure!(
+                    switch::snapshot(&repo.git_dir().join("HEAD"))? == self.state.head
+                        && switch::snapshot(&repo.index_path())? == self.state.index
+                        && switch::snapshot(&repo.git_dir().join("logs/HEAD"))? == self.state.log,
+                    "replay metadata changed before pre-rebase launch"
+                );
+                for change in &self.state.work {
+                    ensure!(
+                        switch::snapshot(
+                            &repo
+                                .workdir()
+                                .context("worktree required")?
+                                .join(gix::path::from_bstr(change.path.as_bstr())?.as_ref(),)
+                        )? == change.after,
+                        "replay work changed before pre-rebase launch"
+                    );
+                }
                 self.state.phase = "invoking-pre".into();
                 self.save()
             })?;
@@ -454,6 +519,28 @@ impl Session {
                 "pre-rebase hook rejected replay; abort remains available"
             );
         }
+        if self
+            .state
+            .interactive
+            .as_ref()
+            .is_some_and(|interactive| interactive.editors.last().is_some_and(|editor| !editor.accepted))
+        {
+            self.accept_editor(repo)?;
+        }
+        if self.state.phase == "pre-approved"
+            && self
+                .state
+                .interactive
+                .as_ref()
+                .is_some_and(|interactive| !interactive.initial_accepted)
+        {
+            self.edit_todo(repo)?;
+        }
+        if self.state.phase == "message" {
+            // No unaccepted invocation remains here. Preparation may have stopped
+            // before editor resolution, so this explicit continue can start it.
+            self.edit_message(repo)?;
+        }
         let _guard = switch::shared_guard(repo)?;
         self.validate_current(repo)?;
         if self.state.phase == "pre-approved" {
@@ -466,24 +553,92 @@ impl Session {
             self.publish_decision(repo, after, transition)?;
             return Ok(Advance::Started);
         }
+        if self.state.phase == "edit-accepted" {
+            self.archive_accepted(repo)?;
+            if let Some(receipt) = self.state.accepted_child.take() {
+                self.state.accepted_children.push(receipt);
+            }
+            self.state.authorized_stop = None;
+            self.state.phase = "replaying".into();
+            self.save()?;
+            return Ok(Advance::Step { commit: self.tip()? });
+        }
         if self.state.phase == "step-proposed" {
             return self.finish_proposal(repo);
         }
+        if self.state.phase == "break" {
+            self.state.phase = "replaying".into();
+            self.save()?;
+        }
         ensure!(
-            matches!(self.state.phase.as_str(), "replaying" | "empty"),
+            matches!(self.state.phase.as_str(), "replaying" | "empty" | "message-ready"),
             "replay is stopped; use the action named by its phase"
         );
-        if self.state.step == self.state.candidates.len() {
+        if self
+            .state
+            .interactive
+            .as_ref()
+            .map_or(self.state.step == self.state.candidates.len(), |interactive| {
+                interactive.cursor == interactive.todo.entries.len()
+            })
+        {
             self.state.phase = "ready-final".into();
             self.save()?;
             return Ok(Advance::ReadyFinal);
         }
-        let (original, parent) = &self.state.candidates[self.state.step];
-        let candidate = Candidate {
-            commit: gix::ObjectId::from_hex(original.as_bytes())?,
-            parent: gix::ObjectId::from_hex(parent.as_bytes())?,
+        match self.current_command()? {
+            Command::Break => {
+                self.state
+                    .interactive
+                    .as_mut()
+                    .context("break requires interactive todo")?
+                    .cursor += 1;
+                self.state.phase = "break".into();
+                self.save()?;
+                return Ok(Advance::Break);
+            }
+            Command::Drop => {
+                let original = self.current_candidate()?.commit.to_string();
+                self.state
+                    .interactive
+                    .as_mut()
+                    .context("drop requires interactive todo")?
+                    .ledger
+                    .record(&original, &[])?;
+                self.state.mappings.push((original, Vec::new()));
+                self.state.step += 1;
+                self.state
+                    .interactive
+                    .as_mut()
+                    .context("drop requires interactive todo")?
+                    .cursor += 1;
+                self.save()?;
+                return Ok(Advance::Dropped);
+            }
+            _ => {}
+        }
+        let candidate = self.current_candidate()?;
+        let step = if self.state.phase == "message-ready" {
+            let tree = gix::ObjectId::from_hex(
+                self.state
+                    .stop_tree
+                    .as_ref()
+                    .context("message tree missing")?
+                    .as_bytes(),
+            )?;
+            Step {
+                original: candidate.commit,
+                parent: self.tip()?,
+                tree,
+                index: repo.index_from_tree(&tree)?,
+                conflicts: Vec::new(),
+                footprint: Vec::new(),
+                initially_empty: false,
+                newly_empty: false,
+            }
+        } else {
+            Step::merge(repo, &candidate, self.tip()?)?
         };
-        let step = Step::merge(repo, &candidate, self.tip()?)?;
         self.grow_scope(repo, &step.footprint)?;
         if !step.conflicts.is_empty() {
             let (mut after, transition) =
@@ -518,6 +673,17 @@ impl Session {
             self.publish_decision(repo, after, transition)?;
             return Ok(Advance::Empty);
         }
+        if self.needs_message()? {
+            let mut after = self.state.clone();
+            self.retain_stop(repo, &mut after, step.tree)?;
+            after.stop_tree = Some(step.tree.to_string());
+            after.phase = "message".into();
+            self.state = after;
+            self.save()?;
+            drop(_guard);
+            self.edit_message(repo)?;
+            return self.advance(repo);
+        }
         let path = self.directory.join(format!("proposal-{}.json", self.state.step));
         match fs::symlink_metadata(&path) {
             Ok(metadata) => ensure!(
@@ -527,7 +693,7 @@ impl Session {
                 "unsafe saved replay proposal"
             ),
             Err(error) if error.kind() == std::io::ErrorKind::NotFound => {
-                let proposal = step.propose(repo)?;
+                let proposal = self.propose_interactive(repo, &step)?;
                 let payload = serde_json::to_vec(&(proposal.commit.to_string(), proposal.bytes))?;
                 let bytes = serde_json::to_vec(&Envelope {
                     checksum: switch::digest(&payload)?,
@@ -574,15 +740,25 @@ impl Session {
             crate::repository::authoring::conflict::Session::open_owned(repo, &authorization)?;
             return Ok(());
         }
-        let (commit, parent) = &self.state.candidates[self.state.step];
-        let step = Step::merge(
-            repo,
-            &Candidate {
-                commit: gix::ObjectId::from_hex(commit.as_bytes())?,
-                parent: gix::ObjectId::from_hex(parent.as_bytes())?,
-            },
-            self.tip()?,
-        )?;
+        if let Some(edit) = self
+            .state
+            .interactive
+            .as_ref()
+            .and_then(|interactive| interactive.edit.as_ref())
+        {
+            let private = repo.index_from_tree(&repo.find_commit(self.tip()?)?.tree_id()?)?;
+            let active = edit.active.iter().cloned().map(Into::into).collect::<Vec<BString>>();
+            crate::repository::authoring::conflict::Session::prepare_owned(
+                repo,
+                &authorization,
+                &self.state.preservation,
+                crate::repository::authoring::conflict::StopKind::Edit,
+                &active,
+                &private,
+            )?;
+            return Ok(());
+        }
+        let step = Step::merge(repo, &self.current_candidate()?, self.tip()?)?;
         ensure!(
             self.state.stop_tree.as_deref() == Some(step.tree.to_string().as_str()),
             "recovered conflict tree changed"
@@ -603,13 +779,30 @@ impl Session {
         let child = crate::repository::authoring::conflict::Session::open_owned(repo, &authorization)?;
         let retained = child.owned_retention(repo, &authorization, aborting)?;
         ensure!(
-            aborting || retained.pending_hook.is_none(),
+            aborting || (retained.pending_hook.is_none() && !retained.queued_post_hooks),
             "resolve or acknowledge the child hook before skipping; unknown pre-hook permits only abort"
         );
+        self.adopt_child_retention(repo, &retained.binding, retained.decisions)?;
+        self.adopt_child_work(repo, &retained.work, retained.head)?;
         self.state.accepted_child = Some((retained.binding, retained.receipt));
-        self.state
-            .closure
-            .extend(retained.objects.iter().map(ToString::to_string));
+        let mut closure = BTreeSet::new();
+        history(repo, retained.head, &mut closure)?;
+        for id in &retained.objects {
+            match repo.find_object(*id)?.kind {
+                gix::objs::Kind::Commit => {
+                    history(repo, *id, &mut closure)?;
+                }
+                gix::objs::Kind::Tree => {
+                    validate_tree(repo, *id, &mut BTreeSet::new(), &mut closure)?;
+                }
+                gix::objs::Kind::Blob => {
+                    closure.insert(*id);
+                }
+                _ => anyhow::bail!("unsupported object in authored retention receipt"),
+            }
+        }
+        sync_tree(&repo.common_dir().join("objects"))?;
+        self.state.closure.extend(closure.iter().map(ToString::to_string));
         self.state.closure.sort();
         self.state.closure.dedup();
         self.state.index = switch::snapshot(&repo.index_path())?;
@@ -655,7 +848,7 @@ impl Session {
         ensure!(completion.head == self.tip()?, "conflict authoring moved replay HEAD");
         let tree = child.private_tree(repo)?;
         let step = Step {
-            original: gix::ObjectId::from_hex(self.state.candidates[self.state.step].0.as_bytes())?,
+            original: self.current_candidate()?.commit,
             parent: self.tip()?,
             tree,
             index: gix::index::File::from_state(completion.private, repo.index_path()),
@@ -664,9 +857,32 @@ impl Session {
             initially_empty: false,
             newly_empty: false,
         };
+        if self.needs_message()? {
+            self.state.index = switch::snapshot(&repo.index_path())?;
+            let root = repo.workdir().context("worktree required")?;
+            for change in &mut self.state.work {
+                change.after = switch::snapshot(&root.join(gix::path::from_bstr(change.path.as_bstr())?.as_ref()))?;
+            }
+            self.state.accepted_child = Some((completion.binding, completion.receipt));
+            let mut closure = BTreeSet::new();
+            validate_tree(repo, tree, &mut BTreeSet::new(), &mut closure)?;
+            let label = format!("message-{}", self.state.step);
+            self.protect(repo, &label, tree, &closure)?;
+            self.state.retained.push((label, tree.to_string()));
+            self.state.closure.extend(closure.iter().map(ToString::to_string));
+            self.state.closure.sort();
+            self.state.closure.dedup();
+            self.state.stop_tree = Some(tree.to_string());
+            self.state.phase = "message".into();
+            self.save()?;
+            self.archive_accepted(repo)?;
+            drop(_guard);
+            self.edit_message(repo)?;
+            return self.advance(repo);
+        }
         let path = self.directory.join(format!("proposal-{}.json", self.state.step));
         if !path.exists() {
-            let proposal = step.propose(repo)?;
+            let proposal = self.propose_interactive(repo, &step)?;
             let payload = serde_json::to_vec(&(proposal.commit.to_string(), proposal.bytes))?;
             switch::private_write(
                 &path,
@@ -812,9 +1028,17 @@ impl Session {
             self.validate_published_resources(repo)?;
         }
         let mut mapping = Vec::new();
-        for (old, results) in &self.state.mappings {
-            for new in results {
+        if let Some(interactive) = &self.state.interactive {
+            for (old, new) in interactive.ledger.edges() {
                 mapping.extend_from_slice(format!("{old} {new}\n").as_bytes());
+            }
+        } else {
+            for (old, _) in &self.state.candidates {
+                if let Some((_, results)) = self.state.mappings.iter().find(|(mapped, _)| mapped == old) {
+                    for new in results {
+                        mapping.extend_from_slice(format!("{old} {new}\n").as_bytes());
+                    }
+                }
             }
         }
         let invocation = self.directory.join("post-rewrite");
@@ -845,6 +1069,9 @@ impl Session {
             Some(&mapping),
             &index,
             || {
+                let _guard = switch::shared_guard(repo)?;
+                self.validate_current(repo)?;
+                self.validate_published_resources(repo)?;
                 self.state.phase = "invoking-post".into();
                 self.save()
             },
@@ -1034,44 +1261,67 @@ impl Session {
 
     fn adopt_retention(&mut self, repo: &gix::Repository) -> Result<()> {
         for step in 0..self.state.candidates.len() {
-            for label in [step.to_string(), format!("stop-{step}")] {
-                let path = self.directory.join(format!("retention-{label}.json"));
-                if !path.exists() {
-                    continue;
-                }
-                let envelope: Envelope = serde_json::from_slice(&fs::read(&path)?)?;
-                ensure!(
-                    switch::digest(&envelope.payload)? == envelope.checksum,
-                    "corrupt retention recipe"
-                );
-                let (nonce, saved, value, values): (String, String, String, Vec<String>) =
-                    serde_json::from_slice(&envelope.payload)?;
-                ensure!(nonce == self.state.nonce && saved == label, "foreign retention recipe");
-                let id = gix::ObjectId::from_hex(value.as_bytes())?;
-                let mut closure = BTreeSet::new();
-                match repo.find_object(id)?.kind {
-                    gix::objs::Kind::Commit => {
-                        history(repo, id, &mut closure)?;
-                    }
-                    gix::objs::Kind::Tree => {
-                        validate_tree(repo, id, &mut BTreeSet::new(), &mut closure)?;
-                    }
-                    _ => anyhow::bail!("invalid retained root kind"),
-                }
-                ensure!(
-                    closure.iter().map(ToString::to_string).collect::<Vec<_>>() == values,
-                    "retention closure changed"
-                );
-                sync_tree(&repo.common_dir().join("objects"))?;
-                self.protect(repo, &label, id, &closure)?;
-                if let Some((_, expected)) = self.state.retained.iter().find(|(name, _)| name == &label) {
-                    ensure!(expected == &value, "retention ledger changed");
-                } else {
-                    self.state.retained.push((label, value));
-                }
-                self.state.closure.extend(values);
+            for label in [
+                step.to_string(),
+                format!("stop-{step}"),
+                format!("message-{step}"),
+                format!("edit-{step}"),
+            ] {
+                self.adopt_retention_label(repo, &label)?;
             }
         }
+        Ok(())
+    }
+
+    fn adopt_child_retention(
+        &mut self,
+        repo: &gix::Repository,
+        binding: &ParentBinding,
+        decisions: usize,
+    ) -> Result<()> {
+        ensure!(binding.nonce == self.state.nonce, "foreign child retention namespace");
+        for ordinal in 1..=decisions.checked_add(1).context("child decision count overflow")? {
+            self.adopt_retention_label(repo, &format!("child-{}-{ordinal}", binding.step))?;
+        }
+        Ok(())
+    }
+
+    fn adopt_retention_label(&mut self, repo: &gix::Repository, label: &str) -> Result<()> {
+        let path = self.directory.join(format!("retention-{label}.json"));
+        if !path.exists() {
+            return Ok(());
+        }
+        let envelope: Envelope = serde_json::from_slice(&fs::read(&path)?)?;
+        ensure!(
+            switch::digest(&envelope.payload)? == envelope.checksum,
+            "corrupt retention recipe"
+        );
+        let (nonce, saved, value, values): (String, String, String, Vec<String>) =
+            serde_json::from_slice(&envelope.payload)?;
+        ensure!(nonce == self.state.nonce && saved == label, "foreign retention recipe");
+        let id = gix::ObjectId::from_hex(value.as_bytes())?;
+        let mut closure = BTreeSet::new();
+        match repo.find_object(id)?.kind {
+            gix::objs::Kind::Commit => {
+                history(repo, id, &mut closure)?;
+            }
+            gix::objs::Kind::Tree => {
+                validate_tree(repo, id, &mut BTreeSet::new(), &mut closure)?;
+            }
+            _ => anyhow::bail!("invalid retained root kind"),
+        }
+        ensure!(
+            closure.iter().map(ToString::to_string).collect::<Vec<_>>() == values,
+            "retention closure changed"
+        );
+        sync_tree(&repo.common_dir().join("objects"))?;
+        self.protect(repo, label, id, &closure)?;
+        if let Some((_, expected)) = self.state.retained.iter().find(|(name, _)| name == label) {
+            ensure!(expected == &value, "retention ledger changed");
+        } else {
+            self.state.retained.push((label.to_owned(), value));
+        }
+        self.state.closure.extend(values);
         self.state.closure.sort();
         self.state.closure.dedup();
         Ok(())
@@ -1098,8 +1348,8 @@ impl Session {
         Ok(ChildAuthorization {
             binding: ParentBinding {
                 nonce: self.state.nonce.clone(),
-                step: self.state.step,
-                parent_state: switch::digest(&serde_json::to_vec(&self.state)?)?,
+                step: self.state.decisions,
+                parent_state: child_state_digest(&self.state)?,
             },
         })
     }
@@ -1157,7 +1407,7 @@ impl Session {
         );
         let decoded = gix::objs::CommitRef::from_bytes(&bytes, repo.object_hash())?;
         ensure!(
-            decoded.parents().collect::<Vec<_>>() == [self.tip()?],
+            decoded.parents().collect::<Vec<_>>() == [self.proposed_parent()?],
             "replay proposal parent changed"
         );
         ensure!(
@@ -1178,21 +1428,58 @@ impl Session {
             self.checkout_transition(repo, tree, &private, commit, super::transition::Kind::Step)?;
         after.phase = "replaying".into();
         after.retained.push((self.state.step.to_string(), commit.to_string()));
-        after.mappings.push((
-            self.state.candidates[self.state.step].0.clone(),
-            vec![commit.to_string()],
-        ));
+        self.record_result(repo, &mut after, commit)?;
         after.step += 1;
         after.stop_tree = None;
         if let Some(receipt) = after.accepted_child.take() {
             after.accepted_children.push(receipt);
         }
         after.authorized_stop = None;
+        let edit = self.current_command()? == Command::Edit;
+        let mut active = BTreeSet::new();
+        if edit {
+            let parent = repo.index_from_tree(&repo.find_commit(self.tip()?)?.tree_id()?)?;
+            changed_index_paths(&parent, &private, &mut active)?;
+            let active = active.iter().cloned().collect::<Vec<_>>();
+            after.authorized_stop = Some(stop_digest(
+                &after.preservation,
+                crate::repository::authoring::conflict::StopKind::Edit,
+                &active,
+                &private,
+            )?);
+            after.phase = "authoring".into();
+            after
+                .interactive
+                .as_mut()
+                .context("edit requires interactive todo")?
+                .edit = Some(interactive::Edit {
+                original: self.current_candidate()?.commit.to_string(),
+                parent: self.state.tip.clone(),
+                active: active.iter().map(|path| path.to_vec()).collect(),
+                previous_group: self
+                    .state
+                    .interactive
+                    .as_ref()
+                    .and_then(|interactive| interactive.group.clone()),
+            });
+        }
         after.closure.extend(closure.iter().map(ToString::to_string));
         after.closure.sort();
         after.closure.dedup();
         self.publish_decision(repo, after, transition)?;
-        Ok(Advance::Step { commit })
+        if edit {
+            crate::repository::authoring::conflict::Session::prepare_owned(
+                repo,
+                &self.child_authorization()?,
+                &self.state.preservation,
+                crate::repository::authoring::conflict::StopKind::Edit,
+                &active.into_iter().collect::<Vec<_>>(),
+                &private,
+            )?;
+            Ok(Advance::Edit)
+        } else {
+            Ok(Advance::Step { commit })
+        }
     }
 
     /// Skip only the current input, with durable intent and retained bytes
@@ -1200,12 +1487,25 @@ impl Session {
     pub fn skip(&mut self, repo: &gix::Repository) -> Result<super::retained::Receipt> {
         let _guard = switch::shared_guard(repo)?;
         self.validate_current(repo)?;
+        if self.state.phase == "break" {
+            self.state.copies += 1;
+            self.save()?;
+            let receipt = self.capture_current(repo)?;
+            self.state.phase = "replaying".into();
+            self.save()?;
+            return Ok(receipt);
+        }
+        let edit = self
+            .state
+            .interactive
+            .as_ref()
+            .and_then(|interactive| interactive.edit.clone());
         ensure!(
             matches!(self.state.phase.as_str(), "empty" | "authoring" | "retaining-skip"),
             "skip requires a current replay input"
         );
         ensure!(
-            self.state.step < self.state.candidates.len(),
+            self.state.step < self.state.candidates.len() || edit.is_some(),
             "no input remains to skip"
         );
         if self.state.phase != "retaining-skip" {
@@ -1223,14 +1523,39 @@ impl Session {
         self.archive_accepted(repo)?;
         let receipt = self.capture_current(repo)?;
         switch::checkpoint("replay-skip-copy-complete")?;
-        let tree = repo.find_commit(self.tip()?)?.tree_id()?.detach();
+        let target = edit
+            .as_ref()
+            .map(|edit| gix::ObjectId::from_hex(edit.parent.as_bytes()))
+            .transpose()?
+            .unwrap_or(self.tip()?);
+        let tree = repo.find_commit(target)?.tree_id()?.detach();
         let private = repo.index_from_tree(&tree)?;
         let (mut after, transition) =
-            self.checkout_transition(repo, tree, &private, self.tip()?, super::transition::Kind::Skip)?;
-        after
-            .mappings
-            .push((self.state.candidates[self.state.step].0.clone(), Vec::new()));
-        after.step += 1;
+            self.checkout_transition(repo, tree, &private, target, super::transition::Kind::Skip)?;
+        if let Some(edit) = edit {
+            let mapping = after
+                .mappings
+                .iter_mut()
+                .find(|(old, _)| old == &edit.original)
+                .context("edit mapping missing")?;
+            mapping.1.clear();
+            let interactive = after.interactive.as_mut().context("interactive state missing")?;
+            interactive.ledger.replace_group(&[edit.original], &[])?;
+            interactive.edit = None;
+            interactive.group = edit.previous_group;
+        } else {
+            after
+                .mappings
+                .push((self.current_candidate()?.commit.to_string(), Vec::new()));
+            if let Some(interactive) = &mut after.interactive {
+                interactive
+                    .ledger
+                    .record(&self.current_candidate()?.commit.to_string(), &[])?;
+                interactive.cursor += 1;
+                interactive.message = None;
+            }
+            after.step += 1;
+        }
         after.phase = "replaying".into();
         after.stop_tree = None;
         if let Some(receipt) = after.accepted_child.take() {
@@ -1274,8 +1599,12 @@ impl Session {
                     | "pre-unknown"
                     | "invoking-pre"
                     | "step-proposed"
+                    | "edit-accepted"
                     | "replaying"
                     | "ready-final"
+                    | "break"
+                    | "message"
+                    | "message-ready"
                     | "empty"
                     | "authoring"
                     | "retaining-abort"
@@ -1290,6 +1619,7 @@ impl Session {
                 .exists(),
             "a durable replay decision must be recovered before abort"
         );
+        self.inspect_editor()?;
         if matches!(self.state.phase.as_str(), "invoking-pre" | "pre-unknown") {
             crate::repository::authoring::invocation::inspect(&self.directory.join("pre-rebase"))?;
         }
@@ -1450,7 +1780,21 @@ impl Session {
                 allowed.insert(name.as_bytes().to_vec());
             }
         }
-        for name in ["pre-rebase", "post-rewrite"] {
+        let mut invocations = vec!["pre-rebase".to_owned(), "post-rewrite".to_owned()];
+        if let Some(interactive) = &self.state.interactive {
+            for editor in &interactive.editors {
+                invocations.push(format!("editor-{}", editor.ordinal));
+                for name in [
+                    format!("editor-{}-output", editor.ordinal),
+                    format!("editor-{}-index", editor.ordinal),
+                ] {
+                    if self.directory.join(&name).exists() {
+                        allowed.insert(name.into_bytes());
+                    }
+                }
+            }
+        }
+        for name in &invocations {
             let directory = self.directory.join(name);
             if directory.exists() {
                 crate::repository::authoring::invocation::inspect(&directory)?;
@@ -2543,6 +2887,24 @@ impl Session {
     }
 }
 
+/// Called by an already-authorized child while it holds the shared guard,
+/// before publishing its durable commit decision. The parent state is immutable;
+/// the bounded recipe is adopted when that child's receipt is accepted/discarded.
+pub(crate) fn protect_child_commit(
+    repo: &gix::Repository,
+    binding: &ParentBinding,
+    ordinal: usize,
+    commit: gix::ObjectId,
+) -> Result<()> {
+    ensure!(ordinal > 0, "child retention requires a positive decision ordinal");
+    validate_child_binding(repo, binding)?;
+    let session = Session::open(repo)?;
+    let mut closure = BTreeSet::new();
+    history(repo, commit, &mut closure)?;
+    sync_tree(&repo.common_dir().join("objects"))?;
+    session.protect(repo, &format!("child-{}-{ordinal}", binding.step), commit, &closure)
+}
+
 /// Validate an active journal's ownership before distinguishing it from a
 /// previously retired operation. This never adopts an unrecognized directory.
 pub(crate) fn active_nonce(repo: &gix::Repository) -> Result<Option<String>> {
@@ -2607,6 +2969,20 @@ fn raw(path: &Path) -> Result<Vec<u8>> {
     Ok(gix::path::into_bstr(fs::canonicalize(path)?)?.to_vec())
 }
 
+// Todo/editor bookkeeping is not mutation authority for an existing child.
+// Every other parent field, including cursor/group/stop digest, remains frozen.
+fn child_state_digest(state: &ParentState) -> Result<String> {
+    let mut authorization = state.clone();
+    if let Some(interactive) = &mut authorization.interactive {
+        interactive.todo.bytes.clear();
+        let boundary = interactive.cursor + usize::from(state.phase == "authoring" && interactive.edit.is_none());
+        interactive.todo.entries.truncate(boundary);
+        interactive.editors.clear();
+        interactive.initial_accepted = false;
+    }
+    switch::digest(&serde_json::to_vec(&authorization)?)
+}
+
 pub(crate) fn validate_child_binding(repo: &gix::Repository, binding: &ParentBinding) -> Result<()> {
     ensure!(
         repo.state().is_none(),
@@ -2645,13 +3021,17 @@ pub(crate) fn validate_child_binding(repo: &gix::Repository, binding: &ParentBin
     let mut hash = gix::hash::hasher(gix::hash::Kind::Sha1);
     hash.update(&envelope.payload);
     let digest = hash.try_finalize()?.to_string();
-    ensure!(
-        digest == envelope.checksum && digest == binding.parent_state,
-        "replay parent state binding changed"
-    );
+    ensure!(digest == envelope.checksum, "replay parent state binding changed");
     let state: ParentState = serde_json::from_slice(&envelope.payload)?;
     ensure!(
-        state.version == 1 && state.nonce == binding.nonce && state.step == binding.step && state.phase == "authoring",
+        child_state_digest(&state)? == binding.parent_state,
+        "replay child authorization context changed"
+    );
+    ensure!(
+        state.version == 1
+            && state.nonce == binding.nonce
+            && state.decisions == binding.step
+            && state.phase == "authoring",
         "replay parent does not authorize this child"
     );
     let worktree = repo.workdir().context("worktree required")?;
@@ -2673,6 +3053,7 @@ pub(crate) fn validate_child_binding(repo: &gix::Repository, binding: &ParentBin
         "replay parent configuration or hooks changed"
     );
     let parent = Session { directory, state };
+    parent.inspect_editor()?;
     parent.validate_retention(repo)?;
     parent.validate_branch(repo, None)?;
     Ok(())

@@ -1969,6 +1969,7 @@ dependencies = [
  "gix-config-value 0.21.0",
  "gix-fsck",
  "gix-pack 0.76.0",
+ "gix-sequencer",
  "gix-status 0.36.0",
  "gix-testtools",
  "gix-trace 0.3.0",
@@ -1976,6 +1977,7 @@ dependencies = [
  "gix-url 0.40.0",
  "insta",
  "layout-rs",
+ "nix",
  "open",
  "parking_lot",
  "rusqlite",
@@ -3621,6 +3623,9 @@ dependencies = [
 [[package]]
 name = "gix-sequencer"
 version = "0.0.0"
+dependencies = [
+ "serde",
+]
 
 [[package]]
 name = "gix-shallow"
