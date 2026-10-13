@@ -889,7 +889,7 @@ Clippy and formatting green. These observations do not qualify Brit rebase.
 Ordered implementation follow-ons (the original daily-driver finish line stays
 unchanged; each needs its own implementation and proof):
 
-- [ ] 5d. Conflict-aware authoring: separate original/public/replay indexes, scoped resolution staging, validated external Git staging and native amend/split child receipts. Probe: no preserved dirty byte enters any rewritten tree; original staged/unstaged distinction survives every stop. Depends on 5c. Serves brit-native-daily-driver.
+- [x] 5d. Conflict-aware authoring: separate original/public/replay indexes, scoped resolution staging, validated external Git staging and native amend/split child receipts. Probe: no preserved dirty byte enters any rewritten tree; original staged/unstaged distinction survives every stop. Depends on 5c. Serves brit-native-daily-driver.
 - [ ] 5e. Durable linear replay: pinned local selection, step/skip/final/abort decisions, retained objects, private abort copies and switch/pull journal compatibility. Probe: explicit recovery at every durable boundary, including abort after completed replay steps. Depends on 5d. Serves brit-native-daily-driver.
 - [ ] 5f. Interactive sequencing: validated todo, every selected command, editor/hook invocation outcomes and rewrite mappings. Probe: invalid/failed/interrupted editors and hooks never replay unknown effects or consume preserved edits. Depends on 5e. Serves brit-native-daily-driver.
 - [ ] 5g. Combined recovery and artifact qualification: complete the spec's fault matrix, retained-copy decoder/extraction/deletion, independent recovery review and exact-source rebuilt artifact journeys before public rebase exposure. Probe: interruption and synchronization-loss models, private-copy recovery and retained 5a/5b regressions. Depends on 5f. Serves brit-native-daily-driver.
@@ -1416,3 +1416,67 @@ sequencing → 5g combined recovery/artifact qualification. Public rebase exposu
 waits for those proofs. No push, publication, parent gitlink move, physical
 power-cut proof or full daily-driver acceptance is claimed. The habit remains
 **UNWIRED**.
+
+
+## Station 5d — conflict-aware authoring, 2026-10-13
+
+Implementation source: `60cd907e830aedfd46cb3a6dbb9ef281055a7a83`, from
+`2a3e51d7c15cc7b83c733f32ed4aea2de5d05d59`, on isolated local branch
+`sprint/conflict-aware-authoring-2026-10-13`. This closes the internal authoring
+foundation only. Full daily-driver readiness remains **UNWIRED**; stations
+5e–5g and public rebase exposure remain unchanged.
+
+The internal Linux session keeps exact original staging, a public resolution
+index and a separate commit index. Scoped resolution staging and external Git
+imports preserve dirty neighbors, including simultaneous staged/unstaged edits,
+intent-to-add, deletion, modes, symlinks and non-UTF-8 names. Native amendment and
+split commits consume only the private index. Explicit scope expansion records
+before-images and refuses overlap or a baseline it cannot reconstruct exactly;
+clean CRLF conversion is one tested refusal. Split completion requires the
+private index to match the authored HEAD, not merely a clean worktree.
+
+Child decisions record exact HEAD/index/reflog old and desired bytes. Recovery
+refuses third states and foreign worktree ownership. Hooks receive the private
+index, and their mutations pass the same scope checks. Durable invocation
+preparation precedes the pending marker; a pipe prevents execution before the
+boot/PID/start/group receipt is durable. Unknown pre-hooks require retained abort;
+unknown post-hooks can be acknowledged without rerunning. Failures after commit
+publication report the committed result and remaining recovery work.
+
+Abort retains raw active work, original index bytes and checksummed authored Git
+object closures before restoring the stop. The retained copy survives Git GC.
+Unrelated new work remains untouched. Corrupt ownership, replaced leases,
+symlinked metadata directories and out-of-scope mutations refuse before mutation.
+
+Verification (one Cargo runner; separate implementation/test owners and an
+independent preservation/recovery reviewer):
+
+| Check | Result |
+| --- | --- |
+| Internal native/fault suite, wired into source CI | 32 entries pass: 31 substantive tests and one subprocess helper |
+| Retained stock-Git rebase characterization | 40 pass; Git observations only |
+| Existing authoring, switch, pull and hook-input journeys | 147 pass |
+| Existing switch/pull signal-recovery journeys | 57 pass (25 switch, 32 pull) |
+| Existing switch/pull synchronization-loss models | 2 pass; no new authoring power-loss claim |
+| Scoped formatting, strict Clippy, whitespace | Pass |
+| Independent preservation/recovery review | Approved for bounded station 5d |
+
+Commands, logs, review, source hashes and the final readiness result live under
+`genesis/local-dev/brit-readiness/conflict-aware-authoring/` in the owning
+workspace, particularly `verification.json`, `source-binding.json`, and
+`review.md`. The existing recipe projects this station and the remaining work.
+Reach rehearsal: `epr ready --target 2a3e51d7c15cc7b83c733f32ed4aea2de5d05d59`.
+No push, publication, parent submodule-pin change, replay sequencer or combined
+rebase artifact qualification is included. The local debug binary is a test
+artifact, not a release candidate. Full authoring loss-of-unsynchronized-writes
+and power-cut qualification, retained-copy decoder/extraction, and complete
+replay final/skip/abort orchestration remain later stations. Arbitrary writers
+escaping the supervised process group remain unsupported.
+
+Story-harvest node: chain 5d / between recording a pending hook → executing its
+child / missing prerequisite: durable owned invocation preparation must exist
+before the pending marker, otherwise a crash leaves no inspectable abort path /
+probe `unknown_pre_hook_is_abort_only_and_unknown_post_hook_acknowledges_without_retry`
+with the pre-hook `after-start` checkpoint / current state: green in the native
+suite. This child-level proof supplies a prerequisite for the still-open 5f
+invocation node; it does not close interactive sequencing.
