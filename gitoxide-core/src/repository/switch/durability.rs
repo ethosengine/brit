@@ -48,6 +48,476 @@ fn baseline(path: &Path) -> Result<()> {
         record_file(path)
     }
 }
+
+/// Qualify preparation only: existing objects start durable; no replay child,
+/// hook, step publication or physical power-cut claim is made by this model.
+#[test]
+fn replay_preparation_power_loss_requires_journal_refs_and_names_before_success() -> gix_testtools::TestResult {
+    use crate::repository::replay::{Selection, Session};
+    if gix_testtools::run_in_isolated_process()? {
+        return Ok(());
+    }
+    let fixture = tempfile::tempdir()?;
+    let root = fixture.path();
+    for command in [
+        "init -b main",
+        "config user.name Replay",
+        "config user.email replay@example.invalid",
+    ] {
+        gix_testtools::git(root, command)?;
+    }
+    fs::write(root.join("selected"), b"base\n")?;
+    for command in ["add selected", "commit -m base", "switch -c upstream"] {
+        gix_testtools::git(root, command)?;
+    }
+    fs::write(root.join("upstream"), b"upstream\n")?;
+    for command in ["add upstream", "commit -m upstream", "switch main"] {
+        gix_testtools::git(root, command)?;
+    }
+    fs::write(root.join("selected"), b"topic\n")?;
+    for command in ["add selected", "commit -m topic"] {
+        gix_testtools::git(root, command)?;
+    }
+    let repo = gix::open(root)?;
+    let selection = Selection::prepare(&repo, b"upstream".as_bstr())?;
+    let originals = [
+        "selected",
+        ".git/HEAD",
+        ".git/index",
+        ".git/refs/heads/main",
+        ".git/logs/HEAD",
+    ]
+    .into_iter()
+    .map(|name| Ok((PathBuf::from(name), snapshot(&root.join(name))?)))
+    .collect::<Result<Vec<_>>>()?;
+    let closure = selection
+        .closure
+        .iter()
+        .map(|id| {
+            let hex = id.to_string();
+            let name = PathBuf::from(".git/objects").join(&hex[..2]).join(&hex[2..]);
+            Ok((name.clone(), snapshot(&root.join(name))?))
+        })
+        .collect::<Result<Vec<_>>>()?;
+    let root_id = identity(root)?;
+    TRACE.with(|trace| *trace.borrow_mut() = Some(Vec::new()));
+    baseline(root)?;
+    let baseline_len = TRACE.with(|trace| trace.borrow().as_ref().expect("trace enabled").len());
+    let session = Session::prepare(&repo, b"upstream".as_bstr())?.expect("divergence");
+    let journal_id = identity(session.directory())?;
+    let git_id = identity(repo.git_dir())?;
+    let refs_id = identity(&repo.common_dir().join("refs"))?;
+    let prepared_events = TRACE.with(|trace| trace.borrow().as_ref().expect("trace enabled").clone());
+    check_replay_preparation_trace(&prepared_events, baseline_len, root_id, &originals, &closure, true)?;
+    for omitted in [
+        "journal-file",
+        "ref-file",
+        "journal-directory",
+        "git-directory",
+        "refs-directory",
+    ] {
+        let trace: Vec<_> = prepared_events
+            .iter()
+            .enumerate()
+            .filter(|(position, event)| {
+                if *position < baseline_len {
+                    return true;
+                }
+                match (omitted, event) {
+                    ("journal-file", Event::File(_, State::File { bytes, .. })) => {
+                        serde_json::from_slice::<Envelope>(bytes).is_err()
+                    }
+                    ("ref-file", Event::File(_, State::File { bytes, .. })) => {
+                        bytes != format!("{}\n", selection.original).as_bytes()
+                            && bytes != format!("{}\n", selection.upstream).as_bytes()
+                    }
+                    ("journal-directory", Event::Directory(id, ..)) => *id != journal_id,
+                    ("git-directory", Event::Directory(id, ..)) => *id != git_id,
+                    ("refs-directory", Event::Directory(id, ..)) => *id != refs_id,
+                    _ => true,
+                }
+            })
+            .map(|(_, event)| event.clone())
+            .collect();
+        let rejected = std::panic::catch_unwind(|| {
+            check_replay_preparation_trace(&trace, baseline_len, root_id, &originals, &closure, true)
+        });
+        assert!(
+            rejected.is_err() || rejected.is_ok_and(|result| result.is_err()),
+            "omission control must reject absent {omitted} synchronization, not pass vacuously"
+        );
+    }
+    Session::recover_preparation(&repo)?.abort_prepared(&repo)?;
+    let events = TRACE.with(|trace| trace.borrow_mut().take().expect("trace enabled"));
+    check_replay_preparation_trace(&events, baseline_len, root_id, &originals, &closure, false)?;
+    Ok(())
+}
+
+fn check_replay_preparation_trace(
+    events: &[Event],
+    baseline_len: usize,
+    root_id: Identity,
+    originals: &[(PathBuf, State)],
+    closure: &[(PathBuf, State)],
+    terminal_prepared: bool,
+) -> Result<()> {
+    let mut durable = Durable::default();
+    let mut saw_prepared = false;
+    let mut final_prepared = false;
+    for (position, event) in events.iter().enumerate() {
+        durable.apply(event);
+        if position < baseline_len {
+            continue;
+        }
+        for (name, expected) in originals {
+            assert_eq!(
+                durable.state(root_id, name),
+                *expected,
+                "preparation changed {} at sync {position}",
+                name.display()
+            );
+        }
+        final_prepared = false;
+        if let State::File { bytes, .. } = durable.state(root_id, Path::new(".git/brit-rebase/state.json")) {
+            let envelope: Envelope = serde_json::from_slice(&bytes)?;
+            assert_eq!(digest(&envelope.payload)?, envelope.checksum);
+            let state: serde_json::Value = serde_json::from_slice(&envelope.payload)?;
+            if state["phase"] == "prepared" {
+                saw_prepared = true;
+                final_prepared = true;
+                let nonce = state["nonce"].as_str().expect("nonce");
+                for label in ["original", "upstream"] {
+                    let name = PathBuf::from(format!(".git/refs/brit-rebase-retain/{nonce}/{label}"));
+                    let State::File { bytes, .. } = durable.state(root_id, &name) else {
+                        panic!("prepared journal precedes durable retention {label} at sync {position}");
+                    };
+                    assert_eq!(bytes, format!("{}\n", state[label].as_str().expect("OID")).as_bytes());
+                }
+                for (name, expected) in closure {
+                    assert_eq!(
+                        durable.state(root_id, name),
+                        *expected,
+                        "prepared closure missing {}",
+                        name.display()
+                    );
+                }
+            }
+        }
+    }
+    assert!(
+        saw_prepared,
+        "successful preparation must have durable prepared state, even under omission controls"
+    );
+    assert_eq!(
+        final_prepared, terminal_prepared,
+        "returned outcome must match terminal durable state"
+    );
+    if !terminal_prepared {
+        assert_eq!(
+            durable.state(root_id, Path::new(".git/brit-rebase")),
+            State::Absent,
+            "returned cancellation must durably retire active journal"
+        );
+    }
+    Ok(())
+}
+
+struct ReplayTraceProof {
+    root_id: Identity,
+    baseline_len: usize,
+    original: BTreeMap<PathBuf, State>,
+    terminal: BTreeMap<PathBuf, State>,
+    decisions: Vec<(PathBuf, State, serde_json::Value)>,
+    objects: BTreeMap<PathBuf, State>,
+    references: BTreeMap<PathBuf, State>,
+    retained: BTreeMap<PathBuf, State>,
+    abort: bool,
+}
+
+#[test]
+fn replay_steps_final_abort_and_cleanup_power_loss_follow_real_sync_boundaries() -> gix_testtools::TestResult {
+    use crate::repository::replay::{Advance, Session};
+    if gix_testtools::run_in_isolated_process()? {
+        return Ok(());
+    }
+    for abort in [false, true] {
+        let fixture = tempfile::tempdir()?;
+        let root = fixture.path();
+        for command in [
+            "init -b main",
+            "config user.name Replay",
+            "config user.email replay@example.invalid",
+        ] {
+            gix_testtools::git(root, command)?;
+        }
+        fs::write(root.join("selected"), b"base\n")?;
+        fs::write(root.join("neighbor"), b"clean neighbor\n")?;
+        for command in ["add .", "commit -m base", "switch -c upstream"] {
+            gix_testtools::git(root, command)?;
+        }
+        fs::write(root.join("upstream"), b"upstream\n")?;
+        for command in ["add upstream", "commit -m upstream", "switch main"] {
+            gix_testtools::git(root, command)?;
+        }
+        fs::write(root.join("selected"), b"topic\n")?;
+        for command in ["add selected", "commit -m topic"] {
+            gix_testtools::git(root, command)?;
+        }
+        fs::write(root.join("neighbor"), b"staged neighbor\n")?;
+        gix_testtools::git(root, "add neighbor")?;
+        fs::write(root.join("neighbor"), b"unstaged neighbor\n")?;
+        let repo = gix::open(root)?;
+        let mut proof = ReplayTraceProof {
+            root_id: identity(root)?,
+            baseline_len: 0,
+            original: [
+                ".git/HEAD",
+                ".git/index",
+                ".git/refs/heads/main",
+                "selected",
+                "neighbor",
+            ]
+            .into_iter()
+            .map(|name| Ok((PathBuf::from(name), snapshot(&root.join(name))?)))
+            .collect::<Result<_>>()?,
+            terminal: BTreeMap::new(),
+            decisions: Vec::new(),
+            objects: BTreeMap::new(),
+            references: BTreeMap::new(),
+            retained: BTreeMap::new(),
+            abort,
+        };
+        TRACE.with(|trace| *trace.borrow_mut() = Some(Vec::new()));
+        baseline(root)?;
+        proof.baseline_len = TRACE.with(|trace| trace.borrow().as_ref().expect("trace enabled").len());
+        let mut session = Session::prepare(&repo, b"upstream".as_bstr())?.expect("divergence");
+        assert_eq!(session.advance(&repo)?, Advance::Started);
+        assert!(matches!(session.advance(&repo)?, Advance::Step { .. }));
+        assert_eq!(session.advance(&repo)?, Advance::ReadyFinal);
+        if abort {
+            session.abort(&repo)?;
+        } else {
+            session.finish(&repo)?;
+        }
+        for entry in fs::read_dir(session.directory())? {
+            let entry = entry?;
+            if entry.file_name().to_string_lossy().starts_with("decision-") {
+                let state = snapshot(&entry.path())?;
+                let State::File { bytes, .. } = &state else {
+                    return Err(anyhow::anyhow!("decision is not a file").into());
+                };
+                let envelope: Envelope = serde_json::from_slice(bytes)?;
+                proof.decisions.push((
+                    entry.path().strip_prefix(root)?.to_owned(),
+                    state.clone(),
+                    serde_json::from_slice(&envelope.payload)?,
+                ));
+            }
+        }
+        proof
+            .decisions
+            .sort_by_key(|(_, _, value)| value["ordinal"].as_u64().expect("decision ordinal"));
+        for (_, _, decision) in &proof.decisions {
+            for value in decision["after"]["closure"].as_array().expect("closure") {
+                let oid = value.as_str().expect("object ID");
+                let name = PathBuf::from(".git/objects").join(&oid[..2]).join(&oid[2..]);
+                proof.objects.insert(name.clone(), snapshot(&root.join(name))?);
+            }
+        }
+        fn collect_files(root: &Path, directory: &Path, out: &mut BTreeMap<PathBuf, State>) -> Result<()> {
+            for entry in fs::read_dir(directory)? {
+                let entry = entry?;
+                if entry.file_type()?.is_dir() {
+                    collect_files(root, &entry.path(), out)?;
+                } else {
+                    out.insert(entry.path().strip_prefix(root)?.to_owned(), snapshot(&entry.path())?);
+                }
+            }
+            Ok(())
+        }
+        collect_files(
+            root,
+            &repo.common_dir().join("refs/brit-rebase-retain"),
+            &mut proof.references,
+        )?;
+        proof.terminal = proof
+            .original
+            .keys()
+            .map(|name| Ok((name.clone(), snapshot(&root.join(name))?)))
+            .collect::<Result<_>>()?;
+        let receipt = session.cleanup(&repo)?;
+        collect_files(root, &receipt.path, &mut proof.retained)?;
+        let retained_directory_ids = [
+            receipt.path.as_path(),
+            receipt.path.parent().expect("copy operation"),
+            receipt.path.parent().and_then(Path::parent).expect("retained root"),
+        ]
+        .into_iter()
+        .map(identity)
+        .collect::<Result<Vec<_>>>()?;
+        let events = TRACE.with(|trace| trace.borrow_mut().take().expect("trace enabled"));
+        check_replay_execution_trace(&events, &proof)?;
+        for omission in ["decision", "new-object", "retained-member", "retained-directory"] {
+            let baseline_objects: Vec<_> = events[..proof.baseline_len]
+                .iter()
+                .filter_map(|event| match event {
+                    Event::File(_, state) if proof.objects.values().any(|expected| expected == state) => {
+                        Some(state.clone())
+                    }
+                    _ => None,
+                })
+                .collect();
+            let reduced = events
+                .iter()
+                .enumerate()
+                .filter(|(position, event)| {
+                    if *position < proof.baseline_len {
+                        return true;
+                    }
+                    match (omission, event) {
+                        ("decision", Event::File(_, state)) => {
+                            !proof.decisions.iter().any(|(_, expected, _)| expected == state)
+                        }
+                        ("new-object", Event::File(_, state)) => {
+                            baseline_objects.contains(state)
+                                || !proof.objects.values().any(|expected| expected == state)
+                        }
+                        ("retained-member", Event::File(_, state)) => {
+                            !proof.retained.values().any(|expected| expected == state)
+                        }
+                        ("retained-directory", Event::Directory(id, ..)) => !retained_directory_ids.contains(id),
+                        _ => true,
+                    }
+                })
+                .map(|(_, event)| event.clone())
+                .collect::<Vec<_>>();
+            assert!(
+                reduced.len() < events.len(),
+                "omission control must remove observed {omission} synchronization events"
+            );
+            let rejected = std::panic::catch_unwind(|| check_replay_execution_trace(&reduced, &proof));
+            assert!(
+                rejected.is_err() || rejected.is_ok_and(|result| result.is_err()),
+                "missing {omission} synchronization must break a real replay invariant (abort={abort})"
+            );
+        }
+    }
+    Ok(())
+}
+
+fn check_replay_execution_trace(events: &[Event], proof: &ReplayTraceProof) -> Result<()> {
+    let mut durable = Durable::default();
+    let mut decisions = BTreeSet::new();
+    let mut seen_refs = BTreeSet::new();
+    let mut final_decided = false;
+    let mut abort_decided = false;
+    let mut index_images = vec![proof.original[Path::new(".git/index")].clone()];
+    let mut head_images = vec![proof.original[Path::new(".git/HEAD")].clone()];
+    for (position, event) in events.iter().enumerate() {
+        durable.apply(event);
+        if position < proof.baseline_len {
+            continue;
+        }
+        for (name, expected, decision) in &proof.decisions {
+            if !decisions.contains(name) && durable.state(proof.root_id, name) == *expected {
+                for oid in decision["after"]["closure"].as_array().expect("decision closure") {
+                    let oid = oid.as_str().expect("object ID");
+                    let object = PathBuf::from(".git/objects").join(&oid[..2]).join(&oid[2..]);
+                    assert_eq!(
+                        durable.state(proof.root_id, &object),
+                        proof.objects[&object],
+                        "decision precedes object durability at sync {position}"
+                    );
+                }
+                let nonce = decision["nonce"].as_str().expect("nonce");
+                for item in decision["after"]["retained"].as_array().expect("owned refs") {
+                    let name = PathBuf::from(format!(
+                        ".git/refs/brit-rebase-retain/{nonce}/{}",
+                        item[0].as_str().expect("ref label")
+                    ));
+                    let State::File { bytes, .. } = durable.state(proof.root_id, &name) else {
+                        panic!("decision has no durable retention ref at sync {position}");
+                    };
+                    assert_eq!(bytes, format!("{}\n", item[1].as_str().expect("ref OID")).as_bytes());
+                }
+                final_decided |= decision["transition"]["kind"] == "Final";
+                abort_decided |= decision["transition"]["kind"] == "Abort";
+                index_images.push(serde_json::from_value(decision["after"]["index"].clone())?);
+                head_images.push(serde_json::from_value(decision["after"]["head"].clone())?);
+                decisions.insert(name.clone());
+            }
+        }
+        assert!(
+            index_images.contains(&durable.state(proof.root_id, Path::new(".git/index"))),
+            "index publication precedes a durable decision at sync {position}"
+        );
+        assert!(
+            head_images.contains(&durable.state(proof.root_id, Path::new(".git/HEAD"))),
+            "HEAD publication precedes a durable decision at sync {position}"
+        );
+        assert_eq!(
+            durable.state(proof.root_id, Path::new("neighbor")),
+            proof.original[Path::new("neighbor")],
+            "preserved work is immutable across every sync boundary"
+        );
+        if durable.state(proof.root_id, Path::new(".git/refs/heads/main"))
+            != proof.original[Path::new(".git/refs/heads/main")]
+        {
+            assert!(
+                final_decided,
+                "original branch cannot publish before durable Final decision and closure"
+            );
+        }
+        for (name, expected) in &proof.references {
+            let actual = durable.state(proof.root_id, name);
+            if actual == *expected {
+                seen_refs.insert(name.clone());
+            } else if seen_refs.contains(name) && actual == State::Absent {
+                for (payload, expected) in &proof.retained {
+                    assert_eq!(
+                        durable.state(proof.root_id, payload),
+                        *expected,
+                        "released ref requires complete independent copy including payload/manifest/COPY_COMPLETE at sync {position}"
+                    );
+                }
+            }
+        }
+    }
+    assert_eq!(
+        decisions.len(),
+        proof.decisions.len(),
+        "every returned decision must be durably observed; omission controls cannot pass vacuously"
+    );
+    assert_eq!(abort_decided, proof.abort);
+    assert_eq!(final_decided, !proof.abort);
+    for (name, expected) in &proof.terminal {
+        assert_eq!(
+            durable.state(proof.root_id, name),
+            *expected,
+            "terminal resource {} must be durable",
+            name.display()
+        );
+    }
+    if proof.abort {
+        assert_eq!(
+            durable.state(proof.root_id, Path::new(".git/index")),
+            proof.original[Path::new(".git/index")],
+            "completed Abort restores byte-exact original index"
+        );
+    }
+    assert_eq!(
+        durable.state(proof.root_id, Path::new(".git/brit-rebase")),
+        State::Absent
+    );
+    for name in proof.references.keys() {
+        assert_eq!(
+            durable.state(proof.root_id, name),
+            State::Absent,
+            "cleanup return releases every retained ref"
+        );
+    }
+    Ok(())
+}
 #[derive(Default)]
 struct Durable {
     data: BTreeMap<Identity, State>,

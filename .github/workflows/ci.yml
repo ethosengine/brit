@@ -380,6 +380,10 @@ jobs:
         run: cargo test --locked -p cli-journey --test git_rebase_characterization
       - name: Prove internal conflict-aware authoring preservation
         run: cargo test --locked -p gitoxide-core --features blocking-client,gix/sha1,switch-test-faults --test conflict_authoring
+      - name: Prove internal replay selection and preservation
+        run: |
+          cargo test --locked -p gitoxide-core --features blocking-client,gix/sha1,switch-test-faults --test replay --test replay_retained
+          cargo test --locked -p gitoxide-core --features blocking-client,gix/sha1 --lib repository::replay::hooks
       - name: Prove switch and pull interruption with explicit recovery
         run: |
           set -euo pipefail

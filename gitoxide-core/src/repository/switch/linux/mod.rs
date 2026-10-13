@@ -17,6 +17,9 @@ use std::{
 const JOURNAL: &str = "brit-switch";
 const VERSION: u32 = 2;
 
+mod object_store;
+pub(crate) use object_store::{validate_local_history, validate_object_boundaries};
+
 #[cfg(feature = "blocking-client")]
 mod pull;
 #[cfg(feature = "blocking-client")]
@@ -24,7 +27,7 @@ pub use pull::{execute as pull_execute, recover as pull_recover};
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
-enum State {
+pub(crate) enum State {
     Absent,
     Directory { mode: u32, device: u64, inode: u64 },
     File { mode: u32, bytes: Vec<u8> },
@@ -32,18 +35,18 @@ enum State {
 }
 #[derive(Clone, Debug, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
-struct Change {
-    path: Vec<u8>,
-    before: State,
-    after: State,
+pub(crate) struct Change {
+    pub(crate) path: Vec<u8>,
+    pub(crate) before: State,
+    pub(crate) after: State,
 }
 #[derive(Clone, Debug, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
-struct Lock {
-    path: Vec<u8>,
-    device: u64,
-    inode: u64,
-    checksum: String,
+pub(crate) struct Lock {
+    pub(crate) path: Vec<u8>,
+    pub(crate) device: u64,
+    pub(crate) inode: u64,
+    pub(crate) checksum: String,
 }
 #[derive(Clone, Debug, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
@@ -109,12 +112,12 @@ fn raw(path: &Path) -> Result<Vec<u8>> {
 fn path(bytes: &[u8]) -> Result<PathBuf> {
     Ok(gix::path::from_bstr(bytes.as_bstr())?.into_owned())
 }
-fn digest(bytes: &[u8]) -> Result<String> {
+pub(crate) fn digest(bytes: &[u8]) -> Result<String> {
     let mut hash = gix::hash::hasher(gix::hash::Kind::Sha1);
     hash.update(bytes);
     Ok(hash.try_finalize()?.to_string())
 }
-fn sync_dir(path: &Path) -> Result<()> {
+pub(crate) fn sync_dir(path: &Path) -> Result<()> {
     fs::File::open(path)?
         .sync_all()
         .with_context(|| format!("synchronize directory {}", path.display()))?;
@@ -122,13 +125,18 @@ fn sync_dir(path: &Path) -> Result<()> {
     durability::record_dir(path)?;
     Ok(())
 }
-fn sync_path(path: &Path) -> Result<()> {
-    fs::File::open(path)?.sync_all()?;
+pub(crate) fn sync_path(path: &Path) -> Result<()> {
+    sync_file(&fs::File::open(path)?, path)
+}
+/// Synchronize the already-open inode while recording its name for recovery models.
+pub(crate) fn sync_file(file: &fs::File, path: &Path) -> Result<()> {
+    file.sync_all()?;
     #[cfg(test)]
     durability::record_file(path)?;
+    let _ = path;
     Ok(())
 }
-fn private_write(path: &Path, bytes: &[u8]) -> Result<()> {
+pub(crate) fn private_write(path: &Path, bytes: &[u8]) -> Result<()> {
     use std::os::unix::fs::OpenOptionsExt;
     let mut file = fs::OpenOptions::new()
         .write(true)
@@ -136,9 +144,7 @@ fn private_write(path: &Path, bytes: &[u8]) -> Result<()> {
         .mode(0o600)
         .open(path)?;
     file.write_all(bytes)?;
-    file.sync_all()?;
-    #[cfg(test)]
-    durability::record_file(path)?;
+    sync_file(&file, path)?;
     Ok(())
 }
 fn directory_identity(path: &Path) -> Result<[u64; 2]> {
@@ -174,10 +180,16 @@ fn present(name: &Path) -> Result<bool> {
     }
 }
 
-/// Block mutations in every worktree while explicit switch recovery is outstanding.
+/// Block mutations in every worktree while explicit operation recovery is outstanding.
 pub fn ensure_no_pending(repo: &gix::Repository) -> Result<()> {
     for worktree in repo.worktrees_including_main()? {
         let worktree = worktree?;
+        super::ensure_no_replay_cleanup(&absolute(&worktree, worktree.git_dir()))?;
+        ensure!(
+            !present(&absolute(&worktree, worktree.git_dir()).join("brit-rebase"))?,
+            "pending replay in {}; recover its internal session",
+            worktree.git_dir().display()
+        );
         ensure!(
             !present(&absolute(&worktree, worktree.git_dir()).join("brit-authoring"))?,
             "pending conflict authoring in {}; recover its internal session",
@@ -262,7 +274,7 @@ pub fn status(repo: &gix::Repository, out: &mut dyn Write) -> Result<()> {
     Ok(())
 }
 
-fn snapshot(path: &Path) -> Result<State> {
+pub(crate) fn snapshot(path: &Path) -> Result<State> {
     use std::os::unix::fs::{MetadataExt, PermissionsExt};
     let metadata = match fs::symlink_metadata(path) {
         Ok(metadata) => metadata,
@@ -310,7 +322,7 @@ fn validate_path(bytes: &[u8]) -> Result<()> {
     }
     Ok(())
 }
-fn validate_ancestors(root: &Path, relative: &[u8]) -> Result<()> {
+pub(crate) fn validate_ancestors(root: &Path, relative: &[u8]) -> Result<()> {
     validate_path(relative)?;
     let relative = path(relative)?;
     let mut current = root.to_owned();
@@ -571,7 +583,7 @@ fn refs_match(repo: &gix::Repository, state: &Manifest) -> Result<()> {
     occupancy(repo, &state.target)
 }
 
-struct HeldLock {
+pub(crate) struct HeldLock {
     native: gix::lock::File,
     resource: PathBuf,
     external: PathBuf,
@@ -618,23 +630,39 @@ fn resources(repo: &gix::Repository, state: &Manifest) -> Result<Vec<PathBuf>> {
     Ok(resources)
 }
 fn lock_resources(repo: &gix::Repository, state: &mut Manifest) -> Result<Vec<HeldLock>> {
-    use std::os::unix::fs::MetadataExt;
-    let mut locks = Vec::new();
     #[cfg(feature = "blocking-client")]
     if state.pull.is_some() {
         for resource in resources(repo, state)? {
             pull::validate_metadata_ancestors(repo, &resource)?;
         }
     }
-    for (position, resource) in resources(repo, state)?.into_iter().enumerate() {
-        let anchor_resource = journal(repo).join(format!("guard-{position}"));
+    let resources = resources(repo, state)?;
+    let owner = format!("brit-switch-owner:{}:{}", state.pid, state.process);
+    acquire_recorded_locks(&journal(repo), &resources, &owner, |lock| {
+        state.locks.push(lock);
+        save(repo, state)
+    })
+}
+
+/// Own ordinary Git locks through private anchors. The caller durably records
+/// each inode before its external lock name becomes visible.
+pub(crate) fn acquire_recorded_locks(
+    staging: &Path,
+    resources: &[PathBuf],
+    owner: &str,
+    mut record: impl FnMut(Lock) -> Result<()>,
+) -> Result<Vec<HeldLock>> {
+    use std::os::unix::fs::MetadataExt;
+    let mut locks = Vec::new();
+    for (position, resource) in resources.iter().cloned().enumerate() {
+        let anchor_resource = staging.join(format!("guard-{position}"));
         let mut native = gix::lock::File::acquire_to_update_resource(
             &anchor_resource,
             gix::lock::acquire::Fail::Immediately,
             None,
             0,
         )?;
-        let token = format!("brit-switch-owner:{}:{}:{position}", state.pid, state.process);
+        let token = format!("{owner}:{position}");
         native.write_all(token.as_bytes())?;
         native.with_mut(|file| {
             use std::os::unix::fs::PermissionsExt;
@@ -648,13 +676,12 @@ fn lock_resources(repo: &gix::Repository, state: &mut Manifest) -> Result<Vec<He
         external.push(".lock");
         let external = PathBuf::from(external);
         // Persist identity and ownership BEFORE the ordinary lock is made visible.
-        state.locks.push(Lock {
+        record(Lock {
             path: raw(&external)?,
             device: metadata.dev(),
             inode: metadata.ino(),
             checksum: digest(token.as_bytes())?,
-        });
-        save(repo, state)?;
+        })?;
         checkpoint("lock-intent")?;
         fs::hard_link(native.lock_path(), &external)
             .with_context(|| format!("acquire ordinary lock {}", external.display()))?;
@@ -994,69 +1021,12 @@ fn execute_locked(repo: gix::Repository, branch: &BStr, _shared: fs::File, pinne
             },
         );
     }
-    // Ancestors are explicit journal resources. This supports file/directory transitions and
-    // retains unrelated directory contents rather than recursively deleting them.
-    for name in &changed {
-        let mut ancestor = path(name)?;
-        while ancestor.pop() && !ancestor.as_os_str().is_empty() {
-            let relative = raw(&ancestor)?;
-            let needs_directory = destination_entries
-                .keys()
-                .any(|other| other.starts_with(&relative) && other.get(relative.len()) == Some(&b'/'));
-            let before = snapshot(&root.join(&ancestor))?;
-            let replaced_ancestor = destination_entries
-                .keys()
-                .any(|other| relative.starts_with(other) && relative.get(other.len()) == Some(&b'/'));
-            let after = if needs_directory || (matches!(before, State::Directory { .. }) && !replaced_ancestor) {
-                if matches!(before, State::Directory { .. }) {
-                    before.clone()
-                } else {
-                    State::Directory {
-                        mode: creation_mode(0o777)?,
-                        device: 0,
-                        inode: 0,
-                    }
-                }
-            } else {
-                State::Absent
-            };
-            changes
-                .entry(relative.clone())
-                .and_modify(|change| {
-                    if needs_directory {
-                        change.after = after.clone();
-                    }
-                })
-                .or_insert(Change {
-                    path: relative,
-                    before,
-                    after,
-                });
-        }
-    }
-    for change in changes.values() {
-        if change.before != change.after && matches!(change.before, State::File { .. } | State::Symlink(_)) {
-            ensure!(
-                source_entries.contains_key(&change.path),
-                "untracked or ignored ancestor collision: {}",
-                change.path.as_bstr()
-            );
-        }
-        if matches!(change.before, State::Directory { .. }) && !matches!(change.after, State::Directory { .. }) {
-            inspect_removed_directory(root, &change.path, &changes)?;
-        }
-        let relative = path(&change.path)?;
-        let mut ancestor = root.to_owned();
-        for part in relative.components() {
-            ancestor.push(part);
-            if ancestor.join(".git").exists() {
-                bail!("affected nested repository {}", ancestor.display());
-            }
-            if matches!(snapshot(&ancestor)?, State::Symlink(_)) && ancestor != root.join(&relative) {
-                bail!("symlink ancestor {}", ancestor.display());
-            }
-        }
-    }
+    complete_directory_ledger(
+        root,
+        &source_entries.keys().cloned().collect(),
+        &destination_entries.keys().cloned().collect(),
+        &mut changes,
+    )?;
     state.changes = changes
         .into_values()
         .filter(|change| change.before != change.after)
@@ -1133,16 +1103,7 @@ fn execute_locked(repo: gix::Repository, branch: &BStr, _shared: fs::File, pinne
     }
     // A preparation crash can leave private directories, so persist their reserved names first.
     save(&repo, &state)?;
-    for change in &mut state.changes {
-        if let State::Directory { mode, inode: 0, .. } = change.after {
-            use std::os::unix::fs::PermissionsExt;
-            let directory = journal(&repo).join(format!("new-dir-{}", digest(&change.path)?));
-            fs::create_dir(&directory)?;
-            fs::set_permissions(&directory, fs::Permissions::from_mode(mode))?;
-            sync_dir(&directory)?;
-            change.after = snapshot(&directory)?;
-        }
-    }
+    prepare_directories(&journal(&repo), &mut state.changes)?;
     if state.reflog.after != State::Absent && state.log_directory.before == State::Absent {
         let directory = journal(&repo).join("log-directory");
         fs::DirBuilder::new().mode(creation_mode(0o777)?).create(&directory)?;
@@ -1167,7 +1128,7 @@ fn reflog_enabled(repo: &gix::Repository) -> Result<bool> {
     Ok(config.try_boolean("core.logAllRefUpdates")? != Some(false))
 }
 
-fn creation_mode(mode: u32) -> Result<u32> {
+pub(crate) fn creation_mode(mode: u32) -> Result<u32> {
     let status = fs::read_to_string("/proc/self/status")?;
     let mask = status
         .lines()
@@ -1183,6 +1144,99 @@ fn file_mode(state: &State, fallback: u32) -> u32 {
         fallback
     }
 }
+/// Complete the explicit ancestor/descendant ledger before any live checkout.
+/// Source and destination names come from the pinned trees, never a filesystem walk.
+/// New directory identities are reserved separately before the publication decision.
+pub(crate) fn complete_directory_ledger(
+    root: &Path,
+    source_paths: &BTreeSet<Vec<u8>>,
+    destination_paths: &BTreeSet<Vec<u8>>,
+    changes: &mut BTreeMap<Vec<u8>, Change>,
+) -> Result<()> {
+    let leaves: Vec<_> = changes.keys().cloned().collect();
+    // Ancestors are explicit journal resources. This supports file/directory transitions and
+    // retains unrelated directory contents rather than recursively deleting them.
+    for name in &leaves {
+        let mut ancestor = path(name)?;
+        while ancestor.pop() && !ancestor.as_os_str().is_empty() {
+            let relative = raw(&ancestor)?;
+            let needs_directory = destination_paths
+                .iter()
+                .any(|other| other.starts_with(&relative) && other.get(relative.len()) == Some(&b'/'));
+            let before = snapshot(&root.join(&ancestor))?;
+            let replaced_ancestor = destination_paths
+                .iter()
+                .any(|other| relative.starts_with(other) && relative.get(other.len()) == Some(&b'/'));
+            let after = if needs_directory || (matches!(before, State::Directory { .. }) && !replaced_ancestor) {
+                if matches!(before, State::Directory { .. }) {
+                    before.clone()
+                } else {
+                    State::Directory {
+                        mode: creation_mode(0o777)?,
+                        device: 0,
+                        inode: 0,
+                    }
+                }
+            } else {
+                State::Absent
+            };
+            changes
+                .entry(relative.clone())
+                .and_modify(|change| {
+                    if needs_directory {
+                        change.after = after.clone();
+                    }
+                })
+                .or_insert(Change {
+                    path: relative,
+                    before,
+                    after,
+                });
+        }
+    }
+    for change in changes.values() {
+        if change.before != change.after && matches!(change.before, State::File { .. } | State::Symlink(_)) {
+            ensure!(
+                source_paths.contains(&change.path),
+                "untracked or ignored ancestor collision: {}",
+                change.path.as_bstr()
+            );
+        }
+        if matches!(change.before, State::Directory { .. }) && !matches!(change.after, State::Directory { .. }) {
+            inspect_removed_directory(root, &change.path, changes)?;
+        }
+        let relative = path(&change.path)?;
+        let mut ancestor = root.to_owned();
+        for part in relative.components() {
+            ancestor.push(part);
+            if ancestor.join(".git").exists() {
+                bail!("affected nested repository {}", ancestor.display());
+            }
+            if matches!(snapshot(&ancestor)?, State::Symlink(_)) && ancestor != root.join(&relative) {
+                bail!("symlink ancestor {}", ancestor.display());
+            }
+        }
+    }
+    Ok(())
+}
+
+/// Materialize reserved empty directories while still in private preparation.
+/// The caller pins their names durably first and persists the resulting identities
+/// before permitting publication. Existing names refuse; recovery owns their disposition.
+pub(crate) fn prepare_directories(staging: &Path, changes: &mut [Change]) -> Result<()> {
+    for change in changes {
+        if let State::Directory { mode, inode: 0, .. } = change.after {
+            use std::os::unix::fs::PermissionsExt;
+            let directory = staging.join(format!("new-dir-{}", digest(&change.path)?));
+            fs::create_dir(&directory)?;
+            fs::set_permissions(&directory, fs::Permissions::from_mode(mode))?;
+            sync_dir(&directory)?;
+            change.after = snapshot(&directory)?;
+        }
+    }
+    Ok(())
+}
+
 fn inspect_removed_directory(root: &Path, name: &[u8], changes: &BTreeMap<Vec<u8>, Change>) -> Result<()> {
     for entry in fs::read_dir(root.join(path(name)?))? {
         let entry = entry?;
@@ -1202,7 +1256,7 @@ fn inspect_removed_directory(root: &Path, name: &[u8], changes: &BTreeMap<Vec<u8
     Ok(())
 }
 
-fn checkpoint(name: &str) -> Result<()> {
+pub(crate) fn checkpoint(name: &str) -> Result<()> {
     #[cfg(feature = "switch-test-faults")]
     if std::env::var("BRIT_SWITCH_CHECKPOINT").ok().as_deref() == Some(name) {
         let directory =
@@ -1228,7 +1282,7 @@ fn expected(actual: &State, change: &Change) -> bool {
         || (*actual == State::Absent
             && (matches!(change.before, State::Directory { .. }) || matches!(change.after, State::Directory { .. })))
 }
-fn verify_files(root: &Path, changes: &[Change], started: &BTreeSet<Vec<u8>>) -> Result<()> {
+pub(crate) fn verify_files(root: &Path, changes: &[Change], started: &BTreeSet<Vec<u8>>) -> Result<()> {
     for change in changes {
         let actual = snapshot(&root.join(path(&change.path)?))?;
         ensure!(
@@ -1247,7 +1301,7 @@ fn verify_files(root: &Path, changes: &[Change], started: &BTreeSet<Vec<u8>>) ->
     }
     Ok(())
 }
-fn publish_file(staging: &Path, root: &Path, change: &Change, desired: &State) -> Result<()> {
+pub(crate) fn publish_file(staging: &Path, root: &Path, change: &Change, desired: &State) -> Result<()> {
     use std::os::unix::fs::PermissionsExt;
     validate_ancestors(root, &change.path)?;
     let absolute = root.join(path(&change.path)?);
@@ -1398,6 +1452,16 @@ fn apply_files(repo: &gix::Repository, state: &mut Manifest) -> Result<()> {
     Ok(())
 }
 fn publish_metadata(repo: &gix::Repository, change: &Change, locks: &mut [HeldLock]) -> Result<()> {
+    publish_metadata_at(repo, &journal(repo), change, locks)
+}
+
+/// Publish the exact metadata image using the shared owned-lock protocol.
+pub(crate) fn publish_metadata_at(
+    repo: &gix::Repository,
+    staging: &Path,
+    change: &Change,
+    locks: &mut [HeldLock],
+) -> Result<()> {
     use std::os::unix::fs::PermissionsExt;
     let resource = path(&change.path)?;
     #[cfg(feature = "blocking-client")]
@@ -1427,24 +1491,29 @@ fn publish_metadata(repo: &gix::Repository, change: &Change, locks: &mut [HeldLo
         digest(&fs::read(&lock.external)?)? == lock.checksum,
         "metadata lock changed"
     );
+    if change.after == State::Absent {
+        ensure!(snapshot(&resource)? == actual, "metadata changed before deletion");
+        fs::remove_file(&resource)?;
+        return sync_dir(resource.parent().context("metadata parent")?);
+    }
     let State::File { mode, bytes } = &change.after else {
         bail!("invalid prepared metadata");
     };
-    let staged = journal(repo).join("publication");
+    let staged = staging.join("publication");
     if fs::symlink_metadata(&staged).is_ok() {
         fs::remove_file(&staged)?;
     }
     private_write(&staged, bytes)?;
     fs::set_permissions(&staged, fs::Permissions::from_mode(*mode))?;
     sync_path(&staged)?;
-    sync_dir(&journal(repo))?;
+    sync_dir(staging)?;
     ensure!(
         snapshot(&resource)? == actual,
         "metadata changed before publication: {}",
         resource.display()
     );
     fs::rename(&staged, &resource)?;
-    sync_dir(&journal(repo))?;
+    sync_dir(staging)?;
     sync_dir(resource.parent().context("metadata parent")?)
 }
 
@@ -1506,7 +1575,7 @@ fn cleanup(repo: &gix::Repository, state: &Manifest) -> Result<()> {
     fs::remove_dir(&completed)?;
     sync_dir(repo.git_dir())
 }
-fn verify_locks(locks: &[HeldLock]) -> Result<()> {
+pub(crate) fn verify_locks(locks: &[HeldLock]) -> Result<()> {
     use std::os::unix::fs::MetadataExt;
     for lock in locks {
         let actual = fs::symlink_metadata(&lock.external)?;

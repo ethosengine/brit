@@ -57,8 +57,7 @@ fn digest(bytes: &[u8]) -> Result<String> {
     Ok(hash.try_finalize()?.to_string())
 }
 fn sync_dir(path: &Path) -> Result<()> {
-    fs::File::open(path)?.sync_all()?;
-    Ok(())
+    super::super::switch::sync_dir(path)
 }
 fn write<T: Serialize>(dir: &Path, name: &str, value: &T) -> Result<()> {
     let payload = serde_json::to_vec(value)?;
@@ -73,7 +72,7 @@ fn write<T: Serialize>(dir: &Path, name: &str, value: &T) -> Result<()> {
         .mode(0o600)
         .open(&temp)?;
     file.write_all(&bytes)?;
-    file.sync_all()?;
+    super::super::switch::sync_file(&file, &temp)?;
     fs::rename(temp, dir.join(name))?;
     sync_dir(dir)
 }

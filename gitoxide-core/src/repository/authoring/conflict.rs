@@ -27,10 +27,156 @@ enum Image {
     File(Vec<u8>, u32),
     Link(Vec<u8>),
 }
+/// Original staging and dirty files, captured once before replay changes the checkout.
+/// This value is private journal data; its file payloads must never enter a commit tree.
+#[derive(Clone, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct Preservation {
+    original_index: Vec<u8>,
+    original: Vec<Entry>,
+    preserved: Vec<Vec<u8>>,
+    clean_preserved: Vec<Entry>,
+    #[serde(with = "byte_map")]
+    before: BTreeMap<Vec<u8>, Option<Image>>,
+}
+
+impl Preservation {
+    /// Capture without changing the index, object store or worktree.
+    /// The caller must hold the repository mutation guard until this is journaled.
+    pub fn capture(repo: &gix::Repository) -> Result<Self> {
+        validate_metadata_directories(repo)?;
+        ensure!(
+            std::env::var_os("GIT_INDEX_FILE").is_none(),
+            "alternate indexes are unsupported"
+        );
+        let original = read_public(repo)?;
+        validate_public(&original)?;
+        ensure!(
+            original.entries().iter().all(|e| e.stage_raw() == 0),
+            "unmerged starting index"
+        );
+        let raw_index = fs::read(repo.index_path())?;
+        let (raw_state, _) =
+            gix::index::State::from_bytes(&raw_index, original.timestamp(), repo.object_hash(), Default::default())?;
+        ensure!(raw_state.link().is_none(), "split index unsupported");
+        let base = repo.index_from_tree(&repo.head_commit()?.tree_id()?)?;
+        let original_entries = entries(&original);
+        let mut preserved = changed(&entries(&base), &original_entries);
+        for e in original.entries() {
+            let p: BString = e.path(&original).into();
+            let current = super::super::index::authoring::worktree_entry(repo, &original, &p)?;
+            let equal = match current {
+                Some((mode, data)) => mode == e.mode && repo.find_object(e.id)?.data == data,
+                None => false,
+            };
+            if !equal && !preserved.contains(&p.to_vec()) {
+                preserved.push(p.to_vec());
+            }
+        }
+        let root = repo.workdir().context("worktree required")?;
+        let mut before = BTreeMap::new();
+        for p in &preserved {
+            before.insert(p.clone(), image(root, p)?);
+        }
+        let clean_preserved = entries(&base)
+            .into_iter()
+            .filter(|e| preserved.contains(&e.path))
+            .collect();
+        Ok(Self {
+            original_index: raw_index,
+            original: original_entries,
+            preserved,
+            clean_preserved,
+            before,
+        })
+    }
+
+    pub fn original_index(&self) -> &[u8] {
+        &self.original_index
+    }
+
+    /// Original staged blobs may be absent from every commit closure. Retained
+    /// copies must include them as raw private payloads before releasing refs.
+    pub(crate) fn original_object_ids(&self) -> Result<BTreeSet<gix::ObjectId>> {
+        self.original
+            .iter()
+            .map(|entry| gix::ObjectId::from_hex(entry.id.as_bytes()).map_err(Into::into))
+            .collect()
+    }
+
+    pub fn preserved_paths(&self) -> &[Vec<u8>] {
+        &self.preserved
+    }
+
+    /// Preserved public staging and working bytes must still match the original
+    /// capture at every transition, including after a hook or external staging.
+    pub fn validate_observed(&self, repo: &gix::Repository, public: &gix::index::State) -> Result<()> {
+        validate_public(public)?;
+        let observed = entries(public);
+        ensure!(
+            self.preserved
+                .iter()
+                .all(|p| semantic(&self.original, p) == semantic(&observed, p)),
+            "preserved staging changed"
+        );
+        ensure!(
+            !observed
+                .iter()
+                .any(|e| self.preserved.iter().any(|p| e.path != *p && overlaps(&e.path, p))),
+            "public index collides with a preserved ancestor or descendant"
+        );
+        let root = repo.workdir().context("worktree required")?;
+        for (path, original) in &self.before {
+            ensure!(image(root, path)? == *original, "preserved working bytes changed");
+        }
+        Ok(())
+    }
+
+    /// Replaying or accepting a reordered footprint cannot consume preserved edits.
+    pub fn validate_scope(&self, active: &[Vec<u8>]) -> Result<()> {
+        ensure!(
+            !self.preserved.iter().any(|p| active.iter().any(|a| overlaps(p, a))),
+            "preserved edits overlap authoring scope"
+        );
+        Ok(())
+    }
+
+    /// Overlay only original preserved staging onto a clean replay index.
+    pub fn public_index(&self, repo: &gix::Repository, private: &gix::index::State) -> Result<gix::index::State> {
+        let private = entries(private);
+        ensure!(
+            !private
+                .iter()
+                .any(|e| self.preserved.iter().any(|p| e.path != *p && overlaps(&e.path, p))),
+            "replay index collides with a preserved ancestor or descendant"
+        );
+        let clean: Vec<_> = private
+            .iter()
+            .filter(|e| self.preserved.contains(&e.path))
+            .cloned()
+            .collect();
+        ensure!(
+            changed(&self.clean_preserved, &clean).is_empty(),
+            "replay changed a preserved path"
+        );
+        index(repo, &overlay(&private, &self.original, &self.preserved))
+    }
+}
+
+/// Ownership of one child is tied to one immutable parent journal state.
+#[derive(Clone, Debug, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(deny_unknown_fields)]
+pub(crate) struct ParentBinding {
+    pub(crate) nonce: String,
+    pub(crate) step: usize,
+    pub(crate) parent_state: String,
+}
 #[derive(Clone, Serialize, Deserialize, PartialEq, Eq)]
 #[serde(deny_unknown_fields)]
 struct State {
     version: u32,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    replay_parent: Option<ParentBinding>,
     identities: Vec<(u64, u64)>,
     policy: String,
     original_index: String,
@@ -70,6 +216,15 @@ struct Decision {
     old_log: Option<Vec<u8>>,
     new_log: Option<Vec<u8>>,
 }
+#[derive(Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+struct OwnedPreparation {
+    version: u32,
+    binding: ParentBinding,
+    state: State,
+    original: Vec<u8>,
+    private: Vec<u8>,
+}
 /// A private, worktree-owned authoring stop. All raw before images remain private.
 pub struct Session {
     directory: PathBuf,
@@ -80,12 +235,35 @@ pub struct Outcome {
     pub commit: gix::ObjectId,
     pub warnings: Vec<String>,
 }
+/// A checked handoff to the replay parent, not permission to remove the child.
+/// The parent must durably accept the binding and receipt before retirement.
+pub(crate) struct OwnedCompletion {
+    pub(crate) binding: ParentBinding,
+    pub(crate) receipt: String,
+    pub(crate) private: gix::index::State,
+    pub(crate) head: gix::ObjectId,
+    pub(crate) active: Vec<BString>,
+}
+pub(crate) struct OwnedRetention {
+    pub(crate) binding: ParentBinding,
+    pub(crate) receipt: String,
+    pub(crate) objects: BTreeSet<gix::ObjectId>,
+    pub(crate) pending_hook: Option<(usize, bool)>,
+}
 fn raw(path: &Path) -> Result<Vec<u8>> {
     Ok(gix::path::into_bstr(path)?.as_bytes().to_vec())
 }
 
 fn overlaps(a: &[u8], b: &[u8]) -> bool {
     a == b || (a.starts_with(b) && a.get(b.len()) == Some(&b'/')) || (b.starts_with(a) && b.get(a.len()) == Some(&b'/'))
+}
+
+/// Fingerprint neighboring work without placing its bytes in the object database.
+/// Only exact active leaves are excluded; descendants and ancestors remain guarded.
+pub(crate) fn worktree_witness(repo: &gix::Repository, excluded: &[Vec<u8>]) -> Result<String> {
+    let work = snapshot(repo.workdir().context("worktree required")?)?;
+    let neighbors: Vec<_> = work.into_iter().filter(|(path, _)| !excluded.contains(path)).collect();
+    digest(&serde_json::to_vec(&neighbors)?)
 }
 fn entries(index: &gix::index::State) -> Vec<Entry> {
     index
@@ -190,9 +368,9 @@ fn persist(path: &Path, data: &[u8]) -> Result<()> {
     }
     let mut file = options.open(&temp)?;
     file.write_all(data)?;
-    file.sync_all()?;
+    super::super::switch::sync_file(&file, &temp)?;
     fs::rename(temp, path)?;
-    fs::File::open(path.parent().context("parent")?)?.sync_all()?;
+    super::super::switch::sync_dir(path.parent().context("parent")?)?;
     Ok(())
 }
 impl Session {
@@ -205,48 +383,21 @@ impl Session {
             repo.head()?.referent_name().is_none(),
             "internal authoring requires detached HEAD"
         );
-        ensure!(
-            std::env::var_os("GIT_INDEX_FILE").is_none(),
-            "alternate indexes are unsupported"
-        );
-        let original = read_public(repo)?;
-        validate_public(&original)?;
-        ensure!(
-            original.entries().iter().all(|e| e.stage_raw() == 0),
-            "unmerged starting index"
-        );
-        let raw_index = fs::read(repo.index_path())?;
-        let (raw_state, _) =
-            gix::index::State::from_bytes(&raw_index, original.timestamp(), repo.object_hash(), Default::default())?;
-        ensure!(raw_state.link().is_none(), "split index unsupported");
+        let preservation = Preservation::capture(repo)?;
         let head = repo.head_commit()?;
         ensure!(
             head.parent_ids().count() == 1,
             "internal authoring requires a non-root linear edit group"
         );
         let base = repo.index_from_tree(&head.tree_id()?)?;
-        let original_entries = entries(&original);
+        let original_entries = preservation.original.clone();
         let private = entries(&base);
-        let mut preserved = changed(&private, &original_entries);
+        let preserved = preservation.preserved.clone();
         let active = super::super::index::authoring::literal_paths(repo, active)?
             .into_iter()
             .map(|p| p.to_vec())
             .collect::<Vec<_>>();
-        for e in original.entries() {
-            let p: BString = e.path(&original).into();
-            let current = super::super::index::authoring::worktree_entry(repo, &original, &p)?;
-            let equal = match current {
-                Some((mode, data)) => mode == e.mode && repo.find_object(e.id)?.data == data,
-                None => false,
-            };
-            if !equal && !preserved.contains(&p.to_vec()) {
-                preserved.push(p.to_vec());
-            }
-        }
-        ensure!(
-            !preserved.iter().any(|p| active.iter().any(|a| overlaps(p, a))),
-            "preserved edits overlap authoring scope"
-        );
+        preservation.validate_scope(&active)?;
         let root = repo.workdir().context("worktree required")?;
         let work = snapshot(root)?;
         for a in &active {
@@ -265,15 +416,16 @@ impl Session {
         }
         #[cfg(not(unix))]
         fs::create_dir(&directory)?;
-        let mut before = BTreeMap::new();
-        for p in preserved.iter().chain(&active) {
+        let mut before = preservation.before.clone();
+        for p in &active {
             before.insert(p.clone(), image(root, p)?);
         }
         let state = State {
             version: 1,
+            replay_parent: None,
             identities: identities(repo, &directory)?,
             policy: policy(repo)?,
-            original_index: digest(&fs::read(repo.index_path())?)?,
+            original_index: digest(preservation.original_index())?,
             original_head: fs::read(repo.git_dir().join("HEAD"))?,
             original_log: read_optional(&repo.git_dir().join("logs/HEAD"))?,
             owner: raw(&fs::canonicalize(repo.git_dir())?)?,
@@ -300,13 +452,214 @@ impl Session {
             pending_hook: None,
         };
         let session = Self { directory, state };
-        persist(&session.directory.join("index.original"), &fs::read(repo.index_path())?)?;
+        persist(&session.directory.join("index.original"), preservation.original_index())?;
         session.save(repo)?;
-        fs::File::open(repo.git_dir())?.sync_all()?;
+        super::super::switch::sync_dir(repo.git_dir())?;
         Ok(session)
     }
     pub fn directory(&self) -> &Path {
         &self.directory
+    }
+    /// Enter a replay-owned stop using the operation's original preservation capture.
+    /// The replay parent has already installed and validated this stop's checkout.
+    /// Caller holds the shared mutation guard through parent and child publication.
+    /// After the child advances, use `open_owned` / `recover_owned`; the immutable
+    /// preparation recipe deliberately refuses changed child state.
+    pub(crate) fn prepare_owned(
+        repo: &gix::Repository,
+        authorization: &super::super::replay::ChildAuthorization,
+        preservation: &Preservation,
+        kind: StopKind,
+        active: &[BString],
+        private: &gix::index::State,
+    ) -> Result<Self> {
+        authorization.validate_stop(repo, preservation, kind, active, private)?;
+        let binding = authorization.binding();
+        let parent_directory = repo.git_dir().join("brit-rebase");
+        let recipe_path = parent_directory.join(format!("child-{}-prepare.json", binding.step));
+        if fs::symlink_metadata(&recipe_path).is_ok() {
+            return Self::resume_owned_preparation(repo, authorization, &recipe_path);
+        }
+        validate_metadata_directories(repo)?;
+        ensure!(repo.state().is_none(), "foreign operation in progress");
+        ensure!(
+            repo.head()?.referent_name().is_none(),
+            "replay child requires detached HEAD"
+        );
+        private.verify_entries()?;
+        validate_public(private)?;
+        let active = super::super::index::authoring::literal_paths(repo, active)?
+            .into_iter()
+            .map(|p| p.to_vec())
+            .collect::<Vec<_>>();
+        preservation.validate_scope(&active)?;
+        let public = preservation.public_index(repo, private)?;
+        ensure!(
+            changed(&entries(&public), &entries(&*read_public(repo)?)).is_empty(),
+            "public stop index differs from the authorized private index overlay"
+        );
+        let root = repo.workdir().context("worktree required")?;
+        for (path, original) in &preservation.before {
+            ensure!(
+                image(root, path)? == *original,
+                "preserved work changed before child preparation"
+            );
+        }
+        let head = repo.head_commit()?;
+        let parent = head.parent_ids().next().map(|id| id.to_string());
+        ensure!(kind != StopKind::Edit || parent.is_some(), "edit group requires parent");
+        let mut before = preservation.before.clone();
+        for path in &active {
+            before.insert(path.clone(), image(root, path)?);
+        }
+        let work = snapshot(root)?;
+        ensure!(
+            fs::symlink_metadata(repo.git_dir().join("brit-authoring")).is_err(),
+            "child destination exists without its preparation recipe"
+        );
+        let directory = parent_directory.join(format!("child-{}-preparing", binding.step));
+        use std::os::unix::fs::DirBuilderExt;
+        fs::DirBuilder::new().mode(0o700).create(&directory)?;
+        super::super::switch::checkpoint("replay-child-preparation-directory-created")?;
+        let state = State {
+            version: 1,
+            replay_parent: Some(authorization.binding()),
+            identities: identities(repo, &directory)?,
+            policy: policy(repo)?,
+            original_index: digest(preservation.original_index())?,
+            original_head: fs::read(repo.git_dir().join("HEAD"))?,
+            original_log: read_optional(&repo.git_dir().join("logs/HEAD"))?,
+            owner: raw(&fs::canonicalize(repo.git_dir())?)?,
+            root: raw(&fs::canonicalize(root)?)?,
+            common: raw(&fs::canonicalize(repo.common_dir())?)?,
+            kind,
+            head: head.id.to_string(),
+            // Conflict stops cannot amend/split; their tip may legitimately be a root.
+            parent: parent.unwrap_or_else(|| head.id.to_string()),
+            original: preservation.original.clone(),
+            private: entries(private),
+            public: entries(&public),
+            preserved: preservation.preserved.clone(),
+            active,
+            before,
+            work,
+            expanded: BTreeMap::new(),
+            split: false,
+            children: 0,
+            invocation: 0,
+            pending_hook: None,
+        };
+        let recipe = OwnedPreparation {
+            version: 1,
+            binding,
+            original: preservation.original_index().to_vec(),
+            private: bytes(repo, &state.private)?,
+            state,
+        };
+        // The complete recipe, including the staging inode, precedes every child
+        // member. Recovery never captures work or preservation a second time.
+        super::super::switch::private_write(&recipe_path, &sealed(&recipe)?)?;
+        super::super::switch::sync_dir(&directory)?;
+        super::super::switch::sync_dir(&parent_directory)?;
+        super::super::switch::checkpoint("replay-child-recipe-durable")?;
+        Self::resume_owned_preparation(repo, authorization, &recipe_path)
+    }
+
+    fn resume_owned_preparation(
+        repo: &gix::Repository,
+        authorization: &super::super::replay::ChildAuthorization,
+        recipe_path: &Path,
+    ) -> Result<Self> {
+        use std::os::unix::fs::{MetadataExt, PermissionsExt};
+        authorization.validate(repo)?;
+        let uid = fs::metadata(repo.git_dir())?.uid();
+        let metadata = fs::symlink_metadata(recipe_path)?;
+        ensure!(
+            metadata.is_file() && metadata.uid() == uid && metadata.permissions().mode().trailing_zeros() >= 6,
+            "unsafe child preparation recipe"
+        );
+        let recipe: OwnedPreparation = load(recipe_path)?;
+        ensure!(
+            recipe.version == 1
+                && recipe.binding == authorization.binding()
+                && recipe.state.replay_parent.as_ref() == Some(&recipe.binding)
+                && digest(&recipe.original)? == recipe.state.original_index
+                && recipe.private == bytes(repo, &recipe.state.private)?,
+            "foreign child preparation recipe"
+        );
+        let parent_directory = recipe_path.parent().context("parent journal")?;
+        // Readable bytes can have survived a process crash before their original
+        // synchronization. Reestablish durable ownership before child publication.
+        super::super::switch::sync_path(recipe_path)?;
+        super::super::switch::sync_dir(parent_directory)?;
+        let staging = parent_directory.join(format!("child-{}-preparing", recipe.binding.step));
+        let active = repo.git_dir().join("brit-authoring");
+        let exists = |path: &Path| -> Result<bool> {
+            match fs::symlink_metadata(path) {
+                Ok(_) => Ok(true),
+                Err(e) if e.kind() == std::io::ErrorKind::NotFound => Ok(false),
+                Err(e) => Err(e.into()),
+            }
+        };
+        let staged = exists(&staging)?;
+        ensure!(staged != exists(&active)?, "ambiguous child preparation directories");
+        let directory = if staged { staging } else { active.clone() };
+        let metadata = fs::symlink_metadata(&directory)?;
+        ensure!(
+            metadata.is_dir()
+                && metadata.uid() == uid
+                && metadata.permissions().mode().trailing_zeros() >= 6
+                && identities(repo, &directory)? == recipe.state.identities,
+            "foreign child preparation directory"
+        );
+        let members = [
+            ("index.original", recipe.original),
+            ("index.private", recipe.private),
+            ("state.json", sealed(&recipe.state)?),
+        ];
+        for entry in fs::read_dir(&directory)? {
+            ensure!(
+                members
+                    .iter()
+                    .any(|(name, _)| entry.as_ref().is_ok_and(|e| e.file_name() == *name)),
+                "unknown child preparation member"
+            );
+        }
+        for (name, bytes) in members {
+            let path = directory.join(name);
+            if exists(&path)? {
+                let metadata = fs::symlink_metadata(&path)?;
+                ensure!(
+                    metadata.is_file()
+                        && metadata.uid() == uid
+                        && metadata.permissions().mode().trailing_zeros() >= 6
+                        && fs::read(&path)? == bytes,
+                    "changed child preparation member"
+                );
+                super::super::switch::sync_path(&path)?;
+            } else {
+                super::super::switch::private_write(&path, &bytes)?;
+            }
+        }
+        let mut session = Self {
+            directory,
+            state: recipe.state,
+        };
+        session.validate(repo)?;
+        ensure!(
+            changed(&session.state.public, &entries(&*read_public(repo)?)).is_empty()
+                && snapshot(repo.workdir().context("worktree required")?)? == session.state.work,
+            "checkout changed during child preparation"
+        );
+        super::super::switch::sync_dir(&session.directory)?;
+        if staged {
+            fs::rename(&session.directory, &active)?;
+            session.directory = active;
+        }
+        super::super::switch::sync_dir(parent_directory)?;
+        super::super::switch::sync_dir(repo.git_dir())?;
+        super::super::switch::checkpoint("replay-child-published")?;
+        Ok(session)
     }
     /// Acknowledge a quiescent unknown post-hook without repeating its side effects.
     pub fn acknowledge_post_hook(&mut self, repo: &gix::Repository) -> Result<()> {
@@ -343,14 +696,44 @@ impl Session {
         persist(&self.directory.join("state.json"), &sealed(&self.state)?)
     }
     pub fn open(repo: &gix::Repository) -> Result<Self> {
+        let s = Self::open_inner(repo)?;
+        ensure!(
+            s.state.replay_parent.is_none(),
+            "replay-owned authoring requires its parent session"
+        );
+        Ok(s)
+    }
+    fn open_inner(repo: &gix::Repository) -> Result<Self> {
         let directory = repo.git_dir().join("brit-authoring");
         let state: State = load(&directory.join("state.json"))?;
         let s = Self { directory, state };
         s.ownership(repo)?;
         Ok(s)
     }
+    pub(crate) fn open_owned(
+        repo: &gix::Repository,
+        authorization: &super::super::replay::ChildAuthorization,
+    ) -> Result<Self> {
+        authorization.validate(repo)?;
+        let session = Self::open_inner(repo)?;
+        ensure!(
+            session.state.replay_parent.as_ref() == Some(&authorization.binding()),
+            "foreign replay child"
+        );
+        Ok(session)
+    }
     fn ownership(&self, repo: &gix::Repository) -> Result<()> {
+        self.ownership_inner(repo, None)
+    }
+    fn ownership_inner(&self, repo: &gix::Repository, accepted: Option<&str>) -> Result<()> {
         validate_metadata_directories(repo)?;
+        if let Some(binding) = &self.state.replay_parent {
+            if let Some(receipt) = accepted {
+                super::super::replay::validate_accepted_child(repo, binding, receipt)?;
+            } else {
+                super::super::replay::validate_child_binding(repo, binding)?;
+            }
+        }
         use std::os::unix::fs::{MetadataExt, PermissionsExt};
         let meta = fs::symlink_metadata(&self.directory)?;
         ensure!(
@@ -426,6 +809,174 @@ impl Session {
             "foreign authoring ownership"
         );
         Ok(())
+    }
+    /// Parent-held mutation guard and a durable accepted-child receipt authorize
+    /// this rename. Keep all messages, decisions and invocation evidence for the
+    /// parent's retained-copy capture and eventual owned tombstone cleanup.
+    pub(crate) fn archive_owned(repo: &gix::Repository, binding: &ParentBinding, receipt: &str) -> Result<PathBuf> {
+        super::super::replay::validate_accepted_child(repo, binding, receipt)?;
+        let parent = repo.git_dir().join("brit-rebase");
+        super::super::switch::sync_path(&parent.join("state.json"))?;
+        super::super::switch::sync_dir(&parent)?;
+        let active = repo.git_dir().join("brit-authoring");
+        let archive = parent.join(format!("child-{}-accepted", binding.step));
+        let present = |path: &Path| -> Result<bool> {
+            match fs::symlink_metadata(path) {
+                Ok(_) => Ok(true),
+                Err(e) if e.kind() == std::io::ErrorKind::NotFound => Ok(false),
+                Err(e) => Err(e.into()),
+            }
+        };
+        let is_active = present(&active)?;
+        ensure!(is_active != present(&archive)?, "ambiguous accepted child directories");
+        let directory = if is_active { active } else { archive.clone() };
+        let state_bytes = fs::read(directory.join("state.json"))?;
+        ensure!(digest(&state_bytes)? == receipt, "accepted child receipt changed");
+        let state: State = load(&directory.join("state.json"))?;
+        ensure!(state.replay_parent.as_ref() == Some(binding), "unaccepted child");
+        let session = Self { directory, state };
+        session.ownership_inner(repo, Some(receipt))?;
+        for number in 1..=session.state.invocation {
+            // Unknown is permitted only once the supervisor and process group
+            // are proven quiescent; inspection never repeats the invocation.
+            super::invocation::inspect(&session.directory.join(format!("invocation-{number}")))?;
+        }
+        sync_objects(&session.directory)?;
+        if is_active {
+            fs::rename(&session.directory, &archive)?;
+        }
+        super::super::switch::sync_dir(&parent)?;
+        super::super::switch::sync_dir(repo.git_dir())?;
+        super::super::switch::checkpoint("replay-child-archived")?;
+        Ok(archive)
+    }
+    /// Derive cleanup ownership from the child schema and bounded counters.
+    /// Returned paths are relative to the parent journal.
+    pub(crate) fn accepted_inventory(
+        repo: &gix::Repository,
+        binding: &ParentBinding,
+        receipt: &str,
+    ) -> Result<BTreeSet<Vec<u8>>> {
+        use std::os::unix::fs::{MetadataExt, PermissionsExt};
+        super::super::replay::validate_accepted_child(repo, binding, receipt)?;
+        let parent = repo.git_dir().join("brit-rebase");
+        let directory = parent.join(format!("child-{}-accepted", binding.step));
+        let state: State = load(&directory.join("state.json"))?;
+        ensure!(
+            digest(&fs::read(directory.join("state.json"))?)? == receipt
+                && state.replay_parent.as_ref() == Some(binding),
+            "accepted child state changed"
+        );
+        let session = Self { directory, state };
+        session.ownership_inner(repo, Some(receipt))?;
+        let recipe_path = parent.join(format!("child-{}-prepare.json", binding.step));
+        let metadata = fs::symlink_metadata(&recipe_path)?;
+        ensure!(
+            metadata.is_file()
+                && metadata.uid() == fs::metadata(&parent)?.uid()
+                && metadata.permissions().mode().trailing_zeros() >= 6,
+            "unsafe accepted child recipe"
+        );
+        let recipe: OwnedPreparation = load(&recipe_path)?;
+        ensure!(
+            recipe.version == 1
+                && &recipe.binding == binding
+                && recipe.state.replay_parent.as_ref() == Some(binding)
+                && recipe.state.identities == session.state.identities
+                && digest(&recipe.original)? == session.state.original_index
+                && recipe.private == bytes(repo, &recipe.state.private)?,
+            "accepted child recipe changed"
+        );
+        let mut owned = BTreeSet::from([
+            raw(session.directory.strip_prefix(&parent)?)?,
+            raw(recipe_path.strip_prefix(&parent)?)?,
+        ]);
+        let mut previous = &recipe.state;
+        let mut decisions = Vec::new();
+        for number in 1..=session.state.children {
+            decisions.push(load::<Decision>(
+                &session.directory.join(format!("child-{number}.json")),
+            )?);
+        }
+        for decision in &decisions {
+            ensure!(
+                decision.before.head == previous.head
+                    && decision.before.private == previous.private
+                    && decision.before.public == previous.public
+                    && decision.before.children == previous.children,
+                "accepted child decision chain is incomplete"
+            );
+            previous = &decision.after;
+        }
+        ensure!(
+            session.state.head == previous.head
+                && session.state.private == previous.private
+                && session.state.public == previous.public
+                && session.state.children == previous.children,
+            "accepted child state differs from decision chain"
+        );
+        for number in 1..=session.state.invocation {
+            super::invocation::inspect(&session.directory.join(format!("invocation-{number}")))?;
+        }
+        for entry in fs::read_dir(&session.directory)? {
+            let entry = entry?;
+            let name = entry.file_name();
+            let name = name.to_str().context("invalid child member name")?;
+            let path = entry.path();
+            if let Some(number) = name.strip_prefix("invocation-") {
+                let number: usize = number.parse()?;
+                ensure!(
+                    (1..=session.state.invocation).contains(&number) && name == format!("invocation-{number}"),
+                    "unowned child invocation"
+                );
+                super::invocation::inspect(&path)?;
+                for member in fs::read_dir(&path)? {
+                    owned.insert(raw(member?.path().strip_prefix(&parent)?)?);
+                }
+            } else if let Some(number) = name.strip_prefix("child-").and_then(|n| n.strip_suffix(".json")) {
+                let number: usize = number.parse()?;
+                ensure!(
+                    (1..=session.state.children).contains(&number) && name == format!("child-{number}.json"),
+                    "unowned child decision"
+                );
+                let decision: Decision = load(&path)?;
+                ensure!(
+                    decision.before.replay_parent.as_ref() == Some(binding)
+                        && decision.after.replay_parent.as_ref() == Some(binding)
+                        && decision.before.children + 1 == number
+                        && decision.after.children == number,
+                    "child decision ownership mismatch"
+                );
+            } else if name == "objects" {
+                for member in fs::read_dir(&path)? {
+                    let member = member?;
+                    let metadata = fs::symlink_metadata(member.path())?;
+                    ensure!(
+                        metadata.is_file() && metadata.uid() == fs::metadata(&parent)?.uid(),
+                        "unsafe child object receipt"
+                    );
+                    let object: RetainedObject = load(&member.path())?;
+                    let id = gix::ObjectId::from_hex(object.id.as_bytes())?;
+                    ensure!(
+                        member.file_name().as_encoded_bytes() == object.id.as_bytes()
+                            && gix::objs::compute_hash(
+                                id.kind(),
+                                gix::objs::Kind::from_bytes(object.kind.as_bytes())?,
+                                &object.data
+                            )? == id,
+                        "corrupt child object receipt"
+                    );
+                    owned.insert(raw(member.path().strip_prefix(&parent)?)?);
+                }
+            } else {
+                ensure!(
+                    matches!(name, "index.original" | "index.private" | "state.json" | "message"),
+                    "unresolved or unknown accepted child member"
+                );
+            }
+            owned.insert(raw(path.strip_prefix(&parent)?)?);
+        }
+        Ok(owned)
     }
     pub fn validate(&self, repo: &gix::Repository) -> Result<()> {
         self.validate_scope(repo, &self.state.active)
@@ -608,6 +1159,118 @@ impl Session {
         }
         Ok(())
     }
+    pub(crate) fn owned_completion(
+        &self,
+        repo: &gix::Repository,
+        authorization: &super::super::replay::ChildAuthorization,
+    ) -> Result<OwnedCompletion> {
+        authorization.validate(repo)?;
+        ensure!(
+            self.state.replay_parent.as_ref() == Some(&authorization.binding()),
+            "foreign replay child completion"
+        );
+        self.validate_completion(repo)?;
+        ensure!(
+            !self
+                .directory
+                .join(format!("child-{}.json", self.state.children + 1))
+                .exists(),
+            "recover the durable child decision before accepting completion"
+        );
+        let private = index(repo, &self.state.private)?;
+        ensure!(
+            fs::read(self.directory.join("index.private"))? == bytes(repo, &self.state.private)?,
+            "private child index differs from its accepted state"
+        );
+        Ok(OwnedCompletion {
+            binding: authorization.binding(),
+            receipt: digest(&fs::read(self.directory.join("state.json"))?)?,
+            private,
+            head: gix::ObjectId::from_hex(self.state.head.as_bytes())?,
+            active: self.state.active.iter().cloned().map(Into::into).collect(),
+        })
+    }
+    /// Capture an unresolved child for skip/abort without requiring its active
+    /// work to be clean. Caller holds the parent guard through retained capture.
+    pub(crate) fn owned_retention(
+        &self,
+        repo: &gix::Repository,
+        authorization: &super::super::replay::ChildAuthorization,
+        allow_unrelated_work: bool,
+    ) -> Result<OwnedRetention> {
+        authorization.validate(repo)?;
+        self.ownership(repo)?;
+        ensure!(
+            self.state.replay_parent.as_ref() == Some(&authorization.binding())
+                && load::<State>(&self.directory.join("state.json"))? == self.state,
+            "stale or foreign replay child retention"
+        );
+        ensure!(
+            !self
+                .directory
+                .join(format!("child-{}.json", self.state.children + 1))
+                .exists(),
+            "recover child decision before retaining or restoring"
+        );
+        for number in 1..=self.state.invocation {
+            super::invocation::inspect(&self.directory.join(format!("invocation-{number}")))?;
+        }
+        ensure!(
+            repo.head()?.referent_name().is_none()
+                && repo.head_commit()?.id == gix::ObjectId::from_hex(self.state.head.as_bytes())?,
+            "foreign child HEAD movement"
+        );
+        if allow_unrelated_work {
+            // Abort restores only parent-owned replay paths. Unrelated new work
+            // remains in place, while frozen preservation and path collisions
+            // must still be checked before the parent authorizes restoration.
+            let current = snapshot(repo.workdir().context("worktree required")?)?;
+            for path in self.state.work.keys().chain(current.keys()) {
+                if self.state.preserved.contains(path)
+                    || (!self.state.active.contains(path)
+                        && self.state.active.iter().any(|active| overlaps(path, active)))
+                {
+                    ensure!(
+                        self.state.work.get(path) == current.get(path),
+                        "retention work collides with preserved or active scope"
+                    );
+                }
+            }
+        } else {
+            self.validate_scope_work(repo, &self.state.active)?;
+        }
+        let public = read_public(repo)?;
+        let private = gix::index::File::at(
+            self.directory.join("index.private"),
+            repo.object_hash(),
+            false,
+            Default::default(),
+        )?;
+        validate_public(&private)?;
+        for (expected, observed) in [
+            (&self.state.public, entries(&public)),
+            (&self.state.private, entries(&private)),
+        ] {
+            ensure!(
+                changed(expected, &observed)
+                    .iter()
+                    .all(|path| self.state.active.contains(path)),
+                "child staging changed outside active retention scope"
+            );
+        }
+        let objects = private
+            .entries()
+            .iter()
+            .chain(public.entries())
+            .map(|entry| entry.id)
+            .collect();
+        Ok(OwnedRetention {
+            binding: authorization.binding(),
+            receipt: digest(&fs::read(self.directory.join("state.json"))?)?,
+            objects,
+            pending_hook: self.state.pending_hook,
+        })
+    }
     pub fn private_tree(&self, repo: &gix::Repository) -> Result<gix::ObjectId> {
         self.validate(repo)?;
         let state = index(repo, &self.state.private)?;
@@ -735,8 +1398,8 @@ impl Session {
                 ensure!(read_optional(resource)? == old, "metadata changed under lock");
                 lock.write_all(&data)?;
                 lock.commit()?;
-                fs::File::open(resource)?.sync_all()?;
-                fs::File::open(parent)?.sync_all()?;
+                super::super::switch::sync_path(resource)?;
+                super::super::switch::sync_dir(parent)?;
                 #[cfg(feature = "switch-test-faults")]
                 if resource == &head_path
                     && std::env::var_os("BRIT_AUTHORING_FAIL_AFTER").as_deref()
@@ -746,12 +1409,22 @@ impl Session {
                 }
             }
         }
-        fs::File::open(repo.git_dir())?.sync_all()?;
+        super::super::switch::sync_dir(repo.git_dir())?;
         Ok(())
     }
     pub fn recover(repo: &gix::Repository) -> Result<Self> {
         let _guard = super::super::switch::shared_guard(repo)?;
-        let mut s = Self::open(repo)?;
+        Self::open(repo)?.recover_pending(repo)
+    }
+    pub(crate) fn recover_owned(
+        repo: &gix::Repository,
+        authorization: &super::super::replay::ChildAuthorization,
+    ) -> Result<Self> {
+        // The replay parent holds the shared guard across its child handoff.
+        Self::open_owned(repo, authorization)?.recover_pending(repo)
+    }
+    fn recover_pending(mut self, repo: &gix::Repository) -> Result<Self> {
+        let s = &mut self;
         let next = s.directory.join(format!("child-{}.json", s.state.children + 1));
         if next.exists() {
             let d: Decision = load(&next)?;
@@ -766,11 +1439,15 @@ impl Session {
         } else {
             s.validate(repo)?;
         }
-        Ok(s)
+        Ok(self)
     }
     /// Retain all authored bytes before restoring the stop's original HEAD/index/files.
     /// Unrelated new work is left in place. Unknown pre-hooks can only take this path.
     pub fn abort(&mut self, repo: &gix::Repository) -> Result<PathBuf> {
+        ensure!(
+            self.state.replay_parent.is_none(),
+            "replay-owned child restoration belongs to its parent"
+        );
         let _guard = super::super::switch::shared_guard(repo)?;
         self.ownership(repo)?;
         ensure!(
@@ -879,7 +1556,7 @@ impl Session {
             .join(format!("brit-authoring-retained-{}", digest(&fs::read(&receipt)?)?));
         ensure!(!retained.exists(), "retention name already exists");
         fs::rename(&self.directory, &retained)?;
-        fs::File::open(repo.git_dir())?.sync_all()?;
+        super::super::switch::sync_dir(repo.git_dir())?;
         self.directory.clone_from(&retained);
         self.state = plan.decision.after;
         Ok(retained)
@@ -947,8 +1624,8 @@ impl Session {
                 _ => anyhow::bail!("unexpected authored object kind"),
             }
         }
-        fs::File::open(&directory)?.sync_all()?;
-        fs::File::open(&self.directory)?.sync_all()?;
+        super::super::switch::sync_dir(&directory)?;
+        super::super::switch::sync_dir(&self.directory)?;
         Ok(())
     }
     pub fn begin_split(&mut self, repo: &gix::Repository) -> Result<()> {
@@ -1125,12 +1802,12 @@ fn sync_objects(path: &Path) -> Result<()> {
         if metadata.is_dir() {
             sync_objects(&entry.path())?;
         } else if metadata.is_file() {
-            fs::File::open(entry.path())?.sync_all()?;
+            super::super::switch::sync_path(&entry.path())?;
         } else {
             ensure!(!metadata.is_symlink(), "object symlink unsupported");
         }
     }
-    fs::File::open(path)?.sync_all()?;
+    super::super::switch::sync_dir(path)?;
     Ok(())
 }
 
@@ -1277,7 +1954,7 @@ fn restore_image(root: &Path, p: &[u8], before: Option<&Image>, after: Option<&I
             let mut temporary = tempfile::NamedTempFile::new_in(parent)?;
             temporary.write_all(bytes)?;
             temporary.as_file().set_permissions(fs::Permissions::from_mode(*mode))?;
-            temporary.as_file().sync_all()?;
+            super::super::switch::sync_file(temporary.as_file(), temporary.path())?;
             ensure!(image(root, p)?.as_ref() == before, "work changed before replace");
             temporary.persist(&file)?;
         }
@@ -1286,12 +1963,12 @@ fn restore_image(root: &Path, p: &[u8], before: Option<&Image>, after: Option<&I
             let temporary = tempfile::NamedTempFile::new_in(parent)?.into_temp_path();
             fs::remove_file(&temporary)?;
             std::os::unix::fs::symlink(gix::path::from_bstr(bytes.as_bstr())?, &temporary)?;
-            fs::File::open(parent)?.sync_all()?;
+            super::super::switch::sync_dir(parent)?;
             ensure!(image(root, p)?.as_ref() == before, "work changed before replace");
             fs::rename(&temporary, &file)?;
         }
     }
-    fs::File::open(parent)?.sync_all()?;
+    super::super::switch::sync_dir(parent)?;
     Ok(())
 }
 

@@ -53,6 +53,7 @@ pub mod odb;
 #[cfg(feature = "blocking-client")]
 pub mod pull;
 pub mod remote;
+pub mod replay;
 pub mod revision;
 pub mod status;
 pub mod submodule;
