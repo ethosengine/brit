@@ -891,13 +891,13 @@ unchanged; each needs its own implementation and proof):
 
 - [x] 5d. Conflict-aware authoring: separate original/public/replay indexes, scoped resolution staging, validated external Git staging and native amend/split child receipts. Probe: no preserved dirty byte enters any rewritten tree; original staged/unstaged distinction survives every stop. Depends on 5c. Serves brit-native-daily-driver.
 - [x] 5e. Durable linear replay: pinned local selection, step/skip/final/abort decisions, retained objects, private abort copies and switch/pull journal compatibility. Probe: explicit recovery at every durable boundary, including abort after completed replay steps. Depends on 5d. Serves brit-native-daily-driver.
-- [ ] 5f. Interactive sequencing: validated todo, every selected command, editor/hook invocation outcomes and rewrite mappings. Probe: invalid/failed/interrupted editors and hooks never replay unknown effects or consume preserved edits. Depends on 5e. Serves brit-native-daily-driver.
+- [x] 5f. Interactive sequencing: validated todo, every selected command, editor/hook invocation outcomes and rewrite mappings. Probe: invalid/failed/interrupted editors and hooks never replay unknown effects or consume preserved edits. Depends on 5e. Serves brit-native-daily-driver.
 - [ ] 5g. Combined recovery and artifact qualification: complete the spec's fault matrix, retained-copy decoder/extraction/deletion, independent recovery review and exact-source rebuilt artifact journeys before public rebase exposure. Probe: interruption and synchronization-loss models, private-copy recovery and retained 5a/5b regressions. Depends on 5f. Serves brit-native-daily-driver.
 
 Maintainer discoveries captured for those stations:
 
 - Chain 5e / between a decided replay step → final branch publication / missing node: operation abort remains available until the separate final decision; probe `abort_after_each_completed_step_restores_exact_index_and_retains_rewritten_objects`. Current state: green in station 5e internal native proof; public exposure remains pending.
-- Chain 5f / between invocation start → recovery mutation / missing node: durably recorded gated child identity and proved quiescence precede capture/restore; probe owner death before/after receipt and gate release. Current state: designed, UNWIRED in Brit.
+- Chain 5f / between invocation start → recovery mutation / missing node: durably recorded gated child identity and proved quiescence precede capture/restore; probes `unknown_sequence_editor_accepts_validated_saved_bytes_without_relaunch` and `unknown_edit_author_message_is_explicitly_accepted_without_second_editor`. Current state: green in internal native proof (`native-tests-2.log`); public exposure remains pending.
 - Chain 5e / between detached replay → garbage collection / missing node: explicit H/U and intermediate commit retention precedes mutation; probe original/upstream/intermediate and stop-tree GC tests. Current state: green in station 5e internal native proof; full combined qualification remains 5g.
 - Chain 5g / between retained-copy completion → active-journal retirement / missing node: standalone byte-preserving inspection/extraction works after operation cleanup; probe recovery into an empty destination plus explicit leaf deletion. Current state: designed, UNWIRED in Brit.
 
@@ -1543,3 +1543,74 @@ unproved orphan before retrying / probe
 including a second interruption while saving the new sequence / current state:
 green in `native-tests-20.log`. This closes the internal abort-availability node;
 the full combined state/action/preservation matrix remains station 5g.
+
+
+## Station 5f — internal interactive sequencing, 2026-10-13
+
+Source base: `dc9d72a2fba24bdaefacf28f2684c3a355eba6ae`; isolated local branch:
+`sprint/interactive-sequencing-2026-10-13`. Implementation source: `09ba4016cc1683e4c536c495ccf78691e2b69179`. Final internal native, CLI,
+formatting, strict lint and feature checks pass; independent bounded Linux
+preservation/recovery approval is recorded with exact source hashes. Public rebase remains unavailable and full readiness remains
+**UNWIRED**; combined recovery, retained-copy tooling and public artifact
+qualification belong to station 5g.
+
+The existing `gix-sequencer` crate now owns pure todo parsing and original-to-result
+mapping transitions. The replay driver owns durable acceptance and mutation.
+Pick, reword, edit, squash, plain fixup, drop and break support their unambiguous
+aliases; rejected output cannot replace the last accepted todo. Completed entries
+remain fixed, every remaining candidate must occur exactly once, and reordered
+work revalidates the preservation footprint. Execution order stays separate from
+original mapping order, including zero-result drops, squash/fixup groups and
+ordered one-to-many split results.
+
+Sequence and message editors use the existing supervised invocation machinery,
+byte-safe arguments, explicit precedence and trust checks. Failed outputs remain
+available; unknown outcomes require explicit saved-byte acceptance without
+relaunch. Launch authorization rechecks the exact parent and live resources under
+the shared guard. Terminal tests exercise Ctrl-Z, foreground resumption and
+Ctrl-C. Explicit edit-stop staging, amendment and splitting consume the private
+index and preserve the operation's original staged/unstaged distinction. Message
+hooks retain their pre-commit → prepare-commit-msg → editor → commit-msg order;
+automatic replay itself runs only operation hooks.
+
+Child authoring seals its exact proposed decision and raw object closure before
+creating owned retention refs or publishing a decision. Recovery reuses those
+bytes after GC without resampling the commit or rerunning pre-hooks. All authored
+receipt heads, including superseded amendments and skipped split chains, remain
+recoverable from independent retained copies. Partial raw-object `.new` files
+are opaque retained evidence, never adopted objects; they can leave cleanup
+pending without blocking abort. Durable post-notification queues distinguish
+not-yet-started hooks from unknown outcomes: recovery runs the former once and
+requires explicit acknowledgement of the latter without rerun.
+
+Separate implementation/test owners, one Cargo runner and independent
+preservation/recovery review remain in use. Current evidence is scoped as follows:
+
+| Check | Recorded result |
+| --- | --- |
+| Full internal native suite | `native-tests-final.log`: 24 core/model, 32 retained authoring, 63 replay, 27 interactive and 8 retained-copy entries pass, including subprocess helpers |
+| Pure sequencer and mapping tests | 8 pass in `sequencer-tests-2.log` |
+| Retained stock-Git characterization | 40 pass in `characterization.log`; compatibility observations remain distinct from intentional Brit recovery behavior |
+| Interactive synchronization-loss model | Six execution modes across final/abort, with omission controls, pass in `interactive-model-1.log` |
+| Strict scoped Clippy | Core and sequencer pass in `clippy-final.log` and `sequencer-clippy.log` |
+| Final queued-hook, terminal and signal tests | All 27 interactive entries pass in `native-tests-final.log`, including repeated background suspension and exact unknown-hook acknowledgement |
+| Retained CLI and feature configurations | 147 CLI and 57 switch/pull fault entries pass; small, lean-async and max-pure checks pass against the corrected source |
+| Independent preservation/recovery review | `review.json`: bounded internal Linux approval confirmed against all 15 source hashes and final native proof; no 5g/public approval |
+
+Commands, failures/fixes, review and final source/readiness bindings belong under
+`genesis/local-dev/brit-readiness/interactive-sequencing/` in the owning workspace.
+`verification.json`, `source-binding.json` and `review.json` bind the implementation,
+commands, artifact hash and independent review. The evidence commit projects this
+station through the existing recipe. Reach rehearsal targets
+`epr ready --target dc9d72a2fba24bdaefacf28f2684c3a355eba6ae`.
+These proofs cover Linux fsync/rename and loss-of-unsynchronized-writes models;
+they do not claim physical power-cut qualification or hostile-writer isolation.
+No push, publication, parent submodule-pin change, public activation or full
+daily-driver acceptance is included.
+
+Story-harvest prerequisites retained as measured nodes:
+
+- Chain 5f / between proposed child authorship → owned retention and decision publication / missing node: seal exact decision bytes and complete raw object closure before the first retention ref, so recovery after GC reuses the same commit and never reruns pre-hooks / probe `durable_child_proposal_recovers_fixed_commit_after_gc_without_repeating_hooks` / current state: green in `native-tests-final.log`, including queued post-notification recovery.
+- Chain 5f / between interrupted raw-object persistence → abort restoration / missing node: an unclaimed `.new` file remains opaque retained evidence and cannot block restoration or become an adopted object / probe `interrupted_child_raw_object_temporary_is_retained_opaquely_on_abort` / current state: green in `native-tests-2.log`; orphan cleanup remains explicitly pending.
+- Chain 5f / between committed child decision → post-authoring notification completion / missing node: a durable queue launches known-not-started notifications once, while unknown outcomes require acknowledgement without rerun before the next notification / probe `unknown_first_queued_post_hook_is_acknowledged_once_before_second_hook_runs` / current state: green in `native-tests-final.log`.
+- Chain 5f / between editor suspension → foreground terminal handoff / missing node: synchronously stop the supervising calling thread before checking foreground ownership or resuming the editor, so repeated background continuation cannot reclaim the terminal; process-directed SIGSTOP alone can leave a multithreaded caller running past the stop request / probe `terminal_editor_ctrl_z_fg_and_ctrl_c_return_terminal_to_calling_shell` exercises background continuation twice, foreground resumption and Ctrl-C / current state: green in `native-tests-final.log` after both stops use `nix::sys::signal::raise(SIGSTOP)`; independent review confirms the final source binding.
