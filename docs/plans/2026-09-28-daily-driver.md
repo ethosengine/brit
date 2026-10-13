@@ -892,14 +892,14 @@ unchanged; each needs its own implementation and proof):
 - [x] 5d. Conflict-aware authoring: separate original/public/replay indexes, scoped resolution staging, validated external Git staging and native amend/split child receipts. Probe: no preserved dirty byte enters any rewritten tree; original staged/unstaged distinction survives every stop. Depends on 5c. Serves brit-native-daily-driver.
 - [x] 5e. Durable linear replay: pinned local selection, step/skip/final/abort decisions, retained objects, private abort copies and switch/pull journal compatibility. Probe: explicit recovery at every durable boundary, including abort after completed replay steps. Depends on 5d. Serves brit-native-daily-driver.
 - [x] 5f. Interactive sequencing: validated todo, every selected command, editor/hook invocation outcomes and rewrite mappings. Probe: invalid/failed/interrupted editors and hooks never replay unknown effects or consume preserved edits. Depends on 5e. Serves brit-native-daily-driver.
-- [ ] 5g. Combined recovery and artifact qualification: complete the spec's fault matrix, retained-copy decoder/extraction/deletion, independent recovery review and exact-source rebuilt artifact journeys before public rebase exposure. Probe: interruption and synchronization-loss models, private-copy recovery and retained 5a/5b regressions. Depends on 5f. Serves brit-native-daily-driver.
+- [x] 5g. Combined recovery and artifact qualification: complete the spec's fault matrix, retained-copy decoder/extraction/deletion, independent recovery review and exact-source rebuilt artifact journeys before public rebase exposure. Probe: interruption and synchronization-loss models, private-copy recovery and retained 5a/5b regressions. Depends on 5f. Serves brit-native-daily-driver.
 
 Maintainer discoveries captured for those stations:
 
 - Chain 5e / between a decided replay step → final branch publication / missing node: operation abort remains available until the separate final decision; probe `abort_after_each_completed_step_restores_exact_index_and_retains_rewritten_objects`. Current state: green in station 5e internal native proof; public exposure remains pending.
 - Chain 5f / between invocation start → recovery mutation / missing node: durably recorded gated child identity and proved quiescence precede capture/restore; probes `unknown_sequence_editor_accepts_validated_saved_bytes_without_relaunch` and `unknown_edit_author_message_is_explicitly_accepted_without_second_editor`. Current state: green in internal native proof (`native-tests-2.log`); public exposure remains pending.
 - Chain 5e / between detached replay → garbage collection / missing node: explicit H/U and intermediate commit retention precedes mutation; probe original/upstream/intermediate and stop-tree GC tests. Current state: green in station 5e internal native proof; full combined qualification remains 5g.
-- Chain 5g / between retained-copy completion → active-journal retirement / missing node: standalone byte-preserving inspection/extraction works after operation cleanup; probe recovery into an empty destination plus explicit leaf deletion. Current state: designed, UNWIRED in Brit.
+- Chain 5g / between retained-copy completion → active-journal retirement / missing node: standalone byte-preserving inspection/extraction works after operation cleanup; probe recovery into an empty destination plus explicit leaf deletion. Current state: green in station 5g retained-copy tests and exact committed public artifact journeys; full daily-driver habit remains UNWIRED.
 
 ### Amendment local-first and data boundary
 
@@ -1614,3 +1614,80 @@ Story-harvest prerequisites retained as measured nodes:
 - Chain 5f / between interrupted raw-object persistence → abort restoration / missing node: an unclaimed `.new` file remains opaque retained evidence and cannot block restoration or become an adopted object / probe `interrupted_child_raw_object_temporary_is_retained_opaquely_on_abort` / current state: green in `native-tests-2.log`; orphan cleanup remains explicitly pending.
 - Chain 5f / between committed child decision → post-authoring notification completion / missing node: a durable queue launches known-not-started notifications once, while unknown outcomes require acknowledgement without rerun before the next notification / probe `unknown_first_queued_post_hook_is_acknowledged_once_before_second_hook_runs` / current state: green in `native-tests-final.log`.
 - Chain 5f / between editor suspension → foreground terminal handoff / missing node: synchronously stop the supervising calling thread before checking foreground ownership or resuming the editor, so repeated background continuation cannot reclaim the terminal; process-directed SIGSTOP alone can leave a multithreaded caller running past the stop request / probe `terminal_editor_ctrl_z_fg_and_ctrl_c_return_terminal_to_calling_shell` exercises background continuation twice, foreground resumption and Ctrl-C / current state: green in `native-tests-final.log` after both stops use `nix::sys::signal::raise(SIGSTOP)`; independent review confirms the final source binding.
+
+
+## Station 5g — qualified local Linux public rebase, 2026-10-13
+
+Source base: `5125ceb339b7a23b24426ab008378bf7c6892d9c`; isolated branch:
+`sprint/rebase-qualification-2026-10-13`. Implementation source:
+`b09a6090749d6517bbe2ef049f1ab13447b37343`. Bounded public rebase and the
+`brit-rebase-retained` helper are enabled after internal qualification and
+independent preservation/recovery source approval. Exact committed ordinary and
+fault artifacts pass their public journeys. Full daily-driver readiness remains
+**UNWIRED**; remote platform qualification, published-version upgrade/rollback
+and two-developer experiential acceptance remain separate open stations.
+
+The public interface supports explicit local upstreams, interactive sequencing,
+status/continue/skip/abort, todo editing, current-patch inspection, literal scoped
+staging and explicit edit-stop amendment/splitting. Deferred options refuse;
+unsupported platforms refuse execution. Private journals, three-index preservation,
+owned invocation receipts and retention refs remain local Git bridge state.
+No protocol entity, network service or recurring protocol head is introduced.
+The [usage and recovery guide](../rebase.md) documents stop outcomes, editor
+configuration, helper installation, lossless extraction and explicit copy-leaf
+removal. Retained copies do not expire automatically; symlinks extract as inert
+payload files into an empty checked destination.
+
+Separate implementation/test owners, one Cargo runner and independent recovery
+review were maintained. Evidence under
+`genesis/local-dev/brit-readiness/rebase-qualification/` in the owning workspace
+binds commands, results, source hashes and binary hashes:
+
+| Check | Recorded result |
+| --- | --- |
+| Final native suite | 178 entries pass: 24 core/model, 32 authoring, 63 replay, 28 interactive, 2 invocation, 6 I/O, 11 combined qualification and 12 retained-copy entries, including helpers |
+| Preservation matrix | Six stops × eight dirty/preserved shapes × finish/abort = 96 cases; 12 ancestor/descendant collision cases pass |
+| Synchronization-loss qualification | 16 modes × final/abort = 32 paths follow actual synchronization boundaries, including child decisions and invocation ordering; omission controls demonstrate missing synchronization breaks invariants |
+| Real interruption and I/O | SIGINT/SIGKILL, live/ambiguous owners, replaced locks, corruption, ENOSPC and file/directory sync errors distinguish unpublished, committed, UNKNOWN and cleanup-pending outcomes |
+| Pure sequencing / retained Git observations | 8 sequencer cases and all 40 Git characterization cases pass; intentional Brit recovery differences remain explicit |
+| Strict checks | Core and CLI all-target Clippy, scoped formatting, small/lean-async/max-pure configurations, readiness contracts, workflow selectors, shell syntax, packaging and installer fixtures pass |
+| Exact ordinary artifacts | 153 installed CLI entries pass, including all public rebase controls/authoring and retained-copy recovery after cleanup without runtime Git |
+| Exact fault artifacts | 68 entries pass: 11 rebase, 32 pull and 25 switch/recovery journeys |
+| Independent review | `review.json` binds production hashes, native proof and committed artifacts; reviewer contributed public tests but no production changes |
+
+Artifacts were built from the clean implementation commit with Rust/Cargo 1.99.0,
+`x86_64-unknown-linux-gnu`, **dev profile**. Ordinary features are default `max`;
+the fault build additionally enables `switch-test-faults`. These are local copied
+installed artifacts, not a claim that optimized release CI ran. Source CI and
+Linux installed-release selectors now include the native/public/fault/helper
+suites and checked helper archive delivery.
+
+| Artifact | SHA-256 |
+| --- | --- |
+| Ordinary `brit` | `1dfd338aecc55d7f7731b8b80bfde2fc6956bed8442dc61303f4ddd0e6618fbc` |
+| Ordinary `brit-rebase-retained` | `49e773767cfb1ec7e622386e7b55ed48328e5ff96b58bf4c617328fcf48b2c9c` |
+| Fault `brit` | `54873045c356b1d514615e22f19393af6ebdc340c61853a3fc3502f53dbc0348` |
+| Fault `brit-rebase-retained` | `f880892022a74e8fbdef1400c0d406789230c59012ddac99632f818975d6f081` |
+
+`verification.json`, `source-binding.json`, `artifacts.json`,
+`artifact-check-receipts.json` and `review.json` retain exact commands, toolchain,
+paths and hashes. Failed runs are retained alongside the fixes: the extended
+model exposed unchanged directory postimages omitted from parent state; public
+journeys exposed relative repository paths, an interactive/control parser
+combination and CLI-handled SIGINT that the earlier native fixtures did not
+exercise. Editor fixture configuration skew and test compile errors were fixed
+without relaxing production configuration guards.
+
+Story-harvest prerequisites retained as measured nodes:
+
+- Chain 5g / between checkout transition → later replay guard / missing node: repair every existing tracked directory postimage before filtering no-op directory writes, but never add unchanged ancestors to mutation scope / probes the directory-to-file loss model and `todo_edit_at_break_and_edit_stop_keeps_unchanged_ancestor_out_of_preserved_sibling_scope` / current state: green.
+- Chain 5g / between CLI discovery → private absolute-path metadata / missing node: normalize repository paths in place while retaining effective configuration and object/ref context / probe exact public artifact journeys from relative working directories / current state: green.
+- Chain 5g / between interrupt handler → supervised child quiescence / missing node: poll cancellation during child wait and saturated stdin, signal only the validated owned group, and bound uncooperative waiting without escalation or a fabricated exit receipt / probe `large_unread_hook_input_interrupt_is_bounded_and_never_retried` with 1 MiB unread input plus public live-hook SIGINT / current state: green.
+- Chain 5g / between failed editor → explicit saved-byte acceptance / missing node: preserve pinned effective editor configuration across commands and prove the intended editor actually ran before asserting acceptance behavior / probe failed-todo public journey checks exact saved invalid bytes / current state: green.
+
+The existing recipe projects this completed station. Reach rehearsal targets
+`epr ready --target 5125ceb339b7a23b24426ab008378bf7c6892d9c`.
+Qualification covers Linux fsync/rename behavior and a separate loss-of-unsynchronized-
+writes model; it does not establish physical power-cut safety or hostile-writer
+isolation. No push, publication, parent submodule-pin change, remote CI execution
+or full daily-driver acceptance is claimed.
