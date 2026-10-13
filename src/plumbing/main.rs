@@ -75,6 +75,7 @@ fn requires_mutation_guard(cmd: &Subcommands) -> bool {
         Subcommands::Worktree(worktree::Platform {
             cmd: worktree::SubCommands::List,
         }) => false,
+        Subcommands::Rebase(_) => false,
         Subcommands::Switch { .. } => false,
         #[cfg(feature = "gitoxide-core-blocking-client")]
         Subcommands::Pull { .. } => false,
@@ -402,6 +403,10 @@ pub fn run_with_command(args: Args, command: clap::Command) -> Result<()> {
             } else {
                 core::repository::index::restore_worktree(repo, &paths, source.is_some())
             }
+        }),
+        Subcommands::Rebase(options) => prepare_and_run("rebase", verbose, None, move |_progress, out, err| {
+            core::repository::replay::command::run(repository(Mode::Strict)?, options.action(), out, err)
+                .map_err(anyhow_to_gix)
         }),
         Subcommands::Switch {
             branch,

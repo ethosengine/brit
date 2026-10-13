@@ -2518,6 +2518,18 @@ impl Session {
             .map(|change| (change.path.clone(), change))
             .collect::<BTreeMap<_, _>>();
         switch::complete_directory_ledger(root, &source_paths, &destination_paths, &mut ledger)?;
+        // Directories are absent from tree indexes. The completed ledger restores
+        // their actual inode postimages, including unchanged owned ancestors.
+        // Record these before omitting no-op directory writes from the transition.
+        for change in ledger.values() {
+            if let Some(tracked) = after.work.iter_mut().find(|tracked| tracked.path == change.path) {
+                tracked.after = change.after.clone();
+            } else if change.before != change.after || !matches!(change.before, switch::State::Directory { .. }) {
+                // Merely observing an unchanged ancestor does not grant writable
+                // scope over preserved siblings beneath that directory.
+                after.work.push(change.clone());
+            }
+        }
         let changes = ledger
             .into_values()
             .filter(|change| change.before != change.after || !matches!(change.before, switch::State::Directory { .. }))
@@ -2529,13 +2541,6 @@ impl Session {
                 .map(|change| change.path.clone())
                 .collect::<Vec<_>>(),
         )?;
-        for change in &changes {
-            if let Some(tracked) = after.work.iter_mut().find(|tracked| tracked.path == change.path) {
-                tracked.after = change.after.clone();
-            } else {
-                after.work.push(change.clone());
-            }
-        }
         after.witness = crate::repository::authoring::conflict::worktree_witness(
             repo,
             &after.work.iter().map(|change| change.path.clone()).collect::<Vec<_>>(),
@@ -3141,4 +3146,153 @@ fn validate_original_directory(root: &Path, relative: &[u8], source: &gix::index
         }
     }
     Ok(())
+}
+
+impl Session {
+    pub fn has_pending_editor(&self) -> bool {
+        self.state
+            .interactive
+            .as_ref()
+            .is_some_and(|i| i.editors.last().is_some_and(|editor| !editor.accepted))
+    }
+
+    /// Read-only indication; recovery revalidates the complete decision under guard.
+    pub fn has_pending_decision(&self) -> bool {
+        self.directory
+            .join(format!("decision-{}.json", self.state.decisions + 1))
+            .exists()
+    }
+
+    /// Inspect the exact authorized child without accepting or recovering it.
+    pub fn has_pending_child_decision(&self, repo: &gix::Repository) -> Result<bool> {
+        let authorization = self.child_authorization()?;
+        let child = crate::repository::authoring::conflict::Session::open_owned(repo, &authorization)?;
+        Ok(child.has_pending_publication())
+    }
+
+    pub fn show_current_patch(&self, repo: &gix::Repository, out: &mut dyn std::io::Write) -> Result<()> {
+        let original = if self.state.interactive.as_ref().is_some_and(|i| i.edit.is_some())
+            && matches!(self.phase(), "authoring" | "retaining-skip" | "retaining-abort")
+        {
+            self.state
+                .interactive
+                .as_ref()
+                .and_then(|i| i.edit.as_ref())
+                .map(|edit| edit.original.clone())
+        } else if matches!(
+            self.phase(),
+            "authoring" | "empty" | "step-proposed" | "message" | "message-ready" | "retaining-skip"
+        ) {
+            Some(self.current_candidate()?.commit.to_string())
+        } else {
+            None
+        };
+        if let Some(original) = original {
+            let id = gix::ObjectId::from_hex(original.as_bytes())?;
+            writeln!(out, "commit {id}")?;
+            crate::repository::diff::pinned_commit(repo, out, id).map_err(|e| anyhow::anyhow!("{e}"))?;
+        } else {
+            writeln!(out, "No current patch.")?;
+        }
+        Ok(())
+    }
+
+    pub fn child_status(&self, repo: &gix::Repository, out: &mut dyn std::io::Write) -> Result<()> {
+        if self.phase() == "authoring" {
+            let authorization = self.child_authorization()?;
+            match crate::repository::authoring::conflict::Session::open_owned(repo, &authorization) {
+                Ok(child) => child.status(out)?,
+                Err(error) => writeln!(out, "Child inspection unavailable (no recovery attempted): {error:#}")?,
+            }
+        }
+        Ok(())
+    }
+
+    /// Read-only status deliberately does not validate mutable stop work or recover.
+    pub fn status(&self, out: &mut dyn std::io::Write) -> Result<()> {
+        writeln!(out, "Rebase phase: {}", self.phase())?;
+        writeln!(
+            out,
+            "Inputs consumed: {}/{}; replay tip: {}",
+            self.state.step,
+            self.state.candidates.len(),
+            self.state.tip
+        )?;
+        writeln!(
+            out,
+            "Original HEAD: {}; upstream: {}",
+            self.state.original, self.state.upstream
+        )?;
+        if self.has_pending_decision() {
+            writeln!(
+                out,
+                "Durable decision pending: use --continue; final decisions cannot be aborted."
+            )?;
+        }
+        if self.phase() == "authoring" {
+            if self.is_edit_stop() {
+                writeln!(
+                    out,
+                    "Edit stop: use --stage, --amend or --begin-split/--commit, then --continue."
+                )?;
+            } else {
+                writeln!(
+                    out,
+                    "Conflict stop: stage 2 (ours) is replay/upstream; stage 3 (theirs) is the original input. Resolve, --stage, then --continue; or --skip/--abort."
+                )?;
+            }
+        }
+        if self.phase() == "empty" {
+            writeln!(
+                out,
+                "Empty stop: --continue keeps an empty commit; --skip drops this input."
+            )?;
+        }
+        if matches!(self.phase(), "pre-unknown" | "invoking-pre")
+            || (self.phase() == "prepared" && self.directory.join("pre-rebase").try_exists()?)
+        {
+            writeln!(
+                out,
+                "Pre-rebase outcome may be unknown: inspect or --abort; never rerun the hook."
+            )?;
+        }
+        if matches!(self.phase(), "invoking-post" | "post-unknown")
+            || (self.phase() == "final-published" && self.directory.join("post-rewrite").try_exists()?)
+        {
+            writeln!(
+                out,
+                "Rebase published; --continue acknowledges the post-hook outcome without rerun."
+            )?;
+        }
+        if let Some(outcome) = self.state.post_outcome {
+            writeln!(out, "Post-rewrite outcome: {outcome:?}")?;
+        }
+        if let Some(editor) = self.state.interactive.as_ref().and_then(|i| i.editors.last()) {
+            writeln!(
+                out,
+                "Saved editor output: {:?}; accepted: {}; recorded outcome: {:?}",
+                self.editor_output(),
+                editor.accepted,
+                editor.outcome
+            )?;
+            if !editor.accepted {
+                writeln!(
+                    out,
+                    "--continue explicitly accepts validated saved bytes without relaunch."
+                )?;
+            }
+        }
+        for number in 1..=self.state.copies {
+            let path = self
+                .directory
+                .parent()
+                .context("Git directory")?
+                .join("brit-rebase-retained")
+                .join(&self.state.nonce)
+                .join(number.to_string());
+            writeln!(out, "Retained copy candidate (inspect completeness): {:?}", path)?;
+        }
+        writeln!(out, "Journal: {:?}", self.directory)?;
+        Ok(())
+    }
 }

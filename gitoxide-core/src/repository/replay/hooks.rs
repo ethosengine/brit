@@ -67,6 +67,7 @@ pub(super) fn run(
         return Ok(InvocationOutcome::Succeeded);
     }
     let prepared = authoring::invocation::prepare(directory)?;
+    crate::repository::switch::checkpoint("replay-operation-invocation-prepared")?;
     durable_start()?;
     authoring::run_prepared_hook(repo, name, args, input, private_index, prepared)
 }

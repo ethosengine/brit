@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Package one brit executable with an inspectable, non-authority build receipt.
+# Package Brit and an explicitly supplied Linux retained-copy helper with a build receipt.
 set -euo pipefail
 
 if [ "$#" -ne 8 ]; then
@@ -90,10 +90,24 @@ sha256_file() {
   fi
 }
 
+helper=${BRIT_REBASE_RETAINED_BIN:-}
+if [ -n "$helper" ]; then
+  if [ "$target" != x86_64-unknown-linux-gnu ] || [ ! -f "$helper" ] || [ -L "$helper" ] || \
+     [ ! -s "$helper" ] || [ ! -x "$helper" ] || [ "$(basename -- "$helper")" != brit-rebase-retained ]; then
+    echo "retained-copy helper must be a regular executable brit-rebase-retained for the qualified Linux target" >&2
+    exit 2
+  fi
+  helper_sha=$(sha256_file "$helper")
+fi
+
 binary_sha=$(sha256_file "$binary")
 lock_sha=$(sha256_file "$source_root/Cargo.lock")
 mkdir -- "$archive_base"
 cp -- "$binary" "$archive_base/$expected_name"
+if [ -n "$helper" ]; then
+  cp -- "$helper" "$archive_base/brit-rebase-retained"
+  test "$(sha256_file "$archive_base/brit-rebase-retained")" = "$helper_sha"
+fi
 cp -- "$source_root/README.md" "$archive_base/"
 for license in "$source_root"/LICENSE-*; do
   [ -f "$license" ] || continue
@@ -104,6 +118,11 @@ done
   printf 'format=brit-binary-archive-v1\n'
   printf 'binary=%s\n' "$expected_name"
   printf 'binary_sha256=%s\n' "$binary_sha"
+  if [ -n "$helper" ]; then
+    printf 'retained_helper_binary=brit-rebase-retained\n'
+    printf 'retained_helper_sha256=%s\n' "$helper_sha"
+    printf 'cargo_helper_bin=brit-rebase-retained\n'
+  fi
   printf 'package=brit-cli\n'
   printf 'version_tag=%s\n' "$version_tag"
   printf 'source_commit=%s\n' "$source_sha"

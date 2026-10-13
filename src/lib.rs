@@ -25,5 +25,7 @@
 
 pub mod plumbing;
 pub mod porcelain;
+/// Standalone, repository-independent retained rebase copy inspection.
+pub mod rebase_retained;
 /// everything in common between the `gix` and `ein` binaries.
 pub mod shared;

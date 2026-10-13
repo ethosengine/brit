@@ -135,6 +135,10 @@ after staging. Existing `diff tree` and `diff file` commands remain available.
 See the [native authoring scope and verification](docs/plans/2026-09-28-daily-driver.md#native-authoring-sprint--2026-10-12)
 for the full compatibility limits.
 
+For linear replay, edit-stop authoring and interrupted-operation recovery, see
+[Native rebase and retained-copy recovery](docs/rebase.md), including the bounded
+Linux interface and separate retained-copy helper installation.
+
 ## Try a verified local snapshot
 
 Run against a disposable repository first. Sealing reads the selected committed

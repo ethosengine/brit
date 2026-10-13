@@ -444,3 +444,12 @@ pub(super) fn resume(repo: &gix::Repository, receipt: &Path) -> Result<()> {
     fs::remove_file(retired_receipt)?;
     switch::sync_dir(repo.git_dir())
 }
+
+/// Validate a cleanup receipt for read-only diagnostics, without touching its members.
+pub(super) fn inspect(repo: &gix::Repository, receipt: &Path) -> Result<(bool, PathBuf)> {
+    let (ledger, retired) = read_receipt(repo, receipt)?;
+    Ok((
+        retired,
+        gix::path::from_bstr(ledger.retained_path.as_bstr())?.into_owned(),
+    ))
+}

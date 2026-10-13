@@ -118,6 +118,7 @@ pub(crate) fn digest(bytes: &[u8]) -> Result<String> {
     Ok(hash.try_finalize()?.to_string())
 }
 pub(crate) fn sync_dir(path: &Path) -> Result<()> {
+    io_fault("directory-sync", path)?;
     fs::File::open(path)?
         .sync_all()
         .with_context(|| format!("synchronize directory {}", path.display()))?;
@@ -130,6 +131,7 @@ pub(crate) fn sync_path(path: &Path) -> Result<()> {
 }
 /// Synchronize the already-open inode while recording its name for recovery models.
 pub(crate) fn sync_file(file: &fs::File, path: &Path) -> Result<()> {
+    io_fault("file-sync", path)?;
     file.sync_all()?;
     #[cfg(test)]
     durability::record_file(path)?;
@@ -143,8 +145,48 @@ pub(crate) fn private_write(path: &Path, bytes: &[u8]) -> Result<()> {
         .create_new(true)
         .mode(0o600)
         .open(path)?;
+    io_fault("write", path)?;
     file.write_all(bytes)?;
     sync_file(&file, path)?;
+    Ok(())
+}
+
+/// Dedicated fault builds can fail a real persistence boundary without filling
+/// the host disk. Delivery builds do not inspect this environment variable.
+fn io_fault(operation: &str, path: &Path) -> Result<()> {
+    #[cfg(feature = "switch-test-faults")]
+    if let Ok(specification) = std::env::var("BRIT_REPLAY_IO_FAULT") {
+        let mut parts = specification.splitn(4, '|');
+        let selected = parts.next().context("missing I/O fault operation")?;
+        let errno: i32 = parts.next().context("missing I/O fault errno")?.parse()?;
+        let needle = parts.next().context("missing I/O fault path")?;
+        let occurrence = parts.next().map(str::parse::<usize>).transpose()?.unwrap_or(1);
+        ensure!(
+            !needle.is_empty() && occurrence > 0 && matches!(errno, 5 | 28),
+            "invalid replay I/O fault specification"
+        );
+        if selected == operation
+            && path
+                .as_os_str()
+                .as_encoded_bytes()
+                .windows(needle.len())
+                .any(|bytes| bytes == needle.as_bytes())
+        {
+            thread_local! { static HITS: std::cell::RefCell<BTreeMap<String, usize>> = const { std::cell::RefCell::new(BTreeMap::new()) }; }
+            let hit = HITS.with(|hits| {
+                let mut hits = hits.borrow_mut();
+                let hit = hits.entry(specification.clone()).or_default();
+                *hit += 1;
+                *hit
+            });
+            if hit != occurrence {
+                return Ok(());
+            }
+            return Err(std::io::Error::from_raw_os_error(errno))
+                .with_context(|| format!("injected {operation} failure at {}", path.display()));
+        }
+    }
+    let _ = (operation, path);
     Ok(())
 }
 fn directory_identity(path: &Path) -> Result<[u64; 2]> {

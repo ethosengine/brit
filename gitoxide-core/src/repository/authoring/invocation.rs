@@ -169,6 +169,10 @@ fn checkpoint(dir: &Path, point: &str) -> Result<()> {
     if std::env::var("BRIT_AUTHORING_INVOCATION_PAUSE").as_deref() == Ok(point) {
         write(dir, "checkpoint", &point)?;
         loop {
+            ensure!(
+                !gix::interrupt::is_triggered(),
+                "invocation interrupted; explicit recovery required"
+            );
             std::thread::sleep(std::time::Duration::from_millis(50));
         }
     }
@@ -255,7 +259,12 @@ impl Terminal {
         self.restored = true;
         Ok(())
     }
-    fn wait(&mut self, child: &mut std::process::Child) -> Result<std::process::ExitStatus> {
+    fn wait(
+        &mut self,
+        child: &mut std::process::Child,
+        identity: &Identity,
+        interrupt: &mut Interrupt,
+    ) -> Result<std::process::ExitStatus> {
         use nix::{
             sys::{
                 signal::{Signal, killpg, raise},
@@ -266,7 +275,8 @@ impl Terminal {
         use std::os::unix::process::ExitStatusExt;
         let pid = Pid::from_raw(i32::try_from(child.id())?);
         loop {
-            match waitpid(pid, Some(WaitPidFlag::WUNTRACED)) {
+            interrupt.poll(identity)?;
+            match waitpid(pid, Some(WaitPidFlag::WUNTRACED | WaitPidFlag::WNOHANG)) {
                 Ok(WaitStatus::Exited(_, code)) => return Ok(std::process::ExitStatus::from_raw(code << 8)),
                 Ok(WaitStatus::Signaled(_, signal, core)) => {
                     return Ok(std::process::ExitStatus::from_raw(
@@ -295,7 +305,7 @@ impl Terminal {
                 }
                 Err(nix::errno::Errno::EINTR) => continue,
                 Err(error) => return Err(error.into()),
-                _ => continue,
+                _ => std::thread::sleep(std::time::Duration::from_millis(10)),
             }
         }
     }
@@ -305,6 +315,39 @@ impl Drop for Terminal {
         if !self.restored {
             let _ = self.restore();
         }
+    }
+}
+
+/// Forward an explicit supervisor interrupt only to its still-owned group.
+/// An uncooperative group remains UNKNOWN and blocks subsequent recovery.
+#[derive(Default)]
+struct Interrupt {
+    sent: Option<std::time::Instant>,
+}
+impl Interrupt {
+    fn poll(&mut self, child: &Identity) -> Result<()> {
+        if gix::interrupt::is_triggered() && self.sent.is_none() {
+            if let Some((start, group, _)) = stat(child.pid)? {
+                ensure!(
+                    start == child.start && group == child.pid,
+                    "invocation process ownership changed"
+                );
+                match nix::sys::signal::killpg(
+                    nix::unistd::Pid::from_raw(i32::try_from(child.pid)?),
+                    nix::sys::signal::Signal::SIGINT,
+                ) {
+                    Ok(()) | Err(nix::errno::Errno::ESRCH) => {}
+                    Err(error) => return Err(error.into()),
+                }
+            }
+            self.sent = Some(std::time::Instant::now());
+        }
+        ensure!(
+            self.sent
+                .is_none_or(|sent| sent.elapsed() < std::time::Duration::from_secs(5)),
+            "invocation interrupted; outcome UNKNOWN; owned group may still be live; stop it explicitly before recovery"
+        );
+        Ok(())
     }
 }
 
@@ -338,19 +381,57 @@ fn run_owned(
         None
     };
     let mut stdin = child.stdin.take().context("gated hook requires piped stdin")?;
-    let input_result = stdin
-        .write_all(b"go\n")
-        .and_then(|()| stdin.write_all(input.unwrap_or_default()));
+    let mut interrupt = Interrupt::default();
+    let flags = rustix::fs::fcntl_getfl(&stdin)?;
+    rustix::fs::fcntl_setfl(&stdin, flags | rustix::fs::OFlags::NONBLOCK)?;
+    let input_result = (|| -> std::io::Result<()> {
+        for mut bytes in [b"go\n".as_slice(), input.unwrap_or_default()] {
+            while !bytes.is_empty() {
+                if gix::interrupt::is_triggered() {
+                    return Err(std::io::ErrorKind::Interrupted.into());
+                }
+                match stdin.write(bytes) {
+                    Ok(0) => return Err(std::io::ErrorKind::WriteZero.into()),
+                    Ok(written) => bytes = &bytes[written..],
+                    Err(error) if error.kind() == std::io::ErrorKind::WouldBlock => {
+                        std::thread::sleep(std::time::Duration::from_millis(10));
+                    }
+                    Err(error) => return Err(error),
+                }
+            }
+        }
+        Ok(())
+    })();
     drop(stdin);
-    checkpoint(dir, "after-release")?;
+    // Even a test checkpoint interruption must pass through owned-group
+    // forwarding and quiescence before the supervisor releases its lease.
+    let checkpoint_result = checkpoint(dir, "after-release");
     let status = match &mut terminal {
-        Some(terminal) => terminal.wait(&mut child)?,
-        None => child.wait().context("wait for hook child")?,
+        Some(terminal) => terminal.wait(&mut child, &child_identity, &mut interrupt)?,
+        None => loop {
+            interrupt.poll(&child_identity)?;
+            if let Some(status) = child.try_wait().context("wait for hook child")? {
+                break status;
+            }
+            std::thread::sleep(std::time::Duration::from_millis(10));
+        },
     };
     if let Some(terminal) = &mut terminal {
         terminal.restore()?;
     }
-    group_quiescent(&child_identity)?;
+    if interrupt.sent.is_some() {
+        while group_quiescent(&child_identity).is_err() {
+            interrupt.poll(&child_identity)?;
+            std::thread::sleep(std::time::Duration::from_millis(10));
+        }
+    } else {
+        group_quiescent(&child_identity)?;
+    }
+    checkpoint_result?;
+    ensure!(
+        interrupt.sent.is_none(),
+        "invocation interrupted; outcome UNKNOWN; explicit recovery required"
+    );
     checkpoint(dir, "after-wait")?;
     let outcome = if status.success()
         && input_result

@@ -372,29 +372,30 @@ jobs:
       - name: Prove shared trees through the public Brit executable
         run: |
           set -euo pipefail
-          cargo build --locked -p brit-cli --bin brit
+          cargo build --locked -p brit-cli --bin brit --bin brit-rebase-retained
           cargo test --locked -p brit-bridge
           debug_dir="$(just dbg)"
-          BRIT_BIN="$debug_dir/brit" cargo test --locked -p cli-journey --test shared_tree --test authoring --test pre_push --test explicit_leases --test commit_cleanup --test commit_amend --test worktree_restore --test switch --test pull --test broader_staging --test daily_driver --test native_authoring --test context --test cli_surface
+          BRIT_BIN="$debug_dir/brit" BRIT_REBASE_RETAINED_BIN="$debug_dir/brit-rebase-retained" cargo test --locked -p cli-journey --test rebase --test shared_tree --test authoring --test pre_push --test explicit_leases --test commit_cleanup --test commit_amend --test worktree_restore --test switch --test pull --test broader_staging --test daily_driver --test native_authoring --test context --test cli_surface
       - name: Characterize stock Git rebase (design evidence, not Brit support)
         run: cargo test --locked -p cli-journey --test git_rebase_characterization
       - name: Prove internal conflict-aware authoring preservation
         run: cargo test --locked -p gitoxide-core --features blocking-client,gix/sha1,switch-test-faults --test conflict_authoring
       - name: Prove internal replay selection and preservation
         run: |
-          cargo test --locked -p gitoxide-core --features blocking-client,gix/sha1,switch-test-faults --test replay --test replay_retained
+          cargo test --locked -p gitoxide-core --features blocking-client,gix/sha1,switch-test-faults --test replay --test replay_retained --test replay_qualification --test replay_io
           cargo test --locked -p gitoxide-core --features blocking-client,gix/sha1 --lib repository::replay::hooks
       - name: Prove internal interactive sequencing and editor recovery
         run: |
           cargo test --locked -p gix-sequencer --features serde
           cargo test --locked -p gitoxide-core --features blocking-client,gix/sha1,switch-test-faults --test replay_interactive
-      - name: Prove switch and pull interruption with explicit recovery
+      - name: Prove replay, switch and pull interruption with explicit recovery
         run: |
           set -euo pipefail
           cargo test --locked -p gitoxide-core --features blocking-client,gix/sha1 --lib power_loss
-          cargo build --locked -p brit-cli --bin brit --features switch-test-faults
+          cargo test --locked -p gitoxide-core --features blocking-client,gix/sha1,switch-test-faults --test replay_invocation
+          cargo build --locked -p brit-cli --bin brit --bin brit-rebase-retained --features switch-test-faults
           debug_dir="$(just dbg)"
-          BRIT_BIN="$debug_dir/brit" cargo test --locked -p cli-journey --features switch-test-faults --test switch --test pull
+          BRIT_BIN="$debug_dir/brit" BRIT_REBASE_RETAINED_BIN="$debug_dir/brit-rebase-retained" cargo test --locked -p cli-journey --features switch-test-faults --test rebase --test switch --test pull
           cargo build --locked -p brit-cli --bin brit
       - name: Prove generic engine without protocol features
         run: cargo test --locked -p brit-epr --no-default-features

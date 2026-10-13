@@ -92,6 +92,34 @@ pub struct Copy {
     pub manifest: Manifest,
 }
 
+/// Resolve without following links. System ancestors such as `/tmp` may be
+/// shared; the copy/destination itself has a separate ownership check.
+fn checked_path(path: &Path) -> Result<PathBuf> {
+    use std::path::Component;
+    let absolute = if path.is_absolute() {
+        path.to_owned()
+    } else {
+        std::env::current_dir()?.join(path)
+    };
+    let mut checked = PathBuf::new();
+    for component in absolute.components() {
+        match component {
+            Component::RootDir => checked.push(component),
+            Component::Normal(name) => {
+                checked.push(name);
+                ensure!(
+                    !fs::symlink_metadata(&checked)?.file_type().is_symlink(),
+                    "symlink in retained-copy path: {}",
+                    checked.display()
+                );
+            }
+            Component::CurDir => {}
+            _ => anyhow::bail!("unsafe retained-copy path: {}", path.display()),
+        }
+    }
+    Ok(checked)
+}
+
 fn check_directory(path: &Path, owner: u32) -> Result<()> {
     let metadata = fs::symlink_metadata(path)?;
     ensure!(
@@ -280,8 +308,14 @@ pub fn capture(
 /// Inspect only: never repair a copy, create files, follow a payload symlink, or
 /// require an active journal. Incomplete copies cannot authorize restoration.
 pub fn inspect(path: &Path) -> Result<Copy> {
+    let checked = checked_path(path)?;
+    let path = checked.as_path();
     let metadata = fs::symlink_metadata(path)?;
     let owner = metadata.uid();
+    ensure!(
+        owner == rustix::process::getuid().as_raw(),
+        "retained copy belongs to another user"
+    );
     check_directory(path, owner)?;
     let envelope: Envelope = serde_json::from_slice(&read_member(&path.join("manifest.json"), owner)?)?;
     ensure!(
@@ -315,7 +349,7 @@ pub fn inspect(path: &Path) -> Result<Copy> {
     }
     Ok(Copy {
         receipt: Receipt {
-            path: fs::canonicalize(path)?,
+            path: checked,
             digest: envelope.checksum,
         },
         manifest,
@@ -323,7 +357,18 @@ pub fn inspect(path: &Path) -> Result<Copy> {
 }
 
 impl Copy {
+    /// Lossless output even when the enclosing repository path is not UTF-8.
+    pub fn inspection_json(&self) -> Result<String> {
+        use std::os::unix::ffi::OsStrExt;
+        Ok(serde_json::to_string_pretty(&serde_json::json!({
+            "copy":self.receipt.path.to_str(),
+            "copyPathBytes":self.receipt.path.as_os_str().as_bytes(),
+            "receipt":self.receipt.digest,"manifest":self.manifest
+        }))?)
+    }
+
     pub fn payload(&self, ordinal: usize) -> Result<Vec<u8>> {
+        checked_path(&self.receipt.path)?;
         check_directory(&self.receipt.path, self.manifest.owner_uid)?;
         let entry = self
             .manifest
@@ -338,4 +383,93 @@ impl Copy {
         validate_member(&entry.kind, &data, validate_manifest(&self.manifest)?)?;
         Ok(data)
     }
+}
+
+/// Export verified payloads into an existing empty owned directory. Logical
+/// Git paths remain lossless metadata; numeric output names cannot escape it.
+/// Links are ordinary payload files, never recreated or followed.
+pub fn extract(copy: &Path, destination: &Path) -> Result<Receipt> {
+    let copy = inspect(copy)?;
+    for entry in &copy.manifest.entries {
+        ensure!(
+            !entry.path.is_empty()
+                && !entry.path.starts_with(b"/")
+                && !entry.path.contains(&0)
+                && !entry.path.split(|byte| *byte == b'/').any(|part| part == b".."),
+            "unsafe retained logical path"
+        );
+    }
+    let destination = checked_path(destination)?;
+    let metadata = fs::symlink_metadata(&destination)?;
+    ensure!(
+        metadata.is_dir() && metadata.uid() == rustix::process::getuid().as_raw() && metadata.mode() & 0o022 == 0,
+        "extraction destination must be an owned safe directory"
+    );
+    ensure!(
+        fs::read_dir(&destination)?.next().is_none(),
+        "extraction destination must be empty"
+    );
+    let identity = (metadata.dev(), metadata.ino());
+    switch::checkpoint("replay-extract-destination-validated")?;
+    let validate = || -> Result<()> {
+        checked_path(&destination)?;
+        let now = fs::symlink_metadata(&destination)?;
+        ensure!(
+            (now.dev(), now.ino()) == identity,
+            "extraction destination was replaced"
+        );
+        Ok(())
+    };
+    let areas = [
+        "original",
+        "before",
+        "staged",
+        "worktree",
+        "after",
+        "messages",
+        "invocations",
+        "objects",
+        "indexes",
+    ];
+    for area in areas {
+        validate()?;
+        fs::DirBuilder::new().mode(0o700).create(destination.join(area))?;
+    }
+    let mut outputs = Vec::new();
+    for (ordinal, entry) in copy.manifest.entries.iter().enumerate() {
+        validate()?;
+        let area = match entry.area {
+            Area::Original => "original",
+            Area::Before => "before",
+            Area::Staged => "staged",
+            Area::Worktree => "worktree",
+            Area::After => "after",
+            Area::Messages => "messages",
+            Area::Invocations => "invocations",
+            Area::Objects => "objects",
+            Area::Indexes => "indexes",
+        };
+        let suffix = match entry.kind {
+            Kind::Symlink => ".symlink-payload",
+            Kind::Deleted => ".deleted",
+            Kind::Directory { .. } => ".directory",
+            _ => ".payload",
+        };
+        let relative = format!("{area}/{ordinal:08}{suffix}");
+        let output = destination.join(&relative);
+        checked_path(output.parent().context("extracted member parent")?)?;
+        switch::private_write(&output, &copy.payload(ordinal)?)?;
+        outputs.push(relative);
+    }
+    validate()?;
+    let manifest = serde_json::json!({"version":1,"sourceReceipt":copy.receipt.digest,"manifest":copy.manifest,"payloads":outputs});
+    switch::private_write(
+        &destination.join("manifest.json"),
+        &serde_json::to_vec_pretty(&manifest)?,
+    )?;
+    for area in areas {
+        switch::sync_dir(&destination.join(area))?;
+    }
+    switch::sync_dir(&destination)?;
+    Ok(copy.receipt)
 }

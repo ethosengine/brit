@@ -222,12 +222,28 @@ fn check_replay_preparation_trace(
     Ok(())
 }
 
+struct TraceMember {
+    paths: Vec<PathBuf>,
+    identity: Identity,
+    state: State,
+}
+struct ChildTraceProof {
+    decision: TraceMember,
+    value: serde_json::Value,
+    proposal: Option<TraceMember>,
+    raw: Vec<TraceMember>,
+    invocations: Vec<TraceMember>,
+    directories: Vec<Identity>,
+}
 struct ReplayTraceProof {
     root_id: Identity,
     baseline_len: usize,
     original: BTreeMap<PathBuf, State>,
     terminal: BTreeMap<PathBuf, State>,
     decisions: Vec<(PathBuf, State, serde_json::Value)>,
+    children: Vec<ChildTraceProof>,
+    invocations: Vec<[TraceMember; 3]>,
+    invocation_directories: Vec<Identity>,
     objects: BTreeMap<PathBuf, State>,
     references: BTreeMap<PathBuf, State>,
     retained: BTreeMap<PathBuf, State>,
@@ -240,10 +256,34 @@ fn replay_steps_final_abort_and_cleanup_power_loss_follow_real_sync_boundaries()
     if gix_testtools::run_in_isolated_process()? {
         return Ok(());
     }
-    for (mode, abort) in ["linear", "reword", "squash", "fixup", "drop", "break"]
-        .into_iter()
-        .flat_map(|mode| [false, true].map(|abort| (mode, abort)))
+    let selected_mode = std::env::var("BRIT_REPLAY_MODEL_MODE").ok();
+    let mut executed = 0;
+    for (mode, abort) in [
+        "linear",
+        "reword",
+        "squash",
+        "fixup",
+        "drop",
+        "break",
+        "conflict",
+        "conflict-skip",
+        "empty",
+        "empty-skip",
+        "edit-amend",
+        "edit-split",
+        "edit-skip",
+        "nested",
+        "file-to-directory",
+        "directory-to-file",
+    ]
+    .into_iter()
+    .flat_map(|mode| [false, true].map(|abort| (mode, abort)))
     {
+        if selected_mode.as_deref().is_some_and(|selected| selected != mode) {
+            continue;
+        }
+        executed += 1;
+        eprintln!("replay loss model: mode={mode}, abort={abort}");
         let fixture = tempfile::tempdir()?;
         let root = fixture.path();
         for command in [
@@ -255,11 +295,24 @@ fn replay_steps_final_abort_and_cleanup_power_loss_follow_real_sync_boundaries()
         }
         fs::write(root.join("selected"), b"base\n")?;
         fs::write(root.join("neighbor"), b"clean neighbor\n")?;
+        if mode == "file-to-directory" {
+            fs::write(root.join("slot"), b"baseline file\n")?;
+        }
+        if mode == "directory-to-file" {
+            fs::create_dir(root.join("slot"))?;
+            fs::write(root.join("slot/child"), b"baseline child\n")?;
+        }
         for command in ["add .", "commit -m base", "switch -c upstream"] {
             gix_testtools::git(root, command)?;
         }
         fs::write(root.join("upstream"), b"upstream\n")?;
-        for command in ["add upstream", "commit -m upstream", "switch main"] {
+        if mode.starts_with("conflict") {
+            fs::write(root.join("selected"), b"upstream conflict\n")?;
+        }
+        if mode.starts_with("empty") {
+            fs::write(root.join("selected"), b"topic\n")?;
+        }
+        for command in ["add .", "commit -m upstream", "switch main"] {
             gix_testtools::git(root, command)?;
         }
         fs::write(root.join("selected"), b"topic\n")?;
@@ -269,13 +322,41 @@ fn replay_steps_final_abort_and_cleanup_power_loss_follow_real_sync_boundaries()
         let first = gix::open(root)?.head_id()?.to_string();
         let second = if mode != "linear" {
             fs::write(root.join("second"), b"second topic\n")?;
-            for command in ["add second", "commit -m second"] {
+            if mode == "nested" {
+                fs::create_dir_all(root.join("new/deep"))?;
+                fs::write(root.join("new/deep/leaf"), b"nested replay\n")?;
+            }
+            if mode == "file-to-directory" {
+                fs::remove_file(root.join("slot"))?;
+                fs::create_dir(root.join("slot"))?;
+                fs::write(root.join("slot/child"), b"replayed child\n")?;
+            }
+            if mode == "directory-to-file" {
+                fs::remove_file(root.join("slot/child"))?;
+                fs::remove_dir(root.join("slot"))?;
+                fs::write(root.join("slot"), b"replayed file\n")?;
+            }
+            for command in ["add .", "commit -m second"] {
                 gix_testtools::git(root, command)?;
             }
             Some(gix::open(root)?.head_id()?.to_string())
         } else {
             None
         };
+        if mode.starts_with("edit-") {
+            use std::os::unix::fs::PermissionsExt;
+            for name in [
+                "pre-commit",
+                "prepare-commit-msg",
+                "commit-msg",
+                "post-commit",
+                "post-rewrite",
+            ] {
+                let path = root.join(".git/hooks").join(name);
+                fs::write(&path, b"#!/bin/sh\nexit 0\n")?;
+                fs::set_permissions(path, fs::Permissions::from_mode(0o700))?;
+            }
+        }
         let _editor = gix_testtools::Env::new().set("GIT_EDITOR", ":");
         fs::write(root.join("neighbor"), b"staged neighbor\n")?;
         gix_testtools::git(root, "add neighbor")?;
@@ -296,11 +377,19 @@ fn replay_steps_final_abort_and_cleanup_power_loss_follow_real_sync_boundaries()
             .collect::<Result<_>>()?,
             terminal: BTreeMap::new(),
             decisions: Vec::new(),
+            children: Vec::new(),
+            invocations: Vec::new(),
+            invocation_directories: Vec::new(),
             objects: BTreeMap::new(),
             references: BTreeMap::new(),
             retained: BTreeMap::new(),
             abort,
         };
+        for name in ["second", "slot", "slot/child", "new", "new/deep", "new/deep/leaf"] {
+            if fs::symlink_metadata(root.join(name)).is_ok() {
+                proof.original.insert(PathBuf::from(name), snapshot(&root.join(name))?);
+            }
+        }
         TRACE.with(|trace| *trace.borrow_mut() = Some(Vec::new()));
         baseline(root)?;
         proof.baseline_len = TRACE.with(|trace| trace.borrow().as_ref().expect("trace enabled").len());
@@ -309,7 +398,14 @@ fn replay_steps_final_abort_and_cleanup_power_loss_follow_real_sync_boundaries()
             let todo = if mode == "break" {
                 format!("pick {first}\nbreak\npick {second}\n")
             } else {
-                format!("pick {first}\n{mode} {second}\n")
+                let command = if mode.starts_with("edit-") {
+                    "edit"
+                } else if matches!(mode, "reword" | "squash" | "fixup" | "drop") {
+                    mode
+                } else {
+                    "pick"
+                };
+                format!("pick {first}\n{command} {second}\n")
             };
             session.accept_todo(&repo, todo.as_bytes())?;
             session
@@ -317,11 +413,50 @@ fn replay_steps_final_abort_and_cleanup_power_loss_follow_real_sync_boundaries()
             Session::prepare(&repo, b"upstream".as_bstr())?.expect("divergence")
         };
         assert_eq!(session.advance(&repo)?, Advance::Started);
-        assert!(matches!(session.advance(&repo)?, Advance::Step { .. }));
         loop {
-            match session.advance(&repo)? {
+            let phase = session.phase().to_owned();
+            match session
+                .advance(&repo)
+                .with_context(|| format!("model {mode}, abort={abort}, advance from {phase}"))?
+            {
                 Advance::ReadyFinal => break,
                 Advance::Step { .. } | Advance::Dropped | Advance::Break => {}
+                Advance::Conflict => {
+                    if mode.ends_with("skip") {
+                        session.skip(&repo)?;
+                    } else {
+                        fs::write(root.join("selected"), b"resolved conflict\n")?;
+                        session.stage(&repo, &["selected".into()], false)?;
+                        session.continue_conflict(&repo)?;
+                    }
+                }
+                Advance::Empty => {
+                    if mode.ends_with("skip") {
+                        session.skip(&repo)?;
+                    }
+                }
+                Advance::Edit => {
+                    if mode == "edit-amend" {
+                        fs::write(root.join("second"), b"amended second\n")?;
+                        session.stage(&repo, &["second".into()], false)?;
+                        session.amend(&repo, b"amended message\n")?;
+                    } else {
+                        session.begin_split(&repo)?;
+                        fs::write(root.join("second"), b"split partial\n")?;
+                        session.stage(&repo, &["second".into()], false)?;
+                        session.commit_split(&repo, b"split first\n")?;
+                        if mode == "edit-split" {
+                            fs::write(root.join("second"), b"split completed\n")?;
+                            session.stage(&repo, &["second".into()], false)?;
+                            session.commit_split(&repo, b"split second\n")?;
+                        }
+                    }
+                    if mode == "edit-skip" {
+                        session.skip(&repo)?;
+                    } else {
+                        session.continue_edit(&repo)?;
+                    }
+                }
                 other => panic!("unexpected {mode} model stop: {other:?}"),
             }
         }
@@ -330,6 +465,13 @@ fn replay_steps_final_abort_and_cleanup_power_loss_follow_real_sync_boundaries()
         } else {
             session.finish(&repo)?;
         }
+        proof.children = collect_replay_child_proofs(root, session.directory())?;
+        collect_replay_invocations(root, session.directory(), None, &mut proof.invocations)?;
+        proof.invocation_directories = proof
+            .invocations
+            .iter()
+            .map(|receipts| identity(&root.join(receipts[0].paths[0].parent().expect("invocation directory"))))
+            .collect::<Result<_>>()?;
         for entry in fs::read_dir(session.directory())? {
             let entry = entry?;
             if entry.file_name().to_string_lossy().starts_with("decision-") {
@@ -388,7 +530,28 @@ fn replay_steps_final_abort_and_cleanup_power_loss_follow_real_sync_boundaries()
         .collect::<Result<Vec<_>>>()?;
         let events = TRACE.with(|trace| trace.borrow_mut().take().expect("trace enabled"));
         check_replay_execution_trace(&events, &proof)?;
-        for omission in ["decision", "new-object", "retained-member", "retained-directory"] {
+        let mut omissions = vec!["decision", "new-object", "retained-member", "retained-directory"];
+        if !proof.children.is_empty() {
+            omissions.extend(["child-decision", "child-namespace"]);
+        }
+        if proof.children.iter().any(|child| child.proposal.is_some()) {
+            omissions.push("child-proposal");
+        }
+        if proof.children.iter().any(|child| !child.raw.is_empty()) {
+            omissions.push("child-raw-object");
+        }
+        if proof.children.iter().any(|child| !child.invocations.is_empty()) {
+            omissions.push("child-invocation");
+        }
+        if !proof.invocations.is_empty() {
+            omissions.extend([
+                "invocation-start",
+                "invocation-launch",
+                "invocation-exit",
+                "invocation-namespace",
+            ]);
+        }
+        for omission in omissions {
             let baseline_objects: Vec<_> = events[..proof.baseline_len]
                 .iter()
                 .filter_map(|event| match event {
@@ -417,6 +580,40 @@ fn replay_steps_final_abort_and_cleanup_power_loss_follow_real_sync_boundaries()
                             !proof.retained.values().any(|expected| expected == state)
                         }
                         ("retained-directory", Event::Directory(id, ..)) => !retained_directory_ids.contains(id),
+                        ("invocation-start" | "invocation-launch" | "invocation-exit", Event::File(id, _)) => {
+                            let ordinal = match omission {
+                                "invocation-start" => 0,
+                                "invocation-launch" => 1,
+                                _ => 2,
+                            };
+                            !proof
+                                .invocations
+                                .iter()
+                                .any(|receipts| receipts[ordinal].identity == *id)
+                        }
+                        ("invocation-namespace", Event::Directory(id, ..)) => {
+                            !proof.invocation_directories.contains(id)
+                        }
+                        ("child-decision", Event::File(id, _)) => {
+                            !proof.children.iter().any(|child| child.decision.identity == *id)
+                        }
+                        ("child-proposal", Event::File(id, _)) => !proof
+                            .children
+                            .iter()
+                            .any(|child| child.proposal.as_ref().is_some_and(|proposal| proposal.identity == *id)),
+                        ("child-raw-object", Event::File(id, _)) => !proof
+                            .children
+                            .iter()
+                            .flat_map(|child| &child.raw)
+                            .any(|raw| raw.identity == *id),
+                        ("child-invocation", Event::File(id, _)) => !proof
+                            .children
+                            .iter()
+                            .flat_map(|child| &child.invocations)
+                            .any(|receipt| receipt.identity == *id),
+                        ("child-namespace", Event::Directory(id, ..)) => {
+                            !proof.children.iter().any(|child| child.directories.contains(id))
+                        }
                         _ => true,
                     }
                 })
@@ -429,16 +626,191 @@ fn replay_steps_final_abort_and_cleanup_power_loss_follow_real_sync_boundaries()
             let rejected = std::panic::catch_unwind(|| check_replay_execution_trace(&reduced, &proof));
             assert!(
                 rejected.is_err() || rejected.is_ok_and(|result| result.is_err()),
-                "missing {omission} synchronization must break a real replay invariant (abort={abort})"
+                "missing {omission} synchronization must break a real replay invariant (mode={mode}, abort={abort})"
             );
+        }
+    }
+    assert!(executed > 0, "unknown BRIT_REPLAY_MODEL_MODE selector");
+    Ok(())
+}
+
+fn collect_replay_invocations(
+    root: &Path,
+    directory: &Path,
+    archive: Option<&Path>,
+    out: &mut Vec<[TraceMember; 3]>,
+) -> Result<()> {
+    if directory.join("start.json").exists() {
+        let receipts = ["start.json", "launch.json", "exit.json"]
+            .map(|name| {
+                let path = directory.join(name);
+                let mut paths = vec![path.strip_prefix(root)?.to_owned()];
+                if let Some(archive) = archive {
+                    paths.push(Path::new(".git/brit-authoring").join(path.strip_prefix(archive)?));
+                }
+                Ok(TraceMember {
+                    paths,
+                    identity: identity(&path)?,
+                    state: snapshot(&path)?,
+                })
+            })
+            .into_iter()
+            .collect::<Result<Vec<_>>>()?;
+        out.push(
+            receipts
+                .try_into()
+                .map_err(|_| anyhow::anyhow!("three invocation receipts required"))?,
+        );
+        return Ok(());
+    }
+    for entry in fs::read_dir(directory)? {
+        let entry = entry?;
+        if entry.file_type()?.is_dir() {
+            let path = entry.path();
+            let archive = if entry.file_name().to_string_lossy().ends_with("-accepted") {
+                Some(path.as_path())
+            } else {
+                archive
+            };
+            collect_replay_invocations(root, &path, archive, out)?;
         }
     }
     Ok(())
 }
 
+fn collect_replay_child_proofs(root: &Path, parent: &Path) -> Result<Vec<ChildTraceProof>> {
+    fn member(root: &Path, archive: &Path, path: &Path) -> Result<TraceMember> {
+        Ok(TraceMember {
+            paths: vec![
+                path.strip_prefix(root)?.to_owned(),
+                Path::new(".git/brit-authoring").join(path.strip_prefix(archive)?),
+            ],
+            identity: identity(path)?,
+            state: snapshot(path)?,
+        })
+    }
+    fn payload(path: &Path) -> Result<serde_json::Value> {
+        let envelope: Envelope = serde_json::from_slice(&fs::read(path)?)?;
+        Ok(serde_json::from_slice(&envelope.payload)?)
+    }
+    let mut out = Vec::new();
+    for entry in fs::read_dir(parent)? {
+        let entry = entry?;
+        if !entry.file_type()?.is_dir() || !entry.file_name().to_string_lossy().ends_with("-accepted") {
+            continue;
+        }
+        let archive = entry.path();
+        let mut raw = BTreeMap::new();
+        if archive.join("objects").exists() {
+            for object in fs::read_dir(archive.join("objects"))? {
+                let path = object?.path();
+                raw.insert(
+                    path.file_name()
+                        .context("raw object name")?
+                        .to_string_lossy()
+                        .into_owned(),
+                    (path.clone(), payload(&path)?),
+                );
+            }
+        }
+        for decision in fs::read_dir(&archive)? {
+            let decision = decision?;
+            let name = decision.file_name().to_string_lossy().into_owned();
+            let Some(number) = name
+                .strip_prefix("child-")
+                .and_then(|name| name.strip_suffix(".json"))
+                .and_then(|number| number.parse::<usize>().ok())
+            else {
+                continue;
+            };
+            let value = payload(&decision.path())?;
+            let proposed = archive.join(format!("child-{number}-proposed.json"));
+            let proposal = proposed
+                .exists()
+                .then(|| member(root, &archive, &proposed))
+                .transpose()?;
+            let mut required_raw = Vec::new();
+            if proposal.is_some() {
+                let mut stack = vec![value["after"]["head"].as_str().context("child head")?.to_owned()];
+                stack.extend(
+                    value["after"]["private"]
+                        .as_array()
+                        .context("private entries")?
+                        .iter()
+                        .map(|entry| entry["id"].as_str().expect("entry object ID").to_owned()),
+                );
+                let mut visited = BTreeSet::new();
+                while let Some(id) = stack.pop() {
+                    if !visited.insert(id.clone()) {
+                        continue;
+                    }
+                    let Some((path, object)) = raw.get(&id) else {
+                        let original_head: Vec<u8> = serde_json::from_value(value["before"]["original_head"].clone())?;
+                        let baseline = std::str::from_utf8(&original_head)?.trim();
+                        ensure!(
+                            id == baseline || value["before"]["parent"].as_str() == Some(id.as_str()),
+                            "child proposal closure is missing raw object {id} outside its pinned baseline"
+                        );
+                        continue;
+                    };
+                    required_raw.push(member(root, &archive, path)?);
+                    let data: Vec<u8> = serde_json::from_value(object["data"].clone())?;
+                    match object["kind"].as_str().context("retained object kind")? {
+                        "commit" => {
+                            let commit = gix::objs::CommitRef::from_bytes(&data, gix::hash::Kind::Sha1)?;
+                            stack.push(commit.tree().to_string());
+                            stack.extend(commit.parents().map(|parent| parent.to_string()));
+                        }
+                        "tree" => stack.extend(
+                            gix::objs::TreeRef::from_bytes(&data, gix::hash::Kind::Sha1)?
+                                .entries
+                                .iter()
+                                .map(|entry| entry.oid.to_string()),
+                        ),
+                        "blob" => {}
+                        kind => anyhow::bail!("unexpected child raw kind {kind}"),
+                    }
+                }
+            }
+            let mut invocations = Vec::new();
+            let mut directories = vec![identity(&archive)?];
+            if archive.join("objects").exists() {
+                directories.push(identity(&archive.join("objects"))?);
+            }
+            for number in 1..=value["after"]["invocation"].as_u64().context("invocation number")? {
+                let invocation = archive.join(format!("invocation-{number}"));
+                directories.push(identity(&invocation)?);
+                for name in ["start.json", "launch.json", "exit.json"] {
+                    invocations.push(member(root, &archive, &invocation.join(name))?);
+                }
+            }
+            out.push(ChildTraceProof {
+                decision: member(root, &archive, &decision.path())?,
+                value,
+                proposal,
+                raw: required_raw,
+                invocations,
+                directories,
+            });
+        }
+    }
+    out.sort_by_key(|child| {
+        (
+            child.value["after"]["replay_parent"]["step"].as_u64(),
+            child.value["after"]["children"].as_u64(),
+        )
+    });
+    Ok(out)
+}
+
 fn check_replay_execution_trace(events: &[Event], proof: &ReplayTraceProof) -> Result<()> {
     let mut durable = Durable::default();
     let mut decisions = BTreeSet::new();
+    let mut completed_invocations = BTreeSet::new();
+    let mut child_decisions = BTreeSet::new();
+    let mut child_proposals = BTreeSet::new();
+    let mut child_index_images: Vec<Vec<u8>> = Vec::new();
+    let mut child_head_images: Vec<Vec<u8>> = Vec::new();
     let mut seen_refs = BTreeSet::new();
     let mut final_decided = false;
     let mut abort_decided = false;
@@ -478,12 +850,97 @@ fn check_replay_execution_trace(events: &[Event], proof: &ReplayTraceProof) -> R
                 decisions.insert(name.clone());
             }
         }
+        for (ordinal, receipts) in proof.invocations.iter().enumerate() {
+            if completed_invocations.contains(&ordinal) {
+                continue;
+            }
+            let visible = |member: &TraceMember| {
+                member
+                    .paths
+                    .iter()
+                    .any(|path| durable.state(proof.root_id, path) == member.state)
+            };
+            if visible(&receipts[1]) {
+                assert!(
+                    visible(&receipts[0]),
+                    "invocation launch precedes durable start at sync {position}"
+                );
+            }
+            if visible(&receipts[2]) {
+                assert!(
+                    visible(&receipts[0]) && visible(&receipts[1]),
+                    "invocation exit precedes durable launch/start at sync {position}"
+                );
+                completed_invocations.insert(ordinal);
+            }
+        }
+        for (ordinal, child) in proof.children.iter().enumerate() {
+            let visible = |member: &TraceMember| {
+                member
+                    .paths
+                    .iter()
+                    .any(|path| durable.state(proof.root_id, path) == member.state)
+            };
+            if let Some(proposal) = &child.proposal
+                && !child_proposals.contains(&ordinal)
+                && visible(proposal)
+            {
+                for raw in &child.raw {
+                    assert!(
+                        visible(raw),
+                        "child proposal precedes raw closure durability at sync {position}: {:?}",
+                        raw.paths
+                    );
+                }
+                child_proposals.insert(ordinal);
+            }
+            if !child_decisions.contains(&ordinal) && visible(&child.decision) {
+                if child.proposal.is_some() {
+                    assert!(
+                        child_proposals.contains(&ordinal),
+                        "child publication requires prior durable proposal at sync {position}"
+                    );
+                    let binding = &child.value["after"]["replay_parent"];
+                    let name = PathBuf::from(format!(
+                        ".git/refs/brit-rebase-retain/{}/child-{}-{}",
+                        binding["nonce"].as_str().expect("nonce"),
+                        binding["step"].as_u64().expect("parent ordinal"),
+                        child.value["after"]["children"].as_u64().expect("child ordinal")
+                    ));
+                    let State::File { bytes, .. } = durable.state(proof.root_id, &name) else {
+                        panic!("child commit decision has no owned durable retention ref at sync {position}");
+                    };
+                    assert_eq!(
+                        bytes,
+                        format!("{}\n", child.value["after"]["head"].as_str().expect("child head")).as_bytes()
+                    );
+                    if child.value["after"]["head"] != child.value["before"]["parent"] {
+                        assert!(
+                            child.value["after"]["post_hooks"].is_object(),
+                            "authored child decision durably queues post notifications"
+                        );
+                    }
+                }
+                for receipt in &child.invocations {
+                    assert!(
+                        visible(receipt),
+                        "completed child transition precedes invocation receipt durability at sync {position}: {:?}",
+                        receipt.paths
+                    );
+                }
+                child_index_images.push(serde_json::from_value(child.value["new_index"].clone())?);
+                child_head_images.push(serde_json::from_value(child.value["new_head"].clone())?);
+                child_decisions.insert(ordinal);
+            }
+        }
         assert!(
-            index_images.contains(&durable.state(proof.root_id, Path::new(".git/index"))),
+            index_images.contains(&durable.state(proof.root_id, Path::new(".git/index")))
+                || matches!(durable.state(proof.root_id, Path::new(".git/index")), State::File { bytes, .. } if child_index_images.contains(&bytes)),
             "index publication precedes a durable decision at sync {position}"
         );
         assert!(
-            head_images.contains(&durable.state(proof.root_id, Path::new(".git/HEAD"))),
+            head_images.contains(&durable.state(proof.root_id, Path::new(".git/HEAD")))
+                || matches!(durable.state(proof.root_id, Path::new(".git/HEAD")), State::File { bytes, .. } if child_head_images.contains(&bytes)),
             "HEAD publication precedes a durable decision at sync {position}"
         );
         assert_eq!(
@@ -518,6 +975,21 @@ fn check_replay_execution_trace(events: &[Event], proof: &ReplayTraceProof) -> R
         decisions.len(),
         proof.decisions.len(),
         "every returned decision must be durably observed; omission controls cannot pass vacuously"
+    );
+    assert_eq!(
+        child_decisions.len(),
+        proof.children.len(),
+        "every completed child decision must be durably observed"
+    );
+    assert_eq!(
+        child_proposals.len(),
+        proof.children.iter().filter(|child| child.proposal.is_some()).count(),
+        "every authored proposal must be durably observed"
+    );
+    assert_eq!(
+        completed_invocations.len(),
+        proof.invocations.len(),
+        "every completed invocation must have durable start, launch and exit receipts"
     );
     assert_eq!(abort_decided, proof.abort);
     assert_eq!(final_decided, !proof.abort);

@@ -529,3 +529,51 @@ fn quote_patch_path(path: &[u8], quote_high: bool) -> BString {
     quoted.push(b'"');
     quoted.into()
 }
+
+/// Render a pinned commit's parent-to-commit patch without consulting mutable refs,
+/// worktree attributes, external drivers or the public index.
+pub fn pinned_commit(repo: &gix::Repository, out: &mut dyn std::io::Write, commit: ObjectId) -> Result<()> {
+    use std::collections::{BTreeMap, BTreeSet};
+    let commit = repo.find_commit(commit)?;
+    let parent = commit
+        .parent_ids()
+        .next()
+        .ok_or_else(|| message("root patch is unsupported"))?;
+    let before = repo.index_from_tree(&repo.find_commit(parent)?.tree_id()?)?;
+    let after = repo.index_from_tree(&commit.tree_id()?)?;
+    let entries = |index: &gix::index::State| -> BTreeMap<BString, (u32, ObjectId)> {
+        index
+            .entries()
+            .iter()
+            .map(|entry| (entry.path(index).to_owned(), (entry.mode.bits(), entry.id)))
+            .collect()
+    };
+    let before = entries(&before);
+    let after = entries(&after);
+    let paths: BTreeSet<_> = before.keys().chain(after.keys()).cloned().collect();
+    let mut rendered = Vec::new();
+    for path in paths {
+        if before.get(&path) == after.get(&path) {
+            continue;
+        }
+        if before
+            .get(&path)
+            .into_iter()
+            .chain(after.get(&path))
+            .any(|(mode, _)| *mode == 0o160000)
+        {
+            bail!(unsupported("submodule patches are unsupported"));
+        }
+        let old = before
+            .get(&path)
+            .map(|&(mode, id)| load_patch_blob(repo, mode, id))
+            .transpose()?;
+        let new = after
+            .get(&path)
+            .map(|&(mode, id)| load_patch_blob(repo, mode, id))
+            .transpose()?;
+        render_patch(repo, &mut rendered, &path, old.as_ref(), new.as_ref())?;
+    }
+    out.write_all(&rendered).or_error()?;
+    Ok(())
+}

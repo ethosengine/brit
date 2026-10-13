@@ -1484,3 +1484,70 @@ fn unknown_first_queued_post_hook_is_acknowledged_once_before_second_hook_runs()
     assert_preserved(root)?;
     Ok(())
 }
+
+#[test]
+fn todo_edit_at_break_and_edit_stop_keeps_unchanged_ancestor_out_of_preserved_sibling_scope() -> Result<()> {
+    use std::os::unix::fs::MetadataExt;
+    if gix_testtools::run_in_isolated_process().map_err(anyhow::Error::from_boxed)? {
+        return Ok(());
+    }
+    let _editor = gix_testtools::Env::new().set("GIT_SEQUENCE_EDITOR", ":");
+    for edit_stop in [false, true] {
+        let temp = tempfile::tempdir()?;
+        let root = temp.path();
+        git(root, &["init", "-q", "-b", "main"])?;
+        git(root, &["config", "user.name", "Directory Scope"])?;
+        git(root, &["config", "user.email", "scope@example.invalid"])?;
+        fs::create_dir(root.join("dir"))?;
+        fs::write(root.join("dir/selected"), b"baseline selected\n")?;
+        fs::write(root.join("dir/neighbor"), b"baseline neighbor\n")?;
+        git(root, &["add", "dir"])?;
+        git(root, &["commit", "-qm", "baseline"])?;
+        git(root, &["branch", "upstream"])?;
+        let first = commit(root, "dir/selected", b"first selected\n", "first")?;
+        let second = commit(root, "dir/selected", b"second selected\n", "second")?;
+        fs::write(root.join("dir/neighbor"), b"preserved staged\n")?;
+        git(root, &["add", "dir/neighbor"])?;
+        fs::write(root.join("dir/neighbor"), b"preserved working\n")?;
+        let index_before = fs::read(root.join(".git/index"))?;
+        let directory = fs::metadata(root.join("dir"))?;
+        let identity = (directory.dev(), directory.ino());
+        let repo = gix::open(root)?;
+        let mut session = Session::prepare_interactive(&repo, b"upstream".as_bstr())?.expect("interactive selection");
+        let todo = if edit_stop {
+            format!("edit {first}\npick {second}\n")
+        } else {
+            format!("pick {first}\nbreak\npick {second}\n")
+        };
+        session.accept_todo(&repo, todo.as_bytes())?;
+        assert_eq!(session.advance(&repo)?, Advance::Started);
+        if edit_stop {
+            assert_eq!(session.advance(&repo)?, Advance::Edit);
+        } else {
+            assert!(matches!(session.advance(&repo)?, Advance::Step { .. }));
+            assert_eq!(session.advance(&repo)?, Advance::Break);
+        }
+        session.edit_todo(&repo)?;
+        session.accept_todo(&repo, format!("drop {second}\n").as_bytes())?;
+        if edit_stop {
+            assert!(matches!(session.continue_edit(&repo)?, Advance::Step { .. }));
+        }
+        assert_eq!(session.advance(&repo)?, Advance::Dropped);
+        assert_eq!(session.advance(&repo)?, Advance::ReadyFinal);
+        assert_eq!(git(root, &["show", "HEAD:dir/neighbor"])?, b"baseline neighbor\n");
+        assert_eq!(git(root, &["show", ":dir/neighbor"])?, b"preserved staged\n");
+        assert_eq!(fs::read(root.join("dir/neighbor"))?, b"preserved working\n");
+        assert_eq!(oid(root, "main")?, second, "original branch remains untouched");
+        session.abort(&repo)?;
+        assert_eq!(fs::read(root.join(".git/index"))?, index_before);
+        assert_eq!(fs::read(root.join("dir/selected"))?, b"second selected\n");
+        assert_eq!(fs::read(root.join("dir/neighbor"))?, b"preserved working\n");
+        let directory = fs::metadata(root.join("dir"))?;
+        assert_eq!(
+            (directory.dev(), directory.ino()),
+            identity,
+            "unchanged ancestor inode remains owned by the user"
+        );
+    }
+    Ok(())
+}

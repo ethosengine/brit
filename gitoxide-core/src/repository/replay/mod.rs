@@ -1,4 +1,4 @@
-//! Internal durable linear replay; public command dispatch remains disabled.
+//! Durable local replay with bounded Linux command dispatch.
 //!
 //! Read-only selection proves pinned local history. Linux sessions preserve the
 //! original staging/worktree distinction through separately journaled decisions.
@@ -417,3 +417,6 @@ mod cleanup;
 pub mod editors;
 #[cfg(target_os = "linux")]
 pub(crate) use cleanup::ensure_cleanup_retired;
+
+/// Bounded public command orchestration (dispatch qualification is separate).
+pub mod command;

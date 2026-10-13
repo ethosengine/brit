@@ -1,4 +1,4 @@
-//! Private retained-copy validation; no public extraction or replay-driver claim.
+//! Retained-copy validation and independent, byte-preserving extraction recovery.
 #![cfg(target_os = "linux")]
 
 use std::{
@@ -414,5 +414,178 @@ fn retained_directory_identity_roundtrips_without_accepting_file_payload_bytes()
     invalid.data = b"directory must not masquerade as file content".to_vec();
     assert!(retained::capture(&repo, NONCE, 2, commit, commit, commit, &[invalid]).is_err());
     retained::inspect(&receipt.path)?;
+    Ok(())
+}
+
+#[test]
+fn extract_is_independent_lossless_and_never_recreates_symlinks() -> Result<()> {
+    if gix_testtools::run_in_isolated_process().map_err(anyhow::Error::from_boxed)? {
+        return Ok(());
+    }
+    let temp = fixture()?;
+    let repo = gix::open(temp.path())?;
+    let commit = repo.head_commit()?.id;
+    let mut members = sample_members(&repo)?;
+    members[0].path = b"raw-\xff/nested".to_vec();
+    let receipt = retained::capture(&repo, NONCE, 1, commit, commit, commit, &members)?;
+    let destination = tempfile::tempdir()?;
+    let before = files(&receipt.path)?;
+    retained::extract(&receipt.path, destination.path())?;
+    let manifest: serde_json::Value = serde_json::from_slice(&fs::read(destination.path().join("manifest.json"))?)?;
+    let decoded: retained::Manifest = serde_json::from_value(manifest["manifest"].clone())?;
+    assert_eq!(decoded.entries[0].path, members[0].path);
+    for (ordinal, member) in members.iter().enumerate() {
+        let output = destination
+            .path()
+            .join(manifest["payloads"][ordinal].as_str().expect("payload path"));
+        assert!(
+            fs::symlink_metadata(&output)?.is_file(),
+            "all output payloads are inert files"
+        );
+        assert_eq!(fs::read(&output)?, member.data);
+    }
+    assert_eq!(
+        files(&receipt.path)?,
+        before,
+        "export does not modify or expire the copy"
+    );
+    assert!(!repo.git_dir().join("brit-rebase").exists());
+    assert!(
+        retained::extract(&receipt.path, destination.path()).is_err(),
+        "nonempty destination refused"
+    );
+    Ok(())
+}
+
+#[test]
+fn inspection_and_extraction_refuse_ancestor_links_unsafe_names_and_corruption_before_output() -> Result<()> {
+    if gix_testtools::run_in_isolated_process().map_err(anyhow::Error::from_boxed)? {
+        return Ok(());
+    }
+    let temp = fixture()?;
+    let repo = gix::open(temp.path())?;
+    let commit = repo.head_commit()?.id;
+    let members = sample_members(&repo)?;
+    let receipt = retained::capture(&repo, NONCE, 1, commit, commit, commit, &members)?;
+    let destination = tempfile::tempdir()?;
+    assert!(
+        retained::extract(&receipt.path, destination.path()).is_err(),
+        "logical parent traversal rejected even with opaque outputs"
+    );
+    assert_eq!(fs::read_dir(destination.path())?.count(), 0);
+    let alias = temp.path().join("retained-alias");
+    std::os::unix::fs::symlink(receipt.path.parent().expect("nonce parent"), &alias)?;
+    assert!(retained::inspect(&alias.join(receipt.path.file_name().expect("leaf"))).is_err());
+    let mut safe = members;
+    safe[0].path = b"safe".to_vec();
+    let receipt = retained::capture(&repo, NONCE, 2, commit, commit, commit, &safe)?;
+    let alias = temp.path().join("destination-alias");
+    std::os::unix::fs::symlink(destination.path(), &alias)?;
+    assert!(retained::extract(&receipt.path, &alias).is_err());
+    assert_eq!(fs::read_dir(destination.path())?.count(), 0);
+    fs::write(receipt.path.join("00000000"), b"corrupted")?;
+    assert!(retained::extract(&receipt.path, destination.path()).is_err());
+    assert_eq!(fs::read_dir(destination.path())?.count(), 0);
+    Ok(())
+}
+
+#[cfg(feature = "switch-test-faults")]
+#[test]
+fn extraction_destination_replacement_child_helper() -> Result<()> {
+    let Some(copy) = std::env::var_os("BRIT_TEST_EXTRACT_COPY") else {
+        return Ok(());
+    };
+    let destination = std::env::var_os("BRIT_TEST_EXTRACT_DESTINATION").expect("destination supplied by parent");
+    let error = retained::extract(Path::new(&copy), Path::new(&destination))
+        .expect_err("replaced destination ancestor must refuse before output");
+    let diagnostic = format!("{error:#}");
+    assert!(
+        diagnostic.contains("symlink") || diagnostic.contains("symbolic") || diagnostic.contains("directory"),
+        "refusal identifies unsafe destination: {diagnostic}"
+    );
+    Ok(())
+}
+
+#[cfg(feature = "switch-test-faults")]
+#[test]
+fn extraction_revalidates_parent_replaced_by_symlink_after_initial_destination_check() -> Result<()> {
+    use std::{
+        process::{Command, Stdio},
+        time::{Duration, Instant},
+    };
+    if gix_testtools::run_in_isolated_process().map_err(anyhow::Error::from_boxed)? {
+        return Ok(());
+    }
+    let fixture = fixture()?;
+    let repo = gix::open(fixture.path())?;
+    let commit = repo.head_commit()?.id;
+    let mut members = sample_members(&repo)?;
+    members[0].path = b"safe/raw-\xff".to_vec();
+    let receipt = retained::capture(&repo, NONCE, 1, commit, commit, commit, &members)?;
+    let retained_before = files(&receipt.path)?;
+    let extraction = tempfile::tempdir()?;
+    let parent = extraction.path().join("parent");
+    let destination = parent.join("destination");
+    fs::create_dir_all(&destination)?;
+    let outside = tempfile::tempdir()?;
+    fs::create_dir(outside.path().join("destination"))?;
+    fs::write(outside.path().join("sentinel"), b"outside remains untouched")?;
+    let outside_before = files(outside.path())?;
+    let checkpoints = tempfile::tempdir()?;
+    let checkpoint = "replay-extract-destination-validated";
+    let mut command = Command::new(std::env::current_exe()?);
+    gix_testtools::configure_git_environment(&mut command, fixture.path());
+    let mut child = command
+        .args([
+            "--exact",
+            "extraction_destination_replacement_child_helper",
+            "--nocapture",
+        ])
+        .env("BRIT_TEST_EXTRACT_COPY", &receipt.path)
+        .env("BRIT_TEST_EXTRACT_DESTINATION", &destination)
+        .env("BRIT_SWITCH_CHECKPOINT", checkpoint)
+        .env("BRIT_SWITCH_CHECKPOINT_DIR", checkpoints.path())
+        .stdin(Stdio::null())
+        .stdout(Stdio::null())
+        .stderr(Stdio::inherit())
+        .spawn()?;
+    let reached = checkpoints.path().join(format!("{checkpoint}.reached"));
+    let deadline = Instant::now() + Duration::from_secs(20);
+    while !reached.exists() {
+        ensure!(
+            child.try_wait()?.is_none(),
+            "extract helper exited before destination validation"
+        );
+        if Instant::now() >= deadline {
+            child.kill()?;
+            child.wait()?;
+            anyhow::bail!("extract destination checkpoint timed out");
+        }
+        std::thread::sleep(Duration::from_millis(10));
+    }
+    let moved = extraction.path().join("original-parent");
+    fs::rename(&parent, &moved)?;
+    std::os::unix::fs::symlink(outside.path(), &parent)?;
+    fs::write(checkpoints.path().join(format!("{checkpoint}.release")), b"resume")?;
+    assert!(
+        child.wait()?.success(),
+        "helper must observe safe refusal after ancestor replacement"
+    );
+    assert_eq!(
+        files(outside.path())?,
+        outside_before,
+        "no writes follow the replaced parent link"
+    );
+    assert_eq!(fs::read_dir(outside.path().join("destination"))?.count(), 0);
+    assert_eq!(
+        fs::read_dir(moved.join("destination"))?.count(),
+        0,
+        "no output precedes checkpoint revalidation"
+    );
+    assert_eq!(
+        files(&receipt.path)?,
+        retained_before,
+        "source retained copy remains unchanged"
+    );
     Ok(())
 }

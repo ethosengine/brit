@@ -2027,6 +2027,59 @@ impl Session {
     pub fn commit_split_edit(&mut self, repo: &gix::Repository) -> Result<Outcome> {
         self.author_edit(repo, false)
     }
+    pub(crate) fn status(&self, out: &mut dyn std::io::Write) -> Result<()> {
+        writeln!(
+            out,
+            "Authoring stop: {:?}; split: {}; authored tip: {}",
+            self.state.kind, self.state.split, self.state.head
+        )?;
+        if self.has_pending_publication() {
+            writeln!(
+                out,
+                "Child publication pending: --continue recovers the exact proposed decision."
+            )?;
+        }
+        if let Some((number, post)) = self.state.pending_hook {
+            let inspected = super::invocation::inspect(&self.directory.join(format!("invocation-{number}")));
+            writeln!(
+                out,
+                "Pending {} hook: {:?}",
+                if post { "post-commit" } else { "pre-commit" },
+                inspected
+            )?;
+            writeln!(
+                out,
+                "{}",
+                if post {
+                    "--continue acknowledges an unknown post-hook without rerun."
+                } else {
+                    "An unknown pre-hook permits inspection or --abort only."
+                }
+            )?;
+        }
+        if self.state.post_hooks.is_some() {
+            writeln!(
+                out,
+                "Post-authoring notifications remain queued; --continue resumes only never-started hooks."
+            )?;
+        }
+        if let Some(message) = &self.state.author_message {
+            writeln!(
+                out,
+                "Saved author message: {:?}; accepted: {}; --continue validates saved bytes without relaunch.",
+                gix::path::from_bstr(message.plan.output.as_bstr())?,
+                message.accepted
+            )?;
+        }
+        Ok(())
+    }
+
+    pub(crate) fn has_pending_publication(&self) -> bool {
+        let ordinal = self.state.children + 1;
+        self.directory.join(format!("child-{ordinal}.json")).exists()
+            || self.directory.join(format!("child-{ordinal}-proposed.json")).exists()
+    }
+
     pub fn has_pending_author_message(&self) -> bool {
         self.state.author_message.is_some()
     }

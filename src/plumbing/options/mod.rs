@@ -1,3 +1,4 @@
+pub mod rebase;
 use std::path::PathBuf;
 
 use clap_complete::Shell;
@@ -78,6 +79,8 @@ pub struct Args {
 
 #[derive(Debug, clap::Subcommand)]
 pub enum Subcommands {
+    /// Replay a linear history with durable local recovery.
+    Rebase(rebase::Platform),
     /// Subcommands for creating worktree archives.
     #[cfg(feature = "gitoxide-core-tools-archive")]
     Archive(archive::Platform),

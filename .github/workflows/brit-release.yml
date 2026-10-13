@@ -1,4 +1,4 @@
-# Brit's fork-owned one-binary release. The inherited release.yml remains the
+# Brit's fork-owned release with the qualified Linux retained-copy helper. The inherited release.yml remains the
 # upstream gitoxide workflow and is guarded off on ethosengine/brit.
 name: brit release
 
@@ -44,13 +44,17 @@ jobs:
         run: |
           set -euo pipefail
           cargo test --locked -p brit-cli --no-default-features --features max-pure
-          cargo build --locked -p brit-cli --bin brit --no-default-features --features max-pure
-          BRIT_BIN="$CARGO_TARGET_DIR/debug/brit" cargo test --locked -p cli-journey \
-            --test brit --test rakia --test inherited_git_environment --test shared_tree \
+          cargo build --locked -p brit-cli --bin brit --bin brit-rebase-retained --no-default-features --features max-pure
+          BRIT_BIN="$CARGO_TARGET_DIR/debug/brit" BRIT_REBASE_RETAINED_BIN="$CARGO_TARGET_DIR/debug/brit-rebase-retained" cargo test --locked -p cli-journey \
+            --test rebase --test git_rebase_characterization --test brit --test rakia --test inherited_git_environment --test shared_tree \
             --test authoring --test pre_push --test explicit_leases --test commit_cleanup --test commit_amend --test worktree_restore --test switch --test pull --test broader_staging --test daily_driver --test native_authoring
+          cargo test --locked -p gix-sequencer --features serde
+          cargo test --locked -p gitoxide-core --features blocking-client,gix/sha1,switch-test-faults \
+            --test conflict_authoring --test replay --test replay_interactive --test replay_retained --test replay_qualification --test replay_io
           cargo test --locked -p gitoxide-core --features blocking-client,gix/sha1 --lib power_loss
-          cargo build --locked -p brit-cli --bin brit --no-default-features --features max-pure,switch-test-faults
-          BRIT_BIN="$CARGO_TARGET_DIR/debug/brit" cargo test --locked -p cli-journey --features switch-test-faults --test switch --test pull
+          cargo test --locked -p gitoxide-core --features blocking-client,gix/sha1,switch-test-faults --test replay_invocation
+          cargo build --locked -p brit-cli --bin brit --bin brit-rebase-retained --no-default-features --features max-pure,switch-test-faults
+          BRIT_BIN="$CARGO_TARGET_DIR/debug/brit" BRIT_REBASE_RETAINED_BIN="$CARGO_TARGET_DIR/debug/brit-rebase-retained" cargo test --locked -p cli-journey --features switch-test-faults --test rebase --test switch --test pull
           test -z "$(git status --porcelain --untracked-files=all)"
 
   build:
@@ -94,11 +98,15 @@ jobs:
         run: |
           rustup update stable
           rustup target add "$TARGET"
-      - name: Build exactly the Brit executable
+      - name: Build Brit and the qualified Linux retained-copy helper
         run: |
           set -euo pipefail
           cargo build --locked -p brit-cli --bin brit --profile "$PROFILE" \
             --target "$TARGET" --no-default-features --features "$FEATURE"
+          if [ "$RUNNER_OS" = Linux ]; then
+            cargo build --locked -p brit-cli --bin brit-rebase-retained --profile "$PROFILE" \
+              --target "$TARGET" --no-default-features --features "$FEATURE"
+          fi
       - name: Smoke the built executable on its host
         run: |
           set -euo pipefail
@@ -109,7 +117,7 @@ jobs:
           "$binary_path" --help >/dev/null
           "$binary_path" build --help >/dev/null
           "$binary_path" --version
-      - name: Package one binary, receipt, and checksum
+      - name: Package binaries, receipt, and checksum
         run: |
           set -euo pipefail
           test "$(git rev-parse HEAD)" = "$SOURCE_SHA"
@@ -120,6 +128,9 @@ jobs:
           if [ "$RUNNER_OS" = Windows ]; then build_root=$(cygpath -u "$CARGO_TARGET_DIR"); fi
           case "$TARGET" in *-windows-*) binary=brit.exe ;; *) binary=brit ;; esac
           archive="brit-$FEATURE-${VERSION_TAG#brit-}-$TARGET"
+          if [ "$RUNNER_OS" = Linux ]; then
+            export BRIT_REBASE_RETAINED_BIN="$build_root/$TARGET/$PROFILE/brit-rebase-retained"
+          fi
           bash scripts/ci/package-brit-release.sh \
             "$build_root/$TARGET/$PROFILE/$binary" . "$archive" \
             "$VERSION_TAG" "$FEATURE" "$TARGET" "$PROFILE" "$SOURCE_SHA" \
@@ -135,6 +146,18 @@ jobs:
           tar -xzf "$ASSET" -C "$isolated/extracted"
           package="$isolated/extracted/${ASSET%.tar.gz}"
           bash scripts/ci/install-brit-release.sh "$package" "$isolated/install" "$SOURCE_SHA" "$binary_sha"
+          if [ "$RUNNER_OS" = Linux ]; then
+            helper_name=$(awk -F= '$1 == "retained_helper_binary" { count++; value=$2 } END { if (count != 1) exit 2; print value }' "$package/BUILD-INFO.txt")
+            helper_sha=$(awk -F= '$1 == "retained_helper_sha256" { count++; value=$2 } END { if (count != 1) exit 2; print value }' "$package/BUILD-INFO.txt")
+            test "$helper_name" = brit-rebase-retained
+            [[ "$helper_sha" =~ ^[0-9a-f]{64}$ ]]
+            test -f "$package/$helper_name" && test ! -L "$package/$helper_name" && test -x "$package/$helper_name"
+            test "$(shasum -a 256 "$package/$helper_name" | awk '{print $1}')" = "$helper_sha"
+            mkdir "$isolated/bin"
+            cp "$package/$helper_name" "$isolated/bin/$helper_name"
+            test "$(shasum -a 256 "$isolated/bin/$helper_name" | awk '{print $1}')" = "$helper_sha"
+            "$isolated/bin/$helper_name" --help >/dev/null
+          fi
       - name: Prove source-free installed authoring and recovery
         if: runner.os != 'Windows'
         run: |
@@ -143,6 +166,13 @@ jobs:
           bash scripts/ci/verify-installed-brit.sh "$installed"
           BRIT_BIN="$installed" cargo test --locked -p cli-journey \
             --test authoring --test pre_push --test explicit_leases --test commit_cleanup --test commit_amend --test worktree_restore --test switch --test pull --test broader_staging --test daily_driver --test native_authoring --test shared_tree
+      - name: Qualify installed Linux rebase and retained-copy recovery
+        if: runner.os == 'Linux'
+        run: |
+          set -euo pipefail
+          isolated="$RUNNER_TEMP/brit-installed-qualification"
+          BRIT_BIN="$isolated/install/bin/brit" BRIT_REBASE_RETAINED_BIN="$isolated/bin/brit-rebase-retained" \
+            cargo test --locked -p cli-journey --test rebase
       - name: Prove Unix installer interruption and rollback mechanics
         if: runner.os != 'Windows'
         run: |
