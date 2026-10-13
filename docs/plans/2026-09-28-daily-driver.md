@@ -890,15 +890,15 @@ Ordered implementation follow-ons (the original daily-driver finish line stays
 unchanged; each needs its own implementation and proof):
 
 - [x] 5d. Conflict-aware authoring: separate original/public/replay indexes, scoped resolution staging, validated external Git staging and native amend/split child receipts. Probe: no preserved dirty byte enters any rewritten tree; original staged/unstaged distinction survives every stop. Depends on 5c. Serves brit-native-daily-driver.
-- [ ] 5e. Durable linear replay: pinned local selection, step/skip/final/abort decisions, retained objects, private abort copies and switch/pull journal compatibility. Probe: explicit recovery at every durable boundary, including abort after completed replay steps. Depends on 5d. Serves brit-native-daily-driver.
+- [x] 5e. Durable linear replay: pinned local selection, step/skip/final/abort decisions, retained objects, private abort copies and switch/pull journal compatibility. Probe: explicit recovery at every durable boundary, including abort after completed replay steps. Depends on 5d. Serves brit-native-daily-driver.
 - [ ] 5f. Interactive sequencing: validated todo, every selected command, editor/hook invocation outcomes and rewrite mappings. Probe: invalid/failed/interrupted editors and hooks never replay unknown effects or consume preserved edits. Depends on 5e. Serves brit-native-daily-driver.
 - [ ] 5g. Combined recovery and artifact qualification: complete the spec's fault matrix, retained-copy decoder/extraction/deletion, independent recovery review and exact-source rebuilt artifact journeys before public rebase exposure. Probe: interruption and synchronization-loss models, private-copy recovery and retained 5a/5b regressions. Depends on 5f. Serves brit-native-daily-driver.
 
 Maintainer discoveries captured for those stations:
 
-- Chain 5e / between a decided replay step → final branch publication / missing node: operation abort remains available until the separate final decision; probe abort after each completed step. Current state: designed, UNWIRED in Brit.
+- Chain 5e / between a decided replay step → final branch publication / missing node: operation abort remains available until the separate final decision; probe `abort_after_each_completed_step_restores_exact_index_and_retains_rewritten_objects`. Current state: green in station 5e internal native proof; public exposure remains pending.
 - Chain 5f / between invocation start → recovery mutation / missing node: durably recorded gated child identity and proved quiescence precede capture/restore; probe owner death before/after receipt and gate release. Current state: designed, UNWIRED in Brit.
-- Chain 5e / between detached replay → garbage collection / missing node: explicit H/U and intermediate commit retention precedes mutation; probe prune at each retention boundary. Current state: designed, UNWIRED in Brit.
+- Chain 5e / between detached replay → garbage collection / missing node: explicit H/U and intermediate commit retention precedes mutation; probe original/upstream/intermediate and stop-tree GC tests. Current state: green in station 5e internal native proof; full combined qualification remains 5g.
 - Chain 5g / between retained-copy completion → active-journal retirement / missing node: standalone byte-preserving inspection/extraction works after operation cleanup; probe recovery into an empty destination plus explicit leaf deletion. Current state: designed, UNWIRED in Brit.
 
 ### Amendment local-first and data boundary
@@ -1480,3 +1480,66 @@ probe `unknown_pre_hook_is_abort_only_and_unknown_post_hook_acknowledges_without
 with the pre-hook `after-start` checkpoint / current state: green in the native
 suite. This child-level proof supplies a prerequisite for the still-open 5f
 invocation node; it does not close interactive sequencing.
+
+
+## Station 5e — durable internal linear replay, 2026-10-13
+
+Implementation source: `3743b1c490b29c8cc1ee54c0479c3409a9469a0b`, from
+`70b08fb4d2a4bc1903c3c91f84da621ca555776b`, on isolated local branch
+`sprint/durable-linear-replay-2026-10-13`. This closes internal linear replay.
+Public rebase remains unavailable; interactive sequencing and combined public
+qualification remain stations 5f and 5g. Full readiness remains **UNWIRED**.
+
+The driver pins explicit local selection and complete required object closures,
+keeps the original branch reserved, and replays native three-way merges with
+original authorship and durably fixed proposed commit bytes. Original, public
+and private indexes remain separate throughout. No-op and fast-forward cases,
+conflicts, initial/newly empty commits, external resolution staging, sticky skip,
+final publication and abort share owned recovery decisions. Parent-child receipts
+bind the operation nonce, worktree, ordinal and exact parent state; preservation
+is never recaptured from an already-replayed checkout.
+
+Step, skip, final and abort decisions are distinct. Abort remains available after
+completed steps until the final decision. Independent copies contain raw work,
+index distinctions, messages, invocation evidence and complete authored objects
+before restoration or retention-ref release. Unknown private allocation orphans
+remain untouched and make cleanup pending; they do not prevent restoring the
+parent's pinned live state. Retired cleanup receipts permit new operations and
+cannot claim their journals. Known and unknown post-hook outcomes validate exact
+published resources; unknown hooks never rerun. Foreign changes in inspect-only
+phases remain inspection-only refusals.
+
+Verification used separate implementation/test owners, one Cargo runner and an
+independent preservation/recovery reviewer:
+
+| Check | Result |
+| --- | --- |
+| Internal native suite | 24 core/model, 32 retained authoring, 63 replay and 8 retained-copy entries pass; includes two subprocess helpers |
+| Stock-Git characterization | 40 pass; observations, not public Brit rebase support |
+| Existing authoring/staging/hook/switch/pull CLI journeys | 147 pass |
+| Existing switch/pull signal-recovery journeys | 57 pass |
+| Real signal checkpoints and synchronization-loss models | Pass, including omission controls and replay final/abort/cleanup ordering |
+| Strict scoped Clippy, formatting and whitespace | Pass |
+| Small, lean-async and max-pure configurations | Pass |
+| Independent preservation/recovery review | Approved for bounded internal Linux 5e |
+
+Commands, failures/fixes, review, logs and exact source hashes are retained under
+`genesis/local-dev/brit-readiness/durable-linear-replay/` in the owning workspace:
+`verification.json`, `review.json` and `source-binding.json`. The review receipt
+is pinned by SHA-256
+`3c30b528c6fcf60df56c429dea1006479822849d2e296b8118a09010d69b4560`. The existing recipe
+projects this station. Reach rehearsal uses
+`epr ready --target 70b08fb4d2a4bc1903c3c91f84da621ca555776b`.
+The local fault-enabled binary is an internal regression artifact. These proofs
+cover Linux fsync/rename behavior and loss-of-unsynchronized-writes models, not
+physical power cuts or hostile-writer isolation. No push, publication, parent
+submodule-pin change, public activation or whole daily-driver acceptance occurred.
+
+Story-harvest node: chain 5e / between abort copy completion → restoration /
+missing prerequisite: interrupted private allocation must not make the immutable
+copy or staging path reusable; persist a fresh copy sequence and preserve the
+unproved orphan before retrying / probe
+`abort_retry_after_its_own_unowned_staging_retains_orphan_without_replacing_prior_copy`,
+including a second interruption while saving the new sequence / current state:
+green in `native-tests-20.log`. This closes the internal abort-availability node;
+the full combined state/action/preservation matrix remains station 5g.
