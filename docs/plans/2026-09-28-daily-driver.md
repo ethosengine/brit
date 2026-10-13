@@ -576,8 +576,8 @@ UNWIRED for its complete invariant.
 
 ## Ordered local daily-driver backlog — 2026-10-12
 
-Stations 1–5a have completed bounded local proof. Station 5b is in verification;
-5c remains queued. Refresh each handoff against its predecessor's actual result before work. All stations serve `brit-native-daily-driver`; its full
+Stations 1–5b have completed bounded local proof; 5c remains queued.
+Refresh each handoff against its predecessor's actual result before work. All stations serve `brit-native-daily-driver`; its full
 invariant remains unqualified. Station numbers live in checkbox labels because
 the existing native recipe extracts bullet checkboxes.
 
@@ -586,7 +586,7 @@ the existing native recipe extracts bullet checkboxes.
 - [x] 3. [Broader staging](#handoff-3-broader-staging). Serves brit-native-daily-driver.
 - [x] 4. [Explicit lease protection](#handoff-4-explicit-lease-protection). Serves brit-native-daily-driver.
 - [x] 5a. [Safe branch switching](#handoff-5a-safe-branch-switching). Serves brit-native-daily-driver.
-- [ ] 5b. [Fast-forward pull](#handoff-5b-fast-forward-pull). Serves brit-native-daily-driver.
+- [x] 5b. [Fast-forward pull](#handoff-5b-fast-forward-pull). Serves brit-native-daily-driver.
 - [ ] 5c. [Rebase/conflict recovery design](#handoff-5c-rebaseconflict-recovery-design). Serves brit-native-daily-driver.
 
 ### Handoff 1: Commit amendment
@@ -864,7 +864,13 @@ Discovered stations (story harvest; final run state belongs to the sprint receip
 
 ### Handoff 5c: Rebase/conflict recovery design
 
-Prerequisite: refreshed 5b result. Deliver a decision-complete design for sequencing,
+Prerequisite: station 5b implementation `5882e60b71f8d98d324fbf97d8aec78f4d6ef445`,
+clean copied artifacts, 169 ordinary journeys, 32 pull and 25 switch/recovery
+journeys, both durability models, independent approval and native readiness.
+The evidence-only follow-up revision is bound in
+`genesis/local-dev/brit-readiness/fast-forward-pull/verification.json` in the
+owning workspace; start from its clean evidence revision when opening 5c.
+Deliver a decision-complete design for sequencing,
 conflict state, continue/abort and crash recovery. Boundary: existing native
 sequencer capabilities assessed against Git oracle; no public dormant command.
 Acceptance: runnable disposable Git characterization scripts and a complete
@@ -1280,3 +1286,65 @@ exit-4 unleased fallback. Direct source and prior-receipt reads occurred outside
 the private recall executor; no memory curation occurred. No push, publication,
 parent-submodule pin change, remote qualification or human acceptance is claimed.
 Next queued: 5b fast-forward pull, then 5c rebase/conflict recovery design.
+
+### Fast-forward pull local verification — 2026-10-13
+
+Station 5b has bounded local proof for explicitly selected fast-forward pull,
+including durable fetch publication and explicit integration recovery. The clean
+copied normal executable passes all 149 retained journeys and 20 new pull
+journeys (169 total, none ignored). The separate fault executable passes 32 pull
+journeys and all 25 retained switch/recovery journeys (57 total, none ignored).
+The pull count includes the same 20 ordinary cases plus 12 recovery cases;
+its main signal matrix exercises 17 checkpoints with both real SIGINT and SIGKILL
+(34 boundary/signal cases). Other cases cover offline continuation, interrupted
+abort, external metadata changes, stale/foreign locks, corrupt evidence, hook
+interruption and legacy version-1 switch recovery.
+
+Two durability model tests execute and pass. The retained switch model covers
+four filesystem shapes. The pull model covers pack and no-pack receives, object
+durability before the fetch decision, completed fetch metadata before integration,
+and metadata before hooks/cleanup, with omitted data/directory-sync negative
+controls. These are synchronization-loss models, not hardware power-cut tests.
+
+All 19 Brit package tests, eight Gitoxide parser tests, 158 native pack tests,
+207 native ref tests (two inherited ignored), two feature-enabled lease tests,
+strict scoped all-target Clippy with and without fault features, formatting and
+small/lean-async/max-pure checks pass. Source CI and installed-release selectors
+include pull; the model command explicitly enables the features needed to run
+both tests. No remote CI or non-Linux execution is claimed.
+
+Independent review approved preservation, private journal identity/permissions,
+object verification, both durable decisions, retry idempotence, ref/reflog
+publication, lock/keep ownership, recovery conflicts and truthful hook outcomes.
+Native receive now preserves existing pack keeps; newly created keeps carry
+creation identity. A crash before that identity can enter the private journal may
+leave an unclaimed keep, which recovery deliberately retains. Object durability
+currently synchronizes and fingerprints the object store conservatively;
+unrelated external repacking/removal may therefore refuse recovery. External
+Git writers are detected through expected-state checks, not isolated.
+
+Source base: `bff8b4f532146fde1ea40a70496548db8404a93c`; implementation source:
+`5882e60b71f8d98d324fbf97d8aec78f4d6ef445`; isolated branch:
+`sprint/fast-forward-pull-2026-10-12`. Normal executable SHA-256:
+`b35866d083446ba308e0a3bf5185eacce2af4f2098064de9e0c0e89c9e0bb89d`.
+Fault executable SHA-256:
+`718c54fcc853877996467cc665e421603a45674f9f024d3c73e0607441c576e8`.
+Both report the implementation revision; the rebuild script requires a clean
+worktree before and after copying and testing them. This evidence-only follow-up
+does not change executable source.
+
+Commands, logs, fault matrix, independent review, copied executables and exact
+revision/hash bindings live under
+`/projects/elohim/genesis/local-dev/brit-readiness/fast-forward-pull/`.
+`verification.json` binds the final evidence revision and distinguishes the
+superseding successful checks from retained iteration logs. The existing
+`.epr-meta/recipes.yaml` owns projection. Native readiness passed against the
+exact base and is rerun on the evidence revision with
+`epr ready --target bff8b4f532146fde1ea40a70496548db8404a93c`.
+
+Evidence is local Linux x86_64, Rust 1.99.0 and Git 2.52.0, empty RUSTFLAGS,
+two Cargo workers and the existing external target. Berth reported its existing
+unleased fallback because its store was read-only. Direct source and receipt
+reads occurred outside private recall; no memory curation occurred. No push,
+publication, parent-submodule pin change or human acceptance is claimed.
+The full habit remains UNWIRED. Next queued: 5c rebase/conflict recovery design.
