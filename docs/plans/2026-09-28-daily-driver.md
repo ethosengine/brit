@@ -576,7 +576,8 @@ UNWIRED for its complete invariant.
 
 ## Ordered local daily-driver backlog — 2026-10-12
 
-Stations 1–5b have completed bounded local proof; 5c remains queued.
+Stations 1–5b have completed bounded local proof; 5c has independently reviewed
+design and stock-Git characterization only. Rebase implementation remains queued.
 Refresh each handoff against its predecessor's actual result before work. All stations serve `brit-native-daily-driver`; its full
 invariant remains unqualified. Station numbers live in checkbox labels because
 the existing native recipe extracts bullet checkboxes.
@@ -587,7 +588,7 @@ the existing native recipe extracts bullet checkboxes.
 - [x] 4. [Explicit lease protection](#handoff-4-explicit-lease-protection). Serves brit-native-daily-driver.
 - [x] 5a. [Safe branch switching](#handoff-5a-safe-branch-switching). Serves brit-native-daily-driver.
 - [x] 5b. [Fast-forward pull](#handoff-5b-fast-forward-pull). Serves brit-native-daily-driver.
-- [ ] 5c. [Rebase/conflict recovery design](#handoff-5c-rebaseconflict-recovery-design). Serves brit-native-daily-driver.
+- [x] 5c. [Rebase/conflict recovery design](#handoff-5c-rebaseconflict-recovery-design). Design only; no rebase implementation or executable qualification. Serves brit-native-daily-driver.
 
 ### Handoff 1: Commit amendment
 
@@ -876,6 +877,29 @@ sequencer capabilities assessed against Git oracle; no public dormant command.
 Acceptance: runnable disposable Git characterization scripts and a complete
 state/recovery matrix. Independent reviewer: separate recovery design reviewer.
 Evidence: design, characterization results and explicit review before any exposure.
+
+Completed design contract:
+`docs/specs/2026-10-13-interactive-rebase-recovery-design.md` at
+`31a2cf294f76af070e876aa32e10f7a036236792`. Independent review approves
+preservation, stop mutation permissions, step/final separation, private retained
+copies, ownership and truthful partial outcomes. Stock Git 2.52.0 passes 40
+isolated characterization cases and the separate source-CI selector, with scoped
+Clippy and formatting green. These observations do not qualify Brit rebase.
+
+Ordered implementation follow-ons (the original daily-driver finish line stays
+unchanged; each needs its own implementation and proof):
+
+- [ ] 5d. Conflict-aware authoring: separate original/public/replay indexes, scoped resolution staging, validated external Git staging and native amend/split child receipts. Probe: no preserved dirty byte enters any rewritten tree; original staged/unstaged distinction survives every stop. Depends on 5c. Serves brit-native-daily-driver.
+- [ ] 5e. Durable linear replay: pinned local selection, step/skip/final/abort decisions, retained objects, private abort copies and switch/pull journal compatibility. Probe: explicit recovery at every durable boundary, including abort after completed replay steps. Depends on 5d. Serves brit-native-daily-driver.
+- [ ] 5f. Interactive sequencing: validated todo, every selected command, editor/hook invocation outcomes and rewrite mappings. Probe: invalid/failed/interrupted editors and hooks never replay unknown effects or consume preserved edits. Depends on 5e. Serves brit-native-daily-driver.
+- [ ] 5g. Combined recovery and artifact qualification: complete the spec's fault matrix, retained-copy decoder/extraction/deletion, independent recovery review and exact-source rebuilt artifact journeys before public rebase exposure. Probe: interruption and synchronization-loss models, private-copy recovery and retained 5a/5b regressions. Depends on 5f. Serves brit-native-daily-driver.
+
+Maintainer discoveries captured for those stations:
+
+- Chain 5e / between a decided replay step → final branch publication / missing node: operation abort remains available until the separate final decision; probe abort after each completed step. Current state: designed, UNWIRED in Brit.
+- Chain 5f / between invocation start → recovery mutation / missing node: durably recorded gated child identity and proved quiescence precede capture/restore; probe owner death before/after receipt and gate release. Current state: designed, UNWIRED in Brit.
+- Chain 5e / between detached replay → garbage collection / missing node: explicit H/U and intermediate commit retention precedes mutation; probe prune at each retention boundary. Current state: designed, UNWIRED in Brit.
+- Chain 5g / between retained-copy completion → active-journal retirement / missing node: standalone byte-preserving inspection/extraction works after operation cleanup; probe recovery into an empty destination plus explicit leaf deletion. Current state: designed, UNWIRED in Brit.
 
 ### Amendment local-first and data boundary
 
@@ -1348,3 +1372,47 @@ unleased fallback because its store was read-only. Direct source and receipt
 reads occurred outside private recall; no memory curation occurred. No push,
 publication, parent-submodule pin change or human acceptance is claimed.
 The full habit remains UNWIRED. Next queued: 5c rebase/conflict recovery design.
+
+## Sprint 5c evidence — 2026-10-13
+
+Design station only is complete on branch
+`sprint/rebase-recovery-design-2026-10-13`, starting from clean 5b evidence
+`7ffdf6b0ad5f63e723df50c569bd78010a38c0cb`. Design/test commit:
+`31a2cf294f76af070e876aa32e10f7a036236792`. No production rebase, authoring or
+recovery code changed. Rebase stays unimplemented and unexposed.
+
+The implementation-ready contract is
+`docs/specs/2026-10-13-interactive-rebase-recovery-design.md`. It defines
+preservation of staged/unstaged neighbors, isolated replay authoring, every stop
+and recovery action, separate step/skip/final/abort decisions, retained private
+abort copies, hook/editor quiescence, ownership and object retention. Every claim
+is a Git observation, an explicit intentional design difference or a deferred
+boundary. Its future fault matrix is not an executed recovery qualification.
+
+Local checks passed on Git 2.52.0 / Linux / Rust 1.99.0:
+
+- Dedicated stock-Git `cli-journey` characterization: 40 passed, none ignored.
+- Separate source-CI selector: the same 40 passed; remote CI was not run.
+- Strict scoped Clippy, Rust formatting, shell syntax and whitespace checks.
+- Independent recovery review: approved after closing skip-state completeness,
+  child-quiescence, H/U retention-root and retained-copy extraction findings.
+- Existing native recipe projected: 80 resources, zero unresolvable locators.
+
+Durable commands, Git observations, matrix extracts, review and hash bindings
+are under `genesis/local-dev/brit-readiness/rebase-recovery-design/` in the owning
+workspace. `source-binding.json` pins the design/test files to the source commit;
+`review.md` is pinned by SHA-256
+`dac405babdbbcf3d6ae526bd2de5e1449e8493921000ab86f5ee51a5109caa64`.
+`verification.json` records final local commit/readiness receipts.
+
+The 5b executable bindings remain unchanged: source
+`5882e60b71f8d98d324fbf97d8aec78f4d6ef445`, ordinary binary SHA-256
+`b35866d083446ba308e0a3bf5185eacce2af4f2098064de9e0c0e89c9e0bb89d`, fault binary
+`718c54fcc853877996467cc665e421603a45674f9f024d3c73e0607441c576e8`.
+Both retained files were rehashed; no executable was requalified in 5c.
+
+Next: 5d conflict-aware authoring → 5e durable linear replay → 5f interactive
+sequencing → 5g combined recovery/artifact qualification. Public rebase exposure
+waits for those proofs. No push, publication, parent gitlink move, physical
+power-cut proof or full daily-driver acceptance is claimed. The habit remains
+**UNWIRED**.
