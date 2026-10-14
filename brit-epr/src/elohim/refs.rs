@@ -49,6 +49,53 @@ impl BritRefManager {
         self.list_refs_under("refs/notes/brit/build/")
     }
 
+    /// Every build attestation under this step's notes ref whose `inputsHash` equals
+    /// `inputs_hash`, as `(commit_sha, payload)` pairs in `git notes list` order.
+    ///
+    /// The notes are keyed by commit, but the question a gate asks is "has this exact input
+    /// closure already been built?" — and that answer must not depend on which commit carried
+    /// the closure. One `git notes list` plus one `git cat-file --batch` over the note objects;
+    /// a step with no notes ref yet reads as empty, and a note that is not JSON is skipped
+    /// because it is not an attestation.
+    pub fn find_build_by_inputs(
+        &self,
+        step_name: &str,
+        inputs_hash: &str,
+    ) -> Result<Vec<(String, serde_json::Value)>, RefError> {
+        let ref_name = format!("refs/notes/brit/build/{}", Self::encode_segment(step_name));
+        let listing = Command::new("git")
+            .args(["notes", "--ref", &ref_name, "list"])
+            .current_dir(&self.repo_path)
+            .output()
+            .map_err(RefError::GitCommand)?;
+        if !listing.status.success() {
+            return Ok(Vec::new());
+        }
+        let text = String::from_utf8_lossy(&listing.stdout);
+        // Each line is `<note object> <annotated commit>`.
+        let pairs: Vec<(String, String)> = text
+            .lines()
+            .filter_map(|line| {
+                let mut it = line.split_whitespace();
+                Some((it.next()?.to_string(), it.next()?.to_string()))
+            })
+            .collect();
+        if pairs.is_empty() {
+            return Ok(Vec::new());
+        }
+        let bodies = self.cat_file_batch(pairs.iter().map(|(note, _)| note.clone()).collect())?;
+        let mut found = Vec::new();
+        for ((_note, commit), body) in pairs.into_iter().zip(bodies) {
+            let Ok(value) = serde_json::from_str::<serde_json::Value>(body.trim()) else {
+                continue;
+            };
+            if value.get("inputsHash").and_then(serde_json::Value::as_str) == Some(inputs_hash) {
+                found.push((commit, value));
+            }
+        }
+        Ok(found)
+    }
+
     // --- Deploy refs (standalone blob refs) ---
 
     /// Write a deploy attestation payload as a standalone blob ref.
@@ -276,6 +323,69 @@ impl BritRefManager {
         let text = String::from_utf8_lossy(&output.stdout);
         let value = serde_json::from_str(text.trim()).map_err(RefError::Json)?;
         Ok(Some(value))
+    }
+
+    /// The contents of each object, in order, through one `git cat-file --batch`. The oids are
+    /// written from a separate thread so a long listing cannot deadlock against a full stdout
+    /// pipe. A missing object yields an empty string in its slot.
+    fn cat_file_batch(&self, oids: Vec<String>) -> Result<Vec<String>, RefError> {
+        use std::{io::Write, process::Stdio};
+
+        let mut child = Command::new("git")
+            .args(["cat-file", "--batch"])
+            .current_dir(&self.repo_path)
+            .stdin(Stdio::piped())
+            .stdout(Stdio::piped())
+            .spawn()
+            .map_err(RefError::GitCommand)?;
+        let mut stdin = child
+            .stdin
+            .take()
+            .ok_or_else(|| RefError::GitFailed("stdin pipe unavailable".into()))?;
+        let writer = std::thread::spawn(move || -> std::io::Result<()> {
+            for oid in oids {
+                writeln!(stdin, "{oid}")?;
+            }
+            Ok(())
+        });
+        let output = child.wait_with_output().map_err(RefError::GitCommand)?;
+        writer
+            .join()
+            .map_err(|_| RefError::GitFailed("cat-file --batch: writer thread panicked".into()))?
+            .map_err(RefError::GitCommand)?;
+        if !output.status.success() {
+            return Err(RefError::GitFailed("cat-file --batch failed".into()));
+        }
+        // Each entry is `<oid> <type> <size>\n`, `size` bytes, then one `\n`; a missing object
+        // prints `<oid> missing\n` and nothing else.
+        let bytes = output.stdout;
+        let mut pos = 0;
+        let mut out = Vec::new();
+        while pos < bytes.len() {
+            let nl = bytes[pos..]
+                .iter()
+                .position(|&b| b == b'\n')
+                .ok_or_else(|| RefError::GitFailed("cat-file --batch: truncated header".into()))?;
+            let header = String::from_utf8_lossy(&bytes[pos..pos + nl]).to_string();
+            pos += nl + 1;
+            let mut fields = header.split_whitespace();
+            let _oid = fields.next();
+            match (fields.next(), fields.next()) {
+                (Some(_kind), Some(size)) => {
+                    let size: usize = size
+                        .parse()
+                        .map_err(|_| RefError::GitFailed(format!("cat-file --batch: bad size in `{header}`")))?;
+                    let end = pos + size;
+                    if end > bytes.len() {
+                        return Err(RefError::GitFailed("cat-file --batch: truncated object".into()));
+                    }
+                    out.push(String::from_utf8_lossy(&bytes[pos..end]).to_string());
+                    pos = end + 1;
+                }
+                _ => out.push(String::new()),
+            }
+        }
+        Ok(out)
     }
 
     fn list_refs_under(&self, prefix: &str) -> Result<Vec<String>, RefError> {

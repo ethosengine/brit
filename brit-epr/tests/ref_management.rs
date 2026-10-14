@@ -80,3 +80,78 @@ fn list_build_refs() {
     refs.sort();
     assert_eq!(refs, vec!["step-a", "step-b"]);
 }
+
+fn commit_empty(dir: &std::path::Path, message: &str) -> String {
+    Command::new("git")
+        .args([
+            "-c",
+            "user.email=test@test.com",
+            "-c",
+            "user.name=test",
+            "commit",
+            "--allow-empty",
+            "-m",
+            message,
+        ])
+        .current_dir(dir)
+        .output()
+        .unwrap();
+    let out = Command::new("git")
+        .args(["rev-parse", "HEAD"])
+        .current_dir(dir)
+        .output()
+        .unwrap();
+    String::from_utf8_lossy(&out.stdout).trim().to_string()
+}
+
+#[test]
+fn find_build_by_inputs_hits_across_commits_and_ignores_other_hashes() {
+    // Notes are keyed by commit; the gate's question is keyed by input closure. Two commits
+    // carrying the same closure must both answer, a different closure must not, and a step
+    // with no notes ref yet must read as empty rather than fail.
+    let tmp = init_git_repo();
+    let mgr = BritRefManager::new(tmp.path()).unwrap();
+    let first = commit_empty(tmp.path(), "first");
+    mgr.put_build_ref(
+        "elohim-edge:storage",
+        &first,
+        &serde_json::json!({"inputsHash": "closure-1", "success": true, "agentId": "a"}),
+    )
+    .unwrap();
+    let second = commit_empty(tmp.path(), "second");
+    mgr.put_build_ref(
+        "elohim-edge:storage",
+        &second,
+        &serde_json::json!({"inputsHash": "closure-2", "success": false, "agentId": "a"}),
+    )
+    .unwrap();
+    let third = commit_empty(tmp.path(), "third");
+    mgr.put_build_ref(
+        "elohim-edge:storage",
+        &third,
+        &serde_json::json!({"inputsHash": "closure-1", "success": true, "agentId": "b"}),
+    )
+    .unwrap();
+
+    let hits = mgr.find_build_by_inputs("elohim-edge:storage", "closure-1").unwrap();
+    let mut commits: Vec<&str> = hits.iter().map(|(c, _)| c.as_str()).collect();
+    commits.sort_unstable();
+    let mut expected = vec![first.as_str(), third.as_str()];
+    expected.sort_unstable();
+    assert_eq!(commits, expected);
+    assert!(hits.iter().all(|(_, v)| v["inputsHash"] == "closure-1"));
+
+    let misses = mgr.find_build_by_inputs("elohim-edge:storage", "closure-2").unwrap();
+    assert_eq!(misses.len(), 1);
+    assert_eq!(misses[0].0, second);
+    assert_eq!(misses[0].1["success"], false);
+
+    assert!(mgr
+        .find_build_by_inputs("elohim-edge:storage", "closure-9")
+        .unwrap()
+        .is_empty());
+    assert!(mgr
+        .find_build_by_inputs("no-such-step", "closure-1")
+        .unwrap()
+        .is_empty());
+}

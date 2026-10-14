@@ -109,6 +109,103 @@ fn build_put_help_only() {
     );
 }
 
+#[test]
+fn build_find_by_inputs_hash_hits_across_two_commits_with_identical_closure() {
+    // F1 of the evidence-by-identity plan: a gate asks "has THIS input closure been built?",
+    // and the answer must not depend on which commit carried it. Two commits whose step
+    // closure is byte-identical share one attestation lookup; a different closure finds none.
+    let temp = TestRepo::new("build-find").expect("repo");
+    let Some(bin) = brit_build_ref_bin() else {
+        eprintln!("skipping: brit-build-ref binary not built (run `cargo build -p brit-build-ref --release`)");
+        return;
+    };
+    let first = temp
+        .commit_file("src/lib.rs", "pub fn one() {}\n")
+        .expect("first commit");
+    let second = temp
+        .commit_file("docs/README.md", "docs only — the step's closure is unchanged\n")
+        .expect("second commit");
+    assert_ne!(first, second);
+
+    let manifest = "bafyreig7os3vfj4z63vgy7lpfgcnzzr2z26vrvdtheapoegvgzhnnhxkr4";
+    let output = "bafyreieicbex3dkkgounj4latxya32ezpl6622lpij327mzndwptfqkf7q";
+    let put = BritInvocation::new(&bin)
+        .arg("--repo")
+        .arg(temp.path())
+        .args([
+            "build",
+            "put",
+            "--step",
+            "elohim-edge:cargo-build-storage",
+            "--manifest",
+            manifest,
+            "--output",
+            output,
+            "--inputs-hash",
+            "closure-a",
+            "--duration-ms",
+            "1875000",
+            "--commit",
+        ])
+        .arg(&first)
+        .run()
+        .expect("invoke put");
+    assert!(put.status.success(), "put failed: {}", put.stderr);
+
+    let hit = BritInvocation::new(&bin)
+        .arg("--repo")
+        .arg(temp.path())
+        .args([
+            "build",
+            "find",
+            "--step",
+            "elohim-edge:cargo-build-storage",
+            "--inputs-hash",
+            "closure-a",
+        ])
+        .run()
+        .expect("invoke find");
+    assert!(hit.status.success(), "find failed: {}", hit.stderr);
+    let rows: serde_json::Value = serde_json::from_str(hit.stdout.trim()).expect("json array");
+    let rows = rows.as_array().expect("array");
+    assert_eq!(rows.len(), 1, "one attestation for closure-a: {}", hit.stdout);
+    assert_eq!(rows[0]["commit"], first);
+    assert_eq!(rows[0]["attestation"]["inputsHash"], "closure-a");
+    assert_eq!(rows[0]["attestation"]["success"], true);
+    assert_eq!(rows[0]["attestation"]["stepName"], "elohim-edge:cargo-build-storage");
+    assert!(
+        rows[0]["attestation"]["agentId"]
+            .as_str()
+            .is_some_and(|s| !s.is_empty()),
+        "the workspace key signs every attestation: {}",
+        hit.stdout
+    );
+
+    let miss = BritInvocation::new(&bin)
+        .arg("--repo")
+        .arg(temp.path())
+        .args([
+            "build",
+            "find",
+            "--step",
+            "elohim-edge:cargo-build-storage",
+            "--inputs-hash",
+            "closure-b",
+        ])
+        .run()
+        .expect("invoke find miss");
+    assert!(
+        miss.status.success(),
+        "a miss is an answer, not a failure: {}",
+        miss.stderr
+    );
+    assert_eq!(miss.stdout.trim(), "[]");
+    staging_dump_path(
+        &["brit-build-ref", "build", "find"],
+        &format!("{}\n---stderr---\n{}", hit.stdout, hit.stderr),
+    );
+}
+
 // ============================================================================
 // deploy subcommands
 // ============================================================================

@@ -87,11 +87,18 @@ enum BuildCmd {
         #[arg(long)]
         step: String,
         /// CID of the build manifest.
+        #[arg(long, required_unless_present = "manifest_path", conflicts_with = "manifest_path")]
+        manifest: Option<String>,
+        /// Path to the build manifest file; its raw-codec CID is recorded as the manifest CID.
         #[arg(long)]
-        manifest: String,
+        manifest_path: Option<PathBuf>,
         /// CID of the artifact produced.
+        #[arg(long, required_unless_present = "output_json", conflicts_with = "output_json")]
+        output: Option<String>,
+        /// A JSON verdict to store as the step's output (a gate that produces no artifact
+        /// records what it observed); its CID is recorded as the output CID.
         #[arg(long)]
-        output: String,
+        output_json: Option<String>,
         /// Content hash of all declared inputs at build time.
         #[arg(long)]
         inputs_hash: String,
@@ -125,6 +132,15 @@ enum BuildCmd {
     },
     /// List all build attestation step names.
     List,
+    /// Find build attestations by their inputs hash, across every commit of a step.
+    Find {
+        /// Pipeline step name.
+        #[arg(long)]
+        step: String,
+        /// Content hash of the declared inputs, as `build put --inputs-hash` recorded it.
+        #[arg(long)]
+        inputs_hash: String,
+    },
 }
 
 // ─── Deploy subcommands ───────────────────────────────────────────────────────
@@ -235,25 +251,40 @@ fn main() -> anyhow::Result<()> {
             BuildCmd::Put {
                 step,
                 manifest,
+                manifest_path,
                 output,
+                output_json,
                 inputs_hash,
                 success,
                 hardware,
                 duration_ms,
                 commit,
-            } => build_cmd::put(
-                &repo,
-                &step,
-                &manifest,
-                &output,
-                &inputs_hash,
-                success,
-                &hardware,
-                duration_ms,
-                &commit,
-            ),
+            } => {
+                let manifest = match (manifest, manifest_path) {
+                    (Some(cid), _) => build_cmd::ManifestSource::Cid(cid),
+                    (None, Some(path)) => build_cmd::ManifestSource::File(path),
+                    (None, None) => unreachable!("clap requires --manifest or --manifest-path"),
+                };
+                let output = match (output, output_json) {
+                    (Some(cid), _) => build_cmd::OutputSource::Cid(cid),
+                    (None, Some(json)) => build_cmd::OutputSource::VerdictJson(json),
+                    (None, None) => unreachable!("clap requires --output or --output-json"),
+                };
+                build_cmd::put(
+                    &repo,
+                    &step,
+                    manifest,
+                    output,
+                    &inputs_hash,
+                    success,
+                    &hardware,
+                    duration_ms,
+                    &commit,
+                )
+            }
             BuildCmd::Get { step, commit } => build_cmd::get(&repo, &step, &commit),
             BuildCmd::List => build_cmd::list(&repo),
+            BuildCmd::Find { step, inputs_hash } => build_cmd::find(&repo, &step, &inputs_hash),
         },
 
         TopCommand::Deploy { cmd } => match cmd {
