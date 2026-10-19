@@ -5,7 +5,9 @@ use std::path::PathBuf;
 use clap::{Parser, Subcommand};
 
 mod build_cmd;
+mod covenant_cmd;
 mod deploy_cmd;
+mod git_dir;
 mod meta_cmd;
 mod reach_cmd;
 mod validate_cmd;
@@ -46,10 +48,66 @@ enum TopCommand {
         #[command(subcommand)]
         cmd: ReachCmd,
     },
+    /// Session covenant clauses (signed Layer 2 blessings under `refs/notes/brit/covenant`).
+    Covenant {
+        #[command(subcommand)]
+        cmd: CovenantCmd,
+    },
     /// Canonical epr-meta artifacts.
     Meta {
         #[command(subcommand)]
         cmd: MetaCmd,
+    },
+}
+
+// ─── Covenant subcommands ─────────────────────────────────────────────────────
+
+#[derive(Subcommand)]
+enum CovenantCmd {
+    /// Sign and record a covenant clause; prints its CID.
+    Put {
+        /// The agent session the clause binds.
+        #[arg(long)]
+        session: String,
+        /// affirmsStewardOfRecord | declaresPurpose | variesRule | revokesClause.
+        #[arg(long)]
+        kind: String,
+        /// Who spoke (recorded verbatim, never judged), e.g. `human:matthew`.
+        #[arg(long)]
+        party: String,
+        /// The party's own words, verbatim.
+        #[arg(long)]
+        quote: String,
+        /// Kind-specific payload as JSON text.
+        #[arg(long, default_value = "{}")]
+        payload_json: String,
+        /// ISO-8601 end of validity (default: until the session ends).
+        #[arg(long)]
+        valid_until: Option<String>,
+        /// CID of an earlier clause this one restates.
+        #[arg(long)]
+        supersedes: Option<String>,
+        /// Print `{cid, clause}` JSON instead of the bare CID.
+        #[arg(long)]
+        output_json: bool,
+    },
+    /// List a session's clauses in validFrom order.
+    List {
+        /// The session to list.
+        #[arg(long)]
+        session: String,
+        /// Print a JSON array of `{cid, clause}`.
+        #[arg(long)]
+        output_json: bool,
+    },
+    /// Show one clause by CID.
+    Show {
+        /// Clause CID.
+        #[arg(long)]
+        cid: String,
+        /// Print compact `{cid, clause}` JSON.
+        #[arg(long)]
+        output_json: bool,
     },
 }
 
@@ -345,6 +403,33 @@ fn main() -> anyhow::Result<()> {
         TopCommand::Reach { cmd } => match cmd {
             ReachCmd::Compute { step } => reach_cmd::compute(&repo, &step),
             ReachCmd::Get { step } => reach_cmd::get(&repo, &step),
+        },
+
+        TopCommand::Covenant { cmd } => match cmd {
+            CovenantCmd::Put {
+                session,
+                kind,
+                party,
+                quote,
+                payload_json,
+                valid_until,
+                supersedes,
+                output_json,
+            } => covenant_cmd::put(
+                &repo,
+                &covenant_cmd::PutArgs {
+                    session: &session,
+                    kind: &kind,
+                    party: &party,
+                    quote: &quote,
+                    payload_json: &payload_json,
+                    valid_until: valid_until.as_deref(),
+                    supersedes: supersedes.as_deref(),
+                    output_json,
+                },
+            ),
+            CovenantCmd::List { session, output_json } => covenant_cmd::list(&repo, &session, output_json),
+            CovenantCmd::Show { cid, output_json } => covenant_cmd::show(&repo, &cid, output_json),
         },
 
         TopCommand::Meta { cmd } => match cmd {

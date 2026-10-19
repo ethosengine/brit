@@ -21,8 +21,8 @@ pub fn put(
     health: HealthStatus,
     ttl: u64,
 ) -> anyhow::Result<()> {
-    let git_dir = repo.join(".git");
-    let key_path = git_dir.join("brit").join("agent-key");
+    let git_dir = crate::git_dir::common_git_dir(repo);
+    let key_path = crate::git_dir::agent_key_path(repo);
     let agent_key = AgentKey::load_or_generate(&key_path)?;
     let store = LocalObjectStore::for_git_dir(&git_dir);
     let refs = BritRefManager::new(repo)?;

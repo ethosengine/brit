@@ -391,3 +391,164 @@ fn reach_get_for_unknown_step() {
         &format!("{}\n---stderr---\n{}", cap.stdout, cap.stderr),
     );
 }
+
+// ============================================================================
+// covenant subcommands
+// ============================================================================
+
+fn covenant_put(
+    bin: &std::path::Path,
+    repo: &std::path::Path,
+    session: &str,
+    kind: &str,
+    quote: &str,
+    payload: &str,
+) -> serde_json::Value {
+    let cap = BritInvocation::new(bin)
+        .arg("--repo")
+        .arg(repo)
+        .args([
+            "covenant",
+            "put",
+            "--session",
+            session,
+            "--kind",
+            kind,
+            "--party",
+            "human:matthew",
+            "--quote",
+            quote,
+            "--payload-json",
+            payload,
+            "--output-json",
+        ])
+        .run()
+        .expect("invoke covenant put");
+    assert!(cap.status.success(), "covenant put failed: {}", cap.stderr);
+    serde_json::from_str(cap.stdout.trim()).expect("put prints {cid, clause}")
+}
+
+fn covenant_list(bin: &std::path::Path, repo: &std::path::Path, session: &str) -> Vec<serde_json::Value> {
+    let cap = BritInvocation::new(bin)
+        .arg("--repo")
+        .arg(repo)
+        .args(["covenant", "list", "--session", session, "--output-json"])
+        .run()
+        .expect("invoke covenant list");
+    assert!(cap.status.success(), "covenant list failed: {}", cap.stderr);
+    serde_json::from_str::<serde_json::Value>(cap.stdout.trim())
+        .expect("json array")
+        .as_array()
+        .expect("array")
+        .clone()
+}
+
+#[test]
+fn covenant_put_list_show_roundtrip() {
+    let temp = TestRepo::new("covenant").expect("repo");
+    let Some(bin) = brit_build_ref_bin() else {
+        eprintln!("skipping: brit-build-ref binary not built (run `cargo build -p brit-build-ref --release`)");
+        return;
+    };
+    assert_eq!(covenant_list(&bin, temp.path(), "s1"), Vec::<serde_json::Value>::new());
+
+    let first = covenant_put(
+        &bin,
+        temp.path(),
+        "s1",
+        "affirmsStewardOfRecord",
+        "I am the steward",
+        "{}",
+    );
+    let second = covenant_put(
+        &bin,
+        temp.path(),
+        "s1",
+        "declaresPurpose",
+        "docs only today",
+        r#"{"purpose":"docs","writeSet":["docs/**"]}"#,
+    );
+    assert_ne!(first["cid"], second["cid"]);
+    assert_eq!(first["clause"]["party"], "human:matthew");
+    assert_eq!(first["clause"]["validUntil"], serde_json::Value::Null);
+
+    let rows = covenant_list(&bin, temp.path(), "s1");
+    assert_eq!(rows.len(), 2, "two puts, two clauses: {rows:?}");
+    assert_eq!(rows[0]["cid"], first["cid"]);
+    assert_eq!(rows[1]["cid"], second["cid"]);
+    assert!(covenant_list(&bin, temp.path(), "other-session").is_empty());
+
+    let cid = first["cid"].as_str().unwrap();
+    let show = BritInvocation::new(&bin)
+        .arg("--repo")
+        .arg(temp.path())
+        .args(["covenant", "show", "--cid", cid, "--output-json"])
+        .run()
+        .expect("invoke show");
+    assert!(show.status.success(), "show failed: {}", show.stderr);
+    let shown: serde_json::Value = serde_json::from_str(show.stdout.trim()).unwrap();
+    assert_eq!(shown, first);
+
+    let missing = BritInvocation::new(&bin)
+        .arg("--repo")
+        .arg(temp.path())
+        .args(["covenant", "show", "--cid", "bafyreimissing"])
+        .run()
+        .expect("invoke show missing");
+    assert!(!missing.status.success(), "an unknown clause is a failure");
+
+    let bad = BritInvocation::new(&bin)
+        .arg("--repo")
+        .arg(temp.path())
+        .args([
+            "covenant",
+            "put",
+            "--session",
+            "s1",
+            "--kind",
+            "variesRule",
+            "--party",
+            "p",
+            "--quote",
+            "q",
+            "--payload-json",
+            "{}",
+        ])
+        .run()
+        .expect("invoke bad put");
+    assert!(!bad.status.success(), "variesRule with an empty payload is malformed");
+    staging_dump_path(
+        &["brit-build-ref", "covenant", "list"],
+        &serde_json::to_string_pretty(&rows).unwrap(),
+    );
+}
+
+#[test]
+fn covenant_put_works_from_a_linked_worktree() {
+    let temp = TestRepo::new("covenant-wt").expect("repo");
+    let Some(bin) = brit_build_ref_bin() else {
+        eprintln!("skipping: brit-build-ref binary not built (run `cargo build -p brit-build-ref --release`)");
+        return;
+    };
+    let wt_parent = tempfile::tempdir().expect("tempdir");
+    let wt = wt_parent.path().join("wt");
+    let st = std::process::Command::new("git")
+        .arg("-C")
+        .arg(temp.path())
+        .args(["worktree", "add", "-q", "-b", "side"])
+        .arg(&wt)
+        .status()
+        .expect("git worktree add");
+    assert!(st.success());
+    assert!(wt.join(".git").is_file(), "linked worktree has a .git file");
+
+    let put = covenant_put(&bin, &wt, "s-wt", "affirmsStewardOfRecord", "from the worktree", "{}");
+    assert!(
+        temp.path().join(".git/brit/agent-key").is_file(),
+        "key lands in the common git dir"
+    );
+    // Refs are shared across worktrees: the main checkout sees the clause too.
+    let rows = covenant_list(&bin, temp.path(), "s-wt");
+    assert_eq!(rows.len(), 1);
+    assert_eq!(rows[0]["cid"], put["cid"]);
+}

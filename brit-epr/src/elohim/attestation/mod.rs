@@ -2,6 +2,8 @@
 
 /// Build attestation — records an agent producing an output artifact.
 pub mod build;
+/// Session covenant clause — a signed Layer 2 blessing over a governance rule.
+pub mod covenant;
 /// Deploy attestation — records an agent confirming an artifact is live.
 pub mod deploy;
 /// Reach computation — derives a reach level from existing attestations.

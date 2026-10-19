@@ -155,3 +155,53 @@ fn find_build_by_inputs_hits_across_commits_and_ignores_other_hashes() {
         .unwrap()
         .is_empty());
 }
+
+fn clause(valid_from: &str, quote: &str) -> serde_json::Value {
+    serde_json::json!({"kind": "declaresPurpose", "session": "s1", "validFrom": valid_from, "quote": quote})
+}
+
+#[test]
+fn covenant_put_is_append_only_and_lists_in_valid_from_order() {
+    let tmp = init_git_repo();
+    let mgr = BritRefManager::new(tmp.path()).unwrap();
+    // Put the later clause first: list order must follow validFrom, not insertion.
+    let late = clause("2026-10-19T12:00:00Z", "late");
+    let early = clause("2026-10-19T09:00:00Z", "early");
+    mgr.put_covenant_clause("s1", "bafyreilate", &late).unwrap();
+    mgr.put_covenant_clause("s1", "bafyreiearly", &early).unwrap();
+
+    let rows = mgr.list_covenant_clauses("s1").unwrap();
+    assert_eq!(rows.len(), 2, "two puts, two refs: {rows:?}");
+    assert_eq!(rows[0]["cid"], "bafyreiearly");
+    assert_eq!(rows[0]["clause"], early);
+    assert_eq!(rows[1]["cid"], "bafyreilate");
+
+    let refs = Command::new("git")
+        .args(["for-each-ref", "--format=%(refname)", "refs/notes/brit/covenant/"])
+        .current_dir(tmp.path())
+        .output()
+        .unwrap();
+    let refs = String::from_utf8_lossy(&refs.stdout).to_string();
+    assert!(refs.contains("refs/notes/brit/covenant/s1/bafyreilate"), "{refs}");
+    assert!(refs.contains("refs/notes/brit/covenant/s1/bafyreiearly"), "{refs}");
+
+    // Same cid, same content: idempotent. Same cid, different content: refused, original kept.
+    mgr.put_covenant_clause("s1", "bafyreilate", &late).unwrap();
+    let other = clause("2026-10-19T12:00:00Z", "tampered");
+    assert!(mgr.put_covenant_clause("s1", "bafyreilate", &other).is_err());
+    assert_eq!(mgr.list_covenant_clauses("s1").unwrap()[1]["clause"], late);
+}
+
+#[test]
+fn covenant_unknown_session_lists_empty_and_get_finds_by_cid() {
+    let tmp = init_git_repo();
+    let mgr = BritRefManager::new(tmp.path()).unwrap();
+    assert!(mgr.list_covenant_clauses("nobody").unwrap().is_empty());
+    mgr.put_covenant_clause("s:1", "bafyreione", &clause("2026-10-19T09:00:00Z", "q"))
+        .unwrap();
+    assert!(mgr.list_covenant_clauses("other").unwrap().is_empty());
+    assert_eq!(mgr.list_covenant_clauses("s:1").unwrap().len(), 1);
+    let got = mgr.get_covenant_clause("bafyreione").unwrap().unwrap();
+    assert_eq!(got["cid"], "bafyreione");
+    assert!(mgr.get_covenant_clause("bafyreimissing").unwrap().is_none());
+}

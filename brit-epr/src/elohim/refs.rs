@@ -169,6 +169,96 @@ impl BritRefManager {
         self.read_ref_blob(&ref_name)
     }
 
+    // --- Covenant refs (append-only, one blob ref per clause) ---
+
+    /// Record a covenant clause at `refs/notes/brit/covenant/<session>/<clause-cid>`.
+    ///
+    /// The blob is `{"cid": "<clause_cid_str>", "clause": <clause_json>}`. Append-only: a clause
+    /// is addressed by its CID, so an existing ref with identical content is a no-op and one with
+    /// different content is refused with [`RefError::Exists`]; nothing is ever overwritten.
+    pub fn put_covenant_clause(
+        &self,
+        session: &str,
+        clause_cid_str: &str,
+        clause_json: &serde_json::Value,
+    ) -> Result<(), RefError> {
+        let ref_name = Self::covenant_ref(session, clause_cid_str);
+        let record = serde_json::json!({ "cid": clause_cid_str, "clause": clause_json });
+        if let Some(existing) = self.read_ref_blob(&ref_name)? {
+            return if existing == record {
+                Ok(())
+            } else {
+                Err(RefError::Exists(ref_name))
+            };
+        }
+        self.write_ref_blob(&ref_name, &record)
+    }
+
+    /// Every clause recorded for `session` as `{cid, clause}` records, ordered by the clause's
+    /// `validFrom` (ties broken by CID). An unknown session reads as empty.
+    pub fn list_covenant_clauses(&self, session: &str) -> Result<Vec<serde_json::Value>, RefError> {
+        let prefix = format!("refs/notes/brit/covenant/{}/", Self::encode_segment(session));
+        self.covenant_records_under(&prefix)
+    }
+
+    /// The `{cid, clause}` record for a clause CID in any session, or `None`.
+    pub fn get_covenant_clause(&self, cid: &str) -> Result<Option<serde_json::Value>, RefError> {
+        let suffix = format!("/{}", Self::encode_segment(cid));
+        let hit = self
+            .for_each_ref("refs/notes/brit/covenant/")?
+            .into_iter()
+            .find(|(name, _)| name.ends_with(&suffix));
+        let Some((name, _)) = hit else {
+            return Ok(None);
+        };
+        self.read_ref_blob(&name)
+    }
+
+    fn covenant_ref(session: &str, cid: &str) -> String {
+        format!(
+            "refs/notes/brit/covenant/{}/{}",
+            Self::encode_segment(session),
+            Self::encode_segment(cid)
+        )
+    }
+
+    fn covenant_records_under(&self, prefix: &str) -> Result<Vec<serde_json::Value>, RefError> {
+        let refs = self.for_each_ref(prefix)?;
+        if refs.is_empty() {
+            return Ok(Vec::new());
+        }
+        let bodies = self.cat_file_batch(refs.into_iter().map(|(_, oid)| oid).collect())?;
+        let mut rows: Vec<serde_json::Value> = bodies
+            .iter()
+            .filter_map(|b| serde_json::from_str::<serde_json::Value>(b.trim()).ok())
+            .collect();
+        let key = |v: &serde_json::Value| {
+            (
+                v["clause"]["validFrom"].as_str().unwrap_or("").to_string(),
+                v["cid"].as_str().unwrap_or("").to_string(),
+            )
+        };
+        rows.sort_by_key(key);
+        Ok(rows)
+    }
+
+    /// `(refname, object id)` for every ref under `prefix`, refnames undecoded.
+    fn for_each_ref(&self, prefix: &str) -> Result<Vec<(String, String)>, RefError> {
+        let output = Command::new("git")
+            .args(["for-each-ref", "--format=%(refname) %(objectname)", prefix])
+            .current_dir(&self.repo_path)
+            .output()
+            .map_err(RefError::GitCommand)?;
+        if !output.status.success() {
+            return Ok(Vec::new());
+        }
+        Ok(String::from_utf8_lossy(&output.stdout)
+            .lines()
+            .filter_map(|l| l.split_once(' '))
+            .map(|(n, o)| (n.to_string(), o.to_string()))
+            .collect())
+    }
+
     // --- Internal helpers ---
 
     /// Encode a ref path segment, replacing characters git rejects in ref names.
@@ -423,6 +513,9 @@ pub enum RefError {
     /// A git subprocess exited with a non-zero status.
     #[error("git command failed: {0}")]
     GitFailed(String),
+    /// An append-only ref already exists with different content.
+    #[error("ref already exists with different content: {0}")]
+    Exists(String),
     /// JSON serialization or deserialization failed.
     #[error("JSON error: {0}")]
     Json(serde_json::Error),
