@@ -64,15 +64,21 @@ mod tests {
 
     #[test]
     fn linked_worktree_resolves_to_the_main_repos_key() {
+        // Git is handed plain paths: a canonicalized Windows path (`\\?\C:\…`) is refused by
+        // `git worktree add`. The comparison canonicalizes both sides instead, which also absorbs
+        // macOS's /var -> /private/var temp-dir symlink.
         let tmp = tempfile::TempDir::new().unwrap();
-        let root = tmp.path().canonicalize().unwrap();
-        let main = root.join("main");
+        let main = tmp.path().join("main");
         std::fs::create_dir(&main).unwrap();
         git(&main, &["init", "-q", "--initial-branch=main"]);
         git(&main, &["commit", "--allow-empty", "-q", "-m", "init"]);
-        let wt = root.join("wt");
+        let wt = tmp.path().join("wt");
         git(&main, &["worktree", "add", "-q", wt.to_str().unwrap(), "-b", "side"]);
         assert!(wt.join(".git").is_file());
-        assert_eq!(agent_key_path(&wt), main.join(".git/brit/agent-key"));
+        assert_eq!(
+            common_git_dir(&wt).canonicalize().unwrap(),
+            main.join(".git").canonicalize().unwrap()
+        );
+        assert!(agent_key_path(&wt).ends_with(Path::new("brit").join("agent-key")));
     }
 }
