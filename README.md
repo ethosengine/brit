@@ -116,6 +116,29 @@ brit-verify HEAD
 `brit-verify HEAD` checks pillar trailers and may correctly reject an ordinary
 Git commit. `brit verify` instead checks repository/object integrity.
 
+## Stage and inspect local edits
+
+```bash
+brit add -- src/example.rs README.md
+brit diff --cached                    # HEAD → index; --staged is an alias
+brit diff -- src/example.rs           # index → working file
+brit restore --staged -- README.md    # restore index from HEAD; keep working bytes
+brit commit -m "Describe the staged change"
+```
+
+Name literal files after `--`; additions, modifications and tracked deletions
+are supported. These operations run locally without invoking Git. Directory or
+interactive staging, pathspec patterns, custom filter/diff drivers and special
+index states require stock Git. Restore requires an existing HEAD. Plain `brit
+diff` inspects tracked working changes; new files become visible in cached diff
+after staging. Existing `diff tree` and `diff file` commands remain available.
+See the [native authoring scope and verification](docs/plans/2026-09-28-daily-driver.md#native-authoring-sprint--2026-10-12)
+for the full compatibility limits.
+
+For linear replay, edit-stop authoring and interrupted-operation recovery, see
+[Native rebase and retained-copy recovery](docs/rebase.md), including the bounded
+Linux interface and separate retained-copy helper installation.
+
 ## Try a verified local snapshot
 
 Run against a disposable repository first. Sealing reads the selected committed

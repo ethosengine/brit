@@ -1,5 +1,14 @@
 //! Git bridge authoring primitives; no covenant or participant authority.
-use std::{ffi::OsString, path::PathBuf, process::Stdio};
+use std::{
+    ffi::OsString,
+    path::{Path, PathBuf},
+    process::Stdio,
+};
+
+#[cfg(target_os = "linux")]
+pub mod conflict;
+#[cfg(target_os = "linux")]
+pub mod invocation;
 
 use anyhow::{Context, Result, bail, ensure};
 
@@ -58,25 +67,7 @@ pub(super) fn run_hook_with_input(
     let Some(path) = hook_path(repo, name)? else {
         return Ok(());
     };
-    let mut context = repo.command_context()?;
-    context.git_dir = Some(absolute(repo, repo.git_dir()));
-    context.worktree_dir = repo.workdir().map(|path| absolute(repo, path));
-    // Keep the path in argv, never in shell source (including hooks with no
-    // arguments). The shell also provides Git's fallback for shebang-less hooks.
-    // A command word before the quoted expansion keeps Windows shell shims from
-    // treating the leading quote as a command-line delimiter during forwarding.
-    let mut command: std::process::Command = gix::command::prepare("exec \"$@\"")
-        .with_shell()
-        .with_context(context)
-        .arg(path.into_os_string())
-        .args(args.iter().cloned())
-        .env("GIT_INDEX_FILE", absolute(repo, &repo.index_path()).into_os_string())
-        .env("GIT_EDITOR", ":")
-        .stdin(if input.is_some() { Stdio::piped() } else { Stdio::null() })
-        .stdout(Stdio::inherit())
-        .stderr(Stdio::inherit())
-        .try_into()?;
-    command.current_dir(absolute(repo, repo.workdir().unwrap_or(repo.git_dir())));
+    let mut command = hook_command(repo, &path, args, &repo.index_path(), input.is_some(), false)?;
     let mut child = command
         .spawn()
         .with_context(|| format!("could not execute {name} hook"))?;
@@ -98,6 +89,69 @@ pub(super) fn run_hook_with_input(
     }
     ensure!(status.success(), "{name} hook rejected the operation ({status})");
     Ok(())
+}
+
+/// An explicit index context prevents preserved public staging entering hook commits.
+#[cfg(target_os = "linux")]
+pub fn run_hook_in_context(
+    repo: &gix::Repository,
+    name: &str,
+    args: &[OsString],
+    input: Option<&[u8]>,
+    index: &Path,
+    invocation_dir: &Path,
+) -> Result<invocation::InvocationOutcome> {
+    let Some(path) = hook_path(repo, name)? else {
+        return Ok(invocation::InvocationOutcome::Succeeded);
+    };
+    let command = hook_command(repo, &path, args, index, true, true)?;
+    invocation::run(command, input, invocation::prepare(invocation_dir)?)
+}
+
+#[cfg(target_os = "linux")]
+pub(super) fn run_prepared_hook(
+    repo: &gix::Repository,
+    name: &str,
+    args: &[OsString],
+    input: Option<&[u8]>,
+    index: &Path,
+    prepared: invocation::PreparedInvocation,
+) -> Result<invocation::InvocationOutcome> {
+    let path = hook_path(repo, name)?.context("prepared hook disappeared")?;
+    invocation::run(hook_command(repo, &path, args, index, true, true)?, input, prepared)
+}
+
+fn hook_command(
+    repo: &gix::Repository,
+    path: &Path,
+    args: &[OsString],
+    index: &Path,
+    piped: bool,
+    gated: bool,
+) -> Result<std::process::Command> {
+    let mut context = repo.command_context()?;
+    context.git_dir = Some(absolute(repo, repo.git_dir()));
+    context.worktree_dir = repo.workdir().map(|path| absolute(repo, path));
+    // Hook path and arguments remain argv, including shebang-less hook fallback.
+    // The launch barrier is consumed before the hook can execute.
+    let script = if gated {
+        "IFS= read -r brit_gate && test \"$brit_gate\" = go && exec \"$@\""
+    } else {
+        "exec \"$@\""
+    };
+    let mut command: std::process::Command = gix::command::prepare(script)
+        .with_shell()
+        .with_context(context)
+        .arg(path.as_os_str())
+        .args(args.iter().cloned())
+        .env("GIT_INDEX_FILE", absolute(repo, index).into_os_string())
+        .env("GIT_EDITOR", ":")
+        .stdin(if piped { Stdio::piped() } else { Stdio::null() })
+        .stdout(Stdio::inherit())
+        .stderr(Stdio::inherit())
+        .try_into()?;
+    command.current_dir(absolute(repo, repo.workdir().unwrap_or(repo.git_dir())));
+    Ok(command)
 }
 
 /// Materialize only persisted index entries, preserving byte paths and modes.

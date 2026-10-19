@@ -61,6 +61,11 @@ pub struct Outcome {
     /// The file is created right before moving the pack data and index data into place (i.e. `data_path` and `index_path`)
     /// and is expected to be removed by the caller when ready.
     pub keep_path: Option<PathBuf>,
+    /// Device and inode captured from the exclusively created keep file on Unix.
+    /// Callers must compare this identity before removing the path; `None` conveys no ownership proof.
+    /// This process-local ownership proof cannot be restored from serialized output.
+    #[cfg_attr(feature = "serde", serde(skip))]
+    pub keep_identity: Option<(u64, u64)>,
 }
 
 impl Outcome {

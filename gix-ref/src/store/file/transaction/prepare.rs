@@ -41,6 +41,7 @@ impl Transaction<'_, '_> {
         packed: Option<&packed::Buffer>,
         change: &mut Edit,
         direct_to_packed_refs: bool,
+        reflog_updates_for_noop: bool,
     ) -> Result {
         use std::io::Write;
         assert!(
@@ -169,7 +170,7 @@ impl Transaction<'_, '_> {
                 };
 
                 let keep_lock_for_loose_source_delete = direct_to_packed_refs && matches!(new, Target::Object(_));
-                if (is_effective && !direct_to_packed_refs) || is_symbolic {
+                if ((is_effective || reflog_updates_for_noop) && !direct_to_packed_refs) || is_symbolic {
                     lock.with_mut(|file| match new {
                         Target::Object(oid) => writeln!(file, "{oid}"),
                         Target::Symbolic(name) => writeln!(file, "ref: {}", name.0),
@@ -340,6 +341,7 @@ impl Transaction<'_, '_> {
 
         for cid in 0..updates.len() {
             let change = &mut updates[cid];
+            let log_noop = self.reflog_updates_for_noop.is_some();
             if let Err(err) = Self::lock_ref_and_apply_change(
                 self.store,
                 ref_files_lock_fail_mode,
@@ -349,6 +351,7 @@ impl Transaction<'_, '_> {
                     self.packed_refs,
                     PackedRefs::DeletionsAndNonSymbolicUpdatesRemoveLooseSourceReference(_)
                 ),
+                log_noop,
             ) {
                 let referent = change.name();
                 let mut ref_name = referent.clone();
@@ -378,6 +381,28 @@ impl Transaction<'_, '_> {
                     parent.leaf_referent_previous_oid = Some(oid);
                 }
             }
+        }
+        // Explicit non-dereferencing symref guards can accompany a pinned direct
+        // edit. Recover the old OID from that already-validated, locked edit for
+        // the guard's reflog, just as preprocessing does for dereferenced edits.
+        for index in 0..updates.len() {
+            if updates[index].leaf_referent_previous_oid.is_some() {
+                continue;
+            }
+            let Some(crate::TargetRef::Symbolic(referent)) = updates[index].update.change.previous_value() else {
+                continue;
+            };
+            let previous = updates.iter().find_map(|edit| {
+                if edit.update.name.as_ref() == referent {
+                    match edit.update.change.previous_value() {
+                        Some(crate::TargetRef::Object(oid)) => Some(oid.to_owned()),
+                        _ => None,
+                    }
+                } else {
+                    None
+                }
+            });
+            updates[index].leaf_referent_previous_oid = previous;
         }
         self.updates = Some(updates);
         Ok(self)

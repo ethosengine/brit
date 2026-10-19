@@ -1,6 +1,7 @@
 #!/usr/bin/env bash
 # Local archive-shape proof; creates no release and needs no Cargo build.
 set -euo pipefail
+unset BRIT_REBASE_RETAINED_BIN
 
 script_dir=$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)
 fixture_dir=$(mktemp -d)
@@ -91,6 +92,40 @@ if bash "$script_dir/package-brit-release.sh" \
   echo "receipt field injection was accepted" >&2
   exit 1
 fi
+# Optional helper packaging preserves the legacy archive when omitted.
+mkdir "$fixture_dir/helper-output"
+printf 'retained-copy helper fixture\n' > "$fixture_dir/brit-rebase-retained"
+chmod +x "$fixture_dir/brit-rebase-retained"
+(
+  cd "$fixture_dir/helper-output"
+  BRIT_REBASE_RETAINED_BIN="$fixture_dir/brit-rebase-retained" bash "$script_dir/package-brit-release.sh" \
+    "$fixture_dir/brit" "$fixture_dir/source" brit-max-pure-v0.1.1-x86_64-unknown-linux-gnu \
+    brit-v0.1.1 max-pure x86_64-unknown-linux-gnu release-github "$source_sha" > receipt.env
+  sha256sum -c brit-max-pure-v0.1.1-x86_64-unknown-linux-gnu.tar.gz.sha256
+  tar -xzf brit-max-pure-v0.1.1-x86_64-unknown-linux-gnu.tar.gz
+  helper_package=brit-max-pure-v0.1.1-x86_64-unknown-linux-gnu
+  test -f "$helper_package/brit-rebase-retained"
+  test ! -L "$helper_package/brit-rebase-retained"
+  test -x "$helper_package/brit-rebase-retained"
+  cmp "$fixture_dir/brit-rebase-retained" "$helper_package/brit-rebase-retained"
+  grep -Fx 'retained_helper_binary=brit-rebase-retained' "$helper_package/BUILD-INFO.txt"
+  grep -Fx "retained_helper_sha256=$(sha256sum "$fixture_dir/brit-rebase-retained" | awk '{print $1}')" "$helper_package/BUILD-INFO.txt"
+)
+mkdir "$fixture_dir/linked-helper"
+ln -s "$fixture_dir/brit-rebase-retained" "$fixture_dir/linked-helper/brit-rebase-retained"
+if BRIT_REBASE_RETAINED_BIN="$fixture_dir/linked-helper/brit-rebase-retained" bash "$script_dir/package-brit-release.sh" \
+  "$fixture_dir/brit" "$fixture_dir/source" brit-small-v0.1.1-x86_64-unknown-linux-gnu \
+  brit-v0.1.1 small x86_64-unknown-linux-gnu release-github "$source_sha" >/dev/null 2>&1; then
+  echo "symlink helper was accepted" >&2
+  exit 1
+fi
+if BRIT_REBASE_RETAINED_BIN="$fixture_dir/brit-rebase-retained" bash "$script_dir/package-brit-release.sh" \
+  "$fixture_dir/brit" "$fixture_dir/source" brit-small-v0.1.1-x86_64-apple-darwin \
+  brit-v0.1.1 small x86_64-apple-darwin release-github "$source_sha" >/dev/null 2>&1; then
+  echo "unqualified platform helper was accepted" >&2
+  exit 1
+fi
+
 printf 'dirty bytes\n' >> "$fixture_dir/source/README.md"
 if bash "$script_dir/package-brit-release.sh" \
   "$fixture_dir/brit" "$fixture_dir/source" brit-max-pure-v0.1.1-x86_64-unknown-linux-gnu \

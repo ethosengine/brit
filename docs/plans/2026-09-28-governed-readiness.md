@@ -130,3 +130,22 @@ implementation. This evaluator result needs a standalone-aware implementation;
 it does not diagnose Brit package drift. The repository's declared route is a
 locally verified `run-ci/**` push, followed by exact-revision remote CI acceptance
 before main integration or parent pin promotion.
+
+## Current daily-driver frontier — 2026-10-12 acceptance sprint
+
+The earlier upstream backlog and `9e86ed425` NOT READY finding above are historical.
+The subsequent native evaluator revision `7fd1c3a45` supports the standalone root;
+installed authoring/recovery, exact-revision integration and the activated hook
+have their bounded proofs in [Daily driver](2026-09-28-daily-driver.md).
+Binary `d6cb92865` and hook `eff40d6ab` each passed the inherited 29-job matrix.
+Those results do not establish the distinct `installed-unix` matrix or whole
+native acceptance. The previous pack snapshot discrepancy is now explained by
+Git's compression implementation, with ten unchanged original assertions passing.
+
+The current sprint adds pinned Brit/EPR pair installation, a nonpublishing branch
+run of the installed-platform workflow, and a public-command two-person procedure.
+Local mechanism and agent-fixture evidence are recorded; actual remote platform
+execution, two distinct published versions and the two developers' experiential
+acceptance remain open. Native EPR source and the final Brit evidence are still
+local delivery work until their remote revisions are verified. Do not repeat the
+already-proven implementation or promote the habit from these preparations alone.

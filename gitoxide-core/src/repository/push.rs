@@ -107,6 +107,72 @@ impl RecurseSubmodules {
     }
 }
 
+/// A deliberately bounded compare-and-swap lease; expectations are object IDs, not revisions.
+#[derive(Debug)]
+struct ExplicitLease {
+    destination: BString,
+    expected_oid: gix::ObjectId,
+}
+
+impl ExplicitLease {
+    fn parse(arg: &str, hash: gix::hash::Kind) -> anyhow::Result<Self> {
+        let (destination, expect) = arg
+            .split_once(':')
+            .ok_or_else(|| anyhow::anyhow!("explicit lease requires refs/heads/<branch>:<full-expected-oid>"))?;
+        anyhow::ensure!(
+            destination.starts_with("refs/heads/") && gix::refs::FullName::try_from(destination).is_ok(),
+            "explicit lease requires a full refs/heads/<branch> destination"
+        );
+        let expected_oid = gix::ObjectId::from_hex(expect.as_bytes())
+            .map_err(|_| anyhow::anyhow!("explicit lease requires a full hexadecimal expected object ID"))?;
+        anyhow::ensure!(
+            expected_oid.kind() == hash && !expected_oid.is_null(),
+            "explicit lease requires a nonzero full expected object ID in the repository's object format"
+        );
+        Ok(Self {
+            destination: destination.into(),
+            expected_oid,
+        })
+    }
+
+    fn validate_refspecs(&self, specs: &[BString]) -> anyhow::Result<()> {
+        anyhow::ensure!(
+            specs.len() == 1,
+            "explicit lease requires exactly one explicit source:destination refspec"
+        );
+        let spec = gix::refspec::parse(specs[0].as_ref(), gix::refspec::parse::Operation::Push)?;
+        anyhow::ensure!(
+            spec.source()
+                .is_some_and(|source| !source.is_empty() && !source.contains(&b'*'))
+                && spec
+                    .destination()
+                    .is_some_and(|destination| destination == self.destination.as_slice()),
+            "explicit lease destination must match the single full branch destination; creation, deletion and patterns are unsupported"
+        );
+        Ok(())
+    }
+
+    fn validate_updates(&self, updates: &[gix::remote::push::Update]) -> std::io::Result<()> {
+        let [update] = updates else {
+            return Err(std::io::Error::other(
+                "explicit lease requires exactly one resolved branch update",
+            ));
+        };
+        if update.remote != self.destination || update.old_oid.is_null() || update.new_oid.is_null() {
+            return Err(std::io::Error::other(
+                "explicit lease requires its existing branch destination; creation and deletion are unsupported",
+            ));
+        }
+        if update.old_oid != self.expected_oid {
+            return Err(std::io::Error::other(format!(
+                "stale lease for {}: expected {}, advertised {}",
+                self.destination, self.expected_oid, update.old_oid
+            )));
+        }
+        Ok(())
+    }
+}
+
 pub const PROGRESS_RANGE: std::ops::RangeInclusive<u8> = 1..=3;
 
 pub use function::push;
@@ -338,39 +404,32 @@ pub(crate) mod function {
             None => None,
         };
 
-        // Parse --force-with-lease. Mirrors parse_push_cas_option in
-        // vendor/git/remote.c (lines 2584-2613).
-        //
-        // Value shape:
-        //   None        → flag not given
-        //   Some("")    → bare --force-with-lease (use tracking for all)
-        //   Some(s)     → `<refname>[:<expect>]`. Empty expect means
-        //                 "expect the ref to not exist" (null OID). Non-
-        //                 empty expect must resolve as an object name; if
-        //                 it doesn't, git dies via parse-options.c's
-        //                 callback-error path — `error: ...` then exit 129.
-        //
-        // Preserve Git's malformed-expect diagnostic, then refuse unsupported
-        // lease enforcement rather than accepting a protection we cannot apply.
-        if let Some((_refname, expect)) = opts
+        anyhow::ensure!(
+            !opts.force_if_includes,
+            "Brit cannot yet enforce --force-if-includes; use git push for this protection"
+        );
+        let lease = opts
             .force_with_lease
             .as_deref()
-            .filter(|arg| !arg.is_empty())
-            .and_then(|arg| arg.split_once(':'))
-            && !expect.is_empty()
-            && repo.rev_parse_single(expect).is_err()
-        {
-            let mut stderr = std::io::stderr().lock();
-            writeln!(stderr, "error: cannot parse expected object name '{expect}'")?;
-            drop(stderr);
-            // parse-options.c returns -1 from the callback; that propagates
-            // to usage_with_options, which exits 129 without a usage banner.
-            std::process::exit(129);
+            .map(|arg| super::ExplicitLease::parse(arg, repo.object_hash()))
+            .transpose()?;
+        if let Some(lease) = &lease {
+            anyhow::ensure!(
+                !opts.all
+                    && !opts.mirror
+                    && !opts.delete
+                    && !opts.tags
+                    && !opts.follow_tags
+                    && !opts.prune
+                    && recurse_submodules.is_none_or(|mode| mode == super::RecurseSubmodules::No),
+                "explicit leases support only one existing branch update"
+            );
+            anyhow::ensure!(
+                opts.remote.is_some() || opts.repo.is_some(),
+                "explicit leases require an explicitly selected remote"
+            );
+            lease.validate_refspecs(&opts.ref_specs)?;
         }
-        anyhow::ensure!(
-            opts.force_with_lease.is_none() && !opts.force_if_includes,
-            "Brit cannot yet enforce --force-with-lease or --force-if-includes; use git push for these protections"
-        );
 
         // Mirrors the `die_for_incompatible_opt4` call at the top of cmd_push
         // in vendor/git/builtin/push.c (after the repo_config + parse_options
@@ -645,10 +704,14 @@ pub(crate) mod function {
                     gix::progress::Discard,
                     &std::sync::atomic::AtomicBool::new(false),
                     |updates| {
-                        // Until push status/lease negotiation is complete, prove safe branch
-                        // advancement locally. Hook bypass never bypasses this protection.
-                        if !opts.force {
-                            for update in updates {
+                        // Authorize against this connection's advertisement, including no-ops.
+                        // Keep its old OID in the command: receive-pack enforces the later race.
+                        if let Some(lease) = &lease {
+                            lease.validate_updates(updates)?;
+                        }
+                        // Hook bypass and global force never bypass a lease refusal.
+                        if !opts.force && lease.is_none() {
+                            for update in updates.iter().filter(|update| update.old_oid != update.new_oid) {
                                 if update.old_oid.is_null() || update.new_oid.is_null() {
                                     continue;
                                 }
@@ -671,7 +734,7 @@ pub(crate) mod function {
                             return Ok(());
                         }
                         let mut input = Vec::new();
-                        for update in updates {
+                        for update in updates.iter().filter(|update| update.old_oid != update.new_oid) {
                             input.extend_from_slice(if update.local.is_empty() {
                                 b"(delete)"
                             } else {
@@ -780,6 +843,75 @@ pub(crate) mod function {
         if any_rejected {
             std::process::exit(1);
         }
+        Ok(())
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::ExplicitLease;
+
+    #[test]
+    fn explicit_lease_parser_requires_full_branch_and_nonzero_oid() -> gix::error::TestResult {
+        let oid = "abcdef0123456789abcdef0123456789abcdef01";
+        let lease = ExplicitLease::parse(&format!("refs/heads/main:{oid}"), gix::hash::Kind::Sha1)?;
+        assert_eq!(lease.expected_oid.to_string(), oid);
+        for value in [
+            "",
+            "refs/heads/main",
+            "refs/heads/main:",
+            "main:abcdef",
+            "refs/tags/v1:abcdef",
+            "refs/heads/main:HEAD",
+            "refs/heads/main:0000000000000000000000000000000000000000",
+        ] {
+            assert!(
+                ExplicitLease::parse(value, gix::hash::Kind::Sha1).is_err(),
+                "unsupported lease {value}"
+            );
+        }
+        for destination in ["main", "refs/tags/v1", "refs/heads/", "refs/heads/a..b", "refs/heads/*"] {
+            assert!(ExplicitLease::parse(&format!("{destination}:{oid}"), gix::hash::Kind::Sha1).is_err());
+        }
+        assert!(ExplicitLease::parse(&format!("refs/heads/main:{}", "a".repeat(64)), gix::hash::Kind::Sha1).is_err());
+        Ok(())
+    }
+
+    #[test]
+    fn explicit_lease_scopes_refspec_and_checks_unchanged_updates() -> gix::error::TestResult {
+        let lease = ExplicitLease::parse(
+            "refs/heads/main:abcdef0123456789abcdef0123456789abcdef01",
+            gix::hash::Kind::Sha1,
+        )?;
+        lease.validate_refspecs(&["main:refs/heads/main".into()])?;
+        for specs in [
+            vec![],
+            vec!["main".into()],
+            vec![":refs/heads/main".into()],
+            vec!["main:refs/heads/other".into()],
+            vec!["refs/heads/*:refs/heads/*".into()],
+            vec!["main:refs/heads/main".into(), "other:refs/heads/other".into()],
+        ] {
+            assert!(lease.validate_refspecs(&specs).is_err());
+        }
+        let mut update = gix::remote::push::Update {
+            local: "refs/heads/main".into(),
+            remote: "refs/heads/main".into(),
+            old_oid: lease.expected_oid,
+            new_oid: lease.expected_oid,
+        };
+        lease.validate_updates(std::slice::from_ref(&update))?;
+        update.old_oid = gix::ObjectId::from_hex(b"1111111111111111111111111111111111111111")?;
+        update.new_oid = update.old_oid;
+        assert!(
+            lease.validate_updates(std::slice::from_ref(&update)).is_err(),
+            "stale no-op must refuse"
+        );
+        update.old_oid = gix::ObjectId::null(gix::hash::Kind::Sha1);
+        assert!(
+            lease.validate_updates(std::slice::from_ref(&update)).is_err(),
+            "creation must refuse"
+        );
         Ok(())
     }
 }

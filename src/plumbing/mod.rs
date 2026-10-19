@@ -1,7 +1,9 @@
 mod main;
+mod mutation;
 pub use main::main;
 pub use main::run;
 pub use main::run_with_command;
+pub use mutation::MutationGuards;
 
 /// Return Git's normalized process arguments for the composed public CLI.
 pub fn args_os() -> impl Iterator<Item = std::ffi::OsString> {

@@ -87,10 +87,18 @@ jobs:
         run: |
           bash -n scripts/ci/package-brit-release.sh scripts/ci/test-package-brit-release.sh
           bash scripts/ci/test-package-brit-release.sh
+      - name: Validate nonpublishing candidate delivery and release guards
+        run: |
+          bash -n scripts/ci/validate-brit-delivery-source.sh scripts/ci/test-brit-delivery-source.sh
+          bash scripts/ci/test-brit-delivery-source.sh
       - name: Validate atomic Unix installation and rollback
         run: |
           bash -n scripts/ci/install-brit-release.sh scripts/ci/test-install-brit-release.sh scripts/ci/verify-installed-brit.sh scripts/ci/verify-brit-upgrade.sh
           bash scripts/ci/test-install-brit-release.sh
+      - name: Validate pinned Brit and EPR pair installation with synthetic fixtures
+        run: |
+          bash -n scripts/ci/install-brit-epr.sh scripts/ci/test-install-brit-epr.sh
+          bash scripts/ci/test-install-brit-epr.sh
       - name: Validate publisher closure checks against a fake registry
         run: env PYTHONDONTWRITEBYTECODE=1 python3 -m unittest discover -s scripts/ci -p 'test_publish_brit.py'
       - name: Validate isolated registry-consumer checks without a registry
@@ -323,7 +331,7 @@ jobs:
       - uses: taiki-e/install-action@9983c65e42da123ff25d1f78505eb6de315aa172 # v2.87.20
         with:
           tool: cargo-auditable@0.7.6
-      - name: Check metadata-based auditable builds on stable Rust
+      - name: Check metadata based auditable builds on stable Rust
         run: just check-auditable
 
   test-doc:
@@ -364,10 +372,31 @@ jobs:
       - name: Prove shared trees through the public Brit executable
         run: |
           set -euo pipefail
-          cargo build --locked -p brit-cli --bin brit
+          cargo build --locked -p brit-cli --bin brit --bin brit-rebase-retained
           cargo test --locked -p brit-bridge
           debug_dir="$(just dbg)"
-          BRIT_BIN="$debug_dir/brit" cargo test --locked -p cli-journey --test shared_tree --test authoring --test pre_push --test commit_cleanup --test daily_driver --test context --test cli_surface
+          BRIT_BIN="$debug_dir/brit" BRIT_REBASE_RETAINED_BIN="$debug_dir/brit-rebase-retained" cargo test --locked -p cli-journey --test rebase --test shared_tree --test authoring --test pre_push --test explicit_leases --test commit_cleanup --test commit_amend --test worktree_restore --test switch --test pull --test broader_staging --test daily_driver --test native_authoring --test context --test cli_surface
+      - name: Characterize stock Git rebase (design evidence, not Brit support)
+        run: cargo test --locked -p cli-journey --test git_rebase_characterization
+      - name: Prove internal conflict-aware authoring preservation
+        run: cargo test --locked -p gitoxide-core --features blocking-client,gix/sha1,switch-test-faults --test conflict_authoring
+      - name: Prove internal replay selection and preservation
+        run: |
+          cargo test --locked -p gitoxide-core --features blocking-client,gix/sha1,switch-test-faults --test replay --test replay_retained --test replay_qualification --test replay_io
+          cargo test --locked -p gitoxide-core --features blocking-client,gix/sha1 --lib repository::replay::hooks
+      - name: Prove internal interactive sequencing and editor recovery
+        run: |
+          cargo test --locked -p gix-sequencer --features serde
+          cargo test --locked -p gitoxide-core --features blocking-client,gix/sha1,switch-test-faults --test replay_interactive
+      - name: Prove replay, switch and pull interruption with explicit recovery
+        run: |
+          set -euo pipefail
+          cargo test --locked -p gitoxide-core --features blocking-client,gix/sha1 --lib power_loss
+          cargo test --locked -p gitoxide-core --features blocking-client,gix/sha1,switch-test-faults --test replay_invocation
+          cargo build --locked -p brit-cli --bin brit --bin brit-rebase-retained --features switch-test-faults
+          debug_dir="$(just dbg)"
+          BRIT_BIN="$debug_dir/brit" BRIT_REBASE_RETAINED_BIN="$debug_dir/brit-rebase-retained" cargo test --locked -p cli-journey --features switch-test-faults --test rebase --test switch --test pull
+          cargo build --locked -p brit-cli --bin brit
       - name: Prove generic engine without protocol features
         run: cargo test --locked -p brit-epr --no-default-features
       - name: Measure legacy parity assertions (observation only)
@@ -548,7 +577,7 @@ jobs:
             libssl-dev
             "libstdc++6:$RUNNER_ARCHITECTURE"  # To support external 64-bit Node.js for actions.
             pkgconf
-            python3-minimal
+            python3  # Terminal recovery tests require the standard-library pty module.
           )
           dpkg --add-architecture "$RUNNER_ARCHITECTURE"
           apt-get update

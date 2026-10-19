@@ -99,3 +99,12 @@ pub fn from_list(
 
 pub mod entries;
 pub use entries::function::entries;
+
+pub mod authoring;
+pub use authoring::{add_paths, restore_staged};
+
+mod staging;
+pub use staging::stage_paths;
+
+mod worktree_restore;
+pub use worktree_restore::restore_worktree;

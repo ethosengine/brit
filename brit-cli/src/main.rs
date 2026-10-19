@@ -269,6 +269,105 @@ mod tests {
     }
 
     #[test]
+    fn switch_exposes_only_existing_branch_and_explicit_recovery() {
+        for args in [
+            vec!["brit", "switch", "main"],
+            vec!["brit", "switch", "refs/heads/topic"],
+            vec!["brit", "switch", "--status"],
+            vec!["brit", "switch", "--continue"],
+            vec!["brit", "switch", "--abort"],
+        ] {
+            assert!(
+                public_command().try_get_matches_from(&args).is_ok(),
+                "supported switch: {args:?}"
+            );
+        }
+        for args in [
+            vec!["brit", "switch"],
+            vec!["brit", "switch", "one", "two"],
+            vec!["brit", "switch", "main", "--status"],
+            vec!["brit", "switch", "--continue", "--abort"],
+            vec!["brit", "switch", "--status", "--continue"],
+            vec!["brit", "switch", "--status", "--abort"],
+            vec!["brit", "switch", "-c", "new"],
+            vec!["brit", "switch", "--force", "main"],
+            vec!["brit", "switch", "--detach", "main"],
+            vec!["brit", "switch", "--track", "main"],
+            vec!["brit", "switch", "--guess", "main"],
+            vec!["brit", "switch", "--recurse-submodules", "main"],
+        ] {
+            assert!(
+                public_command().try_get_matches_from(&args).is_err(),
+                "deferred or ambiguous switch: {args:?}"
+            );
+        }
+    }
+
+    #[cfg(any(feature = "max", feature = "max-pure", feature = "lean"))]
+    #[test]
+    fn pull_requires_explicit_fast_forward_selection_or_recovery() {
+        for args in [
+            vec!["brit", "pull", "--ff-only", "origin", "main"],
+            vec!["brit", "pull", "--ff-only", "../remote", "refs/heads/main"],
+            vec!["brit", "pull", "--ff-only", "https://example.test/repo", "main"],
+            vec!["brit", "pull", "--status"],
+            vec!["brit", "pull", "--continue"],
+            vec!["brit", "pull", "--abort"],
+        ] {
+            assert!(
+                public_command().try_get_matches_from(&args).is_ok(),
+                "supported pull: {args:?}"
+            );
+        }
+        for args in [
+            vec!["brit", "pull"],
+            vec!["brit", "pull", "origin", "main"],
+            vec!["brit", "pull", "--ff-only"],
+            vec!["brit", "pull", "--ff-only", "origin"],
+            vec!["brit", "pull", "--ff-only", "origin", "main", "other"],
+            vec!["brit", "pull", "--status", "--continue"],
+            vec!["brit", "pull", "--continue", "--abort"],
+            vec!["brit", "pull", "--status", "--ff-only", "origin", "main"],
+            vec!["brit", "pull", "--rebase", "origin", "main"],
+            vec!["brit", "pull", "--ff-only", "--autostash", "origin", "main"],
+        ] {
+            assert!(
+                public_command().try_get_matches_from(&args).is_err(),
+                "unsupported pull: {args:?}"
+            );
+        }
+    }
+
+    #[test]
+    fn broader_staging_requires_literal_paths_or_a_repository_wide_flag() {
+        for args in [
+            vec!["brit", "add", "--", "file", "directory/"],
+            vec!["brit", "add", "-u"],
+            vec!["brit", "add", "-A"],
+            vec!["brit", "add", "--update", "--", "directory"],
+            vec!["brit", "add", "--all", "--", "-literal"],
+        ] {
+            assert!(
+                public_command().try_get_matches_from(&args).is_ok(),
+                "supported staging arguments: {args:?}"
+            );
+        }
+        for args in [
+            vec!["brit", "add"],
+            vec!["brit", "add", "file"],
+            vec!["brit", "add", "-u", "-A"],
+            vec!["brit", "add", "-f", "--", "file"],
+            vec!["brit", "add", "-p"],
+            vec!["brit", "restore", "--worktree"],
+        ] {
+            assert!(
+                public_command().try_get_matches_from(&args).is_err(),
+                "deferred or ambiguous staging arguments: {args:?}"
+            );
+        }
+    }
+
+    #[test]
     fn git_errors_preserve_anyhow_main_diagnostics() {
         use anyhow::Context;
 

@@ -120,7 +120,7 @@
           "job": "auditable",
           "name": "cargo-auditable build",
           "steps": [
-            "Check metadata-based auditable builds on stable Rust"
+            "Check metadata based auditable builds on stable Rust"
           ]
         }
       ],
@@ -136,7 +136,7 @@
     },
     "native-daily-driver": {
       "status": "unwired",
-      "reason": "Automated authoring, transport, recovery and Unix installed-delivery slices have runnable probes. Exact-revision remote evidence, real released-version upgrade/rollback, installed epr integration and independently accepted two-human operation remain required; CI fixtures cannot establish human acceptance.",
+      "reason": "Automated authoring, transport, recovery and Unix installed-delivery slices have runnable probes. Exact-revision remote evidence, real released-version upgrade/rollback, installed epr integration and our own ongoing development across workspaces remain required; CI fixtures cannot establish operational acceptance.",
       "evidence_scope": "human-operational-acceptance",
       "automated_milestones": [
         "inherited-ci",
@@ -164,10 +164,11 @@
           "name": "installed delivery (x86_64-unknown-linux-gnu)",
           "steps": [
             "Verify this job received the validated source",
-            "Package one binary, receipt, and checksum",
+            "Package binaries, receipt, and checksum",
             "Qualify extracted Unix installation and operational journeys",
-            "Prove source-free installed authoring and recovery",
-            "Prove Unix installer interruption and rollback mechanics"
+            "Prove source free installed authoring and recovery",
+            "Prove Unix installer interruption and rollback mechanics",
+            "Qualify installed Linux rebase and retained copy recovery"
           ]
         },
         {
@@ -175,9 +176,9 @@
           "name": "installed delivery (x86_64-apple-darwin)",
           "steps": [
             "Verify this job received the validated source",
-            "Package one binary, receipt, and checksum",
+            "Package binaries, receipt, and checksum",
             "Qualify extracted Unix installation and operational journeys",
-            "Prove source-free installed authoring and recovery",
+            "Prove source free installed authoring and recovery",
             "Prove Unix installer interruption and rollback mechanics"
           ]
         },
@@ -186,14 +187,14 @@
           "name": "installed delivery (aarch64-apple-darwin)",
           "steps": [
             "Verify this job received the validated source",
-            "Package one binary, receipt, and checksum",
+            "Package binaries, receipt, and checksum",
             "Qualify extracted Unix installation and operational journeys",
-            "Prove source-free installed authoring and recovery",
+            "Prove source free installed authoring and recovery",
             "Prove Unix installer interruption and rollback mechanics"
           ]
         }
       ],
-      "meaning": "Exact-source Unix release installation and installed-binary fixture behavior, plus synthetic installer fault/rollback mechanics. Excludes actual two-version release upgrade, Windows upgrade, installed epr and human acceptance."
+      "meaning": "Exact-source Unix release installation and installed-binary fixture behavior, plus synthetic installer fault/rollback mechanics. Excludes actual two-version release upgrade, Windows upgrade, installed epr and our own cross-workspace dogfooding."
     }
   }
 }

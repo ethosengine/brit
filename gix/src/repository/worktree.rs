@@ -21,12 +21,15 @@ impl crate::Repository {
         self.checked_out_branches_inner(self.namespace())
     }
 
-    /// Like [`checked_out_branches()`][Self::checked_out_branches()], but ignore the repository's reference namespace.
+    /// Return references checked out or reserved by bisect or rebase across all worktrees,
+    /// ignoring the repository's reference namespace.
     ///
     /// Resolve each worktree's `HEAD` and its referents in the default namespace.
-    /// Use this for worktree creation, which ignores reference namespaces like `git worktree add`.
+    /// Use this for worktree creation and branch switching, which must account for
+    /// reservations in the shared repository rather than a caller's namespace.
+    /// The returned paths are worktree directories, not their private Git directories.
     #[cfg(feature = "worktree-mutation")]
-    pub(crate) fn checked_out_branches_without_namespace(&self) -> Result<BTreeMap<gix_ref::FullName, Vec<PathBuf>>> {
+    pub fn checked_out_branches_without_namespace(&self) -> Result<BTreeMap<gix_ref::FullName, Vec<PathBuf>>> {
         self.checked_out_branches_inner(None)
     }
 

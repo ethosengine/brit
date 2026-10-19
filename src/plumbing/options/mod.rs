@@ -1,3 +1,4 @@
+pub mod rebase;
 use std::path::PathBuf;
 
 use clap_complete::Shell;
@@ -78,6 +79,8 @@ pub struct Args {
 
 #[derive(Debug, clap::Subcommand)]
 pub enum Subcommands {
+    /// Replay a linear history with durable local recovery.
+    Rebase(rebase::Platform),
     /// Subcommands for creating worktree archives.
     #[cfg(feature = "gitoxide-core-tools-archive")]
     Archive(archive::Platform),
@@ -117,6 +120,28 @@ pub enum Subcommands {
     /// Fetch data from remotes and store it in the repository.
     #[cfg(feature = "gitoxide-core-blocking-client")]
     Fetch(fetch::Platform),
+    /// Fetch one explicit remote branch and integrate only a fast-forward, with explicit recovery.
+    #[cfg(feature = "gitoxide-core-blocking-client")]
+    Pull {
+        /// Require fast-forward-only integration.
+        #[clap(long, required_unless_present_any = ["status", "continue_pull", "abort"], conflicts_with_all = ["status", "continue_pull", "abort"], requires_all = ["remote", "branch"])]
+        ff_only: bool,
+        /// Configured remote, URL, or filesystem path.
+        #[clap(requires_all = ["ff_only", "branch"], conflicts_with_all = ["status", "continue_pull", "abort"])]
+        remote: Option<String>,
+        /// Remote branch, short name or refs/heads/name.
+        #[clap(requires_all = ["ff_only", "remote"], conflicts_with_all = ["status", "continue_pull", "abort"], value_parser = crate::shared::AsBString)]
+        branch: Option<BString>,
+        /// Inspect any pending switch or pull without changing it.
+        #[clap(long, conflicts_with_all = ["continue_pull", "abort"])]
+        status: bool,
+        /// Explicitly continue an interrupted pull.
+        #[clap(long = "continue", conflicts_with = "abort")]
+        continue_pull: bool,
+        /// Abort integration before its durable commit decision; retain completed fetch results.
+        #[clap(long)]
+        abort: bool,
+    },
     /// Update remote refs along with their reachable objects.
     #[cfg(feature = "gitoxide-core-blocking-client")]
     Push(push::Platform),
@@ -165,6 +190,48 @@ pub enum Subcommands {
     Editor {
         /// Paths to open, or none to start the editor without a file.
         paths: Vec<PathBuf>,
+    },
+    /// Stage literal files or directories in one index transaction.
+    Add {
+        /// Stage tracked modifications and deletions; without paths, select the entire repository.
+        #[clap(short = 'u', long, conflicts_with = "all")]
+        update: bool,
+        /// Include additions, modifications and deletions; without paths, select the entire repository.
+        #[clap(short = 'A', long)]
+        all: bool,
+        /// Literal file or directory paths. Pathspec patterns are unsupported.
+        #[clap(last = true, required_unless_present_any = ["update", "all"], value_parser = crate::shared::AsBString)]
+        paths: Vec<BString>,
+    },
+    /// Restore literal files in either the index or the worktree.
+    Restore {
+        /// Restore the index from HEAD, leaving working files untouched.
+        #[clap(long, required_unless_present = "worktree", conflicts_with = "worktree")]
+        staged: bool,
+        /// Restore working files, leaving the index untouched.
+        #[clap(long, required_unless_present = "staged")]
+        worktree: bool,
+        /// Worktree source: HEAD; defaults to the index when omitted.
+        #[clap(long, requires = "worktree", value_parser = ["HEAD"])]
+        source: Option<String>,
+        /// Literal file paths; directories and pathspec patterns are unsupported.
+        #[clap(last = true, required = true, value_parser = crate::shared::AsBString)]
+        paths: Vec<BString>,
+    },
+    /// Switch to an existing local branch, or explicitly recover an interrupted switch.
+    Switch {
+        /// Existing local branch, short name or refs/heads/name.
+        #[clap(required_unless_present_any = ["status", "continue_switch", "abort"], conflicts_with_all = ["status", "continue_switch", "abort"], value_parser = crate::shared::AsBString)]
+        branch: Option<BString>,
+        /// Inspect the private recovery journal without changing repository state.
+        #[clap(long, conflicts_with_all = ["continue_switch", "abort"])]
+        status: bool,
+        /// Explicitly continue the interrupted switch.
+        #[clap(long = "continue", conflicts_with = "abort")]
+        continue_switch: bool,
+        /// Restore the original state before a durable commit decision.
+        #[clap(long)]
+        abort: bool,
     },
     Diff(diff::Platform),
     Log(log::Platform),
@@ -618,11 +685,18 @@ pub mod merge {
 pub mod diff {
     use gix::bstr::BString;
 
-    /// Print all changes between two objects.
+    /// Show unstaged changes, staged changes, or compare two objects.
     #[derive(Debug, clap::Parser)]
+    #[clap(args_conflicts_with_subcommands = true)]
     pub struct Platform {
+        /// Compare the index with HEAD instead of working files with the index.
+        #[clap(long, visible_alias = "staged")]
+        pub cached: bool,
+        /// Restrict changes to these literal file paths.
+        #[clap(last = true, value_parser = crate::shared::AsBString)]
+        pub paths: Vec<BString>,
         #[clap(subcommand)]
-        pub cmd: SubCommands,
+        pub cmd: Option<SubCommands>,
     }
 
     #[derive(Debug, clap::Subcommand)]
@@ -1065,6 +1139,12 @@ pub mod commit {
         /// Explicitly bypass pre-commit and commit-msg hooks.
         #[clap(short = 'n', long)]
         pub no_verify: bool,
+        /// Replace HEAD while preserving its author and parents; requires an explicit message source.
+        #[clap(long)]
+        pub amend: bool,
+        /// Reuse HEAD's message without launching an editor.
+        #[clap(long, requires = "amend", conflicts_with_all = ["message", "file"])]
+        pub no_edit: bool,
     }
 
     #[derive(Debug, clap::Subcommand)]

@@ -23,6 +23,9 @@ doctest = false
 [features]
 default = ["max"]
 
+# Dedicated fault-injection builds only; never part of a delivery preset.
+switch-test-faults = ["gitoxide-core/switch-test-faults"]
+
 #! ### Build Configuration
 #! These combine common choices of building blocks to represent typical builds.
 

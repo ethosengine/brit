@@ -9,6 +9,19 @@ pub(crate) fn run(args: Vec<OsString>) -> Result<()> {
 }
 
 pub(crate) fn integrate(args: Vec<OsString>) -> Result<()> {
+    let mut root = std::path::PathBuf::from(".");
+    let mut cursor = args.iter();
+    while let Some(arg) = cursor.next() {
+        if arg == "--root" {
+            if let Some(value) = cursor.next() {
+                root = value.into();
+            }
+        } else if let Some(value) = arg.to_str().and_then(|arg| arg.strip_prefix("--root=")) {
+            root = value.into();
+        }
+    }
+    let mut guards = gitoxide::plumbing::MutationGuards::default();
+    guards.path(&root).map_err(|err| CliError::Git(err.into()))?;
     installed(&["integrate"], args)
 }
 

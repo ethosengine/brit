@@ -73,8 +73,8 @@ fn unsupported_public_mutations_refuse_and_preserve_all_bytes() -> Result<()> {
     fs::write(repo.path().join("untracked"), "keep")?;
     let before = state(repo.path())?;
     for args in [
-        vec!["add", "tracked"],
-        vec!["restore", "tracked"],
+        vec!["add", "--force", "-A"],
+        vec!["restore", "--staged", "--worktree", "--", "tracked"],
         vec!["reset", "--hard", "HEAD"],
         vec!["rm", "--force", "tracked"],
         vec!["mv", "tracked", "moved"],
@@ -84,7 +84,7 @@ fn unsupported_public_mutations_refuse_and_preserve_all_bytes() -> Result<()> {
             !output.status.success(),
             "unsupported mutation must not claim success: {args:?}"
         );
-        ensure!(output.stderr.contains("unrecognized subcommand"), "{}", output.stderr);
+        ensure!(!output.stderr.is_empty(), "refusal must explain unsupported input");
         assert_eq!(
             state(repo.path())?,
             before,

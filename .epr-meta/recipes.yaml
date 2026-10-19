@@ -6,7 +6,9 @@ recipes:
     stages:
       - name: spec
         artifactKind: doc:spec
-        paths: ["docs/parity/capability-boundaries.md"]
+        paths:
+          - "docs/parity/capability-boundaries.md"
+          - "docs/specs/2026-10-13-interactive-rebase-recovery-design.md"
       - name: plan
         artifactKind: doc:plan
         paths:

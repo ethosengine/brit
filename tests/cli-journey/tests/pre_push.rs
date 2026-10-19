@@ -263,7 +263,12 @@ fn lease_flags_and_non_fast_forward_fail_closed_even_without_hooks() -> Result<(
             !output.status.success(),
             "{option} must not silently overwrite remote history"
         );
-        ensure!(output.stderr.contains("git push"), "{}", output.stderr);
+        let diagnostic = if option == "--force-with-lease" {
+            "explicit lease requires refs/heads/<branch>:<full-expected-oid>"
+        } else {
+            "git push"
+        };
+        ensure!(output.stderr.contains(diagnostic), "{}", output.stderr);
         assert_eq!(git(remote.path(), &["rev-parse", "main"])?, old);
     }
     let output = brit(repo.path(), &["push", "--force", "origin", "main:main"])?;

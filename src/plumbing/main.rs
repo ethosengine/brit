@@ -32,6 +32,147 @@ pub fn main() -> Result<()> {
     run(args)
 }
 
+// Keep inspection usable during recovery. New commands default to the writer
+// boundary until their read-only semantics are explicitly established here.
+fn requires_mutation_guard(cmd: &Subcommands) -> bool {
+    match cmd {
+        Subcommands::Branch(_)
+        | Subcommands::CommitGraph(_)
+        | Subcommands::Odb(_)
+        | Subcommands::Fsck(_)
+        | Subcommands::Tree(_)
+        | Subcommands::Tag(_)
+        | Subcommands::Verify { .. }
+        | Subcommands::Revision(_)
+        | Subcommands::Mailmap(_)
+        | Subcommands::Attributes(_)
+        | Subcommands::Exclude(_)
+        | Subcommands::Submodule(_)
+        | Subcommands::Cat { .. }
+        | Subcommands::IsClean
+        | Subcommands::IsChanged
+        | Subcommands::ConfigTree
+        | Subcommands::Status(_)
+        | Subcommands::Dirwalk(_)
+        | Subcommands::MergeBase(_)
+        | Subcommands::Env
+        | Subcommands::Diff(_)
+        | Subcommands::Log(_)
+        | Subcommands::Blame { .. } => false,
+        Subcommands::Commit(commit::Platform {
+            cmd: Some(commit::Subcommands::Verify { .. } | commit::Subcommands::Describe { .. }),
+            ..
+        }) => false,
+        Subcommands::Config(config::Platform {
+            cmd: None | Some(config::Subcommands::Show | config::Subcommands::List),
+            ..
+        }) => false,
+        Subcommands::Index(index::Subcommands::Entries { .. }) => false,
+        Subcommands::Index(index::Subcommands::FromTree {
+            index_output_path: None,
+            ..
+        }) => false,
+        Subcommands::Worktree(worktree::Platform {
+            cmd: worktree::SubCommands::List,
+        }) => false,
+        Subcommands::Rebase(_) => false,
+        Subcommands::Switch { .. } => false,
+        #[cfg(feature = "gitoxide-core-blocking-client")]
+        Subcommands::Pull { .. } => false,
+        #[cfg(any(feature = "gitoxide-core-async-client", feature = "gitoxide-core-blocking-client"))]
+        Subcommands::Remote(_) => false,
+        _ => true,
+    }
+}
+
+fn explicit_write_paths(cmd: &Subcommands) -> Vec<&std::path::Path> {
+    use free::{index as fi, pack as fp};
+    let mut paths = Vec::new();
+    match cmd {
+        #[cfg(feature = "tix")]
+        Subcommands::Tix(command) => paths.extend(command.output_path()),
+        #[cfg(feature = "gitoxide-core-tools-corpus")]
+        Subcommands::Corpus(crate::plumbing::options::corpus::Platform { db, .. }) => paths.push(db.as_path()),
+        #[cfg(feature = "gitoxide-core-tools-archive")]
+        Subcommands::Archive(crate::plumbing::options::archive::Platform { output_file, .. }) => {
+            paths.push(output_file.as_path());
+        }
+        Subcommands::Revision(revision::Subcommands::List { svg, .. }) => paths.extend(svg.as_deref()),
+        #[cfg(feature = "gitoxide-core-blocking-client")]
+        Subcommands::Fetch(crate::plumbing::options::fetch::Platform {
+            open_negotiation_graph, ..
+        }) => paths.extend(open_negotiation_graph.as_deref()),
+        #[cfg(feature = "gitoxide-core-blocking-client")]
+        Subcommands::Clone(crate::plumbing::options::clone::Platform { directory, .. }) => {
+            paths.push(directory.as_deref().unwrap_or(std::path::Path::new(".")));
+        }
+        Subcommands::Worktree(worktree::Platform {
+            cmd: worktree::SubCommands::Add { path, .. },
+        }) => paths.push(path.as_path()),
+        Subcommands::Editor { paths: files } => paths.extend(files.iter().map(PathBuf::as_path)),
+        Subcommands::Completions { out_dir, .. } => paths.extend(out_dir.as_deref().map(std::path::Path::new)),
+        Subcommands::Config(config::Platform {
+            cmd:
+                Some(config::Subcommands::Fmt {
+                    in_place,
+                    in_file,
+                    out_file,
+                }),
+            ..
+        }) => {
+            if *in_place {
+                paths.extend(in_file.as_deref());
+            }
+            paths.extend(out_file.as_deref());
+        }
+        Subcommands::Index(index::Subcommands::FromTree { index_output_path, .. }) => {
+            paths.extend(index_output_path.as_deref());
+        }
+        Subcommands::Free(free::Subcommands::Index(fi::Platform { cmd, .. })) => match cmd {
+            fi::Subcommands::FromList { index_output_path, .. } => paths.extend(index_output_path.as_deref()),
+            fi::Subcommands::CheckoutExclusive { directory, .. } => paths.push(directory.as_path()),
+            _ => {}
+        },
+        Subcommands::Free(free::Subcommands::Pack(cmd)) => match cmd {
+            fp::Subcommands::Create { output_directory, .. } => paths.extend(output_directory.as_deref()),
+            fp::Subcommands::Explode {
+                pack_path,
+                object_path,
+                delete_pack,
+                ..
+            } => {
+                if *delete_pack {
+                    paths.push(pack_path.as_path());
+                }
+                paths.extend(object_path.as_deref());
+            }
+            fp::Subcommands::Index(fp::index::Subcommands::Create { directory, .. }) => {
+                paths.extend(directory.as_deref());
+            }
+            fp::Subcommands::MultiIndex(fp::multi_index::Platform {
+                multi_index_path,
+                cmd: fp::multi_index::Subcommands::Create { .. },
+            }) => paths.push(multi_index_path.as_path()),
+            #[cfg(any(feature = "gitoxide-core-async-client", feature = "gitoxide-core-blocking-client"))]
+            fp::Subcommands::Receive {
+                directory,
+                refs_directory,
+                ..
+            } => {
+                paths.extend(directory.as_deref());
+                paths.extend(refs_directory.as_deref());
+            }
+            _ => {}
+        },
+        #[cfg(feature = "gitoxide-core-blocking-client")]
+        Subcommands::Free(free::Subcommands::Remote(free::remote::Subcommands::Refs { refs_directory, .. })) => {
+            paths.extend(refs_directory.as_deref());
+        }
+        _ => {}
+    }
+    paths
+}
+
 /// Execute an already parsed plumbing command, allowing another CLI to compose its command tree.
 pub fn run(args: Args) -> Result<()> {
     run_with_command(args, Args::command())
@@ -47,6 +188,11 @@ pub fn run_with_command(args: Args, command: clap::Command) -> Result<()> {
     #[cfg(not(feature = "tracing"))]
     let trace = 0;
     let cmd = args.cmd;
+    let guards = std::cell::RefCell::new(super::MutationGuards::default());
+    let requires_mutation_guard = requires_mutation_guard(&cmd);
+    for path in explicit_write_paths(&cmd) {
+        guards.borrow_mut().path(path)?;
+    }
     #[cfg(feature = "tix")]
     let cmd = match cmd {
         Subcommands::Tix(command) if !command.requires_repository() => {
@@ -81,6 +227,7 @@ pub fn run_with_command(args: Args, command: clap::Command) -> Result<()> {
 
     let repository = {
         let config = config.clone();
+        let guards = &guards;
         move |mut mode: Mode| -> Result<gix::Repository> {
             let mut mapping: gix::sec::trust::Mapping<gix::open::Options> = Default::default();
             if !config.is_empty() {
@@ -128,6 +275,9 @@ pub fn run_with_command(args: Args, command: clap::Command) -> Result<()> {
                 {
                     config_mut.set_raw_value(gix::config::tree::Gitoxide::PARSE_PRECIOUS, "true")?;
                 }
+            }
+            if requires_mutation_guard {
+                guards.borrow_mut().repository(&repo)?;
             }
             Ok(repo)
         }
@@ -236,17 +386,74 @@ pub fn run_with_command(args: Args, command: clap::Command) -> Result<()> {
                 core::repository::merge_base(repository(Mode::Lenient)?, first, others, out, format)
             })
         }
-        Subcommands::Diff(crate::plumbing::options::diff::Platform { cmd }) => match cmd {
-            crate::plumbing::options::diff::SubCommands::Tree {
+        Subcommands::Add { paths, update, all: _ } => {
+            prepare_and_run("add", verbose, None, move |_progress, _out, _err| {
+                core::repository::index::stage_paths(repository(Mode::Strict)?, &paths, update)
+            })
+        }
+        Subcommands::Restore {
+            staged,
+            worktree: _,
+            source,
+            paths,
+        } => prepare_and_run("restore", verbose, None, move |_progress, _out, _err| {
+            let repo = repository(Mode::Strict)?;
+            if staged {
+                core::repository::index::restore_staged(repo, &paths)
+            } else {
+                core::repository::index::restore_worktree(repo, &paths, source.is_some())
+            }
+        }),
+        Subcommands::Rebase(options) => prepare_and_run("rebase", verbose, None, move |_progress, out, err| {
+            core::repository::replay::command::run(repository(Mode::Strict)?, options.action(), out, err)
+                .map_err(anyhow_to_gix)
+        }),
+        Subcommands::Switch {
+            branch,
+            status,
+            continue_switch: _,
+            abort,
+        } => prepare_and_run("switch", verbose, None, move |_progress, out, _err| {
+            let repo = repository(Mode::Strict)?;
+            if status {
+                core::repository::switch::status(&repo, out).map_err(anyhow_to_gix)
+            } else if let Some(branch) = branch {
+                core::repository::switch::execute(repo, branch.as_ref()).map_err(anyhow_to_gix)
+            } else {
+                core::repository::switch::recover(repo, abort).map_err(anyhow_to_gix)
+            }
+        }),
+        #[cfg(feature = "gitoxide-core-blocking-client")]
+        Subcommands::Pull {
+            remote,
+            branch,
+            status,
+            abort,
+            ..
+        } => prepare_and_run("pull", verbose, None, move |_progress, out, _err| {
+            let repo = repository(Mode::Strict)?;
+            if status {
+                core::repository::pull::status(&repo, out).map_err(anyhow_to_gix)
+            } else if let (Some(remote), Some(branch)) = (remote, branch) {
+                core::repository::pull::execute(repo, &remote, branch.as_ref()).map_err(anyhow_to_gix)
+            } else {
+                core::repository::pull::recover(repo, abort).map_err(anyhow_to_gix)
+            }
+        }),
+        Subcommands::Diff(crate::plumbing::options::diff::Platform { cmd, cached, paths }) => match cmd {
+            None => prepare_and_run("diff", verbose, None, move |_progress, out, _err| {
+                core::repository::diff::working(repository(Mode::Strict)?, out, cached, &paths)
+            }),
+            Some(crate::plumbing::options::diff::SubCommands::Tree {
                 old_treeish,
                 new_treeish,
-            } => prepare_and_run("diff-tree", verbose, None, move |_progress, out, _err| {
+            }) => prepare_and_run("diff-tree", verbose, None, move |_progress, out, _err| {
                 core::repository::diff::tree(repository(Mode::Lenient)?, out, old_treeish, new_treeish)
             }),
-            crate::plumbing::options::diff::SubCommands::File {
+            Some(crate::plumbing::options::diff::SubCommands::File {
                 old_revspec,
                 new_revspec,
-            } => prepare_and_run("diff-file", verbose, None, move |_progress, out, _err| {
+            }) => prepare_and_run("diff-file", verbose, None, move |_progress, out, _err| {
                 core::repository::diff::file(repository(Mode::Lenient)?, out, old_revspec, new_revspec)
             }),
         },
@@ -341,8 +548,14 @@ pub fn run_with_command(args: Args, command: clap::Command) -> Result<()> {
             index_worktree_renames,
         }) => prepare_and_run("status", auto_verbose, None, move |progress, out, err| {
             use crate::plumbing::options::status::Submodules;
+            let repo = repository(Mode::Lenient)?;
+            // An index refresh is a mutation. On contention or pending recovery,
+            // retain read-only inspection and leave the index bytes alone.
+            let refresh_guard = (!no_write)
+                .then(|| core::repository::switch::mutation_guard(&repo))
+                .and_then(std::result::Result::ok);
             core::repository::status::show(
-                repository(Mode::Lenient)?,
+                repo,
                 pathspec,
                 out,
                 err,
@@ -372,7 +585,7 @@ pub fn run_with_command(args: Args, command: clap::Command) -> Result<()> {
                     output_format: format,
                     statistics,
                     thread_limit: thread_limit.or(cfg!(target_os = "macos").then_some(3)), // TODO: make this a configurable when in `gix`, this seems to be optimal on MacOS, linux scales though! MacOS also scales if reading a lot of files for refresh index
-                    allow_write: !no_write,
+                    allow_write: refresh_guard.is_some(),
                     index_worktree_renames: index_worktree_renames.map(|percentage| percentage.unwrap_or(0.5)),
                     submodules: submodules.map(|submodules| match submodules {
                         Submodules::All => core::repository::status::Submodules::All,
@@ -1195,6 +1408,8 @@ pub fn run_with_command(args: Args, command: clap::Command) -> Result<()> {
                         file: platform.file,
                         cleanup: platform.cleanup,
                         no_verify: platform.no_verify,
+                        amend: platform.amend,
+                        no_edit: platform.no_edit,
                         ..Default::default()
                     },
                 )
@@ -1499,13 +1714,35 @@ fn verify_mode(decode: bool, re_encode: bool) -> verify::Mode {
     }
 }
 
-fn anyhow_to_gix(error: anyhow::Error) -> gix::error::Error {
+pub(super) fn anyhow_to_gix(error: anyhow::Error) -> gix::error::Error {
     gix::error::Error::from_boxed(error.into_boxed_dyn_error())
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn amend_message_options() {
+        use clap::Parser;
+        for args in [
+            vec!["brit", "commit", "--amend", "--no-edit"],
+            vec!["brit", "commit", "--amend", "-m", ""],
+            vec!["brit", "commit", "--amend", "-F", "-"],
+        ] {
+            assert!(Args::try_parse_from(&args).is_ok(), "valid amendment options: {args:?}");
+        }
+        for args in [
+            vec!["brit", "commit", "--no-edit"],
+            vec!["brit", "commit", "--amend", "--no-edit", "-m", "replacement"],
+            vec!["brit", "commit", "--amend", "--no-edit", "-F", "message.txt"],
+        ] {
+            assert!(
+                Args::try_parse_from(&args).is_err(),
+                "invalid amendment options: {args:?}"
+            );
+        }
+    }
 
     #[test]
     fn clap() {

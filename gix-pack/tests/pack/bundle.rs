@@ -113,6 +113,7 @@ mod write_to_directory {
             index_path: None,
             data_path: None,
             keep_path: None,
+            keep_identity: None,
             object_hash: gix_hash::Kind::Sha1,
         })
     }
@@ -134,6 +135,11 @@ mod write_to_directory {
         let dir = TempDir::new()?;
         let mut res = write_pack(Some(&dir), SMALL_PACK)?;
         let (index_path, data_path, keep_path) = (res.index_path.take(), res.data_path.take(), res.keep_path.take());
+        #[cfg(unix)]
+        assert!(
+            res.keep_identity.take().is_some(),
+            "new keep carries its creation identity"
+        );
         assert_eq!(res, expected_outcome()?);
         let mut sorted_entries = fs::read_dir(&dir)?
             .filter_map(std::result::Result::ok)
@@ -155,6 +161,37 @@ mod write_to_directory {
 
         res.index_path = index_path;
         assert!(res.to_bundle().transpose()?.is_some());
+        Ok(())
+    }
+
+    #[test]
+    fn a_foreign_keep_is_never_truncated_or_claimed() -> gix_testtools::TestResult {
+        let dir = TempDir::new()?;
+        let pack_hash = expected_outcome()?.index.data_hash.to_hex().to_string();
+        let keep = dir.path().join(format!("pack-{pack_hash}.keep"));
+        fs::write(&keep, b"owned by another fetch\n")?;
+        let outcome = write_pack(Some(&dir), SMALL_PACK)?;
+        assert!(outcome.keep_path.is_none(), "foreign keep must not be claimed");
+        assert!(
+            outcome.keep_identity.is_none(),
+            "foreign keep carries no ownership proof"
+        );
+        assert_eq!(fs::read(&keep)?, b"owned by another fetch\n");
+        assert!(dir.path().join(format!("pack-{pack_hash}.pack")).exists());
+        Ok(())
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn a_keep_symlink_refuses_without_touching_its_target() -> gix_testtools::TestResult {
+        let dir = TempDir::new()?;
+        let pack_hash = expected_outcome()?.index.data_hash.to_hex().to_string();
+        let target = dir.path().join("private");
+        fs::write(&target, b"private bytes")?;
+        std::os::unix::fs::symlink(&target, dir.path().join(format!("pack-{pack_hash}.keep")))?;
+        assert!(write_pack(Some(&dir), SMALL_PACK).is_err());
+        assert_eq!(fs::read(&target)?, b"private bytes");
+        assert!(!dir.path().join(format!("pack-{pack_hash}.pack")).exists());
         Ok(())
     }
 

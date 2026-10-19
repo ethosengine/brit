@@ -26,6 +26,119 @@ use crate::{
 mod collisions;
 
 #[test]
+fn pinned_branch_update_with_symbolic_head_guard_preserves_reflog_old_oid() -> Result {
+    let (_keep, store) = empty_store()?;
+    let mut buf = TimeBuf::default();
+    store
+        .transaction()
+        .prepare(
+            [
+                create_at("refs/heads/main"),
+                create_symbolic_at("HEAD", "refs/heads/main"),
+            ],
+            Fail::Immediately,
+            Fail::Immediately,
+        )?
+        .commit(committer().to_ref(&mut buf))?;
+    let old_id = store
+        .find_loose("refs/heads/main")?
+        .target
+        .try_id()
+        .expect("direct ref")
+        .to_owned();
+    let new_id = hex_to_id("28ce6a8b26aa170e1de65536fe8abe1832bd3242");
+    let transaction = store.transaction().prepare(
+        [
+            RefEdit::update(
+                "refs/heads/main".try_into()?,
+                new_id,
+                PreviousValue::MustExistAndMatch(Target::Object(old_id)),
+                "amend",
+            ),
+            RefEdit::update_with_log(
+                "HEAD".try_into()?,
+                Target::Object(new_id),
+                PreviousValue::MustExistAndMatch(Target::Symbolic("refs/heads/main".try_into()?)),
+                LogChange {
+                    mode: RefLog::Only,
+                    force_create_reflog: true,
+                    message: "amend".into(),
+                },
+            ),
+        ],
+        Fail::Immediately,
+        Fail::Immediately,
+    )?;
+    assert!(
+        store.git_dir().join("HEAD.lock").exists(),
+        "HEAD remains locked through publication"
+    );
+    transaction.commit(committer().to_ref(&mut buf))?;
+    assert_eq!(
+        store.find_loose("HEAD")?.target,
+        Target::Symbolic("refs/heads/main".try_into()?),
+        "HEAD stays attached"
+    );
+    assert_eq!(
+        reflog_lines(&store, "HEAD")?,
+        vec![log_line(old_id, new_id, "amend")],
+        "HEAD log records the pinned old OID"
+    );
+    assert_eq!(store.find_loose("refs/heads/main")?.target, Target::Object(new_id));
+    Ok(())
+}
+
+#[test]
+fn unchanged_oid_reflog_updates_are_opt_in_and_keep_the_lock() -> Result {
+    let (_keep, store) = empty_store()?;
+    let mut buf = TimeBuf::default();
+    store
+        .transaction()
+        .prepare([create_at("refs/heads/main")], Fail::Immediately, Fail::Immediately)?
+        .commit(committer().to_ref(&mut buf))?;
+    let old_id = store
+        .find_loose("refs/heads/main")?
+        .target
+        .try_id()
+        .expect("direct ref")
+        .to_owned();
+    for enabled in [false, true] {
+        let transaction = store.transaction();
+        let transaction = if enabled {
+            transaction.reflog_updates_for_noop(["refs/heads/main".try_into()?])
+        } else {
+            transaction
+        };
+        let transaction = transaction.prepare(
+            [RefEdit::update(
+                "refs/heads/main".try_into()?,
+                old_id,
+                PreviousValue::MustExistAndMatch(Target::Object(old_id)),
+                "same object",
+            )],
+            Fail::Immediately,
+            Fail::Immediately,
+        )?;
+        assert_eq!(
+            store.git_dir().join("refs/heads/main.lock").exists(),
+            enabled,
+            "opting in retains the unchanged reference lock through publication"
+        );
+        transaction.commit(committer().to_ref(&mut buf))?;
+        let lines = reflog_lines(&store, "refs/heads/main")?;
+        assert_eq!(
+            lines.len(),
+            if enabled { 2 } else { 1 },
+            "default behavior is unchanged"
+        );
+        if enabled {
+            assert_eq!(lines[1], log_line(old_id, old_id, "same object"));
+        }
+    }
+    Ok(())
+}
+
+#[test]
 fn reflog_messages_preserve_bytes() -> Result {
     let (_keep, store) = empty_store()?;
     for (index, message) in [b"".as_slice(), b"plain text", b"raw \xff\xfe bytes"]

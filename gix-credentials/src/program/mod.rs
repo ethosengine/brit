@@ -102,8 +102,17 @@ impl Program {
             Kind::ExternalName { name_and_args } => {
                 external_name_command(git_program, name_and_args.as_bstr(), action)?
             }
-            Kind::ExternalShellScript(for_shell)
-            | Kind::ExternalPath {
+            Kind::ExternalShellScript(for_shell) => {
+                // Git appends the operation to the script itself. An inner function may
+                // use "$@" without forwarding the script's arguments at its final call.
+                let mut script = for_shell.clone();
+                script.push_char(' ');
+                script.push_str(action.as_arg(true));
+                gix_command::prepare(gix_path::from_bstr(script.as_bstr())?.as_ref())
+                    .command_may_be_shell_script_allow_manual_argument_splitting()
+                    .try_into()?
+            }
+            Kind::ExternalPath {
                 path_and_args: for_shell,
             } => gix_command::prepare(gix_path::from_bstr(for_shell.as_bstr())?.as_ref())
                 .command_may_be_shell_script()

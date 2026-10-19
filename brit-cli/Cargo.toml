@@ -14,6 +14,10 @@ rust-version = "1.88"
 name = "brit"
 path = "src/main.rs"
 
+[[bin]]
+name = "brit-rebase-retained"
+path = "src/rebase_retained.rs"
+
 [features]
 default = ["max"]
 max = ["gitoxide/max"]
@@ -21,6 +25,7 @@ max-pure = ["gitoxide/max-pure"]
 small = ["gitoxide/small"]
 lean = ["gitoxide/lean"]
 lean-async = ["gitoxide/lean-async"]
+switch-test-faults = ["gitoxide/switch-test-faults"]
 
 [dependencies]
 anyhow = "1.0.98"

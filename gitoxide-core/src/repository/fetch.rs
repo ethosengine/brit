@@ -16,6 +16,137 @@ pub struct Options {
 
 pub const PROGRESS_RANGE: std::ops::RangeInclusive<u8> = 1..=3;
 
+/// A single advertised branch selected for a durable pull. No local ref has been updated.
+pub(crate) struct PullFetchPlan {
+    pub target_oid: gix::ObjectId,
+    pub tracking: Option<(BString, bool)>,
+}
+
+/// Newly received object files. The caller owns synchronization and eventual keep-file cleanup.
+pub(crate) struct PullFetchOutcome {
+    pub plan: PullFetchPlan,
+    pub object_paths: Vec<std::path::PathBuf>,
+    pub keep_path: Option<std::path::PathBuf>,
+    pub keep_identity: Option<(u64, u64)>,
+}
+
+/// Resolve the configured mapping before connecting, without guessing a tracking destination for URLs.
+pub(crate) fn pull_tracking(
+    repo: &gix::Repository,
+    remote_name: &str,
+    branch: &gix::bstr::BStr,
+) -> anyhow::Result<Option<(BString, bool)>> {
+    use anyhow::ensure;
+    let remote = crate::repository::remote::by_name_or_url(repo, Some(remote_name))?;
+    if remote.name().is_none() {
+        return Ok(None);
+    }
+    let null = gix::ObjectId::null(repo.object_hash());
+    let specs = remote.refspecs(gix::remote::Direction::Fetch);
+    let matches = gix::refspec::MatchGroup::from_fetch_specs(specs.iter().map(|s| s.to_ref())).match_lhs(
+        std::iter::once(gix::refspec::match_group::Item {
+            full_ref_name: branch,
+            target: &null,
+            object: None,
+        }),
+    );
+    let mut destinations = Vec::new();
+    for mapping in &matches.mappings {
+        // Literal object refspecs are emitted independently of input items by the native
+        // matcher. They are not tracking mappings for the explicitly selected branch.
+        if !matches!(&mapping.lhs, gix::refspec::match_group::SourceRef::FullName(name) if name.as_ref() == branch) {
+            continue;
+        }
+        if let Some(name) = &mapping.rhs {
+            ensure!(
+                name.starts_with(b"refs/remotes/"),
+                "pull tracking destination must be under refs/remotes/"
+            );
+            let _: gix::refs::FullName = name.as_ref().try_into()?;
+            destinations.push((
+                name.as_ref().to_owned(),
+                specs[mapping.spec_index].allow_non_fast_forward(),
+            ));
+        }
+    }
+    ensure!(destinations.len() <= 1, "pull refuses ambiguous fetch mappings");
+    Ok(destinations.pop())
+}
+
+/// Receive only the selected branch, leaving every ref and FETCH_HEAD for the caller's journal.
+/// The callback runs after advertisement and before receiving any pack bytes.
+pub(crate) fn pull_receive(
+    repo: &gix::Repository,
+    remote_name: &str,
+    branch: &gix::bstr::BStr,
+    pin: impl FnOnce(&PullFetchPlan) -> anyhow::Result<()>,
+) -> anyhow::Result<PullFetchOutcome> {
+    use anyhow::{Context, ensure};
+    let mut isolated = repo.clone();
+    isolated
+        .config_snapshot_mut()
+        .set_value(&gix::config::tree::Clone::REJECT_SHALLOW, "true")?;
+    let repo = &isolated;
+    let tracking = pull_tracking(repo, remote_name, branch)?;
+    let mut remote = crate::repository::remote::by_name_or_url(repo, Some(remote_name))?;
+    remote.replace_refspecs([branch], gix::remote::Direction::Fetch)?;
+    remote = remote.with_fetch_tags(gix::remote::fetch::Tags::None);
+    let prepared = remote
+        .connect(gix::remote::Direction::Fetch)?
+        .prepare_fetch(gix::progress::Discard, Default::default())?;
+    let mappings = &prepared.ref_map().mappings;
+    ensure!(
+        mappings.len() == 1,
+        "pull requires exactly one advertised remote branch"
+    );
+    ensure!(
+        mappings[0].local.is_none(),
+        "pull fetch unexpectedly selected a local destination"
+    );
+    let target_oid = mappings[0]
+        .remote
+        .as_id()
+        .context("remote branch is unborn")?
+        .to_owned();
+    let plan = PullFetchPlan { target_oid, tracking };
+    pin(&plan)?;
+    let received = prepared.receive(gix::progress::Discard, &gix::interrupt::IS_INTERRUPTED)?;
+    let (object_paths, keep_path, keep_identity) = match received.status {
+        gix::remote::fetch::Status::Change {
+            write_pack_bundle,
+            update_refs,
+            ..
+        } => {
+            ensure!(
+                update_refs.edits.is_empty(),
+                "source-only pull fetch unexpectedly updated refs"
+            );
+            (
+                write_pack_bundle
+                    .data_path
+                    .into_iter()
+                    .chain(write_pack_bundle.index_path)
+                    .collect(),
+                write_pack_bundle.keep_path,
+                write_pack_bundle.keep_identity,
+            )
+        }
+        gix::remote::fetch::Status::NoPackReceived { update_refs, .. } => {
+            ensure!(
+                update_refs.edits.is_empty(),
+                "source-only pull fetch unexpectedly updated refs"
+            );
+            (Vec::new(), None, None)
+        }
+    };
+    Ok(PullFetchOutcome {
+        plan,
+        object_paths,
+        keep_path,
+        keep_identity,
+    })
+}
+
 pub(crate) mod function {
     use gix::{
         Result,

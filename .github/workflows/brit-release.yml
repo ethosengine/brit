@@ -1,4 +1,4 @@
-# Brit's fork-owned one-binary release. The inherited release.yml remains the
+# Brit's fork-owned release with the qualified Linux retained-copy helper. The inherited release.yml remains the
 # upstream gitoxide workflow and is guarded off on ethosengine/brit.
 name: brit release
 
@@ -6,6 +6,7 @@ on:
   push:
     tags:
       - 'brit-v*'
+  # Manual branch runs qualify installable candidates; only tag pushes publish.
   workflow_dispatch:
 
 permissions:
@@ -19,13 +20,11 @@ env:
 jobs:
   prepare:
     runs-on: ubuntu-latest
-    permissions:
-      contents: write
     env:
       RUSTFLAGS: ''
     outputs:
       source_sha: ${{ steps.source.outputs.source_sha }}
-      version_tag: ${{ steps.source.outputs.version_tag }}
+      publish: ${{ steps.source.outputs.publish }}
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
@@ -35,35 +34,27 @@ jobs:
       - name: Validate the Brit tag and source checkout
         id: source
         env:
-          RELEASE_TAG: ${{ github.ref_name }}
+          DELIVERY_EVENT: ${{ github.event_name }}
+          DELIVERY_REF: ${{ github.ref }}
+          DELIVERY_SHA: ${{ github.sha }}
         run: |
-          set -euo pipefail
-          case "$GITHUB_REF" in
-            refs/tags/brit-v*) ;;
-            *) echo "Brit releases require a brit-v* tag ref" >&2; exit 2 ;;
-          esac
-          version=$(awk '/^\[package\]/{inside=1; next} inside && /^version[[:space:]]*=/{gsub(/[" ]/, "", $3); print $3; exit}' brit-cli/Cargo.toml)
-          test -n "$version"
-          test "$RELEASE_TAG" = "brit-v$version"
-          source_sha=$(git rev-parse HEAD)
-          test "$(git rev-parse "$GITHUB_REF^{commit}")" = "$source_sha"
-          test -z "$(git status --porcelain --untracked-files=normal)"
-          echo "source_sha=$source_sha" >> "$GITHUB_OUTPUT"
-          echo "version_tag=$RELEASE_TAG" >> "$GITHUB_OUTPUT"
+          bash scripts/ci/validate-brit-delivery-source.sh . "$DELIVERY_EVENT" "$DELIVERY_REF" "$DELIVERY_SHA" >> "$GITHUB_OUTPUT"
       - name: Test the exact source before creating a release
         run: |
           set -euo pipefail
           cargo test --locked -p brit-cli --no-default-features --features max-pure
-          cargo build --locked -p brit-cli --bin brit --no-default-features --features max-pure
-          BRIT_BIN="$CARGO_TARGET_DIR/debug/brit" cargo test --locked -p cli-journey \
-            --test brit --test rakia --test inherited_git_environment --test shared_tree \
-            --test authoring --test pre_push --test commit_cleanup --test daily_driver
+          cargo build --locked -p brit-cli --bin brit --bin brit-rebase-retained --no-default-features --features max-pure
+          BRIT_BIN="$CARGO_TARGET_DIR/debug/brit" BRIT_REBASE_RETAINED_BIN="$CARGO_TARGET_DIR/debug/brit-rebase-retained" cargo test --locked -p cli-journey \
+            --test rebase --test git_rebase_characterization --test brit --test rakia --test inherited_git_environment --test shared_tree \
+            --test authoring --test pre_push --test explicit_leases --test commit_cleanup --test commit_amend --test worktree_restore --test switch --test pull --test broader_staging --test daily_driver --test native_authoring
+          cargo test --locked -p gix-sequencer --features serde
+          cargo test --locked -p gitoxide-core --features blocking-client,gix/sha1,switch-test-faults \
+            --test conflict_authoring --test replay --test replay_interactive --test replay_retained --test replay_qualification --test replay_io
+          cargo test --locked -p gitoxide-core --features blocking-client,gix/sha1 --lib power_loss
+          cargo test --locked -p gitoxide-core --features blocking-client,gix/sha1,switch-test-faults --test replay_invocation
+          cargo build --locked -p brit-cli --bin brit --bin brit-rebase-retained --no-default-features --features max-pure,switch-test-faults
+          BRIT_BIN="$CARGO_TARGET_DIR/debug/brit" BRIT_REBASE_RETAINED_BIN="$CARGO_TARGET_DIR/debug/brit-rebase-retained" cargo test --locked -p cli-journey --features switch-test-faults --test rebase --test switch --test pull
           test -z "$(git status --porcelain --untracked-files=all)"
-      - name: Create a draft release after source tests
-        env:
-          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-          VERSION_TAG: ${{ steps.source.outputs.version_tag }}
-        run: gh release create "$VERSION_TAG" --title "$VERSION_TAG" --draft --verify-tag
 
   build:
     name: installed delivery (${{ matrix.target }})
@@ -81,14 +72,11 @@ jobs:
           - os: windows-latest
             target: x86_64-pc-windows-msvc
     runs-on: ${{ matrix.os }}
-    permissions:
-      contents: write
     env:
       RUSTFLAGS: ''
       FEATURE: max-pure
       PROFILE: release-github
       SOURCE_SHA: ${{ needs.prepare.outputs.source_sha }}
-      VERSION_TAG: ${{ needs.prepare.outputs.version_tag }}
       TARGET: ${{ matrix.target }}
     defaults:
       run:
@@ -100,19 +88,32 @@ jobs:
       - name: Set an external Cargo target for this host
         run: printf 'CARGO_TARGET_DIR=%s/brit-release-target\n' "$RUNNER_TEMP" >> "$GITHUB_ENV"
       - name: Verify this job received the validated source
+        env:
+          DELIVERY_EVENT: ${{ github.event_name }}
+          DELIVERY_REF: ${{ github.ref }}
         run: |
           set -euo pipefail
           test "$(git rev-parse HEAD)" = "$SOURCE_SHA"
           test -z "$(git status --porcelain --untracked-files=normal)"
+          # Derive the public version from this validated checkout. GitHub may
+          # suppress a job output when its value overlaps a masked secret.
+          delivery=$(bash scripts/ci/validate-brit-delivery-source.sh . "$DELIVERY_EVENT" "$DELIVERY_REF" "$SOURCE_SHA")
+          version_tag=$(printf '%s\n' "$delivery" | sed -n 's/^version_tag=//p')
+          test -n "$version_tag"
+          printf 'VERSION_TAG=%s\n' "$version_tag" >> "$GITHUB_ENV"
       - name: Install the target toolchain
         run: |
           rustup update stable
           rustup target add "$TARGET"
-      - name: Build exactly the Brit executable
+      - name: Build Brit and the qualified Linux retained-copy helper
         run: |
           set -euo pipefail
           cargo build --locked -p brit-cli --bin brit --profile "$PROFILE" \
             --target "$TARGET" --no-default-features --features "$FEATURE"
+          if [ "$RUNNER_OS" = Linux ]; then
+            cargo build --locked -p brit-cli --bin brit-rebase-retained --profile "$PROFILE" \
+              --target "$TARGET" --no-default-features --features "$FEATURE"
+          fi
       - name: Smoke the built executable on its host
         run: |
           set -euo pipefail
@@ -123,7 +124,7 @@ jobs:
           "$binary_path" --help >/dev/null
           "$binary_path" build --help >/dev/null
           "$binary_path" --version
-      - name: Package one binary, receipt, and checksum
+      - name: Package binaries, receipt, and checksum
         run: |
           set -euo pipefail
           test "$(git rev-parse HEAD)" = "$SOURCE_SHA"
@@ -134,6 +135,9 @@ jobs:
           if [ "$RUNNER_OS" = Windows ]; then build_root=$(cygpath -u "$CARGO_TARGET_DIR"); fi
           case "$TARGET" in *-windows-*) binary=brit.exe ;; *) binary=brit ;; esac
           archive="brit-$FEATURE-${VERSION_TAG#brit-}-$TARGET"
+          if [ "$RUNNER_OS" = Linux ]; then
+            export BRIT_REBASE_RETAINED_BIN="$build_root/$TARGET/$PROFILE/brit-rebase-retained"
+          fi
           bash scripts/ci/package-brit-release.sh \
             "$build_root/$TARGET/$PROFILE/$binary" . "$archive" \
             "$VERSION_TAG" "$FEATURE" "$TARGET" "$PROFILE" "$SOURCE_SHA" \
@@ -149,42 +153,74 @@ jobs:
           tar -xzf "$ASSET" -C "$isolated/extracted"
           package="$isolated/extracted/${ASSET%.tar.gz}"
           bash scripts/ci/install-brit-release.sh "$package" "$isolated/install" "$SOURCE_SHA" "$binary_sha"
-      - name: Prove source-free installed authoring and recovery
+          if [ "$RUNNER_OS" = Linux ]; then
+            helper_name=$(awk -F= '$1 == "retained_helper_binary" { count++; value=$2 } END { if (count != 1) exit 2; print value }' "$package/BUILD-INFO.txt")
+            helper_sha=$(awk -F= '$1 == "retained_helper_sha256" { count++; value=$2 } END { if (count != 1) exit 2; print value }' "$package/BUILD-INFO.txt")
+            test "$helper_name" = brit-rebase-retained
+            [[ "$helper_sha" =~ ^[0-9a-f]{64}$ ]]
+            test -f "$package/$helper_name" && test ! -L "$package/$helper_name" && test -x "$package/$helper_name"
+            test "$(shasum -a 256 "$package/$helper_name" | awk '{print $1}')" = "$helper_sha"
+            mkdir "$isolated/bin"
+            cp "$package/$helper_name" "$isolated/bin/$helper_name"
+            test "$(shasum -a 256 "$isolated/bin/$helper_name" | awk '{print $1}')" = "$helper_sha"
+            "$isolated/bin/$helper_name" --help >/dev/null
+          fi
+      - name: Prove source free installed authoring and recovery
         if: runner.os != 'Windows'
         run: |
           set -euo pipefail
           installed="$RUNNER_TEMP/brit-installed-qualification/install/bin/brit"
           bash scripts/ci/verify-installed-brit.sh "$installed"
           BRIT_BIN="$installed" cargo test --locked -p cli-journey \
-            --test authoring --test pre_push --test commit_cleanup --test daily_driver --test shared_tree
+            --test authoring --test pre_push --test explicit_leases --test commit_cleanup --test commit_amend --test worktree_restore --test switch --test pull --test broader_staging --test daily_driver --test native_authoring --test shared_tree
+      - name: Qualify installed Linux rebase and retained copy recovery
+        if: runner.os == 'Linux'
+        run: |
+          set -euo pipefail
+          isolated="$RUNNER_TEMP/brit-installed-qualification"
+          BRIT_BIN="$isolated/install/bin/brit" BRIT_REBASE_RETAINED_BIN="$isolated/bin/brit-rebase-retained" \
+            cargo test --locked -p cli-journey --test rebase
       - name: Prove Unix installer interruption and rollback mechanics
         if: runner.os != 'Windows'
-        run: bash scripts/ci/test-install-brit-release.sh
-      - name: Upload the checksummed archive to the draft release
-        env:
-          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-        run: gh release upload "$VERSION_TAG" "$ASSET" "$ASSET_SUM"
+        run: |
+          bash scripts/ci/test-install-brit-release.sh
+          bash scripts/ci/test-install-brit-epr.sh
+      - name: Retain checksummed delivery candidate
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: brit-delivery-${{ env.SOURCE_SHA }}-${{ github.run_attempt }}-${{ matrix.target }}
+          path: |
+            ${{ env.ASSET }}
+            ${{ env.ASSET_SUM }}
+          if-no-files-found: error
 
   publish:
+    if: github.event_name == 'push' && startsWith(github.ref, 'refs/tags/brit-v') && needs.prepare.outputs.publish == 'true'
     needs: [prepare, build]
     runs-on: ubuntu-latest
     permissions:
       contents: write
+      actions: read
     env:
-      VERSION_TAG: ${{ needs.prepare.outputs.version_tag }}
+      VERSION_TAG: ${{ github.ref_name }}
+      SOURCE_SHA: ${{ needs.prepare.outputs.source_sha }}
       GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
       GH_REPO: ${{ github.repository }}
     steps:
       - name: Download and verify all four release archives
         run: |
           set -euo pipefail
-          gh release download "$VERSION_TAG" --pattern 'brit-*.sha256'
-          gh release download "$VERSION_TAG" --pattern 'brit-*.tar.gz' --pattern 'brit-*.zip'
+          for target in x86_64-unknown-linux-gnu x86_64-apple-darwin aarch64-apple-darwin x86_64-pc-windows-msvc; do
+            gh run download "$GITHUB_RUN_ID" --name "brit-delivery-$SOURCE_SHA-$GITHUB_RUN_ATTEMPT-$target" --dir .
+          done
           count=$(find . -maxdepth 1 -name 'brit-*.sha256' -type f | wc -l)
           test "$count" -eq 4
           for sum in brit-*.sha256; do sha256sum -c "$sum"; done
           cat brit-*.sha256 > hashes.sha256
-          gh release upload "$VERSION_TAG" hashes.sha256
+      - name: Create draft with all verified archives
+        run: |
+          gh release create "$VERSION_TAG" --title "$VERSION_TAG" --draft --verify-tag \
+            brit-*.tar.gz brit-*.zip brit-*.sha256 hashes.sha256
       - name: Publish only after every target succeeded
         if: vars.DRY_RUN_RELEASE != 'true' && vars.DRY_RUN_RELEASE != 'yes' && vars.DRY_RUN_RELEASE != '1'
         run: gh release edit "$VERSION_TAG" --draft=false
