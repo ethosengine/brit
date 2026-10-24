@@ -1,0 +1,84 @@
+name: brit build artifacts
+
+on:
+  workflow_run:
+    workflows: [ci]
+    types: [completed]
+
+permissions:
+  contents: write
+
+concurrency: { group: brit-build-artifacts-${{ github.event.workflow_run.head_sha }}, cancel-in-progress: false }
+
+env:
+  CARGO_REGISTRIES_ELOHIM_INDEX: sparse+https://nexus.ethosengine.com/repository/cargo-internal/
+  CARGO_REGISTRIES_ELOHIM_TOKEN: ${{ secrets.CARGO_REGISTRIES_ELOHIM_TOKEN }}
+  CARGO_REGISTRY_GLOBAL_CREDENTIAL_PROVIDERS: cargo:token
+  RUSTFLAGS: ''
+  CARGO_BUILD_JOBS: '1'
+
+jobs:
+  publish-build:
+    if: >-
+      github.event.workflow_run.event == 'push' &&
+      github.event.workflow_run.head_branch == 'main' &&
+      github.event.workflow_run.conclusion == 'success' &&
+      github.event.workflow_run.head_repository.full_name == github.repository
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: ${{ github.event.workflow_run.head_sha }}
+          persist-credentials: false
+      - name: Set the isolated build target
+        run: printf 'CARGO_TARGET_DIR=%s/brit-build-artifacts-target\n' "$RUNNER_TEMP" >> "$GITHUB_ENV"
+      - name: Install Rust
+        run: |
+          rustup update stable
+          rustup default stable
+      - name: Build the followed executables
+        run: |
+          set -euo pipefail
+          cargo build --locked --profile release-github \
+            -p brit-cli --bin brit \
+            -p brit-build-ref --bin brit-build-ref \
+            -p brit-verify --bin brit-verify \
+            --no-default-features --features brit-cli/max-pure
+      - name: Verify and checksum the source-pinned bytes
+        env:
+          SOURCE_SHA: ${{ github.event.workflow_run.head_sha }}
+        run: |
+          set -euo pipefail
+          test "$(git rev-parse HEAD)" = "$SOURCE_SHA"
+          mkdir -p artifacts
+          for name in brit brit-build-ref brit-verify; do
+            install -m 0755 "$CARGO_TARGET_DIR/release-github/$name" "artifacts/$name"
+          done
+          artifacts/brit --version | grep -Fx "source HEAD: $SOURCE_SHA"
+          (cd artifacts && sha256sum brit brit-build-ref brit-verify | sort -k2 > SHA256SUMS)
+          test "$(wc -l < artifacts/SHA256SUMS)" -eq 3
+          (cd artifacts && sha256sum -c SHA256SUMS)
+      - name: Stage and publish the source build prerelease
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          GH_REPO: ${{ github.repository }}
+          SOURCE_SHA: ${{ github.event.workflow_run.head_sha }}
+        run: |
+          set -euo pipefail
+          tag="brit-build-${SOURCE_SHA:0:12}"
+          draft_tag="${tag}-draft-${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT}"
+          gh release create "$draft_tag" \
+            --target "$SOURCE_SHA" \
+            --title "$tag" \
+            --draft \
+            artifacts/brit artifacts/brit-build-ref artifacts/brit-verify artifacts/SHA256SUMS
+          test "$(gh release view "$draft_tag" --json isDraft --jq .isDraft)" = true
+          test "$(gh release view "$draft_tag" --json assets --jq '.assets | length')" -eq 4
+          if gh release view "$tag" >/dev/null 2>&1; then
+            gh release delete "$tag" --yes --cleanup-tag
+          fi
+          gh release edit "$draft_tag" \
+            --tag "$tag" \
+            --title "$tag" \
+            --draft=false \
+            --prerelease
