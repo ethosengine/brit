@@ -136,6 +136,8 @@ pub struct MetadataCollection {
     ///
     /// This is the inverse of the order attributes are searched.
     name_to_meta: HashMap<Name, Metadata>,
+    /// Sources in which lenient parsing dropped at least one line, in the order they were added.
+    rejected_sources: Vec<std::path::PathBuf>,
 }
 
 /// Metadata associated with an attribute or macro name.

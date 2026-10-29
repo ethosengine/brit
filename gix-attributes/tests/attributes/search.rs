@@ -283,6 +283,50 @@ fn attribute_tokenisation_matches_git() -> gix_testtools::TestResult {
     Ok(())
 }
 
+#[test]
+fn sources_with_dropped_lines_are_recorded() -> gix_testtools::TestResult {
+    use gix_attributes::{Search, search::MetadataCollection};
+    let mut collection = MetadataCollection::default();
+    let mut group = Search::default();
+    group.add_patterns_buffer(
+        b"# comment\n\n*.txt text\n[attr]large -text\n",
+        "clean".into(),
+        None,
+        &mut collection,
+        true,
+    )?;
+    assert!(
+        collection.sources_with_rejected_lines().is_empty(),
+        "comments, blanks, patterns and macros parse in full"
+    );
+    for (source, bytes) in [
+        ("invalid-name", &b"*.bin filter=lfs bad/name\n"[..]),
+        ("negative-pattern", b"!*.bin filter=lfs\n"),
+        ("invalid-macro", b"[attr]-large filter=lfs\n"),
+        ("reserved-name", b"*.bin builtin_x\n"),
+    ] {
+        group.add_patterns_buffer(bytes, source.into(), None, &mut collection, true)?;
+    }
+    let dir = gix_testtools::tempfile::tempdir()?;
+    let file = dir.path().join("attributes");
+    std::fs::write(&file, b"ok text\n*.bin filter=lfs bad/name\n")?;
+    let mut buf = Vec::new();
+    assert!(group.add_patterns_file(file.clone(), true, None, &mut buf, &mut collection, true)?);
+    let expected: Vec<std::path::PathBuf> = vec![
+        "invalid-name".into(),
+        "negative-pattern".into(),
+        "invalid-macro".into(),
+        "reserved-name".into(),
+        file,
+    ];
+    assert_eq!(
+        collection.sources_with_rejected_lines(),
+        expected.as_slice(),
+        "every source that lost a line is named, in the order it was added"
+    );
+    Ok(())
+}
+
 fn assert_baseline(name: &str) -> gix_testtools::Result {
     let (mut group, mut collection, base, input) = baseline::user_attributes(name)?;
 

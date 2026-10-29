@@ -63,6 +63,12 @@ impl Search {
             gix_glob::search::add_patterns_file(&mut self.patterns, source, follow_symlinks, root, buf, Attributes)?;
         if was_added {
             let last = self.patterns.last_mut().expect("just added");
+            // A file that was added left its bytes in `buf`.
+            if has_rejected_lines(buf) {
+                collection
+                    .rejected_sources
+                    .push(last.source.clone().expect("a file list knows its source"));
+            }
             if !allow_macros {
                 last.patterns
                     .retain(|p| !matches!(p.value, Value::MacroAssignments { .. }));
@@ -82,6 +88,9 @@ impl Search {
         collection: &mut MetadataCollection,
         allow_macros: bool,
     ) -> std::io::Result<()> {
+        if has_rejected_lines(bytes) {
+            collection.rejected_sources.push(source.clone());
+        }
         self.patterns
             .push(pattern::List::from_bytes(bytes, source, root, Attributes)?);
         let last = self.patterns.last_mut().expect("just added");
@@ -190,6 +199,15 @@ impl Attributes {
     fn may_use_glob_pattern(pattern: &gix_glob::Pattern) -> bool {
         pattern.mode != macro_mode()
     }
+}
+
+/// Return `true` if lenient parsing of `bytes` drops a line: an invalid pattern, macro or attribute name
+/// discards every assignment on its line.
+fn has_rejected_lines(bytes: &[u8]) -> bool {
+    crate::parse(bytes).any(|line| match line {
+        Ok((_, mut assignments, _)) => assignments.any(|assignment| assignment.is_err()),
+        Err(_) => true,
+    })
 }
 
 fn macro_mode() -> gix_glob::pattern::Mode {

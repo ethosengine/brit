@@ -291,6 +291,15 @@ impl MetadataCollection {
     pub fn iter(&self) -> impl Iterator<Item = (&str, &Metadata)> {
         self.name_to_meta.iter().map(|(k, v)| (k.as_str(), v))
     }
+
+    /// Return every source added so far in which lenient parsing dropped at least one line, in the order
+    /// the sources were added.
+    ///
+    /// The assignments on a dropped line are unknown, so a caller that must not miss an attribute can refuse
+    /// to proceed while this is non-empty.
+    pub fn sources_with_rejected_lines(&self) -> &[std::path::PathBuf] {
+        &self.rejected_sources
+    }
 }
 
 impl MetadataCollection {
