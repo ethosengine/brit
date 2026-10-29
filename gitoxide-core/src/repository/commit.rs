@@ -238,6 +238,10 @@ pub fn create(
         std::process::exit(128);
     }
 
+    if !amend && repo.config_snapshot().try_boolean("commit.gpgSign")?.unwrap_or(false) {
+        bail!("commit.gpgSign requires a signed commit; run: git commit -S");
+    }
+
     // `--cleanup=<mode>` validation. git's parse_cleanup_arg
     // (vendor/git/builtin/commit.c) accepts strip / whitespace /
     // verbatim / scissors / default and dies 128 on anything else
@@ -681,7 +685,7 @@ pub fn create(
         let packed_timeout = gix::config::tree::Core::PACKED_REFS_TIMEOUT
             .try_into_lock_timeout(config.try_integer("core.packedRefsTimeout"))?
             .unwrap_or(gix::lock::acquire::Fail::AfterDurationWithBackoff(
-                std::time::Duration::from_millis(1000),
+                std::time::Duration::from_secs(1),
             ));
         let transaction = repo
             .refs
