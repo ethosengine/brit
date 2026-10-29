@@ -26,7 +26,9 @@ elohim-protocol = ["dep:elohim-epr"]
 gix-object = { version = "^0.66.0", path = "../gix-object", registry = "elohim", features = ["sha1"] }
 thiserror = "2.0"
 serde = { version = "1", features = ["derive"] }
-serde_json = "1"
+# `float_roundtrip`: a signed node is read back from its JSON note; a float in it must parse to
+# the exact f64 that was signed, or the note cannot verify.
+serde_json = { version = "1", features = ["float_roundtrip"] }
 cid = { version = "0.11", features = ["serde-codec"] }
 multihash-codetable = { version = "0.2", features = ["sha2"] }
 serde_ipld_dagcbor = "0.6"
@@ -51,11 +53,6 @@ required-features = ["elohim-protocol"]
 [[test]]
 name = "elohim_validate"
 path = "tests/elohim_validate.rs"
-required-features = ["elohim-protocol"]
-
-[[test]]
-name = "reach_computation"
-path = "tests/reach_computation.rs"
 required-features = ["elohim-protocol"]
 
 [[test]]

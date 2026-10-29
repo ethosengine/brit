@@ -4,7 +4,7 @@ use crate::engine::{cid::BritCid, content_node::ContentNode, signing::Signed};
 
 /// Records that an agent produced an output artifact from a manifest's inputs.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
-#[serde(rename_all = "camelCase")]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
 pub struct BuildAttestationContentNode {
     /// CID of the build manifest that was executed.
     pub manifest_cid: BritCid,

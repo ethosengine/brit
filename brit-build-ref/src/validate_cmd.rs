@@ -63,11 +63,10 @@ pub fn put(
 
 pub fn get(repo: &Path, step: &str, check: &str) -> anyhow::Result<()> {
     let refs = BritRefManager::new(repo)?;
-    match refs.get_validate_ref(step, check)? {
-        Some(v) => println!("{}", serde_json::to_string_pretty(&v)?),
-        None => eprintln!("no validate ref found for step={step} check={check}"),
-    }
-    Ok(())
+    crate::lookup_out::print(
+        refs.get_validate_ref(step, check)?,
+        &format!("no validate ref found for step={step} check={check}"),
+    )
 }
 
 pub fn list(repo: &Path) -> anyhow::Result<()> {

@@ -1,14 +1,13 @@
 //! Coverage tests for the brit-build-ref binary.
 //!
-//! Manages build/deploy/validate/reach attestation refs and signer inspection. Each leaf
+//! Manages build/deploy/validate attestation refs and signer inspection. Each leaf
 //! subcommand gets its own test that exercises the operation against
 //! a temp git repo and dumps captured output to staging.
 //!
-//! Subcommand tree (12 leaves):
-//!   build   → put, get, list
+//! Subcommand tree (11 leaves):
+//!   build   → put, get, list, find
 //!   deploy  → put, get, list
 //!   validate → put, get, list
-//!   reach   → compute, get
 //!   signer
 //!
 //! Staging layout (per leaf):
@@ -685,47 +684,27 @@ fn validate_put_help_only() {
 }
 
 // ============================================================================
-// reach subcommands
+// reach is gone
 // ============================================================================
 
 #[test]
-fn reach_compute_for_unknown_step() {
-    // reach compute --step is required; invoke against a temp repo where the step
-    // doesn't exist to observe the error path and document the exit behaviour.
-    let temp = TestRepo::new("reach-compute").expect("repo");
+fn reach_is_a_usage_error() {
+    // `reach compute` stamped "verified" from the presence of ref names, with no signature read;
+    // it was deleted outright. Both verbs are now clap usage errors that write nothing.
+    let temp = TestRepo::new("reach-gone").expect("repo");
     let Some(bin) = brit_build_ref_bin() else {
         eprintln!("skipping: brit-build-ref binary not built (run `cargo build -p brit-build-ref --release`)");
         return;
     };
-    let cap = BritInvocation::new(bin)
-        .args(["reach", "compute", "--step", "no-such-step", "--repo"])
-        .arg(temp.path())
-        .normalize(true)
-        .run()
-        .expect("invoke");
-    staging_dump_path(
-        &["brit-build-ref", "reach", "compute"],
-        &format!("{}\n---stderr---\n{}", cap.stdout, cap.stderr),
-    );
-}
-
-#[test]
-fn reach_get_for_unknown_step() {
-    let temp = TestRepo::new("reach-get").expect("repo");
-    let Some(bin) = brit_build_ref_bin() else {
-        eprintln!("skipping: brit-build-ref binary not built (run `cargo build -p brit-build-ref --release`)");
-        return;
-    };
-    let cap = BritInvocation::new(bin)
-        .args(["reach", "get", "--step", "no-such-step", "--repo"])
-        .arg(temp.path())
-        .normalize(true)
-        .run()
-        .expect("invoke");
-    staging_dump_path(
-        &["brit-build-ref", "reach", "get"],
-        &format!("{}\n---stderr---\n{}", cap.stdout, cap.stderr),
-    );
+    for verb in ["compute", "get"] {
+        let cap = BritInvocation::new(&bin)
+            .args(["reach", verb, "--step", "no-such-step", "--repo"])
+            .arg(temp.path())
+            .run()
+            .expect("invoke");
+        assert_eq!(cap.status.code(), Some(2), "reach {verb}: {}", cap.stderr);
+        assert!(cap.stdout.is_empty(), "reach {verb} printed: {}", cap.stdout);
+    }
 }
 
 // ============================================================================

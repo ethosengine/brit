@@ -43,7 +43,6 @@ pub mod attestation {
         attestation::{
             build::BuildAttestationContentNode,
             deploy::{DeployAttestationContentNode, HealthStatus},
-            reach::{compute_reach, ReachInput, ReachLevel},
             validation::{ValidationAttestationContentNode, ValidationResult},
         },
         refs::BritRefManager,

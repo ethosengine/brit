@@ -16,7 +16,7 @@ pub enum HealthStatus {
 
 /// Records that an agent confirms an artifact is live at an environment.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
-#[serde(rename_all = "camelCase")]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
 pub struct DeployAttestationContentNode {
     /// CID of the artifact that was deployed.
     pub artifact_cid: BritCid,

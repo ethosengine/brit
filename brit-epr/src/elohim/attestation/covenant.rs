@@ -115,7 +115,7 @@ pub fn validate_payload(kind: CovenantClauseKind, payload: &serde_json::Value) -
 
 /// A signed record of one thing a party said about a session's covenant.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
-#[serde(rename_all = "camelCase")]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
 pub struct CovenantClauseContentNode {
     /// What the clause says.
     pub kind: CovenantClauseKind,
@@ -157,6 +157,19 @@ impl Signed for CovenantClauseContentNode {
         c.signature = String::new();
         c
     }
+}
+
+/// The stored form of a clause: the blob at `refs/notes/brit/covenant/<session>/<cid>`.
+///
+/// `cid` is the CID of the signed clause's canonical bytes; a reader recomputes it from `clause`
+/// rather than trusting it.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct CovenantRecord {
+    /// CID (string form) of the signed clause.
+    pub cid: String,
+    /// The signed clause.
+    pub clause: CovenantClauseContentNode,
 }
 
 #[cfg(test)]
@@ -235,6 +248,22 @@ mod tests {
         assert!(validate_payload(RevokesClause, &serde_json::json!({ "revokes": c })).is_ok());
         assert!(validate_payload(RevokesClause, &serde_json::json!({"revokes": "not-a-cid"})).is_err());
         assert!(validate_payload(VariesRule, &serde_json::json!({"rule": "r"})).is_err());
+    }
+
+    #[test]
+    fn clause_and_record_refuse_unknown_fields() {
+        let node = signed_sample();
+        let mut clause = serde_json::to_value(&node).unwrap();
+        clause["admitted"] = serde_json::Value::Bool(true);
+        assert!(serde_json::from_value::<CovenantClauseContentNode>(clause).is_err());
+        let mut record = serde_json::to_value(CovenantRecord {
+            cid: node.compute_cid().unwrap().to_string(),
+            clause: node,
+        })
+        .unwrap();
+        assert!(serde_json::from_value::<CovenantRecord>(record.clone()).is_ok());
+        record["standing"] = serde_json::Value::Bool(true);
+        assert!(serde_json::from_value::<CovenantRecord>(record).is_err());
     }
 
     #[test]

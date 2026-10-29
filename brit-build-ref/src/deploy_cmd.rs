@@ -10,7 +10,10 @@ use brit_epr::{
     engine::{content_node::ContentNode, object_store::LocalObjectStore, signing::AgentKey},
 };
 
-#[allow(clippy::too_many_arguments)]
+#[allow(
+    clippy::too_many_arguments,
+    reason = "one argument per CLI flag of the put verb; main.rs destructures them from clap"
+)]
 pub fn put(
     repo: &Path,
     step: &str,
@@ -62,11 +65,10 @@ pub fn put(
 
 pub fn get(repo: &Path, step: &str, env: &str) -> anyhow::Result<()> {
     let refs = BritRefManager::new(repo)?;
-    match refs.get_deploy_ref(step, env)? {
-        Some(v) => println!("{}", serde_json::to_string_pretty(&v)?),
-        None => eprintln!("no deploy ref found for step={step} env={env}"),
-    }
-    Ok(())
+    crate::lookup_out::print(
+        refs.get_deploy_ref(step, env)?,
+        &format!("no deploy ref found for step={step} env={env}"),
+    )
 }
 
 pub fn list(repo: &Path) -> anyhow::Result<()> {

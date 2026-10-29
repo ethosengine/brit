@@ -35,7 +35,10 @@ impl ContentNode for GateVerdictContentNode {
     }
 }
 
-#[allow(clippy::too_many_arguments)]
+#[allow(
+    clippy::too_many_arguments,
+    reason = "one argument per CLI flag of the put verb; main.rs destructures them from clap"
+)]
 pub fn put(
     repo: &Path,
     step: &str,
@@ -108,26 +111,32 @@ pub fn put(
     Ok(())
 }
 
+/// Print the verified build attestation on `commit`, or the miss line (absent or unverifiable).
 pub fn get(repo: &Path, step: &str, commit: &str) -> anyhow::Result<()> {
     let refs = BritRefManager::new(repo)?;
-    match refs.get_build_ref(step, commit)? {
-        Some(v) => println!("{}", serde_json::to_string_pretty(&v)?),
-        None => eprintln!("no build ref found for step={step} commit={commit}"),
-    }
-    Ok(())
+    crate::lookup_out::print(
+        refs.get_build_ref(step, commit)?,
+        &format!("no build ref found for step={step} commit={commit}"),
+    )
 }
 
-/// Print every attestation for `step` whose inputs hash equals `inputs_hash`, across every
-/// commit that carried one, as a JSON array of `{commit, attestation}` — `[]` when none.
-/// Exit 0 either way: an absent attestation is an answer, not a failure.
+/// Print every verified attestation for `step` whose inputs hash equals `inputs_hash`, across
+/// every commit that carried one, as a JSON array of `{commit, attestation}` — `[]` when none.
+/// Each note that failed verification is dropped and named on stderr as
+/// `unverifiable: <commit> <reason>`. Exit 0 either way: an absent attestation is an answer, not
+/// a failure; a git read that fails is a failure.
 pub fn find(repo: &Path, step: &str, inputs_hash: &str) -> anyhow::Result<()> {
     let refs = BritRefManager::new(repo)?;
-    let rows: Vec<serde_json::Value> = refs
-        .find_build_by_inputs(step, inputs_hash)?
+    let scan = refs.find_build_by_inputs(step, inputs_hash)?;
+    let rows = scan
+        .verified
         .into_iter()
-        .map(|(commit, attestation)| serde_json::json!({ "commit": commit, "attestation": attestation }))
-        .collect();
+        .map(|(commit, node)| Ok(serde_json::json!({ "commit": commit, "attestation": serde_json::to_value(&node)? })))
+        .collect::<anyhow::Result<Vec<serde_json::Value>>>()?;
     println!("{}", serde_json::to_string(&rows)?);
+    for (commit, reason) in &scan.unverifiable {
+        crate::lookup_out::unverifiable(commit, reason);
+    }
     Ok(())
 }
 

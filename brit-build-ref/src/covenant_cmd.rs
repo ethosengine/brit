@@ -7,7 +7,7 @@ use std::path::Path;
 use brit_epr::{
     elohim::{
         attestation::covenant::{validate_payload, CovenantClauseContentNode, CovenantClauseKind},
-        refs::BritRefManager,
+        refs::{BritRefManager, Lookup},
     },
     engine::{cid::BritCid, content_node::ContentNode, object_store::LocalObjectStore, signing::AgentKey},
 };
@@ -76,31 +76,46 @@ pub fn put(repo: &Path, args: &PutArgs<'_>) -> anyhow::Result<()> {
     Ok(())
 }
 
+/// The session's verified clauses in validFrom order; each record that failed verification is
+/// dropped and named on stderr as `unverifiable: <ref> <reason>`.
 pub fn list(repo: &Path, session: &str, output_json: bool) -> anyhow::Result<()> {
     let refs = BritRefManager::new(repo)?;
-    let rows = refs.list_covenant_clauses(session)?;
+    let scan = refs.list_covenant_clauses(session)?;
     if output_json {
+        let rows = scan
+            .verified
+            .iter()
+            .map(|(_, record)| serde_json::to_value(record))
+            .collect::<Result<Vec<_>, _>>()?;
         println!("{}", serde_json::to_string(&rows)?);
-    } else if rows.is_empty() {
+    } else if scan.verified.is_empty() {
         println!("[]");
     } else {
-        for r in &rows {
+        for (_, r) in &scan.verified {
             println!(
                 "{} {} {} {}",
-                r["cid"].as_str().unwrap_or(""),
-                r["clause"]["validFrom"].as_str().unwrap_or(""),
-                r["clause"]["kind"].as_str().unwrap_or(""),
-                r["clause"]["party"].as_str().unwrap_or("")
+                r.cid,
+                r.clause.valid_from,
+                r.clause.kind.as_str(),
+                r.clause.party
             );
         }
+    }
+    for (at, reason) in &scan.unverifiable {
+        crate::lookup_out::unverifiable(at, reason);
     }
     Ok(())
 }
 
+/// One verified clause by CID; absent or unverifiable is an error.
 pub fn show(repo: &Path, cid: &str, output_json: bool) -> anyhow::Result<()> {
     let refs = BritRefManager::new(repo)?;
-    let Some(row) = refs.get_covenant_clause(cid)? else {
-        anyhow::bail!("no covenant clause with cid {cid}");
+    let row = match refs.get_covenant_clause(cid)? {
+        Lookup::Verified(record) => serde_json::to_value(&record)?,
+        Lookup::Absent => anyhow::bail!("no covenant clause with cid {cid}"),
+        Lookup::Unverifiable { at, reason } => {
+            anyhow::bail!("no covenant clause with cid {cid}: unverifiable: {at} {reason}")
+        }
     };
     if output_json {
         println!("{}", serde_json::to_string(&row)?);

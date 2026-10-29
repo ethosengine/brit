@@ -1,4 +1,4 @@
-//! `LocalObjectStore` — stores ContentNodes as JSON files under
+//! `LocalObjectStore` — stores ContentNodes as canonical DAG-CBOR files under
 //! `.git/brit/objects/`, addressed by their BritCid.
 
 use std::{fs, path::PathBuf};
@@ -38,6 +38,9 @@ impl LocalObjectStore {
     }
 
     /// Retrieve a ContentNode by CID.
+    ///
+    /// The file name is only an index: the bytes read are hashed, and bytes that do not hash to
+    /// `cid` are refused with [`ObjectStoreError::CidMismatch`] before they are decoded.
     pub fn get<T: ContentNode>(&self, cid: &BritCid) -> Result<T, ObjectStoreError> {
         let path = self.base_dir.join(cid.to_string());
         let bytes = fs::read(&path).map_err(|e| {
@@ -47,6 +50,13 @@ impl LocalObjectStore {
                 ObjectStoreError::Io(e)
             }
         })?;
+        let actual = BritCid::compute(&bytes);
+        if &actual != cid {
+            return Err(ObjectStoreError::CidMismatch {
+                requested: cid.clone(),
+                actual,
+            });
+        }
         serde_ipld_dagcbor::from_slice(&bytes).map_err(|e| ObjectStoreError::Deserialize(e.to_string()))
     }
 
@@ -83,4 +93,12 @@ pub enum ObjectStoreError {
     /// Object not found.
     #[error("object not found: {0}")]
     NotFound(BritCid),
+    /// The bytes stored under a CID hash to a different CID.
+    #[error("object stored under {requested} hashes to {actual}")]
+    CidMismatch {
+        /// The CID asked for (the file's name).
+        requested: BritCid,
+        /// The CID of the bytes actually stored there.
+        actual: BritCid,
+    },
 }

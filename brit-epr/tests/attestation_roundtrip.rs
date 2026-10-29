@@ -7,7 +7,7 @@ use brit_epr::{
     engine::{
         cid::BritCid,
         content_node::ContentNode,
-        signing::{verify_signed_node, AgentKey},
+        signing::{verify_signed_node, AgentKey, Signed},
     },
 };
 use tempfile::TempDir;
@@ -138,4 +138,123 @@ fn build_attestation_sign_store_retrieve_verify() {
         !verify_signed_node(&tampered).unwrap(),
         "tampered node should fail verification"
     );
+}
+
+/// The note path: a build node is signed over its DAG-CBOR bytes, stored as JSON in a git note,
+/// and read back from that JSON. Verification is only sound if the JSON form reproduces the signed
+/// bytes exactly, for every value a `hardwareProfile` can carry and in any property order.
+#[test]
+fn json_note_round_trip_reproduces_the_signed_bytes() {
+    let tmp = TempDir::new().unwrap();
+    let key = AgentKey::generate(&tmp.path().join("agent-key")).unwrap();
+    let profiles = [
+        serde_json::json!({}),
+        serde_json::json!({"z": {"y": {"x": [3, 2, 1]}}, "a": null, "m": {"b": null, "a": []}}),
+        serde_json::json!({
+            "u64max": u64::MAX, "i64min": i64::MIN, "zero": 0, "neg": -1,
+            "past53": 9_007_199_254_740_993_u64, "i64max": i64::MAX
+        }),
+        serde_json::json!({
+            "tenth": 0.1, "third": 0.30000000000000004, "tiny": 5e-324, "subnormal": 2.225_073_858_507_201e-308,
+            "min_normal": 2.2250738585072014e-308, "huge": 1.797_693_134_862_315_7e308, "neg": -1.5e-300,
+            "frac": 123_456_789.123_456_78, "one": 1.0
+        }),
+        serde_json::json!([null, true, "s", 1, -1, 0.5, {"k": [{}]}]),
+        serde_json::Value::Null,
+    ];
+    for profile in profiles {
+        let mut node = BuildAttestationContentNode {
+            manifest_cid: sample_cid(),
+            step_name: "gate:elohim-storage".into(),
+            inputs_hash: "closure".into(),
+            output_cid: BritCid::compute(b"output"),
+            agent_id: key.agent_id(),
+            hardware_profile: profile.clone(),
+            build_duration_ms: u64::MAX,
+            built_at: "2026-10-29T16:00:57.532831468+00:00".into(),
+            success: false,
+            signature: String::new(),
+        };
+        let signed_bytes = node.canonical_bytes().unwrap();
+        node.signature = key.sign(&signed_bytes);
+
+        // The writer's own path: typed node -> JSON value -> note bytes.
+        let note = serde_json::to_vec(&serde_json::to_value(&node).unwrap()).unwrap();
+        let back: BuildAttestationContentNode = serde_json::from_slice(&note).unwrap();
+        assert_eq!(
+            back.without_signature().canonical_bytes().unwrap(),
+            signed_bytes,
+            "profile {profile}"
+        );
+        assert!(verify_signed_node(&back).unwrap(), "profile {profile}");
+        assert_eq!(back, node);
+
+        // The same note with every top-level property in reverse order.
+        let serde_json::Value::Object(map) = serde_json::to_value(&node).unwrap() else {
+            unreachable!("a struct serializes to an object")
+        };
+        let reversed = format!(
+            "{{{}}}",
+            map.iter()
+                .rev()
+                .map(|(k, v)| format!("{}:{}", serde_json::to_string(k).unwrap(), v))
+                .collect::<Vec<_>>()
+                .join(",")
+        );
+        let back: BuildAttestationContentNode = serde_json::from_str(&reversed).unwrap();
+        assert_eq!(back.without_signature().canonical_bytes().unwrap(), signed_bytes);
+        assert!(verify_signed_node(&back).unwrap());
+    }
+}
+
+#[test]
+fn attestation_nodes_refuse_unknown_fields() {
+    let mut build = serde_json::to_value(BuildAttestationContentNode {
+        manifest_cid: sample_cid(),
+        step_name: "s".into(),
+        inputs_hash: "i".into(),
+        output_cid: sample_cid(),
+        agent_id: "a".into(),
+        hardware_profile: serde_json::json!({}),
+        build_duration_ms: 0,
+        built_at: "t".into(),
+        success: true,
+        signature: String::new(),
+    })
+    .unwrap();
+    build["trusted"] = serde_json::Value::Bool(true);
+    assert!(serde_json::from_value::<BuildAttestationContentNode>(build).is_err());
+
+    let mut deploy = serde_json::to_value(DeployAttestationContentNode {
+        artifact_cid: sample_cid(),
+        step_name: "s".into(),
+        environment_label: "e".into(),
+        endpoint: "x".into(),
+        health_check_epr: "epr:x".into(),
+        health_status: HealthStatus::Healthy,
+        deployed_at: "t".into(),
+        attested_at: "t".into(),
+        liveness_ttl_sec: 1,
+        agent_id: "a".into(),
+        signature: String::new(),
+    })
+    .unwrap();
+    deploy["admitted"] = serde_json::Value::Bool(true);
+    assert!(serde_json::from_value::<DeployAttestationContentNode>(deploy).is_err());
+
+    let mut validation = serde_json::to_value(ValidationAttestationContentNode {
+        artifact_cid: sample_cid(),
+        check_name: "c".into(),
+        validator_id: "a".into(),
+        validator_version: "v".into(),
+        result: ValidationResult::Pass,
+        result_summary: String::new(),
+        findings_cid: None,
+        validated_at: "t".into(),
+        ttl_sec: None,
+        signature: String::new(),
+    })
+    .unwrap();
+    validation["standing"] = serde_json::Value::Bool(true);
+    assert!(serde_json::from_value::<ValidationAttestationContentNode>(validation).is_err());
 }

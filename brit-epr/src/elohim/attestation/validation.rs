@@ -18,7 +18,7 @@ pub enum ValidationResult {
 
 /// Records that a validator applied a named check to an artifact.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
-#[serde(rename_all = "camelCase")]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
 pub struct ValidationAttestationContentNode {
     /// CID of the artifact under validation.
     pub artifact_cid: BritCid,

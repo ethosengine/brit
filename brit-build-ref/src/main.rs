@@ -1,4 +1,4 @@
-//! `brit-build-ref` — CLI for build/deploy/validate/reach attestation refs.
+//! `brit-build-ref` — CLI for build/deploy/validate attestation refs, covenant clauses and epr-meta.
 
 use std::path::PathBuf;
 
@@ -8,16 +8,13 @@ mod build_cmd;
 mod covenant_cmd;
 mod deploy_cmd;
 mod git_dir;
+mod lookup_out;
 mod meta_cmd;
-mod reach_cmd;
 mod signer_cmd;
 mod validate_cmd;
 
 #[derive(Parser)]
-#[command(
-    name = "brit-build-ref",
-    about = "Manage build/deploy/validate/reach attestation refs"
-)]
+#[command(name = "brit-build-ref", about = "Manage build/deploy/validate attestation refs")]
 struct Cli {
     /// Path to the git repository (default: current directory).
     #[arg(long, default_value = ".")]
@@ -43,11 +40,6 @@ enum TopCommand {
     Validate {
         #[command(subcommand)]
         cmd: ValidateCmd,
-    },
-    /// Reach level computation.
-    Reach {
-        #[command(subcommand)]
-        cmd: ReachCmd,
     },
     /// Session covenant clauses (signed Layer 2 blessings under `refs/notes/brit/covenant`).
     Covenant {
@@ -287,24 +279,6 @@ enum ValidateCmd {
     List,
 }
 
-// ─── Reach subcommands ────────────────────────────────────────────────────────
-
-#[derive(Subcommand)]
-enum ReachCmd {
-    /// Compute and store reach level for a step.
-    Compute {
-        /// Pipeline step name.
-        #[arg(long)]
-        step: String,
-    },
-    /// Retrieve the stored reach level.
-    Get {
-        /// Pipeline step name.
-        #[arg(long)]
-        step: String,
-    },
-}
-
 // ─── Entry point ──────────────────────────────────────────────────────────────
 
 fn main() -> anyhow::Result<()> {
@@ -405,11 +379,6 @@ fn main() -> anyhow::Result<()> {
             }
             ValidateCmd::Get { step, check } => validate_cmd::get(&repo, &step, &check),
             ValidateCmd::List => validate_cmd::list(&repo),
-        },
-
-        TopCommand::Reach { cmd } => match cmd {
-            ReachCmd::Compute { step } => reach_cmd::compute(&repo, &step),
-            ReachCmd::Get { step } => reach_cmd::get(&repo, &step),
         },
 
         TopCommand::Covenant { cmd } => match cmd {

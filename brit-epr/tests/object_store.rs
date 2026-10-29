@@ -71,3 +71,32 @@ fn list_returns_all_stored_cids() {
     expected.sort_by_key(ToString::to_string);
     assert_eq!(cids, expected);
 }
+
+#[test]
+fn get_refuses_an_object_stored_under_another_cid() {
+    // The file name is only an index: `get` hashes what it read and refuses bytes that do not
+    // hash to the CID asked for, so a swapped or corrupted object never decodes as the request.
+    let tmp = TempDir::new().unwrap();
+    let base = tmp.path().join("objects");
+    let store = LocalObjectStore::new(base.clone());
+    let asked = store
+        .put(&TestNode {
+            name: "asked".into(),
+            value: 1,
+        })
+        .unwrap();
+    let other = TestNode {
+        name: "other".into(),
+        value: 2,
+    };
+    std::fs::write(base.join(asked.to_string()), other.canonical_bytes().unwrap()).unwrap();
+
+    let err = store
+        .get::<TestNode>(&asked)
+        .expect_err("bytes under the wrong CID are refused");
+    assert!(
+        err.to_string().contains(&asked.to_string())
+            && err.to_string().contains(&other.compute_cid().unwrap().to_string()),
+        "the refusal names the requested and the actual CID: {err}"
+    );
+}
