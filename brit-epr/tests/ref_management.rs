@@ -357,6 +357,7 @@ fn find_build_by_inputs_hits_across_commits_and_ignores_other_hashes() {
 fn find_drops_tampered_notes_and_names_them() {
     let tmp = init_git_repo();
     let k = key(&tmp, "a");
+    let other = key(&tmp, "b");
     let mgr = BritRefManager::new(tmp.path()).unwrap();
     let step = "gate:x";
     let good = commit_empty(tmp.path(), "good");
@@ -372,6 +373,16 @@ fn find_drops_tampered_notes_and_names_them() {
     let mut v = json(&build(&k, step, "c", true));
     v["trusted"] = serde_json::Value::Bool(true);
     raw_note(tmp.path(), notes_ref, &extended, &v);
+    // A signature that is not even hex: refused as this one note, never an abort of the scan.
+    let badhex = commit_empty(tmp.path(), "badhex");
+    let mut v = json(&build(&k, step, "c", true));
+    v["signature"] = serde_json::Value::String("zz".into());
+    raw_note(tmp.path(), notes_ref, &badhex, &v);
+    // Signed by `a`, claiming to be `b`: the agentId is inside the signed bytes.
+    let impersonated = commit_empty(tmp.path(), "impersonated");
+    let mut v = json(&build(&k, step, "c", true));
+    v["agentId"] = serde_json::Value::String(other.agent_id());
+    raw_note(tmp.path(), notes_ref, &impersonated, &v);
 
     let scan = mgr.find_build_by_inputs(step, "c").unwrap();
     assert_eq!(
@@ -380,13 +391,21 @@ fn find_drops_tampered_notes_and_names_them() {
     );
     let mut dropped: Vec<&str> = scan.unverifiable.iter().map(|(c, _)| c.as_str()).collect();
     dropped.sort_unstable();
-    let mut expected = vec![flipped.as_str(), swapped.as_str(), extended.as_str()];
+    let mut expected = vec![
+        flipped.as_str(),
+        swapped.as_str(),
+        extended.as_str(),
+        badhex.as_str(),
+        impersonated.as_str(),
+    ];
     expected.sort_unstable();
     assert_eq!(dropped, expected);
     let reason = |c: &str| &scan.unverifiable.iter().find(|(at, _)| at == c).unwrap().1;
     assert!(reason(&flipped).contains("signature"), "{}", reason(&flipped));
     assert!(reason(&swapped).contains("stepName"), "{}", reason(&swapped));
     assert!(reason(&extended).contains("decode"), "{}", reason(&extended));
+    assert!(reason(&badhex).contains("signature"), "{}", reason(&badhex));
+    assert!(reason(&impersonated).contains("signature"), "{}", reason(&impersonated));
 }
 
 #[test]

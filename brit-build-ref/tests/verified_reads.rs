@@ -307,6 +307,47 @@ fn find_keeps_valid_rows_beside_a_dropped_one_and_ignores_other_closures() {
 }
 
 #[test]
+fn find_drops_a_note_whose_signature_is_not_hex_and_keeps_its_siblings() {
+    let tmp = repo();
+    let a = commit(tmp.path(), "a");
+    put_build(tmp.path(), STEP, "closure-1", true, &a);
+    let z = commit(tmp.path(), "z");
+    let mut v = note(tmp.path(), STEP_REF, &a);
+    v["signature"] = Value::String("zz".to_string());
+    write_note(tmp.path(), STEP_REF, &z, &v);
+
+    let (rows, err) = find(tmp.path(), STEP, "closure-1");
+    assert_eq!(rows.len(), 1, "the valid note survives its sibling: {err}");
+    assert_eq!(rows[0]["commit"], a.as_str());
+    let lines = unverifiable_lines(&err);
+    assert_eq!(lines.len(), 1, "{err}");
+    assert!(lines[0].starts_with(&format!("unverifiable: {z} ")), "{err}");
+    assert!(lines[0].contains("signature"), "{err}");
+}
+
+#[test]
+fn find_drops_a_note_signed_by_one_key_and_claiming_another() {
+    let tmp = repo();
+    let a = commit(tmp.path(), "a");
+    put_build(tmp.path(), STEP, "closure-1", true, &a);
+    let keys = tempfile::TempDir::new().expect("key dir");
+    let signer = AgentKey::generate(&keys.path().join("signer")).expect("signer key");
+    let claimed = AgentKey::generate(&keys.path().join("claimed")).expect("claimed key");
+    let mut v = serde_json::to_value(signed_build(&signer, STEP, "closure-1", true)).expect("node encodes");
+    v["agentId"] = Value::String(claimed.agent_id());
+    let i = commit(tmp.path(), "i");
+    write_note(tmp.path(), STEP_REF, &i, &v);
+
+    let (rows, err) = find(tmp.path(), STEP, "closure-1");
+    assert_eq!(rows.len(), 1, "{err}");
+    assert_eq!(rows[0]["commit"], a.as_str());
+    let lines = unverifiable_lines(&err);
+    assert_eq!(lines.len(), 1, "{err}");
+    assert!(lines[0].starts_with(&format!("unverifiable: {i} ")), "{err}");
+    assert!(lines[0].contains("signature"), "{err}");
+}
+
+#[test]
 fn find_on_a_step_without_notes_is_an_empty_answer() {
     let tmp = repo();
     let (rows, err) = find(tmp.path(), "no-such-step", "closure-1");
