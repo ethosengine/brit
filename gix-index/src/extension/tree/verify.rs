@@ -23,6 +23,13 @@ impl Tree {
             let mut entries = 0u32;
             let mut prev = None::<&Tree>;
             for child in children {
+                // Git invalidates every ancestor of an invalidated node, so a valid tree can't contain one.
+                if parent_num_entries.is_some() && child.num_entries.is_none() {
+                    bail!(corruption(format!(
+                        "Valid tree {parent_id} contains the invalidated subtree \"{}\"",
+                        child.name.as_bstr()
+                    )));
+                }
                 entries = entries
                     .checked_add(child.num_entries.unwrap_or(0))
                     .ok_or_raise(|| corruption("The combined TREE entry count exceeds the supported maximum"))?;
@@ -215,6 +222,76 @@ mod tests {
     }
 
     #[test]
+    fn invalidated_parent_still_fails_on_a_valid_child_with_a_missing_object() {
+        let root = tree(
+            b"",
+            gix_hash::Kind::Sha1.null(),
+            None,
+            vec![tree(
+                b"child",
+                object_id(b"1111111111111111111111111111111111111111"),
+                Some(1),
+                vec![tree(
+                    b"grandchild",
+                    object_id(b"2222222222222222222222222222222222222222"),
+                    Some(1),
+                    Vec::new(),
+                )],
+            )],
+        );
+
+        let objects = OneTree::with_child(
+            object_id(b"3333333333333333333333333333333333333333"),
+            b"grandchild",
+            object_id(b"2222222222222222222222222222222222222222"),
+        );
+        let err = root
+            .verify(true, &objects)
+            .expect_err("a valid child below an invalidated parent must resolve its object ID");
+        assert_eq!(err.to_string(), "Tree node could not be found");
+        assert!(err.is_corrupted());
+        assert_eq!(
+            objects.lookups.get(),
+            1,
+            "the failed lookup is the valid child's, not the root's"
+        );
+    }
+
+    #[test]
+    fn valid_parent_with_an_invalidated_child_fails() {
+        let root_id = object_id(b"1111111111111111111111111111111111111111");
+        for grandchildren in [
+            Vec::new(),
+            vec![tree(
+                b"grandchild",
+                object_id(b"2222222222222222222222222222222222222222"),
+                Some(1),
+                Vec::new(),
+            )],
+        ] {
+            let has_grandchildren = !grandchildren.is_empty();
+            let root = tree(
+                b"",
+                root_id,
+                Some(1),
+                vec![tree(b"child", gix_hash::Kind::Sha1.null(), None, grandchildren)],
+            );
+            for use_objects in [false, true] {
+                let objects = OneTree::with_child(root_id, b"child", gix_hash::Kind::Sha1.null());
+                let err = root.verify(use_objects, &objects).expect_err(
+                    "Git invalidates every ancestor of an invalidated node, so a valid parent cannot contain one",
+                );
+                assert_eq!(
+                    err.to_string(),
+                    format!("Valid tree {root_id} contains the invalidated subtree \"child\""),
+                    "use_objects = {use_objects}, has_grandchildren = {has_grandchildren}"
+                );
+                assert!(err.is_corrupted());
+            }
+        }
+    }
+
+    #[test]
     fn valid_node_with_missing_object_still_fails() {
         let root = tree(
             b"",
@@ -262,6 +339,35 @@ mod tests {
             err.is_corrupted(),
             "an inconsistent valid-node entry count is corruption"
         );
+    }
+
+    #[test]
+    fn valid_child_with_too_few_declared_entries_still_fails() {
+        let root = tree(
+            b"",
+            object_id(b"1111111111111111111111111111111111111111"),
+            Some(2),
+            vec![tree(
+                b"child",
+                object_id(b"2222222222222222222222222222222222222222"),
+                Some(0),
+                vec![tree(
+                    b"grandchild",
+                    object_id(b"3333333333333333333333333333333333333333"),
+                    Some(1),
+                    Vec::new(),
+                )],
+            )],
+        );
+
+        let err = root
+            .verify(false, gix_object::find::Never)
+            .expect_err("a valid non-root node must cover all entries reachable through its children");
+        assert_eq!(
+            err.to_string(),
+            "Expected not more than 0 entries to be reachable from the top-level, but actual count was 1"
+        );
+        assert!(err.is_corrupted());
     }
 
     struct MalformedTree;
