@@ -547,7 +547,7 @@ impl ThreadSafeRepository {
                     config.object_hash,
                     &mut replacements.into_iter(),
                     gix_odb::store::init::Options {
-                        slots: object_store_slots,
+                        slots: Options::resolve_object_store_slots(object_store_slots, *git_dir_trust),
                         use_multi_pack_index: config.use_multi_pack_index,
                         alloc_limit_bytes: config.alloc_limit_bytes,
                         loose_compression: config.loose_compression,

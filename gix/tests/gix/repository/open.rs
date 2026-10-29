@@ -42,6 +42,141 @@ fn discover_with_git_dir_environment_override_uses_it_and_sets_trust() -> TestRe
 }
 
 #[test]
+#[serial_test::serial]
+fn object_store_slots_follow_final_trust_unless_explicit() -> TestResult {
+    use gix::discover::upwards::{Options as DiscoverOptions, TrustPolicy};
+    use gix_odb::store::init::Slots;
+    use gix_sec::{Trust, trust::Mapping};
+
+    fn discover(path: &std::path::Path, slots: Option<Slots>) -> gix::Result<gix::Repository> {
+        let mut options: Mapping<gix::open::Options> = Default::default();
+        if let Some(slots) = slots {
+            options.reduced = options.reduced.object_store_slots(slots);
+        }
+        let repo = gix::ThreadSafeRepository::discover_opts(
+            path,
+            DiscoverOptions {
+                trust: TrustPolicy::Assume(Trust::Reduced),
+                ..Default::default()
+            },
+            options,
+        )?;
+        Ok(repo.to_thread_local())
+    }
+
+    fn unused_slots(repo: &gix::Repository) -> usize {
+        repo.objects.store_ref().metrics().unused_slots
+    }
+
+    let environment = gix_testtools::isolate_git_environment()?;
+    let fixture = gix::path::realpath(gix_testtools::scripted_fixture_read_only("make_many_packs.sh")?)?;
+    let global_dir = gix_testtools::tempfile::TempDir::new()?;
+    let global_path = global_dir.path().join("global.config");
+    std::fs::write(&global_path, [])?;
+    let _environment = environment.set("GIT_CONFIG_GLOBAL", global_path.display().to_string());
+
+    let reduced = discover(&fixture, None)?;
+    assert_eq!(reduced.git_dir_trust(), Trust::Reduced);
+    assert_eq!(
+        unused_slots(&reduced),
+        32,
+        "the implicit policy limits a repository whose final trust remains reduced"
+    );
+
+    for (slots, expected) in [
+        (Slots::Given(32), 32),
+        (Slots::Given(64), 64),
+        (
+            Slots::AsNeededByDiskState {
+                multiplier: 1.0,
+                minimum: 96,
+            },
+            96,
+        ),
+    ] {
+        let repo = discover(&fixture, Some(slots))?;
+        assert_eq!(repo.git_dir_trust(), Trust::Reduced);
+        assert_eq!(
+            unused_slots(&repo),
+            expected,
+            "an explicit object-store slot policy wins at reduced trust"
+        );
+    }
+
+    let mut global = gix_config::File::new(gix_config::file::Metadata::from(gix_config::Source::User));
+    global.set_raw_value("safe.directory", gix_path::into_bstr(&fixture)?.as_ref())?;
+    std::fs::write(&global_path, global.to_bstring())?;
+
+    let promoted = discover(&fixture, None)?;
+    assert_eq!(promoted.git_dir_trust(), Trust::Full);
+    assert_eq!(
+        unused_slots(&promoted),
+        45,
+        "the implicit policy is sized from disk after safe.directory promotes final trust"
+    );
+    promoted.head_commit()?;
+    assert_eq!(
+        promoted.objects.store_ref().metrics().known_reachable_indices,
+        41,
+        "the promoted repository can register every pack index"
+    );
+
+    let explicit = discover(&fixture, Some(Slots::Given(64)))?;
+    assert_eq!(explicit.git_dir_trust(), Trust::Full);
+    assert_eq!(
+        unused_slots(&explicit),
+        64,
+        "safe.directory promotion does not replace an explicit slot policy"
+    );
+    Ok(())
+}
+
+#[test]
+fn reopened_object_store_keeps_slots_from_final_trust() -> TestResult {
+    use gix::discover::upwards::{Options as DiscoverOptions, TrustPolicy};
+    use gix_sec::Trust;
+
+    if gix_testtools::run_in_isolated_process()? {
+        return Ok(());
+    }
+    let fixture = gix::path::realpath(gix_testtools::scripted_fixture_read_only("make_many_packs.sh")?)?;
+    let global_dir = gix_testtools::tempfile::TempDir::new()?;
+    let global_path = global_dir.path().join("global.config");
+    let mut global = gix_config::File::new(gix_config::file::Metadata::from(gix_config::Source::User));
+    global.set_raw_value("safe.directory", gix_path::into_bstr(&fixture)?.as_ref())?;
+    std::fs::write(&global_path, global.to_bstring())?;
+    let _environment = gix_testtools::Env::new().set("GIT_CONFIG_GLOBAL", global_path.display().to_string());
+    let _cwd = gix_testtools::set_current_dir(&fixture)?;
+
+    let mut repo = gix::ThreadSafeRepository::discover_opts(
+        ".",
+        DiscoverOptions {
+            trust: TrustPolicy::Assume(Trust::Reduced),
+            ..Default::default()
+        },
+        Default::default(),
+    )?
+    .to_thread_local();
+    assert_eq!(repo.git_dir_trust(), Trust::Full);
+    assert!(
+        repo.objects.store_ref().path().is_relative(),
+        "the object store must be relative so making paths absolute reopens it"
+    );
+    assert_eq!(repo.objects.store_ref().metrics().unused_slots, 45);
+
+    repo.make_paths_absolute()?;
+    assert!(repo.objects.store_ref().path().is_absolute());
+    assert_eq!(
+        repo.objects.store_ref().metrics().unused_slots,
+        45,
+        "reopening the object store sizes slots from the final trust, not the reduced default"
+    );
+    repo.head_commit()?;
+    assert_eq!(repo.objects.store_ref().metrics().known_reachable_indices, 41);
+    Ok(())
+}
+
+#[test]
 fn core_worktree_paths_are_literal() -> TestResult {
     let fixture = gix_testtools::scripted_fixture_read_only("make_literal_worktree_paths.sh")?;
     let baseline = std::fs::read_to_string(fixture.join("worktrees.baseline"))?;

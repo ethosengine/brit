@@ -24,7 +24,7 @@ pub struct Permissions {
 /// Use [Permissions] to control which environment variables can be read, and config-overrides to control these values programmatically.
 #[derive(Clone)]
 pub struct Options {
-    pub(crate) object_store_slots: gix_odb::store::init::Slots,
+    pub(crate) object_store_slots: Option<gix_odb::store::init::Slots>,
     /// Define what is allowed while opening a repository.
     pub permissions: Permissions,
     pub(crate) git_dir_trust: Option<gix_sec::Trust>,

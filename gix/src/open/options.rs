@@ -6,7 +6,7 @@ use crate::{Result, ThreadSafeRepository, bstr::BString, config, open::Permissio
 impl Default for Options {
     fn default() -> Self {
         Options {
-            object_store_slots: Default::default(),
+            object_store_slots: None,
             permissions: Default::default(),
             git_dir_trust: None,
             filter_config_section: None,
@@ -83,8 +83,11 @@ impl Options {
 
     /// Set the amount of slots to use for the object database. It's a value that doesn't need changes on the client, typically,
     /// but should be controlled on the server.
+    ///
+    /// If unset, the slots follow the repository's final trust: sized from disk when fully trusted,
+    /// and capped when trust remains reduced. A value set here is used regardless of trust.
     pub fn object_store_slots(mut self, slots: gix_odb::store::init::Slots) -> Self {
-        self.object_store_slots = slots;
+        self.object_store_slots = Some(slots);
         self
     }
 
@@ -187,13 +190,27 @@ impl Options {
     pub(crate) fn current_dir_or_empty(&self) -> &std::path::Path {
         self.current_dir.as_deref().unwrap_or(std::path::Path::new(""))
     }
+
+    /// Return the object-store slots for a repository whose trust is final, after any `safe.directory` promotion.
+    ///
+    /// Slots set explicitly via [`Self::object_store_slots()`] always win. Otherwise fully trusted repositories size
+    /// their slots from disk, while repositories that remain at reduced trust are capped to limit resource usage.
+    pub(crate) fn resolve_object_store_slots(
+        slots: Option<gix_odb::store::init::Slots>,
+        trust: gix_sec::Trust,
+    ) -> gix_odb::store::init::Slots {
+        slots.unwrap_or_else(|| match trust {
+            gix_sec::Trust::Full => Default::default(),
+            gix_sec::Trust::Reduced => gix_odb::store::init::Slots::Given(32),
+        })
+    }
 }
 
 impl gix_sec::trust::DefaultForLevel for Options {
     fn default_for_level(level: gix_sec::Trust) -> Self {
         match level {
             gix_sec::Trust::Full => Options {
-                object_store_slots: Default::default(),
+                object_store_slots: None,
                 permissions: Permissions::default_for_level(level),
                 git_dir_trust: gix_sec::Trust::Full.into(),
                 filter_config_section: Some(config::section::is_trusted),
@@ -209,7 +226,7 @@ impl gix_sec::trust::DefaultForLevel for Options {
                 current_dir: None,
             },
             gix_sec::Trust::Reduced => Options {
-                object_store_slots: gix_odb::store::init::Slots::Given(32), // limit resource usage
+                object_store_slots: None,
                 permissions: Permissions::default_for_level(level),
                 git_dir_trust: gix_sec::Trust::Reduced.into(),
                 filter_config_section: Some(config::section::is_trusted),

@@ -73,7 +73,10 @@ impl crate::Repository {
                 store.object_hash(),
                 store.replacements(),
                 gix_odb::store::init::Options {
-                    slots: self.options.object_store_slots,
+                    slots: crate::open::Options::resolve_object_store_slots(
+                        self.options.object_store_slots,
+                        self.git_dir_trust(),
+                    ),
                     use_multi_pack_index: store.use_multi_pack_index(),
                     alloc_limit_bytes: self.config.alloc_limit_bytes,
                     current_dir: Some(current_dir.to_owned()),
