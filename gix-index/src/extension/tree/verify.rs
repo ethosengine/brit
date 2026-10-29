@@ -12,6 +12,7 @@ impl Tree {
     pub fn verify(&self, use_objects: bool, objects: impl gix_object::Find) -> Result {
         fn verify_recursive(
             parent_id: gix_hash::ObjectId,
+            parent_num_entries: Option<u32>,
             children: &[Tree],
             mut object_buf: Option<&mut Vec<u8>>,
             objects: &impl gix_object::Find,
@@ -36,7 +37,9 @@ impl Tree {
                 }
                 prev = Some(child);
             }
-            if let Some(buf) = object_buf.as_mut() {
+            if parent_num_entries.is_some()
+                && let Some(buf) = object_buf.as_mut()
+            {
                 let tree_entries = objects
                     .find_tree_iter(&parent_id, buf)
                     .or_raise(|| corruption("Tree node could not be found"))?;
@@ -68,8 +71,13 @@ impl Tree {
             }
             for child in children {
                 // This is actually needed here as it's a mut ref, which isn't copy. We do a re-borrow here.
-                let actual_num_entries =
-                    verify_recursive(child.id, &child.children, object_buf.as_deref_mut(), objects)?;
+                let actual_num_entries = verify_recursive(
+                    child.id,
+                    child.num_entries,
+                    &child.children,
+                    object_buf.as_deref_mut(),
+                    objects,
+                )?;
                 if let Some((actual, num_entries)) = actual_num_entries.zip(child.num_entries)
                     && actual > num_entries
                 {
@@ -91,7 +99,13 @@ impl Tree {
         }
 
         let mut buf = Vec::new();
-        let declared_entries = verify_recursive(self.id, &self.children, use_objects.then_some(&mut buf), &objects)?;
+        let declared_entries = verify_recursive(
+            self.id,
+            self.num_entries,
+            &self.children,
+            use_objects.then_some(&mut buf),
+            &objects,
+        )?;
         if let Some((actual, num_entries)) = declared_entries.zip(self.num_entries)
             && actual > num_entries
         {
@@ -131,6 +145,124 @@ impl Tree {
 mod tests {
     use super::Tree;
     use gix_error::Result;
+    use std::cell::Cell;
+
+    struct OneTree {
+        id: gix_hash::ObjectId,
+        data: Vec<u8>,
+        lookups: Cell<usize>,
+    }
+
+    impl OneTree {
+        fn with_child(id: gix_hash::ObjectId, child_name: &[u8], child_id: gix_hash::ObjectId) -> Self {
+            let mut data = b"40000 ".to_vec();
+            data.extend_from_slice(child_name);
+            data.push(0);
+            data.extend_from_slice(child_id.as_bytes());
+            OneTree {
+                id,
+                data,
+                lookups: Cell::new(0),
+            }
+        }
+    }
+
+    impl gix_object::Find for OneTree {
+        fn try_find<'a>(&self, id: &gix_hash::oid, buffer: &'a mut Vec<u8>) -> Result<Option<gix_object::Data<'a>>> {
+            self.lookups.set(self.lookups.get() + 1);
+            if id != self.id {
+                return Ok(None);
+            }
+            buffer.clear();
+            buffer.extend_from_slice(&self.data);
+            Ok(Some(gix_object::Data::new(buffer, gix_object::Kind::Tree, id.kind())))
+        }
+    }
+
+    fn object_id(hex: &[u8; 40]) -> gix_hash::ObjectId {
+        gix_hash::ObjectId::from_hex(hex).expect("test object IDs are valid SHA-1 hex")
+    }
+
+    fn tree(name: &[u8], id: gix_hash::ObjectId, num_entries: Option<u32>, children: Vec<Tree>) -> Tree {
+        Tree {
+            name: name.into(),
+            id,
+            num_entries,
+            children,
+        }
+    }
+
+    #[test]
+    fn invalidated_parent_skips_its_object_but_verifies_valid_children() {
+        let child_id = object_id(b"1111111111111111111111111111111111111111");
+        let grandchild_id = object_id(b"2222222222222222222222222222222222222222");
+        let root = tree(
+            b"",
+            gix_hash::Kind::Sha1.null(),
+            None,
+            vec![tree(
+                b"child",
+                child_id,
+                Some(1),
+                vec![tree(b"grandchild", grandchild_id, Some(1), Vec::new())],
+            )],
+        );
+
+        let objects = OneTree::with_child(child_id, b"grandchild", grandchild_id);
+        root.verify(true, &objects)
+            .expect("the invalidated root is skipped while its valid child is verified");
+        assert_eq!(objects.lookups.get(), 1, "only the valid child should be looked up");
+    }
+
+    #[test]
+    fn valid_node_with_missing_object_still_fails() {
+        let root = tree(
+            b"",
+            object_id(b"1111111111111111111111111111111111111111"),
+            Some(1),
+            vec![tree(
+                b"child",
+                object_id(b"2222222222222222222222222222222222222222"),
+                Some(1),
+                Vec::new(),
+            )],
+        );
+
+        let err = root
+            .verify(true, gix_object::find::Never)
+            .expect_err("a valid node must resolve its object ID");
+        assert_eq!(
+            err.to_string(),
+            "Tree node could not be found",
+            "the failed valid-node lookup retains its verification context"
+        );
+        assert!(err.is_corrupted(), "a missing valid-node object is corruption");
+    }
+
+    #[test]
+    fn valid_node_with_too_few_declared_entries_still_fails() {
+        let root_id = object_id(b"1111111111111111111111111111111111111111");
+        let child_id = object_id(b"2222222222222222222222222222222222222222");
+        let root = tree(
+            b"",
+            root_id,
+            Some(0),
+            vec![tree(b"child", child_id, Some(1), Vec::new())],
+        );
+
+        let err = root
+            .verify(true, OneTree::with_child(root_id, b"child", child_id))
+            .expect_err("a valid node must cover all entries reachable through its children");
+        assert_eq!(
+            err.to_string(),
+            "Expected not more than 0 entries to be reachable from the top-level, but actual count was 1",
+            "valid nodes still enforce their declared entry count"
+        );
+        assert!(
+            err.is_corrupted(),
+            "an inconsistent valid-node entry count is corruption"
+        );
+    }
 
     struct MalformedTree;
 
