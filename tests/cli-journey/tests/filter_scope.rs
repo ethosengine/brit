@@ -365,6 +365,27 @@ fn an_attribute_source_with_rejected_lines_fails_closed() -> Result<()> {
     Ok(())
 }
 
+#[test]
+fn a_committed_attribute_source_with_rejected_lines_fails_closed_on_switch() -> Result<()> {
+    let global = Global::witnessed_lfs()?;
+    let repo = TestRepo::new("filter-committed-unparseable")?;
+    repo.commit_file("selected", "original\n")?;
+    let git = |args: &[&str]| -> Result<()> {
+        let out = gix_testtools::git_command(repo.path()).args(args).output()?;
+        ensure!(out.status.success(), "{}", String::from_utf8_lossy(&out.stderr));
+        Ok(())
+    };
+    git(&["switch", "-c", "destination"])?;
+    // Read from the destination tree, not the worktree: the dropped line's assignments are unknown.
+    repo.commit_file(".gitattributes", "*.bin filter=lfs bad/name\n")?;
+    repo.commit_file("selected", "destination\n")?;
+    git(&["switch", "main"])?;
+    let stderr = global.refused(repo.path(), &["switch", "destination"])?;
+    ensure!(stderr.contains(".gitattributes"), "refusal names the source: {stderr}");
+    assert_eq!(fs::read(repo.path().join("selected"))?, b"original\n");
+    Ok(())
+}
+
 fn replay_fixture(label: &str) -> Result<TestRepo> {
     let repo = TestRepo::new(label)?;
     repo.commit_file("selected", "base\n")?;
