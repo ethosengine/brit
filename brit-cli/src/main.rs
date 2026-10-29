@@ -2,10 +2,10 @@
 
 use std::{path::PathBuf, process::ExitCode};
 
-use clap::parser::ValueSource;
-use clap::{CommandFactory, FromArgMatches, Parser, Subcommand};
+use clap::{parser::ValueSource, CommandFactory, FromArgMatches, Parser, Subcommand};
 use gitoxide::plumbing;
 
+mod bridge;
 mod commands;
 mod context;
 mod error;
@@ -192,6 +192,13 @@ fn run() -> Result<()> {
         return run_build(Cli::parse_from(args).command);
     }
 
+    // Bridged names are answered before clap sees them: brit prints the stock Git command and
+    // never runs it.
+    if let Some(line) = bridge::line(&args) {
+        eprintln!("{line}");
+        std::process::exit(bridge::EXIT_CODE);
+    }
+
     let command = public_command();
     // Introspection is deliberately standalone. Never dispatch a Git/native command
     // when the caller combines a census request with work-performing arguments.
@@ -266,6 +273,36 @@ mod tests {
     #[test]
     fn combined_clap_tree_is_valid() {
         public_command().debug_assert();
+    }
+
+    #[test]
+    fn no_bridge_row_shadows_an_owned_verb() {
+        let command = public_command();
+        let owned: Vec<&str> = command
+            .get_subcommands()
+            .flat_map(|sub| std::iter::once(sub.get_name()).chain(sub.get_all_aliases()))
+            .collect();
+        for name in bridge::BRIDGED {
+            assert!(!owned.contains(name), "`{name}` is bridged but brit owns it");
+        }
+        let submodule = command
+            .find_subcommand("submodule")
+            .expect("brit owns `submodule list`");
+        for verb in bridge::BRIDGED_SUBMODULE {
+            assert!(
+                submodule.find_subcommand(verb).is_none(),
+                "`submodule {verb}` is bridged but brit owns it"
+            );
+        }
+        assert!(
+            submodule.find_subcommand("list").is_some(),
+            "`submodule list` stays owned by brit"
+        );
+    }
+
+    #[test]
+    fn bridge_refusals_exit_with_the_documented_usage_code() {
+        assert_eq!(bridge::EXIT_CODE, error::CliError::Args(String::new()).exit_code());
     }
 
     #[test]

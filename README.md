@@ -59,6 +59,23 @@ adapter requires an epr version supporting `integrate`; it never pushes.
 Installed release delivery and the complete two-developer workflow still need
 qualification. Keep stock Git available; do not alias `git` to `brit`.
 
+Operations brit owns and operations it leaves to stock Git are named, never
+guessed. A bridged name prints `brit: <name> is a Git bridge operation; run: git
+<name> <the same arguments>` to stderr and exits with status 2; it changes nothing,
+does not fall back to Git and is not an alias. The check looks at the first
+argument, before any option parsing, so a bridged name after a global option
+(`brit -c key=value reset`) is not bridged: the parser refuses it instead, also
+with status 2 and no change.
+
+| Owned by `brit` (daily verbs; `brit --help` lists all) | Bridged to stock Git (exit 2) |
+| --- | --- |
+| `status`, `diff`, `log`, `add`, `restore`, `switch`, `commit`, `tag`, `branch`, `merge`, `rebase`, `clone`, `fetch`, `pull`, `push`, `worktree` | `reset`, `rm`, `mv`, `show`, `stash`, `cherry-pick`, `revert`, `checkout`, `notes` |
+| `submodule list` | `submodule update`, `submodule init`, `submodule sync` |
+| `build`, `snapshot`, `context`, `integrate`, `verify` | |
+
+`brit --help` is the authority for the owned column; a unit test asserts that no
+bridged name is a subcommand brit owns.
+
 Two milestones remain distinct:
 
 - **Developer entry point:** Brit owns the accountable development journey;
