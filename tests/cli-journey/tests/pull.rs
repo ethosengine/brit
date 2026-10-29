@@ -387,7 +387,11 @@ fn alternate_indexes_and_external_filters_refuse_without_integration() -> Result
         let f = fixture()?;
         match kind {
             "filter" => {
-                git(f.local.path(), &["config", "filter.unsafe.smudge", "cat"])?;
+                fs::write(f.local.path().join(".git/info/attributes"), "selected filter=unsafe\n")?;
+                git(
+                    f.local.path(),
+                    &["config", "filter.unsafe.smudge", "touch filter-ran; cat"],
+                )?;
             }
             "sparse" => {
                 git(f.local.path(), &["update-index", "--skip-worktree", "selected"])?;
@@ -414,6 +418,14 @@ fn alternate_indexes_and_external_filters_refuse_without_integration() -> Result
         ensure!(!out.status.success(), "refuse {kind}");
         assert_eq!(index(f.local.path())?, before);
         assert_eq!(f.local.head_id()?, f.original);
+        assert_eq!(fs::read(f.local.path().join("selected"))?, b"original\n");
+        assert!(!f.local.path().join("filter-ran").exists());
+        if kind == "filter" {
+            // A filter is known only once the fetched change set is; fetch results are retained
+            // like any other refusal after receive.
+            fetched(&f)?;
+            continue;
+        }
         assert_eq!(
             fs::read(f.local.path().join(".git/FETCH_HEAD"))?,
             fetch_before,

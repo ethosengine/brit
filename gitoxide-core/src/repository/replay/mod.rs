@@ -43,10 +43,6 @@ pub(crate) fn validate_execution_policy(repo: &gix::Repository) -> Result<()> {
         !repo.config_snapshot().try_boolean("commit.gpgSign")?.unwrap_or(false),
         "required signing is unsupported"
     );
-    ensure!(
-        gix::filter::Pipeline::options(repo)?.drivers.is_empty(),
-        "external filters are unsupported"
-    );
     if let Some(sections) = repo.config_snapshot().plumbing().sections_by_name("merge") {
         ensure!(
             !sections
@@ -108,7 +104,7 @@ impl Selection {
         }
         ensure!(candidates.len() == selected.len(), "selection is not one linear chain");
         candidates.reverse();
-        Ok(Self {
+        let selection = Self {
             original,
             upstream: upstream_id,
             attachment,
@@ -116,7 +112,18 @@ impl Selection {
             candidates,
             kind,
             closure,
-        })
+        };
+        if selection.kind != SelectionKind::Noop || !selection.candidates.is_empty() {
+            let commits = [selection.original, selection.upstream]
+                .into_iter()
+                .chain(selection.candidates.iter().flat_map(|c| [c.parent, c.commit]));
+            let mut trees = BTreeSet::new();
+            for commit in commits {
+                trees.insert(repo.find_commit(commit)?.tree_id()?.detach());
+            }
+            refuse_external_filters(repo, trees, &selection.footprint(repo)?)?;
+        }
+        Ok(selection)
     }
 
     /// An attachment change is foreign movement even if the commit stays equal.
@@ -139,6 +146,25 @@ impl Selection {
         }
         Ok(paths.into_iter().collect())
     }
+}
+
+/// Refuse when a configured external filter driver could convert one of `paths` under the attributes
+/// of any of `trees`, the trees whose files a replay reads, merges or writes.
+fn refuse_external_filters(
+    repo: &gix::Repository,
+    trees: impl IntoIterator<Item = gix::ObjectId>,
+    paths: &[BString],
+) -> Result<()> {
+    if paths.is_empty() || gix::filter::Pipeline::options(repo)?.drivers.is_empty() {
+        return Ok(());
+    }
+    for tree in trees {
+        let index = repo.index_from_tree(&tree)?;
+        let mut attributes =
+            repo.attributes_only(&index, gix::worktree::stack::state::attributes::Source::IdMapping)?;
+        super::index::authoring::refuse_external_filters(repo, &mut attributes, paths.iter().map(|p| p.as_bstr()))?;
+    }
+    Ok(())
 }
 
 fn changed_paths(
@@ -329,6 +355,8 @@ impl Step {
             &mut footprint,
         )?;
         changed_index_paths(&*repo.index_from_tree(&ours)?, &index, &mut footprint)?;
+        // The merged tree's attributes govern the files this step will write.
+        refuse_external_filters(repo, [tree], &footprint.iter().cloned().collect::<Vec<_>>())?;
         result.index_changed_after_applying_conflicts(
             &mut index,
             how,

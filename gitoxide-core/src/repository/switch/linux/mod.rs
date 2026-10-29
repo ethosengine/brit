@@ -2,7 +2,7 @@
 //!
 //! Durability means successful file and containing-directory `sync_all` calls on Linux.
 //! Arbitrary external writers are detected by before/after comparisons, not isolated.
-use super::super::index::authoring::{read_index, worktree_entry};
+use super::super::index::authoring::{read_index, refuse_external_filters, worktree_entry};
 use anyhow::{Context, Result, bail, ensure};
 use gix::bstr::{BStr, BString, ByteSlice};
 use gix::index::entry::{Flags, Mode, Stat};
@@ -860,10 +860,6 @@ fn execute_locked(repo: gix::Repository, branch: &BStr, _shared: fs::File, pinne
     if !pulling {
         occupancy(&repo, &target)?;
     }
-    ensure!(
-        gix::filter::Pipeline::options(&repo)?.drivers.is_empty(),
-        "external filters require Git"
-    );
     super::super::authoring::hook_path(&repo, if pulling { "post-merge" } else { "post-checkout" })?;
     let mut state = Manifest {
         version: VERSION,
@@ -1013,7 +1009,9 @@ fn execute_locked(repo: gix::Repository, branch: &BStr, _shared: fs::File, pinne
         }
     }
     new_index.sort_entries();
-    let attrs = repo.attributes_only(&new_index, gix::worktree::stack::state::attributes::Source::IdMapping)?;
+    let mut attrs = repo.attributes_only(&new_index, gix::worktree::stack::state::attributes::Source::IdMapping)?;
+    // Every path the switch rewrites is checked, including a pull's fast-forward change set.
+    refuse_external_filters(&repo, &mut attrs, changed.iter().map(|name| name.as_bstr()))?;
     let mut pipeline = gix::filter::Pipeline::new(&repo, attrs.detach())?;
     let mut changes = BTreeMap::<Vec<u8>, Change>::new();
     for name in &changed {

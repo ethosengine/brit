@@ -149,10 +149,6 @@ fn preflight(repo: &gix::Repository) -> Result<()> {
     validate_object_boundaries(repo)?;
     read_index(repo)?;
     repo.head_commit()?;
-    ensure!(
-        gix::filter::Pipeline::options(repo)?.drivers.is_empty(),
-        "external filters require Git"
-    );
     super::super::super::authoring::hook_path(repo, "post-merge")?;
     for directory in [
         root,

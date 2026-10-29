@@ -1741,12 +1741,18 @@ recovery test enabled. Its Git server reports a failed compare-and-swap as
 requiring rejection, the hook's advertised old OID, and the competitor's exact
 remote ref to survive. Those behavioral assertions remain unchanged.
 
-Real-use boundary: `brit add` refused the integration worktree because system and
-user Git configuration declare Git LFS clean/process filters. No index change
-occurred. The bounded staging implementation rejects configured external filters
-even when selected source paths do not use LFS; use explicit path-scoped `git add`
-in that environment, then Brit for supported subsequent operations. We did not
-remove or override the workspace's filter configuration to claim native staging.
+Real-use boundary: `brit add` once refused the integration worktree because system
+and user Git configuration declare Git LFS clean/process filters, though no path
+there uses LFS. No index change occurred. The refusal is now scoped per path:
+configured drivers alone never refuse. `add`, `restore --worktree`, `switch`,
+`pull --ff-only` and replay resolve each path they convert (for switch, pull and
+replay, every path in the change set) through gix's attribute stack, and refuse
+only when a path resolves `filter=<name>` for a configured driver. Attribute
+state brit cannot know in full fails closed whatever the paths: an unreadable
+attribute source, a source with a line gix's parser drops, or an `[attr]` macro
+that assigns `filter`. A refusal leaves the index, HEAD and worktree unchanged
+and never runs the driver; use Git for those paths. We did not remove or
+override the workspace's filter configuration to claim native staging.
 
 Continued integration at `e0773f57e` exposed four further boundaries:
 

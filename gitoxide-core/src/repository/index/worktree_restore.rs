@@ -12,7 +12,7 @@ use gix::{
     index::entry::Mode,
 };
 
-use super::authoring::{component_options, literal_paths, read_index, validate_relative_path};
+use super::authoring::{component_options, literal_paths, read_index, refuse_external_filters, validate_relative_path};
 
 /// Restore literal worktree files from the index, or HEAD when `from_head` is set.
 /// The index is read only. Publication is atomic per file, not across the selection.
@@ -22,9 +22,6 @@ pub fn restore_worktree(repo: gix::Repository, paths: &[BString], from_head: boo
     let index = read_index(&repo)?;
     let paths = literal_paths(&repo, paths)?;
     let root = repo.workdir().expect("literal_paths required a worktree");
-    if !gix::filter::Pipeline::options(&repo)?.drivers.is_empty() {
-        bail!("Configured external filters require Git".unsupported());
-    }
     if repo.config_snapshot().try_boolean("core.precomposeunicode")? == Some(true)
         && paths.iter().any(|path| !path.is_ascii())
     {
@@ -37,10 +34,11 @@ pub fn restore_worktree(repo: gix::Repository, paths: &[BString], from_head: boo
     };
     let source: &gix::index::State = head.as_ref().map_or(&index, |head| head);
     let attribute_index = attribute_snapshot(&repo, &index, source, &paths)?;
-    let attributes = repo.attributes_only(
+    let mut attributes = repo.attributes_only(
         &attribute_index,
         gix::worktree::stack::state::attributes::Source::IdMapping,
     )?;
+    refuse_external_filters(&repo, &mut attributes, paths.iter().map(|path| path.as_bstr()))?;
     let mut pipeline = gix::filter::Pipeline::new(&repo, attributes.detach())?;
     let emulate_symlinks = repo.config_snapshot().try_boolean("core.symlinks")? == Some(false);
     let mut replacements = Vec::with_capacity(paths.len());

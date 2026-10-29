@@ -95,6 +95,54 @@ pub fn validate_index(index: &gix::index::State) -> Result<()> {
     Ok(())
 }
 
+/// Refuse when a configured external filter driver could convert any of `paths`, so brit never runs
+/// or bypasses one.
+///
+/// A path is refused when `attributes` resolve `filter=<name>` for it and `<name>` is a configured
+/// driver; a path whose filter names no configured driver converts like Git, without one. Attribute
+/// state that cannot be known in full fails closed whatever the paths: an attribute macro that assigns
+/// `filter`, or a source in which parsing dropped a line. A source that cannot be read fails while the
+/// stack is primed. Macros and dropped lines are judged after every path has been primed, because
+/// `attributes` only loads the sources on the way to each path.
+pub(crate) fn refuse_external_filters<'a>(
+    repo: &gix::Repository,
+    attributes: &mut gix::AttributeStack<'_>,
+    paths: impl IntoIterator<Item = &'a gix::bstr::BStr>,
+) -> Result<()> {
+    use gix::attrs::{State, StateRef};
+    let drivers = gix::filter::Pipeline::options(repo)?.drivers;
+    if drivers.is_empty() {
+        return Ok(());
+    }
+    let mut outcome = attributes.selected_attribute_matches(Some("filter"));
+    for path in paths {
+        attributes.at_entry(path, None)?.matching_attributes(&mut outcome);
+        for matched in outcome.iter_selected() {
+            if let StateRef::Value(name) = matched.assignment.state {
+                let name = name.as_bstr();
+                if drivers.iter().any(|driver| driver.name == name) {
+                    bail!("External filter '{name}' applies to {path}; use Git".unsupported());
+                }
+            }
+        }
+    }
+    let collection = attributes.attributes_collection();
+    if let Some(source) = collection.sources_with_rejected_lines().first() {
+        bail!(
+            "Attribute source {} has lines that cannot be parsed, so a filter may apply; use Git".unsupported(),
+            source.display()
+        );
+    }
+    if let Some((name, _)) = collection.iter().find(|(_, meta)| {
+        meta.macro_attributes.iter().any(|assignment| {
+            assignment.inner.name.as_str() == "filter" && matches!(assignment.inner.state, State::Value(_))
+        })
+    }) {
+        bail!("Attribute macro '{name}' assigns a filter; use Git".unsupported());
+    }
+    Ok(())
+}
+
 /// Read a validated worktree file in Git's canonical representation. Never executes external filters.
 pub fn worktree_entry(
     repo: &gix::Repository,
@@ -132,13 +180,11 @@ pub fn worktree_entry(
     {
         bail!("Emulated symlinks require Git".unsupported());
     }
-    if !gix::filter::Pipeline::options(repo)?.drivers.is_empty() {
-        bail!("Configured external clean filters require Git".unsupported());
-    }
-    let attributes = repo.attributes_only(
+    let mut attributes = repo.attributes_only(
         index,
         gix::worktree::stack::state::attributes::Source::WorktreeThenIdMapping,
     )?;
+    refuse_external_filters(repo, &mut attributes, [path.as_bstr()])?;
     let mut pipeline = gix::filter::Pipeline::new(repo, attributes.detach())?;
     let file = std::fs::File::open(absolute).or_error()?;
     let mut filtered = pipeline.convert_to_git(file, relative.as_ref(), index)?;
