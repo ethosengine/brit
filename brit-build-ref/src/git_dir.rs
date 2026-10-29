@@ -6,37 +6,35 @@ use std::{
 };
 
 /// The repository's common git dir: `.git` in a normal checkout, the main repo's `.git` from a
-/// linked worktree (where `<repo>/.git` is a file, not a directory). Falls back to `<repo>/.git`
-/// when git cannot answer.
-pub fn common_git_dir(repo: &Path) -> PathBuf {
-    let fallback = repo.join(".git");
-    let Ok(out) = Command::new("git")
+/// linked worktree (where `<repo>/.git` is a file, not a directory).
+pub fn common_git_dir(repo: &Path) -> anyhow::Result<PathBuf> {
+    let out = Command::new("git")
         .arg("-C")
         .arg(repo)
         .args(["rev-parse", "--git-common-dir"])
         .output()
-    else {
-        return fallback;
-    };
+        .map_err(|err| anyhow::anyhow!("failed to resolve the common Git directory: {err}"))?;
     if !out.status.success() {
-        return fallback;
+        let diagnostic = String::from_utf8_lossy(&out.stderr);
+        anyhow::bail!("failed to resolve the common Git directory: {}", diagnostic.trim());
     }
-    let text = String::from_utf8_lossy(&out.stdout);
+    let text = std::str::from_utf8(&out.stdout)
+        .map_err(|err| anyhow::anyhow!("common Git directory is not valid UTF-8: {err}"))?;
     let line = text.trim();
     if line.is_empty() {
-        return fallback;
+        anyhow::bail!("failed to resolve the common Git directory: Git returned an empty path");
     }
     let p = PathBuf::from(line);
     if p.is_absolute() {
-        p
+        Ok(p)
     } else {
-        repo.join(p)
+        Ok(repo.join(p))
     }
 }
 
 /// `<git-common-dir>/brit/agent-key`.
-pub fn agent_key_path(repo: &Path) -> PathBuf {
-    common_git_dir(repo).join("brit").join("agent-key")
+pub fn agent_key_path(repo: &Path) -> anyhow::Result<PathBuf> {
+    Ok(common_git_dir(repo)?.join("brit").join("agent-key"))
 }
 
 #[cfg(test)]
@@ -59,7 +57,10 @@ mod tests {
         let tmp = tempfile::TempDir::new().unwrap();
         let repo = tmp.path().canonicalize().unwrap();
         git(&repo, &["init", "-q", "--initial-branch=main"]);
-        assert_eq!(agent_key_path(&repo), repo.join(".git/brit/agent-key"));
+        assert_eq!(
+            agent_key_path(&repo).expect("common Git directory resolves"),
+            repo.join(".git/brit/agent-key")
+        );
     }
 
     #[test]
@@ -76,9 +77,29 @@ mod tests {
         git(&main, &["worktree", "add", "-q", wt.to_str().unwrap(), "-b", "side"]);
         assert!(wt.join(".git").is_file());
         assert_eq!(
-            common_git_dir(&wt).canonicalize().unwrap(),
-            main.join(".git").canonicalize().unwrap()
+            common_git_dir(&wt)
+                .expect("linked worktree common Git directory resolves")
+                .canonicalize()
+                .expect("resolved common Git directory canonicalizes"),
+            main.join(".git")
+                .canonicalize()
+                .expect("main Git directory canonicalizes")
         );
-        assert!(agent_key_path(&wt).ends_with(Path::new("brit").join("agent-key")));
+        assert!(agent_key_path(&wt)
+            .expect("linked worktree key path resolves")
+            .ends_with(Path::new("brit").join("agent-key")));
+    }
+
+    #[test]
+    fn non_repository_is_an_error() {
+        let tmp = tempfile::TempDir::new().expect("temporary non-repository directory");
+        assert!(
+            common_git_dir(tmp.path()).is_err(),
+            "repository discovery must fail closed"
+        );
+        assert!(
+            !tmp.path().join(".git").exists(),
+            "resolution does not invent a Git directory"
+        );
     }
 }

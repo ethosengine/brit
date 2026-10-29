@@ -10,6 +10,7 @@ mod deploy_cmd;
 mod git_dir;
 mod meta_cmd;
 mod reach_cmd;
+mod signer_cmd;
 mod validate_cmd;
 
 #[derive(Parser)]
@@ -57,6 +58,12 @@ enum TopCommand {
     Meta {
         #[command(subcommand)]
         cmd: MetaCmd,
+    },
+    /// Show the existing repository signer without creating one.
+    Signer {
+        /// Print `{\"agentId\": ...}` JSON.
+        #[arg(long)]
+        json: bool,
     },
 }
 
@@ -437,6 +444,7 @@ fn main() -> anyhow::Result<()> {
             MetaCmd::Verify { cid } => meta_cmd::verify(&repo, &cid),
             MetaCmd::Status { dir } => meta_cmd::status(&repo, &dir),
         },
+        TopCommand::Signer { json } => signer_cmd::show(&repo, json),
     }
 }
 

@@ -12,7 +12,7 @@ use brit_epr::{
 
 /// Seal the immediate files of `dir` into an EprMeta; print + store its CID.
 pub fn seal(repo: &Path, dir: &Path) -> anyhow::Result<()> {
-    let git_dir = repo.join(".git");
+    let git_dir = crate::git_dir::common_git_dir(repo)?;
     let store = LocalObjectStore::for_git_dir(&git_dir);
 
     // Collect immediate files, sorted by name for deterministic encoding.
@@ -83,7 +83,7 @@ pub fn seal(repo: &Path, dir: &Path) -> anyhow::Result<()> {
 
 /// Re-read the stored EprMeta and confirm its recomputed CID matches.
 pub fn verify(repo: &Path, cid: &str) -> anyhow::Result<()> {
-    let git_dir = repo.join(".git");
+    let git_dir = crate::git_dir::common_git_dir(repo)?;
     let store = LocalObjectStore::for_git_dir(&git_dir);
     let parsed: BritCid = cid.parse().map_err(|e| anyhow::anyhow!("invalid CID: {e}"))?;
     let node: EprMeta = store.get(&parsed)?;

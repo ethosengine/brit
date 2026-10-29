@@ -43,8 +43,8 @@ pub fn put(repo: &Path, args: &PutArgs<'_>) -> anyhow::Result<()> {
     }
 
     let refs = BritRefManager::new(repo)?;
-    let agent_key = AgentKey::load_or_generate(&agent_key_path(repo))?;
-    let store = LocalObjectStore::for_git_dir(&common_git_dir(repo));
+    let agent_key = AgentKey::load_or_generate(&agent_key_path(repo)?)?;
+    let store = LocalObjectStore::for_git_dir(&common_git_dir(repo)?);
 
     let mut node = CovenantClauseContentNode {
         kind,

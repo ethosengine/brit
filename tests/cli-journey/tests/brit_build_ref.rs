@@ -1,14 +1,15 @@
 //! Coverage tests for the brit-build-ref binary.
 //!
-//! Manages build/deploy/validate/reach attestation refs. Each leaf
+//! Manages build/deploy/validate/reach attestation refs and signer inspection. Each leaf
 //! subcommand gets its own test that exercises the operation against
 //! a temp git repo and dumps captured output to staging.
 //!
-//! Subcommand tree (11 leaves):
+//! Subcommand tree (12 leaves):
 //!   build   → put, get, list
 //!   deploy  → put, get, list
 //!   validate → put, get, list
 //!   reach   → compute, get
+//!   signer
 //!
 //! Staging layout (per leaf):
 //!   BRIT_TEST_PAGE_STAGING/rust/brit-build-ref/<group>/<leaf>.txt
@@ -204,6 +205,341 @@ fn build_find_by_inputs_hash_hits_across_two_commits_with_identical_closure() {
         &["brit-build-ref", "build", "find"],
         &format!("{}\n---stderr---\n{}", hit.stdout, hit.stderr),
     );
+}
+
+#[test]
+fn signer_is_read_only_and_matches_subsequent_build_attestations() {
+    let temp = TestRepo::new("signer").expect("repo");
+    let Some(bin) = brit_build_ref_bin() else {
+        eprintln!("skipping: brit-build-ref binary not built (run `cargo build -p brit-build-ref --release`)");
+        return;
+    };
+    let key_path = temp.path().join(".git/brit/agent-key");
+
+    let absent = BritInvocation::new(&bin)
+        .arg("--repo")
+        .arg(temp.path())
+        .args(["signer", "--json"])
+        .run()
+        .expect("invoke signer without a key");
+    assert!(absent.status.success(), "an absent key is an answer: {}", absent.stderr);
+    assert_eq!(
+        serde_json::from_str::<serde_json::Value>(absent.stdout.trim()).expect("signer JSON"),
+        serde_json::json!({ "agentId": null })
+    );
+    assert!(!key_path.exists(), "signer must not mint a key");
+    assert!(
+        !temp.path().join(".git/brit").exists(),
+        "signer must not create the key directory"
+    );
+
+    let manifest = "bafyreig7os3vfj4z63vgy7lpfgcnzzr2z26vrvdtheapoegvgzhnnhxkr4";
+    let output = "bafyreieicbex3dkkgounj4latxya32ezpl6622lpij327mzndwptfqkf7q";
+    let bootstrap = BritInvocation::new(&bin)
+        .arg("--repo")
+        .arg(temp.path())
+        .args([
+            "build",
+            "put",
+            "--step",
+            "bootstrap",
+            "--manifest",
+            manifest,
+            "--output",
+            output,
+            "--inputs-hash",
+            "bootstrap-inputs",
+        ])
+        .run()
+        .expect("bootstrap signer through a writer");
+    assert!(
+        bootstrap.status.success(),
+        "bootstrap build put failed: {}",
+        bootstrap.stderr
+    );
+
+    let signer = BritInvocation::new(&bin)
+        .arg("--repo")
+        .arg(temp.path())
+        .args(["signer", "--json"])
+        .run()
+        .expect("invoke signer with a key");
+    assert!(signer.status.success(), "signer failed: {}", signer.stderr);
+    let signer_json: serde_json::Value = serde_json::from_str(signer.stdout.trim()).expect("signer JSON");
+    let agent_id = signer_json["agentId"].as_str().expect("agentId is present");
+    assert_eq!(agent_id.len(), 64, "agentId is an Ed25519 public key in hex");
+    let seed_hex: String =
+        fs::read(&key_path)
+            .expect("writer created the key")
+            .iter()
+            .fold(String::with_capacity(64), |mut hex, byte| {
+                use std::fmt::Write as _;
+                write!(hex, "{byte:02x}").expect("writing to a String cannot fail");
+                hex
+            });
+    assert_eq!(seed_hex.len(), 64, "the stored seed is 32 bytes");
+    assert!(
+        !signer.stdout.contains(&seed_hex),
+        "signer stdout must not contain the private seed"
+    );
+    assert!(
+        !signer.stdout.contains(&key_path.display().to_string()),
+        "signer stdout must not contain the key path"
+    );
+
+    let put = BritInvocation::new(&bin)
+        .arg("--repo")
+        .arg(temp.path())
+        .args([
+            "build",
+            "put",
+            "--step",
+            "after-signer",
+            "--manifest",
+            manifest,
+            "--output",
+            output,
+            "--inputs-hash",
+            "after-signer-inputs",
+        ])
+        .run()
+        .expect("invoke build put after signer");
+    assert!(put.status.success(), "build put failed: {}", put.stderr);
+    let get = BritInvocation::new(&bin)
+        .arg("--repo")
+        .arg(temp.path())
+        .args(["build", "get", "--step", "after-signer"])
+        .run()
+        .expect("read build attestation");
+    assert!(get.status.success(), "build get failed: {}", get.stderr);
+    let attestation: serde_json::Value = serde_json::from_str(get.stdout.trim()).expect("attestation JSON");
+    assert_eq!(
+        attestation["agentId"], agent_id,
+        "signer reports the identity writers use"
+    );
+}
+
+#[cfg(unix)]
+#[test]
+fn signer_refuses_malformed_and_unreadable_keys_without_disclosing_their_location() {
+    use std::os::unix::fs::symlink;
+
+    let temp = TestRepo::new("signer-invalid").expect("repo");
+    let Some(bin) = brit_build_ref_bin() else {
+        eprintln!("skipping: brit-build-ref binary not built (run `cargo build -p brit-build-ref --release`)");
+        return;
+    };
+    let key_path = temp.path().join(".git/brit/agent-key");
+    fs::create_dir_all(key_path.parent().expect("key has a parent")).expect("create key directory");
+    fs::write(&key_path, b"not-a-32-byte-seed").expect("write malformed key");
+
+    let malformed = BritInvocation::new(&bin)
+        .arg("--repo")
+        .arg(temp.path())
+        .args(["signer", "--json"])
+        .run()
+        .expect("invoke signer with malformed key");
+    assert!(!malformed.status.success(), "a malformed key must fail");
+    assert!(malformed.stdout.is_empty(), "failure must not emit partial JSON");
+    assert!(
+        malformed.stderr.contains("cannot load the repository signer key"),
+        "failure carries a diagnostic: {}",
+        malformed.stderr
+    );
+    assert!(
+        !malformed.stderr.contains(&key_path.display().to_string()),
+        "diagnostic must not disclose the key path"
+    );
+
+    fs::remove_file(&key_path).expect("remove malformed key");
+    fs::create_dir(&key_path).expect("make the key unreadable as a file");
+    let unreadable = BritInvocation::new(&bin)
+        .arg("--repo")
+        .arg(temp.path())
+        .args(["signer", "--json"])
+        .run()
+        .expect("invoke signer with unreadable key");
+    assert!(!unreadable.status.success(), "an unreadable key must fail");
+    assert!(unreadable.stdout.is_empty(), "failure must not emit partial JSON");
+    assert!(
+        unreadable.stderr.contains("cannot load the repository signer key"),
+        "failure carries a diagnostic: {}",
+        unreadable.stderr
+    );
+    assert!(
+        !unreadable.stderr.contains(&key_path.display().to_string()),
+        "diagnostic must not disclose the key path"
+    );
+
+    fs::remove_dir(&key_path).expect("remove unreadable key stand-in");
+    symlink(key_path.with_file_name("missing-seed"), &key_path).expect("create broken key symlink");
+    let broken = BritInvocation::new(&bin)
+        .arg("--repo")
+        .arg(temp.path())
+        .args(["signer", "--json"])
+        .run()
+        .expect("invoke signer with broken key symlink");
+    assert!(
+        !broken.status.success(),
+        "a broken key symlink must not read as absence"
+    );
+    assert!(broken.stdout.is_empty(), "failure must not emit partial JSON");
+    assert!(
+        broken.stderr.contains("cannot load the repository signer key"),
+        "failure carries a diagnostic: {}",
+        broken.stderr
+    );
+    assert!(
+        !broken.stderr.contains(&key_path.display().to_string()),
+        "diagnostic must not disclose the key path"
+    );
+}
+
+#[cfg(unix)]
+#[test]
+fn first_writer_publishes_the_key_with_mode_0600_under_umask_022() {
+    use std::os::unix::fs::PermissionsExt;
+
+    let temp = TestRepo::new("signer-mode").expect("repo");
+    let Some(bin) = brit_build_ref_bin() else {
+        eprintln!("skipping: brit-build-ref binary not built (run `cargo build -p brit-build-ref --release`)");
+        return;
+    };
+    let isolated_config = tempfile::tempdir().expect("isolated Git config");
+    let mut command = std::process::Command::new("sh");
+    gix_testtools::configure_git_environment(&mut command, temp.path());
+    let output = command
+        .env("GIT_CONFIG_GLOBAL", isolated_config.path().join("missing.gitconfig"))
+        .args(["-c", "umask 022; exec \"$@\"", "brit-build-ref"])
+        .arg(&bin)
+        .arg("--repo")
+        .arg(temp.path())
+        .args([
+            "build",
+            "put",
+            "--step",
+            "mode",
+            "--manifest",
+            "bafyreig7os3vfj4z63vgy7lpfgcnzzr2z26vrvdtheapoegvgzhnnhxkr4",
+            "--output",
+            "bafyreieicbex3dkkgounj4latxya32ezpl6622lpij327mzndwptfqkf7q",
+            "--inputs-hash",
+            "mode-inputs",
+        ])
+        .output()
+        .expect("run first writer under umask 022");
+    assert!(
+        output.status.success(),
+        "build put failed: {}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    let mode = fs::metadata(temp.path().join(".git/brit/agent-key"))
+        .expect("key metadata")
+        .permissions()
+        .mode()
+        & 0o777;
+    assert_eq!(mode, 0o600, "the published seed is private regardless of umask");
+}
+
+#[test]
+fn repository_resolution_failure_creates_no_brit_state() {
+    let temp = tempfile::tempdir().expect("non-repository directory");
+    let Some(bin) = brit_build_ref_bin() else {
+        eprintln!("skipping: brit-build-ref binary not built (run `cargo build -p brit-build-ref --release`)");
+        return;
+    };
+    // Discovery must not climb out of the temporary directory into an enclosing repository.
+    let ceiling = temp
+        .path()
+        .parent()
+        .expect("temporary directory has a parent")
+        .to_path_buf();
+
+    let signer = BritInvocation::new(&bin)
+        .arg("--repo")
+        .arg(temp.path())
+        .env("GIT_CEILING_DIRECTORIES", &ceiling)
+        .args(["signer", "--json"])
+        .run()
+        .expect("invoke signer outside a repository");
+    assert!(
+        !signer.status.success(),
+        "signer must refuse an unresolved repository home"
+    );
+
+    let docs = temp.path().join("docs");
+    fs::create_dir(&docs).expect("create seal input");
+    fs::write(docs.join("a.md"), "alpha").expect("write seal input");
+    let seal = BritInvocation::new(&bin)
+        .arg("--repo")
+        .arg(temp.path())
+        .env("GIT_CEILING_DIRECTORIES", &ceiling)
+        .args(["meta", "seal", "--dir"])
+        .arg(&docs)
+        .run()
+        .expect("invoke meta seal outside a repository");
+    assert!(
+        !seal.status.success(),
+        "meta seal must refuse an unresolved repository home"
+    );
+    assert!(
+        !temp.path().join(".git/brit").exists(),
+        "failure must not create key or object state"
+    );
+}
+
+#[test]
+fn meta_sealed_from_a_linked_worktree_verifies_from_both_checkouts() {
+    let temp = TestRepo::new("meta-worktree").expect("repo");
+    let Some(bin) = brit_build_ref_bin() else {
+        eprintln!("skipping: brit-build-ref binary not built (run `cargo build -p brit-build-ref --release`)");
+        return;
+    };
+    let wt_parent = tempfile::tempdir().expect("worktree parent");
+    let wt = wt_parent.path().join("linked");
+    let add = gix_testtools::git_command(temp.path())
+        .args(["worktree", "add", "-q", "-b", "meta-side"])
+        .arg(&wt)
+        .output()
+        .expect("git worktree add");
+    assert!(
+        add.status.success(),
+        "worktree add failed: {}",
+        String::from_utf8_lossy(&add.stderr)
+    );
+    assert!(wt.join(".git").is_file(), "a linked worktree uses a gitfile");
+    let docs = wt.join("docs");
+    fs::create_dir(&docs).expect("create seal input");
+    fs::write(docs.join("a.md"), "alpha").expect("write seal input");
+
+    let seal = BritInvocation::new(&bin)
+        .arg("--repo")
+        .arg(&wt)
+        .args(["meta", "seal", "--dir"])
+        .arg(&docs)
+        .run()
+        .expect("seal from linked worktree");
+    assert!(seal.status.success(), "meta seal failed: {}", seal.stderr);
+    let cid = seal.stdout.trim();
+    assert!(
+        temp.path().join(".git/brit/objects").join(cid).is_file(),
+        "object is stored in the common Git directory"
+    );
+
+    for repo in [temp.path(), wt.as_path()] {
+        let verify = BritInvocation::new(&bin)
+            .arg("--repo")
+            .arg(repo)
+            .args(["meta", "verify", "--cid", cid])
+            .run()
+            .expect("verify sealed metadata");
+        assert!(
+            verify.status.success(),
+            "verify from {} failed: {}",
+            repo.display(),
+            verify.stderr
+        );
+    }
 }
 
 // ============================================================================
