@@ -270,6 +270,7 @@ impl BritRefManager {
     /// Run `hook(ref_name, attempt)` each time a write has read the prior it expects and built
     /// what it will publish, immediately before it publishes. Nothing in brit sets it: it is the
     /// seam a test uses to lose a race deterministically, by publishing underneath the writer.
+    #[doc(hidden)] // test seam: not part of the supported API
     pub fn before_publish(mut self, hook: impl Fn(&str, u32) + Send + Sync + 'static) -> Self {
         self.before_publish = Some(std::sync::Arc::new(hook));
         self

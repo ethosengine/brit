@@ -4,7 +4,7 @@ id: brit-native-daily-driver
 invariant: >
   A native developer can safely author, recover, reconcile, independently review
   and integrate scoped work through Brit with enforced gates and stock Git interoperability.
-status: unwired
+status: red
 active: false
 refs:
   - docs/plans/2026-09-28-daily-driver.md
@@ -12,6 +12,7 @@ retire-when: >
   when the full native workflow is the continuously verified release and integration floor
   and this separate cutover marker adds no information
 ---
+DELTA 2026-10-29: Status unwired -> red: the habit now has a runnable check, scripts/daily-driver-probe.sh [--json] [--repo PATH] (seven rungs, each ok, REFUSED or unmeasured-with-reason; a silent rung fails the script; never writes to the probed repo). Run against /projects/elohim at HEAD 7a53fd61c. Installed brit 0.1.5 (/opt/rust/cargo/bin, PATH defaults): R1 REFUSED (status --no-write exit 1, "The object database has too few index slots, current=32, needed=9"); R2 REFUSED (verify exit 1 after 0s, same cause); R3 REFUSED (log exit 1, could not peel refs/heads/dev); R4 REFUSED (add: "Configured external clean filters require Git"); R5 REFUSED (same); R6 ok (build find over 90 notes in 21 steps, 0 unverifiable); R7 REFUSED (brit-build-ref has no `signer` subcommand). Sprint binaries (branch feat/daily-driver-evidence-layer through G1b, dev profile, copied to /var/tmp/bdd/bin-final): R1 ok; R2 ok (verify exit 0 in 12s); R3 ok (first log id 7a53fd61 is HEAD); R4 ok (tree equals git's, pre-commit hook ran); R5 ok (same under explicit filter.lfs clean/smudge/process, no attributes); R6 ok (90 notes, 21 steps, 0 unverifiable); R7 ok (agentId null, no key file created); exit 0. What the sprint changed: open from final trust; verify no longer false-red on an invalidated cache-tree; fail-closed verified reads, against the live corpus 90/90 build notes and 24/24 covenant refs; CAS ref writes with read-back; commit.gpgSign refusal; per-path LFS refusal (configured drivers alone never refuse); signer verb with atomic key creation; named git bridges. Why red, not green: the probe observes only the single-developer local rungs. Integrate, independent review and two-developer legs are unobserved; the sprint binary is not published and the parent pin is not moved, so the installed binary above is what runs today; the real network is one human. Green needs those legs wired and the installed binary to pass the same probe.
 DELTA 2026-10-13: UNWIRED preserved. Revision 1d055172 passed full integration CI 38386962091 and all four candidate delivery platforms 38386981865, with both strict qualifiers green; its installed Linux binary pushed main through the native reach hook. Main CI then exposed one shared-directory listing race among 5,565 i386 tests. Isolated listing fixtures pass all 61 command integration tests, three unit tests, one doctest and strict Clippy; main publication was cancelled before upload pending the correction. Our own cross-workspace use remains the operational verification.
 DELTA 2026-09-28: Declared, unqualified. Local staged-authoring tests and shared-tree
 proof do not establish pre-push enforcement, independent target-bound acceptance,

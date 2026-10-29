@@ -4,7 +4,7 @@ Guidance for Claude Code when working in the `brit` submodule. (Upstream gitoxid
 
 ## What brit is
 
-brit is a **fork of gitoxide** that makes version control **covenantal**: every commit carries three-pillar EPR metadata (lamad/shefa/qahal) as RFC-822 trailers, and git artifacts project to **content-addressed ContentNodes**. The `gix-*` crates (~60) are upstream parity — **do not do gitoxide parity-maintenance**; the first-party work is `brit-epr` (engine + elohim app-schema), `brit-graph`, `brit-cli` (binary: `rakia`), `brit-build-ref`, `brit-verify`. Master design: `docs/specs/2026-04-12-brit-design.md`.
+brit is a **fork of gitoxide** that makes version control **covenantal**: every commit carries three-pillar EPR metadata (lamad/shefa/qahal) as RFC-822 trailers, and git artifacts project to **content-addressed ContentNodes**. The `gix-*` crates (~60) are upstream parity — **do not do gitoxide parity-maintenance**; the first-party work is `brit-epr` (engine + elohim app-schema), `brit-graph`, `brit-cli` (binary: `brit`; `rakia` remains a deprecated alias), `brit-build-ref`, `brit-verify`. Master design: `docs/specs/2026-04-12-brit-design.md`.
 
 **Engine boundary (load-bearing):** `brit-epr::engine` is the generic covenant engine and MUST stay codec-/protocol-agnostic — disabling feature `elohim-protocol` must leave a working real-CID git tool. The Elohim vocabulary lives behind that feature flag.
 
@@ -28,7 +28,7 @@ Identity is **CIDv1 · multicodec `0x71` dag-cbor · multihash `0x12` sha2-256**
 
 ## Dev-loop
 
-- `just test` = clippy + check + doc + unit-tests + doc-tests + journey-tests. `just check` = feature-matrix `cargo check`. `cargo nextest run -p <crate>` for a single crate.
+- `just test` = clippy + check + doc + unit-tests + doc-tests + journey-tests. `just check` = feature-matrix `cargo check`. `cargo test -p <crate>` for a single crate (nextest is not installed in this workspace).
 - Format: `cargo +nightly fmt -p <brit-crate> -- --config-path rustfmt-nightly.toml` then `cargo +stable fmt --check`. Scope the nightly pass to the `brit-*` crates — never run it over the workspace: its import grouping rewrites upstream `gix-*` files, and every such diff becomes merge noise against gitoxide (the 2026-09 upstream merge had to reset 63 of them).
 - Lints: clippy `pedantic` via root `[workspace.lints.clippy]`; every brit crate opts in with `lints.workspace = true`.
 
