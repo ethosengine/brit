@@ -484,6 +484,93 @@ fn deploy_and_validate_get_drop_a_tampered_record() {
     }
 }
 
+/// A valid deploy or validation record filed under a ref it was not signed for does not read as
+/// that ref's answer: deploy binds step and environment, validation binds its check.
+#[test]
+fn deploy_and_validate_get_drop_a_record_filed_under_another_ref() {
+    let tmp = repo();
+    let artifact = BritCid::compute_raw(b"artifact").to_string();
+    let out = brit(
+        tmp.path(),
+        &[
+            "deploy",
+            "put",
+            "--step",
+            STEP,
+            "--env",
+            "staging",
+            "--artifact",
+            &artifact,
+            "--endpoint",
+            "https://x",
+            "--health-check-epr",
+            "epr:x/health",
+        ],
+    );
+    assert!(out.status.success(), "{}", stderr(&out));
+    let out = brit(
+        tmp.path(),
+        &[
+            "validate",
+            "put",
+            "--step",
+            STEP,
+            "--check",
+            "lint@v1",
+            "--artifact",
+            &artifact,
+            "--result",
+            "pass",
+        ],
+    );
+    assert!(out.status.success(), "{}", stderr(&out));
+
+    let deploy_oid = git(
+        tmp.path(),
+        &["rev-parse", "refs/notes/brit/deploy/gate%3Aelohim-storage/staging"],
+    );
+    let validate_oid = git(
+        tmp.path(),
+        &["rev-parse", "refs/notes/brit/validate/gate%3Aelohim-storage/lint%40v1"],
+    );
+    git(
+        tmp.path(),
+        &[
+            "update-ref",
+            "refs/notes/brit/deploy/gate%3Aelohim-storage/prod",
+            &deploy_oid,
+        ],
+    );
+    git(
+        tmp.path(),
+        &["update-ref", "refs/notes/brit/deploy/other-step/staging", &deploy_oid],
+    );
+    git(
+        tmp.path(),
+        &[
+            "update-ref",
+            "refs/notes/brit/validate/gate%3Aelohim-storage/other",
+            &validate_oid,
+        ],
+    );
+
+    for args in [
+        vec!["deploy", "get", "--step", STEP, "--env", "prod"],
+        vec!["deploy", "get", "--step", "other-step", "--env", "staging"],
+        vec!["validate", "get", "--step", STEP, "--check", "other"],
+    ] {
+        let out = brit(tmp.path(), &args);
+        assert!(out.status.success(), "{args:?}: {}", stderr(&out));
+        assert!(stdout(&out).is_empty(), "{args:?}: printed {}", stdout(&out));
+        let err = stderr(&out);
+        assert!(
+            err.lines().next().is_some_and(|l| l.starts_with("no ")),
+            "{args:?}: {err}"
+        );
+        assert_eq!(unverifiable_lines(&err).len(), 1, "{args:?}: {err}");
+    }
+}
+
 // ─── covenant ────────────────────────────────────────────────────────────────
 
 fn put_clause(repo: &Path, session: &str, quote: &str) -> Value {
