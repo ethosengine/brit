@@ -8,7 +8,9 @@ on:
 permissions:
   contents: write
 
-concurrency: { group: brit-build-artifacts-${{ github.event.workflow_run.head_sha }}, cancel-in-progress: false }
+concurrency:
+  group: brit-build-artifacts-${{ github.event.workflow_run.head_sha }}
+  cancel-in-progress: false
 
 env:
   CARGO_REGISTRIES_ELOHIM_INDEX: sparse+https://nexus.ethosengine.com/repository/cargo-internal/

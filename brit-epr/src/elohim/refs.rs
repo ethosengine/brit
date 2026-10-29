@@ -293,7 +293,7 @@ impl BritRefManager {
     /// The node must pass the read this ref gets — strict decode, its signature, `stepName ==
     /// step_name` — or nothing is written and no git command runs. The note is published against
     /// the notes head it was built on. A race lost to a note on another commit is rebuilt on the
-    /// new head (at most [`MAX_ATTEMPTS`] publications); a race lost to a change of this commit's
+    /// new head (at most three publications); a race lost to a change of this commit's
     /// own note is refused with [`RefError::Concurrent`], unless that change wrote these same bytes.
     pub fn put_build_ref(
         &self,
