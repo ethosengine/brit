@@ -59,3 +59,8 @@ required-features = ["elohim-protocol"]
 name = "ref_management"
 path = "tests/ref_management.rs"
 required-features = ["elohim-protocol"]
+
+[[test]]
+name = "cas_writes"
+path = "tests/cas_writes.rs"
+required-features = ["elohim-protocol"]

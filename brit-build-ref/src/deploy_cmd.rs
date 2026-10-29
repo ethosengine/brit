@@ -55,8 +55,7 @@ pub fn put(
 
     store.put(&node)?;
 
-    let payload = serde_json::to_value(&node)?;
-    refs.put_deploy_ref(step, env, &payload)?;
+    refs.put_deploy_ref(step, env, &node)?;
 
     let cid = node.compute_cid()?;
     println!("{cid}");

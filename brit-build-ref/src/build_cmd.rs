@@ -104,8 +104,7 @@ pub fn put(
 
     let cid = store.put(&node)?;
 
-    let payload = serde_json::to_value(&node)?;
-    refs.put_build_ref(step, commit, &payload)?;
+    refs.put_build_ref(step, commit, &node)?;
 
     println!("{cid}");
     Ok(())

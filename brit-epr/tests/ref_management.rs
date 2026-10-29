@@ -8,7 +8,7 @@ use brit_epr::{
             deploy::{DeployAttestationContentNode, HealthStatus},
             validation::{ValidationAttestationContentNode, ValidationResult},
         },
-        refs::{BritRefManager, Lookup},
+        refs::{BritRefManager, Lookup, RefError},
     },
     engine::{cid::BritCid, content_node::ContentNode, signing::AgentKey},
 };
@@ -118,6 +118,46 @@ fn json<T: serde::Serialize>(node: &T) -> serde_json::Value {
     serde_json::to_value(node).unwrap()
 }
 
+/// Store `bytes` as a blob, bypassing brit; its oid.
+fn raw_blob(dir: &std::path::Path, bytes: &[u8]) -> String {
+    use std::io::Write;
+    let mut child = Command::new("git")
+        .args(["hash-object", "-w", "--stdin"])
+        .current_dir(dir)
+        .stdin(std::process::Stdio::piped())
+        .stdout(std::process::Stdio::piped())
+        .spawn()
+        .unwrap();
+    child.stdin.take().unwrap().write_all(bytes).unwrap();
+    let out = child.wait_with_output().unwrap();
+    assert!(out.status.success());
+    String::from_utf8(out.stdout).unwrap().trim().to_string()
+}
+
+/// Point `ref_name` at a blob of `value`, bypassing brit (which refuses to write what it would
+/// refuse to read).
+fn raw_ref(dir: &std::path::Path, ref_name: &str, value: &serde_json::Value) {
+    let blob = raw_blob(dir, serde_json::to_string(value).unwrap().as_bytes());
+    git(dir, &["update-ref", ref_name, &blob]);
+}
+
+/// Note `value` on `commit` under `notes_ref`, bypassing brit.
+fn raw_note(dir: &std::path::Path, notes_ref: &str, commit: &str, value: &serde_json::Value) {
+    git(
+        dir,
+        &[
+            "notes",
+            "--ref",
+            notes_ref,
+            "add",
+            "-f",
+            "-m",
+            &serde_json::to_string(value).unwrap(),
+            commit,
+        ],
+    );
+}
+
 fn verified<T: std::fmt::Debug>(lookup: Lookup<T>) -> T {
     match lookup {
         Lookup::Verified(node) => node,
@@ -131,7 +171,7 @@ fn put_and_get_build_ref() {
     let k = key(&tmp, "a");
     let mgr = BritRefManager::new(tmp.path()).unwrap();
     let node = build(&k, "elohim-edge:storage", "closure-1", true);
-    mgr.put_build_ref("elohim-edge:storage", "HEAD", &json(&node)).unwrap();
+    mgr.put_build_ref("elohim-edge:storage", "HEAD", &node).unwrap();
     assert_eq!(
         verified(mgr.get_build_ref("elohim-edge:storage", "HEAD").unwrap()),
         node
@@ -154,8 +194,7 @@ fn get_build_ref_on_a_commit_without_a_note_is_absent() {
     let k = key(&tmp, "a");
     let mgr = BritRefManager::new(tmp.path()).unwrap();
     let first = git(tmp.path(), &["rev-parse", "HEAD"]);
-    mgr.put_build_ref("s", &first, &json(&build(&k, "s", "c", true)))
-        .unwrap();
+    mgr.put_build_ref("s", &first, &build(&k, "s", "c", true)).unwrap();
     commit_empty(tmp.path(), "second");
     assert_eq!(mgr.get_build_ref("s", "HEAD").unwrap(), Lookup::Absent);
     verified(mgr.get_build_ref("s", &first).unwrap());
@@ -170,17 +209,21 @@ fn unsigned_payloads_are_not_returned() {
     let unsigned = serde_json::json!({
         "attestationCid": "abc123", "outputCid": "def456", "agentId": "agent001", "builtAt": "2026-04-16T10:00:00Z"
     });
-    mgr.put_build_ref("elohim-edge:storage", "HEAD", &unsigned).unwrap();
+    raw_note(
+        tmp.path(),
+        "refs/notes/brit/build/elohim-edge%3Astorage",
+        &head,
+        &unsigned,
+    );
     assert!(matches!(
         mgr.get_build_ref("elohim-edge:storage", "HEAD").unwrap(),
         Lookup::Unverifiable { at, .. } if at == head
     ));
-    mgr.put_deploy_ref(
-        "elohim-edge:storage",
-        "staging",
+    raw_ref(
+        tmp.path(),
+        "refs/notes/brit/deploy/elohim-edge%3Astorage/staging",
         &serde_json::json!({"artifactCid": "abc123", "healthStatus": "healthy"}),
-    )
-    .unwrap();
+    );
     assert!(matches!(
         mgr.get_deploy_ref("elohim-edge:storage", "staging").unwrap(),
         Lookup::Unverifiable { .. }
@@ -189,7 +232,7 @@ fn unsigned_payloads_are_not_returned() {
     let k = key(&tmp, "a");
     let mut blank = build(&k, "s", "c", true);
     blank.signature = String::new();
-    mgr.put_build_ref("s", "HEAD", &json(&blank)).unwrap();
+    raw_note(tmp.path(), "refs/notes/brit/build/s", &head, &json(&blank));
     assert!(matches!(
         mgr.get_build_ref("s", "HEAD").unwrap(),
         Lookup::Unverifiable { .. }
@@ -202,15 +245,22 @@ fn put_and_get_deploy_ref_binds_step_and_env() {
     let k = key(&tmp, "a");
     let mgr = BritRefManager::new(tmp.path()).unwrap();
     let node = deploy(&k, "elohim-edge:storage", "staging");
-    mgr.put_deploy_ref("elohim-edge:storage", "staging", &json(&node))
-        .unwrap();
+    mgr.put_deploy_ref("elohim-edge:storage", "staging", &node).unwrap();
     assert_eq!(
         verified(mgr.get_deploy_ref("elohim-edge:storage", "staging").unwrap()),
         node
     );
-    // The same signed node filed under another environment does not bind there.
-    mgr.put_deploy_ref("elohim-edge:storage", "production", &json(&node))
-        .unwrap();
+    // The same signed node filed under another environment does not bind there; brit will not
+    // file it there itself.
+    assert!(matches!(
+        mgr.put_deploy_ref("elohim-edge:storage", "production", &node),
+        Err(RefError::WouldNotVerify { .. })
+    ));
+    raw_ref(
+        tmp.path(),
+        "refs/notes/brit/deploy/elohim-edge%3Astorage/production",
+        &json(&node),
+    );
     assert!(matches!(
         mgr.get_deploy_ref("elohim-edge:storage", "production").unwrap(),
         Lookup::Unverifiable { .. }
@@ -223,7 +273,7 @@ fn put_and_get_validate_ref_binds_its_check() {
     let k = key(&tmp, "a");
     let mgr = BritRefManager::new(tmp.path()).unwrap();
     let node = validation(&k, "sonarqube-scan@v10", ValidationResult::Fail);
-    mgr.put_validate_ref("elohim-edge:storage", "sonarqube-scan@v10", &json(&node))
+    mgr.put_validate_ref("elohim-edge:storage", "sonarqube-scan@v10", &node)
         .unwrap();
     assert_eq!(
         verified(
@@ -233,8 +283,15 @@ fn put_and_get_validate_ref_binds_its_check() {
         node,
         "a valid failing check is returned"
     );
-    mgr.put_validate_ref("elohim-edge:storage", "lint@v1", &json(&node))
-        .unwrap();
+    assert!(matches!(
+        mgr.put_validate_ref("elohim-edge:storage", "lint@v1", &node),
+        Err(RefError::WouldNotVerify { .. })
+    ));
+    raw_ref(
+        tmp.path(),
+        "refs/notes/brit/validate/elohim-edge%3Astorage/lint%40v1",
+        &json(&node),
+    );
     assert!(matches!(
         mgr.get_validate_ref("elohim-edge:storage", "lint@v1").unwrap(),
         Lookup::Unverifiable { .. }
@@ -246,9 +303,9 @@ fn list_build_refs() {
     let tmp = init_git_repo();
     let k = key(&tmp, "a");
     let mgr = BritRefManager::new(tmp.path()).unwrap();
-    mgr.put_build_ref("step-a", "HEAD", &json(&build(&k, "step-a", "c", true)))
+    mgr.put_build_ref("step-a", "HEAD", &build(&k, "step-a", "c", true))
         .unwrap();
-    mgr.put_build_ref("step-b", "HEAD", &json(&build(&k, "step-b", "c", true)))
+    mgr.put_build_ref("step-b", "HEAD", &build(&k, "step-b", "c", true))
         .unwrap();
     let mut refs = mgr.list_build_refs(None).unwrap();
     refs.sort();
@@ -266,13 +323,13 @@ fn find_build_by_inputs_hits_across_commits_and_ignores_other_hashes() {
     let mgr = BritRefManager::new(tmp.path()).unwrap();
     let step = "elohim-edge:storage";
     let first = commit_empty(tmp.path(), "first");
-    mgr.put_build_ref(step, &first, &json(&build(&a, step, "closure-1", true)))
+    mgr.put_build_ref(step, &first, &build(&a, step, "closure-1", true))
         .unwrap();
     let second = commit_empty(tmp.path(), "second");
-    mgr.put_build_ref(step, &second, &json(&build(&a, step, "closure-2", false)))
+    mgr.put_build_ref(step, &second, &build(&a, step, "closure-2", false))
         .unwrap();
     let third = commit_empty(tmp.path(), "third");
-    mgr.put_build_ref(step, &third, &json(&build(&b, step, "closure-1", true)))
+    mgr.put_build_ref(step, &third, &build(&b, step, "closure-1", true))
         .unwrap();
 
     let hits = mgr.find_build_by_inputs(step, "closure-1").unwrap();
@@ -303,19 +360,18 @@ fn find_drops_tampered_notes_and_names_them() {
     let mgr = BritRefManager::new(tmp.path()).unwrap();
     let step = "gate:x";
     let good = commit_empty(tmp.path(), "good");
-    mgr.put_build_ref(step, &good, &json(&build(&k, step, "c", true)))
-        .unwrap();
+    mgr.put_build_ref(step, &good, &build(&k, step, "c", true)).unwrap();
+    let notes_ref = "refs/notes/brit/build/gate%3Ax";
     let flipped = commit_empty(tmp.path(), "flipped");
     let mut v = json(&build(&k, step, "c", false));
     v["success"] = serde_json::Value::Bool(true);
-    mgr.put_build_ref(step, &flipped, &v).unwrap();
+    raw_note(tmp.path(), notes_ref, &flipped, &v);
     let swapped = commit_empty(tmp.path(), "swapped");
-    mgr.put_build_ref(step, &swapped, &json(&build(&k, "gate:y", "c", true)))
-        .unwrap();
+    raw_note(tmp.path(), notes_ref, &swapped, &json(&build(&k, "gate:y", "c", true)));
     let extended = commit_empty(tmp.path(), "extended");
     let mut v = json(&build(&k, step, "c", true));
     v["trusted"] = serde_json::Value::Bool(true);
-    mgr.put_build_ref(step, &extended, &v).unwrap();
+    raw_note(tmp.path(), notes_ref, &extended, &v);
 
     let scan = mgr.find_build_by_inputs(step, "c").unwrap();
     assert_eq!(
@@ -378,8 +434,8 @@ fn covenant_put_is_append_only_and_lists_verified_clauses_in_valid_from_order() 
     let early = clause(&k, "s1", "2026-10-19T09:00:00Z", "early");
     let late_cid = late.compute_cid().unwrap().to_string();
     let early_cid = early.compute_cid().unwrap().to_string();
-    mgr.put_covenant_clause("s1", &late_cid, &json(&late)).unwrap();
-    mgr.put_covenant_clause("s1", &early_cid, &json(&early)).unwrap();
+    assert_eq!(mgr.put_covenant_clause(&late).unwrap(), late_cid);
+    assert_eq!(mgr.put_covenant_clause(&early).unwrap(), early_cid);
 
     let scan = mgr.list_covenant_clauses("s1").unwrap();
     assert!(scan.unverifiable.is_empty(), "{:?}", scan.unverifiable);
@@ -390,11 +446,16 @@ fn covenant_put_is_append_only_and_lists_verified_clauses_in_valid_from_order() 
     assert_eq!(rows[1].cid, late_cid);
     assert_eq!(scan.verified[1].0, format!("refs/notes/brit/covenant/s1/{late_cid}"));
 
-    // Same cid, same content: idempotent. Same cid, different content: refused, original kept.
-    mgr.put_covenant_clause("s1", &late_cid, &json(&late)).unwrap();
-    let other = clause(&k, "s1", "2026-10-19T12:00:00Z", "tampered");
-    assert!(mgr.put_covenant_clause("s1", &late_cid, &json(&other)).is_err());
+    // Same cid, same content: idempotent. A ref at a clause's CID that already holds other
+    // bytes: refused, and those bytes are kept.
+    mgr.put_covenant_clause(&late).unwrap();
     assert_eq!(mgr.list_covenant_clauses("s1").unwrap().verified[1].1.clause, late);
+    let other = clause(&k, "s1", "2026-10-19T12:00:00Z", "other");
+    let other_ref = format!("refs/notes/brit/covenant/s1/{}", other.compute_cid().unwrap());
+    raw_ref(tmp.path(), &other_ref, &serde_json::json!({"squatter": true}));
+    assert!(matches!(mgr.put_covenant_clause(&other), Err(RefError::Exists(_))));
+    let kept = git(tmp.path(), &["cat-file", "-p", &other_ref]);
+    assert_eq!(kept, r#"{"squatter":true}"#);
 }
 
 #[test]
@@ -405,7 +466,7 @@ fn covenant_reads_check_the_cid_the_signature_and_the_session() {
     assert!(mgr.list_covenant_clauses("nobody").unwrap().verified.is_empty());
     let one = clause(&k, "s:1", "2026-10-19T09:00:00Z", "q");
     let one_cid = one.compute_cid().unwrap().to_string();
-    mgr.put_covenant_clause("s:1", &one_cid, &json(&one)).unwrap();
+    assert_eq!(mgr.put_covenant_clause(&one).unwrap(), one_cid);
     assert!(mgr.list_covenant_clauses("other").unwrap().verified.is_empty());
     assert_eq!(mgr.list_covenant_clauses("s:1").unwrap().verified.len(), 1);
     let got = verified(mgr.get_covenant_clause(&one_cid).unwrap());
@@ -414,14 +475,32 @@ fn covenant_reads_check_the_cid_the_signature_and_the_session() {
 
     // A record filed under a CID that is not its clause's.
     let wrong = BritCid::compute(b"some other clause").to_string();
-    mgr.put_covenant_clause("s:1", &wrong, &json(&one)).unwrap();
-    // A record whose clause changed after signing, filed under the changed clause's CID.
+    let record = |cid: &str, c: &CovenantClauseContentNode| serde_json::json!({"cid": cid, "clause": json(c)});
+    raw_ref(
+        tmp.path(),
+        &format!("refs/notes/brit/covenant/s%3A1/{wrong}"),
+        &record(&wrong, &one),
+    );
+    // A record whose clause changed after signing, filed under the changed clause's CID. brit
+    // refuses to write it itself.
     let mut tampered = one.clone();
     tampered.quote = "not what was said".into();
     let tampered_cid = tampered.compute_cid().unwrap().to_string();
-    mgr.put_covenant_clause("s:1", &tampered_cid, &json(&tampered)).unwrap();
+    assert!(matches!(
+        mgr.put_covenant_clause(&tampered),
+        Err(RefError::WouldNotVerify { .. })
+    ));
+    raw_ref(
+        tmp.path(),
+        &format!("refs/notes/brit/covenant/s%3A1/{tampered_cid}"),
+        &record(&tampered_cid, &tampered),
+    );
     // A valid record of session s:1 filed under session s:2.
-    mgr.put_covenant_clause("s:2", &one_cid, &json(&one)).unwrap();
+    raw_ref(
+        tmp.path(),
+        &format!("refs/notes/brit/covenant/s%3A2/{one_cid}"),
+        &record(&one_cid, &one),
+    );
 
     let scan = mgr.list_covenant_clauses("s:1").unwrap();
     assert_eq!(scan.verified.len(), 1);
@@ -450,7 +529,7 @@ fn a_foreign_key_note_is_returned_under_its_own_agent_id() {
     let foreign = key(&tmp, "foreign");
     let mgr = BritRefManager::new(tmp.path()).unwrap();
     let node = build(&foreign, "s", "c", true);
-    mgr.put_build_ref("s", "HEAD", &json(&node)).unwrap();
+    mgr.put_build_ref("s", "HEAD", &node).unwrap();
     let got = verified(mgr.get_build_ref("s", "HEAD").unwrap());
     assert_eq!(got.agent_id, foreign.agent_id());
     assert_ne!(got.agent_id, mine.agent_id(), "brit does not judge whose key it is");

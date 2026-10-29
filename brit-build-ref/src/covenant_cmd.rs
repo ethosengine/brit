@@ -61,9 +61,9 @@ pub fn put(repo: &Path, args: &PutArgs<'_>) -> anyhow::Result<()> {
     let canonical = node.canonical_bytes()?;
     node.signature = agent_key.sign(&canonical);
 
-    let cid = store.put(&node)?.to_string();
+    store.put(&node)?;
+    let cid = refs.put_covenant_clause(&node)?;
     let clause = serde_json::to_value(&node)?;
-    refs.put_covenant_clause(args.session, &cid, &clause)?;
 
     if args.output_json {
         println!(
