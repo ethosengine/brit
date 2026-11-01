@@ -2,7 +2,7 @@ lints.workspace = true
 
 [package]
 name = "gix-diff"
-version = "0.69.0"
+version = "0.69.1"
 repository = "https://github.com/GitoxideLabs/gitoxide"
 license = "MIT OR Apache-2.0"
 description = "Calculate differences between various git objects"
@@ -52,14 +52,14 @@ required-features = ["blob"]
 path = "./benches/rewrite_tracker.rs"
 
 [dependencies]
-gix-index = { version = "^0.57.0", path = "../gix-index", registry = "elohim", optional = true }
-gix-pathspec = { version = "^0.22.0", path = "../gix-pathspec", registry = "elohim", optional = true }
-gix-attributes = { version = "^0.37.0", path = "../gix-attributes", registry = "elohim", optional = true }
+gix-index = { version = "^0.57.1", path = "../gix-index", registry = "elohim", optional = true }
+gix-pathspec = { version = "^0.22.1", path = "../gix-pathspec", registry = "elohim", optional = true }
+gix-attributes = { version = "^0.37.1", path = "../gix-attributes", registry = "elohim", optional = true }
 gix-hash = { version = "^0.28.0", path = "../gix-hash", registry = "elohim" }
 gix-error = { version = "^0.5.1", path = "../gix-error", registry = "elohim" }
 gix-object = { version = "^0.66.0", path = "../gix-object", registry = "elohim" }
-gix-filter = { version = "^0.36.0", path = "../gix-filter", registry = "elohim", optional = true }
-gix-worktree = { version = "^0.58.0", path = "../gix-worktree", registry = "elohim", default-features = false, features = ["attributes"], optional = true }
+gix-filter = { version = "^0.36.1", path = "../gix-filter", registry = "elohim", optional = true }
+gix-worktree = { version = "^0.58.1", path = "../gix-worktree", registry = "elohim", default-features = false, features = ["attributes"], optional = true }
 gix-command = { version = "^0.12.0", path = "../gix-command", registry = "elohim", optional = true }
 gix-path = { version = "^0.14.0", path = "../gix-path", registry = "elohim", optional = true }
 gix-fs = { version = "^0.24.0", path = "../gix-fs", registry = "elohim", optional = true }

@@ -4,7 +4,7 @@ lints.workspace = true
 name = "gitoxide-core"
 description = "The library implementing all capabilities of the gitoxide CLI"
 repository = "https://github.com/GitoxideLabs/gitoxide"
-version = "0.63.0"
+version = "0.63.1"
 authors = ["Sebastian Thiel <sebastian.thiel@icloud.com>"]
 license = "MIT OR Apache-2.0"
 edition = "2024"
@@ -61,11 +61,11 @@ gix-sequencer = { version = "0.0.0", path = "../gix-sequencer", features = ["ser
 anyhow = "1.0.102"
 gix-config-value = { version = "^0.21.0", path = "../gix-config-value", registry = "elohim" }
 # deselect everything else (like "performance") as this should be controllable by the parent application.
-gix = { version = "^0.89.0", path = "../gix", registry = "elohim", default-features = false, features = ["anyhow", "merge", "blob-diff", "blame", "revision", "mailmap", "excludes", "attributes", "worktree-mutation", "credentials", "interrupt", "status", "dirwalk", "command"] }
-gix-pack = { version = "^0.76.0", path = "../gix-pack", registry = "elohim", default-features = false, features = ["pack-cache-lru-dynamic", "pack-cache-lru-static", "generate", "streaming-input"] }
+gix = { version = "^0.89.1", path = "../gix", registry = "elohim", default-features = false, features = ["anyhow", "merge", "blob-diff", "blame", "revision", "mailmap", "excludes", "attributes", "worktree-mutation", "credentials", "interrupt", "status", "dirwalk", "command"] }
+gix-pack = { version = "^0.76.1", path = "../gix-pack", registry = "elohim", default-features = false, features = ["pack-cache-lru-dynamic", "pack-cache-lru-static", "generate", "streaming-input"] }
 gix-transport = { version = "^0.61.0", path = "../gix-transport", registry = "elohim", default-features = false }
-gix-archive = { version = "^0.38.0", path = "../gix-archive", registry = "elohim", optional = true, features = ["tar", "tar_gz"] }
-gix-status = { version = "^0.36.0", path = "../gix-status", registry = "elohim" }
+gix-archive = { version = "^0.38.1", path = "../gix-archive", registry = "elohim", optional = true, features = ["tar", "tar_gz"] }
+gix-status = { version = "^0.36.1", path = "../gix-status", registry = "elohim" }
 gix-fsck = { version = "^0.27.0", path = "../gix-fsck", registry = "elohim" }
 serde = { version = "1.0.114", default-features = false, features = ["derive"] }
 bytesize = "2.3.1"

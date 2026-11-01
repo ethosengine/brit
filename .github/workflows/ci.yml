@@ -546,12 +546,15 @@ jobs:
 
   test-32bit:
     strategy:
+      fail-fast: false
       matrix:
         container-architecture: [i386, arm32v7]
         include:
           - container-architecture: i386
             runner-architecture: amd64
-            runner-os: ubuntu-latest
+            # Ubuntu 26.04 / Docker 29.4.2 denies i386 socketcall, breaking DNS.
+            # Keep the normal seccomp profile; return after runner-images#14790.
+            runner-os: ubuntu-24.04
             host-triple: i686-unknown-linux-gnu
           - container-architecture: arm32v7
             runner-architecture: arm64
@@ -580,8 +583,8 @@ jobs:
             python3  # Terminal recovery tests require the standard-library pty module.
           )
           dpkg --add-architecture "$RUNNER_ARCHITECTURE"
-          apt-get update
-          apt-get install --no-install-recommends -y -- "${prerequisites[@]}"
+          apt-get -o Acquire::Retries=3 update --error-on=any
+          apt-get -o Acquire::Retries=3 install --no-install-recommends -y -- "${prerequisites[@]}"
         shell: bash # This step needs `bash`, and the default in container jobs is `sh`.
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:

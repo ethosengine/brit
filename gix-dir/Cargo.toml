@@ -2,7 +2,7 @@ lints.workspace = true
 
 [package]
 name = "gix-dir"
-version = "0.31.0"
+version = "0.31.1"
 repository = "https://github.com/GitoxideLabs/gitoxide"
 license = "MIT OR Apache-2.0"
 description = "A crate of the gitoxide project dealing with directory walks"
@@ -24,12 +24,12 @@ sha256 = ["gix-index/sha256", "gix-worktree/sha256"]
 [dependencies]
 gix-error = { version = "^0.5.1", path = "../gix-error", registry = "elohim" }
 gix-trace = { version = "^0.3.0", path = "../gix-trace", registry = "elohim" }
-gix-index = { version = "^0.57.0", path = "../gix-index", registry = "elohim" }
+gix-index = { version = "^0.57.1", path = "../gix-index", registry = "elohim" }
 gix-discover = { version = "^0.57.0", path = "../gix-discover", registry = "elohim" }
 gix-fs = { version = "^0.24.0", path = "../gix-fs", registry = "elohim" }
 gix-path = { version = "^0.14.0", path = "../gix-path", registry = "elohim" }
-gix-pathspec = { version = "^0.22.0", path = "../gix-pathspec", registry = "elohim" }
-gix-worktree = { version = "^0.58.0", path = "../gix-worktree", registry = "elohim", default-features = false }
+gix-pathspec = { version = "^0.22.1", path = "../gix-pathspec", registry = "elohim" }
+gix-worktree = { version = "^0.58.1", path = "../gix-worktree", registry = "elohim", default-features = false }
 gix-object = { version = "^0.66.0", path = "../gix-object", registry = "elohim" }
 gix-ignore = { version = "^0.24.0", path = "../gix-ignore", registry = "elohim" }
 gix-utils = { version = "^0.5.1", path = "../gix-utils", registry = "elohim", features = ["bstr"] }

@@ -2,7 +2,7 @@ lints.workspace = true
 
 [package]
 name = "gix-protocol"
-version = "0.67.0"
+version = "0.67.1"
 repository = "https://github.com/GitoxideLabs/gitoxide"
 license = "MIT OR Apache-2.0"
 description = "A crate of the gitoxide project for implementing git protocols"
@@ -75,7 +75,7 @@ path = "tests/async-protocol.rs"
 required-features = ["async-client"]
 
 [dependencies]
-gix-pack = { version = "^0.76.0", path = "../gix-pack", registry = "elohim", default-features = false, features = ["generate"] }
+gix-pack = { version = "^0.76.1", path = "../gix-pack", registry = "elohim", default-features = false, features = ["generate"] }
 thiserror = "2.0.18"
 gix-error = { version = "^0.5.1", path = "../gix-error", registry = "elohim" }
 gix-transport = { version = "^0.61.0", path = "../gix-transport", registry = "elohim" }

@@ -2,7 +2,7 @@ lints.workspace = true
 
 [package]
 name = "gix-pack"
-version = "0.76.0"
+version = "0.76.1"
 repository = "https://github.com/GitoxideLabs/gitoxide"
 authors = ["Sebastian Thiel <sebastian.thiel@icloud.com>"]
 license = "MIT OR Apache-2.0"
@@ -59,7 +59,7 @@ gix-hashtable = { version = "^0.18.0", path = "../gix-hashtable", registry = "el
 
 # for streaming of packs (input, output)
 gix-traverse = { version = "^0.63.0", path = "../gix-traverse", registry = "elohim", optional = true }
-gix-diff = { version = "^0.69.0", path = "../gix-diff", registry = "elohim", default-features = false, optional = true }
+gix-diff = { version = "^0.69.1", path = "../gix-diff", registry = "elohim", default-features = false, optional = true }
 
 memmap2 = "0.9.11"
 smallvec = "1.15.1"

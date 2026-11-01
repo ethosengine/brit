@@ -2,7 +2,7 @@ lints.workspace = true
 
 [package]
 name = "gix-status"
-version = "0.36.0"
+version = "0.36.1"
 repository = "https://github.com/GitoxideLabs/gitoxide"
 license = "MIT OR Apache-2.0"
 description = "A crate of the gitoxide project dealing with 'git status'-like functionality"
@@ -26,18 +26,18 @@ worktree-rewrites = ["dep:gix-dir", "dep:gix-diff"]
 gix-trace = { version = "^0.3.0", path = "../gix-trace", registry = "elohim" }
 gix-utils = { version = "^0.5.1", path = "../gix-utils", registry = "elohim", features = ["interrupt", "progress"] }
 gix-parallel = { version = "^0.50.0", path = "../gix-parallel", registry = "elohim" }
-gix-index = { version = "^0.57.0", path = "../gix-index", registry = "elohim" }
+gix-index = { version = "^0.57.1", path = "../gix-index", registry = "elohim" }
 gix-fs = { version = "^0.24.0", path = "../gix-fs", registry = "elohim" }
 gix-hash = { version = "^0.28.0", path = "../gix-hash", registry = "elohim" }
 gix-error = { version = "^0.5.1", path = "../gix-error", registry = "elohim" }
 gix-object = { version = "^0.66.0", path = "../gix-object", registry = "elohim" }
 gix-path = { version = "^0.14.0", path = "../gix-path", registry = "elohim" }
-gix-filter = { version = "^0.36.0", path = "../gix-filter", registry = "elohim" }
-gix-worktree = { version = "^0.58.0", path = "../gix-worktree", registry = "elohim", default-features = false, features = ["attributes"] }
-gix-pathspec = { version = "^0.22.0", path = "../gix-pathspec", registry = "elohim" }
+gix-filter = { version = "^0.36.1", path = "../gix-filter", registry = "elohim" }
+gix-worktree = { version = "^0.58.1", path = "../gix-worktree", registry = "elohim", default-features = false, features = ["attributes"] }
+gix-pathspec = { version = "^0.22.1", path = "../gix-pathspec", registry = "elohim" }
 
-gix-dir = { version = "^0.31.0", path = "../gix-dir", registry = "elohim", optional = true }
-gix-diff = { version = "^0.69.0", path = "../gix-diff", registry = "elohim", default-features = false, features = ["blob"], optional = true }
+gix-dir = { version = "^0.31.1", path = "../gix-dir", registry = "elohim", optional = true }
+gix-diff = { version = "^0.69.1", path = "../gix-diff", registry = "elohim", default-features = false, features = ["blob"], optional = true }
 
 filetime = "0.2.29"
 bstr = { version = "1.12.0", default-features = false }
