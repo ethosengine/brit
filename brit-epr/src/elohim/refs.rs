@@ -198,12 +198,26 @@ impl<'a> Scratch<'a> {
 impl Drop for Scratch<'_> {
     fn drop(&mut self) {
         // It may not exist (no head, and `notes add` failed); either way it is gone after this.
-        let _ = Command::new("git")
-            .args(["update-ref", "-d", &self.name])
-            .current_dir(&self.refs.repo_path)
-            .output();
+        // A delete takes `packed-refs.lock`, which concurrent writers' deletes hold too, so one
+        // that loses past git's own lock timeout is retried while the ref is still there.
+        let git = |args: &[&str]| {
+            Command::new("git")
+                .args(args)
+                .current_dir(&self.refs.repo_path)
+                .output()
+                .is_ok_and(|o| o.status.success())
+        };
+        for attempt in 1..=SCRATCH_DELETE_ATTEMPTS {
+            if git(&["update-ref", "-d", &self.name]) || !git(&["show-ref", "--verify", "--quiet", &self.name]) {
+                return;
+            }
+            std::thread::sleep(std::time::Duration::from_millis(25 * u64::from(attempt)));
+        }
     }
 }
+
+/// Deletes of one scratch ref before `sweep_scratch` is left to remove it once stale.
+const SCRATCH_DELETE_ATTEMPTS: u32 = 8;
 
 /// A build note: verified, and bound to the step whose ref it was found under.
 fn read_build(bytes: &[u8], step_name: &str) -> Result<BuildAttestationContentNode, String> {
