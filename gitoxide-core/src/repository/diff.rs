@@ -272,6 +272,11 @@ pub fn working(repo: gix::Repository, out: &mut dyn std::io::Write, cached: bool
     // Buffer output so a refused path never leaves a misleading partial patch.
     let mut rendered = Vec::new();
     for path in paths {
+        // HEAD and index identities prove no staged change, even for paths whose
+        // patches we cannot render. Worktree comparisons still need to read disk.
+        if cached && before.get(&path) == after.get(&path) {
+            continue;
+        }
         if before
             .get(&path)
             .into_iter()

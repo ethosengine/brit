@@ -282,6 +282,56 @@ fn patches_match_git_and_leave_index_and_objects_unchanged() -> Result<()> {
 }
 
 #[test]
+fn staged_diff_skips_unchanged_unsupported_paths_but_refuses_changed_ones() -> Result<()> {
+    let repo = TestRepo::new("cached-unsupported-neighbor")?;
+    repo.commit_file("ordinary", "base\n")?;
+    repo.commit_file("archive", "archive base\n")?;
+    repo.commit_file(".gitattributes", "archive diff=lfs\n")?;
+    let head = repo.head_id()?;
+    git(
+        repo.path(),
+        &["update-index", "--add", "--cacheinfo", &format!("160000,{head},sub")],
+    )?;
+    git(repo.path(), &["commit", "-m", "unchanged gitlink"])?;
+    ensure!(success(repo.path(), &["diff", "--cached"])?.stdout.is_empty());
+    fs::write(repo.path().join("ordinary"), "staged change\n")?;
+    success(repo.path(), &["add", "--", "ordinary"])?;
+    let before = index(repo.path())?;
+    let patch = success(repo.path(), &["diff", "--cached"])?;
+    assert_eq!(
+        patch.stdout.as_bytes(),
+        git(repo.path(), &["diff", "--cached", "--no-ext-diff", "--no-color"])?
+    );
+    ensure!(patch.stdout.contains("+staged change"));
+    assert_eq!(index(repo.path())?, before, "inspection preserves index bytes");
+
+    // A staged attribute-driven change must still refuse without a partial patch.
+    fs::write(repo.path().join("archive"), "changed archive\n")?;
+    git(repo.path(), &["add", "--", "archive"])?;
+    let before = index(repo.path())?;
+    let refused = brit(repo.path(), &["diff", "--cached"])?;
+    ensure!(!refused.status.success() && refused.stderr.contains("diff attributes"));
+    ensure!(refused.stdout.is_empty(), "refusal emits no partial patch");
+    assert_eq!(index(repo.path())?, before);
+    git(repo.path(), &["restore", "--staged", "--", "archive"])?;
+    // Equal content alone is insufficient: staged mode changes still need a patch.
+    git(repo.path(), &["update-index", "--chmod=+x", "archive"])?;
+    let refused = brit(repo.path(), &["diff", "--cached"])?;
+    ensure!(!refused.status.success() && refused.stderr.contains("diff attributes"));
+    ensure!(refused.stdout.is_empty());
+    git(repo.path(), &["restore", "--staged", "--", "archive"])?;
+    let new_head = repo.head_id()?;
+    git(
+        repo.path(),
+        &["update-index", "--cacheinfo", &format!("160000,{new_head},sub")],
+    )?;
+    let refused = brit(repo.path(), &["diff", "--cached"])?;
+    ensure!(!refused.status.success() && refused.stderr.contains("submodule patches"));
+    ensure!(refused.stdout.is_empty());
+    Ok(())
+}
+
+#[test]
 fn ignored_paths_and_external_filters_refuse_atomically() -> Result<()> {
     let repo = fixture("filters")?;
     fs::write(repo.path().join(".gitignore"), "ignored\n")?;
