@@ -337,11 +337,17 @@ def existing_decision(index_url: str, name: str, version: str, local: bytes, pac
     checksum = hashlib.sha256(local).hexdigest()
     if checksum == record["cksum"]:
         return "skip-exact"
-    if payloads_equivalent(local, remote, name, version):
+    local_files = archive_files(local, name, version)
+    remote_files = archive_files(remote, name, version)
+    changed = sorted(path for path in local_files.keys() | remote_files.keys()
+                     if local_files.get(path) != remote_files.get(path))
+    if not changed:
         return "skip-equivalent"
     raise PublishError(
         f"immutable version collision for {name} {version}: local crate SHA-256 "
-        f"{checksum}, registry {record['cksum']}; bump the package version"
+        f"{checksum}, registry {record['cksum']}; changed files: {json.dumps(changed[:12])}"
+        f"{f' (+{len(changed) - 12} more)' if len(changed) > 12 else ''}; "
+        "bump the package version"
     )
 
 

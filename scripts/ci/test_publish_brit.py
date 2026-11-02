@@ -406,6 +406,20 @@ class RegistryTests(unittest.TestCase):
         with self.assertRaisesRegex(publish_brit.PublishError, "checksum mismatch"):
             publish_brit.existing_decision(self.registry.url, "brit-cli", "0.1.1", new, package("brit-cli", "0.1.1", Path("/fake")))
 
+    def test_lock_only_collision_names_the_changed_payload(self):
+        files = {"Cargo.toml": b"manifest", "Cargo.lock": b"old dependencies"}
+        old = crate_archive("brit-cli", "0.1.1", files)
+        new = crate_archive("brit-cli", "0.1.1", dict(files, **{"Cargo.lock": b"new dependencies"}))
+        self.registry.records["/" + publish_brit.sparse_path("brit-cli")] = [{
+            "name": "brit-cli", "vers": "0.1.1", "cksum": publish_brit.hashlib.sha256(old).hexdigest(),
+        }]
+        self.registry.archives["/crates/brit-cli/0.1.1/download"] = old
+        with self.assertRaisesRegex(publish_brit.PublishError, r'immutable version collision.*changed files: \["Cargo.lock"\]'):
+            publish_brit.existing_decision(
+                self.registry.url, "brit-cli", "0.1.1", new,
+                package("brit-cli", "0.1.1", Path("/fake")),
+            )
+
     def test_executable_mode_and_unsafe_archive_entries_refuse(self):
         files = {"Cargo.toml": b"manifest", "src/main.rs": b"main"}
         old = crate_archive("brit-cli", "0.1.1", files)
