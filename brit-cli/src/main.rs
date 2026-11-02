@@ -9,6 +9,7 @@ mod bridge;
 mod commands;
 mod context;
 mod error;
+mod native_task;
 mod output;
 mod surface;
 mod tree;
@@ -38,6 +39,8 @@ struct Cli {
 
 #[derive(Subcommand)]
 enum Command {
+    /// Execute one exact local source candidate through the installed Ark task supervisor.
+    Run(native_task::RunArgs),
     /// Graph operations on the build constellation
     #[command(subcommand)]
     Graph(GraphCmd),
@@ -150,6 +153,7 @@ enum BaselineCmd {
 
 fn run_build(command: Command) -> Result<()> {
     match command {
+        Command::Run(args) => native_task::run(args),
         Command::Graph(GraphCmd::Discover { repo }) => commands::graph_discover::run(&repo),
         Command::Graph(GraphCmd::Show { repo, format }) => commands::graph_show::run(&repo, &format),
         Command::Affected(args) => commands::affected::run(&args.repo, args.files.as_deref(), args.since.as_deref()),
