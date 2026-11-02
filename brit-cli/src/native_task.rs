@@ -21,7 +21,10 @@ pub struct RunArgs {
 pub fn run(args: RunArgs) -> Result<()> {
     // These paths are private immutable custody and a fresh run layout. Git discovery and
     // repository writer leases belong to Git mutations, which this command never performs.
-    let mut command = Command::new("ark");
+    // An explicit runtime selection must never silently execute a different PATH artifact.
+    // Preserve byte-oriented paths; an empty or invalid selection fails at exec.
+    let ark = std::env::var_os("ARK_BIN").unwrap_or_else(|| "ark".into());
+    let mut command = Command::new(ark);
     command.args(["task", "run", "--root", &args.root]);
     command.arg("--store").arg(args.store);
     command.arg("--request").arg(args.request);

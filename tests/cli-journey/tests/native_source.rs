@@ -169,10 +169,7 @@ fn native_build_run_uses_ark_and_fixed_candidate() {
     let source = temp.path().join("source");
     let store = temp.path().join("store");
     let run = temp.path().join("run");
-    let bin = temp.path().join("bin");
     fs::create_dir(&source).expect("source");
-    fs::create_dir(&bin).expect("bin");
-    symlink(&ark, bin.join("ark")).expect("installed Ark on test PATH");
     fs::write(source.join("value"), b"A captured\n").expect("A");
     fs::write(
         temp.path().join(".git"),
@@ -218,7 +215,8 @@ fn native_build_run_uses_ark_and_fixed_candidate() {
         .arg(&artifact)
         .arg("--run-dir")
         .arg(&run)
-        .env("PATH", &bin)
+        .env("ARK_BIN", &ark)
+        .env("PATH", "")
         .current_dir(temp.path())
         .stdout(Stdio::piped())
         .stderr(Stdio::piped())
@@ -247,4 +245,38 @@ fn native_build_run_uses_ark_and_fixed_candidate() {
         b"B independent edit\n"
     );
     assert!(outcome["output"].as_str().is_some());
+}
+
+#[test]
+fn native_explicit_ark_selection_never_falls_back() {
+    use std::process::Command;
+    let temp = tempfile::tempdir().expect("fixture");
+    // If fallback occurs this real executable would parse the forwarded arguments,
+    // producing a different diagnostic. No shell or hook is involved.
+    symlink(brit_bin().expect("Brit"), temp.path().join("ark")).expect("PATH decoy");
+    for selection in ["", "missing-explicit-ark"] {
+        let output = Command::new(brit_bin().expect("Brit"))
+            .args([
+                "build",
+                "run",
+                "--root",
+                "unused",
+                "--store",
+                "store",
+                "--request",
+                "request",
+                "--artifact",
+                "artifact",
+                "--run-dir",
+                "run",
+            ])
+            .env("ARK_BIN", selection)
+            .env("PATH", temp.path())
+            .current_dir(temp.path())
+            .output()
+            .expect("selection refusal");
+        assert!(!output.status.success());
+        assert!(String::from_utf8_lossy(&output.stderr).contains("could not execute installed ark"));
+        assert!(!temp.path().join("run").exists());
+    }
 }

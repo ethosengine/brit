@@ -6,7 +6,7 @@ decisionPoints:
 - name: native_task::run
   kind: verdict-fn
   sourceLocation: {file: src/native_task.rs, modulePath: brit::native_task}
-  summary: Parse native-only arguments and replace the CLI transport with installed Ark; capture delegates to published EPRFS.
+  summary: Parse native-only arguments and exec explicit ARK_BIN (PATH only when absent); capture delegates to published EPRFS.
   concernIds:
   - {id: C0, status: answered, justification: 'Private local source and outcomes; no public heads or new store.'}
   - {id: C1, status: answered, justification: 'Capture returns published false; run delegates without self-acceptance.'}
@@ -26,3 +26,5 @@ decisionPoints:
   - {id: C14, status: partial, justification: 'Underlying errors and residue are retained; CLI is not an acceptance authority.'}
   contractTests:
   - {path: tests/cli-journey/tests/native_source.rs, testName: native_capture_and_git_seal_have_one_root, kind: integration}
+  - {path: tests/cli-journey/tests/native_source.rs, testName: native_explicit_ark_selection_never_falls_back, kind: integration}
+  - {path: tests/cli-journey/tests/native_source.rs, testName: native_build_run_uses_ark_and_fixed_candidate, kind: integration}
