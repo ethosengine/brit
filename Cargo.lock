@@ -748,6 +748,7 @@ version = "0.0.0"
 dependencies = [
  "anyhow",
  "gix-testtools",
+ "libc",
  "regex",
  "serde_json",
  "tempfile",

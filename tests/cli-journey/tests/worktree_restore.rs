@@ -416,10 +416,15 @@ fn suspended_restore(partial: bool) -> Result<(TestRepo, RestoreChild, Vec<u8>)>
                 && entry.metadata().is_ok_and(|meta| meta.len() > 1024 * 1024)
         });
         if temporary {
-            ensure!(Command::new("kill")
-                .args(["-STOP", &child.id().to_string()])
-                .status()?
-                .success());
+            let pid = libc::pid_t::try_from(child.id())?;
+            // Signal the child directly: spawning `kill` can take longer than
+            // the remaining write on a busy/emulated 32-bit runner.
+            // SAFETY: the positive PID names the live child retained above.
+            ensure!(
+                unsafe { libc::kill(pid, libc::SIGSTOP) } == 0,
+                "could not stop restore: {}",
+                std::io::Error::last_os_error()
+            );
             // SIGSTOP is asynchronous. Observe the kernel's stopped state before
             // changing the target or queuing cancellation.
             let status_path = format!("/proc/{}/status", child.id());
