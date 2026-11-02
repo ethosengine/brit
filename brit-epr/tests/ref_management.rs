@@ -444,6 +444,43 @@ fn a_blob_ref_to_a_missing_object_is_an_error_not_an_absence() {
 }
 
 #[test]
+fn covenant_listing_never_admits_another_signed_session() -> Result<(), Box<dyn std::error::Error>> {
+    let tmp = init_git_repo();
+    let k = key(&tmp, "session-isolation");
+    let mgr = BritRefManager::new(tmp.path())?;
+    let sessions = ["victim", "victim/x", "a:b", "a%3Ab", "dots..name", "dots%2E%2Ename"];
+    for session in sessions {
+        let record = clause(&k, session, "2026-11-02T00:00:00Z", "session isolation");
+        mgr.put_covenant_clause(&record)?;
+    }
+    for session in sessions {
+        let scan = mgr.list_covenant_clauses(session)?;
+        assert_eq!(
+            scan.verified.len(),
+            1,
+            "only the requested session may be admitted: {session}"
+        );
+        assert_eq!(scan.verified[0].1.clause.session, session);
+        if session.starts_with("a") || session.starts_with("dots") {
+            assert_eq!(
+                scan.unverifiable.len(),
+                1,
+                "an alias must be reported, not silently discarded"
+            );
+            assert!(scan.unverifiable[0].1.contains("requested session"));
+        } else {
+            assert!(scan.unverifiable.is_empty(), "nested session paths are excluded");
+        }
+    }
+    let record = clause(&k, "unwritten:alias", "2026-11-02T00:00:00Z", "unwritten alias");
+    let cid = mgr.put_covenant_clause(&record)?;
+    assert!(mgr.list_covenant_clauses("unwritten%3Aalias")?.verified.is_empty());
+    assert_eq!(verified(mgr.get_covenant_clause(&cid)?).clause, record);
+    assert!(mgr.list_covenant_clauses("absent")?.verified.is_empty());
+    Ok(())
+}
+
+#[test]
 fn covenant_put_is_append_only_and_lists_verified_clauses_in_valid_from_order() {
     let tmp = init_git_repo();
     let k = key(&tmp, "a");

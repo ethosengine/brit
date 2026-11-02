@@ -499,7 +499,8 @@ impl BritRefManager {
 
     /// Every verified clause recorded for `session`, ordered by the clause's `validFrom` (ties
     /// broken by CID), plus every record under it that failed verification. An unknown session
-    /// is an empty scan.
+    /// has no verified records. Encoded ref segments can alias; the signed session must match
+    /// the requested label exactly, not merely its encoded spelling.
     pub fn list_covenant_clauses(&self, session: &str) -> Result<Scan<CovenantRecord>, RefError> {
         let prefix = format!("{COVENANT_PREFIX}{}/", Self::encode_segment(session));
         let refs: Vec<(String, String)> = self
@@ -507,7 +508,7 @@ impl BritRefManager {
             .into_iter()
             .filter(|(name, _)| name.strip_prefix(&prefix).is_some_and(|rest| !rest.contains('/')))
             .collect();
-        let mut scan = self.covenant_scan(refs)?;
+        let mut scan = self.covenant_scan(refs, Some(session))?;
         scan.verified
             .sort_by(|(_, a), (_, b)| (&a.clause.valid_from, &a.cid).cmp(&(&b.clause.valid_from, &b.cid)));
         Ok(scan)
@@ -522,7 +523,7 @@ impl BritRefManager {
             .into_iter()
             .filter(|(name, _)| name.ends_with(&suffix))
             .collect();
-        let mut scan = self.covenant_scan(refs)?;
+        let mut scan = self.covenant_scan(refs, None)?;
         if !scan.verified.is_empty() {
             return Ok(Lookup::Verified(scan.verified.remove(0).1));
         }
@@ -540,7 +541,11 @@ impl BritRefManager {
         )
     }
 
-    fn covenant_scan(&self, refs: Vec<(String, String)>) -> Result<Scan<CovenantRecord>, RefError> {
+    fn covenant_scan(
+        &self,
+        refs: Vec<(String, String)>,
+        session: Option<&str>,
+    ) -> Result<Scan<CovenantRecord>, RefError> {
         let bodies = self.cat_blobs(refs.iter().map(|(_, oid)| oid.clone()).collect())?;
         let mut scan = Scan::default();
         for ((name, _), body) in refs.into_iter().zip(bodies) {
@@ -549,7 +554,11 @@ impl BritRefManager {
                     .strip_prefix(COVENANT_PREFIX)
                     .and_then(|rest| rest.rsplit_once('/'))
                     .ok_or_else(|| "not a <session>/<cid> covenant ref".to_string())?;
-                read_covenant(&b, session_segment, cid_segment)
+                let record = read_covenant(&b, session_segment, cid_segment)?;
+                if let Some(session) = session {
+                    bound("requested session", &record.clause.session, session)?;
+                }
+                Ok(record)
             });
             match verified {
                 Ok(record) => scan.verified.push((name, record)),
