@@ -449,11 +449,24 @@ fn suspended_restore_attempt(partial: bool) -> Result<Option<(TestRepo, RestoreC
                 ensure!(Instant::now() < deadline, "restore did not stop");
                 std::thread::yield_now();
             }
-            if fs::read(repo.path().join("z-large"))? == b"large dirty\n" {
+            let contents = fs::read(repo.path().join("z-large"))?;
+            if contents == b"large dirty\n" {
                 return Ok(Some((repo, child, before)));
             }
-            let _ = child.kill();
-            let _ = child.wait();
+            ensure!(
+                contents.len() == 128 * 1024 * 1024 && contents.iter().all(|byte| *byte == b'x'),
+                "early publication did not restore the expected object"
+            );
+            // Only successful early completion is a missed setup window. A
+            // product error after publication must still fail this attempt.
+            // SAFETY: this is the same retained child observed stopped above.
+            ensure!(unsafe { libc::kill(pid, libc::SIGCONT) } == 0);
+            let out = child.wait_with_output()?;
+            ensure!(
+                out.status.success(),
+                "early restore failed: {}",
+                String::from_utf8_lossy(&out.stderr)
+            );
             return Ok(None);
         }
         if child.try_wait()?.is_some() || Instant::now() >= deadline {
