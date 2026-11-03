@@ -56,6 +56,7 @@ resolved=$(git rev-parse --verify "$target_oid^{commit}" 2>/dev/null) || refuse 
 git merge-base --is-ancestor "$target_oid" "$source_oid" || refuse 'baseline must be an ancestor of the pushed source; non-fast-forward reach is unsupported'
 command -v epr >/dev/null 2>&1 || refuse 'install the standalone epr evaluator and run epr setup in this clone'
 epr --repo "$root" ready --target "$target_oid" || refuse 'native readiness did not pass; repair its findings before retrying'
+bash "$root/scripts/ci/rust-style.sh" --base "$target_oid" --head "$source_oid" || refuse 'shared Rust discipline did not pass for the pushed commit'
 check_source
 if [ "$first_push" -eq 1 ]; then
     current_base=$(git config --get "$base_key") || refuse 'first-push baseline changed during evaluation'

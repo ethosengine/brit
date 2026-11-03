@@ -10,6 +10,7 @@ export GIT_AUTHOR_NAME='Reach Fixture' GIT_AUTHOR_EMAIL=fixture@example.invalid
 export GIT_COMMITTER_NAME="$GIT_AUTHOR_NAME" GIT_COMMITTER_EMAIL="$GIT_AUTHOR_EMAIL"
 mkdir "$fixture/bin" "$fixture/repo"
 export REACH_TEST_CALLS="$fixture/calls" REACH_TEST_MODE=pass
+export REACH_TEST_STYLE_CALLS="$fixture/style-calls" REACH_TEST_STYLE_MODE=pass
 cat > "$fixture/bin/epr" <<'SH'
 #!/bin/sh
 printf '%s\n' "$@" >> "$REACH_TEST_CALLS"
@@ -30,13 +31,23 @@ git init -q --initial-branch=main
 mkdir .githooks
 cp "$repo_root/.githooks/pre-push" .githooks/pre-push
 chmod +x .githooks/pre-push
+mkdir -p scripts/ci
+cat > scripts/ci/rust-style.sh <<'SH'
+#!/bin/sh
+printf '%s\n' "$@" > "$REACH_TEST_STYLE_CALLS"
+case "$REACH_TEST_STYLE_MODE" in
+  fail) exit 1 ;;
+  unmeasured) exit 2 ;;
+  dirty) printf 'concurrent style edit\n' >> tracked ;;
+esac
+SH
 printf 'base\n' > tracked
 printf 'private/\n' > .gitignore
 printf 'fixture\n' > AGENTS.md
 printf 'fixture\n' > CLAUDE.md
 mkdir .epr-meta
 printf '%s\n' '---' 'epr-meta-version: 1' 'root: true' '---' > .epr-meta/manifest.md
-git add .githooks/pre-push tracked .gitignore AGENTS.md CLAUDE.md .epr-meta/manifest.md
+git add .githooks/pre-push scripts/ci/rust-style.sh tracked .gitignore AGENTS.md CLAUDE.md .epr-meta/manifest.md
 git commit -qm base
 base=$(git rev-parse HEAD)
 printf 'candidate\n' >> tracked
@@ -55,6 +66,8 @@ reject() {
 run_hook "$tuple"
 printf '%s\n' --repo "$PWD" ready --target "$base" > "$fixture/expected"
 cmp "$fixture/expected" "$REACH_TEST_CALLS"
+printf '%s\n' --base "$base" --head "$candidate" > "$fixture/style-expected"
+cmp "$fixture/style-expected" "$REACH_TEST_STYLE_CALLS"
 echo 'passed: exact installed-evaluator argument binding'
 rm "$REACH_TEST_CALLS"
 run_hook ''
@@ -114,6 +127,12 @@ for mode in fail dirty untracked head branch baseline hidden; do
   git config branch.main.britReachBase "$base"
 done
 export REACH_TEST_MODE=pass
+for mode in fail unmeasured dirty; do
+  export REACH_TEST_STYLE_MODE=$mode
+  reject "$tuple" "style checker $mode refusal or mutation"
+  git restore tracked
+done
+export REACH_TEST_STYLE_MODE=pass
 
 # An actual push proves evaluator rejection cannot mutate the remote.
 git init --bare -q "$fixture/remote.git"
@@ -124,6 +143,12 @@ if git push -q "$fixture/remote.git" main > "$fixture/out" 2>&1; then
 fi
 test -z "$(git --git-dir="$fixture/remote.git" for-each-ref)"
 export REACH_TEST_MODE=pass
+export REACH_TEST_STYLE_MODE=fail
+if git push -q "$fixture/remote.git" main > "$fixture/out" 2>&1; then
+  echo 'rejecting style checker allowed remote mutation' >&2; exit 1
+fi
+test -z "$(git --git-dir="$fixture/remote.git" for-each-ref)"
+export REACH_TEST_STYLE_MODE=pass
 git push -q "$fixture/remote.git" main
 test "$(git --git-dir="$fixture/remote.git" rev-parse refs/heads/main)" = "$candidate"
 echo 'passed: actual push refusal preserves remote, acceptance transfers exact source'

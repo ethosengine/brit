@@ -9,6 +9,82 @@
 
 Brit is an expansion of gitoxide that makes version control covenantal. Every commit carries three-pillar metadata (lamad/shefa/qahal) as RFC-822 trailers that survive `git clone` from any forge. The engine (brit-epr) is generic — it parses trailers and dispatches to a pluggable AppSchema. The Elohim Protocol vocabulary is one schema implementation behind a feature flag. Schema-driven development: JSON Schema files define all ContentNode types; Rust types are generated from them.
 
+## 2026-10-13 contract extension: shared work before the covenant
+
+This extension records the requested developer/team contract; it does not claim
+that live editing, shared-branch admission or review ceremonies are implemented.
+The April design below is retained as historical design. The integration map is
+`genesis/docs/superpowers/specs/2026-10-13-shared-working-versions-social-coding-design.md`
+in the Elohim repository; Brit consumes the shared working-version and sync-state
+contracts rather than creating a second document protocol.
+
+### Branch birth and participation
+
+A project goal and its reach template select a channel when a branch is born.
+The person sees its audience and agreement before admitting another participant.
+Under the person's standing choice, already-admitted devices receive attributed
+live proposals by default; device-private work never enters that channel. Absent
+that choice or enforceable admission, retain the work device-private and explain why.
+Following grants observation only unless the agreement also grants co-editing.
+An agent contributes an attributed proposal for human integration; it writes a
+shared working version only under explicit bounded shared-edit permission.
+Device ownership, collective membership, following and permission to accept a
+candidate are separate facts, each read from its governing record.
+
+### One shared working version, independently safe working trees
+
+Live editor operations and filesystem saves feed the same working version.
+Editor operations may appear before a save; a filesystem adapter must compare its
+last projected bytes before importing a save or applying an incoming change.
+Concurrent unsent local edits are preserved for reconciliation, never overwritten
+by assuming the last file observed is the accepted version. Selection and cursors
+remain transient; private notes remain on their device.
+
+Each admitted device keeps its working version durably and projects it into its
+opted-in working tree. Received code is **unbuilt**: receipt does not run hooks,
+builds, tests, dependency installation or deployment, and does not advance a Git
+ref or establish acceptance. Watchers and IDE automation cannot execute received
+changes. Closing the editor and reopening without the network retains the
+acknowledged local work. A missing peer delays its own receipt or agreement, not
+the author's ability to prepare and retain a proposal. Revoking future access
+cannot promise erasure of bytes another admitted device already held.
+
+### Fixed candidates and agreement
+
+A review request fixes the candidate tree identity, source lineage, governing
+policy identity and requested reach before reviewers act. Review and gate events
+name those exact inputs: requested, running, passed, failed, cancelled or unknown
+are distinct observations. New edits produce a new candidate; they inherit no
+green result from the previous one. Live proposals remain visible while a fixed
+candidate is reviewed, without changing the object under review.
+
+The branch agreement determines who can accept and whether the ceremony is an
+internal agreement or a pull request. Acceptance records the parties and evidence
+for the fixed candidate before any permitted ref advancement or reach expansion.
+The Elohim repository retains local fast-forward feature-to-dev integration and
+dev-to-main pull-request review. CRDT convergence supplies values, not consent.
+Refusing a gate leaves work available for repair; it is not a sanction on its
+author. Signing a snapshot alone does not prove review, collective acceptance,
+build success or DHT notarization.
+
+### Existing foundation and remaining stations
+
+`brit-bridge/src/lib.rs` now seals committed Git trees into canonical EPRFS trees
+and restores them. Its boundary explicitly excludes index/ref mutation and
+standing. `brit-epr/src/engine/signing.rs` supplies attestation signing, while
+`brit-epr/src/elohim/refs.rs` indexes evidence. Neither is a live working-tree
+adapter. Shared document admission, durable editor integration, safe filesystem
+projection, exact-candidate review transitions and acceptance-to-ref wiring remain
+implementation stations. The current `Unknown/Built/Deployed/Verified` computation
+is artifact maturity, not an audience-admission or branch-acceptance predicate.
+
+Acceptance probes must demonstrate two admitted devices editing offline and
+reconnecting, device-private edits staying private, a follower without co-edit
+permission being refused, default agent proposals awaiting integration, bounded
+agent coediting only by explicit agreement, an incoming save preserving unsent
+edits, zero execution on receipt, and a changed candidate receiving no inherited
+green result.
+
 ## 1. Problem
 
 Git tracks content but not value, governance, or provenance beyond author/email. Open-source projects live at the intersection of knowledge (informational), contribution (economic), and maintainer decisions (governance), but git knows about none of it. Contributors are invisible. Governance is implicit. Value extraction is structurally easy; value recognition is structurally absent.

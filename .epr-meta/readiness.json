@@ -7,6 +7,15 @@
       "status": "wired",
       "required": [
         {
+          "job": "brit-rust-style",
+          "name": "brit-rust-style",
+          "steps": [
+            "Install the addressed standalone Rust checker",
+            "Test Rust style adapter boundaries",
+            "Check the committed Rust discipline trial"
+          ]
+        },
+        {
           "job": "brit-release-package-contract",
           "name": "brit-release-package-contract",
           "steps": []

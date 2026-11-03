@@ -84,7 +84,17 @@ control group for why this ladder (asserted → self-claimed → signed → witn
 
 ## 4. Commit-lift — not built, deliberately; the interim seam stands
 
-Strongly-evidenced negative ✅: no git-object ContentNodes exist (zero hits for
+**2026-10-13 reconciliation (current source):** the August absence finding below
+is historical. `brit-bridge/src/lib.rs` now implements `resolve_tree_revision`,
+`seal_git_tree` and `restore_git_tree` for committed Git trees and canonical EPRFS
+trees. The bridge explicitly never moves refs, writes an index or resolves
+standing. This closes the tree snapshot bridge portion, not live co-editing,
+commit/branch governance or a witnessed merge ceremony. The shared-working-version
+contract extension in `docs/specs/2026-04-12-brit-design.md` records those remaining
+stations and the unbuilt-on-receipt boundary. No fresh external Backstitch review
+was performed in this reconciliation.
+
+August finding, retained as dated evidence ✅: no git-object ContentNodes exist (zero hits for
 `Commit|Tree|Blob|Repo|BranchContentNode` across brit source; the five real `ContentNode` impls are
 `EprMeta`, `NodeSeed`, and the three attestations). The 2026-06-30 epr-meta foundation seals
 **filesystem bytes** (`brit-build-ref meta seal --dir` → `read_dir` → `BritCid::compute_raw` →

@@ -37,6 +37,32 @@ env:
   CARGO_REGISTRY_GLOBAL_CREDENTIAL_PROVIDERS: cargo:token
 
 jobs:
+  brit-rust-style:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+          fetch-depth: 0
+      - name: Install the addressed standalone Rust checker
+        env:
+          CARGO_TARGET_DIR: ${{ runner.temp }}/brit-rust-style-target
+          RUSTFLAGS: ""
+          RUSTC_WRAPPER: ""
+          CARGO_BUILD_JOBS: "1"
+        run: |
+          rustup toolchain install 1.96.1 --profile minimal --no-self-update
+          bash scripts/ci/install-rust-style.sh "$GITHUB_WORKSPACE/.eprfs/tools/rust-style"
+      - name: Test Rust style adapter boundaries
+        run: |
+          bash scripts/ci/test-install-rust-style.sh
+          bash scripts/ci/test-rust-style-ci.sh
+          bash scripts/ci/test-rust-style.sh --native "$GITHUB_WORKSPACE/.eprfs/tools/rust-style/bin/epr-rust-style"
+      - name: Check the committed Rust discipline trial
+        env:
+          EVENT_BASE: ${{ github.event.pull_request.base.sha || github.event.before }}
+        run: bash scripts/ci/rust-style-ci.sh
+
   brit-feature-census:
     runs-on: ubuntu-latest
     steps:
@@ -910,6 +936,7 @@ jobs:
     permissions: {}
 
     needs:
+      - brit-rust-style
       - brit-release-package-contract
       - brit-readiness-contract
       - brit-feature-census

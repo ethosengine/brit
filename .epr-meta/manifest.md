@@ -10,6 +10,25 @@ purpose: >
 
 # Brit's native developer boundary
 
+## Shared application capabilities
+
+Brit composes the protocol's working-version, sync-state, publication and serving
+contracts; it does not define competing versions of them. In the Elohim repository,
+`.epr-meta/manifest.md` section "Application lifecycle — authoritative homes and
+composition" routes their owners. The standards are
+`genesis/docs/superpowers/specs/2026-10-04-working-version-sdk-standard-design.md`
+and `2026-08-29-sync-state-contract-design.md`; their implementation gaps remain
+explicit. These are architectural references, not a required sibling checkout.
+
+Author Git/source interpretation here; shared client lifecycle in the Elohim SDK,
+node document sync/custody in storage, publication authority in DNA, and peer/web
+serving in hub/doorway respectively. Rakia owns build/artifact/quality-service
+interpretation, including its GUI. A Brit sprint names its producer dependency and
+consumer journey rather than filling an absent shared primitive with a private
+implementation. Local commits and Git refs remain Git semantics; an Automerge draft
+does not replace them or establish acceptance. This root adopts the routing as review
+guidance; parent manifest links do not mechanically govern this standalone repository.
+
 `brit-cli` owns the public `brit` executable. Local source and focused tests now
 exercise Git and build commands through that one executable. Installation,
 publication, and the accountable record/prove/release journey remain separate
@@ -52,3 +71,29 @@ Run `epr flow project --root . --recipes .epr-meta/recipes.yaml`, then
 These commands require installed epr. No sibling checkout or copied governance
 engine is an installation dependency. Context and readiness are derived views;
 private recall packets never become acceptance or habit evidence by themselves.
+
+## Shared Rust discipline trial
+
+Brit locally adopts the addressed Rust discipline held by
+`.epr-meta/rust-style-policy.json` for `brit-build-ref/**/*.rs`. That file names
+the immutable policy, guide and checker method; `.epr-meta/rust-style/objects/`
+holds the policy and method, and `docs/rust-style-guide.md` holds the verified guide.
+These holdings have shared content identity. They
+do not give Elohim's repository authority over Brit or establish network standing.
+The first commit carrying this policy is the enrollment commit. Comparison with
+an earlier baseline enforces no new unexplained suppressions; once enrollment is
+in the baseline, touched crates must also reduce existing debt. A zero-debt
+strict-scope enrollment must be separately measured and explicit.
+
+The standalone `epr-rust-style` checker interprets this full discipline envelope.
+The generic `.epr-meta` resolver does not interpret it as a new validator binding.
+Run `bash scripts/ci/rust-style.sh` for working-tree advice. The checked-in
+pre-push adapter evaluates the exact pushed commit and reviewed ancestor, and
+the required `brit-rust-style` CI job evaluates committed inputs. Setup and
+limitations are in `docs/rust-discipline.md`.
+
+This trial preserves upstream `gix-*` and `vendor/git`, existing formatting/SLOC
+constraints, per-crate MSRVs, and compiler/feature checks. It covers Rust source
+attributes, including inactive cfg branches; it does not inspect command-line or
+Cargo suppression allowances. Scope growth, migration and withdrawal require a
+new explicit local decision. No automatic policy successor activation is granted.
