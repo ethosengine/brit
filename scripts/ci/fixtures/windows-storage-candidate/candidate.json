@@ -1,0 +1,384 @@
+{
+  "schema": "eprfs-windows-source-fixture/v1",
+  "storageVersion": "0.3.4",
+  "rustToolchain": "1.96.1",
+  "purpose": "Disposable production-source Windows tests; no publication or acceptance",
+  "workspaceChanges": [
+    "Only core, serve and storage members",
+    "Unrelated iroh patch omitted"
+  ],
+  "files": [
+    {
+      "path": ".gitattributes",
+      "sha256": "705fd4d6451a31d36b3df7de96f83f30ac976c9b4a6d1e51671d8e2f33e2d0da",
+      "sourcePath": null,
+      "derived": "Fixture harness"
+    },
+    {
+      "path": "crates/seam-contracts/Cargo.lock",
+      "sha256": "3e7df28e078517ae96ae33a59a5276e4a176215eb83ecfa9fc25509df9b4186d",
+      "sourcePath": "crates/seam-contracts/Cargo.lock",
+      "derived": null
+    },
+    {
+      "path": "crates/seam-contracts/Cargo.toml",
+      "sha256": "3e0b48b46a38609182e76c574e5870aa49537d481578d1c80bb5c0a382fc9c8d",
+      "sourcePath": "crates/seam-contracts/Cargo.toml",
+      "derived": null
+    },
+    {
+      "path": "crates/seam-contracts/README.md",
+      "sha256": "d19ea9af5b583f67818e9daf4bf08d0d1afe58abd4405df3039ca3a944b32cfb",
+      "sourcePath": "crates/seam-contracts/README.md",
+      "derived": null
+    },
+    {
+      "path": "crates/seam-contracts/src/answer.rs",
+      "sha256": "d1522b0b1a5136f1c0c0f2c2e4dba7d181408cf5d0b40197ff9755a2a8c5b16c",
+      "sourcePath": "crates/seam-contracts/src/answer.rs",
+      "derived": null
+    },
+    {
+      "path": "crates/seam-contracts/src/canon.rs",
+      "sha256": "083c3356e7760bac73d574a654da473209438915dacf5d66ee2f19f667d78886",
+      "sourcePath": "crates/seam-contracts/src/canon.rs",
+      "derived": null
+    },
+    {
+      "path": "crates/seam-contracts/src/demand.rs",
+      "sha256": "d8fe27d85d7776cb05567f79e2a4f23ed7efcb0e6473e56611661e21c9da001e",
+      "sourcePath": "crates/seam-contracts/src/demand.rs",
+      "derived": null
+    },
+    {
+      "path": "crates/seam-contracts/src/election.rs",
+      "sha256": "072f0b8c154caba8fcec4b53f1d09a4cd15049683caea308bf4029b6cdf6f17c",
+      "sourcePath": "crates/seam-contracts/src/election.rs",
+      "derived": null
+    },
+    {
+      "path": "crates/seam-contracts/src/freshness.rs",
+      "sha256": "19df15871c1993c7be551e04eecd49caabfda7bb5a86fd25719f9de9541f3435",
+      "sourcePath": "crates/seam-contracts/src/freshness.rs",
+      "derived": null
+    },
+    {
+      "path": "crates/seam-contracts/src/harness/arbitrated.rs",
+      "sha256": "ab009c29cc2b16e2fe7dddd0dd89dfe8c02705645f5d9621fba15f992ab5bad0",
+      "sourcePath": "crates/seam-contracts/src/harness/arbitrated.rs",
+      "derived": null
+    },
+    {
+      "path": "crates/seam-contracts/src/harness/liveness.rs",
+      "sha256": "1c41b8d569cdcad2113506987699ac4359bcc081fed47118ed045940e8e26e95",
+      "sourcePath": "crates/seam-contracts/src/harness/liveness.rs",
+      "derived": null
+    },
+    {
+      "path": "crates/seam-contracts/src/harness/mod.rs",
+      "sha256": "c6f605cfb2919eeef6bc9d412196a600fba3d36496271eba143b9fa771c0fb90",
+      "sourcePath": "crates/seam-contracts/src/harness/mod.rs",
+      "derived": null
+    },
+    {
+      "path": "crates/seam-contracts/src/harness/quiescent.rs",
+      "sha256": "84f578a3a1c39fe409f0362d7c62fad4759581b5f36567c975928108b58d706c",
+      "sourcePath": "crates/seam-contracts/src/harness/quiescent.rs",
+      "derived": null
+    },
+    {
+      "path": "crates/seam-contracts/src/harness/status.rs",
+      "sha256": "8f2f49b4c5ead11cc39ab99414c45b79ac923f79290173ab46663de3d745efb4",
+      "sourcePath": "crates/seam-contracts/src/harness/status.rs",
+      "derived": null
+    },
+    {
+      "path": "crates/seam-contracts/src/lib.rs",
+      "sha256": "a941a9627bda49eb2fa5bac26b9f832e314ef4bc48ea374412d422da80f464e2",
+      "sourcePath": "crates/seam-contracts/src/lib.rs",
+      "derived": null
+    },
+    {
+      "path": "crates/seam-contracts/src/probe.rs",
+      "sha256": "8a2c7422a88f711ab84d99e7967d37fe1b6c8321fce0089518245c029086af5b",
+      "sourcePath": "crates/seam-contracts/src/probe.rs",
+      "derived": null
+    },
+    {
+      "path": "crates/seam-contracts/src/reason.rs",
+      "sha256": "103d00633b26ab81c280df843428b5436bcfe9da2422f420e5dd36977fbd6496",
+      "sourcePath": "crates/seam-contracts/src/reason.rs",
+      "derived": null
+    },
+    {
+      "path": "crates/seam-contracts/src/residual.rs",
+      "sha256": "3cc93af9550e1f6fa32977fa07510966f3535153534fd53c37c5b0db91dc4d1e",
+      "sourcePath": "crates/seam-contracts/src/residual.rs",
+      "derived": null
+    },
+    {
+      "path": "crates/seam-contracts/src/unanswered.rs",
+      "sha256": "df2fd0c10f5a958b24872f2fd96765528efeafbe1d019eb8b0741df57d7b692f",
+      "sourcePath": "crates/seam-contracts/src/unanswered.rs",
+      "derived": null
+    },
+    {
+      "path": "crates/seam-contracts/tests/probe.rs",
+      "sha256": "179c5d1c7f2767c3ef689ed1c17ded176b24daa2c4827a974ca1ead92d7b3830",
+      "sourcePath": "crates/seam-contracts/tests/probe.rs",
+      "derived": null
+    },
+    {
+      "path": "crates/seam-contracts/tests/unanswered.rs",
+      "sha256": "800d2d2e2cafab082dd3493e094dc93378bd4966113b0cf1d8ee02c02a99e68f",
+      "sourcePath": "crates/seam-contracts/tests/unanswered.rs",
+      "derived": null
+    },
+    {
+      "path": "elohim/eprfs/Cargo.lock",
+      "sha256": "e826342030c7c2dda8bbcae7a48025030471c621f783ed812890e1a9c4694786",
+      "sourcePath": null,
+      "derived": "Cargo-resolved fixture lock"
+    },
+    {
+      "path": "elohim/eprfs/Cargo.toml",
+      "sha256": "4b9e963ffff411f53e169e97bf4565f92e767d89e7f66a10b05d286760e86367",
+      "sourcePath": null,
+      "derived": "Fixture harness"
+    },
+    {
+      "path": "elohim/eprfs/eprfs-agent/Cargo.toml",
+      "sha256": "73c5236e1a228485553927c33d225c68582dd4831e9603ec281c28ff879eb8ea",
+      "sourcePath": "elohim/eprfs/eprfs-agent/Cargo.toml",
+      "derived": null
+    },
+    {
+      "path": "elohim/eprfs/eprfs-core/Cargo.toml",
+      "sha256": "89007dd5120593db919d848a76ce49a7136d622440ed9186f2442b05120b8df8",
+      "sourcePath": "elohim/eprfs/eprfs-core/Cargo.toml",
+      "derived": null
+    },
+    {
+      "path": "elohim/eprfs/eprfs-core/src/address.rs",
+      "sha256": "d39332b22ead9f2c8fecb79a640e95dfb2fef790f2b4717044417e254cb6d848",
+      "sourcePath": "elohim/eprfs/eprfs-core/src/address.rs",
+      "derived": null
+    },
+    {
+      "path": "elohim/eprfs/eprfs-core/src/attestation.rs",
+      "sha256": "713f64ca32c0e035e403f875f42ae119a6099ad44687d94b654e9ebb2b317ddf",
+      "sourcePath": "elohim/eprfs/eprfs-core/src/attestation.rs",
+      "derived": null
+    },
+    {
+      "path": "elohim/eprfs/eprfs-core/src/awareness.rs",
+      "sha256": "f91664c1d93ffd9b4a32d2e693f2aa0f067654d01aaff3807315e9dd57aa3f64",
+      "sourcePath": "elohim/eprfs/eprfs-core/src/awareness.rs",
+      "derived": null
+    },
+    {
+      "path": "elohim/eprfs/eprfs-core/src/boundary/manifest_deps.rs",
+      "sha256": "88b669a9e38ff7be341c5b5f8dd8f5d4cd1cdcb3b6cd70eab5669a35591dd342",
+      "sourcePath": "elohim/eprfs/eprfs-core/src/boundary/manifest_deps.rs",
+      "derived": null
+    },
+    {
+      "path": "elohim/eprfs/eprfs-core/src/composition.rs",
+      "sha256": "3a4236aa2dfd495c72e36ff09d128534b6578749fa734f402c38653321e49e8b",
+      "sourcePath": "elohim/eprfs/eprfs-core/src/composition.rs",
+      "derived": null
+    },
+    {
+      "path": "elohim/eprfs/eprfs-core/src/derive.rs",
+      "sha256": "e86c4defb6545205c802549739064fdb619874efabc7f6337544b5150d724c5a",
+      "sourcePath": "elohim/eprfs/eprfs-core/src/derive.rs",
+      "derived": null
+    },
+    {
+      "path": "elohim/eprfs/eprfs-core/src/error.rs",
+      "sha256": "9e4ab2445f7027ecf8d7803dc78af9e82aadcb6f02de2c81b65bc4d32d9e99c6",
+      "sourcePath": "elohim/eprfs/eprfs-core/src/error.rs",
+      "derived": null
+    },
+    {
+      "path": "elohim/eprfs/eprfs-core/src/level_walk.rs",
+      "sha256": "4faba6d604bcaad2a2c297ed7800ca1e224921efe075cc7202ec1d9b0d4be623",
+      "sourcePath": "elohim/eprfs/eprfs-core/src/level_walk.rs",
+      "derived": null
+    },
+    {
+      "path": "elohim/eprfs/eprfs-core/src/lib.rs",
+      "sha256": "7b5097dfb96b2ccddfad2dbd1dcc3636aea9db9276e062135c8cbfd5f9325a5c",
+      "sourcePath": "elohim/eprfs/eprfs-core/src/lib.rs",
+      "derived": null
+    },
+    {
+      "path": "elohim/eprfs/eprfs-core/src/meta.rs",
+      "sha256": "20f0ef0d593e125023b3882f647183004ebc95ed68011293fe5762b767875223",
+      "sourcePath": "elohim/eprfs/eprfs-core/src/meta.rs",
+      "derived": null
+    },
+    {
+      "path": "elohim/eprfs/eprfs-core/src/projection.rs",
+      "sha256": "7a219310b75a53b4689c4209152eed3cc3366de74345fb332095013ecd190743",
+      "sourcePath": "elohim/eprfs/eprfs-core/src/projection.rs",
+      "derived": null
+    },
+    {
+      "path": "elohim/eprfs/eprfs-core/src/reach.rs",
+      "sha256": "a62a16a3716177005457c8753890ac1667f9b80cb60e3c402190a03180e57a90",
+      "sourcePath": "elohim/eprfs/eprfs-core/src/reach.rs",
+      "derived": null
+    },
+    {
+      "path": "elohim/eprfs/eprfs-core/src/storage.rs",
+      "sha256": "8052b76e3c57c8b6d5f6e01b3bdad9ade2968439e71b937cdc2b276563889bdc",
+      "sourcePath": "elohim/eprfs/eprfs-core/src/storage.rs",
+      "derived": null
+    },
+    {
+      "path": "elohim/eprfs/eprfs-core/src/test_support.rs",
+      "sha256": "693bb7317659b0cf1a5fe546dac5a8feaca4d5bb07bdbad237131f307473550c",
+      "sourcePath": "elohim/eprfs/eprfs-core/src/test_support.rs",
+      "derived": null
+    },
+    {
+      "path": "elohim/eprfs/eprfs-core/src/tier.rs",
+      "sha256": "8d546666c80e24cb030efe70f49358916821c0a0f2010dfaca18ab72fb4a629c",
+      "sourcePath": "elohim/eprfs/eprfs-core/src/tier.rs",
+      "derived": null
+    },
+    {
+      "path": "elohim/eprfs/eprfs-core/src/tree.rs",
+      "sha256": "ff1234039ee6926d78976ceeb36cae5f546064ee14ae9cc1920b6e80c87cd961",
+      "sourcePath": "elohim/eprfs/eprfs-core/src/tree.rs",
+      "derived": null
+    },
+    {
+      "path": "elohim/eprfs/eprfs-core/src/view_decl.rs",
+      "sha256": "8b5f8c7f521835dc02b33654bf5edf27fb8c259a27561623e36dfc7599676129",
+      "sourcePath": "elohim/eprfs/eprfs-core/src/view_decl.rs",
+      "derived": null
+    },
+    {
+      "path": "elohim/eprfs/eprfs-core/src/walk.rs",
+      "sha256": "3125be0ebbbb58afdf0bcc68321c78edf353c54325cf3f714ec95fe77a339c29",
+      "sourcePath": "elohim/eprfs/eprfs-core/src/walk.rs",
+      "derived": null
+    },
+    {
+      "path": "elohim/eprfs/eprfs-core/src/whole_tree_tests.rs",
+      "sha256": "cf91e6d08dc198baeeae687a5be6639a5b40a08c596f2025a293e1f479cb98bb",
+      "sourcePath": "elohim/eprfs/eprfs-core/src/whole_tree_tests.rs",
+      "derived": null
+    },
+    {
+      "path": "elohim/eprfs/eprfs-core/tests/vectors.rs",
+      "sha256": "727d186144094e21ee2b6fd57209e1c82fc21edccd9b2da31b122b831cc7e2dd",
+      "sourcePath": "elohim/eprfs/eprfs-core/tests/vectors.rs",
+      "derived": null
+    },
+    {
+      "path": "elohim/eprfs/eprfs-local/Cargo.toml",
+      "sha256": "1e766731349d9db4e2455ac3625ed409ee6d7ed496ed388f9f6e4bc3d5818d37",
+      "sourcePath": "elohim/eprfs/eprfs-local/Cargo.toml",
+      "derived": null
+    },
+    {
+      "path": "elohim/eprfs/eprfs-serve/Cargo.toml",
+      "sha256": "10cb2f2a1ccd8412b465bb2d6d568e018bb86b0e135f2cd2079f3aa1e9c2dac5",
+      "sourcePath": "elohim/eprfs/eprfs-serve/Cargo.toml",
+      "derived": null
+    },
+    {
+      "path": "elohim/eprfs/eprfs-serve/src/labels.rs",
+      "sha256": "dae9d3fbbf2d14fd83d6005d8f742308725cae52cfeb7a2124724c9ca27b9de3",
+      "sourcePath": "elohim/eprfs/eprfs-serve/src/labels.rs",
+      "derived": null
+    },
+    {
+      "path": "elohim/eprfs/eprfs-serve/src/lib.rs",
+      "sha256": "69515b0d65c4232aa60b21b225c1a80dd507e44b9fa6c4fff9ded7e7bb5281cb",
+      "sourcePath": "elohim/eprfs/eprfs-serve/src/lib.rs",
+      "derived": null
+    },
+    {
+      "path": "elohim/eprfs/eprfs-serve/src/testing.rs",
+      "sha256": "1bb84906345c239058494bf7cd0de97011f319849b21561000391f51fd4fd4a1",
+      "sourcePath": "elohim/eprfs/eprfs-serve/src/testing.rs",
+      "derived": null
+    },
+    {
+      "path": "elohim/eprfs/eprfs-serve/tests/endpoint.rs",
+      "sha256": "e64eaf7cd08eb8b44873cc72d567a3eb77347a38d727a59f569e0aff5300b23d",
+      "sourcePath": "elohim/eprfs/eprfs-serve/tests/endpoint.rs",
+      "derived": null
+    },
+    {
+      "path": "elohim/eprfs/eprfs-storage/Cargo.toml",
+      "sha256": "2470b92faf1b6057381fdbc599c36f00a6181c2074588ead0dc78a0319cf2a14",
+      "sourcePath": "elohim/eprfs/eprfs-storage/Cargo.toml",
+      "derived": null
+    },
+    {
+      "path": "elohim/eprfs/eprfs-storage/src/budget.rs",
+      "sha256": "2a8eda8e8d0a87b654c9c90a00e11443f40f8636d1df5802c60a455802c2d25f",
+      "sourcePath": "elohim/eprfs/eprfs-storage/src/budget.rs",
+      "derived": null
+    },
+    {
+      "path": "elohim/eprfs/eprfs-storage/src/durability_tests.rs",
+      "sha256": "02ac1238125b8493092feb63de3a4c35806b972c32c90d0a23d18879903f677b",
+      "sourcePath": "elohim/eprfs/eprfs-storage/src/durability_tests.rs",
+      "derived": null
+    },
+    {
+      "path": "elohim/eprfs/eprfs-storage/src/lib.rs",
+      "sha256": "1dc9eca52984a13bbf6672056895c5edd7b203e2bbcd6dea299b4189c9453a1a",
+      "sourcePath": "elohim/eprfs/eprfs-storage/src/lib.rs",
+      "derived": null
+    },
+    {
+      "path": "elohim/eprfs/eprfs-storage/src/windows.rs",
+      "sha256": "2a3d7ca5fc4a1d95202ca3cdd49f463267ad6a6f4309a083bc9b7aa4128ffa1b",
+      "sourcePath": "elohim/eprfs/eprfs-storage/src/windows.rs",
+      "derived": null
+    },
+    {
+      "path": "elohim/eprfs/eprfs-storage/tests/boundary.rs",
+      "sha256": "4adb06db6125c0d5ba0ff5c1cb6bb77fe5bffc5468d582234352c4c615f7fbf8",
+      "sourcePath": "elohim/eprfs/eprfs-storage/tests/boundary.rs",
+      "derived": null
+    },
+    {
+      "path": "elohim/eprfs/eprfs-storage/tests/tier_chain.rs",
+      "sha256": "ce930fe3f10795a55f7a11c2f44b554c5f21839c495347173941ee30d30c904c",
+      "sourcePath": "elohim/eprfs/eprfs-storage/tests/tier_chain.rs",
+      "derived": null
+    },
+    {
+      "path": "elohim/eprfs/eprfs-storage/tests/walk_directory_storage.rs",
+      "sha256": "47ce12d6c1155c706fb7dc91e5c43834ebcda5e5b20be7faad38d23ca04e797b",
+      "sourcePath": "elohim/eprfs/eprfs-storage/tests/walk_directory_storage.rs",
+      "derived": null
+    },
+    {
+      "path": "elohim/eprfs/fixtures/tree-vectors.json",
+      "sha256": "8cf9b8cb6edd6b64344dfe87533f04cf55ec95a1ef557e5dcfefb0aa584e953c",
+      "sourcePath": "elohim/eprfs/fixtures/tree-vectors.json",
+      "derived": null
+    },
+    {
+      "path": "source-workspace/Cargo.lock",
+      "sha256": "b2400f458ae8eac2775c7321c7c0f6f13ac2e910beb8958c80ac21a8eafee91a",
+      "sourcePath": "elohim/eprfs/Cargo.lock",
+      "derived": null
+    },
+    {
+      "path": "source-workspace/Cargo.toml",
+      "sha256": "70d1df5afe4abd2badce93ed06aad075a92414557725cb93baf8bfc438297508",
+      "sourcePath": "elohim/eprfs/Cargo.toml",
+      "derived": null
+    }
+  ]
+}

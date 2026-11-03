@@ -1,0 +1,648 @@
+//! Storage-facing adapters for `eprfs`.
+//!
+//! This crate is where `elohim-storage` integration belongs. The current
+//! implementation provides a memory-backed adapter for tests and a verified,
+//! synchronized private directory store. Neither elects a release head.
+
+use std::collections::HashMap;
+use std::io::{Read, Write};
+use std::path::{Path, PathBuf};
+
+use async_trait::async_trait;
+use bytes::Bytes;
+use eprfs_core::{
+    AttestationDraft, BlobCid, BlobHandle, BlobPresence, EprRecord, EprRef, EprfsError,
+    EprfsStorage, FetchPolicy, Result,
+};
+use tokio::sync::RwLock;
+
+pub mod budget;
+pub use budget::{BudgetScope, SemaphoreGate};
+
+#[cfg(windows)]
+mod windows;
+
+/// Adapter configuration for a future elohim-storage HTTP-backed client.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct StorageEndpoint {
+    pub base_url: String,
+}
+
+/// In-memory storage adapter for tests and contract prototyping.
+#[derive(Default)]
+pub struct MemoryStorage {
+    blobs: RwLock<HashMap<BlobCid, Bytes>>,
+    records: RwLock<HashMap<EprRef, EprRecord>>,
+    attestations: RwLock<Vec<AttestationDraft>>,
+}
+
+impl MemoryStorage {
+    pub async fn insert_blob(&self, cid: BlobCid, bytes: Bytes) {
+        self.blobs.write().await.insert(cid, bytes);
+    }
+
+    pub async fn insert_record(&self, record: EprRecord) {
+        self.records
+            .write()
+            .await
+            .insert(record.reference.clone(), record);
+    }
+
+    pub async fn attestations(&self) -> Vec<AttestationDraft> {
+        self.attestations.read().await.clone()
+    }
+}
+
+#[async_trait]
+impl EprfsStorage for MemoryStorage {
+    async fn resolve_epr(&self, reference: &EprRef) -> Result<EprRecord> {
+        self.records
+            .read()
+            .await
+            .get(reference)
+            .cloned()
+            .ok_or_else(|| EprfsError::EprNotFound(reference.clone()))
+    }
+
+    async fn has_blob(&self, cid: &BlobCid) -> Result<BlobPresence> {
+        if self.blobs.read().await.contains_key(cid) {
+            Ok(BlobPresence::Local)
+        } else {
+            Ok(BlobPresence::Missing)
+        }
+    }
+
+    async fn fetch_blob(&self, cid: &BlobCid, _policy: FetchPolicy) -> Result<BlobHandle> {
+        let bytes = self
+            .blobs
+            .read()
+            .await
+            .get(cid)
+            .cloned()
+            .ok_or_else(|| EprfsError::BlobNotFound(cid.clone()))?;
+
+        Ok(BlobHandle {
+            cid: cid.clone(),
+            bytes,
+        })
+    }
+
+    async fn put_blob(&self, bytes: Bytes) -> Result<BlobCid> {
+        let cid = BlobCid::compute(&bytes);
+        self.blobs.write().await.insert(cid.clone(), bytes);
+        Ok(cid)
+    }
+
+    async fn put_blob_verified(&self, cid: &BlobCid, bytes: Bytes) -> Result<()> {
+        if !cid.verifies(&bytes) {
+            return Err(EprfsError::Storage(format!(
+                "blob integrity verification failed for {cid}"
+            )));
+        }
+        let mut blobs = self.blobs.write().await;
+        if let Some(existing) = blobs.get(cid) {
+            if !cid.verifies(existing) {
+                return Err(EprfsError::Corrupt(cid.clone()));
+            }
+        }
+        blobs.insert(cid.clone(), bytes);
+        Ok(())
+    }
+
+    async fn publish_attestation(&self, draft: AttestationDraft) -> Result<EprRef> {
+        let reference = EprRef::new(format!(
+            "epr:attestation:{}",
+            self.attestations.read().await.len() + 1
+        ));
+        self.attestations.write().await.push(draft);
+        Ok(reference)
+    }
+}
+
+/// Flat local content store for explicit caller-selected private bytes. This
+/// does not resolve EPRs, publish attestations, or establish release standing.
+/// Its directory is caller-owned and trusted against concurrent path replacement.
+/// Successful puts synchronize the verified object, store directory and store's
+/// parent, including deduplicated/concurrent puts. This relies on the filesystem
+/// honoring `sync_all`; reads alone do not establish durable custody.
+/// On Windows, custody requires NTFS and write access to the synchronized handles;
+/// other filesystems refuse before creating a store or a content candidate.
+#[derive(Debug, Clone)]
+pub struct DirectoryStorage {
+    root: PathBuf,
+    max_blob_bytes: usize,
+}
+
+const DEFAULT_MAX_BLOB_BYTES: usize = 64 * 1024 * 1024;
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum StoreStep {
+    CreateRoot,
+    WriteObject,
+    SyncObject,
+    PublishObject,
+    SyncRoot,
+    SyncParent,
+}
+
+impl DirectoryStorage {
+    /// Open an existing directory without creating or modifying it.
+    pub fn open(path: impl AsRef<Path>) -> Result<Self> {
+        // Bind relative paths once; a later process-wide cwd change must not
+        // redirect an already opened store.
+        let root = std::path::absolute(path.as_ref()).map_err(|source| EprfsError::Io {
+            path: path.as_ref().to_path_buf(),
+            source,
+        })?;
+        let metadata = std::fs::symlink_metadata(&root).map_err(|source| EprfsError::Io {
+            path: root.to_path_buf(),
+            source,
+        })?;
+        if !metadata.is_dir() || metadata.file_type().is_symlink() {
+            return Err(EprfsError::Storage(format!(
+                "content store is not a real directory: {}",
+                root.display()
+            )));
+        }
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::PermissionsExt;
+            if metadata.permissions().mode() & 0o077 != 0 {
+                return Err(EprfsError::Storage(format!(
+                    "content store directory permits group/other access: {}",
+                    root.display()
+                )));
+            }
+        }
+        Ok(Self {
+            root: root.to_path_buf(),
+            max_blob_bytes: DEFAULT_MAX_BLOB_BYTES,
+        })
+    }
+
+    /// Restrict each object read and write before allocating or persisting it.
+    /// Values above the 64 MiB native ceiling are clamped to that ceiling.
+    pub fn with_max_blob_bytes(mut self, max_blob_bytes: usize) -> Self {
+        self.max_blob_bytes = max_blob_bytes.min(DEFAULT_MAX_BLOB_BYTES);
+        self
+    }
+
+    /// Explicitly create a new store, then open it. Existing stores are opened
+    /// without changing their contents. Synchronize the directory and its parent
+    /// even when another creator won the race or a prior creation was interrupted.
+    pub fn create(path: impl AsRef<Path>) -> Result<Self> {
+        Self::create_with_hook(path.as_ref(), &mut |_, _| Ok(()))
+    }
+
+    fn create_with_hook(
+        path: &Path,
+        hook: &mut impl FnMut(StoreStep, &Path) -> std::io::Result<()>,
+    ) -> Result<Self> {
+        let root = std::path::absolute(path).map_err(|source| storage_io(path, source))?;
+        // Refuse unsupported Windows filesystems before creating a new directory.
+        #[cfg(windows)]
+        {
+            let parent = root.parent().unwrap_or(&root);
+            windows::open_sync_directory(parent).map_err(|source| storage_io(parent, source))?;
+        }
+        let mut builder = std::fs::DirBuilder::new();
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::DirBuilderExt;
+            builder.mode(0o700);
+        }
+        hook(StoreStep::CreateRoot, &root).map_err(|source| storage_io(&root, source))?;
+        match builder.create(&root) {
+            Ok(()) => {}
+            Err(error) if error.kind() == std::io::ErrorKind::AlreadyExists => {}
+            Err(source) => return Err(storage_io(&root, source)),
+        }
+        let store = Self::open(&root)?;
+        store.sync_directories(hook)?;
+        Ok(store)
+    }
+
+    fn sync_directories(
+        &self,
+        hook: &mut impl FnMut(StoreStep, &Path) -> std::io::Result<()>,
+    ) -> Result<()> {
+        let parent = self.root.parent().unwrap_or(&self.root);
+        for (step, path) in [
+            (StoreStep::SyncRoot, self.root.as_path()),
+            (StoreStep::SyncParent, parent),
+        ] {
+            #[cfg(windows)]
+            let file =
+                windows::open_sync_directory(path).map_err(|source| storage_io(path, source))?;
+            #[cfg(not(windows))]
+            let file = std::fs::File::open(path).map_err(|source| storage_io(path, source))?;
+            hook(step, path)
+                .and_then(|()| file.sync_all())
+                .map_err(|source| storage_io(path, source))?;
+        }
+        Ok(())
+    }
+
+    fn object_path(&self, cid: &BlobCid) -> PathBuf {
+        self.root.join(cid.to_string())
+    }
+
+    fn has_object(&self, cid: &BlobCid) -> Result<BlobPresence> {
+        let path = self.object_path(cid);
+        match std::fs::symlink_metadata(&path) {
+            Ok(_) => {
+                self.read_object(cid)?;
+                Ok(BlobPresence::Local)
+            }
+            Err(error) if error.kind() == std::io::ErrorKind::NotFound => Ok(BlobPresence::Missing),
+            Err(source) => Err(EprfsError::Io { path, source }),
+        }
+    }
+
+    fn put_object(&self, cid: &BlobCid, bytes: Bytes) -> Result<()> {
+        self.put_object_with_hook(cid, bytes, &mut |_, _| Ok(()))
+    }
+
+    fn put_object_with_hook(
+        &self,
+        cid: &BlobCid,
+        bytes: Bytes,
+        hook: &mut impl FnMut(StoreStep, &Path) -> std::io::Result<()>,
+    ) -> Result<()> {
+        if bytes.len() > self.max_blob_bytes {
+            return Err(EprfsError::Storage(format!(
+                "content object exceeds byte limit: {cid}"
+            )));
+        }
+        if !cid.verifies(&bytes) {
+            return Err(EprfsError::Storage(format!(
+                "blob integrity verification failed for {cid}"
+            )));
+        }
+        // `open` is read-only and permits stores whose filesystem cannot promise
+        // custody. Check before creating any candidate through such a store.
+        #[cfg(windows)]
+        for directory in [
+            self.root.as_path(),
+            self.root.parent().unwrap_or(&self.root),
+        ] {
+            windows::open_sync_directory(directory)
+                .map_err(|source| storage_io(directory, source))?;
+        }
+        let path = self.object_path(cid);
+        match std::fs::symlink_metadata(&path) {
+            Ok(_) => {
+                return self.sync_existing(cid, hook);
+            }
+            Err(error) if error.kind() == std::io::ErrorKind::NotFound => {}
+            Err(source) => return Err(EprfsError::Io { path, source }),
+        }
+        let mut temporary =
+            tempfile::NamedTempFile::new_in(&self.root).map_err(|source| EprfsError::Io {
+                path: self.root.clone(),
+                source,
+            })?;
+        let prepared = (|| {
+            hook(StoreStep::WriteObject, temporary.path())?;
+            temporary.write_all(&bytes)?;
+            hook(StoreStep::SyncObject, temporary.path())?;
+            temporary.as_file().sync_all()?;
+            hook(StoreStep::PublishObject, &path)
+        })();
+        if let Err(source) = prepared {
+            return Err(retain_temporary(temporary, storage_io(&path, source)));
+        }
+        match temporary.persist_noclobber(&path) {
+            Ok(_) => self.sync_directories(hook),
+            Err(error) if error.error.kind() == std::io::ErrorKind::AlreadyExists => {
+                // The winner may not have reached fsync yet. Verify and sync
+                // its actual inode, not just our losing temporary inode.
+                match self.sync_existing(cid, hook) {
+                    Ok(()) => Ok(()),
+                    Err(failure) => Err(retain_temporary(error.file, failure)),
+                }
+            }
+            Err(error) => Err(retain_temporary(error.file, storage_io(&path, error.error))),
+        }
+    }
+
+    fn sync_existing(
+        &self,
+        cid: &BlobCid,
+        hook: &mut impl FnMut(StoreStep, &Path) -> std::io::Result<()>,
+    ) -> Result<()> {
+        let (file, _) = self.read_object_file(cid, true)?;
+        let path = self.object_path(cid);
+        hook(StoreStep::SyncObject, &path)
+            .and_then(|()| file.sync_all())
+            .map_err(|source| storage_io(&path, source))?;
+        self.sync_directories(hook)
+    }
+
+    fn read_object(&self, cid: &BlobCid) -> Result<Bytes> {
+        self.read_object_file(cid, false).map(|(_, bytes)| bytes)
+    }
+
+    fn read_object_file(&self, cid: &BlobCid, for_custody: bool) -> Result<(std::fs::File, Bytes)> {
+        let path = self.object_path(cid);
+        let metadata = std::fs::symlink_metadata(&path).map_err(|source| {
+            if source.kind() == std::io::ErrorKind::NotFound {
+                EprfsError::BlobNotFound(cid.clone())
+            } else {
+                EprfsError::Io {
+                    path: path.clone(),
+                    source,
+                }
+            }
+        })?;
+        if !metadata.file_type().is_file() || metadata.file_type().is_symlink() {
+            return Err(EprfsError::Storage(format!(
+                "content object is not a regular file: {cid}"
+            )));
+        }
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::PermissionsExt;
+            if metadata.permissions().mode() & 0o077 != 0 {
+                return Err(EprfsError::Storage(format!(
+                    "content object permits group/other access: {cid}"
+                )));
+            }
+        }
+        if metadata.len() > self.max_blob_bytes as u64 {
+            return Err(EprfsError::Storage(format!(
+                "content object exceeds byte limit: {cid}"
+            )));
+        }
+        // FlushFileBuffers requires write access. Verify and flush this same
+        // handle for custody; fetching never requests write access.
+        let file = std::fs::OpenOptions::new()
+            .read(true)
+            .write(for_custody && cfg!(windows))
+            .open(&path)
+            .map_err(|source| EprfsError::Io {
+                path: path.clone(),
+                source,
+            })?;
+        let mut bytes = Vec::new();
+        (&file)
+            .take((self.max_blob_bytes as u64).saturating_add(1))
+            .read_to_end(&mut bytes)
+            .map_err(|source| EprfsError::Io { path, source })?;
+        if bytes.len() > self.max_blob_bytes {
+            return Err(EprfsError::Storage(format!(
+                "content object exceeds byte limit: {cid}"
+            )));
+        }
+        if !cid.verifies(&bytes) {
+            return Err(EprfsError::Corrupt(cid.clone()));
+        }
+        Ok((file, Bytes::from(bytes)))
+    }
+}
+
+fn storage_io(path: &Path, source: std::io::Error) -> EprfsError {
+    EprfsError::Io {
+        path: path.to_path_buf(),
+        source,
+    }
+}
+
+fn retain_temporary(mut file: tempfile::NamedTempFile, error: EprfsError) -> EprfsError {
+    let path = file.path().to_path_buf();
+    // Retention itself may fail on a platform with delete-on-close semantics.
+    // Never let dropping that second error silently request filesystem cleanup.
+    file.disable_cleanup(true);
+    match file.keep() {
+        Ok(_) => EprfsError::Storage(format!(
+            "{error}; incomplete object retained at {}",
+            path.display()
+        )),
+        Err(keep) => EprfsError::Storage(format!(
+            "{error}; retaining incomplete object at {} failed: {}",
+            path.display(),
+            keep.error
+        )),
+    }
+}
+
+#[cfg(test)]
+mod durability_tests;
+
+#[async_trait]
+impl EprfsStorage for DirectoryStorage {
+    async fn resolve_epr(&self, _reference: &EprRef) -> Result<EprRecord> {
+        Err(EprfsError::Storage(
+            "directory content store cannot resolve EPRs".into(),
+        ))
+    }
+
+    async fn has_blob(&self, cid: &BlobCid) -> Result<BlobPresence> {
+        self.has_object(cid)
+    }
+
+    async fn fetch_blob(&self, cid: &BlobCid, _policy: FetchPolicy) -> Result<BlobHandle> {
+        Ok(BlobHandle {
+            cid: cid.clone(),
+            bytes: self.read_object(cid)?,
+        })
+    }
+
+    async fn put_blob(&self, bytes: Bytes) -> Result<BlobCid> {
+        let cid = BlobCid::compute(&bytes);
+        self.put_blob_verified(&cid, bytes).await?;
+        Ok(cid)
+    }
+
+    async fn put_blob_verified(&self, cid: &BlobCid, bytes: Bytes) -> Result<()> {
+        self.put_object(cid, bytes)
+    }
+
+    async fn publish_attestation(&self, _draft: AttestationDraft) -> Result<EprRef> {
+        Err(EprfsError::Storage(
+            "directory content store cannot publish attestations".into(),
+        ))
+    }
+}
+
+/// [`DirectoryStorage`] with every object read and write run on tokio's blocking pool
+/// (interfaces spec §4, Blocking I/O). `DirectoryStorage` calls blocking `std::fs` inside its
+/// `async fn`s, which stalls a runtime worker for the length of each read; a `TierChain` on a
+/// multi-thread runtime, and every serving adapter, use this wrapper as the own store instead.
+/// eprfs-core never spawns (R-E2): the offload lives here, in the adapter that does the I/O.
+///
+/// It needs a tokio runtime with a blocking pool (any tokio runtime has one). The answers are
+/// `DirectoryStorage`'s own, unchanged; a blocking task that fails to run is a storage error.
+#[derive(Debug, Clone)]
+pub struct OffloadedDirectory {
+    inner: std::sync::Arc<DirectoryStorage>,
+}
+
+impl OffloadedDirectory {
+    pub fn new(store: DirectoryStorage) -> Self {
+        Self {
+            inner: std::sync::Arc::new(store),
+        }
+    }
+
+    pub fn inner(&self) -> &DirectoryStorage {
+        &self.inner
+    }
+
+    async fn offload<T: Send + 'static>(
+        &self,
+        work: impl FnOnce(&DirectoryStorage) -> Result<T> + Send + 'static,
+    ) -> Result<T> {
+        let store = self.inner.clone();
+        tokio::task::spawn_blocking(move || work(&store))
+            .await
+            .map_err(|error| EprfsError::Storage(format!("blocking store task failed: {error}")))?
+    }
+}
+
+#[async_trait]
+impl EprfsStorage for OffloadedDirectory {
+    async fn resolve_epr(&self, reference: &EprRef) -> Result<EprRecord> {
+        self.inner.resolve_epr(reference).await
+    }
+
+    async fn has_blob(&self, cid: &BlobCid) -> Result<BlobPresence> {
+        let cid = cid.clone();
+        self.offload(move |store| store.has_object(&cid)).await
+    }
+
+    async fn fetch_blob(&self, cid: &BlobCid, _policy: FetchPolicy) -> Result<BlobHandle> {
+        let cid = cid.clone();
+        self.offload(move |store| {
+            Ok(BlobHandle {
+                bytes: store.read_object(&cid)?,
+                cid,
+            })
+        })
+        .await
+    }
+
+    async fn put_blob(&self, bytes: Bytes) -> Result<BlobCid> {
+        let cid = BlobCid::compute(&bytes);
+        self.put_blob_verified(&cid, bytes).await?;
+        Ok(cid)
+    }
+
+    async fn put_blob_verified(&self, cid: &BlobCid, bytes: Bytes) -> Result<()> {
+        let cid = cid.clone();
+        self.offload(move |store| store.put_object(&cid, bytes))
+            .await
+    }
+
+    async fn publish_attestation(&self, draft: AttestationDraft) -> Result<EprRef> {
+        self.inner.publish_attestation(draft).await
+    }
+
+    fn tier_id(&self) -> eprfs_core::TierId {
+        self.inner.tier_id()
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[tokio::test]
+    async fn directory_store_verifies_raw_and_dag_cbor_and_never_clobbers_corruption() {
+        let dir = tempfile::tempdir().unwrap();
+        let root = dir.path().join("objects");
+        assert!(DirectoryStorage::open(&root).is_err());
+        assert!(!root.exists());
+        let store = DirectoryStorage::create(&root).unwrap();
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::PermissionsExt;
+            assert_eq!(
+                std::fs::metadata(&root).unwrap().permissions().mode() & 0o777,
+                0o700
+            );
+        }
+        let capped = store.clone().with_max_blob_bytes(2);
+        let too_large = BlobCid::compute_raw(b"raw");
+        assert!(capped
+            .put_blob_verified(&too_large, Bytes::from_static(b"raw"))
+            .await
+            .is_err());
+        let raw = Bytes::from_static(b"raw");
+        let raw_cid = BlobCid::compute_raw(&raw);
+        store
+            .put_blob_verified(&raw_cid, raw.clone())
+            .await
+            .unwrap();
+        assert_eq!(
+            store
+                .fetch_blob(&raw_cid, FetchPolicy::LocalOnly)
+                .await
+                .unwrap()
+                .bytes,
+            raw
+        );
+        let cbor = Bytes::from_static(&[0xa0]);
+        let cbor_cid = BlobCid::compute(&cbor);
+        store
+            .put_blob_verified(&cbor_cid, cbor.clone())
+            .await
+            .unwrap();
+        assert_eq!(
+            store
+                .fetch_blob(&cbor_cid, FetchPolicy::LocalOnly)
+                .await
+                .unwrap()
+                .bytes,
+            cbor
+        );
+        assert!(store
+            .put_blob_verified(&raw_cid, Bytes::from_static(b"wrong"))
+            .await
+            .is_err());
+        std::fs::write(root.join(raw_cid.to_string()), b"corrupt").unwrap();
+        assert!(store.put_blob_verified(&raw_cid, raw).await.is_err());
+        assert_eq!(
+            std::fs::read(root.join(raw_cid.to_string())).unwrap(),
+            b"corrupt"
+        );
+    }
+
+    #[tokio::test]
+    async fn directory_store_refuses_symlink_object_and_root() {
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::symlink;
+            let dir = tempfile::tempdir().unwrap();
+            let root = dir.path().join("objects");
+            DirectoryStorage::create(&root).unwrap();
+            symlink(&root, dir.path().join("linked")).unwrap();
+            assert!(DirectoryStorage::open(dir.path().join("linked")).is_err());
+            let cid = BlobCid::compute_raw(b"contents");
+            symlink(dir.path().join("outside"), root.join(cid.to_string())).unwrap();
+            let store = DirectoryStorage::open(&root).unwrap();
+            assert!(store
+                .put_blob_verified(&cid, Bytes::from_static(b"contents"))
+                .await
+                .is_err());
+        }
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn directory_store_refuses_public_existing_root_and_object() {
+        use std::os::unix::fs::PermissionsExt;
+        let dir = tempfile::tempdir().unwrap();
+        let root = dir.path().join("objects");
+        std::fs::create_dir(&root).unwrap();
+        std::fs::set_permissions(&root, std::fs::Permissions::from_mode(0o755)).unwrap();
+        assert!(DirectoryStorage::open(&root).is_err());
+        std::fs::set_permissions(&root, std::fs::Permissions::from_mode(0o700)).unwrap();
+        let store = DirectoryStorage::open(&root).unwrap();
+        let cid = BlobCid::compute_raw(b"hello");
+        let object = root.join(cid.to_string());
+        std::fs::write(&object, b"hello").unwrap();
+        std::fs::set_permissions(&object, std::fs::Permissions::from_mode(0o644)).unwrap();
+        assert!(store.read_object(&cid).is_err());
+    }
+}
