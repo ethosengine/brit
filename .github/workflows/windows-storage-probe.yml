@@ -43,7 +43,16 @@ jobs:
             if ($LASTEXITCODE -ne 0) { throw 'Could not grant the probe user its fixture directory.' }
             $credential = [PSCredential]::new("$env:COMPUTERNAME\$probeUser", $secure)
             $arguments = @('-NoProfile', '-File', "`"$script`"", '-ReportPath', "`"$report`"")
-            $process = Start-Process -FilePath (Get-Command pwsh).Source -ArgumentList $arguments -Credential $credential -LoadUserProfile -Wait -PassThru
+            $oldTemp = $env:TEMP
+            $oldTmp = $env:TMP
+            try {
+              $env:TEMP = $probeDir
+              $env:TMP = $probeDir
+              $process = Start-Process -FilePath (Get-Command pwsh).Source -ArgumentList $arguments -Credential $credential -LoadUserProfile -WorkingDirectory $probeDir -Wait -PassThru
+            } finally {
+              $env:TEMP = $oldTemp
+              $env:TMP = $oldTmp
+            }
             if (Test-Path -LiteralPath $report) {
               Copy-Item $report probe-result.json
               $result = Get-Content -Raw -LiteralPath $report | ConvertFrom-Json
