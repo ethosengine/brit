@@ -1,0 +1,66 @@
+name: Windows storage API probe
+
+on:
+  push:
+    branches: [run-ci/windows-storage-probe-20261103]
+
+permissions:
+  contents: read
+
+jobs:
+  probe:
+    strategy:
+      fail-fast: false
+      matrix:
+        runner: [windows-2025, windows-11-arm]
+    runs-on: ${{ matrix.runner }}
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+        with:
+          persist-credentials: false
+      - name: Probe NTFS from a standard user
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = 'Stop'
+          $probeUser = 'BritProbe' + [Guid]::NewGuid().ToString('N').Substring(0, 8)
+          $password = [Guid]::NewGuid().ToString('N') + 'aA1!'
+          Write-Output "::add-mask::$password"
+          $secure = ConvertTo-SecureString $password -AsPlainText -Force
+          $probeDir = Join-Path $env:PUBLIC ('brit-storage-probe-' + [Guid]::NewGuid().ToString('N'))
+          $created = $false
+          try {
+            New-LocalUser -Name $probeUser -Password $secure -AccountNeverExpires | Out-Null
+            $created = $true
+            $users = Get-LocalGroup -SID 'S-1-5-32-545'
+            Add-LocalGroupMember -Group $users -Member $probeUser
+            New-Item -ItemType Directory -Path $probeDir | Out-Null
+            $script = Join-Path $probeDir 'windows-storage-probe.ps1'
+            $report = Join-Path $probeDir 'probe-result.json'
+            Copy-Item scripts/ci/windows-storage-probe.ps1 $script
+            $grant = '{0}\{1}:(OI)(CI)F' -f $env:COMPUTERNAME, $probeUser
+            & icacls.exe $probeDir /grant $grant | Out-Null
+            if ($LASTEXITCODE -ne 0) { throw 'Could not grant the probe user its fixture directory.' }
+            $credential = [PSCredential]::new("$env:COMPUTERNAME\$probeUser", $secure)
+            $arguments = @('-NoProfile', '-File', "`"$script`"", '-ReportPath', "`"$report`"")
+            $process = Start-Process -FilePath (Get-Command pwsh).Source -ArgumentList $arguments -Credential $credential -LoadUserProfile -Wait -PassThru
+            if (Test-Path -LiteralPath $report) {
+              Copy-Item $report probe-result.json
+              $result = Get-Content -Raw -LiteralPath $report | ConvertFrom-Json
+              $result | ConvertTo-Json -Depth 6
+              if ($result.elevatedAdministrator) { throw 'The probe ran elevated; this is not standard-user evidence.' }
+            } else {
+              throw 'The standard-user probe wrote no report.'
+            }
+            if ($process.ExitCode -ne 0 -or -not $result.apiBridgePassed) {
+              throw "The storage API probe failed (exit $($process.ExitCode)); inspect the report."
+            }
+          } finally {
+            if ($created) { Remove-LocalUser -Name $probeUser }
+          }
+      - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
+        if: always()
+        with:
+          name: storage-probe-${{ matrix.runner }}
+          path: probe-result.json
+          if-no-files-found: warn
