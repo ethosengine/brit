@@ -44,6 +44,13 @@ allow = [
 # [possible values: any between 0.0 and 1.0].
 confidence-threshold = 0.8
 
+# The steward permits this EPRFS dependency under its existing license.
+# Keep the exception scoped to the consumed package and published version.
+[[licenses.exceptions]]
+name = "elohim-seam-contracts"
+version = "=0.1.2"
+allow = ["AGPL-3.0"]
+
 # This section is considered when running `cargo deny check bans`.
 # More documentation about the 'bans' section can be found here:
 # https://embarkstudios.github.io/cargo-deny/checks/bans/cfg.html

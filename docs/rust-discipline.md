@@ -75,3 +75,21 @@ other first-party crates and mixed root source ownership remain outside this tri
 Pass `--native /absolute/path/to/epr-rust-style` for the actual installed-engine
 proof: enrollment, unexplained suppression refusal, explained exception, and a
 dirty repair that cannot conceal the committed failure. CI requires both.
+
+## Integration candidate correction — 2026-11-03
+
+The initial candidate used an `eprfs-meta` 0.3.3 manifest, but that version was
+already published with different bytes by the native-source sprint. The integration
+candidate holds the corrected 0.3.4 checker source and regenerated method/policy
+objects. The guide, scope, rules and licensing restrictions are unchanged. Both
+sets of immutable objects are retained. This candidate is evaluated against the
+current main baseline, which has not enrolled the trial; it does not implement or
+authorize migration of an already adopted policy. The earlier published candidate
+remains available for comparison.
+
+The isolated source installation and native adapter fixtures passed: enrollment,
+paydown, committed-input isolation, corrupt-guide refusal and unexplained-attribute
+refusal. The first candidate's CI run 41671223402 reported a 32-bit fixture race:
+restore published before the test harness could suspend the process (5,657 tests
+passed, one failed). That run is not green integration evidence. The corrected
+candidate must obtain its own complete CI verdict before the parent pin moves.

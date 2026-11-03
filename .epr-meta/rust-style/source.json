@@ -1,7 +1,7 @@
 {
   "format": "rust-style-source-holding@1",
-  "archive": ".epr-meta/rust-style/objects/bafkreiekgcq6dzpw2r5asipbeyjlvbffrac72e4pjtjulvviwmghvpcx2u.tar.gz",
-  "cid": "bafkreiekgcq6dzpw2r5asipbeyjlvbffrac72e4pjtjulvviwmghvpcx2u",
-  "sha256": "8a30a1e1e5f6d47a0921e12612ba84a58805fd138f4cd345d6a8b30c7abc57d5",
+  "archive": ".epr-meta/rust-style/objects/bafkreicpqi74fydkhjajwx57pcaxpx6fqobu5bbfe66e27lgb3lghburky.tar.gz",
+  "cid": "bafkreicpqi74fydkhjajwx57pcaxpx6fqobu5bbfe66e27lgb3lghburky",
+  "sha256": "4f823fc2e06a3a409b5fbf788177dfc583834e842527bc4d7d660ed663869156",
   "toolchain": "1.96.1"
 }

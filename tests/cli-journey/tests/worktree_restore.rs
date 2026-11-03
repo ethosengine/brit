@@ -389,6 +389,20 @@ impl Drop for RestoreChild {
 /// failpoints, filters, or timing-only sleeps.
 #[cfg(target_os = "linux")]
 fn suspended_restore(partial: bool) -> Result<(TestRepo, RestoreChild, Vec<u8>)> {
+    // The child can finish its write between observing the temporary file and
+    // delivery of SIGSTOP, especially on the emulated i386 runner. That means
+    // the fixture was never established. Start a fresh fixture in that case;
+    // errors and the caller's cancellation/publication assertions never retry.
+    for _ in 0..8 {
+        if let Some(fixture) = suspended_restore_attempt(partial)? {
+            return Ok(fixture);
+        }
+    }
+    anyhow::bail!("large restore published before suspension in all eight fixture attempts")
+}
+
+#[cfg(target_os = "linux")]
+fn suspended_restore_attempt(partial: bool) -> Result<Option<(TestRepo, RestoreChild, Vec<u8>)>> {
     use std::{
         process::Stdio,
         time::{Duration, Instant},
@@ -435,12 +449,25 @@ fn suspended_restore(partial: bool) -> Result<(TestRepo, RestoreChild, Vec<u8>)>
                 ensure!(Instant::now() < deadline, "restore did not stop");
                 std::thread::yield_now();
             }
-            if fs::read(repo.path().join("z-large"))? == b"large dirty\n" {
-                return Ok((repo, child, before));
+            let contents = fs::read(repo.path().join("z-large"))?;
+            if contents == b"large dirty\n" {
+                return Ok(Some((repo, child, before)));
             }
-            let _ = child.kill();
-            let _ = child.wait();
-            anyhow::bail!("large restore published before the process could be suspended");
+            ensure!(
+                contents.len() == 128 * 1024 * 1024 && contents.iter().all(|byte| *byte == b'x'),
+                "early publication did not restore the expected object"
+            );
+            // Only successful early completion is a missed setup window. A
+            // product error after publication must still fail this attempt.
+            // SAFETY: this is the same retained child observed stopped above.
+            ensure!(unsafe { libc::kill(pid, libc::SIGCONT) } == 0);
+            let out = child.wait_with_output()?;
+            ensure!(
+                out.status.success(),
+                "early restore failed: {}",
+                String::from_utf8_lossy(&out.stderr)
+            );
+            return Ok(None);
         }
         if child.try_wait()?.is_some() || Instant::now() >= deadline {
             let _ = child.kill();
