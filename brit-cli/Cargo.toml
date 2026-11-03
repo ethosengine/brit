@@ -32,8 +32,8 @@ anyhow = "1.0.98"
 brit-bridge = { version = "0.1.2", path = "../brit-bridge", registry = "elohim" }
 eprfs-core = { version = "=0.3.3", registry = "elohim" }
 eprfs-host = { version = "=0.3.3", registry = "elohim" }
-eprfs-local = { version = "=0.3.3", registry = "elohim" }
-eprfs-storage = { version = "=0.3.3", registry = "elohim" }
+eprfs-local = { version = "=0.3.4", registry = "elohim" }
+eprfs-storage = { version = "=0.3.4", registry = "elohim" }
 tokio = { version = "1", features = ["rt"] }
 brit-graph = { version = "0.1.4", registry = "elohim", path = "../brit-graph", features = ["repo"] }
 gitoxide = { version = "^0.60.1", registry = "elohim", path = "..", default-features = false }

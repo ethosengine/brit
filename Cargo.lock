@@ -1551,9 +1551,9 @@ dependencies = [
 
 [[package]]
 name = "eprfs-local"
-version = "0.3.3"
+version = "0.3.4"
 source = "sparse+https://nexus.ethosengine.com/repository/cargo-internal/"
-checksum = "cabdf9c91819a340c5e814f47013c77d0d41f5cb8e7354aa880b77ab05e629a7"
+checksum = "4ab09213bf628540e26016c9fe70246ae8000cebe557450aa1e2af4b2f4757ab"
 dependencies = [
  "bytes",
  "eprfs-core",
@@ -1568,9 +1568,9 @@ dependencies = [
 
 [[package]]
 name = "eprfs-storage"
-version = "0.3.3"
+version = "0.3.4"
 source = "sparse+https://nexus.ethosengine.com/repository/cargo-internal/"
-checksum = "a5843143456d027ba60f832ff1540ddbc983881fd80bf225ff34de6a61a7991c"
+checksum = "85084c23ef337c8b06f458a74492fec9896189efdcf6b19891c6340396d6a421"
 dependencies = [
  "async-trait",
  "bytes",
@@ -1579,6 +1579,7 @@ dependencies = [
  "serde_json",
  "tempfile",
  "tokio",
+ "windows-sys 0.61.2",
 ]
 
 [[package]]
