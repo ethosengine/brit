@@ -1,0 +1,30 @@
+seamRegistryVersion: 1
+crate: brit-cli
+crateRoot: brit-cli
+seamLocus: Thin public capture and exact-source task consumers of published EPRFS and installed Ark.
+decisionPoints:
+- name: native_task::run
+  kind: verdict-fn
+  sourceLocation: {file: src/native_task.rs, modulePath: brit::native_task}
+  summary: Parse native-only arguments and exec explicit ARK_BIN (PATH only when absent); capture delegates to published EPRFS.
+  concernIds:
+  - {id: C0, status: answered, justification: 'Private local source and outcomes; no public heads or new store.'}
+  - {id: C1, status: answered, justification: 'Capture returns published false; run delegates without self-acceptance.'}
+  - {id: C2, status: n-a, justification: 'No mutable head or authority operation.'}
+  - {id: C3, status: answered, justification: 'Exec delegation preserves signal delivery to the sole supervisor.'}
+  - {id: C4, status: answered, justification: 'Missing installed Ark and invalid CLI selections refuse explicitly.'}
+  - {id: C5, status: answered, justification: 'No outcome is promoted to reusable evidence.'}
+  - {id: C6a, status: answered, justification: 'EPRFS owns bounded capture; Ark owns bounded input and output validation.'}
+  - {id: C6b, status: answered, justification: 'No retry runner; absent run directory enforced by Ark.'}
+  - {id: C7, status: answered, justification: 'No Git discovery, publication or hermetic-execution claim on native commands.'}
+  - {id: C8, status: answered, justification: 'Underlying capture report and Ark outcome are returned directly.'}
+  - {id: C9, status: answered, justification: 'Original request and root are passed unchanged.'}
+  - {id: C10, status: answered, justification: 'Additive commands preserve existing Git and snapshot journeys.'}
+  - {id: C11, status: n-a, justification: 'No remote calls.'}
+  - {id: C12, status: answered, justification: 'Explicit source selection and execution; Ark owns scope admission.'}
+  - {id: C13, status: n-a, justification: 'No delegated standing introduced.'}
+  - {id: C14, status: partial, justification: 'Underlying errors and residue are retained; CLI is not an acceptance authority.'}
+  contractTests:
+  - {path: tests/cli-journey/tests/native_source.rs, testName: native_capture_and_git_seal_have_one_root, kind: integration}
+  - {path: tests/cli-journey/tests/native_source.rs, testName: native_explicit_ark_selection_never_falls_back, kind: integration}
+  - {path: tests/cli-journey/tests/native_source.rs, testName: native_build_run_uses_ark_and_fixed_candidate, kind: integration}

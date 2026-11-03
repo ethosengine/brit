@@ -11,6 +11,15 @@ use eprfs_storage::DirectoryStorage;
 
 #[derive(Subcommand)]
 pub enum TreeCommand {
+    /// Capture explicitly selected files and literal symlinks without discovering Git.
+    Capture {
+        #[arg(long)]
+        source: PathBuf,
+        #[arg(long)]
+        store: PathBuf,
+        #[arg(required = true, last = true)]
+        paths: Vec<PathBuf>,
+    },
     /// Seal a committed Git tree into an explicitly selected local content store.
     Seal {
         #[arg(long, default_value = ".")]
@@ -63,13 +72,31 @@ async fn run_async(command: TreeCommand) -> Result<()> {
         TreeCommand::Seal { store, .. } => Some(store),
         TreeCommand::Restore { destination, .. } => Some(destination),
         TreeCommand::ExportGit { repo, .. } => Some(repo),
-        TreeCommand::Verify { .. } => None,
+        // Explicit native custody never discovers or mutates a Git repository.
+        TreeCommand::Verify { .. } | TreeCommand::Capture { .. } => None,
     };
     if let Some(destination) = destination {
         guards.path(destination).map_err(anyhow::Error::from)?;
     }
     let limits = TreeLimits::default();
     match command {
+        TreeCommand::Capture { source, store, paths } => {
+            let report = eprfs_local::capture_tree(&source, &store, &paths, &limits).await?;
+            // Paths can contain arbitrary Unix bytes. The selected byte arrays are lossless.
+            #[cfg(unix)]
+            let selected: Vec<_> = {
+                use std::os::unix::ffi::OsStrExt;
+                report.selected_paths.iter().map(|p| p.as_os_str().as_bytes()).collect()
+            };
+            #[cfg(not(unix))]
+            let selected = &report.selected_paths;
+            crate::output::print_json(&serde_json::json!({
+                "root": report.root.to_string(), "selectedPaths": selected,
+                "files": report.files, "directories": report.directories,
+                "symlinks": report.symlinks, "bytesCaptured": report.bytes_captured,
+                "published": report.published,
+            }))?;
+        }
         TreeCommand::Seal { repo, revision, store } => {
             let repository = gix::open(repo).context("open source repository")?;
             let tree_id = brit_bridge::resolve_tree_revision(&repository, &revision, &limits)?;
