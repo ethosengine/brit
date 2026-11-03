@@ -1,5 +1,6 @@
 param([Parameter(Mandatory = $true)][string] $Target)
 $ErrorActionPreference = 'Stop'
+$env:CARGO_TARGET_DIR = Join-Path $env:RUNNER_TEMP 'eprfs-storage-candidate-target'
 $fixture = (Resolve-Path 'scripts/ci/fixtures/windows-storage-candidate').Path
 $evidence = Join-Path $env:GITHUB_WORKSPACE 'rust-probe-evidence'
 New-Item -ItemType Directory $evidence | Out-Null

@@ -2,7 +2,7 @@ name: Windows storage API probe
 
 on:
   push:
-    branches: [run-ci/windows-storage-probe-20261103]
+    branches: [probe/windows-storage-20261103]
 
 permissions:
   contents: read
@@ -89,7 +89,6 @@ jobs:
       CARGO_REGISTRIES_ELOHIM_INDEX: sparse+https://nexus.ethosengine.com/repository/cargo-internal/
       CARGO_REGISTRIES_ELOHIM_TOKEN: ${{ secrets.CARGO_REGISTRIES_ELOHIM_TOKEN }}
       CARGO_REGISTRY_GLOBAL_CREDENTIAL_PROVIDERS: cargo:token
-      CARGO_TARGET_DIR: ${{ runner.temp }}/eprfs-storage-candidate-target
       RUSTFLAGS: ''
       RUSTC_WRAPPER: ''
     steps:
