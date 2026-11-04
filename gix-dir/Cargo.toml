@@ -28,7 +28,7 @@ gix-index = { version = "^0.57.2", path = "../gix-index", registry = "elohim" }
 gix-discover = { version = "^0.57.0", path = "../gix-discover", registry = "elohim" }
 gix-fs = { version = "^0.24.0", path = "../gix-fs", registry = "elohim" }
 gix-path = { version = "^0.14.0", path = "../gix-path", registry = "elohim" }
-gix-pathspec = { version = "^0.22.1", path = "../gix-pathspec", registry = "elohim" }
+gix-pathspec = { version = "^0.22.2", path = "../gix-pathspec", registry = "elohim" }
 gix-worktree = { version = "^0.58.2", path = "../gix-worktree", registry = "elohim", default-features = false }
 gix-object = { version = "^0.66.0", path = "../gix-object", registry = "elohim" }
 gix-ignore = { version = "^0.24.0", path = "../gix-ignore", registry = "elohim" }

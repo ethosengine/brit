@@ -384,8 +384,8 @@ gix-worktree = { version = "^0.58.2", path = "../gix-worktree", registry = "eloh
 gix-worktree-state = { version = "^0.36.2", path = "../gix-worktree-state", registry = "elohim", optional = true }
 gix-hashtable = { version = "^0.18.0", path = "../gix-hashtable", registry = "elohim" }
 gix-commitgraph = { version = "^0.41.0", path = "../gix-commitgraph", registry = "elohim" }
-gix-pathspec = { version = "^0.22.1", path = "../gix-pathspec", registry = "elohim", optional = true }
-gix-submodule = { version = "^0.36.1", path = "../gix-submodule", registry = "elohim", optional = true }
+gix-pathspec = { version = "^0.22.2", path = "../gix-pathspec", registry = "elohim", optional = true }
+gix-submodule = { version = "^0.36.2", path = "../gix-submodule", registry = "elohim", optional = true }
 gix-status = { version = "^0.36.2", path = "../gix-status", registry = "elohim", optional = true, features = [
     "worktree-rewrites",
 ] }

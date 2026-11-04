@@ -53,7 +53,7 @@ path = "./benches/rewrite_tracker.rs"
 
 [dependencies]
 gix-index = { version = "^0.57.2", path = "../gix-index", registry = "elohim", optional = true }
-gix-pathspec = { version = "^0.22.1", path = "../gix-pathspec", registry = "elohim", optional = true }
+gix-pathspec = { version = "^0.22.2", path = "../gix-pathspec", registry = "elohim", optional = true }
 gix-attributes = { version = "^0.37.1", path = "../gix-attributes", registry = "elohim", optional = true }
 gix-hash = { version = "^0.28.0", path = "../gix-hash", registry = "elohim" }
 gix-error = { version = "^0.5.1", path = "../gix-error", registry = "elohim" }

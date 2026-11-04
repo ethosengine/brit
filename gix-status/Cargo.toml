@@ -34,7 +34,7 @@ gix-object = { version = "^0.66.0", path = "../gix-object", registry = "elohim" 
 gix-path = { version = "^0.14.0", path = "../gix-path", registry = "elohim" }
 gix-filter = { version = "^0.36.1", path = "../gix-filter", registry = "elohim" }
 gix-worktree = { version = "^0.58.2", path = "../gix-worktree", registry = "elohim", default-features = false, features = ["attributes"] }
-gix-pathspec = { version = "^0.22.1", path = "../gix-pathspec", registry = "elohim" }
+gix-pathspec = { version = "^0.22.2", path = "../gix-pathspec", registry = "elohim" }
 
 gix-dir = { version = "^0.31.2", path = "../gix-dir", registry = "elohim", optional = true }
 gix-diff = { version = "^0.69.2", path = "../gix-diff", registry = "elohim", default-features = false, features = ["blob"], optional = true }

@@ -453,7 +453,7 @@ dependencies = [
 
 [[package]]
 name = "brit-build-ref"
-version = "0.1.4"
+version = "0.1.5"
 dependencies = [
  "anyhow",
  "brit-epr",
@@ -491,7 +491,7 @@ dependencies = [
 
 [[package]]
 name = "brit-epr"
-version = "0.1.4"
+version = "0.1.5"
 dependencies = [
  "cid",
  "ed25519-dalek",
@@ -509,7 +509,7 @@ dependencies = [
 
 [[package]]
 name = "brit-graph"
-version = "0.1.4"
+version = "0.1.5"
 dependencies = [
  "brit-epr",
  "gix 0.81.0",
@@ -2098,7 +2098,7 @@ dependencies = [
  "gix-pack 0.76.2",
  "gix-parallel",
  "gix-path 0.14.0",
- "gix-pathspec 0.22.1",
+ "gix-pathspec 0.22.2",
  "gix-prompt",
  "gix-protocol 0.67.2",
  "gix-quote 0.10.0",
@@ -2109,7 +2109,7 @@ dependencies = [
  "gix-sec 0.16.0",
  "gix-shallow 0.15.0",
  "gix-status 0.36.2",
- "gix-submodule 0.36.1",
+ "gix-submodule 0.36.2",
  "gix-tempfile 26.0.0",
  "gix-testtools",
  "gix-trace 0.3.0",
@@ -2539,7 +2539,7 @@ dependencies = [
  "gix-object 0.66.0",
  "gix-odb 0.86.2",
  "gix-path 0.14.0",
- "gix-pathspec 0.22.1",
+ "gix-pathspec 0.22.2",
  "gix-tempfile 26.0.0",
  "gix-testtools",
  "gix-trace 0.3.0",
@@ -2583,7 +2583,7 @@ dependencies = [
  "gix-index 0.57.2",
  "gix-object 0.66.0",
  "gix-path 0.14.0",
- "gix-pathspec 0.22.1",
+ "gix-pathspec 0.22.2",
  "gix-testtools",
  "gix-trace 0.3.0",
  "gix-utils 0.5.1",
@@ -3350,7 +3350,7 @@ dependencies = [
 
 [[package]]
 name = "gix-pathspec"
-version = "0.22.1"
+version = "0.22.2"
 dependencies = [
  "bitflags 2.13.0",
  "bstr",
@@ -3706,7 +3706,7 @@ dependencies = [
  "gix-odb 0.86.2",
  "gix-parallel",
  "gix-path 0.14.0",
- "gix-pathspec 0.22.1",
+ "gix-pathspec 0.22.2",
  "gix-status 0.36.2",
  "gix-testtools",
  "gix-trace 0.3.0",
@@ -3736,14 +3736,14 @@ dependencies = [
 
 [[package]]
 name = "gix-submodule"
-version = "0.36.1"
+version = "0.36.2"
 dependencies = [
  "bstr",
  "gix-config 0.62.0",
  "gix-error 0.5.1",
  "gix-fs 0.24.0",
  "gix-path 0.14.0",
- "gix-pathspec 0.22.1",
+ "gix-pathspec 0.22.2",
  "gix-refspec 0.47.0",
  "gix-testtools",
  "gix-url 0.40.0",

@@ -2,7 +2,7 @@ lints.workspace = true
 
 [package]
 name = "gix-pathspec"
-version = "0.22.1"
+version = "0.22.2"
 repository = "https://github.com/GitoxideLabs/gitoxide"
 license = "MIT OR Apache-2.0"
 description = "A crate of the gitoxide project dealing magical pathspecs"
