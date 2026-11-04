@@ -326,3 +326,35 @@ fn options_with(extensions: write::Extensions) -> Options {
         skip_hash: false,
     }
 }
+
+#[test]
+fn resolve_undo_roundtrips_for_both_hash_formats() -> TestResult {
+    use extension::resolve_undo::{ResolvePath, Stage};
+    for hash in [gix_hash::Kind::Sha1, gix_hash::Kind::Sha256] {
+        let mut state = State::new(hash);
+        state.set_resolve_undo(vec![ResolvePath {
+            name: "resolved".into(),
+            stages: [
+                Some(Stage {
+                    mode: 0o100755,
+                    id: hash.null(),
+                }),
+                None,
+                Some(Stage {
+                    mode: 0o120000,
+                    id: hash.null(),
+                }),
+            ],
+        }]);
+        let file = gix_index::File::from_state(state, "unused");
+        let mut bytes = Vec::new();
+        file.write_to(&mut bytes, Options::default())?;
+        let (decoded, _) = State::from_bytes(&bytes, FileTime::now(), hash, Default::default())?;
+        let paths = decoded.resolve_undo().expect("resolve-undo survives publication");
+        assert_eq!(paths[0].name, "resolved");
+        assert_eq!(paths[0].stages[0].expect("base").mode, 0o100755);
+        assert!(paths[0].stages[1].is_none());
+        assert_eq!(paths[0].stages[2].expect("theirs").id, hash.null());
+    }
+    Ok(())
+}

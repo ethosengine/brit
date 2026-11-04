@@ -646,6 +646,10 @@ impl State {
     pub fn resolve_undo(&self) -> Option<&extension::resolve_undo::Paths> {
         self.resolve_undo.as_ref()
     }
+    /// Replace the resolve-undo extension.
+    pub fn set_resolve_undo(&mut self, paths: extension::resolve_undo::Paths) {
+        self.resolve_undo = (!paths.is_empty()).then_some(paths);
+    }
     /// Remove the resolve-undo extension.
     pub fn remove_resolve_undo(&mut self) -> Option<extension::resolve_undo::Paths> {
         self.resolve_undo.take()

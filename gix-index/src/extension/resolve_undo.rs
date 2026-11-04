@@ -3,33 +3,32 @@ use gix_hash::ObjectId;
 
 use crate::{extension::Signature, util::split_at_byte_exclusive};
 
+/// Paths with recorded conflict stages.
 pub type Paths = Vec<ResolvePath>;
 
-#[expect(
-    dead_code,
-    reason = "REUC is decoded but not yet exposed or written; retain its fields for planned round-trip support"
-)]
+/// A resolved path and its original conflict stages.
 #[derive(Clone)]
 pub struct ResolvePath {
     /// relative to the root of the repository, or what would be stored in the index
-    name: BString,
+    pub name: BString,
 
     /// 0 = ancestor/common, 1 = ours, 2 = theirs
-    stages: [Option<Stage>; 3],
+    pub stages: [Option<Stage>; 3],
 }
 
-#[expect(
-    dead_code,
-    reason = "REUC is decoded but not yet exposed or written; retain its fields for planned round-trip support"
-)]
+/// One original conflict stage.
 #[derive(Clone, Copy)]
 pub struct Stage {
-    mode: u32,
-    id: ObjectId,
+    /// Git file mode.
+    pub mode: u32,
+    /// Object recorded at this stage.
+    pub id: ObjectId,
 }
 
+/// Git resolve-undo extension signature.
 pub const SIGNATURE: Signature = *b"REUC";
 
+/// Decode resolve-undo bytes for the repository object hash format.
 pub fn decode(mut data: &[u8], object_hash: gix_hash::Kind) -> Option<Paths> {
     let hash_len = object_hash.len_in_bytes();
     let mut out = Vec::new();
@@ -64,4 +63,24 @@ pub fn decode(mut data: &[u8], object_hash: gix_hash::Kind) -> Option<Paths> {
         });
     }
     out.into()
+}
+
+/// Serialize resolve-undo records with their extension header.
+pub fn write_to(paths: &Paths, mut out: impl std::io::Write) -> std::io::Result<()> {
+    use std::io::Write;
+    let mut bytes = Vec::new();
+    for path in paths {
+        bytes.extend_from_slice(&path.name);
+        bytes.push(0);
+        for stage in &path.stages {
+            write!(bytes, "{:o}\0", stage.map_or(0, |s| s.mode))?;
+        }
+        for stage in path.stages.iter().flatten() {
+            bytes.extend_from_slice(stage.id.as_bytes());
+        }
+    }
+    let size = u32::try_from(bytes.len()).map_err(|err| std::io::Error::new(std::io::ErrorKind::InvalidData, err))?;
+    out.write_all(&SIGNATURE)?;
+    out.write_all(&size.to_be_bytes())?;
+    out.write_all(&bytes)
 }

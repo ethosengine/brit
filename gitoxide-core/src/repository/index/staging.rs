@@ -9,7 +9,7 @@ use gix::{
     index::entry::{Flags, Mode, Stat},
 };
 
-use super::authoring::{component_options, read_index, worktree_entry};
+use super::authoring::{component_options, read_index_for_staging, worktree_entry};
 
 /// Stage literal files and directories. Empty paths select the whole repository.
 /// With `update`, only existing index paths are selected.
@@ -20,7 +20,7 @@ pub fn stage_paths(repo: gix::Repository, paths: &[BString], update: bool) -> Re
     let mut lock =
         gix::lock::File::acquire_to_update_resource(repo.index_path(), gix::lock::acquire::Fail::Immediately, None, 0)
             .or_error()?;
-    let index = read_index(&repo)?;
+    let index = read_index_for_staging(&repo)?;
     let scopes = selection(&repo, root, paths)?;
     let selected = |path: &BStr| scopes.iter().any(|scope| contains(scope.as_bstr(), path));
     let mut candidates = BTreeSet::<BString>::new();
@@ -44,7 +44,7 @@ pub fn stage_paths(repo: gix::Repository, paths: &[BString], update: bool) -> Re
             Err(err) if err.kind() == std::io::ErrorKind::NotFound => None,
             Err(err) => return Err(err).or_error(),
         };
-        let tracked = index.entry_by_path(scope.as_bstr()).is_some() || index.path_is_directory(scope.as_bstr());
+        let tracked = index.entry_index_by_path(scope.as_bstr()).is_ok() || index.path_is_directory(scope.as_bstr());
         if update && !tracked {
             bail!("Path does not match any tracked files: {scope}".validation());
         }
@@ -154,7 +154,7 @@ pub fn stage_paths(repo: gix::Repository, paths: &[BString], update: bool) -> Re
         };
         replacements.push((path, replacement));
     }
-    // Rebuilding invalidates TREE/FSMN/UNTR/REUC while preserving unselected entries.
+    // Rebuild invalidated caches, retaining resolve-undo and unselected entries.
     let mut state = gix::index::State::new(repo.object_hash());
     for entry in index.entries() {
         let path = entry.path(&index);
@@ -184,6 +184,32 @@ pub fn stage_paths(repo: gix::Repository, paths: &[BString], update: bool) -> Re
             state.dangerously_push_entry(Stat::default(), blob_id, Flags::empty(), mode, path.as_bstr());
         }
     }
+    let mut undo = index.resolve_undo().cloned().unwrap_or_default();
+    for path in &candidates {
+        let mut stages = [None; 3];
+        for entry in index
+            .entries()
+            .iter()
+            .filter(|entry| entry.path(&index) == path.as_bstr())
+        {
+            let stage = entry.stage_raw();
+            if stage != 0 {
+                stages[stage as usize - 1] = Some(gix::index::extension::resolve_undo::Stage {
+                    mode: entry.mode.bits(),
+                    id: entry.id,
+                });
+            }
+        }
+        if stages.iter().any(Option::is_some) {
+            undo.retain(|record| record.name != *path);
+            undo.push(gix::index::extension::resolve_undo::ResolvePath {
+                name: path.clone(),
+                stages,
+            });
+        }
+    }
+    undo.sort_by(|a, b| a.name.cmp(&b.name));
+    state.set_resolve_undo(undo);
     state.sort_entries();
     state.verify_entries()?;
     let output = gix::index::File::from_state(state, repo.index_path());

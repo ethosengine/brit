@@ -79,17 +79,24 @@ pub(crate) fn validate_relative_path(root: &std::path::Path, path: &gix::bstr::B
 
 /// Refuse index forms whose special semantics are not supported by this bounded command.
 pub fn validate_index(index: &gix::index::State) -> Result<()> {
+    validate_index_for_staging(index)?;
+    if index.entries().iter().any(|entry| entry.stage_raw() != 0) {
+        bail!("Conflicted indexes require Git for this operation".unsupported());
+    }
+    Ok(())
+}
+
+pub(crate) fn validate_index_for_staging(index: &gix::index::State) -> Result<()> {
     index.verify_entries()?;
     if index.is_sparse() || index.link().is_some() {
         bail!("Sparse and split indexes require Git".unsupported());
     }
     for entry in index.entries() {
-        if entry.stage_raw() != 0
-            || entry
-                .flags
-                .intersects(Flags::ASSUME_VALID | Flags::SKIP_WORKTREE | Flags::INTENT_TO_ADD)
+        if entry
+            .flags
+            .intersects(Flags::ASSUME_VALID | Flags::SKIP_WORKTREE | Flags::INTENT_TO_ADD)
         {
-            bail!("Conflicted, assume-unchanged, skip-worktree, and intent-to-add indexes require Git".unsupported());
+            bail!("Assume-unchanged, skip-worktree, and intent-to-add indexes require Git".unsupported());
         }
     }
     Ok(())
@@ -229,6 +236,12 @@ pub fn restore_staged(repo: gix::Repository, paths: &[BString]) -> Result<()> {
 
 /// Read the original index form, refusing split-index expansion and special files.
 pub(crate) fn read_index(repo: &gix::Repository) -> Result<gix::index::File> {
+    let index = read_index_for_staging(repo)?;
+    validate_index(&index)?;
+    Ok(index)
+}
+
+pub(crate) fn read_index_for_staging(repo: &gix::Repository) -> Result<gix::index::File> {
     let index = match std::fs::symlink_metadata(repo.index_path()) {
         Ok(meta) if meta.is_file() => {
             let index = repo.open_index()?;
@@ -247,7 +260,7 @@ pub(crate) fn read_index(repo: &gix::Repository) -> Result<gix::index::File> {
         }
         Err(err) => return Err(err).or_error(),
     };
-    validate_index(&index)?;
+    validate_index_for_staging(&index)?;
     Ok(index)
 }
 

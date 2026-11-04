@@ -481,6 +481,9 @@ fn special_index_states_refuse_without_rewriting_any_entries() -> Result<()> {
             vec!["diff", "--cached", "--", "selected"],
             vec!["diff", "--", "selected"],
         ] {
+            if state == "conflict" && args[0] == "add" {
+                continue; // Conflict-tolerant staging has its own Git parity journey.
+            }
             ensure!(
                 !brit(repo.path(), &args)?.status.success(),
                 "{state} must refuse {args:?}"
@@ -591,5 +594,131 @@ fn case_aliases_and_unicode_precomposition_refuse_without_index_changes() -> Res
     ensure!(!brit(repo.path(), &["add", "--", "caf\u{e9}"])?.status.success());
     assert_eq!(index(repo.path())?, before);
     assert_eq!(fs::read(repo.path().join("caf\u{e9}"))?, b"unicode content\n");
+    Ok(())
+}
+
+// Construct all Git conflict shapes without a merge driver or shared repository state.
+fn conflict_entries(repo: &Path, path: &str, stages: &[u8]) -> Result<()> {
+    use std::{io::Write, process::Stdio};
+    let blob = String::from_utf8(git(repo, &["rev-parse", "HEAD:selected"])?)?;
+    let mut child = gix_testtools::git_command(repo)
+        .args(["update-index", "--index-info"])
+        .stdin(Stdio::piped())
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped())
+        .spawn()?;
+    {
+        let input = child.stdin.as_mut().expect("piped index input");
+        writeln!(input, "0 {}\t{path}", "0".repeat(40))?;
+        for stage in stages {
+            writeln!(input, "100644 {} {stage}\t{path}", blob.trim())?;
+        }
+    }
+    drop(child.stdin.take());
+    let out = child.wait_with_output()?;
+    ensure!(out.status.success(), "{}", String::from_utf8_lossy(&out.stderr));
+    Ok(())
+}
+
+#[test]
+fn scoped_conflict_staging_and_resolve_undo_match_git() -> Result<()> {
+    for stages in [&[1, 2, 3][..], &[2, 3], &[1, 2], &[1, 3], &[3]] {
+        for deletion in [false, true] {
+            for update in [false, true] {
+                let actual = fixture("conflict-actual")?;
+                let oracle = fixture("conflict-oracle")?;
+                for repo in [&actual, &oracle] {
+                    conflict_entries(repo.path(), "selected", stages)?;
+                    conflict_entries(repo.path(), "unresolved", &[1, 2, 3])?;
+                    conflict_entries(repo.path(), "previous", &[2, 3])?;
+                    fs::write(repo.path().join("previous"), "earlier resolution\n")?;
+                    git(repo.path(), &["add", "previous"])?;
+                    if deletion {
+                        fs::remove_file(repo.path().join("selected"))?;
+                    }
+                }
+                let before = index(actual.path())?;
+                ensure!(!brit(actual.path(), &["add", "--", "selected", "../outside"])?
+                    .status
+                    .success());
+                assert_eq!(index(actual.path())?, before, "invalid batch must be atomic");
+                let args = if update {
+                    vec!["add", "-u", "--", "selected"]
+                } else {
+                    vec!["add", "--", "selected"]
+                };
+                success(actual.path(), &args)?;
+                git(oracle.path(), &args)?;
+                assert_eq!(
+                    entries(actual.path())?,
+                    entries(oracle.path())?,
+                    "all index stages match Git"
+                );
+                assert_eq!(
+                    git(actual.path(), &["ls-files", "--resolve-undo"])?,
+                    git(oracle.path(), &["ls-files", "--resolve-undo"])?
+                );
+                assert_eq!(fs::read(actual.path().join("neighbor"))?, b"unstaged neighbor\n");
+                if !deletion && stages == [1, 2, 3] {
+                    git(actual.path(), &["checkout", "-m", "--", "selected"])?;
+                    git(oracle.path(), &["checkout", "-m", "--", "selected"])?;
+                    assert_eq!(
+                        entries(actual.path())?,
+                        entries(oracle.path())?,
+                        "Git recreates resolved conflict"
+                    );
+                }
+            }
+        }
+    }
+    Ok(())
+}
+
+#[test]
+fn staging_unrelated_file_preserves_conflicts_and_directory_selection_resolves_them() -> Result<()> {
+    let actual = fixture("directory-conflicts")?;
+    let oracle = fixture("directory-oracle")?;
+    for repo in [&actual, &oracle] {
+        fs::create_dir(repo.path().join("dir"))?;
+        conflict_entries(repo.path(), "dir/file", &[1, 2, 3])?;
+        fs::write(repo.path().join("dir/file"), "<<<<<<< deliberate bytes\n")?;
+    }
+    for args in [vec!["add", "--", "selected"], vec!["add", "--", "dir"]] {
+        success(actual.path(), &args)?;
+        git(oracle.path(), &args)?;
+        assert_eq!(entries(actual.path())?, entries(oracle.path())?);
+        assert_eq!(
+            git(actual.path(), &["ls-files", "--resolve-undo"])?,
+            git(oracle.path(), &["ls-files", "--resolve-undo"])?
+        );
+    }
+    Ok(())
+}
+
+#[cfg(unix)]
+#[test]
+fn conflict_resolution_modes_and_lock_refusal_match_git() -> Result<()> {
+    use std::os::unix::fs::{symlink, PermissionsExt};
+    for link in [false, true] {
+        let actual = fixture("conflict-mode")?;
+        let oracle = fixture("conflict-mode-oracle")?;
+        for repo in [&actual, &oracle] {
+            conflict_entries(repo.path(), "selected", &[1, 2, 3])?;
+            if link {
+                fs::remove_file(repo.path().join("selected"))?;
+                symlink("neighbor", repo.path().join("selected"))?;
+            } else {
+                fs::set_permissions(repo.path().join("selected"), fs::Permissions::from_mode(0o755))?;
+            }
+        }
+        let before = index(actual.path())?;
+        fs::write(actual.path().join(".git/index.lock"), "held")?;
+        ensure!(!brit(actual.path(), &["add", "--", "selected"])?.status.success());
+        assert_eq!(index(actual.path())?, before);
+        fs::remove_file(actual.path().join(".git/index.lock"))?;
+        success(actual.path(), &["add", "--", "selected"])?;
+        git(oracle.path(), &["add", "--", "selected"])?;
+        assert_eq!(entries(actual.path())?, entries(oracle.path())?);
+    }
     Ok(())
 }

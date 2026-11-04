@@ -542,9 +542,11 @@ commands remain available. New untracked files appear in cached diff after stagi
 Restore requires an existing HEAD; an unborn repository can stage and inspect its
 first commit but cannot restore from a commit that does not exist.
 
-This bounded implementation refuses recursive directories, wildcard/pathspec
+This bounded implementation refuses wildcard/pathspec
 magic, interactive staging, selected submodules, external clean filters, special
-index flags and conflicted indexes. Mutations also refuse split/sparse indexes
+index flags. Staging accepts conflicted indexes, resolves only selected paths,
+and preserves unselected stages and Git resolve-undo records. Diff and restore
+retain their conflicted-index refusal. Mutations also refuse split/sparse indexes
 and unsupported case aliases or Unicode precomposition. Diff refuses custom diff
 attributes/external drivers and submodule patches; explicitly selecting ordinary
 files works alongside unrelated submodules. Text patches use Myers with three
