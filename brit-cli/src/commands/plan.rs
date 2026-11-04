@@ -78,7 +78,8 @@ fn compute_fingerprints(
         return Ok(out);
     }
 
-    let repo = gix::discover(repo_path).map_err(|e| CliError::Args(format!("repo open failed: {e}")))?;
+    let repo = crate::repository::discover(repo_path, Default::default())
+        .map_err(|e| CliError::Args(format!("repo open failed: {}", crate::error::format_error(&e))))?;
     let commit_id = gix::ObjectId::from_hex(head_commit_hex.as_bytes())
         .map_err(|e| CliError::Args(format!("invalid commit hex '{head_commit_hex}': {e}")))?;
 

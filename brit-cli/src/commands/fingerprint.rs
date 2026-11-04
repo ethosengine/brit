@@ -33,13 +33,23 @@ pub fn run(manifest_path: &Path, step_filter: Option<&str>, commit_ref: &str) ->
     let manifest_dir = manifest_path
         .parent()
         .ok_or_else(|| CliError::Args(format!("manifest has no parent dir: {}", manifest_path.display())))?;
-    let repo = gix::discover(manifest_dir)
-        .map_err(|e| CliError::Args(format!("repo discovery failed for {}: {e}", manifest_dir.display())))?;
+    let repo = crate::repository::discover(manifest_dir, Default::default()).map_err(|e| {
+        CliError::Args(format!(
+            "repo discovery failed for {}: {}",
+            manifest_dir.display(),
+            crate::error::format_error(&e)
+        ))
+    })?;
 
     // Resolve the commit ref to an ObjectId
     let commit_id = repo
         .rev_parse_single(commit_ref)
-        .map_err(|e| CliError::Args(format!("could not resolve commit '{commit_ref}': {e}")))?
+        .map_err(|e| {
+            CliError::Args(format!(
+                "could not resolve commit '{commit_ref}': {}",
+                crate::error::format_error(&e)
+            ))
+        })?
         .detach();
 
     let mut out = Vec::new();
