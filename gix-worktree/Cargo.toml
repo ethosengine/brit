@@ -2,7 +2,7 @@ lints.workspace = true
 
 [package]
 name = "gix-worktree"
-version = "0.58.1"
+version = "0.58.2"
 repository = "https://github.com/GitoxideLabs/gitoxide"
 license = "MIT OR Apache-2.0"
 description = "A crate of the gitoxide project for shared worktree related types and utilities."
@@ -33,7 +33,7 @@ remove = ["dep:dua-core", "dep:gix-trace", "gix-utils/progress"]
 gix-trace = { version = "^0.3.0", path = "../gix-trace", registry = "elohim", optional = true }
 gix-utils = { version = "^0.5.1", path = "../gix-utils", registry = "elohim", optional = true }
 gix-error = { version = "^0.5.1", path = "../gix-error", registry = "elohim" }
-gix-index = { version = "^0.57.1", path = "../gix-index", registry = "elohim" }
+gix-index = { version = "^0.57.2", path = "../gix-index", registry = "elohim" }
 gix-fs = { version = "^0.24.0", path = "../gix-fs", registry = "elohim" }
 gix-hash = { version = "^0.28.0", path = "../gix-hash", registry = "elohim" }
 gix-object = { version = "^0.66.0", path = "../gix-object", registry = "elohim" }

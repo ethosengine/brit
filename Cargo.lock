@@ -83,7 +83,7 @@ version = "1.1.5"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "40c48f72fd53cd289104fc64099abca73db4166ad86ea0b4341abe65af83dadc"
 dependencies = [
- "windows-sys 0.60.2",
+ "windows-sys 0.61.2",
 ]
 
 [[package]]
@@ -94,7 +94,7 @@ checksum = "291e6a250ff86cd4a820112fb8898808a366d8f9f58ce16d1f538353ad55747d"
 dependencies = [
  "anstyle",
  "once_cell_polyfill",
- "windows-sys 0.60.2",
+ "windows-sys 0.61.2",
 ]
 
 [[package]]
@@ -438,14 +438,14 @@ dependencies = [
 
 [[package]]
 name = "brit-bridge"
-version = "0.1.2"
+version = "0.1.3"
 dependencies = [
  "anyhow",
  "async-trait",
  "bytes",
  "eprfs-core",
  "futures-lite",
- "gix 0.89.1",
+ "gix 0.89.2",
  "gix-testtools",
  "hex",
  "tempfile",
@@ -467,7 +467,7 @@ dependencies = [
 
 [[package]]
 name = "brit-cli"
-version = "0.1.7"
+version = "0.1.8"
 dependencies = [
  "anyhow",
  "brit-bridge",
@@ -527,7 +527,7 @@ name = "brit-verify"
 version = "0.0.0"
 dependencies = [
  "brit-epr",
- "gix 0.89.1",
+ "gix 0.89.2",
 ]
 
 [[package]]
@@ -1116,7 +1116,7 @@ dependencies = [
  "openssl-sys",
  "schannel",
  "socket2",
- "windows-sys 0.60.2",
+ "windows-sys 0.61.2",
 ]
 
 [[package]]
@@ -1132,7 +1132,7 @@ dependencies = [
  "pkg-config",
  "rustls-ffi",
  "vcpkg",
- "windows-sys 0.60.2",
+ "windows-sys 0.61.2",
 ]
 
 [[package]]
@@ -1376,7 +1376,7 @@ dependencies = [
  "libc",
  "option-ext",
  "redox_users",
- "windows-sys 0.60.2",
+ "windows-sys 0.61.2",
 ]
 
 [[package]]
@@ -1595,7 +1595,7 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "39cab71617ae0d63f51a36d69f866391735b51691dbda63cf6f96d042b63efeb"
 dependencies = [
  "libc",
- "windows-sys 0.52.0",
+ "windows-sys 0.61.2",
 ]
 
 [[package]]
@@ -1940,7 +1940,7 @@ dependencies = [
 
 [[package]]
 name = "gitoxide"
-version = "0.60.1"
+version = "0.60.2"
 dependencies = [
  "anstream",
  "anyhow",
@@ -1951,7 +1951,7 @@ dependencies = [
  "env_logger",
  "futures-lite",
  "gitoxide-core",
- "gix 0.89.1",
+ "gix 0.89.2",
  "gix-tix",
  "prodash",
  "serde_derive",
@@ -1961,7 +1961,7 @@ dependencies = [
 
 [[package]]
 name = "gitoxide-core"
-version = "0.63.1"
+version = "0.63.2"
 dependencies = [
  "anyhow",
  "async-io",
@@ -1976,13 +1976,13 @@ dependencies = [
  "futures-io",
  "futures-lite",
  "gitoxide-core",
- "gix 0.89.1",
+ "gix 0.89.2",
  "gix-archive 0.38.1",
  "gix-config-value 0.21.0",
  "gix-fsck",
- "gix-pack 0.76.1",
+ "gix-pack 0.76.2",
  "gix-sequencer",
- "gix-status 0.36.1",
+ "gix-status 0.36.2",
  "gix-testtools",
  "gix-trace 0.3.0",
  "gix-transport 0.61.1",
@@ -2063,22 +2063,22 @@ dependencies = [
 
 [[package]]
 name = "gix"
-version = "0.89.1"
+version = "0.89.2"
 dependencies = [
  "async-std",
  "document-features",
- "gix 0.89.1",
+ "gix 0.89.2",
  "gix-actor 0.44.0",
  "gix-archive 0.38.1",
  "gix-attributes 0.37.1",
- "gix-blame 0.19.1",
+ "gix-blame 0.19.2",
  "gix-command 0.12.0",
  "gix-commitgraph 0.41.0",
  "gix-config 0.62.0",
  "gix-credentials",
  "gix-date 0.18.0",
- "gix-diff 0.69.1",
- "gix-dir 0.31.1",
+ "gix-diff 0.69.2",
+ "gix-dir 0.31.2",
  "gix-discover 0.57.0",
  "gix-error 0.5.1",
  "gix-filter 0.36.1",
@@ -2087,20 +2087,20 @@ dependencies = [
  "gix-hash 0.28.0",
  "gix-hashtable 0.18.0",
  "gix-ignore 0.24.0",
- "gix-index 0.57.1",
+ "gix-index 0.57.2",
  "gix-lock 26.0.0",
  "gix-mailmap",
- "gix-merge 0.22.1",
+ "gix-merge 0.22.2",
  "gix-negotiate 0.37.0",
  "gix-note",
  "gix-object 0.66.0",
- "gix-odb 0.86.1",
- "gix-pack 0.76.1",
+ "gix-odb 0.86.2",
+ "gix-pack 0.76.2",
  "gix-parallel",
  "gix-path 0.14.0",
  "gix-pathspec 0.22.1",
  "gix-prompt",
- "gix-protocol 0.67.1",
+ "gix-protocol 0.67.2",
  "gix-quote 0.10.0",
  "gix-ref 0.69.0",
  "gix-refspec 0.47.0",
@@ -2108,7 +2108,7 @@ dependencies = [
  "gix-revwalk 0.37.0",
  "gix-sec 0.16.0",
  "gix-shallow 0.15.0",
- "gix-status 0.36.1",
+ "gix-status 0.36.2",
  "gix-submodule 0.36.1",
  "gix-tempfile 26.0.0",
  "gix-testtools",
@@ -2118,8 +2118,8 @@ dependencies = [
  "gix-url 0.40.0",
  "gix-utils 0.5.1",
  "gix-validate 0.13.0",
- "gix-worktree 0.58.1",
- "gix-worktree-state 0.36.1",
+ "gix-worktree 0.58.2",
+ "gix-worktree-state 0.36.2",
  "gix-worktree-stream 0.38.1",
  "gix-zlib",
  "insta",
@@ -2190,10 +2190,10 @@ dependencies = [
  "gix-filter 0.36.1",
  "gix-hash 0.28.0",
  "gix-object 0.66.0",
- "gix-odb 0.86.1",
+ "gix-odb 0.86.2",
  "gix-path 0.14.0",
  "gix-testtools",
- "gix-worktree 0.58.1",
+ "gix-worktree 0.58.2",
  "gix-worktree-stream 0.38.1",
  "rawzip",
  "tar",
@@ -2276,24 +2276,24 @@ dependencies = [
 
 [[package]]
 name = "gix-blame"
-version = "0.19.1"
+version = "0.19.2"
 dependencies = [
  "gix-commitgraph 0.41.0",
  "gix-date 0.18.0",
- "gix-diff 0.69.1",
+ "gix-diff 0.69.2",
  "gix-error 0.5.1",
  "gix-filter 0.36.1",
  "gix-fs 0.24.0",
  "gix-hash 0.28.0",
- "gix-index 0.57.1",
+ "gix-index 0.57.2",
  "gix-object 0.66.0",
- "gix-odb 0.86.1",
+ "gix-odb 0.86.2",
  "gix-ref 0.69.0",
  "gix-revwalk 0.37.0",
  "gix-testtools",
  "gix-trace 0.3.0",
  "gix-traverse 0.63.0",
- "gix-worktree 0.58.1",
+ "gix-worktree 0.58.2",
  "insta",
  "pretty_assertions",
  "smallvec",
@@ -2522,7 +2522,7 @@ dependencies = [
 
 [[package]]
 name = "gix-diff"
-version = "0.69.1"
+version = "0.69.2"
 dependencies = [
  "bstr",
  "criterion",
@@ -2535,16 +2535,16 @@ dependencies = [
  "gix-fs 0.24.0",
  "gix-hash 0.28.0",
  "gix-imara-diff",
- "gix-index 0.57.1",
+ "gix-index 0.57.2",
  "gix-object 0.66.0",
- "gix-odb 0.86.1",
+ "gix-odb 0.86.2",
  "gix-path 0.14.0",
  "gix-pathspec 0.22.1",
  "gix-tempfile 26.0.0",
  "gix-testtools",
  "gix-trace 0.3.0",
  "gix-traverse 0.63.0",
- "gix-worktree 0.58.1",
+ "gix-worktree 0.58.2",
  "insta",
  "pretty_assertions",
  "serde",
@@ -2572,22 +2572,22 @@ dependencies = [
 
 [[package]]
 name = "gix-dir"
-version = "0.31.1"
+version = "0.31.2"
 dependencies = [
  "bstr",
- "gix-dir 0.31.1",
+ "gix-dir 0.31.2",
  "gix-discover 0.57.0",
  "gix-error 0.5.1",
  "gix-fs 0.24.0",
  "gix-ignore 0.24.0",
- "gix-index 0.57.1",
+ "gix-index 0.57.2",
  "gix-object 0.66.0",
  "gix-path 0.14.0",
  "gix-pathspec 0.22.1",
  "gix-testtools",
  "gix-trace 0.3.0",
  "gix-utils 0.5.1",
- "gix-worktree 0.58.1",
+ "gix-worktree 0.58.2",
  "insta",
  "pretty_assertions",
 ]
@@ -2710,7 +2710,7 @@ dependencies = [
  "gix-testtools",
  "gix-trace 0.3.0",
  "gix-utils 0.5.1",
- "gix-worktree 0.58.1",
+ "gix-worktree 0.58.2",
  "insta",
  "smallvec",
 ]
@@ -2757,7 +2757,7 @@ dependencies = [
  "gix-hash 0.28.0",
  "gix-hashtable 0.18.0",
  "gix-object 0.66.0",
- "gix-odb 0.86.1",
+ "gix-odb 0.86.2",
  "gix-testtools",
 ]
 
@@ -2910,7 +2910,7 @@ dependencies = [
 
 [[package]]
 name = "gix-index"
-version = "0.57.1"
+version = "0.57.2"
 dependencies = [
  "bitflags 2.13.0",
  "bstr",
@@ -2925,7 +2925,7 @@ dependencies = [
  "gix-hashtable 0.18.0",
  "gix-lock 26.0.0",
  "gix-object 0.66.0",
- "gix-odb 0.86.1",
+ "gix-odb 0.86.2",
  "gix-parallel",
  "gix-testtools",
  "gix-trace 0.3.0",
@@ -3022,23 +3022,23 @@ dependencies = [
 
 [[package]]
 name = "gix-merge"
-version = "0.22.1"
+version = "0.22.2"
 dependencies = [
  "arbitrary",
  "bstr",
  "criterion",
  "document-features",
  "gix-command 0.12.0",
- "gix-diff 0.69.1",
+ "gix-diff 0.69.2",
  "gix-error 0.5.1",
  "gix-filter 0.36.1",
  "gix-fs 0.24.0",
  "gix-hash 0.28.0",
  "gix-imara-diff",
- "gix-index 0.57.1",
- "gix-merge 0.22.1",
+ "gix-index 0.57.2",
+ "gix-merge 0.22.2",
  "gix-object 0.66.0",
- "gix-odb 0.86.1",
+ "gix-odb 0.86.2",
  "gix-path 0.14.0",
  "gix-quote 0.10.0",
  "gix-revision 0.51.0",
@@ -3047,7 +3047,7 @@ dependencies = [
  "gix-testtools",
  "gix-trace 0.3.0",
  "gix-utils 0.5.1",
- "gix-worktree 0.58.1",
+ "gix-worktree 0.58.2",
  "insta",
  "nonempty",
  "pretty_assertions",
@@ -3079,7 +3079,7 @@ dependencies = [
  "gix-error 0.5.1",
  "gix-hash 0.28.0",
  "gix-object 0.66.0",
- "gix-odb 0.86.1",
+ "gix-odb 0.86.2",
  "gix-ref 0.69.0",
  "gix-revwalk 0.37.0",
  "gix-testtools",
@@ -3094,7 +3094,7 @@ dependencies = [
  "gix-hash 0.28.0",
  "gix-note",
  "gix-object 0.66.0",
- "gix-odb 0.86.1",
+ "gix-odb 0.86.2",
  "gix-testtools",
  "insta",
 ]
@@ -3134,7 +3134,7 @@ dependencies = [
  "gix-hash 0.28.0",
  "gix-hashtable 0.18.0",
  "gix-object 0.66.0",
- "gix-odb 0.86.1",
+ "gix-odb 0.86.2",
  "gix-path 0.14.0",
  "gix-tempfile 26.0.0",
  "gix-testtools",
@@ -3170,7 +3170,7 @@ dependencies = [
 
 [[package]]
 name = "gix-odb"
-version = "0.86.1"
+version = "0.86.2"
 dependencies = [
  "arc-swap",
  "crc32fast",
@@ -3184,8 +3184,8 @@ dependencies = [
  "gix-hash 0.28.0",
  "gix-hashtable 0.18.0",
  "gix-object 0.66.0",
- "gix-odb 0.86.1",
- "gix-pack 0.76.1",
+ "gix-odb 0.86.2",
+ "gix-pack 0.76.2",
  "gix-parallel",
  "gix-path 0.14.0",
  "gix-quote 0.10.0",
@@ -3223,7 +3223,7 @@ dependencies = [
 
 [[package]]
 name = "gix-pack"
-version = "0.76.1"
+version = "0.76.2"
 dependencies = [
  "bstr",
  "clru",
@@ -3232,13 +3232,13 @@ dependencies = [
  "crossbeam-deque",
  "document-features",
  "gix-chunk 0.10.0",
- "gix-diff 0.69.1",
+ "gix-diff 0.69.2",
  "gix-error 0.5.1",
  "gix-hash 0.28.0",
  "gix-hashtable 0.18.0",
  "gix-object 0.66.0",
- "gix-odb 0.86.1",
- "gix-pack 0.76.1",
+ "gix-odb 0.86.2",
+ "gix-pack 0.76.2",
  "gix-parallel",
  "gix-path 0.14.0",
  "gix-tempfile 26.0.0",
@@ -3282,8 +3282,8 @@ dependencies = [
  "gix-error 0.5.1",
  "gix-hash 0.28.0",
  "gix-macros",
- "gix-odb 0.86.1",
- "gix-pack 0.76.1",
+ "gix-odb 0.86.2",
+ "gix-pack 0.76.2",
  "gix-testtools",
  "gix-trace 0.3.0",
  "insta",
@@ -3402,7 +3402,7 @@ dependencies = [
 
 [[package]]
 name = "gix-protocol"
-version = "0.67.1"
+version = "0.67.2"
 dependencies = [
  "async-std",
  "async-trait",
@@ -3418,9 +3418,9 @@ dependencies = [
  "gix-macros",
  "gix-negotiate 0.37.0",
  "gix-object 0.66.0",
- "gix-pack 0.76.1",
+ "gix-pack 0.76.2",
  "gix-packetline 0.24.0",
- "gix-protocol 0.67.1",
+ "gix-protocol 0.67.2",
  "gix-ref 0.69.0",
  "gix-refspec 0.47.0",
  "gix-revwalk 0.37.0",
@@ -3493,7 +3493,7 @@ dependencies = [
  "gix-hash 0.28.0",
  "gix-lock 26.0.0",
  "gix-object 0.66.0",
- "gix-odb 0.86.1",
+ "gix-odb 0.86.2",
  "gix-parallel",
  "gix-path 0.14.0",
  "gix-tempfile 26.0.0",
@@ -3567,7 +3567,7 @@ dependencies = [
  "gix-hash 0.28.0",
  "gix-hashtable 0.18.0",
  "gix-object 0.66.0",
- "gix-odb 0.86.1",
+ "gix-odb 0.86.2",
  "gix-revwalk 0.37.0",
  "gix-testtools",
  "gix-trace 0.3.0",
@@ -3690,28 +3690,28 @@ dependencies = [
 
 [[package]]
 name = "gix-status"
-version = "0.36.1"
+version = "0.36.2"
 dependencies = [
  "bstr",
  "document-features",
  "filetime",
- "gix-diff 0.69.1",
- "gix-dir 0.31.1",
+ "gix-diff 0.69.2",
+ "gix-dir 0.31.2",
  "gix-error 0.5.1",
  "gix-filter 0.36.1",
  "gix-fs 0.24.0",
  "gix-hash 0.28.0",
- "gix-index 0.57.1",
+ "gix-index 0.57.2",
  "gix-object 0.66.0",
- "gix-odb 0.86.1",
+ "gix-odb 0.86.2",
  "gix-parallel",
  "gix-path 0.14.0",
  "gix-pathspec 0.22.1",
- "gix-status 0.36.1",
+ "gix-status 0.36.2",
  "gix-testtools",
  "gix-trace 0.3.0",
  "gix-utils 0.5.1",
- "gix-worktree 0.58.1",
+ "gix-worktree 0.58.2",
  "hashbrown 0.16.1",
  "insta",
  "portable-atomic",
@@ -3793,17 +3793,17 @@ dependencies = [
  "gix-discover 0.57.0",
  "gix-error 0.5.1",
  "gix-hash 0.28.0",
- "gix-index 0.57.1",
+ "gix-index 0.57.2",
  "gix-lock 26.0.0",
  "gix-object 0.66.0",
- "gix-odb 0.86.1",
+ "gix-odb 0.86.2",
  "gix-parallel",
  "gix-path 0.14.0",
  "gix-ref 0.69.0",
  "gix-shallow 0.15.0",
  "gix-tempfile 26.0.0",
  "gix-testtools",
- "gix-worktree 0.58.1",
+ "gix-worktree 0.58.2",
  "insta",
  "io-close",
  "is_ci",
@@ -3817,15 +3817,15 @@ dependencies = [
 
 [[package]]
 name = "gix-tix"
-version = "0.5.1"
+version = "0.5.2"
 dependencies = [
  "clap",
  "crossterm",
  "directories",
- "gix 0.89.1",
+ "gix 0.89.2",
  "gix-testtools",
  "gix-trace 0.3.0",
- "gix-worktree 0.58.1",
+ "gix-worktree 0.58.2",
  "insta",
  "notify",
  "ratatui",
@@ -3889,7 +3889,7 @@ dependencies = [
  "gix-error 0.5.1",
  "gix-hash 0.28.0",
  "gix-macros",
- "gix-pack 0.76.1",
+ "gix-pack 0.76.2",
  "gix-packetline 0.24.0",
  "gix-path 0.14.0",
  "gix-quote 0.10.0",
@@ -3935,7 +3935,7 @@ dependencies = [
  "gix-hash 0.28.0",
  "gix-hashtable 0.18.0",
  "gix-object 0.66.0",
- "gix-odb 0.86.1",
+ "gix-odb 0.86.2",
  "gix-path 0.14.0",
  "gix-revwalk 0.37.0",
  "gix-testtools",
@@ -4047,7 +4047,7 @@ dependencies = [
 
 [[package]]
 name = "gix-worktree"
-version = "0.58.1"
+version = "0.58.2"
 dependencies = [
  "bstr",
  "document-features",
@@ -4059,15 +4059,15 @@ dependencies = [
  "gix-glob 0.29.0",
  "gix-hash 0.28.0",
  "gix-ignore 0.24.0",
- "gix-index 0.57.1",
+ "gix-index 0.57.2",
  "gix-object 0.66.0",
- "gix-odb 0.86.1",
+ "gix-odb 0.86.2",
  "gix-path 0.14.0",
  "gix-testtools",
  "gix-trace 0.3.0",
  "gix-utils 0.5.1",
  "gix-validate 0.13.0",
- "gix-worktree 0.58.1",
+ "gix-worktree 0.58.2",
  "insta",
  "serde",
 ]
@@ -4092,23 +4092,23 @@ dependencies = [
 
 [[package]]
 name = "gix-worktree-state"
-version = "0.36.1"
+version = "0.36.2"
 dependencies = [
  "bstr",
  "gix-error 0.5.1",
  "gix-filter 0.36.1",
  "gix-fs 0.24.0",
  "gix-hash 0.28.0",
- "gix-index 0.57.1",
+ "gix-index 0.57.2",
  "gix-object 0.66.0",
- "gix-odb 0.86.1",
+ "gix-odb 0.86.2",
  "gix-parallel",
  "gix-path 0.14.0",
  "gix-testtools",
  "gix-trace 0.3.0",
  "gix-utils 0.5.1",
- "gix-worktree 0.58.1",
- "gix-worktree-state 0.36.1",
+ "gix-worktree 0.58.2",
+ "gix-worktree-state 0.36.2",
  "insta",
  "io-close",
  "walkdir",
@@ -4142,14 +4142,14 @@ dependencies = [
  "gix-fs 0.24.0",
  "gix-hash 0.28.0",
  "gix-object 0.66.0",
- "gix-odb 0.86.1",
+ "gix-odb 0.86.2",
  "gix-parallel",
  "gix-path 0.14.0",
  "gix-testtools",
  "gix-trace 0.3.0",
  "gix-traverse 0.63.0",
  "gix-utils 0.5.1",
- "gix-worktree 0.58.1",
+ "gix-worktree 0.58.2",
  "gix-worktree-stream 0.38.1",
  "insta",
  "parking_lot",
@@ -4732,7 +4732,7 @@ name = "internal-tools"
 version = "0.0.0"
 dependencies = [
  "clap",
- "gix 0.89.1",
+ "gix 0.89.2",
  "gix-testtools",
  "regex",
 ]
@@ -5414,7 +5414,7 @@ version = "0.50.3"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "7957b9740744892f114936ab4a57b3f487491bbeafaf8083688b16841a4240e5"
 dependencies = [
- "windows-sys 0.60.2",
+ "windows-sys 0.61.2",
 ]
 
 [[package]]
@@ -6341,7 +6341,7 @@ dependencies = [
  "errno",
  "libc",
  "linux-raw-sys",
- "windows-sys 0.52.0",
+ "windows-sys 0.61.2",
 ]
 
 [[package]]
@@ -6412,7 +6412,7 @@ dependencies = [
  "security-framework",
  "security-framework-sys",
  "webpki-root-certs",
- "windows-sys 0.52.0",
+ "windows-sys 0.61.2",
 ]
 
 [[package]]
@@ -6788,7 +6788,7 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "52d1cfed4120b4d927bf7c0f86d2087a4a7d6027c906d9f9d525a80573b9be51"
 dependencies = [
  "libc",
- "windows-sys 0.60.2",
+ "windows-sys 0.61.2",
 ]
 
 [[package]]
@@ -6983,7 +6983,7 @@ dependencies = [
  "getrandom 0.4.3",
  "once_cell",
  "rustix",
- "windows-sys 0.52.0",
+ "windows-sys 0.61.2",
 ]
 
 [[package]]
@@ -7028,7 +7028,7 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "230a1b821ccbd75b185820a1f1ff7b14d21da1e442e22c0863ea5f08771a8874"
 dependencies = [
  "rustix",
- "windows-sys 0.60.2",
+ "windows-sys 0.61.2",
 ]
 
 [[package]]
@@ -7712,7 +7712,7 @@ version = "0.1.11"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "c2a7b1c03c876122aa43f3020e6c3c3ee5c05081c9a00739faf7503aeba10d22"
 dependencies = [
- "windows-sys 0.52.0",
+ "windows-sys 0.61.2",
 ]
 
 [[package]]
@@ -8089,7 +8089,7 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "7d6f32a0ff4a9f6f01231eb2059cc85479330739333e0e58cadf03b6af2cca10"
 dependencies = [
  "cfg-if",
- "windows-sys 0.60.2",
+ "windows-sys 0.61.2",
 ]
 
 [[package]]

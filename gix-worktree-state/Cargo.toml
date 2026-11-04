@@ -2,7 +2,7 @@ lints.workspace = true
 
 [package]
 name = "gix-worktree-state"
-version = "0.36.1"
+version = "0.36.2"
 repository = "https://github.com/GitoxideLabs/gitoxide"
 license = "MIT OR Apache-2.0"
 description = "A crate of the gitoxide project implementing setting the worktree to a particular state"
@@ -24,8 +24,8 @@ sha256 = ["gix-index/sha256"]
 gix-trace = { version = "^0.3.0", path = "../gix-trace", registry = "elohim" }
 gix-utils = { version = "^0.5.1", path = "../gix-utils", registry = "elohim", features = ["interrupt", "progress"] }
 gix-parallel = { version = "^0.50.0", path = "../gix-parallel", registry = "elohim" }
-gix-worktree = { version = "^0.58.1", path = "../gix-worktree", registry = "elohim", default-features = false, features = ["attributes"] }
-gix-index = { version = "^0.57.1", path = "../gix-index", registry = "elohim" }
+gix-worktree = { version = "^0.58.2", path = "../gix-worktree", registry = "elohim", default-features = false, features = ["attributes"] }
+gix-index = { version = "^0.57.2", path = "../gix-index", registry = "elohim" }
 gix-fs = { version = "^0.24.0", path = "../gix-fs", registry = "elohim" }
 gix-object = { version = "^0.66.0", path = "../gix-object", registry = "elohim" }
 gix-error = { version = "^0.5.1", path = "../gix-error", registry = "elohim", features = ["bstr"] }
