@@ -71,21 +71,29 @@ are part of this repair; the initial local green did not establish them.
 
 Preparation now polls preservation entries, worktree and object-directory walks,
 and the durability scan. All original metadata reads precede journal allocation.
-Cancellation before the initial state write removes only the still-owned empty
-allocation; after state writing starts, the journal remains recoverable. Retention
+Cancellation before the initial state write checks allocation identity before
+removing the empty directory; this coordinates cooperating writers and does not
+isolate a hostile process that can mutate `.git` paths. After state writing
+starts, the journal remains recoverable. Retention
 verification checks cancellation before and after hashing, and each retention-ref
 publication has its own check. A cancellation after one ref is written retains
-that partial preparation for explicit recovery; cancellation during recovery must
-leave the journal and ref count unchanged.
+that partial preparation for explicit recovery. Cancellation during recovery
+stops subsequent publication while preserving progress already made. The tested
+pre-publication checkpoint leaves journal bytes and ref count unchanged; a later
+checkpoint can legitimately leave a new ref, and recovery can promote
+`state.pending` before cancellation.
 
 The public journeys now name six pre-journal interruption points and three
 post-journal points, including another interrupt during `--abort`. They preserve
-the original integration and private work. All 158 affected core checks, 13 fault-enabled rebase journeys and 40 ordinary
-pull/rebase/switch journeys pass, with zero ignored. Scoped strict Clippy,
-formatting and both Rust-style gates pass. Exact follow-up CI and independent
-re-review remain required before landing.
+the original integration and private work. All 158 affected core checks, 13
+fault-enabled rebase journeys and 40 ordinary pull/rebase/switch journeys pass,
+with zero ignored. Scoped strict Clippy, formatting and both Rust-style gates
+pass. Independent re-review of `a524bf36` accepted the three required code fixes
+and conditioned LAND on these documentation corrections. Exact final CI remains
+required before landing; this is technical review, not human acceptance.
 
-- [ ] Bound cancellation latency inside individual large-object decompression/hash operations, bulk index comparisons and blocking filesystem calls; current polling bounds transitions between these operations, not their duration. Add representative large-object/index probes before claiming a latency budget. Serves brit-native-daily-driver.
+- [ ] Bound cancellation latency in individual large-object decompression/hash operations, bulk index comparisons, merge-base traversal, candidate/footprint loops in replay/mod.rs, whole-worktree witness serialization/hashing, journal serialization and blocking filesystem calls. Current polling does not preempt those operations; no hard latency budget is claimed. Add representative large-object/index/history probes before claiming one. Serves brit-native-daily-driver.
+- [ ] Harden unpublished-journal cleanup against a hostile local process with write access inside `.git`: path substitution can race create/metadata or inode-check/remove, including ancestor symlinks, and cause removal of an empty directory not created by this operation. `remove_dir` refuses non-empty directories and does not follow a final-component symlink; that bounds the observed threat. Investigate private staging and handle-anchored ownership, with adversarial path-swap probes, as a separate slice. Serves brit-native-daily-driver.
 - [ ] Reconcile retained-copy helper delivery with the followed-tool install: `brit-build-artifacts.yml` ships only brit/build-ref/verify, while `brit-release.yml` includes and qualifies `brit-rebase-retained`. On shem, `command -v brit-rebase-retained` currently fails. Abort/recovery itself runs in-process; independent retained-copy inspection/extraction still needs the separate helper. Probe the installed helper and export a retained copy before declaring that delivery station qualified. Serves brit-native-daily-driver.
 
 ## Sprint — 2026-10-12
