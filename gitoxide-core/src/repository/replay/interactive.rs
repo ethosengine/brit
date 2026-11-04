@@ -694,7 +694,7 @@ impl Session {
                     history(repo, *id, &mut closure)?;
                 }
                 gix::objs::Kind::Tree => {
-                    validate_tree(repo, *id, &mut BTreeSet::new(), &mut closure)?;
+                    validate_tree(repo, *id, &mut closure)?;
                 }
                 gix::objs::Kind::Blob => {
                     closure.insert(*id);

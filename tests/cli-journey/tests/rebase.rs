@@ -508,6 +508,37 @@ mod recovery {
     }
 
     #[test]
+    fn public_selection_interrupt_leaves_no_journal_or_repository_changes() -> Result<()> {
+        let repo = fixture(false)?;
+        let root = repo.path();
+        let head = git(root, &["rev-parse", "HEAD"])?;
+        let index = fs::read(root.join(".git/index"))?;
+        let markers = tempfile::tempdir()?;
+        let point = "replay-selection-object";
+        let mut child = launch(
+            root,
+            &["rebase", "upstream"],
+            &[
+                ("BRIT_SWITCH_CHECKPOINT", point.as_ref()),
+                ("BRIT_SWITCH_CHECKPOINT_DIR", markers.path().as_os_str()),
+            ],
+        )?;
+        wait_file(&mut child, &markers.path().join(format!("{point}.reached")))?;
+        interrupt(&mut child, "-INT")?;
+        assert_eq!(git(root, &["rev-parse", "HEAD"])?, head);
+        assert_eq!(fs::read(root.join(".git/index"))?, index);
+        assert!(
+            !root.join(".git/brit-rebase").exists(),
+            "selection never creates a journal"
+        );
+        assert!(git(root, &["for-each-ref", "refs/brit-rebase-retain"])?.is_empty());
+        preserved(root)?;
+        success(root, &["rebase", "upstream"])?;
+        preserved(root)?;
+        Ok(())
+    }
+
+    #[test]
     fn public_prepared_invocation_gap_never_relaunches_an_operation_hook() -> Result<()> {
         for name in ["pre-rebase", "post-rewrite"] {
             for signal in ["-INT", "-KILL"] {

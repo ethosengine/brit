@@ -793,7 +793,7 @@ impl Session {
                     history(repo, *id, &mut closure)?;
                 }
                 gix::objs::Kind::Tree => {
-                    validate_tree(repo, *id, &mut BTreeSet::new(), &mut closure)?;
+                    validate_tree(repo, *id, &mut closure)?;
                 }
                 gix::objs::Kind::Blob => {
                     closure.insert(*id);
@@ -865,7 +865,7 @@ impl Session {
             }
             self.state.accepted_child = Some((completion.binding, completion.receipt));
             let mut closure = BTreeSet::new();
-            validate_tree(repo, tree, &mut BTreeSet::new(), &mut closure)?;
+            validate_tree(repo, tree, &mut closure)?;
             let label = format!("message-{}", self.state.step);
             self.protect(repo, &label, tree, &closure)?;
             self.state.retained.push((label, tree.to_string()));
@@ -1306,7 +1306,7 @@ impl Session {
                 history(repo, id, &mut closure)?;
             }
             gix::objs::Kind::Tree => {
-                validate_tree(repo, id, &mut BTreeSet::new(), &mut closure)?;
+                validate_tree(repo, id, &mut closure)?;
             }
             _ => anyhow::bail!("invalid retained root kind"),
         }
@@ -1329,7 +1329,7 @@ impl Session {
 
     fn retain_stop(&self, repo: &gix::Repository, after: &mut ParentState, tree: gix::ObjectId) -> Result<()> {
         let mut closure = BTreeSet::new();
-        validate_tree(repo, tree, &mut BTreeSet::new(), &mut closure)?;
+        validate_tree(repo, tree, &mut closure)?;
         sync_tree(&repo.common_dir().join("objects"))?;
         let label = format!("stop-{}", self.state.step);
         self.protect(repo, &label, tree, &closure)?;

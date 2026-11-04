@@ -7,6 +7,11 @@ use std::collections::{BTreeMap, BTreeSet};
 use anyhow::{Context, Result, ensure};
 use gix::bstr::{BStr, BString, ByteSlice};
 
+mod validation;
+use validation::Validation;
+#[cfg(target_os = "linux")]
+use validation::{history, validate_tree};
+
 #[cfg(target_os = "linux")]
 mod hooks;
 
@@ -58,6 +63,7 @@ impl Selection {
     /// Resolve only explicit, local revisions and prove the selected linear chain.
     /// This function is read-only, including for no-op and fast-forward results.
     pub fn prepare(repo: &gix::Repository, upstream: &BStr) -> Result<Self> {
+        ensure!(!gix::interrupt::is_triggered(), "replay selection interrupted");
         ensure!(!upstream.is_empty(), "an explicit local upstream is required");
         validate_execution_policy(repo)?;
         #[cfg(target_os = "linux")]
@@ -76,8 +82,9 @@ impl Selection {
         let attachment = repo.head_name()?.map(|name| name.as_bstr().to_owned());
         let upstream_id = resolve_upstream(repo, upstream)?;
         let mut closure = BTreeSet::new();
-        let ours = history(repo, original, &mut closure)?;
-        let theirs = history(repo, upstream_id, &mut closure)?;
+        let mut validation = Validation::default();
+        let ours = validation.history(repo, original, &mut closure)?;
+        let theirs = validation.history(repo, upstream_id, &mut closure)?;
         let bases = repo.merge_bases_many(original, &[upstream_id])?;
         ensure!(bases.len() == 1, "replay requires exactly one merge base");
         let kind = if theirs.contains_key(&original) && original != upstream_id {
@@ -123,6 +130,7 @@ impl Selection {
             }
             refuse_external_filters(repo, trees, &selection.footprint(repo)?)?;
         }
+        ensure!(!gix::interrupt::is_triggered(), "replay selection interrupted");
         Ok(selection)
     }
 
@@ -235,69 +243,6 @@ fn resolve_upstream(repo: &gix::Repository, argument: &BStr) -> Result<gix::Obje
         "upstream must resolve to one unambiguous local reference"
     );
     Ok(matches[0])
-}
-
-fn validate_object(
-    repo: &gix::Repository,
-    object_id: gix::ObjectId,
-    kind: gix::objs::Kind,
-    closure: &mut BTreeSet<gix::ObjectId>,
-) -> Result<()> {
-    let object = repo.find_object(object_id)?;
-    ensure!(object.kind == kind, "pinned object has wrong type");
-    ensure!(
-        gix::objs::compute_hash(repo.object_hash(), object.kind, &object.data)? == object_id,
-        "pinned object checksum mismatch"
-    );
-    closure.insert(object_id);
-    Ok(())
-}
-
-fn history(
-    repo: &gix::Repository,
-    tip: gix::ObjectId,
-    closure: &mut BTreeSet<gix::ObjectId>,
-) -> Result<BTreeMap<gix::ObjectId, Vec<gix::ObjectId>>> {
-    let mut commits = BTreeMap::new();
-    let mut pending = vec![tip];
-    let mut trees = BTreeSet::new();
-    while let Some(commit_id) = pending.pop() {
-        if commits.contains_key(&commit_id) {
-            continue;
-        }
-        validate_object(repo, commit_id, gix::objs::Kind::Commit, closure)?;
-        let commit = repo.find_commit(commit_id)?;
-        let parents: Vec<_> = commit.parent_ids().map(gix::Id::detach).collect();
-        validate_tree(repo, commit.tree_id()?.detach(), &mut trees, closure)?;
-        pending.extend(parents.iter().copied());
-        commits.insert(commit_id, parents);
-    }
-    Ok(commits)
-}
-
-fn validate_tree(
-    repo: &gix::Repository,
-    tree_id: gix::ObjectId,
-    seen: &mut BTreeSet<gix::ObjectId>,
-    closure: &mut BTreeSet<gix::ObjectId>,
-) -> Result<()> {
-    let mut pending = vec![tree_id];
-    while let Some(tree_id) = pending.pop() {
-        if !seen.insert(tree_id) {
-            continue;
-        }
-        validate_object(repo, tree_id, gix::objs::Kind::Tree, closure)?;
-        let tree = repo.find_tree(tree_id)?;
-        for entry in tree.iter() {
-            let entry = entry?;
-            if entry.mode().is_tree() {
-                pending.push(entry.object_id());
-            } else if !entry.mode().is_commit() {
-                validate_object(repo, entry.object_id(), gix::objs::Kind::Blob, closure)?;
-            }
-        }
-    }
-    Ok(())
 }
 
 /// A native three-way result. Objects may be written, but no live index, file or

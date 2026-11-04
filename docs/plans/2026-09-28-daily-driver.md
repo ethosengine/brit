@@ -15,6 +15,53 @@ scheduler. Use native context for observed environment and citation blockers.
 - [ ] Installed delivery: fresh standalone install, feature/platform matrix, upgrade and rollback prove the executable and installed epr interface; package publication and clean consumer tests identify exact source revisions. Requires native integration; serves brit-native-daily-driver.
 - [ ] Operational qualification through our own ongoing development across workspaces: complete the loop, preserve Git interoperability and recover interrupted work, recording actual outcomes as we daily-drive Brit. Cross-workspace verification follows this integration pass; scripted identities do not establish it. Serves brit-native-daily-driver.
 
+## Rebase reliability — 2026-11-04
+
+A one-commit integration spent more than three minutes validating history before
+creating a journal and did not stop on the first SIGINT. This slice retains the
+complete pinned history required by the replay design. It removes repeated
+verification of identical objects within one selection and makes that read-only
+phase cancellable. Validation results never survive into another operation.
+
+- [x] Prove cancellation leaves HEAD, index, worktree and operation metadata unchanged, including a real CLI SIGINT during object validation. Serves brit-native-daily-driver.
+- [x] Verify the same complete object closure as Git for shared histories; retain missing-object, checksum and wrong-type refusals. Measure repeated-content fixtures at two history sizes. Serves brit-native-daily-driver.
+- [x] Run local replay/recovery and public artifact journeys. Serves brit-native-daily-driver.
+- [ ] Qualify the committed revision in CI and independent review, then deliver the release and parent pin. Serves brit-native-daily-driver.
+
+The prior release `a8187cb3` is already published and installed as Brit 0.1.8 on
+shem; parent `bbb8db95` reached dev. Its seven installed probe rungs and complete
+CI/publication are recorded in the parent's
+`genesis/local-dev/brit-delivery-20261104/`. These observations supersede the
+earlier pending delivery entries, without qualifying the whole daily-driver habit.
+The peer agent owns the separate fingerprint/open-helper repair in `brit-cli`;
+this slice owns `gitoxide-core` replay validation.
+
+Local evidence: the cancellation regression first failed on the unmodified
+validator. With the repair, 49 replay, 21 interactive and two validation tests
+pass (zero ignored). The final fault-enabled run passes 96 checks across replay,
+I/O, qualification, retained recovery and validation. All 12 public rebase journeys also pass, including a single
+SIGINT during validation followed by a successful retry. A normal max-pure
+0.1.9 build, with fault hooks disabled, also stopped its actual Brit-history
+validation 0.032 seconds after the first SIGINT; HEAD, index and replay source
+bytes stayed identical and no journal appeared. All six ordinary-build public
+rebase journeys pass too. Scoped strict Clippy for core/all targets and the
+CLI rebase suite passes on Rust 1.96.1, as do formatting and both Rust-style
+gates. Registry audit finds the three release versions unused (core 0.63.3,
+gitoxide 0.60.3, CLI 0.1.9). The two controlled fixtures each reuse one 256 KiB blob
+under 128 names per revision. Eight revisions took 8.856349 seconds before and
+0.010849 seconds after; 32 took 36.043735 seconds before and 0.039315 seconds
+after. The verified closure remains exactly 17 and 65 objects respectively.
+These are debug-build synthetic selection timings, not a monorepo latency or
+whole-workflow budget. The type cache is private to one validation operation;
+the next selection rechecks missing/corrupt content. Raw logs and binary hashes
+are in the parent's `genesis/local-dev/brit-reliability-20261104/`.
+
+Story-graph seam: between explicit upstream selection and durable journal
+creation, a developer must be able to cancel the read-only object walk without
+changing HEAD, index or private work. The public SIGINT journey names this
+station; full closure, wrong-type and per-operation revalidation tests protect
+its integrity boundary. No new shared authority or persistent cache is added.
+
 ## Sprint — 2026-10-12
 
 Bounded local work under safe authoring and native gates. The implementation

@@ -338,6 +338,50 @@ fn missing_blob_in_pinned_history_refuses_before_selection_is_accepted() -> Resu
     Ok(())
 }
 
+#[test]
+fn cancelled_selection_preserves_every_byte_and_creates_no_journal() -> Result<()> {
+    if gix_testtools::run_in_isolated_process().map_err(anyhow::Error::from_boxed)? {
+        return Ok(());
+    }
+    let temp = divergent_fixture(false)?;
+    let root = temp.path();
+    let before = snapshot(root)?;
+    gix::interrupt::trigger();
+    let result = Selection::prepare(&gix::open(root)?, b"upstream".as_bstr());
+    gix::interrupt::reset();
+    let error = result.expect_err("an interrupted history walk must not accept a selection");
+    assert!(error.to_string().contains("interrupted"), "{error:#}");
+    assert_eq!(snapshot(root)?, before, "cancellation before preparation is read-only");
+    Ok(())
+}
+
+#[test]
+fn shared_history_closure_matches_git_and_is_revalidated_on_each_selection() -> Result<()> {
+    if gix_testtools::run_in_isolated_process().map_err(anyhow::Error::from_boxed)? {
+        return Ok(());
+    }
+    let temp = divergent_fixture(false)?;
+    let root = temp.path();
+    let repo = gix::open(root)?;
+    let selection = Selection::prepare(&repo, b"upstream".as_bstr())?;
+    let expected = git(root, &["rev-list", "--objects", "HEAD", "upstream"])?;
+    let expected = expected
+        .lines()
+        .map(|line| gix::ObjectId::from_hex(line.split(|b| *b == b' ').next().expect("object id")))
+        .collect::<Result<std::collections::BTreeSet<_>, _>>()?;
+    assert_eq!(
+        selection.closure, expected,
+        "deduplication must retain both complete histories"
+    );
+    let blob = oid(root, "base:selected")?.to_string();
+    fs::remove_file(root.join(".git/objects").join(&blob[..2]).join(&blob[2..]))?;
+    assert!(
+        Selection::prepare(&gix::open(root)?, b"upstream".as_bstr()).is_err(),
+        "an earlier successful selection must not cache trust across operations"
+    );
+    Ok(())
+}
+
 fn divergent_fixture(conflict: bool) -> Result<tempfile::TempDir> {
     let temp = fixture()?;
     let root = temp.path();
