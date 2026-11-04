@@ -62,6 +62,32 @@ changing HEAD, index or private work. The public SIGINT journey names this
 station; full closure, wrong-type and per-operation revalidation tests protect
 its integrity boundary. No new shared authority or persistent cache is added.
 
+### Independent review follow-up
+
+Review of `eb63955d` accepted complete closure/type/checksum preservation and
+per-operation cache scope, but required cancellation checks around preservation,
+the initial journal write and retention publication. Those neighboring phases
+are part of this repair; the initial local green did not establish them.
+
+Preparation now polls preservation entries, worktree and object-directory walks,
+and the durability scan. All original metadata reads precede journal allocation.
+Cancellation before the initial state write removes only the still-owned empty
+allocation; after state writing starts, the journal remains recoverable. Retention
+verification checks cancellation before and after hashing, and each retention-ref
+publication has its own check. A cancellation after one ref is written retains
+that partial preparation for explicit recovery; cancellation during recovery must
+leave the journal and ref count unchanged.
+
+The public journeys now name six pre-journal interruption points and three
+post-journal points, including another interrupt during `--abort`. They preserve
+the original integration and private work. All 158 affected core checks, 13 fault-enabled rebase journeys and 40 ordinary
+pull/rebase/switch journeys pass, with zero ignored. Scoped strict Clippy,
+formatting and both Rust-style gates pass. Exact follow-up CI and independent
+re-review remain required before landing.
+
+- [ ] Bound cancellation latency inside individual large-object decompression/hash operations, bulk index comparisons and blocking filesystem calls; current polling bounds transitions between these operations, not their duration. Add representative large-object/index probes before claiming a latency budget. Serves brit-native-daily-driver.
+- [ ] Reconcile retained-copy helper delivery with the followed-tool install: `brit-build-artifacts.yml` ships only brit/build-ref/verify, while `brit-release.yml` includes and qualifies `brit-rebase-retained`. On shem, `command -v brit-rebase-retained` currently fails. Abort/recovery itself runs in-process; independent retained-copy inspection/extraction still needs the separate helper. Probe the installed helper and export a retained copy before declaring that delivery station qualified. Serves brit-native-daily-driver.
+
 ## Sprint — 2026-10-12
 
 Bounded local work under safe authoring and native gates. The implementation

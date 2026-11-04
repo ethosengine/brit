@@ -509,32 +509,108 @@ mod recovery {
 
     #[test]
     fn public_selection_interrupt_leaves_no_journal_or_repository_changes() -> Result<()> {
-        let repo = fixture(false)?;
-        let root = repo.path();
-        let head = git(root, &["rev-parse", "HEAD"])?;
-        let index = fs::read(root.join(".git/index"))?;
-        let markers = tempfile::tempdir()?;
-        let point = "replay-selection-object";
-        let mut child = launch(
-            root,
-            &["rebase", "upstream"],
-            &[
-                ("BRIT_SWITCH_CHECKPOINT", point.as_ref()),
-                ("BRIT_SWITCH_CHECKPOINT_DIR", markers.path().as_os_str()),
-            ],
-        )?;
-        wait_file(&mut child, &markers.path().join(format!("{point}.reached")))?;
-        interrupt(&mut child, "-INT")?;
-        assert_eq!(git(root, &["rev-parse", "HEAD"])?, head);
-        assert_eq!(fs::read(root.join(".git/index"))?, index);
-        assert!(
-            !root.join(".git/brit-rebase").exists(),
-            "selection never creates a journal"
-        );
-        assert!(git(root, &["for-each-ref", "refs/brit-rebase-retain"])?.is_empty());
-        preserved(root)?;
-        success(root, &["rebase", "upstream"])?;
-        preserved(root)?;
+        for point in [
+            "replay-selection-object",
+            "replay-object-verified",
+            "replay-preservation-entry",
+            "replay-worktree-witness-entry",
+            "replay-before-journal",
+            "replay-journal-ready",
+        ] {
+            let repo = fixture(false)?;
+            let root = repo.path();
+            let head = git(root, &["rev-parse", "HEAD"])?;
+            let index = fs::read(root.join(".git/index"))?;
+            let markers = tempfile::tempdir()?;
+            let mut child = launch(
+                root,
+                &["rebase", "upstream"],
+                &[
+                    ("BRIT_SWITCH_CHECKPOINT", point.as_ref()),
+                    ("BRIT_SWITCH_CHECKPOINT_DIR", markers.path().as_os_str()),
+                ],
+            )?;
+            wait_file(&mut child, &markers.path().join(format!("{point}.reached")))?;
+            interrupt(&mut child, "-INT")?;
+            assert_eq!(git(root, &["rev-parse", "HEAD"])?, head);
+            assert_eq!(fs::read(root.join(".git/index"))?, index);
+            assert!(
+                !root.join(".git/brit-rebase").exists(),
+                "selection never creates a journal"
+            );
+            assert!(git(root, &["for-each-ref", "refs/brit-rebase-retain"])?.is_empty());
+            preserved(root)?;
+            success(root, &["rebase", "upstream"])?;
+            preserved(root)?;
+        }
+        Ok(())
+    }
+
+    #[test]
+    fn public_preparation_cancel_preserves_recoverable_journal_and_stops_retention() -> Result<()> {
+        for (point, expected_refs) in [
+            ("replay-retention-verify", 0),
+            ("replay-retention-reference", 0),
+            ("replay-retention-reference-published", 1),
+        ] {
+            let repo = fixture(false)?;
+            let root = repo.path();
+            let head = git(root, &["rev-parse", "HEAD"])?;
+            let index = fs::read(root.join(".git/index"))?;
+            let markers = tempfile::tempdir()?;
+            let mut child = launch(
+                root,
+                &["rebase", "upstream"],
+                &[
+                    ("BRIT_SWITCH_CHECKPOINT", point.as_ref()),
+                    ("BRIT_SWITCH_CHECKPOINT_DIR", markers.path().as_os_str()),
+                ],
+            )?;
+            wait_file(&mut child, &markers.path().join(format!("{point}.reached")))?;
+            interrupt(&mut child, "-INT")?;
+            assert_eq!(git(root, &["rev-parse", "HEAD"])?, head);
+            assert_eq!(fs::read(root.join(".git/index"))?, index);
+            let journal = fs::read(root.join(".git/brit-rebase/state.json"))?;
+            let envelope: serde_json::Value = serde_json::from_slice(&journal)?;
+            let payload: Vec<u8> = serde_json::from_value(envelope["payload"].clone())?;
+            let state: serde_json::Value = serde_json::from_slice(&payload)?;
+            assert_eq!(state["phase"], "preparing");
+            assert_eq!(
+                git(root, &["for-each-ref", "refs/brit-rebase-retain"])?
+                    .split(|byte| *byte == b'\n')
+                    .filter(|line| !line.is_empty())
+                    .count(),
+                expected_refs
+            );
+            preserved(root)?;
+            // Recovery must honor a fresh cancellation before it adds any ref.
+            let markers = tempfile::tempdir()?;
+            let point = "replay-retention-reference";
+            let mut child = launch(
+                root,
+                &["rebase", "--abort"],
+                &[
+                    ("BRIT_SWITCH_CHECKPOINT", point.as_ref()),
+                    ("BRIT_SWITCH_CHECKPOINT_DIR", markers.path().as_os_str()),
+                ],
+            )?;
+            wait_file(&mut child, &markers.path().join(format!("{point}.reached")))?;
+            interrupt(&mut child, "-INT")?;
+            assert_eq!(
+                git(root, &["for-each-ref", "refs/brit-rebase-retain"])?
+                    .split(|byte| *byte == b'\n')
+                    .filter(|line| !line.is_empty())
+                    .count(),
+                expected_refs
+            );
+            assert_eq!(git(root, &["rev-parse", "HEAD"])?, head);
+            assert_eq!(fs::read(root.join(".git/index"))?, index);
+            assert_eq!(fs::read(root.join(".git/brit-rebase/state.json"))?, journal);
+            success(root, &["rebase", "--abort"])?;
+            assert!(!root.join(".git/brit-rebase").exists());
+            assert!(git(root, &["for-each-ref", "refs/brit-rebase-retain"])?.is_empty());
+            preserved(root)?;
+        }
         Ok(())
     }
 

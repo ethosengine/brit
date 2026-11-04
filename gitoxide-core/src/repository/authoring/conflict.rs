@@ -44,6 +44,7 @@ impl Preservation {
     /// Capture without changing the index, object store or worktree.
     /// The caller must hold the repository mutation guard until this is journaled.
     pub fn capture(repo: &gix::Repository) -> Result<Self> {
+        ensure!(!gix::interrupt::is_triggered(), "preservation capture interrupted");
         validate_metadata_directories(repo)?;
         ensure!(
             std::env::var_os("GIT_INDEX_FILE").is_none(),
@@ -63,6 +64,9 @@ impl Preservation {
         let original_entries = entries(&original);
         let mut preserved = changed(&entries(&base), &original_entries);
         for e in original.entries() {
+            #[cfg(all(target_os = "linux", feature = "switch-test-faults"))]
+            super::super::switch::checkpoint("replay-preservation-entry")?;
+            ensure!(!gix::interrupt::is_triggered(), "preservation capture interrupted");
             let p: BString = e.path(&original).into();
             let current = super::super::index::authoring::worktree_entry(repo, &original, &p)?;
             let equal = match current {
@@ -76,12 +80,14 @@ impl Preservation {
         let root = repo.workdir().context("worktree required")?;
         let mut before = BTreeMap::new();
         for p in &preserved {
+            ensure!(!gix::interrupt::is_triggered(), "preservation capture interrupted");
             before.insert(p.clone(), image(root, p)?);
         }
         let clean_preserved = entries(&base)
             .into_iter()
             .filter(|e| preserved.contains(&e.path))
             .collect();
+        ensure!(!gix::interrupt::is_triggered(), "preservation capture interrupted");
         Ok(Self {
             original_index: raw_index,
             original: original_entries,
@@ -305,9 +311,12 @@ fn overlaps(a: &[u8], b: &[u8]) -> bool {
 /// Fingerprint neighboring work without placing its bytes in the object database.
 /// Only exact active leaves are excluded; descendants and ancestors remain guarded.
 pub(crate) fn worktree_witness(repo: &gix::Repository, excluded: &[Vec<u8>]) -> Result<String> {
+    ensure!(!gix::interrupt::is_triggered(), "worktree witness interrupted");
     let work = snapshot(repo.workdir().context("worktree required")?)?;
     let neighbors: Vec<_> = work.into_iter().filter(|(path, _)| !excluded.contains(path)).collect();
-    digest(&serde_json::to_vec(&neighbors)?)
+    let witness = digest(&serde_json::to_vec(&neighbors)?)?;
+    ensure!(!gix::interrupt::is_triggered(), "worktree witness interrupted");
+    Ok(witness)
 }
 fn entries(index: &gix::index::State) -> Vec<Entry> {
     index
@@ -372,6 +381,9 @@ fn overlay(base: &[Entry], source: &[Entry], paths: &[Vec<u8>]) -> Vec<Entry> {
 fn snapshot(root: &Path) -> Result<BTreeMap<Vec<u8>, Image>> {
     fn walk(root: &Path, dir: &Path, out: &mut BTreeMap<Vec<u8>, Image>) -> Result<()> {
         for e in fs::read_dir(dir)? {
+            #[cfg(all(target_os = "linux", feature = "switch-test-faults"))]
+            super::super::switch::checkpoint("replay-worktree-witness-entry")?;
+            ensure!(!gix::interrupt::is_triggered(), "worktree witness interrupted");
             let e = e?;
             if e.file_name() == ".git" {
                 continue;

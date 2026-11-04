@@ -183,6 +183,7 @@ impl Session {
         let _guard = switch::shared_guard(repo)?;
         switch::ensure_no_pending(repo)?;
         selection.validate_head(repo)?;
+        ensure!(!gix::interrupt::is_triggered(), "replay preparation interrupted");
         let preservation = Preservation::capture(repo)?;
         let active = selection
             .footprint(repo)?
@@ -195,6 +196,7 @@ impl Session {
         let witness = crate::repository::authoring::conflict::worktree_witness(repo, &active)?;
         let mut work = Vec::new();
         for path in active {
+            ensure!(!gix::interrupt::is_triggered(), "replay preparation interrupted");
             validate_scope_ancestors(root, &path, &original_tree)?;
             let image = switch::snapshot(&root.join(gix::path::from_bstr(path.as_bstr())?.as_ref()))?;
 
@@ -243,12 +245,11 @@ impl Session {
             }
         }
         let directory = repo.git_dir().join("brit-rebase");
-        fs::DirBuilder::new().mode(0o700).create(&directory)?;
-        let identities = [repo.git_dir(), root, repo.common_dir(), directory.as_path()]
+        let identities = [repo.git_dir(), root, repo.common_dir()]
             .into_iter()
             .map(|path| fs::symlink_metadata(path).map(|m| (m.dev(), m.ino())))
             .collect::<std::io::Result<_>>()?;
-        let state = ParentState {
+        let mut state = ParentState {
             version: 1,
             nonce,
             step: 0,
@@ -311,9 +312,37 @@ impl Session {
                 .then(|| interactive::Interactive::new(&selection.candidates))
                 .transpose()?,
         };
-        let mut session = Self { directory, state };
-        session.validate_branch(repo, None)?;
-        session.save()?;
+        // All preservation and metadata reads precede journal allocation. Once
+        // save_bytes starts, interruption leaves a recoverable preparation record.
+        switch::checkpoint("replay-before-journal")?;
+        fs::DirBuilder::new().mode(0o700).create(&directory)?;
+        let allocated = fs::symlink_metadata(&directory)?;
+        let identity = (allocated.dev(), allocated.ino());
+        state.identities.push(identity);
+        let session = Self { directory, state };
+        let unpublished = (|| -> Result<Vec<u8>> {
+            session.validate_branch(repo, None)?;
+            let bytes = session.state_bytes()?;
+            switch::checkpoint("replay-journal-ready")?;
+            Ok(bytes)
+        })();
+        let bytes = match unpublished {
+            Ok(bytes) => bytes,
+            Err(error) => {
+                let current = fs::symlink_metadata(&session.directory)?;
+                ensure!(
+                    (current.dev(), current.ino()) == identity,
+                    "foreign preparation directory"
+                );
+                // Never remove members or a replacement directory: an empty,
+                // still-owned unpublished allocation alone is ours to release.
+                fs::remove_dir(&session.directory)?;
+                switch::sync_dir(repo.git_dir())?;
+                return Err(error);
+            }
+        };
+        let mut session = session;
+        session.save_bytes(&bytes)?;
         switch::sync_dir(repo.git_dir())?;
         switch::checkpoint("replay-prepared")?;
         session.complete_preparation(repo)?;
@@ -334,14 +363,20 @@ impl Session {
                 .map(ToString::to_string),
         );
         for value in &retained_objects {
+            switch::checkpoint("replay-retention-verify")?;
             let id = gix::ObjectId::from_hex(value.as_bytes())?;
             let object = repo.find_object(id)?;
             ensure!(
                 gix::objs::compute_hash(repo.object_hash(), object.kind, &object.data)? == id,
                 "pinned closure checksum mismatch"
             );
+            ensure!(
+                !gix::interrupt::is_triggered(),
+                "replay retention verification interrupted"
+            );
         }
         for (label, value) in &self.state.retained {
+            switch::checkpoint("replay-retention-reference")?;
             let name = format!("refs/brit-rebase-retain/{}/{label}", self.state.nonce);
             let id = gix::ObjectId::from_hex(value.as_bytes())?;
             match repo.try_find_reference(name.as_str())? {
@@ -350,7 +385,12 @@ impl Session {
                     "foreign replay retention reference"
                 ),
                 None => {
+                    ensure!(
+                        !gix::interrupt::is_triggered(),
+                        "replay retention publication interrupted"
+                    );
                     repo.reference(name, id, gix::refs::transaction::PreviousValue::MustNotExist, "")?;
+                    switch::checkpoint("replay-retention-reference-published")?;
                 }
             }
         }
@@ -2363,11 +2403,19 @@ impl Session {
     }
 
     fn save(&self) -> Result<()> {
+        self.save_bytes(&self.state_bytes()?)
+    }
+
+    fn state_bytes(&self) -> Result<Vec<u8>> {
         let payload = serde_json::to_vec(&self.state)?;
         let bytes = serde_json::to_vec(&Envelope {
             checksum: switch::digest(&payload)?,
             payload,
         })?;
+        Ok(bytes)
+    }
+
+    fn save_bytes(&self, bytes: &[u8]) -> Result<()> {
         let temporary = self.directory.join("state.pending");
         match fs::symlink_metadata(&temporary) {
             Ok(metadata) => {
@@ -2380,7 +2428,7 @@ impl Session {
                 );
                 switch::sync_path(&temporary)?;
             }
-            Err(error) if error.kind() == std::io::ErrorKind::NotFound => switch::private_write(&temporary, &bytes)?,
+            Err(error) if error.kind() == std::io::ErrorKind::NotFound => switch::private_write(&temporary, bytes)?,
             Err(error) => return Err(error.into()),
         }
         switch::checkpoint("replay-state-file-synced")?;
@@ -2958,6 +3006,7 @@ fn retained_image(area: super::retained::Area, path: &[u8], image: &switch::Stat
 }
 
 fn sync_tree(path: &Path) -> Result<()> {
+    ensure!(!gix::interrupt::is_triggered(), "replay durability scan interrupted");
     let metadata = fs::symlink_metadata(path)?;
     if metadata.is_dir() {
         for entry in fs::read_dir(path)? {
@@ -3107,6 +3156,7 @@ fn validate_scope_ancestors(root: &Path, path: &[u8], source: &gix::index::State
     let mut ancestor = std::path::PathBuf::new();
     let parts = relative.components().collect::<Vec<_>>();
     for part in parts.iter().take(parts.len().saturating_sub(1)) {
+        ensure!(!gix::interrupt::is_triggered(), "replay preparation interrupted");
         ensure!(matches!(part, std::path::Component::Normal(_)), "invalid replay path");
         ancestor.push(part.as_os_str());
         let bytes = gix::path::into_bstr(ancestor.clone())?;
@@ -3126,6 +3176,7 @@ fn validate_scope_ancestors(root: &Path, path: &[u8], source: &gix::index::State
 
 fn validate_original_directory(root: &Path, relative: &[u8], source: &gix::index::State) -> Result<()> {
     for entry in fs::read_dir(root.join(gix::path::from_bstr(relative.as_bstr())?.as_ref()))? {
+        ensure!(!gix::interrupt::is_triggered(), "replay preparation interrupted");
         let entry = entry?;
         let path = gix::path::into_bstr(entry.path().strip_prefix(root)?.to_path_buf())?;
         if entry.file_type()?.is_dir() {

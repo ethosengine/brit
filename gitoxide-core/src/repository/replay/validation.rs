@@ -29,6 +29,9 @@ impl Validation {
             gix::objs::compute_hash(repo.object_hash(), object.kind, &object.data)? == object_id,
             "pinned object checksum mismatch"
         );
+        #[cfg(all(target_os = "linux", feature = "switch-test-faults"))]
+        super::super::switch::checkpoint("replay-object-verified")?;
+        ensure!(!gix::interrupt::is_triggered(), "replay object validation interrupted");
         self.checked.insert(object_id, kind);
         closure.insert(object_id);
         Ok(true)

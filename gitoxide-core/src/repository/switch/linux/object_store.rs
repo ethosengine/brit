@@ -52,6 +52,10 @@ pub(crate) fn validate_object_boundaries(repo: &gix::Repository) -> Result<()> {
     let device = fs::metadata(repo.common_dir())?.dev();
     let mut pending = vec![root];
     while let Some(directory) = pending.pop() {
+        ensure!(
+            !gix::interrupt::is_triggered(),
+            "object boundary validation interrupted"
+        );
         let metadata = fs::symlink_metadata(&directory)?;
         ensure!(
             metadata.is_dir() && metadata.dev() == device,
@@ -59,6 +63,10 @@ pub(crate) fn validate_object_boundaries(repo: &gix::Repository) -> Result<()> {
             directory.display()
         );
         for entry in fs::read_dir(directory)? {
+            ensure!(
+                !gix::interrupt::is_triggered(),
+                "object boundary validation interrupted"
+            );
             let entry = entry?;
             let metadata = fs::symlink_metadata(entry.path())?;
             ensure!(
