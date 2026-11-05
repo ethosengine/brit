@@ -1,7 +1,6 @@
 //! Regression coverage for build-command repository object-store sizing.
 
 use std::{error::Error, io::Write, path::Path, process::Stdio};
-
 #[cfg(unix)]
 use std::{os::unix::fs::MetadataExt, process::Command};
 
@@ -46,8 +45,10 @@ fn create_many_pack_indexes(repo: &Path, head: &str) -> TestResult {
     let ids: Vec<_> = ids.lines().collect();
     assert_eq!(ids.len(), 64, "every filler file produces one loose object");
 
-    for pair in ids.chunks_exact(2) {
-        let input = format!("{}\n{}\n", pair[0], pair[1]);
+    let (pairs, rest) = ids.as_chunks::<2>();
+    assert!(rest.is_empty(), "filler objects pair up exactly");
+    for [first, second] in pairs {
+        let input = format!("{first}\n{second}\n");
         git_with_input(repo, &["pack-objects", ".git/objects/pack/pack"], input.as_bytes())?;
     }
     git_with_input(
