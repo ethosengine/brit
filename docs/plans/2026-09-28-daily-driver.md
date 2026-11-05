@@ -2070,3 +2070,15 @@ Direct shell source reads supplemented the bounded recall session
 `brit-retained-delivery`; unsupported Codex shell adapter coverage is unmeasured.
 Repository-opening, cancellation bounds, submodules and named remotes remain
 outside this delivery slice.
+
+
+Candidate follow-up: `84972abb3` CI run `42028702733` completed the Linux test
+steps but failed the final repository executable-mode check: the new shell
+fixture had a shebang and mode 0644. Corrected it to 0755 and ran it directly;
+all four executables and their checksums/uploads pass. Production code is
+unchanged. Parent runtime: 224 tests and strict Clippy pass; parent Rust-style
+and orchestrator gates pass after supplying generated Husky shims in the fresh
+worktree. The isolated installed-launcher run now passes all six public rebase
+journeys. Registry audit finds all 70 existing versions, with zero new versions.
+The full EPRFS gate and exact replacement-revision CI remain the publication
+frontier; the mode failure is retained in `ci-test-failure.txt`.
