@@ -15,6 +15,62 @@ scheduler. Use native context for observed environment and citation blockers.
 - [ ] Installed delivery: fresh standalone install, feature/platform matrix, upgrade and rollback prove the executable and installed epr interface; package publication and clean consumer tests identify exact source revisions. Requires native integration; serves brit-native-daily-driver.
 - [ ] Operational qualification through our own ongoing development across workspaces: complete the loop, preserve Git interoperability and recover interrupted work, recording actual outcomes as we daily-drive Brit. Cross-workspace verification follows this integration pass; scripted identities do not establish it. Serves brit-native-daily-driver.
 
+## Collision-fixture rebase — 2026-11-05
+
+Installed Brit 0.1.9 cannot replay divergent commits in its own repository:
+the worktree witness hashes raw file bytes, and the committed SHA-1-is-a-Shambles
+fixtures trigger collision detection. An isolated native worktree rehearsal
+(`brit rebase c387e79bbeb9fb8b3ad86304aaded1b3b9cfd4ef`) reproduced the refusal
+after 41 seconds. HEAD, index bytes, every worktree file and the absence of an
+operation journal remained unchanged. An earlier ancestor-only rehearsal was
+a no-op and is not the reproduction.
+
+The file fingerprint keeps ordinary raw SHA-1 values unchanged. Only a detected
+collision selects `git-blob-sha1:<digest>`, calculated with Git blob framing and
+collision detection still enabled. Capture and original-image validation use
+the same calculation. Full public journeys then exposed the same raw-digest
+refusal in retained-copy payloads after branch publication. Their capture,
+inspection and extraction now share the file fingerprint too. Journal and
+manifest checksums, receipt formats and Git object verification retain their
+existing algorithms and refusal behavior. Ordinary retained payloads and their
+receipts remain byte-identical; collision payloads previously could not produce
+a complete retained copy.
+
+- [x] Reproduce the installed refusal without modifying HEAD, index or private work. Serves brit-native-daily-driver.
+- [x] Preserve legacy fingerprints and checksum envelopes while distinguishing both committed collision fixtures. Serves brit-native-daily-driver.
+- [ ] Verify actual Brit-history replay, conflict/continue, abort, interrupted recovery and an old-binary journal across the upgrade. Serves brit-native-daily-driver.
+- [x] Pass affected core/public suites, formatting, strict Clippy, Rust-style gates and independent review. Serves brit-native-daily-driver.
+- [ ] Pass exact-revision CI, publish coordinated unused versions, advance the parent pin and prove the installed binary. Brit 0.1.10 remains the peer's repository-opening/fingerprint release. Serves brit-native-daily-driver.
+
+Maintainer node: between verified Git objects and durable replay preparation,
+checkout witnesses and retained recovery payloads must distinguish collision-test
+payloads that are valid, distinct Git blobs. The fingerprint and public recovery regressions name
+this boundary. Cancellation latency, helper packaging, submodule support and
+named-remote handling remain separate work. Evidence is retained in the parent
+`genesis/local-dev/brit-collision-20261105/`; this station does not qualify the
+whole daily-driver habit.
+
+Verification so far: 186 initial core checks passed (zero ignored), then the
+retained-payload extension passed all 13 retained-copy checks and all 13 public
+fault/recovery journeys with both collision fixtures present. A genuine 0.1.9
+conflict journal was resolved and completed by the candidate, preserving staged,
+unstaged and untracked neighboring files and keeping them out of the commit.
+Independent review approved both production changes after two test-fixture
+corrections (private journal permissions and the extraction output path).
+
+Rehearsal limits remain explicit. Changing shared repository configuration during
+an active linked-worktree rehearsal correctly refused recovery until restored.
+A Python subprocess with `cwd` changed but inherited `PWD` also refused the policy;
+the matching shell working directory continued the same journal. Final publication
+in a linked checkout separately refuses `unsafe metadata ancestor` when its
+common-directory path contains `../..`; that path-handling issue is outside this
+collision slice. The real-history finish proof uses an independent native clone.
+Selected unused candidate versions are CLI 0.1.11, core 0.63.5 and gitoxide
+0.60.5; the peer's CLI 0.1.10 and possible .4 versions remain available. The
+allocation proposal was sent through the steward channel; peer acknowledgment
+is still outstanding. Scoped Clippy uses the repository's CI compatibility
+flags (`-D warnings -A unknown-lints --no-deps`).
+
 ## Rebase reliability — 2026-11-04
 
 A one-commit integration spent more than three minutes validating history before

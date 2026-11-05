@@ -612,6 +612,26 @@ fn explicit_scope_expansion_can_accept_a_changed_previously_clean_tracked_path()
 }
 
 #[test]
+fn scope_expansion_restores_collision_fixture_from_its_tagged_fingerprint() -> Result<()> {
+    if gix_testtools::run_in_isolated_process().map_err(anyhow::Error::from_boxed)? {
+        return Ok(());
+    }
+    let temp = fixture()?;
+    let root = temp.path();
+    let original = include_bytes!("../../gix-hash/tests/fixtures/shambles/messageA");
+    fs::write(root.join("collision"), original)?;
+    git(root, &["add", "collision"])?;
+    git(root, &["commit", "-qm", "collision fixture"])?;
+    let repo = gix::open(root)?;
+    let mut session = Session::prepare(&repo, StopKind::Edit, &active())?;
+    fs::write(root.join("collision"), b"explicit expansion\n")?;
+    session.stage(&repo, &["collision".into()], true)?;
+    session.abort(&repo)?;
+    assert_eq!(fs::read(root.join("collision"))?, original);
+    Ok(())
+}
+
+#[test]
 fn scope_expansion_refuses_a_preexisting_untracked_file() -> Result<()> {
     if gix_testtools::run_in_isolated_process().map_err(anyhow::Error::from_boxed)? {
         return Ok(());

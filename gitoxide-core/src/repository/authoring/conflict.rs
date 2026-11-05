@@ -404,7 +404,7 @@ fn snapshot(root: &Path) -> Result<BTreeMap<Vec<u8>, Image>> {
                 };
                 #[cfg(not(unix))]
                 let mode = 0;
-                out.insert(rel, Image::File(digest(&fs::read(p)?)?.into_bytes(), mode));
+                out.insert(rel, Image::File(file_fingerprint(&fs::read(p)?)?.into_bytes(), mode));
             }
         }
         Ok(())
@@ -1224,7 +1224,7 @@ impl Session {
             }
             Some(Image::File(hash, mode)) => {
                 ensure!(
-                    *hash == digest(&data)?.as_bytes(),
+                    *hash == file_fingerprint(&data)?.as_bytes(),
                     "expanded path requires unsupported worktree conversion"
                 );
                 Ok(Some(Image::File(data, *mode)))
@@ -2450,11 +2450,28 @@ mod byte_map {
     }
 }
 
+/// Keep existing witnesses stable; collision fixtures can still be valid Git blobs.
+/// The tag separates the fallback from legacy raw digests. Both hashes retain
+/// collision detection, and journal checksums continue to use `digest` alone.
+pub(crate) fn file_fingerprint(bytes: &[u8]) -> Result<String> {
+    let mut hash = gix::hash::hasher(gix::hash::Kind::Sha1);
+    hash.update(bytes);
+    match hash.try_finalize() {
+        Ok(hash) => Ok(hash.to_string()),
+        // SHA-1 finalization's only failure is a detected collision attack.
+        Err(_) => Ok(format!(
+            "git-blob-sha1:{}",
+            gix::objs::compute_hash(gix::hash::Kind::Sha1, gix::objs::Kind::Blob, bytes)?
+        )),
+    }
+}
+
 fn digest(bytes: &[u8]) -> Result<String> {
     let mut hash = gix::hash::hasher(gix::hash::Kind::Sha1);
     hash.update(bytes);
     Ok(hash.try_finalize()?.to_string())
 }
+
 #[derive(Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 struct Envelope {
@@ -2655,4 +2672,47 @@ fn validate_metadata_directories(repo: &gix::Repository) -> Result<()> {
         }
     }
     Ok(())
+}
+
+#[cfg(test)]
+mod fingerprint_tests {
+    use super::*;
+
+    #[test]
+    fn collision_files_are_distinct_without_changing_legacy_digests() -> Result<()> {
+        let a = include_bytes!("../../../../gix-hash/tests/fixtures/shambles/messageA");
+        let b = include_bytes!("../../../../gix-hash/tests/fixtures/shambles/messageB");
+        assert!(digest(a).is_err(), "raw journal hashing still refuses collisions");
+        assert!(digest(b).is_err(), "both fixtures exercise collision detection");
+        let a_hash = file_fingerprint(a)?;
+        let b_hash = file_fingerprint(b)?;
+        assert!(a_hash.starts_with("git-blob-sha1:"));
+        assert!(b_hash.starts_with("git-blob-sha1:"));
+        assert_ne!(a_hash, b_hash, "collision fixtures must not alias in a witness");
+        assert_eq!(file_fingerprint(b"abc")?, "a9993e364706816aba3e25717850c26c9cd0d89d");
+        let temp = tempfile::tempdir()?;
+        fs::write(temp.path().join("a"), a)?;
+        fs::write(temp.path().join("b"), b)?;
+        let before = snapshot(temp.path())?;
+        assert_ne!(before[b"a".as_slice()], before[b"b".as_slice()]);
+        fs::write(temp.path().join("a"), b)?;
+        assert_ne!(
+            snapshot(temp.path())?,
+            before,
+            "swapping collision files changes the witness"
+        );
+        let path = temp.path().join("legacy.json");
+        // Pre-change envelope: the payload and its untagged raw checksum are unchanged.
+        let legacy = br#"{"payload":[34,97,98,99,34],"checksum":"b87f4bf9b7b07f594430548b653b4998e4b40402"}"#;
+        persist(&path, legacy)?;
+        assert_eq!(load::<String>(&path)?, "abc", "legacy envelopes remain readable");
+        assert_eq!(
+            sealed(&"abc")?,
+            legacy,
+            "journal serialization and checksums stay byte-identical"
+        );
+        fs::write(&path, String::from_utf8_lossy(legacy).replace("97,98,99", "97,98,100"))?;
+        assert!(load::<String>(&path).is_err(), "changed journal payloads still refuse");
+        Ok(())
+    }
 }

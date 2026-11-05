@@ -9,7 +9,7 @@ use std::{
 use anyhow::{Context, Result, ensure};
 use serde::{Deserialize, Serialize};
 
-use crate::repository::switch;
+use crate::repository::{authoring::conflict::file_fingerprint, switch};
 
 #[derive(Clone, Debug, Serialize, Deserialize, PartialEq, Eq, PartialOrd, Ord)]
 pub enum Area {
@@ -248,7 +248,7 @@ pub fn capture(
                     kind: member.kind.clone(),
                     mode: member.mode,
                     size: member.data.len() as u64,
-                    checksum: switch::digest(&member.data)?,
+                    checksum: file_fingerprint(&member.data)?,
                 })
             })
             .collect::<Result<_>>()?,
@@ -335,7 +335,7 @@ pub fn inspect(path: &Path) -> Result<Copy> {
         expected.insert(name.clone());
         let data = read_member(&path.join(name), owner)?;
         ensure!(
-            data.len() as u64 == entry.size && switch::digest(&data)? == entry.checksum,
+            data.len() as u64 == entry.size && file_fingerprint(&data)? == entry.checksum,
             "retained payload checksum mismatch"
         );
         validate_member(&entry.kind, &data, hash)?;
@@ -377,7 +377,7 @@ impl Copy {
             .context("unknown retained payload ordinal")?;
         let data = read_member(&self.receipt.path.join(payload_name(ordinal)), self.manifest.owner_uid)?;
         ensure!(
-            data.len() as u64 == entry.size && switch::digest(&data)? == entry.checksum,
+            data.len() as u64 == entry.size && file_fingerprint(&data)? == entry.checksum,
             "retained payload changed"
         );
         validate_member(&entry.kind, &data, validate_manifest(&self.manifest)?)?;

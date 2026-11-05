@@ -64,6 +64,16 @@ fn refused(root: &Path, args: &[&str]) -> Result<Capture> {
 
 fn fixture(conflict: bool) -> Result<TestRepo> {
     let repo = TestRepo::new("public-rebase")?;
+    // Both raw SHA-1 collision fixtures are legitimate, distinct Git blobs.
+    for name in ["messageA", "messageB"] {
+        fs::copy(
+            Path::new(env!("CARGO_MANIFEST_DIR"))
+                .join("../../gix-hash/tests/fixtures/shambles")
+                .join(name),
+            repo.path().join(name),
+        )?;
+    }
+    git(repo.path(), &["add", "messageA", "messageB"])?;
     repo.commit_file("selected", "base\n")?;
     repo.commit_file("neighbor", "base neighbor\n")?;
     git(repo.path(), &["switch", "-c", "upstream"])?;
@@ -78,6 +88,15 @@ fn fixture(conflict: bool) -> Result<TestRepo> {
 }
 
 fn preserved(root: &Path) -> Result<()> {
+    for name in ["messageA", "messageB"] {
+        let expected = fs::read(
+            Path::new(env!("CARGO_MANIFEST_DIR"))
+                .join("../../gix-hash/tests/fixtures/shambles")
+                .join(name),
+        )?;
+        assert_eq!(fs::read(root.join(name))?, expected);
+        assert_eq!(git(root, &["show", &format!("HEAD:{name}")])?, expected);
+    }
     assert_eq!(git(root, &["show", ":neighbor"])?, b"staged neighbor\n");
     assert_eq!(fs::read(root.join("neighbor"))?, b"unstaged neighbor\n");
     assert_eq!(git(root, &["show", "HEAD:neighbor"])?, b"base neighbor\n");

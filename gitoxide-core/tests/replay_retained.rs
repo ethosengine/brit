@@ -149,6 +149,57 @@ fn capture_roundtrips_raw_names_links_deletion_indexes_and_objects_without_odb_w
 }
 
 #[test]
+fn collision_payloads_roundtrip_without_aliasing_or_relaxing_object_verification() -> Result<()> {
+    if gix_testtools::run_in_isolated_process().map_err(anyhow::Error::from_boxed)? {
+        return Ok(());
+    }
+    let temp = fixture()?;
+    let repo = gix::open(temp.path())?;
+    let commit = repo.head_commit()?.id;
+    let a = include_bytes!("../../gix-hash/tests/fixtures/shambles/messageA");
+    let b = include_bytes!("../../gix-hash/tests/fixtures/shambles/messageB");
+    let members = [a, b]
+        .into_iter()
+        .map(|data| {
+            let id = gix::objs::compute_hash(repo.object_hash(), gix::objs::Kind::Blob, data)?.to_string();
+            Ok(Member {
+                area: Area::Objects,
+                path: id.as_bytes().to_vec(),
+                stage: None,
+                kind: Kind::Object {
+                    id,
+                    kind: "blob".into(),
+                },
+                mode: 0o600,
+                data: data.to_vec(),
+            })
+        })
+        .collect::<Result<Vec<_>>>()?;
+    let receipt = retained::capture(&repo, NONCE, 1, commit, commit, commit, &members)?;
+    let copy = retained::inspect(&receipt.path)?;
+    assert_ne!(copy.manifest.entries[0].checksum, copy.manifest.entries[1].checksum);
+    assert_eq!(copy.payload(0)?, a);
+    assert_eq!(copy.payload(1)?, b);
+    let destination = tempfile::tempdir()?;
+    retained::extract(&receipt.path, destination.path())?;
+    assert_eq!(fs::read(destination.path().join("objects/00000000.payload"))?, a);
+    assert_eq!(fs::read(destination.path().join("objects/00000001.payload"))?, b);
+    fs::write(receipt.path.join("00000000"), b)?;
+    assert!(retained::inspect(&receipt.path).is_err(), "collision swaps must refuse");
+    assert!(
+        copy.payload(0).is_err(),
+        "previous inspection cannot authorize changed bytes"
+    );
+    let mut corrupt = members;
+    corrupt[0].data = b.to_vec();
+    assert!(
+        retained::capture(&repo, NONCE, 2, commit, commit, commit, &corrupt).is_err(),
+        "a valid payload fingerprint cannot replace Git object verification"
+    );
+    Ok(())
+}
+
+#[test]
 fn completed_capture_refuses_changed_or_additional_sources_without_mutating_copy() -> Result<()> {
     if gix_testtools::run_in_isolated_process().map_err(anyhow::Error::from_boxed)? {
         return Ok(());
