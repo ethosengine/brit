@@ -188,6 +188,11 @@ fn validate_member(kind: &Kind, data: &[u8], hash: gix::hash::Kind) -> Result<()
     Ok(())
 }
 
+#[cfg(test)]
+thread_local! {
+    static VALIDATED_ENTRIES: std::cell::Cell<usize> = const { std::cell::Cell::new(0) };
+}
+
 fn validate_manifest(manifest: &Manifest) -> Result<gix::hash::Kind> {
     ensure!(manifest.version == 1, "unsupported retained-copy schema");
     ensure!(
@@ -203,6 +208,8 @@ fn validate_manifest(manifest: &Manifest) -> Result<gix::hash::Kind> {
     }
     let mut paths = std::collections::BTreeSet::new();
     for entry in &manifest.entries {
+        #[cfg(test)]
+        VALIDATED_ENTRIES.with(|count| count.set(count.get() + 1));
         ensure!(
             entry
                 .stage
@@ -368,6 +375,17 @@ impl Copy {
     }
 
     pub fn payload(&self, ordinal: usize) -> Result<Vec<u8>> {
+        self.payload_reader()?(ordinal)
+    }
+
+    /// Validate the manifest once while its immutable borrow prevents changes.
+    /// Each read still checks live path ownership, bytes and Git object identity.
+    pub(crate) fn payload_reader(&self) -> Result<impl Fn(usize) -> Result<Vec<u8>> + '_> {
+        let hash = validate_manifest(&self.manifest)?;
+        Ok(move |ordinal| self.read_payload(ordinal, hash))
+    }
+
+    fn read_payload(&self, ordinal: usize, hash: gix::hash::Kind) -> Result<Vec<u8>> {
         checked_path(&self.receipt.path)?;
         check_directory(&self.receipt.path, self.manifest.owner_uid)?;
         let entry = self
@@ -380,7 +398,7 @@ impl Copy {
             data.len() as u64 == entry.size && file_fingerprint(&data)? == entry.checksum,
             "retained payload changed"
         );
-        validate_member(&entry.kind, &data, validate_manifest(&self.manifest)?)?;
+        validate_member(&entry.kind, &data, hash)?;
         Ok(data)
     }
 }
@@ -472,4 +490,58 @@ pub fn extract(copy: &Path, destination: &Path) -> Result<Receipt> {
     }
     switch::sync_dir(&destination)?;
     Ok(copy.receipt)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn borrowed_reader_validates_each_manifest_entry_once_and_rechecks_live_payloads() -> Result<()> {
+        if gix_testtools::run_in_isolated_process().map_err(anyhow::Error::from_boxed)? {
+            return Ok(());
+        }
+        for count in [64, 128] {
+            let temp = tempfile::tempdir()?;
+            let repo = gix::init(temp.path())?;
+            let id = gix::hash::Kind::Sha1.null();
+            let members = (0..count)
+                .map(|ordinal| Member {
+                    area: Area::Worktree,
+                    path: ordinal.to_string().into_bytes(),
+                    stage: None,
+                    kind: Kind::File,
+                    mode: 0o600,
+                    data: b"private payload".to_vec(),
+                })
+                .collect::<Vec<_>>();
+            let receipt = capture(&repo, &"a".repeat(40), 1, id, id, id, &members)?;
+            let mut copy = inspect(&receipt.path)?;
+            VALIDATED_ENTRIES.with(|visits| visits.set(0));
+            {
+                let read = copy.payload_reader()?;
+                for (ordinal, member) in members.iter().enumerate() {
+                    assert_eq!(read(ordinal)?, member.data);
+                }
+                assert_eq!(VALIDATED_ENTRIES.with(std::cell::Cell::get), count);
+                fs::write(receipt.path.join(payload_name(0)), b"changed payload")?;
+                assert!(read(0).is_err(), "a borrowed reader must not cache payload bytes");
+            }
+            fs::write(receipt.path.join(payload_name(0)), &members[0].data)?;
+            copy.manifest.entries[0].kind = Kind::Object {
+                id: id.to_string(),
+                kind: "blob".into(),
+            };
+            assert!(
+                copy.payload_reader()?(0).is_err(),
+                "Git object verification remains mandatory"
+            );
+            copy.manifest.entries.push(copy.manifest.entries[0].clone());
+            assert!(
+                copy.payload_reader().is_err(),
+                "a new borrow must validate edited metadata"
+            );
+        }
+        Ok(())
+    }
 }

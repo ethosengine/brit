@@ -127,6 +127,7 @@ fn validate_release(ledger: &Ledger) -> Result<()> {
         .map(|(_, id)| gix::ObjectId::from_hex(id.as_bytes()))
         .collect::<std::result::Result<Vec<_>, _>>()?;
     let mut seen = BTreeSet::new();
+    let payload = copy.payload_reader()?;
     while let Some(id) = pending.pop() {
         if !seen.insert(id) {
             continue;
@@ -134,7 +135,7 @@ fn validate_release(ledger: &Ledger) -> Result<()> {
         let (kind, ordinal) = objects
             .get(&id)
             .context("retained copy lacks a released object closure")?;
-        let data = copy.payload(*ordinal)?;
+        let data = payload(*ordinal)?;
         match kind {
             gix::objs::Kind::Commit => {
                 let commit = gix::objs::CommitRef::from_bytes(&data, id.kind())?;

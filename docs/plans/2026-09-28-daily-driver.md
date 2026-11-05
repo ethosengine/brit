@@ -36,16 +36,37 @@ existing algorithms and refusal behavior. Ordinary retained payloads and their
 receipts remain byte-identical; collision payloads previously could not produce
 a complete retained copy.
 
+Full-history cleanup then exposed repeated manifest validation: every released
+object called `payload()`, which rebuilt the logical-path set for every entry.
+Cleanup now borrows a manifest-validated reader for its traversal. Rust's
+immutable borrow prevents metadata changes during that traversal; each payload
+still rereads live paths and bytes and verifies ownership, its fingerprint and
+Git object identity. Public single-payload reads retain per-call validation.
+A controlled test checks 64 and 128 manifest-entry visits for batches of 64 and
+128 payloads, plus live tamper and edited-metadata refusals. Extraction retains
+its existing per-call validation; no cancellation-latency bound is claimed.
+The first collision candidate passed complete CI (run 41967763430 at
+bb4b1f85436235ae0830499fa3b53ff127def205); this cleanup follow-up requires its own
+exact-revision qualification. Both full-history clones completed through explicit recovery with the reviewed
+reader change. Their staged, unstaged and untracked neighbors remained identical,
+both collision fixtures survived, and active journals were removed. The original
+0.1.9 abort journal also recovered after hard interruption: HEAD, the retained
+original index bytes, private file and deliberately deleted fixtures were
+preserved, with an independently validated retained copy left behind.
+
 - [x] Reproduce the installed refusal without modifying HEAD, index or private work. Serves brit-native-daily-driver.
 - [x] Preserve legacy fingerprints and checksum envelopes while distinguishing both committed collision fixtures. Serves brit-native-daily-driver.
-- [ ] Verify actual Brit-history replay, conflict/continue, abort, interrupted recovery and an old-binary journal across the upgrade. Serves brit-native-daily-driver.
+- [x] Verify actual Brit-history replay, conflict/continue, abort, interrupted recovery and an old-binary journal across the upgrade. Serves brit-native-daily-driver.
 - [x] Pass affected core/public suites, formatting, strict Clippy, Rust-style gates and independent review. Serves brit-native-daily-driver.
 - [ ] Pass exact-revision CI, publish coordinated unused versions, advance the parent pin and prove the installed binary. Brit 0.1.10 remains the peer's repository-opening/fingerprint release. Serves brit-native-daily-driver.
 
 Maintainer node: between verified Git objects and durable replay preparation,
 checkout witnesses and retained recovery payloads must distinguish collision-test
 payloads that are valid, distinct Git blobs. The fingerprint and public recovery regressions name
-this boundary. Cancellation latency, helper packaging, submodule support and
+this boundary. Between retained-copy completion and reservation release, the
+cleanup traversal must reuse immutable metadata validation while rechecking
+every live payload; the borrowed-reader regression names that station.
+Cancellation latency, helper packaging, submodule support and
 named-remote handling remain separate work. Evidence is retained in the parent
 `genesis/local-dev/brit-collision-20261105/`; this station does not qualify the
 whole daily-driver habit.
@@ -55,8 +76,11 @@ retained-payload extension passed all 13 retained-copy checks and all 13 public
 fault/recovery journeys with both collision fixtures present. A genuine 0.1.9
 conflict journal was resolved and completed by the candidate, preserving staged,
 unstaged and untracked neighboring files and keeping them out of the commit.
-Independent review approved both production changes after two test-fixture
-corrections (private journal permissions and the extraction output path).
+The cleanup follow-up passes all 127 affected core replay checks, the isolated
+reader regression, all 13 public fault/recovery journeys, formatting, prescribed
+strict Clippy and Rust style. Independent review approved the production changes
+after three test-fixture corrections (private journal permissions, extraction output path and isolation
+of the reader regression).
 
 Rehearsal limits remain explicit. Changing shared repository configuration during
 an active linked-worktree rehearsal correctly refused recovery until restored.
@@ -65,6 +89,11 @@ the matching shell working directory continued the same journal. Final publicati
 in a linked checkout separately refuses `unsafe metadata ancestor` when its
 common-directory path contains `../..`; that path-handling issue is outside this
 collision slice. The real-history finish proof uses an independent native clone.
+The first native HTTPS candidate push passed its gates but failed in send-pack
+with a closed channel. The branch was confirmed absent remotely before a Git
+fallback pushed it with the same gates enabled. The first follow-up public run
+also selected a CLI without fault checkpoints; rebuilding through the CI CLI
+feature chain made all 13 tests pass without a source change.
 Selected unused candidate versions are CLI 0.1.11, core 0.63.5 and gitoxide
 0.60.5; the peer's CLI 0.1.10 and possible .4 versions remain available. The
 allocation proposal was sent through the steward channel; peer acknowledgment
