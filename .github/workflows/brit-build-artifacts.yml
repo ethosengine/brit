@@ -42,7 +42,7 @@ jobs:
         run: |
           set -euo pipefail
           cargo build --locked --profile release-github \
-            -p brit-cli --bin brit \
+            -p brit-cli --bin brit --bin brit-rebase-retained \
             -p brit-build-ref --bin brit-build-ref \
             -p brit-verify --bin brit-verify \
             --no-default-features --features brit-cli/max-pure
@@ -53,12 +53,12 @@ jobs:
           set -euo pipefail
           test "$(git rev-parse HEAD)" = "$SOURCE_SHA"
           mkdir -p artifacts
-          for name in brit brit-build-ref brit-verify; do
+          for name in brit brit-build-ref brit-rebase-retained brit-verify; do
             install -m 0755 "$CARGO_TARGET_DIR/release-github/$name" "artifacts/$name"
           done
           artifacts/brit --version | grep -Fx "source HEAD: $SOURCE_SHA"
-          (cd artifacts && sha256sum brit brit-build-ref brit-verify | sort -k2 > SHA256SUMS)
-          test "$(wc -l < artifacts/SHA256SUMS)" -eq 3
+          (cd artifacts && sha256sum brit brit-build-ref brit-rebase-retained brit-verify | sort -k2 > SHA256SUMS)
+          test "$(wc -l < artifacts/SHA256SUMS)" -eq 4
           (cd artifacts && sha256sum -c SHA256SUMS)
       - name: Stage and publish the source build prerelease
         env:
@@ -73,9 +73,9 @@ jobs:
             --target "$SOURCE_SHA" \
             --title "$tag" \
             --draft \
-            artifacts/brit artifacts/brit-build-ref artifacts/brit-verify artifacts/SHA256SUMS
+            artifacts/brit artifacts/brit-build-ref artifacts/brit-rebase-retained artifacts/brit-verify artifacts/SHA256SUMS
           test "$(gh release view "$draft_tag" --json isDraft --jq .isDraft)" = true
-          test "$(gh release view "$draft_tag" --json assets --jq '.assets | length')" -eq 4
+          test "$(gh release view "$draft_tag" --json assets --jq '.assets | length')" -eq 5
           if gh release view "$tag" >/dev/null 2>&1; then
             gh release delete "$tag" --yes --cleanup-tag
           fi

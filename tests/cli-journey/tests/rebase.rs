@@ -145,10 +145,32 @@ fn retained_leaf(root: &Path) -> Result<PathBuf> {
         .ok_or_else(|| anyhow::anyhow!("no completed retained copy"))
 }
 
+fn repository_bytes(root: &Path) -> Result<std::collections::BTreeMap<PathBuf, Vec<u8>>> {
+    fn walk(root: &Path, path: &Path, files: &mut std::collections::BTreeMap<PathBuf, Vec<u8>>) -> Result<()> {
+        for entry in fs::read_dir(path)? {
+            let path = entry?.path();
+            if path.is_dir() {
+                walk(root, &path, files)?;
+            } else {
+                files.insert(path.strip_prefix(root)?.to_path_buf(), fs::read(path)?);
+            }
+        }
+        Ok(())
+    }
+    let mut files = std::collections::BTreeMap::new();
+    walk(root, root, &mut files)?;
+    Ok(files)
+}
+
 #[test]
 fn public_linear_replay_finishes_and_helper_exports_after_cleanup_without_runtime_git() -> Result<()> {
     let repo = fixture(false)?;
     let root = repo.path();
+    fs::write(root.join("private-neighbor"), b"private neighbor\0bytes\n")?;
+    let originals = ["messageA", "messageB", "neighbor", "private-neighbor"]
+        .into_iter()
+        .map(|name| Ok((name, fs::read(root.join(name))?)))
+        .collect::<Result<std::collections::BTreeMap<_, _>>>()?;
     let bin = brit_bin().expect("required artifact");
     let helper = std::env::var_os("BRIT_REBASE_RETAINED_BIN")
         .map(PathBuf::from)
@@ -177,6 +199,7 @@ fn public_linear_replay_finishes_and_helper_exports_after_cleanup_without_runtim
         .stdout
         .contains("No active rebase"));
     let copy = retained_leaf(root)?;
+    let source_before = repository_bytes(root)?;
     let inspected = BritInvocation::new(&helper)
         .args(["inspect", "--copy"])
         .arg(copy.as_os_str())
@@ -195,7 +218,41 @@ fn public_linear_replay_finishes_and_helper_exports_after_cleanup_without_runtim
         .env("PATH", sentinels.path().as_os_str())
         .run()?;
     ensure!(extracted.status.success(), "{}", extracted.stderr);
-    assert!(destination.path().join("manifest.json").is_file());
+    let exported: serde_json::Value = serde_json::from_slice(&fs::read(destination.path().join("manifest.json"))?)?;
+    assert_eq!(
+        exported["manifest"], manifest["manifest"],
+        "export retains every inspected entry"
+    );
+    let entries = exported["manifest"]["entries"].as_array().expect("entries");
+    let payloads = exported["payloads"].as_array().expect("payloads");
+    assert_eq!(entries.len(), payloads.len());
+    let mut seen = std::collections::BTreeSet::new();
+    for (ordinal, (_entry, payload)) in entries.iter().zip(payloads).enumerate() {
+        let bytes = fs::read(destination.path().join(payload.as_str().expect("payload path")))?;
+        assert_eq!(
+            bytes,
+            fs::read(copy.join(format!("{ordinal:08}")))?,
+            "exported member {ordinal} matches captured bytes"
+        );
+        for (name, original) in &originals {
+            if &bytes == original {
+                seen.insert((*name).to_owned());
+            }
+        }
+    }
+    // The copy captures replay footprint/object custody, not private neighbors.
+    assert!(
+        seen.contains("messageA") && seen.contains("messageB"),
+        "collision fixture bytes are independently exported: {seen:?}"
+    );
+    for (name, bytes) in &originals {
+        assert_eq!(&fs::read(root.join(name))?, bytes);
+    }
+    assert_eq!(
+        repository_bytes(root)?,
+        source_before,
+        "inspect and extract leave every source file unchanged"
+    );
     assert!(
         copy.join("COPY_COMPLETE").is_file(),
         "helper never expires retained copies"

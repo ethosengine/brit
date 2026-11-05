@@ -2025,3 +2025,48 @@ Local validation of the signed-field correction: two parser regressions, 28
 interactive replay tests, two invocation tests, 11 preservation/recovery matrix
 tests, all six public rebase journeys using the rebuilt CLI, strict scoped
 Clippy and formatting passed. Remote confirmation remains pending.
+
+
+### 2026-11-05 — retained helper through the followed installation
+
+The delivery closure is four executables: `brit`, `brit-build-ref`,
+`brit-rebase-retained`, `brit-verify` (with `rakia` remaining an alias).
+The workflow builds and publishes the helper with the same source SHA and
+checksum set as Brit. No crate source/version or registry-only `cargo install
+--bin brit` contract changes in this slice; source-SHA releases avoid the
+reserved 0.1.10 lane.
+
+The parent runtime declaration registers the helper and its existing
+`BRIT_REBASE_RETAINED_BIN` override. Historical three-executable releases remain
+usable, including plain-binary adoption and rollback. A session or explicit
+Brit pin selects the whole release; asking an old release for its absent helper
+names that release and refuses. It never borrows a newer helper. Declared-but-
+missing and corrupt helpers fail checksum verification.
+
+Measured candidate evidence: packaging executes the workflow shell bodies with
+local build/forge fixtures and checks all five uploaded assets; six ordinary
+public rebase journeys pass against preserved 0.1.11 binaries; exported payloads
+match captured bytes, both collision fixtures are present independently, and
+all repository file bytes remain unchanged by inspect/extract. Strict scoped
+Clippy, formatting and Rust-style checks pass. The first exploratory journey
+selected a stale 0.1.9 pool binary and reproduced the previously fixed collision
+refusal; the corrected run names preserved 0.1.11 artifacts. Review round 1
+found two moderate runtime regressions; both are corrected and round 2 reports
+zero critical/high/moderate findings. Runtime gate, installed candidate launcher
+and exact-revision CI/publication evidence will be appended after completion.
+
+Maintainer stations: chain daily-driver retained recovery / between packaged
+helper → installed recovery / node: historical inventory remains installable
+without changing the selected release; probes `historical_install_upgrade_session_and_rollback_keep_one_release`
+and `historical_launcher_install_preserves_plain_brit_without_borrowing_helper`.
+Between installed recovery → exported recovery / node: every exported payload
+matches retained bytes and helpers leave repository bytes unchanged; probe
+`public_linear_replay_finishes_and_helper_exports_after_cleanup_without_runtime_git`.
+The existing public journey remains the finish assertion. No new a2o scaffold
+is needed for these executable regression boundaries.
+
+Receipts live under parent `genesis/a2o/reports/recovery/brit-retained-20261105/`.
+Direct shell source reads supplemented the bounded recall session
+`brit-retained-delivery`; unsupported Codex shell adapter coverage is unmeasured.
+Repository-opening, cancellation bounds, submodules and named remotes remain
+outside this delivery slice.
