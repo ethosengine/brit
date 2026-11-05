@@ -2093,3 +2093,66 @@ prove paginated admission and fail-closed missing, duplicate, unsuccessful,
 malformed and unavailable verdicts. Independent review corrected run-attempt
 binding and the unsupported gh --slurp/--jq combination. No dependency/security
 policy is changed. Fresh exact-revision CI remains required before publication.
+
+Published qualification: source `b5d501c45ea9db63a9e5ffbe17efe2d064747a8c`
+passed the required Tests pass aggregate in candidate CI
+[42034221471](https://github.com/ethosengine/brit/actions/runs/42034221471)
+and main CI
+[42038456372](https://github.com/ethosengine/brit/actions/runs/42038456372).
+The existing advisory-only failure remained visible. Artifact CI
+[42044574220](https://github.com/ethosengine/brit/actions/runs/42044574220)
+published [brit-build-b5d501c45ea9](https://github.com/ethosengine/brit/releases/tag/brit-build-b5d501c45ea9).
+All four downloaded executable checksums match, and all six public rebase
+journeys pass through isolated installed launchers using those published bytes.
+The proof compares every exported payload and both collision originals with
+captured bytes and verifies that inspect/extract leave source files unchanged.
+
+Parent integration revision `b663aa65f85ac030c289ce08f3686020fee65830`
+passes every selected owning gate, including 2,046 EPRFS tests, 5,884 storage
+tests and 135 storage-client tests, strict Clippy and formatting. Its EPR and
+launcher candidate is ingested with clean source provenance. Independent review
+confirms that rebasing onto the newer EPRFS core/meta base preserved every
+reviewed implementation byte. Two integration fixtures were corrected without
+production changes: the historical RunLaunch CID now uses its frozen original
+manifest; a one-second grant deadline accepts one or two attempts while retaining
+the refusal, no-worker, retry and permanent-failure assertions.
+
+The executable pin remains the qualified `b5d501c45` release. This evidence-only
+update changes no executable or version. The shared-device installation runner,
+release records and all proof receipts are kept in parent
+`genesis/a2o/reports/recovery/brit-retained-20261105/`; its
+`run-installed-proof.sh` checks the device head and session pin, all published
+checksums and the six journeys through normal PATH launchers. The separate parent
+Jenkins baseline stopped before dispatch at a checker/method mismatch
+(`elohim-orchestrator/dev/2224`, source `426b0bcb`); it is not a verdict on the
+qualified Brit release.
+
+Operational boundaries remain explicit: native rebase refused the parent's
+affected gitlink, and Brit's merge interface does not perform a branch
+fast-forward. Clean-state inspections preceded the recorded Git fallbacks.
+Repository-opening, cancellation, submodule and named-remote work remain outside
+this delivery slice; the broader habit remains RED.
+
+Shared-device delivery is now measured. Parent `dev` is published at
+`b663aa65f85ac030c289ce08f3686020fee65830`, with every pre-push gate passing.
+Native `epr bin follow`, launcher installation and session pinning select the
+published Brit closure
+`bafyreib55iexpa5v66ttbd2ttbuhlbk3gja2eedp4yccb3ju54k76cphqy`.
+The normal PATH proof passes all six journeys in 78.33 seconds and verifies all
+four installed executable checksums against the release. Before switching the
+session pin, old Brit `c2f819` remained usable and its absent helper refused with
+that old release CID despite the newer global head; it borrowed no helper.
+
+The EPR activation used an explicit native lineage transition after confirming
+that the previous source tree exactly equaled an ancestor of the new revision.
+The known legacy direct EPR symlink was preserved and migrated to the managed
+launcher. An ordering exception projected the registry before that migration
+finished; it was repaired and recorded, and uninterrupted legacy availability
+during that interval is not claimed. `session-exceptions.json` preserves the
+ancestry, equal-tree and launcher receipts. Final installed status, checksums,
+legacy refusal and the complete journey output are in the existing recovery
+directory. Parent Jenkins build
+[2225](https://jenkins.ethosengine.com/job/elohim-orchestrator/job/dev/2225/)
+at the published revision repeats build 2224's checker/method mismatch before
+downstream dispatch. It does not change the exact Brit release's qualified CI
+verdict, and is not represented as a green parent CI run.
