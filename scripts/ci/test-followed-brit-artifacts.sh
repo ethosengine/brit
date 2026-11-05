@@ -16,6 +16,7 @@ export SOURCE_SHA
 SOURCE_SHA=$(git -C "$fixture/source" rev-parse HEAD)
 export CARGO_TARGET_DIR="$fixture/target" GITHUB_RUN_ID=1 GITHUB_RUN_ATTEMPT=1
 export FIXTURE_ROOT="$fixture"
+export GH_REPO=fixture/brit SOURCE_RUN=42 SOURCE_ATTEMPT=2
 cat > "$fixture/bin/cargo" <<'SH'
 #!/usr/bin/env bash
 set -euo pipefail
@@ -32,6 +33,12 @@ SH
 cat > "$fixture/bin/gh" <<'SH'
 #!/usr/bin/env bash
 set -euo pipefail
+if [ "$1" = api ]; then
+  [ "${FIXTURE_API_FAIL:-0}" = 0 ] || exit 1
+  test "$4" = 'repos/fixture/brit/actions/runs/42/attempts/2/jobs?per_page=100'
+  jq -s . "$FIXTURE_ROOT/jobs.json"
+  exit
+fi
 case "$1 $2" in
   'release create')
     for arg in "$@"; do
@@ -48,7 +55,7 @@ chmod +x "$fixture/bin/"*
 export PATH="$fixture/bin:$PATH"
 step() {
   awk -v wanted="$1" '
-    /^      - name:/ { active = index($0, wanted) > 0; body = 0 }
+    /^      - / { active = index($0, wanted) > 0; body = 0 }
     active && /^        run: \|/ { body = 1; next }
     body { sub(/^          /, ""); print }
   ' "$workflow" > "$fixture/step.sh"
@@ -56,6 +63,26 @@ step() {
   bash "$fixture/step.sh"
 }
 cd "$fixture/source"
+for jobs in '[]' '[{"name":"Tests pass","conclusion":"failure"}]' \
+  '[{"name":"Tests pass","conclusion":"cancelled"}]' \
+  '[{"name":"Tests pass","conclusion":"skipped"}]' \
+  '[{"name":"Tests pass","conclusion":null}]' \
+  '[{"name":"Tests pass","conclusion":"success"},{"name":"Tests pass","conclusion":"success"}]'; do
+  printf '{"jobs":%s}\n' "$jobs" > "$fixture/jobs.json"
+  if step "Require the triggering run's Tests pass verdict"; then
+    echo 'missing, ambiguous or unsuccessful verdict accepted' >&2; exit 1
+  fi
+done
+printf invalid > "$fixture/jobs.json"
+if step "Require the triggering run's Tests pass verdict" 2>/dev/null; then
+  echo 'malformed verdict accepted' >&2; exit 1
+fi
+printf '%s\n' '{"jobs":[{"name":"cargo-deny-advisories","conclusion":"failure"}]}' \
+  '{"jobs":[{"name":"Tests pass","conclusion":"success"}]}' > "$fixture/jobs.json"
+if FIXTURE_API_FAIL=1 step "Require the triggering run's Tests pass verdict"; then
+  echo 'unavailable verdict accepted' >&2; exit 1
+fi
+step "Require the triggering run's Tests pass verdict"
 step 'Build the followed executables'
 step 'Verify and checksum the source-pinned bytes'
 step 'Stage and publish the source build prerelease'

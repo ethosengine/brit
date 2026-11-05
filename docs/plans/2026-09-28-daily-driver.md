@@ -2082,3 +2082,14 @@ worktree. The isolated installed-launcher run now passes all six public rebase
 journeys. Registry audit finds all 70 existing versions, with zero new versions.
 The full EPRFS gate and exact replacement-revision CI remain the publication
 frontier; the mode failure is retained in `ci-test-failure.txt`.
+
+Publication preflight found a missing station: release workflow / between exact
+Tests pass → source-SHA artifact / required aggregate admission: read exactly
+one successful Tests pass from the triggering run AND attempt, before checkout
+or publication. Whole-workflow success wrongly included the known non-gating
+advisory job. The producer now preserves push/main/same-repository guards and
+checks the attempt-specific API with Actions read permission. Real jq fixtures
+prove paginated admission and fail-closed missing, duplicate, unsuccessful,
+malformed and unavailable verdicts. Independent review corrected run-attempt
+binding and the unsupported gh --slurp/--jq combination. No dependency/security
+policy is changed. Fresh exact-revision CI remains required before publication.
