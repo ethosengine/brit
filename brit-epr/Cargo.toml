@@ -67,3 +67,7 @@ required-features = ["elohim-protocol"]
 name = "cas_writes"
 path = "tests/cas_writes.rs"
 required-features = ["elohim-protocol"]
+
+[package.metadata.cargo-machete]
+# `serde_bytes` is used only through `#[serde(with = "serde_bytes")]` on the @2 envelope
+ignored = ["serde_bytes"]
