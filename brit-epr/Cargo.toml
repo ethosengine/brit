@@ -2,13 +2,13 @@ lints.workspace = true
 
 [package]
 name = "brit-epr"
-version = "0.1.5"
+version = "0.2.0"
 description = "Elohim Protocol primitives (pillar trailers, dispatch trait, validation) for brit — an expansion of gitoxide with covenant semantics"
 repository = "https://github.com/ethosengine/brit"
 authors = ["Matthew Dowell <matthew@ethosengine.com>"]
 license = "MIT OR Apache-2.0"
 edition = "2021"
-rust-version = "1.82"
+rust-version = "1.83"
 
 [lib]
 doctest = false
@@ -20,7 +20,7 @@ default = ["elohim-protocol"]
 # parsing, the AppSchema dispatch trait, error types. No pillar-specific
 # behavior. A downstream fork can disable this feature and ship their own
 # app schema crate.
-elohim-protocol = ["dep:elohim-epr"]
+elohim-protocol = ["dep:elohim-epr", "dep:serde_bytes"]
 
 [dependencies]
 gix-object = { version = "^0.66.0", path = "../gix-object", registry = "elohim", features = ["sha1"] }
@@ -28,11 +28,14 @@ thiserror = "2.0"
 serde = { version = "1", features = ["derive"] }
 # `float_roundtrip`: a signed node is read back from its JSON note; a float in it must parse to
 # the exact f64 that was signed, or the note cannot verify.
-serde_json = { version = "1", features = ["float_roundtrip"] }
+serde_json = { version = "1", features = ["float_roundtrip", "raw_value"] }
 cid = { version = "0.11", features = ["serde-codec"] }
-multihash-codetable = { version = "0.2", features = ["sha2"] }
 serde_ipld_dagcbor = "0.6"
-elohim-epr = { version = "0.1", optional = true, registry = "elohim" }
+# The one Rust addressing kernel: record, byte (BLAKE3) and citation CIDs. Wasm-safe, no runtime.
+elohim-address = { version = "0.1", registry = "elohim" }
+# The signature envelope (scheme + multikey + transcript v1) the `@2` note formats carry.
+elohim-epr = { version = "0.2", optional = true, registry = "elohim" }
+serde_bytes = { version = "0.11", optional = true }
 ed25519-dalek = { version = "2", features = ["rand_core"] }
 rand = "0.8"
 hex = "0.4"

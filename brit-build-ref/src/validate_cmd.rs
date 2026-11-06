@@ -4,7 +4,10 @@ use std::path::Path;
 
 use brit_epr::{
     elohim::{
-        attestation::validation::{ValidationAttestationContentNode, ValidationResult},
+        attestation::{
+            note::EnvelopeNote,
+            validation::{ValidationBody, ValidationNote, ValidationResult},
+        },
         refs::BritRefManager,
     },
     engine::{content_node::ContentNode, object_store::LocalObjectStore, signing::AgentKey},
@@ -31,31 +34,30 @@ pub fn put(
 
     let validated_at = chrono::Utc::now().to_rfc3339();
 
-    let mut node = ValidationAttestationContentNode {
-        artifact_cid,
-        check_name: check.to_string(),
-        validator_id: agent_key.agent_id(),
-        validator_version: if validator_version.is_empty() {
-            "unknown".to_string()
-        } else {
-            validator_version.to_string()
+    let note = EnvelopeNote::sign(
+        ValidationBody {
+            artifact_cid,
+            check_name: check.to_string(),
+            validator_id: agent_key.agent_id(),
+            validator_version: if validator_version.is_empty() {
+                "unknown".to_string()
+            } else {
+                validator_version.to_string()
+            },
+            result,
+            result_summary: summary.to_string(),
+            findings_cid: None,
+            validated_at,
+            ttl_sec: None,
         },
-        result,
-        result_summary: summary.to_string(),
-        findings_cid: None,
-        validated_at,
-        ttl_sec: None,
-        signature: String::new(),
-    };
+        &agent_key,
+    )?;
 
-    let canonical = node.canonical_bytes()?;
-    node.signature = agent_key.sign(&canonical);
+    store.put(&note)?;
+    let cid = note.compute_cid()?;
 
-    store.put(&node)?;
+    refs.put_validate_ref(step, check, ValidationNote::Envelope(note))?;
 
-    refs.put_validate_ref(step, check, &node)?;
-
-    let cid = node.compute_cid()?;
     println!("{cid}");
     Ok(())
 }

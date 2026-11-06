@@ -142,6 +142,15 @@ fn write_note(repo: &Path, notes_ref: &str, commit: &str, value: &Value) {
     );
 }
 
+/// The signed fields of a stored note: its `body` in the envelope format, the note itself in the
+/// frozen legacy format. Tampering goes here, so a test changes what was signed.
+fn body_mut(v: &mut Value) -> &mut Value {
+    if v.get("body").is_some() {
+        return &mut v["body"];
+    }
+    v
+}
+
 fn find(repo: &Path, step: &str, inputs: &str) -> (Vec<Value>, String) {
     let out = brit(repo, &["build", "find", "--step", step, "--inputs-hash", inputs]);
     assert!(out.status.success(), "find exits 0: {}", stderr(&out));
@@ -179,7 +188,8 @@ fn find_drops_a_note_whose_success_was_flipped() {
     let red = commit(tmp.path(), "red");
     put_build(tmp.path(), STEP, "closure-1", false, &red);
     let mut v = note(tmp.path(), STEP_REF, &red);
-    v["success"] = Value::Bool(true);
+    assert_eq!(v["epoch"], 2, "a new note is written in the envelope format");
+    body_mut(&mut v)["success"] = Value::Bool(true);
     write_note(tmp.path(), STEP_REF, &red, &v);
 
     let (rows, err) = find(tmp.path(), STEP, "closure-1");
@@ -212,13 +222,22 @@ fn find_drops_a_note_with_an_appended_field() {
     let tmp = repo();
     let c = commit(tmp.path(), "c");
     put_build(tmp.path(), STEP, "closure-1", true, &c);
-    let mut v = note(tmp.path(), STEP_REF, &c);
+    let stored = note(tmp.path(), STEP_REF, &c);
+    let mut v = stored.clone();
     v["admitted"] = Value::Bool(true);
     write_note(tmp.path(), STEP_REF, &c, &v);
+    let d = commit(tmp.path(), "d");
+    let mut v = stored;
+    body_mut(&mut v)["admitted"] = Value::Bool(true);
+    write_note(tmp.path(), STEP_REF, &d, &v);
 
     let (rows, err) = find(tmp.path(), STEP, "closure-1");
     assert!(rows.is_empty(), "an unknown field is not decoded away: {rows:?}");
-    assert_eq!(unverifiable_lines(&err).len(), 1, "{err}");
+    assert_eq!(
+        unverifiable_lines(&err).len(),
+        2,
+        "beside the envelope and inside its body: {err}"
+    );
 }
 
 #[test]
@@ -274,6 +293,111 @@ fn find_returns_a_foreign_key_note_under_its_own_agent_id_and_no_standing() {
 }
 
 #[test]
+fn find_rows_carry_the_envelope_view_of_a_new_note() {
+    let tmp = repo();
+    let c = commit(tmp.path(), "c");
+    put_build(tmp.path(), STEP, "closure-1", true, &c);
+    let stored = note(tmp.path(), STEP_REF, &c);
+    let mut stored_keys: Vec<&str> = stored
+        .as_object()
+        .expect("note is an object")
+        .keys()
+        .map(String::as_str)
+        .collect();
+    stored_keys.sort_unstable();
+    assert_eq!(
+        stored_keys,
+        ["body", "epoch", "key", "scheme", "sig"],
+        "stored in the @2 format"
+    );
+    assert_eq!(
+        (stored["epoch"].as_u64(), stored["scheme"].as_u64()),
+        (Some(2), Some(0))
+    );
+
+    let (rows, err) = find(tmp.path(), STEP, "closure-1");
+    assert!(err.is_empty(), "{err}");
+    assert_eq!(rows.len(), 1);
+    let att = rows[0]["attestation"].as_object().expect("attestation is an object");
+    let mut keys: Vec<&str> = att.keys().map(String::as_str).collect();
+    keys.sort_unstable();
+    assert_eq!(
+        keys,
+        [
+            "agentId",
+            "buildDurationMs",
+            "builtAt",
+            "epoch",
+            "hardwareProfile",
+            "inputsHash",
+            "key",
+            "manifestCid",
+            "outputCid",
+            "scheme",
+            "sig",
+            "stepName",
+            "success"
+        ],
+        "the body's signed fields plus the envelope; no verdict flag"
+    );
+    assert_eq!(att["agentId"], stored["body"]["agentId"]);
+    assert_eq!(att["sig"], stored["sig"]);
+}
+
+/// A note framed in a scheme or epoch this reader does not implement is HELD: named on stderr as
+/// `held: <commit> <reason>`, never a row (so never a reuse candidate) and never an
+/// `unverifiable:` line.
+#[test]
+fn find_and_get_report_held_notes_apart_and_never_as_rows() {
+    let tmp = repo();
+    let a = commit(tmp.path(), "a");
+    put_build(tmp.path(), STEP, "closure-1", true, &a);
+    let stored = note(tmp.path(), STEP_REF, &a);
+    let s = commit(tmp.path(), "unknown scheme");
+    let mut v = stored.clone();
+    v["scheme"] = Value::from(0xfe01_u16);
+    write_note(tmp.path(), STEP_REF, &s, &v);
+    let e = commit(tmp.path(), "unknown epoch");
+    let mut v = stored;
+    v["epoch"] = Value::from(3);
+    write_note(tmp.path(), STEP_REF, &e, &v);
+
+    let (rows, err) = find(tmp.path(), STEP, "closure-1");
+    assert_eq!(rows.len(), 1, "only the verified note is a candidate: {rows:?}");
+    assert_eq!(rows[0]["commit"], a.as_str());
+    assert!(unverifiable_lines(&err).is_empty(), "held is not unverifiable: {err}");
+    let held: Vec<&str> = err.lines().filter(|l| l.starts_with("held: ")).collect();
+    assert_eq!(held.len(), 2, "{err}");
+    assert!(
+        held.iter()
+            .any(|l| l.starts_with(&format!("held: {s} signature scheme 65025 "))),
+        "{err}"
+    );
+    assert!(
+        held.iter().any(|l| l.starts_with(&format!("held: {e} note epoch 3 "))),
+        "{err}"
+    );
+
+    let out = brit(tmp.path(), &["build", "get", "--step", STEP, "--commit", &s]);
+    assert!(out.status.success(), "{}", stderr(&out));
+    assert!(
+        stdout(&out).is_empty(),
+        "a held note is never printed: {}",
+        stdout(&out)
+    );
+    let err = stderr(&out);
+    let mut lines = err.lines();
+    assert_eq!(
+        lines.next(),
+        Some(format!("no build ref found for step={STEP} commit={s}").as_str())
+    );
+    assert!(
+        lines.next().is_some_and(|l| l.starts_with(&format!("held: {s} "))),
+        "{err}"
+    );
+}
+
+#[test]
 fn find_returns_a_valid_red_attestation() {
     let tmp = repo();
     let c = commit(tmp.path(), "c");
@@ -311,18 +435,31 @@ fn find_drops_a_note_whose_signature_is_not_hex_and_keeps_its_siblings() {
     let tmp = repo();
     let a = commit(tmp.path(), "a");
     put_build(tmp.path(), STEP, "closure-1", true, &a);
+    // The frozen format with a signature that is not hex, and the envelope format with signature
+    // bytes of the wrong length.
     let z = commit(tmp.path(), "z");
-    let mut v = note(tmp.path(), STEP_REF, &a);
+    let keys = tempfile::TempDir::new().expect("key dir");
+    let key = AgentKey::generate(&keys.path().join("k")).expect("key");
+    let mut v = serde_json::to_value(signed_build(&key, STEP, "closure-1", true)).expect("node encodes");
     v["signature"] = Value::String("zz".to_string());
     write_note(tmp.path(), STEP_REF, &z, &v);
+    let y = commit(tmp.path(), "y");
+    let mut v = note(tmp.path(), STEP_REF, &a);
+    v["sig"] = Value::from(vec![0u8; 63]);
+    write_note(tmp.path(), STEP_REF, &y, &v);
 
     let (rows, err) = find(tmp.path(), STEP, "closure-1");
-    assert_eq!(rows.len(), 1, "the valid note survives its sibling: {err}");
+    assert_eq!(rows.len(), 1, "the valid note survives its siblings: {err}");
     assert_eq!(rows[0]["commit"], a.as_str());
     let lines = unverifiable_lines(&err);
-    assert_eq!(lines.len(), 1, "{err}");
-    assert!(lines[0].starts_with(&format!("unverifiable: {z} ")), "{err}");
-    assert!(lines[0].contains("signature"), "{err}");
+    assert_eq!(lines.len(), 2, "{err}");
+    for c in [&z, &y] {
+        let line = lines
+            .iter()
+            .find(|l| l.starts_with(&format!("unverifiable: {c} ")))
+            .unwrap_or_else(|| panic!("{c}: {err}"));
+        assert!(line.contains("signature"), "{err}");
+    }
 }
 
 #[test]
@@ -403,7 +540,7 @@ fn get_unverifiable_reads_as_the_miss_line_then_the_reason() {
     let head = git(tmp.path(), &["rev-parse", "HEAD"]);
     put_build(tmp.path(), STEP, "closure-1", false, "HEAD");
     let mut v = note(tmp.path(), STEP_REF, &head);
-    v["success"] = Value::Bool(true);
+    body_mut(&mut v)["success"] = Value::Bool(true);
     write_note(tmp.path(), STEP_REF, &head, &v);
 
     let out = brit(tmp.path(), &["build", "get", "--step", STEP]);
@@ -505,7 +642,11 @@ fn deploy_and_validate_get_drop_a_tampered_record() {
         ),
     ] {
         let mut v: Value = serde_json::from_str(&git(tmp.path(), &["cat-file", "-p", ref_name])).expect("blob is JSON");
-        v[field] = Value::String(value.to_string());
+        assert_eq!(
+            v["epoch"], 2,
+            "{ref_name}: a new record is written in the envelope format"
+        );
+        body_mut(&mut v)[field] = Value::String(value.to_string());
         let blob = git_stdin(
             tmp.path(),
             &["hash-object", "-w", "--stdin"],
@@ -635,6 +776,11 @@ fn put_clause(repo: &Path, session: &str, quote: &str) -> Value {
     serde_json::from_str(&stdout(&out)).expect("covenant put prints JSON")
 }
 
+/// The record stored at `ref_name`, as stored.
+fn stored_record(repo: &Path, ref_name: &str) -> Value {
+    serde_json::from_str(&git(repo, &["cat-file", "-p", ref_name])).expect("record is JSON")
+}
+
 fn write_ref_json(repo: &Path, ref_name: &str, value: &Value) {
     let blob = git_stdin(
         repo,
@@ -651,9 +797,14 @@ fn covenant_reads_drop_records_that_do_not_verify_or_bind() {
     let other = put_clause(tmp.path(), "s2", "also yes");
     let good_cid = good["cid"].as_str().expect("cid").to_string();
     let other_cid = other["cid"].as_str().expect("cid").to_string();
+    let stored = stored_record(tmp.path(), &format!("refs/notes/brit/covenant/s1/{good_cid}"));
+    assert_eq!(
+        stored["clause"]["epoch"], 2,
+        "a new clause is written in the envelope format"
+    );
 
     // A valid record filed under a CID that is not its clause's.
-    let mut wrong_cid = good.clone();
+    let mut wrong_cid = stored.clone();
     wrong_cid["cid"] = Value::String(other_cid.clone());
     write_ref_json(
         tmp.path(),
@@ -661,8 +812,8 @@ fn covenant_reads_drop_records_that_do_not_verify_or_bind() {
         &wrong_cid,
     );
     // A clause whose words changed after signing, under its own CID.
-    let mut tampered = good.clone();
-    tampered["clause"]["quote"] = Value::String("no".into());
+    let mut tampered = stored;
+    body_mut(&mut tampered["clause"])["quote"] = Value::String("no".into());
     let tampered_cid = BritCid::compute(b"tampered").to_string();
     tampered["cid"] = Value::String(tampered_cid.clone());
     write_ref_json(
@@ -698,7 +849,8 @@ fn covenant_list_drops_a_clause_filed_under_another_session() {
     let tmp = repo();
     let other = put_clause(tmp.path(), "s2", "mine");
     let cid = other["cid"].as_str().expect("cid").to_string();
-    write_ref_json(tmp.path(), &format!("refs/notes/brit/covenant/s1/{cid}"), &other);
+    let stored = stored_record(tmp.path(), &format!("refs/notes/brit/covenant/s2/{cid}"));
+    write_ref_json(tmp.path(), &format!("refs/notes/brit/covenant/s1/{cid}"), &stored);
     let out = brit(tmp.path(), &["covenant", "list", "--session", "s1", "--output-json"]);
     assert!(out.status.success(), "{}", stderr(&out));
     assert_eq!(stdout(&out).trim(), "[]");

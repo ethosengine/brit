@@ -6,10 +6,13 @@ use std::path::Path;
 
 use brit_epr::{
     elohim::{
-        attestation::covenant::{validate_payload, CovenantClauseContentNode, CovenantClauseKind},
+        attestation::{
+            covenant::{validate_payload, CovenantClause, CovenantClauseBody, CovenantClauseKind, CovenantRecord},
+            note::EnvelopeNote,
+        },
         refs::{BritRefManager, Lookup},
     },
-    engine::{cid::BritCid, content_node::ContentNode, object_store::LocalObjectStore, signing::AgentKey},
+    engine::{cid::BritCid, object_store::LocalObjectStore, signing::AgentKey},
 };
 
 use crate::git_dir::{agent_key_path, common_git_dir};
@@ -46,7 +49,7 @@ pub fn put(repo: &Path, args: &PutArgs<'_>) -> anyhow::Result<()> {
     let agent_key = AgentKey::load_or_generate(&agent_key_path(repo)?)?;
     let store = LocalObjectStore::for_git_dir(&common_git_dir(repo)?);
 
-    let mut node = CovenantClauseContentNode {
+    let body = CovenantClauseBody {
         kind,
         session: args.session.to_string(),
         party: args.party.to_string(),
@@ -56,19 +59,19 @@ pub fn put(repo: &Path, args: &PutArgs<'_>) -> anyhow::Result<()> {
         valid_until: args.valid_until.map(str::to_string),
         supersedes,
         agent_id: agent_key.agent_id(),
-        signature: String::new(),
     };
-    let canonical = node.canonical_bytes()?;
-    node.signature = agent_key.sign(&canonical);
+    // New clauses are written in the envelope format (`brit.covenant@2`).
+    let note = EnvelopeNote::sign(body, &agent_key)?;
 
-    store.put(&node)?;
-    let cid = refs.put_covenant_clause(&node)?;
-    let clause = serde_json::to_value(&node)?;
+    store.put(&note)?;
+    let clause = CovenantClause::Envelope(note);
+    let view = clause.view()?;
+    let cid = refs.put_covenant_clause(clause)?;
 
     if args.output_json {
         println!(
             "{}",
-            serde_json::to_string(&serde_json::json!({ "cid": cid, "clause": clause }))?
+            serde_json::to_string(&serde_json::json!({ "cid": cid, "clause": view }))?
         );
     } else {
         println!("{cid}");
@@ -76,8 +79,15 @@ pub fn put(repo: &Path, args: &PutArgs<'_>) -> anyhow::Result<()> {
     Ok(())
 }
 
+/// A record as tools print it: `{cid, clause}` with the clause's view (a frozen clause as stored;
+/// an envelope clause as its body plus `epoch`, `scheme`, `key`, `sig`).
+fn record_row(record: &CovenantRecord) -> serde_json::Result<serde_json::Value> {
+    Ok(serde_json::json!({ "cid": record.cid, "clause": record.clause.view()? }))
+}
+
 /// The session's verified clauses in validFrom order; each record that failed verification is
-/// dropped and named on stderr as `unverifiable: <ref> <reason>`.
+/// dropped and named on stderr as `unverifiable: <ref> <reason>`, each held record (an epoch or
+/// scheme this reader does not implement) as `held: <ref> <reason>`.
 pub fn list(repo: &Path, session: &str, output_json: bool) -> anyhow::Result<()> {
     let refs = BritRefManager::new(repo)?;
     let scan = refs.list_covenant_clauses(session)?;
@@ -85,37 +95,36 @@ pub fn list(repo: &Path, session: &str, output_json: bool) -> anyhow::Result<()>
         let rows = scan
             .verified
             .iter()
-            .map(|(_, record)| serde_json::to_value(record))
+            .map(|(_, record)| record_row(record))
             .collect::<Result<Vec<_>, _>>()?;
         println!("{}", serde_json::to_string(&rows)?);
     } else if scan.verified.is_empty() {
         println!("[]");
     } else {
         for (_, r) in &scan.verified {
-            println!(
-                "{} {} {} {}",
-                r.cid,
-                r.clause.valid_from,
-                r.clause.kind.as_str(),
-                r.clause.party
-            );
+            let body = r.clause.body();
+            println!("{} {} {} {}", r.cid, body.valid_from, body.kind.as_str(), body.party);
         }
     }
     for (at, reason) in &scan.unverifiable {
         crate::lookup_out::unverifiable(at, reason);
     }
+    for (at, reason) in &scan.held {
+        crate::lookup_out::held(at, *reason);
+    }
     Ok(())
 }
 
-/// One verified clause by CID; absent or unverifiable is an error.
+/// One verified clause by CID; absent, unverifiable or held is an error.
 pub fn show(repo: &Path, cid: &str, output_json: bool) -> anyhow::Result<()> {
     let refs = BritRefManager::new(repo)?;
     let row = match refs.get_covenant_clause(cid)? {
-        Lookup::Verified(record) => serde_json::to_value(&record)?,
+        Lookup::Verified(record) => record_row(&record)?,
         Lookup::Absent => anyhow::bail!("no covenant clause with cid {cid}"),
         Lookup::Unverifiable { at, reason } => {
             anyhow::bail!("no covenant clause with cid {cid}: unverifiable: {at} {reason}")
         }
+        Lookup::Held { at, reason } => anyhow::bail!("no covenant clause with cid {cid}: held: {at} {reason}"),
     };
     if output_json {
         println!("{}", serde_json::to_string(&row)?);

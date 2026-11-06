@@ -3,7 +3,13 @@
 use std::path::Path;
 
 use brit_epr::{
-    elohim::{attestation::build::BuildAttestationContentNode, refs::BritRefManager},
+    elohim::{
+        attestation::{
+            build::{BuildBody, BuildNote},
+            note::EnvelopeNote,
+        },
+        refs::BritRefManager,
+    },
     engine::{content_node::ContentNode, object_store::LocalObjectStore, signing::AgentKey},
 };
 
@@ -66,7 +72,8 @@ pub fn put(
         ManifestSource::File(path) => {
             let bytes = std::fs::read(&path)
                 .map_err(|e| anyhow::anyhow!("cannot read --manifest-path {}: {e}", path.display()))?;
-            brit_epr::engine::cid::BritCid::compute_raw(&bytes)
+            // A manifest file is payload bytes: the byte profile (`bafkr4i…`).
+            brit_epr::engine::cid::BritCid::compute_bytes(&bytes)
         }
     };
     let output_cid: brit_epr::engine::cid::BritCid = match output {
@@ -85,26 +92,26 @@ pub fn put(
 
     let built_at = chrono::Utc::now().to_rfc3339();
 
-    // Build with empty signature, compute canonical JSON, sign, then set signature.
-    let mut node = BuildAttestationContentNode {
-        manifest_cid,
-        step_name: step.to_string(),
-        inputs_hash: inputs_hash.to_string(),
-        output_cid,
-        agent_id: agent_key.agent_id(),
-        hardware_profile,
-        build_duration_ms: duration_ms,
-        built_at,
-        success,
-        signature: String::new(),
-    };
+    // New notes are written in the envelope format (`brit.build@2`); historical notes keep
+    // their frozen format and are never re-encoded.
+    let note = EnvelopeNote::sign(
+        BuildBody {
+            manifest_cid,
+            step_name: step.to_string(),
+            inputs_hash: inputs_hash.to_string(),
+            output_cid,
+            agent_id: agent_key.agent_id(),
+            hardware_profile,
+            build_duration_ms: duration_ms,
+            built_at,
+            success,
+        },
+        &agent_key,
+    )?;
 
-    let canonical = node.canonical_bytes()?;
-    node.signature = agent_key.sign(&canonical);
+    let cid = store.put(&note)?;
 
-    let cid = store.put(&node)?;
-
-    refs.put_build_ref(step, commit, &node)?;
+    refs.put_build_ref(step, commit, BuildNote::Envelope(note))?;
 
     println!("{cid}");
     Ok(())
@@ -121,20 +128,27 @@ pub fn get(repo: &Path, step: &str, commit: &str) -> anyhow::Result<()> {
 
 /// Print every verified attestation for `step` whose inputs hash equals `inputs_hash`, across
 /// every commit that carried one, as a JSON array of `{commit, attestation}` — `[]` when none.
+/// `attestation` is the note's view ([`brit_epr::elohim::attestation::note::VersionedNote::view`]):
+/// a frozen note as stored; an envelope note as its body plus `epoch`, `scheme`, `key`, `sig`.
 /// Each note that failed verification is dropped and named on stderr as
-/// `unverifiable: <commit> <reason>`. Exit 0 either way: an absent attestation is an answer, not
-/// a failure; a git read that fails is a failure.
+/// `unverifiable: <commit> <reason>`; each note this reader holds (an epoch or scheme it does not
+/// implement) is dropped and named as `held: <commit> <reason>` — never a row, so never a reuse
+/// candidate. Exit 0 either way: an absent attestation is an answer, not a failure; a git read
+/// that fails is a failure.
 pub fn find(repo: &Path, step: &str, inputs_hash: &str) -> anyhow::Result<()> {
     let refs = BritRefManager::new(repo)?;
     let scan = refs.find_build_by_inputs(step, inputs_hash)?;
     let rows = scan
         .verified
         .into_iter()
-        .map(|(commit, node)| Ok(serde_json::json!({ "commit": commit, "attestation": serde_json::to_value(&node)? })))
+        .map(|(commit, note)| Ok(serde_json::json!({ "commit": commit, "attestation": note.view()? })))
         .collect::<anyhow::Result<Vec<serde_json::Value>>>()?;
     println!("{}", serde_json::to_string(&rows)?);
     for (commit, reason) in &scan.unverifiable {
         crate::lookup_out::unverifiable(commit, reason);
+    }
+    for (commit, reason) in &scan.held {
+        crate::lookup_out::held(commit, *reason);
     }
     Ok(())
 }

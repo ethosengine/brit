@@ -15,7 +15,7 @@ fn drift_fingerprint_is_body_cid_short_form() {
         let body = canonical_body(content);
         let cid = BritCid::compute_raw(body.as_bytes());
         assert_eq!(
-            drift_fingerprint(content),
+            Some(drift_fingerprint(content)),
             cid.short_fingerprint(),
             "drift fingerprint must equal the canonical body CID short-form for {content:?}",
         );

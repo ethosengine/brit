@@ -2,7 +2,7 @@ lints.workspace = true
 
 [package]
 name = "brit-cli"
-version = "0.1.12"
+version = "0.1.13"
 description = "Unified Brit Git and build CLI"
 repository = "https://github.com/ethosengine/brit"
 authors = ["Matthew Dowell <matthew@ethosengine.com>"]
@@ -35,7 +35,7 @@ eprfs-host = { version = "=0.3.3", registry = "elohim" }
 eprfs-local = { version = "=0.3.4", registry = "elohim" }
 eprfs-storage = { version = "=0.3.4", registry = "elohim" }
 tokio = { version = "1", features = ["rt"] }
-brit-graph = { version = "0.1.5", registry = "elohim", path = "../brit-graph", features = ["repo"] }
+brit-graph = { version = "0.2.0", registry = "elohim", path = "../brit-graph", features = ["repo"] }
 gitoxide = { version = "^0.60.5", registry = "elohim", path = "..", default-features = false }
 # rakia lives in a separate repo (ethosengine/rakia) and is published to the
 # internal Nexus registry by rakia's own pipeline. Consumed here as a registry

@@ -44,6 +44,16 @@ jobs:
         with:
           persist-credentials: false
           fetch-depth: 0
+      # The checker holding is addressed by its byte CID (raw + BLAKE3-256, `bafkr4i…`); the
+      # installer recomputes it from the archive bytes with the BLAKE3 reference CLI.
+      - name: Install the BLAKE3 hasher for byte-CID holdings
+        env:
+          CARGO_TARGET_DIR: ${{ runner.temp }}/b3sum-target
+          RUSTFLAGS: ""
+          RUSTC_WRAPPER: ""
+        run: |
+          command -v b3sum || cargo install --locked b3sum --version 1.8.2
+          b3sum --version
       - name: Install the addressed standalone Rust checker
         env:
           CARGO_TARGET_DIR: ${{ runner.temp }}/brit-rust-style-target

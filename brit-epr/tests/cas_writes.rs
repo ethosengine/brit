@@ -20,6 +20,7 @@ use brit_epr::{
             build::BuildAttestationContentNode,
             covenant::{CovenantClauseContentNode, CovenantClauseKind},
             deploy::{DeployAttestationContentNode, HealthStatus},
+            note::{NoteBody, VersionedNote},
             validation::{ValidationAttestationContentNode, ValidationResult},
         },
         refs::{BritRefManager, Lookup, RefError},
@@ -150,6 +151,14 @@ fn verified<T: std::fmt::Debug>(lookup: Lookup<T>) -> T {
     }
 }
 
+/// The verified note, which must be in the frozen legacy format these fences write.
+fn legacy<B: NoteBody>(lookup: Lookup<VersionedNote<B>>) -> B::Legacy {
+    match verified(lookup) {
+        VersionedNote::Legacy(node) => node,
+        other => panic!("expected a legacy-format note, got {other:?}"),
+    }
+}
+
 /// The oid `name` holds, or `None` when it does not exist.
 fn ref_oid(dir: &Path, name: &str) -> Option<String> {
     let out = git_status(dir, &["rev-parse", "--verify", "-q", name]);
@@ -229,8 +238,8 @@ fn notes_on_different_commits_both_survive_a_lost_race() {
         "lost once, rebuilt on the new head once"
     );
     let mgr = BritRefManager::new(tmp.path()).unwrap();
-    assert_eq!(verified(mgr.get_build_ref(STEP, &c1).unwrap()), a);
-    assert_eq!(verified(mgr.get_build_ref(STEP, &c2).unwrap()), b);
+    assert_eq!(legacy(mgr.get_build_ref(STEP, &c1).unwrap()), a);
+    assert_eq!(legacy(mgr.get_build_ref(STEP, &c2).unwrap()), b);
     // The winner's head is an ancestor of the final head: A was rebuilt on it, not beside it.
     let head = ref_oid(tmp.path(), NOTES).unwrap();
     let theirs_head = git(tmp.path(), &["rev-parse", &format!("{head}^")]);
@@ -280,7 +289,7 @@ fn a_note_on_the_same_commit_changed_underneath_is_refused_and_kept() {
     assert_eq!(calls.load(Ordering::SeqCst), 1);
     let mgr = BritRefManager::new(tmp.path()).unwrap();
     assert_eq!(
-        verified(mgr.get_build_ref(STEP, &c1).unwrap()),
+        legacy(mgr.get_build_ref(STEP, &c1).unwrap()),
         theirs,
         "the winner's note is intact"
     );
@@ -343,7 +352,7 @@ fn the_retry_bound_is_exact() {
     let mgr = BritRefManager::new(tmp.path()).unwrap();
     assert_eq!(mgr.get_build_ref(STEP, &target).unwrap(), Lookup::Absent);
     for c in &others[..3] {
-        verified(mgr.get_build_ref(STEP, c).unwrap());
+        legacy(mgr.get_build_ref(STEP, c).unwrap());
     }
     assert!(scratch_refs(tmp.path()).is_empty());
 
@@ -370,9 +379,9 @@ fn the_retry_bound_is_exact() {
     wins_third.put_build_ref(STEP, &target, &node).unwrap();
     assert_eq!(calls.load(Ordering::SeqCst), 3);
     let mgr = BritRefManager::new(tmp.path()).unwrap();
-    assert_eq!(verified(mgr.get_build_ref(STEP, &target).unwrap()), node);
+    assert_eq!(legacy(mgr.get_build_ref(STEP, &target).unwrap()), node);
     for c in &others {
-        verified(mgr.get_build_ref(STEP, c).unwrap());
+        legacy(mgr.get_build_ref(STEP, c).unwrap());
     }
 }
 
@@ -408,7 +417,7 @@ fn a_blob_ref_moved_underneath_a_stale_prior_is_refused_and_kept() {
         1,
         "a moved blob ref is never retried onto"
     );
-    assert_eq!(verified(refs.get_deploy_ref(STEP, "staging").unwrap()), theirs);
+    assert_eq!(legacy(refs.get_deploy_ref(STEP, "staging").unwrap()), theirs);
 }
 
 #[test]
@@ -437,7 +446,7 @@ fn a_blob_ref_created_underneath_an_absence_is_refused_and_kept() {
             "{format}"
         );
         let refs = BritRefManager::new(tmp.path()).unwrap();
-        assert_eq!(verified(refs.get_validate_ref(STEP, "lint").unwrap()), theirs);
+        assert_eq!(legacy(refs.get_validate_ref(STEP, "lint").unwrap()), theirs);
     }
 }
 
@@ -477,7 +486,7 @@ fn covenant_creation_is_create_only_against_the_absence_it_read() {
     assert_eq!(writer.put_covenant_clause(&node).unwrap(), cid);
     assert_eq!(calls.load(Ordering::SeqCst), 1);
     let refs = BritRefManager::new(tmp.path()).unwrap();
-    assert_eq!(verified(refs.get_covenant_clause(&cid).unwrap()).clause, node);
+    assert_eq!(verified(refs.get_covenant_clause(&cid).unwrap()).clause, (&node).into());
 }
 
 #[test]
@@ -598,7 +607,7 @@ fn a_sha256_repository_writes_and_reads_back() {
     refs.put_build_ref(STEP, "HEAD", &node).unwrap();
     let c2 = commit(tmp.path(), "two");
     refs.put_build_ref(STEP, &c2, &build(&k, STEP, "d")).unwrap();
-    assert_eq!(verified(refs.get_build_ref(STEP, "HEAD~1").unwrap()), node);
+    assert_eq!(legacy(refs.get_build_ref(STEP, "HEAD~1").unwrap()), node);
     refs.put_deploy_ref(STEP, "staging", &deploy(&k, "t")).unwrap();
     let cid = refs.put_covenant_clause(&clause(&k, "q")).unwrap();
     verified(refs.get_covenant_clause(&cid).unwrap());
@@ -727,11 +736,11 @@ fn a_fanned_out_notes_tree_is_written_and_read_back() {
     let noted = git(tmp.path(), &["rev-parse", "refs/heads/many~7"]);
     let node = build(&k, STEP, "over-junk");
     refs.put_build_ref(STEP, &noted, &node).unwrap();
-    assert_eq!(verified(refs.get_build_ref(STEP, &noted).unwrap()), node);
+    assert_eq!(legacy(refs.get_build_ref(STEP, &noted).unwrap()), node);
     let fresh = commit(tmp.path(), "fresh");
     let node = build(&k, STEP, "fresh");
     refs.put_build_ref(STEP, &fresh, &node).unwrap();
-    assert_eq!(verified(refs.get_build_ref(STEP, &fresh).unwrap()), node);
+    assert_eq!(legacy(refs.get_build_ref(STEP, &fresh).unwrap()), node);
     // Repeating it is recognised as already there through the fanned path.
     let head = ref_oid(tmp.path(), NOTES).unwrap();
     refs.put_build_ref(STEP, &fresh, &node).unwrap();
@@ -779,7 +788,7 @@ fn eight_writers_by_twenty_five_puts_every_ok_reads_back_verified() {
         match result {
             Ok(()) => {
                 ok += 1;
-                assert_eq!(&verified(refs.get_build_ref(STEP, c).unwrap()), node, "{c}");
+                assert_eq!(&legacy(refs.get_build_ref(STEP, c).unwrap()), node, "{c}");
             }
             Err(RefError::Concurrent { attempts: 3, .. }) => {
                 assert_eq!(refs.get_build_ref(STEP, c).unwrap(), Lookup::Absent, "{c}");

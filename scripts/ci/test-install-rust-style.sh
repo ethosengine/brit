@@ -21,10 +21,12 @@ chmod +x "$scratch/fake-bin/cargo"
 export PATH="$scratch/fake-bin:$PATH" CARGO_TARGET_DIR="$scratch/target" CARGO_TEST_LOG="$scratch/cargo.log"
 hold() {
     local file=$1 digest address
+    local blake3
     digest=$(sha256sum "$file"); digest=${digest%% *}
-    address="b$(printf '01551220%s' "$digest" | xxd -r -p | base32 | tr -d '=\n' | tr 'A-Z' 'a-z')"
+    blake3=$(b3sum --no-names "$file")
+    address="b$(printf '01551e20%s' "$blake3" | xxd -r -p | base32 | tr -d '=\n' | tr 'A-Z' 'a-z')"
     cp "$file" "$root/.epr-meta/rust-style/objects/$address.tar.gz"
-    jq -n --arg sha "$digest" --arg cid "$address" '{format:"rust-style-source-holding@1",sha256:$sha,cid:$cid,archive:(".epr-meta/rust-style/objects/"+$cid+".tar.gz"),toolchain:"1.96.1"}' > "$root/.epr-meta/rust-style/source.json"
+    jq -n --arg sha "$digest" --arg cid "$address" '{format:"rust-style-source-holding@2",sha256:$sha,cid:$cid,archive:(".epr-meta/rust-style/objects/"+$cid+".tar.gz"),toolchain:"1.96.1"}' > "$root/.epr-meta/rust-style/source.json"
 }
 refuses() {
     if "$@" > "$scratch/out" 2> "$scratch/err"; then echo 'expected refusal' >&2; exit 1; fi
@@ -61,6 +63,29 @@ tar -czf "$scratch/traversal.tar.gz" --transform='s|rust-style-source/|rust-styl
 hold "$scratch/traversal.tar.gz"
 refuses "$installer" "$scratch/traversal-install"
 [[ $(wc -l < "$scratch/cargo.log") == 1 ]]
+# The byte CID is the identity: an archive whose sha256 evidence matches but whose BLAKE3 is not
+# its declared address is refused, and so is a declaration still in the retired raw+sha2 profile.
+hold "$scratch/valid.tar.gz"
+cid=$(jq -r .cid "$root/.epr-meta/rust-style/source.json")
+other=$(printf 'other\n' | b3sum --no-names)
+wrong="b$(printf '01551e20%s' "$other" | xxd -r -p | base32 | tr -d '=\n' | tr 'A-Z' 'a-z')"
+mv "$root/.epr-meta/rust-style/objects/$cid.tar.gz" "$root/.epr-meta/rust-style/objects/$wrong.tar.gz"
+jq --arg cid "$wrong" '.cid = $cid | .archive = (".epr-meta/rust-style/objects/" + $cid + ".tar.gz")' "$root/.epr-meta/rust-style/source.json" > "$scratch/source.json"
+mv "$scratch/source.json" "$root/.epr-meta/rust-style/source.json"
+refuses "$installer" "$scratch/wrong-cid-install"
+grep -q 'not its declared byte CID' "$scratch/err"
+hold "$scratch/valid.tar.gz"
+sha=$(jq -r .sha256 "$root/.epr-meta/rust-style/source.json")
+legacy="b$(printf '01551220%s' "$sha" | xxd -r -p | base32 | tr -d '=\n' | tr 'A-Z' 'a-z')"
+cp "$scratch/valid.tar.gz" "$root/.epr-meta/rust-style/objects/$legacy.tar.gz"
+jq --arg cid "$legacy" '.format = "rust-style-source-holding@1" | .cid = $cid | .archive = (".epr-meta/rust-style/objects/" + $cid + ".tar.gz")' "$root/.epr-meta/rust-style/source.json" > "$scratch/source.json"
+mv "$scratch/source.json" "$root/.epr-meta/rust-style/source.json"
+refuses "$installer" "$scratch/legacy-install"
+jq '.format = "rust-style-source-holding@2"' "$root/.epr-meta/rust-style/source.json" > "$scratch/source.json"
+mv "$scratch/source.json" "$root/.epr-meta/rust-style/source.json"
+refuses "$installer" "$scratch/legacy-install"
+[[ $(wc -l < "$scratch/cargo.log") == 1 ]]
+hold "$scratch/valid.tar.gz"
 mv "$root/.epr-meta" "$root/.metadata"
 ln -s .metadata "$root/.epr-meta"
 refuses "$installer" --verify "$scratch/install"

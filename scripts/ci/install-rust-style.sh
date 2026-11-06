@@ -13,19 +13,19 @@ while [[ $prefix_parent != / && -n $prefix_parent ]]; do
     [[ ! -L $prefix_parent ]] || fail 'installation prefix traverses a symlink'
     prefix_parent=${prefix_parent%/*}
 done
-for tool in jq sha256sum base32 xxd tar mktemp; do command -v "$tool" >/dev/null || fail "required tool unavailable: $tool"; done
+for tool in jq sha256sum b3sum base32 xxd tar mktemp; do command -v "$tool" >/dev/null || fail "required tool unavailable: $tool"; done
 for path in "$root/.epr-meta" "$root/.epr-meta/rust-style" "$root/.epr-meta/rust-style/objects"; do
     [[ ! -L $path ]] || fail 'source holding traverses a symlink'
 done
 config="$root/.epr-meta/rust-style/source.json"
 [[ -f $config && ! -L $config ]] || fail 'held source declaration unavailable or symlinked'
-jq -e 'keys == ["archive","cid","format","sha256","toolchain"] and .format == "rust-style-source-holding@1" and .toolchain == "1.96.1"' "$config" >/dev/null || fail 'unsupported source declaration'
+# @2: `cid` is the archive's byte CID (raw 0x55 + BLAKE3-256, `bafkr4i…`), its identity;
+# `sha256` is labelled evidence, checked but never the address.
+jq -e 'keys == ["archive","cid","format","sha256","toolchain"] and .format == "rust-style-source-holding@2" and .toolchain == "1.96.1"' "$config" >/dev/null || fail 'unsupported source declaration'
 source_sha=$(jq -er '.sha256 | select(type == "string")' "$config")
 source_cid=$(jq -er '.cid | select(type == "string")' "$config")
 archive_relative=$(jq -er '.archive | select(type == "string")' "$config")
-[[ $source_sha =~ ^[0-9a-f]{64}$ && $source_cid =~ ^bafkrei[a-z2-7]+$ ]] || fail 'malformed source identity'
-computed_cid="b$(printf '01551220%s' "$source_sha" | xxd -r -p | base32 | tr -d '=\n' | tr 'A-Z' 'a-z')"
-[[ $computed_cid == "$source_cid" ]] || fail 'source CID and digest disagree'
+[[ $source_sha =~ ^[0-9a-f]{64}$ && $source_cid =~ ^bafkr4i[a-z2-7]{52}$ ]] || fail 'malformed source identity'
 [[ $archive_relative == ".epr-meta/rust-style/objects/$source_cid.tar.gz" ]] || fail 'source archive is not its addressed local holding'
 archive="$root/$archive_relative"
 [[ ! -L $archive ]] || fail 'source holding traverses a symlink'
@@ -33,6 +33,10 @@ archive="$root/$archive_relative"
 [[ $(wc -c < "$archive") -le 16777216 ]] || fail 'source archive exceeds size bound'
 actual=$(sha256sum "$archive"); actual=${actual%% *}
 [[ $actual == "$source_sha" ]] || fail 'source archive digest mismatch'
+blake3=$(b3sum --no-names "$archive") || fail 'cannot hash the source archive'
+[[ $blake3 =~ ^[0-9a-f]{64}$ ]] || fail 'unexpected b3sum output'
+computed_cid="b$(printf '01551e20%s' "$blake3" | xxd -r -p | base32 | tr -d '=\n' | tr 'A-Z' 'a-z')"
+[[ $computed_cid == "$source_cid" ]] || fail 'source archive is not its declared byte CID'
 binary="$prefix/bin/epr-rust-style"
 receipt="$prefix/install.json"
 verify_installed() {

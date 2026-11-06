@@ -4,7 +4,10 @@ use std::path::Path;
 
 use brit_epr::{
     elohim::{
-        attestation::deploy::{DeployAttestationContentNode, HealthStatus},
+        attestation::{
+            deploy::{DeployBody, DeployNote, HealthStatus},
+            note::EnvelopeNote,
+        },
         refs::BritRefManager,
     },
     engine::{content_node::ContentNode, object_store::LocalObjectStore, signing::AgentKey},
@@ -36,28 +39,27 @@ pub fn put(
 
     let now = chrono::Utc::now().to_rfc3339();
 
-    let mut node = DeployAttestationContentNode {
-        artifact_cid,
-        step_name: step.to_string(),
-        environment_label: env.to_string(),
-        endpoint: endpoint.to_string(),
-        health_check_epr: health_check_epr.to_string(),
-        health_status: health,
-        deployed_at: now.clone(),
-        attested_at: now,
-        liveness_ttl_sec: ttl,
-        agent_id: agent_key.agent_id(),
-        signature: String::new(),
-    };
+    let note = EnvelopeNote::sign(
+        DeployBody {
+            artifact_cid,
+            step_name: step.to_string(),
+            environment_label: env.to_string(),
+            endpoint: endpoint.to_string(),
+            health_check_epr: health_check_epr.to_string(),
+            health_status: health,
+            deployed_at: now.clone(),
+            attested_at: now,
+            liveness_ttl_sec: ttl,
+            agent_id: agent_key.agent_id(),
+        },
+        &agent_key,
+    )?;
 
-    let canonical = node.canonical_bytes()?;
-    node.signature = agent_key.sign(&canonical);
+    store.put(&note)?;
+    let cid = note.compute_cid()?;
 
-    store.put(&node)?;
+    refs.put_deploy_ref(step, env, DeployNote::Envelope(note))?;
 
-    refs.put_deploy_ref(step, env, &node)?;
-
-    let cid = node.compute_cid()?;
     println!("{cid}");
     Ok(())
 }

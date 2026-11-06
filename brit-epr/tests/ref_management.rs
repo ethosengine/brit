@@ -6,6 +6,7 @@ use brit_epr::{
             build::BuildAttestationContentNode,
             covenant::{CovenantClauseContentNode, CovenantClauseKind, CovenantRecord},
             deploy::{DeployAttestationContentNode, HealthStatus},
+            note::{NoteBody, VersionedNote},
             validation::{ValidationAttestationContentNode, ValidationResult},
         },
         refs::{BritRefManager, Lookup, RefError},
@@ -165,6 +166,14 @@ fn verified<T: std::fmt::Debug>(lookup: Lookup<T>) -> T {
     }
 }
 
+/// The verified note, which must be in the frozen legacy format these tests write.
+fn legacy<B: NoteBody>(lookup: Lookup<VersionedNote<B>>) -> B::Legacy {
+    match verified(lookup) {
+        VersionedNote::Legacy(node) => node,
+        other => panic!("expected a legacy-format note, got {other:?}"),
+    }
+}
+
 #[test]
 fn put_and_get_build_ref() {
     let tmp = init_git_repo();
@@ -172,10 +181,7 @@ fn put_and_get_build_ref() {
     let mgr = BritRefManager::new(tmp.path()).unwrap();
     let node = build(&k, "elohim-edge:storage", "closure-1", true);
     mgr.put_build_ref("elohim-edge:storage", "HEAD", &node).unwrap();
-    assert_eq!(
-        verified(mgr.get_build_ref("elohim-edge:storage", "HEAD").unwrap()),
-        node
-    );
+    assert_eq!(legacy(mgr.get_build_ref("elohim-edge:storage", "HEAD").unwrap()), node);
 }
 
 #[test]
@@ -197,7 +203,7 @@ fn get_build_ref_on_a_commit_without_a_note_is_absent() {
     mgr.put_build_ref("s", &first, &build(&k, "s", "c", true)).unwrap();
     commit_empty(tmp.path(), "second");
     assert_eq!(mgr.get_build_ref("s", "HEAD").unwrap(), Lookup::Absent);
-    verified(mgr.get_build_ref("s", &first).unwrap());
+    legacy(mgr.get_build_ref("s", &first).unwrap());
 }
 
 #[test]
@@ -247,7 +253,7 @@ fn put_and_get_deploy_ref_binds_step_and_env() {
     let node = deploy(&k, "elohim-edge:storage", "staging");
     mgr.put_deploy_ref("elohim-edge:storage", "staging", &node).unwrap();
     assert_eq!(
-        verified(mgr.get_deploy_ref("elohim-edge:storage", "staging").unwrap()),
+        legacy(mgr.get_deploy_ref("elohim-edge:storage", "staging").unwrap()),
         node
     );
     // The same signed node filed under another environment does not bind there; brit will not
@@ -276,7 +282,7 @@ fn put_and_get_validate_ref_binds_its_check() {
     mgr.put_validate_ref("elohim-edge:storage", "sonarqube-scan@v10", &node)
         .unwrap();
     assert_eq!(
-        verified(
+        legacy(
             mgr.get_validate_ref("elohim-edge:storage", "sonarqube-scan@v10")
                 .unwrap()
         ),
@@ -339,14 +345,18 @@ fn find_build_by_inputs_hits_across_commits_and_ignores_other_hashes() {
     let mut expected = vec![first.as_str(), third.as_str()];
     expected.sort_unstable();
     assert_eq!(commits, expected);
-    assert!(hits.verified.iter().all(|(_, n)| n.inputs_hash == "closure-1"));
+    assert!(hits.verified.iter().all(|(_, n)| n.body().inputs_hash == "closure-1"));
     let by_b = hits.verified.iter().find(|(c, _)| *c == third).unwrap();
-    assert_eq!(by_b.1.agent_id, b.agent_id(), "each note answers under its own signer");
+    assert_eq!(
+        by_b.1.agent_id(),
+        b.agent_id(),
+        "each note answers under its own signer"
+    );
 
     let red = mgr.find_build_by_inputs(step, "closure-2").unwrap();
     assert_eq!(red.verified.len(), 1);
     assert_eq!(red.verified[0].0, second);
-    assert!(!red.verified[0].1.success, "a valid red attestation is returned");
+    assert!(!red.verified[0].1.body().success, "a valid red attestation is returned");
 
     assert!(mgr.find_build_by_inputs(step, "closure-9").unwrap().verified.is_empty());
     let none = mgr.find_build_by_inputs("no-such-step", "closure-1").unwrap();
@@ -460,7 +470,7 @@ fn covenant_listing_never_admits_another_signed_session() -> Result<(), Box<dyn 
             1,
             "only the requested session may be admitted: {session}"
         );
-        assert_eq!(scan.verified[0].1.clause.session, session);
+        assert_eq!(scan.verified[0].1.clause.body().session, session);
         if session.starts_with("a") || session.starts_with("dots") {
             assert_eq!(
                 scan.unverifiable.len(),
@@ -475,7 +485,7 @@ fn covenant_listing_never_admits_another_signed_session() -> Result<(), Box<dyn 
     let record = clause(&k, "unwritten:alias", "2026-11-02T00:00:00Z", "unwritten alias");
     let cid = mgr.put_covenant_clause(&record)?;
     assert!(mgr.list_covenant_clauses("unwritten%3Aalias")?.verified.is_empty());
-    assert_eq!(verified(mgr.get_covenant_clause(&cid)?).clause, record);
+    assert_eq!(verified(mgr.get_covenant_clause(&cid)?).clause, (&record).into());
     assert!(mgr.list_covenant_clauses("absent")?.verified.is_empty());
     Ok(())
 }
@@ -498,14 +508,17 @@ fn covenant_put_is_append_only_and_lists_verified_clauses_in_valid_from_order() 
     let rows: Vec<&CovenantRecord> = scan.verified.iter().map(|(_, r)| r).collect();
     assert_eq!(rows.len(), 2, "two puts, two refs: {rows:?}");
     assert_eq!(rows[0].cid, early_cid);
-    assert_eq!(rows[0].clause, early);
+    assert_eq!(rows[0].clause, (&early).into());
     assert_eq!(rows[1].cid, late_cid);
     assert_eq!(scan.verified[1].0, format!("refs/notes/brit/covenant/s1/{late_cid}"));
 
     // Same cid, same content: idempotent. A ref at a clause's CID that already holds other
     // bytes: refused, and those bytes are kept.
     mgr.put_covenant_clause(&late).unwrap();
-    assert_eq!(mgr.list_covenant_clauses("s1").unwrap().verified[1].1.clause, late);
+    assert_eq!(
+        mgr.list_covenant_clauses("s1").unwrap().verified[1].1.clause,
+        (&late).into()
+    );
     let other = clause(&k, "s1", "2026-10-19T12:00:00Z", "other");
     let other_ref = format!("refs/notes/brit/covenant/s1/{}", other.compute_cid().unwrap());
     raw_ref(tmp.path(), &other_ref, &serde_json::json!({"squatter": true}));
@@ -527,7 +540,7 @@ fn covenant_reads_check_the_cid_the_signature_and_the_session() {
     assert_eq!(mgr.list_covenant_clauses("s:1").unwrap().verified.len(), 1);
     let got = verified(mgr.get_covenant_clause(&one_cid).unwrap());
     assert_eq!(got.cid, one_cid);
-    assert_eq!(got.clause, one);
+    assert_eq!(got.clause, (&one).into());
 
     // A record filed under a CID that is not its clause's.
     let wrong = BritCid::compute(b"some other clause").to_string();
@@ -575,7 +588,10 @@ fn covenant_reads_check_the_cid_the_signature_and_the_session() {
         Lookup::Unverifiable { .. }
     ));
     // The copy under s:2 does not hide the original under s:1.
-    assert_eq!(verified(mgr.get_covenant_clause(&one_cid).unwrap()).clause, one);
+    assert_eq!(
+        verified(mgr.get_covenant_clause(&one_cid).unwrap()).clause,
+        (&one).into()
+    );
 }
 
 #[test]
@@ -586,7 +602,7 @@ fn a_foreign_key_note_is_returned_under_its_own_agent_id() {
     let mgr = BritRefManager::new(tmp.path()).unwrap();
     let node = build(&foreign, "s", "c", true);
     mgr.put_build_ref("s", "HEAD", &node).unwrap();
-    let got = verified(mgr.get_build_ref("s", "HEAD").unwrap());
+    let got = legacy(mgr.get_build_ref("s", "HEAD").unwrap());
     assert_eq!(got.agent_id, foreign.agent_id());
     assert_ne!(got.agent_id, mine.agent_id(), "brit does not judge whose key it is");
 }

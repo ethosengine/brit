@@ -36,7 +36,7 @@ if [[ -n "$head" ]]; then
   declaration=.epr-meta/rust-style/source.json
   committed_holding_matches "$declaration"
   archive=$(jq -er '.archive | select(type == "string")' "$root/$declaration") || fail 'invalid checker archive declaration'
-  [[ "$archive" =~ ^\.epr-meta/rust-style/objects/bafkrei[a-z2-7]+\.tar\.gz$ ]] || fail 'checker archive must be an addressed local holding'
+  [[ "$archive" =~ ^\.epr-meta/rust-style/objects/bafkr4i[a-z2-7]{52}\.tar\.gz$ ]] || fail 'checker archive must be an addressed local holding'
   committed_holding_matches "$archive"
 fi
 prefix=${BRIT_RUST_STYLE_PREFIX:-"$root/.eprfs/tools/rust-style"}

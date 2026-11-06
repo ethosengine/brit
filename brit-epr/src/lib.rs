@@ -41,10 +41,11 @@ pub use engine::{
 pub mod attestation {
     pub use crate::elohim::{
         attestation::{
-            build::BuildAttestationContentNode,
-            deploy::{DeployAttestationContentNode, HealthStatus},
-            validation::{ValidationAttestationContentNode, ValidationResult},
+            build::{BuildAttestationContentNode, BuildBody, BuildNote},
+            deploy::{DeployAttestationContentNode, DeployBody, DeployNote, HealthStatus},
+            note::{EnvelopeNote, HeldReason, NoteBody, VersionedNote},
+            validation::{ValidationAttestationContentNode, ValidationBody, ValidationNote, ValidationResult},
         },
-        refs::BritRefManager,
+        refs::{Admission, BritRefManager},
     };
 }

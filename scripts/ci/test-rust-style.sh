@@ -38,8 +38,8 @@ adapter="$fixture/repo/scripts/ci/rust-style.sh"
 cd "$fixture/repo"
 git init -q --initial-branch=main
 mkdir -p .epr-meta/rust-style/objects
-printf '{"archive":".epr-meta/rust-style/objects/bafkreiaaaa.tar.gz"}\n' > .epr-meta/rust-style/source.json
-printf 'fixture holding\n' > .epr-meta/rust-style/objects/bafkreiaaaa.tar.gz
+printf '{"archive":".epr-meta/rust-style/objects/bafkr4iaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa.tar.gz"}\n' > .epr-meta/rust-style/source.json
+printf 'fixture holding\n' > .epr-meta/rust-style/objects/bafkr4iaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa.tar.gz
 git add scripts .epr-meta
 git commit -qm baseline
 base=$(git rev-parse HEAD)
@@ -65,9 +65,9 @@ expect_exit 2 env STYLE_INSTALL_FAIL=1 bash "$adapter"
 printf '\n' >> .epr-meta/rust-style/source.json
 expect_exit 2 bash "$adapter" --base "$base" --head "$head"
 git restore .epr-meta/rust-style/source.json
-printf 'dirty archive\n' >> .epr-meta/rust-style/objects/bafkreiaaaa.tar.gz
+printf 'dirty archive\n' >> .epr-meta/rust-style/objects/bafkr4iaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa.tar.gz
 expect_exit 2 bash "$adapter" --base "$base" --head "$head"
-git restore .epr-meta/rust-style/objects/bafkreiaaaa.tar.gz
+git restore .epr-meta/rust-style/objects/bafkr4iaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa.tar.gz
 expect_exit 1 env STYLE_STATUS=1 bash "$adapter"
 expect_exit 2 env STYLE_STATUS=2 bash "$adapter"
 bash "$adapter"
