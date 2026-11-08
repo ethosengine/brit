@@ -94,7 +94,7 @@ unset http_proxy https_proxy all_proxy HTTP_PROXY HTTPS_PROXY ALL_PROXY
 export NO_PROXY=localhost,127.0.0.1 no_proxy=localhost,127.0.0.1
 brit_run fetch --dry-run --remote "https://localhost:$port/repo" \
   '+refs/heads/main:refs/remotes/tls/main' > "$fixture/tls-client.log" 2>&1 || tls_status=$?
-if [[ $tls_status != 1 ]] || ! grep -Ei 'certificate|UnknownIssuer' "$fixture/tls-client.log" > /dev/null; then
+if [[ $tls_status != 1 ]] || ! grep -Ei 'invalid peer certificate|UnknownIssuer|self[- ]signed certificate|certificate verify failed' "$fixture/tls-client.log" > /dev/null; then
   cat "$fixture/tls-client.log" >&2
   echo "TLS compatibility failed: expected certificate refusal (1), got $tls_status" >&2
   exit 1

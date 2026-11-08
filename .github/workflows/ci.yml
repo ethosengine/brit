@@ -17,6 +17,9 @@ permissions:
 env:
   CARGO_TERM_COLOR: always
   CLICOLOR: "1"
+  # Ubuntu compiler defaults can exceed v2. Scope the C floor to this target,
+  # preserving the ARM, i386, Windows and WASM members of the inherited matrix.
+  CFLAGS_x86_64_unknown_linux_gnu: '-march=x86-64-v2'
   # Read-only credential for the internal Nexus cargo registry. `cargo-internal`
   # is a hosted repo: Nexus serves its content to anonymous clients (verified),
   # but config.json advertises auth-required:true and the cargo *client* refuses

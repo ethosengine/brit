@@ -28,6 +28,7 @@ if [ "\${1:-}" = clone ]; then
     timeout) exit 124 ;;
     success) exit 0 ;;
     wrong-error) echo 'connection refused' >&2; exit 1 ;;
+    wrong-certificate) echo 'unable to load certificate file' >&2; exit 1 ;;
     *) echo 'UnknownIssuer certificate' >&2; exit 1 ;;
   esac
 elif [ "\${1:-}" = --version ]; then
@@ -64,7 +65,7 @@ active=$(readlink "$fixture/prefix/bin/brit")
 assert_retained() { test "$(readlink "$fixture/prefix/bin/brit")" = "$active"; test "$(sha256_file "$fixture/prefix/bin/brit")" = "$hash_a"; }
 refuse() { if install "$@" >/dev/null 2>&1; then echo 'invalid installation accepted' >&2; exit 1; fi; assert_retained; }
 if [ "$target" = x86_64-unknown-linux-gnu ]; then
-  for failure in signal timeout success wrong-error; do
+  for failure in signal timeout success wrong-error wrong-certificate; do
     BRIT_FIXTURE_TLS="$failure" refuse "$fixture/b" "$source_b" "$hash_b"
   done
 fi

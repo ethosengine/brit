@@ -47,7 +47,7 @@ done
 [[ $port =~ ^[0-9]+$ ]] || { cat server.log >&2; exit 1; }
 status=0
 timeout 30 "$@" "$binary" clone "https://localhost:$port/repo" "$fixture/client" > client.log 2>&1 || status=$?
-if [[ $status != 1 ]] || ! grep -Ei 'certificate|UnknownIssuer' client.log >/dev/null; then
+if [[ $status != 1 ]] || ! grep -Ei 'invalid peer certificate|UnknownIssuer|self[- ]signed certificate|certificate verify failed' client.log >/dev/null; then
   cat client.log >&2
   echo "HTTPS compatibility refused: expected certificate refusal (1), got $status" >&2
   exit 1

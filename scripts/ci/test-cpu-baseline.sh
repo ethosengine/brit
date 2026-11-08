@@ -37,8 +37,13 @@ fn main() {
 EOF
 cd "$fixture"
 export CARGO_TARGET_DIR="$CARGO_TARGET_DIR/cpu-baseline-probe"
-unset CARGO_ENCODED_RUSTFLAGS
+unset CARGO_ENCODED_RUSTFLAGS CFLAGS_x86_64_unknown_linux_gnu TARGET_CFLAGS
 export RUSTFLAGS= CFLAGS= CXXFLAGS=
+# Positive controls declare the target. A host compiler's default may itself
+# exceed the floor (Ubuntu 26); the wrapper below independently proves refusal.
+if [[ $(rustc --print cfg) == *'target_arch="x86_64"'* && $(rustc --print cfg) == *'target_os="linux"'* ]]; then
+  export CFLAGS=-march=x86-64-v2
+fi
 cargo clippy --quiet -- -D warnings
 if [[ $(rustc --print cfg) != *'target_arch="x86_64"'* ]]; then
   echo 'cpu-baseline: non-x86 target compiles; x86 refusal controls require an x86 host' >&2
@@ -62,7 +67,7 @@ if [[ $(rustc --print cfg) == *'target_os="linux"'* ]]; then
   compiler=$(command -v cc)
   printf '#!/usr/bin/env bash\nexec "%s" -march=x86-64-v3 "$@"\n' "$compiler" > "$fixture/cc-v3"
   chmod +x "$fixture/cc-v3"
-  reject env CC="$fixture/cc-v3" cargo check --quiet
+  reject env CC="$fixture/cc-v3" CFLAGS= cargo check --quiet
   CC="$fixture/cc-v3" CFLAGS=-march=x86-64-v2 cargo clippy --quiet -- -D warnings
 fi
 echo 'cpu-baseline=passed (Clippy/check/build refusal; guarded acceleration permitted)'
