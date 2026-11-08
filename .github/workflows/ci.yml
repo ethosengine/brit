@@ -40,7 +40,6 @@ jobs:
   brit-cpu-compatibility:
     runs-on: ubuntu-latest
     env:
-      CARGO_TARGET_DIR: ${{ runner.temp }}/brit-cpu-target
       CARGO_BUILD_JOBS: '1'
       RUSTFLAGS: '-C target-cpu=x86-64-v2'
       CFLAGS: '-march=x86-64-v2'
@@ -50,6 +49,7 @@ jobs:
           persist-credentials: false
       - name: Install CPU emulation and Clippy
         run: |
+          printf 'CARGO_TARGET_DIR=%s/brit-cpu-target\n' "$RUNNER_TEMP" >> "$GITHUB_ENV"
           sudo apt-get update
           sudo apt-get install -y qemu-user openssl
           rustup update stable
