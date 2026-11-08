@@ -108,6 +108,10 @@ jobs:
       - name: Build Brit and the qualified Linux retained-copy helper
         run: |
           set -euo pipefail
+          # C dependencies do not inherit Rust's target CPU. Pin both explicitly.
+          if [ "$RUNNER_OS" = Linux ]; then
+            export RUSTFLAGS='-C target-cpu=x86-64-v2' CFLAGS='-march=x86-64-v2'
+          fi
           cargo build --locked -p brit-cli --bin brit --profile "$PROFILE" \
             --target "$TARGET" --no-default-features --features "$FEATURE"
           if [ "$RUNNER_OS" = Linux ]; then
@@ -185,6 +189,13 @@ jobs:
         run: |
           bash scripts/ci/test-install-brit-release.sh
           bash scripts/ci/test-install-brit-epr.sh
+      - name: Qualify exact installed Linux bytes on supported CPU models
+        if: runner.os == 'Linux'
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y qemu-user openssl
+          isolated="$RUNNER_TEMP/brit-installed-qualification"
+          bash scripts/ci/verify-cpu-matrix.sh "$isolated/install/bin/brit" "$isolated/bin/brit-rebase-retained"
       - name: Retain checksummed delivery candidate
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         with:

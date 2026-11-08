@@ -1,5 +1,8 @@
 use std::{path::Path, process::Command};
 
+#[path = "build/cpu_compatibility.rs"]
+mod cpu_compatibility;
+
 fn git(manifest_dir: &Path, args: &[&str]) -> Option<String> {
     let mut command = Command::new("git");
     command.current_dir(manifest_dir).args(args);
@@ -25,7 +28,8 @@ fn watch_git_path(manifest_dir: &Path, path: &str) {
     }
 }
 
-fn main() {
+fn main() -> Result<(), Box<dyn std::error::Error>> {
+    cpu_compatibility::check()?;
     let manifest_dir = std::env::var_os("CARGO_MANIFEST_DIR")
         .map(std::path::PathBuf::from)
         .expect("Cargo supplies CARGO_MANIFEST_DIR to build scripts");
@@ -65,4 +69,5 @@ fn main() {
         }
         watch_git_path(&manifest_dir, "packed-refs");
     }
+    Ok(())
 }

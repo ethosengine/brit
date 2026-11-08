@@ -467,11 +467,12 @@ dependencies = [
 
 [[package]]
 name = "brit-cli"
-version = "0.1.11"
+version = "0.1.12"
 dependencies = [
  "anyhow",
  "brit-bridge",
  "brit-graph",
+ "cc",
  "clap",
  "eprfs-core",
  "eprfs-host",

@@ -66,6 +66,12 @@ version_output=$(cd -- "$stage" && ./brit --version)
 [ "${version_output%%$'\n'*}" = "brit ${version_tag#brit-v}" ] || fail 'executable version differs from receipt'
 printf '%s\n' "$version_output" | grep -Fx "source HEAD: $source_pin" >/dev/null || fail 'executable source differs from accepted pin'
 (cd -- "$stage" && ./brit --help >/dev/null && ./brit build --help >/dev/null)
+# Starting --help did not catch the Shem TLS SIGILL. Qualify the copied bytes
+# before activation; any missing prerequisite, signal or timeout retains current.
+if [ "$host" = x86_64-unknown-linux-gnu ]; then
+  script_dir=$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd -P)
+  bash "$script_dir/verify-native-https.sh" "$stage/brit" || fail 'native HTTPS qualification failed; current retained'
+fi
 ln -s "$stage/brit" "$link"
 # Both paths are on the prefix filesystem; replacing a file symlink is atomic.
 # Never point at a directory: mv would otherwise follow it on some Unix hosts.

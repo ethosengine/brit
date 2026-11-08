@@ -71,3 +71,18 @@ awk '
   END { if (guard != 1 || boundary != 3 || artifact != 1) exit 1 }
 ' "$repo_root/.github/workflows/brit-release.yml"
 printf 'delivery-source-fixtures=passed (candidate, annotated release tag, 10 refusals)\npublication-boundary=push-only; candidates retain workflow artifacts\n'
+
+# Both ways of publishing Linux executables must qualify the exact bytes before
+# they become a downloadable candidate or release. A source-only check is not
+# evidence about the release compiler, native dependencies, or link profile.
+for workflow in brit-release.yml brit-build-artifacts.yml; do
+  awk '
+    /bash scripts\/ci\/verify-cpu-matrix.sh/ { qualified++ }
+    /uses: actions\/upload-artifact@|gh release create/ {
+      if (qualified != 1) exit 1
+      publications++
+    }
+    END { if (qualified != 1 || publications == 0) exit 1 }
+  ' "$repo_root/.github/workflows/$workflow"
+done
+echo 'cpu-publication-boundary=qualified before candidate upload or release creation'

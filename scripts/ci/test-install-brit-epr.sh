@@ -22,6 +22,7 @@ source_b=bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb
 mkdir "$fixture/package a"
 cat > "$fixture/package a/brit" <<SCRIPT
 #!/usr/bin/env bash
+if [ "\${1:-}" = clone ]; then echo 'UnknownIssuer certificate' >&2; exit 1; fi
 if [ "\${1:-}" = --version ]; then printf 'brit 0.1.5\\nsource HEAD: $source_a\\n'; fi
 SCRIPT
 chmod +x "$fixture/package a/brit"

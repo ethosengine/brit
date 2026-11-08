@@ -22,7 +22,15 @@ make_package() {
   cat > "$directory/brit" <<SCRIPT
 #!/usr/bin/env bash
 set -eu
-if [ "\${1:-}" = --version ]; then
+if [ "\${1:-}" = clone ]; then
+  case "\${BRIT_FIXTURE_TLS:-certificate}" in
+    signal) kill -ILL "\$\$" ;;
+    timeout) exit 124 ;;
+    success) exit 0 ;;
+    wrong-error) echo 'connection refused' >&2; exit 1 ;;
+    *) echo 'UnknownIssuer certificate' >&2; exit 1 ;;
+  esac
+elif [ "\${1:-}" = --version ]; then
   printf 'brit $version\\nsource HEAD: $source\\n'
 elif [ "\${1:-}" = --help ] && [ -n "\${BRIT_FIXTURE_BLOCK_DIR:-}" ]; then
   touch "\$BRIT_FIXTURE_BLOCK_DIR/waiting"
@@ -55,6 +63,11 @@ test "$(sha256_file "$fixture/prefix/bin/brit")" = "$hash_a"
 active=$(readlink "$fixture/prefix/bin/brit")
 assert_retained() { test "$(readlink "$fixture/prefix/bin/brit")" = "$active"; test "$(sha256_file "$fixture/prefix/bin/brit")" = "$hash_a"; }
 refuse() { if install "$@" >/dev/null 2>&1; then echo 'invalid installation accepted' >&2; exit 1; fi; assert_retained; }
+if [ "$target" = x86_64-unknown-linux-gnu ]; then
+  for failure in signal timeout success wrong-error; do
+    BRIT_FIXTURE_TLS="$failure" refuse "$fixture/b" "$source_b" "$hash_b"
+  done
+fi
 refuse "$fixture/b" "$source_a" "$hash_b"
 refuse "$fixture/b" "$source_b" "$hash_a"
 printf 'tampered bytes\n' >> "$fixture/b/brit"

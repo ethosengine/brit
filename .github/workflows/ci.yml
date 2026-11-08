@@ -37,6 +37,50 @@ env:
   CARGO_REGISTRY_GLOBAL_CREDENTIAL_PROVIDERS: cargo:token
 
 jobs:
+  brit-cpu-compatibility:
+    runs-on: ubuntu-latest
+    env:
+      CARGO_TARGET_DIR: ${{ runner.temp }}/brit-cpu-target
+      CARGO_BUILD_JOBS: '1'
+      RUSTFLAGS: '-C target-cpu=x86-64-v2'
+      CFLAGS: '-march=x86-64-v2'
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - name: Install CPU emulation and Clippy
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y qemu-user openssl
+          rustup update stable
+          rustup component add clippy
+      - name: Prove early compiler refusals
+        run: bash scripts/ci/test-cpu-baseline.sh
+      - name: Build and exercise optimized delivery bytes
+        run: |
+          set -euo pipefail
+          cargo build --locked --profile release-github \
+            -p brit-cli --bin brit --bin brit-rebase-retained \
+            -p brit-build-ref --bin brit-build-ref -p brit-verify --bin brit-verify \
+            --no-default-features --features brit-cli/max-pure
+          mkdir cpu-candidate
+          for name in brit brit-build-ref brit-verify brit-rebase-retained; do
+            install -m 0755 "$CARGO_TARGET_DIR/release-github/$name" "cpu-candidate/$name"
+          done
+          cpu-candidate/brit --version | grep -Fx "source HEAD: $GITHUB_SHA"
+          bash scripts/ci/verify-cpu-matrix.sh "$PWD/cpu-candidate/brit" \
+            "$PWD/cpu-candidate/brit-build-ref" "$PWD/cpu-candidate/brit-verify" \
+            "$PWD/cpu-candidate/brit-rebase-retained" | tee cpu-candidate/qualification.log
+          (cd cpu-candidate && sha256sum brit brit-build-ref brit-verify brit-rebase-retained > SHA256SUMS)
+          printf '%s\n' "$GITHUB_SHA" > cpu-candidate/SOURCE_COMMIT
+      - name: Retain CPU-qualified candidate bytes
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: brit-cpu-candidate
+          path: cpu-candidate/
+          if-no-files-found: error
+          retention-days: 14
+
   brit-rust-style:
     runs-on: ubuntu-latest
     steps:
@@ -945,6 +989,7 @@ jobs:
 
     needs:
       - brit-rust-style
+      - brit-cpu-compatibility
       - brit-release-package-contract
       - brit-readiness-contract
       - brit-feature-census
