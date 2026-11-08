@@ -21,3 +21,10 @@ refuses installation and retains the current binary. This probe is offline and
 uses an untrusted loopback certificate. EPR followed-tool adoption consumes the
 source-qualified build release; it must not treat a successful `--version` as
 CPU qualification. Local observations do not confer network standing or reach.
+
+The first hosted run caught a compiler-default mismatch: Ubuntu's unqualified
+`cc -E` enabled instructions above v2 even though Rust had no such global flag.
+CI declares `CFLAGS_x86_64_unknown_linux_gnu` for ordinary source tests and both
+Rust and C flags for delivery builds. The negative control deliberately removes
+that target override, so an explicit floor cannot hide a regressed compiler
+default in the test itself.

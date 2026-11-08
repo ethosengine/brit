@@ -21,7 +21,7 @@
           "steps": [
             "Prove early compiler refusals",
             "Build and exercise optimized delivery bytes",
-            "Retain CPU-qualified candidate bytes"
+            "Retain CPU qualified candidate bytes"
           ]
         },
         {
