@@ -41,7 +41,9 @@ env:
 
 jobs:
   brit-cpu-compatibility:
-    runs-on: ubuntu-latest
+    # Distribution includes prebuilt CRT/loader/ABI inputs, not just our flags.
+    # Keep the shipping baseline explicit; ordinary source jobs still cover latest.
+    runs-on: ubuntu-24.04
     env:
       CARGO_BUILD_JOBS: '1'
       RUSTFLAGS: '-C target-cpu=x86-64-v2'
@@ -55,6 +57,7 @@ jobs:
           printf 'CARGO_TARGET_DIR=%s/brit-cpu-target\n' "$RUNNER_TEMP" >> "$GITHUB_ENV"
           sudo apt-get update
           sudo apt-get install -y qemu-user openssl
+          bash scripts/ci/verify-cpu-matrix.sh --preflight
           rustup update stable
           rustup component add clippy
       - name: Prove early compiler refusals
@@ -71,11 +74,12 @@ jobs:
             install -m 0755 "$CARGO_TARGET_DIR/release-github/$name" "cpu-candidate/$name"
           done
           cpu-candidate/brit --version | grep -Fx "source HEAD: $GITHUB_SHA"
+          (cd cpu-candidate && sha256sum brit brit-build-ref brit-verify brit-rebase-retained > SHA256SUMS)
+          printf '%s\n' "$GITHUB_SHA" > cpu-candidate/SOURCE_COMMIT
+          test -z "$(git status --porcelain --untracked-files=no)"
           bash scripts/ci/verify-cpu-matrix.sh "$PWD/cpu-candidate/brit" \
             "$PWD/cpu-candidate/brit-build-ref" "$PWD/cpu-candidate/brit-verify" \
             "$PWD/cpu-candidate/brit-rebase-retained" | tee cpu-candidate/qualification.log
-          (cd cpu-candidate && sha256sum brit brit-build-ref brit-verify brit-rebase-retained > SHA256SUMS)
-          printf '%s\n' "$GITHUB_SHA" > cpu-candidate/SOURCE_COMMIT
       - name: Retain CPU qualified candidate bytes
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         with:
@@ -83,6 +87,14 @@ jobs:
           path: cpu-candidate/
           if-no-files-found: error
           retention-days: 14
+      - name: Retain failed CPU diagnostics separately
+        if: failure()
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: brit-cpu-failed-diagnostics
+          path: cpu-candidate/
+          if-no-files-found: ignore
+          retention-days: 1
 
   brit-rust-style:
     runs-on: ubuntu-latest

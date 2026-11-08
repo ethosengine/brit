@@ -28,3 +28,12 @@ CI declares `CFLAGS_x86_64_unknown_linux_gnu` for ordinary source tests and both
 Rust and C flags for delivery builds. The negative control deliberately removes
 that target override, so an explicit floor cannot hide a regressed compiler
 default in the test itself.
+
+Linux binaries are built and CPU-qualified on the explicit Ubuntu 24.04 shipping
+environment. The ordinary source matrix continues to cover newer Ubuntu runners.
+Before an expensive CPU build, a v2 C positive control must also run under the
+restricted model: compiler flags cannot lower the floor of prebuilt runtime
+objects or libraries. The emulation preflight refuses an incompatible measurement
+runtime without attributing its failure to Brit. Failed CPU diagnostics are kept
+for one day under a distinct artifact name; only the successful candidate artifact
+is eligible for the delivery exercise.
