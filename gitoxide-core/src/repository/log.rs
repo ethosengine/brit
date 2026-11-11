@@ -4,22 +4,34 @@ use gix::{
     error::{ResultExt, bail, unsupported},
 };
 
-pub fn log(mut repo: gix::Repository, out: &mut dyn std::io::Write, path: Option<BString>) -> Result<()> {
+pub fn log(repo: gix::Repository, out: &mut dyn std::io::Write, path: Option<BString>) -> Result<()> {
+    log_limited(repo, out, path, None)
+}
+
+pub fn log_limited(
+    mut repo: gix::Repository,
+    out: &mut dyn std::io::Write,
+    path: Option<BString>,
+    max_count: Option<usize>,
+) -> Result<()> {
     repo.object_cache_size_if_unset(repo.compute_object_cache_size_for_tree_diffs(&**repo.index_or_empty()?));
 
     if let Some(path) = path {
         log_file(repo, out, path)
     } else {
-        log_all(repo, out)
+        log_all(repo, out, max_count)
     }
 }
 
-fn log_all(repo: gix::Repository, out: &mut dyn std::io::Write) -> Result<()> {
+fn log_all(repo: gix::Repository, out: &mut dyn std::io::Write, max_count: Option<usize>) -> Result<()> {
+    if max_count == Some(0) {
+        return Ok(());
+    }
     let head = repo.head()?.peel_to_commit()?;
     let topo = gix::traverse::commit::topo::Builder::from_iters(&repo.objects, [head.id], None::<Vec<gix::ObjectId>>)
         .build()?;
 
-    for info in topo {
+    for info in topo.take(max_count.unwrap_or(usize::MAX)) {
         let info = info?;
 
         write_info(&repo, &mut *out, &info).or_error()?;
@@ -39,7 +51,9 @@ fn write_info(
     mut out: impl std::io::Write,
     info: &gix::traverse::commit::Info,
 ) -> std::io::Result<()> {
-    let commit = repo.find_commit(info.id).unwrap();
+    let commit = repo
+        .find_commit(info.id)
+        .map_err(|error| std::io::Error::other(error.to_string()))?;
 
     let message = commit.message_raw_sloppy();
     let title = message.lines().next();

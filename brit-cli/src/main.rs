@@ -9,6 +9,7 @@ mod bridge;
 mod commands;
 mod context;
 mod error;
+mod feedback;
 mod native_task;
 mod output;
 mod surface;
@@ -185,28 +186,80 @@ fn public_command() -> clap::Command {
         )
 }
 
-fn run() -> Result<()> {
-    let args: Vec<_> = plumbing::args_os().collect();
+fn command_prefix(args: &[std::ffi::OsString], command: &clap::Command) -> Option<(usize, String)> {
+    let partial = command.clone().ignore_errors(true).try_get_matches_from(args).ok()?;
+    let name = partial.subcommand_name()?;
+    args.iter().enumerate().skip(1).find_map(|(index, arg)| {
+        let subcommand = command.find_subcommand(arg.to_str()?)?;
+        if subcommand.get_name() != name {
+            return None;
+        }
+        command
+            .clone()
+            .ignore_errors(true)
+            .try_get_matches_from(&args[..=index])
+            .ok()
+            .filter(|matches| matches.subcommand_name() == Some(name))
+            .map(|_| (index, name.to_owned()))
+    })
+}
+
+fn normalize_log_counts(args: &mut [std::ffi::OsString], index: usize) {
+    // Familiar bounded history spelling, scoped to log and before `--`. Never reinterpret
+    // a path after the option terminator or a numeric argument to another command. Let
+    // the real parser identify log after root options; a repository named "log" is not it.
+    for arg in args.iter_mut().skip(index + 1) {
+        if arg == "--" {
+            break;
+        }
+        if let Some(count) = arg
+            .to_str()
+            .and_then(|s| s.strip_prefix('-'))
+            .filter(|s| !s.is_empty() && s.bytes().all(|b| b.is_ascii_digit()))
+        {
+            *arg = format!("--max-count={count}").into();
+        }
+    }
+}
+
+fn run(capture: &mut feedback::Capture) -> Result<()> {
+    let mut args: Vec<_> = plumbing::args_os().collect();
     let invoked_as_rakia = args
         .first()
         .and_then(|name| std::path::PathBuf::from(name).file_stem().map(|stem| stem == "rakia"))
         .unwrap_or(false);
     if invoked_as_rakia {
         eprintln!("warning: rakia is deprecated; use `brit build` with the same arguments");
-        return run_build(Cli::parse_from(args).command);
+        capture.operation("build");
+        let cli = Cli::try_parse_from(args).map_err(|error| {
+            let code = error.exit_code();
+            capture.outcome = Some(if code == 0 { "passed" } else { "refused" });
+            let _ = error.print();
+            error::CliError::ContextExit(code)
+        })?;
+        return run_build(cli.command);
     }
 
     // Bridged names are answered before clap sees them: brit prints the stock Git command and
     // never runs it.
     if let Some(line) = bridge::line(&args) {
         eprintln!("{line}");
-        std::process::exit(bridge::EXIT_CODE);
+        capture.operation = "bridge";
+        capture.outcome = Some("bridge-declared");
+        return Err(error::CliError::ContextExit(bridge::EXIT_CODE));
     }
 
     let command = public_command();
+    if let Some((index, name)) = command_prefix(&args, &command) {
+        capture.operation(&name);
+        if name == "log" {
+            normalize_log_counts(&mut args, index);
+        }
+    }
     // Introspection is deliberately standalone. Never dispatch a Git/native command
     // when the caller combines a census request with work-performing arguments.
     if args.get(1).is_some_and(|arg| arg == "--cli-surface-json") {
+        capture.operation = "surface";
         if args.len() != 2 {
             return Err(error::CliError::Args("--cli-surface-json must be used alone".into()));
         }
@@ -215,7 +268,15 @@ fn run() -> Result<()> {
         println!();
         return Ok(());
     }
-    let matches = command.clone().get_matches_from(args);
+    let matches = command.clone().try_get_matches_from(args).map_err(|error| {
+        let code = error.exit_code();
+        capture.outcome = Some(if code == 0 { "passed" } else { "refused" });
+        let _ = error.print();
+        error::CliError::ContextExit(code)
+    })?;
+    if let Some(name) = matches.subcommand_name() {
+        capture.operation(name);
+    }
     if matches.get_flag("cli-surface-json") {
         return Err(error::CliError::Args("--cli-surface-json must be used alone".into()));
     }
@@ -260,14 +321,20 @@ fn diagnostic(error: &error::CliError) -> String {
 }
 
 fn main() -> ExitCode {
-    match run() {
-        Ok(()) => ExitCode::SUCCESS,
-        Err(error::CliError::ContextExit(code)) => std::process::exit(code),
+    let mut capture = feedback::Capture::new();
+    let code = match run(&mut capture) {
+        Ok(()) => 0,
+        Err(error::CliError::ContextExit(code)) => code,
         Err(e) => {
             eprintln!("{}", diagnostic(&e));
-            ExitCode::from(e.exit_code() as u8)
+            if matches!(e, error::CliError::Args(_)) {
+                capture.outcome = Some("refused");
+            }
+            e.exit_code()
         }
-    }
+    };
+    capture.finish(code);
+    ExitCode::from(code as u8)
 }
 
 #[cfg(test)]

@@ -728,6 +728,9 @@ pub mod log {
     /// List all commits in a repository, optionally limited to those that change a given path.
     #[derive(Debug, clap::Parser)]
     pub struct Platform {
+        /// Stop after this many commits (Brit also accepts -N; zero prints none).
+        #[clap(short = 'n', long)]
+        pub max_count: Option<usize>,
         /// The git path specification to show a log for.
         #[clap(value_parser = crate::shared::AsBString)]
         pub pathspec: Option<BString>,

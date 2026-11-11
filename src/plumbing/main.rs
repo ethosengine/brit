@@ -457,9 +457,9 @@ pub fn run_with_command(args: Args, command: clap::Command) -> Result<()> {
                 core::repository::diff::file(repository(Mode::Lenient)?, out, old_revspec, new_revspec)
             }),
         },
-        Subcommands::Log(crate::plumbing::options::log::Platform { pathspec }) => {
+        Subcommands::Log(crate::plumbing::options::log::Platform { pathspec, max_count }) => {
             prepare_and_run("log", verbose, None, move |_progress, out, _err| {
-                core::repository::log::log(repository(Mode::Lenient)?, out, pathspec)
+                core::repository::log::log_limited(repository(Mode::Lenient)?, out, pathspec, max_count)
             })
         }
         Subcommands::Worktree(worktree::Platform { cmd }) => match cmd {
