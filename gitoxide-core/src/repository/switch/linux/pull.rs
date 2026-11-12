@@ -752,11 +752,13 @@ pub(super) fn validate_metadata_ancestors(repo: &gix::Repository, resource: &Pat
     use std::os::unix::fs::MetadataExt;
     let common = absolute(repo, repo.common_dir());
     let git_dir = absolute(repo, repo.git_dir());
-    let root = if resource.starts_with(&git_dir) {
-        &git_dir
-    } else {
-        &common
-    };
+    // A linked worktree's common root can be spelled `git_dir/../..`.
+    // Match that declared root before interpreting its descendants.
+    let root = [&git_dir, &common]
+        .into_iter()
+        .filter(|root| resource.starts_with(root))
+        .max_by_key(|root| root.components().count())
+        .context("foreign metadata resource")?;
     let relative = resource.strip_prefix(root).context("foreign metadata resource")?;
     let mut cursor = root.clone();
     let device = fs::metadata(repo.git_dir())?.dev();

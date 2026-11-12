@@ -469,7 +469,7 @@ jobs:
       - name: Prove internal replay selection and preservation
         run: |
           cargo test --locked -p gitoxide-core --features blocking-client,gix/sha1,switch-test-faults --test replay --test replay_validation --test replay_retained --test replay_qualification --test replay_io
-          cargo test --locked -p gitoxide-core --features blocking-client,gix/sha1 --lib repository::replay::hooks
+          cargo test --locked -p gitoxide-core --features blocking-client,gix/sha1 --lib repository::replay
       - name: Prove internal interactive sequencing and editor recovery
         run: |
           cargo test --locked -p gix-sequencer --features serde

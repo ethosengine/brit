@@ -1052,6 +1052,129 @@ fn preserved_linear_fixture(conflict: bool) -> Result<tempfile::TempDir> {
     Ok(temp)
 }
 
+fn linked_ready_final() -> Result<(tempfile::TempDir, std::path::PathBuf, gix::Repository, Session)> {
+    let temp = preserved_linear_fixture(false)?;
+    let root = temp.path().join("linked worktree");
+    git(
+        temp.path(),
+        &[
+            "worktree",
+            "add",
+            "-b",
+            "topic/nested",
+            root.to_str().expect("temporary path"),
+            "main",
+        ],
+    )?;
+    let repo = gix::open(&root)?;
+    assert!(repo.common_dir().ends_with("../.."));
+    let mut session = Session::prepare(&repo, b"upstream".as_bstr())?.expect("divergence");
+    assert_eq!(session.advance(&repo)?, Advance::Started);
+    for _ in 0..2 {
+        assert!(matches!(session.advance(&repo)?, Advance::Step { .. }));
+    }
+    assert_eq!(session.advance(&repo)?, Advance::ReadyFinal);
+    Ok((temp, root, repo, session))
+}
+
+#[test]
+fn linked_worktree_version_one_ready_final_reopens_without_rewriting_identity() -> Result<()> {
+    if gix_testtools::run_in_isolated_process().map_err(anyhow::Error::from_boxed)? {
+        return Ok(());
+    }
+    let (_temp, root, repo, session) = linked_ready_final()?;
+    let state_path = repo.git_dir().join("brit-rebase/state.json");
+    let before = fs::read(&state_path)?;
+    let envelope: serde_json::Value = serde_json::from_slice(&before)?;
+    let payload: Vec<u8> = serde_json::from_value(envelope["payload"].clone())?;
+    let state: serde_json::Value = serde_json::from_slice(&payload)?;
+    assert_eq!(state["version"], 1);
+    assert_eq!(
+        state["common"],
+        serde_json::json!(fs::canonicalize(repo.common_dir())?.as_os_str().as_encoded_bytes())
+    );
+    let mut reopened = Session::open(&gix::open(&root)?)?;
+    assert_eq!(reopened.phase(), "ready-final");
+    assert_eq!(fs::read(&state_path)?, before);
+    reopened.finish(&gix::open(&root)?)?;
+    assert_eq!(oid(&root, "topic/nested")?, session.tip()?);
+    assert_eq!(git(&root, &["symbolic-ref", "HEAD"])?, b"refs/heads/topic/nested\n");
+    Ok(())
+}
+
+#[test]
+fn linked_worktree_final_refuses_symlinked_ancestors_foreign_locks_and_changed_state() -> Result<()> {
+    if gix_testtools::run_in_isolated_process().map_err(anyhow::Error::from_boxed)? {
+        return Ok(());
+    }
+    for mutation in ["branch-parent", "log-parent", "branch", "HEAD", "lock", "identity"] {
+        let (_temp, root, repo, mut session) = linked_ready_final()?;
+        let external = tempfile::tempdir()?;
+        match mutation {
+            "branch-parent" | "log-parent" => {
+                let parent = repo.common_dir().join(if mutation == "branch-parent" {
+                    "refs/heads/topic"
+                } else {
+                    "logs/refs/heads/topic"
+                });
+                fs::rename(&parent, external.path().join("saved"))?;
+                std::os::unix::fs::symlink(external.path().join("saved"), parent)?;
+            }
+            "branch" => {
+                git(&root, &["update-ref", "refs/heads/topic/nested", "upstream"])?;
+            }
+            "HEAD" => {
+                fs::write(repo.git_dir().join("HEAD"), b"ref: refs/heads/main\n")?;
+            }
+            "lock" => {
+                fs::write(
+                    repo.common_dir().join("refs/heads/topic/nested.lock"),
+                    b"foreign lock\n",
+                )?;
+            }
+            "identity" => {
+                let owner = repo.git_dir();
+                fs::rename(owner, owner.with_extension("saved"))?;
+                fs::create_dir(owner)?;
+                for entry in fs::read_dir(owner.with_extension("saved"))? {
+                    let entry = entry?;
+                    fs::rename(entry.path(), owner.join(entry.file_name()))?;
+                }
+            }
+            _ => unreachable!(),
+        }
+        let before = snapshot(repo.git_dir())?;
+        let work_before = snapshot(&root)?;
+        let branch_before = fs::read(repo.common_dir().join("refs/heads/topic/nested"))?;
+        let external_before = snapshot(external.path())?;
+        let result = session.finish(&gix::open(&root)?);
+        assert!(result.is_err(), "must refuse {mutation}");
+        assert_eq!(
+            snapshot(external.path())?,
+            external_before,
+            "external targets survive {mutation}"
+        );
+        // Planning may leave a recoverable unpublished transition; the journal
+        // and every existing resource must remain, with their original bytes.
+        let after = snapshot(repo.git_dir())?;
+        assert_eq!(snapshot(&root)?, work_before);
+        assert_eq!(
+            fs::read(repo.common_dir().join("refs/heads/topic/nested"))?,
+            branch_before
+        );
+        if mutation == "lock" {
+            assert_eq!(
+                fs::read(repo.common_dir().join("refs/heads/topic/nested.lock"))?,
+                b"foreign lock\n"
+            );
+        }
+        for (path, bytes) in before {
+            assert_eq!(after.get(&path), Some(&bytes), "{mutation}: {}", path.display());
+        }
+    }
+    Ok(())
+}
+
 #[test]
 fn abort_after_each_completed_step_restores_exact_index_and_retains_rewritten_objects() -> Result<()> {
     use gitoxide_core::repository::replay::retained::{self, Area};

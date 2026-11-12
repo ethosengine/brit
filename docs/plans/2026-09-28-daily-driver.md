@@ -15,6 +15,62 @@ scheduler. Use native context for observed environment and citation blockers.
 - [ ] Installed delivery: fresh standalone install, feature/platform matrix, upgrade and rollback prove the executable and installed epr interface; package publication and clean consumer tests identify exact source revisions. Requires native integration; serves brit-native-daily-driver.
 - [ ] Operational qualification through our own ongoing development across workspaces: complete the loop, preserve Git interoperability and recover interrupted work, recording actual outcomes as we daily-drive Brit. Cross-workspace verification follows this integration pass; scripted identities do not establish it. Serves brit-native-daily-driver.
 
+## Linked-worktree rebase publication — 2026-11-12
+
+Git normally writes `../..` in a linked worktree's `commondir`. Replaying an
+attached branch reached `ready-final` and then refused with `unsafe metadata
+ancestor`: replay compared a canonical directory with its lexical spelling,
+and shared publication validation selected the shorter worktree prefix before
+the common-directory prefix.
+
+Replay now checks every original ancestor as a directory without symlinks,
+including components later removed by `..`, before comparing the canonical
+location with the existing path utility's lexical normalization. Shared metadata
+validation selects the longest matching declared root. Descendant validation and
+cross-filesystem refusals remain in force, as do exact resource allowlists,
+repository/inode identity, branch and old/desired state comparisons, and owned
+locks. There is no journal migration, path rewrite, public interface or version
+change. Version-1 encoding and repository identity remain readable; ordinary
+continuation still advances the recorded state.
+
+The public rebase suite covers ordinary attached completion with a nested branch
+and spaces in the worktree path, conflict resolution followed by `--continue`,
+abort, and detached HEAD. It checks history, trees, attachment, reflogs, staged,
+unstaged and untracked neighbors, and the main worktree's private state. The
+existing main-worktree journeys remain controls. For a compatibility rehearsal,
+`BRIT_REBASE_BASELINE_BIN` can point to the preserved predecessor executable when
+running `linked_worktree_rebase_publishes_nested_branch_and_preserves_both_worktrees`:
+it creates a disposable old-format `ready-final` journal, checks unchanged bytes
+on inspection, then completes with the candidate. Both invocations use the same
+editor environment because journal recovery also pins configuration.
+
+Focused replay tests reopen version-1 state, interrupt a durable final decision
+and partial metadata publication, and refuse symlinked ancestors, a symlink hidden
+by `..`, replaced repository identity, foreign paths and locks, and changed branch
+or HEAD state. Existing recoverable evidence and external targets survive refusal.
+CI's existing replay unit lane now includes the ancestor regression.
+
+Story boundary: `brit-native-daily-driver` / between completed replay and branch
+publication / the original path traversal must be safe before lexical cleanup;
+`metadata_checks_original_traversal_even_when_parent_components_cancel` measures
+the distinction. Given `directory/./../topic`, publication validation accepts a
+real directory; replacing it with a symlink refuses even when canonical and
+normalized destinations would agree. The runnable story lives in this standalone
+repository; parent a2o placement remains separate work.
+
+Measured locally: 130 core replay/recovery/retained-copy regressions, 8 replay
+unit checks, 4 power-loss checks, 72 fault-enabled public rebase/pull/switch tests,
+8 ordinary-build rebase tests and 12 readiness-contract tests pass. The preserved
+predecessor reproduces the failure and its journal completes with the rebuilt
+candidate. Workspace formatting and declared Rust style pass. Additional strict
+Clippy refuses a pre-existing `collapsible_if` in unchanged `commit.rs:307`;
+the advisory run reports no new findings in this change. No suppression was added.
+
+Readiness remains RED. Independent review, upstream CI, publication, installation,
+version allocation and parent-pin integration remain separate delivery work.
+Private receipts: parent
+`.worktrees/epr-noise-20261112/genesis/local-dev/brit-noise-20261112/rebase-evidence.json`.
+
 ## Commit attribution adapter — 2026-11-12
 
 The standalone `.githooks/prepare-commit-msg` connects Brit's existing hook

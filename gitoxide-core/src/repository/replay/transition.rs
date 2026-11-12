@@ -315,11 +315,16 @@ impl Transition {
             "unowned replay metadata resource"
         );
         let parent = path.parent().context("metadata parent")?;
-        let metadata = fs::symlink_metadata(parent)?;
-        ensure!(
-            metadata.is_dir() && fs::canonicalize(parent)? == parent,
-            "unsafe metadata ancestor"
-        );
+        // Inspect the original traversal before normalizing: `link/..` must not
+        // hide a symlink even when it resolves to the same lexical location.
+        let mut cursor = PathBuf::new();
+        for component in parent.components() {
+            cursor.push(component);
+            ensure!(fs::symlink_metadata(&cursor)?.is_dir(), "unsafe metadata ancestor");
+        }
+        let normalized =
+            gix::path::normalize(parent.into(), repo.current_dir()).context("invalid metadata ancestor")?;
+        ensure!(fs::canonicalize(parent)? == normalized, "unsafe metadata ancestor");
         let current = switch::snapshot(&path)?;
         ensure!(
             current == change.before || current == change.after,
@@ -424,4 +429,67 @@ fn reclaim_locks(staging: &Path, resources: &[PathBuf]) -> Result<()> {
         switch::sync_dir(staging)?;
     }
     Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn metadata_checks_original_traversal_even_when_parent_components_cancel() -> Result<()> {
+        if gix_testtools::run_in_isolated_process().map_err(anyhow::Error::from_boxed)? {
+            return Ok(());
+        }
+        let temp = tempfile::tempdir()?;
+        let repo = gix::init(temp.path())?;
+        let heads = repo.git_dir().join("refs/heads");
+        fs::create_dir_all(heads.join("directory"))?;
+        let transition = Transition {
+            kind: Kind::Final,
+            work: Vec::new(),
+            metadata: Vec::new(),
+            branch: Some((b"refs/heads/directory/./../topic".to_vec(), String::new())),
+            final_tip: None,
+            packed_refs: State::Absent,
+        };
+        let change = Change {
+            path: gix::path::into_bstr(heads.join("directory/./../topic"))?.to_vec(),
+            before: State::Absent,
+            after: State::Absent,
+        };
+        transition.validate_metadata(&repo, &change)?;
+        fs::rename(heads.join("directory"), heads.join("saved"))?;
+        // Both canonical and normalized paths still agree. A check made only
+        // after collapsing `..` would wrongly accept this symlink.
+        std::os::unix::fs::symlink("saved", heads.join("directory"))?;
+        let result = transition
+            .validate_metadata(&repo, &change)
+            .expect_err("hidden symlink refuses");
+        assert!(result.to_string().contains("unsafe metadata ancestor"));
+        assert!(!heads.join("topic").exists());
+        fs::remove_file(heads.join("directory"))?;
+        assert!(
+            transition.validate_metadata(&repo, &change).is_err(),
+            "missing erased directory refuses"
+        );
+        fs::write(heads.join("directory"), b"not a directory")?;
+        assert!(
+            transition.validate_metadata(&repo, &change).is_err(),
+            "erased file refuses"
+        );
+        fs::write(temp.path().join("outside"), b"foreign target")?;
+        let foreign = Change {
+            path: gix::path::into_bstr(temp.path().join("outside"))?.to_vec(),
+            ..change
+        };
+        assert!(
+            transition
+                .validate_metadata(&repo, &foreign)
+                .expect_err("foreign resource refuses")
+                .to_string()
+                .contains("unowned replay metadata resource")
+        );
+        assert_eq!(fs::read(temp.path().join("outside"))?, b"foreign target");
+        Ok(())
+    }
 }

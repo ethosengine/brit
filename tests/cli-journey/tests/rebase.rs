@@ -162,6 +162,153 @@ fn repository_bytes(root: &Path) -> Result<std::collections::BTreeMap<PathBuf, V
     Ok(files)
 }
 
+fn linked_fixture(conflict: bool) -> Result<(TestRepo, tempfile::TempDir, PathBuf)> {
+    let main = fixture(conflict)?;
+    let temp = tempfile::Builder::new().prefix("rebase with spaces ").tempdir()?;
+    let root = temp.path().join("linked worktree");
+    git(
+        main.path(),
+        &[
+            "worktree",
+            "add",
+            "-b",
+            "topic/nested",
+            root.to_str().expect("temporary path"),
+            "main",
+        ],
+    )?;
+    fs::write(root.join("neighbor"), b"staged neighbor\n")?;
+    git(&root, &["add", "neighbor"])?;
+    fs::write(root.join("neighbor"), b"unstaged neighbor\n")?;
+    fs::write(root.join("private-neighbor"), b"untracked neighbor\n")?;
+    let git_dir = git(&root, &["rev-parse", "--absolute-git-dir"])?;
+    let git_dir = PathBuf::from(String::from_utf8(git_dir)?.trim());
+    assert_eq!(fs::read(git_dir.join("commondir"))?, b"../..\n");
+    Ok((main, temp, root))
+}
+
+fn main_private_bytes(root: &Path) -> Result<Vec<Vec<u8>>> {
+    [
+        "selected",
+        "second",
+        "neighbor",
+        ".git/HEAD",
+        ".git/index",
+        ".git/logs/HEAD",
+        ".git/refs/heads/main",
+        ".git/logs/refs/heads/main",
+    ]
+    .iter()
+    .map(|name| fs::read(root.join(name)).map_err(Into::into))
+    .collect()
+}
+
+#[test]
+fn linked_worktree_rebase_publishes_nested_branch_and_preserves_both_worktrees() -> Result<()> {
+    let (main, _temp, root) = linked_fixture(false)?;
+    let before = main_private_bytes(main.path())?;
+    let original = git(&root, &["rev-parse", "HEAD"])?;
+    let head_log = git(&root, &["reflog", "show", "--format=%H", "HEAD"])?;
+    let branch_log = git(&root, &["reflog", "show", "--format=%H", "topic/nested"])?;
+    // An optional predecessor artifact proves byte-compatible recovery of the
+    // journal that originally exposed this bug; ordinary CI exercises start.
+    if let Some(baseline) = std::env::var_os("BRIT_REBASE_BASELINE_BIN") {
+        let result = BritInvocation::new(PathBuf::from(baseline))
+            .current_dir(&root)
+            .args(["rebase", "upstream"])
+            .env("GIT_EDITOR", message_editor(&root))
+            .env("GIT_SEQUENCE_EDITOR", ":")
+            .run()?;
+        ensure!(!result.status.success() && result.stderr.contains("unsafe metadata ancestor"));
+        let git_dir = PathBuf::from(String::from_utf8(git(&root, &["rev-parse", "--absolute-git-dir"])?)?.trim());
+        let state = fs::read(git_dir.join("brit-rebase/state.json"))?;
+        let envelope: serde_json::Value = serde_json::from_slice(&state)?;
+        let payload: Vec<u8> = serde_json::from_value(envelope["payload"].clone())?;
+        let value: serde_json::Value = serde_json::from_slice(&payload)?;
+        assert_eq!(value["version"], 1);
+        assert_eq!(value["phase"], "ready-final");
+        assert!(success(&root, &["rebase", "--status"])?.stdout.contains("ready-final"));
+        assert_eq!(
+            fs::read(git_dir.join("brit-rebase/state.json"))?,
+            state,
+            "inspection leaves old bytes intact"
+        );
+        success(&root, &["rebase", "--continue"])?;
+    } else {
+        success(&root, &["rebase", "upstream"])?;
+    }
+    assert_eq!(git(&root, &["symbolic-ref", "HEAD"])?, b"refs/heads/topic/nested\n");
+    assert_eq!(
+        git(&root, &["rev-parse", "HEAD~2"])?,
+        git(&root, &["rev-parse", "upstream"])?
+    );
+    assert_eq!(git(&root, &["rev-parse", "ORIG_HEAD"])?, original);
+    assert_eq!(
+        git(&root, &["diff", "--name-only", "upstream", "HEAD", "--"])?,
+        b"second\nselected\n"
+    );
+    assert_eq!(fs::read(root.join("selected"))?, b"topic\n");
+    assert_eq!(fs::read(root.join("second"))?, b"second\n");
+    assert_eq!(fs::read(root.join("upstream"))?, b"upstream\n");
+    for (reference, old) in [("HEAD", head_log), ("topic/nested", branch_log)] {
+        let log = git(&root, &["reflog", "show", "--format=%H", reference])?;
+        assert!(log.starts_with(&git(&root, &["rev-parse", "HEAD"])?));
+        assert!(log.ends_with(&old), "existing reflog entries survive");
+        assert!(log.len() > old.len(), "publication appends its reflog");
+    }
+    preserved(&root)?;
+    assert_eq!(fs::read(root.join("private-neighbor"))?, b"untracked neighbor\n");
+    assert_eq!(main_private_bytes(main.path())?, before);
+    assert!(success(&root, &["rebase", "--status"])?
+        .stdout
+        .contains("No active rebase"));
+    Ok(())
+}
+
+#[test]
+fn linked_worktree_conflict_continue_abort_and_detached_head_preserve_neighbors() -> Result<()> {
+    for mode in ["continue", "abort", "detached"] {
+        let (main, _temp, root) = linked_fixture(mode != "detached")?;
+        let before = main_private_bytes(main.path())?;
+        let original = git(&root, &["rev-parse", "HEAD"])?;
+        if mode == "detached" {
+            git(&root, &["switch", "--detach"])?;
+            success(&root, &["rebase", "upstream"])?;
+            assert!(git(&root, &["rev-parse", "--abbrev-ref", "HEAD"])? == b"HEAD\n");
+            assert_eq!(git(&root, &["rev-parse", "topic/nested"])?, original);
+        } else {
+            refused(&root, &["rebase", "upstream"])?;
+            assert!(
+                !git(&root, &["ls-files", "-u"])?.is_empty(),
+                "fixture stops on conflict"
+            );
+            if mode == "abort" {
+                success(&root, &["rebase", "--abort"])?;
+                assert_eq!(git(&root, &["rev-parse", "HEAD"])?, original);
+            } else {
+                fs::write(root.join("selected"), b"resolved\n")?;
+                success(&root, &["rebase", "--stage", "--", "selected"])?;
+                success(&root, &["rebase", "--continue"])?;
+                assert_eq!(git(&root, &["show", "HEAD:selected"])?, b"resolved\n");
+            }
+            assert_eq!(git(&root, &["symbolic-ref", "HEAD"])?, b"refs/heads/topic/nested\n");
+        }
+        if mode != "abort" {
+            assert_eq!(
+                git(&root, &["rev-parse", "HEAD~2"])?,
+                git(&root, &["rev-parse", "upstream"])?
+            );
+        }
+        preserved(&root)?;
+        assert_eq!(fs::read(root.join("private-neighbor"))?, b"untracked neighbor\n");
+        assert_eq!(main_private_bytes(main.path())?, before);
+        assert!(success(&root, &["rebase", "--status"])?
+            .stdout
+            .contains("No active rebase"));
+    }
+    Ok(())
+}
+
 #[test]
 fn public_linear_replay_finishes_and_helper_exports_after_cleanup_without_runtime_git() -> Result<()> {
     let repo = fixture(false)?;

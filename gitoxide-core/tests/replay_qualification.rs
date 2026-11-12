@@ -411,7 +411,7 @@ fn final_publication_fault_helper() -> Result<()> {
 }
 
 #[cfg(feature = "switch-test-faults")]
-fn kill_final_decision(root: &Path) -> Result<()> {
+fn kill_final_decision(root: &Path, checkpoint: &str) -> Result<()> {
     use std::{
         process::{Command, Stdio},
         time::{Duration, Instant},
@@ -422,13 +422,13 @@ fn kill_final_decision(root: &Path) -> Result<()> {
     let mut child = command
         .args(["--exact", "final_publication_fault_helper", "--nocapture"])
         .env("BRIT_QUALIFICATION_FINAL_ROOT", root)
-        .env("BRIT_SWITCH_CHECKPOINT", "replay-decision-durable")
+        .env("BRIT_SWITCH_CHECKPOINT", checkpoint)
         .env("BRIT_SWITCH_CHECKPOINT_DIR", checkpoints.path())
         .stdin(Stdio::null())
         .stdout(Stdio::null())
         .stderr(Stdio::inherit())
         .spawn()?;
-    let reached = checkpoints.path().join("replay-decision-durable.reached");
+    let reached = checkpoints.path().join(format!("{checkpoint}.reached"));
     let deadline = Instant::now() + Duration::from_secs(20);
     while !reached.exists() {
         ensure!(child.try_wait()?.is_none(), "final helper exited before decision");
@@ -453,7 +453,7 @@ fn final_decision_refuses_replaced_head_branch_orig_head_locks_and_foreign_branc
     for resource in ["HEAD.lock", "refs/heads/main.lock", "ORIG_HEAD.lock", "refs/heads/main"] {
         let fixture = fixture(Stop::Edit, Shape::StagedUnstaged)?;
         let root = fixture.temp.path();
-        kill_final_decision(root)?;
+        kill_final_decision(root, "replay-decision-durable")?;
         let repo = gix::open(root)?;
         let path = root.join(".git").join(resource);
         if path.exists() {
@@ -573,6 +573,73 @@ fn owned_edit_child_refuses_forged_parent_binding_and_same_oid_attachment_change
         assert_eq!(fs::read(&child)?, before_child);
         assert_eq!(fs::read(root.join(".git/HEAD"))?, before_head);
         assert_eq!(fs::read(repo.index_path())?, before_index);
+    }
+    Ok(())
+}
+
+#[cfg(feature = "switch-test-faults")]
+#[test]
+fn linked_worktree_final_publication_recovers_durable_decision_and_partial_metadata() -> Result<()> {
+    if gix_testtools::run_in_isolated_process().map_err(anyhow::Error::from_boxed)? {
+        return Ok(());
+    }
+    for checkpoint in ["replay-decision-durable", "replay-metadata-publication"] {
+        let main = fixture(Stop::Edit, Shape::StagedUnstaged)?;
+        let temp = tempfile::Builder::new().prefix("linked replay ").tempdir()?;
+        let root = temp.path().join("work tree");
+        git(
+            main.temp.path(),
+            &[
+                "worktree",
+                "add",
+                "-b",
+                "topic/nested",
+                root.to_str().expect("temporary path"),
+                "main",
+            ],
+        )?;
+        fs::write(root.join("neighbor"), b"staged linked\n")?;
+        git(&root, &["add", "neighbor"])?;
+        fs::write(root.join("neighbor"), b"unstaged linked\n")?;
+        fs::write(root.join("untracked"), b"private\n")?;
+        let private_paths = [".git/HEAD", ".git/index", ".git/logs/HEAD", "neighbor"];
+        let before = private_paths
+            .iter()
+            .map(|path| file_state(&main.temp.path().join(path)))
+            .collect::<Result<Vec<_>>>()?;
+        let repo = gix::open(&root)?;
+        let branch_log_path = repo.common_dir().join("logs/refs/heads/topic/nested");
+        let old_log = fs::read(&branch_log_path)?;
+        kill_final_decision(&root, checkpoint)?;
+        assert!(repo.git_dir().join("brit-rebase/state.json").is_file());
+        let mut session = Session::recover_decision(&gix::open(&root)?)?;
+        assert_eq!(session.phase(), "final-published");
+        assert_eq!(git(&root, &["symbolic-ref", "HEAD"])?, b"refs/heads/topic/nested\n");
+        assert_eq!(
+            git(&root, &["rev-parse", "HEAD~2"])?,
+            git(&root, &["rev-parse", "upstream"])?
+        );
+        assert_eq!(git(&root, &["show", "HEAD:selected"])?, b"topic\n");
+        assert_eq!(git(&root, &["show", ":neighbor"])?, b"staged linked\n");
+        assert_eq!(fs::read(root.join("neighbor"))?, b"unstaged linked\n");
+        assert_eq!(fs::read(root.join("untracked"))?, b"private\n");
+        let final_log = fs::read(&branch_log_path)?;
+        assert!(final_log.starts_with(&old_log));
+        assert_eq!(
+            final_log[old_log.len()..].iter().filter(|byte| **byte == b'\n').count(),
+            1
+        );
+        session.finish(&gix::open(&root)?)?;
+        session.cleanup(&gix::open(&root)?)?;
+        assert!(!repo.git_dir().join("brit-rebase").exists());
+        assert_eq!(fs::read(&branch_log_path)?, final_log, "cleanup cannot append again");
+        for (path, expected) in private_paths.iter().zip(before) {
+            assert_eq!(
+                file_state(&main.temp.path().join(path))?,
+                expected,
+                "other worktree private state: {path}"
+            );
+        }
     }
     Ok(())
 }
