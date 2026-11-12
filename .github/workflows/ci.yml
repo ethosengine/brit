@@ -519,6 +519,7 @@ jobs:
   test-fast:
     name: test-fast (${{ matrix.os }})
     strategy:
+      fail-fast: false
       matrix:
         # Windows legs dropped: this fork of gitoxide does not maintain Windows
         # parity for the gix crates. Windows coverage remains available via the
@@ -553,6 +554,9 @@ jobs:
       - uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2.9.2
         with:
           save-if: ${{ github.ref == 'refs/heads/main' }}
+      - name: Install the attribution timer on macOS
+        if: runner.os == 'macOS'
+        run: brew install coreutils
       - name: cargo check default features
         if: startsWith(matrix.os, 'windows')
         run: cargo check --workspace --bins --examples

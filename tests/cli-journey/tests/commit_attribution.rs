@@ -266,13 +266,18 @@ fn tool_path(fixture: &Fixture, omit: &str, gtimeout: bool) -> Result<PathBuf> {
         }
         let mut cmd = Command::new("bash");
         gix_testtools::configure_git_environment(&mut cmd, &fixture.root);
-        let located = success(cmd.args(["-c", "command -v \"$1\"", "lookup", tool]).output()?)?;
+        let lookup = if tool == "timeout" {
+            "command -v timeout || command -v gtimeout"
+        } else {
+            "command -v \"$1\""
+        };
+        let located = success(cmd.args(["-c", lookup, "lookup", tool]).output()?)?;
         let source = String::from_utf8(located)?;
-        if tool == "timeout" && gtimeout {
+        if tool == "timeout" {
             // Ubuntu's coreutils requires argv[0] to match /proc/self/exe.
-            // Delegate to timeout at its real name instead of renaming its symlink.
+            // Delegate to the host's timer name, also supporting Homebrew gtimeout.
             executable(
-                &directory.join("gtimeout"),
+                &directory.join(if gtimeout { "gtimeout" } else { "timeout" }),
                 &format!("#!/bin/sh\nexec '{}' \"$@\"\n", source.trim().replace('\'', "'\\''")),
             )?;
         } else {

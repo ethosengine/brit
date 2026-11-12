@@ -34,6 +34,13 @@ The final Windows fixture log also exposed invalid host filenames (tab, quote
 and literal backslash). Those entries remain exercised on Unix; Windows retains
 the shared names, scaling, selection and rename assertions. All 14 diff-stat
 journeys and formatting pass locally after this fixture-only correction.
+Candidate `01ca0de97` then passed both 32-bit suites, but macOS exposed a missing
+timer prerequisite and host filename assumptions. CI and installed delivery now
+install Homebrew coreutils on macOS, and timer fixtures resolve either executable
+name. The combining-name fixture uses x plus acute, which has no precomposed form;
+macOS retains newline quoting while malformed-byte names remain on filesystems
+that admit them. All 18 affected local journeys pass. Platform jobs now finish
+their siblings after a failure so independent portability results stay visible.
 
 Brit 0.1.14 packages the nine sprint commits after 0.1.13: branch creation and
 shared mutation guarding, resolved merge commits, diff statistics, passive commit

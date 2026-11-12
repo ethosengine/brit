@@ -243,7 +243,8 @@ fn graph_rounding_and_unicode_name_widths() -> Result<()> {
     }
     let wide = format!("parent/{}/leaf", "界".repeat(35));
     let flat = "é".repeat(70);
-    let combining = "e\u{301}".repeat(45);
+    // x + acute has no precomposed form, so Git's macOS normalization preserves it.
+    let combining = "x\u{301}".repeat(45);
     for name in [&wide, &flat, &combining] {
         repo.commit_file(name, "old\n")?;
         fs::write(repo.path().join(name), "new\n")?;
@@ -255,7 +256,7 @@ fn graph_rounding_and_unicode_name_widths() -> Result<()> {
     parity(repo.path(), &["diff", "--stat"], &[])?;
     git(repo.path(), &["config", "core.quotePath", "false"])?;
     // Git 2.56 clips by display width. Older hosts split UTF-8 sequences here,
-    // so retain the exact 2.56 oracle bytes instead of accepting their output.
+    // so retain the expected 2.56 output instead of accepting their output.
     let before = snapshot(repo.path())?;
     let actual = brit(repo.path(), &["diff", "--stat"])?;
     ensure!(actual.status.success(), "{}", String::from_utf8_lossy(&actual.stderr));
@@ -354,7 +355,12 @@ fn symlinks_modes_types_and_byte_paths() -> Result<()> {
     }
     symlink("old-target", repo.path().join("link"))?;
     symlink("old-target", repo.path().join("to-file"))?;
-    let bytes = OsStr::from_bytes(b"invalid-\xff\n");
+    // macOS filesystems reject malformed UTF-8; keep newline quoting covered there.
+    let bytes = OsStr::from_bytes(if cfg!(target_os = "macos") {
+        b"line\n".as_slice()
+    } else {
+        b"invalid-\xff\n"
+    });
     fs::write(repo.path().join(bytes), "old\n")?;
     git(repo.path(), &["add", "--all"])?;
     git(repo.path(), &["commit", "-m", "types"])?;
