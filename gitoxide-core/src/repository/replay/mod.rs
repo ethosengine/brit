@@ -78,14 +78,18 @@ impl Selection {
             std::env::var_os("GIT_INDEX_FILE").is_none(),
             "alternate indexes are unsupported"
         );
+        selection_interrupt()?;
         let original = repo.head_commit()?.id;
         let attachment = repo.head_name()?.map(|name| name.as_bstr().to_owned());
         let upstream_id = resolve_upstream(repo, upstream)?;
+        selection_interrupt()?;
         let mut closure = BTreeSet::new();
         let mut validation = Validation::default();
         let ours = validation.history(repo, original, &mut closure)?;
         let theirs = validation.history(repo, upstream_id, &mut closure)?;
+        selection_interrupt()?;
         let bases = repo.merge_bases_many(original, &[upstream_id])?;
+        selection_interrupt()?;
         ensure!(bases.len() == 1, "replay requires exactly one merge base");
         let kind = if theirs.contains_key(&original) && original != upstream_id {
             SelectionKind::FastForward
@@ -94,23 +98,7 @@ impl Selection {
         } else {
             SelectionKind::Replay
         };
-        let selected: BTreeSet<_> = ours.keys().filter(|id| !theirs.contains_key(*id)).copied().collect();
-        let mut candidates = Vec::new();
-        let mut current = original;
-        while selected.contains(&current) {
-            let parents = ours.get(&current).context("selected history disappeared")?;
-            ensure!(
-                parents.len() == 1,
-                "merge-bearing or root replay selection is unsupported"
-            );
-            candidates.push(Candidate {
-                commit: current,
-                parent: parents[0],
-            });
-            current = parents[0];
-        }
-        ensure!(candidates.len() == selected.len(), "selection is not one linear chain");
-        candidates.reverse();
+        let candidates = selected_candidates(original, &ours, &theirs)?;
         let selection = Self {
             original,
             upstream: upstream_id,
@@ -124,10 +112,7 @@ impl Selection {
             let commits = [selection.original, selection.upstream]
                 .into_iter()
                 .chain(selection.candidates.iter().flat_map(|c| [c.parent, c.commit]));
-            let mut trees = BTreeSet::new();
-            for commit in commits {
-                trees.insert(repo.find_commit(commit)?.tree_id()?.detach());
-            }
+            let trees = collect_trees(repo, commits)?;
             refuse_external_filters(repo, trees, &selection.footprint(repo)?)?;
         }
         ensure!(!gix::interrupt::is_triggered(), "replay selection interrupted");
@@ -147,14 +132,110 @@ impl Selection {
     /// Conservative initial preservation exclusion set. Merge outcomes may
     /// enlarge it, but never shrink away a selected input's changed path.
     pub fn footprint(&self, repo: &gix::Repository) -> Result<Vec<BString>> {
+        selection_interrupt()?;
         let mut paths = BTreeSet::new();
         changed_paths(repo, self.original, self.upstream, &mut paths)?;
         for candidate in &self.candidates {
+            selection_interrupt()?;
             changed_paths(repo, candidate.parent, candidate.commit, &mut paths)?;
+            selection_checkpoint("replay-footprint-candidate")?;
         }
-        Ok(paths.into_iter().collect())
+        collect_footprint(paths)
     }
 }
+
+fn collect_footprint(paths: BTreeSet<BString>) -> Result<Vec<BString>> {
+    selection_interrupt()?;
+    let mut footprint = Vec::new();
+    for path in paths {
+        selection_interrupt()?;
+        footprint.push(path);
+        selection_checkpoint("replay-footprint-path")?;
+    }
+    selection_interrupt()?;
+    Ok(footprint)
+}
+
+// Keep test injection separate from the real poll: a checkpoint must return here.
+fn selection_interrupt() -> Result<()> {
+    ensure!(!gix::interrupt::is_triggered(), "replay selection interrupted");
+    Ok(())
+}
+
+fn selection_checkpoint(point: &str) -> Result<()> {
+    #[cfg(test)]
+    tests::completed(point);
+    #[cfg(all(target_os = "linux", feature = "switch-test-faults"))]
+    cancellation::checkpoint(point)?;
+    let _ = point;
+    selection_interrupt()
+}
+
+fn selected_candidates(
+    original: gix::ObjectId,
+    ours: &BTreeMap<gix::ObjectId, Vec<gix::ObjectId>>,
+    theirs: &BTreeMap<gix::ObjectId, Vec<gix::ObjectId>>,
+) -> Result<Vec<Candidate>> {
+    selection_interrupt()?;
+    let mut selected = BTreeSet::new();
+    for commit in ours.keys() {
+        selection_interrupt()?;
+        if !theirs.contains_key(commit) {
+            selected.insert(*commit);
+        }
+        selection_checkpoint("replay-selected-commit")?;
+    }
+    let mut candidates = Vec::new();
+    let mut current = original;
+    while selected.contains(&current) {
+        selection_interrupt()?;
+        let parents = ours.get(&current).context("selected history disappeared")?;
+        ensure!(
+            parents.len() == 1,
+            "merge-bearing or root replay selection is unsupported"
+        );
+        candidates.push(Candidate {
+            commit: current,
+            parent: parents[0],
+        });
+        current = parents[0];
+        selection_checkpoint("replay-candidate-chain")?;
+    }
+    ensure!(candidates.len() == selected.len(), "selection is not one linear chain");
+    selection_interrupt()?;
+    candidates.reverse();
+    selection_interrupt()?;
+    Ok(candidates)
+}
+
+fn collect_trees(
+    repo: &gix::Repository,
+    commits: impl IntoIterator<Item = gix::ObjectId>,
+) -> Result<BTreeSet<gix::ObjectId>> {
+    selection_interrupt()?;
+    let mut trees = BTreeSet::new();
+    for commit in commits {
+        selection_interrupt()?;
+        trees.insert(commit_tree(repo, commit)?);
+        selection_checkpoint("replay-selection-tree")?;
+    }
+    selection_interrupt()?;
+    Ok(trees)
+}
+
+fn commit_tree(repo: &gix::Repository, commit: gix::ObjectId) -> Result<gix::ObjectId> {
+    selection_interrupt()?;
+    let commit = repo.find_commit(commit)?;
+    selection_interrupt()?;
+    let tree = commit.tree_id()?.detach();
+    selection_interrupt()?;
+    Ok(tree)
+}
+
+#[cfg(all(target_os = "linux", feature = "switch-test-faults"))]
+mod cancellation;
+#[cfg(test)]
+mod tests;
 
 /// Refuse when a configured external filter driver could convert one of `paths` under the attributes
 /// of any of `trees`, the trees whose files a replay reads, merges or writes.
@@ -163,16 +244,23 @@ fn refuse_external_filters(
     trees: impl IntoIterator<Item = gix::ObjectId>,
     paths: &[BString],
 ) -> Result<()> {
-    if paths.is_empty() || gix::filter::Pipeline::options(repo)?.drivers.is_empty() {
+    selection_interrupt()?;
+    let no_filters = paths.is_empty() || gix::filter::Pipeline::options(repo)?.drivers.is_empty();
+    selection_interrupt()?;
+    if no_filters {
         return Ok(());
     }
     for tree in trees {
+        selection_interrupt()?;
         let index = repo.index_from_tree(&tree)?;
+        selection_interrupt()?;
         let mut attributes =
             repo.attributes_only(&index, gix::worktree::stack::state::attributes::Source::IdMapping)?;
+        selection_interrupt()?;
         super::index::authoring::refuse_external_filters(repo, &mut attributes, paths.iter().map(|p| p.as_bstr()))?;
+        selection_checkpoint("replay-filter-tree")?;
     }
-    Ok(())
+    selection_interrupt()
 }
 
 fn changed_paths(
@@ -181,8 +269,15 @@ fn changed_paths(
     after: gix::ObjectId,
     paths: &mut BTreeSet<BString>,
 ) -> Result<()> {
-    let before = repo.index_from_tree(&repo.find_commit(before)?.tree_id()?)?;
-    let after = repo.index_from_tree(&repo.find_commit(after)?.tree_id()?)?;
+    selection_interrupt()?;
+    let before_tree = commit_tree(repo, before)?;
+    selection_interrupt()?;
+    let before = repo.index_from_tree(&before_tree)?;
+    selection_interrupt()?;
+    let after_tree = commit_tree(repo, after)?;
+    selection_interrupt()?;
+    let after = repo.index_from_tree(&after_tree)?;
+    selection_interrupt()?;
     changed_index_paths(&before, &after, paths)
 }
 
@@ -191,16 +286,21 @@ fn changed_index_paths(
     after: &gix::index::State,
     paths: &mut BTreeSet<BString>,
 ) -> Result<()> {
-    let entries = |index: &gix::index::State| {
-        index
-            .entries()
-            .iter()
-            .map(|entry| (entry.path(index).to_owned(), (entry.id, entry.mode)))
-            .collect::<BTreeMap<_, _>>()
+    let entries = |index: &gix::index::State, point| -> Result<BTreeMap<_, _>> {
+        selection_interrupt()?;
+        let mut entries = BTreeMap::new();
+        for entry in index.entries() {
+            selection_interrupt()?;
+            entries.insert(entry.path(index).to_owned(), (entry.id, entry.mode));
+            selection_checkpoint(point)?;
+        }
+        selection_interrupt()?;
+        Ok(entries)
     };
-    let before = entries(before);
-    let after = entries(after);
+    let before = entries(before, "replay-index-before")?;
+    let after = entries(after, "replay-index-after")?;
     for path in before.keys().chain(after.keys()) {
+        selection_interrupt()?;
         if before.get(path) != after.get(path) {
             ensure!(
                 ![before.get(path), after.get(path)]
@@ -211,8 +311,9 @@ fn changed_index_paths(
             );
             paths.insert(path.clone());
         }
+        selection_checkpoint("replay-changed-path")?;
     }
-    Ok(())
+    selection_interrupt()
 }
 
 fn resolve_upstream(repo: &gix::Repository, argument: &BStr) -> Result<gix::ObjectId> {
@@ -261,6 +362,7 @@ pub struct Step {
 
 impl Step {
     pub fn merge(repo: &gix::Repository, candidate: &Candidate, tip: gix::ObjectId) -> Result<Self> {
+        selection_interrupt()?;
         validate_execution_policy(repo)?;
         let original = repo.find_commit(candidate.commit)?;
         let parents: Vec<_> = original.parent_ids().map(gix::Id::detach).collect();
@@ -268,10 +370,14 @@ impl Step {
             parents == [candidate.parent],
             "candidate parent does not match pinned selection"
         );
-        let base = repo.find_commit(candidate.parent)?.tree_id()?.detach();
-        let ours = repo.find_commit(tip)?.tree_id()?.detach();
+        let base = commit_tree(repo, candidate.parent)?;
+        let ours = commit_tree(repo, tip)?;
         let theirs = original.tree_id()?.detach();
-        let result = repo.merge_trees(base, ours, theirs, Default::default(), repo.tree_merge_options()?)?;
+        selection_interrupt()?;
+        let options = repo.tree_merge_options()?;
+        selection_interrupt()?;
+        let result = repo.merge_trees(base, ours, theirs, Default::default(), options)?;
+        selection_interrupt()?;
         let how = gix::merge::tree::TreatAsUnresolved::default();
         let mut conflicts = BTreeSet::new();
         for conflict in result.conflicts.iter().filter(|conflict| conflict.is_unresolved(how)) {
@@ -287,34 +393,47 @@ impl Step {
                 }
             }
         }
+        selection_interrupt()?;
         let tree = result
             .tree
             .clone()
             .detach()
             .write(|tree| repo.write_object(tree).map(gix::Id::detach))?;
+        selection_interrupt()?;
         let mut index = repo.index_from_tree(&tree)?;
+        selection_interrupt()?;
         let mut footprint = conflicts.clone();
-        changed_index_paths(
-            &*repo.index_from_tree(&base)?,
-            &*repo.index_from_tree(&theirs)?,
-            &mut footprint,
-        )?;
-        changed_index_paths(&*repo.index_from_tree(&ours)?, &index, &mut footprint)?;
+        {
+            let base_index = repo.index_from_tree(&base)?;
+            selection_interrupt()?;
+            let theirs_index = repo.index_from_tree(&theirs)?;
+            selection_interrupt()?;
+            changed_index_paths(&base_index, &theirs_index, &mut footprint)?;
+        }
+        {
+            selection_interrupt()?;
+            let ours_index = repo.index_from_tree(&ours)?;
+            selection_interrupt()?;
+            changed_index_paths(&ours_index, &index, &mut footprint)?;
+        }
         // The merged tree's attributes govern the files this step will write.
-        refuse_external_filters(repo, [tree], &footprint.iter().cloned().collect::<Vec<_>>())?;
+        let footprint = collect_footprint(footprint)?;
+        refuse_external_filters(repo, [tree], &footprint)?;
         result.index_changed_after_applying_conflicts(
             &mut index,
             how,
             gix::merge::tree::apply_index_entries::RemovalMode::Prune,
         );
+        selection_interrupt()?;
         index.verify_entries()?;
+        selection_interrupt()?;
         Ok(Self {
             original: candidate.commit,
             parent: tip,
             tree,
             index,
             conflicts: conflicts.into_iter().collect(),
-            footprint: footprint.into_iter().collect(),
+            footprint,
             initially_empty: base == theirs,
             newly_empty: base != theirs && tree == ours,
         })

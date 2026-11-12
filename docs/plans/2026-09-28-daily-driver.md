@@ -15,6 +15,65 @@ scheduler. Use native context for observed environment and citation blockers.
 - [ ] Installed delivery: fresh standalone install, feature/platform matrix, upgrade and rollback prove the executable and installed epr interface; package publication and clean consumer tests identify exact source revisions. Requires native integration; serves brit-native-daily-driver.
 - [ ] Operational qualification through our own ongoing development across workspaces: complete the loop, preserve Git interoperability and recover interrupted work, recording actual outcomes as we daily-drive Brit. Cross-workspace verification follows this integration pass; scripted identities do not establish it. Serves brit-native-daily-driver.
 
+## Cancellation within selection and index loops — 2026-11-12
+
+Brit-owned selected-commit collection, candidate-chain traversal, tree collection,
+footprint traversal and materialization, both index-map constructions and changed-path
+comparison now poll the existing interrupt flag. External-filter tree traversal also
+polls between trees. Library calls remain unchanged, with checks at their boundaries.
+Ordering, deduplication, mode comparisons, affected-gitlink refusal and selected-history
+semantics are retained. No public command, flag, type, cache or journal format changes.
+
+- [x] Refuse after 16 completed items, before another item is processed, in process-isolated deterministic probes at 10,000/100,000 index entries and 1,000/10,000 synthetic candidate/history records. Probe: `cargo test -p gitoxide-core --lib repository::replay::tests`. Serves brit-native-daily-driver.
+- [x] Preserve recovery when the shared comparison helper cancels inside a prepared replay step: journal, index, refs and worktree snapshot stay equal; only unreachable merge objects may be added. Reopen and resume or abort, retaining the independent recovery copy. Probe: `cancelled_merge_keeps_prepared_evidence_and_can_resume_or_abort`. Serves brit-native-daily-driver.
+
+All 24 final controlled measurements returned in less than one second; the slowest
+was 68.611856 ms. Eighteen cover the two requested sizes across nine loop points;
+six exercise both resume and abort after interrupting shared index comparison.
+Each worker starts a monotonic clock immediately before triggering the real flag.
+Test injection returns to the production poll, and a worker that finishes before
+interruption fails. The public SIGINT rendezvous likewise cannot detect cancellation
+itself: the controller signals, releases it, and the real poll must refuse.
+All eight new public SIGINT checkpoints passed; the slowest signal-to-process-exit
+measurement was 78.126607 ms. All 72 fault-enabled and 42 ordinary public
+rebase/pull/switch journeys passed against the separately hashed rebuilt binaries.
+
+Measurements use Rust 1.96.1, unoptimized Linux x86_64 test binaries with debug info
+disabled and two Cargo build jobs. Private evidence records source and executable
+hashes, the full toolchain identity, workload, processed count, elapsed nanoseconds
+and outcome under the isolated Elohim worktree's
+`genesis/local-dev/brit-noise-20261112/cancellation-measurements.json`.
+These are controlled local results. Decompression, individual-object hashing,
+merge-base internals, serialization, allocation/deallocation and blocking filesystem
+calls remain outside the latency claim; there is no universal Ctrl-C guarantee.
+
+Story-graph station (`@regression`, executable Rust probes above): given a selected
+history of 1,000/10,000 records or an index of 10,000/100,000 entries, when the real
+interrupt flag is triggered after item 16, then the loop refuses before item 17 and
+returns within one second. Chain: daily-driver safe recovery / between validated
+history → durable preparation (and prepared replay → next step) / missing node:
+Brit-owned loop cancellation preserves the appropriate read-only or recoverable
+boundary / current state: locally green; independent review and delivery pending.
+Native abort and terminal journal cleanup are separate stations; this slice does
+not change the journal-cleanup race.
+The final native replay run passed 65 cases but two existing 20-second lifecycle
+checkpoint waits expired while the CLI recovery suite ran concurrently. Both
+failed fixtures passed individually after that competing suite finished, with
+no source or timeout changes. The failed run remains in
+`cancellation-core-complete.log`; the focused recovery verdicts are separate.
+
+Local validation covers 13 replay unit checks (including five new tests), 130
+native replay/recovery cases across the final run and focused timeout reruns,
+72 fault-enabled and 42 ordinary public journeys, and 12 readiness-contract
+checks. Workspace formatting and the declared Rust-style checker pass. The
+checker retains its declared `brit-build-ref` scope; this is not new core style
+certification. Strict core Clippy still refuses the untouched `commit.rs:307`
+`collapsible_if` finding; advisory all-target Clippy has no new replay findings,
+and strict CLI rebase Clippy passes. No suppression was added.
+
+Readiness remains RED. Independent review, upstream CI, publication, installation,
+version allocation and parent-pin integration remain subsequent work.
+
 ## Unchanged attributed working files — 2026-11-12
 
 Ordinary `brit diff` and `brit diff --stat` now skip an attributed working file
@@ -394,7 +453,8 @@ pass. Independent re-review of `a524bf36` accepted the three required code fixes
 and conditioned LAND on these documentation corrections. Exact final CI remains
 required before landing; this is technical review, not human acceptance.
 
-- [ ] Bound cancellation latency in individual large-object decompression/hash operations, bulk index comparisons, merge-base traversal, candidate/footprint loops in replay/mod.rs, whole-worktree witness serialization/hashing, journal serialization and blocking filesystem calls. Current polling does not preempt those operations; no hard latency budget is claimed. Add representative large-object/index/history probes before claiming one. Serves brit-native-daily-driver.
+- [ ] Bound the remaining cancellation frontier: individual large-object decompression/hash operations, merge-base traversal, whole-worktree witness serialization/hashing, journal serialization, allocation/deallocation and blocking filesystem calls. The 2026-11-12 selection/index loop slice proves only its controlled workloads within one second; it does not preempt library internals or establish a universal latency budget. Retain representative large-object and real-repository probes as subsequent work. Serves brit-native-daily-driver.
+- [ ] Next sprint: reproduce the operator-reported `brit worktree add` refusal, `Entry too large to fit in memory`, on `.claude/data/governance-findings.jsonl` after the new branch was already created. Measure the entry-size boundary with disposable repositories, preserve existing worktrees and branches, and prove safe recovery from partial branch creation without blindly replaying the command. This report is user-supplied, not reproduced or fixed by the cancellation slice. Serves brit-native-daily-driver.
 - [ ] Harden unpublished-journal cleanup against a hostile local process with write access inside `.git`: path substitution can race create/metadata or inode-check/remove, including ancestor symlinks, and cause removal of an empty directory not created by this operation. `remove_dir` refuses non-empty directories and does not follow a final-component symlink; that bounds the observed threat. Investigate private staging and handle-anchored ownership, with adversarial path-swap probes, as a separate slice. Serves brit-native-daily-driver.
 - [ ] Reconcile retained-copy helper delivery with the followed-tool install: `brit-build-artifacts.yml` ships only brit/build-ref/verify, while `brit-release.yml` includes and qualifies `brit-rebase-retained`. On shem, `command -v brit-rebase-retained` currently fails. Abort/recovery itself runs in-process; independent retained-copy inspection/extraction still needs the separate helper. Probe the installed helper and export a retained copy before declaring that delivery station qualified. Serves brit-native-daily-driver.
 

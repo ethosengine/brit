@@ -735,6 +735,14 @@ mod recovery {
         for point in [
             "replay-selection-object",
             "replay-object-verified",
+            "replay-selected-commit",
+            "replay-candidate-chain",
+            "replay-selection-tree",
+            "replay-footprint-candidate",
+            "replay-footprint-path",
+            "replay-index-before",
+            "replay-index-after",
+            "replay-changed-path",
             "replay-preservation-entry",
             "replay-worktree-witness-entry",
             "replay-before-journal",
@@ -754,7 +762,44 @@ mod recovery {
                 ],
             )?;
             wait_file(&mut child, &markers.path().join(format!("{point}.reached")))?;
-            interrupt(&mut child, "-INT")?;
+            let started = Instant::now();
+            if matches!(
+                point,
+                "replay-selected-commit"
+                    | "replay-candidate-chain"
+                    | "replay-selection-tree"
+                    | "replay-footprint-candidate"
+                    | "replay-footprint-path"
+                    | "replay-index-before"
+                    | "replay-index-after"
+                    | "replay-changed-path"
+            ) {
+                ensure!(Command::new("kill")
+                    .args(["-INT", &child.0.id().to_string()])
+                    .status()?
+                    .success());
+                // The rendezvous cannot refuse on its own: release to the real poll.
+                fs::write(markers.path().join(format!("{point}.release")), b"release")?;
+                loop {
+                    if let Some(status) = child.0.try_wait()? {
+                        ensure!(!status.success(), "cancelled rebase must refuse");
+                        break;
+                    }
+                    ensure!(
+                        started.elapsed() < Duration::from_secs(1),
+                        "{point}: cancellation exceeded one second"
+                    );
+                    std::thread::sleep(Duration::from_millis(1));
+                }
+                ensure!(started.elapsed() < Duration::from_secs(1));
+                eprintln!(
+                    "public cancellation point={point} elapsed_ns={} outcome=refused executable={}",
+                    started.elapsed().as_nanos(),
+                    brit_bin().expect("public artifact").display()
+                );
+            } else {
+                interrupt(&mut child, "-INT")?;
+            }
             assert_eq!(git(root, &["rev-parse", "HEAD"])?, head);
             assert_eq!(fs::read(root.join(".git/index"))?, index);
             assert!(
