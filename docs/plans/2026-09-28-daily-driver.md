@@ -41,6 +41,14 @@ name. The combining-name fixture uses x plus acute, which has no precomposed for
 macOS retains newline quoting while malformed-byte names remain on filesystems
 that admit them. All 18 affected local journeys pass. Platform jobs now finish
 their siblings after a failure so independent portability results stay visible.
+Candidate `a893fcf97` passes macOS and both 32-bit suites. Windows ARM's only
+failure (5,414 cases pass) and the x64 diff-stat failure are byte-for-byte the
+same output except for eight CR bytes added to the golden file by checkout.
+That fixture now declares `-text`; the exact-byte assertion is unchanged.
+The separate x64 fixture lane also reports a concurrent note-lock refusal in
+the existing CAS stress test. Its source and test match main exactly, and the
+first Windows candidate passed it; this observation remains separate from the
+fixture correction, with no timeout, retry or lock-semantics change.
 
 Brit 0.1.14 packages the nine sprint commits after 0.1.13: branch creation and
 shared mutation guarding, resolved merge commits, diff statistics, passive commit

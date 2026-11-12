@@ -4,6 +4,7 @@
 *.sh text eol=lf
 justfile text eol=lf
 /tests/tools/src/signature/fixtures/ssh-* text eol=lf
+/tests/cli-journey/fixtures/diff-stat-unicode.txt -text
 
 # have GitHub include fixture-making scripts when it counts code
 **/tests/fixtures/**/*.sh -linguist-vendored
