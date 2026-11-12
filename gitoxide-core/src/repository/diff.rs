@@ -771,6 +771,18 @@ fn stat_name_width(name: &[u8]) -> usize {
     std::str::from_utf8(name).map_or(name.len(), |s| s.chars().map(|c| c.width().unwrap_or(0)).sum())
 }
 
+fn stat_name_suffix(mut name: &[u8], available: usize) -> &[u8] {
+    use unicode_width::UnicodeWidthChar;
+    let mut width = stat_name_width(name);
+    while width > available && !name.is_empty() {
+        let (character, size) = gix::bstr::decode_utf8(name);
+        let (columns, bytes) = character.map_or((1, 1), |c| (c.width().unwrap_or(0), size));
+        width = width.saturating_sub(columns);
+        name = &name[bytes..];
+    }
+    name
+}
+
 fn render_stats(stats: &[FileStat], out: &mut Vec<u8>) -> Result<()> {
     use std::io::Write;
     if stats.is_empty() {
@@ -811,8 +823,9 @@ fn render_stats(stats: &[FileStat], out: &mut Vec<u8>) -> Result<()> {
         if stat_name_width(name) > available {
             out.extend_from_slice(b"...");
             available -= 3;
-            // Git's suffix clipping is byte-oriented, including quoted names.
-            name = &name[stat_name_width(name) - available..];
+            // Git 2.56 clips complete characters by display width, advancing
+            // one byte for malformed UTF-8 instead of splitting valid text.
+            name = stat_name_suffix(name, available);
             if let Some(slash) = name.find_byte(b'/') {
                 name = &name[slash..];
             }
@@ -886,4 +899,22 @@ fn write_diff_output(out: &mut dyn std::io::Write, rendered: &[u8]) -> Result<()
     check_interrupted()?;
     out.write_all(rendered).or_error()?;
     Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    #[test]
+    fn stat_suffix_preserves_character_boundaries_and_git_width_semantics() {
+        for (name, available, expected) in [
+            ("ééé".as_bytes(), 2, "éé".as_bytes()),
+            ("界界界".as_bytes(), 3, "界".as_bytes()),
+            ("e\u{301}e\u{301}".as_bytes(), 1, "\u{301}e\u{301}".as_bytes()),
+            (b"\xff\xfeabc".as_slice(), 3, b"abc".as_slice()),
+            (b"\xe2\x98abc".as_slice(), 3, b"abc".as_slice()),
+            (b"\x01abc".as_slice(), 2, b"bc".as_slice()),
+            (b"abc".as_slice(), 0, b"".as_slice()),
+        ] {
+            assert_eq!(super::stat_name_suffix(name, available), expected, "name={name:?}");
+        }
+    }
 }

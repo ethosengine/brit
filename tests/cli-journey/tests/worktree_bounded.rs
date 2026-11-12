@@ -1,5 +1,5 @@
 //! Large-file checkout preserves bytes, conversions and rollback under bounded resources.
-use anyhow::{ensure, Result};
+use anyhow::{ensure, Context, Result};
 use cli_journey::support::{
     runner::{brit_bin, BritInvocation},
     test_repo::TestRepo,
@@ -292,7 +292,8 @@ fn controlled_large_checkout_measurements() -> Result<()> {
                     "--detach",
                 ])
                 .arg(&target)
-                .output()?;
+                .output()
+                .context("run /usr/bin/time for the controlled checkout; GNU time is required")?;
             ensure!(output.status.success(), "{}", String::from_utf8_lossy(&output.stderr));
             let timing = fs::read_to_string(timing)?;
             let peak_kib: u64 = timing.split_whitespace().next().expect("time maximum RSS").parse()?;

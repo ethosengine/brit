@@ -674,6 +674,7 @@ jobs:
             "libstdc++6:$RUNNER_ARCHITECTURE"  # To support external 64-bit Node.js for actions.
             pkgconf
             python3  # Terminal recovery tests require the standard-library pty module.
+            time  # Bounded-checkout probes measure child maximum RSS with GNU time.
           )
           dpkg --add-architecture "$RUNNER_ARCHITECTURE"
           apt-get -o Acquire::Retries=3 update --error-on=any

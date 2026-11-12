@@ -248,10 +248,20 @@ fn graph_rounding_and_unicode_name_widths() -> Result<()> {
     for (name, lines) in [("mostly-deleted", 1), ("equal", 3), ("mostly-added", 1100), ("tiny", 1)] {
         fs::write(repo.path().join(name), "new\n".repeat(lines))?;
     }
-    for quote in ["true", "false"] {
-        git(repo.path(), &["config", "core.quotePath", quote])?;
-        parity(repo.path(), &["diff", "--stat"], &[])?;
-    }
+    git(repo.path(), &["config", "core.quotePath", "true"])?;
+    parity(repo.path(), &["diff", "--stat"], &[])?;
+    git(repo.path(), &["config", "core.quotePath", "false"])?;
+    // Git 2.56 clips by display width. Older hosts split UTF-8 sequences here,
+    // so retain the exact 2.56 oracle bytes instead of accepting their output.
+    let before = snapshot(repo.path())?;
+    let actual = brit(repo.path(), &["diff", "--stat"])?;
+    ensure!(actual.status.success(), "{}", String::from_utf8_lossy(&actual.stderr));
+    assert_eq!(actual.stdout, include_bytes!("../fixtures/diff-stat-unicode.txt"));
+    assert_eq!(
+        snapshot(repo.path())?,
+        before,
+        "Unicode clipping preserves repository state"
+    );
     Ok(())
 }
 

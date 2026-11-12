@@ -17,6 +17,20 @@ scheduler. Use native context for observed environment and citation blockers.
 
 ## Daily-driver release integration — 2026-11-12
 
+The first candidate (`abc4c1023`, CI 43320400970) passed strict lint, MSRV,
+readiness/package contracts and optimized CPU qualification, but exposed three
+portability gaps before main moved. Git 2.56 clips diff-stat names by display
+width; Brit now preserves whole UTF-8 characters, with the hosted oracle captured
+as a fixture and separate wide/combining/malformed-byte unit cases. Ubuntu's
+coreutils requires the invoked name to match the executable name, so the
+attribution test's synthetic `gtimeout` delegates to the real `timeout` path.
+Both 32-bit minimal containers now install GNU time for the existing RSS probe;
+neither the 64 MiB measurement assertion nor the 1 GiB scratch cap is relaxed.
+The Unicode fixture failed locally before the renderer correction, then all
+26 diff-stat, attribution and bounded-checkout journeys passed, along with the
+Unicode unit cases, strict scoped Clippy, formatting and 12 readiness contracts. The candidate's
+20 dependency-advisory findings remain separately recorded; no ignore was added.
+
 Brit 0.1.14 packages the nine sprint commits after 0.1.13: branch creation and
 shared mutation guarding, resolved merge commits, diff statistics, passive commit
 attribution, linked-worktree rebase publication, canonical unchanged-file detection,

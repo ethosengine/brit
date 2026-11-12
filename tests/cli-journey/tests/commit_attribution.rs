@@ -268,14 +268,16 @@ fn tool_path(fixture: &Fixture, omit: &str, gtimeout: bool) -> Result<PathBuf> {
         gix_testtools::configure_git_environment(&mut cmd, &fixture.root);
         let located = success(cmd.args(["-c", "command -v \"$1\"", "lookup", tool]).output()?)?;
         let source = String::from_utf8(located)?;
-        symlink(
-            source.trim(),
-            directory.join(if tool == "timeout" && gtimeout {
-                "gtimeout"
-            } else {
-                tool
-            }),
-        )?;
+        if tool == "timeout" && gtimeout {
+            // Ubuntu's coreutils requires argv[0] to match /proc/self/exe.
+            // Delegate to timeout at its real name instead of renaming its symlink.
+            executable(
+                &directory.join("gtimeout"),
+                &format!("#!/bin/sh\nexec '{}' \"$@\"\n", source.trim().replace('\'', "'\\''")),
+            )?;
+        } else {
+            symlink(source.trim(), directory.join(tool))?;
+        }
     }
     symlink(&fixture.epr, directory.join("epr"))?;
     Ok(directory)
@@ -295,17 +297,17 @@ fn prerequisites_parser_failures_and_path_resolution_preserve_the_message() -> R
         )?;
     }
     let tools = tool_path(&fixture, "none", true)?;
-    success(
-        fixture
-            .hook_command(&path)
-            .env("PATH", &tools)
-            .env_remove("EPR_BIN")
-            .output()?,
-    )?;
+    let output = fixture
+        .hook_command(&path)
+        .env("PATH", &tools)
+        .env_remove("EPR_BIN")
+        .output()?;
+    ensure!(output.status.success(), "{}", String::from_utf8_lossy(&output.stderr));
     assert_eq!(
         fs::read(&path)?,
         DECORATED.as_bytes(),
-        "PATH EPR and gtimeout fallback work"
+        "PATH EPR and gtimeout fallback work: {}",
+        String::from_utf8_lossy(&output.stderr)
     );
     assert_eq!(fs::metadata(&path)?.permissions().mode() & 0o777, 0o640);
     success(fixture.hook_command(&path).env("PATH", &tools).output()?)?;
