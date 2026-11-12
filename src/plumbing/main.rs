@@ -442,15 +442,29 @@ pub fn run_with_command(args: Args, command: clap::Command) -> Result<()> {
                 core::repository::pull::recover(repo, abort).map_err(anyhow_to_gix)
             }
         }),
-        Subcommands::Diff(crate::plumbing::options::diff::Platform { cmd, cached, paths }) => match cmd {
+        Subcommands::Diff(crate::plumbing::options::diff::Platform {
+            cmd,
+            cached,
+            stat,
+            paths,
+        }) => match cmd {
             None => prepare_and_run("diff", verbose, None, move |_progress, out, _err| {
-                core::repository::diff::working(repository(Mode::Strict)?, out, cached, &paths)
+                if stat {
+                    core::repository::diff::working_stat(repository(Mode::Strict)?, out, cached, &paths)
+                } else {
+                    core::repository::diff::working(repository(Mode::Strict)?, out, cached, &paths)
+                }
             }),
             Some(crate::plumbing::options::diff::SubCommands::Tree {
+                stat,
                 old_treeish,
                 new_treeish,
             }) => prepare_and_run("diff-tree", verbose, None, move |_progress, out, _err| {
-                core::repository::diff::tree(repository(Mode::Lenient)?, out, old_treeish, new_treeish)
+                if stat {
+                    core::repository::diff::tree_stat(repository(Mode::Strict)?, out, old_treeish, new_treeish)
+                } else {
+                    core::repository::diff::tree(repository(Mode::Lenient)?, out, old_treeish, new_treeish)
+                }
             }),
             Some(crate::plumbing::options::diff::SubCommands::File {
                 old_revspec,

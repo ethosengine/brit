@@ -15,6 +15,30 @@ scheduler. Use native context for observed environment and citation blockers.
 - [ ] Installed delivery: fresh standalone install, feature/platform matrix, upgrade and rollback prove the executable and installed epr interface; package publication and clean consumer tests identify exact source revisions. Requires native integration; serves brit-native-daily-driver.
 - [ ] Operational qualification through our own ongoing development across workspaces: complete the loop, preserve Git interoperability and recover interrupted work, recording actual outcomes as we daily-drive Brit. Cross-workspace verification follows this integration pass; scripted identities do not establish it. Serves brit-native-daily-driver.
 
+## Read-only diff summaries — 2026-11-12
+
+`brit diff --stat [-- <literal files>]` compares tracked working files with the
+index. `brit diff --cached --stat` (also `--staged`) compares the index with HEAD,
+including unborn HEAD. `brit diff tree --stat <old-treeish> <new-treeish>` compares
+only the requested trees, including in bare repositories or with an unusable
+working index. Existing patch output and `diff file` retain their interfaces.
+
+Summaries use fixed, uncolored 80-column Git layout with rename detection off;
+renames appear as deletion plus addition. They cover text, binary sizes,
+symlinks, executable modes and file-type replacements. File selection retains
+the existing literal-path restrictions. Revision positionals, tree path filters,
+width controls, `--numstat`, and `--shortstat` remain unsupported.
+
+`tests/cli-journey/tests/diff_stat.rs` binds this station to exact Git output and
+repository-state snapshots. It proves staged/unstaged separation, unchanged
+refs/reflogs/index/objects/worktree/foreign locks, and inspection during an active
+mutation. Unsupported index states, changed gitlinks, external commands and diff
+attributes refuse before output. Tree comparisons check attributes in both trees;
+working attributes cannot stand in for those declarations. The fault-enabled
+lane proves cancellation before output for all three summary modes. Ordinary
+and fault journeys run in the existing public CLI CI lanes. These are local
+source proofs; review, upstream CI and installed delivery remain separate.
+
 ## Branch creation — 2026-11-12
 
 Daily-driving follow-up, 2026-11-12: a developer must be able to create a named

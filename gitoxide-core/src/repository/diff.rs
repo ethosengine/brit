@@ -223,14 +223,31 @@ pub(crate) fn tokens_for_diffing(data: &[u8]) -> gix::diff::blob::platform::reso
 /// Show HEAD-to-index or index-to-worktree patches without refreshing or writing the index.
 /// Literal file selection deliberately does not interpret Git pathspec magic.
 pub fn working(repo: gix::Repository, out: &mut dyn std::io::Write, cached: bool, paths: &[BString]) -> Result<()> {
-    use super::index::authoring::{literal_paths, validate_index};
+    working_output(repo, out, cached, paths, false)
+}
+
+/// Show HEAD-to-index or index-to-worktree statistics without writing repository state.
+pub fn working_stat(
+    repo: gix::Repository,
+    out: &mut dyn std::io::Write,
+    cached: bool,
+    paths: &[BString],
+) -> Result<()> {
+    working_output(repo, out, cached, paths, true)
+}
+
+fn working_output(
+    repo: gix::Repository,
+    out: &mut dyn std::io::Write,
+    cached: bool,
+    paths: &[BString],
+    stat: bool,
+) -> Result<()> {
+    use super::index::authoring::{literal_paths, read_index, validate_index};
     use std::collections::{BTreeMap, BTreeSet};
 
-    if repo.config_snapshot().string("diff.external").is_some() || std::env::var_os("GIT_EXTERNAL_DIFF").is_some() {
-        bail!(unsupported("external diff commands are not supported; use git diff"));
-    }
-    let index = repo.index_or_empty()?;
-    validate_index(&index)?;
+    check_external_diff(&repo)?;
+    let index = read_index(&repo)?;
     let selected = if paths.is_empty() {
         Vec::new()
     } else {
@@ -271,7 +288,9 @@ pub fn working(repo: gix::Repository, out: &mut dyn std::io::Write, cached: bool
     let mut matches = attrs.attribute_matches();
     // Buffer output so a refused path never leaves a misleading partial patch.
     let mut rendered = Vec::new();
+    let mut stats = Vec::new();
     for path in paths {
+        check_interrupted()?;
         // HEAD and index identities prove no staged change, even for paths whose
         // patches we cannot render. Worktree comparisons still need to read disk.
         if cached && before.get(&path) == after.get(&path) {
@@ -305,16 +324,23 @@ pub fn working(repo: gix::Repository, out: &mut dyn std::io::Write, cached: bool
         } else {
             worktree_patch_blob(&repo, &index, &path)?
         };
-        render_patch(&repo, &mut rendered, &path, old.as_ref(), new.as_ref())?;
+        if stat {
+            collect_stat(&repo, &mut stats, &path, old.as_ref(), new.as_ref())?;
+        } else {
+            render_patch(&repo, &mut rendered, &path, old.as_ref(), new.as_ref())?;
+        }
     }
-    out.write_all(&rendered).or_error()?;
-    Ok(())
+    if stat {
+        render_stats(&stats, &mut rendered)?;
+    }
+    write_diff_output(out, &rendered)
 }
 
 struct PatchBlob {
     mode: u32,
     blob_id: ObjectId,
     data: Vec<u8>,
+    from_worktree: bool,
 }
 
 fn load_patch_blob(repo: &gix::Repository, mode: u32, blob_id: ObjectId) -> Result<PatchBlob> {
@@ -323,6 +349,7 @@ fn load_patch_blob(repo: &gix::Repository, mode: u32, blob_id: ObjectId) -> Resu
         mode,
         blob_id,
         data: blob.data.clone(),
+        from_worktree: false,
     })
 }
 
@@ -335,6 +362,7 @@ fn worktree_patch_blob(repo: &gix::Repository, index: &gix::index::State, path: 
         mode: mode.bits(),
         blob_id,
         data,
+        from_worktree: true,
     }))
 }
 
@@ -422,12 +450,7 @@ fn render_patch(
     };
     let old_data = old.map_or(&[][..], |b| b.data.as_slice());
     let new_data = new.map_or(&[][..], |b| b.data.as_slice());
-    if old_data
-        .iter()
-        .take(8000)
-        .chain(new_data.iter().take(8000))
-        .any(|b| *b == 0)
-    {
+    if is_binary(old_data, new_data) {
         out.extend_from_slice(b"Binary files ");
         out.extend_from_slice(a_label);
         out.extend_from_slice(b" and ");
@@ -459,7 +482,7 @@ fn render_patch(
         gix::diff::blob::sources::byte_lines(old_data),
         gix::diff::blob::sources::byte_lines(new_data),
     );
-    let diff = gix::diff::blob::diff_with_slider_heuristics(gix::diff::blob::Algorithm::Myers, &input);
+    let diff = compare_lines(&input);
     gix::diff::blob::UnifiedDiff::new(
         &diff,
         &input,
@@ -580,5 +603,277 @@ pub fn pinned_commit(repo: &gix::Repository, out: &mut dyn std::io::Write, commi
         render_patch(repo, &mut rendered, &path, old.as_ref(), new.as_ref())?;
     }
     out.write_all(&rendered).or_error()?;
+    Ok(())
+}
+
+fn check_external_diff(repo: &gix::Repository) -> Result<()> {
+    if repo.config_snapshot().string("diff.external").is_some() || std::env::var_os("GIT_EXTERNAL_DIFF").is_some() {
+        bail!(unsupported("external diff commands are not supported; use git diff"));
+    }
+    Ok(())
+}
+
+fn check_interrupted() -> Result<()> {
+    if gix::interrupt::is_triggered() {
+        bail!(message("diff interrupted"));
+    }
+    Ok(())
+}
+
+fn is_binary(old: &[u8], new: &[u8]) -> bool {
+    old.iter().take(8000).chain(new.iter().take(8000)).any(|b| *b == 0)
+}
+
+fn compare_lines(input: &gix::diff::blob::InternedInput<&[u8]>) -> gix::diff::blob::Diff {
+    gix::diff::blob::diff_with_slider_heuristics(gix::diff::blob::Algorithm::Myers, input)
+}
+
+/// Compare exactly the requested trees, independently of the working index and files.
+/// Both trees' attributes are checked conservatively; no custom diff driver is run.
+pub fn tree_stat(
+    repo: gix::Repository,
+    out: &mut dyn std::io::Write,
+    old_treeish: BString,
+    new_treeish: BString,
+) -> Result<()> {
+    use std::collections::{BTreeMap, BTreeSet};
+    check_external_diff(&repo)?;
+    let old_tree = repo.rev_parse_single(old_treeish.as_bstr())?.object()?.peel_to_tree()?;
+    let new_tree = repo.rev_parse_single(new_treeish.as_bstr())?.object()?.peel_to_tree()?;
+    let before_index = repo.index_from_tree(&old_tree.id)?;
+    let after_index = repo.index_from_tree(&new_tree.id)?;
+    let entries = |index: &gix::index::State| -> BTreeMap<BString, (u32, ObjectId)> {
+        index
+            .entries()
+            .iter()
+            .map(|e| (e.path(index).into(), (e.mode.bits(), e.id)))
+            .collect()
+    };
+    let before = entries(&before_index);
+    let after = entries(&after_index);
+    let paths: BTreeSet<_> = before.keys().chain(after.keys()).collect();
+    let source = gix::worktree::stack::state::attributes::Source::IdMapping;
+    let mut old_attrs = repo.attributes_only(&before_index, source)?;
+    let mut new_attrs = repo.attributes_only(&after_index, source)?;
+    let mut stats = Vec::new();
+    for path in paths {
+        check_interrupted()?;
+        if before.get(path) == after.get(path) {
+            continue;
+        }
+        if before
+            .get(path)
+            .into_iter()
+            .chain(after.get(path))
+            .any(|(mode, _)| *mode == 0o160000)
+        {
+            bail!(unsupported("submodule patches are not supported; use git diff"));
+        }
+        for attrs in [&mut old_attrs, &mut new_attrs] {
+            let mut matches = attrs.attribute_matches();
+            attrs.at_entry(path, None)?.matching_attributes(&mut matches);
+            if matches.iter().any(|m| m.assignment.name.as_str() == "diff") {
+                bail!(unsupported(
+                    "diff attributes and text conversion are not supported; use git diff"
+                ));
+            }
+        }
+        let old = before
+            .get(path)
+            .map(|&(mode, id)| load_patch_blob(&repo, mode, id))
+            .transpose()?;
+        let new = after
+            .get(path)
+            .map(|&(mode, id)| load_patch_blob(&repo, mode, id))
+            .transpose()?;
+        collect_stat(&repo, &mut stats, path, old.as_ref(), new.as_ref())?;
+    }
+    let mut rendered = Vec::new();
+    render_stats(&stats, &mut rendered)?;
+    write_diff_output(out, &rendered)
+}
+
+struct FileStat {
+    name: BString,
+    added: usize,
+    removed: usize,
+    binary: bool,
+}
+
+fn collect_stat(
+    repo: &gix::Repository,
+    stats: &mut Vec<FileStat>,
+    path: &BString,
+    old: Option<&PatchBlob>,
+    new: Option<&PatchBlob>,
+) -> Result<()> {
+    if old
+        .zip(new)
+        .is_some_and(|(a, b)| a.mode == b.mode && a.blob_id == b.blob_id)
+    {
+        return Ok(());
+    }
+    let a = old.map_or(&[][..], |b| b.data.as_slice());
+    let b = new.map_or(&[][..], |b| b.data.as_slice());
+    let binary = is_binary(a, b);
+    let type_changed = old
+        .zip(new)
+        .is_some_and(|(a, b)| a.mode & 0o170000 != b.mode & 0o170000);
+    let (added, removed) = if binary {
+        // Git omits byte sizes when both object identities are already known
+        // and equal. A worktree file has no cached object identity in Git.
+        if old
+            .zip(new)
+            .is_some_and(|(a, b)| !b.from_worktree && a.blob_id == b.blob_id)
+        {
+            (0, 0)
+        } else {
+            (b.len(), a.len())
+        }
+    } else if type_changed {
+        (
+            gix::diff::blob::sources::byte_lines(b).count(),
+            gix::diff::blob::sources::byte_lines(a).count(),
+        )
+    } else if a == b {
+        (0, 0)
+    } else {
+        let input = gix::diff::blob::InternedInput::new(
+            gix::diff::blob::sources::byte_lines(a),
+            gix::diff::blob::sources::byte_lines(b),
+        );
+        let diff = compare_lines(&input);
+        (diff.count_additions() as usize, diff.count_removals() as usize)
+    };
+    let quote_high = repo.config_snapshot().try_boolean("core.quotePath")?.unwrap_or(true);
+    stats.push(FileStat {
+        name: quote_patch_path(path, quote_high),
+        added,
+        removed,
+        binary,
+    });
+    Ok(())
+}
+
+fn stat_name_width(name: &[u8]) -> usize {
+    use unicode_width::UnicodeWidthChar;
+    // Git falls back to byte width for an invalid UTF-8 name.
+    std::str::from_utf8(name).map_or(name.len(), |s| s.chars().map(|c| c.width().unwrap_or(0)).sum())
+}
+
+fn render_stats(stats: &[FileStat], out: &mut Vec<u8>) -> Result<()> {
+    use std::io::Write;
+    if stats.is_empty() {
+        return Ok(());
+    }
+    let digits = |n: usize| n.to_string().len();
+    let max_change = stats
+        .iter()
+        .filter(|s| !s.binary)
+        .map(|s| s.added + s.removed)
+        .max()
+        .unwrap_or(0);
+    let binary_width = stats
+        .iter()
+        .filter(|s| s.binary)
+        .map(|s| 14 + digits(s.added) + digits(s.removed))
+        .max()
+        .unwrap_or(0);
+    let number_width = digits(max_change).max(if binary_width > 0 { 3 } else { 0 });
+    let mut name_width = stats.iter().map(|s| stat_name_width(&s.name)).max().unwrap_or(0);
+    let mut graph_width = max_change.max(binary_width.saturating_sub(4));
+    // Fixed Git default: leave one blank column at the right, assigning 5/8 of
+    // the available width to names when both the name and graph need clipping.
+    if name_width + number_width + 6 + graph_width > 80 {
+        graph_width = graph_width.min((30 - number_width - 6).max(6));
+        if name_width > 80 - number_width - 6 - graph_width {
+            name_width = 80 - number_width - 6 - graph_width;
+        } else {
+            graph_width = 80 - number_width - 6 - name_width;
+        }
+    }
+    let (mut additions, mut removals) = (0, 0);
+    for stat in stats {
+        check_interrupted()?;
+        let mut name = stat.name.as_slice();
+        let mut available = name_width;
+        out.push(b' ');
+        if stat_name_width(name) > available {
+            out.extend_from_slice(b"...");
+            available -= 3;
+            // Git's suffix clipping is byte-oriented, including quoted names.
+            name = &name[stat_name_width(name) - available..];
+            if let Some(slash) = name.find_byte(b'/') {
+                name = &name[slash..];
+            }
+        }
+        out.extend_from_slice(name);
+        out.extend(std::iter::repeat_n(
+            b' ',
+            available.saturating_sub(stat_name_width(name)),
+        ));
+        if stat.binary {
+            write!(out, " | {:>number_width$}", "Bin").or_error()?;
+            if stat.added != 0 || stat.removed != 0 {
+                write!(out, " {} -> {} bytes", stat.removed, stat.added).or_error()?;
+            }
+        } else {
+            additions += stat.added;
+            removals += stat.removed;
+            let total = stat.added + stat.removed;
+            write!(out, " | {total:>number_width$}").or_error()?;
+            if total > 0 {
+                out.push(b' ');
+            }
+            let (mut add, mut del) = (stat.added, stat.removed);
+            if graph_width <= max_change && max_change > 0 {
+                let scale = |n| {
+                    if n == 0 {
+                        0
+                    } else {
+                        1 + n * (graph_width - 1) / max_change
+                    }
+                };
+                let total = scale(total).max(if add > 0 && del > 0 { 2 } else { 0 });
+                if add < del {
+                    add = scale(add);
+                    del = total - add;
+                } else {
+                    del = scale(del);
+                    add = total - del;
+                }
+            }
+            out.extend(std::iter::repeat_n(b'+', add));
+            out.extend(std::iter::repeat_n(b'-', del));
+        }
+        out.push(b'\n');
+    }
+    write!(
+        out,
+        " {} file{} changed",
+        stats.len(),
+        if stats.len() == 1 { "" } else { "s" }
+    )
+    .or_error()?;
+    if additions > 0 || removals == 0 {
+        write!(
+            out,
+            ", {additions} insertion{}(+)",
+            if additions == 1 { "" } else { "s" }
+        )
+        .or_error()?;
+    }
+    if removals > 0 || additions == 0 {
+        write!(out, ", {removals} deletion{}(-)", if removals == 1 { "" } else { "s" }).or_error()?;
+    }
+    writeln!(out).or_error()?;
+    Ok(())
+}
+
+fn write_diff_output(out: &mut dyn std::io::Write, rendered: &[u8]) -> Result<()> {
+    #[cfg(all(target_os = "linux", feature = "switch-test-faults"))]
+    super::switch::checkpoint("diff-before-output").map_err(|err| message!("{err:#}"))?;
+    check_interrupted()?;
+    out.write_all(rendered).or_error()?;
     Ok(())
 }

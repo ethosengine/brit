@@ -12,8 +12,8 @@ checks:
   - "bash scripts/ci/verify-cpu-matrix.sh <absolute-delivery-brit> <absolute-delivery-helpers...>"
   - "bash scripts/ci/test-install-brit-release.sh"
   - scripts/daily-driver-probe.sh --json
-  - "cargo test -p cli-journey --test native_authoring --test broader_staging (rebuilt Brit selected through BRIT_BIN)"
-  - "cargo test -p cli-journey --features switch-test-faults --test commit_merge --test commit_amend --test commit_cleanup (BRIT_BIN built with switch-test-faults)"
+  - "cargo test -p cli-journey --test native_authoring --test broader_staging --test diff_stat (rebuilt Brit selected through BRIT_BIN)"
+  - "cargo test -p cli-journey --features switch-test-faults --test commit_merge --test commit_amend --test commit_cleanup --test diff_stat (BRIT_BIN built with switch-test-faults)"
   - "a2o genesis/a2o/features/devflow/acceptance-aware-reconciliation.feature @concern:brit-native-daily-driver (Elohim host, acceptance-reconciliation profile)"
 refs:
   - docs/cpu-compatibility.md
@@ -22,6 +22,8 @@ retire-when: >
   when the full native workflow is the continuously verified release and integration floor
   and this separate cutover marker adds no information
 ---
+DELTA 2026-11-12 (read-only diff statistics; RED preserved): Working, staged/--staged and explicit-tree --stat summaries match the fixed 80-column Git oracle across text, binary, quoted byte paths, symlinks, modes and file-type replacements. Tree comparisons ignore the working index and check both trees' attributes; unsupported states and cancellation emit no partial summary. All 54 focused Rust regressions (12 summary, 21 native authoring, 2 CLI surface, 19 public CLI), 12 readiness checks, workspace formatting and declared Rust style pass. Both public CLI CI lanes select the summary suite. No independent review, upstream CI, installation, version allocation or parent-pin integration is claimed. Evidence: parent `.worktrees/epr-noise-20261112/genesis/local-dev/brit-noise-20261112/stat-evidence.json`.
+
 DELTA 2026-11-12 (resolved merge authoring; RED preserved): Explicit -m/-F commits complete resolved two-parent merges through the guarded ref transaction, including unchanged-tree, detached and linked-worktree cases. Exact Git objects match; changed refs/attachment/metadata and unsupported state refuse. SIGINT/SIGKILL and failed cleanup preserve the published commit and remaining marker; duplicate commits refuse. All 74 focused Rust regressions (9 merge, 18 amendment, 7 cleanup, 21 native authoring, 19 CLI), 12 readiness checks, workspace formatting and declared Rust style pass. CI selects ordinary and fault merge journeys. No independent review, upstream CI, installed delivery, version allocation or parent-pin integration is claimed. Evidence: parent `.worktrees/epr-noise-20261112/genesis/local-dev/brit-noise-20261112/merge-evidence.json`.
 
 DELTA 2026-11-12 (branch mutation boundary; RED preserved): Branch creation now acquires the shared mutation guard; only branch listing is exempt. Four branch CLI regressions pass, including main/linked-worktree contention with unchanged refs, foreign locks, index and worktree bytes. Formatting and declared Rust style pass. Source qualification only; installation and upstream delivery remain pending. Evidence: parent `.worktrees/epr-noise-20261112/genesis/local-dev/brit-noise-20261112/branch-guard-tests.log`.

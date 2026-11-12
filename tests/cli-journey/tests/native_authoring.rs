@@ -410,7 +410,7 @@ fn legacy_diff_subcommands_remain_available_and_mixed_modes_refuse() -> Result<(
     let before = index(repo.path())?;
     for args in [
         vec!["diff", "--cached", "tree", "HEAD", "HEAD"],
-        vec!["diff", "--stat"],
+        vec!["diff", "file", "--stat", "HEAD:selected", "HEAD:selected"],
         vec!["diff", "--", "private"],
     ] {
         ensure!(

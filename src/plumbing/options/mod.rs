@@ -700,6 +700,9 @@ pub mod diff {
         /// Compare the index with HEAD instead of working files with the index.
         #[clap(long, visible_alias = "staged")]
         pub cached: bool,
+        /// Show an 80-column summary instead of patches.
+        #[clap(long)]
+        pub stat: bool,
         /// Restrict changes to these literal file paths.
         #[clap(last = true, value_parser = crate::shared::AsBString)]
         pub paths: Vec<BString>,
@@ -711,6 +714,9 @@ pub mod diff {
     pub enum SubCommands {
         /// Diff two trees.
         Tree {
+            /// Show an 80-column summary instead of object changes.
+            #[clap(long)]
+            stat: bool,
             /// A rev-spec representing the 'before' or old tree.
             #[clap(value_parser = crate::shared::AsBString)]
             old_treeish: BString,
