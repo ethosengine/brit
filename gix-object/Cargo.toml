@@ -26,6 +26,8 @@ path = "./benches/edit_tree.rs"
 
 
 [features]
+## Find objects through bounded disk-backed storage; opt in only for filesystem consumers.
+stream = ["gix-utils/stream"]
 ## Enable commit and annotated-tag signing and signature verification with external programs.
 signature = ["dep:gix-command", "dep:gix-path", "dep:gix-tempfile"]
 ## Enable support for the SHA-1 hash by enabling the respective feature in the `gix-hash` crate.

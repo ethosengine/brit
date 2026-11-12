@@ -50,3 +50,46 @@ pub fn read(rd: &mut impl BufRead, state: &mut Decompress, mut dst: &mut [u8]) -
         }
     }
 }
+
+/// An incremental zlib reader which refuses truncated streams instead of treating them as EOF.
+pub struct Reader<R> {
+    input: R,
+    state: crate::Decompress,
+    ended: bool,
+}
+impl<R: BufRead> Reader<R> {
+    /// Decode one zlib stream from `input`, leaving any following bytes unread.
+    pub fn new(input: R) -> Self {
+        Self {
+            input,
+            state: crate::Decompress::new(),
+            ended: false,
+        }
+    }
+}
+impl<R: BufRead> io::Read for Reader<R> {
+    fn read(&mut self, out: &mut [u8]) -> io::Result<usize> {
+        if out.is_empty() || self.ended {
+            return Ok(0);
+        }
+        loop {
+            let input = self.input.fill_buf()?;
+            let before_in = self.state.total_in();
+            let before_out = self.state.total_out();
+            let status = self
+                .state
+                .decompress(input, out, crate::FlushDecompress::None)
+                .map_err(io::Error::other)?;
+            let consumed = (self.state.total_in() - before_in) as usize;
+            let written = (self.state.total_out() - before_out) as usize;
+            self.input.consume(consumed);
+            self.ended = status == crate::Status::StreamEnd;
+            if written != 0 || self.ended {
+                return Ok(written);
+            }
+            if consumed == 0 {
+                return Err(io::Error::new(io::ErrorKind::UnexpectedEof, "Truncated zlib stream"));
+            }
+        }
+    }
+}

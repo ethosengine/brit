@@ -76,3 +76,6 @@ pub struct Buffers {
     /// The data produced after processing `src`.
     pub dest: Vec<u8>,
 }
+
+#[cfg(feature = "stream")]
+pub mod stream;

@@ -42,3 +42,32 @@ fn deflated(data: &[u8]) -> Vec<u8> {
     out.flush().expect("in-memory flushes never fail");
     out.into_inner()
 }
+
+#[test]
+fn incremental_reader_validates_completion_and_checksums() -> io::Result<()> {
+    use std::io::Read;
+    let data = b"a stream split into one-byte reads";
+    let compressed = deflated(data);
+    let mut reader = inflate::Reader::new(compressed.as_slice());
+    for byte in data {
+        let mut actual = [0];
+        reader.read_exact(&mut actual)?;
+        assert_eq!(&actual, &[*byte]);
+    }
+    assert_eq!(reader.read(&mut [0])?, 0);
+    for end in 0..compressed.len() {
+        let mut reader = inflate::Reader::new(&compressed[..end]);
+        assert!(
+            reader.read_to_end(&mut Vec::new()).is_err(),
+            "truncation at {end} must fail"
+        );
+    }
+    let mut corrupt = compressed;
+    *corrupt.last_mut().expect("zlib checksum") ^= 1;
+    assert!(
+        inflate::Reader::new(corrupt.as_slice())
+            .read_to_end(&mut Vec::new())
+            .is_err()
+    );
+    Ok(())
+}

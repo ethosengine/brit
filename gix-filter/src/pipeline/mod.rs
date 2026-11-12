@@ -106,3 +106,6 @@ impl Pipeline {
 pub mod convert;
 
 pub(crate) mod util;
+
+/// Disk-backed conversion with bounded transport buffers.
+pub mod stream;

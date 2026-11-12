@@ -303,3 +303,24 @@ impl DerefMut for Storage {
         &mut self.0
     }
 }
+
+impl<T: gix_object::FindStream> gix_object::FindStream for Proxy<T> {
+    fn find_stream(
+        &self,
+        id: &gix_hash::oid,
+        budget: &Arc<gix_utils::stream::Budget>,
+        interrupt: &std::sync::atomic::AtomicBool,
+    ) -> Result<(gix_object::Kind, gix_utils::stream::Spool)> {
+        use std::io::Seek;
+        if let Some(memory) = &self.memory {
+            let memory = memory.borrow();
+            if let Some((kind, data)) = memory.get(id) {
+                let mut out = budget.spool().or_error()?;
+                gix_utils::stream::copy(&mut data.as_slice(), &mut out, interrupt).or_error()?;
+                out.rewind().or_error()?;
+                return Ok((*kind, out));
+            }
+        }
+        self.inner.find_stream(id, budget, interrupt)
+    }
+}

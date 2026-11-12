@@ -105,3 +105,6 @@ impl Options {
 mod chunk;
 mod entry;
 pub(crate) mod function;
+
+/// Serial checkout with quota-accounted disk-backed content.
+pub mod bounded;

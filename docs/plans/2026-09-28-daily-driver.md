@@ -15,6 +15,108 @@ scheduler. Use native context for observed environment and citation blockers.
 - [ ] Installed delivery: fresh standalone install, feature/platform matrix, upgrade and rollback prove the executable and installed epr interface; package publication and clean consumer tests identify exact source revisions. Requires native integration; serves brit-native-daily-driver.
 - [ ] Operational qualification through our own ongoing development across workspaces: complete the loop, preserve Git interoperability and recover interrupted work, recording actual outcomes as we daily-drive Brit. Cross-workspace verification follows this integration pass; scripted identities do not establish it. Serves brit-native-daily-driver.
 
+## Bounded worktree checkout — 2026-11-12
+
+`brit worktree add` now streams loose and packed blobs into operation-owned scratch
+on the destination filesystem. OFS/REF deltas use a disk-backed descriptor stack,
+streamed instructions and one live base/result pair; obsolete bases are reclaimed
+before reconstructing the next version. Hash and size validation, alternates,
+replacement objects and SHA-1/SHA-256 are retained. The buffered object reader's
+allocation limit remains unchanged. A size-only observation of the reported shared
+file found 20,574,865 bytes on this run, above the 16 MiB reduced-trust default;
+its contents and original failed checkout were not replayed. This is the operator-authorized, narrowly scoped
+upstream-ready plumbing exception, not a new cache or worker pool.
+
+The **1 GiB aggregate scratch cap is fixed** and charged before growth, including
+holes, delta metadata and simultaneous input/output spools. Publication releases
+scratch only for completed destination files; serial entry processing avoids
+competing blob stages. Cleanup failure does not refund still-live scratch. There
+is no automatic cap increase or Git fallback. A base/result pair or conversion
+that cannot fit still refuses with the quota diagnostic. Completed worktree files
+and the existing index/tree/attribute metadata machinery are outside the scratch
+budget. The payload transfer buffers are fixed at 64 KiB; process RSS measurements
+below are observations, not attribution of every allocation or a whole-process cap.
+External filter allocations, OS cache and blocking I/O remain outside the bound.
+
+Built-in conversion order remains ident, EOL, encoding, then smudge. Incremental
+statistics and encoding match the existing buffered implementation across chunk
+boundaries. Single-file filters pump a borrowed spool concurrently into stdin
+while draining stdout into charged scratch; optional filter failure retains its
+input, while quota and I/O failures refuse. Immediate and delayed process-filter
+protocols reuse the existing transport. Existing gix ident output has no space
+before the closing `$`, unlike Git; this slice preserves that behavior and tests
+buffered/streamed equality rather than claiming new ident parity.
+
+The existing prepared-worktree boundary owns registration and rollback. Failure
+removes owned destination/registration state, preserves source HEAD/index and
+foreign locks, and reports that a newly created branch remains. After inspection,
+retry uses the existing branch without `-b`. Tests also cover empty trees,
+executables, symlinks, gitlinks and pre-existing destination content. The separate
+hostile-writer cleanup race remains open.
+
+- [x] Cross the buffered allocation boundary with loose/packed entries at 16 MiB minus one byte, exactly 16 MiB, plus one byte and 20 MiB while keeping the 16 MiB object allocation limit. Probe: `large_loose_and_packed_worktrees_preserve_allocation_safeguards`. Serves brit-native-daily-driver.
+- [x] Reclaim delta bases under the actual cap: a 384 MiB base plus three delta versions succeeds with 805,306,393 bytes peak scratch (about 768 MiB); retaining all four versions would exceed 1.5 GiB. OFS depth 1,500, REF depth 40, cross-pack bases, alternates, replacements, corruption and cycles are separately exercised. Probe: `gix-odb` stream tests. Serves brit-native-daily-driver.
+
+Measurements use Rust 1.100.0 (`0ef1bc386`, LLVM 23.1.5), Linux x86_64 debug builds,
+debug information disabled and two compiler workers. This loop selects the new
+toolchain explicitly; the other session owns persistent pins. `BRIT_BIN` and
+`BRIT_REBASE_RETAINED_BIN` explicitly select the tested artifacts because this
+Cargo version changed test executable layout. No package version or shared Elohim
+Rust pin changes are included. Private source/executable identities, commands,
+exit codes and measurements live in the isolated Elohim evidence directory,
+`genesis/local-dev/brit-noise-20261112/bounded-evidence.json`.
+
+The final executable is SHA-256
+`d0149e45ecfb6dc8c0b94f40325e813c9bfbf9344b019066d3ebc8f1a0f3a8db`.
+All six controlled cases succeeded with exact-byte comparisons, below the 64 MiB
+RSS test ceiling. GNU Time 1.9 measured process maximum RSS; a monotonic clock
+measured elapsed time. These are debug-build observations on a shared host,
+not an isolated throughput SLA or a heap-allocation census.
+
+| Input | Conversion | Wall time (ms) | Peak RSS (KiB) |
+| --- | --- | ---: | ---: |
+| 64 MiB | plain | 425 | 43968 |
+| 64 MiB | crlf | 2435 | 44736 |
+| 64 MiB | filter | 553 | 43776 |
+| 256 MiB | plain | 1614 | 44160 |
+| 256 MiB | crlf | 8800 | 43968 |
+| 256 MiB | filter | 1754 | 44160 |
+
+The 384 MiB delta-chain worker returned in 3.768551418 s with peak scratch
+805,306,393 bytes. A real SIGINT after observing at least 1 MiB of blob scratch
+returned in 35 ms, preserving the source index and foreign lock and retaining
+the created branch. The hard-quota test makes an optional filter produce 1 GiB
+while its input remains live: checkout must refuse rather than silently fall
+back, and owned destination/registration state must disappear.
+
+Validation passes all eight public bounded-checkout journeys; three quota/copy
+checks; five focused ODB stream checks and the 92-case ODB suite; 69 filter,
+12 zlib, 30 worktree-state and 52 repository-worktree checks. Regression coverage
+passes 13 replay unit checks, 130 native recovery cases, 72 fault-enabled and
+42 ordinary public rebase/pull/switch cases, with zero ignored tests. The minimal
+object-format build also passes without requiring the new stream feature.
+Workspace formatting, all 12 readiness-contract checks and the declared Rust-style
+checker pass; the latter retains its `brit-build-ref` scope. Strict Clippy passes
+the affected plumbing crates, `gix` library and new CLI test. Full core strict
+Clippy still refuses the untouched `commit.rs:307` `collapsible_if` finding,
+recorded separately in `bounded-clippy-core.log`. No suppression is added.
+Rust 1.100 additionally reports existing manifest warnings for `gix-imara-diff`
+lint inheritance and the test-only `gix-hashtable` dependency in a minimal
+`gix-object` build; these are recorded separately from source lint verdicts.
+
+Story-harvest node: `brit-native-developer`, between branch creation and usable
+linked worktree. Given a packed 384 MiB blob with three delta versions and the
+1 GiB scratch cap, when checkout reconstructs it, then exact bytes are produced
+with peak scratch below the cap; if the cap is exhausted, owned setup rolls back
+and the retained branch supports an inspected retry. The runnable stations are
+the ODB resource test and public `worktree_bounded` journeys. This preserves the
+resource constraint without weakening whole-workflow acceptance.
+
+Readiness remains **RED**. Independent review, upstream CI, publication,
+installation, version allocation, parent-pin integration and the broader
+cancellation backlog remain subsequent work. Controlled SIGINT during a blob
+write is tested; no universal Ctrl-C latency guarantee is claimed.
+
 ## Cancellation within selection and index loops — 2026-11-12
 
 Brit-owned selected-commit collection, candidate-chain traversal, tree collection,
@@ -454,7 +556,7 @@ and conditioned LAND on these documentation corrections. Exact final CI remains
 required before landing; this is technical review, not human acceptance.
 
 - [ ] Bound the remaining cancellation frontier: individual large-object decompression/hash operations, merge-base traversal, whole-worktree witness serialization/hashing, journal serialization, allocation/deallocation and blocking filesystem calls. The 2026-11-12 selection/index loop slice proves only its controlled workloads within one second; it does not preempt library internals or establish a universal latency budget. Retain representative large-object and real-repository probes as subsequent work. Serves brit-native-daily-driver.
-- [ ] Next sprint: reproduce the operator-reported `brit worktree add` refusal, `Entry too large to fit in memory`, on `.claude/data/governance-findings.jsonl` after the new branch was already created. Measure the entry-size boundary with disposable repositories, preserve existing worktrees and branches, and prove safe recovery from partial branch creation without blindly replaying the command. This report is user-supplied, not reproduced or fixed by the cancellation slice. Serves brit-native-daily-driver.
+- [x] Implement bounded `brit worktree add` payload processing and retained-branch recovery under the hard 1 GiB scratch cap. Disposable loose/packed fixtures reproduce the allocation-limit failure in the buffered reader and succeed through bounded checkout. The original shared `governance-findings.jsonl` incident is not replayed. Probes: `worktree_bounded` CLI suite and `gix-odb` stream tests; see the 2026-11-12 bounded-checkout evidence above. Serves brit-native-daily-driver.
 - [ ] Harden unpublished-journal cleanup against a hostile local process with write access inside `.git`: path substitution can race create/metadata or inode-check/remove, including ancestor symlinks, and cause removal of an empty directory not created by this operation. `remove_dir` refuses non-empty directories and does not follow a final-component symlink; that bounds the observed threat. Investigate private staging and handle-anchored ownership, with adversarial path-swap probes, as a separate slice. Serves brit-native-daily-driver.
 - [ ] Reconcile retained-copy helper delivery with the followed-tool install: `brit-build-artifacts.yml` ships only brit/build-ref/verify, while `brit-release.yml` includes and qualifies `brit-rebase-retained`. On shem, `command -v brit-rebase-retained` currently fails. Abort/recovery itself runs in-process; independent retained-copy inspection/extraction still needs the separate helper. Probe the installed helper and export a retained copy before declaring that delivery station qualified. Serves brit-native-daily-driver.
 

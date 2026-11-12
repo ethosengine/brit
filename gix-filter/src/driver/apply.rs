@@ -222,7 +222,6 @@ impl WriterThread {
                 use std::io::Write;
                 stdin.write_all(&data)?;
                 // Explicitly drop stdin to close the pipe and signal EOF to the child
-                drop(stdin);
                 Ok(())
             }))?;
 
@@ -377,6 +376,62 @@ impl std::io::Read for ReadFilterOutput {
                 Ok(num_read)
             }
             None => Ok(0),
+        }
+    }
+}
+
+impl State {
+    pub(crate) fn apply_single_stream(
+        &mut self,
+        driver: &Driver,
+        mut src: gix_utils::stream::Spool,
+        ctx: Context<'_, '_>,
+        budget: &std::sync::Arc<gix_utils::stream::Budget>,
+        interrupt: &std::sync::atomic::AtomicBool,
+    ) -> Result<gix_utils::stream::Spool> {
+        use gix_error::{ResultExt, message};
+        use gix_utils::stream;
+        use std::io::Seek;
+        let Some(Process::SingleFile { mut child, .. }) =
+            self.maybe_launch_process(driver, Operation::Smudge, ctx.rela_path)?
+        else {
+            return Ok(src);
+        };
+        let mut stdin = child.stdin.take().expect("piped filter input");
+        let mut stdout = child.stdout.take().expect("piped filter output");
+        let result = std::thread::scope(|scope| -> Result<_> {
+            let input = &mut src;
+            let writer = scope.spawn(move || stream::copy(input, &mut stdin, interrupt));
+            let result: Result<_> = (|| {
+                let mut out = budget.spool().or_error()?;
+                stream::copy(&mut stdout, &mut out, interrupt).or_error()?;
+                Ok(out)
+            })();
+            if result.is_err() {
+                child.kill().ok();
+            }
+            let written = writer
+                .join()
+                .map_err(|_| std::io::Error::other("Filter input thread panicked"))
+                .or_error()?;
+            let status = child.wait().or_error()?;
+            let out = result?;
+            if !status.success() {
+                if driver.required {
+                    bail!(message("Smudge filter failed"));
+                }
+                return Ok(None);
+            }
+            written.or_error()?;
+            Ok(Some(out))
+        });
+        match result {
+            Ok(Some(out)) => Ok(out),
+            Ok(None) => {
+                src.rewind().or_error()?;
+                Ok(src)
+            }
+            Err(err) => Err(err),
         }
     }
 }

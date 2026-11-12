@@ -65,6 +65,8 @@ pub mod data;
 pub mod find;
 
 mod traits;
+#[cfg(feature = "stream")]
+pub use traits::FindStream;
 pub use traits::{Exists, Find, FindExt, FindObjectOrHeader, Header as FindHeader, HeaderExt, Write, WriteTo};
 
 pub mod encode;

@@ -44,8 +44,11 @@ interrupt = ["dep:gix-error"]
 io-pipe = ["dep:bytes"]
 ## Count cache hits, misses, and insertions and print diagnostics on drop.
 cache-efficiency-debug = []
+## Quota-accounted disk spools for bounded object processing.
+stream = ["dep:tempfile", "dep:gix-error"]
 
 [dependencies]
+tempfile = { version = "3.26.0", optional = true }
 gix-error = { version = "^0.5.1", path = "../gix-error", registry = "elohim", optional = true }
 prodash = { version = "31.0.1", optional = true }
 bytesize = { version = "2.3.1", optional = true }

@@ -49,6 +49,7 @@ where
                 .ok_or_raise(|| gix::error::validation("The destination needs a directory name"))?,
         )?)?)
     };
+    let mut created_branch = None;
     let head = match branch {
         Some(name) if options.new_branch.is_none() && repo.try_find_reference(name.as_ref())?.is_some() => {
             Head::Attached(name)
@@ -65,13 +66,24 @@ where
                     reflog_message.extend_from_slice(start_point);
                     // Git also retains this branch if subsequent worktree setup fails.
                     repo.reference(name.clone(), commit_id, PreviousValue::MustNotExist, reflog_message)?;
+                    created_branch = Some(name.clone());
                     Head::Attached(name)
                 }
                 None => Head::Detached(commit_id),
             }
         }
     };
-    let (created, outcome) = repo.add_worktree(destination, head, progress, should_interrupt)?;
+    let (created, outcome) = (|| {
+        repo.prepare_add_worktree(destination, head, should_interrupt)?
+            .checkout_bounded(progress, should_interrupt)
+    })()
+    .or_raise(|| match created_branch {
+        Some(name) => message!(
+            "Worktree add failed at {}. Branch {name} is retained; inspect the destination and registration before retrying with that existing branch, without -b",
+            destination.display()
+        ),
+        None => message!("Worktree add failed at {}", destination.display()),
+    })?;
     if let Some(error) = outcome.errors.into_iter().next() {
         return Err(error.error).or_raise(|| message!("Worktree checkout failed at {:?}", error.path));
     }

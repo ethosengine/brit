@@ -22,12 +22,12 @@ sha256 = ["gix-index/sha256"]
 
 [dependencies]
 gix-trace = { version = "^0.3.0", path = "../gix-trace", registry = "elohim" }
-gix-utils = { version = "^0.5.1", path = "../gix-utils", registry = "elohim", features = ["interrupt", "progress"] }
+gix-utils = { version = "^0.5.1", path = "../gix-utils", registry = "elohim", features = ["stream", "interrupt", "progress"] }
 gix-parallel = { version = "^0.50.0", path = "../gix-parallel", registry = "elohim" }
 gix-worktree = { version = "^0.58.2", path = "../gix-worktree", registry = "elohim", default-features = false, features = ["attributes"] }
 gix-index = { version = "^0.57.2", path = "../gix-index", registry = "elohim" }
 gix-fs = { version = "^0.24.0", path = "../gix-fs", registry = "elohim" }
-gix-object = { version = "^0.66.0", path = "../gix-object", registry = "elohim" }
+gix-object = { version = "^0.66.0", path = "../gix-object", registry = "elohim", features = ["stream"] }
 gix-error = { version = "^0.5.1", path = "../gix-error", registry = "elohim", features = ["bstr"] }
 gix-path = { version = "^0.14.0", path = "../gix-path", registry = "elohim" }
 gix-filter = { version = "^0.36.1", path = "../gix-filter", registry = "elohim" }

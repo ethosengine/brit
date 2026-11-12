@@ -225,3 +225,126 @@ fn unknown_encoding_can_be_an_error() -> gix_testtools::TestResult {
     assert!(err.is_validation(), "unknown encodings are validation failures");
     Ok(())
 }
+
+#[test]
+fn bounded_stream_matches_buffered_conversions_across_chunks() -> gix_testtools::TestResult {
+    use gix_filter::pipeline::stream::Outcome;
+    use gix_utils::stream::Budget;
+    use std::io::{Seek, Write};
+    let temp = gix_testtools::tempfile::tempdir()?;
+    let budget = Budget::new(temp.path())?;
+    for path in ["any.txt", "other.txt"] {
+        for offset in [8190, 8191, 65534, 65535, 65536] {
+            let mut input = vec![b'x'; offset];
+            input.extend_from_slice("$Id$\r\n$Id$\nmultibyte: €\n".as_bytes());
+            let (mut cache, mut pipe) = pipeline("all-filters", || {
+                (vec![], Vec::new(), CrlfRoundTripCheck::Skip, Default::default())
+            })?;
+            let mut attributes = |path: &bstr::BStr, attrs: &mut gix_attributes::search::Outcome| {
+                cache
+                    .at_entry(path, None, &gix_object::find::Never)
+                    .expect("fixture attributes")
+                    .matching_attributes(attrs);
+            };
+            let options = || to_worktree::Options {
+                can_delay: gix_filter::driver::apply::Delay::Forbid,
+                unknown_encoding: to_worktree::UnknownEncoding::Fail,
+            };
+            let mut expected = Vec::new();
+            pipe.convert_to_worktree(&input, path.into(), &mut attributes, options())?
+                .read_to_end(&mut expected)?;
+            let mut source = budget.spool()?;
+            source.write_all(&input)?;
+            source.rewind()?;
+            let Outcome::Ready(mut out) = pipe.convert_to_worktree_stream(
+                source,
+                path.into(),
+                &mut attributes,
+                options(),
+                &budget,
+                &Default::default(),
+            )?
+            else {
+                panic!("no driver is configured")
+            };
+            let mut actual = Vec::new();
+            out.read_to_end(&mut actual)?;
+            assert_eq!(actual, expected, "{path}, split at {offset}");
+            drop(out);
+            assert_eq!(budget.usage().0, 0);
+        }
+    }
+    Ok(())
+}
+
+#[test]
+fn bounded_process_filters_preserve_immediate_and_delayed_protocols() -> gix_testtools::TestResult {
+    use gix_filter::{driver::apply::Delay, pipeline::stream::Outcome};
+    use gix_utils::stream::{self, Budget};
+    use std::io::{Seek, Write};
+    let temp = gix_testtools::tempfile::tempdir()?;
+    let budget = Budget::new(temp.path())?;
+    for can_delay in [Delay::Allow, Delay::Forbid] {
+        let (mut cache, mut pipe) = pipeline("driver-only", || {
+            (
+                vec![driver_with_process()],
+                Vec::new(),
+                CrlfRoundTripCheck::Skip,
+                Default::default(),
+            )
+        })?;
+        let mut input = budget.spool()?;
+        input.write_all(b"a\nb\n")?;
+        input.rewind()?;
+        let out = pipe.convert_to_worktree_stream(
+            input,
+            "file".into(),
+            &mut |path, attrs| {
+                cache
+                    .at_entry(path, None, &gix_object::find::Never)
+                    .expect("fixture attributes")
+                    .matching_attributes(attrs);
+            },
+            to_worktree::Options {
+                can_delay,
+                unknown_encoding: to_worktree::UnknownEncoding::Fail,
+            },
+            &budget,
+            &Default::default(),
+        )?;
+        let mut out = match out {
+            Outcome::Ready(out) => {
+                assert!(matches!(can_delay, Delay::Forbid));
+                out
+            }
+            Outcome::Delayed(key) => {
+                assert!(matches!(can_delay, Delay::Allow));
+                assert_eq!(
+                    budget.usage().0,
+                    0,
+                    "the driver owns delayed input, no Brit spool is retained"
+                );
+                let paths = pipe.driver_state_mut().list_delayed_paths(&key)?;
+                assert_eq!(paths, vec![bstr::BString::from("file")]);
+                let mut reader = pipe.driver_state_mut().fetch_delayed(
+                    &key,
+                    "file".into(),
+                    gix_filter::driver::Operation::Smudge,
+                )?;
+                let mut out = budget.spool()?;
+                stream::copy(&mut reader, &mut out, &Default::default())?;
+                out.rewind()?;
+                out
+            }
+        };
+        let mut content = String::new();
+        out.read_to_string(&mut content)?;
+        assert_eq!(content, "➡a\n➡b\n");
+        drop(out);
+        assert_eq!(budget.usage().0, 0);
+        pipe.driver_state_mut()
+            .shutdown(gix_filter::driver::shutdown::Mode::WaitForProcesses)?
+            .into_result()?;
+    }
+    Ok(())
+}

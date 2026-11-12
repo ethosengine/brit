@@ -502,6 +502,62 @@ fn filter_process_failure_during_shutdown_is_ignored() -> TestResult {
 }
 
 #[test]
+fn bounded_checkout_preserves_delayed_paths_and_refuses_forgotten_outputs() -> TestResult {
+    use gix_filter::driver::apply::Delay;
+    use gix_utils::stream::Budget;
+
+    for delay in [Delay::Forbid, Delay::Allow] {
+        let mut opts = opts_from_probe();
+        opts.filter_process_delay = delay;
+        setup_filter_pipeline(opts.filters.options_mut());
+        let (source, expected, mut index, baseline) =
+            checkout_index_in_tmp_dir(opts.clone(), "make_mixed_without_submodules_and_symlinks", None)?;
+        let actual = gix_testtools::tempfile::tempdir()?;
+        let budget = Budget::new(actual.path())?;
+        let outcome = gix_worktree_state::checkout::bounded::checkout(
+            &mut index,
+            actual.path(),
+            odb_at(source.join(".git/objects"))?,
+            opts.clone(),
+            &budget,
+            &AtomicBool::new(false),
+        )?;
+        assert_eq!(outcome.files_updated, baseline.files_updated);
+        assert_eq!(outcome.bytes_written, baseline.bytes_written);
+        assert_eq!(budget.usage().0, 0);
+        for entry in index.entries() {
+            let path = gix_path::from_bstr(entry.path(&index))?;
+            assert_eq!(
+                fs::read(actual.path().join(&path))?,
+                fs::read(expected.path().join(&path))?
+            );
+            #[cfg(unix)]
+            assert_eq!(
+                fs::metadata(actual.path().join(&path))?.mode() & 0o111,
+                fs::metadata(expected.path().join(&path))?.mode() & 0o111,
+            );
+        }
+        if matches!(delay, Delay::Allow) {
+            opts.filters.options_mut().drivers[0].process = Some((driver_exe() + " process forget-delayed").into());
+            let refused = gix_testtools::tempfile::tempdir()?;
+            let budget = Budget::new(refused.path())?;
+            let err = gix_worktree_state::checkout::bounded::checkout(
+                &mut index,
+                refused.path(),
+                odb_at(source.join(".git/objects"))?,
+                opts,
+                &budget,
+                &AtomicBool::new(false),
+            )
+            .expect_err("forgotten delayed content cannot become a successful checkout");
+            assert!(err.is_corrupted());
+            assert_eq!(budget.usage().0, 0);
+        }
+    }
+    Ok(())
+}
+
+#[test]
 fn forgotten_delayed_path_is_a_corruption_error() {
     let mut opts = opts_from_probe();
     // Keep the forgotten path independent of worker scheduling.

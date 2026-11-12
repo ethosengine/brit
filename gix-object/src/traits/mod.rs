@@ -71,3 +71,15 @@ mod _impls;
 
 mod find;
 pub use find::*;
+
+/// Find an object without materializing its content in memory.
+#[cfg(feature = "stream")]
+pub trait FindStream {
+    /// Resolve and validate an object into quota-accounted scratch, positioned at its start.
+    fn find_stream(
+        &self,
+        id: &gix_hash::oid,
+        budget: &std::sync::Arc<gix_utils::stream::Budget>,
+        interrupt: &std::sync::atomic::AtomicBool,
+    ) -> Result<(Kind, gix_utils::stream::Spool)>;
+}

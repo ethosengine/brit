@@ -4,7 +4,7 @@ use std::{
 };
 
 use gix_error::{ClassificationMarker, ErrorExt, OptionExt, ResultExt, bail, ensure, message, validation};
-use gix_utils::progress::{NestedProgress, Progress};
+use gix_utils::progress::{Count, NestedProgress, Progress};
 
 use crate::{Result, repository::FormatVersion};
 use gix_ref::transaction::{LogChange, PreviousValue, RefEdit, RefLog};
@@ -360,13 +360,47 @@ impl PrepareCheckout {
             }
         }
     }
+    /// Check out using bounded blob buffers and a hard 1 GiB aggregate scratch quota.
+    pub fn checkout_bounded<P>(
+        self,
+        progress: P,
+        should_interrupt: &AtomicBool,
+    ) -> Result<(crate::Repository, gix_worktree_state::checkout::Outcome)>
+    where
+        P: NestedProgress,
+        P::SubProgress: NestedProgress + 'static,
+    {
+        match checkout_tree_inner(&self.repo, &self.root_tree_id, progress, should_interrupt, true) {
+            Ok(outcome) => Ok((self.persist()?, outcome)),
+            Err(err) => {
+                if let Err(cleanup) = self.rollback() {
+                    return Err(err.and_raise(cleanup));
+                }
+                Err(err)
+            }
+        }
+    }
 }
 
 pub(crate) fn checkout_tree<P>(
     repo: &crate::Repository,
     root_tree_id: &gix_hash::oid,
+    progress: P,
+    should_interrupt: &AtomicBool,
+) -> Result<gix_worktree_state::checkout::Outcome>
+where
+    P: NestedProgress,
+    P::SubProgress: NestedProgress + 'static,
+{
+    checkout_tree_inner(repo, root_tree_id, progress, should_interrupt, false)
+}
+
+fn checkout_tree_inner<P>(
+    repo: &crate::Repository,
+    root_tree_id: &gix_hash::oid,
     mut progress: P,
     should_interrupt: &AtomicBool,
+    bounded: bool,
 ) -> Result<gix_worktree_state::checkout::Outcome>
 where
     P: NestedProgress,
@@ -388,24 +422,43 @@ where
     files.init(Some(index.entries().len()), crate::progress::count("files"));
     bytes.init(None, crate::progress::bytes());
     let started = std::time::Instant::now();
-    let outcome = gix_worktree_state::checkout(
-        &mut index,
-        work_dir,
-        repo.objects
-            .clone()
-            .into_arc()
-            .or_raise(|| message("Failed to reopen the object database for checkout"))?,
-        &files,
-        &bytes,
-        should_interrupt,
-        checkout_options,
-    )?;
+    let outcome = if bounded {
+        let budget = gix_utils::stream::Budget::new(work_dir).or_error()?;
+        gix_worktree_state::checkout::bounded::checkout(
+            &mut index,
+            work_dir,
+            repo.objects.clone(),
+            checkout_options,
+            &budget,
+            should_interrupt,
+        )?
+    } else {
+        gix_worktree_state::checkout(
+            &mut index,
+            work_dir,
+            repo.objects
+                .clone()
+                .into_arc()
+                .or_raise(|| message("Failed to reopen the object database for checkout"))?,
+            &files,
+            &bytes,
+            should_interrupt,
+            checkout_options,
+        )?
+    };
+    if bounded {
+        files.set(outcome.files_updated);
+        bytes.set(outcome.bytes_written.try_into().unwrap_or(usize::MAX));
+    }
     files.show_throughput(started);
     bytes.show_throughput(started);
     ensure!(!should_interrupt.load(Ordering::Relaxed), Error::Interrupted);
     index
         .write(Default::default())
         .or_raise(|| message("Could not write the linked worktree index"))?;
+    if bounded {
+        ensure!(!should_interrupt.load(Ordering::Relaxed), Error::Interrupted);
+    }
     Ok(outcome)
 }
 fn copy_worktree_config(source: &Path, destination: &Path) -> Result<()> {
