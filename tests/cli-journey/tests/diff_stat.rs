@@ -184,8 +184,11 @@ fn names_scaling_literal_selection_and_renames() -> Result<()> {
         &long,
         &flat,
         "space name",
+        #[cfg(unix)]
         "tab\tname",
+        #[cfg(unix)]
         "quote\"name",
+        #[cfg(unix)]
         "back\\slash",
         "café",
         "literal[ab]",

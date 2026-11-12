@@ -30,6 +30,10 @@ The Unicode fixture failed locally before the renderer correction, then all
 26 diff-stat, attribution and bounded-checkout journeys passed, along with the
 Unicode unit cases, strict scoped Clippy, formatting and 12 readiness contracts. The candidate's
 20 dependency-advisory findings remain separately recorded; no ignore was added.
+The final Windows fixture log also exposed invalid host filenames (tab, quote
+and literal backslash). Those entries remain exercised on Unix; Windows retains
+the shared names, scaling, selection and rename assertions. All 14 diff-stat
+journeys and formatting pass locally after this fixture-only correction.
 
 Brit 0.1.14 packages the nine sprint commits after 0.1.13: branch creation and
 shared mutation guarding, resolved merge commits, diff statistics, passive commit
