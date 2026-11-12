@@ -10,6 +10,8 @@ pub mod conflict;
 #[cfg(target_os = "linux")]
 pub mod invocation;
 
+pub(super) mod merge;
+
 use anyhow::{Context, Result, bail, ensure};
 
 fn absolute(repo: &gix::Repository, path: &std::path::Path) -> PathBuf {

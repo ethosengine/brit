@@ -25,9 +25,11 @@ story; installed delivery remains separate from source validation.
 
 The native command is `brit branch create <name> [start-point]`. It reuses the
 worktree branch-name validator and a `MustNotExist` ref transaction. It does
-not offer branch replacement or deletion. Three executable regressions cover
+not offer branch replacement or deletion. Four executable regressions cover
 dirty/staged preservation, tag peeling and invalid sources, and linked-worktree
-HEAD selection. The remote-tracking regression also verifies the existing
+HEAD selection, and the shared mutation guard. Creation refuses during an active
+guarded operation in either checkout; branch listing remains available.
+The remote-tracking regression also verifies the existing
 `brit remote -n origin refs`, `brit fetch -r origin`, and explicit destination
 refspecs. Supplying refspecs replaces the configured mappings; when naming a
 single branch, use `brit fetch -r origin +refs/heads/dev:refs/remotes/origin/dev`
@@ -40,8 +42,36 @@ needs its private feedback capacity store initialized: inspect `epr feedback
 capacity` before an explicit `migrate --legacy-writers-quiesced`; the migration
 is only appropriate after establishing that no legacy writer is active. Neither
 finding calls for suppressing capture-gap warnings or changing another session's
-pin. Arbitrary-shell seam coverage, merge commits and missing live Claude model
+pin. Arbitrary-shell seam coverage and missing live Claude model
 context remain separate gaps.
+
+## Resolved merge commits — 2026-11-12
+
+`brit commit -m <message>` or `brit commit -F <file>` completes an ordinary
+two-parent merge after its conflicts have been resolved and staged. The commit
+uses the original HEAD and then MERGE_HEAD as parents, including when the staged
+tree equals HEAD's tree. Hooks retain the normal message and attribution path;
+the committed tree reads staging after hooks, preserving unstaged work.
+
+This path supplies no merge engine or editor. It refuses unresolved indexes,
+unborn HEAD, malformed or multiple merge heads, mixed operations, required
+signing, amendment, implicit messages and pending autostash/rerere work.
+Metadata snapshots and ordinary locks protect completion; the existing guarded
+ref transaction pins HEAD's identity and attachment before publication.
+
+After publication, only captured and unchanged merge metadata is removed from
+the worktree's Git directory, with MERGE_HEAD last. ORIG_HEAD, index and worktree
+remain intact. Post-commit runs after cleanup. Cleanup failure reports the
+published commit and remaining metadata, with no rollback or automatic retry.
+An incorporated MERGE_HEAD refuses another commit, including after interrupted
+cleanup. An uncatchable process kill cannot print a diagnostic and may leave
+ordinary lock files; inspect the published HEAD and retained metadata before
+any manual recovery.
+
+`tests/cli-journey/tests/commit_merge.rs` is the executable story, with stock Git
+as the exact-object oracle and the existing `switch-test-faults` build feature
+for publication and cleanup interruption. Source verification does not establish
+independent review, installed delivery, upstream CI or parent-pin integration.
 
 ## Collision-fixture rebase — 2026-11-05
 

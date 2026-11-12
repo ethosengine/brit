@@ -279,7 +279,20 @@ pub fn create(
     if !pathspec.is_empty() || include || only {
         bail!("path-scoped commit is not yet supported; stage explicit paths and inspect the index, or use git commit");
     }
-    if let Some(state) = repo.state() {
+    let original_head = repo.head()?;
+    let merge = super::authoring::merge::ResolvedMerge::capture(&repo)?;
+    if merge.is_some() {
+        if amend
+            || no_edit
+            || reuse_message.is_some()
+            || reedit_message.is_some()
+            || squash.is_some()
+            || fixup.is_some()
+            || (message.is_empty() && file.is_none())
+        {
+            bail!("resolved merge commit requires -m or -F and does not support amendment or implicit messages");
+        }
+    } else if let Some(state) = repo.state() {
         bail!("commit during {state:?} is not yet supported; use git commit");
     }
     if no_edit && (!amend || !message.is_empty() || file.is_some()) {
@@ -291,13 +304,14 @@ pub fn create(
     if amend && repo.git_dir().join("sequencer").exists() {
         bail!("commit amendment during an active sequencer operation is not supported; finish or abort it first");
     }
-    let original_head = repo.head()?;
-    if amend {
+    if amend || merge.is_some() {
         if let Some(name) = original_head.referent_name()
             && repo.find_reference(name)?.target().try_id().is_none()
         {
-            bail!("amend does not support symbolic branch chains");
+            bail!("commit does not support symbolic branch chains");
         }
+    }
+    if amend {
         let config = repo.config_snapshot();
         if config.try_boolean("commit.gpgSign")?.unwrap_or(false) {
             bail!("amend does not support required signing (commit.gpgSign)");
@@ -514,6 +528,7 @@ pub fn create(
         bail!("Aborting commit due to empty commit message.");
     }
     // Read after hooks, which may stage changes. Never substitute worktree bytes.
+    let merge_locks = merge.as_ref().map(|merge| merge.lock(&repo)).transpose()?;
     let tree_id = super::authoring::index_tree(&repo)?;
     let comparison_commit = if amend {
         head_commit
@@ -530,13 +545,14 @@ pub fn create(
         .as_ref()
         .map(|commit| commit.tree_id().map(|id| id.detach()))
         .transpose()?;
-    let is_merge = amend
-        && head_commit
-            .as_ref()
-            .context("amend requires HEAD")?
-            .parent_ids()
-            .count()
-            > 1;
+    let is_merge = merge.is_some()
+        || amend
+            && head_commit
+                .as_ref()
+                .context("amend requires HEAD")?
+                .parent_ids()
+                .count()
+                > 1;
     if !allow_empty
         && !is_merge
         && previous_tree.unwrap_or_else(|| gix::ObjectId::empty_tree(repo.object_hash())) == tree_id
@@ -553,7 +569,7 @@ pub fn create(
     // For --amend, the new commit's parents are HEAD's parents (we
     // replace HEAD itself). For --allow-empty, the new commit's
     // parent is HEAD.
-    let parent_ids: Vec<gix::ObjectId> = if amend {
+    let mut parent_ids: Vec<gix::ObjectId> = if amend {
         head_commit
             .as_ref()
             .context("amend requires HEAD")?
@@ -563,6 +579,10 @@ pub fn create(
     } else {
         head_id.into_iter().map(gix::Id::detach).collect()
     };
+
+    if let Some(merge) = &merge {
+        parent_ids.push(merge.commit_id);
+    }
 
     // Resolve the author signature. For --amend without --reset-author
     // (the latter is gated 128 above), git keeps the original commit's
@@ -597,13 +617,10 @@ pub fn create(
         .context("invalid committer time configuration")?
         .to_owned()?;
 
-    let new_id = if amend {
-        // --amend: build the commit object directly so we can both (a)
-        // set parents to HEAD's parents (not HEAD) and (b) update HEAD
-        // with the expected previous value being HEAD itself, not the
-        // new commit's first parent. repo.commit_as() can't do that
-        // because it expects HEAD == first parent in its ref-update
-        // pre-condition (see commit_as_inner).
+    let new_id = if amend || merge.is_some() {
+        // Amendments and resolved merges publish through the same pinned ref
+        // transaction: lock HEAD's attachment as well as its original commit.
+        // Amendment parents come from HEAD; merge parents are HEAD, MERGE_HEAD.
         use gix::refs::{
             Target,
             transaction::{Change, LogChange, PreviousValue, RefEdit, RefLog},
@@ -620,14 +637,15 @@ pub fn create(
         let new_id = repo.write_object(&commit_obj)?;
         // Git's amendment reflog uses the first physical message line, even
         // when it is blank, and normalizes whitespace in the resulting entry.
-        let log_line = format!("commit (amend): {}", composed.split('\n').next().unwrap_or(""));
+        let operation = if amend { "amend" } else { "merge" };
+        let log_line = format!("commit ({operation}): {}", composed.split('\n').next().unwrap_or(""));
         let log_message: gix::bstr::BString = log_line
             .split([' ', '\t', '\r', '\n'])
             .filter(|part| !part.is_empty())
             .collect::<Vec<_>>()
             .join(" ")
             .into();
-        let old_id = head_id.context("amend requires HEAD")?.detach();
+        let old_id = head_id.context("guarded commit requires HEAD")?.detach();
         let mut edits = Vec::new();
         if let Some(branch) = original_head.referent_name() {
             // Publish the pinned branch first while the HEAD guard's lock remains held.
@@ -687,6 +705,10 @@ pub fn create(
             .unwrap_or(gix::lock::acquire::Fail::AfterDurationWithBackoff(
                 std::time::Duration::from_secs(1),
             ));
+        #[cfg(all(target_os = "linux", feature = "switch-test-faults"))]
+        if merge.is_some() {
+            super::switch::checkpoint("merge-before-publication")?;
+        }
         let transaction = repo
             .refs
             .transaction()
@@ -696,6 +718,12 @@ pub fn create(
                     .map(|_| "HEAD".try_into().expect("valid HEAD")),
             )
             .prepare(edits, file_timeout, packed_timeout)?;
+        if gix::interrupt::is_triggered() {
+            bail!("commit cancelled before publication; HEAD was not updated by Brit");
+        }
+        if let Some(merge) = &merge {
+            merge.validate(&repo)?;
+        }
         if gix::interrupt::is_triggered() {
             bail!("commit cancelled before publication; HEAD was not updated by Brit");
         }
@@ -742,6 +770,14 @@ pub fn create(
         )
         .context("writing the commit object failed")?
     };
+
+    if let Some(merge) = &merge {
+        merge.cleanup(&repo).with_context(|| format!(
+            "commit {new_id} was published, but merge cleanup failed; remaining merge metadata in {}: {}; no rollback or automatic retry was attempted",
+            repo.git_dir().display(), merge.remaining(&repo)
+        ))?;
+    }
+    drop(merge_locks);
 
     // Post-commit cannot undo an already-created commit; report its failure as a warning.
     if let Err(err) = super::authoring::run_hook(&repo, "post-commit", &[]) {
