@@ -15,6 +15,34 @@ scheduler. Use native context for observed environment and citation blockers.
 - [ ] Installed delivery: fresh standalone install, feature/platform matrix, upgrade and rollback prove the executable and installed epr interface; package publication and clean consumer tests identify exact source revisions. Requires native integration; serves brit-native-daily-driver.
 - [ ] Operational qualification through our own ongoing development across workspaces: complete the loop, preserve Git interoperability and recover interrupted work, recording actual outcomes as we daily-drive Brit. Cross-workspace verification follows this integration pass; scripted identities do not establish it. Serves brit-native-daily-driver.
 
+## Branch creation — 2026-11-12
+
+Daily-driving follow-up, 2026-11-12: a developer must be able to create a named
+branch at HEAD or an explicit commit without changing HEAD, staged bytes or
+unstaged work. Existing names and invalid/non-commit start points must refuse
+without replacing a ref. `brit-cli/tests/branch_create.rs` is the executable
+story; installed delivery remains separate from source validation.
+
+The native command is `brit branch create <name> [start-point]`. It reuses the
+worktree branch-name validator and a `MustNotExist` ref transaction. It does
+not offer branch replacement or deletion. Three executable regressions cover
+dirty/staged preservation, tag peeling and invalid sources, and linked-worktree
+HEAD selection. The remote-tracking regression also verifies the existing
+`brit remote -n origin refs`, `brit fetch -r origin`, and explicit destination
+refspecs. Supplying refspecs replaces the configured mappings; when naming a
+single branch, use `brit fetch -r origin +refs/heads/dev:refs/remotes/origin/dev`
+to explicitly refresh `origin/dev`.
+
+The inherited `EPR_BIN` candidate can select a recorder older than the installed
+device head. On this workspace, removing that obsolete override restored both
+feedback capture and native Codex commit trailers. A new Elohim worktree also
+needs its private feedback capacity store initialized: inspect `epr feedback
+capacity` before an explicit `migrate --legacy-writers-quiesced`; the migration
+is only appropriate after establishing that no legacy writer is active. Neither
+finding calls for suppressing capture-gap warnings or changing another session's
+pin. Arbitrary-shell seam coverage, merge commits and missing live Claude model
+context remain separate gaps.
+
 ## Collision-fixture rebase — 2026-11-05
 
 Installed Brit 0.1.9 cannot replay divergent commits in its own repository:

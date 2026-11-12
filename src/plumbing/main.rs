@@ -681,6 +681,11 @@ pub fn run_with_command(args: Args, command: clap::Command) -> Result<()> {
             )
         }),
         Subcommands::Branch(platform) => match platform.cmd {
+            branch::Subcommands::Create { name, start_point } => {
+                prepare_and_run("branch-create", auto_verbose, None, move |_progress, _out, _err| {
+                    core::repository::branch::create(repository(Mode::Strict)?, name.as_str(), start_point.as_str())
+                })
+            }
             branch::Subcommands::List { all } => {
                 use core::repository::branch::list;
 

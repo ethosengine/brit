@@ -325,6 +325,14 @@ pub mod branch {
 
     #[derive(Debug, clap::Subcommand)]
     pub enum Subcommands {
+        /// Create a branch without switching the checkout or replacing an existing name.
+        Create {
+            /// Name of the new local branch.
+            name: String,
+            /// Commit or annotated tag at which to create the branch.
+            #[clap(default_value = "HEAD")]
+            start_point: String,
+        },
         /// List branches.
         List {
             /// List remote-tracking as well as local branches.

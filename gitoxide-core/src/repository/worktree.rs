@@ -2,12 +2,13 @@ use std::{path::Path, sync::atomic::AtomicBool};
 
 use gix::{
     NestedProgress, Result,
-    bstr::{BStr, BString, ByteSlice},
+    bstr::{BString, ByteSlice},
     error::{OptionExt, ResultExt, bail, message},
     prelude::ObjectIdExt,
 };
 use unicode_width::UnicodeWidthStr;
 
+use super::branch::local_branch_name;
 use crate::OutputFormat;
 
 pub struct AddOptions {
@@ -95,16 +96,6 @@ where
     )?;
     info.write(out, UnicodeWidthStr::width(info.base.as_str())).or_error()?;
     Ok(())
-}
-
-fn local_branch_name(name: &BStr) -> Result<gix::refs::FullName> {
-    if name.starts_with(b"-") {
-        bail!(gix::error::validation("Branch names must not start with '-'"));
-    }
-    let mut full_name: BString = "refs/heads/".into();
-    full_name.extend_from_slice(name);
-    gix::validate::reference::branch_name(full_name.as_bstr()).or_error()?;
-    gix::refs::FullName::try_from(full_name).or_error()
 }
 
 pub fn remove<P>(repo: gix::Repository, worktree: &Path, force: u8, progress: P, format: OutputFormat) -> Result<()>
