@@ -36,7 +36,9 @@ pub fn main() -> Result<()> {
 // boundary until their read-only semantics are explicitly established here.
 fn requires_mutation_guard(cmd: &Subcommands) -> bool {
     match cmd {
-        Subcommands::Branch(_)
+        Subcommands::Branch(branch::Platform {
+            cmd: branch::Subcommands::List { .. },
+        })
         | Subcommands::CommitGraph(_)
         | Subcommands::Odb(_)
         | Subcommands::Fsck(_)
