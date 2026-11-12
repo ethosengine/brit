@@ -2,7 +2,7 @@ lints.workspace = true
 
 [package]
 name = "gix-protocol"
-version = "0.67.2"
+version = "0.67.3"
 repository = "https://github.com/GitoxideLabs/gitoxide"
 license = "MIT OR Apache-2.0"
 description = "A crate of the gitoxide project for implementing git protocols"
@@ -75,24 +75,24 @@ path = "tests/async-protocol.rs"
 required-features = ["async-client"]
 
 [dependencies]
-gix-pack = { version = "^0.76.2", path = "../gix-pack", registry = "elohim", default-features = false, features = ["generate"] }
+gix-pack = { version = "^0.76.3", path = "../gix-pack", registry = "elohim", default-features = false, features = ["generate"] }
 thiserror = "2.0.18"
 gix-error = { version = "^0.5.1", path = "../gix-error", registry = "elohim" }
-gix-transport = { version = "^0.61.1", path = "../gix-transport", registry = "elohim" }
-gix-hash = { version = "^0.28.0", path = "../gix-hash", registry = "elohim" }
-gix-shallow = { version = "^0.15.0", path = "../gix-shallow", registry = "elohim" }
+gix-transport = { version = "^0.61.2", path = "../gix-transport", registry = "elohim" }
+gix-hash = { version = "^0.28.1", path = "../gix-hash", registry = "elohim" }
+gix-shallow = { version = "^0.15.1", path = "../gix-shallow", registry = "elohim" }
 gix-date = { version = "^0.18.0", path = "../gix-date", registry = "elohim" }
-gix-utils = { version = "^0.5.1", path = "../gix-utils", registry = "elohim", features = ["progress"] }
-gix-ref = { version = "^0.69.0", path = "../gix-ref", registry = "elohim" }
+gix-utils = { version = "^0.5.2", path = "../gix-utils", registry = "elohim", features = ["progress"] }
+gix-ref = { version = "^0.69.1", path = "../gix-ref", registry = "elohim" }
 gix-macros = { version = "^0.2.0", path = "../gix-macros", registry = "elohim" }
 
 gix-trace = { version = "^0.3.0", path = "../gix-trace", registry = "elohim", optional = true }
-gix-negotiate = { version = "^0.37.0", path = "../gix-negotiate", registry = "elohim", optional = true }
-gix-object = { version = "^0.66.0", path = "../gix-object", registry = "elohim", optional = true }
-gix-revwalk = { version = "^0.37.0", path = "../gix-revwalk", registry = "elohim", optional = true }
-gix-credentials = { version = "^0.42.0", path = "../gix-credentials", registry = "elohim", optional = true }
-gix-refspec = { version = "^0.47.0", path = "../gix-refspec", registry = "elohim", optional = true }
-gix-lock = { version = "^26.0.0", path = "../gix-lock", registry = "elohim", optional = true }
+gix-negotiate = { version = "^0.37.1", path = "../gix-negotiate", registry = "elohim", optional = true }
+gix-object = { version = "^0.66.1", path = "../gix-object", registry = "elohim", optional = true }
+gix-revwalk = { version = "^0.37.1", path = "../gix-revwalk", registry = "elohim", optional = true }
+gix-credentials = { version = "^0.42.1", path = "../gix-credentials", registry = "elohim", optional = true }
+gix-refspec = { version = "^0.47.1", path = "../gix-refspec", registry = "elohim", optional = true }
+gix-lock = { version = "^26.0.1", path = "../gix-lock", registry = "elohim", optional = true }
 
 nonempty = "0.12.0"
 serde = { version = "1.0.114", optional = true, default-features = false, features = [

@@ -63,19 +63,19 @@ sbom = ["dep:serde_json"]
 
 [dependencies]
 gix-error = { version = "^0.5.1", path = "../../gix-error", registry = "elohim", features = ["error-print-location"] }
-gix-hash = { version = "^0.28.0", path = "../../gix-hash", registry = "elohim" }
-gix-lock = { version = "^26.0.0", path = "../../gix-lock", registry = "elohim" }
+gix-hash = { version = "^0.28.1", path = "../../gix-hash", registry = "elohim" }
+gix-lock = { version = "^26.0.1", path = "../../gix-lock", registry = "elohim" }
 gix-path = { version = "^0.14.0", path = "../../gix-path", registry = "elohim" }
-gix-config = { version = "^0.62.0", path = "../../gix-config", registry = "elohim", optional = true, default-features = false }
-gix-discover = { version = "^0.57.0", path = "../../gix-discover", registry = "elohim", optional = true }
-gix-index = { version = "^0.57.0", path = "../../gix-index", registry = "elohim", optional = true, default-features = false }
-gix-object = { version = "^0.66.0", path = "../../gix-object", registry = "elohim", optional = true, default-features = false }
-gix-odb = { version = "^0.86.0", path = "../../gix-odb", registry = "elohim", optional = true, default-features = false }
-gix-ref = { version = "^0.69.0", path = "../../gix-ref", registry = "elohim", optional = true, default-features = false }
-gix-shallow = { version = "^0.15.0", path = "../../gix-shallow", registry = "elohim", optional = true }
-gix-worktree = { version = "^0.58.0", path = "../../gix-worktree", registry = "elohim", optional = true }
+gix-config = { version = "^0.62.1", path = "../../gix-config", registry = "elohim", optional = true, default-features = false }
+gix-discover = { version = "^0.57.1", path = "../../gix-discover", registry = "elohim", optional = true }
+gix-index = { version = "^0.57.3", path = "../../gix-index", registry = "elohim", optional = true, default-features = false }
+gix-object = { version = "^0.66.1", path = "../../gix-object", registry = "elohim", optional = true, default-features = false }
+gix-odb = { version = "^0.86.3", path = "../../gix-odb", registry = "elohim", optional = true, default-features = false }
+gix-ref = { version = "^0.69.1", path = "../../gix-ref", registry = "elohim", optional = true, default-features = false }
+gix-shallow = { version = "^0.15.1", path = "../../gix-shallow", registry = "elohim", optional = true }
+gix-worktree = { version = "^0.58.3", path = "../../gix-worktree", registry = "elohim", optional = true }
 gix-parallel = { version = "^0.50.0", path = "../../gix-parallel", registry = "elohim", optional = true }
-gix-tempfile = { version = "^26.0.0", path = "../../gix-tempfile", registry = "elohim", default-features = false, features = ["signals"] }
+gix-tempfile = { version = "^26.0.1", path = "../../gix-tempfile", registry = "elohim", default-features = false, features = ["signals"] }
 
 fastrand = "2.0.0"
 bstr = { version = "1.12.0", default-features = false }

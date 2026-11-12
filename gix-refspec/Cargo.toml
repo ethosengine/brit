@@ -2,7 +2,7 @@ lints.workspace = true
 
 [package]
 name = "gix-refspec"
-version = "0.47.0"
+version = "0.47.1"
 repository = "https://github.com/GitoxideLabs/gitoxide"
 license = "MIT OR Apache-2.0"
 description = "A crate of the gitoxide project for parsing and representing refspecs"
@@ -22,7 +22,7 @@ sha256 = ["gix-hash/sha256"]
 
 [dependencies]
 gix-validate = { version = "^0.13.0", path = "../gix-validate", registry = "elohim" }
-gix-hash = { version = "^0.28.0", path = "../gix-hash", registry = "elohim" }
+gix-hash = { version = "^0.28.1", path = "../gix-hash", registry = "elohim" }
 gix-error = { version = "^0.5.1", path = "../gix-error", registry = "elohim", features = ["bstr"] }
 
 bstr = { version = "1.12.0", default-features = false, features = ["std"] }

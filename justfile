@@ -307,11 +307,11 @@ summarize EXPRESSION='all()':
     cargo nextest run --workspace --run-ignored all --no-fail-fast \
         --status-level none --final-status-level none -E {{ quote(EXPRESSION) }}
 
-# Format with nightly Rust, check stable formatting, and format the justfile
+# Format with nightly Rust, check pinned formatting, and format the justfile
 [group('Development')]
 fmt:
     cargo +nightly fmt --all -- --config-path rustfmt-nightly.toml
-    cargo +stable fmt --all -- --check
+    cargo fmt --all -- --check
     {{ j }} --fmt --unstable
 
 # Look for yanked crates (cancel after the initial warnings)

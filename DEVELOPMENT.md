@@ -10,6 +10,13 @@ Run `just` to browse commands grouped by purpose, with everyday development task
 first. Use `just --groups` to list the groups, or filter the overview with, for
 example, `just --list --group 'Dependencies and SBOMs'`.
 
+## Brit toolchain
+
+`rust-toolchain.toml` pins ordinary development and Brit delivery to Rust 1.100.0,
+including rustfmt and Clippy. The fork-owned CI and artifact workflows install
+that same version. Explicit MSRV/nightly probes and the addressed Rust-style
+checker retain their own declared toolchains; this does not raise library MSRVs.
+
 ## Release source paths
 
 The GitHub release workflow builds `gix` and `ein` through

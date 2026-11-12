@@ -13,6 +13,7 @@ permissions:
   contents: read
 
 env:
+  RUSTUP_TOOLCHAIN: 1.100.0
   CFLAGS_x86_64_unknown_linux_gnu: '-march=x86-64-v2'
   CARGO_REGISTRIES_ELOHIM_INDEX: sparse+https://nexus.ethosengine.com/repository/cargo-internal/
   CARGO_REGISTRIES_ELOHIM_TOKEN: ${{ secrets.CARGO_REGISTRIES_ELOHIM_TOKEN }}
@@ -47,7 +48,7 @@ jobs:
           cargo build --locked -p brit-cli --bin brit --bin brit-rebase-retained --no-default-features --features max-pure
           BRIT_BIN="$CARGO_TARGET_DIR/debug/brit" BRIT_REBASE_RETAINED_BIN="$CARGO_TARGET_DIR/debug/brit-rebase-retained" cargo test --locked -p cli-journey \
             --test rebase --test git_rebase_characterization --test brit --test rakia --test inherited_git_environment --test shared_tree \
-            --test authoring --test pre_push --test explicit_leases --test commit_cleanup --test commit_amend --test worktree_restore --test switch --test pull --test broader_staging --test daily_driver --test native_authoring
+            --test authoring --test commit_attribution --test commit_merge --test diff_stat --test worktree_bounded --test pre_push --test explicit_leases --test commit_cleanup --test commit_amend --test worktree_restore --test switch --test pull --test broader_staging --test daily_driver --test native_authoring
           cargo test --locked -p gix-sequencer --features serde
           cargo test --locked -p gitoxide-core --features blocking-client,gix/sha1,switch-test-faults \
             --test conflict_authoring --test replay --test replay_interactive --test replay_retained --test replay_qualification --test replay_io
@@ -104,7 +105,7 @@ jobs:
           printf 'VERSION_TAG=%s\n' "$version_tag" >> "$GITHUB_ENV"
       - name: Install the target toolchain
         run: |
-          rustup update stable
+          rustup toolchain install 1.100.0 --profile minimal --no-self-update
           rustup target add "$TARGET"
       - name: Build Brit and the qualified Linux retained-copy helper
         run: |
@@ -177,7 +178,7 @@ jobs:
           installed="$RUNNER_TEMP/brit-installed-qualification/install/bin/brit"
           bash scripts/ci/verify-installed-brit.sh "$installed"
           BRIT_BIN="$installed" cargo test --locked -p cli-journey \
-            --test authoring --test pre_push --test explicit_leases --test commit_cleanup --test commit_amend --test worktree_restore --test switch --test pull --test broader_staging --test daily_driver --test native_authoring --test shared_tree
+            --test authoring --test commit_attribution --test commit_merge --test diff_stat --test worktree_bounded --test pre_push --test explicit_leases --test commit_cleanup --test commit_amend --test worktree_restore --test switch --test pull --test broader_staging --test daily_driver --test native_authoring --test shared_tree
       - name: Qualify installed Linux rebase and retained copy recovery
         if: runner.os == 'Linux'
         run: |

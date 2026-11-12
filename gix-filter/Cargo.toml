@@ -2,7 +2,7 @@ lints.workspace = true
 
 [package]
 name = "gix-filter"
-version = "0.36.1"
+version = "0.36.2"
 repository = "https://github.com/GitoxideLabs/gitoxide"
 license = "MIT OR Apache-2.0"
 description = "A crate of the gitoxide project implementing git filters"
@@ -43,15 +43,15 @@ sha256 = ["gix-hash/sha256"]
 test-helper = ["gix-error/error-print-location"]
 
 [dependencies]
-gix-hash = { version = "^0.28.0", path = "../gix-hash", registry = "elohim" }
+gix-hash = { version = "^0.28.1", path = "../gix-hash", registry = "elohim" }
 gix-trace = { version = "^0.3.0", path = "../gix-trace", registry = "elohim" }
-gix-object = { version = "^0.66.0", path = "../gix-object", registry = "elohim" }
-gix-command = { version = "^0.12.0", path = "../gix-command", registry = "elohim" }
-gix-quote = { version = "^0.10.0", path = "../gix-quote", registry = "elohim" }
-gix-utils = { version = "^0.5.1", path = "../gix-utils", registry = "elohim", features = ["stream"] }
+gix-object = { version = "^0.66.1", path = "../gix-object", registry = "elohim" }
+gix-command = { version = "^0.12.1", path = "../gix-command", registry = "elohim" }
+gix-quote = { version = "^0.10.1", path = "../gix-quote", registry = "elohim" }
+gix-utils = { version = "^0.5.2", path = "../gix-utils", registry = "elohim", features = ["stream"] }
 gix-path = { version = "^0.14.0", path = "../gix-path", registry = "elohim" }
 gix-packetline = { version = "^0.24.0", path = "../gix-packetline", registry = "elohim", features = ["blocking-io"] }
-gix-attributes = { version = "^0.37.1", path = "../gix-attributes", registry = "elohim" }
+gix-attributes = { version = "^0.37.2", path = "../gix-attributes", registry = "elohim" }
 
 encoding_rs = "0.8.32"
 bstr = { version = "1.12.0", default-features = false, features = ["std"] }

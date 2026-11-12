@@ -60,11 +60,20 @@ pub fn auxiliary_bin(env_key: &str, name: &str) -> Option<PathBuf> {
 }
 
 fn profile_binary(test_executable: &Path, name: &str, suffix: &str) -> PathBuf {
-    test_executable
-        .parent()
-        .and_then(|deps| deps.parent())
-        .expect("Cargo target profile directory")
-        .join(format!("{name}{suffix}"))
+    let directory = test_executable.parent().expect("Cargo test executable directory");
+    let profile = if directory.file_name() == Some(std::ffi::OsStr::new("out")) {
+        // Cargo 1.100: <profile>/build/<package>/<unit-hash>/out/<test>.
+        directory
+            .ancestors()
+            .nth(3)
+            .filter(|build| build.file_name() == Some(std::ffi::OsStr::new("build")))
+            .and_then(Path::parent)
+    } else {
+        // Earlier Cargo: <profile>/deps/<test>.
+        directory.parent()
+    }
+    .expect("Cargo target profile directory");
+    profile.join(format!("{name}{suffix}"))
 }
 
 impl BritInvocation {
@@ -148,14 +157,19 @@ mod tests {
 
     #[test]
     fn profile_binary_uses_the_platform_executable_suffix() {
-        let test_executable = Path::new("target").join("debug").join("deps").join("journey-test.exe");
-        assert_eq!(
-            profile_binary(&test_executable, "brit", ".exe"),
-            Path::new("target").join("debug").join("brit.exe")
-        );
-        assert_eq!(
-            profile_binary(&test_executable, "brit", ""),
-            Path::new("target").join("debug").join("brit")
-        );
+        for relative in ["deps", "build/cli-journey/unit-hash/out"] {
+            let test_executable = Path::new("target")
+                .join("debug")
+                .join(relative)
+                .join("journey-test.exe");
+            assert_eq!(
+                profile_binary(&test_executable, "brit", ".exe"),
+                Path::new("target").join("debug").join("brit.exe")
+            );
+            assert_eq!(
+                profile_binary(&test_executable, "brit", ""),
+                Path::new("target").join("debug").join("brit")
+            );
+        }
     }
 }

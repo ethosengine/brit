@@ -2,7 +2,7 @@ lints.workspace = true
 
 [package]
 name = "gix-blame"
-version = "0.19.2"
+version = "0.19.3"
 repository = "https://github.com/GitoxideLabs/gitoxide"
 license = "MIT OR Apache-2.0"
 description = "A crate of the gitoxide project dedicated to implementing a 'blame' algorithm"
@@ -19,15 +19,15 @@ sha256 = ["gix-hash/sha256"]
 
 [dependencies]
 gix-error = { version = "^0.5.1", path = "../gix-error", registry = "elohim" }
-gix-commitgraph = { version = "^0.41.0", path = "../gix-commitgraph", registry = "elohim" }
-gix-revwalk = { version = "^0.37.0", path = "../gix-revwalk", registry = "elohim" }
+gix-commitgraph = { version = "^0.41.1", path = "../gix-commitgraph", registry = "elohim" }
+gix-revwalk = { version = "^0.37.1", path = "../gix-revwalk", registry = "elohim" }
 gix-trace = { version = "^0.3.0", path = "../gix-trace", registry = "elohim" }
 gix-date = { version = "^0.18.0", path = "../gix-date", registry = "elohim" }
-gix-diff = { version = "^0.69.2", path = "../gix-diff", registry = "elohim", default-features = false, features = ["blob"] }
-gix-object = { version = "^0.66.0", path = "../gix-object", registry = "elohim" }
-gix-hash = { version = "^0.28.0", path = "../gix-hash", registry = "elohim" }
-gix-worktree = { version = "^0.58.2", path = "../gix-worktree", registry = "elohim", default-features = false, features = ["attributes"] }
-gix-traverse = { version = "^0.63.0", path = "../gix-traverse", registry = "elohim" }
+gix-diff = { version = "^0.69.3", path = "../gix-diff", registry = "elohim", default-features = false, features = ["blob"] }
+gix-object = { version = "^0.66.1", path = "../gix-object", registry = "elohim" }
+gix-hash = { version = "^0.28.1", path = "../gix-hash", registry = "elohim" }
+gix-worktree = { version = "^0.58.3", path = "../gix-worktree", registry = "elohim", default-features = false, features = ["attributes"] }
+gix-traverse = { version = "^0.63.1", path = "../gix-traverse", registry = "elohim" }
 
 smallvec = "1.15.1"
 

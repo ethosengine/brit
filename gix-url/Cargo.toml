@@ -2,7 +2,7 @@ lints.workspace = true
 
 [package]
 name = "gix-url"
-version = "0.40.0"
+version = "0.40.1"
 repository = "https://github.com/GitoxideLabs/gitoxide"
 license = "MIT OR Apache-2.0"
 description = "A crate of the gitoxide project implementing parsing and serialization of gix-url"
@@ -20,7 +20,7 @@ serde = ["dep:serde", "bstr/serde"]
 
 [dependencies]
 gix-path = { version = "^0.14.0", path = "../gix-path", registry = "elohim" }
-gix-utils = { version = "^0.5.1", path = "../gix-utils", registry = "elohim", features = ["bstr"] }
+gix-utils = { version = "^0.5.2", path = "../gix-utils", registry = "elohim", features = ["bstr"] }
 gix-error = { version = "^0.5.1", path = "../gix-error", registry = "elohim", features = ["bstr"] }
 
 serde = { version = "1.0.114", optional = true, default-features = false, features = ["std", "derive"] }

@@ -49,8 +49,8 @@ jobs:
         run: printf 'CARGO_TARGET_DIR=%s/brit-build-artifacts-target\n' "$RUNNER_TEMP" >> "$GITHUB_ENV"
       - name: Install Rust
         run: |
-          rustup update stable
-          rustup default stable
+          rustup toolchain install 1.100.0 --profile minimal --no-self-update
+          rustup default 1.100.0
       - name: Build the followed executables
         run: |
           set -euo pipefail

@@ -1,6 +1,6 @@
 [package]
 name = "gix-merge"
-version = "0.22.2"
+version = "0.22.3"
 repository = "https://github.com/GitoxideLabs/gitoxide"
 license = "MIT OR Apache-2.0"
 description = "A crate of the gitoxide project implementing merge algorithms"
@@ -28,20 +28,20 @@ sha256 = ["gix-hash/sha256"]
 serde = ["dep:serde", "gix-hash/serde", "gix-object/serde"]
 
 [dependencies]
-gix-hash = { version = "^0.28.0", path = "../gix-hash", registry = "elohim" }
-gix-object = { version = "^0.66.0", path = "../gix-object", registry = "elohim" }
-gix-filter = { version = "^0.36.1", path = "../gix-filter", registry = "elohim" }
-gix-worktree = { version = "^0.58.2", path = "../gix-worktree", registry = "elohim", default-features = false, features = ["attributes"] }
-gix-command = { version = "^0.12.0", path = "../gix-command", registry = "elohim" }
+gix-hash = { version = "^0.28.1", path = "../gix-hash", registry = "elohim" }
+gix-object = { version = "^0.66.1", path = "../gix-object", registry = "elohim" }
+gix-filter = { version = "^0.36.2", path = "../gix-filter", registry = "elohim" }
+gix-worktree = { version = "^0.58.3", path = "../gix-worktree", registry = "elohim", default-features = false, features = ["attributes"] }
+gix-command = { version = "^0.12.1", path = "../gix-command", registry = "elohim" }
 gix-path = { version = "^0.14.0", path = "../gix-path", registry = "elohim" }
-gix-fs = { version = "^0.24.0", path = "../gix-fs", registry = "elohim" }
-gix-tempfile = { version = "^26.0.0", path = "../gix-tempfile", registry = "elohim" }
+gix-fs = { version = "^0.24.1", path = "../gix-fs", registry = "elohim" }
+gix-tempfile = { version = "^26.0.1", path = "../gix-tempfile", registry = "elohim" }
 gix-trace = { version = "^0.3.0", path = "../gix-trace", registry = "elohim" }
-gix-quote = { version = "^0.10.0", path = "../gix-quote", registry = "elohim" }
-gix-revision = { version = "^0.51.0", path = "../gix-revision", registry = "elohim", default-features = false, features = ["merge_base"] }
-gix-revwalk = { version = "^0.37.0", path = "../gix-revwalk", registry = "elohim" }
-gix-diff = { version = "^0.69.2", path = "../gix-diff", registry = "elohim", default-features = false, features = ["blob"] }
-gix-index = { version = "^0.57.2", path = "../gix-index", registry = "elohim" }
+gix-quote = { version = "^0.10.1", path = "../gix-quote", registry = "elohim" }
+gix-revision = { version = "^0.51.1", path = "../gix-revision", registry = "elohim", default-features = false, features = ["merge_base"] }
+gix-revwalk = { version = "^0.37.1", path = "../gix-revwalk", registry = "elohim" }
+gix-diff = { version = "^0.69.3", path = "../gix-diff", registry = "elohim", default-features = false, features = ["blob"] }
+gix-index = { version = "^0.57.3", path = "../gix-index", registry = "elohim" }
 gix-error = { version = "^0.5.1", path = "../gix-error", registry = "elohim" }
 gix-imara-diff = { version = "^0.3.1", path = "../gix-imara-diff", registry = "elohim" }
 

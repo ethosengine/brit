@@ -58,7 +58,7 @@ jobs:
           sudo apt-get update
           sudo apt-get install -y qemu-user openssl
           bash scripts/ci/verify-cpu-matrix.sh --preflight
-          rustup update stable
+          rustup toolchain install 1.100.0 --profile minimal --no-self-update
           rustup component add clippy
       - name: Prove early compiler refusals
         run: bash scripts/ci/test-cpu-baseline.sh
@@ -374,8 +374,8 @@ jobs:
           persist-credentials: false
       - name: Install Rust
         run: |
-          rustup update stable
-          rustup default stable
+          rustup toolchain install 1.100.0 --profile minimal --no-self-update
+          rustup default 1.100.0
       - uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2.9.2
         with:
           save-if: ${{ github.ref == 'refs/heads/main' }}
@@ -408,8 +408,8 @@ jobs:
           persist-credentials: false
       - name: Install Rust
         run: |
-          rustup update stable
-          rustup default stable
+          rustup toolchain install 1.100.0 --profile minimal --no-self-update
+          rustup default 1.100.0
       - uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2.9.2
         with:
           save-if: ${{ github.ref == 'refs/heads/main' }}
@@ -429,8 +429,8 @@ jobs:
           persist-credentials: false
       - name: Install Rust
         run: |
-          rustup update stable
-          rustup default stable
+          rustup toolchain install 1.100.0 --profile minimal --no-self-update
+          rustup default 1.100.0
       - uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2.9.2
         with:
           save-if: ${{ github.ref == 'refs/heads/main' }}
@@ -447,8 +447,8 @@ jobs:
           persist-credentials: false
       - name: Install Rust
         run: |
-          rustup update stable
-          rustup default stable
+          rustup toolchain install 1.100.0 --profile minimal --no-self-update
+          rustup default 1.100.0
       - uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2.9.2
         with:
           save-if: ${{ github.ref == 'refs/heads/main' }}
@@ -548,8 +548,8 @@ jobs:
       - name: Install Rust
         shell: bash # Use `bash` on all OSes, for `set -e` behavior.
         run: |
-          rustup update stable
-          rustup default stable
+          rustup toolchain install 1.100.0 --profile minimal --no-self-update
+          rustup default 1.100.0
       - uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2.9.2
         with:
           save-if: ${{ github.ref == 'refs/heads/main' }}
@@ -619,8 +619,8 @@ jobs:
       - name: Install Rust
         shell: bash # Use `bash` (not `pwsh`), for `set -e` behavior.
         run: |
-          rustup update stable
-          rustup default stable
+          rustup toolchain install 1.100.0 --profile minimal --no-self-update
+          rustup default 1.100.0
       - uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2.9.2
         with:
           # Reuse test-fast's dependency cache; the fixture mode only changes runtime behavior.
@@ -717,8 +717,8 @@ jobs:
       - name: Install Rust
         shell: bash # Use `bash` (not `pwsh`), for `$` expansion and `set -e` behavior.
         run: |
-          rustup update stable
-          rustup default stable
+          rustup toolchain install 1.100.0 --profile minimal --no-self-update
+          rustup default 1.100.0
           rustup target add "$TARGET"
       - uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2.9.2
         with:
@@ -740,8 +740,8 @@ jobs:
           persist-credentials: false
       - name: Install Rust
         run: |
-          rustup update stable
-          rustup default stable
+          rustup toolchain install 1.100.0 --profile minimal --no-self-update
+          rustup default 1.100.0
           rustup component add clippy rustfmt
       - name: Install cargo machete
         uses: taiki-e/install-action@9983c65e42da123ff25d1f78505eb6de315aa172 # v2.87.20
@@ -792,8 +792,8 @@ jobs:
         run: printf 'CARGO_TARGET_DIR=%s/brit-publish-target\n' "$RUNNER_TEMP" >> "$GITHUB_ENV"
       - name: Install Rust
         run: |
-          rustup update stable
-          rustup default stable
+          rustup toolchain install 1.100.0 --profile minimal --no-self-update
+          rustup default 1.100.0
       - name: Publish brit crates (idempotent, 409-safe)
         env:
           NEXUS_NPM_TOKEN: ${{ secrets.NEXUS_NPM_TOKEN }}
@@ -852,8 +852,8 @@ jobs:
           persist-credentials: false
       - name: Install Rust
         run: |
-          rustup update stable
-          rustup default stable
+          rustup toolchain install 1.100.0 --profile minimal --no-self-update
+          rustup default 1.100.0
           rustup target add "$TARGET"
       - uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2.9.2
         with:

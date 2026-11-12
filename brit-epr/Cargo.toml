@@ -2,7 +2,7 @@ lints.workspace = true
 
 [package]
 name = "brit-epr"
-version = "0.1.5"
+version = "0.1.6"
 description = "Elohim Protocol primitives (pillar trailers, dispatch trait, validation) for brit — an expansion of gitoxide with covenant semantics"
 repository = "https://github.com/ethosengine/brit"
 authors = ["Matthew Dowell <matthew@ethosengine.com>"]
@@ -23,7 +23,7 @@ default = ["elohim-protocol"]
 elohim-protocol = ["dep:elohim-epr"]
 
 [dependencies]
-gix-object = { version = "^0.66.0", path = "../gix-object", registry = "elohim", features = ["sha1"] }
+gix-object = { version = "^0.66.1", path = "../gix-object", registry = "elohim", features = ["sha1"] }
 thiserror = "2.0"
 serde = { version = "1", features = ["derive"] }
 # `float_roundtrip`: a signed node is read back from its JSON note; a float in it must parse to

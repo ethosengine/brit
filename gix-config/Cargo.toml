@@ -2,7 +2,7 @@ lints.workspace = true
 
 [package]
 name = "gix-config"
-version = "0.62.0"
+version = "0.62.1"
 repository = "https://github.com/GitoxideLabs/gitoxide"
 description = "A git-config file parser and editor from the gitoxide project"
 license = "MIT OR Apache-2.0"
@@ -24,13 +24,13 @@ serde = ["dep:serde", "bstr/serde", "gix-sec/serde", "gix-ref/serde", "gix-glob/
 [dependencies]
 gix-trace = { version = "^0.3.0", path = "../gix-trace", registry = "elohim" }
 gix-parallel = { version = "^0.50.0", path = "../gix-parallel", registry = "elohim" }
-gix-config-value = { version = "^0.21.0", path = "../gix-config-value", registry = "elohim" }
+gix-config-value = { version = "^0.21.1", path = "../gix-config-value", registry = "elohim" }
 gix-error = { version = "^0.5.1", path = "../gix-error", registry = "elohim", features = ["bstr"] }
 gix-path = { version = "^0.14.0", path = "../gix-path", registry = "elohim" }
 gix-sec = { version = "^0.16.0", path = "../gix-sec", registry = "elohim" }
-gix-ref = { version = "^0.69.0", path = "../gix-ref", registry = "elohim" }
-gix-glob = { version = "^0.29.0", path = "../gix-glob", registry = "elohim" }
-gix-utils = { version = "^0.5.1", path = "../gix-utils", registry = "elohim", features = ["bstr"] }
+gix-ref = { version = "^0.69.1", path = "../gix-ref", registry = "elohim" }
+gix-glob = { version = "^0.29.1", path = "../gix-glob", registry = "elohim" }
+gix-utils = { version = "^0.5.2", path = "../gix-utils", registry = "elohim", features = ["bstr"] }
 
 unicode-bom = { version = "2.0.3" }
 bstr = { version = "1.12.0", default-features = false, features = ["std"] }

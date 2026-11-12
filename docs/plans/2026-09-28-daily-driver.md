@@ -15,6 +15,48 @@ scheduler. Use native context for observed environment and citation blockers.
 - [ ] Installed delivery: fresh standalone install, feature/platform matrix, upgrade and rollback prove the executable and installed epr interface; package publication and clean consumer tests identify exact source revisions. Requires native integration; serves brit-native-daily-driver.
 - [ ] Operational qualification through our own ongoing development across workspaces: complete the loop, preserve Git interoperability and recover interrupted work, recording actual outcomes as we daily-drive Brit. Cross-workspace verification follows this integration pass; scripted identities do not establish it. Serves brit-native-daily-driver.
 
+## Daily-driver release integration — 2026-11-12
+
+Brit 0.1.14 packages the nine sprint commits after 0.1.13: branch creation and
+shared mutation guarding, resolved merge commits, diff statistics, passive commit
+attribution, linked-worktree rebase publication, canonical unchanged-file detection,
+replay loop cancellation and bounded worktree checkout. The release preserves the
+hard 1 GiB scratch cap and the measured cancellation boundaries below.
+
+The root toolchain and fork-owned CI/delivery workflows select Rust 1.100.0.
+Library MSRVs, explicit MSRV/nightly checks and the addressed governance checker
+remain separately declared. The journey runner resolves both the old `deps` layout
+and Cargo 1.100's `build/<package>/<unit>/out` layout, including Windows suffixes,
+so workspace tests can find the built executable without `BRIT_BIN`. The previously recorded `commit.rs:307` Clippy finding
+is resolved by combining the nested guard without changing its short-circuit order;
+all four workspace Clippy configurations now pass, with no new suppression.
+
+The 70-package registry closure carries 55 patch-version increments, including
+reverse dependencies whose minimum requirements now bind the new payloads. All
+55 candidate versions were absent at the read-only registry audit. The remaining
+15 packages match their complete published payloads, including manifests and
+packaged lockfiles; external lockfile versions and checksums are unchanged.
+Publication still verifies immutable package payloads and
+registry metadata in dependency order; no version may overwrite published bytes.
+
+Local integration verification passes all four workspace strict-Clippy presets,
+workspace formatting, 198 ordinary CLI tests, 19 branch/feedback tests, 163 native
+replay/recovery tests and 34 fault-enabled commit tests. The ordinary binaries are
+restored after fault testing. A fresh Cargo 1.100 fixture, the runner unit test and
+two CLI tests without executable overrides prove discovery in the new layout;
+strict journey-target Clippy also passes. The 25 publisher tests, 12 readiness
+contracts, delivery/artifact contracts, isolated reach-hook checks and declared
+Rust-style checker pass. Hosted qualification remains a separate exact-commit gate.
+
+Delivery qualification includes the new attribution, merge, diff-stat and bounded
+worktree journeys. Candidate branch CI must qualify the exact integration commit
+before main moves; main's existing workflows then publish the crate closure and
+CPU-qualified source-pinned binaries. Neither source checks nor a release change
+the RED daily-driver readiness declaration. Independent review, full operational
+qualification, installed upgrade, the broader cancellation backlog and the separate
+cleanup race remain open. The Elohim gitlink must wait for its own landing lane
+and the pinned Brit commit's green hosted attestation.
+
 ## Bounded worktree checkout — 2026-11-12
 
 `brit worktree add` now streams loose and packed blobs into operation-owned scratch
@@ -59,7 +101,8 @@ hostile-writer cleanup race remains open.
 
 Measurements use Rust 1.100.0 (`0ef1bc386`, LLVM 23.1.5), Linux x86_64 debug builds,
 debug information disabled and two compiler workers. This loop selects the new
-toolchain explicitly; the other session owns persistent pins. `BRIT_BIN` and
+toolchain explicitly. The subsequent integration pass pins Brit only to 1.100.0;
+the other session owns the shared Elohim pins. `BRIT_BIN` and
 `BRIT_REBASE_RETAINED_BIN` explicitly select the tested artifacts because this
 Cargo version changed test executable layout. No package version or shared Elohim
 Rust pin changes are included. Private source/executable identities, commands,

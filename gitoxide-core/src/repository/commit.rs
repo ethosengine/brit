@@ -304,12 +304,11 @@ pub fn create(
     if amend && repo.git_dir().join("sequencer").exists() {
         bail!("commit amendment during an active sequencer operation is not supported; finish or abort it first");
     }
-    if amend || merge.is_some() {
-        if let Some(name) = original_head.referent_name()
-            && repo.find_reference(name)?.target().try_id().is_none()
-        {
-            bail!("commit does not support symbolic branch chains");
-        }
+    if (amend || merge.is_some())
+        && let Some(name) = original_head.referent_name()
+        && repo.find_reference(name)?.target().try_id().is_none()
+    {
+        bail!("commit does not support symbolic branch chains");
     }
     if amend {
         let config = repo.config_snapshot();
