@@ -15,6 +15,50 @@ scheduler. Use native context for observed environment and citation blockers.
 - [ ] Installed delivery: fresh standalone install, feature/platform matrix, upgrade and rollback prove the executable and installed epr interface; package publication and clean consumer tests identify exact source revisions. Requires native integration; serves brit-native-daily-driver.
 - [ ] Operational qualification through our own ongoing development across workspaces: complete the loop, preserve Git interoperability and recover interrupted work, recording actual outcomes as we daily-drive Brit. Cross-workspace verification follows this integration pass; scripted identities do not establish it. Serves brit-native-daily-driver.
 
+## Commit attribution adapter — 2026-11-12
+
+The standalone `.githooks/prepare-commit-msg` connects Brit's existing hook
+invocation to installed EPR's `session commit-trailers --json` interface. EPR
+owns model and session attribution; the adapter adds no identity lookup or
+session mutation. The existing hooks path and pre-push hook are unchanged.
+An explicitly set `EPR_BIN` is authoritative, including an empty, missing or
+obsolete override; otherwise the adapter uses `epr` on PATH. Inspect an obsolete
+override before deliberately removing it from the command environment.
+
+The hook requires Bash, jq, Git, standard file utilities, and `timeout` or
+`gtimeout`. EPR lookup, JSON validation and Git trailer processing each have a
+five-second deadline and one-second forced-termination grace. A measured response
+must contain valid trailer pairs without embedded control characters. Git's
+`interpret-trailers` preserves existing contributors with `addIfDifferent` and
+`add` semantics. Decoration uses an owned temporary copy beside the message,
+preserves its permissions, and replaces the original only after success.
+`not-applicable` is quiet. Missing prerequisites, incompatible EPR, invalid
+responses, timeouts and processing failures leave the original message intact
+and warn `UNMEASURED`; attribution remains passive, including under `--no-verify`.
+
+`tests/cli-journey/tests/commit_attribution.rs` runs the checked-in hook through
+Brit and stock Git in disposable main and linked worktrees. It checks exact
+committed trailers for ordinary, empty, amended and resolved merge commits,
+spaces in paths, existing contributors, repeated invocation, explicit overrides,
+dependency failures, malformed pairs, partial parser output and forced timeout
+termination. Staged scope and dirty neighbors remain intact. The existing public
+CLI CI lane now selects it. A stale authoring fixture also now distinguishes
+orphaned merge metadata from an independently unmerged index.
+
+Local verification passes 50 Rust tests (19 authoring, 18 amendment, 9 merge,
+4 attribution), 12 readiness-contract tests, workspace formatting and the
+declared Rust-style checker. A disposable-message rehearsal against real installed
+EPR produces measured trailers; the final committed object must be checked too.
+Private receipts: parent
+`.worktrees/epr-noise-20261112/genesis/local-dev/brit-noise-20261112/attribution-evidence.json`.
+Readiness remains RED. Independent review, upstream CI execution, publication,
+installation, version allocation and parent-pin integration remain separate.
+
+Historical omission: `5520dcdc7f919ddd35bcfcb42d34c577871ecfbf` lacks attribution
+trailers despite a successful native lookup because this standalone hook was
+absent. Preserve that commit and earlier history; coordinate append-only follow-up
+with the integrator before publication, without retrospective trailer claims.
+
 ## Read-only diff summaries — 2026-11-12
 
 `brit diff --stat [-- <literal files>]` compares tracked working files with the

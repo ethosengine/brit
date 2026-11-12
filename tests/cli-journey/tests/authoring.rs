@@ -268,6 +268,20 @@ fn unmerged_index_and_in_progress_merge_refuse_without_advancing_head() -> Resul
         .success());
     assert_eq!(repo.head_id()?, head);
     fs::remove_file(repo.path().join(".git/MERGE_HEAD"))?;
+    let output = brit(repo.path(), &["commit", "--allow-empty", "-m", "interrupted merge"])?;
+    ensure!(
+        !output.status.success() && output.stderr.contains("merge metadata exists without MERGE_HEAD"),
+        "{}",
+        output.stderr
+    );
+    assert_eq!(repo.head_id()?, head);
+    // Remove the remaining merge markers to reach the independent index refusal.
+    for name in ["MERGE_MSG", "MERGE_MODE", "AUTO_MERGE"] {
+        let path = repo.path().join(".git").join(name);
+        if path.exists() {
+            fs::remove_file(path)?;
+        }
+    }
     let output = brit(repo.path(), &["commit", "--allow-empty", "-m", "still unmerged"])?;
     ensure!(
         !output.status.success() && output.stderr.contains("unmerged"),

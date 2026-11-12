@@ -1,0 +1,54 @@
+#!/usr/bin/env bash
+# EPR owns attribution. Failure to observe it never gates a local commit.
+set -u
+unmeasured() { printf 'Brit attribution UNMEASURED: %s\n' "$*" >&2; exit 0; }
+
+message=${1:-}
+[[ -f "$message" && ! -L "$message" ]] || unmeasured 'missing or nonregular commit message'
+for dependency in jq git mktemp cp mv rm; do
+  command -v "$dependency" >/dev/null 2>&1 || unmeasured "missing prerequisite: $dependency"
+done
+if command -v timeout >/dev/null 2>&1; then
+  timer=timeout
+elif command -v gtimeout >/dev/null 2>&1; then
+  timer=gtimeout
+else
+  unmeasured 'missing prerequisite: timeout or gtimeout'
+fi
+epr=${EPR_BIN-epr}
+[[ -n "$epr" ]] && command -v "$epr" >/dev/null 2>&1 || unmeasured 'EPR executable unavailable'
+
+temporary=$(mktemp -d -- "$message.attribution.XXXXXX") || unmeasured 'cannot create temporary directory'
+trap 'rm -rf -- "$temporary"' EXIT
+trap 'unmeasured "interrupted"' HUP INT TERM
+"$timer" -k 1 5 "$epr" session commit-trailers --json >"$temporary/response" 2>"$temporary/error" ||
+  unmeasured 'EPR lookup failed or timed out (requires session commit-trailers --json)'
+
+# Validate the entire response before extracting any pair. Slurping rejects
+# multiple JSON documents; raw bytes stay in a file so Bash cannot discard NULs.
+"$timer" -k 1 5 jq -ers '
+  def clean: type == "string" and (test("[\u0000-\u001f\u007f-\u009f]") | not);
+  if length != 1 then error("expected one response") else .[0] end |
+  if .status == "not-applicable" then "not-applicable"
+  elif .status == "measured" and (.trailers | type == "array" and length > 0) then
+    if all(.trailers[];
+      type == "array" and length == 2 and
+      (.[0] | clean and test("^[A-Za-z0-9][A-Za-z0-9-]*$")) and
+      (.[1] | clean and test("\\S"))) then
+      "measured", (.trailers[] | "\(.[0]): \(.[1])")
+    else error("invalid trailer pair") end
+  else error("unmeasured or incompatible response") end
+' "$temporary/response" >"$temporary/trailers" 2>"$temporary/error" ||
+  unmeasured 'invalid or unavailable EPR attribution'
+
+trailers=()
+while IFS= read -r line; do trailers+=("$line"); done <"$temporary/trailers"
+[[ "${trailers[0]:-}" != not-applicable ]] || exit 0
+args=()
+for line in "${trailers[@]:1}"; do args+=(--trailer "$line"); done
+cp -p -- "$message" "$temporary/message" || unmeasured 'cannot preserve message permissions'
+"$timer" -k 1 5 git interpret-trailers --if-exists addIfDifferent --if-missing add "${args[@]}" \
+  <"$message" >"$temporary/message" 2>"$temporary/error" ||
+  unmeasured 'trailer processing failed or timed out'
+mv -f -- "$temporary/message" "$message" || unmeasured 'cannot replace commit message'
+exit 0
