@@ -282,6 +282,43 @@ fn patches_match_git_and_leave_index_and_objects_unchanged() -> Result<()> {
 }
 
 #[test]
+fn working_diff_skips_only_canonically_unchanged_attributed_files() -> Result<()> {
+    let repo = TestRepo::new("working-unsupported-neighbor")?;
+    repo.commit_file("a-ordinary", "base\n")?;
+    repo.commit_file("z-archive", "archive\n")?;
+    repo.commit_file("z-binary", "binary\0bytes\n")?;
+    repo.commit_file("z-lines", "canonical\nlines\n")?;
+    repo.commit_file(
+        ".gitattributes",
+        "z-* diff=lfs filter=lfs-disabled\nz-lines text eol=lf\n",
+    )?;
+    fs::write(repo.path().join("z-lines"), "canonical\r\nlines\r\n")?;
+    ensure!(success(repo.path(), &["diff"])?.stdout.is_empty());
+    for path in ["z-archive", "z-binary", "z-lines"] {
+        ensure!(success(repo.path(), &["diff", "--", path])?.stdout.is_empty());
+    }
+    fs::write(repo.path().join("a-ordinary"), "changed\n")?;
+    let expected = git(repo.path(), &["diff", "--no-ext-diff", "--no-color"])?;
+    let before = index(repo.path())?;
+    fs::write(repo.path().join(".git/index.lock"), "foreign lock\n")?;
+    assert_eq!(success(repo.path(), &["diff"])?.stdout.as_bytes(), expected);
+    assert_eq!(
+        index(repo.path())?,
+        before,
+        "canonical comparison leaves index untouched"
+    );
+    // Same length is not equality; the attribute refusal must still be atomic.
+    fs::write(repo.path().join("z-archive"), "changed\n")?;
+    for args in [&["diff"][..], &["diff", "--", "z-archive"]] {
+        let refused = brit(repo.path(), args)?;
+        ensure!(!refused.status.success() && refused.stderr.contains("diff attributes"));
+        ensure!(refused.stdout.is_empty(), "refusal emits no partial patch");
+    }
+    assert_eq!(index(repo.path())?, before);
+    Ok(())
+}
+
+#[test]
 fn staged_diff_skips_unchanged_unsupported_paths_but_refuses_changed_ones() -> Result<()> {
     let repo = TestRepo::new("cached-unsupported-neighbor")?;
     repo.commit_file("ordinary", "base\n")?;

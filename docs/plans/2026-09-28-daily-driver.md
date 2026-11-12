@@ -15,6 +15,40 @@ scheduler. Use native context for observed environment and citation blockers.
 - [ ] Installed delivery: fresh standalone install, feature/platform matrix, upgrade and rollback prove the executable and installed epr interface; package publication and clean consumer tests identify exact source revisions. Requires native integration; serves brit-native-daily-driver.
 - [ ] Operational qualification through our own ongoing development across workspaces: complete the loop, preserve Git interoperability and recover interrupted work, recording actual outcomes as we daily-drive Brit. Cross-workspace verification follows this integration pass; scripted identities do not establish it. Serves brit-native-daily-driver.
 
+## Unchanged attributed working files — 2026-11-12
+
+Ordinary `brit diff` and `brit diff --stat` now skip an attributed working file
+only after its effective mode and canonical content bytes equal the index.
+Previously, even a clean checkout refused on an unchanged `diff=lfs` file.
+The comparison reuses the authoring reader's path validation, symlink handling,
+line-ending conversion, external-filter refusal and `core.filemode` behavior.
+It reads content rather than trusting timestamps, sizes or raw filesystem bytes,
+and reuses those loaded bytes when a patch or summary is required.
+
+Changed attributed content, deletions, modes and types still refuse with no
+partial output. Unconfigured filter names can pass through; configured external
+filters still refuse. Global external diff commands, unsupported index states
+and working gitlinks retain their refusals. Custom drivers and text conversion
+remain unsupported. Staged and explicit-tree comparison semantics are unchanged.
+
+The `native_authoring` and `diff_stat` suites preserve the boundary with isolated
+Git oracles, unchanged LFS/binary/symlink fixtures, canonical CRLF conversion,
+effective executable modes, literal selection, external-command sentinels,
+repository snapshots and foreign locks. The attribute-refusal fixture now has
+an actual unstaged change; its old working bytes incorrectly equaled the index.
+The fault-enabled cancellation probe also crosses an unchanged attributed file
+before cancelling both patch and summary output.
+
+Local ordinary verification passes 36 tests and fault-enabled verification passes
+37; readiness-contract checks pass 12 tests. Workspace formatting and the
+declared Rust-style checker pass. Actual-checkout patch and stat smoke checks
+also pass with the rebuilt executable. The
+previously recorded strict Clippy finding in untouched `commit.rs:307` remains
+separate. Readiness stays RED: independent review, upstream CI, publication,
+installation, version allocation and parent-pin integration remain separate.
+Private evidence belongs to the parent workspace's
+`.worktrees/epr-noise-20261112/genesis/local-dev/brit-noise-20261112/unchanged-evidence.json`.
+
 ## Linked-worktree rebase publication — 2026-11-12
 
 Git normally writes `../..` in a linked worktree's `commondir`. Replaying an
@@ -132,8 +166,9 @@ width controls, `--numstat`, and `--shortstat` remain unsupported.
 `tests/cli-journey/tests/diff_stat.rs` binds this station to exact Git output and
 repository-state snapshots. It proves staged/unstaged separation, unchanged
 refs/reflogs/index/objects/worktree/foreign locks, and inspection during an active
-mutation. Unsupported index states, changed gitlinks, external commands and diff
-attributes refuse before output. Tree comparisons check attributes in both trees;
+mutation. Unsupported index states, working or changed staged gitlinks, external
+commands and changed paths with diff attributes refuse before output. Tree
+comparisons check attributes in both trees;
 working attributes cannot stand in for those declarations. The fault-enabled
 lane proves cancellation before output for all three summary modes. Ordinary
 and fault journeys run in the existing public CLI CI lanes. These are local

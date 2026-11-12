@@ -273,10 +273,13 @@ fn cancellation_before_output_preserves_state_and_prints_nothing() -> Result<()>
     }
     let repo = TestRepo::new("stat-cancel")?;
     repo.commit_file("file", "old\n")?;
+    repo.commit_file("z-archive", "unchanged\n")?;
+    repo.commit_file(".gitattributes", "z-archive diff=lfs\n")?;
     fs::write(repo.path().join("file"), "staged\n")?;
     git(repo.path(), &["add", "file"])?;
     fs::write(repo.path().join("file"), "unstaged\n")?;
     for args in [
+        &["diff"][..],
         &["diff", "--stat"][..],
         &["diff", "--cached", "--stat"],
         &["diff", "tree", "--stat", "HEAD~", "HEAD"],
@@ -416,6 +419,7 @@ fn unsupported_indexes_attributes_and_external_commands_refuse_atomically() -> R
             }
             "attributes" => {
                 fs::write(repo.path().join(".gitattributes"), "z-refused diff=custom\n")?;
+                fs::write(repo.path().join("z-refused"), "unstaged change\n")?;
             }
             "external" => {
                 git(repo.path(), &["config", "diff.external", "must-not-run"])?;
@@ -428,6 +432,141 @@ fn unsupported_indexes_attributes_and_external_commands_refuse_atomically() -> R
         for args in [&["diff", "--stat"][..], &["diff", "--cached", "--stat"]] {
             refuse(repo.path(), args, "")?;
         }
+    }
+    Ok(())
+}
+
+#[test]
+fn unchanged_attributed_files_do_not_block_working_statistics() -> Result<()> {
+    let repo = TestRepo::new("stat-unchanged-attributes")?;
+    repo.commit_file("a-ordinary", "old\n")?;
+    repo.commit_file("z-archive", "archive\n")?;
+    repo.commit_file("z-binary", "binary\0bytes\n")?;
+    repo.commit_file("z-lines", "canonical\nlines\n")?;
+    repo.commit_file(
+        ".gitattributes",
+        "z-* diff=lfs filter=lfs-disabled\nz-lines text eol=lf\n",
+    )?;
+    // Filesystem bytes differ, but conversion to index form proves equality.
+    fs::write(repo.path().join("z-lines"), "canonical\r\nlines\r\n")?;
+    fs::write(repo.path().join(".git/index.lock"), "foreign lock\n")?;
+    ensure!(parity(repo.path(), &["diff", "--stat"], &[])?.is_empty());
+    for path in ["z-archive", "z-binary", "z-lines"] {
+        ensure!(parity(repo.path(), &["diff", "--stat", "--", path], &["--", path])?.is_empty());
+    }
+    fs::write(repo.path().join("a-ordinary"), "new\n")?;
+    ensure!(!parity(repo.path(), &["diff", "--stat"], &[])?.is_empty());
+    for data in ["changed\n", "changed\0bytes\n"] {
+        fs::write(repo.path().join("z-archive"), data)?;
+        for args in [&["diff"][..], &["diff", "--stat"]] {
+            refuse(repo.path(), args, "diff attributes")?;
+        }
+    }
+    fs::remove_file(repo.path().join("z-archive"))?;
+    for args in [&["diff"][..], &["diff", "--stat"]] {
+        refuse(repo.path(), args, "diff attributes")?;
+    }
+    Ok(())
+}
+
+#[cfg(unix)]
+#[test]
+fn attributed_symlinks_and_effective_modes_still_require_exact_equality() -> Result<()> {
+    use std::os::unix::fs::{symlink, PermissionsExt};
+
+    let repo = TestRepo::new("attributed-modes")?;
+    let patch_parity = || -> Result<()> {
+        let expected = git(repo.path(), &["diff", "--no-ext-diff", "--no-color"])?;
+        let before = snapshot(repo.path())?;
+        let out = brit(repo.path(), &["diff"])?;
+        ensure!(out.status.success(), "{}", String::from_utf8_lossy(&out.stderr));
+        assert_eq!(out.stdout, expected);
+        assert_eq!(snapshot(repo.path())?, before);
+        Ok(())
+    };
+    repo.commit_file("a-ordinary", "old\n")?;
+    repo.commit_file("z-file", "target")?;
+    symlink("target", repo.path().join("z-link"))?;
+    git(repo.path(), &["add", "z-link"])?;
+    repo.commit_file(".gitattributes", "z-* diff=lfs\n")?;
+    ensure!(parity(repo.path(), &["diff", "--stat"], &[])?.is_empty());
+    patch_parity()?;
+    fs::write(repo.path().join("a-ordinary"), "new\n")?;
+    parity(repo.path(), &["diff", "--stat"], &[])?;
+    patch_parity()?;
+
+    fs::set_permissions(repo.path().join("z-file"), fs::Permissions::from_mode(0o755))?;
+    git(repo.path(), &["config", "core.filemode", "false"])?;
+    parity(repo.path(), &["diff", "--stat"], &[])?;
+    patch_parity()?;
+    git(repo.path(), &["config", "core.filemode", "true"])?;
+    for args in [&["diff"][..], &["diff", "--stat"]] {
+        refuse(repo.path(), args, "diff attributes")?;
+    }
+    // An unchanged executable remains skippable when executable bits matter.
+    git(repo.path(), &["add", "z-file"])?;
+    parity(repo.path(), &["diff", "--stat"], &[])?;
+    patch_parity()?;
+    // File and symlink bytes can agree without their types agreeing.
+    fs::remove_file(repo.path().join("z-file"))?;
+    symlink("target", repo.path().join("z-file"))?;
+    for args in [&["diff"][..], &["diff", "--stat"]] {
+        refuse(repo.path(), args, "diff attributes")?;
+    }
+    fs::remove_file(repo.path().join("z-file"))?;
+    fs::write(repo.path().join("z-file"), "target")?;
+    git(repo.path(), &["add", "z-file"])?;
+    fs::remove_file(repo.path().join("z-link"))?;
+    symlink("changed-target", repo.path().join("z-link"))?;
+    for args in [&["diff"][..], &["diff", "--stat"]] {
+        refuse(repo.path(), args, "diff attributes")?;
+    }
+    fs::remove_file(repo.path().join("z-link"))?;
+    fs::write(repo.path().join("z-link"), "target")?;
+    for args in [&["diff"][..], &["diff", "--stat"]] {
+        refuse(repo.path(), args, "diff attributes")?;
+    }
+    Ok(())
+}
+
+#[test]
+fn unchanged_attributed_files_never_execute_external_commands() -> Result<()> {
+    for setting in [
+        "filter.external.clean",
+        "filter.external.process",
+        "diff.external",
+        "diff.lfs.command",
+        "diff.lfs.textconv",
+    ] {
+        let repo = TestRepo::new("attributed-external-sentinel")?;
+        repo.commit_file("a-ordinary", "old\n")?;
+        repo.commit_file("z-archive", "unchanged\n")?;
+        repo.commit_file(".gitattributes", "z-archive diff=lfs filter=external\n")?;
+        git(repo.path(), &["config", setting, "echo executed > .git/executed; cat"])?;
+        fs::write(repo.path().join("a-ordinary"), "new\n")?;
+        if setting.starts_with("diff.lfs.") {
+            let before = snapshot(repo.path())?;
+            for args in [&["diff"][..], &["diff", "--stat"]] {
+                let out = brit(repo.path(), args)?;
+                ensure!(out.status.success() && !out.stdout.is_empty());
+                assert_eq!(snapshot(repo.path())?, before);
+            }
+            fs::write(repo.path().join("z-archive"), "changed\n")?;
+        }
+        for args in [&["diff"][..], &["diff", "--stat"]] {
+            let reason = if setting.starts_with("filter.") {
+                "External filter"
+            } else if setting.starts_with("diff.lfs.") {
+                "diff attributes"
+            } else {
+                "external diff"
+            };
+            refuse(repo.path(), args, reason)?;
+        }
+        ensure!(
+            !repo.path().join(".git/executed").exists(),
+            "no external command may run"
+        );
     }
     Ok(())
 }

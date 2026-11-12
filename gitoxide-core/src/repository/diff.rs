@@ -306,12 +306,6 @@ fn working_output(
                 "submodule patches are not supported; select ordinary files or use git diff"
             ));
         }
-        attrs.at_entry(&path, None)?.matching_attributes(&mut matches);
-        if matches.iter().any(|m| m.assignment.name.as_str() == "diff") {
-            bail!(unsupported(
-                "diff attributes and text conversion are not supported; use git diff"
-            ));
-        }
         let old = before
             .get(&path)
             .map(|&(mode, blob_id)| load_patch_blob(&repo, mode, blob_id))
@@ -324,6 +318,22 @@ fn working_output(
         } else {
             worktree_patch_blob(&repo, &index, &path)?
         };
+        // Only canonical content and effective mode prove a worktree entry unchanged.
+        // Read through the authoring path first, retaining validation and filter refusals.
+        if !cached
+            && old
+                .as_ref()
+                .zip(new.as_ref())
+                .is_some_and(|(old, new)| old.mode == new.mode && old.data == new.data)
+        {
+            continue;
+        }
+        attrs.at_entry(&path, None)?.matching_attributes(&mut matches);
+        if matches.iter().any(|m| m.assignment.name.as_str() == "diff") {
+            bail!(unsupported(
+                "diff attributes and text conversion are not supported; use git diff"
+            ));
+        }
         if stat {
             collect_stat(&repo, &mut stats, &path, old.as_ref(), new.as_ref())?;
         } else {
