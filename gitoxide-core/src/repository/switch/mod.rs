@@ -24,9 +24,9 @@ fn ensure_no_replay_cleanup(git_dir: &std::path::Path) -> anyhow::Result<()> {
 mod linux;
 #[cfg(target_os = "linux")]
 pub(crate) use linux::{
-    Change, Lock, State, acquire_recorded_locks, checkpoint, complete_directory_ledger, creation_mode, digest,
-    prepare_directories, private_write, publish_file, publish_metadata_at, shared_guard, snapshot, sync_dir, sync_file,
-    sync_path, validate_local_history, validate_object_boundaries, verify_files, verify_locks,
+    Change, Lock, State, acquire_recorded_locks, checkpoint, complete_directory_ledger, creation_mode, digest, payload,
+    prepare_directories, private_copy, private_write, publish_file_from, publish_metadata_at, shared_guard, snapshot,
+    sync_dir, sync_file, sync_path, validate_local_history, validate_object_boundaries, verify_files, verify_locks,
 };
 #[cfg(target_os = "linux")]
 pub use linux::{ensure_no_pending, execute, mutation_guard, recover, status};

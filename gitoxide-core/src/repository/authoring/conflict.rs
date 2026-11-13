@@ -63,14 +63,26 @@ impl Preservation {
         let base = repo.index_from_tree(&repo.head_commit()?.tree_id()?)?;
         let original_entries = entries(&original);
         let mut preserved = changed(&entries(&base), &original_entries);
+        let budget = gix::utils::stream::Budget::new(&std::env::temp_dir())?;
         for e in original.entries() {
             #[cfg(all(target_os = "linux", feature = "switch-test-faults"))]
             super::super::switch::checkpoint("replay-preservation-entry")?;
             ensure!(!gix::interrupt::is_triggered(), "preservation capture interrupted");
             let p: BString = e.path(&original).into();
-            let current = super::super::index::authoring::worktree_entry(repo, &original, &p)?;
+            let current = super::super::index::authoring::worktree_entry_spooled(repo, &original, &p, &budget)?;
             let equal = match current {
-                Some((mode, data)) => mode == e.mode && repo.find_object(e.id)?.data == data,
+                Some((mode, mut data)) => {
+                    let size = data.len();
+                    mode == e.mode
+                        && gix::objs::compute_stream_hash(
+                            repo.object_hash(),
+                            gix::objs::Kind::Blob,
+                            &mut data,
+                            size,
+                            &mut gix::progress::Discard,
+                            &gix::interrupt::IS_INTERRUPTED,
+                        )? == e.id
+                }
                 None => false,
             };
             if !equal && !preserved.contains(&p.to_vec()) {
@@ -404,7 +416,13 @@ fn snapshot(root: &Path) -> Result<BTreeMap<Vec<u8>, Image>> {
                 };
                 #[cfg(not(unix))]
                 let mode = 0;
-                out.insert(rel, Image::File(file_fingerprint(&fs::read(p)?)?.into_bytes(), mode));
+                out.insert(
+                    rel,
+                    Image::File(
+                        file_fingerprint_reader(&mut fs::File::open(p)?, m.len())?.into_bytes(),
+                        mode,
+                    ),
+                );
             }
         }
         Ok(())
@@ -2454,15 +2472,31 @@ mod byte_map {
 /// The tag separates the fallback from legacy raw digests. Both hashes retain
 /// collision detection, and journal checksums continue to use `digest` alone.
 pub(crate) fn file_fingerprint(bytes: &[u8]) -> Result<String> {
-    let mut hash = gix::hash::hasher(gix::hash::Kind::Sha1);
-    hash.update(bytes);
-    match hash.try_finalize() {
+    let mut source = bytes;
+    file_fingerprint_reader(&mut source, bytes.len() as u64)
+}
+
+pub(crate) fn file_fingerprint_reader(input: &mut impl std::io::Read, size: u64) -> Result<String> {
+    let mut raw = gix::hash::hasher(gix::hash::Kind::Sha1);
+    let mut blob = gix::hash::hasher(gix::hash::Kind::Sha1);
+    blob.update(&gix::objs::encode::loose_header(gix::objs::Kind::Blob, size));
+    let mut buffer = [0; gix::utils::stream::CHUNK];
+    let mut read = 0;
+    loop {
+        gix::utils::stream::check(&gix::interrupt::IS_INTERRUPTED)?;
+        let count = input.read(&mut buffer)?;
+        if count == 0 {
+            break;
+        }
+        read += count as u64;
+        raw.update(&buffer[..count]);
+        blob.update(&buffer[..count]);
+    }
+    ensure!(read == size, "worktree file changed while fingerprinting");
+    match raw.try_finalize() {
         Ok(hash) => Ok(hash.to_string()),
-        // SHA-1 finalization's only failure is a detected collision attack.
-        Err(_) => Ok(format!(
-            "git-blob-sha1:{}",
-            gix::objs::compute_hash(gix::hash::Kind::Sha1, gix::objs::Kind::Blob, bytes)?
-        )),
+        // Preserve the collision-safe Git-blob fallback used by existing witnesses.
+        Err(_) => Ok(format!("git-blob-sha1:{}", blob.try_finalize()?)),
     }
 }
 

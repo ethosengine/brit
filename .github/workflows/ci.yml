@@ -467,7 +467,7 @@ jobs:
           set -euo pipefail
           debug_dir="$(just dbg)"
           # Functional coverage only. Whole-group enforcement is separately recorded by qualify-memory.sh.
-          BRIT_BIN="$debug_dir/brit" cargo test --locked -p cli-journey --test memory --test memory_recovery --test memory_snapshot --test memory_diff_resources --test memory_object_store --test memory_merge_resources -- --test-threads=1
+          BRIT_BIN="$debug_dir/brit" cargo test --locked -p cli-journey --test memory --test memory_recovery --test memory_snapshot --test memory_diff_resources --test memory_object_store --test memory_merge_resources --test memory_replay -- --test-threads=1
       - name: Characterize stock Git rebase (design evidence, not Brit support)
         run: cargo test --locked -p cli-journey --test git_rebase_characterization
       - name: Prove internal conflict-aware authoring preservation

@@ -763,7 +763,7 @@ fn valid_loose_object_payload_under_wrong_hash_refuses_history_closure() -> Resu
     let before = snapshot(root)?;
     let error = Selection::prepare(&repo, b"base".as_bstr()).expect_err("corrupt closure must refuse");
     assert!(
-        error.to_string().contains("checksum"),
+        format!("{error:#}").contains("checksum") || format!("{error:#}").contains("hash mismatch"),
         "refusal must identify object hash verification: {error:#}"
     );
     assert_eq!(snapshot(root)?, before);
@@ -1078,7 +1078,7 @@ fn linked_ready_final() -> Result<(tempfile::TempDir, std::path::PathBuf, gix::R
 }
 
 #[test]
-fn linked_worktree_version_one_ready_final_reopens_without_rewriting_identity() -> Result<()> {
+fn linked_worktree_version_two_ready_final_reopens_without_rewriting_identity() -> Result<()> {
     if gix_testtools::run_in_isolated_process().map_err(anyhow::Error::from_boxed)? {
         return Ok(());
     }
@@ -1088,7 +1088,7 @@ fn linked_worktree_version_one_ready_final_reopens_without_rewriting_identity() 
     let envelope: serde_json::Value = serde_json::from_slice(&before)?;
     let payload: Vec<u8> = serde_json::from_value(envelope["payload"].clone())?;
     let state: serde_json::Value = serde_json::from_slice(&payload)?;
-    assert_eq!(state["version"], 1);
+    assert_eq!(state["version"], 2);
     assert_eq!(
         state["common"],
         serde_json::json!(fs::canonicalize(repo.common_dir())?.as_os_str().as_encoded_bytes())
@@ -1099,6 +1099,126 @@ fn linked_worktree_version_one_ready_final_reopens_without_rewriting_identity() 
     reopened.finish(&gix::open(&root)?)?;
     assert_eq!(oid(&root, "topic/nested")?, session.tip()?);
     assert_eq!(git(&root, &["symbolic-ref", "HEAD"])?, b"refs/heads/topic/nested\n");
+    Ok(())
+}
+
+#[test]
+fn legacy_inline_preparation_opens_unchanged_and_can_advance() -> Result<()> {
+    let temp = preserved_linear_fixture(false)?;
+    let root = temp.path();
+    let repo = gix::open(root)?;
+    let _session = Session::prepare(&repo, b"upstream".as_bstr())?.expect("divergence");
+    let directory = repo.git_dir().join("brit-rebase");
+    let state_path = directory.join("state.json");
+    let envelope: serde_json::Value = serde_json::from_slice(&fs::read(&state_path)?)?;
+    let payload: Vec<u8> = serde_json::from_value(envelope["payload"].clone())?;
+    let mut state: serde_json::Value = serde_json::from_slice(&payload)?;
+    let payloads = state["payloads"].as_object().expect("raw payload inventory").clone();
+    for change in state["work"].as_array_mut().expect("work images") {
+        for side in ["before", "after"] {
+            if let Some(image) = change[side].get("StoredFile") {
+                let hash = image["checksum"].as_str().expect("payload hash");
+                change[side] = serde_json::json!({"File": {
+                    "mode": image["mode"], "bytes": fs::read(directory.join(format!("payload-{hash}")))?
+                }});
+            }
+        }
+    }
+    state["version"] = 1.into();
+    state.as_object_mut().expect("state").remove("payloads");
+    let payload = serde_json::to_vec(&state)?;
+    let mut hash = gix::hash::hasher(gix::hash::Kind::Sha1);
+    hash.update(&payload);
+    let bytes =
+        serde_json::to_vec(&serde_json::json!({"payload": payload, "checksum": hash.try_finalize()?.to_string()}))?;
+    fs::write(&state_path, &bytes)?;
+    for hash in payloads.keys() {
+        fs::remove_file(directory.join(format!("payload-{hash}")))?;
+    }
+    let mut session = Session::open(&repo)?;
+    assert_eq!(fs::read(&state_path)?, bytes, "opening legacy state is read-only");
+    assert_eq!(session.advance(&repo)?, Advance::Started);
+    session.abort(&gix::open(root)?)?;
+    Ok(())
+}
+
+#[test]
+fn replay_payload_corruption_symlinks_and_foreign_members_preserve_evidence() -> Result<()> {
+    for mutation in ["corrupt", "missing", "symlink", "foreign"] {
+        let temp = preserved_linear_fixture(false)?;
+        let root = temp.path();
+        let repo = gix::open(root)?;
+        let session = Session::prepare(&repo, b"upstream".as_bstr())?.expect("divergence");
+        let directory = repo.git_dir().join("brit-rebase");
+        let payload = fs::read_dir(&directory)?
+            .collect::<std::io::Result<Vec<_>>>()?
+            .into_iter()
+            .find(|entry| entry.file_name().as_encoded_bytes().starts_with(b"payload-"))
+            .expect("raw payload")
+            .path();
+        match mutation {
+            "corrupt" => fs::write(&payload, b"foreign bytes")?,
+            "missing" => fs::remove_file(&payload)?,
+            "symlink" => {
+                fs::remove_file(&payload)?;
+                std::os::unix::fs::symlink(root.join("selected"), &payload)?;
+            }
+            "foreign" => fs::write(directory.join("foreign"), b"retain me")?,
+            _ => unreachable!(),
+        }
+        let before = snapshot(root)?;
+        if mutation == "foreign" {
+            assert!(session.abort_prepared(&repo).is_err());
+        } else {
+            assert!(Session::open(&repo).is_err());
+        }
+        assert_eq!(snapshot(root)?, before);
+    }
+    Ok(())
+}
+
+#[test]
+fn replay_scratch_exhaustion_preserves_integration_and_foreign_pressure_file() -> Result<()> {
+    let temp = preserved_linear_fixture(false)?;
+    let root = temp.path();
+    let repo = gix::open(root)?;
+    let _session = Session::prepare(&repo, b"upstream".as_bstr())?.expect("divergence");
+    let pressure = repo.git_dir().join("brit-rebase/foreign-pressure");
+    fs::File::create(&pressure)?.set_len(1024 * 1024 * 1024)?;
+    let before = integration_snapshot(root)?;
+    let error = match Session::open(&repo) {
+        Ok(_) => anyhow::bail!("exhausted scratch admitted"),
+        Err(error) => error,
+    };
+    assert!(format!("{error:#}").contains("hard 1 GiB aggregate scratch budget"));
+    assert_eq!(integration_snapshot(root)?, before);
+    assert_eq!(fs::metadata(&pressure)?.len(), 1024 * 1024 * 1024);
+    Ok(())
+}
+
+#[test]
+fn raw_collision_fixture_remains_a_valid_git_blob_through_replay_cleanup() -> Result<()> {
+    let temp = fixture()?;
+    let root = temp.path();
+    let collision = include_bytes!("../../gix-hash/tests/fixtures/shambles/messageA");
+    commit(root, "selected", collision, "raw collision fixture")?;
+    git(root, &["switch", "-qc", "upstream"])?;
+    commit(root, "upstream", b"upstream\n", "upstream")?;
+    git(root, &["switch", "-q", "main"])?;
+    commit(root, "selected", b"topic\n", "topic")?;
+    let repo = gix::open(root)?;
+    let mut session = Session::prepare(&repo, b"upstream".as_bstr())?.expect("divergence");
+    loop {
+        match session.advance(&repo)? {
+            Advance::ReadyFinal => break,
+            Advance::Started | Advance::Step { .. } => {}
+            other => anyhow::bail!("unexpected replay stop: {other:?}"),
+        }
+    }
+    session.finish(&repo)?;
+    session.cleanup(&repo)?;
+    assert_eq!(fs::read(root.join("selected"))?, b"topic\n");
+    assert!(!repo.git_dir().join("brit-rebase").exists());
     Ok(())
 }
 
@@ -1943,6 +2063,8 @@ fn real_signals_during_preparation_recover_without_touching_original_integration
         for checkpoint in [
             "replay-state-file-synced",
             "replay-state-directory-synced",
+            "replay-payload-intent",
+            "replay-payload-persisted",
             "replay-retained",
             "replay-preparation-tombstoned",
             "replay-preparation-last-member-removed",

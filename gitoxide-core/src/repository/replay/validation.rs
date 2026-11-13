@@ -1,7 +1,7 @@
 //! Verify each immutable object once per selection, retaining its expected type.
 use std::collections::{BTreeMap, BTreeSet};
 
-use anyhow::{Result, ensure};
+use anyhow::{Context, Result, ensure};
 
 #[derive(Default)]
 pub(super) struct Validation {
@@ -23,12 +23,7 @@ impl Validation {
             ensure!(*checked_kind == kind, "pinned object has wrong type");
             return Ok(false);
         }
-        let object = repo.find_object(object_id)?;
-        ensure!(object.kind == kind, "pinned object has wrong type");
-        ensure!(
-            gix::objs::compute_hash(repo.object_hash(), object.kind, &object.data)? == object_id,
-            "pinned object checksum mismatch"
-        );
+        ensure!(verify_object(repo, object_id)? == kind, "pinned object has wrong type");
         #[cfg(all(target_os = "linux", feature = "switch-test-faults"))]
         super::super::switch::checkpoint("replay-object-verified")?;
         ensure!(!gix::interrupt::is_triggered(), "replay object validation interrupted");
@@ -83,6 +78,43 @@ impl Validation {
             }
         }
         Ok(())
+    }
+}
+
+/// Verify blob identity through the shared bounded reader; metadata keeps its
+/// structural reader and configured allocation policy.
+pub(super) fn verify_object(repo: &gix::Repository, id: gix::ObjectId) -> Result<gix::objs::Kind> {
+    use gix::objs::FindStream;
+    ensure!(!gix::interrupt::is_triggered(), "replay object validation interrupted");
+    let header = repo.find_header(id)?;
+    if header.kind() == gix::objs::Kind::Blob {
+        let budget = gix::utils::stream::Budget::new(&std::env::temp_dir())?;
+        let (kind, mut bytes) = repo
+            .objects
+            .find_stream(&id, &budget, &gix::interrupt::IS_INTERRUPTED)
+            .with_context(|| format!("verify pinned replay blob {id}"))?;
+        ensure!(kind == gix::objs::Kind::Blob, "pinned object has wrong type");
+        let size = bytes.len();
+        ensure!(
+            gix::objs::compute_stream_hash(
+                repo.object_hash(),
+                kind,
+                &mut bytes,
+                size,
+                &mut gix::progress::Discard,
+                &gix::interrupt::IS_INTERRUPTED
+            )? == id,
+            "pinned object checksum mismatch"
+        );
+        Ok(kind)
+    } else {
+        let object = repo.find_object(id)?;
+        ensure!(
+            gix::objs::compute_hash(repo.object_hash(), object.kind, &object.data)? == id,
+            "pinned object checksum mismatch"
+        );
+        ensure!(!gix::interrupt::is_triggered(), "replay object validation interrupted");
+        Ok(object.kind)
     }
 }
 

@@ -68,7 +68,7 @@ pub(super) fn retire_scratch(repo: &gix::Repository, state: &Manifest) -> Result
     sync_dir(repo.git_dir())
 }
 
-fn checksum(input: &mut impl Read, size: u64) -> Result<String> {
+pub(crate) fn checksum(input: &mut impl Read, size: u64) -> Result<String> {
     Ok(gix::objs::compute_stream_hash(
         gix::hash::Kind::Sha1,
         gix::objs::Kind::Blob,
@@ -149,7 +149,7 @@ fn usage(root: &Path) -> Result<u64> {
     Ok(size)
 }
 
-pub(super) fn check_growth(root: &Path, requested: u64) -> Result<()> {
+pub(crate) fn check_growth(root: &Path, requested: u64) -> Result<()> {
     let live = usage(root)?;
     if live.checked_add(requested).is_none_or(|size| size > SCRATCH_LIMIT) {
         return Err(ScratchLimit {
@@ -162,11 +162,11 @@ pub(super) fn check_growth(root: &Path, requested: u64) -> Result<()> {
     Ok(())
 }
 
-pub(super) fn charge(budget: &Arc<Budget>, root: &Path) -> Result<Charge> {
+pub(crate) fn charge(budget: &Arc<Budget>, root: &Path) -> Result<Charge> {
     Ok(budget.charge(usage(root)?)?)
 }
 
-fn open(root: &Path, size: u64, hash: &str) -> Result<fs::File> {
+pub(crate) fn open(root: &Path, size: u64, hash: &str) -> Result<fs::File> {
     ensure!(
         hash.len() == 40 && hash.bytes().all(|byte| byte.is_ascii_hexdigit()),
         "invalid recovery payload identity"
@@ -246,20 +246,11 @@ pub(super) fn store(repo: &gix::Repository, state: &mut Manifest, mut source: Sp
     let hash = checksum(&mut source, size)?;
     source.rewind()?;
     let root = journal(repo);
-    let destination = root.join(format!("payload-{hash}"));
     state.payloads.insert(hash.clone(), size);
     // Intent licenses exactly this private name before any durable payload appears.
     save(repo, state)?;
     checkpoint("payload-intent")?;
-    if present(&destination)? {
-        open(&root, size, &hash)?;
-    } else {
-        check_growth(&root, size)?;
-        source.set_permissions(fs::Permissions::from_mode(0o600))?;
-        let file = source.publish(&destination)?;
-        sync_file(&file, &destination)?;
-        sync_dir(&root)?;
-    }
+    persist(&root, source, size, &hash)?;
     checkpoint("payload-persisted")?;
     Ok(State::StoredFile {
         mode,
@@ -268,9 +259,56 @@ pub(super) fn store(repo: &gix::Repository, state: &mut Manifest, mut source: Sp
     })
 }
 
-pub(super) fn publish(root: &Path, destination: &Path, mode: u32, size: u64, hash: &str, actual: &State) -> Result<()> {
+/// Persist only after the caller has durably licensed this exact identity.
+pub(crate) fn persist(root: &Path, mut source: Spool, size: u64, hash: &str) -> Result<()> {
+    let destination = root.join(format!("payload-{hash}"));
+    if present(&destination)? {
+        open(root, size, hash)?;
+    } else {
+        check_growth(root, size)?;
+        source.set_permissions(fs::Permissions::from_mode(0o600))?;
+        let file = source.publish(&destination)?;
+        sync_file(&file, &destination)?;
+        sync_dir(root)?;
+    }
+    Ok(())
+}
+
+/// Observe regular files without retaining their contents. This is also comparable
+/// with the legacy inline image, so old recovery journals keep their semantics.
+pub(crate) fn fingerprint(path: &Path) -> Result<State> {
+    let metadata = match fs::symlink_metadata(path) {
+        Ok(metadata) if metadata.is_file() => metadata,
+        _ => return super::snapshot(path),
+    };
+    let mut file = fs::OpenOptions::new()
+        .read(true)
+        .custom_flags(rustix::fs::OFlags::NOFOLLOW.bits() as i32)
+        .open(path)?;
+    let opened = file.metadata()?;
+    ensure!(
+        (metadata.dev(), metadata.ino(), metadata.len()) == (opened.dev(), opened.ino(), opened.len()),
+        "file changed while observing {}",
+        path.display()
+    );
+    Ok(State::StoredFile {
+        mode: metadata.permissions().mode() & 0o777,
+        size: metadata.len(),
+        checksum: checksum(&mut file, metadata.len())?,
+    })
+}
+
+pub(super) fn publish(
+    root: &Path,
+    staging: &Path,
+    destination: &Path,
+    mode: u32,
+    size: u64,
+    hash: &str,
+    actual: &State,
+) -> Result<()> {
     let mut source = open(root, size, hash)?;
-    let staged = root.join("publication");
+    let staged = staging.join("publication");
     if fs::symlink_metadata(&staged).is_ok() {
         fs::remove_file(&staged)?;
     }
@@ -290,12 +328,12 @@ pub(super) fn publish(root: &Path, destination: &Path, mode: u32, size: u64, has
     );
     file.set_permissions(fs::Permissions::from_mode(mode))?;
     sync_file(&file, &staged)?;
-    sync_dir(root)?;
+    sync_dir(staging)?;
     ensure!(
-        super::snapshot(destination)? == *actual,
+        fingerprint(destination)? == *actual,
         "filesystem changed before publication: {}",
         destination.display()
     );
     fs::rename(&staged, destination)?;
-    sync_dir(root)
+    sync_dir(staging)
 }

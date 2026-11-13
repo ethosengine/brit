@@ -2,6 +2,7 @@
 //! Logical paths are metadata only; every payload has an opaque numeric filename.
 use std::{
     fs,
+    io::Read,
     os::unix::fs::{DirBuilderExt, MetadataExt, PermissionsExt},
     path::{Path, PathBuf},
 };
@@ -37,13 +38,133 @@ pub enum Kind {
 /// The caller selects only operation-touched resources. This module never walks
 /// a worktree or imports raw working files into the Git object database.
 #[derive(Clone, Debug)]
-pub struct Member {
+pub struct Member<D = Vec<u8>> {
     pub area: Area,
     pub path: Vec<u8>,
     pub stage: Option<u8>,
     pub kind: Kind,
     pub mode: u32,
-    pub data: Vec<u8>,
+    pub data: D,
+}
+
+/// A repeatable source. Capture pins its digest before publishing and checks it
+/// again after copying, so a changing source cannot authorize restoration.
+pub trait Content {
+    fn size(&self) -> Result<u64>;
+    fn reader(&self) -> Result<Box<dyn Read + '_>>;
+}
+impl Content for Vec<u8> {
+    fn size(&self) -> Result<u64> {
+        Ok(self.len() as u64)
+    }
+    fn reader(&self) -> Result<Box<dyn Read + '_>> {
+        Ok(Box::new(self.as_slice()))
+    }
+}
+
+pub(super) enum Source<'a> {
+    Bytes(Vec<u8>),
+    File(PathBuf),
+    Object(&'a gix::Repository, gix::ObjectId),
+}
+impl Content for Source<'_> {
+    fn size(&self) -> Result<u64> {
+        Ok(match self {
+            Self::Bytes(bytes) => bytes.len() as u64,
+            Self::File(path) => {
+                let metadata = fs::symlink_metadata(path)?;
+                ensure!(metadata.is_file(), "retained source is not a regular file");
+                metadata.len()
+            }
+            Self::Object(repo, id) => repo.find_header(*id)?.size(),
+        })
+    }
+    fn reader(&self) -> Result<Box<dyn Read + '_>> {
+        Ok(match self {
+            Self::Bytes(bytes) => Box::new(bytes.as_slice()),
+            Self::File(path) => {
+                use std::os::unix::fs::OpenOptionsExt;
+                Box::new(
+                    fs::OpenOptions::new()
+                        .read(true)
+                        .custom_flags(rustix::fs::OFlags::NOFOLLOW.bits() as i32)
+                        .open(path)?,
+                )
+            }
+            Self::Object(repo, id) => {
+                use gix::objs::FindStream;
+                let budget = gix::utils::stream::Budget::new(&std::env::temp_dir())?;
+                Box::new(
+                    repo.objects
+                        .find_stream(id, &budget, &gix::interrupt::IS_INTERRUPTED)?
+                        .1,
+                )
+            }
+        })
+    }
+}
+
+fn fingerprint(source: &impl Content) -> Result<String> {
+    crate::repository::authoring::conflict::file_fingerprint_reader(&mut source.reader()?, source.size()?)
+}
+
+fn validate_content(kind: &Kind, source: &impl Content, hash: gix::hash::Kind) -> Result<()> {
+    match kind {
+        Kind::Deleted | Kind::Directory { .. } => {
+            ensure!(source.size()? == 0, "directory or deletion cannot carry file bytes");
+        }
+        Kind::Object { id, kind } => {
+            let id = gix::ObjectId::from_hex(id.as_bytes())?;
+            let kind = gix::objs::Kind::from_bytes(kind.as_bytes())?;
+            ensure!(
+                id.kind() == hash
+                    && gix::objs::compute_stream_hash(
+                        hash,
+                        kind,
+                        &mut source.reader()?,
+                        source.size()?,
+                        &mut gix::progress::Discard,
+                        &gix::interrupt::IS_INTERRUPTED
+                    )? == id,
+                "retained Git object hash mismatch"
+            );
+        }
+        Kind::File | Kind::Symlink => {}
+    }
+    Ok(())
+}
+
+fn persist_content(path: &Path, owner: u32, source: &impl Content, entry: &Entry) -> Result<()> {
+    use std::os::unix::fs::OpenOptionsExt;
+    match fs::symlink_metadata(path) {
+        Ok(metadata) => ensure!(
+            metadata.is_file() && metadata.uid() == owner && metadata.permissions().mode().trailing_zeros() >= 6,
+            "unsafe retained member"
+        ),
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => {
+            switch::payload::check_growth(path.parent().context("retained member parent")?, entry.size)?;
+            let mut reader = source.reader()?;
+            switch::private_copy(path, &mut reader.by_ref().take(entry.size))?;
+            let mut extra = [0];
+            ensure!(
+                reader.read(&mut extra)? == 0,
+                "retained-copy source grew during capture"
+            );
+        }
+        Err(error) => return Err(error.into()),
+    }
+    let mut file = fs::OpenOptions::new()
+        .read(true)
+        .custom_flags(rustix::fs::OFlags::NOFOLLOW.bits() as i32)
+        .open(path)?;
+    ensure!(
+        file.metadata()?.len() == entry.size
+            && crate::repository::authoring::conflict::file_fingerprint_reader(&mut file, entry.size)?
+                == entry.checksum,
+        "retained-copy source or member changed"
+    );
+    switch::sync_file(&file, path)?;
+    switch::sync_dir(path.parent().context("retained member parent")?)
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize, PartialEq, Eq)]
@@ -227,14 +348,14 @@ fn validate_manifest(manifest: &Manifest) -> Result<gix::hash::Kind> {
 /// Resume only a byte-identical capture at the same nonce/sequence. The caller
 /// must durably record skip/abort intent and validate live sources before calling.
 /// The returned receipt alone licenses a later restoration decision.
-pub fn capture(
+pub fn capture<D: Content>(
     repo: &gix::Repository,
     nonce: &str,
     sequence: u64,
     original: gix::ObjectId,
     replay: gix::ObjectId,
     observed: gix::ObjectId,
-    members: &[Member],
+    members: &[Member<D>],
 ) -> Result<Receipt> {
     let owner = fs::metadata(repo.git_dir())?.uid();
     let manifest = Manifest {
@@ -254,15 +375,15 @@ pub fn capture(
                     stage: member.stage,
                     kind: member.kind.clone(),
                     mode: member.mode,
-                    size: member.data.len() as u64,
-                    checksum: file_fingerprint(&member.data)?,
+                    size: member.data.size()?,
+                    checksum: fingerprint(&member.data)?,
                 })
             })
             .collect::<Result<_>>()?,
     };
     let hash = validate_manifest(&manifest)?;
     for member in members {
-        validate_member(&member.kind, &member.data, hash)?;
+        validate_content(&member.kind, &member.data, hash)?;
     }
     let payload = serde_json::to_vec(&manifest)?;
     let digest = switch::digest(&payload)?;
@@ -300,7 +421,12 @@ pub fn capture(
     persist_exact(&leaf.join("manifest.json"), owner, &bytes)?;
     switch::checkpoint("replay-retained-manifest")?;
     for (ordinal, member) in members.iter().enumerate() {
-        persist_exact(&leaf.join(payload_name(ordinal)), owner, &member.data)?;
+        persist_content(
+            &leaf.join(payload_name(ordinal)),
+            owner,
+            &member.data,
+            &manifest.entries[ordinal],
+        )?;
         switch::checkpoint("replay-retained-member")?;
     }
     persist_exact(&leaf.join("COPY_COMPLETE"), owner, format!("{digest}\n").as_bytes())?;
@@ -340,12 +466,18 @@ pub fn inspect(path: &Path) -> Result<Copy> {
     for (ordinal, entry) in manifest.entries.iter().enumerate() {
         let name = payload_name(ordinal);
         expected.insert(name.clone());
-        let data = read_member(&path.join(name), owner)?;
+        let source = Source::File(path.join(name));
+        let Source::File(member) = &source else { unreachable!() };
+        let metadata = fs::symlink_metadata(member)?;
         ensure!(
-            data.len() as u64 == entry.size && file_fingerprint(&data)? == entry.checksum,
+            metadata.is_file() && metadata.uid() == owner && metadata.permissions().mode().trailing_zeros() >= 6,
+            "unsafe retained-copy member"
+        );
+        ensure!(
+            source.size()? == entry.size && fingerprint(&source)? == entry.checksum,
             "retained payload checksum mismatch"
         );
-        validate_member(&entry.kind, &data, hash)?;
+        validate_content(&entry.kind, &source, hash)?;
     }
     for entry in fs::read_dir(path)? {
         let name = entry?.file_name();
@@ -383,6 +515,33 @@ impl Copy {
     pub(crate) fn payload_reader(&self) -> Result<impl Fn(usize) -> Result<Vec<u8>> + '_> {
         let hash = validate_manifest(&self.manifest)?;
         Ok(move |ordinal| self.read_payload(ordinal, hash))
+    }
+
+    pub(crate) fn payload_verifier(&self) -> Result<impl Fn(usize) -> Result<()> + '_> {
+        let hash = validate_manifest(&self.manifest)?;
+        Ok(move |ordinal| {
+            checked_path(&self.receipt.path)?;
+            check_directory(&self.receipt.path, self.manifest.owner_uid)?;
+            let entry = self
+                .manifest
+                .entries
+                .get(ordinal)
+                .context("unknown retained payload ordinal")?;
+            let path = self.receipt.path.join(payload_name(ordinal));
+            let metadata = fs::symlink_metadata(&path)?;
+            ensure!(
+                metadata.is_file()
+                    && metadata.uid() == self.manifest.owner_uid
+                    && metadata.permissions().mode().trailing_zeros() >= 6,
+                "unsafe retained-copy member"
+            );
+            let source = Source::File(path);
+            ensure!(
+                source.size()? == entry.size && fingerprint(&source)? == entry.checksum,
+                "retained payload changed"
+            );
+            validate_content(&entry.kind, &source, hash)
+        })
     }
 
     fn read_payload(&self, ordinal: usize, hash: gix::hash::Kind) -> Result<Vec<u8>> {
@@ -454,6 +613,7 @@ pub fn extract(copy: &Path, destination: &Path) -> Result<Receipt> {
         fs::DirBuilder::new().mode(0o700).create(destination.join(area))?;
     }
     let mut outputs = Vec::new();
+    let verify_payload = copy.payload_verifier()?;
     for (ordinal, entry) in copy.manifest.entries.iter().enumerate() {
         validate()?;
         let area = match entry.area {
@@ -476,9 +636,20 @@ pub fn extract(copy: &Path, destination: &Path) -> Result<Receipt> {
         let relative = format!("{area}/{ordinal:08}{suffix}");
         let output = destination.join(&relative);
         checked_path(output.parent().context("extracted member parent")?)?;
-        switch::private_write(&output, &copy.payload(ordinal)?)?;
+        verify_payload(ordinal)?;
+        let source = Source::File(copy.receipt.path.join(payload_name(ordinal)));
+        let mut reader = source.reader()?;
+        switch::private_copy(&output, &mut reader.by_ref().take(entry.size))?;
+        let mut extra = [0];
+        ensure!(reader.read(&mut extra)? == 0, "retained payload grew during extraction");
+        let destination_source = Source::File(output);
+        ensure!(
+            destination_source.size()? == entry.size && fingerprint(&destination_source)? == entry.checksum,
+            "retained payload changed during extraction"
+        );
         outputs.push(relative);
     }
+    drop(verify_payload);
     validate()?;
     let manifest = serde_json::json!({"version":1,"sourceReceipt":copy.receipt.digest,"manifest":copy.manifest,"payloads":outputs});
     switch::private_write(
@@ -495,6 +666,43 @@ pub fn extract(copy: &Path, destination: &Path) -> Result<Receipt> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn a_growing_source_cannot_exceed_its_licensed_size_or_complete_a_copy() -> Result<()> {
+        struct Growing(std::cell::Cell<bool>);
+        impl Content for Growing {
+            fn size(&self) -> Result<u64> {
+                Ok(3)
+            }
+            fn reader(&self) -> Result<Box<dyn Read + '_>> {
+                let bytes: &[u8] = if self.0.replace(true) {
+                    b"old plus unlicensed growth"
+                } else {
+                    b"old"
+                };
+                Ok(Box::new(bytes))
+            }
+        }
+        let temp = tempfile::tempdir()?;
+        let repo = gix::init(temp.path())?;
+        let id = gix::hash::Kind::Sha1.null();
+        let nonce = "a".repeat(40);
+        let member = Member {
+            area: Area::Worktree,
+            path: b"file".to_vec(),
+            stage: None,
+            kind: Kind::File,
+            mode: 0o600,
+            data: Growing(std::cell::Cell::new(false)),
+        };
+        let error = capture(&repo, &nonce, 1, id, id, id, &[member]).expect_err("source growth must refuse");
+        assert!(error.to_string().contains("source grew"));
+        let leaf = repo.git_dir().join("brit-rebase-retained").join(nonce).join("1");
+        assert_eq!(fs::read(leaf.join(payload_name(0)))?, b"old");
+        assert!(!leaf.join("COPY_COMPLETE").exists());
+        assert!(inspect(&leaf).is_err());
+        Ok(())
+    }
 
     #[test]
     fn borrowed_reader_validates_each_manifest_entry_once_and_rechecks_live_payloads() -> Result<()> {

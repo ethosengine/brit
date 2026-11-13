@@ -2840,6 +2840,59 @@ storage policy applies equally to worktree and object-backed resources**.
 The three-sided filesystem fixture had passed while the same object-backed
 inputs refused at 16 MiB; the new resource fixture guards both entry paths.
 
+### Replay recovery payloads and retained copies
+
+A 20 MiB public rebase exceeded the 1 GiB cgroup limit before this repair:
+three OOM kills, exit 137, 87.02 s. Its `state.json` contained 503,360,857 logical
+bytes. The journal repeated working-file images as nested JSON byte arrays.
+Replay version 2 licenses immutable raw payload identities before publication;
+worktree checks stream hashes and transition records refer to those payloads.
+Version 1 inline journals still open without a rewrite and can advance or abort.
+Conversion uses the existing streamed checkout pipeline. Closure verification,
+preservation comparisons, retained-copy capture and inspection stream blobs;
+retained manifests, checksums, object identities and completion receipts keep
+their existing format. Cleanup hashes payloads without loading their contents.
+
+The public Git-oracle fixture checks full resulting trees and parentage, staged
+and unstaged neighboring content, reclaimed active journals and `fsck`, using
+loose objects at a 1 GiB allocation setting and packed objects at 16 MiB.
+The repaired 20 MiB case passes in 77.40 s with a 553,140,224 B whole-group peak;
+64 MiB passes in 223.02 s with a 1,073,741,824 B peak. Both have zero OOM kills,
+zero surviving processes and stable executable identities. The observed 20 MiB
+state file is about 57 KB. These receipts precede the final cleanup-reader
+refinement; committed-source qualification is still required. Scratch peak is
+unmeasured, so neither receipt closes full acceptance.
+
+The ordinary native authoring/replay run passes 117 tests; the subsequent
+cleanup run passes 36 core/power-loss, 54 replay and 11 retained-copy tests.
+These include legacy opening, scratch exhaustion and payload corruption,
+missing-file, symlink and foreign-member refusals. A packed 20 MiB case with actual reduced trust also passes (333,959,168 B,
+39.12 s, no OOM or surviving processes). Its foreign-owned worktree triggers
+reduced trust while private Git metadata retains the acting user's ownership;
+no trust override or allocation setting is supplied. The fault-enabled run
+passes 33 authoring, 69 replay, 28 interactive, six I/O and twelve preservation
+matrix tests; the cleanup refinement additionally passes 70 replay and six I/O
+tests. The shared public switch/pull/rebase run passes 42 tests. Growing-source
+and collision-fixture tests preserve the existing recovery semantics: raw SHA-1
+collision detection must use the existing tagged Git-blob fingerprint fallback,
+without weakening actual Git object validation. Strict affected Clippy, readiness
+and declared Rust style pass for this slice. Conflict-child payloads, large
+preserved edits, journal metadata, aggregate scratch accounting and final-source
+resource proofs remain open. The original large version-1 journal can be
+inspected under the cap (679,194,624 B, 44.92 s), but its abort still OOM-kills
+(two kills, 379.36 s); HEAD, index, branches and working files remain byte-identical.
+Small legacy compatibility passes; large legacy mutation needs normalization
+before another encoded decision. This failure remains open, not accepted or
+silently deferred.
+
+Story-harvest station: **replay / between retained history → recovery journal /
+file custody must remain bounded independently of comparison storage**. A
+bounded merge alone did not prevent the journal from exhausting memory.
+A separate custody station checks **raw payload → cleanup witness**: Git-blob
+identity and an unframed SHA-1 file digest are different checks. The existing
+collision fixture failed cleanup before reusing the tagged fingerprint fallback,
+then passed the full replay/cleanup path.
+
 ### Public-command audit in progress
 
 The command boundary is `src/plumbing/options/mod.rs` plus
@@ -2853,7 +2906,7 @@ unsupported independently of this effort. No open row is accepted as deferred.
 | `diff`, `cat`, `add`, `restore`, `archive` | Shared readers repaired as above; large converted archive and clean/status fixtures pass; pinned diff, larger aggregate selections and remaining fault cases stay open. `diff file` and diff-format reads now use the streamed/mapped shared conversion path and pass the added 20/64/256 MiB matrix. Other comparison-cache consumers remain open. |
 | `status`, `is-clean`, `is-changed`, `index`, `dirwalk`, `clean` | Hash-only status paths stream ordinary files; filtered status and a 200,000-entry index crossing 16 MiB are measured. Other metadata, dirwalk and clean paths still need complete tracing. |
 | `worktree`, `clone` checkout | Existing bounded checkout, OFS/REF delta and filter machinery retained. Whole-cgroup 64/256 MiB worktree checkout/recovery passes; 64/256 MiB local clone/fetch/push also passes; other protocols and reduced-trust transfer paths remain open. |
-| `switch`, `pull`, `rebase`, `merge`, `commit` | Switch/pull raw recovery payloads and streamed dirty checks are repaired and measured at 20/64/256 MiB. Replay/conflict journals and journal metadata still retain byte vectors and serialized images. Three-sided 64 MiB filesystem and object-backed file/tree/commit merge fixtures pass, with bounded rename inputs and recursive-base conformance. External merge drivers, large journals and resource-bound recovery/death fixtures remain open. |
+| `switch`, `pull`, `rebase`, `merge`, `commit` | Switch/pull raw recovery payloads and streamed dirty checks are repaired and measured at 20/64/256 MiB. Replay working-file journals now use raw payloads and retained-copy capture streams, with 20/64 MiB public cases passing; conflict-child payloads, preserved large edits and journal metadata remain open. Three-sided 64 MiB filesystem and object-backed file/tree/commit merge fixtures pass, with bounded rename inputs and recursive-base conformance. External merge drivers, large journals and resource-bound recovery/death fixtures remain open. |
 | `blame`, `log`, `revision`, `merge-base`, `tree` | Blame initial/history blobs, rename similarity and rendering are repaired and measured, including actual reduced trust and a million unique lines; large history metadata remains open. Ordinary log traverses commits without reading blobs; path-filtered log was already unsupported. Tree listing streams output and uses headers for sizes; its traversal metadata remains to qualify. |
 | `fetch`, `push`, `odb`, `fsck`, `verify`, `commit-graph` | Pack decode diagnostics improved; 64/256 MiB local transfer passes without worker/cache changes. Loose blob verification now streams. Both verification algorithms and all decode modes, ODB inspection, connectivity and pack create/index/explode pass at 20/64/256 MiB with a 1 GiB allocation setting, including 64 MiB OFS/REF histories. Explicit 16 MiB packed-buffer refusal is accurately diagnosed and preserves repository state; this is refusal proof, not successful bounded packed verification. Reduced-trust packed buffers, additional protocols and large metadata qualification remain open. |
 | `branch`, `tag`, `remote`, `submodule`, `config`, `config-tree`, `attributes`, `exclude`, `mailmap` | Ref/config/path metadata and helper dispatch still need allocation tracing and applicable fixtures. |

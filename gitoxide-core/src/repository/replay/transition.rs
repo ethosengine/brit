@@ -89,7 +89,8 @@ impl Transition {
         let mut ordered: Vec<_> = self.work.iter().collect();
         ordered.sort_by_key(|change| std::cmp::Reverse(change.path.len()));
         for change in &ordered {
-            let actual = switch::snapshot(&root.join(gix::path::from_bstr(change.path.as_bstr())?.as_ref()))?;
+            let actual =
+                switch::payload::fingerprint(&root.join(gix::path::from_bstr(change.path.as_bstr())?.as_ref()))?;
             let must_remove = self.replaced_ancestor(&change.path)
                 || change.after == State::Absent
                 || (actual != State::Absent
@@ -97,7 +98,13 @@ impl Transition {
                     && (matches!(change.after, State::Directory { .. }) || matches!(actual, State::Directory { .. })));
             if must_remove && actual != State::Absent {
                 self.mark_started(staging, &mut started, &change.path)?;
-                switch::publish_file(staging, root, change, &State::Absent)?;
+                switch::publish_file_from(
+                    staging.parent().context("replay payload directory")?,
+                    staging,
+                    root,
+                    change,
+                    &State::Absent,
+                )?;
                 switch::checkpoint("replay-worktree-removal")?;
             }
         }
@@ -106,11 +113,18 @@ impl Transition {
             if change.after != State::Absent {
                 self.mark_started(staging, &mut started, &change.path)?;
                 let mut publishing = (*change).clone();
-                let actual = switch::snapshot(&root.join(gix::path::from_bstr(change.path.as_bstr())?.as_ref()))?;
+                let actual =
+                    switch::payload::fingerprint(&root.join(gix::path::from_bstr(change.path.as_bstr())?.as_ref()))?;
                 if actual == State::Absent && self.replaced_ancestor(&change.path) && started.contains(&change.path) {
                     publishing.before = State::Absent;
                 }
-                switch::publish_file(staging, root, &publishing, &change.after)?;
+                switch::publish_file_from(
+                    staging.parent().context("replay payload directory")?,
+                    staging,
+                    root,
+                    &publishing,
+                    &change.after,
+                )?;
                 switch::checkpoint("replay-worktree-publication")?;
             }
         }
@@ -138,7 +152,8 @@ impl Transition {
 
     fn verify_work(&self, root: &Path, started: &BTreeSet<Vec<u8>>) -> Result<()> {
         for change in &self.work {
-            let actual = switch::snapshot(&root.join(gix::path::from_bstr(change.path.as_bstr())?.as_ref()))?;
+            let actual =
+                switch::payload::fingerprint(&root.join(gix::path::from_bstr(change.path.as_bstr())?.as_ref()))?;
             if actual == State::Absent && self.replaced_ancestor(&change.path) && started.contains(&change.path) {
                 // Only this declared descendant may be temporarily absent while
                 // its exact parent directory inode is replaced.

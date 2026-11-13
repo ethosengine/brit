@@ -1,8 +1,11 @@
 use super::*;
 #[path = "interactive.rs"]
 mod interactive;
+#[path = "payload.rs"]
+mod payload;
 use crate::repository::authoring::conflict::ParentBinding;
 use crate::repository::{authoring::conflict::Preservation, switch};
+use gix::objs::FindStream;
 use gix_sequencer::Command;
 use serde::{Deserialize, Serialize};
 use std::{
@@ -82,6 +85,8 @@ struct Envelope {
 #[serde(deny_unknown_fields)]
 struct ParentState {
     version: u32,
+    #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
+    payloads: BTreeMap<String, u64>,
     nonce: String,
     step: usize,
     phase: String,
@@ -198,7 +203,7 @@ impl Session {
         for path in active {
             ensure!(!gix::interrupt::is_triggered(), "replay preparation interrupted");
             validate_scope_ancestors(root, &path, &original_tree)?;
-            let image = switch::snapshot(&root.join(gix::path::from_bstr(path.as_bstr())?.as_ref()))?;
+            let image = switch::payload::fingerprint(&root.join(gix::path::from_bstr(path.as_bstr())?.as_ref()))?;
 
             ensure!(
                 original_tree.entry_by_path(path.as_bstr()).is_some()
@@ -250,7 +255,14 @@ impl Session {
             .map(|path| fs::symlink_metadata(path).map(|m| (m.dev(), m.ino())))
             .collect::<std::io::Result<_>>()?;
         let mut state = ParentState {
-            version: 1,
+            version: 2,
+            payloads: work
+                .iter()
+                .filter_map(|change| match &change.before {
+                    switch::State::StoredFile { size, checksum, .. } => Some((checksum.clone(), *size)),
+                    _ => None,
+                })
+                .collect(),
             nonce,
             step: 0,
             phase: "preparing".into(),
@@ -343,6 +355,7 @@ impl Session {
         };
         let mut session = session;
         session.save_bytes(&bytes)?;
+        drop(bytes);
         switch::sync_dir(repo.git_dir())?;
         switch::checkpoint("replay-prepared")?;
         session.complete_preparation(repo)?;
@@ -353,6 +366,7 @@ impl Session {
         switch::validate_local_history(repo)?;
         switch::validate_object_boundaries(repo)?;
         ensure!(self.state.phase == "preparing", "preparation already completed");
+        self.prepare_payloads(repo)?;
         sync_tree(&repo.common_dir().join("objects"))?;
         let mut retained_objects = self.state.closure.iter().cloned().collect::<BTreeSet<_>>();
         retained_objects.extend(
@@ -365,11 +379,7 @@ impl Session {
         for value in &retained_objects {
             switch::checkpoint("replay-retention-verify")?;
             let id = gix::ObjectId::from_hex(value.as_bytes())?;
-            let object = repo.find_object(id)?;
-            ensure!(
-                gix::objs::compute_hash(repo.object_hash(), object.kind, &object.data)? == id,
-                "pinned closure checksum mismatch"
-            );
+            super::validation::verify_object(repo, id)?;
             ensure!(
                 !gix::interrupt::is_triggered(),
                 "replay retention verification interrupted"
@@ -828,7 +838,7 @@ impl Session {
         let mut closure = BTreeSet::new();
         history(repo, retained.head, &mut closure)?;
         for id in &retained.objects {
-            match repo.find_object(*id)?.kind {
+            match super::validation::verify_object(repo, *id)? {
                 gix::objs::Kind::Commit => {
                     history(repo, *id, &mut closure)?;
                 }
@@ -846,10 +856,7 @@ impl Session {
         self.state.closure.sort();
         self.state.closure.dedup();
         self.state.index = switch::snapshot(&repo.index_path())?;
-        let root = repo.workdir().context("worktree required")?;
-        for change in &mut self.state.work {
-            change.after = switch::snapshot(&root.join(gix::path::from_bstr(change.path.as_bstr())?.as_ref()))?;
-        }
+        self.capture_after(repo)?;
         Ok(())
     }
 
@@ -899,10 +906,7 @@ impl Session {
         };
         if self.needs_message()? {
             self.state.index = switch::snapshot(&repo.index_path())?;
-            let root = repo.workdir().context("worktree required")?;
-            for change in &mut self.state.work {
-                change.after = switch::snapshot(&root.join(gix::path::from_bstr(change.path.as_bstr())?.as_ref()))?;
-            }
+            self.capture_after(repo)?;
             self.state.accepted_child = Some((completion.binding, completion.receipt));
             let mut closure = BTreeSet::new();
             validate_tree(repo, tree, &mut closure)?;
@@ -935,10 +939,7 @@ impl Session {
         switch::sync_path(&path)?;
         switch::sync_dir(&self.directory)?;
         self.state.index = switch::snapshot(&repo.index_path())?;
-        let root = repo.workdir().context("worktree required")?;
-        for change in &mut self.state.work {
-            change.after = switch::snapshot(&root.join(gix::path::from_bstr(change.path.as_bstr())?.as_ref()))?;
-        }
+        self.capture_after(repo)?;
         self.state.accepted_child = Some((completion.binding, completion.receipt));
         self.state.phase = "step-proposed".into();
         self.state.stop_tree = Some(tree.to_string());
@@ -1175,7 +1176,8 @@ impl Session {
         let root = repo.workdir().context("worktree required")?;
         for change in &self.state.work {
             ensure!(
-                switch::snapshot(&root.join(gix::path::from_bstr(change.path.as_bstr())?.as_ref()))? == change.after,
+                switch::payload::fingerprint(&root.join(gix::path::from_bstr(change.path.as_bstr())?.as_ref()))?
+                    == change.after,
                 "published replay worktree changed"
             );
         }
@@ -1341,7 +1343,7 @@ impl Session {
         ensure!(nonce == self.state.nonce && saved == label, "foreign retention recipe");
         let id = gix::ObjectId::from_hex(value.as_bytes())?;
         let mut closure = BTreeSet::new();
-        match repo.find_object(id)?.kind {
+        match repo.find_header(id)?.kind() {
             gix::objs::Kind::Commit => {
                 history(repo, id, &mut closure)?;
             }
@@ -1413,7 +1415,7 @@ impl Session {
             .collect::<Vec<_>>()
         {
             validate_scope_ancestors(root, &path, &original)?;
-            let image = switch::snapshot(&root.join(gix::path::from_bstr(path.as_bstr())?.as_ref()))?;
+            let image = self.capture_payload(repo, &root.join(gix::path::from_bstr(path.as_bstr())?.as_ref()))?;
             ensure!(
                 original.entry_by_path(path.as_bstr()).is_some() || image == switch::State::Absent,
                 "merge expansion collides with untracked or ignored content"
@@ -1692,7 +1694,8 @@ impl Session {
             "invoking-pre" | "pre-unknown" | "pre-rejected" | "pre-approved"
         );
         for change in &mut self.state.work {
-            let observed = switch::snapshot(&root.join(gix::path::from_bstr(change.path.as_bstr())?.as_ref()))?;
+            let observed =
+                switch::payload::fingerprint(&root.join(gix::path::from_bstr(change.path.as_bstr())?.as_ref()))?;
             ensure!(
                 hook_stopped || observed == change.after,
                 "foreign replay worktree mutation before abort"
@@ -1807,7 +1810,14 @@ impl Session {
     }
 
     fn cleanup_inventory(&self, repo: &gix::Repository) -> Result<BTreeSet<Vec<u8>>> {
+        self.validate_payloads()?;
         let mut allowed = BTreeSet::from([b"state.json".to_vec()]);
+        for hash in self.state.payloads.keys() {
+            let name = format!("payload-{hash}");
+            if fs::symlink_metadata(self.directory.join(&name)).is_ok() {
+                allowed.insert(name.into_bytes());
+            }
+        }
         if self.directory.join("state.pending").exists() {
             ensure!(
                 fs::read(self.directory.join("state.pending"))? == fs::read(self.directory.join("state.json"))?,
@@ -1977,7 +1987,7 @@ impl Session {
     }
 
     fn capture_current(&self, repo: &gix::Repository) -> Result<super::retained::Receipt> {
-        use super::retained::{Area, Kind, Member};
+        use super::retained::{Area, Kind, Member, Source};
         let mut members = vec![
             Member {
                 area: Area::Original,
@@ -1985,7 +1995,7 @@ impl Session {
                 stage: None,
                 kind: Kind::File,
                 mode: 0o600,
-                data: serde_json::to_vec(&self.state.preservation)?,
+                data: Source::Bytes(serde_json::to_vec(&self.state.preservation)?),
             },
             Member {
                 area: Area::Indexes,
@@ -1993,7 +2003,7 @@ impl Session {
                 stage: None,
                 kind: Kind::File,
                 mode: 0o600,
-                data: self.state.preservation.original_index().to_vec(),
+                data: Source::Bytes(self.state.preservation.original_index().to_vec()),
             },
             Member {
                 area: Area::Indexes,
@@ -2001,18 +2011,21 @@ impl Session {
                 stage: None,
                 kind: Kind::File,
                 mode: 0o600,
-                data: fs::read(repo.index_path())?,
+                data: Source::File(repo.index_path()),
             },
         ];
         for change in &self.state.work {
-            members.push(retained_image(Area::Before, &change.path, &change.before)?);
-            let observed = switch::snapshot(
-                &repo
-                    .workdir()
-                    .context("worktree required")?
-                    .join(gix::path::from_bstr(change.path.as_bstr())?.as_ref()),
-            )?;
-            members.push(retained_image(Area::Worktree, &change.path, &observed)?);
+            members.push(retained_image(
+                &self.directory,
+                Area::Before,
+                &change.path,
+                &change.before,
+            )?);
+            let path = repo
+                .workdir()
+                .context("worktree required")?
+                .join(gix::path::from_bstr(change.path.as_bstr())?.as_ref());
+            members.push(retained_path(Area::Worktree, &change.path, &path)?);
         }
         let observed = repo.open_index()?;
         for entry in observed.entries() {
@@ -2023,7 +2036,10 @@ impl Session {
                 .iter()
                 .any(|change| change.path.as_slice() == path.as_bytes())
             {
-                let blob = repo.find_object(entry.id)?.try_into_blob()?;
+                ensure!(
+                    repo.find_header(entry.id)?.kind() == gix::objs::Kind::Blob,
+                    "staged object is not a blob"
+                );
                 members.push(Member {
                     area: Area::Staged,
                     path: path.to_vec(),
@@ -2034,7 +2050,7 @@ impl Session {
                         Kind::File
                     },
                     mode: entry.mode.bits(),
-                    data: blob.data.clone(),
+                    data: Source::Object(repo, entry.id),
                 });
             }
         }
@@ -2049,17 +2065,17 @@ impl Session {
         retained_objects.extend(observed.entries().iter().map(|entry| entry.id.to_string()));
         for value in &retained_objects {
             let id = gix::ObjectId::from_hex(value.as_bytes())?;
-            let object = repo.find_object(id)?;
+            let object = repo.find_header(id)?;
             members.push(Member {
                 area: Area::Objects,
                 path: value.as_bytes().to_vec(),
                 stage: None,
                 kind: Kind::Object {
                     id: value.clone(),
-                    kind: object.kind.to_string(),
+                    kind: object.kind().to_string(),
                 },
                 mode: 0o600,
-                data: object.data.clone(),
+                data: Source::Object(repo, id),
             });
         }
         retain_journal_members(&self.directory, &self.directory, &mut members)?;
@@ -2111,7 +2127,9 @@ impl Session {
         );
         let state: ParentState = serde_json::from_slice(&envelope.payload)?;
         ensure!(
-            state.version == 1 && state.nonce.len() == 40 && state.nonce.as_bytes().iter().all(u8::is_ascii_hexdigit),
+            matches!(state.version, 1 | 2)
+                && state.nonce.len() == 40
+                && state.nonce.as_bytes().iter().all(u8::is_ascii_hexdigit),
             "unsupported replay journal identity"
         );
         let root = repo.workdir().context("worktree required")?;
@@ -2127,6 +2145,7 @@ impl Session {
             .collect::<std::io::Result<_>>()?;
         ensure!(identities == state.identities, "replay inode identity mismatch");
         let session = Self { directory, state };
+        session.validate_payloads()?;
         if session.state.phase == "prepared" {
             session.validate_retention(repo)?;
         }
@@ -2268,9 +2287,16 @@ impl Session {
             switch::sync_dir(&self.directory)?;
             current = candidate;
         }
+        current.validate_payloads()?;
         for entry in fs::read_dir(&self.directory)? {
+            let name = entry?.file_name();
             ensure!(
-                entry?.file_name() == "state.json",
+                name == "state.json"
+                    || current
+                        .state
+                        .payloads
+                        .keys()
+                        .any(|hash| name == format!("payload-{hash}").as_str()),
                 "unknown replay journal member; inspect before cleanup"
             );
         }
@@ -2349,7 +2375,7 @@ impl Session {
             Err(error) => return Err(error.into()),
         };
         ensure!(
-            state.version == 1
+            matches!(state.version, 1 | 2)
                 && state.phase == "cancelling-prepared"
                 && tombstone.file_name() == Some(std::ffi::OsStr::new(&format!("brit-rebase-done-{}", state.nonce))),
             "invalid preparation tombstone"
@@ -2380,14 +2406,25 @@ impl Session {
                     metadata.is_dir() && (metadata.dev(), metadata.ino()) == state.identities[3],
                     "foreign tombstone directory"
                 );
-                for entry in fs::read_dir(tombstone)? {
-                    let entry = entry?;
-                    ensure!(
-                        entry.file_name() == "state.json"
-                            && fs::symlink_metadata(entry.path())?.is_file()
-                            && fs::read(entry.path())? == fs::read(&receipt)?,
-                        "unknown tombstone member"
-                    );
+                let entries = fs::read_dir(tombstone)?.collect::<std::io::Result<Vec<_>>>()?;
+                // Validate the complete inventory before deleting any member.
+                for entry in &entries {
+                    if entry.file_name() == "state.json" {
+                        ensure!(
+                            fs::symlink_metadata(entry.path())?.is_file()
+                                && fs::read(entry.path())? == fs::read(&receipt)?,
+                            "unknown tombstone member"
+                        );
+                    } else {
+                        let (hash, size) = state
+                            .payloads
+                            .iter()
+                            .find(|(hash, _)| entry.file_name() == format!("payload-{hash}").as_str())
+                            .context("unknown tombstone member")?;
+                        switch::payload::open(tombstone, *size, hash)?;
+                    }
+                }
+                for entry in entries {
                     fs::remove_file(entry.path())?;
                 }
                 switch::sync_dir(tombstone)?;
@@ -2474,7 +2511,7 @@ impl Session {
     }
 
     fn checkout_transition(
-        &self,
+        &mut self,
         repo: &gix::Repository,
         tree: gix::ObjectId,
         private: &gix::index::State,
@@ -2499,46 +2536,62 @@ impl Session {
         let root = repo.workdir().context("worktree required")?;
         let desired = repo.index_from_tree(&tree)?;
         let attributes = repo.attributes_only(&desired, gix::worktree::stack::state::attributes::Source::IdMapping)?;
-        let mut pipeline = gix::filter::Pipeline::new(repo, attributes.detach())?;
+        let (mut pipeline, mut attributes) = gix::filter::Pipeline::new(repo, attributes.detach())?.into_parts();
+        let budget = gix::utils::stream::Budget::new(repo.git_dir())?;
         let mut after = self.state.clone();
         let mut changes = Vec::new();
         for tracked in &mut after.work {
             let relative = gix::path::from_bstr(tracked.path.as_bstr())?;
             let absolute = root.join(relative.as_ref());
 
-            let before = switch::snapshot(&absolute)?;
+            let before = switch::payload::fingerprint(&absolute)?;
             ensure!(before == tracked.after, "foreign worktree mutation in replay footprint");
             let image = match desired.entry_by_path(tracked.path.as_bstr()) {
                 None => switch::State::Absent,
                 Some(entry) => {
-                    let blob = repo.find_object(entry.id)?.try_into_blob()?;
+                    let _charge = switch::payload::charge(&budget, &self.directory)?;
+                    let (kind, mut source) =
+                        repo.objects
+                            .find_stream(&entry.id, &budget, &gix::interrupt::IS_INTERRUPTED)?;
+                    ensure!(
+                        kind == gix::objs::Kind::Blob,
+                        "replay destination is not a blob: {}",
+                        entry.id
+                    );
                     match entry.mode {
                         gix::index::entry::Mode::SYMLINK => {
                             ensure!(
                                 repo.config_snapshot().try_boolean("core.symlinks")? != Some(false),
                                 "emulated replay symlinks are unsupported"
                             );
-                            ensure!(
-                                !blob.data.is_empty() && !blob.data.contains(&0),
-                                "invalid replay symlink"
-                            );
-                            switch::State::Symlink(blob.data.clone())
+                            let mut bytes = Vec::new();
+                            source.read_to_end(&mut bytes)?;
+                            ensure!(!bytes.is_empty() && !bytes.contains(&0), "invalid replay symlink");
+                            switch::State::Symlink(bytes)
                         }
                         gix::index::entry::Mode::FILE | gix::index::entry::Mode::FILE_EXECUTABLE => {
-                            let mut bytes = Vec::new();
-                            pipeline
-                                .convert_to_worktree(&blob.data, tracked.path.as_bstr(), Default::default())?
-                                .read_to_end(&mut bytes)?;
-                            switch::State::File {
-                                mode: switch::creation_mode(
-                                    if entry.mode == gix::index::entry::Mode::FILE_EXECUTABLE {
-                                        0o777
-                                    } else {
-                                        0o666
-                                    },
-                                )?,
-                                bytes,
-                            }
+                            let entry_attributes = attributes.at_entry(tracked.path.as_bstr(), None, &repo.objects)?;
+                            let converted = pipeline.convert_to_worktree_stream(
+                                source,
+                                tracked.path.as_bstr(),
+                                &mut |_, attrs| {
+                                    entry_attributes.matching_attributes(attrs);
+                                },
+                                Default::default(),
+                                &budget,
+                                &gix::interrupt::IS_INTERRUPTED,
+                            )?;
+                            let gix::filter::plumbing::pipeline::stream::Outcome::Ready(source) = converted else {
+                                unreachable!("delay is forbidden")
+                            };
+                            self.store_payload(
+                                source,
+                                switch::creation_mode(if entry.mode == gix::index::entry::Mode::FILE_EXECUTABLE {
+                                    0o777
+                                } else {
+                                    0o666
+                                })?,
+                            )?
                         }
                         _ => anyhow::bail!("affected unsupported replay entry"),
                     }
@@ -2551,6 +2604,8 @@ impl Session {
             });
             tracked.after = image;
         }
+        after.version = self.state.version;
+        after.payloads.clone_from(&self.state.payloads);
         let source_paths = observed
             .entries()
             .iter()
@@ -2685,11 +2740,7 @@ impl Session {
         }
         for value in &decision.after.closure {
             let id = gix::ObjectId::from_hex(value.as_bytes())?;
-            let object = repo.find_object(id)?;
-            ensure!(
-                gix::objs::compute_hash(repo.object_hash(), object.kind, &object.data)? == id,
-                "decision closure corrupted"
-            );
+            super::validation::verify_object(repo, id)?;
         }
         sync_tree(&repo.common_dir().join("objects"))?;
         sync_reference_storage(repo)?;
@@ -2980,20 +3031,32 @@ fn sync_reference_storage(repo: &gix::Repository) -> Result<()> {
     switch::sync_dir(repo.common_dir())
 }
 
-fn retained_image(area: super::retained::Area, path: &[u8], image: &switch::State) -> Result<super::retained::Member> {
-    use super::retained::{Kind, Member};
+fn retained_image<'a>(
+    root: &Path,
+    area: super::retained::Area,
+    path: &[u8],
+    image: &switch::State,
+) -> Result<super::retained::Member<super::retained::Source<'a>>> {
+    use super::retained::{Kind, Member, Source};
     let (kind, mode, data) = match image {
-        switch::State::Absent => (Kind::Deleted, 0, Vec::new()),
-        switch::State::File { mode, bytes } => (Kind::File, *mode, bytes.clone()),
-        switch::State::StoredFile { .. } => anyhow::bail!("switch payload is not a replay-owned image"),
-        switch::State::Symlink(bytes) => (Kind::Symlink, 0, bytes.clone()),
+        switch::State::Absent => (Kind::Deleted, 0, Source::Bytes(Vec::new())),
+        switch::State::File { mode, bytes } => (Kind::File, *mode, Source::Bytes(bytes.clone())),
+        switch::State::StoredFile { mode, size, checksum } => {
+            switch::payload::open(root, *size, checksum)?;
+            (
+                Kind::File,
+                *mode,
+                Source::File(root.join(format!("payload-{checksum}"))),
+            )
+        }
+        switch::State::Symlink(bytes) => (Kind::Symlink, 0, Source::Bytes(bytes.clone())),
         switch::State::Directory { mode, device, inode } => (
             Kind::Directory {
                 device: *device,
                 inode: *inode,
             },
             *mode,
-            Vec::new(),
+            Source::Bytes(Vec::new()),
         ),
     };
     Ok(Member {
@@ -3004,6 +3067,32 @@ fn retained_image(area: super::retained::Area, path: &[u8], image: &switch::Stat
         mode,
         data,
     })
+}
+
+fn retained_path<'a>(
+    area: super::retained::Area,
+    path: &[u8],
+    absolute: &Path,
+) -> Result<super::retained::Member<super::retained::Source<'a>>> {
+    use super::retained::{Kind, Member, Source};
+    use std::os::unix::fs::OpenOptionsExt;
+    if fs::symlink_metadata(absolute).is_ok_and(|metadata| metadata.is_file()) {
+        let file = fs::OpenOptions::new()
+            .read(true)
+            .custom_flags(rustix::fs::OFlags::NOFOLLOW.bits() as i32)
+            .open(absolute)?;
+        let mode = file.metadata()?.permissions().mode() & 0o777;
+        Ok(Member {
+            area,
+            path: path.to_vec(),
+            stage: None,
+            kind: Kind::File,
+            mode,
+            data: Source::File(absolute.to_owned()),
+        })
+    } else {
+        retained_image(absolute, area, path, &switch::snapshot(absolute)?)
+    }
 }
 
 fn sync_tree(path: &Path) -> Result<()> {
@@ -3083,7 +3172,7 @@ pub(crate) fn validate_child_binding(repo: &gix::Repository, binding: &ParentBin
         "replay child authorization context changed"
     );
     ensure!(
-        state.version == 1
+        matches!(state.version, 1 | 2)
             && state.nonce == binding.nonce
             && state.decisions == binding.step
             && state.phase == "authoring",
@@ -3132,7 +3221,11 @@ pub(crate) fn validate_accepted_child(repo: &gix::Repository, binding: &ParentBi
     Ok(())
 }
 
-fn retain_journal_members(root: &Path, directory: &Path, members: &mut Vec<super::retained::Member>) -> Result<()> {
+fn retain_journal_members(
+    root: &Path,
+    directory: &Path,
+    members: &mut Vec<super::retained::Member<super::retained::Source<'_>>>,
+) -> Result<()> {
     let owner = fs::metadata(root)?.uid();
     for entry in fs::read_dir(directory)? {
         let entry = entry?;
@@ -3143,8 +3236,7 @@ fn retain_journal_members(root: &Path, directory: &Path, members: &mut Vec<super
         // is private, and orphan members may have ordinary work-file modes.
         // Snapshot symlink payloads without following them and never read devices.
         let relative = gix::path::into_bstr(path.strip_prefix(root)?.to_path_buf())?.to_vec();
-        let image = switch::snapshot(&path)?;
-        members.push(retained_image(super::retained::Area::Invocations, &relative, &image)?);
+        members.push(retained_path(super::retained::Area::Invocations, &relative, &path)?);
         if metadata.is_dir() {
             retain_journal_members(root, &path, members)?;
         }

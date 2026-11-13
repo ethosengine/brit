@@ -19,7 +19,7 @@ use std::{
 const JOURNAL: &str = "brit-switch";
 const VERSION: u32 = 3;
 
-mod payload;
+pub(crate) mod payload;
 
 mod object_store;
 pub(crate) use object_store::{validate_local_history, validate_object_boundaries};
@@ -128,6 +128,7 @@ pub(crate) fn digest(bytes: &[u8]) -> Result<String> {
     hash.update(bytes);
     Ok(hash.try_finalize()?.to_string())
 }
+
 pub(crate) fn sync_dir(path: &Path) -> Result<()> {
     io_fault("directory-sync", path)?;
     fs::File::open(path)?
@@ -150,6 +151,17 @@ pub(crate) fn sync_file(file: &fs::File, path: &Path) -> Result<()> {
     Ok(())
 }
 pub(crate) fn private_write(path: &Path, bytes: &[u8]) -> Result<()> {
+    private_output(path, |file| Ok(file.write_all(bytes)?))
+}
+
+pub(crate) fn private_copy(path: &Path, source: &mut impl Read) -> Result<()> {
+    private_output(path, |file| {
+        stream::copy(source, file, &gix::interrupt::IS_INTERRUPTED)?;
+        Ok(())
+    })
+}
+
+fn private_output(path: &Path, write: impl FnOnce(&mut fs::File) -> Result<()>) -> Result<()> {
     use std::os::unix::fs::OpenOptionsExt;
     let mut file = fs::OpenOptions::new()
         .write(true)
@@ -157,7 +169,7 @@ pub(crate) fn private_write(path: &Path, bytes: &[u8]) -> Result<()> {
         .mode(0o600)
         .open(path)?;
     io_fault("write", path)?;
-    file.write_all(bytes)?;
+    write(&mut file)?;
     sync_file(&file, path)?;
     Ok(())
 }
@@ -1377,7 +1389,7 @@ fn expected(actual: &State, change: &Change) -> bool {
 }
 pub(crate) fn verify_files(root: &Path, changes: &[Change], started: &BTreeSet<Vec<u8>>) -> Result<()> {
     for change in changes {
-        let actual = snapshot(&root.join(path(&change.path)?))?;
+        let actual = payload::fingerprint(&root.join(path(&change.path)?))?;
         ensure!(
             expected(&actual, change),
             "foreign filesystem state at {}; recovery evidence retained",
@@ -1395,17 +1407,30 @@ pub(crate) fn verify_files(root: &Path, changes: &[Change], started: &BTreeSet<V
     Ok(())
 }
 pub(crate) fn publish_file(staging: &Path, root: &Path, change: &Change, desired: &State) -> Result<()> {
+    publish_file_from(staging, staging, root, change, desired)
+}
+
+pub(crate) fn publish_file_from(
+    payloads: &Path,
+    staging: &Path,
+    root: &Path,
+    change: &Change,
+    desired: &State,
+) -> Result<()> {
     use std::os::unix::fs::PermissionsExt;
     validate_ancestors(root, &change.path)?;
     let absolute = root.join(path(&change.path)?);
-    let actual = snapshot(&absolute)?;
+    let actual = payload::fingerprint(&absolute)?;
     ensure!(
         expected(&actual, change),
         "foreign filesystem state at {}",
         change.path.as_bstr()
     );
     if &actual == desired {
-        if matches!(actual, State::File { .. } | State::Directory { .. }) {
+        if matches!(
+            actual,
+            State::File { .. } | State::StoredFile { .. } | State::Directory { .. }
+        ) {
             sync_path(&absolute)?;
         }
         sync_dir(absolute.parent().context("file parent required")?)?;
@@ -1451,7 +1476,7 @@ pub(crate) fn publish_file(staging: &Path, root: &Path, change: &Change, desired
                 !matches!(actual, State::Directory { .. }),
                 "directory transition was not prepared"
             );
-            payload::publish(staging, &absolute, *mode, *size, checksum, &actual)?;
+            payload::publish(payloads, staging, &absolute, *mode, *size, checksum, &actual)?;
         }
         State::File { mode, bytes } => {
             ensure!(
@@ -1467,7 +1492,7 @@ pub(crate) fn publish_file(staging: &Path, root: &Path, change: &Change, desired
             sync_path(&staged)?;
             sync_dir(staging)?;
             ensure!(
-                snapshot(&absolute)? == actual,
+                payload::fingerprint(&absolute)? == actual,
                 "filesystem changed before publication: {}",
                 change.path.as_bstr()
             );
@@ -1486,7 +1511,7 @@ pub(crate) fn publish_file(staging: &Path, root: &Path, change: &Change, desired
             std::os::unix::fs::symlink(path(bytes)?, &staged)?;
             sync_dir(staging)?;
             ensure!(
-                snapshot(&absolute)? == actual,
+                payload::fingerprint(&absolute)? == actual,
                 "filesystem changed before publication: {}",
                 change.path.as_bstr()
             );

@@ -128,6 +128,7 @@ fn validate_release(ledger: &Ledger) -> Result<()> {
         .collect::<std::result::Result<Vec<_>, _>>()?;
     let mut seen = BTreeSet::new();
     let payload = copy.payload_reader()?;
+    let verify_payload = copy.payload_verifier()?;
     while let Some(id) = pending.pop() {
         if !seen.insert(id) {
             continue;
@@ -135,14 +136,15 @@ fn validate_release(ledger: &Ledger) -> Result<()> {
         let (kind, ordinal) = objects
             .get(&id)
             .context("retained copy lacks a released object closure")?;
-        let data = payload(*ordinal)?;
         match kind {
             gix::objs::Kind::Commit => {
+                let data = payload(*ordinal)?;
                 let commit = gix::objs::CommitRef::from_bytes(&data, id.kind())?;
                 pending.push(commit.tree());
                 pending.extend(commit.parents());
             }
             gix::objs::Kind::Tree => {
+                let data = payload(*ordinal)?;
                 for entry in gix::objs::TreeRefIter::from_bytes(&data, id.kind()) {
                     let entry = entry?;
                     if !entry.mode.is_commit() {
@@ -150,7 +152,7 @@ fn validate_release(ledger: &Ledger) -> Result<()> {
                     }
                 }
             }
-            gix::objs::Kind::Blob => {}
+            gix::objs::Kind::Blob => verify_payload(*ordinal)?,
             gix::objs::Kind::Tag => anyhow::bail!("unexpected retained tag release root"),
         }
     }
@@ -202,7 +204,10 @@ pub(super) fn run(
             mode: m.mode(),
             directory: m.is_dir(),
             checksum: if m.is_file() {
-                Some(switch::digest(&fs::read(path)?)?)
+                Some(crate::repository::authoring::conflict::file_fingerprint_reader(
+                    &mut fs::File::open(path)?,
+                    m.len(),
+                )?)
             } else {
                 None
             },
@@ -365,7 +370,11 @@ pub(super) fn resume(repo: &gix::Repository, receipt: &Path) -> Result<()> {
             );
             if let Some(checksum) = &member.checksum {
                 ensure!(
-                    m.is_file() && switch::digest(&fs::read(path)?)? == *checksum,
+                    m.is_file()
+                        && crate::repository::authoring::conflict::file_fingerprint_reader(
+                            &mut fs::File::open(path)?,
+                            m.len()
+                        )? == *checksum,
                     "cleanup member bytes changed"
                 );
             }
