@@ -29,12 +29,19 @@ fn commit(root: &Path, path: &str, bytes: &[u8], message: &str) -> Result<gix::O
 }
 
 fn fixture() -> Result<(tempfile::TempDir, Vec<gix::ObjectId>)> {
+    fixture_with_clean(false)
+}
+
+fn fixture_with_clean(clean: bool) -> Result<(tempfile::TempDir, Vec<gix::ObjectId>)> {
     let temp = tempfile::tempdir()?;
     let root = temp.path();
     git(root, &["init", "-q", "-b", "main"])?;
     git(root, &["config", "user.name", "Interactive Author"])?;
     git(root, &["config", "user.email", "interactive@example.invalid"])?;
     commit(root, "neighbor", b"clean neighbor\n", "base")?;
+    if clean {
+        commit(root, "clean", b"clean base\n", "clean base")?;
+    }
     git(root, &["branch", "upstream"])?;
     let first = commit(root, "first", b"first content\n", "first message")?;
     let second = commit(root, "second", b"second content\n", "second message")?;
@@ -445,7 +452,10 @@ fn interrupted_editor_child_helper() -> Result<()> {
         session.accept_todo(&repo, first_edit.as_bytes())?;
         assert_eq!(session.advance(&repo)?, Advance::Started);
         assert_eq!(session.advance(&repo)?, Advance::Edit);
-        if std::env::var_os("BRIT_TEST_ACCEPT_EDIT").is_some() {
+        if std::env::var_os("BRIT_TEST_EXPAND_EDIT").is_some() {
+            fs::write(Path::new(&root).join("clean"), b"expanded authored bytes\n")?;
+            session.stage(&repo, &["clean".into()], true)?;
+        } else if std::env::var_os("BRIT_TEST_ACCEPT_EDIT").is_some() {
             session.amend(&repo, b"accepted child amendment\n")?;
             session.continue_edit(&repo)?;
         } else {
@@ -1568,6 +1578,79 @@ fn todo_edit_at_break_and_edit_stop_keeps_unchanged_ancestor_out_of_preserved_si
             identity,
             "unchanged ancestor inode remains owned by the user"
         );
+    }
+    Ok(())
+}
+
+#[cfg(feature = "switch-test-faults")]
+#[test]
+fn interrupted_scope_expansion_distinguishes_retained_bytes_from_accepted_scope() -> Result<()> {
+    use gitoxide_core::repository::replay::retained;
+    if gix_testtools::run_in_isolated_process().map_err(anyhow::Error::from_boxed)? {
+        return Ok(());
+    }
+    let _expand = gix_testtools::Env::new().set("BRIT_TEST_EXPAND_EDIT", "1");
+    for checkpoint in [
+        "replay-child-payload-intent",
+        "replay-child-payload-persisted",
+        "replay-child-scope-images-retained",
+        "replay-child-scope-decided",
+    ] {
+        for abort in [false, true] {
+            let (temp, _) = fixture_with_clean(true)?;
+            let root = temp.path();
+            let original = oid(root, "HEAD")?;
+            let original_index = fs::read(root.join(".git/index"))?;
+            interrupt_amend(root, checkpoint, "KILL")?;
+            let repo = gix::open(root)?;
+            let mut session = Session::open(&repo)?;
+            if checkpoint == "replay-child-scope-decided" {
+                session.recover_child(&repo)?;
+            } else {
+                let index = fs::read(repo.index_path())?;
+                let error = session
+                    .recover_child(&repo)
+                    .expect_err("unaccepted expansion must be restaged or aborted");
+                assert!(
+                    format!("{error:#}").contains("worktree mutation outside resolution scope"),
+                    "{error:#}"
+                );
+                assert_eq!(fs::read(repo.index_path())?, index);
+                assert_eq!(fs::read(root.join("clean"))?, b"expanded authored bytes\n");
+            }
+            if abort {
+                let receipt = session.abort(&repo)?;
+                assert_eq!(oid(root, "HEAD")?, original);
+                assert_eq!(fs::read(root.join(".git/index"))?, original_index);
+                assert_eq!(
+                    fs::read(root.join("clean"))?,
+                    if checkpoint == "replay-child-scope-decided" {
+                        b"clean base\n".as_slice()
+                    } else {
+                        b"expanded authored bytes\n".as_slice()
+                    },
+                    "only an accepted scope authorizes restoration: {checkpoint}"
+                );
+                let copy = retained::inspect(&receipt.path)?;
+                if checkpoint != "replay-child-payload-intent" {
+                    assert!(
+                        (0..copy.manifest.entries.len()).any(|ordinal| {
+                            copy.payload(ordinal)
+                                .is_ok_and(|bytes| bytes == b"expanded authored bytes\n")
+                        }),
+                        "published expansion bytes retain independent custody: {checkpoint}"
+                    );
+                }
+                session.cleanup(&repo)?;
+            } else {
+                session.stage(&repo, &["clean".into()], true)?;
+                session.amend(&repo, b"expanded amendment\n")?;
+                session.continue_edit(&repo)?;
+                finish_remaining(&mut session, root)?;
+                assert_eq!(git(root, &["show", "HEAD:clean"])?, b"expanded authored bytes\n");
+            }
+            assert_preserved(root)?;
+        }
     }
     Ok(())
 }

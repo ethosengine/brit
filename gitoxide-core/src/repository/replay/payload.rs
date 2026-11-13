@@ -18,6 +18,35 @@ struct ChildPayloadLicense {
 }
 
 impl Session {
+    fn child_payload_owner(repo: &gix::Repository, binding: &ParentBinding) -> Result<Self> {
+        validate_child_binding(repo, binding)?;
+        let parent = Self::open(repo)?;
+        ensure!(
+            parent.child_authorization()?.binding == *binding,
+            "foreign child payload owner"
+        );
+        Ok(parent)
+    }
+
+    /// Retain an edit-scope expansion without changing the live child's parent binding.
+    pub(crate) fn capture_child_payload(
+        repo: &gix::Repository,
+        binding: &ParentBinding,
+        path: &Path,
+    ) -> Result<switch::State> {
+        Self::child_payload_owner(repo, binding)?.capture_payload(repo, path)
+    }
+
+    /// Retain verified original bytes under the same exact child payload license.
+    pub(crate) fn store_child_payload(
+        repo: &gix::Repository,
+        binding: &ParentBinding,
+        source: Spool,
+        mode: u32,
+    ) -> Result<switch::State> {
+        Self::child_payload_owner(repo, binding)?.store_payload(repo, source, mode)
+    }
+
     /// Upgrade an unbound abort before-image, preserving any previously captured
     /// copy. The inventory is durable before raw bytes; an interrupted metadata
     /// rename is accepted only if it is exactly one of these two successors.

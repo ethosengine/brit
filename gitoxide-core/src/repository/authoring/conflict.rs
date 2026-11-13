@@ -1249,10 +1249,24 @@ impl Session {
                     after.original.iter().any(|e| e.path == p.as_bytes()) || !after.work.contains_key(p.as_bytes()),
                     "scope expansion collides with pre-existing untracked path"
                 );
-                after
-                    .expanded
-                    .insert(p.to_vec(), image(repo.workdir().context("worktree")?, p)?);
+                let current = if let Some(binding) = &self.state.replay_parent {
+                    after.version = 2;
+                    stored_child_image(super::super::replay::Session::capture_child_payload(
+                        repo,
+                        binding,
+                        &repo
+                            .workdir()
+                            .context("worktree")?
+                            .join(gix::path::from_bstr(p.as_bstr())?),
+                    )?)?
+                } else {
+                    image(repo.workdir().context("worktree")?, p)?
+                };
+                after.expanded.insert(p.to_vec(), current);
                 after.before.insert(p.to_vec(), self.original_image(repo, p)?);
+                if self.state.replay_parent.is_some() {
+                    super::super::switch::checkpoint("replay-child-scope-images-retained")?;
+                }
                 after.active.push(p.to_vec());
             }
         }
@@ -1265,6 +1279,9 @@ impl Session {
         after.public = overlay(&after.private, &after.original, &after.preserved);
         // Journal scope/before-images before writing any new blob or staging.
         self.transition(repo, after)?;
+        if expand && self.state.replay_parent.is_some() {
+            super::super::switch::checkpoint("replay-child-scope-decided")?;
+        }
         let mut after = self.state.clone();
         let current = index(repo, &after.private)?;
         let budget = gix::utils::stream::Budget::new(&std::env::temp_dir())?;
@@ -1293,6 +1310,38 @@ impl Session {
         let Some(entry) = self.state.original.iter().find(|e| e.path == p) else {
             return Ok(None);
         };
+        if let Some(binding) = &self.state.replay_parent {
+            use gix::objs::FindStream;
+            use std::io::Seek;
+            let budget = gix::utils::stream::Budget::new(&std::env::temp_dir())?;
+            let (_, mut data) = repo.objects.find_stream(
+                &gix::ObjectId::from_hex(entry.id.as_bytes())?,
+                &budget,
+                &gix::interrupt::IS_INTERRUPTED,
+            )?;
+            return match self.state.work.get(p) {
+                Some(Image::Link(target)) => {
+                    ensure!(
+                        gix::utils::stream::equal(&mut data, target.as_slice(), &gix::interrupt::IS_INTERRUPTED)?,
+                        "original symlink mismatch"
+                    );
+                    Ok(Some(Image::Link(target.clone())))
+                }
+                Some(Image::File(hash, mode)) => {
+                    let size = data.len();
+                    ensure!(
+                        *hash == file_fingerprint_reader(&mut data, size)?.as_bytes(),
+                        "expanded path requires unsupported worktree conversion"
+                    );
+                    data.rewind()?;
+                    stored_child_image(super::super::replay::Session::store_child_payload(
+                        repo, binding, data, *mode,
+                    )?)
+                }
+                Some(Image::StoredFile { .. }) => anyhow::bail!("invalid original worktree fingerprint"),
+                None => anyhow::bail!("missing original worktree image"),
+            };
+        }
         let data = repo
             .find_object(gix::ObjectId::from_hex(entry.id.as_bytes())?)?
             .data
@@ -2624,6 +2673,16 @@ fn image(root: &Path, p: &[u8]) -> Result<Option<Image>> {
     #[cfg(not(unix))]
     let mode = 0;
     Ok(Some(Image::File(fs::read(file)?, mode)))
+}
+
+fn stored_child_image(state: super::super::switch::State) -> Result<Option<Image>> {
+    use super::super::switch::State;
+    Ok(match state {
+        State::Absent => None,
+        State::StoredFile { mode, size, checksum } => Some(Image::StoredFile { mode, size, checksum }),
+        State::Symlink(bytes) => Some(Image::Link(bytes)),
+        _ => anyhow::bail!("child image must be a stored file or symlink"),
+    })
 }
 
 fn stored_image(root: &Path, path: &[u8]) -> Result<Option<Image>> {

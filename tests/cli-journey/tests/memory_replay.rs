@@ -257,8 +257,7 @@ fn sixty_four_mib_conflict_resolution_preserves_neighbor() -> Result<()> {
     conflict_stop(64 * 1024 * 1024, true)
 }
 
-#[test]
-fn sixty_four_mib_edit_amend_preserves_authored_object_custody() -> Result<()> {
+fn edit_amend(size: usize, expand: bool, abort: bool) -> Result<()> {
     use std::os::unix::fs::PermissionsExt;
     let repo = TestRepo::new("memory-replay-edit")?;
     let root = repo.path();
@@ -266,23 +265,30 @@ fn sixty_four_mib_edit_amend_preserves_authored_object_custody() -> Result<()> {
     let mut file = fs::File::create(root.join("large"))?;
     let mut chunk = [b'x'; 65536];
     chunk[65535] = b'\n';
-    for _ in 0..1024 {
+    for _ in 0..size / chunk.len() {
         file.write_all(&chunk)?;
     }
     drop(file);
     fs::write(root.join("neighbor"), b"base\n")?;
-    git(root, &["add", "large", "neighbor"])?;
+    fs::write(root.join("selected"), b"base selected\n")?;
+    git(root, &["add", "large", "neighbor", "selected"])?;
     git(root, &["commit", "-qm", "base"])?;
     git(root, &["switch", "-c", "upstream"])?;
     fs::write(root.join("upstream"), b"upstream\n")?;
     git(root, &["add", "upstream"])?;
     git(root, &["commit", "-qm", "upstream"])?;
     git(root, &["switch", "main"])?;
-    fs::OpenOptions::new()
-        .write(true)
-        .open(root.join("large"))?
-        .write_all(b"topic---")?;
+    if expand {
+        fs::write(root.join("selected"), b"topic selected\n")?;
+    } else {
+        fs::OpenOptions::new()
+            .write(true)
+            .open(root.join("large"))?
+            .write_all(b"topic---")?;
+    }
     git(root, &["commit", "-qam", "topic"])?;
+    let original = git(root, &["rev-parse", "HEAD"])?;
+    let original_blob = git(root, &["hash-object", "large"])?;
     fs::write(root.join("neighbor"), b"staged\n")?;
     git(root, &["add", "neighbor"])?;
     fs::write(root.join("neighbor"), b"unstaged\n")?;
@@ -307,18 +313,69 @@ fn sixty_four_mib_edit_amend_preserves_authored_object_custody() -> Result<()> {
         .open(root.join("large"))?
         .write_all(b"authored")?;
     let authored = git(root, &["hash-object", "large"])?;
-    invoke(&["rebase", "--stage", "--", "large"])?;
+    if expand {
+        invoke(&["rebase", "--stage", "--expand-scope", "--", "large"])?;
+    } else {
+        invoke(&["rebase", "--stage", "--", "large"])?;
+    }
     invoke(&["rebase", "--amend", "--no-edit"])?;
-    invoke(&["rebase", "--continue"])?;
-    assert_eq!(git(root, &["rev-parse", "HEAD:large"])?, authored);
-    assert_eq!(
-        git(root, &["rev-parse", "HEAD^"])?,
-        git(root, &["rev-parse", "upstream"])?
-    );
+    if abort {
+        invoke(&["rebase", "--abort"])?;
+        assert_eq!(git(root, &["rev-parse", "HEAD"])?, original);
+        assert_eq!(git(root, &["hash-object", "large"])?, original_blob);
+        // Abort's independent retained copy keeps authored objects after pruning.
+        git(root, &["reflog", "expire", "--expire=now", "--all"])?;
+        git(root, &["gc", "--prune=now"])?;
+        let copies = root.join(".git/brit-rebase-retained");
+        let mut retained_authored = false;
+        for operation in fs::read_dir(copies)? {
+            for copy in fs::read_dir(operation?.path())? {
+                let copy = copy?.path();
+                if !copy.join("COPY_COMPLETE").is_file() {
+                    continue;
+                }
+                let envelope: serde_json::Value = serde_json::from_slice(&fs::read(copy.join("manifest.json"))?)?;
+                let payload: Vec<u8> = serde_json::from_value(envelope["payload"].clone())?;
+                let manifest: serde_json::Value = serde_json::from_slice(&payload)?;
+                for (ordinal, entry) in manifest["entries"].as_array().expect("entries").iter().enumerate() {
+                    if entry["kind"]["Object"]["id"].as_str() == Some(std::str::from_utf8(&authored)?.trim()) {
+                        let payload = copy.join(format!("{ordinal:08}"));
+                        assert_eq!(
+                            git(root, &["hash-object", payload.to_str().expect("fixture path")])?,
+                            authored
+                        );
+                        retained_authored = true;
+                    }
+                }
+            }
+        }
+        ensure!(
+            retained_authored,
+            "expanded authored object survives pruning in an independent copy"
+        );
+    } else {
+        invoke(&["rebase", "--continue"])?;
+        assert_eq!(git(root, &["rev-parse", "HEAD:large"])?, authored);
+        assert_eq!(
+            git(root, &["rev-parse", "HEAD^"])?,
+            git(root, &["rev-parse", "upstream"])?
+        );
+    }
     assert_eq!(git(root, &["show", ":neighbor"])?, b"staged\n");
     assert_eq!(fs::read(root.join("neighbor"))?, b"unstaged\n");
     assert!(!root.join(".git/brit-rebase").exists());
     assert!(!root.join(".git/brit-authoring").exists());
     git(root, &["fsck", "--full", "--no-dangling"])?;
     Ok(())
+}
+
+#[test]
+fn sixty_four_mib_edit_amend_preserves_authored_object_custody() -> Result<()> {
+    edit_amend(64 * 1024 * 1024, false, false)
+}
+
+#[test]
+fn twenty_mib_edit_scope_expansion_preserves_original_and_authored_bytes() -> Result<()> {
+    edit_amend(20 * 1024 * 1024, true, false)?;
+    edit_amend(20 * 1024 * 1024, true, true)
 }
