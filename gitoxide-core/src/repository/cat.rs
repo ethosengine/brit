@@ -3,7 +3,9 @@ use gix::{
     diff::blob::ResourceKind,
     error::{OptionExt, ResultExt, message},
     filter::plumbing::{driver::apply::Delay, pipeline::convert::to_worktree},
+    objs::FindStream,
     revision::Spec,
+    utils::stream::{self, Budget},
 };
 
 use crate::repository::revision::resolve::{BlobFormat, TreeMode};
@@ -34,9 +36,12 @@ pub fn display_object(
                         .attr_stack
                         .at_entry(path, Some(mode.into()), &repo.objects)
                         .or_error()?;
-                    let object = id.object()?;
-                    let mut converted = cache.filter.worktree_filter.convert_to_worktree(
-                        &object.data,
+                    let budget = Budget::new(&std::env::temp_dir()).or_error()?;
+                    let (_, object) = repo
+                        .objects
+                        .find_stream(&id, &budget, &gix::interrupt::IS_INTERRUPTED)?;
+                    let converted = cache.filter.worktree_filter.convert_to_worktree_stream(
+                        object,
                         path,
                         &mut |_path, attrs| {
                             let _ = platform.matching_attributes(attrs);
@@ -45,8 +50,13 @@ pub fn display_object(
                             can_delay: Delay::Forbid,
                             unknown_encoding: to_worktree::UnknownEncoding::Fail,
                         },
+                        &budget,
+                        &gix::interrupt::IS_INTERRUPTED,
                     )?;
-                    std::io::copy(&mut converted, &mut out).or_error()?;
+                    let gix::filter::plumbing::pipeline::stream::Outcome::Ready(mut converted) = converted else {
+                        unreachable!("delay is forbidden")
+                    };
+                    stream::copy(&mut converted, &mut out, &gix::interrupt::IS_INTERRUPTED).or_error()?;
                 }
                 (BlobFormat::Diff | BlobFormat::DiffOrGit, cache) => {
                     cache.set_resource(id.detach(), mode.kind(), path, ResourceKind::OldOrSource, &repo.objects)?;
@@ -59,7 +69,13 @@ pub fn display_object(
                 }
             }
         }
-        _ => out.write_all(&id.object()?.data).or_error()?,
+        _ => {
+            let budget = Budget::new(&std::env::temp_dir()).or_error()?;
+            let (_, mut object) = repo
+                .objects
+                .find_stream(&id, &budget, &gix::interrupt::IS_INTERRUPTED)?;
+            stream::copy(&mut object, &mut out, &gix::interrupt::IS_INTERRUPTED).or_error()?;
+        }
     }
     Ok(())
 }

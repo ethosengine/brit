@@ -9,7 +9,7 @@ use gix::{
     index::entry::{Flags, Mode, Stat},
 };
 
-use super::authoring::{component_options, read_index_for_staging, worktree_entry};
+use super::authoring::{component_options, read_index_for_staging, worktree_entry_spooled};
 
 /// Stage literal files and directories. Empty paths select the whole repository.
 /// With `update`, only existing index paths are selected.
@@ -125,6 +125,7 @@ pub fn stage_paths(repo: gix::Repository, paths: &[BString], update: bool) -> Re
     check_cancelled()?;
     let ignore_case = repo.config_snapshot().try_boolean("core.ignorecase")? == Some(true);
     let precompose = repo.config_snapshot().try_boolean("core.precomposeunicode")? == Some(true);
+    let budget = gix::utils::stream::Budget::new(&std::env::temp_dir()).or_error()?;
     let mut replacements = Vec::new();
     for path in &candidates {
         check_cancelled()?;
@@ -146,8 +147,13 @@ pub fn stage_paths(repo: gix::Repository, paths: &[BString], update: bool) -> Re
         // A tracked file replaced by a directory, or hidden beneath a replacement
         // file/symlink, is a deletion. Never follow that symlink to read its target.
         let replacement = if is_file(root, path.as_bstr())? {
-            worktree_entry(&repo, &index, path)?
-                .map(|(mode, bytes)| repo.write_blob(bytes).map(|id| (mode, id.detach())))
+            worktree_entry_spooled(&repo, &index, path, &budget)?
+                .map(|(mode, mut bytes)| {
+                    use gix::objs::Write;
+                    repo.objects
+                        .write_stream(gix::objs::Kind::Blob, bytes.len(), &mut bytes)
+                        .map(|id| (mode, id))
+                })
                 .transpose()?
         } else {
             None

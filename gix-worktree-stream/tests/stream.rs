@@ -76,6 +76,17 @@ mod from_tree {
         }
     }
 
+    impl gix_object::FindStream for FailObjectRetrieval {
+        fn find_stream(
+            &self,
+            _id: &oid,
+            _budget: &std::sync::Arc<gix_utils::stream::Budget>,
+            _interrupt: &std::sync::atomic::AtomicBool,
+        ) -> Result<(gix_object::Kind, gix_utils::stream::Spool)> {
+            Err(Error::other("object retrieval failed").raise())
+        }
+    }
+
     #[test]
     fn can_receive_err_if_root_is_not_found() {
         let mut stream = gix_worktree_stream::from_tree(
@@ -270,15 +281,17 @@ mod from_tree {
             ]
         );
 
+        // A converted process result now has a known spool length, removing its
+        // two u16 streaming frames; entry contents and archive semantics are unchanged.
         #[cfg(target_pointer_width = "64")]
         let expected_buffer_length: usize = match gix_testtools::object_hash() {
-            gix_hash::Kind::Sha1 => 320302,
-            gix_hash::Kind::Sha256 => 320458,
+            gix_hash::Kind::Sha1 => 320298,
+            gix_hash::Kind::Sha256 => 320454,
             _ => unimplemented!(),
         };
         #[cfg(target_pointer_width = "32")]
         let expected_buffer_length: usize = match gix_testtools::object_hash() {
-            gix_hash::Kind::Sha1 => 320198,
+            gix_hash::Kind::Sha1 => 320194,
             gix_hash::Kind::Sha256 => todo!("let the test fail on CI and add the value here"),
             _ => unimplemented!(),
         };

@@ -1,23 +1,22 @@
-use std::{collections::VecDeque, io::Write};
-
-use gix_filter::{
-    driver::apply::MaybeDelayed,
-    pipeline::convert::{ToWorktreeOutcome, to_worktree},
+use std::{
+    collections::VecDeque,
+    sync::{Arc, atomic::AtomicBool},
 };
+
+use gix_filter::pipeline::{convert::to_worktree, stream::Outcome};
 use gix_object::{
-    FindExt,
     bstr::{BStr, BString, ByteSlice, ByteVec},
     tree,
 };
 use gix_traverse::tree::{Visit, visit::Action};
 
-use gix_error::{Result, ResultExt, message};
+use gix_error::{ErrorExt, Result, ResultExt, message};
 
 use crate::{SharedErrorSlot, protocol};
 
 pub struct Delegate<'a, AttributesFn, Find>
 where
-    Find: gix_object::Find,
+    Find: gix_object::Find + gix_object::FindStream,
 {
     pub(crate) out: &'a mut gix_utils::io::pipe::Writer,
     pub(crate) err: SharedErrorSlot,
@@ -27,12 +26,12 @@ where
     pub(crate) attrs: gix_attributes::search::Outcome,
     pub(crate) fetch_attributes: AttributesFn,
     pub(crate) objects: Find,
-    pub(crate) buf: Vec<u8>,
+    pub(crate) budget: Arc<gix_utils::stream::Budget>,
 }
 
 impl<AttributesFn, Find> Delegate<'_, AttributesFn, Find>
 where
-    Find: gix_object::Find,
+    Find: gix_object::Find + gix_object::FindStream,
     AttributesFn: FnMut(&BStr, gix_object::tree::EntryMode, &mut gix_attributes::search::Outcome) -> Result + 'static,
 {
     fn pop_element(&mut self) {
@@ -70,15 +69,19 @@ where
         if self.ignore_state().is_set() {
             return Ok(std::ops::ControlFlow::Continue(true));
         }
-        self.objects
-            .find(entry.oid, &mut self.buf)
-            .or_raise(|| message("Could not find a tree's leaf, typically a blob"))?;
-
+        let interrupt = AtomicBool::new(false);
+        let (kind, source) = self
+            .objects
+            .find_stream(entry.oid, &self.budget, &interrupt)
+            .or_raise(|| message!("Could not read archive entry {} ({})", self.path, entry.oid))?;
+        if kind != gix_object::Kind::Blob {
+            return Err(gix_error::corruption("Archive leaf is not a blob").raise());
+        }
         self.pipeline.driver_context_mut().blob = Some(entry.oid.into());
         let converted = self
             .pipeline
-            .convert_to_worktree(
-                &self.buf,
+            .convert_to_worktree_stream(
+                source,
                 self.path.as_ref(),
                 &mut |a, b| {
                     (self.fetch_attributes)(a, entry.mode, b).ok();
@@ -87,39 +90,25 @@ where
                     can_delay: gix_filter::driver::apply::Delay::Forbid,
                     unknown_encoding: to_worktree::UnknownEncoding::Fail,
                 },
+                &self.budget,
+                &interrupt,
             )
             .or_raise(|| message("Could not convert to worktree representation"))?;
-
-        // Our pipe writer always writes the whole amount.
-        match converted {
-            ToWorktreeOutcome::Unchanged(buf) | ToWorktreeOutcome::Buffer(buf) => {
-                protocol::write_entry_header_and_path(
-                    self.path.as_ref(),
-                    entry.oid,
-                    entry.mode,
-                    Some(buf.len()),
-                    self.out,
-                )
-                .or_raise(|| message("Could not write entry header"))?;
-                self.out.write(buf).or_raise(|| message("Could not write entry data"))?;
-            }
-            ToWorktreeOutcome::Process(MaybeDelayed::Immediate(read)) => {
-                protocol::write_entry_header_and_path(self.path.as_ref(), entry.oid, entry.mode, None, self.out)
-                    .or_raise(|| message("Could not write entry header"))?;
-                protocol::write_stream(&mut self.buf, read, self.out)
-                    .or_raise(|| message("Could not write stream data"))?;
-            }
-            ToWorktreeOutcome::Process(MaybeDelayed::Delayed(_)) => {
-                unreachable!("we forbade it")
-            }
-        }
+        let Outcome::Ready(mut source) = converted else {
+            unreachable!("delay is forbidden")
+        };
+        let size = usize::try_from(source.len()).or_error()?;
+        protocol::write_entry_header_and_path(self.path.as_ref(), entry.oid, entry.mode, Some(size), self.out)
+            .or_raise(|| message("Could not write entry header"))?;
+        gix_utils::stream::copy(&mut source, self.out, &interrupt)
+            .or_raise(|| message("Could not write archive entry data"))?;
         Ok(std::ops::ControlFlow::Continue(true))
     }
 }
 
 impl<AttributesFn, Find> Visit for Delegate<'_, AttributesFn, Find>
 where
-    Find: gix_object::Find,
+    Find: gix_object::Find + gix_object::FindStream,
     AttributesFn: FnMut(&BStr, gix_object::tree::EntryMode, &mut gix_attributes::search::Outcome) -> Result + 'static,
 {
     fn pop_back_tracked_path_and_set_current(&mut self) {

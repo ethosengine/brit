@@ -1,8 +1,9 @@
 //! Bounded worktree restoration: validate every selection before publishing any file.
 use std::{
     borrow::Cow,
-    io::{Read, Write},
+    io::{Read, Seek},
     path::Path,
+    sync::Arc,
 };
 
 use gix::{
@@ -10,6 +11,8 @@ use gix::{
     bstr::{BString, ByteSlice},
     error::{ResultExt, bail},
     index::entry::Mode,
+    objs::FindStream,
+    utils::stream::{self, Budget, Spool},
 };
 
 use super::authoring::{component_options, literal_paths, read_index, refuse_external_filters, validate_relative_path};
@@ -39,7 +42,8 @@ pub fn restore_worktree(repo: gix::Repository, paths: &[BString], from_head: boo
         gix::worktree::stack::state::attributes::Source::IdMapping,
     )?;
     refuse_external_filters(&repo, &mut attributes, paths.iter().map(|path| path.as_bstr()))?;
-    let mut pipeline = gix::filter::Pipeline::new(&repo, attributes.detach())?;
+    let (mut pipeline, mut attributes) = gix::filter::Pipeline::new(&repo, attributes.detach())?.into_parts();
+    let budget = Budget::new(root).or_error()?;
     let emulate_symlinks = repo.config_snapshot().try_boolean("core.symlinks")? == Some(false);
     let mut replacements = Vec::with_capacity(paths.len());
     for path in &paths {
@@ -83,7 +87,12 @@ pub fn restore_worktree(repo: gix::Repository, paths: &[BString], from_head: boo
             }
             None => None,
             Some(entry) => {
-                let blob = repo.find_object(entry.id)?.try_into_blob()?;
+                let (kind, mut blob) = repo
+                    .objects
+                    .find_stream(&entry.id, &budget, &gix::interrupt::IS_INTERRUPTED)?;
+                if kind != gix::objs::Kind::Blob {
+                    bail!("Restore source is not a blob: {path} ({})", entry.id);
+                }
                 let bytes = if entry.mode == Mode::SYMLINK {
                     if !cfg!(unix) && !emulate_symlinks {
                         bail!("Native symlink restoration is unsupported on this platform".unsupported());
@@ -94,16 +103,36 @@ pub fn restore_worktree(repo: gix::Repository, paths: &[BString], from_head: boo
                         component_options(),
                     )
                     .or_error()?;
-                    if blob.data.is_empty() || blob.data.contains(&0) {
+                    let mut chunk = [0; stream::CHUNK];
+                    let mut invalid = blob.is_empty();
+                    loop {
+                        stream::check(&gix::interrupt::IS_INTERRUPTED).or_error()?;
+                        let n = blob.read(&mut chunk).or_error()?;
+                        if n == 0 {
+                            break;
+                        }
+                        invalid |= chunk[..n].contains(&0);
+                    }
+                    blob.rewind().or_error()?;
+                    if invalid {
                         bail!("Invalid symlink target: {path}".validation());
                     }
-                    blob.data.clone()
+                    blob
                 } else {
-                    let mut bytes = Vec::new();
-                    pipeline
-                        .convert_to_worktree(&blob.data, path.as_bstr(), Default::default())?
-                        .read_to_end(&mut bytes)
-                        .or_error()?;
+                    let platform = attributes.at_entry(path.as_bstr(), None, &repo.objects).or_error()?;
+                    let converted = pipeline.convert_to_worktree_stream(
+                        blob,
+                        path.as_bstr(),
+                        &mut |_, attrs| {
+                            platform.matching_attributes(attrs);
+                        },
+                        Default::default(),
+                        &budget,
+                        &gix::interrupt::IS_INTERRUPTED,
+                    )?;
+                    let gix::filter::plumbing::pipeline::stream::Outcome::Ready(bytes) = converted else {
+                        unreachable!("delay is forbidden")
+                    };
                     bytes
                 };
                 let mode = if entry.mode == Mode::SYMLINK && emulate_symlinks {
@@ -119,11 +148,11 @@ pub fn restore_worktree(repo: gix::Repository, paths: &[BString], from_head: boo
             return stopped(&paths, 0, "cancelled before publication");
         }
     }
-    for (position, (path, replacement)) in paths.iter().zip(&replacements).enumerate() {
+    for (position, (path, replacement)) in paths.iter().zip(replacements).enumerate() {
         if gix::interrupt::is_triggered() {
             return stopped(&paths, position, "cancelled before publication of the next file");
         }
-        let result = publish(root, path, replacement.as_ref());
+        let result = publish(root, path, replacement, &budget);
         if let Err(err) = result {
             return stopped(&paths, position, &err.to_string());
         }
@@ -201,11 +230,11 @@ fn stopped(paths: &[BString], completed: usize, reason: &str) -> Result<()> {
     );
 }
 
-fn publish(root: &Path, path: &BString, replacement: Option<&(Mode, Vec<u8>)>) -> Result<()> {
+fn publish(root: &Path, path: &BString, replacement: Option<(Mode, Spool)>, budget: &Arc<Budget>) -> Result<()> {
     // Repeat traversal validation immediately before each publication; never follow a final symlink.
     validate_relative_path(root, path.as_bstr())?;
     let absolute = root.join(gix::path::from_bstr(Cow::Borrowed(path.as_bstr()))?.as_ref());
-    let Some((mode, bytes)) = replacement else {
+    let Some((mode, mut bytes)) = replacement else {
         if gix::interrupt::is_triggered() {
             bail!("cancelled before publication");
         }
@@ -229,27 +258,29 @@ fn publish(root: &Path, path: &BString, replacement: Option<&(Mode, Vec<u8>)>) -
             std::fs::create_dir(directory).or_error()?;
             created.push(directory.clone());
         }
-        if *mode == Mode::SYMLINK {
+        if mode == Mode::SYMLINK {
             let temporary = tempfile::Builder::new()
                 .prefix(".brit-restore-")
                 .tempdir_in(parent)
                 .or_error()?;
             let staged = temporary.path().join("link");
-            create_symlink(bytes, &staged)?;
+            let bytes = bytes.into_mapped().or_error()?;
+            create_symlink(bytes.as_slice(), &staged)?;
             if gix::interrupt::is_triggered() {
                 bail!("cancelled before publication");
             }
             validate_relative_path(root, path.as_bstr())?;
             std::fs::rename(staged, &absolute).or_error()?;
         } else {
-            let mut temporary = temporary_file(parent, *mode)?;
-            temporary.write_all(bytes).or_error()?;
+            let mut temporary = temporary_file(parent, mode, budget)?;
+            stream::copy(&mut bytes, &mut temporary, &gix::interrupt::IS_INTERRUPTED).or_error()?;
+            drop(bytes);
             if gix::interrupt::is_triggered() {
                 bail!("cancelled before publication");
             }
             validate_relative_path(root, path.as_bstr())?;
             // Drop a failed persistence temporary before removing newly created parents.
-            temporary.persist(&absolute).map_err(|err| err.error).or_error()?;
+            temporary.publish_replace(&absolute).or_error()?;
         }
         Ok(())
     })();
@@ -272,20 +303,21 @@ fn create_symlink(_: &[u8], _: &Path) -> Result<()> {
     bail!("Native symlink restoration is unsupported on this platform".unsupported());
 }
 
-fn temporary_file(parent: &Path, mode: Mode) -> Result<tempfile::NamedTempFile> {
-    let mut builder = tempfile::Builder::new();
-    builder.prefix(".brit-restore-");
+fn temporary_file(parent: &Path, mode: Mode, budget: &Arc<Budget>) -> Result<Spool> {
     #[cfg(unix)]
-    {
+    let permissions = {
         use std::os::unix::fs::PermissionsExt;
         // Builder passes these to open(2), so the process umask remains authoritative.
-        builder.permissions(std::fs::Permissions::from_mode(if mode == Mode::FILE_EXECUTABLE {
+        Some(std::fs::Permissions::from_mode(if mode == Mode::FILE_EXECUTABLE {
             0o777
         } else {
             0o666
-        }));
-    }
+        }))
+    };
     #[cfg(not(unix))]
-    let _ = mode;
-    builder.tempfile_in(parent).or_error()
+    let permissions = {
+        let _ = mode;
+        None
+    };
+    budget.spool_in(parent, ".brit-restore-", permissions).or_error()
 }

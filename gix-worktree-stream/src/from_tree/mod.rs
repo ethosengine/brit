@@ -47,7 +47,7 @@ pub fn from_tree<Find, E>(
     + 'static,
 ) -> Stream
 where
-    Find: gix_object::Find + Clone + Send + 'static,
+    Find: gix_object::Find + gix_object::FindStream + Clone + Send + 'static,
     E: std::error::Error + Send + Sync + 'static,
 {
     let (stream, mut write, additional_entries) = Stream::new();
@@ -94,7 +94,7 @@ fn run<Find, E>(
     additional_entries: std::sync::mpsc::Receiver<AdditionalEntry>,
 ) -> Result
 where
-    Find: gix_object::Find + Clone,
+    Find: gix_object::Find + gix_object::FindStream + Clone,
     E: std::error::Error + Send + Sync + 'static,
 {
     let mut buf = Vec::new();
@@ -118,7 +118,7 @@ where
         },
         path_deque: Default::default(),
         path: Default::default(),
-        buf: Vec::with_capacity(1024),
+        budget: gix_utils::stream::Budget::new(&std::env::temp_dir()).or_error()?,
     };
     gix_traverse::tree::breadthfirst(
         tree_iter,

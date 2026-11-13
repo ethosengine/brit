@@ -2,9 +2,15 @@ use gix::{
     ObjectId, Result,
     bstr::{BString, ByteSlice},
     error::{OptionExt, ResultExt, bail, message, unsupported},
+    objs::FindStream,
     objs::tree::EntryMode,
     odb::store::RefreshMode,
     prelude::ObjectIdExt,
+    utils::stream::{self, Budget, Mapped, Spool},
+};
+use std::{
+    io::{Seek, Write},
+    sync::Arc,
 };
 
 pub fn tree(
@@ -287,7 +293,8 @@ fn working_output(
     )?;
     let mut matches = attrs.attribute_matches();
     // Buffer output so a refused path never leaves a misleading partial patch.
-    let mut rendered = Vec::new();
+    let budget = Budget::new(&std::env::temp_dir()).or_error()?;
+    let mut rendered = std::io::BufWriter::new(budget.spool().or_error()?);
     let mut stats = Vec::new();
     for path in paths {
         check_interrupted()?;
@@ -308,15 +315,15 @@ fn working_output(
         }
         let old = before
             .get(&path)
-            .map(|&(mode, blob_id)| load_patch_blob(&repo, mode, blob_id))
+            .map(|&(mode, blob_id)| load_patch_blob(&repo, mode, blob_id, &budget))
             .transpose()?;
         let new = if cached {
             after
                 .get(&path)
-                .map(|&(mode, blob_id)| load_patch_blob(&repo, mode, blob_id))
+                .map(|&(mode, blob_id)| load_patch_blob(&repo, mode, blob_id, &budget))
                 .transpose()?
         } else {
-            worktree_patch_blob(&repo, &index, &path)?
+            worktree_patch_blob(&repo, &index, &path, &budget)?
         };
         // Only canonical content and effective mode prove a worktree entry unchanged.
         // Read through the authoring path first, retaining validation and filter refusals.
@@ -324,7 +331,7 @@ fn working_output(
             && old
                 .as_ref()
                 .zip(new.as_ref())
-                .is_some_and(|(old, new)| old.mode == new.mode && old.data == new.data)
+                .is_some_and(|(old, new)| old.mode == new.mode && old.data.as_slice() == new.data.as_slice())
         {
             continue;
         }
@@ -343,31 +350,80 @@ fn working_output(
     if stat {
         render_stats(&stats, &mut rendered)?;
     }
-    write_diff_output(out, &rendered)
+    write_diff_output(out, &mut rendered)
 }
 
 struct PatchBlob {
     mode: u32,
     blob_id: ObjectId,
-    data: Vec<u8>,
+    data: PatchData,
     from_worktree: bool,
 }
 
-fn load_patch_blob(repo: &gix::Repository, mode: u32, blob_id: ObjectId) -> Result<PatchBlob> {
-    let blob = repo.find_blob(blob_id)?;
+enum PatchData {
+    Buffered(Vec<u8>),
+    Mapped(Mapped),
+}
+impl PatchData {
+    fn as_slice(&self) -> &[u8] {
+        match self {
+            Self::Buffered(bytes) => bytes,
+            Self::Mapped(bytes) => bytes.as_slice(),
+        }
+    }
+    fn from_spool(repo: &gix::Repository, mut spool: Spool) -> Result<Self> {
+        use std::io::Read;
+        let limit = repo
+            .allocation_limit()
+            .map(|n| n as u64)
+            .unwrap_or(repo.big_file_threshold()?);
+        if spool.len() > limit {
+            return Ok(Self::Mapped(spool.into_mapped().or_error()?));
+        }
+        let size = usize::try_from(spool.len()).or_error()?;
+        let mut bytes = Vec::new();
+        bytes
+            .try_reserve_exact(size)
+            .or_raise(|| message!("Diff could not allocate {size} bytes within limit {limit}").allocation_failure())?;
+        spool.rewind().or_error()?;
+        spool.read_to_end(&mut bytes).or_error()?;
+        Ok(Self::Buffered(bytes))
+    }
+}
+
+fn load_patch_blob(repo: &gix::Repository, mode: u32, blob_id: ObjectId, budget: &Arc<Budget>) -> Result<PatchBlob> {
+    let (kind, data) = repo
+        .objects
+        .find_stream(&blob_id, budget, &gix::interrupt::IS_INTERRUPTED)?;
+    if kind != gix::objs::Kind::Blob {
+        bail!(gix::error::corruption(format!("Expected blob {blob_id}, found {kind}")));
+    }
     Ok(PatchBlob {
         mode,
         blob_id,
-        data: blob.data.clone(),
+        data: PatchData::from_spool(repo, data)?,
         from_worktree: false,
     })
 }
 
-fn worktree_patch_blob(repo: &gix::Repository, index: &gix::index::State, path: &BString) -> Result<Option<PatchBlob>> {
-    let Some((mode, data)) = super::index::authoring::worktree_entry(repo, index, path)? else {
+fn worktree_patch_blob(
+    repo: &gix::Repository,
+    index: &gix::index::State,
+    path: &BString,
+    budget: &Arc<Budget>,
+) -> Result<Option<PatchBlob>> {
+    let Some((mode, data)) = super::index::authoring::worktree_entry_spooled(repo, index, path, budget)? else {
         return Ok(None);
     };
-    let blob_id = gix::objs::compute_hash(repo.object_hash(), gix::objs::Kind::Blob, &data)?;
+    let data = PatchData::from_spool(repo, data)?;
+    let blob_id = gix::objs::compute_stream_hash(
+        repo.object_hash(),
+        gix::objs::Kind::Blob,
+        &mut data.as_slice(),
+        data.as_slice().len() as u64,
+        &mut gix::progress::Discard,
+        &gix::interrupt::IS_INTERRUPTED,
+    )?;
     Ok(Some(PatchBlob {
         mode: mode.bits(),
         blob_id,
@@ -378,12 +434,11 @@ fn worktree_patch_blob(repo: &gix::Repository, index: &gix::index::State, path: 
 
 fn render_patch(
     repo: &gix::Repository,
-    out: &mut Vec<u8>,
+    out: &mut dyn std::io::Write,
     path: &BString,
     old: Option<&PatchBlob>,
     new: Option<&PatchBlob>,
 ) -> Result<()> {
-    use std::io::Write;
     if old
         .zip(new)
         .is_some_and(|(old, new)| old.mode == new.mode && old.blob_id == new.blob_id)
@@ -404,11 +459,11 @@ fn render_patch(
     let mut b_path = BString::from("b/");
     b_path.extend_from_slice(path);
     let b_path = quote_patch_path(&b_path, quote_high);
-    out.extend_from_slice(b"diff --git ");
-    out.extend_from_slice(&a_path);
-    out.push(b' ');
-    out.extend_from_slice(&b_path);
-    out.push(b'\n');
+    out.write_all(b"diff --git ").or_error()?;
+    out.write_all(&a_path).or_error()?;
+    out.write_all(b" ").or_error()?;
+    out.write_all(&b_path).or_error()?;
+    out.write_all(b"\n").or_error()?;
     match (old, new) {
         (None, Some(new)) => writeln!(out, "new file mode {:06o}", new.mode).or_error()?,
         (Some(old), None) => writeln!(out, "deleted file mode {:06o}", old.mode).or_error()?,
@@ -461,11 +516,11 @@ fn render_patch(
     let old_data = old.map_or(&[][..], |b| b.data.as_slice());
     let new_data = new.map_or(&[][..], |b| b.data.as_slice());
     if is_binary(old_data, new_data) {
-        out.extend_from_slice(b"Binary files ");
-        out.extend_from_slice(a_label);
-        out.extend_from_slice(b" and ");
-        out.extend_from_slice(b_label);
-        out.extend_from_slice(b" differ\n");
+        out.write_all(b"Binary files ").or_error()?;
+        out.write_all(a_label).or_error()?;
+        out.write_all(b" and ").or_error()?;
+        out.write_all(b_label).or_error()?;
+        out.write_all(b" differ\n").or_error()?;
         return Ok(());
     }
     if old_data == new_data {
@@ -481,13 +536,13 @@ fn render_patch(
     } else {
         ""
     };
-    out.extend_from_slice(b"--- ");
-    out.extend_from_slice(a_label);
-    out.extend_from_slice(a_tab.as_bytes());
-    out.extend_from_slice(b"\n+++ ");
-    out.extend_from_slice(b_label);
-    out.extend_from_slice(b_tab.as_bytes());
-    out.push(b'\n');
+    out.write_all(b"--- ").or_error()?;
+    out.write_all(a_label).or_error()?;
+    out.write_all(a_tab.as_bytes()).or_error()?;
+    out.write_all(b"\n+++ ").or_error()?;
+    out.write_all(b_label).or_error()?;
+    out.write_all(b_tab.as_bytes()).or_error()?;
+    out.write_all(b"\n").or_error()?;
     let input = gix::diff::blob::InternedInput::new(
         gix::diff::blob::sources::byte_lines(old_data),
         gix::diff::blob::sources::byte_lines(new_data),
@@ -504,7 +559,7 @@ fn render_patch(
     Ok(())
 }
 
-struct PatchHunks<'a>(&'a mut Vec<u8>);
+struct PatchHunks<'a>(&'a mut dyn std::io::Write);
 
 impl gix::diff::blob::unified_diff::ConsumeHunk for PatchHunks<'_> {
     type Out = ();
@@ -513,7 +568,6 @@ impl gix::diff::blob::unified_diff::ConsumeHunk for PatchHunks<'_> {
         header: gix::diff::blob::unified_diff::HunkHeader,
         lines: &[(gix::diff::blob::unified_diff::DiffLineKind, &[u8])],
     ) -> std::io::Result<()> {
-        use std::io::Write;
         fn range(start: u32, len: u32) -> String {
             match len {
                 0 => format!("{},0", start.saturating_sub(1)),
@@ -528,10 +582,10 @@ impl gix::diff::blob::unified_diff::ConsumeHunk for PatchHunks<'_> {
             range(header.after_hunk_start, header.after_hunk_len)
         )?;
         for &(kind, line) in lines {
-            self.0.push(kind.to_prefix() as u8);
-            self.0.extend_from_slice(line);
+            self.0.write_all(&[kind.to_prefix() as u8])?;
+            self.0.write_all(line)?;
             if !line.ends_with(b"\n") {
-                self.0.extend_from_slice(b"\n\\ No newline at end of file\n");
+                self.0.write_all(b"\n\\ No newline at end of file\n")?;
             }
         }
         Ok(())
@@ -589,7 +643,8 @@ pub fn pinned_commit(repo: &gix::Repository, out: &mut dyn std::io::Write, commi
     let before = entries(&before);
     let after = entries(&after);
     let paths: BTreeSet<_> = before.keys().chain(after.keys()).cloned().collect();
-    let mut rendered = Vec::new();
+    let budget = Budget::new(&std::env::temp_dir()).or_error()?;
+    let mut rendered = std::io::BufWriter::new(budget.spool().or_error()?);
     for path in paths {
         if before.get(&path) == after.get(&path) {
             continue;
@@ -604,16 +659,15 @@ pub fn pinned_commit(repo: &gix::Repository, out: &mut dyn std::io::Write, commi
         }
         let old = before
             .get(&path)
-            .map(|&(mode, id)| load_patch_blob(repo, mode, id))
+            .map(|&(mode, id)| load_patch_blob(repo, mode, id, &budget))
             .transpose()?;
         let new = after
             .get(&path)
-            .map(|&(mode, id)| load_patch_blob(repo, mode, id))
+            .map(|&(mode, id)| load_patch_blob(repo, mode, id, &budget))
             .transpose()?;
         render_patch(repo, &mut rendered, &path, old.as_ref(), new.as_ref())?;
     }
-    out.write_all(&rendered).or_error()?;
-    Ok(())
+    write_diff_output(out, &mut rendered)
 }
 
 fn check_external_diff(repo: &gix::Repository) -> Result<()> {
@@ -665,6 +719,7 @@ pub fn tree_stat(
     let source = gix::worktree::stack::state::attributes::Source::IdMapping;
     let mut old_attrs = repo.attributes_only(&before_index, source)?;
     let mut new_attrs = repo.attributes_only(&after_index, source)?;
+    let budget = Budget::new(&std::env::temp_dir()).or_error()?;
     let mut stats = Vec::new();
     for path in paths {
         check_interrupted()?;
@@ -690,17 +745,17 @@ pub fn tree_stat(
         }
         let old = before
             .get(path)
-            .map(|&(mode, id)| load_patch_blob(&repo, mode, id))
+            .map(|&(mode, id)| load_patch_blob(&repo, mode, id, &budget))
             .transpose()?;
         let new = after
             .get(path)
-            .map(|&(mode, id)| load_patch_blob(&repo, mode, id))
+            .map(|&(mode, id)| load_patch_blob(&repo, mode, id, &budget))
             .transpose()?;
         collect_stat(&repo, &mut stats, path, old.as_ref(), new.as_ref())?;
     }
-    let mut rendered = Vec::new();
+    let mut rendered = std::io::BufWriter::new(budget.spool().or_error()?);
     render_stats(&stats, &mut rendered)?;
-    write_diff_output(out, &rendered)
+    write_diff_output(out, &mut rendered)
 }
 
 struct FileStat {
@@ -783,8 +838,7 @@ fn stat_name_suffix(mut name: &[u8], available: usize) -> &[u8] {
     name
 }
 
-fn render_stats(stats: &[FileStat], out: &mut Vec<u8>) -> Result<()> {
-    use std::io::Write;
+fn render_stats(stats: &[FileStat], out: &mut dyn std::io::Write) -> Result<()> {
     if stats.is_empty() {
         return Ok(());
     }
@@ -819,9 +873,9 @@ fn render_stats(stats: &[FileStat], out: &mut Vec<u8>) -> Result<()> {
         check_interrupted()?;
         let mut name = stat.name.as_slice();
         let mut available = name_width;
-        out.push(b' ');
+        out.write_all(b" ").or_error()?;
         if stat_name_width(name) > available {
-            out.extend_from_slice(b"...");
+            out.write_all(b"...").or_error()?;
             available -= 3;
             // Git 2.56 clips complete characters by display width, advancing
             // one byte for malformed UTF-8 instead of splitting valid text.
@@ -830,11 +884,10 @@ fn render_stats(stats: &[FileStat], out: &mut Vec<u8>) -> Result<()> {
                 name = &name[slash..];
             }
         }
-        out.extend_from_slice(name);
-        out.extend(std::iter::repeat_n(
-            b' ',
-            available.saturating_sub(stat_name_width(name)),
-        ));
+        out.write_all(name).or_error()?;
+        for byte in std::iter::repeat_n(b' ', available.saturating_sub(stat_name_width(name))) {
+            out.write_all(&[byte]).or_error()?;
+        }
         if stat.binary {
             write!(out, " | {:>number_width$}", "Bin").or_error()?;
             if stat.added != 0 || stat.removed != 0 {
@@ -846,7 +899,7 @@ fn render_stats(stats: &[FileStat], out: &mut Vec<u8>) -> Result<()> {
             let total = stat.added + stat.removed;
             write!(out, " | {total:>number_width$}").or_error()?;
             if total > 0 {
-                out.push(b' ');
+                out.write_all(b" ").or_error()?;
             }
             let (mut add, mut del) = (stat.added, stat.removed);
             if graph_width <= max_change && max_change > 0 {
@@ -866,10 +919,14 @@ fn render_stats(stats: &[FileStat], out: &mut Vec<u8>) -> Result<()> {
                     add = total - del;
                 }
             }
-            out.extend(std::iter::repeat_n(b'+', add));
-            out.extend(std::iter::repeat_n(b'-', del));
+            for byte in std::iter::repeat_n(b'+', add) {
+                out.write_all(&[byte]).or_error()?;
+            }
+            for byte in std::iter::repeat_n(b'-', del) {
+                out.write_all(&[byte]).or_error()?;
+            }
         }
-        out.push(b'\n');
+        out.write_all(b"\n").or_error()?;
     }
     write!(
         out,
@@ -893,11 +950,14 @@ fn render_stats(stats: &[FileStat], out: &mut Vec<u8>) -> Result<()> {
     Ok(())
 }
 
-fn write_diff_output(out: &mut dyn std::io::Write, rendered: &[u8]) -> Result<()> {
+fn write_diff_output(mut out: &mut dyn std::io::Write, rendered: &mut std::io::BufWriter<Spool>) -> Result<()> {
     #[cfg(all(target_os = "linux", feature = "switch-test-faults"))]
     super::switch::checkpoint("diff-before-output").map_err(|err| message!("{err:#}"))?;
     check_interrupted()?;
-    out.write_all(rendered).or_error()?;
+    rendered.flush().or_error()?;
+    let rendered = rendered.get_mut();
+    rendered.rewind().or_error()?;
+    stream::copy(rendered, &mut out, &gix::interrupt::IS_INTERRUPTED).or_error()?;
     Ok(())
 }
 

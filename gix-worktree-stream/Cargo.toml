@@ -22,7 +22,7 @@ sha256 = ["gix-hash/sha256"]
 
 [dependencies]
 gix-trace = { version = "^0.3.0", path = "../gix-trace", registry = "elohim" }
-gix-utils = { version = "^0.5.2", path = "../gix-utils", registry = "elohim", features = ["io-pipe"] }
+gix-utils = { version = "^0.5.2", path = "../gix-utils", registry = "elohim", features = ["io-pipe", "stream"] }
 gix-hash = { version = "^0.28.1", path = "../gix-hash", registry = "elohim" }
 gix-object = { version = "^0.66.1", path = "../gix-object", registry = "elohim" }
 gix-attributes = { version = "^0.37.2", path = "../gix-attributes", registry = "elohim" }

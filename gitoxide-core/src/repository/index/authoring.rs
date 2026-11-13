@@ -156,6 +156,22 @@ pub fn worktree_entry(
     index: &gix::index::State,
     path: &BString,
 ) -> Result<Option<(Mode, Vec<u8>)>> {
+    let budget = gix::utils::stream::Budget::new(&std::env::temp_dir()).or_error()?;
+    let Some((mode, mut source)) = worktree_entry_spooled(repo, index, path, &budget)? else {
+        return Ok(None);
+    };
+    let mut bytes = Vec::new();
+    source.read_to_end(&mut bytes).or_error()?;
+    Ok(Some((mode, bytes)))
+}
+
+/// Read canonical worktree bytes into operation-owned, quota-charged storage.
+pub fn worktree_entry_spooled(
+    repo: &gix::Repository,
+    index: &gix::index::State,
+    path: &BString,
+    budget: &std::sync::Arc<gix::utils::stream::Budget>,
+) -> Result<Option<(Mode, gix::utils::stream::Spool)>> {
     let relative = gix::path::from_bstr(Cow::Borrowed(path.as_bstr()))?;
     let root = repo
         .workdir()
@@ -175,7 +191,11 @@ pub fn worktree_entry(
         )
         .or_error()?;
         let target = std::fs::read_link(absolute).or_error()?;
-        return Ok(Some((Mode::SYMLINK, gix::path::into_bstr(target)?.into_owned().into())));
+        let target = gix::path::into_bstr(target)?;
+        let mut bytes = budget.spool().or_error()?;
+        gix::utils::stream::copy(&mut target.as_bytes(), &mut bytes, &gix::interrupt::IS_INTERRUPTED).or_error()?;
+        std::io::Seek::rewind(&mut bytes).or_error()?;
+        return Ok(Some((Mode::SYMLINK, bytes)));
     }
     if !meta.is_file() {
         bail!("Only regular files and symlinks can be staged".unsupported());
@@ -193,10 +213,12 @@ pub fn worktree_entry(
     )?;
     refuse_external_filters(repo, &mut attributes, [path.as_bstr()])?;
     let mut pipeline = gix::filter::Pipeline::new(repo, attributes.detach())?;
-    let file = std::fs::File::open(absolute).or_error()?;
-    let mut filtered = pipeline.convert_to_git(file, relative.as_ref(), index)?;
-    let mut bytes = Vec::new();
-    filtered.read_to_end(&mut bytes).or_error()?;
+    let mut file = std::fs::File::open(absolute).or_error()?;
+    let mut bytes = budget.spool().or_error()?;
+    gix::utils::stream::copy(&mut file, &mut bytes, &gix::interrupt::IS_INTERRUPTED).or_error()?;
+    std::io::Seek::rewind(&mut bytes).or_error()?;
+    let bytes =
+        pipeline.convert_to_git_stream(bytes, relative.as_ref(), index, budget, &gix::interrupt::IS_INTERRUPTED)?;
     let mut mode = executable_mode(&meta);
     if repo.config_snapshot().try_boolean("core.filemode")? == Some(false) {
         mode = index

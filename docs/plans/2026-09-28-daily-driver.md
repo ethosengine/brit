@@ -2569,3 +2569,122 @@ prove paginated admission and fail-closed missing, duplicate, unsuccessful,
 malformed and unavailable verdicts. Independent review corrected run-attempt
 binding and the unsupported gh --slurp/--jq combination. No dependency/security
 policy is changed. Fresh exact-revision CI remains required before publication.
+
+
+## Fixed-ceiling memory work — 2026-11-13, incomplete
+
+The acceptance target is **1,073,741,824 bytes for Brit and all owned children
+in one Linux cgroup**, swap disabled, and an independent **1 GiB scratch cap**.
+This is external qualification, not an always-on runtime sandbox. Existing
+allocation configuration and reduced-trust defaults remain authoritative. No
+algorithm selection, binary decision, automatic Git fallback or release version
+has changed. This work builds on the existing 0.1.14 integration candidate
+`a4db877811c153a1f97f8a916877d1d18248005f`; it does not duplicate that release.
+
+The first implementation reuses `FindStream`, bounded filter conversion and the
+existing charged `Spool`. Raw cat, worktree-form cat, archive blob extraction,
+staging and scoped restore avoid retaining complete blob copies. Working,
+cached and tree-stat comparisons consume immutable operation-owned mappings
+above the effective object allocation limit (or the existing large-file
+threshold when no explicit allocation limit exists). The comparison algorithm
+and tie-breaking are unchanged. Atomic patch output is itself charged scratch.
+Restore retains whole-selection preflight and per-file atomic publication;
+destination temporary files share the operation quota and completed files are
+reclaimed promptly. Symlink, executable mode and conversion tests remain active.
+Clean conversions now stream EOL, ident and encoding operations. Status hashes
+ordinary files directly and reads auto-EOL index objects through `FindStream`.
+Routine configuration reloads reapply the existing reduced-trust allocation
+fallback; a privileged ownership fixture caught and now guards the previous loss
+of that policy during the CLI's precious-file configuration update. Explicit limits
+and the explicit reduced-trust fallback opt-out remain effective.
+Pack decode diagnostics distinguish configured allocation refusal from allocator
+failure and include requested sizes; packed object lookup also names the pack
+and offset. Scratch exhaustion has a separate typed diagnostic.
+
+### Measured local proof, not final qualification
+
+`tests/cli-journey/tests/memory.rs` drives disposable repositories and the isolated
+stock-Git helper. It compares bytes at 16 MiB minus one, exactly 16 MiB, plus one,
+20 MiB, 64 MiB and 256 MiB, for loose and packed objects. Explicit 16 MiB and
+1 GiB allocation settings exercise mapped and buffered representations of the
+same two-sided inputs. Million-line fixtures cover both repetition and unique
+lines with append-only changes; numeric-leading lines avoid the existing
+function-context-header compatibility exception documented above. A two-file
+64 MiB restore fixture checks index preservation and rejection before publication.
+
+The opt-in `scripts/ci/qualify-memory.sh` enters its exclusively owned delegated
+cgroup before exec; test harness, Brit, Git oracle and all descendants inherit it.
+It records executable hashes, toolchain, arguments, elapsed time, memory peak,
+memory events, exits and surviving processes. An OOM or surviving child fails the
+run. The wrapper deliberately reports `qualificationComplete: false` while
+scratch peak evidence and complete source/workload qualification are absent.
+It does not turn missing evidence into a successful qualification.
+
+| Local run | Outcome | Whole-group peak | Elapsed |
+| --- | --- | ---: | ---: |
+| Boundary through 20 MiB, diff/stat/cat/add | 2 passed, no OOM | 89,878,528 B | 21.23 s |
+| Boundary through 256 MiB, buffered/mapped and loose/packed | 2 passed, no OOM | 1,073,741,824 B | 120.04 s |
+| Two 64 MiB files, scoped restore | passed, no OOM | 214,777,856 B | 6.06 s |
+| Million-line repetitive/unique comparisons | passed, no OOM | 160,239,616 B | 14.19 s |
+| Three-sided 64 MiB file merge | passed, no OOM | 618,782,720 B | 1.59 s |
+| Existing bounded checkout/recovery fixtures through 256 MiB | 8 passed, no OOM | 1,073,741,824 B | 64.35 s |
+| 64 MiB clean conversions and status | passed, no OOM | 216,305,664 B | 24.09 s |
+| Combined seven-case daily matrix, including 200,000-entry metadata | 7 passed, no OOM | 1,073,741,824 B | 173.60 s |
+| Local clone/fetch/push at 64/256 MiB, including owned transports | passed, no OOM | 1,073,741,824 B | 49.12 s |
+| Ownership-derived reduced trust, streamed blob and metadata refusal | passed, no OOM | 165,539,840 B | 1.91 s |
+| 64/256 MiB converted archive and commit | passed, no OOM | 1,018,191,872 B | 21.54 s |
+| Deliberate 1.2 GiB child allocation | correctly rejected, exit 137, 2 OOM kills | 1,073,741,824 B | negative control |
+
+The 256 MiB run reached `memory.max` with reclamation (495 max events), without
+OOM or OOM kills. Reaching that peak is not headroom. Scratch peak is currently
+unmeasured; these receipts cannot close the fixed-ceiling acceptance station.
+Private logs and receipts are in Elohim's existing isolated
+`genesis/local-dev/brit-readiness/bounded-memory/` directory. Source reads outside
+the private recall executor, the explicit fast-forward Git fallback (installed
+Brit has no branch-merge operation), and unsupported Codex shell-adapter
+coverage are observation gaps, not clean governance verdicts.
+
+Ordinary authoring verification passes 150 public journeys; the fault-enabled
+native recovery matrix passes 163 tests. Shared reader/pack/archive tests, clean
+conversion and status suites, strict affected-crate Clippy, formatting and the
+declared Rust-style scope pass. These are local source checks, not CI or complete
+resource qualification. The public memory suite is selected explicitly in CI;
+the privileged ownership case is ignored there and was explicitly executed on
+the delegated worker. All 121 fault-enabled public CLI authoring/recovery checks also pass.
+
+Story-harvest station: **daily-driver allocation safety / between ownership
+classification → command resource use / policy survives configuration reload**.
+The probe is `reduced_trust_sets_a_default_limit_unless_disabled` plus
+`actual_reduced_trust_keeps_ownership_policy_and_streams_large_blobs`; the
+previous CLI succeeded on metadata that should have exceeded its implicit
+16 MiB policy, and the repaired CLI correctly refuses while streaming the
+20 MiB blob. This node is measured locally; whole-command qualification stays
+open. Existing native fixtures own the regression, with no parallel registry.
+
+### Public-command audit in progress
+
+The command boundary is `src/plumbing/options/mod.rs` plus
+`brit-cli/src/main.rs` and its composed bridge. This table is interim audit
+coverage in the existing readiness document, **not final classification**.
+Every open row must finish qualified, traced/tested unaffected, or already
+unsupported independently of this effort. No open row is accepted as deferred.
+
+| Public command family | Observed path / remaining proof |
+| --- | --- |
+| `diff`, `cat`, `add`, `restore`, `archive` | Shared readers repaired as above; large converted archive and clean/status fixtures pass; pinned diff, larger aggregate selections and remaining fault cases stay open. `diff file` and diff-format cat still use the buffered comparison cache. |
+| `status`, `is-clean`, `is-changed`, `index`, `dirwalk`, `clean` | Hash-only status paths stream ordinary files; filtered status and a 200,000-entry index crossing 16 MiB are measured. Other metadata, dirwalk and clean paths still need complete tracing. |
+| `worktree`, `clone` checkout | Existing bounded checkout, OFS/REF delta and filter machinery retained. Whole-cgroup 64/256 MiB worktree checkout/recovery passes; 64/256 MiB local clone/fetch/push also passes; other protocols and reduced-trust transfer paths remain open. |
+| `switch`, `pull`, `rebase`, `merge`, `commit` | Switch/replay/conflict journals retain byte vectors and serialized images. Dirty checks still load blobs in these paths. Three-sided 64 MiB filesystem merge passes; object-backed merge, large journals and resource-bound recovery/death fixtures remain open. |
+| `blame`, `log`, `revision`, `merge-base`, `tree` | History/comparison caches and metadata need workload-specific measurement; ordinary history-only paths must be distinguished from blob/patch variants. |
+| `fetch`, `push`, `odb`, `fsck`, `verify`, `commit-graph` | Pack decode diagnostics improved; 64/256 MiB local transfer passes without worker/cache changes. Verification, delta-tree allocations under explicit limits, additional protocols and large metadata qualification remain open. |
+| `branch`, `tag`, `remote`, `submodule`, `config`, `config-tree`, `attributes`, `exclude`, `mailmap` | Ref/config/path metadata and helper dispatch still need allocation tracing and applicable fixtures. |
+| `credential`, `env`, `editor`, `completions`, `free`, `corpus`, `tix` | Applicable metadata/output/owned-child audit remains open. Existing unsupported behavior cannot be relabeled a memory success. |
+| `snapshot`, `build`, `run`, `graph`, `affected`, `plan`, `fingerprint`, `baseline`, `integrate`, `context` | Snapshot and first-party composition require their own reader/metadata/output audit; arbitrary external tasks are outside a universal success guarantee, but owned children still count in measured workloads. |
+
+Outstanding acceptance also includes broader reduced-trust command coverage,
+supported hashes, alternates/replacements, long-line and binary cases, additional
+metadata families over 16 MiB, aggregate scratch accounting and telemetry,
+allocation and I/O faults, corruption, cancellation/death, cross-platform checks,
+ordinary and fault-enabled recovery suites, and committed-source receipts.
+The habit remains RED. Release and parent-pin changes wait for the complete
+required matrix and coordination with the existing 0.1.14 integration owner.
