@@ -15,6 +15,8 @@ use gix_object::tree::EntryKind;
 
 use crate::blob::{Driver, Pipeline, ResourceKind};
 
+mod stream;
+
 /// A way to access roots for different kinds of resources that are possibly located and accessible in a worktree.
 #[derive(Clone, Debug, Default)]
 pub struct WorktreeRoots {

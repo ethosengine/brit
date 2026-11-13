@@ -27,7 +27,9 @@ blob = [
     "dep:gix-command",
     "dep:gix-tempfile",
     "dep:gix-trace",
-    "dep:gix-traverse"
+    "dep:gix-traverse",
+    "dep:gix-utils",
+    "gix-object/stream"
 ]
 ## Enable diffing of two indices, which also allows for a generic rewrite tracking implementation.
 index = ["dep:gix-index", "dep:gix-pathspec", "dep:gix-attributes"]
@@ -52,6 +54,7 @@ required-features = ["blob"]
 path = "./benches/rewrite_tracker.rs"
 
 [dependencies]
+gix-utils = { version = "^0.5.2", path = "../gix-utils", registry = "elohim", optional = true, features = ["stream"] }
 gix-index = { version = "^0.57.3", path = "../gix-index", registry = "elohim", optional = true }
 gix-pathspec = { version = "^0.22.3", path = "../gix-pathspec", registry = "elohim", optional = true }
 gix-attributes = { version = "^0.37.2", path = "../gix-attributes", registry = "elohim", optional = true }

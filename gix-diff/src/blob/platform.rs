@@ -20,14 +20,50 @@ pub(crate) struct CacheKey {
 }
 
 /// A stored value representing a diffable resource.
-#[derive(Clone, Eq, PartialEq, Ord, PartialOrd, Debug)]
+#[derive(Clone)]
 pub(crate) struct CacheValue {
     /// The outcome of converting a resource into a diffable format using [Pipeline::convert_to_diffable()].
     conversion: pipeline::Outcome,
     /// The kind of the resource we are looking at. Only possible values are `Blob`, `BlobExecutable` and `Link`.
     mode: gix_object::tree::EntryKind,
     /// A possibly empty buffer, depending on `conversion.data` which may indicate the data is considered binary.
-    buffer: Vec<u8>,
+    buffer: Content,
+}
+
+#[derive(Clone)]
+enum Content {
+    Memory(Vec<u8>),
+    Mapped(std::sync::Arc<gix_utils::stream::Mapped>),
+}
+impl Content {
+    fn from_spool(mut spool: gix_utils::stream::Spool, limit: usize) -> Result<Self> {
+        use std::io::Read;
+        if spool.len() > limit as u64 {
+            return Ok(Self::Mapped(std::sync::Arc::new(spool.into_mapped().or_error()?)));
+        }
+        let size = usize::try_from(spool.len()).or_error()?;
+        let mut bytes = Vec::new();
+        bytes.try_reserve_exact(size).or_raise(|| {
+            message!("Comparison resource could not allocate {size} bytes within limit {limit}").allocation_failure()
+        })?;
+        spool.read_to_end(&mut bytes).or_error()?;
+        Ok(Self::Memory(bytes))
+    }
+}
+impl std::ops::Deref for Content {
+    type Target = [u8];
+    fn deref(&self) -> &[u8] {
+        match self {
+            Self::Memory(bytes) => bytes,
+            Self::Mapped(bytes) => bytes.as_slice(),
+        }
+    }
+}
+struct Stream<'a> {
+    objects: &'a dyn gix_object::FindStream,
+    budget: &'a std::sync::Arc<gix_utils::stream::Budget>,
+    buffer_limit: usize,
+    interrupt: &'a std::sync::atomic::AtomicBool,
 }
 
 impl std::hash::Hash for CacheKey {
@@ -488,7 +524,7 @@ impl Platform {
         kind: ResourceKind,
         objects: &impl gix_object::FindObjectOrHeader, // TODO: make this `dyn` once https://github.com/rust-lang/rust/issues/65991 is stable, then also make tracker.rs `objects` dyn
     ) -> ExnResult<(), set_resource::Error> {
-        let res = self.set_resource_inner(id, mode, rela_path, kind, objects);
+        let res = self.set_resource_inner(id, mode, rela_path, kind, objects, None);
         if res.is_err() {
             *match kind {
                 ResourceKind::OldOrSource => &mut self.old,
@@ -496,6 +532,46 @@ impl Platform {
             } = None;
         }
         res
+    }
+
+    /// Prepare a resource through charged spools, buffering up to `buffer_limit` and
+    /// mapping larger converted payloads. Driver, algorithm and binary decisions
+    /// remain the same as `set_resource`; the limit only selects byte storage.
+    #[expect(
+        clippy::too_many_arguments,
+        reason = "Preserves resource inputs with an explicit shared quota and interrupt flag"
+    )]
+    pub fn set_resource_bounded(
+        &mut self,
+        id: gix_hash::ObjectId,
+        mode: gix_object::tree::EntryKind,
+        rela_path: &BStr,
+        kind: ResourceKind,
+        objects: &(impl gix_object::FindObjectOrHeader + gix_object::FindStream),
+        budget: &std::sync::Arc<gix_utils::stream::Budget>,
+        buffer_limit: usize,
+        interrupt: &std::sync::atomic::AtomicBool,
+    ) -> ExnResult<(), set_resource::Error> {
+        let result = self.set_resource_inner(
+            id,
+            mode,
+            rela_path,
+            kind,
+            objects,
+            Some(Stream {
+                objects,
+                budget,
+                buffer_limit,
+                interrupt,
+            }),
+        );
+        if result.is_err() {
+            *match kind {
+                ResourceKind::OldOrSource => &mut self.old,
+                ResourceKind::NewOrDestination => &mut self.new,
+            } = None;
+        }
+        result
     }
 
     /// Given `diff_command` and `context`, typically obtained from git-configuration, and the currently set diff-resources,
@@ -717,8 +793,15 @@ impl Platform {
         match self.free_list.len().cmp(&diff_cache.len()) {
             Ordering::Less => {
                 let to_take = diff_cache.len() - self.free_list.len();
-                self.free_list
-                    .extend(diff_cache.into_values().map(|v| v.buffer).take(to_take));
+                self.free_list.extend(
+                    diff_cache
+                        .into_values()
+                        .filter_map(|value| match value.buffer {
+                            Content::Memory(bytes) => Some(bytes),
+                            Content::Mapped(_) => None,
+                        })
+                        .take(to_take),
+                );
             }
             Ordering::Equal => {}
             Ordering::Greater => {
@@ -738,6 +821,7 @@ impl Platform {
         rela_path: &BStr,
         kind: ResourceKind,
         objects: &impl gix_object::FindObjectOrHeader,
+        streamed: Option<Stream<'_>>,
     ) -> ExnResult<(), set_resource::Error> {
         if matches!(
             mode,
@@ -766,25 +850,59 @@ impl Platform {
                     kind,
                     rela_path: rela_path.into(),
                 })?;
-        let mut buf = self.free_list.pop().unwrap_or_default();
-        let out = self
-            .filter
-            .convert_to_diffable(
-                &id,
-                mode,
-                rela_path,
-                kind,
-                &mut |_, out| {
-                    let _ = entry.matching_attributes(out);
-                },
-                objects,
-                self.filter_mode,
-                &mut buf,
-            )
-            .or_raise_typed(|| set_resource::Error::ConvertToDiffable {
-                kind,
-                rela_path: rela_path.into(),
-            })?;
+        let (out, buffer) = if let Some(streamed) = streamed {
+            let (out, bytes) = self
+                .filter
+                .convert_to_diffable_stream(
+                    &id,
+                    mode,
+                    rela_path,
+                    kind,
+                    &mut |_, out| {
+                        let _ = entry.matching_attributes(out);
+                    },
+                    objects,
+                    streamed.objects,
+                    self.filter_mode,
+                    streamed.budget,
+                    streamed.interrupt,
+                )
+                .or_raise_typed(|| set_resource::Error::ConvertToDiffable {
+                    kind,
+                    rela_path: rela_path.into(),
+                })?;
+            let buffer = match bytes {
+                Some(bytes) => Content::from_spool(bytes, streamed.buffer_limit).or_raise_typed(|| {
+                    set_resource::Error::ConvertToDiffable {
+                        kind,
+                        rela_path: rela_path.into(),
+                    }
+                })?,
+                None => Content::Memory(Vec::new()),
+            };
+            (out, buffer)
+        } else {
+            let mut bytes = self.free_list.pop().unwrap_or_default();
+            let out = self
+                .filter
+                .convert_to_diffable(
+                    &id,
+                    mode,
+                    rela_path,
+                    kind,
+                    &mut |_, out| {
+                        let _ = entry.matching_attributes(out);
+                    },
+                    objects,
+                    self.filter_mode,
+                    &mut bytes,
+                )
+                .or_raise_typed(|| set_resource::Error::ConvertToDiffable {
+                    kind,
+                    rela_path: rela_path.into(),
+                })?;
+            (out, Content::Memory(bytes))
+        };
         let key = storage.clone();
         assert!(
             self.diff_cache
@@ -793,7 +911,7 @@ impl Platform {
                     CacheValue {
                         conversion: out,
                         mode,
-                        buffer: buf,
+                        buffer,
                     },
                 )
                 .is_none(),

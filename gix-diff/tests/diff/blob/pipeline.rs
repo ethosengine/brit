@@ -33,7 +33,7 @@ pub(crate) mod convert_to_diffable {
             let a_name = "a";
             let a_content = "a-content";
             std::fs::write(tmp.path().join(a_name), a_content.as_bytes())?;
-            let out = filter.convert_to_diffable(
+            let out = filter.convert_and_compare(
                 &does_not_matter,
                 EntryKind::Blob,
                 a_name.into(),
@@ -49,7 +49,7 @@ pub(crate) mod convert_to_diffable {
 
             let link_name = "link";
             gix_fs::symlink::create(a_name.as_ref(), &tmp.path().join(link_name))?;
-            let out = filter.convert_to_diffable(
+            let out = filter.convert_and_compare(
                 &does_not_matter,
                 EntryKind::Link,
                 link_name.into(),
@@ -70,7 +70,7 @@ pub(crate) mod convert_to_diffable {
 
             filter.options.fs.symlink = false;
             let err = filter
-                .convert_to_diffable(
+                .convert_and_compare(
                     &does_not_matter,
                     EntryKind::Link,
                     link_name.into(),
@@ -97,7 +97,7 @@ pub(crate) mod convert_to_diffable {
             let b_content = "b-content";
             let id = insert(&db, b_content)?;
 
-            let out = filter.convert_to_diffable(
+            let out = filter.convert_and_compare(
                 &id,
                 EntryKind::Blob,
                 a_name.into(),
@@ -116,6 +116,45 @@ pub(crate) mod convert_to_diffable {
         Ok(())
     }
 
+    #[cfg(unix)]
+    #[test]
+    fn textconv_can_handle_a_dangling_path_without_an_unrequested_stat() -> TestResult {
+        let root = gix_testtools::tempfile::tempdir()?;
+        std::fs::write(root.path().join(".gitattributes"), "a diff=custom\n")?;
+        std::os::unix::fs::symlink("missing-target", root.path().join("a"))?;
+        let mut attributes = crate::blob::new_attributes_stack(root.path());
+        let entry = attributes.at_entry("a", None, &gix_object::find::Never)?;
+        let mut filter = gix_diff::blob::Pipeline::new(
+            WorktreeRoots {
+                old_root: Some(root.path().to_owned()),
+                new_root: None,
+            },
+            gix_filter::Pipeline::new(Default::default(), gix_testtools::object_hash(), Default::default()),
+            vec![gix_diff::blob::Driver {
+                name: "custom".into(),
+                binary_to_text_command: Some("printf 'converted\\n'; :".into()),
+                ..Default::default()
+            }],
+            default_options(),
+        );
+        let mut bytes = Vec::new();
+        let outcome = filter.convert_and_compare(
+            gix_hash::Kind::Sha1.null().as_ref(),
+            EntryKind::Blob,
+            "a".into(),
+            ResourceKind::OldOrSource,
+            &mut |_, out| {
+                let _ = entry.matching_attributes(out);
+            },
+            &gix_object::find::Never,
+            pipeline::Mode::ToWorktreeAndBinaryToText,
+            &mut bytes,
+        )?;
+        assert_eq!(outcome.data, Some(pipeline::Data::Buffer { is_derived: true }));
+        assert_eq!(bytes, b"converted\n");
+        Ok(())
+    }
+
     #[test]
     fn invalid_resource_modes() -> gix_error::TestResult {
         let mut filter = gix_diff::blob::Pipeline::new(
@@ -126,7 +165,7 @@ pub(crate) mod convert_to_diffable {
         );
         for mode in [EntryKind::Tree, EntryKind::Commit] {
             let err = filter
-                .convert_to_diffable(
+                .convert_and_compare(
                     gix_hash::Kind::Sha1.null().as_ref(),
                     mode,
                     "a".into(),
@@ -168,7 +207,7 @@ pub(crate) mod convert_to_diffable {
         let a_name = "a";
         let large_content = "a\0b";
         std::fs::write(tmp.path().join(a_name), large_content.as_bytes())?;
-        let out = filter.convert_to_diffable(
+        let out = filter.convert_and_compare(
             &does_not_matter,
             EntryKind::BlobExecutable,
             a_name.into(),
@@ -184,7 +223,7 @@ pub(crate) mod convert_to_diffable {
 
         let db = object_db();
         let id = insert(&db, large_content)?;
-        let out = filter.convert_to_diffable(
+        let out = filter.convert_and_compare(
             &id,
             EntryKind::Blob,
             a_name.into(),
@@ -223,7 +262,7 @@ pub(crate) mod convert_to_diffable {
         let a_name = "a";
         let large_content = "hello";
         std::fs::write(tmp.path().join(a_name), large_content.as_bytes())?;
-        let out = filter.convert_to_diffable(
+        let out = filter.convert_and_compare(
             &does_not_matter,
             EntryKind::BlobExecutable,
             a_name.into(),
@@ -243,7 +282,7 @@ pub(crate) mod convert_to_diffable {
         if !cfg!(windows) {
             let link_name = "link";
             gix_fs::symlink::create(large_content.as_ref(), &tmp.path().join(link_name))?;
-            let out = filter.convert_to_diffable(
+            let out = filter.convert_and_compare(
                 &does_not_matter,
                 EntryKind::Link,
                 link_name.into(),
@@ -267,7 +306,7 @@ pub(crate) mod convert_to_diffable {
         let db = object_db();
         let id = insert(&db, large_content)?;
 
-        let out = filter.convert_to_diffable(
+        let out = filter.convert_and_compare(
             &id,
             EntryKind::Blob,
             a_name.into(),
@@ -305,7 +344,7 @@ pub(crate) mod convert_to_diffable {
             !tmp.path().join(a_name).exists(),
             "precondition: worktree file doesn't exist"
         );
-        let out = filter.convert_to_diffable(
+        let out = filter.convert_and_compare(
             &null,
             EntryKind::Blob,
             a_name.into(),
@@ -320,7 +359,7 @@ pub(crate) mod convert_to_diffable {
         assert_eq!(buf.len(), 0, "always cleared");
 
         buf.push(1);
-        let out = filter.convert_to_diffable(
+        let out = filter.convert_and_compare(
             &null,
             EntryKind::Link,
             "link".into(),
@@ -337,7 +376,7 @@ pub(crate) mod convert_to_diffable {
         drop(tmp);
 
         buf.push(1);
-        let out = filter.convert_to_diffable(
+        let out = filter.convert_and_compare(
             &null,
             EntryKind::Blob,
             a_name.into(),
@@ -384,7 +423,7 @@ pub(crate) mod convert_to_diffable {
         let a_name = "a";
         let a_content = "a-content\n";
         std::fs::write(tmp.path().join(a_name), a_content.as_bytes())?;
-        let out = filter.convert_to_diffable(
+        let out = filter.convert_and_compare(
             &does_not_matter,
             EntryKind::Blob,
             a_name.into(),
@@ -405,7 +444,7 @@ pub(crate) mod convert_to_diffable {
         let b_name = "b";
         let b_content = "a\r\nb";
         std::fs::write(tmp.path().join(b_name), b_content.as_bytes())?;
-        let out = filter.convert_to_diffable(
+        let out = filter.convert_and_compare(
             &does_not_matter,
             EntryKind::Blob,
             b_name.into(),
@@ -429,7 +468,7 @@ pub(crate) mod convert_to_diffable {
             let link_name = "link";
             let link_content = "hello\n";
             gix_fs::symlink::create(link_content.as_ref(), &tmp.path().join(link_name))?;
-            let out = filter.convert_to_diffable(
+            let out = filter.convert_and_compare(
                 &does_not_matter,
                 EntryKind::Link,
                 link_name.into(),
@@ -454,7 +493,7 @@ pub(crate) mod convert_to_diffable {
         let b_content = "b-content\n";
         let id = insert(&db, b_content)?;
 
-        let out = filter.convert_to_diffable(
+        let out = filter.convert_and_compare(
             &id,
             EntryKind::Blob,
             a_name.into(),
@@ -472,7 +511,7 @@ pub(crate) mod convert_to_diffable {
         let db = object_db();
         let b_content = "b\n";
         let id = insert(&db, b_content)?;
-        let out = filter.convert_to_diffable(
+        let out = filter.convert_and_compare(
             &id,
             EntryKind::Blob,
             a_name.into(),
@@ -526,7 +565,7 @@ pub(crate) mod convert_to_diffable {
                 } else {
                     &objects
                 };
-                let out = filter.convert_to_diffable(
+                let out = filter.convert_and_compare(
                     &id,
                     EntryKind::Blob,
                     "a".into(),
@@ -575,7 +614,7 @@ pub(crate) mod convert_to_diffable {
         let a_name = "a";
         let a_content = "a\0b";
         std::fs::write(tmp.path().join(a_name), a_content.as_bytes())?;
-        let out = filter.convert_to_diffable(
+        let out = filter.convert_and_compare(
             &does_not_matter,
             EntryKind::Blob,
             a_name.into(),
@@ -597,7 +636,7 @@ pub(crate) mod convert_to_diffable {
         let b_content = "b-co\0ntent\n";
         let id = insert(&db, b_content)?;
 
-        let out = filter.convert_to_diffable(
+        let out = filter.convert_and_compare(
             &id,
             EntryKind::Blob,
             a_name.into(),
@@ -615,7 +654,7 @@ pub(crate) mod convert_to_diffable {
         let platform = attributes.at_entry("c", None, &gix_object::find::Never)?;
 
         let id = insert(&db, "b")?;
-        let out = filter.convert_to_diffable(
+        let out = filter.convert_and_compare(
             &id,
             EntryKind::Blob,
             "c".into(),
@@ -658,7 +697,7 @@ pub(crate) mod convert_to_diffable {
         );
         let entry = attributes.at_entry("a", None, &gix_object::find::Never)?;
         let err = filter
-            .convert_to_diffable(
+            .convert_and_compare(
                 gix_hash::Kind::Sha1.null().as_ref(),
                 EntryKind::Blob,
                 "a".into(),
@@ -746,7 +785,7 @@ pub(crate) mod convert_to_diffable {
             pipeline::Mode::ToGitUnlessBinaryToTextIsPresent,
         ];
         for mode in worktree_modes {
-            let out = filter.convert_to_diffable(
+            let out = filter.convert_and_compare(
                 &null,
                 EntryKind::Blob,
                 "a".into(),
@@ -768,7 +807,7 @@ pub(crate) mod convert_to_diffable {
             assert_eq!(buf.as_bstr(), "to-text\na\n", "filter was applied");
         }
 
-        let out = filter.convert_to_diffable(
+        let out = filter.convert_and_compare(
             &null,
             EntryKind::Blob,
             "a".into(),
@@ -786,7 +825,7 @@ pub(crate) mod convert_to_diffable {
 
         let id = insert(&db, "a\n")?;
         for mode in worktree_modes {
-            let out = filter.convert_to_diffable(
+            let out = filter.convert_and_compare(
                 &id,
                 EntryKind::Blob,
                 "a".into(),
@@ -803,7 +842,7 @@ pub(crate) mod convert_to_diffable {
             assert_eq!(buf.as_bstr(), "to-text\na\n", "filter was applied");
         }
 
-        let out = filter.convert_to_diffable(
+        let out = filter.convert_and_compare(
             &id,
             EntryKind::Blob,
             "a".into(),
@@ -826,7 +865,7 @@ pub(crate) mod convert_to_diffable {
         let platform = attributes.at_entry("missing", None, &gix_object::find::Never)?;
         for mode in all_modes {
             buf.push(1);
-            let out = filter.convert_to_diffable(
+            let out = filter.convert_and_compare(
                 &null,
                 EntryKind::Link,
                 "missing".into(), /* does not actually exist */
@@ -843,7 +882,7 @@ pub(crate) mod convert_to_diffable {
             assert_eq!(buf.len(), 0, "always cleared");
 
             buf.push(1);
-            let out = filter.convert_to_diffable(
+            let out = filter.convert_and_compare(
                 &null,
                 EntryKind::Link,
                 "missing".into(), /* does not actually exist */
@@ -861,7 +900,7 @@ pub(crate) mod convert_to_diffable {
 
             buf.push(1);
             let id = insert(&db, "link-target")?;
-            let out = filter.convert_to_diffable(
+            let out = filter.convert_and_compare(
                 &id,
                 EntryKind::Link,
                 "missing".into(),
@@ -885,7 +924,7 @@ pub(crate) mod convert_to_diffable {
         let platform = attributes.at_entry("b", None, &gix_object::find::Never)?;
         for mode in all_modes {
             buf.push(1);
-            let out = filter.convert_to_diffable(
+            let out = filter.convert_and_compare(
                 &null,
                 EntryKind::Blob,
                 "b".into(),
@@ -910,7 +949,7 @@ pub(crate) mod convert_to_diffable {
         let id = insert(&db, "b\n")?;
         for mode in all_modes {
             buf.push(1);
-            let out = filter.convert_to_diffable(
+            let out = filter.convert_and_compare(
                 &id,
                 EntryKind::Blob,
                 "b".into(),
@@ -934,7 +973,7 @@ pub(crate) mod convert_to_diffable {
 
         let platform = attributes.at_entry("c", None, &gix_object::find::Never)?;
         for mode in worktree_modes {
-            let out = filter.convert_to_diffable(
+            let out = filter.convert_and_compare(
                 &null,
                 EntryKind::Blob,
                 "c".into(),
@@ -962,7 +1001,7 @@ pub(crate) mod convert_to_diffable {
 
         let id = insert(&db, "c\n")?;
         for mode in worktree_modes {
-            let out = filter.convert_to_diffable(
+            let out = filter.convert_and_compare(
                 &id,
                 EntryKind::Blob,
                 "c".into(),
@@ -985,7 +1024,7 @@ pub(crate) mod convert_to_diffable {
 
         let platform = attributes.at_entry("unset", None, &gix_object::find::Never)?;
         for mode in all_modes {
-            let out = filter.convert_to_diffable(
+            let out = filter.convert_and_compare(
                 &null,
                 EntryKind::Blob,
                 "unset".into(),
@@ -1011,7 +1050,7 @@ pub(crate) mod convert_to_diffable {
 
         let id = insert(&db, "unset\n")?;
         for mode in all_modes {
-            let out = filter.convert_to_diffable(
+            let out = filter.convert_and_compare(
                 &id,
                 EntryKind::Blob,
                 "unset".into(),
@@ -1038,7 +1077,7 @@ pub(crate) mod convert_to_diffable {
         let platform = attributes.at_entry("d", None, &gix_object::find::Never)?;
         let id = insert(&db, "d-in-db")?;
         for mode in worktree_modes {
-            let out = filter.convert_to_diffable(
+            let out = filter.convert_and_compare(
                 &null,
                 EntryKind::Blob,
                 "d".into(),
@@ -1063,7 +1102,7 @@ pub(crate) mod convert_to_diffable {
                 "the worktree + text conversion was triggered for worktree source"
             );
 
-            let out = filter.convert_to_diffable(
+            let out = filter.convert_and_compare(
                 &id,
                 EntryKind::Blob,
                 "d".into(),
@@ -1085,7 +1124,7 @@ pub(crate) mod convert_to_diffable {
         }
 
         let platform = attributes.at_entry("e-no-attr", None, &gix_object::find::Never)?;
-        let out = filter.convert_to_diffable(
+        let out = filter.convert_and_compare(
             &null,
             EntryKind::Blob,
             "e-no-attr".into(),
@@ -1106,7 +1145,7 @@ pub(crate) mod convert_to_diffable {
         );
 
         let id = insert(&db, "e-in-db")?;
-        let out = filter.convert_to_diffable(
+        let out = filter.convert_and_compare(
             &id,
             EntryKind::Blob,
             "e-no-attr".into(),
@@ -1127,6 +1166,97 @@ pub(crate) mod convert_to_diffable {
         );
 
         Ok(())
+    }
+
+    trait CompareStreaming {
+        #[expect(
+            clippy::too_many_arguments,
+            reason = "Runs the existing conversion fixtures through both storage representations"
+        )]
+        fn convert_and_compare(
+            &mut self,
+            id: &gix_hash::oid,
+            mode: EntryKind,
+            path: &gix_object::bstr::BStr,
+            kind: ResourceKind,
+            attributes: &mut dyn FnMut(&gix_object::bstr::BStr, &mut gix_filter::attributes::search::Outcome),
+            objects: &dyn gix_object::FindObjectOrHeader,
+            convert: pipeline::Mode,
+            out: &mut Vec<u8>,
+        ) -> gix_error::Result<pipeline::Outcome>;
+    }
+    impl CompareStreaming for gix_diff::blob::Pipeline {
+        fn convert_and_compare(
+            &mut self,
+            id: &gix_hash::oid,
+            mode: EntryKind,
+            path: &gix_object::bstr::BStr,
+            kind: ResourceKind,
+            attributes: &mut dyn FnMut(&gix_object::bstr::BStr, &mut gix_filter::attributes::search::Outcome),
+            objects: &dyn gix_object::FindObjectOrHeader,
+            convert: pipeline::Mode,
+            out: &mut Vec<u8>,
+        ) -> gix_error::Result<pipeline::Outcome> {
+            use gix_error::{OptionExt, ResultExt};
+            use std::io::{Read, Seek, Write};
+            // Existing tiny fixture stores expose a dynamic FindObjectOrHeader. This
+            // adapter supplies their bytes to the streaming converter; public resource
+            // fixtures separately qualify the real loose/packed FindStream readers.
+            struct FixtureStreams<'a>(&'a dyn gix_object::FindObjectOrHeader);
+            impl gix_object::FindStream for FixtureStreams<'_> {
+                fn find_stream(
+                    &self,
+                    id: &gix_hash::oid,
+                    budget: &std::sync::Arc<gix_utils::stream::Budget>,
+                    _interrupt: &std::sync::atomic::AtomicBool,
+                ) -> gix_error::Result<(gix_object::Kind, gix_utils::stream::Spool)> {
+                    let mut bytes = Vec::new();
+                    let object = self
+                        .0
+                        .try_find(id, &mut bytes)?
+                        .ok_or_raise(|| gix_error::not_found("fixture object"))?;
+                    let mut spool = budget.spool().or_error()?;
+                    spool.write_all(object.data).or_error()?;
+                    spool.rewind().or_error()?;
+                    Ok((object.kind, spool))
+                }
+            }
+            let mut streamed = self.clone();
+            let expected = self.convert_to_diffable(id, mode, path, kind, attributes, objects, convert, out);
+            let budget = gix_utils::stream::Budget::new(&std::env::temp_dir()).or_error()?;
+            let actual = streamed.convert_to_diffable_stream(
+                id,
+                mode,
+                path,
+                kind,
+                attributes,
+                objects,
+                &FixtureStreams(objects),
+                convert,
+                &budget,
+                &std::sync::atomic::AtomicBool::new(false),
+            );
+            match (&expected, actual) {
+                (Ok(expected), Ok((actual, bytes))) => {
+                    assert_eq!(
+                        *expected, actual,
+                        "conversion decisions differ at {path:?}, mode {convert:?}"
+                    );
+                    let mut actual = Vec::new();
+                    if let Some(mut bytes) = bytes {
+                        bytes.read_to_end(&mut actual).or_error()?;
+                    }
+                    assert_eq!(*out, actual, "conversion bytes differ at {path:?}, mode {convert:?}");
+                }
+                (Err(_), Err(_)) => {}
+                (expected, actual) => panic!(
+                    "conversion success differs: buffered={}, streamed={} at {path:?}, mode {convert:?}",
+                    expected.is_ok(),
+                    actual.is_ok()
+                ),
+            }
+            expected
+        }
     }
 
     pub(crate) fn default_options() -> Options {

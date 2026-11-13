@@ -14,6 +14,9 @@ pub const SCRATCH_LIMIT: u64 = 1024 * 1024 * 1024;
 /// Transfer size, independent of object sizes.
 pub const CHUNK: usize = 64 * 1024;
 
+mod command;
+pub use command::{CommandOutput, command_output};
+
 /// Scratch accounting for a single operation. Completed destination files are no longer scratch.
 #[derive(Debug)]
 pub struct Budget {
@@ -163,7 +166,21 @@ pub struct Spool {
     len: u64,
     position: u64,
 }
+
+/// A named converter input. Exposing its path permanently relinquishes mapping access.
+pub struct NamedInput(Spool);
+impl NamedInput {
+    /// The private path supplied to an owned converter for this input's lifetime.
+    pub fn path(&self) -> &Path {
+        self.0.file.as_ref().expect("spool owns its file").path()
+    }
+}
 impl Spool {
+    /// Transfer ownership to a named converter input which can never be mapped.
+    /// Converter output must use a different, unexposed spool before mapping.
+    pub fn into_named_input(self) -> NamedInput {
+        NamedInput(self)
+    }
     /// Freeze this spool, retaining its quota until the read-only mapping is dropped.
     #[allow(
         unsafe_code,
@@ -291,7 +308,11 @@ pub fn check(interrupt: &AtomicBool) -> io::Result<()> {
     }
 }
 /// Copy with fixed storage and cancellation between chunks.
-pub fn copy(input: &mut impl Read, output: &mut impl Write, interrupt: &AtomicBool) -> io::Result<u64> {
+pub fn copy(
+    input: &mut (impl Read + ?Sized),
+    output: &mut (impl Write + ?Sized),
+    interrupt: &AtomicBool,
+) -> io::Result<u64> {
     let mut buf = [0; CHUNK];
     let mut total = 0;
     loop {

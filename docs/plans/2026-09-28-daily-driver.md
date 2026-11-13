@@ -2643,6 +2643,8 @@ It does not turn missing evidence into a successful qualification.
 | 20/64/256 MiB switch journal, raw payloads, loose/packed, 1 GiB/16 MiB allocation settings | 3 passed, no OOM | 1,073,741,824 B | 90.72 s |
 | Snapshot 20 MiB, explicit allocation limit and actual reduced trust, before repair | 2 failed allocation refusal, no OOM | 76,120,064 B | 1.33 s |
 | Snapshot 20/64 MiB round-trip, aggregate files, actual reduced trust and existing 256 MiB refusal | 5 passed, no OOM | 553,558,016 B | 115.29 s |
+| 20 MiB `diff file`, explicit 16 MiB policy, before repair | failed allocation refusal, no OOM | 93,544,448 B | 1.20 s |
+| `diff file`/diff-format reads at 20/64/256 MiB, textconv expansion refusal and real SIGINT | 5 passed, no OOM or surviving owned processes | 1,073,741,824 B | 65.64 s |
 | Deliberate 1.2 GiB child allocation | correctly rejected, exit 137, 2 OOM kills | 1,073,741,824 B | negative control |
 
 The 256 MiB run reached `memory.max` with reclamation (495 max events), without
@@ -2716,6 +2718,39 @@ storage / blob custody honors the effective allocation policy without copying**.
 The two formerly failing 20 MiB fixtures now pass; these observations do not
 complete the command-family or global resource audit.
 
+The shared comparison platform now also accepts resources through its existing
+object-stream and filter interfaces, buffering converted results within the
+effective allocation policy and mapping larger ones. Public `diff file` and
+`revision resolve --cat-file --blob-format diff|diff-or-git` use that path;
+`diff file` stages patch output in charged scratch without accumulating the
+complete patch or each rendered hunk in RAM. Its original tokenization, selected
+algorithm, slider heuristics and header/newline behavior are preserved.
+The existing conversion fixtures compare both representations for all three
+conversion modes, binary attributes, thresholds, symlinks, EOL and textconv;
+a dangling-path converter regression also preserves the old stat behavior.
+Cache clones share mappings and release quota after the final reader.
+
+Textconv stdout and stderr share the operation quota. On Linux the converter
+runs in its own process group; interruption or output refusal retires that group
+before reaping the leader, avoiding PID reuse when cleaning descendants. Failed
+converter diagnostics retain bounded 64 KiB prefixes with original output sizes
+and exit status. Named converter inputs cannot subsequently be mapped. The
+100-test diff suite, eleven conversion checks, eleven stream/process checks,
+48 existing public authoring/filter/stat checks and strict affected Clippy pass.
+The five-case public cgroup matrix covers 20/64/256 MiB sparse comparisons with
+both storage representations forced by existing allocation settings, diff-format
+reads, finite expanded NUL-bearing textconv output, a converter that exceeds
+scratch, and real SIGINT after the
+converter starts. Controlled return is under one second; HEAD/index survive,
+patch stdout stays empty on refusal/interruption, and owned scratch is reclaimed.
+
+Story-harvest stations: **comparison resources / between conversion → algorithm /
+byte storage changes preserve conversion decisions**, and **owned converters /
+between output growth or interruption → command return / both output pipes share
+the quota and descendants cannot retain capture pipes**. Existing algorithms
+remain unchanged. Other cache consumers, especially object-backed merge and
+reduced-trust blame, are still part of the open audit.
+
 ### Public-command audit in progress
 
 The command boundary is `src/plumbing/options/mod.rs` plus
@@ -2726,7 +2761,7 @@ unsupported independently of this effort. No open row is accepted as deferred.
 
 | Public command family | Observed path / remaining proof |
 | --- | --- |
-| `diff`, `cat`, `add`, `restore`, `archive` | Shared readers repaired as above; large converted archive and clean/status fixtures pass; pinned diff, larger aggregate selections and remaining fault cases stay open. `diff file` and diff-format cat still use the buffered comparison cache. |
+| `diff`, `cat`, `add`, `restore`, `archive` | Shared readers repaired as above; large converted archive and clean/status fixtures pass; pinned diff, larger aggregate selections and remaining fault cases stay open. `diff file` and diff-format reads now use the streamed/mapped shared conversion path and pass the added 20/64/256 MiB matrix. Other comparison-cache consumers remain open. |
 | `status`, `is-clean`, `is-changed`, `index`, `dirwalk`, `clean` | Hash-only status paths stream ordinary files; filtered status and a 200,000-entry index crossing 16 MiB are measured. Other metadata, dirwalk and clean paths still need complete tracing. |
 | `worktree`, `clone` checkout | Existing bounded checkout, OFS/REF delta and filter machinery retained. Whole-cgroup 64/256 MiB worktree checkout/recovery passes; 64/256 MiB local clone/fetch/push also passes; other protocols and reduced-trust transfer paths remain open. |
 | `switch`, `pull`, `rebase`, `merge`, `commit` | Switch/pull raw recovery payloads and streamed dirty checks are repaired and measured at 20/64/256 MiB. Replay/conflict journals and journal metadata still retain byte vectors and serialized images. Three-sided 64 MiB filesystem merge passes; object-backed merge, large journals and resource-bound recovery/death fixtures remain open. |

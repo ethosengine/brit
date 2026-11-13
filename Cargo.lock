@@ -2545,6 +2545,7 @@ dependencies = [
  "gix-testtools",
  "gix-trace 0.3.0",
  "gix-traverse 0.63.1",
+ "gix-utils 0.5.2",
  "gix-worktree 0.58.3",
  "insta",
  "pretty_assertions",
@@ -4007,6 +4008,7 @@ dependencies = [
  "insta",
  "memmap2",
  "prodash",
+ "rustix",
  "tempfile",
  "unicode-normalization",
 ]

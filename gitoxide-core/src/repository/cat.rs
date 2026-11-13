@@ -59,13 +59,25 @@ pub fn display_object(
                     stream::copy(&mut converted, &mut out, &gix::interrupt::IS_INTERRUPTED).or_error()?;
                 }
                 (BlobFormat::Diff | BlobFormat::DiffOrGit, cache) => {
-                    cache.set_resource(id.detach(), mode.kind(), path, ResourceKind::OldOrSource, &repo.objects)?;
+                    let budget = Budget::new(&std::env::temp_dir()).or_error()?;
+                    cache.set_resource_bounded(
+                        id.detach(),
+                        mode.kind(),
+                        path,
+                        ResourceKind::OldOrSource,
+                        &repo.objects,
+                        &budget,
+                        repo.allocation_limit()
+                            .unwrap_or(usize::try_from(repo.big_file_threshold()?).unwrap_or(usize::MAX)),
+                        &gix::interrupt::IS_INTERRUPTED,
+                    )?;
                     let resource = cache.resource(ResourceKind::OldOrSource).expect("just set");
                     let data = resource
                         .data
                         .as_slice()
                         .ok_or_raise(|| message!("Binary data at {path} cannot be diffed").unsupported())?;
-                    out.write_all(data).or_error()?;
+                    stream::copy(&mut &data[..], &mut out, &gix::interrupt::IS_INTERRUPTED).or_error()?;
+                    cache.clear_resource_cache();
                 }
             }
         }

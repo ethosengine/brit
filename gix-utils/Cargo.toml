@@ -45,7 +45,7 @@ io-pipe = ["dep:bytes"]
 ## Count cache hits, misses, and insertions and print diagnostics on drop.
 cache-efficiency-debug = []
 ## Quota-accounted disk spools for bounded object processing.
-stream = ["dep:tempfile", "dep:gix-error", "dep:memmap2"]
+stream = ["dep:tempfile", "dep:gix-error", "dep:memmap2", "dep:rustix"]
 
 [dependencies]
 memmap2 = { version = "0.9.11", optional = true }
@@ -73,6 +73,9 @@ gix-testtools = { path = "../tests/tools", default-features = false, features = 
 insta = "1.46.3"
 gix-utils = { path = ".", features = ["bstr" ]}
 criterion = "0.8.2"
+
+[target.'cfg(unix)'.dependencies]
+rustix = { version = "1", optional = true, features = ["process"] }
 
 [[test]]
 name = "pipe"

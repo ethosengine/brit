@@ -167,6 +167,10 @@ pub fn file(
     let (old_blob_id, old_root, old_path) = resolve_revspec(&repo, old_revspec)?;
     let (new_blob_id, new_root, new_path) = resolve_revspec(&repo, new_revspec)?;
 
+    let budget = Budget::new(&std::env::temp_dir()).or_error()?;
+    let buffer_limit = repo
+        .allocation_limit()
+        .unwrap_or(usize::try_from(repo.big_file_threshold()?).unwrap_or(usize::MAX));
     let worktree_roots = gix::diff::blob::pipeline::WorktreeRoots { old_root, new_root };
 
     let mut resource_cache = repo.diff_resource_cache(
@@ -174,19 +178,25 @@ pub fn file(
         worktree_roots,
     )?;
 
-    resource_cache.set_resource(
+    resource_cache.set_resource_bounded(
         old_blob_id,
         gix::object::tree::EntryKind::Blob,
         old_path.as_ref(),
         gix::diff::blob::ResourceKind::OldOrSource,
         &repo.objects,
+        &budget,
+        buffer_limit,
+        &gix::interrupt::IS_INTERRUPTED,
     )?;
-    resource_cache.set_resource(
+    resource_cache.set_resource_bounded(
         new_blob_id,
         gix::object::tree::EntryKind::Blob,
         new_path.as_ref(),
         gix::diff::blob::ResourceKind::NewOrDestination,
         &repo.objects,
+        &budget,
+        buffer_limit,
+        &gix::interrupt::IS_INTERRUPTED,
     )?;
 
     let outcome = resource_cache.prepare_diff()?;
@@ -209,17 +219,44 @@ pub fn file(
     );
 
     let diff = gix::diff::blob::diff_with_slider_heuristics(algorithm, &interner);
-    let rendered = gix::diff::blob::UnifiedDiff::new(
+    let mut rendered = budget.spool().or_error()?;
+    gix::diff::blob::UnifiedDiff::new(
         &diff,
         &interner,
-        gix::diff::blob::unified_diff::ConsumeBinaryHunk::new(BString::default(), "\n"),
+        FileHunks(&mut rendered),
         gix::diff::blob::unified_diff::ContextSize::symmetrical(3),
     )
     .consume()
     .or_error()?;
-    write!(out, "{rendered}").or_error()?;
+    drop(interner);
+    drop(resource_cache);
+    rendered.rewind().or_error()?;
+    stream::copy(&mut rendered, out, &gix::interrupt::IS_INTERRUPTED).or_error()?;
 
     Ok(())
+}
+
+struct FileHunks<'a>(&'a mut dyn std::io::Write);
+impl gix::diff::blob::unified_diff::ConsumeHunk for FileHunks<'_> {
+    type Out = ();
+    fn consume_hunk(
+        &mut self,
+        header: gix::diff::blob::unified_diff::HunkHeader,
+        lines: &[(gix::diff::blob::unified_diff::DiffLineKind, &[u8])],
+    ) -> std::io::Result<()> {
+        stream::check(&gix::interrupt::IS_INTERRUPTED)?;
+        writeln!(self.0, "{header}")?;
+        for &(kind, bytes) in lines {
+            stream::check(&gix::interrupt::IS_INTERRUPTED)?;
+            self.0.write_all(&[kind.to_prefix() as u8])?;
+            self.0.write_all(bytes)?;
+            if !bytes.ends_with(b"\n") {
+                self.0.write_all(b"\n")?;
+            }
+        }
+        Ok(())
+    }
+    fn finish(self) {}
 }
 
 pub(crate) fn tokens_for_diffing(data: &[u8]) -> gix::diff::blob::platform::resource::ByteLinesWithoutTerminator<'_> {

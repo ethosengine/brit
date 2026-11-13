@@ -14,6 +14,37 @@ use crate::{
 };
 
 #[test]
+fn streamed_resources_preserve_decisions_and_reclaim_shared_mappings() -> TestResult {
+    let mut buffered = new_platform(None, pipeline::Mode::ToGit);
+    let mut streamed = buffered.clone();
+    let db = object_db();
+    let id = insert(&db, "changed content\n")?;
+    let budget = gix_utils::stream::Budget::new(&std::env::temp_dir())?;
+    let interrupt = std::sync::atomic::AtomicBool::new(false);
+    for (id, kind) in [
+        (gix_hash::Kind::Sha1.null(), ResourceKind::OldOrSource),
+        (id, ResourceKind::NewOrDestination),
+    ] {
+        buffered.set_resource(id, EntryKind::Blob, "a".into(), kind, &db)?;
+        streamed.set_resource_bounded(id, EntryKind::Blob, "a".into(), kind, &db, &budget, 0, &interrupt)?;
+        let expected = buffered.resource(kind).expect("buffered resource");
+        let actual = streamed.resource(kind).expect("streamed resource");
+        assert_eq!(actual.data.as_slice(), expected.data.as_slice());
+        assert_eq!(actual.driver_index, expected.driver_index);
+    }
+    assert_eq!(streamed.prepare_diff()?.operation, buffered.prepare_diff()?.operation);
+    let live = budget.usage().0;
+    assert!(live > 0);
+    let mut retained = streamed.clone();
+    assert_eq!(budget.usage().0, live, "cloning a cache shares immutable mappings");
+    streamed.clear_resource_cache_keep_allocation();
+    assert_eq!(budget.usage().0, live, "the remaining reader retains its quota");
+    retained.clear_resource_cache();
+    assert_eq!(budget.usage().0, 0, "the final reader promptly reclaims its files");
+    Ok(())
+}
+
+#[test]
 fn resources_of_worktree_and_odb_and_check_link() -> TestResult {
     let mut platform = new_platform(
         Some(gix_diff::blob::Driver {
