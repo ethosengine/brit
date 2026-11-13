@@ -1102,12 +1102,7 @@ fn linked_worktree_version_two_ready_final_reopens_without_rewriting_identity() 
     Ok(())
 }
 
-#[test]
-fn legacy_inline_preparation_opens_unchanged_and_can_advance() -> Result<()> {
-    let temp = preserved_linear_fixture(false)?;
-    let root = temp.path();
-    let repo = gix::open(root)?;
-    let _session = Session::prepare(&repo, b"upstream".as_bstr())?.expect("divergence");
+fn make_legacy_inline(repo: &gix::Repository) -> Result<Vec<u8>> {
     let directory = repo.git_dir().join("brit-rebase");
     let state_path = directory.join("state.json");
     let envelope: serde_json::Value = serde_json::from_slice(&fs::read(&state_path)?)?;
@@ -1124,6 +1119,17 @@ fn legacy_inline_preparation_opens_unchanged_and_can_advance() -> Result<()> {
             }
         }
     }
+    for entry in state["preservation"]["before"]
+        .as_array_mut()
+        .expect("preserved images")
+    {
+        if let Some(image) = entry[1].get("StoredFile") {
+            let hash = image["checksum"].as_str().expect("preserved payload hash");
+            entry[1] = serde_json::json!({"File": [
+                fs::read(directory.join(format!("payload-{hash}")))?, image["mode"]
+            ]});
+        }
+    }
     state["version"] = 1.into();
     state.as_object_mut().expect("state").remove("payloads");
     let payload = serde_json::to_vec(&state)?;
@@ -1135,6 +1141,81 @@ fn legacy_inline_preparation_opens_unchanged_and_can_advance() -> Result<()> {
     for hash in payloads.keys() {
         fs::remove_file(directory.join(format!("payload-{hash}")))?;
     }
+    Ok(bytes)
+}
+
+fn legacy_aborting_fixture(repo: &gix::Repository) -> Result<gitoxide_core::repository::replay::retained::Receipt> {
+    use gitoxide_core::repository::replay::retained::{self, Area, Kind, Member};
+    Session::prepare(repo, b"upstream".as_bstr())?.expect("divergence");
+    let bytes = make_legacy_inline(repo)?;
+    let envelope: serde_json::Value = serde_json::from_slice(&bytes)?;
+    let payload: Vec<u8> = serde_json::from_value(envelope["payload"].clone())?;
+    let mut state: serde_json::Value = serde_json::from_slice(&payload)?;
+    state["phase"] = "retaining-abort".into();
+    state["copies"] = 1.into();
+    let payload = serde_json::to_vec(&state)?;
+    let mut hash = gix::hash::hasher(gix::hash::Kind::Sha1);
+    hash.update(&payload);
+    let bytes =
+        serde_json::to_vec(&serde_json::json!({"payload": payload, "checksum": hash.try_finalize()?.to_string()}))?;
+    fs::write(repo.git_dir().join("brit-rebase/state.json"), &bytes)?;
+    let original = repo.head_commit()?.id;
+    retained::capture(
+        repo,
+        state["nonce"].as_str().expect("nonce"),
+        1,
+        original,
+        original,
+        original,
+        &[Member {
+            area: Area::Messages,
+            path: b"state.json".to_vec(),
+            stage: None,
+            kind: Kind::File,
+            mode: 0o600,
+            data: bytes,
+        }],
+    )
+}
+
+#[test]
+fn legacy_abort_converts_file_custody_and_preserves_completed_copies() -> Result<()> {
+    let temp = preserved_linear_fixture(false)?;
+    let root = temp.path();
+    let repo = gix::open(root)?;
+    let original = legacy_aborting_fixture(&repo)?;
+    let retained_before = snapshot(&original.path)?;
+    let before = integration_snapshot(root)?;
+    let mut session = Session::open(&repo)?;
+    let receipt = session.abort(&repo)?;
+    assert_ne!(receipt.path, original.path);
+    assert_eq!(snapshot(&original.path)?, retained_before);
+    assert_eq!(integration_snapshot(root)?, before);
+    let envelope: serde_json::Value = serde_json::from_slice(&fs::read(session.directory().join("state.json"))?)?;
+    let payload: Vec<u8> = serde_json::from_value(envelope["payload"].clone())?;
+    let state: serde_json::Value = serde_json::from_slice(&payload)?;
+    assert_eq!(state["version"], 2);
+    assert!(
+        state["work"]
+            .as_array()
+            .expect("work")
+            .iter()
+            .all(|change| change["before"].get("File").is_none() && change["after"].get("File").is_none())
+    );
+    session.cleanup(&repo)?;
+    assert_eq!(integration_snapshot(root)?, before);
+    assert_eq!(snapshot(&original.path)?, retained_before);
+    Ok(())
+}
+
+#[test]
+fn legacy_inline_preparation_opens_unchanged_and_can_advance() -> Result<()> {
+    let temp = preserved_linear_fixture(false)?;
+    let root = temp.path();
+    let repo = gix::open(root)?;
+    let _session = Session::prepare(&repo, b"upstream".as_bstr())?.expect("divergence");
+    let bytes = make_legacy_inline(&repo)?;
+    let state_path = repo.git_dir().join("brit-rebase/state.json");
     let mut session = Session::open(&repo)?;
     assert_eq!(fs::read(&state_path)?, bytes, "opening legacy state is read-only");
     assert_eq!(session.advance(&repo)?, Advance::Started);
@@ -1197,7 +1278,29 @@ fn replay_scratch_exhaustion_preserves_integration_and_foreign_pressure_file() -
 }
 
 #[test]
+fn oversized_encoded_journal_refuses_before_decoding_or_allocating_its_payload() -> Result<()> {
+    let temp = preserved_linear_fixture(false)?;
+    let root = temp.path();
+    let repo = gix::open(root)?;
+    Session::prepare(&repo, b"upstream".as_bstr())?.expect("divergence");
+    let path = repo.git_dir().join("brit-rebase/state.json");
+    fs::OpenOptions::new()
+        .write(true)
+        .open(&path)?
+        .set_len(1024 * 1024 * 1024 + 1)?;
+    let before = integration_snapshot(root)?;
+    let error = Session::open(&repo).err().expect("oversized journal refused");
+    assert!(format!("{error:#}").contains("hard 1 GiB aggregate scratch budget"));
+    assert_eq!(integration_snapshot(root)?, before);
+    assert_eq!(fs::metadata(path)?.len(), 1024 * 1024 * 1024 + 1);
+    Ok(())
+}
+
+#[test]
 fn raw_collision_fixture_remains_a_valid_git_blob_through_replay_cleanup() -> Result<()> {
+    if gix_testtools::run_in_isolated_process().map_err(anyhow::Error::from_boxed)? {
+        return Ok(());
+    }
     let temp = fixture()?;
     let root = temp.path();
     let collision = include_bytes!("../../gix-hash/tests/fixtures/shambles/messageA");
@@ -1731,6 +1834,30 @@ fn terminal_cleanup_keeps_independent_copies_after_journal_release_and_gc() -> R
         git(root, &["reflog", "expire", "--expire=now", "--all"])?;
         git(root, &["gc", "--prune=now"])?;
         let copy = retained::inspect(&receipt.path)?;
+        let preserved = copy
+            .manifest
+            .entries
+            .iter()
+            .position(|entry| entry.area == Area::Original && entry.path == b"preservation.json")
+            .expect("independent preservation description");
+        let preserved: serde_json::Value = serde_json::from_slice(&copy.payload(preserved)?)?;
+        let neighbor_path = serde_json::json!(b"neighbor".to_vec());
+        let neighbor = preserved["before"]
+            .as_array()
+            .expect("preserved paths")
+            .iter()
+            .find(|entry| entry[0] == neighbor_path)
+            .expect("preserved neighbor");
+        let checksum = neighbor[1]["StoredFile"]["checksum"]
+            .as_str()
+            .expect("raw neighbor identity");
+        let raw = copy
+            .manifest
+            .entries
+            .iter()
+            .position(|entry| entry.area == Area::Invocations && entry.path == format!("payload-{checksum}").as_bytes())
+            .expect("raw neighbor survives journal cleanup and GC");
+        assert_eq!(copy.payload(raw)?, b"unstaged private neighbor\n");
         for commit in rewritten {
             let ordinal = copy
                 .manifest
@@ -2069,7 +2196,7 @@ fn real_signals_during_preparation_recover_without_touching_original_integration
             "replay-preparation-tombstoned",
             "replay-preparation-last-member-removed",
         ] {
-            let temp = divergent_fixture(false)?;
+            let temp = preserved_linear_fixture(false)?;
             let root = temp.path();
             let checkpoints = tempfile::tempdir()?;
             let before = integration_snapshot(root)?;
@@ -2149,6 +2276,92 @@ fn real_signals_during_preparation_recover_without_touching_original_integration
                 .is_empty()
             );
         }
+    }
+    Ok(())
+}
+
+#[cfg(feature = "switch-test-faults")]
+#[test]
+fn legacy_payload_upgrade_survives_process_death_at_each_boundary() -> Result<()> {
+    use std::{
+        process::{Command, Stdio},
+        time::{Duration, Instant},
+    };
+    if gix_testtools::run_in_isolated_process().map_err(anyhow::Error::from_boxed)? {
+        return Ok(());
+    }
+    for checkpoint in [
+        "replay-state-file-synced",
+        "replay-legacy-payload-licensed",
+        "replay-legacy-payload-persisted",
+        "replay-legacy-payload-complete",
+    ] {
+        let temp = preserved_linear_fixture(false)?;
+        let root = temp.path();
+        let repo = gix::open(root)?;
+        let original = legacy_aborting_fixture(&repo)?;
+        let retained_before = snapshot(&original.path)?;
+        let state_path = repo.git_dir().join("brit-rebase/state.json");
+        let legacy_bytes = fs::read(&state_path)?;
+        let before = integration_snapshot(root)?;
+        let checkpoints = tempfile::tempdir()?;
+        let mut command = Command::new(std::env::current_exe()?);
+        gix_testtools::configure_git_environment(&mut command, root);
+        let mut child = command
+            .args(["--exact", "preparation_interruption_child_helper", "--nocapture"])
+            .env("BRIT_TEST_REPLAY_PREPARATION_ROOT", root)
+            .env("BRIT_TEST_REPLAY_LIFECYCLE", "retry-abort")
+            .env("BRIT_SWITCH_CHECKPOINT", checkpoint)
+            .env("BRIT_SWITCH_CHECKPOINT_DIR", checkpoints.path())
+            .stdin(Stdio::null())
+            .stdout(Stdio::null())
+            .stderr(Stdio::inherit())
+            .spawn()?;
+        let reached = checkpoints.path().join(format!("{checkpoint}.reached"));
+        let deadline = Instant::now() + Duration::from_secs(15);
+        while !reached.exists() {
+            ensure!(child.try_wait()?.is_none(), "legacy helper exited before {checkpoint}");
+            if Instant::now() >= deadline {
+                child.kill()?;
+                child.wait()?;
+                anyhow::bail!("legacy checkpoint timeout: {checkpoint}");
+            }
+            std::thread::sleep(Duration::from_millis(10));
+        }
+        child.kill()?;
+        child.wait()?;
+        assert_eq!(integration_snapshot(root)?, before);
+        if checkpoint == "replay-legacy-payload-complete" {
+            // Model a durable final successor whose rename was not durable:
+            // the previous state still licenses each published raw payload.
+            let envelope: serde_json::Value = serde_json::from_slice(&fs::read(&state_path)?)?;
+            let payload: Vec<u8> = serde_json::from_value(envelope["payload"].clone())?;
+            let complete: serde_json::Value = serde_json::from_slice(&payload)?;
+            let envelope: serde_json::Value = serde_json::from_slice(&legacy_bytes)?;
+            let payload: Vec<u8> = serde_json::from_value(envelope["payload"].clone())?;
+            let mut licensed: serde_json::Value = serde_json::from_slice(&payload)?;
+            for field in ["version", "payloads", "copies"] {
+                licensed[field] = complete[field].clone();
+            }
+            let pending = repo.git_dir().join("brit-rebase/state.pending");
+            let permissions = fs::metadata(&state_path)?.permissions();
+            fs::rename(&state_path, &pending)?;
+            let payload = serde_json::to_vec(&licensed)?;
+            let mut hash = gix::hash::hasher(gix::hash::Kind::Sha1);
+            hash.update(&payload);
+            fs::write(
+                &state_path,
+                serde_json::to_vec(&serde_json::json!({
+                    "payload": payload, "checksum": hash.try_finalize()?.to_string()
+                }))?,
+            )?;
+            fs::set_permissions(&state_path, permissions)?;
+        }
+        let mut session = Session::open(&repo)?;
+        session.abort(&repo)?;
+        session.cleanup(&repo)?;
+        assert_eq!(integration_snapshot(root)?, before);
+        assert_eq!(snapshot(&original.path)?, retained_before);
     }
     Ok(())
 }

@@ -161,6 +161,15 @@ pub(crate) fn private_copy(path: &Path, source: &mut impl Read) -> Result<()> {
     })
 }
 
+/// Publish an already encoded, charged private file without a second disk copy.
+pub(crate) fn private_publish(path: &Path, mut source: stream::Spool) -> Result<()> {
+    use std::os::unix::fs::PermissionsExt;
+    source.set_permissions(fs::Permissions::from_mode(0o600))?;
+    io_fault("write", path)?;
+    let file = source.publish(path)?;
+    sync_file(&file, path)
+}
+
 fn private_output(path: &Path, write: impl FnOnce(&mut fs::File) -> Result<()>) -> Result<()> {
     use std::os::unix::fs::OpenOptionsExt;
     let mut file = fs::OpenOptions::new()

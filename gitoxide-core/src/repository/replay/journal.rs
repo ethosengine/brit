@@ -35,7 +35,7 @@ impl ChildAuthorization {
         kind: crate::repository::authoring::conflict::StopKind,
         active: &[BString],
         private: &gix::index::State,
-    ) -> Result<()> {
+    ) -> Result<BTreeMap<Vec<u8>, switch::State>> {
         self.validate(repo)?;
         let envelope: Envelope = serde_json::from_slice(&fs::read(repo.git_dir().join("brit-rebase/state.json"))?)?;
         let state: ParentState = serde_json::from_slice(&envelope.payload)?;
@@ -43,7 +43,11 @@ impl ChildAuthorization {
             state.authorized_stop.as_ref() == Some(&stop_digest(preservation, kind, active, private)?),
             "replay parent does not authorize supplied child context"
         );
-        Ok(())
+        Ok(state
+            .work
+            .into_iter()
+            .map(|change| (change.path, change.after))
+            .collect())
     }
 }
 
@@ -189,7 +193,7 @@ impl Session {
         switch::ensure_no_pending(repo)?;
         selection.validate_head(repo)?;
         ensure!(!gix::interrupt::is_triggered(), "replay preparation interrupted");
-        let preservation = Preservation::capture(repo)?;
+        let preservation = Preservation::capture_for_replay(repo)?;
         let active = selection
             .footprint(repo)?
             .into_iter()
@@ -262,6 +266,10 @@ impl Session {
                     switch::State::StoredFile { size, checksum, .. } => Some((checksum.clone(), *size)),
                     _ => None,
                 })
+                .chain(preservation.raw_images().filter_map(|(_, image)| match image {
+                    switch::State::StoredFile { size, checksum, .. } => Some((checksum, size)),
+                    _ => None,
+                }))
                 .collect(),
             nonce,
             step: 0,
@@ -1617,6 +1625,7 @@ impl Session {
             serde_json::to_vec(&current.state)? == serde_json::to_vec(&self.state)?,
             "stale replay session"
         );
+        drop(current);
         if self
             .directory
             .join(format!("decision-{}.json", self.state.decisions + 1))
@@ -1714,6 +1723,7 @@ impl Session {
             self.state.copies += 1;
             self.save()?;
         }
+        self.migrate_inline_work(repo)?;
         self.archive_accepted(repo)?;
         let receipt = self.capture_current(repo)?;
         switch::checkpoint("replay-abort-copy-complete")?;
@@ -2120,6 +2130,8 @@ impl Session {
             file.is_file() && file.permissions().mode().trailing_zeros() >= 6 && file.uid() == metadata.uid(),
             "unsafe replay state"
         );
+        // Refuse an exhausted journal before allocating its encoded metadata.
+        switch::payload::check_growth(&directory, 0)?;
         let envelope: Envelope = serde_json::from_slice(&fs::read(path)?)?;
         ensure!(
             switch::digest(&envelope.payload)? == envelope.checksum,
@@ -2440,7 +2452,42 @@ impl Session {
     }
 
     fn save(&self) -> Result<()> {
-        self.save_bytes(&self.state_bytes()?)
+        use std::io::{BufWriter, Seek, Write};
+        let payload = serde_json::to_vec(&self.state)?;
+        let envelope = Envelope {
+            checksum: switch::digest(&payload)?,
+            payload,
+        };
+        let budget = gix::utils::stream::Budget::new(self.directory.parent().context("journal parent")?)?;
+        let _charge = switch::payload::charge(&budget, &self.directory)?;
+        let mut source = budget.spool()?;
+        {
+            let mut writer = BufWriter::new(&mut source);
+            serde_json::to_writer(&mut writer, &envelope)?;
+            writer.flush()?;
+        }
+        drop(envelope);
+        source.rewind()?;
+        let temporary = self.directory.join("state.pending");
+        match fs::symlink_metadata(&temporary) {
+            Ok(metadata) => {
+                ensure!(
+                    metadata.is_file()
+                        && metadata.permissions().mode().trailing_zeros() >= 6
+                        && metadata.uid() == fs::metadata(&self.directory)?.uid()
+                        && gix::utils::stream::equal(
+                            fs::File::open(&temporary)?,
+                            &mut source,
+                            &gix::interrupt::IS_INTERRUPTED
+                        )?,
+                    "foreign pending replay state"
+                );
+                switch::sync_path(&temporary)?;
+            }
+            Err(error) if error.kind() == std::io::ErrorKind::NotFound => switch::private_publish(&temporary, source)?,
+            Err(error) => return Err(error.into()),
+        }
+        self.publish_state()
     }
 
     fn state_bytes(&self) -> Result<Vec<u8>> {
@@ -2465,11 +2512,18 @@ impl Session {
                 );
                 switch::sync_path(&temporary)?;
             }
-            Err(error) if error.kind() == std::io::ErrorKind::NotFound => switch::private_write(&temporary, bytes)?,
+            Err(error) if error.kind() == std::io::ErrorKind::NotFound => {
+                switch::payload::check_growth(&self.directory, bytes.len() as u64)?;
+                switch::private_write(&temporary, bytes)?;
+            }
             Err(error) => return Err(error.into()),
         }
+        self.publish_state()
+    }
+
+    fn publish_state(&self) -> Result<()> {
         switch::checkpoint("replay-state-file-synced")?;
-        fs::rename(&temporary, self.directory.join("state.json"))?;
+        fs::rename(self.directory.join("state.pending"), self.directory.join("state.json"))?;
         switch::sync_dir(&self.directory)?;
         switch::checkpoint("replay-state-directory-synced")?;
         Ok(())

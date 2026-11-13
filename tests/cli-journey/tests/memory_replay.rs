@@ -22,7 +22,7 @@ fn git(root: &Path, args: &[&str]) -> Result<Vec<u8>> {
     Ok(output.stdout)
 }
 
-fn replay(size: usize, reduced_trust: bool) -> Result<()> {
+fn replay(size: usize, reduced_trust: bool, large_neighbor: bool) -> Result<()> {
     let repo = TestRepo::new("memory-replay")?;
     let root = repo.path();
     eprintln!("owned replay fixture: {}", root.display());
@@ -33,7 +33,11 @@ fn replay(size: usize, reduced_trust: bool) -> Result<()> {
         file.write_all(&chunk)?;
     }
     drop(file);
-    fs::write(root.join("neighbor"), b"base neighbor\n")?;
+    if large_neighbor {
+        fs::copy(root.join("large"), root.join("neighbor"))?;
+    } else {
+        fs::write(root.join("neighbor"), b"base neighbor\n")?;
+    }
     git(root, &["add", "large", "neighbor"])?;
     git(root, &["commit", "-qm", "base"])?;
     git(root, &["switch", "-c", "upstream"])?;
@@ -60,9 +64,19 @@ fn replay(size: usize, reduced_trust: bool) -> Result<()> {
     };
     for &limit in limits {
         git(root, &["reset", "--hard", original.trim()])?;
-        fs::write(root.join("neighbor"), b"staged neighbor\n")?;
+        let write_neighbor = |bytes: &[u8]| -> Result<()> {
+            fs::OpenOptions::new()
+                .write(true)
+                .truncate(!large_neighbor)
+                .open(root.join("neighbor"))?
+                .write_all(bytes)?;
+            Ok(())
+        };
+        write_neighbor(b"staged neighbor\n")?;
         git(root, &["add", "neighbor"])?;
-        fs::write(root.join("neighbor"), b"unstaged neighbor\n")?;
+        let staged_neighbor = git(root, &["rev-parse", ":neighbor"])?;
+        write_neighbor(b"unstaged neighbor\n")?;
+        let working_neighbor = git(root, &["hash-object", "neighbor"])?;
         if limit == "16777216" || reduced_trust {
             git(root, &["repack", "-ad"])?;
         }
@@ -102,8 +116,8 @@ fn replay(size: usize, reduced_trust: bool) -> Result<()> {
         );
         ensure!(String::from_utf8(git(root, &["rev-parse", "HEAD^{tree}"])?)?.trim() == expected);
         ensure!(git(root, &["rev-parse", "HEAD^"])? == git(root, &["rev-parse", "upstream"])?);
-        ensure!(git(root, &["show", ":neighbor"])? == b"staged neighbor\n");
-        ensure!(fs::read(root.join("neighbor"))? == b"unstaged neighbor\n");
+        ensure!(git(root, &["rev-parse", ":neighbor"])? == staged_neighbor);
+        ensure!(git(root, &["hash-object", "neighbor"])? == working_neighbor);
         ensure!(
             !root.join(".git/brit-rebase").exists(),
             "completed replay journal reclaimed"
@@ -115,15 +129,130 @@ fn replay(size: usize, reduced_trust: bool) -> Result<()> {
 
 #[test]
 fn twenty_mib_replay() -> Result<()> {
-    replay(20 * 1024 * 1024, false)
+    replay(20 * 1024 * 1024, false, false)
 }
 #[test]
 fn sixty_four_mib_replay() -> Result<()> {
-    replay(64 * 1024 * 1024, false)
+    replay(64 * 1024 * 1024, false, false)
 }
 
 #[test]
 #[ignore = "requires chown authority: qualification runs this explicitly"]
 fn actual_reduced_trust_replay() -> Result<()> {
-    replay(20 * 1024 * 1024, true)
+    replay(20 * 1024 * 1024, true, false)
+}
+
+fn conflict_stop(size: usize, resolve: bool) -> Result<()> {
+    let repo = TestRepo::new("memory-replay-conflict")?;
+    let root = repo.path();
+    eprintln!("owned conflict fixture: {}", root.display());
+    let mut file = fs::File::create(root.join("large"))?;
+    let mut chunk = [b'x'; 65536];
+    chunk[65535] = b'\n';
+    for _ in 0..size / chunk.len() {
+        file.write_all(&chunk)?;
+    }
+    drop(file);
+    fs::write(root.join("neighbor"), b"base\n")?;
+    git(root, &["add", "large", "neighbor"])?;
+    git(root, &["commit", "-qm", "base"])?;
+    git(root, &["switch", "-c", "upstream"])?;
+    fs::OpenOptions::new()
+        .write(true)
+        .open(root.join("large"))?
+        .write_all(b"upstream")?;
+    git(root, &["commit", "-qam", "upstream"])?;
+    git(root, &["switch", "main"])?;
+    fs::OpenOptions::new()
+        .write(true)
+        .open(root.join("large"))?
+        .write_all(b"topic---")?;
+    git(root, &["commit", "-qam", "topic"])?;
+    fs::write(root.join("neighbor"), b"staged\n")?;
+    git(root, &["add", "neighbor"])?;
+    fs::write(root.join("neighbor"), b"unstaged\n")?;
+    let head = git(root, &["rev-parse", "HEAD"])?;
+    let index = fs::read(root.join(".git/index"))?;
+    let original = git(root, &["hash-object", "large"])?;
+    let result = BritInvocation::new(brit_bin().expect("built Brit"))
+        .current_dir(root)
+        .args(["-c", "gitoxide.objects.allocLimit=16777216", "rebase", "upstream"])
+        .run()?;
+    ensure!(!result.status.success(), "conflicting replay must stop");
+    ensure!(
+        !git(root, &["ls-files", "-u"])?.is_empty(),
+        "must reach conflict publication: {}",
+        result.stderr
+    );
+    if resolve {
+        let mut file = fs::File::create(root.join("large"))?;
+        for _ in 0..size / chunk.len() {
+            file.write_all(&chunk)?;
+        }
+        file.seek(SeekFrom::Start(0))?;
+        file.write_all(b"resolved")?;
+        drop(file);
+        let resolved = git(root, &["hash-object", "large"])?;
+        let result = BritInvocation::new(brit_bin().expect("built Brit"))
+            .current_dir(root)
+            .args([
+                "-c",
+                "gitoxide.objects.allocLimit=16777216",
+                "rebase",
+                "--stage",
+                "--",
+                "large",
+            ])
+            .run()?;
+        ensure!(result.status.success(), "stage resolution: {}", result.stderr);
+        let result = BritInvocation::new(brit_bin().expect("built Brit"))
+            .current_dir(root)
+            .args(["-c", "gitoxide.objects.allocLimit=16777216", "rebase", "--continue"])
+            .run()?;
+        ensure!(result.status.success(), "continue: {}", result.stderr);
+        assert_eq!(git(root, &["rev-parse", "HEAD:large"])?, resolved);
+        assert_eq!(
+            git(root, &["rev-parse", "HEAD^"])?,
+            git(root, &["rev-parse", "upstream"])?
+        );
+        assert_eq!(git(root, &["show", ":neighbor"])?, b"staged\n");
+        assert_eq!(fs::read(root.join("neighbor"))?, b"unstaged\n");
+        assert!(!root.join(".git/brit-rebase").exists());
+        assert!(!root.join(".git/brit-authoring").exists());
+        git(root, &["fsck", "--full", "--no-dangling"])?;
+        return Ok(());
+    }
+    let result = BritInvocation::new(brit_bin().expect("built Brit"))
+        .current_dir(root)
+        .args(["-c", "gitoxide.objects.allocLimit=16777216", "rebase", "--abort"])
+        .run()?;
+    ensure!(result.status.success(), "abort: {}", result.stderr);
+    assert_eq!(git(root, &["rev-parse", "HEAD"])?, head);
+    assert_eq!(fs::read(root.join(".git/index"))?, index);
+    assert_eq!(git(root, &["hash-object", "large"])?, original);
+    assert_eq!(fs::read(root.join("neighbor"))?, b"unstaged\n");
+    assert!(!root.join(".git/brit-rebase").exists());
+    assert!(!root.join(".git/brit-authoring").exists());
+    git(root, &["fsck", "--full", "--no-dangling"])?;
+    Ok(())
+}
+
+#[test]
+fn twenty_mib_conflict_abort_preserves_original_files_and_index() -> Result<()> {
+    conflict_stop(20 * 1024 * 1024, false)
+}
+
+#[test]
+fn sixty_four_mib_conflict_abort_preserves_original_files_and_index() -> Result<()> {
+    conflict_stop(64 * 1024 * 1024, false)
+}
+
+#[test]
+fn sixty_four_mib_preserved_staged_and_dirty_neighbor() -> Result<()> {
+    replay(64 * 1024 * 1024, false, true)
+}
+
+#[test]
+fn sixty_four_mib_conflict_resolution_preserves_neighbor() -> Result<()> {
+    conflict_stop(64 * 1024 * 1024, true)
 }

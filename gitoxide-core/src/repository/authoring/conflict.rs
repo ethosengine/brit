@@ -26,6 +26,12 @@ struct Entry {
 enum Image {
     File(Vec<u8>, u32),
     Link(Vec<u8>),
+    /// Immutable custody licensed by the replay parent before publication.
+    StoredFile {
+        mode: u32,
+        size: u64,
+        checksum: String,
+    },
 }
 /// Original staging and dirty files, captured once before replay changes the checkout.
 /// This value is private journal data; its file payloads must never enter a commit tree.
@@ -44,6 +50,16 @@ impl Preservation {
     /// Capture without changing the index, object store or worktree.
     /// The caller must hold the repository mutation guard until this is journaled.
     pub fn capture(repo: &gix::Repository) -> Result<Self> {
+        Self::capture_inner(repo, false)
+    }
+
+    /// The replay parent must license and publish these fingerprints before any
+    /// checkout mutation. Standalone authoring keeps its existing inline format.
+    pub(crate) fn capture_for_replay(repo: &gix::Repository) -> Result<Self> {
+        Self::capture_inner(repo, true)
+    }
+
+    fn capture_inner(repo: &gix::Repository, replay: bool) -> Result<Self> {
         ensure!(!gix::interrupt::is_triggered(), "preservation capture interrupted");
         validate_metadata_directories(repo)?;
         ensure!(
@@ -93,7 +109,14 @@ impl Preservation {
         let mut before = BTreeMap::new();
         for p in &preserved {
             ensure!(!gix::interrupt::is_triggered(), "preservation capture interrupted");
-            before.insert(p.clone(), image(root, p)?);
+            before.insert(
+                p.clone(),
+                if replay {
+                    stored_image(root, p)?
+                } else {
+                    image(root, p)?
+                },
+            );
         }
         let clean_preserved = entries(&base)
             .into_iter()
@@ -122,6 +145,20 @@ impl Preservation {
             .collect()
     }
 
+    pub(crate) fn raw_images(&self) -> impl Iterator<Item = (&[u8], super::super::switch::State)> {
+        self.before.iter().filter_map(|(path, image)| match image {
+            Some(Image::StoredFile { mode, size, checksum }) => Some((
+                path.as_slice(),
+                super::super::switch::State::StoredFile {
+                    mode: *mode,
+                    size: *size,
+                    checksum: checksum.clone(),
+                },
+            )),
+            _ => None,
+        })
+    }
+
     pub fn preserved_paths(&self) -> &[Vec<u8>] {
         &self.preserved
     }
@@ -145,7 +182,10 @@ impl Preservation {
         );
         let root = repo.workdir().context("worktree required")?;
         for (path, original) in &self.before {
-            ensure!(image(root, path)? == *original, "preserved working bytes changed");
+            ensure!(
+                matches_image(root, path, original.as_ref())?,
+                "preserved working bytes changed"
+            );
         }
         Ok(())
     }
@@ -562,7 +602,7 @@ impl Session {
         active: &[BString],
         private: &gix::index::State,
     ) -> Result<Self> {
-        authorization.validate_stop(repo, preservation, kind, active, private)?;
+        let mut parent_images = authorization.validate_stop(repo, preservation, kind, active, private)?;
         let binding = authorization.binding();
         let parent_directory = repo.git_dir().join("brit-rebase");
         let recipe_path = parent_directory.join(format!("child-{}-prepare.json", binding.step));
@@ -590,7 +630,7 @@ impl Session {
         let root = repo.workdir().context("worktree required")?;
         for (path, original) in &preservation.before {
             ensure!(
-                image(root, path)? == *original,
+                matches_image(root, path, original.as_ref())?,
                 "preserved work changed before child preparation"
             );
         }
@@ -599,7 +639,20 @@ impl Session {
         ensure!(kind != StopKind::Edit || parent.is_some(), "edit group requires parent");
         let mut before = preservation.before.clone();
         for path in &active {
-            before.insert(path.clone(), image(root, path)?);
+            let image = match parent_images
+                .remove(path)
+                .context("missing authorized child before-image")?
+            {
+                super::super::switch::State::Absent => None,
+                super::super::switch::State::File { bytes, mode } => Some(Image::File(bytes, mode)),
+                super::super::switch::State::Symlink(bytes) => Some(Image::Link(bytes)),
+                super::super::switch::State::StoredFile { mode, size, checksum } => {
+                    super::super::switch::payload::open(&parent_directory, size, &checksum)?;
+                    Some(Image::StoredFile { mode, size, checksum })
+                }
+                super::super::switch::State::Directory { .. } => anyhow::bail!("before image must be file or symlink"),
+            };
+            before.insert(path.clone(), image);
         }
         let work = snapshot(root)?;
         ensure!(
@@ -611,7 +664,7 @@ impl Session {
         fs::DirBuilder::new().mode(0o700).create(&directory)?;
         super::super::switch::checkpoint("replay-child-preparation-directory-created")?;
         let state = State {
-            version: 1,
+            version: 2,
             replay_parent: Some(authorization.binding()),
             identities: identities(repo, &directory)?,
             policy: policy(repo)?,
@@ -901,12 +954,21 @@ impl Session {
             "corrupt original index"
         );
         ensure!(
-            self.state.version == 1
+            matches!(self.state.version, 1 | 2)
                 && self.state.owner == raw(&fs::canonicalize(repo.git_dir())?)?
                 && self.state.root == raw(&fs::canonicalize(repo.workdir().context("worktree required")?)?)?
                 && self.state.common == raw(&fs::canonicalize(repo.common_dir())?)?,
             "foreign authoring ownership"
         );
+        for image in self.state.before.values().chain(self.state.expanded.values()).flatten() {
+            if let Image::StoredFile { size, checksum, .. } = image {
+                ensure!(
+                    self.state.version == 2 && self.state.replay_parent.is_some(),
+                    "unowned raw child image"
+                );
+                super::super::switch::payload::open(&repo.git_dir().join("brit-rebase"), *size, checksum)?;
+            }
+        }
         Ok(())
     }
     /// Parent-held mutation guard and a durable accepted-child receipt authorize
@@ -1211,10 +1273,16 @@ impl Session {
         self.transition(repo, after)?;
         let mut after = self.state.clone();
         let current = index(repo, &after.private)?;
+        let budget = gix::utils::stream::Budget::new(&std::env::temp_dir())?;
         for p in paths {
             after.private.retain(|e| e.path != p.as_bytes());
-            if let Some((mode, data)) = super::super::index::authoring::worktree_entry(repo, &current, &p)? {
-                let id = repo.write_blob(&data)?;
+            if let Some((mode, mut data)) =
+                super::super::index::authoring::worktree_entry_spooled(repo, &current, &p, &budget)?
+            {
+                use gix::objs::Write;
+                let id = repo
+                    .objects
+                    .write_stream(gix::objs::Kind::Blob, data.len(), &mut data)?;
                 after.private.push(Entry {
                     path: p.to_vec(),
                     id: id.to_string(),
@@ -1247,6 +1315,7 @@ impl Session {
                 );
                 Ok(Some(Image::File(data, *mode)))
             }
+            Some(Image::StoredFile { .. }) => anyhow::bail!("invalid original worktree fingerprint"),
             None => anyhow::bail!("missing original worktree image"),
         }
     }
@@ -1269,13 +1338,31 @@ impl Session {
     fn clean(&self, repo: &gix::Repository, values: &[Entry]) -> Result<()> {
         let state = index(repo, values)?;
         super::super::index::authoring::validate_index(&state)?;
+        let budget = gix::utils::stream::Budget::new(&std::env::temp_dir())?;
         for p in &self.state.active {
-            let current = super::super::index::authoring::worktree_entry(repo, &state, &BString::from(p.clone()))?;
+            let current = super::super::index::authoring::worktree_entry_spooled(
+                repo,
+                &state,
+                &BString::from(p.clone()),
+                &budget,
+            )?;
             let expected = state.entry_by_path(p.as_bstr());
             ensure!(
                 match (current, expected) {
                     (None, None) => true,
-                    (Some((mode, data)), Some(e)) => mode == e.mode && repo.find_object(e.id)?.data == data,
+                    (Some((mode, mut data)), Some(e)) => {
+                        let size = data.len();
+                        mode == e.mode
+                            && repo.find_header(e.id)?.kind() == gix::objs::Kind::Blob
+                            && gix::objs::compute_stream_hash(
+                                repo.object_hash(),
+                                gix::objs::Kind::Blob,
+                                &mut data,
+                                size,
+                                &mut gix::progress::Discard,
+                                &gix::interrupt::IS_INTERRUPTED,
+                            )? == e.id
+                    }
                     _ => false,
                 },
                 "unstaged resolution changes"
@@ -1356,6 +1443,7 @@ impl Session {
             None => State::Absent,
             Some(Image::File(bytes, mode)) => State::File { bytes, mode },
             Some(Image::Link(bytes)) => State::Symlink(bytes),
+            Some(Image::StoredFile { mode, size, checksum }) => State::StoredFile { mode, size, checksum },
         };
         let root = repo.workdir().context("worktree required")?;
         self.state
@@ -1801,7 +1889,11 @@ impl Session {
             let root = repo.workdir().context("worktree")?;
             for p in &self.state.preserved {
                 ensure!(
-                    image(root, p)? == *self.state.before.get(p).context("preserved before image")?,
+                    matches_image(
+                        root,
+                        p,
+                        self.state.before.get(p).context("preserved before image")?.as_ref()
+                    )?,
                     "preserved work changed"
                 );
             }
@@ -1854,7 +1946,11 @@ impl Session {
         }
         for p in &self.state.preserved {
             ensure!(
-                image(root, p)? == *self.state.before.get(p).context("preserved before image")?,
+                matches_image(
+                    root,
+                    p,
+                    self.state.before.get(p).context("preserved before image")?.as_ref()
+                )?,
                 "preserved work changed"
             );
         }
@@ -2557,6 +2653,26 @@ fn image(root: &Path, p: &[u8]) -> Result<Option<Image>> {
     Ok(Some(Image::File(fs::read(file)?, mode)))
 }
 
+fn stored_image(root: &Path, path: &[u8]) -> Result<Option<Image>> {
+    use super::super::switch::State;
+    Ok(
+        match super::super::switch::payload::fingerprint(&root.join(gix::path::from_bstr(path.as_bstr())?))? {
+            State::Absent => None,
+            State::StoredFile { mode, size, checksum } => Some(Image::StoredFile { mode, size, checksum }),
+            State::Symlink(bytes) => Some(Image::Link(bytes)),
+            _ => anyhow::bail!("before image must be file or symlink"),
+        },
+    )
+}
+
+fn matches_image(root: &Path, path: &[u8], expected: Option<&Image>) -> Result<bool> {
+    Ok(if matches!(expected, Some(Image::StoredFile { .. })) {
+        stored_image(root, path)?.as_ref() == expected
+    } else {
+        image(root, path)?.as_ref() == expected
+    })
+}
+
 fn read_optional(path: &Path) -> Result<Option<Vec<u8>>> {
     match fs::symlink_metadata(path) {
         Ok(m) => {
@@ -2619,6 +2735,7 @@ fn restore_image(root: &Path, p: &[u8], before: Option<&Image>, after: Option<&I
     let file = root.join(gix::path::from_bstr(p.as_bstr())?);
     let parent = file.parent().context("file parent")?;
     match after {
+        Some(Image::StoredFile { .. }) => anyhow::bail!("stored child images are restored by their replay parent"),
         None => {
             if fs::symlink_metadata(&file).is_ok() {
                 fs::remove_file(&file)?;
