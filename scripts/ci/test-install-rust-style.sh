@@ -12,6 +12,7 @@ cat > "$scratch/fake-bin/cargo" <<'EOF'
 #!/usr/bin/env bash
 set -euo pipefail
 [[ $1 == build && $2 == --locked && $PWD == */rust-style-source ]]
+[[ $RUSTUP_TOOLCHAIN == 1.100.0 && -z $RUSTFLAGS && -z $RUSTC_WRAPPER ]]
 printf '%s\n' "$PWD" >> "$CARGO_TEST_LOG"
 mkdir -p "$CARGO_TARGET_DIR/debug"
 printf '#!/usr/bin/env bash\nprintf "fixture checker\\n"\n' > "$CARGO_TARGET_DIR/debug/epr-rust-style"
@@ -24,7 +25,7 @@ hold() {
     digest=$(sha256sum "$file"); digest=${digest%% *}
     address="b$(printf '01551220%s' "$digest" | xxd -r -p | base32 | tr -d '=\n' | tr 'A-Z' 'a-z')"
     cp "$file" "$root/.epr-meta/rust-style/objects/$address.tar.gz"
-    jq -n --arg sha "$digest" --arg cid "$address" '{format:"rust-style-source-holding@1",sha256:$sha,cid:$cid,archive:(".epr-meta/rust-style/objects/"+$cid+".tar.gz"),toolchain:"1.96.1"}' > "$root/.epr-meta/rust-style/source.json"
+    jq -n --arg sha "$digest" --arg cid "$address" '{format:"rust-style-source-holding@1",sha256:$sha,cid:$cid,archive:(".epr-meta/rust-style/objects/"+$cid+".tar.gz"),toolchain:"1.100.0"}' > "$root/.epr-meta/rust-style/source.json"
 }
 refuses() {
     if "$@" > "$scratch/out" 2> "$scratch/err"; then echo 'expected refusal' >&2; exit 1; fi
@@ -44,6 +45,10 @@ installed=$(TMPDIR="$root" "$installer" "$scratch/install")
 [[ $(cat "$scratch/cargo.log") == /tmp/brit-rust-style.*/rust-style-source ]]
 [[ $("$installer" --verify "$scratch/install") == "$installed" ]]
 [[ $(wc -l < "$scratch/cargo.log") == 1 ]]
+cp "$scratch/install/install.json" "$scratch/valid-install.json"
+jq '.toolchain = "1.96.1"' "$scratch/valid-install.json" > "$scratch/install/install.json"
+refuses "$installer" --verify "$scratch/install"
+cp "$scratch/valid-install.json" "$scratch/install/install.json"
 "$installer" "$scratch/install" >/dev/null
 [[ $(wc -l < "$scratch/cargo.log") == 1 ]]
 printf 'damage' >> "$installed"

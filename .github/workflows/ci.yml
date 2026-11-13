@@ -110,7 +110,7 @@ jobs:
           RUSTC_WRAPPER: ""
           CARGO_BUILD_JOBS: "1"
         run: |
-          rustup toolchain install 1.96.1 --profile minimal --no-self-update
+          rustup toolchain install 1.100.0 --profile minimal --no-self-update
           bash scripts/ci/install-rust-style.sh "$GITHUB_WORKSPACE/.eprfs/tools/rust-style"
       - name: Test Rust style adapter boundaries
         run: |

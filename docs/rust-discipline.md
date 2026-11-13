@@ -22,8 +22,11 @@ The checker comes from the pinned source bundle in
 `.epr-meta/rust-style/source.json`. It is built outside the source checkout from
 the addressed original sources, using locked third-party dependencies. No Elohim
 sibling checkout or registry publication is required. Initial installation needs
-Rust 1.96.1, Bash, jq, coreutils, xxd, tar, and the dependency cache or access to
-crates.io; checking is offline.
+Rust 1.100.0, Bash, jq, coreutils, xxd, tar, and the dependency cache or access to
+crates.io; checking is offline. The consumer now builds the unchanged addressed
+source on 1.100.0; the archive's distribution note records its original 1.96.1
+build recipe. Source identity is unchanged, while installation receipts must
+name the current compiler and rebuilt binary.
 Use an absolute Cargo target directory appropriate to your machine:
 
 ```sh

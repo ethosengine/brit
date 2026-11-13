@@ -19,7 +19,7 @@ for path in "$root/.epr-meta" "$root/.epr-meta/rust-style" "$root/.epr-meta/rust
 done
 config="$root/.epr-meta/rust-style/source.json"
 [[ -f $config && ! -L $config ]] || fail 'held source declaration unavailable or symlinked'
-jq -e 'keys == ["archive","cid","format","sha256","toolchain"] and .format == "rust-style-source-holding@1" and .toolchain == "1.96.1"' "$config" >/dev/null || fail 'unsupported source declaration'
+jq -e 'keys == ["archive","cid","format","sha256","toolchain"] and .format == "rust-style-source-holding@1" and .toolchain == "1.100.0"' "$config" >/dev/null || fail 'unsupported source declaration'
 source_sha=$(jq -er '.sha256 | select(type == "string")' "$config")
 source_cid=$(jq -er '.cid | select(type == "string")' "$config")
 archive_relative=$(jq -er '.archive | select(type == "string")' "$config")
@@ -38,7 +38,7 @@ receipt="$prefix/install.json"
 verify_installed() {
     [[ ! -L $prefix && ! -L $prefix/bin && -f $receipt && ! -L $receipt && -x $binary && ! -L $binary ]] || return 1
     local expected actual_binary
-    expected=$(jq -er --arg source "$source_sha" --arg cid "$source_cid" 'select(.format == "rust-style-installation@1" and .sourceSha256 == $source and .sourceCid == $cid and .toolchain == "1.96.1") | .binarySha256 | select(type == "string")' "$receipt") || return 1
+    expected=$(jq -er --arg source "$source_sha" --arg cid "$source_cid" 'select(.format == "rust-style-installation@1" and .sourceSha256 == $source and .sourceCid == $cid and .toolchain == "1.100.0") | .binarySha256 | select(type == "string")' "$receipt") || return 1
     [[ $expected =~ ^[0-9a-f]{64}$ ]] || return 1
     actual_binary=$(sha256sum "$binary"); actual_binary=${actual_binary%% *}
     [[ $expected == "$actual_binary" ]]
@@ -81,7 +81,7 @@ build_target="$CARGO_TARGET_DIR/rust-style-source-$source_sha"
 printf 'rust-style install: building verified source %s\n' "$source_cid" >&2
 # Run from the isolated extraction so neither parent nor consumer Cargo configs
 # can silently add source paths. First-party relative paths stay within the holding.
-(cd "$scratch/rust-style-source" && env CARGO_TARGET_DIR="$build_target" RUSTUP_TOOLCHAIN=1.96.1 RUSTFLAGS= RUSTC_WRAPPER= CARGO_BUILD_JOBS=1 \
+(cd "$scratch/rust-style-source" && env CARGO_TARGET_DIR="$build_target" RUSTUP_TOOLCHAIN=1.100.0 RUSTFLAGS= RUSTC_WRAPPER= CARGO_BUILD_JOBS=1 \
     cargo build --locked --manifest-path "$manifest" --bin epr-rust-style) >&2
 built="$build_target/debug/epr-rust-style"
 [[ -f $built && ! -L $built ]] || fail 'Cargo produced no regular checker binary'
@@ -91,7 +91,7 @@ chmod 755 "$stage"
 binary_sha=$(sha256sum "$stage"); binary_sha=${binary_sha%% *}
 receipt_stage=$(mktemp "$prefix/.install.XXXXXX")
 jq -n --arg cid "$source_cid" --arg source "$source_sha" --arg binary "$binary_sha" \
-    '{format:"rust-style-installation@1",sourceCid:$cid,sourceSha256:$source,binarySha256:$binary,toolchain:"1.96.1"}' > "$receipt_stage"
+    '{format:"rust-style-installation@1",sourceCid:$cid,sourceSha256:$source,binarySha256:$binary,toolchain:"1.100.0"}' > "$receipt_stage"
 mv -f "$stage" "$binary"
 mv -f "$receipt_stage" "$receipt"
 verify_installed || fail 'installed binary did not reproduce its receipt'
