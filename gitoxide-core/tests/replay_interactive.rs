@@ -1279,7 +1279,7 @@ fn durable_child_proposal_recovers_fixed_commit_after_gc_without_repeating_hooks
     if gix_testtools::run_in_isolated_process().map_err(anyhow::Error::from_boxed)? {
         return Ok(());
     }
-    for signal in ["INT", "KILL"] {
+    for (signal, legacy) in [("INT", false), ("KILL", false), ("KILL", true)] {
         let (temp, _) = fixture()?;
         let root = temp.path();
         for name in ["pre-commit", "prepare-commit-msg", "commit-msg"] {
@@ -1300,6 +1300,26 @@ fn durable_child_proposal_recovers_fixed_commit_after_gc_without_repeating_hooks
             "printf 'post-rewrite:%s\\n' \"$1\" >> \"$GIT_DIR/proposal-post-hooks\"; cat >/dev/null",
         )?;
         interrupt_amend(root, "replay-child-proposal-durable", signal)?;
+        if legacy {
+            for entry in fs::read_dir(root.join(".git/brit-authoring/objects"))? {
+                let entry = entry?;
+                let raw = fs::read(entry.path())?;
+                let (kind, _, header_len) = gix::objs::decode::loose_header(&raw)?;
+                let payload = serde_json::to_vec(&serde_json::json!({
+                    "id": entry.file_name().to_str().expect("object id"),
+                    "kind": kind.to_string(),
+                    "data": &raw[header_len..],
+                }))?;
+                let mut hash = gix::hash::hasher(gix::hash::Kind::Sha1);
+                hash.update(&payload);
+                fs::write(
+                    entry.path(),
+                    serde_json::to_vec(&serde_json::json!({
+                        "payload": payload, "checksum": hash.try_finalize()?.to_string(),
+                    }))?,
+                )?;
+            }
+        }
         let proposals = fs::read_dir(root.join(".git/brit-authoring"))?
             .filter_map(|entry| entry.ok())
             .filter(|entry| entry.file_name().to_string_lossy().ends_with("-proposed.json"))

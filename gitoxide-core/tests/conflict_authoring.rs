@@ -859,19 +859,157 @@ fn abort_retains_child_work_and_exact_index_before_restoring_active_files() -> R
         (child.commit.to_string(), "commit", commit_bytes),
         (blob.trim().to_owned(), "blob", b"retained child draft\n".to_vec()),
     ] {
-        let envelope: serde_json::Value = serde_json::from_slice(&fs::read(retained.join("objects").join(&id))?)?;
-        let payload: Vec<u8> = serde_json::from_value(envelope["payload"].clone())?;
+        let raw = fs::read(retained.join("objects").join(&id))?;
+        let (actual_kind, size, header_len) = gix::objs::decode::loose_header(&raw)?;
+        assert_eq!(actual_kind.to_string(), kind);
+        assert_eq!(size, expected.len() as u64);
+        let bytes = &raw[header_len..];
+        assert_eq!(bytes, expected, "retained object bytes survive real Git pruning");
+        assert_eq!(
+            gix::objs::compute_hash(repo.object_hash(), actual_kind, bytes)?.to_string(),
+            id,
+            "raw receipt preserves the Git object identity"
+        );
+        if kind == "commit" {
+            gix::objs::CommitRef::from_bytes(bytes, repo.object_hash())?;
+        }
+    }
+    Ok(())
+}
+
+fn raw_authored_blob_receipt(session: &Session, root: &Path, id: &str) -> Result<std::path::PathBuf> {
+    use std::io::Write;
+    use std::os::unix::fs::{DirBuilderExt, OpenOptionsExt};
+    let directory = session.directory().join("objects");
+    fs::DirBuilder::new().mode(0o700).create(&directory)?;
+    let path = directory.join(id);
+    let bytes = git(root, &["cat-file", "blob", id])?;
+    let mut file = fs::OpenOptions::new()
+        .write(true)
+        .create_new(true)
+        .mode(0o600)
+        .open(&path)?;
+    file.write_all(&gix::objs::encode::loose_header(
+        gix::objs::Kind::Blob,
+        bytes.len() as u64,
+    ))?;
+    file.write_all(&bytes)?;
+    Ok(path)
+}
+
+#[test]
+fn legacy_authored_object_receipts_preserve_pruned_bytes_on_abort() -> Result<()> {
+    if gix_testtools::run_in_isolated_process().map_err(anyhow::Error::from_boxed)? {
+        return Ok(());
+    }
+    let temp = fixture()?;
+    let root = temp.path();
+    let repo = gix::open(root)?;
+    let mut session = Session::prepare(&repo, StopKind::Edit, &active())?;
+    fs::write(root.join("selected"), b"legacy authored bytes\n")?;
+    session.stage(&repo, &active(), false)?;
+    session.amend(&repo, "legacy child")?;
+    let blob = String::from_utf8(git(root, &["rev-parse", "HEAD:selected"])?)?;
+    let blob = blob.trim();
+    raw_authored_blob_receipt(&session, root, blob)?;
+    let directory = session.directory().join("objects");
+    for entry in fs::read_dir(&directory)? {
+        let entry = entry?;
+        let raw = fs::read(entry.path())?;
+        let (kind, _, header_len) = gix::objs::decode::loose_header(&raw)?;
+        let payload = serde_json::to_vec(&serde_json::json!({
+            "id": entry.file_name().to_str().expect("object id"),
+            "kind": kind.to_string(),
+            "data": &raw[header_len..],
+        }))?;
         let mut hash = gix::hash::hasher(gix::hash::Kind::Sha1);
         hash.update(&payload);
-        assert_eq!(envelope["checksum"], hash.try_finalize()?.to_string());
-        let object: serde_json::Value = serde_json::from_slice(&payload)?;
-        assert_eq!(object["id"], id);
-        assert_eq!(object["kind"], kind);
-        let bytes: Vec<u8> = serde_json::from_value(object["data"].clone())?;
-        assert_eq!(bytes, expected, "retained object bytes survive real Git pruning");
-        if kind == "commit" {
-            gix::objs::CommitRef::from_bytes(&bytes, repo.object_hash())?;
+        let envelope = serde_json::json!({"payload": payload, "checksum": hash.try_finalize()?.to_string()});
+        // Legacy JSON allowed leading whitespace; format selection must retain that.
+        fs::write(entry.path(), format!(" \n{}", serde_json::to_string(&envelope)?))?;
+    }
+    fs::remove_file(repo.common_dir().join("objects").join(&blob[..2]).join(&blob[2..]))?;
+    drop(repo);
+    let repo = gix::open(root)?;
+    assert!(!repo.has_object(gix::ObjectId::from_hex(blob.as_bytes())?));
+    let retained = session.abort(&repo)?;
+    let envelope: serde_json::Value = serde_json::from_slice(&fs::read(retained.join("objects").join(blob))?)?;
+    let payload: Vec<u8> = serde_json::from_value(envelope["payload"].clone())?;
+    let object: serde_json::Value = serde_json::from_slice(&payload)?;
+    let bytes: Vec<u8> = serde_json::from_value(object["data"].clone())?;
+    assert_eq!(bytes, b"legacy authored bytes\n");
+    assert_eq!(fs::read(root.join("selected"))?, b"original step\n");
+    Ok(())
+}
+
+#[test]
+fn invalid_authored_object_receipts_refuse_without_changing_integration() -> Result<()> {
+    use std::os::unix::fs::{PermissionsExt, symlink};
+    if gix_testtools::run_in_isolated_process().map_err(anyhow::Error::from_boxed)? {
+        return Ok(());
+    }
+    for damage in [
+        "bytes",
+        "truncated",
+        "trailing",
+        "header",
+        "identity",
+        "symlink",
+        "mode",
+        "scratch",
+    ] {
+        let temp = fixture()?;
+        let root = temp.path();
+        let repo = gix::open(root)?;
+        let mut session = Session::prepare(&repo, StopKind::Edit, &active())?;
+        fs::write(root.join("selected"), b"retained authored bytes\n")?;
+        session.stage(&repo, &active(), false)?;
+        session.amend(&repo, "retained child")?;
+        let blob = String::from_utf8(git(root, &["rev-parse", "HEAD:selected"])?)?;
+        let receipt = raw_authored_blob_receipt(&session, root, blob.trim())?;
+        let original = fs::read(&receipt)?;
+        match damage {
+            "bytes" => {
+                let mut corrupt = original.clone();
+                *corrupt.last_mut().expect("body") ^= 1;
+                fs::write(&receipt, corrupt)?;
+            }
+            "truncated" => fs::write(&receipt, &original[..original.len() - 1])?,
+            "trailing" => fs::write(&receipt, [original.as_slice(), b"extra"].concat())?,
+            "header" => fs::write(&receipt, [b"blob 0".as_slice(), &original[5..]].concat())?,
+            "identity" => fs::write(&receipt, [b"blob 5\0".as_slice(), b"other"].concat())?,
+            "symlink" => {
+                let foreign = root.join("foreign-receipt");
+                fs::write(&foreign, &original)?;
+                fs::remove_file(&receipt)?;
+                symlink(foreign, &receipt)?;
+            }
+            "mode" => fs::set_permissions(&receipt, fs::Permissions::from_mode(0o644))?,
+            "scratch" => fs::OpenOptions::new()
+                .write(true)
+                .open(&receipt)?
+                .set_len(1024 * 1024 * 1024 + 1)?,
+            _ => unreachable!(),
         }
+        let head = fs::read(repo.git_dir().join("HEAD"))?;
+        let index = fs::read(repo.index_path())?;
+        let state = fs::read(session.directory().join("state.json"))?;
+        let error = session.abort(&repo).expect_err(damage);
+        if damage == "scratch" {
+            assert!(format!("{error:#}").contains("scratch budget"), "{error:#}");
+        }
+        assert_eq!(fs::read(repo.git_dir().join("HEAD"))?, head, "{damage}");
+        assert_eq!(fs::read(repo.index_path())?, index, "{damage}");
+        assert_eq!(fs::read(session.directory().join("state.json"))?, state, "{damage}");
+        assert_eq!(
+            fs::read(root.join("selected"))?,
+            b"retained authored bytes\n",
+            "{damage}"
+        );
+        assert!(
+            fs::symlink_metadata(receipt).is_ok(),
+            "refused receipt remains available"
+        );
     }
     Ok(())
 }

@@ -9,6 +9,9 @@ use std::{
     path::{Path, PathBuf},
 };
 
+#[path = "retained.rs"]
+mod retained;
+
 #[derive(Clone, Copy, Debug, Serialize, Deserialize, PartialEq, Eq)]
 pub enum StopKind {
     Conflict,
@@ -1138,6 +1141,7 @@ impl Session {
                     "child decision ownership mismatch"
                 );
             } else if name == "objects" {
+                let budget = gix::utils::stream::Budget::new(&std::env::temp_dir())?;
                 for member in fs::read_dir(&path)? {
                     let member = member?;
                     let metadata = fs::symlink_metadata(member.path())?;
@@ -1145,17 +1149,7 @@ impl Session {
                         metadata.is_file() && metadata.uid() == fs::metadata(&parent)?.uid(),
                         "unsafe child object receipt"
                     );
-                    let object: RetainedObject = load(&member.path())?;
-                    let id = gix::ObjectId::from_hex(object.id.as_bytes())?;
-                    ensure!(
-                        member.file_name().as_encoded_bytes() == object.id.as_bytes()
-                            && gix::objs::compute_hash(
-                                id.kind(),
-                                gix::objs::Kind::from_bytes(object.kind.as_bytes())?,
-                                &object.data
-                            )? == id,
-                        "corrupt child object receipt"
-                    );
+                    drop(retained::open(repo, &member.path(), &budget)?);
                     owned.insert(raw(member.path().strip_prefix(&parent)?)?);
                 }
             } else {
@@ -1982,6 +1976,7 @@ impl Session {
         if !directory.exists() {
             return Ok(roots);
         }
+        let budget = gix::utils::stream::Budget::new(&std::env::temp_dir())?;
         for entry in fs::read_dir(&directory)? {
             let entry = entry?;
             ensure!(entry.file_type()?.is_file(), "unsafe authored object receipt");
@@ -1991,21 +1986,9 @@ impl Session {
                 // retained copy carries it; exact cleanup inventory still refuses.
                 continue;
             }
-            let object: RetainedObject = load(&entry.path())?;
-            let id = gix::ObjectId::from_hex(object.id.as_bytes())?;
-            let kind = gix::objs::Kind::from_bytes(object.kind.as_bytes())?;
-            ensure!(
-                entry.file_name().as_encoded_bytes() == object.id.as_bytes()
-                    && gix::objs::compute_hash(id.kind(), kind, &object.data)? == id,
-                "corrupt authored object receipt"
-            );
-            ensure!(
-                repo.write_object(&gix::objs::ObjectRef::from_bytes(&object.data, kind, id.kind())?)?
-                    .detach()
-                    == id,
-                "restored authored object changed identity"
-            );
-            roots.insert(id);
+            let mut object = retained::open(repo, &entry.path(), &budget)?;
+            object.restore(repo)?;
+            roots.insert(object.id);
         }
         sync_objects(&repo.common_dir().join("objects"))?;
         Ok(roots)
@@ -2016,6 +1999,7 @@ impl Session {
             use std::os::unix::fs::DirBuilderExt;
             fs::DirBuilder::new().mode(0o700).create(&directory)?;
         }
+        let budget = gix::utils::stream::Budget::new(&std::env::temp_dir())?;
         let mut stack = self.state.private.iter().map(|e| e.id.clone()).collect::<Vec<_>>();
         stack.extend_from_slice(extra);
         stack.extend(read_public(repo)?.entries().iter().map(|e| e.id.to_string()));
@@ -2038,34 +2022,23 @@ impl Session {
             if id == baseline || id == self.state.parent || !seen.insert(id.clone()) {
                 continue;
             }
+            let object_id = gix::ObjectId::from_hex(id.as_bytes())?;
             let receipt = directory.join(&id);
-            let retained = if receipt.exists() {
-                load::<RetainedObject>(&receipt)?
+            let mut retained = if receipt.exists() {
+                retained::open(repo, &receipt, &budget)?
             } else {
-                let object = repo.find_object(gix::ObjectId::from_hex(id.as_bytes())?)?;
-                let retained = RetainedObject {
-                    id: id.clone(),
-                    kind: object.kind.to_string(),
-                    data: object.data.clone(),
-                };
-                persist(&receipt, &sealed(&retained)?)?;
-                retained
+                retained::persist(repo, object_id, &receipt, &budget)?
             };
-            let kind = gix::objs::Kind::from_bytes(retained.kind.as_bytes())?;
-            ensure!(
-                retained.id == id
-                    && gix::objs::compute_hash(repo.object_hash(), kind, &retained.data)?
-                        == gix::ObjectId::from_hex(id.as_bytes())?,
-                "retained object identity mismatch"
-            );
-            match kind {
+            match retained.kind {
                 gix::objs::Kind::Commit => {
-                    let commit = gix::objs::CommitRef::from_bytes(&retained.data, repo.object_hash())?;
+                    let data = retained.metadata(repo)?;
+                    let commit = gix::objs::CommitRef::from_bytes(&data, repo.object_hash())?;
                     stack.push(commit.tree().to_string());
                     stack.extend(commit.parents().map(|p| p.to_string()));
                 }
                 gix::objs::Kind::Tree => {
-                    for entry in gix::objs::TreeRef::from_bytes(&retained.data, repo.object_hash())?.entries {
+                    let data = retained.metadata(repo)?;
+                    for entry in gix::objs::TreeRef::from_bytes(&data, repo.object_hash())?.entries {
                         ensure!(!entry.mode.is_commit(), "gitlinks unsupported");
                         stack.push(entry.oid.to_string());
                     }

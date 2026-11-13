@@ -2914,12 +2914,33 @@ tests pass, along with strict affected Clippy, formatting, readiness and the
 declared Rust-style check. The same public 64 MiB conflict continuation
 passes with these licenses at 277,864,448 B in 142.69 s, without OOM or survivors.
 
-Scope expansion, authored-object retention, large metadata, aggregate scratch
-accounting and final committed-source resource proofs remain open. The new
-64 MiB edit/amend fixture identifies a required-success refusal in authored-object
-retention at the explicit 16 MiB allocation limit (177,242,112 B peak, 51.15 s);
-that path still loads blobs into encoded JSON receipts and is not qualified. None of these memory receipts measures aggregate scratch
-peak, and the overall habit remains red.
+The 64 MiB edit/amend fixture next refused authored-object retention at the
+explicit 16 MiB allocation limit (177,242,112 B peak, 51.15 s). New authored-object
+receipts store a canonical Git loose header and raw body, using the bounded
+object reader, streamed identity verification and charged private publication.
+Traversal decodes only commits and trees; blobs are released after each receipt.
+Restoration streams blobs back into the object database. Legacy checksummed JSON
+receipts remain readable, including leading whitespace. Interrupted `.new` files
+remain opaque retained evidence and cannot authorize cleanup. Accepted-child
+validation streams object verification instead of loading every blob again.
+Legacy decoding reads the already checked file handle with interruptible buffered
+readers, avoiding another whole-file copy and a path reopen.
+
+The public 64 MiB edit/amend fixture now passes in 143.31 s with a 209,580,032 B
+whole-group peak, no OOM, no surviving children and stable executable identities.
+It verifies authored content and parentage, staged/unstaged neighboring edits,
+active journal cleanup and Git fsck. All 145 native authoring/replay/interactive/
+I/O fault tests pass. Raw and legacy proposal receipts restore the exact commit
+after real Git pruning without repeating hooks; corrupt content, lengths, headers,
+identities, permissions, symlinks and oversized scratch refuse without changing
+integration. The resource receipt predates only the legacy-reader refinement;
+final committed-source qualification remains required. The final reader refinement
+passes both authored-object tests and the three-shape GC recovery test, strict
+affected Clippy, formatting, readiness and the declared Rust-style check.
+
+Scope expansion, large metadata, aggregate scratch accounting and final
+committed-source resource proofs remain open. None of these memory receipts
+measures aggregate scratch peak, and the overall habit remains red.
 
 Story-harvest station: **replay / between retained history → recovery journal /
 file custody must remain bounded independently of comparison storage**. A

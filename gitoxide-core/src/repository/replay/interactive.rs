@@ -689,7 +689,7 @@ impl Session {
         history(repo, completion.head, &mut closure)?;
         let tip_closure = closure.clone();
         for id in &completion.objects {
-            match repo.find_object(*id)?.kind {
+            match super::super::validation::verify_object(repo, *id)? {
                 gix::objs::Kind::Commit => {
                     history(repo, *id, &mut closure)?;
                 }

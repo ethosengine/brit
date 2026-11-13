@@ -256,3 +256,69 @@ fn sixty_four_mib_preserved_staged_and_dirty_neighbor() -> Result<()> {
 fn sixty_four_mib_conflict_resolution_preserves_neighbor() -> Result<()> {
     conflict_stop(64 * 1024 * 1024, true)
 }
+
+#[test]
+fn sixty_four_mib_edit_amend_preserves_authored_object_custody() -> Result<()> {
+    use std::os::unix::fs::PermissionsExt;
+    let repo = TestRepo::new("memory-replay-edit")?;
+    let root = repo.path();
+    eprintln!("owned edit fixture: {}", root.display());
+    let mut file = fs::File::create(root.join("large"))?;
+    let mut chunk = [b'x'; 65536];
+    chunk[65535] = b'\n';
+    for _ in 0..1024 {
+        file.write_all(&chunk)?;
+    }
+    drop(file);
+    fs::write(root.join("neighbor"), b"base\n")?;
+    git(root, &["add", "large", "neighbor"])?;
+    git(root, &["commit", "-qm", "base"])?;
+    git(root, &["switch", "-c", "upstream"])?;
+    fs::write(root.join("upstream"), b"upstream\n")?;
+    git(root, &["add", "upstream"])?;
+    git(root, &["commit", "-qm", "upstream"])?;
+    git(root, &["switch", "main"])?;
+    fs::OpenOptions::new()
+        .write(true)
+        .open(root.join("large"))?
+        .write_all(b"topic---")?;
+    git(root, &["commit", "-qam", "topic"])?;
+    fs::write(root.join("neighbor"), b"staged\n")?;
+    git(root, &["add", "neighbor"])?;
+    fs::write(root.join("neighbor"), b"unstaged\n")?;
+    let editor = root.join(".git/sequence-editor");
+    fs::write(&editor, b"#!/bin/sh\nsed -i 's/^pick /edit /' \"$1\"\n")?;
+    fs::set_permissions(&editor, fs::Permissions::from_mode(0o700))?;
+    let invoke = |args: &[&str]| -> Result<()> {
+        let output = BritInvocation::new(brit_bin().expect("built Brit"))
+            .current_dir(root)
+            .args(["-c", "gitoxide.objects.allocLimit=16777216"])
+            .args(args)
+            .env("GIT_SEQUENCE_EDITOR", &editor)
+            .env("GIT_EDITOR", ":")
+            .run()?;
+        ensure!(output.status.success(), "{args:?}: {} {}", output.stdout, output.stderr);
+        Ok(())
+    };
+    invoke(&["rebase", "--interactive", "upstream"])?;
+    ensure!(root.join(".git/brit-authoring").is_dir(), "must reach the edit stop");
+    fs::OpenOptions::new()
+        .write(true)
+        .open(root.join("large"))?
+        .write_all(b"authored")?;
+    let authored = git(root, &["hash-object", "large"])?;
+    invoke(&["rebase", "--stage", "--", "large"])?;
+    invoke(&["rebase", "--amend", "--no-edit"])?;
+    invoke(&["rebase", "--continue"])?;
+    assert_eq!(git(root, &["rev-parse", "HEAD:large"])?, authored);
+    assert_eq!(
+        git(root, &["rev-parse", "HEAD^"])?,
+        git(root, &["rev-parse", "upstream"])?
+    );
+    assert_eq!(git(root, &["show", ":neighbor"])?, b"staged\n");
+    assert_eq!(fs::read(root.join("neighbor"))?, b"unstaged\n");
+    assert!(!root.join(".git/brit-rebase").exists());
+    assert!(!root.join(".git/brit-authoring").exists());
+    git(root, &["fsck", "--full", "--no-dangling"])?;
+    Ok(())
+}
