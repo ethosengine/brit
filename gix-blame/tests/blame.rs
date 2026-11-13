@@ -216,7 +216,7 @@ impl Fixture {
     }
 
     fn blame_file(&mut self, source_file_name: &bstr::BStr, options: gix_blame::Options) -> Result<gix_blame::Outcome> {
-        gix_blame::file(
+        crate::file_with_storage_conformance(
             &self.odb,
             gix_blame::Start::Commit(self.suspect),
             None,
@@ -232,7 +232,7 @@ impl Fixture {
         contents: Vec<u8>,
         options: gix_blame::Options,
     ) -> Result<gix_blame::Outcome> {
-        gix_blame::file(
+        crate::file_with_storage_conformance(
             &self.odb,
             gix_blame::Start::Contents {
                 first_suspect: self.suspect,
@@ -258,7 +258,7 @@ macro_rules! mktest {
 
             let source_file_name: gix_object::bstr::BString = format!("{}.txt", $case).into();
 
-            let lines_blamed = gix_blame::file(
+            let lines_blamed = crate::file_with_storage_conformance(
                 &odb,
                 gix_blame::Start::Commit(suspect),
                 None,
@@ -347,7 +347,7 @@ fn diff_algorithm_parity() {
 
         let source_file_name: gix_object::bstr::BString = format!("{case}.txt").into();
 
-        let lines_blamed = gix_blame::file(
+        let lines_blamed = crate::file_with_storage_conformance(
             &odb,
             gix_blame::Start::Commit(suspect),
             None,
@@ -384,7 +384,7 @@ fn file_that_was_added_in_two_branches() -> gix_testtools::TestResult {
     } = Fixture::for_worktree_path(worktree_path.to_path_buf())?;
 
     let source_file_name = "file-with-two-roots.txt";
-    let lines_blamed = gix_blame::file(
+    let lines_blamed = crate::file_with_storage_conformance(
         &odb,
         gix_blame::Start::Commit(suspect),
         None,
@@ -414,7 +414,7 @@ fn since() -> gix_testtools::TestResult {
 
     let source_file_name: gix_object::bstr::BString = "simple.txt".into();
 
-    let lines_blamed = gix_blame::file(
+    let lines_blamed = crate::file_with_storage_conformance(
         &odb,
         gix_blame::Start::Commit(suspect),
         None,
@@ -454,7 +454,7 @@ mod blame_ranges {
 
         let source_file_name: gix_object::bstr::BString = "simple.txt".into();
 
-        let lines_blamed = gix_blame::file(
+        let lines_blamed = crate::file_with_storage_conformance(
             &odb,
             gix_blame::Start::Commit(suspect),
             None,
@@ -497,7 +497,7 @@ mod blame_ranges {
 
         let source_file_name: gix_object::bstr::BString = "simple.txt".into();
 
-        let lines_blamed = gix_blame::file(
+        let lines_blamed = crate::file_with_storage_conformance(
             &odb,
             gix_blame::Start::Commit(suspect),
             None,
@@ -538,7 +538,7 @@ mod blame_ranges {
 
         let source_file_name: gix_object::bstr::BString = "simple.txt".into();
 
-        let lines_blamed = gix_blame::file(
+        let lines_blamed = crate::file_with_storage_conformance(
             &odb,
             gix_blame::Start::Commit(suspect),
             None,
@@ -584,7 +584,7 @@ mod rename_tracking {
         } = Fixture::for_worktree_path(worktree_path.to_path_buf())?;
 
         let source_file_name = "after-rename.txt";
-        let lines_blamed = gix_blame::file(
+        let lines_blamed = crate::file_with_storage_conformance(
             &odb,
             gix_blame::Start::Commit(suspect),
             None,
@@ -803,4 +803,59 @@ mod symlinks {
 
 fn fixture_path() -> gix_testtools::Result<PathBuf> {
     gix_testtools::scripted_fixture_read_only("make_blame_repo.sh")
+}
+
+/// Existing Git-oracle fixtures also exercise immutable storage without changing their expectations.
+fn file_with_storage_conformance(
+    odb: impl gix_object::Find + gix_object::FindHeader + gix_object::FindStream,
+    start: gix_blame::Start<'_>,
+    cache: Option<gix_commitgraph::Graph>,
+    resources: &mut gix_diff::blob::Platform,
+    path: &bstr::BStr,
+    options: gix_blame::Options,
+) -> Result<gix_blame::Outcome> {
+    use gix_error::ResultExt;
+    assert!(cache.is_none(), "this fixture compares uncached traversals");
+    let budget = gix_utils::stream::Budget::new(&std::env::temp_dir()).or_error()?;
+    let storage = gix_blame::Bounded {
+        budget: budget.clone(),
+        buffer_limit: 0,
+        interrupt: &std::sync::atomic::AtomicBool::new(false),
+    };
+    let bounded_start = match &start {
+        gix_blame::Start::Commit(id) => gix_blame::Start::Commit(*id),
+        gix_blame::Start::Contents {
+            first_suspect,
+            contents,
+        } => gix_blame::Start::Contents {
+            first_suspect: *first_suspect,
+            contents: contents.as_ref().into(),
+        },
+    };
+    let mut bounded_resources = resources.clone();
+    bounded_resources.clear_resource_cache();
+    let bounded = gix_blame::file_bounded(
+        &odb,
+        bounded_start,
+        None,
+        &mut bounded_resources,
+        path,
+        options.clone(),
+        &storage,
+    )?;
+    let buffered = gix_blame::file(&odb, start, cache, resources, path, options)?;
+    assert_eq!(bounded.entries, buffered.entries, "storage preserves every attribution");
+    assert_eq!(bounded.blob.as_slice(), buffered.blob, "storage preserves blamed bytes");
+    assert_eq!(
+        format!("{:?}", bounded.statistics),
+        format!("{:?}", buffered.statistics)
+    );
+    assert_eq!(
+        format!("{:?}", bounded.blame_path),
+        format!("{:?}", buffered.blame_path)
+    );
+    drop(bounded);
+    drop(bounded_resources);
+    assert_eq!(budget.usage().0, 0, "completed comparisons release their spools");
+    Ok(buffered)
 }

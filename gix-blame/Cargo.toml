@@ -19,6 +19,7 @@ sha256 = ["gix-hash/sha256"]
 
 [dependencies]
 gix-error = { version = "^0.5.1", path = "../gix-error", registry = "elohim" }
+gix-utils = { version = "^0.5.2", path = "../gix-utils", registry = "elohim", features = ["stream"] }
 gix-commitgraph = { version = "^0.41.1", path = "../gix-commitgraph", registry = "elohim" }
 gix-revwalk = { version = "^0.37.1", path = "../gix-revwalk", registry = "elohim" }
 gix-trace = { version = "^0.3.0", path = "../gix-trace", registry = "elohim" }

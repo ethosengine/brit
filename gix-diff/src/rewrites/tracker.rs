@@ -201,9 +201,32 @@ impl<T: Change> Tracker<T> {
     /// will panic if `change` is not a modification, and it's valid to not call `push` at all.
     pub fn emit<PushSourceTreeFn, E>(
         &mut self,
-        mut cb: impl FnMut(visit::Destination<'_, T>, Option<visit::Source<'_, T>>) -> Action,
+        cb: impl FnMut(visit::Destination<'_, T>, Option<visit::Source<'_, T>>) -> Action,
         diff_cache: &mut crate::blob::Platform,
         objects: &impl gix_object::FindObjectOrHeader,
+        push_source_tree: PushSourceTreeFn,
+    ) -> Result<Outcome>
+    where
+        PushSourceTreeFn: FnMut(&mut dyn FnMut(T, &BStr)) -> std::result::Result<(), E>,
+        E: std::error::Error + Send + Sync + 'static,
+    {
+        self.emit_with_resource_loader(
+            cb,
+            diff_cache,
+            &mut |cache, id, mode, path, kind| {
+                cache.set_resource(id, mode, path, kind, objects)?;
+                Ok(())
+            },
+            push_source_tree,
+        )
+    }
+
+    /// Emit rewrites with caller-controlled resource storage, preserving matching and tie-breaking.
+    pub fn emit_with_resource_loader<PushSourceTreeFn, E>(
+        &mut self,
+        mut cb: impl FnMut(visit::Destination<'_, T>, Option<visit::Source<'_, T>>) -> Action,
+        diff_cache: &mut crate::blob::Platform,
+        load_resource: &mut crate::blob::ResourceLoader<'_>,
         mut push_source_tree: PushSourceTreeFn,
     ) -> Result<Outcome>
     where
@@ -256,7 +279,7 @@ impl<T: Change> Tracker<T> {
                 None, /* by identity for parents */
                 &mut out,
                 diff_cache,
-                objects,
+                load_resource,
                 Some(is_parent),
             )?;
 
@@ -266,7 +289,7 @@ impl<T: Change> Tracker<T> {
                 self.rewrites.percentage,
                 &mut out,
                 diff_cache,
-                objects,
+                load_resource,
                 None,
             )?;
 
@@ -279,7 +302,7 @@ impl<T: Change> Tracker<T> {
                     copies.percentage,
                     &mut out,
                     diff_cache,
-                    objects,
+                    load_resource,
                     None,
                 )?;
 
@@ -305,7 +328,7 @@ impl<T: Change> Tracker<T> {
                             copies.percentage,
                             &mut out,
                             diff_cache,
-                            objects,
+                            load_resource,
                             None,
                         )?;
                     }
@@ -360,7 +383,7 @@ impl<T: Change> Tracker<T> {
         percentage: Option<f32>,
         out: &mut Outcome,
         diff_cache: &mut crate::blob::Platform,
-        objects: &impl gix_object::FindObjectOrHeader,
+        load_resource: &mut crate::blob::ResourceLoader<'_>,
         filter: Option<fn(&T) -> bool>,
     ) -> Result {
         // we try to cheaply reduce the set of possibilities first, before possibly looking more exhaustively.
@@ -370,7 +393,15 @@ impl<T: Change> Tracker<T> {
         // We would need a hashmap to be OK to not use the limit here, otherwise the performance is too bad.
         // This also means we don't find all renames if we hit the rename limit.
         if self
-            .match_pairs(cb, None /* by identity */, kind, out, diff_cache, objects, filter)?
+            .match_pairs(
+                cb,
+                None, /* by identity */
+                kind,
+                out,
+                diff_cache,
+                load_resource,
+                filter,
+            )?
             .is_break()
         {
             return Ok(());
@@ -397,7 +428,7 @@ impl<T: Change> Tracker<T> {
                 }
             };
             if !is_limited {
-                let _ = self.match_pairs(cb, percentage, kind, out, diff_cache, objects, None)?;
+                let _ = self.match_pairs(cb, percentage, kind, out, diff_cache, load_resource, None)?;
             }
         }
         Ok(())
@@ -411,7 +442,7 @@ impl<T: Change> Tracker<T> {
         kind: visit::SourceKind,
         stats: &mut Outcome,
         diff_cache: &mut crate::blob::Platform,
-        objects: &impl gix_object::FindObjectOrHeader,
+        load_resource: &mut crate::blob::ResourceLoader<'_>,
         filter: Option<fn(&T) -> bool>,
     ) -> Result<Action> {
         let mut dest_ofs = 0;
@@ -452,7 +483,7 @@ impl<T: Change> Tracker<T> {
                 percentage,
                 kind,
                 stats,
-                objects,
+                load_resource,
                 diff_cache,
                 &self.path_backing,
                 &mut num_checks,
@@ -689,7 +720,7 @@ fn find_match<'a, T: Change>(
     percentage: Option<f32>,
     kind: visit::SourceKind,
     stats: &mut Outcome,
-    objects: &impl gix_object::FindObjectOrHeader,
+    load_resource: &mut crate::blob::ResourceLoader<'_>,
     diff_cache: &mut crate::blob::Platform,
     path_backing: &[u8],
     num_checks: &mut usize,
@@ -744,27 +775,25 @@ fn find_match<'a, T: Change>(
             .filter(|(src_idx, src)| *src_idx != item_idx && src.is_source_for_destination_of(kind, item_mode))
         {
             if !has_new {
-                diff_cache
-                    .set_resource(
-                        item_id.to_owned(),
-                        item_mode.kind(),
-                        item.location(path_backing),
-                        ResourceKind::NewOrDestination,
-                        objects,
-                    )
-                    .or_raise(|| message("Could not set destination for similarity checking"))?;
+                load_resource(
+                    diff_cache,
+                    item_id.to_owned(),
+                    item_mode.kind(),
+                    item.location(path_backing),
+                    ResourceKind::NewOrDestination,
+                )
+                .or_raise(|| message("Could not set destination for similarity checking"))?;
                 has_new = true;
             }
             let (src_id, src_mode) = src.change.id_and_entry_mode();
-            diff_cache
-                .set_resource(
-                    src_id.to_owned(),
-                    src_mode.kind(),
-                    src.location(path_backing),
-                    ResourceKind::OldOrSource,
-                    objects,
-                )
-                .or_raise(|| message("Could not set source for similarity checking"))?;
+            load_resource(
+                diff_cache,
+                src_id.to_owned(),
+                src_mode.kind(),
+                src.location(path_backing),
+                ResourceKind::OldOrSource,
+            )
+            .or_raise(|| message("Could not set source for similarity checking"))?;
             let prep = diff_cache
                 .prepare_diff()
                 .or_raise(|| message("Could not prepare resources for similarity checking"))?;

@@ -39,12 +39,29 @@ pub fn blame_file(
             new_root: None,
         },
     )?;
-    let start = start_for_blame(&repo, file.as_bstr(), &mut resource_cache)?;
+    let storage = gix::blame::Bounded {
+        budget: gix::utils::stream::Budget::new(&std::env::temp_dir()).or_error()?,
+        buffer_limit: repo
+            .allocation_limit()
+            .unwrap_or(usize::try_from(repo.big_file_threshold()?).unwrap_or(usize::MAX)),
+        interrupt: &gix::interrupt::IS_INTERRUPTED,
+    };
     // The worktree root is only for constructing `start`; historical `OldOrSource` resources must be loaded by
     // object ID, and we make sure that worktree contents can't possibly be used.
-    resource_cache.filter.roots = Default::default();
-    resource_cache.clear_resource_cache_keep_allocation();
-    let outcome = gix::blame::file(&repo.objects, start, cache, &mut resource_cache, file.as_ref(), options)?;
+    let mut history_resources = resource_cache.clone();
+    history_resources.filter.roots = Default::default();
+    let start = start_for_blame(&repo, file.as_bstr(), &mut resource_cache, &storage)?;
+    let outcome = gix::blame::file_bounded(
+        &repo.objects,
+        start,
+        cache,
+        &mut history_resources,
+        file.as_ref(),
+        options,
+        &storage,
+    )?;
+    drop(resource_cache);
+    drop(history_resources);
     let statistics = outcome.statistics;
     show_blame_entries(out, outcome, file.as_ref()).or_error()?;
 
@@ -59,7 +76,8 @@ pub fn blame_file(
 fn start_for_blame<'a>(
     repo: &'a gix::Repository,
     file: &'a gix::bstr::BStr,
-    resources: &mut gix::diff::blob::Platform,
+    resources: &'a mut gix::diff::blob::Platform,
+    storage: &gix::blame::Bounded<'_>,
 ) -> Result<gix::blame::Start<'a>> {
     let first_suspect: gix::ObjectId = repo.head()?.into_peeled_id()?.into();
     let Some(workdir) = repo.workdir() else {
@@ -82,17 +100,20 @@ fn start_for_blame<'a>(
         // executable bits don't matter.
         gix::objs::tree::EntryKind::Blob
     };
-    resources.set_resource(
+    resources.set_resource_bounded(
         repo.object_hash().null(),
         entry_kind,
         file,
         gix::diff::blob::ResourceKind::OldOrSource,
         &repo.objects,
+        &storage.budget,
+        storage.buffer_limit,
+        storage.interrupt,
     )?;
     let contents = resources
         .resource(gix::diff::blob::ResourceKind::OldOrSource)
         .and_then(|resource| match resource.data {
-            gix::diff::blob::platform::resource::Data::Buffer { buf, .. } => Some(buf.to_owned()),
+            gix::diff::blob::platform::resource::Data::Buffer { buf, .. } => Some(buf),
             gix::diff::blob::platform::resource::Data::Binary { .. }
             | gix::diff::blob::platform::resource::Data::Missing => None,
         });
@@ -107,7 +128,7 @@ fn start_for_blame<'a>(
 
 fn show_blame_entries(
     mut out: impl std::io::Write,
-    outcome: gix::blame::Outcome,
+    outcome: gix::blame::Outcome<impl AsRef<[u8]>>,
     source_file_name: &BStr,
 ) -> std::io::Result<()> {
     let num_digits_for_line_number = {
@@ -118,12 +139,18 @@ fn show_blame_entries(
         (largest_line_number.checked_ilog10().unwrap_or(0) + 1) as usize
     };
 
-    for (entry, lines_in_hunk) in outcome.entries_with_lines() {
+    let mut lines = gix::diff::blob::sources::byte_lines(outcome.blob.as_ref());
+    let mut next_line = 0;
+    for entry in &outcome.entries {
+        let range = entry.range_in_blamed_file();
+        let lines_in_hunk = lines.by_ref().skip(range.start - next_line).take(range.len());
+        next_line = range.end;
         for ((actual_lno, source_lno), line) in entry
             .range_in_blamed_file()
             .zip(entry.range_in_source_file())
             .zip(lines_in_hunk)
         {
+            gix::utils::stream::check(&gix::interrupt::IS_INTERRUPTED)?;
             write!(
                 out,
                 "{short_id} {line_no:>num_digits_for_line_number$} ",
@@ -137,10 +164,32 @@ fn show_blame_entries(
             write!(
                 out,
                 "{src_line_no:>num_digits_for_line_number$} {line}",
-                src_line_no = source_lno + 1
+                src_line_no = source_lno + 1,
+                line = BStr::new(line)
             )?;
         }
     }
 
     Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    #[test]
+    fn rendering_streams_disjoint_ranges_and_preserves_byte_display() -> std::io::Result<()> {
+        let id = gix::ObjectId::null(gix::hash::Kind::default());
+        let outcome = gix::blame::Outcome {
+            entries: vec![
+                gix::blame::BlameEntry::new(1..2, 9..10, id, None),
+                gix::blame::BlameEntry::new(3..4, 19..20, id, Some("old".into())),
+            ],
+            blob: b"skip\nalpha\r\nskip\n\xfflast".to_vec(),
+            statistics: Default::default(),
+            blame_path: None,
+        };
+        let mut output = Vec::new();
+        super::show_blame_entries(&mut output, outcome, gix::bstr::BStr::new("path"))?;
+        assert_eq!(output, "00000000 2 path 10 alpha\r\n00000000 4 old 20 �last".as_bytes());
+        Ok(())
+    }
 }

@@ -7,6 +7,7 @@ use gix_hash::ObjectId;
 use crate::types::{BlameEntry, Change, Either, LineRange, Offset, UnblamedHunk};
 
 pub(super) mod function;
+pub(super) mod storage;
 
 /// Compare a section from a potential *Source File* (`hunk`) with a change from a diff and see if
 /// there is an intersection with `change`. Based on that intersection, we may generate a

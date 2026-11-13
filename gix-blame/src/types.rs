@@ -235,12 +235,12 @@ impl std::fmt::Debug for Start<'_> {
 }
 /// The outcome of [`file()`](crate::file()).
 #[derive(Debug, Default, Clone)]
-pub struct Outcome {
+pub struct Outcome<B = Vec<u8>> {
     /// One entry in sequential order, to associate a hunk in the blamed file with the source commit (and its lines)
     /// that introduced it.
     pub entries: Vec<BlameEntry>,
     /// A buffer with the file content of the *Blamed File*, ready for tokenization.
-    pub blob: Vec<u8>,
+    pub blob: B,
     /// Additional information about the amount of work performed to produce the blame.
     pub statistics: Statistics,
     /// Contains a log of all changes that affected the outcome of this blame.
@@ -267,15 +267,16 @@ pub struct Statistics {
     pub blobs_diffed: usize,
 }
 
-impl Outcome {
+impl<B: AsRef<[u8]>> Outcome<B> {
     /// Return an iterator over each entry in [`Self::entries`], along with its lines, line by line.
     ///
     /// Note that [`Self::blob`] must be tokenized in exactly the same way as the tokenizer that was used
     /// to perform the diffs, which is what this method assures.
     pub fn entries_with_lines(&self) -> impl Iterator<Item = (BlameEntry, Vec<BString>)> + '_ {
         use gix_diff::blob::TokenSource;
-        let mut interner = gix_diff::blob::Interner::new(self.blob.len() / 100);
-        let lines_as_tokens: Vec<_> = tokens_for_diffing(&self.blob)
+        let blob = self.blob.as_ref();
+        let mut interner = gix_diff::blob::Interner::new(blob.len() / 100);
+        let lines_as_tokens: Vec<_> = tokens_for_diffing(blob)
             .tokenize()
             .map(|token| interner.intern(token))
             .collect();

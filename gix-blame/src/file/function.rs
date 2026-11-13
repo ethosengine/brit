@@ -11,7 +11,10 @@ use gix_object::{
 use gix_traverse::commit::find as find_commit;
 use smallvec::SmallVec;
 
-use super::{Change, UnblamedHunk, process_changes};
+use super::{
+    Change, UnblamedHunk, process_changes,
+    storage::{Bounded, Buffered, Storage},
+};
 use crate::{
     BlameEntry, Options, Outcome, Statistics,
     types::{BlamePathEntry, Start},
@@ -74,6 +77,36 @@ pub fn file(
     file_path: &BStr,
     options: Options,
 ) -> Result<Outcome> {
+    file_with_storage(odb, start, cache, resource_cache, file_path, options, &Buffered)
+}
+
+/// Attribute lines with the same algorithm as [`file()`], using operation-owned
+/// mappings for initial blobs and bounded storage for historical comparisons.
+pub fn file_bounded(
+    odb: impl gix_object::Find + gix_object::FindHeader + gix_object::FindStream,
+    start: Start,
+    cache: Option<gix_commitgraph::Graph>,
+    resource_cache: &mut gix_diff::blob::Platform,
+    file_path: &BStr,
+    options: Options,
+    storage: &Bounded<'_>,
+) -> Result<Outcome<gix_utils::stream::Mapped>> {
+    file_with_storage(odb, start, cache, resource_cache, file_path, options, storage)
+}
+
+fn file_with_storage<O, S>(
+    odb: O,
+    start: Start,
+    cache: Option<gix_commitgraph::Graph>,
+    resource_cache: &mut gix_diff::blob::Platform,
+    file_path: &BStr,
+    options: Options,
+    storage: &S,
+) -> Result<Outcome<S::Bytes>>
+where
+    O: gix_object::Find + gix_object::FindHeader,
+    S: Storage<O>,
+{
     let _span = gix_trace::coarse!("gix_blame::file()", ?file_path, ?start);
 
     let mut stats = Statistics::default();
@@ -93,6 +126,7 @@ pub fn file(
         &mut buf,
         &mut buf2,
         &mut stats,
+        storage,
     )?;
 
     if hunks_to_blame.is_empty() {
@@ -122,6 +156,7 @@ pub fn file(
     };
 
     'outer: while let Some(suspect) = queue.pop_value() {
+        storage.check()?;
         // Change lists own their ranges; completed revisions no longer need their blob data.
         // Reuse buffers within this comparison, without retaining the entire file history.
         resource_cache.clear_resource_cache_keep_allocation();
@@ -213,15 +248,16 @@ pub fn file(
         // identical to the corresponding lines in the *Source File*.
         #[cfg(debug_assertions)]
         {
-            let source_blob = odb.find_blob(&entry_id, &mut buf)?.data.to_vec();
+            let source_blob = storage.load(&odb, &entry_id, &mut buf)?;
+            let source_blob = source_blob.as_ref();
             let mut source_interner = gix_diff::blob::Interner::new(source_blob.len() / 100);
-            let source_lines_as_tokens: Vec<_> = tokens_for_diffing(&source_blob)
+            let source_lines_as_tokens: Vec<_> = tokens_for_diffing(source_blob)
                 .tokenize()
                 .map(|token| source_interner.intern(token))
                 .collect();
 
-            let mut blamed_interner = gix_diff::blob::Interner::new(blamed_file_blob.len() / 100);
-            let blamed_lines_as_tokens: Vec<_> = tokens_for_diffing(&blamed_file_blob)
+            let mut blamed_interner = gix_diff::blob::Interner::new(blamed_file_blob.as_ref().len() / 100);
+            let blamed_lines_as_tokens: Vec<_> = tokens_for_diffing(blamed_file_blob.as_ref())
                 .tokenize()
                 .map(|token| blamed_interner.intern(token))
                 .collect();
@@ -230,16 +266,13 @@ pub fn file(
                 if let Some(range_in_suspect) = hunk.get_range(&suspect) {
                     let range_in_blamed_file = hunk.range_in_blamed_file.clone();
 
-                    let source_lines = range_in_suspect
-                        .clone()
-                        .map(|i| BString::new(source_interner[source_lines_as_tokens[i as usize]].into()))
-                        .collect::<Vec<_>>();
-                    let blamed_lines = range_in_blamed_file
-                        .clone()
-                        .map(|i| BString::new(blamed_interner[blamed_lines_as_tokens[i as usize]].into()))
-                        .collect::<Vec<_>>();
-
-                    assert_eq!(source_lines, blamed_lines);
+                    assert_eq!(range_in_suspect.len(), range_in_blamed_file.len());
+                    for (source, blamed) in range_in_suspect.clone().zip(range_in_blamed_file) {
+                        assert_eq!(
+                            source_interner[source_lines_as_tokens[source as usize]],
+                            blamed_interner[blamed_lines_as_tokens[blamed as usize]],
+                        );
+                    }
                 }
             }
         }
@@ -282,6 +315,7 @@ pub fn file(
                 &mut buf2,
                 &mut buf3,
                 options.rewrites,
+                storage,
             )?;
             let Some(modification) = changes_for_file_path else {
                 if more_than_one_parent {
@@ -331,6 +365,7 @@ pub fn file(
                         file_path,
                         options.diff_algorithm,
                         &mut stats,
+                        storage,
                     )?;
                     hunks_to_blame = process_changes(hunks_to_blame, changes.clone(), suspect, *parent_id);
                     if let Some(ref mut blame_path) = blame_path {
@@ -363,6 +398,7 @@ pub fn file(
                         source_location.as_ref(),
                         options.diff_algorithm,
                         &mut stats,
+                        storage,
                     )?;
                     hunks_to_blame = process_changes(hunks_to_blame, changes, suspect, *parent_id);
 
@@ -558,8 +594,8 @@ impl From<gix_diff::tree_with_rewrites::Change> for TreeDiffChange {
 }
 
 #[expect(clippy::too_many_arguments)]
-fn tree_diff_at_file_path(
-    odb: impl gix_object::Find + gix_object::FindHeader,
+fn tree_diff_at_file_path<O, S>(
+    odb: &O,
     file_path: &BStr,
     id: ObjectId,
     parent_id: ObjectId,
@@ -571,8 +607,13 @@ fn tree_diff_at_file_path(
     lhs_tree_buf: &mut Vec<u8>,
     rhs_tree_buf: &mut Vec<u8>,
     rewrites: Option<gix_diff::Rewrites>,
-) -> Result<Option<TreeDiffChange>> {
-    let parent_tree_id = find_commit(cache, &odb, &parent_id, commit_buf)
+    storage: &S,
+) -> Result<Option<TreeDiffChange>>
+where
+    O: gix_object::Find + gix_object::FindHeader,
+    S: Storage<O>,
+{
+    let parent_tree_id = find_commit(cache, odb, &parent_id, commit_buf)
         .or_raise(|| message("Could not find existing iterator over a tree"))?
         .tree_id()
         .or_raise(|| message("Failure to decode commit during traversal"))?;
@@ -582,7 +623,7 @@ fn tree_diff_at_file_path(
         .or_raise(|| message("Could not find existing iterator over a tree"))?;
     stats.trees_decoded += 1;
 
-    let tree_id = find_commit(cache, &odb, &id, commit_buf)
+    let tree_id = find_commit(cache, odb, &id, commit_buf)
         .or_raise(|| message("Could not find existing iterator over a tree"))?
         .tree_id()
         .or_raise(|| message("Failure to decode commit during traversal"))?;
@@ -592,7 +633,7 @@ fn tree_diff_at_file_path(
         .or_raise(|| message("Could not find existing iterator over a tree"))?;
     stats.trees_decoded += 1;
 
-    let result = tree_diff_without_rewrites_at_file_path(&odb, file_path, stats, state, parent_tree_iter, tree_iter)?;
+    let result = tree_diff_without_rewrites_at_file_path(odb, file_path, stats, state, parent_tree_iter, tree_iter)?;
 
     // Here, we follow git’s behaviour. We return when we’ve found a `Modification`. We try a
     // second time with rename tracking when the change is either an `Addition` or a `Deletion`
@@ -608,7 +649,7 @@ fn tree_diff_at_file_path(
     };
 
     let result = tree_diff_with_rewrites_at_file_path(
-        &odb,
+        odb,
         file_path,
         stats,
         state,
@@ -616,6 +657,7 @@ fn tree_diff_at_file_path(
         parent_tree_iter,
         tree_iter,
         rewrites,
+        storage,
     )?;
 
     Ok(result)
@@ -722,8 +764,8 @@ fn tree_diff_without_rewrites_at_file_path(
 }
 
 #[expect(clippy::too_many_arguments)]
-fn tree_diff_with_rewrites_at_file_path(
-    odb: impl gix_object::Find + gix_object::FindHeader,
+fn tree_diff_with_rewrites_at_file_path<O, S>(
+    odb: &O,
     file_path: &BStr,
     stats: &mut Statistics,
     state: &mut gix_diff::tree::State,
@@ -731,14 +773,19 @@ fn tree_diff_with_rewrites_at_file_path(
     parent_tree_iter: gix_object::TreeRefIter<'_>,
     tree_iter: gix_object::TreeRefIter<'_>,
     rewrites: gix_diff::Rewrites,
-) -> Result<Option<TreeDiffChange>> {
+    storage: &S,
+) -> Result<Option<TreeDiffChange>>
+where
+    O: gix_object::Find + gix_object::FindHeader,
+    S: Storage<O>,
+{
     let mut change: Option<gix_diff::tree_with_rewrites::Change> = None;
 
     let options: gix_diff::tree_with_rewrites::Options = gix_diff::tree_with_rewrites::Options {
         location: Some(gix_diff::tree::recorder::Location::Path),
         rewrites: Some(rewrites),
     };
-    let result = gix_diff::tree_with_rewrites(
+    let result = gix_diff::tree_with_rewrites::diff_with_resource_loader(
         parent_tree_iter,
         tree_iter,
         resource_cache,
@@ -753,6 +800,7 @@ fn tree_diff_with_rewrites_at_file_path(
             }
         },
         options,
+        &mut |cache, id, mode, path, kind| storage.resource(odb, cache, id, mode, path, kind),
     );
     stats.trees_diffed_with_rewrites += 1;
 
@@ -763,8 +811,8 @@ fn tree_diff_with_rewrites_at_file_path(
 }
 
 #[expect(clippy::too_many_arguments)]
-fn blob_changes(
-    odb: impl gix_object::Find + gix_object::FindHeader,
+fn blob_changes<O, S>(
+    odb: &O,
     resource_cache: &mut gix_diff::blob::Platform,
     oid: ObjectId,
     previous_oid: ObjectId,
@@ -772,21 +820,27 @@ fn blob_changes(
     previous_file_path: &BStr,
     diff_algorithm: gix_diff::blob::Algorithm,
     stats: &mut Statistics,
-) -> Result<Vec<Change>> {
-    resource_cache.set_resource(
+    storage: &S,
+) -> Result<Vec<Change>>
+where
+    O: gix_object::Find + gix_object::FindHeader,
+    S: Storage<O>,
+{
+    storage.resource(
+        odb,
+        resource_cache,
         previous_oid,
-        // TODO(blame): add a test to show of symlink blaming works.
         gix_object::tree::EntryKind::Blob,
         previous_file_path,
         gix_diff::blob::ResourceKind::OldOrSource,
-        &odb,
     )?;
-    resource_cache.set_resource(
+    storage.resource(
+        odb,
+        resource_cache,
         oid,
         gix_object::tree::EntryKind::Blob,
         file_path,
         gix_diff::blob::ResourceKind::NewOrDestination,
-        &odb,
     )?;
 
     let outcome = resource_cache.prepare_diff()?;
@@ -918,9 +972,9 @@ pub(crate) fn tokens_for_diffing(data: &[u8]) -> impl TokenSource<Token = &[u8]>
 }
 
 /// The blame input after resolving [`Start`] and before traversing commit history.
-struct InitialState {
+struct InitialState<B> {
     /// The final file contents whose lines are being attributed.
-    blamed_file_blob: Vec<u8>,
+    blamed_file_blob: B,
     /// Requested ranges that still need attribution through commit traversal.
     hunks_to_blame: Vec<UnblamedHunk>,
     /// Entries already resolved while comparing worktree contents to the first suspect.
@@ -930,8 +984,8 @@ struct InitialState {
 }
 
 #[expect(clippy::too_many_arguments)]
-fn initial_state(
-    odb: &impl gix_object::Find,
+fn initial_state<O, S>(
+    odb: &O,
     start: Start<'_>,
     cache: Option<&gix_commitgraph::Graph>,
     file_path: &BStr,
@@ -939,7 +993,12 @@ fn initial_state(
     buf: &mut Vec<u8>,
     buf2: &mut Vec<u8>,
     stats: &mut Statistics,
-) -> Result<InitialState> {
+    storage: &S,
+) -> Result<InitialState<S::Bytes>>
+where
+    O: gix_object::Find + gix_object::FindHeader,
+    S: Storage<O>,
+{
     match start {
         Start::Commit(suspect) => {
             let blamed_file_entry_id = find_path_entry_in_commit(&odb, &suspect, file_path, cache, buf, buf2, stats)?
@@ -947,12 +1006,8 @@ fn initial_state(
                 message!("The file to blame at \"{file_path}\" wasn't found in the first commit at {suspect}")
                     .not_found()
             })?;
-            let blamed_file_blob = odb
-                .find_blob(&blamed_file_entry_id, buf)
-                .or_raise(|| message("Could not find existing blob or commit"))?
-                .data
-                .to_vec();
-            let num_lines_in_blamed = tokens_for_diffing(&blamed_file_blob).tokenize().count() as u32;
+            let blamed_file_blob = storage.load(odb, &blamed_file_entry_id, buf)?;
+            let num_lines_in_blamed = tokens_for_diffing(blamed_file_blob.as_ref()).tokenize().count() as u32;
 
             // Binary or otherwise empty?
             if num_lines_in_blamed == 0 {
@@ -982,8 +1037,8 @@ fn initial_state(
             contents,
         } => {
             let null_id = first_suspect.kind().null();
-            let blamed_file_blob = contents.into_owned();
-            let num_lines_in_blamed = tokens_for_diffing(&blamed_file_blob).tokenize().count() as u32;
+            let blamed_file_blob = storage.retain(contents)?;
+            let num_lines_in_blamed = tokens_for_diffing(blamed_file_blob.as_ref()).tokenize().count() as u32;
 
             if num_lines_in_blamed == 0 {
                 return Ok(InitialState {
@@ -1021,13 +1076,14 @@ fn initial_state(
                 });
             };
 
-            let first_suspect_blob = odb
-                .find_blob(&first_suspect_entry_id, buf)
-                .or_raise(|| message("Could not find existing blob or commit"))?
-                .data
-                .to_vec();
+            let first_suspect_blob = storage.load(odb, &first_suspect_entry_id, buf)?;
 
-            let changes = blob_changes_from_data(&first_suspect_blob, &blamed_file_blob, options.diff_algorithm, stats);
+            let changes = blob_changes_from_data(
+                first_suspect_blob.as_ref(),
+                blamed_file_blob.as_ref(),
+                options.diff_algorithm,
+                stats,
+            );
             hunks_to_blame = process_changes(hunks_to_blame, changes, null_id, first_suspect);
 
             unblamed_to_out_is_done(&mut hunks_to_blame, &mut out, null_id);

@@ -2647,6 +2647,8 @@ It does not turn missing evidence into a successful qualification.
 | `diff file`/diff-format reads at 20/64/256 MiB, textconv expansion refusal and real SIGINT | 5 passed, no OOM or surviving owned processes | 1,073,741,824 B | 65.64 s |
 | Loose object verification before streaming, explicit 16 MiB policy at 20/64/256 MiB | 3 allocation refusals, no OOM | 561,020,928 B | 29.25 s |
 | Object verification/inspection and pack creation/index/extraction, 20/64/256 MiB and 64 MiB OFS/REF histories; explicit-limit refusal contract | 5 passed, no OOM or surviving owned processes | 828,985,344 B | 95.52 s |
+| Bounded blame: 64 revisions, actual reduced trust, one million unique lines; synthetic nested-bare discovery failure retained | 3 passed, 1 failed discovery; no OOM | 187,695,104 B | 81.86 s |
+| Bounded blame policy equality: loose/packed, rename with edits, dirty worktree and actual bare clone | passed, no OOM | 178,540,544 B | 18.66 s |
 | Deliberate 1.2 GiB child allocation | correctly rejected, exit 137, 2 OOM kills | 1,073,741,824 B | negative control |
 
 The 256 MiB run reached `memory.max` with reclamation (495 max events), without
@@ -2750,8 +2752,7 @@ Story-harvest stations: **comparison resources / between conversion → algorith
 byte storage changes preserve conversion decisions**, and **owned converters /
 between output growth or interruption → command return / both output pipes share
 the quota and descendants cannot retain capture pipes**. Existing algorithms
-remain unchanged. Other cache consumers, especially object-backed merge and
-reduced-trust blame, are still part of the open audit.
+remain unchanged. Other cache consumers, especially object-backed merge, remain in the open audit.
 
 Loose blob verification now reuses the bounded loose-header reader and hashes
 fixed chunks, validating both the advertised length and Git object identity.
@@ -2779,6 +2780,32 @@ conflating configured limits with corruption**. The probe is
 `streamed_blob_verification_preserves_limits_and_rejects_corruption` and the
 public `memory_object_store` fixture.
 
+Blame now streams initial and historical blobs into immutable operation-owned
+mappings and uses the same bounded comparison conversion path. Rename similarity
+receives that loader too, preserving its matching order, scores and tie-breaking.
+The existing buffered API remains available. All 39 Git-oracle journeys compare
+buffered and mapped outcomes, statistics and paths; both hash suites pass (61
+unit, 39 integration and one documentation test each). The 101-test diff suite
+and strict affected-crate Clippy pass. Rendering walks borrowed line slices,
+avoiding a second whole-file line collection; disjoint ranges, CRLF, invalid
+UTF-8 and the final unterminated line preserve the existing byte-display behavior.
+
+The four public blame cases include 64 append-only revisions, a million unique
+short lines, actual ownership-derived reduced trust, loose/packed objects,
+rename similarity, dirty worktrees and an actual bare clone. The initial run
+passed three cases but the synthetic nested `.git`-as-bare subsection failed
+repository discovery before blame; the real bare-clone policy case passes in a
+separate fixed-ceiling receipt. That nested-directory discovery issue is retained
+as an unrelated compatibility observation, not counted as successful coverage.
+An accidentally empty exact-name filter and an intentionally stopped old-fixture
+run are excluded from acceptance. No changed executable was accepted.
+
+Story-harvest station: **history attribution / between blob selection → rename
+similarity and rendered lines / all blob readers honor the same storage policy**.
+The explicit 16 MiB fixture first failed at the initial blob, then at rename
+similarity; both now pass without changing attribution algorithms. Large history
+metadata, whole-operation scratch proof and final source qualification stay open.
+
 ### Public-command audit in progress
 
 The command boundary is `src/plumbing/options/mod.rs` plus
@@ -2793,7 +2820,7 @@ unsupported independently of this effort. No open row is accepted as deferred.
 | `status`, `is-clean`, `is-changed`, `index`, `dirwalk`, `clean` | Hash-only status paths stream ordinary files; filtered status and a 200,000-entry index crossing 16 MiB are measured. Other metadata, dirwalk and clean paths still need complete tracing. |
 | `worktree`, `clone` checkout | Existing bounded checkout, OFS/REF delta and filter machinery retained. Whole-cgroup 64/256 MiB worktree checkout/recovery passes; 64/256 MiB local clone/fetch/push also passes; other protocols and reduced-trust transfer paths remain open. |
 | `switch`, `pull`, `rebase`, `merge`, `commit` | Switch/pull raw recovery payloads and streamed dirty checks are repaired and measured at 20/64/256 MiB. Replay/conflict journals and journal metadata still retain byte vectors and serialized images. Three-sided 64 MiB filesystem merge passes; object-backed merge, large journals and resource-bound recovery/death fixtures remain open. |
-| `blame`, `log`, `revision`, `merge-base`, `tree` | Append-only blame cache retention is repaired and measured; explicit-limit blob paths and large history metadata remain open. Ordinary log traverses commits without reading blobs; path-filtered log was already unsupported. Tree listing streams output and uses headers for sizes; its traversal metadata remains to qualify. |
+| `blame`, `log`, `revision`, `merge-base`, `tree` | Blame initial/history blobs, rename similarity and rendering are repaired and measured, including actual reduced trust and a million unique lines; large history metadata remains open. Ordinary log traverses commits without reading blobs; path-filtered log was already unsupported. Tree listing streams output and uses headers for sizes; its traversal metadata remains to qualify. |
 | `fetch`, `push`, `odb`, `fsck`, `verify`, `commit-graph` | Pack decode diagnostics improved; 64/256 MiB local transfer passes without worker/cache changes. Loose blob verification now streams. Both verification algorithms and all decode modes, ODB inspection, connectivity and pack create/index/explode pass at 20/64/256 MiB with a 1 GiB allocation setting, including 64 MiB OFS/REF histories. Explicit 16 MiB packed-buffer refusal is accurately diagnosed and preserves repository state; this is refusal proof, not successful bounded packed verification. Reduced-trust packed buffers, additional protocols and large metadata qualification remain open. |
 | `branch`, `tag`, `remote`, `submodule`, `config`, `config-tree`, `attributes`, `exclude`, `mailmap` | Ref/config/path metadata and helper dispatch still need allocation tracing and applicable fixtures. |
 | `credential`, `env`, `editor`, `completions`, `free`, `corpus`, `tix` | Applicable metadata/output/owned-child audit remains open. Existing unsupported behavior cannot be relabeled a memory success. |

@@ -20,3 +20,5 @@ pub struct Options {
 }
 
 pub(super) mod function;
+
+pub use function::diff_with_resource_loader;

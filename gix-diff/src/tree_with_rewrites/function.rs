@@ -32,6 +32,36 @@ pub fn diff(
     for_each: impl FnMut(ChangeRef<'_>) -> Result<Action>,
     options: Options,
 ) -> std::result::Result<Option<rewrites::Outcome>, Error> {
+    diff_with_resource_loader(
+        lhs,
+        rhs,
+        resource_cache,
+        tree_diff_state,
+        objects,
+        for_each,
+        options,
+        &mut |cache, id, mode, path, kind| {
+            cache.set_resource(id, mode, path, kind, objects)?;
+            Ok(())
+        },
+    )
+}
+
+/// Compute the same tree diff as [`diff()`] with caller-controlled storage for similarity resources.
+#[expect(
+    clippy::too_many_arguments,
+    reason = "Keep the tree-diff inputs and resource loader explicit"
+)]
+pub fn diff_with_resource_loader(
+    lhs: TreeRefIter<'_>,
+    rhs: TreeRefIter<'_>,
+    resource_cache: &mut crate::blob::Platform,
+    tree_diff_state: &mut crate::tree::State,
+    objects: &impl gix_object::FindObjectOrHeader,
+    for_each: impl FnMut(ChangeRef<'_>) -> Result<Action>,
+    options: Options,
+    load_resource: &mut crate::blob::ResourceLoader<'_>,
+) -> std::result::Result<Option<rewrites::Outcome>, Error> {
     fn callback_error(err: gix_error::Error) -> Error {
         Error::Failure(err.and_raise(gix_error::message("The user-provided callback failed")))
     }
@@ -47,7 +77,7 @@ pub fn diff(
     };
     match crate::tree(lhs, rhs, tree_diff_state, objects, &mut delegate) {
         Ok(()) => {
-            let outcome = delegate.process_tracked_changes(resource_cache)?;
+            let outcome = delegate.process_tracked_changes(resource_cache, load_resource)?;
             match delegate.err {
                 Some(err) => Err(callback_error(err)),
                 None => Ok(outcome),
@@ -130,6 +160,7 @@ where
     fn process_tracked_changes(
         &mut self,
         diff_cache: &mut crate::blob::Platform,
+        load_resource: &mut crate::blob::ResourceLoader<'_>,
     ) -> std::result::Result<Option<rewrites::Outcome>, Error> {
         use crate::rewrites::tracker::Change as _;
         let tracked = match self.tracked.as_mut() {
@@ -137,7 +168,7 @@ where
             None => return Ok(None),
         };
 
-        let outcome = tracked.emit(
+        let outcome = tracked.emit_with_resource_loader(
             |dest, source| match source {
                 Some(source) => {
                     let (oid, mode) = dest.change.oid_and_entry_mode();
@@ -168,7 +199,7 @@ where
                 None => Self::emit_change(dest.change, dest.location, &mut self.visit, &mut self.err),
             },
             diff_cache,
-            self.objects,
+            load_resource,
             |push| {
                 let mut delegate = tree_to_changes::Delegate::new(push, self.location);
                 let state = gix_traverse::tree::breadthfirst::State::default();

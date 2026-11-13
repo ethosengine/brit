@@ -165,3 +165,14 @@ mod impls {
         }
     }
 }
+
+/// Load one comparison resource using the caller's storage policy.
+/// The callback must preserve conversion, mode and binary-detection semantics.
+pub type ResourceLoader<'a> = dyn FnMut(
+        &mut Platform,
+        gix_hash::ObjectId,
+        gix_object::tree::EntryKind,
+        &bstr::BStr,
+        ResourceKind,
+    ) -> gix_error::Result
+    + 'a;

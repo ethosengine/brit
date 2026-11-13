@@ -530,6 +530,129 @@ fn append_only_blame_reclaims_completed_comparisons() -> Result<()> {
     Ok(())
 }
 
+#[test]
+fn blame_explicit_policy_matches_buffered_history() -> Result<()> {
+    let repo = TestRepo::new("memory-blame-policy")?;
+    let root = repo.path();
+    large_file(&root.join("history"), 20 * 1024 * 1024)?;
+    git(root, &["add", "history"])?;
+    git(root, &["commit", "-qm", "base"])?;
+    for i in 0..2 {
+        let mut file = fs::OpenOptions::new().append(true).open(root.join("history"))?;
+        writeln!(file, "{i:06} appended history")?;
+        drop(file);
+        git(root, &["commit", "-qam", "append"])?;
+    }
+    for packed in [false, true] {
+        if packed {
+            git(root, &["repack", "-ad"])?;
+        }
+        let args = ["blame", "-L", "321,322", "history"];
+        let buffered = brit(root, &args, "gitoxide.objects.allocLimit=1073741824")?;
+        let bounded = brit(root, &args, "gitoxide.objects.allocLimit=16777216")?;
+        ensure!(bounded == buffered, "allocation policy must preserve attribution");
+    }
+    git(root, &["mv", "history", "renamed"])?;
+    let mut file = fs::OpenOptions::new().append(true).open(root.join("renamed"))?;
+    writeln!(file, "000002 changed during rename")?;
+    drop(file);
+    git(root, &["commit", "-qam", "rename with an edit"])?;
+    let args = ["blame", "-L", "321,323", "renamed"];
+    let buffered = brit(root, &args, "gitoxide.objects.allocLimit=1073741824")?;
+    let bounded = brit(root, &args, "gitoxide.objects.allocLimit=16777216")?;
+    ensure!(
+        bounded == buffered,
+        "allocation policy must preserve rename attribution"
+    );
+    let mut file = fs::OpenOptions::new().append(true).open(root.join("renamed"))?;
+    writeln!(file, "uncommitted line")?;
+    drop(file);
+    let args = ["blame", "-L", "321,324", "renamed"];
+    let buffered = brit(root, &args, "gitoxide.objects.allocLimit=1073741824")?;
+    let bounded = brit(root, &args, "gitoxide.objects.allocLimit=16777216")?;
+    ensure!(
+        bounded == buffered && bounded.lines().last().is_some_and(|line| line.starts_with("00000000")),
+        "worktree attribution includes the uncommitted line"
+    );
+    let bare = tempfile::tempdir()?;
+    git(
+        root,
+        &["clone", "--bare", ".", bare.path().to_str().expect("temporary path")],
+    )?;
+    let args = ["blame", "-L", "321,323", "renamed"];
+    let buffered = brit(bare.path(), &args, "gitoxide.objects.allocLimit=1073741824")?;
+    let bounded = brit(bare.path(), &args, "gitoxide.objects.allocLimit=16777216")?;
+    ensure!(
+        bounded == buffered && bounded.lines().count() == 3,
+        "bare blame reads committed bytes"
+    );
+    Ok(())
+}
+
+#[cfg(target_os = "linux")]
+#[test]
+#[ignore = "requires chown authority: qualification runs this explicitly with --ignored"]
+fn blame_actual_reduced_trust_streams_history() -> Result<()> {
+    use std::{ffi::CString, os::unix::ffi::OsStrExt};
+    let repo = TestRepo::new("memory-blame-reduced")?;
+    let root = repo.path();
+    large_file(&root.join("history"), 20 * 1024 * 1024)?;
+    git(root, &["add", "history"])?;
+    git(root, &["commit", "-qm", "base"])?;
+    let expected = String::from_utf8(git(root, &["rev-parse", "HEAD"])?)?;
+    git(root, &["repack", "-ad"])?;
+    for path in [root.to_owned(), root.join(".git")] {
+        let path = CString::new(path.as_os_str().as_bytes())?;
+        // SAFETY: these NUL-terminated paths belong exclusively to this disposable fixture.
+        ensure!(
+            unsafe { libc::chown(path.as_ptr(), 65534, 65534) } == 0,
+            "requires chown authority"
+        );
+    }
+    let out = BritInvocation::new(brit_bin().expect("built Brit"))
+        .current_dir(root)
+        .args(["blame", "-L", "1,1", "history"])
+        .run()?;
+    ensure!(out.status.success(), "actual reduced-trust blame: {}", out.stderr);
+    ensure!(
+        out.stdout.starts_with(&expected[..8]),
+        "attribution retains the original commit"
+    );
+    Ok(())
+}
+
+#[test]
+fn blame_one_million_unique_short_lines() -> Result<()> {
+    let repo = TestRepo::new("memory-blame-million")?;
+    let root = repo.path();
+    let mut file = std::io::BufWriter::new(fs::File::create(root.join("history"))?);
+    for n in 0..1_000_000 {
+        writeln!(file, "line-{n:08} unique")?;
+    }
+    file.flush()?;
+    drop(file);
+    git(root, &["add", "history"])?;
+    git(root, &["commit", "-qm", "million lines"])?;
+    let base = String::from_utf8(git(root, &["rev-parse", "HEAD"])?)?;
+    fs::OpenOptions::new()
+        .append(true)
+        .open(root.join("history"))?
+        .write_all(b"last-line\n")?;
+    git(root, &["commit", "-qam", "append"])?;
+    let last = String::from_utf8(git(root, &["rev-parse", "HEAD"])?)?;
+    let output = brit(
+        root,
+        &["blame", "-L", "1,1", "-L", "1000001,1000001", "history"],
+        "gitoxide.objects.allocLimit=16777216",
+    )?;
+    let lines: Vec<_> = output.lines().collect();
+    ensure!(
+        lines.len() == 2 && lines[0].starts_with(&base[..8]) && lines[1].starts_with(&last[..8]),
+        "disjoint ranges preserve attribution across a million unique lines"
+    );
+    Ok(())
+}
+
 #[cfg(target_os = "linux")]
 #[test]
 fn archive_cancels_during_large_object_spooling() -> Result<()> {
