@@ -1205,7 +1205,7 @@ mod pack_alloc_limit_bytes {
             "trusted repositories keep reading packed objects without an implicit limit"
         );
 
-        let reduced = repo_opts(
+        let mut reduced = repo_opts(
             "make_packed_and_loose.sh",
             crate::util::restricted()
                 .with(Trust::Reduced)
@@ -1221,6 +1221,33 @@ mod pack_alloc_limit_bytes {
             reduced.find_object(packed_only_id).is_err(),
             "reduced trust applies the configured fallback allocation limit if none was configured"
         );
+
+        reduced.config_snapshot_mut().set_raw_value("core.abbrev", "8")?;
+        assert_eq!(
+            reduced.allocation_limit(),
+            Some(1),
+            "unrelated reload preserves fallback"
+        );
+        reduced
+            .config_snapshot_mut()
+            .set_raw_value("gitoxide.objects.allocLimitIfReducedTrust", "2")?;
+        assert_eq!(
+            reduced.allocation_limit(),
+            Some(2),
+            "reload observes an explicit fallback"
+        );
+        reduced
+            .config_snapshot_mut()
+            .set_raw_value("gitoxide.objects.allocLimitIfReducedTrust", "0")?;
+        assert_eq!(
+            reduced.allocation_limit(),
+            None,
+            "explicit fallback opt-out survives reload"
+        );
+        reduced
+            .config_snapshot_mut()
+            .set_raw_value("gitoxide.objects.allocLimit", "3")?;
+        assert_eq!(reduced.allocation_limit(), Some(3), "explicit allocation limit wins");
 
         let reduced_without_fallback = repo_opts(
             "make_packed_and_loose.sh",

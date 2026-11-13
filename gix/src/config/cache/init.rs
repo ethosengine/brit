@@ -120,9 +120,13 @@ impl Cache {
     /// However, those that are lazily read won't be re-evaluated right away and might thus pass now but fail later.
     ///
     /// Note that we unconditionally re-read all values.
-    pub fn reread_values_and_clear_caches_replacing_config(&mut self, config: crate::Config) -> Result<()> {
+    pub fn reread_values_and_clear_caches_replacing_config(
+        &mut self,
+        config: crate::Config,
+        trust: gix_sec::Trust,
+    ) -> Result<()> {
         let prev = std::mem::replace(&mut self.resolved, config);
-        match self.reread_values_and_clear_caches() {
+        match self.reread_values_and_clear_caches(trust) {
             Err(err) => {
                 drop(std::mem::replace(&mut self.resolved, prev));
                 Err(err)
@@ -133,7 +137,7 @@ impl Cache {
 
     /// Similar to `reread_values_and_clear_caches_replacing_config()`, but works on the existing configuration instead of a passed
     /// in one that it them makes the default.
-    pub fn reread_values_and_clear_caches(&mut self) -> Result<()> {
+    pub fn reread_values_and_clear_caches(&mut self, trust: gix_sec::Trust) -> Result<()> {
         let config = &self.resolved;
         let hex_len = util::parse_core_abbrev(config, self.object_hash).with_leniency(self.lenient_config)?;
 
@@ -154,6 +158,15 @@ impl Cache {
         let reflog = util::query_refupdates(config, self.lenient_config)?;
         let refs_namespace = util::query_refs_namespace(config, self.lenient_config)?;
 
+        let (static_pack_cache_limit_bytes, pack_cache_bytes, object_cache_bytes, alloc_limit_bytes) =
+            util::parse_object_caches(config, self.lenient_config, self.filter_config_section)?;
+        let alloc_limit_bytes = util::allocation_limit(
+            config,
+            alloc_limit_bytes,
+            trust,
+            self.lenient_config,
+            self.filter_config_section,
+        )?;
         self.hex_len = hex_len;
         self.ignore_case = ignore_case;
         self.reflog = reflog;
@@ -167,12 +180,10 @@ impl Cache {
             self.diff_renames = Default::default();
             self.diff_algorithm = Default::default();
         }
-        (
-            self.static_pack_cache_limit_bytes,
-            self.pack_cache_bytes,
-            self.object_cache_bytes,
-            self.alloc_limit_bytes,
-        ) = util::parse_object_caches(config, self.lenient_config, self.filter_config_section)?;
+        self.static_pack_cache_limit_bytes = static_pack_cache_limit_bytes;
+        self.pack_cache_bytes = pack_cache_bytes;
+        self.object_cache_bytes = object_cache_bytes;
+        self.alloc_limit_bytes = alloc_limit_bytes;
         let loose_compression =
             super::access::loose_compression(config, self.lenient_config, self.filter_config_section)?;
         self.loose_compression = loose_compression;
@@ -381,7 +392,8 @@ impl crate::Repository {
             self.config.object_cache_bytes,
             self.config.loose_compression,
         );
-        self.config.reread_values_and_clear_caches_replacing_config(config)?;
+        self.config
+            .reread_values_and_clear_caches_replacing_config(config, self.git_dir_trust())?;
         self.apply_changed_values();
         if previous_static_pack_cache_limit_bytes != self.config.static_pack_cache_limit_bytes
             || previous_pack_cache_bytes != self.config.pack_cache_bytes

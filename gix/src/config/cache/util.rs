@@ -119,6 +119,24 @@ pub(crate) fn parse_object_caches(
     ))
 }
 
+/// Reapply the ownership-derived fallback after every configuration reload.
+pub(crate) fn allocation_limit(
+    config: &gix_config::File,
+    explicit: Option<usize>,
+    trust: gix_sec::Trust,
+    lenient: bool,
+    mut filter: fn(&gix_config::file::Metadata) -> bool,
+) -> Result<Option<usize>> {
+    if explicit.is_some() || trust == gix_sec::Trust::Full {
+        return Ok(explicit);
+    }
+    let fallback = gitoxide::Objects::ALLOC_LIMIT_IF_REDUCED_TRUST
+        .try_into_usize(config.integer_filter(gitoxide::Objects::ALLOC_LIMIT_IF_REDUCED_TRUST, &mut filter))
+        .with_leniency(lenient)?
+        .unwrap_or(gitoxide::Objects::ALLOC_LIMIT_IF_REDUCED_TRUST_DEFAULT);
+    Ok((fallback != 0).then_some(fallback))
+}
+
 pub(crate) fn parse_core_abbrev(config: &gix_config::File, object_hash: gix_hash::Kind) -> Result<Option<usize>> {
     Ok(config
         .string("core.abbrev")

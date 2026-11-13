@@ -326,7 +326,7 @@ impl PrepareFetch {
                         )
                     })?;
                 repo.config
-                    .reread_values_and_clear_caches_replacing_config(resolved_config.into())?;
+                    .reread_values_and_clear_caches_replacing_config(resolved_config.into(), repo.git_dir_trust())?;
                 config = None;
             }
         }
