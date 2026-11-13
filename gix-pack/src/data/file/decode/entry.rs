@@ -274,11 +274,8 @@ where
                 .checked_mul(std::mem::size_of::<Delta>())
                 .ok_or_raise(|| allocation_error(ResourceExhaustionKind::AllocationFailure))?;
             let allocation_size = total_delta_data_size.max(chain_bytes as u64);
-            if self
-                .alloc_limit_bytes
-                .is_some_and(|limit| allocation_size > limit as u64)
-            {
-                bail!(allocation_error(ResourceExhaustionKind::AllocationLimit));
+            if let Some(limit) = self.alloc_limit_bytes.filter(|limit| allocation_size > *limit as u64) {
+                bail!(gix_error::message!("Pack delta chain requested {allocation_size} bytes: configured allocation limit is {limit} bytes").allocation_limit());
             }
             let decompressed_size = self.decoded_object_size(cursor.decompressed_size)?;
             if chain_capacity > chain.capacity() {
@@ -504,8 +501,13 @@ where
 /// Convert user-controlled sizes from pack data into allocation sizes while enforcing the configured allocation cap.
 fn decoded_object_size(size: u64, alloc_limit_bytes: Option<usize>) -> Result<usize> {
     let size = usize::try_from(size).or_raise(|| allocation_error(ResourceExhaustionKind::AllocationFailure))?;
-    if alloc_limit_bytes.is_some_and(|limit| size > limit) {
-        bail!(allocation_error(ResourceExhaustionKind::AllocationLimit));
+    if let Some(limit) = alloc_limit_bytes.filter(|limit| size > *limit) {
+        bail!(
+            gix_error::message!(
+                "Pack object decode requested {size} bytes: configured allocation limit is {limit} bytes"
+            )
+            .allocation_limit()
+        );
     }
     Ok(size)
 }

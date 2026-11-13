@@ -115,7 +115,7 @@ mod method {
                 &mut gix_odb::pack::cache::Never,
             )
             .expect_err("pack-controlled allocations larger than the configured limit are rejected");
-        insta::assert_debug_snapshot!(err, "decode entry respects alloc limit bytes", @"Entry too large to fit in memory");
+        insta::assert_debug_snapshot!(err, "decode entry respects alloc limit bytes", @"Pack object decode requested 187 bytes: configured allocation limit is 0 bytes");
         assert_eq!(
             err.classify().find_map(|classification| match classification.class() {
                 gix_error::Class::ResourceExhaustion(kind) => Some(kind),

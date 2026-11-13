@@ -1212,6 +1212,11 @@ mod pack_alloc_limit_bytes {
                 .config_overrides(["gitoxide.objects.allocLimitIfReducedTrust=1"]),
         )?
         .to_thread_local();
+        assert_eq!(
+            reduced.allocation_limit(),
+            Some(1),
+            "the public limit includes reduced-trust policy"
+        );
         assert!(
             reduced.find_object(packed_only_id).is_err(),
             "reduced trust applies the configured fallback allocation limit if none was configured"

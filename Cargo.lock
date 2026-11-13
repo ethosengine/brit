@@ -4005,6 +4005,7 @@ dependencies = [
  "gix-testtools",
  "gix-utils 0.5.2",
  "insta",
+ "memmap2",
  "prodash",
  "tempfile",
  "unicode-normalization",

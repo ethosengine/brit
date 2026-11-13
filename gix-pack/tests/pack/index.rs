@@ -596,7 +596,7 @@ fn verify_integrity_respects_pack_alloc_limit_bytes() -> gix_testtools::TestResu
             Object Oid(1) at offset 12 could not be decoded
             
             Caused by:
-                0: Entry too large to fit in memory,
+                0: Pack object decode requested 223 bytes: configured allocation limit is 0 bytes,
         ),
         (
             DeltaTreeLookup,

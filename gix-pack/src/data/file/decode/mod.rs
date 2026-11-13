@@ -1,4 +1,4 @@
-use gix_error::{ResourceExhaustionKind, Result, ResultExt, bail};
+use gix_error::{Result, ResultExt, bail};
 
 ///
 pub mod entry;
@@ -7,8 +7,11 @@ pub mod header;
 
 /// Check the whole buffer size before growing it, avoiding amortized growth beyond a configured cap.
 pub(crate) fn resize_with_limit(out: &mut Vec<u8>, len: usize, alloc_limit_bytes: Option<usize>) -> Result {
-    if alloc_limit_bytes.is_some_and(|limit| len > limit) {
-        bail!(allocation_error(ResourceExhaustionKind::AllocationLimit));
+    if let Some(limit) = alloc_limit_bytes.filter(|limit| len > *limit) {
+        bail!(
+            gix_error::message!("Pack decode requested {len} bytes: configured allocation limit is {limit} bytes")
+                .allocation_limit()
+        );
     }
     let additional = len.saturating_sub(out.len());
     if alloc_limit_bytes.is_some() {
@@ -16,7 +19,10 @@ pub(crate) fn resize_with_limit(out: &mut Vec<u8>, len: usize, alloc_limit_bytes
     } else {
         out.try_reserve(additional)
     }
-    .or_raise(|| allocation_error(ResourceExhaustionKind::AllocationFailure))?;
+    .or_raise(|| {
+        gix_error::message!("Pack decode could not allocate a {len}-byte buffer (additional {additional} bytes)")
+            .allocation_failure()
+    })?;
     out.resize(len, 0);
     Ok(())
 }

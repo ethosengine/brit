@@ -743,11 +743,14 @@ fn pack_location_allocation_failures_are_resource_exhaustion() -> gix_testtools:
             .filter_map(|error| error.downcast_ref::<Message>())
             .find(|diagnostic| diagnostic.message.starts_with("Cannot store pack entry"))
             .expect("the failed allocation has a diagnostic");
-        if limit.is_some() {
+        if let Some(limit) = limit {
             assert_eq!(
                 err.to_string(),
-                "Cannot store pack entry in memory: allocation limit exceeded",
-                "allocation limits retain their diagnostic without metadata suffixes"
+                format!(
+                    "Cannot store pack entry at offset {blob_offset} in {}: requested {size} bytes, configured allocation limit is {limit} bytes",
+                    pack_dir.join(format!("pack-{pack_id}.pack")).display()
+                ),
+                "configured refusals identify the operation, requested size, limit and pack location"
             );
         } else if usize::try_from(size).is_err() {
             assert_eq!(

@@ -212,6 +212,12 @@ impl crate::Repository {
         self.config.big_file_threshold()
     }
 
+    /// The effective per-allocation limit, including the reduced-trust default.
+    /// Streaming callers can avoid allocations above this limit without changing trust or configuration.
+    pub fn allocation_limit(&self) -> Option<usize> {
+        self.config.alloc_limit_bytes
+    }
+
     /// Create a low-level parser for ignore patterns, for instance for use in [`excludes()`](crate::Repository::excludes()).
     ///
     /// Depending on the configuration, precious-file parsing in `.gitignore-files` is supported.

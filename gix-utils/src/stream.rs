@@ -9,7 +9,7 @@ use std::{
     },
 };
 
-/// The maximum live temporary content, shared by every stage of one checkout.
+/// The maximum live temporary content, shared by every stage of one operation.
 pub const SCRATCH_LIMIT: u64 = 1024 * 1024 * 1024;
 /// Transfer size, independent of object sizes.
 pub const CHUNK: usize = 64 * 1024;
@@ -31,15 +31,28 @@ impl Budget {
     }
     /// Open an empty, automatically removed spool.
     pub fn spool(self: &Arc<Self>) -> io::Result<Spool> {
+        self.spool_in(self.directory.path(), "blob-", None)
+    }
+    /// Open charged temporary content on a destination filesystem. Permissions are
+    /// passed to file creation, so the process umask remains authoritative.
+    pub fn spool_in(
+        self: &Arc<Self>,
+        parent: &Path,
+        prefix: &str,
+        permissions: Option<std::fs::Permissions>,
+    ) -> io::Result<Spool> {
         let mut builder = tempfile::Builder::new();
-        builder.prefix("blob-");
+        builder.prefix(prefix);
         #[cfg(unix)]
         {
             use std::os::unix::fs::PermissionsExt;
             builder.permissions(std::fs::Permissions::from_mode(0o666));
         }
+        if let Some(permissions) = permissions {
+            builder.permissions(permissions);
+        }
         Ok(Spool {
-            file: Some(builder.tempfile_in(self.directory.path())?),
+            file: Some(builder.tempfile_in(parent)?),
             budget: self.clone(),
             len: 0,
             position: 0,
@@ -52,10 +65,13 @@ impl Budget {
     fn reserve(&self, bytes: u64) -> io::Result<()> {
         let mut live = self.live.load(Ordering::Relaxed);
         loop {
-            let next = live
-                .checked_add(bytes)
-                .filter(|n| *n <= SCRATCH_LIMIT)
-                .ok_or_else(|| io::Error::other("Checkout exceeds the hard 1 GiB aggregate scratch budget"))?;
+            let next = live.checked_add(bytes).filter(|n| *n <= SCRATCH_LIMIT).ok_or_else(|| {
+                io::Error::other(ScratchLimit {
+                    requested: bytes,
+                    live,
+                    path: self.directory.path().to_owned(),
+                })
+            })?;
             match self
                 .live
                 .compare_exchange_weak(live, next, Ordering::Relaxed, Ordering::Relaxed)
@@ -69,6 +85,41 @@ impl Budget {
         }
     }
 }
+/// A scratch quota refusal, distinct from allocator failure and filesystem errors.
+#[derive(Debug)]
+pub struct ScratchLimit {
+    /// Additional bytes requested by the operation.
+    pub requested: u64,
+    /// Bytes already charged, including sparse file holes.
+    pub live: u64,
+    /// Operation-owned directory whose quota was exhausted.
+    pub path: std::path::PathBuf,
+}
+impl std::fmt::Display for ScratchLimit {
+    fn fmt(&self, out: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(
+            out,
+            "Scratch write requested {} bytes with {} bytes live: hard 1 GiB aggregate scratch budget ({} bytes) at {} exceeded",
+            self.requested,
+            self.live,
+            SCRATCH_LIMIT,
+            self.path.display()
+        )
+    }
+}
+impl std::error::Error for ScratchLimit {}
+
+/// Immutable bytes backed by an operation-owned file. Mapping is dropped before its file.
+pub struct Mapped {
+    map: Option<memmap2::Mmap>,
+    _spool: Spool,
+}
+impl Mapped {
+    /// Borrow the bytes without allocating another complete copy.
+    pub fn as_slice(&self) -> &[u8] {
+        self.map.as_deref().unwrap_or_default()
+    }
+}
 /// A seekable temporary file whose growth is charged before any write.
 pub struct Spool {
     file: Option<tempfile::NamedTempFile>,
@@ -77,6 +128,22 @@ pub struct Spool {
     position: u64,
 }
 impl Spool {
+    /// Freeze this spool, retaining its quota until the read-only mapping is dropped.
+    #[allow(
+        unsafe_code,
+        reason = "Mapping an exclusively owned immutable spool requires memmap2's unsafe constructor"
+    )]
+    pub fn into_mapped(self) -> io::Result<Mapped> {
+        let map = if self.is_empty() {
+            None
+        } else {
+            // SAFETY: the file was created exclusively in our private directory. This
+            // consumes its only writable handle, and Mapped exposes neither that handle
+            // nor its path. No code can truncate or write it while the mapping is alive.
+            Some(unsafe { memmap2::Mmap::map(self.file.as_ref().expect("spool owns its file").as_file())? })
+        };
+        Ok(Mapped { map, _spool: self })
+    }
     /// Logical length, including holes.
     pub fn len(&self) -> u64 {
         self.len
@@ -103,6 +170,17 @@ impl Spool {
     pub fn publish(mut self, path: &Path) -> io::Result<File> {
         let file = self.file.take().expect("spool owns its file");
         match file.persist_noclobber(path) {
+            Ok(file) => Ok(file),
+            Err(err) => {
+                self.file = Some(err.file);
+                Err(err.error)
+            }
+        }
+    }
+    /// Atomically replace a destination with this completed spool, releasing its quota.
+    pub fn publish_replace(mut self, path: &Path) -> io::Result<File> {
+        let file = self.file.take().expect("spool owns its file");
+        match file.persist(path) {
             Ok(file) => Ok(file),
             Err(err) => {
                 self.file = Some(err.file);
@@ -163,7 +241,7 @@ impl Write for Spool {
 /// Poll cancellation without `Interrupted`, which standard I/O helpers retry indefinitely.
 pub fn check(interrupt: &AtomicBool) -> io::Result<()> {
     if interrupt.load(Ordering::Relaxed) {
-        Err(io::Error::other(gix_error::cancelled("Checkout interrupted")))
+        Err(io::Error::other(gix_error::cancelled("Object processing interrupted")))
     } else {
         Ok(())
     }
@@ -187,6 +265,21 @@ pub fn copy(input: &mut impl Read, output: &mut impl Write, interrupt: &AtomicBo
 mod tests {
     use super::*;
     #[test]
+    fn mapping_keeps_quota_and_releases_it_after_readers() -> io::Result<()> {
+        let dir = tempfile::tempdir()?;
+        let budget = Budget::new(dir.path())?;
+        for bytes in [&b""[..], &b"immutable bytes"[..]] {
+            let mut spool = budget.spool()?;
+            spool.write_all(bytes)?;
+            let mapped = spool.into_mapped()?;
+            assert_eq!(mapped.as_slice(), bytes);
+            assert_eq!(budget.usage().0, bytes.len() as u64);
+            drop(mapped);
+            assert_eq!(budget.usage().0, 0);
+        }
+        Ok(())
+    }
+    #[test]
     fn hard_quota_counts_holes_and_is_reclaimed() -> io::Result<()> {
         let dir = tempfile::tempdir()?;
         let budget = Budget::new(dir.path())?;
@@ -198,7 +291,13 @@ mod tests {
         second.seek(SeekFrom::Start(SCRATCH_LIMIT + 1))?;
         assert_eq!(second.write(&[])?, 0);
         second.rewind()?;
-        assert!(second.write_all(&[2]).is_err());
+        let error = second.write_all(&[2]).expect_err("aggregate scratch is full");
+        let refusal = error
+            .get_ref()
+            .and_then(|error| error.downcast_ref::<ScratchLimit>())
+            .expect("quota refusal is distinct from a filesystem error");
+        assert_eq!(refusal.requested, 1);
+        assert_eq!(refusal.live, SCRATCH_LIMIT);
         first.rewind()?;
         first.write_all(&[3])?; // overwriting is not growth
         assert_eq!(budget.usage().0, SCRATCH_LIMIT);
@@ -221,6 +320,25 @@ mod tests {
         assert!(spool.publish(&path).is_err());
         assert_eq!(std::fs::read(path)?, b"retained");
         assert_eq!(budget.usage().0, 0);
+        Ok(())
+    }
+    #[test]
+    fn destination_temporary_is_charged_until_replacement() -> io::Result<()> {
+        let dir = tempfile::tempdir()?;
+        let destination = tempfile::tempdir()?;
+        let path = destination.path().join("file");
+        std::fs::write(&path, b"before")?;
+        let budget = Budget::new(dir.path())?;
+        let mut source = budget.spool()?;
+        source.write_all(b"after")?;
+        source.rewind()?;
+        let mut staged = budget.spool_in(destination.path(), ".brit-restore-", None)?;
+        copy(&mut source, &mut staged, &AtomicBool::new(false))?;
+        assert_eq!(budget.usage(), (10, 10));
+        drop(source);
+        staged.publish_replace(&path)?;
+        assert_eq!(budget.usage(), (0, 10));
+        assert_eq!(std::fs::read(path)?, b"after");
         Ok(())
     }
     #[test]

@@ -20,7 +20,7 @@
 #![cfg_attr(all(doc, feature = "document-features"), doc = ::document_features::document_features!())]
 #![cfg_attr(all(doc, feature = "document-features"), feature(doc_cfg))]
 #![deny(missing_docs)]
-#![forbid(unsafe_code)]
+#![deny(unsafe_code)]
 
 /// Cache efficiency diagnostics, enabled with `cache-efficiency-debug`.
 pub mod cache;

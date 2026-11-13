@@ -377,8 +377,8 @@ where
                         // This allocation is driven by on-disk pack metadata, so keep it aligned with
                         // `gix_pack::data::File::with_alloc_limit_bytes()`.
                         let size = entry.decompressed_size;
-                        if pack.alloc_limit_bytes.is_some_and(|limit| size > limit as u64) {
-                            bail!("Cannot store pack entry in memory: allocation limit exceeded".allocation_limit());
+                        if let Some(limit) = pack.alloc_limit_bytes.filter(|limit| size > *limit as u64) {
+                            bail!(message!("Cannot store pack entry at offset {pack_offset} in {}: requested {size} bytes, configured allocation limit is {limit} bytes", pack.path().display()).allocation_limit());
                         }
                         let size_usize = usize::try_from(size).or_raise(|| {
                             message!("Cannot store pack entry of {size} bytes in memory: the entry size cannot be represented in memory")
