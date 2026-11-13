@@ -15,6 +15,57 @@ scheduler. Use native context for observed environment and citation blockers.
 - [ ] Installed delivery: fresh standalone install, feature/platform matrix, upgrade and rollback prove the executable and installed epr interface; package publication and clean consumer tests identify exact source revisions. Requires native integration; serves brit-native-daily-driver.
 - [ ] Operational qualification through our own ongoing development across workspaces: complete the loop, preserve Git interoperability and recover interrupted work, recording actual outcomes as we daily-drive Brit. Cross-workspace verification follows this integration pass; scripted identities do not establish it. Serves brit-native-daily-driver.
 
+## Next-sprint backlog: detect compatibility failures during development — 2026-11-13
+
+- [ ] Early compatibility feedback: make changed test families expose host assumptions during their owning sprint, before release integration. Serves brit-native-daily-driver.
+
+Observed character: CI runs `43320400970`, `43324701858` and `43327296378`
+found host-dependent fixture names, newline conversion, missing external tools
+and a Unicode display-width/byte-offset bug. Clippy caught a compiler-sensitive
+lint separately; it does not establish filesystem, executable or text-rendering
+semantics. Keep strict Clippy as one check rather than treating it as portability
+proof.
+
+Scope and acceptance:
+
+1. Add a small local fixture check that detects byte-exact golden inputs lacking
+   explicit line-ending treatment. Exercise checkout with CRLF conversion enabled
+   and require the same expected bytes. Review unusual filename fixtures for
+   Windows restrictions, macOS canonical composition and malformed UTF-8 support;
+   use host-admissible cases plus pure unit coverage, preserving shared assertions.
+   Avoid blanket bans on filenames that are intentional negative tests.
+2. Declare external test-tool requirements in the owning existing test/CI setup
+   and check them before expensive builds. Cover `time`, `timeout`/`gtimeout`,
+   canonical executable invocation and the minimal 32-bit images. Missing tools
+   must produce a direct prerequisite failure, never a silent test skip or pass.
+3. Establish a compact text-boundary test pattern for rendering changes: ASCII,
+   multibyte characters, combining marks, wide characters, malformed bytes and
+   control characters. Keep byte offsets distinct from character/display widths;
+   include a stock-Git oracle where relevant. Demonstrate that the prior diff-stat
+   clipping bug fails this local check; do not weaken exact-byte assertions.
+4. Run the changed public test families on native Windows and macOS early in
+   each sprint, with Linux as the local floor. Reuse the existing workflows and
+   prerequisites; define and test which source/fixture changes select each family.
+   Uncertain selection must be visible and select broader coverage. Measure time
+   to first useful verdict against the recorded integration runs. The full exact-
+   commit release matrix remains required; focused checks do not replace it.
+5. Prove these checks with seeded versions of the observed failures and passing
+   corrected cases. Record executable/toolchain, platform, selected tests and
+   elapsed time in the owning habit. Reuse the existing readiness contracts;
+   introduce no parallel governance register or unchecked suppression.
+
+Separate follow-up: investigate the Windows concurrent-note CAS stress-test
+refusal from `43327296378`. Its implementation and test were byte-identical to
+main, and the earlier Windows run passed. Reproduce contention and distinguish
+lock acquisition from moved-ref retries before proposing a fix; do not disguise
+it with a timeout increase, automatic rerun or portability exclusion.
+
+Maintainer station: daily-driver release / between locally passing sprint →
+platform-qualified candidate / missing node: changed fixtures and test tools have
+host-admissible behavior, proved by local preflight plus focused native matrix.
+This backlog is unimplemented; readiness stays RED and the 1 GiB scratch cap,
+recovery assertions and cancellation boundaries remain unchanged.
+
 ## Daily-driver release integration — 2026-11-12
 
 The first candidate (`abc4c1023`, CI 43320400970) passed strict lint, MSRV,
