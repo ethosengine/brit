@@ -1153,6 +1153,19 @@ fn check_trace(events: &[Event], baseline_len: usize, root: &Path, root_id: Iden
             );
             let state: Manifest = serde_json::from_slice(&envelope.payload)?;
             active_manifest = Some(state.clone());
+            if !state.preparing {
+                for (hash, size) in &state.payloads {
+                    let name = Path::new(".git/brit-switch").join(format!("payload-{hash}"));
+                    let State::File { bytes, .. } = durable.state(root_id, &name) else {
+                        panic!("prepared journal requires durable payload {hash} at boundary {position}");
+                    };
+                    assert_eq!(bytes.len() as u64, *size);
+                    assert_eq!(
+                        gix::objs::compute_hash(gix::hash::Kind::Sha1, gix::objs::Kind::Blob, &bytes)?.to_string(),
+                        *hash
+                    );
+                }
+            }
             if let Some(pull) = &state.pull {
                 pull_seen = true;
                 if pull.fetch_decision {

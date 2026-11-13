@@ -2,10 +2,12 @@
 //!
 //! Durability means successful file and containing-directory `sync_all` calls on Linux.
 //! Arbitrary external writers are detected by before/after comparisons, not isolated.
-use super::super::index::authoring::{read_index, refuse_external_filters, worktree_entry};
+use super::super::index::authoring::{read_index, refuse_external_filters, worktree_entry_spooled};
 use anyhow::{Context, Result, bail, ensure};
 use gix::bstr::{BStr, BString, ByteSlice};
 use gix::index::entry::{Flags, Mode, Stat};
+use gix::objs::FindStream;
+use gix::utils::stream::{self, Budget};
 use serde::{Deserialize, Serialize};
 use std::{
     collections::{BTreeMap, BTreeSet},
@@ -15,7 +17,9 @@ use std::{
 };
 
 const JOURNAL: &str = "brit-switch";
-const VERSION: u32 = 2;
+const VERSION: u32 = 3;
+
+mod payload;
 
 mod object_store;
 pub(crate) use object_store::{validate_local_history, validate_object_boundaries};
@@ -25,12 +29,13 @@ mod pull;
 #[cfg(feature = "blocking-client")]
 pub use pull::{execute as pull_execute, recover as pull_recover};
 
-#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Clone, Debug, Eq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub(crate) enum State {
     Absent,
     Directory { mode: u32, device: u64, inode: u64 },
     File { mode: u32, bytes: Vec<u8> },
+    StoredFile { mode: u32, size: u64, checksum: String },
     Symlink(Vec<u8>),
 }
 #[derive(Clone, Debug, Serialize, Deserialize)]
@@ -52,6 +57,12 @@ pub(crate) struct Lock {
 #[serde(deny_unknown_fields)]
 struct Manifest {
     version: u32,
+    #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
+    payloads: BTreeMap<String, u64>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    scratch: Option<payload::ScratchDirectory>,
+    #[serde(skip)]
+    budget: Option<std::sync::Arc<Budget>>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pull: Option<Pull>,
     git_dir: Vec<u8>,
@@ -396,6 +407,12 @@ fn save(repo: &gix::Repository, state: &Manifest) -> Result<()> {
     if staged.exists() {
         fs::remove_file(&staged)?;
     }
+    payload::check_growth(&root, bytes.len() as u64)?;
+    let _charge = state
+        .budget
+        .as_ref()
+        .map(|budget| budget.charge(bytes.len() as u64))
+        .transpose()?;
     private_write(&staged, &bytes)?;
     fs::rename(staged, root.join("manifest.json"))?;
     sync_dir(&root)
@@ -414,14 +431,15 @@ fn load(repo: &gix::Repository) -> Result<Manifest> {
         metadata.is_file() && metadata.permissions().mode().trailing_zeros() >= 6,
         "unsafe switch manifest"
     );
-    let envelope: Envelope = serde_json::from_slice(&fs::read(manifest_path)?)?;
+    let envelope: Envelope = serde_json::from_reader(std::io::BufReader::new(fs::File::open(manifest_path)?))?;
     ensure!(
         digest(&envelope.payload)? == envelope.checksum,
         "corrupt switch journal checksum; evidence retained"
     );
     let state: Manifest = serde_json::from_slice(&envelope.payload)?;
+    drop(envelope);
     ensure!(
-        (state.version == 1 && state.pull.is_none()) || state.version == VERSION,
+        (state.version == 1 && state.pull.is_none()) || matches!(state.version, 2 | VERSION),
         "unsupported recovery journal version"
     );
     ensure!(
@@ -482,6 +500,13 @@ fn load(repo: &gix::Repository) -> Result<Manifest> {
         .into_iter()
         .map(|name| name.as_bytes().to_vec())
         .collect();
+    payload::validate(&root, &state)?;
+    allowed.extend(
+        state
+            .payloads
+            .keys()
+            .map(|checksum| format!("payload-{checksum}").into_bytes()),
+    );
     let mut directory_states = BTreeMap::new();
     if let Some(pull) = &state.pull {
         for (i, change) in pull.directories.iter().enumerate() {
@@ -744,7 +769,7 @@ struct Preparation {
 }
 impl Drop for Preparation {
     fn drop(&mut self) {
-        if self.armed {
+        if self.armed && !gix::interrupt::is_triggered() {
             use std::os::unix::fs::MetadataExt;
             // Keep ownership evidence if a normal lock release failed or an owned lock
             // was edited in place. A pre-existing contended lock has a different inode.
@@ -763,7 +788,7 @@ impl Drop for Preparation {
             }) {
                 return;
             }
-            // Only used on a normal preflight return. SIGKILL keeps all ownership evidence.
+            // Only used on a normal preflight refusal. Interruption retains recovery intent.
             if let Ok(entries) = fs::read_dir(&self.directory) {
                 for entry in entries.flatten() {
                     if entry.file_type().is_ok_and(|kind| kind.is_dir()) {
@@ -863,6 +888,9 @@ fn execute_locked(repo: gix::Repository, branch: &BStr, _shared: fs::File, pinne
     super::super::authoring::hook_path(&repo, if pulling { "post-merge" } else { "post-checkout" })?;
     let mut state = Manifest {
         version: VERSION,
+        payloads: pinned.as_ref().map(|state| state.payloads.clone()).unwrap_or_default(),
+        scratch: None,
+        budget: None,
         pull: pinned.as_ref().and_then(|state| state.pull.clone()),
         git_dir: raw(&fs::canonicalize(git_dir)?)?,
         root: raw(&fs::canonicalize(root)?)?,
@@ -904,6 +932,7 @@ fn execute_locked(repo: gix::Repository, branch: &BStr, _shared: fs::File, pinne
         aborting: false,
         hook: "not-started".into(),
     };
+    payload::attach_budget(&repo, &mut state)?;
     use std::os::unix::fs::DirBuilderExt;
     sync_dir(root)?;
     sync_dir(git_dir)?;
@@ -952,6 +981,7 @@ fn execute_locked(repo: gix::Repository, branch: &BStr, _shared: fs::File, pinne
             );
         }
     }
+    let budget = state.budget.as_ref().context("switch scratch budget")?.clone();
     for name in &changed {
         validate_path(name)?;
         for entries in [&source_entries, &destination_entries, &index_entries] {
@@ -969,15 +999,18 @@ fn execute_locked(repo: gix::Repository, branch: &BStr, _shared: fs::File, pinne
                 "staged changes overlap switch: {}",
                 name.as_bstr()
             );
-            let actual = worktree_entry(&repo, &index, &BString::from(name.clone()))?;
-            let blob = repo.find_object(*oid)?.try_into_blob()?;
-            ensure!(
-                actual
-                    .as_ref()
-                    .is_some_and(|(actual_mode, bytes)| actual_mode == mode && *bytes == blob.data),
-                "unstaged changes overlap switch: {}",
-                name.as_bstr()
-            );
+            let _charge = payload::charge(&budget, &journal(&repo))?;
+            let actual = worktree_entry_spooled(&repo, &index, &BString::from(name.clone()), &budget)?;
+            let (kind, expected) = repo
+                .objects
+                .find_stream(oid, &budget, &gix::interrupt::IS_INTERRUPTED)?;
+            ensure!(kind == gix::objs::Kind::Blob, "switch source is not a blob: {oid}");
+            let clean = if let Some((actual_mode, bytes)) = actual {
+                actual_mode == *mode && stream::equal(bytes, expected, &gix::interrupt::IS_INTERRUPTED)?
+            } else {
+                false
+            };
+            ensure!(clean, "unstaged changes overlap switch: {}", name.as_bstr());
         }
     }
     if repo.config_snapshot().try_boolean("core.ignorecase")? == Some(true) {
@@ -1012,11 +1045,11 @@ fn execute_locked(repo: gix::Repository, branch: &BStr, _shared: fs::File, pinne
     let mut attrs = repo.attributes_only(&new_index, gix::worktree::stack::state::attributes::Source::IdMapping)?;
     // Every path the switch rewrites is checked, including a pull's fast-forward change set.
     refuse_external_filters(&repo, &mut attrs, changed.iter().map(|name| name.as_bstr()))?;
-    let mut pipeline = gix::filter::Pipeline::new(&repo, attrs.detach())?;
+    let (mut pipeline, mut attrs) = gix::filter::Pipeline::new(&repo, attrs.detach())?.into_parts();
     let mut changes = BTreeMap::<Vec<u8>, Change>::new();
     for name in &changed {
         let absolute = root.join(path(name)?);
-        let before = snapshot(&absolute)?;
+        let before = payload::snapshot(&repo, &mut state, &absolute, &budget)?;
         if !source_entries.contains_key(name) {
             ensure!(
                 matches!(before, State::Absent | State::Directory { .. }),
@@ -1025,29 +1058,44 @@ fn execute_locked(repo: gix::Repository, branch: &BStr, _shared: fs::File, pinne
             );
         }
         let after = if let Some((mode, oid)) = destination_entries.get(name) {
-            let blob = repo.find_object(*oid)?.try_into_blob()?;
+            let _charge = payload::charge(&budget, &journal(&repo))?;
+            let (kind, mut source) = repo
+                .objects
+                .find_stream(oid, &budget, &gix::interrupt::IS_INTERRUPTED)?;
+            ensure!(kind == gix::objs::Kind::Blob, "switch destination is not a blob: {oid}");
             if *mode == Mode::SYMLINK {
-                ensure!(
-                    !blob.data.is_empty() && !blob.data.contains(&0),
-                    "invalid symlink target"
-                );
+                let mut bytes = Vec::new();
+                source.read_to_end(&mut bytes)?;
+                ensure!(!bytes.is_empty() && !bytes.contains(&0), "invalid symlink target");
                 if repo.config_snapshot().try_boolean("core.symlinks")? == Some(false) {
                     State::File {
                         mode: creation_mode(0o666)?,
-                        bytes: blob.data.clone(),
+                        bytes,
                     }
                 } else {
-                    State::Symlink(blob.data.clone())
+                    State::Symlink(bytes)
                 }
             } else {
-                let mut bytes = Vec::new();
-                pipeline
-                    .convert_to_worktree(&blob.data, name.as_bstr(), Default::default())?
-                    .read_to_end(&mut bytes)?;
-                State::File {
-                    mode: creation_mode(if *mode == Mode::FILE_EXECUTABLE { 0o777 } else { 0o666 })?,
-                    bytes,
-                }
+                let entry = attrs.at_entry(name.as_bstr(), None, &repo.objects)?;
+                let source = pipeline.convert_to_worktree_stream(
+                    source,
+                    name.as_bstr(),
+                    &mut |_, attrs| {
+                        entry.matching_attributes(attrs);
+                    },
+                    Default::default(),
+                    &budget,
+                    &gix::interrupt::IS_INTERRUPTED,
+                )?;
+                let gix::filter::plumbing::pipeline::stream::Outcome::Ready(source) = source else {
+                    unreachable!("delay is forbidden")
+                };
+                payload::store(
+                    &repo,
+                    &mut state,
+                    source,
+                    creation_mode(if *mode == Mode::FILE_EXECUTABLE { 0o777 } else { 0o666 })?,
+                )?
             }
         } else {
             State::Absent
@@ -1235,7 +1283,12 @@ pub(crate) fn complete_directory_ledger(
         }
     }
     for change in changes.values() {
-        if change.before != change.after && matches!(change.before, State::File { .. } | State::Symlink(_)) {
+        if change.before != change.after
+            && matches!(
+                change.before,
+                State::File { .. } | State::StoredFile { .. } | State::Symlink(_)
+            )
+        {
             ensure!(
                 source_paths.contains(&change.path),
                 "untracked or ignored ancestor collision: {}",
@@ -1393,6 +1446,13 @@ pub(crate) fn publish_file(staging: &Path, root: &Path, change: &Change, desired
             sync_dir(staging)?;
             sync_dir(&absolute)?;
         }
+        State::StoredFile { mode, size, checksum } => {
+            ensure!(
+                !matches!(actual, State::Directory { .. }),
+                "directory transition was not prepared"
+            );
+            payload::publish(staging, &absolute, *mode, *size, checksum, &actual)?;
+        }
         State::File { mode, bytes } => {
             ensure!(
                 !matches!(actual, State::Directory { .. }),
@@ -1435,7 +1495,7 @@ pub(crate) fn publish_file(staging: &Path, root: &Path, change: &Change, desired
         }
     }
     sync_dir(parent)?;
-    if let State::File { .. } = desired {
+    if matches!(desired, State::File { .. } | State::StoredFile { .. }) {
         sync_path(&absolute)?;
     }
     Ok(())
@@ -1444,21 +1504,14 @@ fn apply_files(repo: &gix::Repository, state: &mut Manifest) -> Result<()> {
     let root = path(&state.root)?;
     verify_files(&root, &state.changes, &state.started)?;
     let aborting = state.aborting;
-    let desired = |change: &Change| {
-        if aborting {
-            change.before.clone()
-        } else {
-            change.after.clone()
-        }
-    };
-    let mut ordered: Vec<_> = state.changes.clone();
+    let mut ordered: Vec<_> = state.changes.iter().collect();
     ordered.sort_by_key(|change| std::cmp::Reverse(change.path.len()));
     // Remove obsolete entries from children to parents. Empty-directory-only removal never
     // discards untracked children that arrived after preflight.
     for change in &ordered {
-        let target = desired(change);
+        let target = if aborting { &change.before } else { &change.after };
         let actual = snapshot(&root.join(path(&change.path)?))?;
-        let must_remove = target == State::Absent
+        let must_remove = *target == State::Absent
             || (actual != State::Absent
                 && ((matches!(target, State::Directory { .. })) != (matches!(actual, State::Directory { .. }))));
         if must_remove && actual != State::Absent {
@@ -1471,19 +1524,19 @@ fn apply_files(repo: &gix::Repository, state: &mut Manifest) -> Result<()> {
     }
     ordered.reverse();
     for change in &ordered {
-        let target = desired(change);
-        if target != State::Absent {
+        let target = if aborting { &change.before } else { &change.after };
+        if *target != State::Absent {
             if state.started.insert(change.path.clone()) {
                 save(repo, state)?;
             }
-            publish_file(&journal(repo), &root, change, &target)?;
+            publish_file(&journal(repo), &root, change, target)?;
             checkpoint(if state.aborting { "abort-file" } else { "file-published" })?;
         }
     }
     // Any fresh external edit before the durable decision is a conflict.
     for change in &state.changes {
         ensure!(
-            snapshot(&root.join(path(&change.path)?))? == desired(change),
+            snapshot(&root.join(path(&change.path)?))? == *if aborting { &change.before } else { &change.after },
             "filesystem changed during switch: {}",
             change.path.as_bstr()
         );
@@ -1588,6 +1641,12 @@ fn cleanup(repo: &gix::Repository, state: &Manifest) -> Result<()> {
     checkpoint("keeps-cleaned")?;
     // Once the rename is durable, partial garbage collection is never mistaken for an active journal.
     fs::remove_file(completed.join("manifest.json"))?;
+    for checksum in state.payloads.keys() {
+        let path = completed.join(format!("payload-{checksum}"));
+        if present(&path)? {
+            fs::remove_file(path)?;
+        }
+    }
     for name in ["manifest.next", "publication"] {
         if fs::symlink_metadata(completed.join(name)).is_ok() {
             fs::remove_file(completed.join(name))?;
@@ -1849,6 +1908,8 @@ fn recover_operation(repo: gix::Repository, abort: bool, pulling: bool) -> Resul
             Err(error) => return Err(error.into()),
         }
     }
+    payload::retire_scratch(&repo, &state)?;
+    payload::attach_budget(&repo, &mut state)?;
     for lock in &state.locks {
         let lock_path = path(&lock.path)?;
         if lock_path.exists() {

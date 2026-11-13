@@ -2640,6 +2640,7 @@ It does not turn missing evidence into a successful qualification.
 | Expanded daily matrix, SHA-256 | 12 passed, no OOM | 1,073,741,824 B | 937.66 s |
 | 20 MiB switch journal, before repair | passed, ceiling reached | 1,073,741,824 B | 333.06 s |
 | 64 MiB switch journal, before repair | failed, exit 137, 3 OOM kills | 1,073,741,824 B | 53.41 s |
+| 20/64/256 MiB switch journal, raw payloads, loose/packed, 1 GiB/16 MiB allocation settings | 3 passed, no OOM | 1,073,741,824 B | 90.72 s |
 | Deliberate 1.2 GiB child allocation | correctly rejected, exit 137, 2 OOM kills | 1,073,741,824 B | negative control |
 
 The 256 MiB run reached `memory.max` with reclamation (495 max events), without
@@ -2682,10 +2683,20 @@ Story-harvest stations: **history attribution / between completed comparison →
 next revision / completed blob buffers are reclaimed**, and **archive cancellation /
 between signal received → command returns / blob producer observes interruption**.
 The public memory fixtures and existing plumbing suites own these probes.
-The 64 MiB switch fixture exposes another open station: **durable checkout /
+The 64 MiB switch fixture exposed another station: **durable checkout /
 between preflight → publication / recovery payloads fit the same resource bounds**.
-Its double JSON encoding and retained byte images are affected; this failure is
-not a supported refusal or a completed qualification.
+Its double JSON encoding and retained byte images caused the measured OOM.
+Switch and pull now journal immutable raw payloads once, with checksummed metadata,
+streamed dirty checks and conversions, and quota reservations for retained recovery
+content. Journal versions 1 and 2 remain recoverable. Intent precedes payload
+publication; recovery verifies payload bytes and ownership before changing state.
+A bound scratch directory is reclaimed only after the previous owner is proven dead
+and ordinary lock ownership passes. Foreign members and corruption retain evidence.
+SIGINT during preparation preserves the explicit recovery path. Generic checkout
+spools retain umask semantics; only private journal payloads are forced to mode 0600.
+The packed 20/64/256 MiB matrix passes both allocation policies under the fixed
+cgroup. This measures the station locally; large metadata and whole-operation
+scratch telemetry remain open.
 
 ### Public-command audit in progress
 
@@ -2700,7 +2711,7 @@ unsupported independently of this effort. No open row is accepted as deferred.
 | `diff`, `cat`, `add`, `restore`, `archive` | Shared readers repaired as above; large converted archive and clean/status fixtures pass; pinned diff, larger aggregate selections and remaining fault cases stay open. `diff file` and diff-format cat still use the buffered comparison cache. |
 | `status`, `is-clean`, `is-changed`, `index`, `dirwalk`, `clean` | Hash-only status paths stream ordinary files; filtered status and a 200,000-entry index crossing 16 MiB are measured. Other metadata, dirwalk and clean paths still need complete tracing. |
 | `worktree`, `clone` checkout | Existing bounded checkout, OFS/REF delta and filter machinery retained. Whole-cgroup 64/256 MiB worktree checkout/recovery passes; 64/256 MiB local clone/fetch/push also passes; other protocols and reduced-trust transfer paths remain open. |
-| `switch`, `pull`, `rebase`, `merge`, `commit` | Switch/replay/conflict journals retain byte vectors and serialized images. Dirty checks still load blobs in these paths. Three-sided 64 MiB filesystem merge passes; object-backed merge, large journals and resource-bound recovery/death fixtures remain open. |
+| `switch`, `pull`, `rebase`, `merge`, `commit` | Switch/pull raw recovery payloads and streamed dirty checks are repaired and measured at 20/64/256 MiB. Replay/conflict journals and journal metadata still retain byte vectors and serialized images. Three-sided 64 MiB filesystem merge passes; object-backed merge, large journals and resource-bound recovery/death fixtures remain open. |
 | `blame`, `log`, `revision`, `merge-base`, `tree` | Append-only blame cache retention is repaired and measured; explicit-limit blob paths and large history metadata remain open. Ordinary log traverses commits without reading blobs; path-filtered log was already unsupported. Tree listing streams output and uses headers for sizes; its traversal metadata remains to qualify. |
 | `fetch`, `push`, `odb`, `fsck`, `verify`, `commit-graph` | Pack decode diagnostics improved; 64/256 MiB local transfer passes without worker/cache changes. Verification, delta-tree allocations under explicit limits, additional protocols and large metadata qualification remain open. |
 | `branch`, `tag`, `remote`, `submodule`, `config`, `config-tree`, `attributes`, `exclude`, `mailmap` | Ref/config/path metadata and helper dispatch still need allocation tracing and applicable fixtures. |

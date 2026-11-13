@@ -2985,6 +2985,7 @@ fn retained_image(area: super::retained::Area, path: &[u8], image: &switch::Stat
     let (kind, mode, data) = match image {
         switch::State::Absent => (Kind::Deleted, 0, Vec::new()),
         switch::State::File { mode, bytes } => (Kind::File, *mode, bytes.clone()),
+        switch::State::StoredFile { .. } => anyhow::bail!("switch payload is not a replay-owned image"),
         switch::State::Symlink(bytes) => (Kind::Symlink, 0, bytes.clone()),
         switch::State::Directory { mode, device, inode } => (
             Kind::Directory {

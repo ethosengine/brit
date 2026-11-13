@@ -70,6 +70,9 @@ pub fn execute(repo: gix::Repository, remote: &str, branch: &BStr) -> Result<()>
     }
     let mut state = Manifest {
         version: VERSION,
+        payloads: BTreeMap::new(),
+        scratch: None,
+        budget: None,
         pull: Some(Pull {
             remote: remote.into(),
             remote_url,
@@ -114,6 +117,7 @@ pub fn execute(repo: gix::Repository, remote: &str, branch: &BStr) -> Result<()>
     };
     use std::os::unix::fs::DirBuilderExt;
     fs::DirBuilder::new().mode(0o700).create(journal(&repo))?;
+    payload::attach_budget(&repo, &mut state)?;
     save(&repo, &state)?;
     sync_dir(git_dir)?;
     // Normal errors before receive remove only private preparation; interruptions retain intent.

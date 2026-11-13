@@ -773,46 +773,64 @@ mod recovery {
     }
 
     #[test]
-    fn version_one_switch_journal_remains_recoverable_without_discriminator() -> Result<()> {
+    fn legacy_switch_journals_remain_recoverable_without_discriminator() -> Result<()> {
         use std::io::Write;
-        for action in ["--continue", "--abort"] {
-            let f = fixture()?;
-            git(f.local.path(), &["fetch", "origin"])?;
-            git(f.local.path(), &["branch", "destination", "origin/main"])?;
-            let before = index(f.local.path())?;
-            let mut child = pause(f.local.path(), &["switch", "destination"], "journal-prepared")?;
-            interrupt(&mut child, "-KILL")?;
-            let path = f.local.path().join(".git/brit-switch/manifest.json");
-            let mut envelope: serde_json::Value = serde_json::from_slice(&fs::read(&path)?)?;
-            let payload: Vec<u8> = serde_json::from_value(envelope["payload"].clone())?;
-            let mut manifest: serde_json::Value = serde_json::from_slice(&payload)?;
-            manifest.as_object_mut().expect("manifest object").remove("pull");
-            manifest["version"] = serde_json::json!(1);
-            let payload = serde_json::to_vec(&manifest)?;
-            let mut hash = Command::new("sha1sum")
-                .stdin(Stdio::piped())
-                .stdout(Stdio::piped())
-                .spawn()?;
-            hash.stdin.take().expect("piped SHA1 input").write_all(&payload)?;
-            let digest = hash.wait_with_output()?;
-            ensure!(digest.status.success());
-            let digest = String::from_utf8(digest.stdout)?;
-            envelope["payload"] = serde_json::to_value(payload)?;
-            envelope["checksum"] = serde_json::json!(digest.split_whitespace().next().expect("SHA1 digest"));
-            fs::write(&path, serde_json::to_vec(&envelope)?)?;
-            success(f.local.path(), &["switch", action])?;
-            assert_eq!(
-                f.local.head_id()?,
-                if action == "--continue" {
-                    f.target.clone()
-                } else {
-                    f.original.clone()
+        for version in [1, 2] {
+            for action in ["--continue", "--abort"] {
+                let f = fixture()?;
+                git(f.local.path(), &["fetch", "origin"])?;
+                git(f.local.path(), &["branch", "destination", "origin/main"])?;
+                let before = index(f.local.path())?;
+                let mut child = pause(f.local.path(), &["switch", "destination"], "journal-prepared")?;
+                interrupt(&mut child, "-KILL")?;
+                let path = f.local.path().join(".git/brit-switch/manifest.json");
+                let mut envelope: serde_json::Value = serde_json::from_slice(&fs::read(&path)?)?;
+                let payload: Vec<u8> = serde_json::from_value(envelope["payload"].clone())?;
+                let mut manifest: serde_json::Value = serde_json::from_slice(&payload)?;
+                // Reconstruct the legacy wire format, including inline file images.
+                for change in manifest["changes"].as_array_mut().expect("changes") {
+                    for side in ["before", "after"] {
+                        if let Some(stored) = change[side].get("StoredFile") {
+                            let hash = stored["checksum"].as_str().expect("payload hash");
+                            let bytes = fs::read(path.parent().expect("journal").join(format!("payload-{hash}")))?;
+                            change[side] = serde_json::json!({"File": {"mode": stored["mode"], "bytes": bytes}});
+                        }
+                    }
                 }
-            );
-            if action == "--abort" {
-                assert_eq!(index(f.local.path())?, before);
+                for hash in manifest["payloads"].as_object().expect("payload inventory").keys() {
+                    fs::remove_file(path.parent().expect("journal").join(format!("payload-{hash}")))?;
+                }
+                let fields = manifest.as_object_mut().expect("manifest object");
+                fields.remove("pull");
+                fields.remove("payloads");
+                fields.remove("scratch");
+                manifest["version"] = serde_json::json!(version);
+                let payload = serde_json::to_vec(&manifest)?;
+                let mut hash = Command::new("sha1sum")
+                    .stdin(Stdio::piped())
+                    .stdout(Stdio::piped())
+                    .spawn()?;
+                hash.stdin.take().expect("piped SHA1 input").write_all(&payload)?;
+                let digest = hash.wait_with_output()?;
+                ensure!(digest.status.success());
+                let digest = String::from_utf8(digest.stdout)?;
+                envelope["payload"] = serde_json::to_value(payload)?;
+                envelope["checksum"] = serde_json::json!(digest.split_whitespace().next().expect("SHA1 digest"));
+                fs::write(&path, serde_json::to_vec(&envelope)?)?;
+                success(f.local.path(), &["switch", action])?;
+                assert_eq!(
+                    f.local.head_id()?,
+                    if action == "--continue" {
+                        f.target.clone()
+                    } else {
+                        f.original.clone()
+                    }
+                );
+                if action == "--abort" {
+                    assert_eq!(index(f.local.path())?, before);
+                }
+                ensure!(!path.exists());
             }
-            ensure!(!path.exists());
         }
         Ok(())
     }

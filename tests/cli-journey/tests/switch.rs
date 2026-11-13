@@ -548,6 +548,8 @@ mod linux {
         fn real_kill_and_interrupt_at_each_publication_boundary_continue_explicitly() -> Result<()> {
             for signal in ["-KILL", "-INT"] {
                 for point in [
+                    "payload-intent",
+                    "payload-persisted",
                     "journal-prepared",
                     "file-published",
                     "commit-decision",
@@ -1066,9 +1068,49 @@ mod linux {
         }
 
         #[test]
+        fn killed_payload_spools_are_reclaimed_without_adopting_foreign_members() -> Result<()> {
+            use std::os::unix::ffi::OsStringExt;
+            for foreign in [false, true] {
+                let repo = fixture("switch-payload-scratch")?;
+                let mut paused = pause(repo.path(), &["switch", "destination"], "payload-intent")?;
+                interrupt(&mut paused, "-KILL")?;
+                let envelope: serde_json::Value =
+                    serde_json::from_slice(&fs::read(journal(repo.path()).join("manifest.json"))?)?;
+                let bytes: Vec<u8> = serde_json::from_value(envelope["payload"].clone())?;
+                let manifest: serde_json::Value = serde_json::from_slice(&bytes)?;
+                let bytes: Vec<u8> = serde_json::from_value(manifest["scratch"]["path"].clone())?;
+                let scratch = std::path::PathBuf::from(std::ffi::OsString::from_vec(bytes));
+                ensure!(
+                    fs::read_dir(&scratch)?.next().is_some(),
+                    "interrupted source spool retained for explicit recovery"
+                );
+                if foreign {
+                    let path = scratch.join("foreign.lock");
+                    fs::write(&path, b"foreign owner")?;
+                    for recovery in ["--continue", "--abort"] {
+                        ensure!(!run(repo.path(), true, &["switch", recovery])?.status.success());
+                        ensure!(fs::read(&path)? == b"foreign owner");
+                    }
+                } else {
+                    success(repo.path(), &["switch", "--continue"])?;
+                    ensure!(!scratch.exists(), "dead owner's spools reclaimed");
+                    ensure!(
+                        fs::read_dir(repo.path().join(".git"))?.all(|entry| !entry
+                            .expect("directory entry")
+                            .file_name()
+                            .as_encoded_bytes()
+                            .starts_with(b".brit-checkout-")),
+                        "new operation scratch reclaimed too"
+                    );
+                }
+            }
+            Ok(())
+        }
+
+        #[test]
         fn private_journal_corruption_refuses_and_never_deletes_evidence() -> Result<()> {
             use std::os::unix::fs::PermissionsExt;
-            for corrupt in ["manifest", "backup"] {
+            for corrupt in ["manifest", "backup", "payload", "payload-symlink"] {
                 let repo = fixture("switch-corrupt")?;
                 let mut paused = pause(repo.path(), &["switch", "destination"], "journal-prepared")?;
                 interrupt(&mut paused, "-KILL")?;
@@ -1086,11 +1128,32 @@ mod linux {
                         "recovery bytes are private"
                     );
                 }
-                let path = dir.join("manifest.json");
-                let corrupted = if corrupt == "manifest" {
+                let path = if corrupt.starts_with("payload") {
+                    files
+                        .iter()
+                        .find(|entry| entry.file_name().as_encoded_bytes().starts_with(b"payload-"))
+                        .expect("raw recovery payload")
+                        .path()
+                } else {
+                    dir.join("manifest.json")
+                };
+                if corrupt == "payload-symlink" {
+                    let outside = tempfile::tempdir()?;
+                    let foreign = outside.path().join("foreign");
+                    fs::write(&foreign, b"foreign bytes")?;
+                    fs::remove_file(&path)?;
+                    std::os::unix::fs::symlink(&foreign, &path)?;
+                    for recovery in ["--continue", "--abort"] {
+                        ensure!(!run(repo.path(), true, &["switch", recovery])?.status.success());
+                        ensure!(fs::symlink_metadata(&path)?.file_type().is_symlink());
+                        ensure!(fs::read(&foreign)? == b"foreign bytes");
+                    }
+                    continue;
+                }
+                let corrupted = if matches!(corrupt, "manifest" | "payload") {
                     b"corrupt recovery evidence\n".to_vec()
                 } else {
-                    // Backups are exact bytes inside the checksum-protected payload.
+                    // The manifest envelope remains checksummed independently of raw file payloads.
                     let mut envelope: serde_json::Value = serde_json::from_slice(&fs::read(&path)?)?;
                     let payload = envelope["payload"].as_array_mut().expect("journal payload bytes");
                     let byte = payload.last_mut().expect("nonempty recovery payload");

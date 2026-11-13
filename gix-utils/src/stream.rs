@@ -15,6 +15,7 @@ pub const SCRATCH_LIMIT: u64 = 1024 * 1024 * 1024;
 pub const CHUNK: usize = 64 * 1024;
 
 /// Scratch accounting for a single operation. Completed destination files are no longer scratch.
+#[derive(Debug)]
 pub struct Budget {
     directory: tempfile::TempDir,
     live: AtomicU64,
@@ -23,8 +24,15 @@ pub struct Budget {
 impl Budget {
     /// Create private scratch on the destination filesystem.
     pub fn new(parent: &Path) -> io::Result<Arc<Self>> {
+        let mut builder = tempfile::Builder::new();
+        builder.prefix(".brit-checkout-");
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::PermissionsExt;
+            builder.permissions(std::fs::Permissions::from_mode(0o700));
+        }
         Ok(Arc::new(Self {
-            directory: tempfile::Builder::new().prefix(".brit-checkout-").tempdir_in(parent)?,
+            directory: builder.tempdir_in(parent)?,
             live: AtomicU64::new(0),
             peak: AtomicU64::new(0),
         }))
@@ -62,6 +70,19 @@ impl Budget {
     pub fn usage(&self) -> (u64, u64) {
         (self.live.load(Ordering::Relaxed), self.peak.load(Ordering::Relaxed))
     }
+    /// Private directory identity for an owner's durable crash-recovery receipt.
+    pub fn directory(&self) -> &Path {
+        self.directory.path()
+    }
+    /// Charge already-persisted recovery content while it participates in an operation.
+    /// The caller must keep this reservation alive until its next inventory or reclamation.
+    pub fn charge(self: &Arc<Self>, bytes: u64) -> io::Result<Charge> {
+        self.reserve(bytes)?;
+        Ok(Charge {
+            budget: self.clone(),
+            bytes,
+        })
+    }
     fn reserve(&self, bytes: u64) -> io::Result<()> {
         let mut live = self.live.load(Ordering::Relaxed);
         loop {
@@ -83,6 +104,16 @@ impl Budget {
                 Err(current) => live = current,
             }
         }
+    }
+}
+/// A reservation for durable temporary content owned outside a [`Spool`].
+pub struct Charge {
+    budget: Arc<Budget>,
+    bytes: u64,
+}
+impl Drop for Charge {
+    fn drop(&mut self) {
+        self.budget.live.fetch_sub(self.bytes, Ordering::Relaxed);
     }
 }
 /// A scratch quota refusal, distinct from allocator failure and filesystem errors.
@@ -165,6 +196,14 @@ impl Spool {
         self.budget.live.fetch_sub(self.len - len, Ordering::Relaxed);
         self.len = len;
         Ok(())
+    }
+    /// Set publication permissions without exposing the writable backing file.
+    pub fn set_permissions(&mut self, permissions: std::fs::Permissions) -> io::Result<()> {
+        self.file
+            .as_ref()
+            .expect("spool owns its file")
+            .as_file()
+            .set_permissions(permissions)
     }
     /// Publish without overwriting an existing path, releasing temporary quota.
     pub fn publish(mut self, path: &Path) -> io::Result<File> {
@@ -261,9 +300,76 @@ pub fn copy(input: &mut impl Read, output: &mut impl Write, interrupt: &AtomicBo
     }
 }
 
+/// Compare streams with bounded buffers, including readers that return short chunks.
+pub fn equal(left: impl Read, right: impl Read, interrupt: &AtomicBool) -> io::Result<bool> {
+    use io::BufRead;
+    let mut left = io::BufReader::with_capacity(CHUNK, left);
+    let mut right = io::BufReader::with_capacity(CHUNK, right);
+    loop {
+        check(interrupt)?;
+        let a = left.fill_buf()?;
+        let b = right.fill_buf()?;
+        if a.is_empty() || b.is_empty() {
+            return Ok(a.is_empty() && b.is_empty());
+        }
+        let len = a.len().min(b.len());
+        if a[..len] != b[..len] {
+            return Ok(false);
+        }
+        left.consume(len);
+        right.consume(len);
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+    #[test]
+    fn durable_content_shares_spool_quota() -> io::Result<()> {
+        let dir = tempfile::tempdir()?;
+        let budget = Budget::new(dir.path())?;
+        let retained = budget.charge(SCRATCH_LIMIT)?;
+        let mut spool = budget.spool()?;
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::PermissionsExt;
+            assert_eq!(budget.directory().metadata()?.permissions().mode() & 0o077, 0);
+        }
+        assert!(
+            spool.write_all(b"x").is_err(),
+            "durable recovery content counts alongside new scratch"
+        );
+        drop(retained);
+        spool.write_all(b"x")?;
+        assert_eq!(budget.usage().0, 1);
+        Ok(())
+    }
+
+    #[test]
+    fn streamed_equality_handles_short_reads_lengths_and_cancellation() -> io::Result<()> {
+        struct Short<'a>(&'a [u8]);
+        impl Read for Short<'_> {
+            fn read(&mut self, bytes: &mut [u8]) -> io::Result<usize> {
+                let len = bytes.len().min(3);
+                self.0.read(&mut bytes[..len])
+            }
+        }
+        let interrupt = AtomicBool::new(false);
+        assert!(equal(Short(b"matching content"), &b"matching content"[..], &interrupt)?);
+        assert!(!equal(
+            Short(b"matching content"),
+            &b"matching contents"[..],
+            &interrupt
+        )?);
+        assert!(!equal(
+            Short(b"matching content"),
+            &b"matching conTent"[..],
+            &interrupt
+        )?);
+        interrupt.store(true, Ordering::Relaxed);
+        assert!(equal(&b""[..], &b""[..], &interrupt).is_err());
+        Ok(())
+    }
     #[test]
     fn mapping_keeps_quota_and_releases_it_after_readers() -> io::Result<()> {
         let dir = tempfile::tempdir()?;

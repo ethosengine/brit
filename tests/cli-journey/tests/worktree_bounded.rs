@@ -233,7 +233,16 @@ fn empty_trees_modes_symlinks_gitlinks_and_foreign_destinations() -> Result<()> 
         .arg(actual.as_os_str().to_owned())
         .run()?;
     ensure!(result.status.success(), "{}", result.stderr);
-    ensure!(fs::metadata(actual.join("script"))?.permissions().mode() & 0o111 != 0);
+    let oracle = destinations.path().join("git-modes");
+    git(
+        root,
+        &["worktree", "add", "--detach", oracle.to_str().context("oracle path")?],
+    )?;
+    ensure!(
+        fs::metadata(actual.join("script"))?.permissions().mode() & 0o777
+            == fs::metadata(oracle.join("script"))?.permissions().mode() & 0o777,
+        "checkout permissions must preserve Git's umask semantics"
+    );
     ensure!(fs::read_link(actual.join("link"))? == Path::new("script"));
     ensure!(actual.join("submodule").is_dir());
     ensure!(git(&actual, &["status", "--porcelain"])?.is_empty());

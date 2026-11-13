@@ -499,14 +499,14 @@ impl ThreadSafeRepository {
                 lenient_config,
                 filter_config_section,
             )?;
-            if config.alloc_limit_bytes.is_some() {
+            if let Some(_alloc_limit_bytes) = config.alloc_limit_bytes {
                 gix_trace::info!(
                     concat!(
                         "Applied a default allocation limit of {alloc_limit_bytes} ",
                         "bytes while opening reduced-trust repository \"{git_dir}\". ",
                         "Set `gitoxide.objects.allocLimitIfReducedTrust=0` to disable this fallback",
                     ),
-                    alloc_limit_bytes = config.alloc_limit_bytes.expect("fallback is present"),
+                    alloc_limit_bytes = _alloc_limit_bytes,
                     git_dir = git_dir.display(),
                 );
             }
