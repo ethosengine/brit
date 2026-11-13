@@ -1,7 +1,8 @@
 use gix::{
     Result,
     bstr::{BStr, BString, ByteSlice},
-    error::{ResultExt, bail},
+    error::{ResultExt, bail, message},
+    objs::FindStream,
 };
 
 use crate::OutputFormat;
@@ -53,21 +54,41 @@ pub fn list(repo: gix::Repository, out: &mut dyn std::io::Write, format: OutputF
     }
 
     let platform = repo.references()?;
+    let mut budget = None;
 
     let mut tags: Vec<_> = platform
         .tags()?
-        .flatten()
-        .map(|mut reference| {
-            let tag = reference.peel_to_tag();
-            let tag_ref = tag.as_ref().map(gix::Tag::decode);
+        .map(|reference| -> Result<_> {
+            let mut reference = reference?;
+            let id = reference.follow_to_object()?.detach();
+            // Lightweight tags need only the object's kind, never its complete contents.
+            let tag = if repo.find_header(id)?.kind() == gix::objs::Kind::Tag {
+                if budget.is_none() {
+                    budget = Some(gix::utils::stream::Budget::new(&std::env::temp_dir()).or_error()?);
+                }
+                let (_, spool) = repo
+                    .find_stream(
+                        &id,
+                        budget.as_ref().expect("annotated tags have scratch"),
+                        &gix::interrupt::IS_INTERRUPTED,
+                    )
+                    .or_raise(|| message!("Could not read tag {} (object {id})", reference.name()))?;
+                Some(spool.into_mapped().or_error()?)
+            } else {
+                None
+            };
+            let tag_ref = tag
+                .as_ref()
+                .map(|data| gix::objs::TagRef::from_bytes(data.as_slice(), repo.object_hash()))
+                .transpose()?;
 
             // `name` is the name of the file in `refs/tags/`.
             // This applies to both lightweight and annotated tags.
             let name = reference.name().shorten();
             let mut fields = Vec::new();
             let version = Version::parse(name);
-            match tag_ref {
-                Ok(Ok(tag_ref)) => {
+            Ok(match tag_ref {
+                Some(tag_ref) => {
                     // `tag_name` is the name provided by the user via `git tag -a/-s/-u`.
                     // It is only present for annotated tags.
                     fields.push(format!(
@@ -81,9 +102,9 @@ pub fn list(repo: gix::Repository, out: &mut dyn std::io::Write, format: OutputF
                     (version, format!("{name} [{fields}]", fields = fields.join(", ")))
                 }
                 _ => (version, name.to_string()),
-            }
+            })
         })
-        .collect();
+        .collect::<Result<_>>()?;
 
     tags.sort_by(|a, b| a.0.cmp(&b.0));
 

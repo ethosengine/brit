@@ -1,0 +1,363 @@
+//! Large metadata qualifies independently of blob contents and output capture buffers.
+use anyhow::{ensure, Result};
+use cli_journey::support::{runner::brit_bin, test_repo::TestRepo};
+use std::{
+    fs,
+    io::{BufWriter, Read, Write},
+    path::Path,
+    process::{Command, Stdio},
+};
+
+fn git(root: &Path, args: &[&str]) -> Result<Vec<u8>> {
+    let output = oracle(root).args(args).output()?;
+    ensure!(
+        output.status.success(),
+        "Git {args:?}: {}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    Ok(output.stdout)
+}
+
+fn oracle(root: &Path) -> Command {
+    let mut command = gix_testtools::git_command(root);
+    // Only the stock-Git oracle opts into this disposable fixture. Brit must derive trust from ownership.
+    command.args(["-c", &format!("safe.directory={}", root.display())]);
+    command
+}
+
+fn reduced_trust(root: &Path, reduced: bool) -> Result<()> {
+    if !reduced {
+        return Ok(());
+    }
+    #[cfg(target_os = "linux")]
+    {
+        use std::os::unix::fs::{chown, MetadataExt};
+        ensure!(fs::metadata(root)?.uid() == 0, "qualification requires chown authority");
+        chown(root, Some(65534), None)?;
+        chown(root.join(".git"), Some(65534), None)?;
+        let trust = root.join(".git/observed-trust");
+        brit(root, &["free", "trust", ".", ".git"], &trust, None)?;
+        ensure!(
+            fs::read_to_string(trust)?
+                .lines()
+                .filter(|line| line.starts_with("Reduced"))
+                .count()
+                == 2,
+            "both worktree and repository must have actual reduced trust"
+        );
+        Ok(())
+    }
+    #[cfg(not(target_os = "linux"))]
+    anyhow::bail!("ownership qualification runs on Linux")
+}
+
+fn output_file(mut command: Command, args: &[&str], destination: &Path) -> Result<()> {
+    let output = command
+        .args(args)
+        .stdout(Stdio::from(fs::File::create(destination)?))
+        .output()?;
+    ensure!(
+        output.status.success() && !String::from_utf8_lossy(&output.stderr).contains("Error while loading mailmap"),
+        "{args:?}: {}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    Ok(())
+}
+
+fn brit(root: &Path, args: &[&str], destination: &Path, limit: Option<&str>) -> Result<()> {
+    eprintln!("qualifying {args:?}, allocation policy {limit:?}");
+    let mut command = Command::new(brit_bin().expect("built Brit"));
+    gix_testtools::configure_git_environment(&mut command, root);
+    command.current_dir(root);
+    if let Some(limit) = limit {
+        command.args(["-c", &format!("gitoxide.objects.allocLimit={limit}")]);
+    }
+    output_file(command, args, destination)
+}
+
+fn same_bytes(left: &Path, right: &Path) -> Result<()> {
+    ensure!(
+        fs::metadata(left)?.len() == fs::metadata(right)?.len(),
+        "output lengths differ"
+    );
+    let mut left = fs::File::open(left)?;
+    let mut right = fs::File::open(right)?;
+    let mut a = [0; 65536];
+    let mut b = [0; 65536];
+    loop {
+        let n = left.read(&mut a)?;
+        if n == 0 {
+            return Ok(());
+        }
+        right.read_exact(&mut b[..n])?;
+        ensure!(a[..n] == b[..n], "output bytes differ");
+    }
+}
+
+#[test]
+fn config_over_sixteen_mib_preserves_values_and_formatting() -> Result<()> {
+    config(false)
+}
+
+fn config(reduced: bool) -> Result<()> {
+    let repo = TestRepo::new("memory-config")?;
+    let root = repo.path();
+    let source = root.join(".git/config");
+    let mut file = BufWriter::new(fs::OpenOptions::new().append(true).open(&source)?);
+    writeln!(file, "\n[probe]")?;
+    let value = "configuration-value-".repeat(4);
+    for n in 0..200_000 {
+        writeln!(file, "key{n:06} = {value}")?;
+    }
+    file.flush()?;
+    drop(file);
+    ensure!(
+        fs::metadata(&source)?.len() > 16 * 1024 * 1024,
+        "metadata fixture exceeds former boundary"
+    );
+    let expected = root.join(".git/expected-values");
+    output_file(oracle(root), &["config", "--get-regexp", "^probe\\."], &expected)?;
+    reduced_trust(root, reduced)?;
+    for limit in [None, Some("16777216")] {
+        let shown = root.join(".git/shown-config");
+        brit(root, &["config", "probe"], &shown, limit)?;
+        let values = root.join(".git/shown-values");
+        output_file(
+            oracle(root),
+            &[
+                "config",
+                "--file",
+                shown.to_str().expect("fixture path"),
+                "--get-regexp",
+                "^probe\\.",
+            ],
+            &values,
+        )?;
+        same_bytes(&expected, &values)?;
+        let formatted = root.join(".git/formatted-config");
+        brit(
+            root,
+            &["config", "fmt", source.to_str().expect("fixture path")],
+            &formatted,
+            limit,
+        )?;
+        output_file(
+            oracle(root),
+            &[
+                "config",
+                "--file",
+                formatted.to_str().expect("fixture path"),
+                "--get-regexp",
+                "^probe\\.",
+            ],
+            &values,
+        )?;
+        same_bytes(&expected, &values)?;
+        let twice = root.join(".git/formatted-twice");
+        brit(
+            root,
+            &["config", "fmt", formatted.to_str().expect("fixture path")],
+            &twice,
+            limit,
+        )?;
+        same_bytes(&formatted, &twice)?;
+        brit(root, &["config", "list"], &root.join(".git/config-files"), limit)?;
+    }
+    Ok(())
+}
+
+#[test]
+fn packed_refs_over_sixteen_mib_preserve_branch_and_tag_order() -> Result<()> {
+    packed_refs(false)
+}
+
+fn packed_refs(reduced: bool) -> Result<()> {
+    let repo = TestRepo::new("memory-refs")?;
+    let root = repo.path();
+    fs::write(root.join("small"), b"small\n")?;
+    git(root, &["add", "small"])?;
+    git(root, &["commit", "-qm", "base"])?;
+    let id = String::from_utf8(git(root, &["rev-parse", "HEAD"])?)?;
+    let source = root.join(".git/packed-refs");
+    let mut file = BufWriter::new(fs::File::create(&source)?);
+    writeln!(file, "# pack-refs with: peeled fully-peeled sorted")?;
+    let suffix = "x".repeat(160);
+    for namespace in ["heads", "tags"] {
+        for n in 0..40_000 {
+            writeln!(file, "{} refs/{namespace}/n{n:06}-{suffix}", id.trim())?;
+        }
+    }
+    file.flush()?;
+    drop(file);
+    ensure!(
+        fs::metadata(&source)?.len() > 16 * 1024 * 1024,
+        "ref metadata exceeds former boundary"
+    );
+    let before = git(root, &["hash-object", source.to_str().expect("fixture path")])?;
+    reduced_trust(root, reduced)?;
+    for (command, oracle) in [
+        (
+            "branch",
+            vec![
+                "for-each-ref",
+                "--format=%(refname:lstrip=2)",
+                "--sort=refname",
+                "refs/heads",
+            ],
+        ),
+        ("tag", vec!["tag", "--list", "--sort=version:refname"]),
+    ] {
+        let expected = root.join(format!(".git/expected-{command}"));
+        output_file(self::oracle(root), &oracle, &expected)?;
+        for limit in [None, Some("16777216")] {
+            let actual = root.join(format!(".git/actual-{command}"));
+            brit(root, &[command, "list"], &actual, limit)?;
+            same_bytes(&expected, &actual)?;
+        }
+    }
+    assert_eq!(
+        git(root, &["hash-object", source.to_str().expect("fixture path")])?,
+        before
+    );
+    Ok(())
+}
+
+#[cfg(target_os = "linux")]
+#[test]
+#[ignore = "requires chown authority: qualification runs this explicitly with --ignored"]
+fn actual_reduced_trust_large_config_and_refs() -> Result<()> {
+    config(true)?;
+    packed_refs(true)
+}
+
+#[test]
+fn mailmap_over_sixteen_mib_from_worktree_loose_and_packed_objects() -> Result<()> {
+    mailmap(false)
+}
+
+fn mailmap(reduced: bool) -> Result<()> {
+    let repo = TestRepo::new("memory-mailmap")?;
+    let root = repo.path();
+    let source = root.join(".mailmap");
+    let mut file = BufWriter::new(fs::File::create(&source)?);
+    let expected = root.join(".git/expected-entries");
+    let mut entries = BufWriter::new(fs::File::create(&expected)?);
+    let suffix = "x".repeat(40);
+    entries.write_all(b"[\n")?;
+    for n in 0..200_000 {
+        let name = format!("New{n:06}");
+        let email = format!("new{n:06}@{suffix}.example");
+        let old_name = format!("Old{n:06}");
+        let old_email = format!("old{n:06}@example.com");
+        writeln!(file, "{name} <{email}> {old_name} <{old_email}>")?;
+        if n != 0 {
+            entries.write_all(b",\n")?;
+        }
+        write!(entries, "  {{\n    \"new_name\": \"{name}\",\n    \"new_email\": \"{email}\",\n    \"old_name\": \"{old_name}\",\n    \"old_email\": \"{old_email}\"\n  }}")?;
+    }
+    entries.write_all(b"\n]")?;
+    entries.flush()?;
+    drop(entries);
+    file.flush()?;
+    drop(file);
+    ensure!(
+        fs::metadata(&source)?.len() > 16 * 1024 * 1024,
+        "large mailmap metadata"
+    );
+    git(root, &["add", ".mailmap"])?;
+    git(root, &["commit", "-qm", "mailmap metadata"])?;
+    let contacts = [
+        "Old000000 <old000000@example.com>",
+        "Old100000 <old100000@example.com>",
+        "Old199999 <old199999@example.com>",
+        "Unknown <unknown@example.com>",
+    ];
+    let mut args = vec!["check-mailmap"];
+    args.extend(contacts);
+    let resolved = root.join(".git/expected-contacts");
+    output_file(oracle(root), &args, &resolved)?;
+    reduced_trust(root, reduced)?;
+    for storage in ["worktree", "loose", "packed"] {
+        eprintln!("qualifying large mailmap: {storage}, reduced={reduced}");
+        if storage == "loose" {
+            git(root, &["config", "mailmap.blob", "HEAD:.mailmap"])?;
+            fs::remove_file(&source)?;
+        } else if storage == "packed" {
+            git(root, &["-c", "pack.threads=1", "repack", "-ad"])?;
+        }
+        for limit in [None, Some("16777216")] {
+            let actual = root.join(".git/actual-entries");
+            brit(root, &["mailmap", "entries"], &actual, limit)?;
+            same_bytes(&expected, &actual)?;
+            let mut args = vec!["mailmap", "check"];
+            args.extend(contacts);
+            brit(root, &args, &actual, limit)?;
+            same_bytes(&resolved, &actual)?;
+        }
+    }
+    Ok(())
+}
+
+#[cfg(target_os = "linux")]
+#[test]
+#[ignore = "requires chown authority: qualification runs this explicitly with --ignored"]
+fn actual_reduced_trust_large_mailmap() -> Result<()> {
+    mailmap(true)
+}
+
+#[test]
+fn annotated_tag_metadata_is_not_lost_above_allocation_policy() -> Result<()> {
+    annotated_tag(false)
+}
+
+fn annotated_tag(reduced: bool) -> Result<()> {
+    let repo = TestRepo::new("memory-tag-object")?;
+    let root = repo.path();
+    let source = root.join(".git/tag-input");
+    let mut file = BufWriter::new(fs::File::create(&source)?);
+    writeln!(
+        file,
+        "object {}\ntype commit\ntag payload-name\ntagger Fixture <fixture@example.com> 1600000000 +0000\n",
+        repo.head_id()?
+    )?;
+    let chunk = [b'x'; 65536];
+    for _ in 0..320 {
+        file.write_all(&chunk)?;
+    }
+    file.write_all(
+        b"\n-----BEGIN PGP SIGNATURE-----\nfixture armor, not a verified signature\n-----END PGP SIGNATURE-----\n",
+    )?;
+    file.flush()?;
+    drop(file);
+    let id = String::from_utf8(git(
+        root,
+        &["hash-object", "-t", "tag", "-w", source.to_str().expect("path")],
+    )?)?;
+    git(root, &["update-ref", "refs/tags/release", id.trim()])?;
+    assert_eq!(
+        git(root, &["for-each-ref", "--format=%(objecttype) %(tag)", "refs/tags"])?,
+        b"tag payload-name\n"
+    );
+    let blob = String::from_utf8(git(root, &["hash-object", "-w", source.to_str().expect("path")])?)?;
+    git(root, &["update-ref", "refs/tags/blob", blob.trim()])?;
+    reduced_trust(root, reduced)?;
+    for packed in [false, true] {
+        if packed {
+            git(root, &["-c", "pack.threads=1", "repack", "-ad"])?;
+            git(root, &["pack-refs", "--all"])?;
+        }
+        for limit in [None, Some("16777216")] {
+            let actual = root.join(".git/actual-tags");
+            brit(root, &["tag", "list"], &actual, limit)?;
+            assert_eq!(fs::read(actual)?, b"blob\nrelease [tag name: payload-name, signed]\n");
+        }
+    }
+    Ok(())
+}
+
+#[cfg(target_os = "linux")]
+#[test]
+#[ignore = "requires chown authority: qualification runs this explicitly with --ignored"]
+fn actual_reduced_trust_large_annotated_tag() -> Result<()> {
+    annotated_tag(true)
+}

@@ -2969,6 +2969,50 @@ identity and an unframed SHA-1 file digest are different checks. The existing
 collision fixture failed cleanup before reusing the tagged fingerprint fallback,
 then passed the full replay/cleanup path.
 
+### Large ref, config, mailmap and tag metadata
+
+The metadata fixture independently crosses 16 MiB with 200,000 config entries,
+80,000 packed refs, 200,000 mailmap mappings and a 20 MiB annotated tag. Output
+goes to files and is compared in fixed chunks. Config values and branch/tag
+ordering use stock Git with fixed options; the branch oracle strips exactly
+two ref components so Git's ambiguous-name shortening does not change the
+comparison. Brit's annotated-tag detail format remains its existing format.
+
+This found two additional affected readers. `mailmap.blob` used a complete
+object buffer and could print an empty mapping after a 16 MiB allocation
+refusal. It now uses the existing verified object stream and immutable mapping;
+worktree and configured-file buffers are released after each source. Mailmap
+JSON entries serialize one at a time, preserving source precedence, partial
+source errors and worktree-symlink protections. Error reports retain their
+causes. Annotated tags previously lost their name/signature details silently
+when their object buffer exceeded policy. Tag listing now reads headers for
+lightweight tags and streams annotated objects through the existing parser,
+releasing each mapped body after extracting its fields. Version sorting is
+unchanged; read/decode errors now propagate instead of erasing metadata.
+
+Seven metadata cases pass for each of SHA-1 and SHA-256, including actual
+ownership-derived reduced trust and explicit allocation settings. The exact
+1 GiB, swap-disabled workers recorded 234,872,832 B / 306.998 s and
+234,881,024 B / 339.768 s, respectively, with no OOM kills, surviving children
+or executable changes. Main executable SHA-256:
+`6297f6a8037e6e695c17e860c489be19b96f2958870274920fa572083f713cd4`.
+These receipts precede the final buffered/cancellable mailmap JSON writer;
+its separate follow-up is recorded below. Four native mailmap checks preserve
+source precedence, one-byte allocation policy and symlink behavior; the two
+existing tag-version checks also pass. The public fixture is selected by CI.
+Aggregate scratch remains unmeasured, and these are not full acceptance
+receipts. Private evidence: `bounded-memory/metadata-*` and `mailmap-*` in the
+existing isolated readiness directory.
+
+The final buffered/cancellable JSON writer passes both mailmap cases again in
+each hash format: 160,911,360 B / 90.921 s (SHA-1) and 160,546,816 B /
+108.641 s (SHA-256), with zero OOM kills, surviving children or executable
+changes. Main SHA-256:
+`cea8f8f592f46a1422484a99459c07594d032e391e3358127c0bb8e38bb7f555`.
+Strict affected-crate Clippy, formatting, readiness contracts and the declared
+Rust-style checker pass. Complete committed-source qualification and scratch
+telemetry remain open.
+
 ### Public-command audit in progress
 
 The command boundary is `src/plumbing/options/mod.rs` plus
@@ -2985,9 +3029,9 @@ unsupported independently of this effort. No open row is accepted as deferred.
 | `switch`, `pull`, `rebase`, `merge`, `commit` | Switch/pull raw recovery payloads and streamed dirty checks are repaired and measured at 20/64/256 MiB. Replay working-file journals now use raw payloads and retained-copy capture streams, with 20/64 MiB public cases passing; 64 MiB conflict/abort and preserved large edits also pass after raw-custody repair; interrupted conflict handoff preserves exact child authority; 64 MiB authored-object retention and 20 MiB edit-scope continuation/abort pass after streamed custody fixes. Journal metadata remains open. Three-sided 64 MiB filesystem and object-backed file/tree/commit merge fixtures pass, with bounded rename inputs and recursive-base conformance. External merge drivers, large journals and resource-bound recovery/death fixtures remain open. |
 | `blame`, `log`, `revision`, `merge-base`, `tree` | Blame initial/history blobs, rename similarity and rendering are repaired and measured, including actual reduced trust and a million unique lines; large history metadata remains open. Ordinary log traverses commits without reading blobs; path-filtered log was already unsupported. Tree listing streams output and uses headers for sizes; its traversal metadata remains to qualify. |
 | `fetch`, `push`, `odb`, `fsck`, `verify`, `commit-graph` | Pack decode diagnostics improved; 64/256 MiB local transfer passes without worker/cache changes. Loose blob verification now streams. Both verification algorithms and all decode modes, ODB inspection, connectivity and pack create/index/explode pass at 20/64/256 MiB with a 1 GiB allocation setting, including 64 MiB OFS/REF histories. Explicit 16 MiB packed-buffer refusal is accurately diagnosed and preserves repository state; this is refusal proof, not successful bounded packed verification. Reduced-trust packed buffers, additional protocols and large metadata qualification remain open. |
-| `branch`, `tag`, `remote`, `submodule`, `config`, `config-tree`, `attributes`, `exclude`, `mailmap` | Ref/config/path metadata and helper dispatch still need allocation tracing and applicable fixtures. |
+| `branch`, `tag`, `remote`, `submodule`, `config`, `config-tree`, `attributes`, `exclude`, `mailmap` | Large config/packed-ref fixtures pass in both hashes and actual reduced trust. Mailmap object reads/output and annotated-tag reads are repaired and measured as above. Remote/submodule/path metadata and helper dispatch remain open. |
 | `credential`, `env`, `editor`, `completions`, `free`, `corpus`, `tix` | Applicable metadata/output/owned-child audit remains open. Existing unsupported behavior cannot be relabeled a memory success. |
-| `snapshot`, `build`, `run`, `graph`, `affected`, `plan`, `fingerprint`, `baseline`, `integrate`, `context` | Snapshot seal/verify/export/restore are measured on 20/64 MiB, aggregate and reduced-trust fixtures; the existing per-object 64 MiB native limit is preserved. Capture and first-party reader/metadata/output audit remain open; arbitrary external tasks are outside a universal success guarantee, but owned children still count in measured workloads. |
+| `snapshot`, `build`, `run`, `graph`, `affected`, `plan`, `fingerprint`, `baseline`, `integrate`, `context` | Snapshot seal/verify/export/restore are measured on 20/64 MiB, aggregate and reduced-trust fixtures; the existing per-object 64 MiB native limit is preserved. `build fingerprint` and `build plan` retain and clone selected blobs through the older graph reader; their measured repair remains open. Capture and other first-party metadata/output paths remain open; arbitrary external tasks are outside a universal success guarantee, but owned children still count in measured workloads. |
 
 Outstanding acceptance also includes broader reduced-trust command coverage,
 broader hash/alternate/replacement combinations beyond the expanded daily matrices, additional

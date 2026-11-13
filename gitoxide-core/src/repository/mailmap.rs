@@ -44,11 +44,23 @@ pub fn entries(
 
     let mut mailmap = gix::mailmap::Snapshot::default();
     if let Err(e) = repo.open_mailmap_into(&mut mailmap) {
-        writeln!(err, "Error while loading mailmap, the first error is: {e}").ok();
+        writeln!(err, "Error while loading mailmap, the first error is: {e:?}").ok();
     }
 
     #[cfg(feature = "serde")]
-    serde_json::to_writer_pretty(out, &mailmap.iter().map(JsonEntry::from).collect::<Vec<_>>()).or_error()?;
+    {
+        use serde::{Serializer, ser::SerializeSeq};
+        use std::io::Write;
+        let mut out = io::BufWriter::new(out);
+        let mut serializer = serde_json::Serializer::pretty(&mut out);
+        let mut sequence = serializer.serialize_seq(None).or_error()?;
+        for entry in mailmap.iter() {
+            gix::utils::stream::check(&gix::interrupt::IS_INTERRUPTED).or_error()?;
+            sequence.serialize_element(&JsonEntry::from(entry)).or_error()?;
+        }
+        sequence.end().or_error()?;
+        out.flush().or_error()?;
+    }
 
     Ok(())
 }

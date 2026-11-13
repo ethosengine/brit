@@ -1,6 +1,7 @@
-use crate::error::{ErrorExt, message};
+use crate::error::{ErrorExt, ResultExt, message};
 use crate::{Error, Id, Result, bstr::ByteSlice, config::tree::Mailmap};
 use gix_fs::FileOrSymlink;
+use gix_object::FindStream;
 
 impl crate::Repository {
     /// Similar to [`open_mailmap_into()`][crate::Repository::open_mailmap_into()], but ignores all errors and returns at worst
@@ -26,7 +27,6 @@ impl crate::Repository {
     /// Parsing errors will be ignored.
     pub fn open_mailmap_into(&self, target: &mut gix_mailmap::Snapshot) -> Result<()> {
         let mut err = None::<Error>;
-        let mut buf = Vec::new();
         let mut blob_id = self.config.resolved.string(Mailmap::BLOB).and_then(|spec| {
             self.rev_parse_single(spec.as_bstr())
                 .map_err(|e| err.get_or_insert(e.and_raise(message("The configured mailmap.blob could not be parsed"))))
@@ -45,7 +45,7 @@ impl crate::Repository {
             }
             Some(root) => match gix_fs::open_read_only_no_follow(&root.join(".mailmap")) {
                 Ok(FileOrSymlink::File(mut file)) => {
-                    buf.clear();
+                    let mut buf = Vec::new();
                     std::io::copy(&mut file, &mut buf)
                         .map_err(|e| {
                             err.get_or_insert(e.and_raise(message("The worktree .mailmap file could not be read")))
@@ -63,14 +63,20 @@ impl crate::Repository {
             },
         }
 
-        if let Some(blob) = blob_id.and_then(|id| {
-            self.find_object(id)
-                .map_err(|e| {
-                    err.get_or_insert(e.and_raise(message("Could not find object configured in `mailmap.blob`")))
-                })
-                .ok()
-        }) {
-            target.merge(gix_mailmap::parse_ignore_errors(&blob.data));
+        if let Some(id) = blob_id {
+            let result = (|| -> Result<()> {
+                let budget = gix_utils::stream::Budget::new(&std::env::temp_dir()).or_error()?;
+                let (_, spool) = self.find_stream(&id, &budget, &crate::interrupt::IS_INTERRUPTED)?;
+                let data = spool.into_mapped().or_error()?;
+                target.merge(gix_mailmap::parse_ignore_errors(data.as_slice()));
+                Ok(())
+            })();
+            if let Err(e) = result {
+                err.get_or_insert(e.and_raise(message!(
+                    "Could not read mailmap object {id} in {}",
+                    self.git_dir().display()
+                )));
+            }
         }
 
         let configured_path = self
@@ -89,7 +95,7 @@ impl crate::Repository {
                 })
                 .ok()
         }) {
-            buf.clear();
+            let mut buf = Vec::new();
             std::io::copy(&mut file, &mut buf)
                 .map_err(|e| {
                     err.get_or_insert(
