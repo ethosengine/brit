@@ -1,4 +1,7 @@
+use crate::data::decode::bounded::{self, Bytes};
 use gix_error::Result;
+use gix_utils::stream::Budget;
+use std::sync::Arc;
 use std::sync::atomic::{AtomicBool, Ordering};
 
 use gix_error::{OptionExt, ResourceExhaustionKind, ResultExt, bail, message};
@@ -75,6 +78,7 @@ fn attach_ref_delta_children<T: Send>(
     decompressed: &[u8],
     ref_delta_children: Option<&super::SharedRefDeltaChildren>,
     object_hash: gix_hash::Kind,
+    should_interrupt: &AtomicBool,
 ) -> Result {
     let Some(ref_delta_children) = ref_delta_children else {
         return Ok(());
@@ -85,8 +89,15 @@ fn attach_ref_delta_children<T: Send>(
     }
 
     let kind = entry.header.as_kind().expect("a fully resolved object has a base kind");
-    let id = gix_object::compute_hash(object_hash, kind, decompressed)
-        .or_raise(|| message("Failed to hash an object while resolving in-pack ref-deltas"))?;
+    let id = gix_object::compute_stream_hash(
+        object_hash,
+        kind,
+        &mut &decompressed[..],
+        decompressed.len() as u64,
+        &mut gix_utils::progress::Discard,
+        should_interrupt,
+    )
+    .or_raise(|| message("Failed to hash an object while resolving in-pack ref-deltas"))?;
     if let Some(children) = threading::lock(ref_delta_children).remove(&id) {
         node.add_children(children);
     }
@@ -100,7 +111,7 @@ struct ResolvedBase {
     /// The pack offset immediately after the entry.
     entry_end: u64,
     /// The fully resolved object bytes.
-    bytes: Vec<u8>,
+    bytes: Bytes,
 }
 
 /// A resolved base shared by sibling work items.
@@ -143,6 +154,7 @@ pub(super) unsafe fn all<T, F, MBFN, R>(
     ref_delta_children: Option<super::SharedRefDeltaChildren>,
     object_hash: gix_hash::Kind,
     alloc_limit_bytes: Option<usize>,
+    decode_budget: Option<&Arc<Budget>>,
     should_interrupt: &AtomicBool,
 ) -> Result
 where
@@ -179,6 +191,7 @@ where
             ref_delta_children,
             object_hash,
             alloc_limit_bytes,
+            decode_budget,
             should_interrupt,
         )
     }
@@ -197,6 +210,7 @@ where
             ref_delta_children,
             object_hash,
             alloc_limit_bytes,
+            decode_budget,
             should_interrupt,
         )
     }
@@ -221,6 +235,7 @@ fn resolve_serial<T, F, MBFN, R>(
     ref_delta_children: Option<super::SharedRefDeltaChildren>,
     object_hash: gix_hash::Kind,
     alloc_limit_bytes: Option<usize>,
+    decode_budget: Option<&Arc<Budget>>,
     should_interrupt: &AtomicBool,
 ) -> Result
 where
@@ -248,6 +263,8 @@ where
             ref_delta_children.as_ref(),
             object_hash,
             alloc_limit_bytes,
+            decode_budget,
+            should_interrupt,
             &objects,
             &size,
             |child| work.push(child),
@@ -278,6 +295,7 @@ fn resolve_parallel<T, F, MBFN, R>(
     ref_delta_children: Option<super::SharedRefDeltaChildren>,
     object_hash: gix_hash::Kind,
     alloc_limit_bytes: Option<usize>,
+    decode_budget: Option<&Arc<Budget>>,
     should_interrupt: &AtomicBool,
 ) -> Result
 where
@@ -352,6 +370,8 @@ where
                                         ref_delta_children.as_ref(),
                                         object_hash,
                                         alloc_limit_bytes,
+                                        decode_budget,
+                                        should_interrupt,
                                         objects,
                                         size,
                                         |child| {
@@ -461,6 +481,8 @@ fn resolve_task<'a, T, F, MBFN, R>(
     ref_delta_children: Option<&super::SharedRefDeltaChildren>,
     object_hash: gix_hash::Kind,
     alloc_limit_bytes: Option<usize>,
+    decode_budget: Option<&Arc<Budget>>,
+    should_interrupt: &AtomicBool,
     objects: &gix_utils::progress::StepShared,
     size: &gix_utils::progress::StepShared,
     mut push: impl FnMut(WorkItem<'a, T>),
@@ -474,54 +496,81 @@ where
     let is_root = parent.is_none();
     // Root buffers either become shared bases or are dropped after inspection. Keeping leaf-root allocations out of
     // worker scratch avoids retaining an occasionally huge capacity for the worker's lifetime.
-    let mut root_bytes = Vec::new();
-    let (entry, entry_end) = if let Some(parent) = parent.as_ref() {
-        let (mut entry, entry_end) = decompress_from_resolver(
-            node.entry_slice(),
-            delta_bytes,
-            inflate,
-            resolve,
-            resolve_data,
-            object_hash,
-            alloc_limit_bytes,
-        )?;
-        let (base_size, consumed) = data::delta::decode_header_size(delta_bytes)?;
-        let base_size = decoded_size_limited(base_size, alloc_limit_bytes, node.entry_slice().start)?;
-        if parent.bytes.len() != base_size {
-            bail!(gix_error::corruption(
-                "Corrupt delta data: delta base size does not match base object size"
-            ));
-        }
-        let (result_size, result_header_size) = data::delta::decode_header_size(&delta_bytes[consumed..])?;
-        let result_size = decoded_size_limited(result_size, alloc_limit_bytes, node.entry_slice().start)?;
-        resize_with_limit(fully_resolved_delta_bytes, result_size, alloc_limit_bytes)?;
-        data::delta::apply(
-            &parent.bytes,
-            fully_resolved_delta_bytes,
-            &delta_bytes[consumed + result_header_size..],
-        )?;
-        entry.header = parent.entry.header;
-        (entry, entry_end)
-    } else {
-        decompress_from_resolver(
-            node.entry_slice(),
-            &mut root_bytes,
-            inflate,
-            resolve,
-            resolve_data,
-            object_hash,
-            alloc_limit_bytes,
-        )?
-    };
-
-    let resolved = ResolvedBase {
-        entry,
-        entry_end,
-        bytes: if is_root {
-            root_bytes
+    let buffered = (|| -> Result<ResolvedBase> {
+        let mut root_bytes = Vec::new();
+        let (entry, entry_end) = if let Some(parent) = parent.as_ref() {
+            let (mut entry, entry_end) = decompress_from_resolver(
+                node.entry_slice(),
+                delta_bytes,
+                inflate,
+                resolve,
+                resolve_data,
+                object_hash,
+                alloc_limit_bytes,
+            )?;
+            let (base_size, consumed) = data::delta::decode_header_size(delta_bytes)?;
+            let base_size = decoded_size_limited(base_size, alloc_limit_bytes, node.entry_slice().start)?;
+            if parent.bytes.len() != base_size {
+                bail!(gix_error::corruption(
+                    "Corrupt delta data: delta base size does not match base object size"
+                ));
+            }
+            let (result_size, result_header_size) = data::delta::decode_header_size(&delta_bytes[consumed..])?;
+            let result_size = decoded_size_limited(result_size, alloc_limit_bytes, node.entry_slice().start)?;
+            resize_with_limit(fully_resolved_delta_bytes, result_size, alloc_limit_bytes)?;
+            data::delta::apply(
+                &parent.bytes,
+                fully_resolved_delta_bytes,
+                &delta_bytes[consumed + result_header_size..],
+            )?;
+            entry.header = parent.entry.header;
+            (entry, entry_end)
         } else {
-            std::mem::take(fully_resolved_delta_bytes)
-        },
+            decompress_from_resolver(
+                node.entry_slice(),
+                &mut root_bytes,
+                inflate,
+                resolve,
+                resolve_data,
+                object_hash,
+                alloc_limit_bytes,
+            )?
+        };
+
+        Ok(ResolvedBase {
+            entry,
+            entry_end,
+            bytes: Bytes::Buffered(if is_root {
+                root_bytes
+            } else {
+                std::mem::take(fully_resolved_delta_bytes)
+            }),
+        })
+    })();
+    let resolved = match buffered {
+        Ok(resolved) => resolved,
+        Err(error) if bounded::allocation_limit(&error) && decode_budget.is_some() => {
+            let slice = node.entry_slice();
+            let bytes = resolve(slice.clone(), resolve_data)
+                .ok_or_raise(|| gix_error::corruption("Missing pack entry during bounded decode"))?;
+            let mut entry = data::Entry::from_bytes(bytes, slice.start, object_hash)?;
+            let (spool, _) = bounded::resolve(
+                &bytes[entry.header_size()..],
+                entry.decompressed_size,
+                parent.as_ref().map(|parent| &*parent.bytes),
+                decode_budget.expect("guarded scratch budget"),
+                should_interrupt,
+            )?;
+            if let Some(parent) = parent.as_ref() {
+                entry.header = parent.entry.header;
+            }
+            ResolvedBase {
+                entry,
+                entry_end: slice.end,
+                bytes: Bytes::Mapped(spool.into_mapped().or_error()?),
+            }
+        }
+        Err(error) => return Err(error),
     };
     attach_ref_delta_children(
         &mut node,
@@ -529,6 +578,7 @@ where
         &resolved.bytes,
         ref_delta_children,
         object_hash,
+        should_interrupt,
     )?;
     let has_children = node.has_children();
     inspect(&mut node, level, &resolved, progress, modify_base, objects, size)?;
@@ -545,18 +595,19 @@ where
     } else if is_root {
         None
     } else {
-        Some(resolved.bytes)
+        resolved.bytes.reusable()
     };
 
     // This might be a leaf, while its base buffer now is also exclusively available,
     // and if so, keep the larger buffer.
     if let Some(parent) = parent
         && let Ok(parent) = OwnShared::try_unwrap(parent)
+        && let Some(bytes) = parent.bytes.reusable()
         && reusable
             .as_ref()
-            .is_none_or(|reusable| parent.bytes.capacity() > reusable.capacity())
+            .is_none_or(|reusable| bytes.capacity() > reusable.capacity())
     {
-        reusable = Some(parent.bytes);
+        reusable = Some(bytes);
     }
     if let Some(reusable) = reusable {
         *fully_resolved_delta_bytes = reusable;
@@ -788,6 +839,7 @@ mod tests {
                 should_interrupt: &AtomicBool::new(false),
                 object_hash: gix_hash::Kind::Sha1,
                 alloc_limit_bytes: None,
+                decode_budget: None,
             },
         )?;
         assert_eq!(
@@ -984,6 +1036,7 @@ mod tests {
                 should_interrupt: &should_interrupt,
                 object_hash: gix_hash::Kind::Sha1,
                 alloc_limit_bytes,
+                decode_budget: None,
             },
         )
         .map(|_| ())

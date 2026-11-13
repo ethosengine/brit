@@ -1,5 +1,8 @@
 use gix_error::{ErrorExt, OptionExt, Result, bail};
 
+/// Bounded delta application shared by object streaming and pack traversal.
+pub mod stream;
+
 fn corrupt(message: &'static str) -> gix_error::Message {
     gix_error::message!("Corrupt delta data: {message}").corrupted()
 }

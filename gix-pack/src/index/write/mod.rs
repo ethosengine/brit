@@ -230,6 +230,7 @@ pub(super) mod function {
                     should_interrupt,
                     object_hash,
                     alloc_limit_bytes,
+                    decode_budget: None,
                 },
             )?;
             root_progress.inc();

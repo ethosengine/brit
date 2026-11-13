@@ -141,6 +141,7 @@ where
                 })
                 .ok();
 
+            let decode_budget = Some(gix::utils::stream::Budget::new(&std::env::temp_dir()).or_error()?);
             idx.verify_integrity(
                 pack.as_ref().map(|p| gix::odb::pack::index::verify::PackContext {
                     data: p,
@@ -149,6 +150,7 @@ where
                         traversal: algorithm.into(),
                         make_pack_lookup_cache: cache,
                         thread_limit,
+                        decode_budget: decode_budget.clone(),
                     },
                 }),
                 &mut progress,
@@ -167,6 +169,7 @@ where
                         verify_mode: mode,
                         traversal: algorithm.into(),
                         thread_limit,
+                        decode_budget: Some(gix::utils::stream::Budget::new(&std::env::temp_dir()).or_error()?),
                         make_pack_lookup_cache: cache,
                     },
                 )?;

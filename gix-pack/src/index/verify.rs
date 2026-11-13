@@ -29,6 +29,9 @@ pub mod integrity {
         pub traversal: crate::index::traverse::Algorithm,
         /// The amount of threads to use of `Some(N)`, with `None|Some(0)` using all available cores are used.
         pub thread_limit: Option<usize>,
+        /// Optional operation-owned scratch for object buffers exceeding the allocation policy.
+        /// The selected traversal algorithm and metadata allocation limits remain unchanged.
+        pub decode_budget: Option<std::sync::Arc<gix_utils::stream::Budget>>,
         /// A function to create a pack cache
         pub make_pack_lookup_cache: F,
     }
@@ -39,6 +42,7 @@ pub mod integrity {
                 verify_mode: Default::default(),
                 traversal: Default::default(),
                 thread_limit: None,
+                decode_budget: None,
                 make_pack_lookup_cache: || crate::cache::Never,
             }
         }
@@ -166,6 +170,7 @@ where
                         verify_mode,
                         traversal,
                         thread_limit,
+                        decode_budget,
                         make_pack_lookup_cache,
                     },
             }) => self
@@ -184,6 +189,7 @@ where
                         thread_limit,
                         check: index::traverse::SafetyCheck::All,
                         alloc_limit_bytes: pack.alloc_limit_bytes,
+                        decode_budget,
                         make_pack_lookup_cache,
                     },
                 )

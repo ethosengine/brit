@@ -5,6 +5,8 @@ pub mod entry;
 ///
 pub mod header;
 
+pub(crate) mod bounded;
+
 /// Check the whole buffer size before growing it, avoiding amortized growth beyond a configured cap.
 pub(crate) fn resize_with_limit(out: &mut Vec<u8>, len: usize, alloc_limit_bytes: Option<usize>) -> Result {
     if let Some(limit) = alloc_limit_bytes.filter(|limit| len > *limit) {

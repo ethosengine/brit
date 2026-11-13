@@ -177,13 +177,13 @@ impl<S: Deref<Target = super::Store> + Clone> FindStream for super::Handle<S> {
             stream::check(interrupt).or_error()?;
             let size = packed.entry.decompressed_size;
             let mut delta = packed.reader()?.take(size);
-            let base_size = varint(&mut delta).or_error()?;
-            let result_size = varint(&mut delta).or_error()?;
+            let base_size = gix_pack::data::delta::stream::size(&mut delta).or_error()?;
+            let result_size = gix_pack::data::delta::stream::size(&mut delta).or_error()?;
             if base_size != result.len() {
                 bail!(corruption("Delta base size mismatch"));
             }
             let mut out = budget.spool().or_error()?;
-            apply_delta(&mut delta, &mut result, &mut out, result_size, interrupt)?;
+            gix_pack::data::delta::stream::apply(&mut delta, &mut result, base_size, &mut out, result_size, interrupt)?;
             if delta.limit() != 0 {
                 bail!(corruption("Truncated delta instructions"));
             }
@@ -218,77 +218,6 @@ impl Packed {
         file.seek(SeekFrom::Start(self.entry.data_offset)).or_error()?;
         Ok(gix_zlib::stream::inflate::Reader::new(BufReader::new(file)))
     }
-}
-fn varint(input: &mut impl Read) -> io::Result<u64> {
-    let mut value = 0u64;
-    for shift in (0..64).step_by(7) {
-        let mut byte = [0];
-        input.read_exact(&mut byte)?;
-        if shift == 63 && byte[0] > 1 {
-            return Err(io::Error::other("Delta size overflow"));
-        }
-        value |= u64::from(byte[0] & 127) << shift;
-        if byte[0] & 128 == 0 {
-            return Ok(value);
-        }
-    }
-    Err(io::Error::other("Delta size overflow"))
-}
-fn apply_delta(
-    input: &mut impl Read,
-    base: &mut Spool,
-    output: &mut Spool,
-    size: u64,
-    interrupt: &AtomicBool,
-) -> Result<()> {
-    let mut command = [0];
-    let mut buf = [0; stream::CHUNK];
-    while input.read(&mut command).or_error()? != 0 {
-        stream::check(interrupt).or_error()?;
-        let cmd = command[0];
-        let count = if cmd & 128 != 0 {
-            let mut offset = 0u64;
-            let mut count = 0u64;
-            for bit in 0..7 {
-                if cmd & (1 << bit) != 0 {
-                    input.read_exact(&mut command).or_error()?;
-                    if bit < 4 {
-                        offset |= u64::from(command[0]) << (8 * bit);
-                    } else {
-                        count |= u64::from(command[0]) << (8 * (bit - 4));
-                    }
-                }
-            }
-            if count == 0 {
-                count = 65536;
-            }
-            if offset.checked_add(count).is_none_or(|end| end > base.len()) {
-                bail!(corruption("Delta copy exceeds base"));
-            }
-            base.seek(SeekFrom::Start(offset)).or_error()?;
-            if output.len().checked_add(count).is_none_or(|end| end > size) {
-                bail!(corruption("Delta exceeds declared result"));
-            }
-            let copied = stream::copy(&mut base.take(count), output, interrupt).or_error()?;
-            if copied != count {
-                bail!(corruption("Truncated delta base"));
-            }
-            count
-        } else {
-            let count = u64::from(cmd);
-            if count == 0 || output.len().checked_add(count).is_none_or(|end| end > size) {
-                bail!(corruption("Invalid delta insertion"));
-            }
-            input.read_exact(&mut buf[..cmd as usize]).or_error()?;
-            output.write_all(&buf[..cmd as usize]).or_error()?;
-            count
-        };
-        let _ = count;
-    }
-    if output.len() != size {
-        bail!(corruption("Delta result size mismatch"));
-    }
-    Ok(())
 }
 impl<S: FindStream> FindStream for crate::Cache<S> {
     fn find_stream(&self, id: &gix_hash::oid, budget: &Arc<Budget>, interrupt: &AtomicBool) -> Result<(Kind, Spool)> {
@@ -490,7 +419,9 @@ mod tests {
         let named = packs.join(format!("pack-{checksum}.pack"));
         std::fs::rename(path, &named)?;
         let output = gix_testtools::git_command(root)
+            .args(["-c", "core.deltaBaseCacheLimit=16m"])
             .arg("index-pack")
+            .arg("--threads=1")
             .arg(&named)
             .output()?;
         assert!(output.status.success(), "{}", String::from_utf8_lossy(&output.stderr));
@@ -542,7 +473,9 @@ mod tests {
         let dir = tempfile::tempdir()?;
         let scratch = tempfile::tempdir()?;
         let bytes = 384 * 1024 * 1024;
+        eprintln!("constructing 384 MiB delta-chain fixture");
         let id = packed_chain(dir.path(), bytes, 3, false)?;
+        eprintln!("reading 384 MiB delta-chain fixture with bounded storage");
         let db = crate::at(dir.path(), gix_hash::Kind::Sha1)?;
         let budget = Budget::new(scratch.path())?;
         let started = std::time::Instant::now();
@@ -567,10 +500,23 @@ mod tests {
         base.write_all(b"base")?;
         for bytes in [&[0][..], &[0x91, 9, 4], &[5, b'x'], &[1, b'x']] {
             let mut out = budget.spool()?;
-            assert!(apply_delta(&mut &bytes[..], &mut base, &mut out, 4, &AtomicBool::new(false)).is_err());
+            assert!(
+                gix_pack::data::delta::stream::apply(
+                    &mut &bytes[..],
+                    &mut base,
+                    4,
+                    &mut out,
+                    4,
+                    &AtomicBool::new(false)
+                )
+                .is_err()
+            );
         }
         let mut out = budget.spool()?;
-        assert!(apply_delta(&mut &b"\x01x"[..], &mut base, &mut out, 1, &AtomicBool::new(true)).is_err());
+        assert!(
+            gix_pack::data::delta::stream::apply(&mut &b"\x01x"[..], &mut base, 4, &mut out, 1, &AtomicBool::new(true))
+                .is_err()
+        );
         assert_eq!(out.len(), 0);
         drop(out);
         drop(base);

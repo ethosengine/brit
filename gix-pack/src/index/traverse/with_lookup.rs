@@ -18,6 +18,8 @@ pub struct Options<F> {
     pub thread_limit: Option<usize>,
     /// The kinds of safety checks to perform.
     pub check: index::traverse::SafetyCheck,
+    /// Optional scratch for decoded object buffers exceeding the configured allocation policy.
+    pub decode_budget: Option<std::sync::Arc<gix_utils::stream::Budget>>,
     /// A function to create a pack cache
     pub make_pack_lookup_cache: F,
 }
@@ -26,6 +28,7 @@ impl Default for Options<fn() -> crate::cache::Never> {
     fn default() -> Self {
         Options {
             check: Default::default(),
+            decode_budget: None,
             thread_limit: None,
             make_pack_lookup_cache: || crate::cache::Never,
         }
@@ -76,6 +79,7 @@ where
         Options {
             thread_limit,
             check,
+            decode_budget,
             make_pack_lookup_cache,
         }: Options<F>,
     ) -> Result<Outcome>
@@ -159,6 +163,8 @@ where
                                 progress,
                                 index_entry,
                                 &mut processor,
+                                decode_budget.as_ref(),
+                                should_interrupt,
                             );
                             progress.inc();
                             let Some(stat) = result? else { continue };

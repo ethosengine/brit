@@ -336,7 +336,15 @@ fn traverse_with_index_respects_alloc_limit_bytes() -> gix_testtools::TestResult
         Err(err) => err,
     };
 
-    insta::assert_debug_snapshot!(err, "traverse_with_index must pass its allocation limit to delta-tree traversal", @"Pack delta traversal at offset 3617 requested 34 bytes: configured allocation limit is 0 bytes");
+    // Serial traversal pops the final root; the parallel root injector takes the first,
+    // even with one worker. Both scheduling contracts predate bounded storage.
+    let expected = if cfg!(feature = "parallel") {
+        "Pack delta traversal at offset 12 requested 223 bytes: configured allocation limit is 0 bytes"
+    } else {
+        "Pack delta traversal at offset 3617 requested 34 bytes: configured allocation limit is 0 bytes"
+    };
+    assert!(err.is_resource_exhausted());
+    assert_eq!(err.to_string(), expected);
     Ok(())
 }
 
@@ -492,6 +500,7 @@ fn pack_lookup() -> gix_testtools::TestResult {
                                 traversal: *algo,
                                 make_pack_lookup_cache: || cache::Never,
                                 thread_limit: None,
+                                decode_budget: None,
                             }
                         }),
                         &mut progress::Discard,
@@ -589,7 +598,24 @@ fn verify_integrity_respects_pack_alloc_limit_bytes() -> gix_testtools::TestResu
 
         errors.push((traversal, err));
     }
-    insta::assert_debug_snapshot!(gix_testtools::redact_debug_snapshot(&(errors), &[]), "both traversal algorithms respect the pack's decoded-object allocation limit", @"
+    if cfg!(feature = "parallel") {
+        insta::assert_debug_snapshot!(gix_testtools::redact_debug_snapshot(&(errors), &[]), "both traversal algorithms respect the pack's decoded-object allocation limit", @"
+    [
+        (
+            Lookup,
+            Object Oid(1) at offset 12 could not be decoded
+            
+            Caused by:
+                0: Pack object decode requested 223 bytes: configured allocation limit is 0 bytes,
+        ),
+        (
+            DeltaTreeLookup,
+            Pack delta traversal at offset 12 requested 223 bytes: configured allocation limit is 0 bytes,
+        ),
+    ]
+    ");
+    } else {
+        insta::assert_debug_snapshot!(gix_testtools::redact_debug_snapshot(&(errors), &[]), "both traversal algorithms respect the pack's decoded-object allocation limit", @"
     [
         (
             Lookup,
@@ -604,6 +630,58 @@ fn verify_integrity_respects_pack_alloc_limit_bytes() -> gix_testtools::TestResu
         ),
     ]
     ");
+    }
+    Ok(())
+}
+
+#[test]
+fn bounded_verification_preserves_algorithms_modes_and_statistics() -> gix_testtools::TestResult {
+    for (index_path, pack_path) in [(SMALL_PACK_INDEX, SMALL_PACK), (INDEX_V1, PACK_FOR_INDEX_V1)] {
+        let index = index::File::at(fixture_path(index_path), gix_hash::Kind::Sha1)?;
+        for traversal in [
+            index::traverse::Algorithm::Lookup,
+            index::traverse::Algorithm::DeltaTreeLookup,
+        ] {
+            for verify_mode in [
+                index::verify::Mode::HashCrc32,
+                index::verify::Mode::HashCrc32Decode,
+                index::verify::Mode::HashCrc32DecodeEncode,
+            ] {
+                let mut expected = None;
+                for limit in [None, Some(0), Some(16)] {
+                    let data = pack::data::File::at(fixture_path(pack_path), gix_hash::Kind::Sha1)?
+                        .with_alloc_limit_bytes(limit);
+                    let scratch = gix_testtools::tempfile::tempdir()?;
+                    let budget = gix_utils::stream::Budget::new(scratch.path())?;
+                    let outcome = index.verify_integrity(
+                        Some(index::verify::PackContext {
+                            data: &data,
+                            options: index::verify::integrity::Options {
+                                verify_mode,
+                                traversal,
+                                thread_limit: Some(2),
+                                decode_budget: limit.map(|_| budget.clone()),
+                                make_pack_lookup_cache: || pack::cache::Never,
+                            },
+                        }),
+                        &mut progress::Discard,
+                        &AtomicBool::new(false),
+                    )?;
+                    let result = (
+                        outcome.actual_index_checksum,
+                        format!("{:?}", outcome.pack_traverse_statistics),
+                    );
+                    if let Some(expected) = &expected {
+                        assert_eq!(&result, expected, "{traversal:?}, {verify_mode:?}, {limit:?}");
+                        assert!(budget.usage().1 > 0, "the bounded decoder was exercised");
+                    } else {
+                        expected = Some(result);
+                    }
+                    assert_eq!(budget.usage().0, 0, "all decoded bodies are reclaimed");
+                }
+            }
+        }
+    }
     Ok(())
 }
 

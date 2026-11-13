@@ -3,7 +3,6 @@ use std::{ffi::OsStr, io, path::Path, str::FromStr, time::Instant};
 use gix::{
     Count, NestedProgress, Progress, Result,
     error::{ResultExt, message},
-    hash,
     hash::ObjectId,
     interrupt,
     objs::bstr::ByteVec,
@@ -116,6 +115,7 @@ where
     type ObjectIdIter = dyn Iterator<Item = Result<ObjectId>> + Send;
 
     let repo = gix::discover(repository_path)?;
+    let object_hash = repo.object_hash();
     let pack_compression = repo.pack_compression()?;
     let repo = repo.into_sync();
     progress.init(Some(2), progress::steps());
@@ -273,7 +273,7 @@ where
             &mut pack_file,
             num_objects as u32,
             pack::data::Version::default(),
-            hash::Kind::default(),
+            object_hash,
         ),
         make_cancellation_err,
     );

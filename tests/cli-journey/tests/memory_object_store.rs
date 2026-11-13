@@ -8,7 +8,10 @@ use std::{
 };
 
 fn git(root: &Path, args: &[&str]) -> Result<Vec<u8>> {
-    let output = gix_testtools::git_command(root).args(args).output()?;
+    let output = gix_testtools::git_command(root)
+        .args(["-c", &format!("safe.directory={}", root.display())])
+        .args(args)
+        .output()?;
     ensure!(
         output.status.success(),
         "Git {args:?}: {}",
@@ -31,6 +34,11 @@ fn brit_output(root: &Path, args: &[&str]) -> Result<std::process::Output> {
     eprintln!("qualifying {args:?}");
     let mut command = std::process::Command::new(brit_bin().expect("built Brit"));
     gix_testtools::configure_git_environment(&mut command, root);
+    if args.first() == Some(&"free") {
+        // Standalone pack files do not declare their hash format in their header.
+        let hash = git(root, &["rev-parse", "--show-object-format"])?;
+        command.args(["--object-hash", std::str::from_utf8(&hash)?.trim()]);
+    }
     Ok(command.current_dir(root).args(args).output()?)
 }
 
@@ -43,7 +51,7 @@ fn pack_in(directory: &Path) -> Result<std::path::PathBuf> {
         .context("generated pack")
 }
 
-fn object_store(size: usize, explicit_limit: bool, ref_deltas: bool) -> Result<()> {
+fn object_store(size: usize, explicit_limit: bool, ref_deltas: bool, reduced: bool) -> Result<()> {
     let repo = TestRepo::new("memory-object-store")?;
     let root = repo.path();
     git(root, &["config", "user.name", "Fixture"])?;
@@ -67,6 +75,27 @@ fn object_store(size: usize, explicit_limit: bool, ref_deltas: bool) -> Result<(
         expected_size += change.len();
     }
     let expected = git(root, &["rev-parse", "HEAD:large"])?;
+    if reduced {
+        #[cfg(target_os = "linux")]
+        {
+            use std::os::unix::fs::{chown, MetadataExt};
+            ensure!(fs::metadata(root)?.uid() == 0, "qualification requires chown authority");
+            chown(root, Some(65534), None)?;
+            chown(root.join(".git"), Some(65534), None)?;
+            let trust = brit_output(root, &["free", "trust", ".", ".git"])?;
+            ensure!(
+                trust.status.success()
+                    && String::from_utf8_lossy(&trust.stdout)
+                        .lines()
+                        .filter(|line| line.starts_with("Reduced"))
+                        .count()
+                        == 2,
+                "fixture must have actual reduced trust"
+            );
+        }
+        #[cfg(not(target_os = "linux"))]
+        anyhow::bail!("ownership qualification runs on Linux");
+    }
     for packed in [false, true] {
         if packed {
             eprintln!("preparing packed fixture");
@@ -106,42 +135,32 @@ fn object_store(size: usize, explicit_limit: bool, ref_deltas: bool) -> Result<(
                 );
             }
         }
-        for limit in if explicit_limit {
-            &["16777216"][..]
+        if reduced && packed {
+            git(root, &["config", "--unset", "gitoxide.objects.allocLimit"])?;
+        }
+        let limits: &[Option<&str>] = if reduced {
+            &[None, Some("16777216")]
+        } else if explicit_limit {
+            &[Some("16777216")]
         } else {
-            &["1073741824"][..]
-        } {
-            git(root, &["config", "gitoxide.objects.allocLimit", limit])?;
-            eprintln!("size={size}, packed={packed}, allocation limit={limit}");
-            let head = repo.head_id()?;
+            &[Some("1073741824")]
+        };
+        for limit in limits {
+            if let Some(limit) = limit {
+                git(root, &["config", "gitoxide.objects.allocLimit", limit])?;
+            }
+            eprintln!("size={size}, packed={packed}, allocation limit={limit:?}, reduced={reduced}");
+            let head = git(root, &["rev-parse", "HEAD"])?;
             let index = fs::read(root.join(".git/index"))?;
             for algorithm in ["less-time", "less-memory"] {
                 for mode in [None, Some("--decode"), Some("--re-encode")] {
                     let mut args = vec!["verify", "--algorithm", algorithm];
                     args.extend(mode);
-                    if packed && explicit_limit {
-                        // This is a refusal/recovery contract, not successful packed verification.
-                        // Bounded packed verification remains an open readiness station.
-                        let output = brit_output(root, &args)?;
-                        let stderr = String::from_utf8_lossy(&output.stderr);
-                        ensure!(
-                            !output.status.success(),
-                            "the configured packed-buffer limit must remain effective"
-                        );
-                        ensure!(
-                            stderr.contains(&format!("requested {size} bytes"))
-                                && stderr.contains("configured allocation limit is 16777216 bytes")
-                                && stderr.contains("pack index, path="),
-                            "accurate allocation diagnostic: {stderr}"
-                        );
-                        ensure!(output.stdout.is_empty(), "refusal must not report success output");
-                    } else {
-                        brit(root, &args)?;
-                    }
+                    brit(root, &args)?;
                 }
             }
             ensure!(
-                repo.head_id()? == head && fs::read(root.join(".git/index"))? == index,
+                git(root, &["rev-parse", "HEAD"])? == head && fs::read(root.join(".git/index"))? == index,
                 "verification preserves repository state"
             );
             for args in [
@@ -154,7 +173,7 @@ fn object_store(size: usize, explicit_limit: bool, ref_deltas: bool) -> Result<(
             }
         }
     }
-    if explicit_limit {
+    if explicit_limit || reduced {
         return Ok(());
     }
     let original = pack_in(&root.join(".git/objects/pack"))?;
@@ -165,7 +184,9 @@ fn object_store(size: usize, explicit_limit: bool, ref_deltas: bool) -> Result<(
             &["free", "pack", "verify", "--algorithm", algorithm, original_arg],
         )?;
     }
-    let generated = tempfile::tempdir()?;
+    // Keep explicit destinations inside this fixture's writer boundary. A plain
+    // TMPDIR beneath a shared checkout would discover and guard that parent repo.
+    let generated = tempfile::tempdir_in(root.join(".git"))?;
     brit(
         root,
         &[
@@ -180,7 +201,7 @@ fn object_store(size: usize, explicit_limit: bool, ref_deltas: bool) -> Result<(
         ],
     )?;
     let pack = pack_in(generated.path())?;
-    let indexed = tempfile::tempdir()?;
+    let indexed = tempfile::tempdir_in(root.join(".git"))?;
     brit(
         root,
         &[
@@ -224,25 +245,49 @@ fn object_store(size: usize, explicit_limit: bool, ref_deltas: bool) -> Result<(
 
 #[test]
 fn object_store_twenty_mib() -> Result<()> {
-    object_store(20 * 1024 * 1024, false, false)
+    object_store(20 * 1024 * 1024, false, false, false)
 }
 
 #[test]
 fn object_store_sixty_four_mib() -> Result<()> {
-    object_store(64 * 1024 * 1024, false, false)
+    object_store(64 * 1024 * 1024, false, false, false)
 }
 
 #[test]
 fn object_store_two_hundred_fifty_six_mib() -> Result<()> {
-    object_store(256 * 1024 * 1024, false, false)
+    object_store(256 * 1024 * 1024, false, false, false)
 }
 
 #[test]
-fn explicit_limit_streams_loose_blobs_and_diagnoses_packed_refusal() -> Result<()> {
-    object_store(20 * 1024 * 1024, true, false)
+fn explicit_limit_streams_loose_and_packed_blobs() -> Result<()> {
+    object_store(20 * 1024 * 1024, true, false, false)
 }
 
 #[test]
 fn object_store_sixty_four_mib_ref_deltas() -> Result<()> {
-    object_store(64 * 1024 * 1024, false, true)
+    object_store(64 * 1024 * 1024, false, true, false)
+}
+
+#[test]
+fn explicit_limit_streams_sixty_four_mib_ofs_and_ref_deltas() -> Result<()> {
+    for refs in [false, true] {
+        object_store(64 * 1024 * 1024, true, refs, false)?;
+    }
+    Ok(())
+}
+
+#[test]
+fn explicit_limit_streams_two_hundred_fifty_six_mib() -> Result<()> {
+    object_store(256 * 1024 * 1024, true, false, false)
+}
+
+#[cfg(target_os = "linux")]
+#[test]
+#[ignore = "requires chown authority: qualification runs this explicitly with --ignored"]
+fn actual_reduced_trust_streams_packed_objects_and_deltas() -> Result<()> {
+    object_store(20 * 1024 * 1024, false, false, true)?;
+    for refs in [false, true] {
+        object_store(64 * 1024 * 1024, false, refs, true)?;
+    }
+    Ok(())
 }

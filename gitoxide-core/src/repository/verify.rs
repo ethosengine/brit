@@ -37,6 +37,7 @@ pub fn integrity(
             verify_mode,
             traversal: algorithm.into(),
             thread_limit,
+            decode_budget: Some(gix::utils::stream::Budget::new(&std::env::temp_dir()).or_error()?),
             // TODO: a way to get the pack cache from a handle
             make_pack_lookup_cache: || gix::odb::pack::cache::Never,
         },

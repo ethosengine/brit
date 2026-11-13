@@ -79,7 +79,13 @@ impl<R: BufRead> io::Read for Reader<R> {
             let status = self
                 .state
                 .decompress(input, out, crate::FlushDecompress::None)
-                .map_err(io::Error::other)?;
+                .map_err(|error| {
+                    if error.is_resource_exhausted() {
+                        io::Error::other(error)
+                    } else {
+                        io::Error::other(error.and_raise(gix_error::corruption("Invalid zlib stream")))
+                    }
+                })?;
             let consumed = (self.state.total_in() - before_in) as usize;
             let written = (self.state.total_out() - before_out) as usize;
             self.input.consume(consumed);
@@ -88,7 +94,10 @@ impl<R: BufRead> io::Read for Reader<R> {
                 return Ok(written);
             }
             if consumed == 0 {
-                return Err(io::Error::new(io::ErrorKind::UnexpectedEof, "Truncated zlib stream"));
+                return Err(io::Error::new(
+                    io::ErrorKind::UnexpectedEof,
+                    gix_error::corruption("Truncated zlib stream"),
+                ));
             }
         }
     }

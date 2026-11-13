@@ -32,6 +32,8 @@ pub struct Options<F> {
     /// If `Some`, rejects individual allocations above the given number of bytes while resolving decoded object and
     /// delta result buffers during delta-tree traversal. `Some(0)` rejects all non-empty allocations.
     pub alloc_limit_bytes: Option<usize>,
+    /// Optional scratch for decoded object buffers exceeding the configured allocation policy.
+    pub decode_budget: Option<std::sync::Arc<gix_utils::stream::Budget>>,
     /// A function to create a pack cache
     pub make_pack_lookup_cache: F,
 }
@@ -43,6 +45,7 @@ impl Default for Options<fn() -> crate::cache::Never> {
             traversal: Default::default(),
             thread_limit: None,
             alloc_limit_bytes: None,
+            decode_budget: None,
             make_pack_lookup_cache: || crate::cache::Never,
         }
     }
@@ -92,6 +95,7 @@ where
             thread_limit,
             check,
             alloc_limit_bytes,
+            decode_budget,
             make_pack_lookup_cache,
         }: Options<F>,
     ) -> Result<Outcome>
@@ -111,6 +115,7 @@ where
                     thread_limit,
                     check,
                     make_pack_lookup_cache,
+                    decode_budget,
                 },
             ),
             Algorithm::DeltaTreeLookup => self.traverse_with_index(
@@ -122,6 +127,7 @@ where
                     check,
                     thread_limit,
                     alloc_limit_bytes,
+                    decode_budget,
                 },
             ),
         }
@@ -164,6 +170,8 @@ where
         progress: &mut dyn Progress,
         index_entry: &index::Entry,
         processor: &mut impl FnMut(gix_object::Kind, &[u8], &index::Entry, &dyn Progress) -> Result,
+        decode_budget: Option<&std::sync::Arc<gix_utils::stream::Budget>>,
+        should_interrupt: &AtomicBool,
     ) -> Result<Option<crate::data::decode::entry::Outcome>>
     where
         C: crate::cache::DecodeEntry,
@@ -171,8 +179,9 @@ where
     {
         let pack_entry = pack.entry(index_entry.pack_offset)?;
         let pack_entry_data_offset = pack_entry.data_offset;
+        let mut mapped = None;
         let entry_stats = match pack.decode_entry(
-            pack_entry,
+            pack_entry.clone(),
             buf,
             inflate,
             &|id, _| {
@@ -186,6 +195,28 @@ where
             cache,
         ) {
             Ok(stats) => stats,
+            Err(err) if crate::data::decode::bounded::allocation_limit(&err) && decode_budget.is_some() => {
+                let (data, stats) = pack
+                    .decode_entry_bounded(
+                        pack_entry,
+                        |id| {
+                            self.lookup(id)
+                                .map(|index| pack.entry(self.pack_offset_at_index(index)))
+                                .transpose()
+                        },
+                        decode_budget.expect("guarded scratch budget"),
+                        should_interrupt,
+                    )
+                    .or_raise(|| {
+                        message!(
+                            "Object {} at offset {} could not be decoded with scratch",
+                            index_entry.oid,
+                            index_entry.pack_offset
+                        )
+                    })?;
+                mapped = Some(data);
+                stats
+            }
             Err(err) if !check.fatal_decode_error() => {
                 progress.info(format!(
                     "Ignoring decode error for object {} at offset {}: {err}",
@@ -206,9 +237,9 @@ where
         let entry_len = header_size + entry_stats.compressed_size;
 
         process_entry(
-            check,
+            (check, should_interrupt),
             object_kind,
-            buf,
+            mapped.as_ref().map_or(buf.as_slice(), |data| data.as_slice()),
             index_entry,
             || pack.entry_crc32(index_entry.pack_offset, entry_len),
             progress,
@@ -219,7 +250,7 @@ where
 }
 
 fn process_entry(
-    check: SafetyCheck,
+    (check, should_interrupt): (SafetyCheck, &AtomicBool),
     object_kind: gix_object::Kind,
     decompressed: &[u8],
     index_entry: &index::Entry,
@@ -228,14 +259,20 @@ fn process_entry(
     processor: &mut impl FnMut(gix_object::Kind, &[u8], &index::Entry, &dyn Progress) -> Result,
 ) -> Result {
     if check.object_checksum() {
-        gix_object::Data::new(decompressed, object_kind, index_entry.oid.kind())
-            .verify_checksum(&index_entry.oid)
-            .or_raise(|| {
-                corruption(format!(
-                    "Error verifying object at offset {} against checksum in the index file",
-                    index_entry.pack_offset
-                ))
-            })?;
+        let actual = gix_object::compute_stream_hash(
+            index_entry.oid.kind(),
+            object_kind,
+            &mut &decompressed[..],
+            decompressed.len() as u64,
+            &mut gix_utils::progress::Discard,
+            should_interrupt,
+        )?;
+        actual.verify(&index_entry.oid).or_raise(|| {
+            corruption(format!(
+                "Error verifying object at offset {} against checksum in the index file",
+                index_entry.pack_offset
+            ))
+        })?;
         if let Some(desired_crc32) = index_entry.crc32 {
             let actual_crc32 = pack_entry_crc32();
             if actual_crc32 != desired_crc32 {

@@ -20,6 +20,8 @@ pub struct Options {
     /// If `Some`, rejects individual allocations above the given number of bytes while resolving decoded object and
     /// delta result buffers. `Some(0)` rejects all non-empty allocations.
     pub alloc_limit_bytes: Option<usize>,
+    /// Optional scratch for decoded object buffers exceeding the configured allocation policy.
+    pub decode_budget: Option<std::sync::Arc<gix_utils::stream::Budget>>,
 }
 
 /// The progress ids used in [`index::File::traverse_with_index()`].
@@ -73,6 +75,7 @@ where
             check,
             thread_limit,
             alloc_limit_bytes,
+            decode_budget,
         }: Options,
     ) -> Result<Outcome>
     where
@@ -135,7 +138,7 @@ where
                         data.compressed_size = entry_end - pack_entry.data_offset;
                         data.object_size = bytes.len() as u64;
                         index::traverse::process_entry(
-                            check,
+                            (check, should_interrupt),
                             object_kind,
                             bytes,
                             &data.index_entry,
@@ -162,6 +165,7 @@ where
                         should_interrupt,
                         object_hash: self.object_hash,
                         alloc_limit_bytes,
+                        decode_budget: decode_budget.as_ref(),
                     },
                 )?);
                 outcome.pack_size = pack.data_len() as u64;

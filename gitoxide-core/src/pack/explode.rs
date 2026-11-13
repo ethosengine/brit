@@ -229,6 +229,7 @@ pub fn pack_or_pack_index(
                 }
             },
             pack::index::traverse::Options {
+                decode_budget: None,
                 traversal: algorithm,
                 thread_limit,
                 check: check.into(),

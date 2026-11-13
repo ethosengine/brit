@@ -724,6 +724,7 @@ fn write_and_verify(
                 traversal: pack::index::traverse::Algorithm::Lookup,
                 make_pack_lookup_cache: || pack::cache::Never,
                 thread_limit: None,
+                decode_budget: None,
             },
         )?;
     }

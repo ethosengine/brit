@@ -3053,6 +3053,48 @@ intermediate mapped-path run is interruption evidence only. Final committed
 source, broader build metadata, rename-change detection and whole-operation
 scratch proof remain open.
 
+### Packed verification preserves both traversal algorithms
+
+Packed verification formerly refused a 20 MiB blob at the explicit 16 MiB
+allocation setting. The existing lookup and delta-tree traversals now use
+charged immutable spools when their buffered decoder reaches that configured
+limit. Actual allocator failures retain their own diagnostic. Delta application
+shares the existing streamed object-reader implementation; traversal selection,
+worker/cache controls, object checksums, CRCs, decode/re-encode modes and
+statistics remain unchanged. Completed mapped bases release their reservations.
+Object hashing now checks cancellation between bounded reads.
+
+The explicit-limit matrix passes 20/64/256 MiB loose and packed objects, including
+64 MiB OFS and REF histories, under both hashes: SHA-1 peaks at 571,211,776 B
+in 54.875 s; SHA-256 at 547,274,752 B in 401.415 s. Actual ownership-derived
+reduced trust passes default and explicit-limit 20/64 MiB cases under both
+hashes (343,433,216 B / 55.820 s and 339,886,080 B / 386.735 s). The ordinary
+SHA-1 matrix, including pack create/index/explode, passes at 822,583,296 B
+in 96.401 s. Every successful worker reports zero OOM kills, surviving children
+and executable identity changes. Main SHA-256:
+`359b1590b8c544d97a6e8a16b16c6454ca7c085c29889a2176580f77cdb6d759`.
+
+The complete ordinary SHA-256 pack round trip exposed a pre-existing writer
+bug: `free pack create` used a SHA-1 trailer regardless of repository format.
+It now takes the repository's hash kind. All four 20/64/256 MiB cases pass,
+including pack creation, indexing and verified explosion (845,455,360 B,
+521.660 s; zero OOM or surviving children). Main SHA-256:
+`85f135b15680de38fc7da77711227e4261478c7c9c63c3f9a572987c7f88373b`.
+The standalone fixture now supplies the existing `--object-hash` option and
+places temporary output destinations inside its own repository. Plain output
+directories under the shared checkout had discovered its parent writer guard;
+concurrent refusals are retained as fixture-isolation failures, not memory proof.
+The isolated rerun passes all four SHA-1 cases at 820,572,160 B in 97.495 s
+and a concurrent SHA-256 20 MiB control at 73,469,952 B in 23.073 s.
+
+Native fixtures compare both algorithms, all decode modes and zero/16-byte
+buffer limits against buffered checksums and statistics. They distinguish
+corruption, cancellation and scratch exhaustion and verify reservation release.
+Both serial and parallel builds preserve their existing traversal ordering.
+Private receipts remain in `bounded-memory/pack-*`. Aggregate scratch telemetry,
+final committed-source qualification and the remaining command audit stay open;
+these memory receipts do not establish full acceptance.
+
 ### Public-command audit in progress
 
 The command boundary is `src/plumbing/options/mod.rs` plus
@@ -3068,7 +3110,7 @@ unsupported independently of this effort. No open row is accepted as deferred.
 | `worktree`, `clone` checkout | Existing bounded checkout, OFS/REF delta and filter machinery retained. Whole-cgroup 64/256 MiB worktree checkout/recovery passes; 64/256 MiB local clone/fetch/push also passes; other protocols and reduced-trust transfer paths remain open. |
 | `switch`, `pull`, `rebase`, `merge`, `commit` | Switch/pull raw recovery payloads and streamed dirty checks are repaired and measured at 20/64/256 MiB. Replay working-file journals now use raw payloads and retained-copy capture streams, with 20/64 MiB public cases passing; 64 MiB conflict/abort and preserved large edits also pass after raw-custody repair; interrupted conflict handoff preserves exact child authority; 64 MiB authored-object retention and 20 MiB edit-scope continuation/abort pass after streamed custody fixes. Journal metadata remains open. Three-sided 64 MiB filesystem and object-backed file/tree/commit merge fixtures pass, with bounded rename inputs and recursive-base conformance. External merge drivers, large journals and resource-bound recovery/death fixtures remain open. |
 | `blame`, `log`, `revision`, `merge-base`, `tree` | Blame initial/history blobs, rename similarity and rendering are repaired and measured, including actual reduced trust and a million unique lines; large history metadata remains open. Ordinary log traverses commits without reading blobs; path-filtered log was already unsupported. Tree listing streams output and uses headers for sizes; its traversal metadata remains to qualify. |
-| `fetch`, `push`, `odb`, `fsck`, `verify`, `commit-graph` | Pack decode diagnostics improved; 64/256 MiB local transfer passes without worker/cache changes. Loose blob verification now streams. Both verification algorithms and all decode modes, ODB inspection, connectivity and pack create/index/explode pass at 20/64/256 MiB with a 1 GiB allocation setting, including 64 MiB OFS/REF histories. Explicit 16 MiB packed-buffer refusal is accurately diagnosed and preserves repository state; this is refusal proof, not successful bounded packed verification. Reduced-trust packed buffers, additional protocols and large metadata qualification remain open. |
+| `fetch`, `push`, `odb`, `fsck`, `verify`, `commit-graph` | Pack decode diagnostics improved; 64/256 MiB local transfer passes without worker/cache changes. Loose blob verification streams; both packed verification algorithms now use bounded storage above configured allocation limits. All decode modes pass 20/64/256 MiB explicit-limit cases in both hashes, including 64 MiB OFS/REF histories, and actual reduced-trust 20/64 MiB cases. ODB inspection, connectivity and pack create/index/explode pass in both hashes; the SHA-256 writer now uses the repository hash format. Additional protocols and large metadata remain open. |
 | `branch`, `tag`, `remote`, `submodule`, `config`, `config-tree`, `attributes`, `exclude`, `mailmap` | Large config/packed-ref fixtures pass in both hashes and actual reduced trust. Mailmap object reads/output and annotated-tag reads are repaired and measured as above. Remote/submodule/path metadata and helper dispatch remain open. |
 | `credential`, `env`, `editor`, `completions`, `free`, `corpus`, `tix` | Applicable metadata/output/owned-child audit remains open. Existing unsupported behavior cannot be relabeled a memory success. |
 | `snapshot`, `build`, `run`, `graph`, `affected`, `plan`, `fingerprint`, `baseline`, `integrate`, `context` | Snapshot seal/verify/export/restore are measured on 20/64 MiB, aggregate and reduced-trust fixtures; the existing per-object 64 MiB native limit is preserved. `build fingerprint` and SHA-1 `build plan` now release streamed inputs and pass the aggregate 3×256 MiB workload; SHA-256 fingerprinting passes, while revision plan/affected retain the independently reproduced pre-existing Rakia limitation described above. Capture and other first-party metadata/output paths remain open; arbitrary external tasks are outside a universal success guarantee, but owned children still count in measured workloads. |

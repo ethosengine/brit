@@ -51,6 +51,8 @@ pub struct Options<'a, 's> {
     /// If `Some`, rejects individual allocations above the given number of bytes while resolving decoded object and
     /// delta result buffers. `Some(0)` rejects all non-empty allocations.
     pub alloc_limit_bytes: Option<usize>,
+    /// Optional shared scratch for object buffers exceeding the configured allocation policy.
+    pub decode_budget: Option<&'a std::sync::Arc<gix_utils::stream::Budget>>,
 }
 
 /// The outcome of [`Tree::traverse()`]
@@ -99,6 +101,7 @@ where
             should_interrupt,
             object_hash,
             alloc_limit_bytes,
+            decode_budget,
         }: Options<'_, '_>,
     ) -> Result<Outcome<T>>
     where
@@ -141,6 +144,7 @@ where
                 ref_delta_children.clone(),
                 object_hash,
                 alloc_limit_bytes,
+                decode_budget,
                 should_interrupt,
             )?;
         }
