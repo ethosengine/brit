@@ -46,7 +46,7 @@ rakia-core = { version = "0.1", registry = "elohim" }
 rakia-brit = { version = "0.1", registry = "elohim" }
 
 clap = { version = "4", features = ["derive"] }
-gix = { version = "0.81", default-features = false, features = ["basic", "revision", "blob-diff", "sha1"] }
+gix = { version = "^0.89.3", path = "../gix", registry = "elohim", default-features = false, features = ["basic", "revision", "blob-diff", "sha1", "sha256"] }
 petgraph = "0.7"
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"

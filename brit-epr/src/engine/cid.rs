@@ -29,6 +29,29 @@ impl BritCid {
         Self(Cid::new_v1(DAG_CBOR_CODEC, mh))
     }
 
+    /// Compute the same dag-cbor CID as [`Self::compute`] without retaining the input.
+    /// Readers can provide cancellation and propagate I/O failures between bounded reads.
+    pub fn compute_reader(mut input: impl std::io::Read) -> std::io::Result<Self> {
+        use sha2::Digest;
+
+        let mut hash = sha2::Sha256::new();
+        let mut buffer = [0; 65536];
+        loop {
+            let amount = match input.read(&mut buffer) {
+                Err(error) if error.kind() == std::io::ErrorKind::Interrupted => continue,
+                result => result?,
+            };
+            if amount == 0 {
+                break;
+            }
+            hash.update(&buffer[..amount]);
+        }
+        let mh = Code::Sha2_256
+            .wrap(&hash.finalize())
+            .expect("SHA-256 produces a supported 32-byte multihash");
+        Ok(Self(Cid::new_v1(DAG_CBOR_CODEC, mh)))
+    }
+
     /// Compute a raw-blob CID (codec 0x55) over arbitrary file bytes.
     pub fn compute_raw(bytes: &[u8]) -> Self {
         let mh = Code::Sha2_256.digest(bytes);
@@ -94,6 +117,25 @@ mod tests {
     #[test]
     fn compute_is_deterministic() {
         assert_eq!(BritCid::compute(&[1, 2, 3]), BritCid::compute(&[1, 2, 3]));
+    }
+
+    #[test]
+    fn reader_matches_buffered_cids_and_propagates_failure() -> std::io::Result<()> {
+        use std::io::{Error, Read};
+
+        for size in [0, 1, 65535, 65536, 65537, 200000] {
+            let bytes: Vec<_> = (0..size).map(|n| (n % 251) as u8).collect();
+            assert_eq!(BritCid::compute_reader(bytes.as_slice())?, BritCid::compute(&bytes));
+        }
+        struct Failure;
+        impl Read for Failure {
+            fn read(&mut self, _: &mut [u8]) -> std::io::Result<usize> {
+                Err(Error::other("input failed"))
+            }
+        }
+        let input = (&b"valid prefix"[..]).chain(Failure);
+        assert_eq!(BritCid::compute_reader(input).unwrap_err().to_string(), "input failed");
+        Ok(())
     }
 
     #[test]

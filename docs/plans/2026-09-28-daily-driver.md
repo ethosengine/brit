@@ -3013,6 +3013,46 @@ Strict affected-crate Clippy, formatting, readiness contracts and the declared
 Rust-style checker pass. Complete committed-source qualification and scratch
 telemetry remain open.
 
+### Build fingerprints release completed inputs
+
+The pre-repair `build fingerprint` fixture with three 256 MiB inputs was killed
+by the 1 GiB cgroup (three OOM kills, 17.321 s). The graph reader had cloned
+each selected blob body and retained the collection until hashing. It now uses the
+shared verified object stream and hashes each input in bounded reads, retaining
+only paths and CIDs. The existing sorted path/NUL/CID/NUL contract, glob and
+executable selection, and symlink/gitlink exclusions remain unchanged.
+`brit-graph` and the CLI now consume the local reader instead of gix 0.81;
+the graph crate's declared minimum follows that dependency at Rust 1.88, while
+the build and checker remain Rust 1.100.0.
+
+The repaired SHA-1 matrix passes four cases in 507.231 s: 20 MiB, three 256 MiB
+inputs, 512 files totaling 32 MiB, and actual ownership-derived reduced trust.
+Loose/packed objects and default/explicit 16 MiB allocation settings produce
+independent golden CIDs; revision plans agree and HEAD/index remain unchanged.
+The SHA-256 matrix passes five cases in 467.787 s, including the compatibility
+control below. Both workers peak at 1,073,741,824 B with page reclamation,
+zero OOM kills, zero surviving children and unchanged executable identities.
+Main SHA-256: `9836861fd8ac04b4857cff5fefb0bce9b22eda5f3e922fc1700ca78aa83eebce`.
+Scratch peak remains unmeasured; these are not full acceptance receipts.
+
+Compatibility exception: revision-based `build plan --since` and
+`build affected --since` still use published Rakia's gix 0.81 reader, which
+cannot open SHA-256 repositories. An empty-repository control independently
+reproduces both refusals with the pre-repair executable; the SHA-256 fixture
+asserts that existing limitation rather than counting it as memory success.
+Fingerprinting and explicit-file affected selection pass in SHA-256. The
+initial assumed reduced-trust ownership refusal was disproved by the old
+binary: reduced-trust planning succeeds and is tested as such in SHA-1.
+The 77 native CID/graph checks compare buffered/streamed boundaries, propagate
+read failure and preserve selection/ordering. All 36 CLI tests pass with
+backtraces disabled, matching the existing diagnostic fixture contract; strict
+affected-crate Clippy, formatting, 12 readiness contracts and the declared
+Rust-style checker pass. Public fixtures are selected by CI. Private receipts are `bounded-memory/build-*` and
+`fingerprint-*` in the existing isolated readiness directory. The stopped
+intermediate mapped-path run is interruption evidence only. Final committed
+source, broader build metadata, rename-change detection and whole-operation
+scratch proof remain open.
+
 ### Public-command audit in progress
 
 The command boundary is `src/plumbing/options/mod.rs` plus
@@ -3031,7 +3071,7 @@ unsupported independently of this effort. No open row is accepted as deferred.
 | `fetch`, `push`, `odb`, `fsck`, `verify`, `commit-graph` | Pack decode diagnostics improved; 64/256 MiB local transfer passes without worker/cache changes. Loose blob verification now streams. Both verification algorithms and all decode modes, ODB inspection, connectivity and pack create/index/explode pass at 20/64/256 MiB with a 1 GiB allocation setting, including 64 MiB OFS/REF histories. Explicit 16 MiB packed-buffer refusal is accurately diagnosed and preserves repository state; this is refusal proof, not successful bounded packed verification. Reduced-trust packed buffers, additional protocols and large metadata qualification remain open. |
 | `branch`, `tag`, `remote`, `submodule`, `config`, `config-tree`, `attributes`, `exclude`, `mailmap` | Large config/packed-ref fixtures pass in both hashes and actual reduced trust. Mailmap object reads/output and annotated-tag reads are repaired and measured as above. Remote/submodule/path metadata and helper dispatch remain open. |
 | `credential`, `env`, `editor`, `completions`, `free`, `corpus`, `tix` | Applicable metadata/output/owned-child audit remains open. Existing unsupported behavior cannot be relabeled a memory success. |
-| `snapshot`, `build`, `run`, `graph`, `affected`, `plan`, `fingerprint`, `baseline`, `integrate`, `context` | Snapshot seal/verify/export/restore are measured on 20/64 MiB, aggregate and reduced-trust fixtures; the existing per-object 64 MiB native limit is preserved. `build fingerprint` and `build plan` retain and clone selected blobs through the older graph reader; their measured repair remains open. Capture and other first-party metadata/output paths remain open; arbitrary external tasks are outside a universal success guarantee, but owned children still count in measured workloads. |
+| `snapshot`, `build`, `run`, `graph`, `affected`, `plan`, `fingerprint`, `baseline`, `integrate`, `context` | Snapshot seal/verify/export/restore are measured on 20/64 MiB, aggregate and reduced-trust fixtures; the existing per-object 64 MiB native limit is preserved. `build fingerprint` and SHA-1 `build plan` now release streamed inputs and pass the aggregate 3×256 MiB workload; SHA-256 fingerprinting passes, while revision plan/affected retain the independently reproduced pre-existing Rakia limitation described above. Capture and other first-party metadata/output paths remain open; arbitrary external tasks are outside a universal success guarantee, but owned children still count in measured workloads. |
 
 Outstanding acceptance also includes broader reduced-trust command coverage,
 broader hash/alternate/replacement combinations beyond the expanded daily matrices, additional

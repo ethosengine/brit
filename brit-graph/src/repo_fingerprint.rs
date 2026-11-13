@@ -6,8 +6,11 @@
 //! given the same commit and patterns.
 
 use std::collections::{BTreeMap, VecDeque};
+use std::sync::Arc;
 
+use brit_epr::BritCid;
 use gix::bstr::{BStr, BString, ByteSlice, ByteVec};
+use gix::{error::ResultExt, objs::FindStream, utils::stream::Budget};
 use globset::{Glob, GlobSetBuilder};
 
 use crate::fingerprint::{ContentFingerprint, FingerprintError};
@@ -55,8 +58,8 @@ impl ContentFingerprint {
         })?;
         let tree = commit.tree().map_err(|e| FingerprintError::TreeWalk(e.to_string()))?;
 
-        // Step C: walk the tree, collect matching (path, blob_bytes)
-        let mut inputs: BTreeMap<String, Vec<u8>> = BTreeMap::new();
+        // Step C: hash each matching blob, retaining only its path and CID.
+        let mut inputs = BTreeMap::new();
         let mut walk_errors: Vec<String> = Vec::new();
 
         let mut visitor = TreeCollector {
@@ -66,6 +69,7 @@ impl ContentFingerprint {
             errors: &mut walk_errors,
             path: BString::default(),
             path_deque: VecDeque::new(),
+            budget: None,
         };
 
         tree.traverse()
@@ -76,13 +80,13 @@ impl ContentFingerprint {
             return Err(FingerprintError::TreeWalk(walk_errors.join("; ")));
         }
 
-        // Step D: delegate to existing pure compute
-        Ok(Self::compute(&inputs))
+        // Step D: retain the existing sorted path/NUL/CID/NUL fingerprint contract.
+        Ok(Self::from_input_cids(inputs))
     }
 }
 
 /// Visitor that walks a tree, matches paths against globs, and collects
-/// blob contents for matching files.
+/// content identities for matching files.
 ///
 /// Path tracking mirrors `gix`'s own `Recorder` — a deque holds the full
 /// path snapshot for each pending subtree so that breadth-first traversal
@@ -90,12 +94,13 @@ impl ContentFingerprint {
 struct TreeCollector<'a> {
     repo: &'a gix::Repository,
     globset: &'a globset::GlobSet,
-    inputs: &'a mut BTreeMap<String, Vec<u8>>,
+    inputs: &'a mut BTreeMap<String, BritCid>,
     errors: &'a mut Vec<String>,
     /// The current path prefix (built up as we traverse).
     path: BString,
     /// Snapshot queue: one entry per pending subtree (breadth-first).
     path_deque: VecDeque<BString>,
+    budget: Option<Arc<Budget>>,
 }
 
 impl<'a> TreeCollector<'a> {
@@ -176,14 +181,32 @@ impl<'a> gix::traverse::tree::Visit for TreeCollector<'a> {
             return std::ops::ControlFlow::Continue(true);
         }
 
-        // Read the blob
-        match self.repo.find_object(entry.oid) {
-            Ok(obj) => {
-                let bytes = obj.data.clone();
-                self.inputs.insert(path_str, bytes);
+        let content_id = (|| -> gix::Result<BritCid> {
+            if self.budget.is_none() {
+                self.budget = Some(Budget::new(&std::env::temp_dir()).or_error()?);
+            }
+            let (_, spool) = self.repo.find_stream(
+                entry.oid,
+                self.budget.as_ref().expect("selected input has scratch"),
+                &gix::interrupt::IS_INTERRUPTED,
+            )?;
+            BritCid::compute_reader(gix::utils::interrupt::Read {
+                inner: spool,
+                should_interrupt: &gix::interrupt::IS_INTERRUPTED,
+            })
+            .or_error()
+        })();
+        match content_id {
+            Ok(cid) => {
+                self.inputs.insert(path_str, cid);
             }
             Err(e) => {
-                self.errors.push(format!("read {}: {e}", path_str));
+                let cancelled = e.is_cancelled();
+                self.errors
+                    .push(format!("read {} (object {}): {e:?}", path_str, entry.oid));
+                if cancelled {
+                    return std::ops::ControlFlow::Break(());
+                }
             }
         }
 

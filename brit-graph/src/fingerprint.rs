@@ -64,16 +64,23 @@ impl ContentFingerprint {
     /// and hashed again to produce the overall fingerprint.
     #[must_use]
     pub fn compute(inputs: &BTreeMap<String, Vec<u8>>) -> Self {
-        let mut individual: BTreeMap<String, BritCid> = BTreeMap::new();
+        Self::from_input_cids(
+            inputs
+                .iter()
+                .map(|(name, bytes)| (name.clone(), BritCid::compute(bytes)))
+                .collect(),
+        )
+    }
+
+    /// Complete the same fingerprint after each input's content has been hashed and released.
+    pub(crate) fn from_input_cids(individual: BTreeMap<String, BritCid>) -> Self {
         let mut combined = Vec::new();
 
-        for (name, bytes) in inputs {
-            let input_cid = BritCid::compute(bytes);
+        for (name, input_cid) in &individual {
             combined.extend_from_slice(name.as_bytes());
             combined.push(0);
             combined.extend_from_slice(input_cid.to_string().as_bytes());
             combined.push(0);
-            individual.insert(name.clone(), input_cid);
         }
 
         let cid = BritCid::compute(&combined);

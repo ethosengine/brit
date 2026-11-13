@@ -479,7 +479,7 @@ dependencies = [
  "eprfs-local",
  "eprfs-storage",
  "gitoxide",
- "gix 0.81.0",
+ "gix 0.89.3",
  "gix-testtools",
  "petgraph",
  "rakia-brit",
@@ -504,6 +504,7 @@ dependencies = [
  "serde",
  "serde_ipld_dagcbor",
  "serde_json",
+ "sha2 0.10.9",
  "tempfile",
  "thiserror",
 ]
@@ -513,7 +514,7 @@ name = "brit-graph"
 version = "0.1.6"
 dependencies = [
  "brit-epr",
- "gix 0.81.0",
+ "gix 0.89.3",
  "globset",
  "petgraph",
  "rustc-hash",
