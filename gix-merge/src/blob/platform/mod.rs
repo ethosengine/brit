@@ -4,7 +4,7 @@ use gix_filter::attributes;
 use crate::blob::{BuiltinDriver, Pipeline, Platform, pipeline};
 
 /// A stored value representing a resource that participates in a merge.
-#[derive(Clone, Eq, PartialEq, Ord, PartialOrd, Debug)]
+#[derive(Clone)]
 pub(super) struct Resource {
     /// The `id` of the value, or `null` if it's only living in a worktree.
     id: gix_hash::ObjectId,
@@ -17,6 +17,8 @@ pub(super) struct Resource {
     /// A possibly empty buffer, depending on `conversion.data` which may indicate the data is considered binary
     /// or the resource doesn't exist.
     buffer: Vec<u8>,
+    /// Immutable storage for payloads above the operation's buffering policy.
+    mapped: Option<std::sync::Arc<gix_utils::stream::Mapped>>,
 }
 
 /// A blob or executable ready to be merged in one way or another.
@@ -106,6 +108,13 @@ impl Platform {
 
 /// Access
 impl Platform {
+    /// Reclaim all completed merge inputs without changing conversion configuration.
+    pub fn clear_resources(&mut self) {
+        self.current = None;
+        self.ancestor = None;
+        self.other = None;
+    }
+
     /// Return all drivers that this instance was initialized with.
     ///
     /// They are sorted by [`name`](super::Driver::name) to support binary searches.

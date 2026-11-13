@@ -155,7 +155,7 @@ fn records_status_quo_sha1() -> gix_testtools::TestResult {
                            theirs_label: &str,
                            options: &gix_merge::commit::Options|
          -> Result<Outcome> {
-            let mut outcome = gix_merge::commit(
+            let mut outcome = crate::commit_with_storage_conformance(
                 ours,
                 theirs,
                 gix_merge::blob::builtin_driver::text::Labels {
@@ -931,7 +931,7 @@ fn records_submodule_status_quo_sha1() -> gix_testtools::TestResult {
                 ("ours", &ours_options),
                 ("ancestor", &ancestor_options),
             ] {
-                let mut outcome = gix_merge::commit(
+                let mut outcome = crate::commit_with_storage_conformance(
                     ours,
                     theirs,
                     gix_merge::blob::builtin_driver::text::Labels {

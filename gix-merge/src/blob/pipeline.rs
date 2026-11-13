@@ -13,6 +13,8 @@ use gix_object::tree::EntryKind;
 
 use super::{Pipeline, ResourceKind};
 
+mod stream;
+
 /// Options for use in a [`Pipeline`].
 #[derive(Default, Clone, PartialEq, Eq, Debug, Hash, Ord, PartialOrd)]
 pub struct Options {

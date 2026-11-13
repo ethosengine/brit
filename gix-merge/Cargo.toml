@@ -28,6 +28,7 @@ sha256 = ["gix-hash/sha256"]
 serde = ["dep:serde", "gix-hash/serde", "gix-object/serde"]
 
 [dependencies]
+gix-utils = { version = "^0.5.2", path = "../gix-utils", registry = "elohim", features = ["stream"] }
 gix-hash = { version = "^0.28.1", path = "../gix-hash", registry = "elohim" }
 gix-object = { version = "^0.66.1", path = "../gix-object", registry = "elohim" }
 gix-filter = { version = "^0.36.2", path = "../gix-filter", registry = "elohim" }

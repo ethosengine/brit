@@ -30,7 +30,7 @@ fn without_transformation() -> TestResult {
         let a_name = "a";
         let a_content = "a-content";
         std::fs::write(tmp.path().join(a_name), a_content.as_bytes())?;
-        let out = filter.convert_to_mergeable(
+        let out = filter.convert_with_storage_conformance(
             &does_not_matter,
             EntryKind::Blob,
             a_name.into(),
@@ -46,7 +46,7 @@ fn without_transformation() -> TestResult {
         let link_name = "link";
         gix_fs::symlink::create(a_name.as_ref(), &tmp.path().join(link_name))?;
         let err = filter
-            .convert_to_mergeable(
+            .convert_with_storage_conformance(
                 &does_not_matter,
                 EntryKind::Link,
                 link_name.into(),
@@ -71,7 +71,7 @@ fn without_transformation() -> TestResult {
         let b_content = "b-content";
         let id = insert(&db, b_content)?;
 
-        let out = filter.convert_to_mergeable(
+        let out = filter.convert_with_storage_conformance(
             &id,
             EntryKind::Blob,
             a_name.into(),
@@ -89,7 +89,7 @@ fn without_transformation() -> TestResult {
             "there is no transformations configured, it fetched the data from the ODB"
         );
 
-        let out = filter.convert_to_mergeable(
+        let out = filter.convert_with_storage_conformance(
             &does_not_matter,
             EntryKind::Blob,
             a_name.into(),
@@ -101,7 +101,7 @@ fn without_transformation() -> TestResult {
         )?;
         assert_eq!(out, None, "the lack of object in the database isn't a problem");
 
-        let out = filter.convert_to_mergeable(
+        let out = filter.convert_with_storage_conformance(
             &does_not_matter,
             EntryKind::Blob,
             "does not exist on disk".into(),
@@ -142,7 +142,7 @@ fn binary_below_large_file_threshold() -> TestResult {
     let a_name = "a";
     let binary_content = "a\0b";
     std::fs::write(tmp.path().join(a_name), binary_content.as_bytes())?;
-    let out = filter.convert_to_mergeable(
+    let out = filter.convert_with_storage_conformance(
         &does_not_matter,
         EntryKind::BlobExecutable,
         a_name.into(),
@@ -157,7 +157,7 @@ fn binary_below_large_file_threshold() -> TestResult {
 
     let db = object_db();
     let id = insert(&db, binary_content)?;
-    let out = filter.convert_to_mergeable(
+    let out = filter.convert_with_storage_conformance(
         &id,
         EntryKind::Blob,
         a_name.into(),
@@ -192,7 +192,7 @@ fn above_large_file_threshold() -> TestResult {
     let a_name = "a";
     let large_content = "hello";
     std::fs::write(tmp.path().join(a_name), large_content.as_bytes())?;
-    let out = filter.convert_to_mergeable(
+    let out = filter.convert_with_storage_conformance(
         &does_not_matter,
         EntryKind::BlobExecutable,
         a_name.into(),
@@ -213,7 +213,7 @@ fn above_large_file_threshold() -> TestResult {
     let db = object_db();
     let id = insert(&db, large_content)?;
 
-    let out = filter.convert_to_mergeable(
+    let out = filter.convert_with_storage_conformance(
         &id,
         EntryKind::Blob,
         a_name.into(),
@@ -253,7 +253,7 @@ fn non_existing() -> TestResult {
         !tmp.path().join(a_name).exists(),
         "precondition: worktree file doesn't exist"
     );
-    let out = filter.convert_to_mergeable(
+    let out = filter.convert_with_storage_conformance(
         &null,
         EntryKind::Blob,
         a_name.into(),
@@ -272,7 +272,7 @@ fn non_existing() -> TestResult {
     drop(tmp);
 
     buf.push(1);
-    let out = filter.convert_to_mergeable(
+    let out = filter.convert_with_storage_conformance(
         &null,
         EntryKind::Blob,
         a_name.into(),
@@ -291,7 +291,7 @@ fn non_existing() -> TestResult {
 
     let some_id = gix_hash::ObjectId::from_hex(b"45c160c35c17ad264b96431cceb9793160396e99")?;
     let err = filter
-        .convert_to_mergeable(
+        .convert_with_storage_conformance(
             &some_id,
             EntryKind::Blob,
             a_name.into(),
@@ -340,7 +340,7 @@ fn worktree_filter() -> TestResult {
     std::fs::write(tmp.path().join(a_name), a_content.as_bytes())?;
     for mode in ALL_MODES {
         let does_not_matter = gix_hash::Kind::Sha1.null();
-        let out = filter.convert_to_mergeable(
+        let out = filter.convert_with_storage_conformance(
             &does_not_matter,
             EntryKind::Blob,
             a_name.into(),
@@ -358,7 +358,7 @@ fn worktree_filter() -> TestResult {
         );
 
         let id = insert(&db, a_content)?;
-        let out = filter.convert_to_mergeable(
+        let out = filter.convert_with_storage_conformance(
             &id,
             EntryKind::Blob,
             a_name.into(),
@@ -392,7 +392,7 @@ fn worktree_filter() -> TestResult {
     let b_content = "b-content\n";
     let id = insert(&db, b_content)?;
 
-    let out = filter.convert_to_mergeable(
+    let out = filter.convert_with_storage_conformance(
         &id,
         EntryKind::Blob,
         a_name.into(),
@@ -409,7 +409,7 @@ fn worktree_filter() -> TestResult {
     let db = object_db();
     let b_content = "b-content\r\n";
     let id = insert(&db, b_content)?;
-    let out = filter.convert_to_mergeable(
+    let out = filter.convert_with_storage_conformance(
         &id,
         EntryKind::Blob,
         a_name.into(),
@@ -435,4 +435,95 @@ fn default_options() -> pipeline::Options {
     pipeline::Options {
         large_file_threshold_bytes: 0,
     }
+}
+
+trait StorageConformance {
+    #[expect(
+        clippy::too_many_arguments,
+        reason = "Mirrors the pipeline API for representation conformance"
+    )]
+    fn convert_with_storage_conformance(
+        &mut self,
+        id: &gix_hash::oid,
+        mode: EntryKind,
+        path: &bstr::BStr,
+        kind: ResourceKind,
+        attributes: &mut dyn FnMut(&bstr::BStr, &mut gix_filter::attributes::search::Outcome),
+        objects: &(impl gix_object::FindObjectOrHeader + gix_object::FindStream),
+        convert: Mode,
+        out: &mut Vec<u8>,
+    ) -> gix_error::Result<Option<pipeline::Data>>;
+}
+impl StorageConformance for Pipeline {
+    fn convert_with_storage_conformance(
+        &mut self,
+        id: &gix_hash::oid,
+        mode: EntryKind,
+        path: &bstr::BStr,
+        kind: ResourceKind,
+        attributes: &mut dyn FnMut(&bstr::BStr, &mut gix_filter::attributes::search::Outcome),
+        objects: &(impl gix_object::FindObjectOrHeader + gix_object::FindStream),
+        convert: Mode,
+        out: &mut Vec<u8>,
+    ) -> gix_error::Result<Option<pipeline::Data>> {
+        use gix_error::ResultExt;
+        use std::{io::Read, sync::atomic::AtomicBool};
+        let mut streamed = self.clone();
+        let budget = gix_utils::stream::Budget::new(&std::env::temp_dir()).or_error()?;
+        let policy = gix_merge::Bounded {
+            budget: budget.clone(),
+            buffer_limit: 0,
+            interrupt: &AtomicBool::new(false),
+        };
+        let actual = streamed.convert_to_mergeable_stream(id, mode, path, kind, attributes, objects, convert, &policy);
+        let expected = self.convert_to_mergeable(id, mode, path, kind, attributes, objects, convert, out);
+        match (&expected, actual) {
+            (Ok(expected), Ok((actual, bytes))) => {
+                assert_eq!(*expected, actual);
+                let mut content = Vec::new();
+                if let Some(mut bytes) = bytes {
+                    bytes.read_to_end(&mut content).or_error()?;
+                }
+                assert_eq!(*out, content, "streamed and buffered conversion bytes");
+            }
+            (Err(expected), Err(actual)) => {
+                assert_eq!(expected.is_validation(), actual.is_validation());
+                assert_eq!(expected.is_not_found(), actual.is_not_found());
+            }
+            (expected, actual) => panic!(
+                "storage outcome differs: {expected:?}, streamed success {}",
+                actual.is_ok()
+            ),
+        }
+        assert_eq!(budget.usage().0, 0);
+        expected
+    }
+}
+
+#[test]
+fn raw_object_kind_does_not_change_conversion() -> TestResult {
+    use gix_object::Write;
+    let db = object_db();
+    let id = db.write_buf(gix_object::Kind::Tag, b"raw tag bytes\n")?;
+    let mut filter = Pipeline::new(
+        WorktreeRoots::default(),
+        gix_filter::Pipeline::new(Default::default(), gix_testtools::object_hash(), Default::default()),
+        default_options(),
+    );
+    let mut bytes = Vec::new();
+    assert_eq!(
+        filter.convert_with_storage_conformance(
+            &id,
+            EntryKind::Blob,
+            "raw".into(),
+            ResourceKind::CurrentOrOurs,
+            &mut |_, _| {},
+            &db,
+            Mode::ToGit,
+            &mut bytes
+        )?,
+        Some(pipeline::Data::Buffer)
+    );
+    assert_eq!(bytes, b"raw tag bytes\n");
+    Ok(())
 }

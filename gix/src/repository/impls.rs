@@ -191,6 +191,21 @@ impl gix_object::Find for crate::Repository {
     }
 }
 
+impl gix_object::FindStream for crate::Repository {
+    fn find_stream(
+        &self,
+        id: &gix_hash::oid,
+        budget: &std::sync::Arc<gix_utils::stream::Budget>,
+        interrupt: &std::sync::atomic::AtomicBool,
+    ) -> gix_error::Result<(gix_object::Kind, gix_utils::stream::Spool)> {
+        if id == ObjectId::empty_tree(self.object_hash()) {
+            gix_utils::stream::check(interrupt).or_error()?;
+            return Ok((gix_object::Kind::Tree, budget.spool().or_error()?));
+        }
+        self.objects.find_stream(id, budget, interrupt)
+    }
+}
+
 impl gix_object::Exists for crate::Repository {
     fn exists(&self, id: &gix_hash::oid) -> bool {
         if id == ObjectId::empty_tree(self.object_hash()) {

@@ -7,7 +7,9 @@ impl<'a> ResourceRef<'a> {
     pub(super) fn new(cache: &'a Resource) -> Self {
         ResourceRef {
             data: cache.data.map_or(Data::Missing, |data| match data {
-                pipeline::Data::Buffer => Data::Buffer(&cache.buffer),
+                pipeline::Data::Buffer => {
+                    Data::Buffer(cache.mapped.as_ref().map_or(&cache.buffer, |map| map.as_slice()))
+                }
                 pipeline::Data::TooLarge { size } => Data::TooLarge { size },
             }),
             rela_path: cache.rela_path.as_ref(),

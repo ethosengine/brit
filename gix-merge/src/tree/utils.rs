@@ -121,9 +121,10 @@ pub fn unique_path_in_tree(
 
 /// Perform a merge between two blobs and return the result of its object id.
 #[expect(clippy::too_many_arguments)]
-pub fn perform_blob_merge(
+pub fn perform_blob_merge<O: gix_object::FindObjectOrHeader>(
     mut labels: crate::blob::builtin_driver::text::Labels<'_>,
-    objects: &impl gix_object::FindObjectOrHeader,
+    objects: &O,
+    storage: &impl crate::storage::Storage<O>,
     blob_merge: &mut crate::blob::Platform,
     buf: &mut Vec<u8>,
     write_blob_to_odb: &mut impl FnMut(&[u8]) -> Result<ObjectId>,
@@ -158,15 +159,24 @@ pub fn perform_blob_merge(
         ConflictMapping::Original => (ResourceKind::CurrentOrOurs, ResourceKind::OtherOrTheirs),
         ConflictMapping::Swapped => (ResourceKind::OtherOrTheirs, ResourceKind::CurrentOrOurs),
     };
-    blob_merge.set_resource(our_id, our_mode.kind(), our_location.as_bstr(), our_kind, objects)?;
-    blob_merge.set_resource(
+    storage.merge(
+        blob_merge,
+        our_id,
+        our_mode.kind(),
+        our_location.as_bstr(),
+        our_kind,
+        objects,
+    )?;
+    storage.merge(
+        blob_merge,
         their_id,
         their_mode.kind(),
         their_location.as_bstr(),
         their_kind,
         objects,
     )?;
-    blob_merge.set_resource(
+    storage.merge(
+        blob_merge,
         previous_id,
         previous_mode.kind(),
         previous_location.as_bstr(),
@@ -212,6 +222,7 @@ pub fn perform_blob_merge(
         .id_by_pick(pick, buf, write_blob_to_odb)
         .or_raise(|| message("Failed to write merged blob content as blob to the object database"))?
         .ok_or_raise(|| crate::tree::Error::MissingBinaryMergeResult)?;
+    storage.finish_merge(blob_merge, buf);
     Ok((merged_blob_id, resolution))
 }
 

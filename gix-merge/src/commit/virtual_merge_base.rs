@@ -32,13 +32,74 @@ pub(super) mod function {
     pub fn virtual_merge_base<'objects>(
         first_commit: gix_hash::ObjectId,
         second_commit: gix_hash::ObjectId,
-        mut others: Vec<gix_hash::ObjectId>,
+        others: Vec<gix_hash::ObjectId>,
         graph: &mut gix_revwalk::Graph<'_, '_, gix_revwalk::graph::Commit<gix_revision::merge_base::Flags>>,
         diff_resource_cache: &mut gix_diff::blob::Platform,
         blob_merge: &mut crate::blob::Platform,
         objects: &'objects (impl gix_object::FindObjectOrHeader + gix_object::Write),
         abbreviate_hash: &mut dyn FnMut(&gix_hash::oid) -> String,
+        options: crate::tree::Options,
+    ) -> Result<super::Outcome> {
+        virtual_merge_base_with_storage(
+            first_commit,
+            second_commit,
+            others,
+            graph,
+            diff_resource_cache,
+            blob_merge,
+            objects,
+            abbreviate_hash,
+            options,
+            &crate::storage::Buffered,
+        )
+    }
+
+    /// Run the same algorithm with bounded payload storage.
+    #[expect(
+        clippy::too_many_arguments,
+        reason = "Preserves merge inputs and adds an explicit operation storage policy"
+    )]
+    pub fn virtual_merge_base_bounded<'objects>(
+        first_commit: gix_hash::ObjectId,
+        second_commit: gix_hash::ObjectId,
+        others: Vec<gix_hash::ObjectId>,
+        graph: &mut gix_revwalk::Graph<'_, '_, gix_revwalk::graph::Commit<gix_revision::merge_base::Flags>>,
+        diff_resource_cache: &mut gix_diff::blob::Platform,
+        blob_merge: &mut crate::blob::Platform,
+        objects: &'objects (impl gix_object::FindObjectOrHeader + gix_object::Write + gix_object::FindStream),
+        abbreviate_hash: &mut dyn FnMut(&gix_hash::oid) -> String,
+        options: crate::tree::Options,
+        storage: &crate::Bounded<'_>,
+    ) -> Result<super::Outcome> {
+        virtual_merge_base_with_storage(
+            first_commit,
+            second_commit,
+            others,
+            graph,
+            diff_resource_cache,
+            blob_merge,
+            objects,
+            abbreviate_hash,
+            options,
+            storage,
+        )
+    }
+
+    #[expect(
+        clippy::too_many_arguments,
+        reason = "Shared algorithm retains its inputs with caller-selected resource storage"
+    )]
+    pub(crate) fn virtual_merge_base_with_storage<'objects, O: gix_object::FindObjectOrHeader + gix_object::Write>(
+        first_commit: gix_hash::ObjectId,
+        second_commit: gix_hash::ObjectId,
+        mut others: Vec<gix_hash::ObjectId>,
+        graph: &mut gix_revwalk::Graph<'_, '_, gix_revwalk::graph::Commit<gix_revision::merge_base::Flags>>,
+        diff_resource_cache: &mut gix_diff::blob::Platform,
+        blob_merge: &mut crate::blob::Platform,
+        objects: &'objects O,
+        abbreviate_hash: &mut dyn FnMut(&gix_hash::oid) -> String,
         mut options: crate::tree::Options,
+        storage: &impl crate::storage::Storage<O>,
     ) -> Result<super::Outcome> {
         let mut merged_commit_id = first_commit;
         others.push(second_commit);
@@ -57,8 +118,9 @@ pub(super) mod function {
         let mut virtual_merge_bases = Vec::new();
         let mut tree_id = None;
         while let Some(next_commit_id) = others.pop() {
+            storage.check()?;
             options.marker_size_multiplier += 1;
-            let mut out = crate::commit(
+            let mut out = crate::commit::function::commit_with_storage(
                 merged_commit_id,
                 next_commit_id,
                 labels,
@@ -72,6 +134,7 @@ pub(super) mod function {
                     tree_merge: options.clone(),
                     use_first_merge_base: false,
                 },
+                storage,
             )?;
             // This shouldn't happen, but if for some buggy reason it does, we rather bail.
             if out.tree_merge.has_unresolved_conflicts(TreatAsUnresolved {

@@ -1,3 +1,4 @@
+use gix_error::ResultExt;
 use gix_merge::blob::builtin_driver::text;
 use gix_object::Write;
 
@@ -9,6 +10,16 @@ use crate::{
 
 /// Merge-utilities
 impl Repository {
+    fn merge_storage(&self) -> Result<gix_merge::Bounded<'static>> {
+        Ok(gix_merge::Bounded {
+            budget: gix_utils::stream::Budget::new(&std::env::temp_dir()).or_error()?,
+            buffer_limit: self
+                .allocation_limit()
+                .unwrap_or(usize::try_from(self.big_file_threshold()?).unwrap_or(usize::MAX)),
+            interrupt: &crate::interrupt::IS_INTERRUPTED,
+        })
+    }
+
     /// Create a resource cache that can hold the three resources needed for a three-way merge. `worktree_roots`
     /// determines which side of the merge is read from the worktree, or from which worktree.
     ///
@@ -133,11 +144,12 @@ impl Repository {
     ) -> Result<crate::merge::tree::Outcome<'_>> {
         let mut diff_cache = self.diff_resource_cache_for_tree_diff()?;
         let mut blob_merge = self.merge_resource_cache(Default::default())?;
+        let storage = self.merge_storage()?;
         let gix_merge::tree::Outcome {
             tree,
             conflicts,
             failed_on_first_unresolved_conflict,
-        } = gix_merge::tree(
+        } = gix_merge::tree_bounded(
             ancestor_tree.as_ref(),
             our_tree.as_ref(),
             their_tree.as_ref(),
@@ -148,6 +160,7 @@ impl Repository {
             &mut diff_cache,
             &mut blob_merge,
             options.into(),
+            &storage,
         )?;
 
         let validate = self.config.protect_options()?;
@@ -187,6 +200,7 @@ impl Repository {
     ) -> Result<crate::merge::commit::Outcome<'_>> {
         let mut diff_cache = self.diff_resource_cache_for_tree_diff()?;
         let mut blob_merge = self.merge_resource_cache(Default::default())?;
+        let storage = self.merge_storage()?;
         let commit_graph = self.commit_graph_if_enabled()?;
         let mut graph = self.revision_graph(commit_graph.as_ref());
         let gix_merge::commit::Outcome {
@@ -199,7 +213,7 @@ impl Repository {
             merge_base_tree_id,
             merge_bases,
             virtual_merge_bases,
-        } = gix_merge::commit(
+        } = gix_merge::commit_bounded(
             our_commit.into(),
             their_commit.into(),
             labels,
@@ -209,6 +223,7 @@ impl Repository {
             self,
             &mut |id| id.to_owned().attach(self).shorten_or_id().to_string(),
             options.into(),
+            &storage,
         )?;
 
         let validate = self.config.protect_options()?;
@@ -272,12 +287,13 @@ impl Repository {
 
         let mut diff_cache = self.diff_resource_cache_for_tree_diff()?;
         let mut blob_merge = self.merge_resource_cache(Default::default())?;
+        let storage = self.merge_storage()?;
 
         let gix_merge::commit::virtual_merge_base::Outcome {
             virtual_merge_bases,
             commit_id,
             tree_id,
-        } = gix_merge::commit::virtual_merge_base(
+        } = gix_merge::commit::virtual_merge_base_bounded(
             first,
             second,
             merge_bases,
@@ -287,6 +303,7 @@ impl Repository {
             self,
             &mut |id| id.to_owned().attach(self).shorten_or_id().to_string(),
             options.into(),
+            &storage,
         )?;
 
         Ok(crate::merge::virtual_merge_base::Outcome {

@@ -2649,6 +2649,10 @@ It does not turn missing evidence into a successful qualification.
 | Object verification/inspection and pack creation/index/extraction, 20/64/256 MiB and 64 MiB OFS/REF histories; explicit-limit refusal contract | 5 passed, no OOM or surviving owned processes | 828,985,344 B | 95.52 s |
 | Bounded blame: 64 revisions, actual reduced trust, one million unique lines; synthetic nested-bare discovery failure retained | 3 passed, 1 failed discovery; no OOM | 187,695,104 B | 81.86 s |
 | Bounded blame policy equality: loose/packed, rename with edits, dirty worktree and actual bare clone | passed, no OOM | 178,540,544 B | 18.66 s |
+| Object-backed merge before repair, 20/64 MiB at an explicit 16 MiB policy | 2 allocation refusals, no OOM | 619,696,128 B | 6.64 s |
+| Object-backed file/tree/commit merges at 20/64 MiB, loose/packed, buffered/mapped and actual reduced trust | 3 passed, no OOM or surviving processes | 625,033,216 B | 34.88 s |
+| Million-line repetitive/unique file/tree/commit merges, buffered/mapped and loose/packed | passed, no OOM | 363,417,600 B | 63.84 s |
+| SIGINT during 64 MiB merge input spooling | passed, controlled return under one second | 254,152,704 B | 2.65 s |
 | Deliberate 1.2 GiB child allocation | correctly rejected, exit 137, 2 OOM kills | 1,073,741,824 B | negative control |
 
 The 256 MiB run reached `memory.max` with reclamation (495 max events), without
@@ -2752,7 +2756,7 @@ Story-harvest stations: **comparison resources / between conversion → algorith
 byte storage changes preserve conversion decisions**, and **owned converters /
 between output growth or interruption → command return / both output pipes share
 the quota and descendants cannot retain capture pipes**. Existing algorithms
-remain unchanged. Other cache consumers, especially object-backed merge, remain in the open audit.
+remain unchanged. Remaining cache consumers and merge-driver output remain in the open audit.
 
 Loose blob verification now reuses the bounded loose-header reader and hashes
 fixed chunks, validating both the advertised length and Git object identity.
@@ -2806,6 +2810,36 @@ The explicit 16 MiB fixture first failed at the initial blob, then at rename
 similarity; both now pass without changing attribution algorithms. Large history
 metadata, whole-operation scratch proof and final source qualification stay open.
 
+Object-backed merge resources now use streamed conversion with buffered or
+immutable mapped storage selected by the same allocation policy. File, tree,
+commit and recursive-base entry points retain the original algorithms, matching
+order, conflict decisions and large-file thresholds. Tree merges reclaim completed
+rename comparisons and blob inputs/output after publication to the object store;
+the existing buffered low-level APIs retain their reuse behavior. Repository
+stream forwarding preserves the synthetic empty-tree behavior of ordinary lookup.
+The pipeline also retains its historical acceptance of raw object bytes under a
+caller-supplied blob mode, rather than introducing an unrelated type restriction.
+
+Existing merge and conversion suites compare buffered and mapped results,
+including tree IDs, conflicts, merge bases and existing Git compatibility
+exceptions. SHA-1-only Cartesian checks retain that scope; the other fixtures
+run with both supported hashes. The public cgroup fixtures compare file bytes
+and complete tree identities with Git at 20/64 MiB, on loose/packed inputs,
+with forced buffer/mapping policies and actual reduced trust. A million-short-line
+fixture checks both repetitive and unique content through those same public merge
+forms and storage policies. Real SIGINT during
+64 MiB input spooling returns within one second, preserves HEAD/index and
+reclaims scratch. Blocking OS calls remain outside that latency claim. The
+35 existing public commit/merge, pull and rebase journeys pass; strict affected
+Clippy, readiness and declared Rust discipline pass. External merge-driver
+output, replay/conflict payload retention, scratch telemetry and full metadata
+qualification remain open.
+
+Story-harvest station: **content merge / between object selection → merge input /
+storage policy applies equally to worktree and object-backed resources**.
+The three-sided filesystem fixture had passed while the same object-backed
+inputs refused at 16 MiB; the new resource fixture guards both entry paths.
+
 ### Public-command audit in progress
 
 The command boundary is `src/plumbing/options/mod.rs` plus
@@ -2819,7 +2853,7 @@ unsupported independently of this effort. No open row is accepted as deferred.
 | `diff`, `cat`, `add`, `restore`, `archive` | Shared readers repaired as above; large converted archive and clean/status fixtures pass; pinned diff, larger aggregate selections and remaining fault cases stay open. `diff file` and diff-format reads now use the streamed/mapped shared conversion path and pass the added 20/64/256 MiB matrix. Other comparison-cache consumers remain open. |
 | `status`, `is-clean`, `is-changed`, `index`, `dirwalk`, `clean` | Hash-only status paths stream ordinary files; filtered status and a 200,000-entry index crossing 16 MiB are measured. Other metadata, dirwalk and clean paths still need complete tracing. |
 | `worktree`, `clone` checkout | Existing bounded checkout, OFS/REF delta and filter machinery retained. Whole-cgroup 64/256 MiB worktree checkout/recovery passes; 64/256 MiB local clone/fetch/push also passes; other protocols and reduced-trust transfer paths remain open. |
-| `switch`, `pull`, `rebase`, `merge`, `commit` | Switch/pull raw recovery payloads and streamed dirty checks are repaired and measured at 20/64/256 MiB. Replay/conflict journals and journal metadata still retain byte vectors and serialized images. Three-sided 64 MiB filesystem merge passes; object-backed merge, large journals and resource-bound recovery/death fixtures remain open. |
+| `switch`, `pull`, `rebase`, `merge`, `commit` | Switch/pull raw recovery payloads and streamed dirty checks are repaired and measured at 20/64/256 MiB. Replay/conflict journals and journal metadata still retain byte vectors and serialized images. Three-sided 64 MiB filesystem and object-backed file/tree/commit merge fixtures pass, with bounded rename inputs and recursive-base conformance. External merge drivers, large journals and resource-bound recovery/death fixtures remain open. |
 | `blame`, `log`, `revision`, `merge-base`, `tree` | Blame initial/history blobs, rename similarity and rendering are repaired and measured, including actual reduced trust and a million unique lines; large history metadata remains open. Ordinary log traverses commits without reading blobs; path-filtered log was already unsupported. Tree listing streams output and uses headers for sizes; its traversal metadata remains to qualify. |
 | `fetch`, `push`, `odb`, `fsck`, `verify`, `commit-graph` | Pack decode diagnostics improved; 64/256 MiB local transfer passes without worker/cache changes. Loose blob verification now streams. Both verification algorithms and all decode modes, ODB inspection, connectivity and pack create/index/explode pass at 20/64/256 MiB with a 1 GiB allocation setting, including 64 MiB OFS/REF histories. Explicit 16 MiB packed-buffer refusal is accurately diagnosed and preserves repository state; this is refusal proof, not successful bounded packed verification. Reduced-trust packed buffers, additional protocols and large metadata qualification remain open. |
 | `branch`, `tag`, `remote`, `submodule`, `config`, `config-tree`, `attributes`, `exclude`, `mailmap` | Ref/config/path metadata and helper dispatch still need allocation tracing and applicable fixtures. |

@@ -10,11 +10,14 @@
 // actual package name; Nexus does not preserve renamed dependency index fields.
 extern crate gix_imara_diff as imara_diff;
 
+mod storage;
+pub use storage::Bounded;
+
 ///
 pub mod blob;
 ///
 pub mod commit;
-pub use commit::function::commit;
+pub use commit::function::{commit, commit_bounded};
 ///
 pub mod tree;
-pub use tree::function::tree;
+pub use tree::function::{tree, tree_bounded};

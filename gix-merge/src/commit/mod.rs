@@ -36,4 +36,4 @@ pub(super) mod function;
 
 ///
 pub mod virtual_merge_base;
-pub use virtual_merge_base::function::virtual_merge_base;
+pub use virtual_merge_base::function::{virtual_merge_base, virtual_merge_base_bounded};

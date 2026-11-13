@@ -612,6 +612,15 @@ mod find {
 #[test]
 fn empty_objects_are_always_present_but_not_in_plumbing() -> TestResult {
     let repo = empty_bare_in_memory_repo()?;
+    let budget = gix::utils::stream::Budget::new(&std::env::temp_dir())?;
+    let (kind, empty_tree) = gix_object::FindStream::find_stream(
+        &repo,
+        &repo.object_hash().empty_tree(),
+        &budget,
+        &std::sync::atomic::AtomicBool::new(false),
+    )?;
+    assert_eq!(kind, gix_object::Kind::Tree);
+    assert_eq!(empty_tree.len(), 0);
     let empty_blob_id = repo.object_hash().empty_blob();
 
     assert!(

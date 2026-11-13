@@ -1,4 +1,5 @@
 mod change;
 mod resolve;
 
-pub use resolve::tree;
+pub(crate) use resolve::tree_with_storage;
+pub use resolve::{tree, tree_bounded};

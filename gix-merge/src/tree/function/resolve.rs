@@ -98,13 +98,78 @@ pub fn tree<'objects>(
     base_tree: &gix_hash::oid,
     our_tree: &gix_hash::oid,
     their_tree: &gix_hash::oid,
-    mut labels: crate::blob::builtin_driver::text::Labels<'_>,
+    labels: crate::blob::builtin_driver::text::Labels<'_>,
     objects: &'objects impl gix_object::FindObjectOrHeader,
+    write_blob_to_odb: impl FnMut(&[u8]) -> Result<ObjectId>,
+    diff_state: &mut gix_diff::tree::State,
+    diff_resource_cache: &mut gix_diff::blob::Platform,
+    blob_merge: &mut crate::blob::Platform,
+    options: Options,
+) -> Result<Outcome<'objects>> {
+    tree_with_storage(
+        base_tree,
+        our_tree,
+        their_tree,
+        labels,
+        objects,
+        write_blob_to_odb,
+        diff_state,
+        diff_resource_cache,
+        blob_merge,
+        options,
+        &crate::storage::Buffered,
+    )
+}
+
+/// Run the same algorithm with bounded payload storage.
+#[expect(
+    clippy::too_many_arguments,
+    reason = "Preserves merge inputs and adds an explicit operation storage policy"
+)]
+pub fn tree_bounded<'objects>(
+    base_tree: &gix_hash::oid,
+    our_tree: &gix_hash::oid,
+    their_tree: &gix_hash::oid,
+    labels: crate::blob::builtin_driver::text::Labels<'_>,
+    objects: &'objects (impl gix_object::FindObjectOrHeader + gix_object::FindStream),
+    write_blob_to_odb: impl FnMut(&[u8]) -> Result<ObjectId>,
+    diff_state: &mut gix_diff::tree::State,
+    diff_resource_cache: &mut gix_diff::blob::Platform,
+    blob_merge: &mut crate::blob::Platform,
+    options: Options,
+    storage: &crate::Bounded<'_>,
+) -> Result<Outcome<'objects>> {
+    tree_with_storage(
+        base_tree,
+        our_tree,
+        their_tree,
+        labels,
+        objects,
+        write_blob_to_odb,
+        diff_state,
+        diff_resource_cache,
+        blob_merge,
+        options,
+        storage,
+    )
+}
+
+#[expect(
+    clippy::too_many_arguments,
+    reason = "Shared algorithm retains its inputs with caller-selected resource storage"
+)]
+pub(crate) fn tree_with_storage<'objects, O: gix_object::FindObjectOrHeader>(
+    base_tree: &gix_hash::oid,
+    our_tree: &gix_hash::oid,
+    their_tree: &gix_hash::oid,
+    mut labels: crate::blob::builtin_driver::text::Labels<'_>,
+    objects: &'objects O,
     mut write_blob_to_odb: impl FnMut(&[u8]) -> Result<ObjectId>,
     diff_state: &mut gix_diff::tree::State,
     diff_resource_cache: &mut gix_diff::blob::Platform,
     blob_merge: &mut crate::blob::Platform,
     options: Options,
+    storage: &impl crate::storage::Storage<O>,
 ) -> Result<Outcome<'objects>> {
     let _span = gix_trace::coarse!("gix_merge::tree", ?base_tree, ?our_tree, ?their_tree, ?labels);
     let (mut base_buf, mut side_buf) = (Vec::new(), Vec::new());
@@ -123,6 +188,7 @@ pub fn tree<'objects>(
         diff_resource_cache,
         diff_state,
         options.rewrites,
+        storage,
     )?;
     let mut theirs = collect_changes(
         base_tree,
@@ -133,6 +199,7 @@ pub fn tree<'objects>(
         diff_resource_cache,
         diff_state,
         options.rewrites,
+        storage,
     )?;
     let mut conflicts = Vec::new();
     let mut failed_on_first_conflict = false;
@@ -173,6 +240,7 @@ pub fn tree<'objects>(
 
         while batch_start != batch_end {
             for theirs_idx in batch_start..batch_end {
+                storage.check()?;
                 // Tree changes are structural index entries, not work items: their descendant leaf changes carry the
                 // actual edits. They remain in the side's path index so matching can detect file/directory overlaps and
                 // paths crossing a renamed directory after the scheduler swaps sides and searches this side's index.
@@ -420,6 +488,7 @@ pub fn tree<'objects>(
                                         let (merged_blob_id, resolution) = perform_blob_merge(
                                             labels,
                                             objects,
+                                            storage,
                                             blob_merge,
                                             &mut diff_state.buf1,
                                             &mut write_blob_to_odb,
@@ -540,6 +609,7 @@ pub fn tree<'objects>(
                                 let (merged_blob_id, resolution) = perform_blob_merge(
                                     labels,
                                     objects,
+                                    storage,
                                     blob_merge,
                                     &mut diff_state.buf1,
                                     &mut write_blob_to_odb,
@@ -839,6 +909,7 @@ pub fn tree<'objects>(
                                     let (merged_blob_id, resolution) = perform_blob_merge(
                                         labels,
                                         objects,
+                                        storage,
                                         blob_merge,
                                         &mut diff_state.buf1,
                                         &mut write_blob_to_odb,
@@ -1296,6 +1367,7 @@ pub fn tree<'objects>(
                                             let (merged_blob_id, resolution) = perform_blob_merge(
                                                 labels,
                                                 objects,
+                                                storage,
                                                 blob_merge,
                                                 &mut diff_state.buf1,
                                                 &mut write_blob_to_odb,
@@ -1567,6 +1639,7 @@ pub fn tree<'objects>(
                                     let (id, resolution) = perform_blob_merge(
                                         labels,
                                         objects,
+                                        storage,
                                         blob_merge,
                                         &mut diff_state.buf1,
                                         &mut write_blob_to_odb,
@@ -1873,6 +1946,7 @@ pub fn tree<'objects>(
                                         let (id, resolution) = perform_blob_merge(
                                             labels,
                                             objects,
+                                            storage,
                                             blob_merge,
                                             &mut diff_state.buf1,
                                             &mut write_blob_to_odb,

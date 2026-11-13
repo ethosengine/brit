@@ -74,7 +74,7 @@ fn run_baseline() -> TestResult {
                 .expect("non-zero"),
         };
 
-        let mut actual = gix_merge::commit(
+        let mut actual = crate::commit_with_storage_conformance(
             our_commit_id,
             their_commit_id,
             gix_merge::blob::builtin_driver::text::Labels {
@@ -182,7 +182,7 @@ fn run_baseline() -> TestResult {
                 options.tree_merge.blob_merge.text.conflict =
                     gix_merge::blob::builtin_driver::text::Conflict::ResolveWithOurs;
             }
-            let mut actual = gix_merge::commit(
+            let mut actual = crate::commit_with_storage_conformance(
                 our_commit_id,
                 their_commit_id,
                 gix_merge::blob::builtin_driver::text::Labels {
@@ -257,7 +257,7 @@ fn unrelated_commits_require_explicit_permission() -> TestResult {
     let mut blob_merge = new_blob_merge_platform(root.path(), 0);
 
     for allow_missing_merge_base in [false, true] {
-        let result = gix_merge::commit(
+        let result = crate::commit_with_storage_conformance(
             our_commit_id,
             their_commit_id,
             Default::default(),

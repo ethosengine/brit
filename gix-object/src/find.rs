@@ -37,6 +37,18 @@ impl super::Exists for PanicAlways {
     }
 }
 
+#[cfg(feature = "stream")]
+impl super::FindStream for PanicAlways {
+    fn find_stream(
+        &self,
+        _id: &gix_hash::oid,
+        _budget: &std::sync::Arc<gix_utils::stream::Budget>,
+        _interrupt: &std::sync::atomic::AtomicBool,
+    ) -> Result<(crate::Kind, gix_utils::stream::Spool)> {
+        panic!("object streams are forbidden");
+    }
+}
+
 impl super::Write for PanicAlways {
     fn write(&self, _object: &dyn crate::WriteTo) -> Result<gix_hash::ObjectId> {
         panic!("object writes are forbidden");

@@ -6,7 +6,7 @@ use gix_object::FindExt;
 
 use crate::{blob::builtin_driver, commit::Options};
 
-/// Like [`tree()`](crate::tree()), but it takes only two commits, `our_commit` and `their_commit` to automatically
+/// Like [`tree()`](crate::tree::function::tree_with_storage()), but it takes only two commits, `our_commit` and `their_commit` to automatically
 /// compute the merge-bases among them.
 /// If there are multiple merge bases, these will be auto-merged into one, recursively, if
 /// [`allow_missing_merge_base`](Options::allow_missing_merge_base) is `true`.
@@ -52,7 +52,69 @@ pub fn commit<'objects>(
     abbreviate_hash: &mut dyn FnMut(&gix_hash::oid) -> String,
     options: Options,
 ) -> Result<super::Outcome<'objects>> {
+    commit_with_storage(
+        our_commit,
+        their_commit,
+        labels,
+        graph,
+        diff_resource_cache,
+        blob_merge,
+        objects,
+        abbreviate_hash,
+        options,
+        &crate::storage::Buffered,
+    )
+}
+
+/// Run the same algorithm with bounded payload storage.
+#[expect(
+    clippy::too_many_arguments,
+    reason = "Preserves merge inputs and adds an explicit operation storage policy"
+)]
+pub fn commit_bounded<'objects>(
+    our_commit: gix_hash::ObjectId,
+    their_commit: gix_hash::ObjectId,
+    labels: builtin_driver::text::Labels<'_>,
+    graph: &mut gix_revwalk::Graph<'_, '_, gix_revwalk::graph::Commit<gix_revision::merge_base::Flags>>,
+    diff_resource_cache: &mut gix_diff::blob::Platform,
+    blob_merge: &mut crate::blob::Platform,
+    objects: &'objects (impl gix_object::FindObjectOrHeader + gix_object::Write + gix_object::FindStream),
+    abbreviate_hash: &mut dyn FnMut(&gix_hash::oid) -> String,
+    options: Options,
+    storage: &crate::Bounded<'_>,
+) -> Result<super::Outcome<'objects>> {
+    commit_with_storage(
+        our_commit,
+        their_commit,
+        labels,
+        graph,
+        diff_resource_cache,
+        blob_merge,
+        objects,
+        abbreviate_hash,
+        options,
+        storage,
+    )
+}
+
+#[expect(
+    clippy::too_many_arguments,
+    reason = "Shared algorithm retains its inputs with caller-selected resource storage"
+)]
+pub(crate) fn commit_with_storage<'objects, O: gix_object::FindObjectOrHeader + gix_object::Write>(
+    our_commit: gix_hash::ObjectId,
+    their_commit: gix_hash::ObjectId,
+    labels: builtin_driver::text::Labels<'_>,
+    graph: &mut gix_revwalk::Graph<'_, '_, gix_revwalk::graph::Commit<gix_revision::merge_base::Flags>>,
+    diff_resource_cache: &mut gix_diff::blob::Platform,
+    blob_merge: &mut crate::blob::Platform,
+    objects: &'objects O,
+    abbreviate_hash: &mut dyn FnMut(&gix_hash::oid) -> String,
+    options: Options,
+    storage: &impl crate::storage::Storage<O>,
+) -> Result<super::Outcome<'objects>> {
     let merge_bases = gix_revision::merge_base(our_commit, &[their_commit], graph)?;
+    storage.check()?;
     let mut virtual_merge_bases = Vec::new();
     let mut state = gix_diff::tree::State::default();
     let mut commit_to_tree =
@@ -70,7 +132,7 @@ pub fn commit<'objects>(
                 let mut base_commits: Vec<_> = base_commits.into();
                 let first = base_commits.pop().expect("at least two");
                 let second = base_commits.pop().expect("at least one left");
-                let out = crate::commit::virtual_merge_base(
+                let out = crate::commit::virtual_merge_base::function::virtual_merge_base_with_storage(
                     first,
                     second,
                     base_commits,
@@ -80,6 +142,7 @@ pub fn commit<'objects>(
                     objects,
                     abbreviate_hash,
                     options.tree_merge.clone(),
+                    storage,
                 )?;
                 virtual_merge_bases = Vec::from(out.virtual_merge_bases);
                 out.tree_id
@@ -103,7 +166,7 @@ pub fn commit<'objects>(
     let our_tree_id = objects.find_commit(&our_commit, &mut state.buf1)?.tree();
     let their_tree_id = objects.find_commit(&their_commit, &mut state.buf1)?.tree();
 
-    let outcome = crate::tree(
+    let outcome = crate::tree::function::tree_with_storage(
         &merge_base_tree_id,
         &our_tree_id,
         &their_tree_id,
@@ -114,6 +177,7 @@ pub fn commit<'objects>(
         diff_resource_cache,
         blob_merge,
         options.tree_merge,
+        storage,
     )?;
 
     Ok(super::Outcome {

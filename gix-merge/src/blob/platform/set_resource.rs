@@ -42,6 +42,10 @@ impl Platform {
             ResourceKind::CurrentOrOurs => &mut self.current,
         };
 
+        if let Some(storage) = storage {
+            storage.mapped = None;
+        }
+
         let mut buf_storage = Vec::new();
         let out = self
             .filter
@@ -67,6 +71,7 @@ impl Platform {
                     data: out,
                     mode,
                     buffer: buf_storage,
+                    mapped: None,
                 });
             }
             Some(storage) => {
@@ -76,6 +81,70 @@ impl Platform {
                 storage.mode = mode;
             }
         }
+        Ok(())
+    }
+
+    /// Prepare the same merge resource using charged, immutable storage above policy.
+    pub fn set_resource_bounded(
+        &mut self,
+        id: gix_hash::ObjectId,
+        mode: gix_object::tree::EntryKind,
+        rela_path: &BStr,
+        kind: ResourceKind,
+        objects: &(impl gix_object::FindObjectOrHeader + gix_object::FindStream),
+        policy: &crate::Bounded<'_>,
+    ) -> Result {
+        use std::io::Read;
+        let entry = self
+            .attr_stack
+            .at_entry(rela_path, None, objects)
+            .or_raise(|| message!("Failed to obtain attributes for {kind:?} resource at '{rela_path}'"))?;
+        let storage = match kind {
+            ResourceKind::OtherOrTheirs => &mut self.other,
+            ResourceKind::CommonAncestorOrBase => &mut self.ancestor,
+            ResourceKind::CurrentOrOurs => &mut self.current,
+        };
+        // Retire the previous file before admitting its successor to the quota.
+        *storage = None;
+        let (data, bytes) = self
+            .filter
+            .convert_to_mergeable_stream(
+                &id,
+                mode,
+                rela_path,
+                kind,
+                &mut |_, out| {
+                    let _ = entry.matching_attributes(out);
+                },
+                objects,
+                self.filter_mode,
+                policy,
+            )
+            .or_raise(|| message!("Failed to convert merge resource '{rela_path}' ({id})"))?;
+        let (mut buffer, mut mapped) = (Vec::new(), None);
+        if let Some(mut bytes) = bytes {
+            if bytes.len() > policy.buffer_limit as u64 {
+                mapped = Some(std::sync::Arc::new(bytes.into_mapped().or_error()?));
+            } else {
+                let size = usize::try_from(bytes.len()).or_error()?;
+                buffer.try_reserve_exact(size).or_raise(|| {
+                    message!(
+                        "Merge resource '{rela_path}' could not allocate {size} bytes within limit {}",
+                        policy.buffer_limit
+                    )
+                    .allocation_failure()
+                })?;
+                bytes.read_to_end(&mut buffer).or_error()?;
+            }
+        }
+        *storage = Some(Resource {
+            id,
+            rela_path: rela_path.to_owned(),
+            data,
+            mode,
+            buffer,
+            mapped,
+        });
         Ok(())
     }
 }

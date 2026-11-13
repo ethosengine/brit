@@ -36,27 +36,37 @@ pub fn file(
     let roots = worktree_roots(base_id, ours_id, theirs_id, repo.workdir())?;
 
     let mut cache = repo.merge_resource_cache(roots)?;
+    let storage = gix::merge::plumbing::Bounded {
+        budget: gix::utils::stream::Budget::new(&std::env::temp_dir()).or_error()?,
+        buffer_limit: repo
+            .allocation_limit()
+            .unwrap_or(usize::try_from(repo.big_file_threshold()?).unwrap_or(usize::MAX)),
+        interrupt: &gix::interrupt::IS_INTERRUPTED,
+    };
     let null = repo.object_hash().null();
-    cache.set_resource(
+    cache.set_resource_bounded(
         base_id.map_or(null, Id::detach),
         EntryKind::Blob,
         base.as_ref(),
         ResourceKind::CommonAncestorOrBase,
         &repo.objects,
+        &storage,
     )?;
-    cache.set_resource(
+    cache.set_resource_bounded(
         ours_id.map_or(null, Id::detach),
         EntryKind::Blob,
         ours.as_ref(),
         ResourceKind::CurrentOrOurs,
         &repo.objects,
+        &storage,
     )?;
-    cache.set_resource(
+    cache.set_resource_bounded(
         theirs_id.map_or(null, Id::detach),
         EntryKind::Blob,
         theirs.as_ref(),
         ResourceKind::OtherOrTheirs,
         &repo.objects,
+        &storage,
     )?;
 
     let mut options = repo.blob_merge_options()?;

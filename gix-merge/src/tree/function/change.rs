@@ -91,22 +91,23 @@ pub(super) enum MatchKind {
 /// diff, including the requested rewrite tracking, is normalized through [`track`]
 /// into a [`ChangeList`] and indexed by [`TreeNodes`] in the returned [`SideState`].
 #[expect(clippy::too_many_arguments)]
-pub(super) fn collect(
+pub(super) fn collect<O: gix_object::FindObjectOrHeader>(
     base_tree: &gix_hash::oid,
     side_tree: &gix_hash::oid,
     base_buf: &[u8],
     side_buf: &mut Vec<u8>,
-    objects: &impl gix_object::FindObjectOrHeader,
+    objects: &O,
     diff_resource_cache: &mut gix_diff::blob::Platform,
     diff_state: &mut gix_diff::tree::State,
     rewrites: Option<gix_diff::Rewrites>,
+    storage: &impl crate::storage::Storage<O>,
 ) -> Result<SideState> {
     let mut changes = Vec::new();
     if base_tree != side_tree {
         let side_tree = objects
             .find_tree_iter(side_tree, side_buf)
             .or_raise(|| message("Tree merge failed"))?;
-        gix_diff::tree_with_rewrites(
+        gix_diff::tree_with_rewrites::diff_with_resource_loader(
             gix_object::TreeRefIter::from_bytes(base_buf, base_tree.kind()),
             side_tree,
             diff_resource_cache,
@@ -120,9 +121,11 @@ pub(super) fn collect(
                 location: Some(Location::Path),
                 rewrites,
             },
+            &mut |cache, id, mode, path, kind| storage.diff(cache, id, mode, path, kind, objects),
         )
         .or_raise(|| message("Tree merge failed"))?;
     }
+    storage.finish_diff(diff_resource_cache);
     Ok(SideState::from_changes(changes))
 }
 
