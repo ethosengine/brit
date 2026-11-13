@@ -7,7 +7,7 @@ use gix_utils::progress::Progress;
 
 use crate::{
     cache::delta::{
-        traverse::{Context, allocation_error, interrupted, util::ItemSliceSync},
+        traverse::{Context, interrupted, util::ItemSliceSync},
         tree::Item,
     },
     data,
@@ -486,14 +486,14 @@ where
             alloc_limit_bytes,
         )?;
         let (base_size, consumed) = data::delta::decode_header_size(delta_bytes)?;
-        let base_size = decoded_size_limited(base_size, alloc_limit_bytes)?;
+        let base_size = decoded_size_limited(base_size, alloc_limit_bytes, node.entry_slice().start)?;
         if parent.bytes.len() != base_size {
             bail!(gix_error::corruption(
                 "Corrupt delta data: delta base size does not match base object size"
             ));
         }
         let (result_size, result_header_size) = data::delta::decode_header_size(&delta_bytes[consumed..])?;
-        let result_size = decoded_size_limited(result_size, alloc_limit_bytes)?;
+        let result_size = decoded_size_limited(result_size, alloc_limit_bytes, node.entry_slice().start)?;
         resize_with_limit(fully_resolved_delta_bytes, result_size, alloc_limit_bytes)?;
         data::delta::apply(
             &parent.bytes,
@@ -623,7 +623,7 @@ where
     })?;
     let entry = data::Entry::from_bytes(bytes, slice.start, object_hash)?;
     let compressed = &bytes[entry.header_size()..];
-    let decompressed_len = decoded_size_limited(entry.decompressed_size, alloc_limit_bytes)?;
+    let decompressed_len = decoded_size_limited(entry.decompressed_size, alloc_limit_bytes, slice.start)?;
     decompress_all_at_once_with(inflate, compressed, decompressed_len, out, alloc_limit_bytes)?;
     Ok((entry, slice.end))
 }
@@ -643,10 +643,22 @@ fn decompress_all_at_once_with(
     Ok(())
 }
 
-fn decoded_size_limited(size: u64, alloc_limit_bytes: Option<usize>) -> Result<usize> {
-    let size = usize::try_from(size).or_raise(|| allocation_error(ResourceExhaustionKind::AllocationFailure))?;
-    if alloc_limit_bytes.is_some_and(|limit| size > limit) {
-        bail!(allocation_error(ResourceExhaustionKind::AllocationLimit));
+fn decoded_size_limited(size: u64, alloc_limit_bytes: Option<usize>, offset: u64) -> Result<usize> {
+    let size = usize::try_from(size).or_raise(|| {
+        gix_error::resource_exhaustion(
+            ResourceExhaustionKind::AllocationFailure,
+            format!(
+                "Pack delta traversal at offset {offset} requested {size} bytes: size cannot be represented in memory"
+            ),
+        )
+    })?;
+    if let Some(limit) = alloc_limit_bytes.filter(|limit| size > *limit) {
+        bail!(gix_error::resource_exhaustion(
+            ResourceExhaustionKind::AllocationLimit,
+            format!(
+                "Pack delta traversal at offset {offset} requested {size} bytes: configured allocation limit is {limit} bytes"
+            )
+        ));
     }
     Ok(size)
 }
@@ -877,9 +889,9 @@ mod tests {
         let mut tree = Tree::with_capacity(1, None)?;
         tree.add_root(root_offset, ())?;
 
-        let err = traverse_with_limit(tree, &pack).expect_err("entry size exceeds the allocation cap");
+        let err = traverse_with_limit(tree, &pack, 0).expect_err("entry size exceeds the allocation cap");
 
-        insta::assert_debug_snapshot!(err, "declared decompressed sizes above the cap must be rejected before allocation", @"Entry too large to fit in memory");
+        insta::assert_debug_snapshot!(err, "declared decompressed sizes above the cap must be rejected before allocation", @"Pack delta traversal at offset 0 requested 1 bytes: configured allocation limit is 0 bytes");
         Ok(())
     }
 
@@ -888,7 +900,7 @@ mod tests {
         let mut pack = Vec::new();
         let root_offset = append_entry(&mut pack, data::entry::Header::Blob, 0, b"");
 
-        let delta = [1, 0];
+        let delta = [3, 0];
         let child_offset = pack.len() as u64;
         append_entry(
             &mut pack,
@@ -903,9 +915,9 @@ mod tests {
         tree.add_root(root_offset, ())?;
         tree.add_child(root_offset, child_offset, ())?;
 
-        let err = traverse_with_limit(tree, &pack).expect_err("delta base size exceeds the allocation cap");
+        let err = traverse_with_limit(tree, &pack, 2).expect_err("delta base size exceeds the allocation cap");
 
-        insta::assert_debug_snapshot!(err, "delta base sizes above the cap must be rejected before comparing them with the decoded base", @"Entry too large to fit in memory");
+        insta::assert_debug_snapshot!(err, "delta base sizes above the cap must be rejected before comparing them with the decoded base", @"Pack delta traversal at offset 9 requested 3 bytes: configured allocation limit is 2 bytes");
         Ok(())
     }
 
@@ -914,7 +926,7 @@ mod tests {
         let mut pack = Vec::new();
         let root_offset = append_entry(&mut pack, data::entry::Header::Blob, 0, b"");
 
-        let delta = [0, 1, 1, b'A'];
+        let delta = [0, 5, 1, b'A'];
         let child_offset = pack.len() as u64;
         append_entry(
             &mut pack,
@@ -929,18 +941,18 @@ mod tests {
         tree.add_root(root_offset, ())?;
         tree.add_child(root_offset, child_offset, ())?;
 
-        let err = traverse_with_limit(tree, &pack).expect_err("delta result size exceeds the allocation cap");
+        let err = traverse_with_limit(tree, &pack, 4).expect_err("delta result size exceeds the allocation cap");
 
-        insta::assert_debug_snapshot!(err, "delta result sizes above the cap must be rejected before resizing the output buffer", @"Entry too large to fit in memory");
+        insta::assert_debug_snapshot!(err, "delta result sizes above the cap must be rejected before resizing the output buffer", @"Pack delta traversal at offset 9 requested 5 bytes: configured allocation limit is 4 bytes");
         Ok(())
     }
 
-    fn traverse_with_limit(tree: Tree<()>, pack: &Vec<u8>) -> Result {
+    fn traverse_with_limit(tree: Tree<()>, pack: &Vec<u8>, limit: usize) -> Result {
         traverse(
             tree,
             pack,
             Some(1),
-            Some(0),
+            Some(limit),
             |slice, pack| pack.get(slice.start as usize..slice.end as usize),
             |(), _progress, _context| Ok(()),
         )

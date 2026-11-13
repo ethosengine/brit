@@ -5,7 +5,7 @@ use gix_pack::data::entry::Header;
 use gix_utils::stream::{self, Budget, Spool};
 use std::{
     fs::File,
-    io::{self, BufRead, BufReader, Read, Seek, SeekFrom, Write},
+    io::{self, BufReader, Read, Seek, SeekFrom, Write},
     ops::Deref,
     sync::{Arc, atomic::AtomicBool},
 };
@@ -85,18 +85,7 @@ impl<S: Deref<Target = super::Store> + Clone> FindStream for super::Handle<S> {
             stream::check(interrupt).or_error()?;
             match source {
                 Source::Loose(file) => {
-                    let mut decoder = BufReader::new(gix_zlib::stream::inflate::Reader::new(BufReader::new(file)));
-                    let mut header = Vec::new();
-                    decoder.by_ref().take(64).read_until(0, &mut header).or_error()?;
-                    let header = header
-                        .strip_suffix(&[0])
-                        .ok_or_raise(|| corruption("Invalid loose object header"))?;
-                    let text = std::str::from_utf8(header).or_error()?;
-                    let (kind, size) = text
-                        .split_once(' ')
-                        .ok_or_raise(|| corruption("Invalid loose object header"))?;
-                    let kind = Kind::from_bytes(kind.as_bytes()).or_error()?;
-                    let size: u64 = size.parse::<u64>().or_error()?;
+                    let (kind, size, mut decoder) = crate::store_impls::loose::stream::reader(file)?;
                     let mut out = budget.spool().or_error()?;
                     let copied = stream::copy(&mut decoder, &mut out, interrupt).or_error()?;
                     if copied != size {

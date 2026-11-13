@@ -106,6 +106,50 @@ fn verify_integrity() -> gix_testtools::TestResult {
     Ok(())
 }
 
+#[test]
+fn streamed_blob_verification_preserves_limits_and_rejects_corruption() -> gix_testtools::TestResult {
+    use std::io::Write;
+    let tmp = gix_testtools::tempfile::tempdir()?;
+    let hash = gix_testtools::object_hash();
+    let db = Store::at_opts(
+        tmp.path(),
+        hash,
+        Options {
+            alloc_limit_bytes: Some(1024),
+            ..Default::default()
+        },
+    );
+    let data = vec![b'x'; 128 * 1024];
+    let id = gix_object::compute_hash(hash, gix_object::Kind::Blob, &data)?;
+    let path = db.object_path(&id);
+    std::fs::create_dir(path.parent().expect("loose object parent"))?;
+    for (declared, bytes, valid) in [
+        (data.len(), data.as_slice(), true),
+        (data.len() + 1, data.as_slice(), false),
+        (data.len() - 1, data.as_slice(), false),
+        (data.len(), &vec![b'y'; data.len()][..], false),
+    ] {
+        let mut writer = gix_zlib::stream::deflate::Write::new(Vec::new(), gix_zlib::Compression::DEFAULT);
+        write!(writer, "blob {declared}\0")?;
+        writer.write_all(bytes)?;
+        writer.flush()?;
+        std::fs::write(&path, writer.into_inner())?;
+        let result = db.verify_integrity(&mut progress::Discard, &AtomicBool::new(false));
+        if valid {
+            assert_eq!(result?.num_objects, 1);
+            assert!(
+                db.try_find(&id, &mut Vec::new()).is_err(),
+                "buffered lookup still respects the policy"
+            );
+        } else {
+            let err = result.expect_err("size and identity corruption must refuse");
+            assert!(err.is_corrupted(), "{err}");
+            assert!(err.to_string().contains(&id.to_string()), "affected object is named");
+        }
+    }
+    Ok(())
+}
+
 mod write {
 
     use gix_object::Write;
@@ -378,7 +422,7 @@ mod find {
         Could not read loose object during verification, object_id="Oid(1)"
 
         Caused by:
-            0: Could not read loose object, path="<object-path>"
+            0: Could not read loose object header, path="<object-path>"
             1: Empty loose object file
         "#);
         assert!(!err.can_retry(), "corrupt objects do not become valid when retried");

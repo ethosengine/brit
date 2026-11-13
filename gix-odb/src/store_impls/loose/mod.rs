@@ -93,6 +93,7 @@ fn hash_path(id: &gix_hash::oid, mut root: PathBuf) -> PathBuf {
 mod find;
 ///
 pub mod iter;
+pub(crate) mod stream;
 ///
 pub mod verify;
 

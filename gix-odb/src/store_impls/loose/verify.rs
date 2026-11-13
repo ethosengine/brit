@@ -1,5 +1,6 @@
 use gix_error::Result;
 use std::{
+    io::Read,
     sync::atomic::{AtomicBool, Ordering},
     time::Instant,
 };
@@ -54,7 +55,22 @@ impl Store {
         let mut progress = progress.add_child_with_id("Validating".into(), integrity::ProgressId::LooseObjects.into());
         progress.init(None, gix_utils::progress::count("loose objects"));
         for id in self.iter() {
+            check_interrupt(should_interrupt)?;
             let id = id.or_raise(|| message("Could not enumerate loose objects"))?;
+            let header = self.try_header(&id).or_raise(|| {
+                Message::new("Could not read loose object during verification").with("object_id", id.to_string())
+            })?;
+            if header.is_some_and(|(_, kind)| kind == gix_object::Kind::Blob) {
+                self.verify_blob(&id, should_interrupt).or_raise(|| {
+                    Message::new("Could not verify loose object")
+                        .with("object_id", id.to_string())
+                        .with("path", self.object_path(&id))
+                        .with("kind", "blob")
+                })?;
+                progress.inc();
+                num_objects += 1;
+                continue;
+            }
             let object = self
                 .try_find(&id, &mut buf)
                 .or_raise(|| {
@@ -73,15 +89,54 @@ impl Store {
 
             progress.inc();
             num_objects += 1;
-            if should_interrupt.load(Ordering::SeqCst) {
-                bail!(ClassificationMarker::with_source(
-                    Class::Cancelled,
-                    std::io::Error::from(std::io::ErrorKind::Interrupted),
-                ));
-            }
+            check_interrupt(should_interrupt)?;
         }
         progress.show_throughput(start);
 
         Ok(integrity::Statistics { num_objects })
     }
+
+    fn verify_blob(&self, id: &gix_hash::oid, interrupt: &AtomicBool) -> Result<()> {
+        let file = std::fs::File::open(self.object_path(id)).or_error()?;
+        let (kind, size, mut reader) = super::stream::reader(file)?;
+        if kind != gix_object::Kind::Blob {
+            bail!(retryable("Loose object kind changed during verification"));
+        }
+        let mut hash = gix_hash::hasher(self.object_hash);
+        hash.update(&gix_object::encode::loose_header(kind, size));
+        let mut buffer = [0; gix_utils::stream::CHUNK];
+        let mut actual = 0u64;
+        loop {
+            check_interrupt(interrupt)?;
+            let count = reader.read(&mut buffer).or_error()?;
+            if count == 0 {
+                break;
+            }
+            actual = actual
+                .checked_add(count as u64)
+                .ok_or_raise(|| gix_error::corruption("Loose object size overflow during verification"))?;
+            if actual > size {
+                break;
+            }
+            hash.update(&buffer[..count]);
+        }
+        if actual != size {
+            bail!(
+                gix_error::corruption("Loose object size mismatch")
+                    .with("actual", actual)
+                    .with("expected", size)
+            );
+        }
+        hash.try_finalize()?.verify(id)
+    }
+}
+
+fn check_interrupt(interrupt: &AtomicBool) -> Result<()> {
+    if interrupt.load(Ordering::SeqCst) {
+        bail!(ClassificationMarker::with_source(
+            Class::Cancelled,
+            std::io::Error::from(std::io::ErrorKind::Interrupted),
+        ));
+    }
+    Ok(())
 }

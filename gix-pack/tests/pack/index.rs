@@ -336,7 +336,7 @@ fn traverse_with_index_respects_alloc_limit_bytes() -> gix_testtools::TestResult
         Err(err) => err,
     };
 
-    insta::assert_debug_snapshot!(err, "traverse_with_index must pass its allocation limit to delta-tree traversal", @"Entry too large to fit in memory");
+    insta::assert_debug_snapshot!(err, "traverse_with_index must pass its allocation limit to delta-tree traversal", @"Pack delta traversal at offset 3617 requested 34 bytes: configured allocation limit is 0 bytes");
     Ok(())
 }
 
@@ -600,7 +600,7 @@ fn verify_integrity_respects_pack_alloc_limit_bytes() -> gix_testtools::TestResu
         ),
         (
             DeltaTreeLookup,
-            Entry too large to fit in memory,
+            Pack delta traversal at offset 3617 requested 34 bytes: configured allocation limit is 0 bytes,
         ),
     ]
     ");

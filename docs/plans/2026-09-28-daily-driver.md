@@ -2645,6 +2645,8 @@ It does not turn missing evidence into a successful qualification.
 | Snapshot 20/64 MiB round-trip, aggregate files, actual reduced trust and existing 256 MiB refusal | 5 passed, no OOM | 553,558,016 B | 115.29 s |
 | 20 MiB `diff file`, explicit 16 MiB policy, before repair | failed allocation refusal, no OOM | 93,544,448 B | 1.20 s |
 | `diff file`/diff-format reads at 20/64/256 MiB, textconv expansion refusal and real SIGINT | 5 passed, no OOM or surviving owned processes | 1,073,741,824 B | 65.64 s |
+| Loose object verification before streaming, explicit 16 MiB policy at 20/64/256 MiB | 3 allocation refusals, no OOM | 561,020,928 B | 29.25 s |
+| Object verification/inspection and pack creation/index/extraction, 20/64/256 MiB and 64 MiB OFS/REF histories; explicit-limit refusal contract | 5 passed, no OOM or surviving owned processes | 828,985,344 B | 95.52 s |
 | Deliberate 1.2 GiB child allocation | correctly rejected, exit 137, 2 OOM kills | 1,073,741,824 B | negative control |
 
 The 256 MiB run reached `memory.max` with reclamation (495 max events), without
@@ -2751,6 +2753,32 @@ the quota and descendants cannot retain capture pipes**. Existing algorithms
 remain unchanged. Other cache consumers, especially object-backed merge and
 reduced-trust blame, are still part of the open audit.
 
+Loose blob verification now reuses the bounded loose-header reader and hashes
+fixed chunks, validating both the advertised length and Git object identity.
+Non-blob objects retain structural decoding and configured allocation limits.
+Corrupt length/hash fixtures and the existing cancellation contract pass. Pack
+delta-tree allocation refusals now name the operation, pack offset, requested
+bytes and configured limit, retaining distinct allocation-failure classification.
+Two former delta-size tests stopped at the instruction buffer; they now reach
+the declared base/result checks they claim to exercise. All 95 ODB and 158 pack
+tests and strict Clippy for both crates and the CLI fixture pass.
+
+`memory_object_store` exercises both verification algorithms and all three
+verification modes, `fsck`, ODB entries/info/header statistics, pack creation,
+index creation, Git pack verification and verified loose extraction. Its 64 MiB
+append fixtures inspect the pack header to prove OFS and REF representations.
+The successful large-pack matrix uses an explicit 1 GiB allocation setting.
+The separate 16 MiB case proves successful loose streaming, accurate packed
+refusal and unchanged HEAD/index; it does **not** claim successful bounded
+packed verification. No algorithm, worker count or cache setting was changed.
+Scratch peak and complete metadata/reduced-trust qualification remain open.
+
+Story-harvest station: **object integrity / between object enumeration → verified
+identity / blob validation streams without weakening metadata validation or
+conflating configured limits with corruption**. The probe is
+`streamed_blob_verification_preserves_limits_and_rejects_corruption` and the
+public `memory_object_store` fixture.
+
 ### Public-command audit in progress
 
 The command boundary is `src/plumbing/options/mod.rs` plus
@@ -2766,7 +2794,7 @@ unsupported independently of this effort. No open row is accepted as deferred.
 | `worktree`, `clone` checkout | Existing bounded checkout, OFS/REF delta and filter machinery retained. Whole-cgroup 64/256 MiB worktree checkout/recovery passes; 64/256 MiB local clone/fetch/push also passes; other protocols and reduced-trust transfer paths remain open. |
 | `switch`, `pull`, `rebase`, `merge`, `commit` | Switch/pull raw recovery payloads and streamed dirty checks are repaired and measured at 20/64/256 MiB. Replay/conflict journals and journal metadata still retain byte vectors and serialized images. Three-sided 64 MiB filesystem merge passes; object-backed merge, large journals and resource-bound recovery/death fixtures remain open. |
 | `blame`, `log`, `revision`, `merge-base`, `tree` | Append-only blame cache retention is repaired and measured; explicit-limit blob paths and large history metadata remain open. Ordinary log traverses commits without reading blobs; path-filtered log was already unsupported. Tree listing streams output and uses headers for sizes; its traversal metadata remains to qualify. |
-| `fetch`, `push`, `odb`, `fsck`, `verify`, `commit-graph` | Pack decode diagnostics improved; 64/256 MiB local transfer passes without worker/cache changes. Verification, delta-tree allocations under explicit limits, additional protocols and large metadata qualification remain open. |
+| `fetch`, `push`, `odb`, `fsck`, `verify`, `commit-graph` | Pack decode diagnostics improved; 64/256 MiB local transfer passes without worker/cache changes. Loose blob verification now streams. Both verification algorithms and all decode modes, ODB inspection, connectivity and pack create/index/explode pass at 20/64/256 MiB with a 1 GiB allocation setting, including 64 MiB OFS/REF histories. Explicit 16 MiB packed-buffer refusal is accurately diagnosed and preserves repository state; this is refusal proof, not successful bounded packed verification. Reduced-trust packed buffers, additional protocols and large metadata qualification remain open. |
 | `branch`, `tag`, `remote`, `submodule`, `config`, `config-tree`, `attributes`, `exclude`, `mailmap` | Ref/config/path metadata and helper dispatch still need allocation tracing and applicable fixtures. |
 | `credential`, `env`, `editor`, `completions`, `free`, `corpus`, `tix` | Applicable metadata/output/owned-child audit remains open. Existing unsupported behavior cannot be relabeled a memory success. |
 | `snapshot`, `build`, `run`, `graph`, `affected`, `plan`, `fingerprint`, `baseline`, `integrate`, `context` | Snapshot seal/verify/export/restore are measured on 20/64 MiB, aggregate and reduced-trust fixtures; the existing per-object 64 MiB native limit is preserved. Capture and first-party reader/metadata/output audit remain open; arbitrary external tasks are outside a universal success guarantee, but owned children still count in measured workloads. |

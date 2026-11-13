@@ -17,11 +17,6 @@ pub(crate) mod util;
 /// Shared access to ref-delta child indices awaiting a resolved base, keyed by its object ID.
 pub(super) type SharedRefDeltaChildren = OwnShared<Mutable<super::tree::RefDeltaChildren>>;
 
-#[cold]
-pub(super) fn allocation_error(kind: gix_error::ResourceExhaustionKind) -> gix_error::Message {
-    gix_error::resource_exhaustion(kind, "Entry too large to fit in memory")
-}
-
 pub(super) fn interrupted() -> gix_error::Error {
     gix_error::message("Interrupted").cancelled_error()
 }
