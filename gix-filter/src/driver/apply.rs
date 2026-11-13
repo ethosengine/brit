@@ -385,6 +385,7 @@ impl State {
         &mut self,
         driver: &Driver,
         mut src: gix_utils::stream::Spool,
+        operation: Operation,
         ctx: Context<'_, '_>,
         budget: &std::sync::Arc<gix_utils::stream::Budget>,
         interrupt: &std::sync::atomic::AtomicBool,
@@ -393,7 +394,7 @@ impl State {
         use gix_utils::stream;
         use std::io::Seek;
         let Some(Process::SingleFile { mut child, .. }) =
-            self.maybe_launch_process(driver, Operation::Smudge, ctx.rela_path)?
+            self.maybe_launch_process(driver, operation, ctx.rela_path)?
         else {
             return Ok(src);
         };
@@ -418,7 +419,7 @@ impl State {
             let out = result?;
             if !status.success() {
                 if driver.required {
-                    bail!(message("Smudge filter failed"));
+                    bail!(message!("{operation:?} filter failed"));
                 }
                 return Ok(None);
             }

@@ -51,6 +51,18 @@ mod _impls {
 
     impl<T> crate::FindObjectOrHeader for T where T: crate::Find + crate::FindHeader {}
 
+    #[cfg(feature = "stream")]
+    impl<T: crate::FindStream + ?Sized> crate::FindStream for &T {
+        fn find_stream(
+            &self,
+            id: &oid,
+            budget: &std::sync::Arc<gix_utils::stream::Budget>,
+            interrupt: &std::sync::atomic::AtomicBool,
+        ) -> Result<(crate::Kind, gix_utils::stream::Spool)> {
+            (*self).find_stream(id, budget, interrupt)
+        }
+    }
+
     impl<T> crate::Find for &T
     where
         T: crate::Find,

@@ -152,3 +152,88 @@ fn no_call(_buf: &mut Vec<u8>) -> gix_error::Result<Option<()>> {
 fn no_object_in_index(_buf: &mut Vec<u8>) -> gix_error::Result<Option<()>> {
     Ok(None)
 }
+
+#[test]
+fn bounded_clean_matches_buffered_conversion_and_index_decisions() -> gix_testtools::TestResult {
+    use gix_utils::stream::Budget;
+    use std::io::{Seek, Write};
+    let directory = gix_testtools::tempfile::tempdir()?;
+    let budget = Budget::new(directory.path())?;
+    for fixture in ["no-filters", "all-filters", "driver-only"] {
+        for check in [CrlfRoundTripCheck::Skip, CrlfRoundTripCheck::Fail] {
+            for indexed in [None, Some(&b"already\r\n"[..]), Some(&b"binary\0\r\n"[..])] {
+                for tail in [
+                    &b"\r\n$Id: expanded$\r\r\n$Id: no\nend$\r"[..],
+                    b"\0\n\x1a",
+                    b"\xe9\r\n",
+                ] {
+                    let (mut cache, mut pipe) = pipeline(fixture, || {
+                        (
+                            vec![driver_with_process()],
+                            vec![encoding_rs::WINDOWS_1252],
+                            check,
+                            eol::Configuration {
+                                auto_crlf: eol::AutoCrlf::Enabled,
+                                eol: None,
+                            },
+                        )
+                    })?;
+                    let mut attributes = |path: &bstr::BStr, attrs: &mut gix_attributes::search::Outcome| {
+                        cache
+                            .at_entry(path, None, &gix_object::find::Never)
+                            .expect("fixture attributes")
+                            .matching_attributes(attrs);
+                    };
+                    let mut input = vec![b'x'; 65535];
+                    input.extend_from_slice(tail);
+                    let expected = (|| -> gix_error::Result<Vec<u8>> {
+                        use gix_error::ResultExt;
+                        let mut out =
+                            pipe.convert_to_git(&input[..], Path::new("any.txt"), &mut attributes, &mut |out| {
+                                Ok(indexed.map(|bytes| {
+                                    out.clear();
+                                    out.extend_from_slice(bytes);
+                                }))
+                            })?;
+                        let mut bytes = Vec::new();
+                        out.read_to_end(&mut bytes).or_error()?;
+                        Ok(bytes)
+                    })();
+                    let mut source = budget.spool()?;
+                    source.write_all(&input)?;
+                    source.rewind()?;
+                    let actual = pipe.convert_to_git_stream(
+                        source,
+                        "any.txt".into(),
+                        &mut attributes,
+                        &mut || {
+                            use gix_error::ResultExt;
+                            indexed
+                                .map(|bytes| {
+                                    let mut file = budget.spool().or_error()?;
+                                    file.write_all(bytes).or_error()?;
+                                    file.rewind().or_error()?;
+                                    Ok(file)
+                                })
+                                .transpose()
+                        },
+                        &budget,
+                        &Default::default(),
+                    );
+                    assert_eq!(
+                        actual.is_ok(),
+                        expected.is_ok(),
+                        "{fixture} {check:?} {indexed:?} {tail:?}"
+                    );
+                    if let (Ok(mut actual), Ok(expected)) = (actual, expected) {
+                        let mut bytes = Vec::new();
+                        actual.read_to_end(&mut bytes)?;
+                        assert_eq!(bytes, expected, "{fixture} {check:?} {indexed:?} {tail:?}");
+                    }
+                    assert_eq!(budget.usage().0, 0, "completed clean releases every spool");
+                }
+            }
+        }
+    }
+    Ok(())
+}

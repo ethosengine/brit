@@ -69,6 +69,54 @@ pub(crate) mod function {
         }
 
         let stats = Stats::from_bytes(src);
+        let convert_crlf_to_lf = should_convert(
+            stats,
+            digest,
+            &mut || {
+                if index_object(buf)
+                    .or_raise(|| message("Could not obtain index object to check line endings for"))?
+                    .is_none()
+                {
+                    return Ok(false);
+                }
+                Ok(buf
+                    .find_byte(b'\r')
+                    .map(|_| Stats::from_bytes(buf))
+                    .is_some_and(|s| !s.is_binary() && s.crlf > 0))
+            },
+            Options {
+                round_trip_check,
+                config,
+            },
+        )?;
+
+        if !convert_crlf_to_lf {
+            return Ok(false);
+        }
+
+        clear_and_set_capacity(buf, src.len() - stats.crlf).or_raise(|| message("Could not allocate buffer"))?;
+        if stats.lone_cr == 0 {
+            buf.extend(src.iter().filter(|b| **b != b'\r'));
+        } else {
+            let mut bytes = src.iter().peekable();
+            while let Some(b) = bytes.next() {
+                if !(*b == b'\r' && bytes.peek() == Some(&&b'\n')) {
+                    buf.push(*b);
+                }
+            }
+        }
+        Ok(true)
+    }
+    /// Share the exact EOL and safe-CRLF decision between buffered and streamed conversion.
+    pub(crate) fn should_convert(
+        stats: Stats,
+        digest: AttributesDigest,
+        index_has_crlf: &mut dyn FnMut() -> Result<bool>,
+        Options {
+            round_trip_check,
+            config,
+        }: Options<'_>,
+    ) -> Result<bool> {
         let mut convert_crlf_to_lf = stats.crlf > 0;
         if digest.is_auto_text() {
             // In this mode, we are supposed to figure out ourselves if we should convert or not.
@@ -76,17 +124,8 @@ pub(crate) mod function {
                 return Ok(false);
             }
 
-            if let Some(()) =
-                index_object(buf).or_raise(|| message("Could not obtain index object to check line endings for"))?
-            {
-                let has_crlf_in_index = buf
-                    .find_byte(b'\r')
-                    .map(|_| Stats::from_bytes(buf))
-                    .filter(|s| !s.is_binary() && s.crlf > 0)
-                    .is_some();
-                if has_crlf_in_index {
-                    convert_crlf_to_lf = false;
-                }
+            if index_has_crlf()? {
+                convert_crlf_to_lf = false;
             }
         }
 
@@ -139,21 +178,6 @@ pub(crate) mod function {
             }
         }
 
-        if !convert_crlf_to_lf {
-            return Ok(false);
-        }
-
-        clear_and_set_capacity(buf, src.len() - stats.crlf).or_raise(|| message("Could not allocate buffer"))?;
-        if stats.lone_cr == 0 {
-            buf.extend(src.iter().filter(|b| **b != b'\r'));
-        } else {
-            let mut bytes = src.iter().peekable();
-            while let Some(b) = bytes.next() {
-                if !(*b == b'\r' && bytes.peek() == Some(&&b'\n')) {
-                    buf.push(*b);
-                }
-            }
-        }
-        Ok(true)
+        Ok(convert_crlf_to_lf)
     }
 }

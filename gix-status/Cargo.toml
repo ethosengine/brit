@@ -24,13 +24,13 @@ worktree-rewrites = ["dep:gix-dir", "dep:gix-diff"]
 
 [dependencies]
 gix-trace = { version = "^0.3.0", path = "../gix-trace", registry = "elohim" }
-gix-utils = { version = "^0.5.2", path = "../gix-utils", registry = "elohim", features = ["interrupt", "progress"] }
+gix-utils = { version = "^0.5.2", path = "../gix-utils", registry = "elohim", features = ["interrupt", "progress", "stream"] }
 gix-parallel = { version = "^0.50.0", path = "../gix-parallel", registry = "elohim" }
 gix-index = { version = "^0.57.3", path = "../gix-index", registry = "elohim" }
 gix-fs = { version = "^0.24.1", path = "../gix-fs", registry = "elohim" }
 gix-hash = { version = "^0.28.1", path = "../gix-hash", registry = "elohim" }
 gix-error = { version = "^0.5.1", path = "../gix-error", registry = "elohim" }
-gix-object = { version = "^0.66.1", path = "../gix-object", registry = "elohim" }
+gix-object = { version = "^0.66.1", path = "../gix-object", registry = "elohim", features = ["stream"] }
 gix-path = { version = "^0.14.0", path = "../gix-path", registry = "elohim" }
 gix-filter = { version = "^0.36.2", path = "../gix-filter", registry = "elohim" }
 gix-worktree = { version = "^0.58.3", path = "../gix-worktree", registry = "elohim", default-features = false, features = ["attributes"] }

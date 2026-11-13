@@ -83,6 +83,19 @@ impl super::Find for Never {
     }
 }
 
+#[cfg(feature = "stream")]
+impl super::FindStream for Never {
+    fn find_stream(
+        &self,
+        id: &gix_hash::oid,
+        _budget: &std::sync::Arc<gix_utils::stream::Budget>,
+        _interrupt: &std::sync::atomic::AtomicBool,
+    ) -> Result<(crate::Kind, gix_utils::stream::Spool)> {
+        use gix_error::ErrorExt;
+        Err(gix_error::message!("Object {id} was not found").not_found().raise())
+    }
+}
+
 impl super::Exists for Never {
     fn exists(&self, _id: &gix_hash::oid) -> bool {
         false

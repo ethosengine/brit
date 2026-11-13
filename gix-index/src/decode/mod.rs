@@ -338,8 +338,11 @@ pub(crate) fn stat(data: &[u8]) -> Option<(entry::Stat, &[u8])> {
 }
 
 fn ensure_in_alloc_limit(size: usize, alloc_limit_bytes: Option<usize>) -> Result {
-    if alloc_limit_bytes.is_some_and(|limit| size > limit) {
-        return Err(allocation_error(ResourceExhaustionKind::AllocationLimit));
+    if let Some(limit) = alloc_limit_bytes.filter(|limit| size > *limit) {
+        return Err(
+            message!("Index decode requested {size} bytes: configured allocation limit is {limit} bytes")
+                .resource_exhaustion_error(ResourceExhaustionKind::AllocationLimit),
+        );
     }
     Ok(())
 }

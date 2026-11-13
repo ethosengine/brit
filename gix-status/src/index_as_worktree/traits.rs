@@ -1,5 +1,5 @@
 use gix_error::Result;
-use std::{io::Read, sync::atomic::AtomicBool};
+use std::io::Read;
 
 use bstr::BStr;
 use gix_hash::ObjectId;
@@ -50,13 +50,18 @@ pub trait ReadData<'a> {
 pub mod read_data {
     use std::sync::atomic::Ordering;
 
-    use gix_filter::pipeline::convert::ToGitOutcome;
+    pub(crate) enum Data<'a> {
+        Buffer(&'a [u8]),
+        Spool(gix_utils::stream::Spool),
+        File(std::fs::File),
+    }
 
     use crate::AtomicU64;
 
     /// A stream with worktree file data.
     pub struct Stream<'a> {
-        pub(crate) inner: ToGitOutcome<'a, std::fs::File>,
+        pub(crate) inner: Data<'a>,
+        pub(crate) interrupt: &'a std::sync::atomic::AtomicBool,
         pub(crate) bytes: Option<&'a AtomicU64>,
         pub(crate) len: Option<u64>,
     }
@@ -67,7 +72,11 @@ pub mod read_data {
         /// If `None`, read from this instance like a stream.
         /// Note that this method should only be called once to assure proper accounting of the amount of bytes read.
         pub fn as_bytes(&self) -> Option<&'a [u8]> {
-            self.inner.as_bytes().inspect(|v| {
+            let bytes = match &self.inner {
+                Data::Buffer(bytes) => Some(*bytes),
+                Data::Spool(_) | Data::File(_) => None,
+            };
+            bytes.inspect(|v| {
                 if let Some(bytes) = self.bytes {
                     bytes.fetch_add(v.len() as u64, Ordering::Relaxed);
                 }
@@ -82,7 +91,12 @@ pub mod read_data {
 
     impl std::io::Read for Stream<'_> {
         fn read(&mut self, buf: &mut [u8]) -> std::io::Result<usize> {
-            let n = self.inner.read(buf)?;
+            gix_utils::stream::check(self.interrupt)?;
+            let n = match &mut self.inner {
+                Data::Buffer(bytes) => std::io::Read::read(bytes, buf)?,
+                Data::Spool(file) => std::io::Read::read(file, buf)?,
+                Data::File(file) => std::io::Read::read(file, buf)?,
+            };
             if let Some(bytes) = self.bytes {
                 bytes.fetch_add(n as u64, Ordering::Relaxed);
             }
@@ -137,6 +151,7 @@ impl CompareBlobs for HashEq {
         buf: &mut Vec<u8>,
     ) -> Result<Option<Self::Output>> {
         let mut stream = data.stream_worktree_file()?;
+        let interrupt = stream.interrupt;
         match stream.as_bytes() {
             Some(buffer) => {
                 let file_hash = gix_object::compute_hash(entry.id.kind(), gix_object::Kind::Blob, buffer)?;
@@ -154,7 +169,7 @@ impl CompareBlobs for HashEq {
                         &mut stream,
                         len,
                         &mut gix_utils::progress::Discard,
-                        &AtomicBool::default(),
+                        interrupt,
                     )?,
                 };
                 Ok((entry.id != file_hash).then_some(file_hash))

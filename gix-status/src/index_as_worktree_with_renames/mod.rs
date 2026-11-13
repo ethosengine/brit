@@ -60,7 +60,7 @@ pub(super) mod function {
     where
         T: Send + Clone,
         U: Send + Clone,
-        Find: gix_object::Find + gix_object::FindHeader + Send + Clone,
+        Find: gix_object::Find + gix_object::FindStream + gix_object::FindHeader + Send + Clone,
     {
         let mut tracked_file_modifications = options.tracked_file_modifications;
         tracked_file_modifications.fscache = options.fscache;

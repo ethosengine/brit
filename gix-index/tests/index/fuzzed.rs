@@ -159,7 +159,12 @@ fn alloc_limit_constructor_rejects_oversized_allocations() {
     )
     .expect_err("fixture should exceed tiny allocation limit");
 
-    insta::assert_debug_snapshot!(err, "alloc limit constructor rejects oversized allocations", @"Index data would require more memory than can be reserved");
+    let entries = u32::from_be_bytes(bytes[8..12].try_into().expect("index entry count")) as usize;
+    let requested = entries * std::mem::size_of::<gix_index::Entry>();
+    assert_eq!(
+        err.to_string(),
+        format!("Index decode requested {requested} bytes: configured allocation limit is 64 bytes")
+    );
     assert!(
         err.classify().any(|classification| {
             classification.class() == Class::ResourceExhaustion(gix_error::ResourceExhaustionKind::AllocationLimit)

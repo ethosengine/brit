@@ -78,6 +78,39 @@ impl<'repo> Pipeline<'repo> {
 
 /// Conversions
 impl Pipeline<'_> {
+    /// Convert a charged worktree spool without retaining complete input/output buffers.
+    pub fn convert_to_git_stream(
+        &mut self,
+        src: gix_utils::stream::Spool,
+        rela_path: &std::path::Path,
+        index: &gix_index::State,
+        budget: &std::sync::Arc<gix_utils::stream::Budget>,
+        interrupt: &std::sync::atomic::AtomicBool,
+    ) -> Result<gix_utils::stream::Spool> {
+        use gix_object::FindStream;
+        let path = gix_path::to_unix_separators_on_windows(gix_path::into_bstr(rela_path)?);
+        let entry = self
+            .cache
+            .at_path(rela_path, None, &self.repo.objects)
+            .or_raise(|| message("Failed to prime attributes to the path at which the data resides"))?;
+        self.inner.convert_to_git_stream(
+            src,
+            path.as_ref(),
+            &mut |_, attrs| {
+                entry.matching_attributes(attrs);
+            },
+            &mut || {
+                let Some(entry) = index.entry_by_path(path.as_ref()) else {
+                    return Ok(None);
+                };
+                let (kind, object) = self.repo.objects.find_stream(&entry.id, budget, interrupt)?;
+                Ok((kind == gix_object::Kind::Blob).then_some(object))
+            },
+            budget,
+            interrupt,
+        )
+    }
+
     /// Convert a `src` stream (to be found at `rela_path`, a repo-relative path) to a representation suitable for storage in `git`
     /// by using all attributes at `rela_path` and configuration of the repository to know exactly which filters apply.
     /// `index` is used in particularly rare cases where the CRLF filter in auto-mode tries to determine whether to apply itself,

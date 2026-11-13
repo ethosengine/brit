@@ -8,9 +8,13 @@ use std::{
 use bstr::BStr;
 use filetime::FileTime;
 use gix_error::{ErrorExt, ResultExt, message};
-use gix_filter::pipeline::convert::ToGitOutcome;
 use gix_object::FindExt;
 use gix_parallel::{Reduce, in_parallel_if};
+use gix_utils::stream::{self, Budget};
+use std::{
+    io::Seek,
+    sync::{Arc, atomic::AtomicBool},
+};
 
 #[cfg(windows)]
 use crate::fscache::{FsCache, Metadata as FsCacheMetadata};
@@ -19,7 +23,10 @@ use crate::{
     AtomicU64, SymlinkCheck,
     index_as_worktree::{
         Change, Conflict, Context, EntryStatus, Outcome, VisitEntry, traits,
-        traits::{CompareBlobs, SubmoduleStatus, read_data::Stream},
+        traits::{
+            CompareBlobs, SubmoduleStatus,
+            read_data::{Data, Stream},
+        },
         types::Options,
     },
     is_dir_to_mode,
@@ -72,7 +79,7 @@ pub fn index_as_worktree<'index, T, U, Find>(
 where
     T: Send,
     U: Send,
-    Find: gix_object::Find + Send + Clone,
+    Find: gix_object::Find + gix_object::FindStream + Send + Clone,
 {
     // the order is absolutely critical here we use the old timestamp to detect racy index entries
     // (modified at or after the last index update) during the index update we then set those
@@ -107,6 +114,7 @@ where
     progress.init(entries.len().into(), gix_utils::progress::count("files"));
     let count = progress.counter();
 
+    let budget = Budget::new(&std::env::temp_dir()).or_error()?;
     let new_state = {
         let options = &options;
         let (skipped_by_pathspec, skipped_by_entry_flags) = (&skipped_by_pathspec, &skipped_by_entry_flags);
@@ -124,6 +132,8 @@ where
                     path_backing,
                     filter,
                     options,
+                    budget,
+                    should_interrupt,
                     #[cfg(windows)]
                     fscache: options.fscache.then(|| FsCache::new(worktree)),
 
@@ -238,6 +248,8 @@ struct State<'a, 'b> {
     /// requires attributes to drive the filter configuration.
     attr_stack: gix_worktree::Stack,
     filter: gix_filter::Pipeline,
+    budget: Arc<Budget>,
+    should_interrupt: &'a AtomicBool,
     path_backing: &'b gix_index::PathStorageRef,
     options: &'a Options,
     /// Optional lazy worktree stats cache for faster status checks on Windows.
@@ -272,7 +284,7 @@ impl<'index> State<'_, 'index> {
         outer_entry_index: &mut usize,
     ) -> Option<StatusResult<'index, T, U>>
     where
-        Find: gix_object::Find,
+        Find: gix_object::Find + gix_object::FindStream,
     {
         if entry.flags.intersects(
             gix_index::entry::Flags::UPTODATE
@@ -378,7 +390,7 @@ impl<'index> State<'_, 'index> {
         objects: &Find,
     ) -> Result<Option<EntryStatus<T, U>>>
     where
-        Find: gix_object::Find,
+        Find: gix_object::Find + gix_object::FindStream,
     {
         let worktree_path = match self.path_stack.verified_path(gix_path::from_bstr(rela_path)?.as_ref()) {
             Ok(path) => path,
@@ -497,7 +509,9 @@ impl<'index> State<'_, 'index> {
             path: worktree_path,
             rela_path,
             entry,
+            budget: &self.budget,
             file_len: file_size_bytes,
+            should_interrupt: self.should_interrupt,
             filter: &mut self.filter,
             attr_stack: &mut self.attr_stack,
             core_symlinks:
@@ -568,12 +582,14 @@ impl<'index, T, U, C: VisitEntry<'index, ContentChange = T, SubmoduleStatus = U>
 
 struct ReadDataImpl<'a, Find>
 where
-    Find: gix_object::Find,
+    Find: gix_object::Find + gix_object::FindStream,
 {
     buf: &'a mut Vec<u8>,
     path: &'a Path,
     rela_path: &'a BStr,
+    budget: &'a Arc<Budget>,
     file_len: u64,
+    should_interrupt: &'a AtomicBool,
     entry: &'a gix_index::Entry,
     filter: &'a mut gix_filter::Pipeline,
     attr_stack: &'a mut gix_worktree::Stack,
@@ -588,7 +604,7 @@ where
 
 impl<'a, Find> traits::ReadData<'a> for ReadDataImpl<'a, Find>
 where
-    Find: gix_object::Find,
+    Find: gix_object::Find + gix_object::FindStream,
 {
     fn read_blob(self) -> Result<&'a [u8]> {
         self.objects
@@ -615,7 +631,8 @@ where
             self.buf.extend_from_slice(&symlink_path);
             self.worktree_bytes.fetch_add(self.buf.len() as u64, Ordering::Relaxed);
             Stream {
-                inner: ToGitOutcome::Buffer(self.buf),
+                inner: Data::Buffer(self.buf),
+                interrupt: self.should_interrupt,
                 bytes: None,
                 len: None,
             }
@@ -625,26 +642,48 @@ where
                 .attr_stack
                 .at_entry(self.rela_path, Some(self.entry.mode), &self.objects)
                 .map_err(gix_hash::io::from_std_io)?;
-            let file = std::fs::File::open(self.path).map_err(gix_hash::io::from_std_io)?;
+            let mut file = std::fs::File::open(self.path).map_err(gix_hash::io::from_std_io)?;
+            if !self
+                .filter
+                .may_convert_to_git(gix_path::into_bstr(self.path)?.as_ref(), &mut |_, attrs| {
+                    platform.matching_attributes(attrs);
+                })?
+            {
+                self.worktree_reads.fetch_add(1, Ordering::Relaxed);
+                return Ok(Stream {
+                    inner: Data::File(file),
+                    interrupt: self.should_interrupt,
+                    bytes: Some(self.worktree_bytes),
+                    len: Some(self.file_len),
+                });
+            }
+            let mut source = self.budget.spool().or_error()?;
+            stream::copy(&mut file, &mut source, self.should_interrupt).or_error()?;
+            source.rewind().or_error()?;
             let out = self
                 .filter
-                .convert_to_git(
-                    file,
-                    self.path,
+                .convert_to_git_stream(
+                    source,
+                    gix_path::into_bstr(self.path)?.as_ref(),
                     &mut |_path, attrs| {
                         platform.matching_attributes(attrs);
                     },
-                    &mut |buf| self.objects.find_blob(self.id, buf).map(|_| Some(())),
+                    &mut || {
+                        let (kind, object) = self.objects.find_stream(self.id, self.budget, self.should_interrupt)?;
+                        if kind != gix_object::Kind::Blob {
+                            return Err(gix_error::corruption("Index entry is not a blob").raise());
+                        }
+                        Ok(Some(object))
+                    },
+                    self.budget,
+                    self.should_interrupt,
                 )
                 .or_raise(|| message("Could not convert worktree file to Git format"))?;
-            let len = match out {
-                ToGitOutcome::Unchanged(_) => Some(self.file_len),
-                ToGitOutcome::Process(_) | ToGitOutcome::Buffer(_) => None,
-            };
             Stream {
-                inner: out,
+                len: Some(out.len()),
+                inner: Data::Spool(out),
+                interrupt: self.should_interrupt,
                 bytes: Some(self.worktree_bytes),
-                len,
             }
         };
 
