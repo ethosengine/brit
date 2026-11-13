@@ -13,6 +13,7 @@ use std::{
     collections::{HashMap, HashSet},
     future::Future,
     pin::Pin,
+    sync::Arc,
 };
 
 use anyhow::{bail, Context, Result};
@@ -24,7 +25,12 @@ use eprfs_core::{
 /// The exact Git API version accepted by this bridge's public functions.
 pub use gix;
 
-use gix::{bstr::BString, objs::WriteTo, ObjectId, Repository};
+use gix::{
+    bstr::BString,
+    objs::{FindStream, WriteTo},
+    utils::stream::Budget,
+    ObjectId, Repository,
+};
 
 /// The canonical root and source Git tree identity produced by a seal.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -37,6 +43,7 @@ pub struct SealedGitTree {
 
 #[derive(Default)]
 struct SealBudget {
+    scratch: Option<Arc<Budget>>,
     entries: usize,
     bytes: usize,
     completed: HashMap<ObjectId, BlobCid>,
@@ -271,18 +278,42 @@ fn seal_node<'a, S: EprfsStorage>(
                 0o100644 | 0o100755 | 0o120000 => {
                     let declared_blob_size =
                         preflight_git_object(repo, oid, gix::objs::Kind::Blob, None, limits, budget)?;
-                    let blob = repo.find_blob(oid).with_context(|| format!("find Git blob {oid}"))?;
-                    if blob.data.len() != declared_blob_size {
+                    let bytes = if repo.allocation_limit().is_some_and(|limit| declared_blob_size > limit) {
+                        let scratch = match &budget.scratch {
+                            Some(scratch) => scratch.clone(),
+                            None => {
+                                let scratch = Budget::new(&std::env::temp_dir())?;
+                                budget.scratch = Some(scratch.clone());
+                                scratch
+                            }
+                        };
+                        let (kind, blob) = repo
+                            .objects
+                            .find_stream(&oid, &scratch, &gix::interrupt::IS_INTERRUPTED)
+                            .with_context(|| format!("stream Git blob {oid}"))?;
+                        if kind != gix::objs::Kind::Blob {
+                            bail!("Git blob {oid} kind changed after header preflight");
+                        }
+                        Bytes::from_owner(blob.into_mapped()?)
+                    } else {
+                        Bytes::from(
+                            repo.find_blob(oid)
+                                .with_context(|| format!("find Git blob {oid}"))?
+                                .detach()
+                                .data,
+                        )
+                    };
+                    if bytes.len() != declared_blob_size {
                         bail!("Git blob {oid} size changed after header preflight");
                     }
-                    if gix::objs::compute_hash(repo.object_hash(), gix::objs::Kind::Blob, &blob.data)? != oid {
+                    if gix::objs::compute_hash(repo.object_hash(), gix::objs::Kind::Blob, &bytes)? != oid {
                         bail!("Git blob {oid} has bytes with a different object ID");
                     }
-                    let cid = BlobCid::compute_raw(&blob.data);
+                    let cid = BlobCid::compute_raw(&bytes);
                     storage
-                        .put_blob_verified(&cid, Bytes::copy_from_slice(&blob.data))
+                        .put_blob_verified(&cid, bytes)
                         .await
-                        .with_context(|| format!("store Git blob {oid}"))?;
+                        .with_context(|| format!("store Git blob {oid} ({declared_blob_size} bytes)"))?;
                     if mode == 0o120000 {
                         TreeEntryKind::Symlink {
                             target: BlobLink::from(cid),

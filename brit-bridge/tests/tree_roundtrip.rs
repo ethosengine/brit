@@ -246,6 +246,34 @@ fn committed_tree_restores_exact_git_oid_with_binary_modes_and_gitlink() -> Resu
 }
 
 #[test]
+fn mapped_and_buffered_blob_sealing_preserve_canonical_bytes_and_git_identity() -> Result {
+    for format in ["sha1", "sha256"] {
+        let (source, tree_id) = fixture_with_format(format)?;
+        let repo = open(source.path())?;
+        let blob = repo.write_blob([b'x'; 65536])?.detach();
+        let mut tree = repo.find_tree(tree_id)?.decode()?.to_owned();
+        tree.entries.push(gix::objs::tree::Entry {
+            mode: gix::objs::tree::EntryMode::try_from(0o100644u32).expect("file mode"),
+            filename: "large".into(),
+            oid: blob,
+        });
+        tree.entries.sort();
+        let tree_id = repo.write_object(tree)?.detach();
+        let buffered = MemoryStorage::default();
+        let limits = TreeLimits::default();
+        let expected = futures_lite::future::block_on(seal_git_tree(&repo, tree_id, &buffered, &limits))?;
+        git(source.path(), "config gitoxide.objects.allocLimit 1024")?;
+        let repo = open(source.path())?;
+        assert_eq!(repo.allocation_limit(), Some(1024));
+        let mapped = MemoryStorage::default();
+        let actual = futures_lite::future::block_on(seal_git_tree(&repo, tree_id, &mapped, &limits))?;
+        assert_eq!(actual, expected);
+        assert_eq!(*buffered.0.lock().unwrap(), *mapped.0.lock().unwrap());
+    }
+    Ok(())
+}
+
+#[test]
 fn corrupted_closure_is_rejected_before_ref_or_index_changes() -> Result {
     let (source, tree_id) = fixture()?;
     let source_repo = open(source.path())?;

@@ -2641,6 +2641,8 @@ It does not turn missing evidence into a successful qualification.
 | 20 MiB switch journal, before repair | passed, ceiling reached | 1,073,741,824 B | 333.06 s |
 | 64 MiB switch journal, before repair | failed, exit 137, 3 OOM kills | 1,073,741,824 B | 53.41 s |
 | 20/64/256 MiB switch journal, raw payloads, loose/packed, 1 GiB/16 MiB allocation settings | 3 passed, no OOM | 1,073,741,824 B | 90.72 s |
+| Snapshot 20 MiB, explicit allocation limit and actual reduced trust, before repair | 2 failed allocation refusal, no OOM | 76,120,064 B | 1.33 s |
+| Snapshot 20/64 MiB round-trip, aggregate files, actual reduced trust and existing 256 MiB refusal | 5 passed, no OOM | 553,558,016 B | 115.29 s |
 | Deliberate 1.2 GiB child allocation | correctly rejected, exit 137, 2 OOM kills | 1,073,741,824 B | negative control |
 
 The 256 MiB run reached `memory.max` with reclamation (495 max events), without
@@ -2698,6 +2700,22 @@ The packed 20/64/256 MiB matrix passes both allocation policies under the fixed
 cgroup. This measures the station locally; large metadata and whole-operation
 scratch telemetry remain open.
 
+Snapshot sealing now transfers buffered blob ownership without a second whole-file
+copy and uses the existing mapped spool above the effective allocation policy.
+The canonical EPRFS codec, CIDs, Git OID verification and shared closure loader
+are unchanged. Eleven bridge tests include buffered/mapped byte equality for
+SHA-1 and SHA-256; public resource fixtures explicitly execute actual reduced
+trust and verify complete exported/restored Git trees. The published native
+DirectoryStorage already limits each content object to 64 MiB; its 256 MiB
+refusal is an existing unsupported capability, not evidence that an otherwise
+supported command fits in memory. This ceiling is preserved. Snapshot capture,
+larger closure metadata and cancellation still need qualification.
+
+Story-harvest station: **snapshot sealing / between Git object header → canonical
+storage / blob custody honors the effective allocation policy without copying**.
+The two formerly failing 20 MiB fixtures now pass; these observations do not
+complete the command-family or global resource audit.
+
 ### Public-command audit in progress
 
 The command boundary is `src/plumbing/options/mod.rs` plus
@@ -2716,7 +2734,7 @@ unsupported independently of this effort. No open row is accepted as deferred.
 | `fetch`, `push`, `odb`, `fsck`, `verify`, `commit-graph` | Pack decode diagnostics improved; 64/256 MiB local transfer passes without worker/cache changes. Verification, delta-tree allocations under explicit limits, additional protocols and large metadata qualification remain open. |
 | `branch`, `tag`, `remote`, `submodule`, `config`, `config-tree`, `attributes`, `exclude`, `mailmap` | Ref/config/path metadata and helper dispatch still need allocation tracing and applicable fixtures. |
 | `credential`, `env`, `editor`, `completions`, `free`, `corpus`, `tix` | Applicable metadata/output/owned-child audit remains open. Existing unsupported behavior cannot be relabeled a memory success. |
-| `snapshot`, `build`, `run`, `graph`, `affected`, `plan`, `fingerprint`, `baseline`, `integrate`, `context` | Snapshot and first-party composition require their own reader/metadata/output audit; arbitrary external tasks are outside a universal success guarantee, but owned children still count in measured workloads. |
+| `snapshot`, `build`, `run`, `graph`, `affected`, `plan`, `fingerprint`, `baseline`, `integrate`, `context` | Snapshot seal/verify/export/restore are measured on 20/64 MiB, aggregate and reduced-trust fixtures; the existing per-object 64 MiB native limit is preserved. Capture and first-party reader/metadata/output audit remain open; arbitrary external tasks are outside a universal success guarantee, but owned children still count in measured workloads. |
 
 Outstanding acceptance also includes broader reduced-trust command coverage,
 broader hash/alternate/replacement combinations beyond the expanded daily matrices, additional

@@ -151,6 +151,11 @@ impl Mapped {
         self.map.as_deref().unwrap_or_default()
     }
 }
+impl AsRef<[u8]> for Mapped {
+    fn as_ref(&self) -> &[u8] {
+        self.as_slice()
+    }
+}
 /// A seekable temporary file whose growth is charged before any write.
 pub struct Spool {
     file: Option<tempfile::NamedTempFile>,
