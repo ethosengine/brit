@@ -2901,9 +2901,24 @@ and original journal remain isolated evidence. Four legacy tests, including
 process death at normalization boundaries, and the full lifecycle power-loss
 model pass; that model is one test covering its existing 32 failure shapes.
 
-Interrupted conflict handoff, scope expansion, authored-object retention,
-large metadata, aggregate scratch accounting and final committed-source resource
-proofs remain open. None of these memory receipts measures aggregate scratch
+Process-death qualification then exposed a child handoff bug: publishing a new
+payload inventory changed the exact parent context while the live child still
+required its old binding. Per-payload immutable licenses now bind the exact
+active child, leaving that parent state unchanged until acceptance incorporates
+the inventory. Accepted licenses must match a durable accepted-child binding.
+The eight death cases cover publication before/after raw bytes, continuation
+and abort. Restaging or deletion cannot change an already pinned proposal;
+continuation refuses, and abort retains the changed work before restoration. Six foreign/corrupt/oversized license cases refuse
+without mutating the operation. All 110 fault-enabled replay, interactive and I/O
+tests pass, along with strict affected Clippy, formatting, readiness and the
+declared Rust-style check. The same public 64 MiB conflict continuation
+passes with these licenses at 277,864,448 B in 142.69 s, without OOM or survivors.
+
+Scope expansion, authored-object retention, large metadata, aggregate scratch
+accounting and final committed-source resource proofs remain open. The new
+64 MiB edit/amend fixture identifies a required-success refusal in authored-object
+retention at the explicit 16 MiB allocation limit (177,242,112 B peak, 51.15 s);
+that path still loads blobs into encoded JSON receipts and is not qualified. None of these memory receipts measures aggregate scratch
 peak, and the overall habit remains red.
 
 Story-harvest station: **replay / between retained history → recovery journal /
@@ -2927,7 +2942,7 @@ unsupported independently of this effort. No open row is accepted as deferred.
 | `diff`, `cat`, `add`, `restore`, `archive` | Shared readers repaired as above; large converted archive and clean/status fixtures pass; pinned diff, larger aggregate selections and remaining fault cases stay open. `diff file` and diff-format reads now use the streamed/mapped shared conversion path and pass the added 20/64/256 MiB matrix. Other comparison-cache consumers remain open. |
 | `status`, `is-clean`, `is-changed`, `index`, `dirwalk`, `clean` | Hash-only status paths stream ordinary files; filtered status and a 200,000-entry index crossing 16 MiB are measured. Other metadata, dirwalk and clean paths still need complete tracing. |
 | `worktree`, `clone` checkout | Existing bounded checkout, OFS/REF delta and filter machinery retained. Whole-cgroup 64/256 MiB worktree checkout/recovery passes; 64/256 MiB local clone/fetch/push also passes; other protocols and reduced-trust transfer paths remain open. |
-| `switch`, `pull`, `rebase`, `merge`, `commit` | Switch/pull raw recovery payloads and streamed dirty checks are repaired and measured at 20/64/256 MiB. Replay working-file journals now use raw payloads and retained-copy capture streams, with 20/64 MiB public cases passing; 64 MiB conflict/abort and preserved large edits also pass after raw-custody repair; interrupted conflict handoff, authored-object retention and journal metadata remain open. Three-sided 64 MiB filesystem and object-backed file/tree/commit merge fixtures pass, with bounded rename inputs and recursive-base conformance. External merge drivers, large journals and resource-bound recovery/death fixtures remain open. |
+| `switch`, `pull`, `rebase`, `merge`, `commit` | Switch/pull raw recovery payloads and streamed dirty checks are repaired and measured at 20/64/256 MiB. Replay working-file journals now use raw payloads and retained-copy capture streams, with 20/64 MiB public cases passing; 64 MiB conflict/abort and preserved large edits also pass after raw-custody repair; interrupted conflict handoff now preserves exact child authority; authored-object retention and journal metadata remain open. Three-sided 64 MiB filesystem and object-backed file/tree/commit merge fixtures pass, with bounded rename inputs and recursive-base conformance. External merge drivers, large journals and resource-bound recovery/death fixtures remain open. |
 | `blame`, `log`, `revision`, `merge-base`, `tree` | Blame initial/history blobs, rename similarity and rendering are repaired and measured, including actual reduced trust and a million unique lines; large history metadata remains open. Ordinary log traverses commits without reading blobs; path-filtered log was already unsupported. Tree listing streams output and uses headers for sizes; its traversal metadata remains to qualify. |
 | `fetch`, `push`, `odb`, `fsck`, `verify`, `commit-graph` | Pack decode diagnostics improved; 64/256 MiB local transfer passes without worker/cache changes. Loose blob verification now streams. Both verification algorithms and all decode modes, ODB inspection, connectivity and pack create/index/explode pass at 20/64/256 MiB with a 1 GiB allocation setting, including 64 MiB OFS/REF histories. Explicit 16 MiB packed-buffer refusal is accurately diagnosed and preserves repository state; this is refusal proof, not successful bounded packed verification. Reduced-trust packed buffers, additional protocols and large metadata qualification remain open. |
 | `branch`, `tag`, `remote`, `submodule`, `config`, `config-tree`, `attributes`, `exclude`, `mailmap` | Ref/config/path metadata and helper dispatch still need allocation tracing and applicable fixtures. |

@@ -736,6 +736,7 @@ impl Session {
             tip: completion.head.to_string(),
         });
         interactive.edit = None;
+        self.capture_after(repo)?;
         self.state.phase = "edit-accepted".into();
         self.save()?;
         switch::checkpoint("replay-edit-accepted")?;

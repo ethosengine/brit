@@ -1822,6 +1822,12 @@ impl Session {
     fn cleanup_inventory(&self, repo: &gix::Repository) -> Result<BTreeSet<Vec<u8>>> {
         self.validate_payloads()?;
         let mut allowed = BTreeSet::from([b"state.json".to_vec()]);
+        for hash in self.child_payload_licenses()?.keys() {
+            allowed.insert(format!("payload-license-{hash}.json").into_bytes());
+            if fs::symlink_metadata(self.directory.join(format!("payload-{hash}"))).is_ok() {
+                allowed.insert(format!("payload-{hash}").into_bytes());
+            }
+        }
         for hash in self.state.payloads.keys() {
             let name = format!("payload-{hash}");
             if fs::symlink_metadata(self.directory.join(&name)).is_ok() {
@@ -2639,6 +2645,7 @@ impl Session {
                                 unreachable!("delay is forbidden")
                             };
                             self.store_payload(
+                                repo,
                                 source,
                                 switch::creation_mode(if entry.mode == gix::index::entry::Mode::FILE_EXECUTABLE {
                                     0o777

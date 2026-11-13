@@ -3339,3 +3339,106 @@ fn abort_retry_after_its_own_unowned_staging_retains_orphan_without_replacing_pr
     }
     Ok(())
 }
+
+#[cfg(feature = "switch-test-faults")]
+#[test]
+fn interrupted_child_payload_handoff_keeps_exact_child_authority_for_continue_and_abort() -> Result<()> {
+    use anyhow::Context;
+    if gix_testtools::run_in_isolated_process().map_err(anyhow::Error::from_boxed)? {
+        return Ok(());
+    }
+    for checkpoint in ["replay-child-payload-intent", "replay-child-payload-persisted"] {
+        for action in ["abort", "continue", "restage", "delete"] {
+            let temp = preserved_linear_fixture(true)?;
+            let root = temp.path();
+            let before = integration_snapshot(root)?;
+            kill_at_lifecycle_checkpoint(root, checkpoint, "conflict")?;
+            let repo = gix::open(root)?;
+            let mut session = Session::open(&repo)?;
+            if matches!(action, "restage" | "delete") {
+                if action == "delete" {
+                    fs::remove_file(root.join("selected"))?;
+                } else {
+                    fs::write(root.join("selected"), b"changed after interrupted handoff\n")?;
+                }
+                session.stage(&repo, &["selected".into()], false)?;
+            }
+            if action == "continue" {
+                assert!(matches!(
+                    session
+                        .continue_conflict(&repo)
+                        .with_context(|| format!("continue {checkpoint}/{action}"))?,
+                    Advance::Step { .. }
+                ));
+            } else if matches!(action, "restage" | "delete") {
+                let head = oid(root, "HEAD")?;
+                let error = session
+                    .continue_conflict(&repo)
+                    .expect_err("a pinned proposal cannot change its tree");
+                assert!(format!("{error:#}").contains("replay proposal tree changed"));
+                assert_eq!(
+                    oid(root, "HEAD")?,
+                    head,
+                    "refusal cannot publish the changed resolution"
+                );
+            }
+            session
+                .abort(&gix::open(root)?)
+                .with_context(|| format!("abort {checkpoint}/{action}"))?;
+            session
+                .cleanup(&gix::open(root)?)
+                .with_context(|| format!("cleanup {checkpoint}/{action}"))?;
+            assert_eq!(integration_snapshot(root)?, before);
+            assert!(!repo.git_dir().join("brit-rebase").exists());
+            assert!(!repo.git_dir().join("brit-authoring").exists());
+        }
+    }
+    Ok(())
+}
+
+#[cfg(feature = "switch-test-faults")]
+#[test]
+fn child_payload_handoff_rejects_foreign_corrupt_and_oversized_licenses_without_mutation() -> Result<()> {
+    if gix_testtools::run_in_isolated_process().map_err(anyhow::Error::from_boxed)? {
+        return Ok(());
+    }
+    for mutation in ["parent", "nonce", "size", "symlink", "oversized", "name"] {
+        let temp = preserved_linear_fixture(true)?;
+        let root = temp.path();
+        kill_at_lifecycle_checkpoint(root, "replay-child-payload-persisted", "conflict")?;
+        let repo = gix::open(root)?;
+        let path = fs::read_dir(repo.git_dir().join("brit-rebase"))?
+            .collect::<std::io::Result<Vec<_>>>()?
+            .into_iter()
+            .find(|entry| entry.file_name().as_encoded_bytes().starts_with(b"payload-license-"))
+            .expect("durable handoff license")
+            .path();
+        let bytes = fs::read_to_string(&path)?;
+        let license: serde_json::Value = serde_json::from_str(&bytes)?;
+        match mutation {
+            "parent" | "nonce" => {
+                let field = if mutation == "parent" { "parent_state" } else { "nonce" };
+                let value = license["binding"][field].as_str().expect("license binding");
+                fs::write(&path, bytes.replace(value, &"f".repeat(40)))?;
+            }
+            "size" => fs::write(
+                &path,
+                bytes.replace(&format!("\"size\":{}", license["size"]), "\"size\":1"),
+            )?,
+            "symlink" => {
+                fs::remove_file(&path)?;
+                std::os::unix::fs::symlink(root.join("selected"), &path)?;
+            }
+            "oversized" => fs::OpenOptions::new().write(true).open(&path)?.set_len(1025)?,
+            "name" => fs::rename(
+                &path,
+                path.with_file_name(format!("payload-license-{}.json", "f".repeat(40))),
+            )?,
+            _ => unreachable!(),
+        }
+        let before = snapshot(root)?;
+        assert!(Session::open(&repo).is_err(), "invalid {mutation} license must refuse");
+        assert_eq!(snapshot(root)?, before, "refusal must preserve the entire operation");
+    }
+    Ok(())
+}
