@@ -1,4 +1,4 @@
-use std::io::Write;
+use std::{io::Write, sync::atomic::AtomicBool};
 
 use gix_object::{FindExt, bstr::BStr};
 
@@ -50,6 +50,29 @@ where
     Find: gix_object::Find + gix_object::FindStream + Clone + Send + 'static,
     E: std::error::Error + Send + Sync + 'static,
 {
+    static UNINTERRUPTED: AtomicBool = AtomicBool::new(false);
+    from_tree_with_interrupt(tree, objects, pipeline, attributes, &UNINTERRUPTED)
+}
+
+/// Like [`from_tree()`], but polls `should_interrupt` while reading and converting blobs.
+/// The flag must outlive the background producer. Blocking OS calls remain outside this bound.
+pub fn from_tree_with_interrupt<Find, E>(
+    tree: gix_hash::ObjectId,
+    objects: Find,
+    pipeline: gix_filter::Pipeline,
+    attributes: impl FnMut(
+        &BStr,
+        gix_object::tree::EntryMode,
+        &mut gix_attributes::search::Outcome,
+    ) -> std::result::Result<(), E>
+    + Send
+    + 'static,
+    should_interrupt: &'static AtomicBool,
+) -> Stream
+where
+    Find: gix_object::Find + gix_object::FindStream + Clone + Send + 'static,
+    E: std::error::Error + Send + Sync + 'static,
+{
     let (stream, mut write, additional_entries) = Stream::new();
     std::thread::spawn(gix_trace::in_thread({
         let slot = stream.err.clone();
@@ -60,8 +83,11 @@ where
                 pipeline,
                 attributes,
                 &mut write,
-                slot.clone(),
-                additional_entries,
+                Producer {
+                    err: slot.clone(),
+                    additional_entries,
+                    should_interrupt,
+                },
             ) {
                 {
                     let mut slot = slot.lock();
@@ -78,6 +104,12 @@ where
     stream
 }
 
+struct Producer {
+    err: SharedErrorSlot,
+    additional_entries: std::sync::mpsc::Receiver<AdditionalEntry>,
+    should_interrupt: &'static AtomicBool,
+}
+
 fn run<Find, E>(
     tree: gix_hash::ObjectId,
     objects: Find,
@@ -90,13 +122,18 @@ fn run<Find, E>(
     + Send
     + 'static,
     out: &mut gix_utils::io::pipe::Writer,
-    err: SharedErrorSlot,
-    additional_entries: std::sync::mpsc::Receiver<AdditionalEntry>,
+    producer: Producer,
 ) -> Result
 where
     Find: gix_object::Find + gix_object::FindStream + Clone,
     E: std::error::Error + Send + Sync + 'static,
 {
+    let Producer {
+        err,
+        additional_entries,
+        should_interrupt,
+    } = producer;
+    gix_utils::stream::check(should_interrupt).or_error()?;
     let mut buf = Vec::new();
     let tree_iter = objects
         .find_tree_iter(tree.as_ref(), &mut buf)
@@ -119,6 +156,7 @@ where
         path_deque: Default::default(),
         path: Default::default(),
         budget: gix_utils::stream::Budget::new(&std::env::temp_dir()).or_error()?,
+        should_interrupt,
     };
     gix_traverse::tree::breadthfirst(
         tree_iter,
@@ -134,6 +172,7 @@ where
     drop(dlg);
 
     for entry in additional_entries {
+        gix_utils::stream::check(should_interrupt).or_error()?;
         protocol::write_entry_header_and_path(
             entry.relative_path.as_ref(),
             &entry.id,

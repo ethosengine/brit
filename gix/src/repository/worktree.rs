@@ -176,7 +176,7 @@ impl crate::Repository {
             crate::filter::Pipeline::options(self)?,
         );
         let objects = self.objects.clone().into_arc().expect("TBD error handling");
-        let stream = gix_worktree_stream::from_tree(
+        let stream = gix_worktree_stream::from_tree_with_interrupt(
             id,
             objects.clone(),
             pipeline,
@@ -185,6 +185,7 @@ impl crate::Repository {
                 entry.matching_attributes(attrs);
                 Ok(())
             },
+            &crate::interrupt::IS_INTERRUPTED,
         );
         Ok((stream, index))
     }

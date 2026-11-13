@@ -2614,9 +2614,9 @@ function-context-header compatibility exception documented above. A two-file
 
 The opt-in `scripts/ci/qualify-memory.sh` enters its exclusively owned delegated
 cgroup before exec; test harness, Brit, Git oracle and all descendants inherit it.
-It records executable hashes, toolchain, arguments, elapsed time, memory peak,
-memory events, exits and surviving processes. An OOM or surviving child fails the
-run. The wrapper deliberately reports `qualificationComplete: false` while
+It records executable hashes before and after execution, fixture hash kind, toolchain, arguments, elapsed time, memory peak,
+memory events, exits and surviving processes. An OOM, surviving child or changed executable fails the
+run. A self-changing executable control exits successfully but is correctly rejected by the wrapper. The wrapper deliberately reports `qualificationComplete: false` while
 scratch peak evidence and complete source/workload qualification are absent.
 It does not turn missing evidence into a successful qualification.
 
@@ -2633,6 +2633,13 @@ It does not turn missing evidence into a successful qualification.
 | Local clone/fetch/push at 64/256 MiB, including owned transports | passed, no OOM | 1,073,741,824 B | 49.12 s |
 | Ownership-derived reduced trust, streamed blob and metadata refusal | passed, no OOM | 165,539,840 B | 1.91 s |
 | 64/256 MiB converted archive and commit | passed, no OOM | 1,018,191,872 B | 21.54 s |
+| 64-revision, 20 MiB append-only blame, before cache reclamation | failed, exit 137, 3 OOM kills | 1,073,741,824 B | 31.20 s |
+| Same blame fixture after per-comparison reclamation | passed, all 64 attributions preserved | 643,690,496 B | 59.04 s |
+| SIGINT during 256 MiB archive spooling | passed, controlled return under one second | 323,751,936 B | 3.75 s |
+| Expanded daily matrix, SHA-1 | 12 passed, no OOM | 1,073,741,824 B | 302.60 s |
+| Expanded daily matrix, SHA-256 | 12 passed, no OOM | 1,073,741,824 B | 937.66 s |
+| 20 MiB switch journal, before repair | passed, ceiling reached | 1,073,741,824 B | 333.06 s |
+| 64 MiB switch journal, before repair | failed, exit 137, 3 OOM kills | 1,073,741,824 B | 53.41 s |
 | Deliberate 1.2 GiB child allocation | correctly rejected, exit 137, 2 OOM kills | 1,073,741,824 B | negative control |
 
 The 256 MiB run reached `memory.max` with reclamation (495 max events), without
@@ -2661,6 +2668,25 @@ previous CLI succeeded on metadata that should have exceeded its implicit
 20 MiB blob. This node is measured locally; whole-command qualification stays
 open. Existing native fixtures own the regression, with no parallel registry.
 
+Blame now reclaims the completed comparison's resource cache at each revision;
+its existing 101 tests pass and the formerly OOM-killed append-only fixture
+preserves all 64 expected attributions. Archive production now receives the
+public interruption flag during blob spooling and conversion. The controlled
+SIGINT fixture preserves HEAD/index and removes its scratch; blocking OS calls
+remain outside the one-second claim. Both expanded hash matrices include long
+single lines, unchanged files and binary content with buffered/mapped equality.
+The separate privileged ownership fixture is explicitly run outside those 12-case
+matrices. Scratch remains unmeasured in these receipts.
+
+Story-harvest stations: **history attribution / between completed comparison →
+next revision / completed blob buffers are reclaimed**, and **archive cancellation /
+between signal received → command returns / blob producer observes interruption**.
+The public memory fixtures and existing plumbing suites own these probes.
+The 64 MiB switch fixture exposes another open station: **durable checkout /
+between preflight → publication / recovery payloads fit the same resource bounds**.
+Its double JSON encoding and retained byte images are affected; this failure is
+not a supported refusal or a completed qualification.
+
 ### Public-command audit in progress
 
 The command boundary is `src/plumbing/options/mod.rs` plus
@@ -2675,14 +2701,14 @@ unsupported independently of this effort. No open row is accepted as deferred.
 | `status`, `is-clean`, `is-changed`, `index`, `dirwalk`, `clean` | Hash-only status paths stream ordinary files; filtered status and a 200,000-entry index crossing 16 MiB are measured. Other metadata, dirwalk and clean paths still need complete tracing. |
 | `worktree`, `clone` checkout | Existing bounded checkout, OFS/REF delta and filter machinery retained. Whole-cgroup 64/256 MiB worktree checkout/recovery passes; 64/256 MiB local clone/fetch/push also passes; other protocols and reduced-trust transfer paths remain open. |
 | `switch`, `pull`, `rebase`, `merge`, `commit` | Switch/replay/conflict journals retain byte vectors and serialized images. Dirty checks still load blobs in these paths. Three-sided 64 MiB filesystem merge passes; object-backed merge, large journals and resource-bound recovery/death fixtures remain open. |
-| `blame`, `log`, `revision`, `merge-base`, `tree` | History/comparison caches and metadata need workload-specific measurement; ordinary history-only paths must be distinguished from blob/patch variants. |
+| `blame`, `log`, `revision`, `merge-base`, `tree` | Append-only blame cache retention is repaired and measured; explicit-limit blob paths and large history metadata remain open. Ordinary log traverses commits without reading blobs; path-filtered log was already unsupported. Tree listing streams output and uses headers for sizes; its traversal metadata remains to qualify. |
 | `fetch`, `push`, `odb`, `fsck`, `verify`, `commit-graph` | Pack decode diagnostics improved; 64/256 MiB local transfer passes without worker/cache changes. Verification, delta-tree allocations under explicit limits, additional protocols and large metadata qualification remain open. |
 | `branch`, `tag`, `remote`, `submodule`, `config`, `config-tree`, `attributes`, `exclude`, `mailmap` | Ref/config/path metadata and helper dispatch still need allocation tracing and applicable fixtures. |
 | `credential`, `env`, `editor`, `completions`, `free`, `corpus`, `tix` | Applicable metadata/output/owned-child audit remains open. Existing unsupported behavior cannot be relabeled a memory success. |
 | `snapshot`, `build`, `run`, `graph`, `affected`, `plan`, `fingerprint`, `baseline`, `integrate`, `context` | Snapshot and first-party composition require their own reader/metadata/output audit; arbitrary external tasks are outside a universal success guarantee, but owned children still count in measured workloads. |
 
 Outstanding acceptance also includes broader reduced-trust command coverage,
-supported hashes, alternates/replacements, long-line and binary cases, additional
+broader hash/alternate/replacement combinations beyond the expanded daily matrices, additional
 metadata families over 16 MiB, aggregate scratch accounting and telemetry,
 allocation and I/O faults, corruption, cancellation/death, cross-platform checks,
 ordinary and fault-enabled recovery suites, and committed-source receipts.

@@ -88,6 +88,25 @@ mod from_tree {
     }
 
     #[test]
+    fn cancellation_precedes_object_reads() {
+        static STOP: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(true);
+        let start = std::time::Instant::now();
+        let mut stream = gix_worktree_stream::from_tree_with_interrupt(
+            gix_testtools::object_hash().null(),
+            FailObjectRetrieval,
+            mutating_pipeline(false),
+            |_, _, _| -> std::result::Result<_, Infallible> { unreachable!("cancelled before attributes") },
+            &STOP,
+        );
+        let err = stream.next_entry().expect_err("cancelled before tree lookup");
+        assert!(
+            err.is_cancelled(),
+            "the tagged cancellation survives the I/O boundary: {err:?}"
+        );
+        assert!(start.elapsed() < std::time::Duration::from_secs(1));
+    }
+
+    #[test]
     fn can_receive_err_if_root_is_not_found() {
         let mut stream = gix_worktree_stream::from_tree(
             gix_testtools::object_hash().null(),

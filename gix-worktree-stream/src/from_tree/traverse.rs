@@ -27,6 +27,7 @@ where
     pub(crate) fetch_attributes: AttributesFn,
     pub(crate) objects: Find,
     pub(crate) budget: Arc<gix_utils::stream::Budget>,
+    pub(crate) should_interrupt: &'static AtomicBool,
 }
 
 impl<AttributesFn, Find> Delegate<'_, AttributesFn, Find>
@@ -62,6 +63,7 @@ where
     }
 
     fn handle_entry(&mut self, entry: &tree::EntryRef<'_>) -> Result<Action> {
+        gix_utils::stream::check(self.should_interrupt).or_error()?;
         if !entry.mode.is_blob_or_symlink() {
             return Ok(std::ops::ControlFlow::Continue(true));
         }
@@ -69,10 +71,9 @@ where
         if self.ignore_state().is_set() {
             return Ok(std::ops::ControlFlow::Continue(true));
         }
-        let interrupt = AtomicBool::new(false);
         let (kind, source) = self
             .objects
-            .find_stream(entry.oid, &self.budget, &interrupt)
+            .find_stream(entry.oid, &self.budget, self.should_interrupt)
             .or_raise(|| message!("Could not read archive entry {} ({})", self.path, entry.oid))?;
         if kind != gix_object::Kind::Blob {
             return Err(gix_error::corruption("Archive leaf is not a blob").raise());
@@ -91,7 +92,7 @@ where
                     unknown_encoding: to_worktree::UnknownEncoding::Fail,
                 },
                 &self.budget,
-                &interrupt,
+                self.should_interrupt,
             )
             .or_raise(|| message("Could not convert to worktree representation"))?;
         let Outcome::Ready(mut source) = converted else {
@@ -100,7 +101,7 @@ where
         let size = usize::try_from(source.len()).or_error()?;
         protocol::write_entry_header_and_path(self.path.as_ref(), entry.oid, entry.mode, Some(size), self.out)
             .or_raise(|| message("Could not write entry header"))?;
-        gix_utils::stream::copy(&mut source, self.out, &interrupt)
+        gix_utils::stream::copy(&mut source, self.out, self.should_interrupt)
             .or_raise(|| message("Could not write archive entry data"))?;
         Ok(std::ops::ControlFlow::Continue(true))
     }
@@ -136,6 +137,10 @@ where
     }
 
     fn visit_tree(&mut self, entry: &tree::EntryRef<'_>) -> Action {
+        if let Err(err) = gix_utils::stream::check(self.should_interrupt).or_error() {
+            *self.err.lock() = Some(err);
+            return std::ops::ControlFlow::Break(());
+        }
         if let Err(err) = (self.fetch_attributes)(self.path.as_ref(), entry.mode, &mut self.attrs) {
             *self.err.lock() = Some(err);
             std::ops::ControlFlow::Break(())

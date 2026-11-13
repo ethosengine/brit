@@ -500,3 +500,150 @@ fn large_local_clone_fetch_and_push_preserve_objects() -> Result<()> {
     }
     Ok(())
 }
+
+#[test]
+fn append_only_blame_reclaims_completed_comparisons() -> Result<()> {
+    let repo = TestRepo::new("memory-blame")?;
+    let root = repo.path();
+    large_file(&root.join("history"), 20 * 1024 * 1024)?;
+    git(root, &["add", "history"])?;
+    git(root, &["commit", "-qm", "base"])?;
+    let mut expected = Vec::new();
+    for i in 0..64 {
+        let mut file = fs::OpenOptions::new().append(true).open(root.join("history"))?;
+        writeln!(file, "{i:06} appended history")?;
+        drop(file);
+        git(root, &["add", "history"])?;
+        git(root, &["commit", "-qm", "append"])?;
+        expected.push(String::from_utf8(git(root, &["rev-parse", "HEAD"])?)?);
+    }
+    let observed = brit(
+        root,
+        &["blame", "-L", "321,384", "history"],
+        "gitoxide.objects.allocLimit=1073741824",
+    )?;
+    let lines: Vec<_> = observed.lines().collect();
+    ensure!(lines.len() == expected.len(), "all appended lines have blame");
+    for (line, id) in lines.into_iter().zip(expected) {
+        ensure!(line.starts_with(&id[..8]), "append attribution: {line} expected {id}");
+    }
+    Ok(())
+}
+
+#[cfg(target_os = "linux")]
+#[test]
+fn archive_cancels_during_large_object_spooling() -> Result<()> {
+    use std::{
+        process::{Child, Command, Stdio},
+        time::{Duration, Instant},
+    };
+    struct OwnedChild(Child);
+    impl Drop for OwnedChild {
+        fn drop(&mut self) {
+            let _ = self.0.kill();
+            let _ = self.0.wait();
+        }
+    }
+    let repo = TestRepo::new("memory-archive-interrupt")?;
+    let root = repo.path();
+    large_file(&root.join("large"), 256 * 1024 * 1024)?;
+    git(root, &["add", "large"])?;
+    git(root, &["commit", "-qm", "large"])?;
+    let index = fs::read(root.join(".git/index"))?;
+    let head = git(root, &["rev-parse", "HEAD"])?;
+    let scratch = tempfile::tempdir()?;
+    let mut command = Command::new(brit_bin().expect("built Brit"));
+    gix_testtools::configure_git_environment(&mut command, root);
+    command
+        .current_dir(root)
+        .env("TMPDIR", scratch.path())
+        .env("GIT_CONFIG_GLOBAL", root.join(".git/absent-global"))
+        .args(["archive", "interrupted.tar"])
+        .stdin(Stdio::null())
+        .stdout(Stdio::null())
+        .stderr(Stdio::null());
+    let mut child = OwnedChild(command.spawn()?);
+    let deadline = Instant::now() + Duration::from_secs(20);
+    loop {
+        let mut spooling = false;
+        for dir in fs::read_dir(scratch.path())? {
+            let dir = dir?;
+            if dir.file_type()?.is_dir() && dir.file_name().to_string_lossy().starts_with(".brit-checkout-") {
+                for file in fs::read_dir(dir.path())? {
+                    if file?.metadata()?.len() >= 1024 * 1024 {
+                        spooling = true;
+                    }
+                }
+            }
+        }
+        if spooling {
+            break;
+        }
+        ensure!(
+            child.0.try_wait()?.is_none(),
+            "archive exited before spooling checkpoint"
+        );
+        ensure!(Instant::now() < deadline, "archive did not reach spooling checkpoint");
+        std::thread::sleep(Duration::from_millis(1));
+    }
+    let interrupted = Instant::now();
+    ensure!(Command::new("kill")
+        .args(["-INT", &child.0.id().to_string()])
+        .status()?
+        .success());
+    loop {
+        if let Some(status) = child.0.try_wait()? {
+            ensure!(!status.success(), "cancelled archive must report failure");
+            break;
+        }
+        ensure!(
+            interrupted.elapsed() < Duration::from_secs(1),
+            "controlled archive cancellation exceeded one second"
+        );
+        std::thread::sleep(Duration::from_millis(1));
+    }
+    ensure!(fs::read(root.join(".git/index"))? == index);
+    ensure!(git(root, &["rev-parse", "HEAD"])? == head);
+    ensure!(
+        fs::read_dir(scratch.path())?.next().is_none(),
+        "cancelled archive must reclaim its spools"
+    );
+    Ok(())
+}
+
+#[test]
+fn mapped_single_lines_and_binary_files_keep_git_semantics() -> Result<()> {
+    for binary in [false, true] {
+        let repo = TestRepo::new("memory-long-line")?;
+        let root = repo.path();
+        let mut file = fs::File::create(root.join("content"))?;
+        let chunk = [b'x'; 65536];
+        for _ in 0..320 {
+            file.write_all(&chunk)?;
+        }
+        if binary {
+            file.rewind()?;
+            file.write_all(&[0])?;
+        }
+        drop(file);
+        git(root, &["add", "content"])?;
+        git(root, &["commit", "-qm", "base"])?;
+        ensure!(brit(root, &["diff"], "gitoxide.objects.allocLimit=16777216")?.is_empty());
+        let mut file = fs::OpenOptions::new().write(true).open(root.join("content"))?;
+        file.seek(SeekFrom::Start(10 * 1024 * 1024))?;
+        file.write_all(b"changed")?;
+        drop(file);
+        let expected = git(root, &["diff", "--no-ext-diff", "--no-textconv"])?;
+        for limit in [
+            "gitoxide.objects.allocLimit=16777216",
+            "gitoxide.objects.allocLimit=1073741824",
+        ] {
+            let actual = brit(root, &["diff"], limit)?;
+            ensure!(
+                actual.as_bytes() == expected,
+                "single-line/binary patch differs from Git (binary={binary})"
+            );
+        }
+    }
+    Ok(())
+}

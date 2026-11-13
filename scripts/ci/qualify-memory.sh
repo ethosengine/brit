@@ -39,15 +39,21 @@ cp -- "$group/memory.events" "$evidence/events-after.txt"
 peak=$(cat "$group/memory.peak")
 oom=$(awk '$1 == "oom_kill" { print $2 }' "$group/memory.events")
 survivors=$(wc -l < "$group/cgroup.procs")
+runner_after=$(sha256sum -- "$executable"); runner_after=${runner_after%% *}
+brit_after=$(sha256sum -- "$brit_executable"); brit_after=${brit_after%% *}
+identity_changed=false
+if [[ "$runner_after" != "$sha" || "$brit_after" != "$brit_sha" ]]; then identity_changed=true; fi
 outcome=$status
+if [[ "$identity_changed" == true ]]; then outcome=1; fi
 if (( oom != 0 || survivors != 0 )); then outcome=1; fi
 jq -n --arg executable "$executable" --arg sha256 "$sha" \
   --arg britExecutable "$brit_executable" --arg britSha256 "$brit_sha" \
   --arg source "${BRIT_MEMORY_SOURCE:-uncommitted}" --argjson exit "$status" \
+  --arg fixtureHash "${GIX_TEST_FIXTURE_HASH:-default}" --argjson identityChanged "$identity_changed" \
   --argjson peak "$peak" --argjson oom "$oom" --argjson survivors "$survivors" \
   --argjson elapsed "$(( (end-start)/1000000 ))" --argjson outcome "$outcome" \
   '{executable:$executable,sha256:$sha256,britExecutable:$britExecutable,britSha256:$britSha256,
-    source:$source,memoryMax:1073741824,swapMax:0,
+    source:$source,fixtureHash:$fixtureHash,identityChanged:$identityChanged,memoryMax:1073741824,swapMax:0,
     memoryPeak:$peak,oomKills:$oom,remainingProcesses:$survivors,elapsedMs:$elapsed,exit:$exit,
     scratchLimit:1073741824,scratchPeak:null,qualificationComplete:false,outcome:$outcome}' > "$evidence/result.json"
 cat "$evidence/result.json"

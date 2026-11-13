@@ -122,6 +122,9 @@ pub fn file(
     };
 
     'outer: while let Some(suspect) = queue.pop_value() {
+        // Change lists own their ranges; completed revisions no longer need their blob data.
+        // Reuse buffers within this comparison, without retaining the entire file history.
+        resource_cache.clear_resource_cache_keep_allocation();
         stats.commits_traversed += 1;
         if hunks_to_blame.is_empty() {
             break;

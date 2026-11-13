@@ -37,7 +37,7 @@ pub mod entry;
 pub(crate) mod protocol;
 
 mod from_tree;
-pub use from_tree::from_tree;
+pub use from_tree::{from_tree, from_tree_with_interrupt};
 
 pub(crate) type SharedErrorSlot = Arc<parking_lot::Mutex<Option<gix_error::Error>>>;
 

@@ -11,7 +11,7 @@ edition = "2021"
 rust-version = "1.82"
 
 [dependencies]
-gix-testtools = { path = "../tools", default-features = false, features = ["sha1"] }
+gix-testtools = { path = "../tools", default-features = false, features = ["sha1", "sha256"] }
 regex = "1"
 tempfile = "3"
 anyhow = "1"
