@@ -66,7 +66,7 @@ gix-fs = { version = "^0.24.1", path = "../gix-fs", registry = "elohim", optiona
 gix-tempfile = { version = "^26.0.1", path = "../gix-tempfile", registry = "elohim", optional = true }
 gix-trace = { version = "^0.3.0", path = "../gix-trace", registry = "elohim", optional = true }
 gix-traverse = { version = "^0.63.1", path = "../gix-traverse", registry = "elohim", optional = true }
-gix-imara-diff = { version = "^0.3.1", optional = true, path = "../gix-imara-diff", registry = "elohim" }
+gix-imara-diff = { version = "^0.3.2", optional = true, path = "../gix-imara-diff", registry = "elohim" }
 
 serde = { version = "1.0.114", optional = true, default-features = false, features = ["derive"] }
 getrandom = { version = "0.4", optional = true, default-features = false, features = ["wasm_js"] }

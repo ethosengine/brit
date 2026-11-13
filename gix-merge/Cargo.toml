@@ -43,7 +43,7 @@ gix-revwalk = { version = "^0.37.1", path = "../gix-revwalk", registry = "elohim
 gix-diff = { version = "^0.69.3", path = "../gix-diff", registry = "elohim", default-features = false, features = ["blob"] }
 gix-index = { version = "^0.57.3", path = "../gix-index", registry = "elohim" }
 gix-error = { version = "^0.5.1", path = "../gix-error", registry = "elohim" }
-gix-imara-diff = { version = "^0.3.1", path = "../gix-imara-diff", registry = "elohim" }
+gix-imara-diff = { version = "^0.3.2", path = "../gix-imara-diff", registry = "elohim" }
 
 bstr = { version = "1.12.0", default-features = false }
 nonempty = "0.12.0"

@@ -64,11 +64,32 @@ so workspace tests can find the built executable without `BRIT_BIN`. The previou
 is resolved by combining the nested guard without changing its short-circuit order;
 all four workspace Clippy configurations now pass, with no new suppression.
 
-The 70-package registry closure carries 55 patch-version increments, including
-reverse dependencies whose minimum requirements now bind the new payloads. All
-55 candidate versions were absent at the read-only registry audit. The remaining
-15 packages match their complete published payloads, including manifests and
-packaged lockfiles; external lockfile versions and checksums are unchanged.
+The 70-package registry closure now carries 56 patch-version increments,
+including reverse dependencies whose minimum requirements bind the new payloads.
+The first 55 candidate versions were absent at the read-only registry audit;
+all 15 then-reused payloads matched before publication. Main CI `43335646602`
+passed every test job, then correctly refused a changed packaged lockfile for
+`gix-imara-diff 0.3.1` after uploading 16 dependencies. Its explicitly versioned
+dev dependencies now resolved the newly available gix-hash/gix-object versions;
+the pre-publication payload comparison had not observed that later registry state.
+
+The correction allocates unused `gix-imara-diff 0.3.2` and binds its two consumers
+to that version. Their allocated versions and Brit 0.1.14 remain unpublished and
+can be completed without overwriting a release. All 16 newly uploaded payloads
+still match exactly, and the other 14 reused packages remain equivalent. The new
+imara package passes the publisher's preflight; 163 tests across its diff/merge
+consumers pass with no failures or ignored tests. All 657 external workspace-lock
+records are unchanged; only the local imara package version changes. No runtime
+source or publisher immutability rule is relaxed. The superseded source-build job
+`43340236592` was cancelled before publication while this correction is qualified.
+
+Maintainer station: package qualification / between pre-upload payload audit →
+immutable closure publication / missing node: packaged dev-dependency lockfiles
+remain admissible after earlier dependency versions become available. The real
+before/after lock diff and package receipts are in isolated Elohim
+`genesis/local-dev/brit-noise-20261112/integration-publication-repair-*` and
+`integration-lock-drift-gix-imara-diff.diff`; future preflight should model the
+final dependency availability, not assume the initial registry snapshot is final.
 Publication still verifies immutable package payloads and
 registry metadata in dependency order; no version may overwrite published bytes.
 

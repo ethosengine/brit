@@ -2869,7 +2869,7 @@ dependencies = [
 
 [[package]]
 name = "gix-imara-diff"
-version = "0.3.1"
+version = "0.3.2"
 dependencies = [
  "arbitrary",
  "bstr",
