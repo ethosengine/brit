@@ -6,7 +6,7 @@ use gix_object::FindExt;
 
 use crate::{blob::builtin_driver, commit::Options};
 
-/// Like [`tree()`](crate::tree::function::tree_with_storage()), but it takes only two commits, `our_commit` and `their_commit` to automatically
+/// Like [`tree()`](crate::tree()), but it takes only two commits, `our_commit` and `their_commit` to automatically
 /// compute the merge-bases among them.
 /// If there are multiple merge bases, these will be auto-merged into one, recursively, if
 /// [`allow_missing_merge_base`](Options::allow_missing_merge_base) is `true`.
