@@ -82,8 +82,16 @@ mod traverse {
             std::fs::write(repo.git_dir().join("shallow"), format!("{boundary}\n"))?;
             let hex = boundary.to_string();
             let object = repo.git_dir().join("objects").join(&hex[..2]).join(&hex[2..]);
+            #[cfg(windows)]
+            {
+                let mut permissions = std::fs::metadata(&object)?.permissions();
+                permissions.set_readonly(false);
+                std::fs::set_permissions(&object, permissions)?;
+            }
+            // Replace this fixture's read-only object before injecting corruption.
+            std::fs::remove_file(&object)?;
             match fault {
-                "missing" => std::fs::remove_file(object)?,
+                "missing" => {}
                 "compressed" => std::fs::write(object, b"not a compressed object")?,
                 "parents" => {
                     use gix::objs::Write;

@@ -682,6 +682,7 @@ jobs:
             jq
             libssl-dev
             "libstdc++6:$RUNNER_ARCHITECTURE"  # To support external 64-bit Node.js for actions.
+            openssh-client  # Commit-signature journeys require ssh-keygen.
             pkgconf
             python3  # Terminal recovery tests require the standard-library pty module.
             time  # Bounded-checkout probes measure child maximum RSS with GNU time.

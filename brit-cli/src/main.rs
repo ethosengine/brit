@@ -450,6 +450,7 @@ mod tests {
     #[test]
     fn broader_staging_requires_literal_paths_or_a_repository_wide_flag() {
         for args in [
+            vec!["brit", "add", "file", "directory/"],
             vec!["brit", "add", "--", "file", "directory/"],
             vec!["brit", "add", "-u"],
             vec!["brit", "add", "-A"],
@@ -463,7 +464,6 @@ mod tests {
         }
         for args in [
             vec!["brit", "add"],
-            vec!["brit", "add", "file"],
             vec!["brit", "add", "-u", "-A"],
             vec!["brit", "add", "-f", "--", "file"],
             vec!["brit", "add", "-p"],

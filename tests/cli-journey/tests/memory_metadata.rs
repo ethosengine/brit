@@ -1247,10 +1247,17 @@ fn attribute_pathspec(size: usize, reduced: bool, faults: bool, status: bool) ->
         }
     }
     if faults {
-        fs::write(
-            root.join(".git/objects").join(&attr_id[..2]).join(&attr_id[2..]),
-            b"corrupt object",
-        )?;
+        let object = root.join(".git/objects").join(&attr_id[..2]).join(&attr_id[2..]);
+        // Loose objects are read-only. Replace only this disposable fixture's
+        // object so fault injection also works without elevated privileges.
+        #[cfg(windows)]
+        {
+            let mut permissions = fs::metadata(&object)?.permissions();
+            permissions.set_readonly(false);
+            fs::set_permissions(&object, permissions)?;
+        }
+        fs::remove_file(&object)?;
+        fs::write(object, b"corrupt object")?;
         for args in commands {
             let mut command = Command::new(brit_bin().expect("built Brit"));
             gix_testtools::configure_git_environment(&mut command, root);

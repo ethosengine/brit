@@ -288,9 +288,16 @@ fn baseline_checks_unattributed_repeated_and_byte_paths() -> Result<()> {
         b"tab\tpath",
         b"quote\"path",
         b"back\\slash",
+        // macOS filesystems reject non-UTF-8 filenames before Brit runs.
+        #[cfg(not(target_os = "macos"))]
         b"bytes\xff",
+        #[cfg(target_os = "macos")]
+        "bytes-é".as_bytes(),
         b"ordinary",
+        #[cfg(not(target_os = "macos"))]
         b"ignored\xff",
+        #[cfg(target_os = "macos")]
+        "ignored-é".as_bytes(),
     ] {
         fs::write(root.join(std::ffi::OsString::from_vec(path.to_vec())), b"unchanged\n")?;
         paths.extend_from_slice(path);
