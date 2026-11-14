@@ -60,6 +60,7 @@ fn checkout_metadata(size: usize, reduced: bool) -> Result<()> {
     }
     git(root, &["switch", "-q", "main"])?;
     let refs = git(root, &["show-ref"])?;
+    let expected_tree_diff = brit(root, &["diff", "tree", "main", "target"], Some("1073741824"))?;
     fs::write(root.join("unrelated"), b"preserved untracked content\n")?;
     if reduced {
         #[cfg(target_os = "linux")]
@@ -85,6 +86,7 @@ fn checkout_metadata(size: usize, reduced: bool) -> Result<()> {
             git(root, &["-c", "pack.threads=1", "repack", "-ad"])?;
         }
         for limit in [Some("1024"), None, Some("16777216"), Some("1073741824")] {
+            ensure!(brit(root, &["diff", "tree", "main", "target"], limit)? == expected_tree_diff);
             let original_index = fs::read(root.join(".git/index"))?;
             fs::write(root.join("selected"), b"working edit\n")?;
             brit(

@@ -51,27 +51,80 @@ impl Repository {
         new_tree: impl Into<Option<&'a Tree<'new_repo>>>,
         options: impl Into<Option<crate::diff::Options>>,
     ) -> Result<Vec<crate::object::tree::diff::ChangeDetached>> {
-        let mut cache = self.diff_resource_cache(gix_diff::blob::pipeline::Mode::ToGit, Default::default())?;
-        let opts = options
-            .into()
-            .map_or_else(|| crate::diff::Options::from_configuration(&self.config), Ok)?
-            .into();
-
         let empty_tree = self.empty_tree();
         let old_tree = old_tree.into().unwrap_or(&empty_tree);
         let new_tree = new_tree.into().unwrap_or(&empty_tree);
-        let mut out = Vec::new();
-        gix_diff::tree_with_rewrites(
+        self.diff_tree_iters(
             TreeRefIter::from_bytes(&old_tree.data, old_tree.id.kind()),
             TreeRefIter::from_bytes(&new_tree.data, new_tree.id.kind()),
+            options.into(),
+        )
+    }
+
+    /// Like [`Self::diff_tree_to_tree()`], reading tree IDs through bounded object storage.
+    /// An absent ID represents an empty tree. Options and rewrite tie-breaking are identical.
+    pub fn diff_tree_to_tree_ids(
+        &self,
+        old_tree: Option<gix_hash::ObjectId>,
+        new_tree: Option<gix_hash::ObjectId>,
+        options: impl Into<Option<crate::diff::Options>>,
+    ) -> Result<Vec<crate::object::tree::diff::ChangeDetached>> {
+        use gix_object::find::{Buffer, Source as _};
+        let source = crate::object::bounded::Source::deferred(self);
+        let empty = gix_hash::ObjectId::empty_tree(self.object_hash());
+        let (mut old_buffer, mut new_buffer) = (Buffer::default(), Buffer::default());
+        let old = source.find_tree(&old_tree.unwrap_or(empty), &mut old_buffer)?;
+        let new = source.find_tree(&new_tree.unwrap_or(empty), &mut new_buffer)?;
+        self.diff_tree_iters(old, new, options.into())
+    }
+
+    fn diff_tree_iters(
+        &self,
+        old: TreeRefIter<'_>,
+        new: TreeRefIter<'_>,
+        options: Option<crate::diff::Options>,
+    ) -> Result<Vec<crate::object::tree::diff::ChangeDetached>> {
+        let mut cache = self.diff_resource_cache(gix_diff::blob::pipeline::Mode::ToGit, Default::default())?;
+        let opts = options
+            .map_or_else(|| crate::diff::Options::from_configuration(&self.config), Ok)?
+            .into();
+        let source = crate::object::bounded::Source::deferred(self);
+        let budget = std::cell::OnceCell::new();
+        let buffer_limit = self
+            .allocation_limit()
+            .unwrap_or(usize::try_from(self.big_file_threshold()?).unwrap_or(usize::MAX));
+        let mut out = Vec::new();
+        gix_diff::tree_with_rewrites::diff_with_resource_loader(
+            old,
+            new,
             &mut cache,
             &mut Default::default(),
-            &self.objects,
+            &source,
             |change| -> Result<_> {
                 out.push(change.into_owned());
                 Ok(std::ops::ControlFlow::Continue(()))
             },
             opts,
+            &mut |cache, id, mode, path, kind| {
+                let budget = match budget.get() {
+                    Some(budget) => budget,
+                    None => {
+                        let created = gix_utils::stream::Budget::new(&std::env::temp_dir()).or_error()?;
+                        budget.get_or_init(|| created)
+                    }
+                };
+                cache.set_resource_bounded(
+                    id,
+                    mode,
+                    path,
+                    kind,
+                    &self.objects,
+                    budget,
+                    buffer_limit,
+                    &crate::interrupt::IS_INTERRUPTED,
+                )?;
+                Ok(())
+            },
         )
         .or_error()?;
         Ok(out)

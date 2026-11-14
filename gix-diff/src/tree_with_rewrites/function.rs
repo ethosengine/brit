@@ -57,7 +57,7 @@ pub fn diff_with_resource_loader(
     rhs: TreeRefIter<'_>,
     resource_cache: &mut crate::blob::Platform,
     tree_diff_state: &mut crate::tree::State,
-    objects: &impl gix_object::FindObjectOrHeader,
+    objects: &dyn gix_object::find::Source,
     for_each: impl FnMut(ChangeRef<'_>) -> Result<Action>,
     options: Options,
     load_resource: &mut crate::blob::ResourceLoader<'_>,
@@ -90,19 +90,26 @@ pub fn diff_with_resource_loader(
     }
 }
 
-struct Delegate<'a, 'old, VisitFn, Objects> {
+struct TreeSource<'a>(&'a dyn gix_object::find::Source);
+
+impl gix_traverse::tree::source::Source for TreeSource<'_> {
+    fn find_tree<'a>(&self, id: &gix_hash::oid, buffer: &'a mut gix_object::find::Buffer) -> Result<TreeRefIter<'a>> {
+        self.0.find_tree(id, buffer)
+    }
+}
+
+struct Delegate<'a, 'old, VisitFn> {
     src_tree: TreeRefIter<'old>,
     recorder: crate::tree::Recorder,
-    objects: &'a Objects,
+    objects: &'a dyn gix_object::find::Source,
     visit: VisitFn,
     tracked: Option<rewrites::Tracker<crate::tree::visit::Change>>,
     location: Option<crate::tree::recorder::Location>,
     err: Option<gix_error::Error>,
 }
 
-impl<VisitFn, Objects> Delegate<'_, '_, VisitFn, Objects>
+impl<VisitFn> Delegate<'_, '_, VisitFn>
 where
-    Objects: gix_object::FindObjectOrHeader,
     VisitFn: FnMut(ChangeRef<'_>) -> Result<Action>,
 {
     /// Call `visit` on an attached version of `change`.
@@ -203,16 +210,15 @@ where
             |push| {
                 let mut delegate = tree_to_changes::Delegate::new(push, self.location);
                 let state = gix_traverse::tree::breadthfirst::State::default();
-                gix_traverse::tree::breadthfirst(self.src_tree, state, self.objects, &mut delegate)
+                gix_traverse::tree::breadthfirst(self.src_tree, state, TreeSource(self.objects), &mut delegate)
             },
         )?;
         Ok(Some(outcome))
     }
 }
 
-impl<VisitFn, Objects> crate::tree::Visit for Delegate<'_, '_, VisitFn, Objects>
+impl<VisitFn> crate::tree::Visit for Delegate<'_, '_, VisitFn>
 where
-    Objects: gix_object::FindObjectOrHeader,
     VisitFn: FnMut(ChangeRef<'_>) -> Result<Action>,
 {
     fn pop_front_tracked_path_and_set_current(&mut self) {

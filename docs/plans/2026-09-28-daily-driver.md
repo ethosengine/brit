@@ -4328,6 +4328,25 @@ or survivors and unchanged source HEAD/index. Tree sizes are 26,400,000 B / 29,2
 Evidence: `bounded-memory/push-metadata-v13-*`, `binary-push-v13-*` and
 `tree-push-metadata-v13-*`; aggregate scratch remains unmeasured.
 
+Public `diff tree` now peels commit/tag inputs and reads root/nested trees through
+the shared bounded source, preserving rewrite selection, ordering and options.
+Rename content uses the existing bounded conversion path. Output is staged in a
+charged spool and published through the existing atomic diff boundary. The prior
+131,300-byte commit refusal under a 1 KiB allocation policy is retained as evidence.
+The 128 KiB/20 MiB commit matrix passes all three cases per hash across loose/packed
+storage, full/actual reduced trust and four policies, with identical buffered-path
+output: 135,106,560 B / 135,061,504 B whole-group peaks (67.721 s / 160.720 s).
+The 240,000-entry tree matrix passes both cases per hash at 161,816,576 B /
+177,291,264 B (292.120 s / 483.963 s). All groups have zero OOM kills or survivors.
+The complete fault-enabled diff/stat suite passes 15 cases per hash; all five
+pre-output interruption variants return within one second, emit no patch and
+preserve repository snapshots. Native tree API parity adds three passing cases
+per hash; diff library/integration suites pass 108 per hash. Strict affected
+Clippy, formatting, declared Rust-style and 12 readiness checks pass. Receipts:
+`bounded-memory/tree-diff-{commit,wide,stat-fault}-v14-*`. These frozen v14
+working-source receipts still have unmeasured aggregate scratch; they are not
+final committed-source qualification.
+
 The command boundary is `src/plumbing/options/mod.rs` plus
 `brit-cli/src/main.rs` and its composed bridge. This table is interim audit
 coverage in the existing readiness document, **not final classification**.

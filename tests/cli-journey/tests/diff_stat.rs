@@ -297,6 +297,7 @@ fn cancellation_before_output_preserves_state_and_prints_nothing() -> Result<()>
         &["diff", "--stat"][..],
         &["diff", "--cached", "--stat"],
         &["diff", "tree", "--stat", "HEAD~", "HEAD"],
+        &["diff", "tree", "HEAD~", "HEAD"],
     ] {
         let checkpoint = tempfile::tempdir()?;
         let before = snapshot(repo.path())?;
@@ -317,11 +318,12 @@ fn cancellation_before_output_preserves_state_and_prints_nothing() -> Result<()>
             );
             std::thread::sleep(Duration::from_millis(10));
         }
+        let interrupted = Instant::now();
         ensure!(Command::new("kill")
             .args(["-INT", &child.0.as_ref().expect("child").id().to_string()])
             .status()?
             .success());
-        let deadline = Instant::now() + Duration::from_secs(10);
+        let deadline = interrupted + Duration::from_secs(1);
         while child.0.as_mut().expect("child").try_wait()?.is_none() {
             ensure!(Instant::now() < deadline, "diff ignored cancellation");
             std::thread::sleep(Duration::from_millis(10));

@@ -25,19 +25,21 @@ pub fn tree(
     let old_tree_id = repo.rev_parse_single(old_treeish.as_bstr())?;
     let new_tree_id = repo.rev_parse_single(new_treeish.as_bstr())?;
 
-    let old_tree = old_tree_id.object()?.peel_to_tree()?;
-    let new_tree = new_tree_id.object()?.peel_to_tree()?;
+    let source = gix::object::bounded::Source::deferred(&repo);
+    let old_tree = source.peel(old_tree_id.detach(), gix::objs::Kind::Tree)?;
+    let new_tree = source.peel(new_tree_id.detach(), gix::objs::Kind::Tree)?;
 
-    let changes = repo.diff_tree_to_tree(&old_tree, &new_tree, None)?;
+    let changes = repo.diff_tree_to_tree_ids(Some(old_tree), Some(new_tree), None)?;
+    let budget = Budget::new(&std::env::temp_dir()).or_error()?;
+    let mut rendered = std::io::BufWriter::new(budget.spool().or_error()?);
 
     writeln!(
-        out,
+        rendered,
         "Diffing trees `{old_treeish}` ({old_tree_id}) -> `{new_treeish}` ({new_tree_id})\n"
     )
     .or_error()?;
-    write_changes(&repo, out, changes).or_error()?;
-
-    Ok(())
+    write_changes(&repo, &mut rendered, changes).or_error()?;
+    write_diff_output(out, &mut rendered)
 }
 
 fn write_changes(

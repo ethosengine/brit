@@ -79,6 +79,13 @@ fn changes_against_tree_modified() -> TestResult {
     assert_eq!(i, 3);
 
     let actual = repo.diff_tree_to_tree(&from, &to, None)?;
+    assert_eq!(repo.diff_tree_to_tree_ids(Some(from.id), Some(to.id), None)?, actual);
+    for (old, new) in [(Some(&from), None), (None, Some(&to)), (None, None)] {
+        assert_eq!(
+            repo.diff_tree_to_tree_ids(old.map(|tree| tree.id), new.map(|tree| tree.id), None)?,
+            repo.diff_tree_to_tree(old, new, None)?
+        );
+    }
     match repo.object_hash() {
         gix::hash::Kind::Sha1 => insta::assert_debug_snapshot!(actual, @r#"
         [
@@ -244,6 +251,16 @@ mod track_rewrites {
             .into_iter()
             .filter(|c| !c.entry_mode().is_tree())
             .collect();
+        let from_ids: Vec<_> = repo
+            .diff_tree_to_tree_ids(
+                Some(from.id),
+                Some(to.id),
+                Some(gix::diff::Options::default().with_rewrites(Some(rewrites))),
+            )?
+            .into_iter()
+            .filter(|change| !change.entry_mode().is_tree())
+            .collect();
+        assert_eq!(from_ids, actual, "ID reads preserve rewrite selection and tie-breaking");
         insta::assert_debug_snapshot!(actual, @r#"
         [
             Rewrite {

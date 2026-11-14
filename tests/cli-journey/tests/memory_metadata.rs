@@ -678,6 +678,14 @@ fn large_tree(reduced: bool) -> Result<()> {
                 "complete tree has no missing objects"
             );
             verify_metadata(root, &actual, limit)?;
+            let tree_diff = root.join(".git/actual-tree-diff");
+            let tree_id = wide.trim();
+            brit(root, &["diff", "tree", tree_id, tree_id], &tree_diff, limit)?;
+            ensure!(
+                fs::read(&tree_diff)?
+                    == format!("Diffing trees `{tree_id}` ({tree_id}) -> `{tree_id}` ({tree_id})\n\n").as_bytes()
+            );
+            ensure!(git(root, &["diff", "--name-status", tree_id, tree_id])?.is_empty());
             for (spec, recursive) in [(wide.trim(), false), ("HEAD", true)] {
                 for extended in [false, true] {
                     let expected = root.join(".git/expected-tree");
