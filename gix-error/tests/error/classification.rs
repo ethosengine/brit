@@ -10,6 +10,7 @@ fn dominant_class_respects_precedence_independently_of_traversal_order() {
         Class::Corruption,
         Class::ResourceExhaustion(ResourceExhaustionKind::AllocationLimit),
         Class::ResourceExhaustion(ResourceExhaustionKind::AllocationFailure),
+        Class::ResourceExhaustion(ResourceExhaustionKind::ScratchLimit),
         Class::Validation,
         Class::Unsupported,
         Class::Unauthenticated,

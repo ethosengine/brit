@@ -65,6 +65,8 @@ impl ClassificationMarker {
     /// A hidden marker for an unrepresentable allocation size or memory that could not be reserved.
     pub const ALLOCATION_FAILURE: Self =
         Self::with_class(Class::ResourceExhaustion(ResourceExhaustionKind::AllocationFailure));
+    /// A hidden marker for an application-configured temporary-storage limit being exceeded.
+    pub const SCRATCH_LIMIT: Self = Self::with_class(Class::ResourceExhaustion(ResourceExhaustionKind::ScratchLimit));
 
     /// Add `class` to `source`, preserving its concrete type and diagnostic without a visible wrapper.
     pub fn with_source(class: Class, source: impl std::error::Error + Send + Sync + 'static) -> Self {
@@ -118,4 +120,6 @@ pub enum ResourceExhaustionKind {
     AllocationLimit,
     /// An allocation size could not be represented or memory could not be reserved.
     AllocationFailure,
+    /// An application-configured temporary-storage limit was exceeded, independently of filesystem capacity.
+    ScratchLimit,
 }

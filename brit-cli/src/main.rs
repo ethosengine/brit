@@ -321,6 +321,7 @@ fn diagnostic(error: &error::CliError) -> String {
 }
 
 fn main() -> ExitCode {
+    gix::utils::stream::Budget::share_process_quota();
     let mut capture = feedback::Capture::new();
     let code = match run(&mut capture) {
         Ok(()) => 0,

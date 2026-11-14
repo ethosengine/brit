@@ -3250,6 +3250,49 @@ history view passed while status still buffered HEAD through submodule discovery
 even in a repository without submodules. The public `memory_tix` fixture and
 native HEAD fallback tests now observe both stations.
 
+### Scratch classification and composed budgets
+
+The quota regression reproduced a missing classification: `ScratchLimit` retained
+its diagnostic through an I/O wrapper, but `is_resource_exhausted()` returned
+false. It now supplies a transparent `ScratchLimit` resource marker, distinct
+from configured allocation limits, allocation failure and filesystem
+`StorageFull`. Requested bytes, live bytes, fixed limit and scratch path remain
+in the original diagnostic, and typed recovery still finds the concrete error.
+The error suite and the original sparse-file quota/reclamation check pass.
+
+Brit and its retained-copy helper initialize a shared process account before
+starting workers. Every subsequently created `Budget` shares its reservations
+and peak, including budgets created for different directories on worker threads.
+Initialization is idempotent and cannot reset existing charges. Library users
+retain independent operation budgets unless they opt into process sharing.
+Thirteen stream/process checks pass, including a fresh-process regression in
+which two workers consume the whole quota, a third refuses before growth, and
+releasing the workers permits new writes without erasing the peak.
+
+The immutable executable `b68a08e9875d182ad98f8f82b1cebca7698518deb5b392f0140dc4e39c921b63`
+passes five comparison cases per hash (20/64/256 MiB, converter expansion refusal
+and interruption), seven SHA-1 merge cases including external drivers and a
+million lines, and the 64 MiB replay case preserving staged and dirty neighbors.
+SHA-1 comparison, merge and replay peaks are respectively 1,073,741,824 B,
+750,718,976 B and 528,121,856 B in 47.140, 128.234 and 229.406 seconds. SHA-256
+comparison peaks at 1,073,741,824 B in 208.260 seconds. Every run
+has zero OOM kills, surviving children and executable changes. Receipts remain
+in the existing private `bounded-memory/scratch-process-*` directories.
+Strict affected Clippy, 24 CLI checks, readiness and the declared Rust-style
+checker pass. The CLI diagnostic assertion requires backtraces disabled; the
+initial environment-sensitive failure is retained with the corrected run.
+
+This accounts for budget-managed storage within one process. It does **not**
+establish aggregate child-process storage, complete durable-journal inventory,
+external-driver temporary files or qualification scratch telemetry. Those remain
+open, and existing resource receipts still report `scratchPeak: null` and
+`qualificationComplete: false`.
+
+Story-harvest station: **bounded reader → composed command / every reader's
+budget must participate in the same quota**. A per-reader limit alone does not
+bound their simultaneous total. The isolated worker regression measures this
+station; whole-operation scratch proof remains the next station.
+
 ### Public-command audit in progress
 
 The command boundary is `src/plumbing/options/mod.rs` plus

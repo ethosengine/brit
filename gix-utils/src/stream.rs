@@ -4,7 +4,7 @@ use std::{
     io::{self, Read, Seek, SeekFrom, Write},
     path::Path,
     sync::{
-        Arc,
+        Arc, OnceLock,
         atomic::{AtomicBool, AtomicU64, Ordering},
     },
 };
@@ -21,10 +21,33 @@ pub use command::{CommandOutput, command_output};
 #[derive(Debug)]
 pub struct Budget {
     directory: tempfile::TempDir,
+    account: Arc<Account>,
+}
+
+#[derive(Debug, Default)]
+struct Account {
     live: AtomicU64,
     peak: AtomicU64,
 }
+
+static PROCESS_ACCOUNT: OnceLock<Arc<Account>> = OnceLock::new();
+
 impl Budget {
+    /// Make every subsequently created budget in this process share the fixed scratch quota.
+    ///
+    /// A command-line application should call this before creating budgets or starting workers.
+    /// Repeated calls preserve reservations and the peak; they never reset the account. Library
+    /// callers which do not opt in retain independent operation-owned budgets. This does not
+    /// account for storage created by other processes or outside these budget APIs.
+    pub fn share_process_quota() {
+        PROCESS_ACCOUNT.get_or_init(|| Arc::new(Account::default()));
+    }
+
+    /// Current and peak charged bytes across the process, if process-wide accounting was enabled.
+    pub fn process_usage() -> Option<(u64, u64)> {
+        PROCESS_ACCOUNT.get().map(|account| account.usage())
+    }
+
     /// Create private scratch on the destination filesystem.
     pub fn new(parent: &Path) -> io::Result<Arc<Self>> {
         let mut builder = tempfile::Builder::new();
@@ -36,8 +59,7 @@ impl Budget {
         }
         Ok(Arc::new(Self {
             directory: builder.tempdir_in(parent)?,
-            live: AtomicU64::new(0),
-            peak: AtomicU64::new(0),
+            account: PROCESS_ACCOUNT.get().cloned().unwrap_or_default(),
         }))
     }
     /// Open an empty, automatically removed spool.
@@ -71,7 +93,7 @@ impl Budget {
     }
     /// Current and peak live bytes, including unpublished destination content.
     pub fn usage(&self) -> (u64, u64) {
-        (self.live.load(Ordering::Relaxed), self.peak.load(Ordering::Relaxed))
+        self.account.usage()
     }
     /// Private directory identity for an owner's durable crash-recovery receipt.
     pub fn directory(&self) -> &Path {
@@ -87,7 +109,7 @@ impl Budget {
         })
     }
     fn reserve(&self, bytes: u64) -> io::Result<()> {
-        let mut live = self.live.load(Ordering::Relaxed);
+        let mut live = self.account.live.load(Ordering::Relaxed);
         loop {
             let next = live.checked_add(bytes).filter(|n| *n <= SCRATCH_LIMIT).ok_or_else(|| {
                 io::Error::other(ScratchLimit {
@@ -97,16 +119,23 @@ impl Budget {
                 })
             })?;
             match self
+                .account
                 .live
                 .compare_exchange_weak(live, next, Ordering::Relaxed, Ordering::Relaxed)
             {
                 Ok(_) => {
-                    self.peak.fetch_max(next, Ordering::Relaxed);
+                    self.account.peak.fetch_max(next, Ordering::Relaxed);
                     return Ok(());
                 }
                 Err(current) => live = current,
             }
         }
+    }
+}
+
+impl Account {
+    fn usage(&self) -> (u64, u64) {
+        (self.live.load(Ordering::Relaxed), self.peak.load(Ordering::Relaxed))
     }
 }
 /// A reservation for durable temporary content owned outside a [`Spool`].
@@ -116,7 +145,7 @@ pub struct Charge {
 }
 impl Drop for Charge {
     fn drop(&mut self) {
-        self.budget.live.fetch_sub(self.bytes, Ordering::Relaxed);
+        self.budget.account.live.fetch_sub(self.bytes, Ordering::Relaxed);
     }
 }
 /// A scratch quota refusal, distinct from allocator failure and filesystem errors.
@@ -141,7 +170,11 @@ impl std::fmt::Display for ScratchLimit {
         )
     }
 }
-impl std::error::Error for ScratchLimit {}
+impl std::error::Error for ScratchLimit {
+    fn source(&self) -> Option<&(dyn std::error::Error + 'static)> {
+        Some(const { &gix_error::ClassificationMarker::SCRATCH_LIMIT })
+    }
+}
 
 /// Immutable bytes backed by an operation-owned file. Mapping is dropped before its file.
 pub struct Mapped {
@@ -215,7 +248,7 @@ impl Spool {
             .expect("spool owns its file")
             .as_file()
             .set_len(len)?;
-        self.budget.live.fetch_sub(self.len - len, Ordering::Relaxed);
+        self.budget.account.live.fetch_sub(self.len - len, Ordering::Relaxed);
         self.len = len;
         Ok(())
     }
@@ -256,7 +289,7 @@ impl Drop for Spool {
         if self.file.take().is_some_and(|file| file.close().is_err()) {
             return;
         }
-        self.budget.live.fetch_sub(self.len, Ordering::Relaxed);
+        self.budget.account.live.fetch_sub(self.len, Ordering::Relaxed);
     }
 }
 impl Read for Spool {
@@ -292,7 +325,7 @@ impl Write for Spool {
             self.position.saturating_sub(self.len)
         };
         self.len += actual;
-        self.budget.live.fetch_sub(growth - actual, Ordering::Relaxed);
+        self.budget.account.live.fetch_sub(growth - actual, Ordering::Relaxed);
         result
     }
     fn flush(&mut self) -> io::Result<()> {
@@ -350,6 +383,52 @@ pub fn equal(left: impl Read, right: impl Read, interrupt: &AtomicBool) -> io::R
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn separately_created_worker_budgets_share_the_process_quota() -> io::Result<()> {
+        // Process-wide initialization must not change the other, independent library tests.
+        const CHILD: &str = "GIX_TEST_PROCESS_SCRATCH_QUOTA";
+        if std::env::var_os(CHILD).is_none() {
+            let output = std::process::Command::new(std::env::current_exe()?)
+                .args([
+                    "--exact",
+                    "stream::tests::separately_created_worker_budgets_share_the_process_quota",
+                ])
+                .env(CHILD, "1")
+                .output()?;
+            assert!(
+                output.status.success(),
+                "isolated process quota check failed: {}{}",
+                String::from_utf8_lossy(&output.stdout),
+                String::from_utf8_lossy(&output.stderr)
+            );
+            return Ok(());
+        }
+        assert_eq!(Budget::process_usage(), None);
+        Budget::share_process_quota();
+        let first = tempfile::tempdir()?;
+        let second = tempfile::tempdir()?;
+        let charges = std::thread::scope(|scope| {
+            let workers = [first.path(), second.path()]
+                .map(|path| scope.spawn(move || Budget::new(path)?.charge(SCRATCH_LIMIT / 2)));
+            workers.map(|worker| worker.join().expect("quota worker did not panic"))
+        });
+        let charges = charges.into_iter().collect::<io::Result<Vec<_>>>()?;
+        Budget::share_process_quota();
+        assert_eq!(Budget::process_usage(), Some((SCRATCH_LIMIT, SCRATCH_LIMIT)));
+        let budget = Budget::new(first.path())?;
+        let mut spool = budget.spool()?;
+        let error = spool.write_all(&[1]).expect_err("both workers share the command quota");
+        assert!(error.get_ref().is_some_and(|error| error.is::<ScratchLimit>()));
+        assert_eq!(spool.len(), 0, "refusal occurs before file growth");
+        drop(charges);
+        spool.write_all(&[1])?;
+        assert_eq!(budget.usage(), (1, SCRATCH_LIMIT));
+        drop(spool);
+        assert_eq!(Budget::process_usage(), Some((0, SCRATCH_LIMIT)));
+        Ok(())
+    }
+
     #[test]
     fn durable_content_shares_spool_quota() -> io::Result<()> {
         let dir = tempfile::tempdir()?;
@@ -430,6 +509,27 @@ mod tests {
             .expect("quota refusal is distinct from a filesystem error");
         assert_eq!(refusal.requested, 1);
         assert_eq!(refusal.live, SCRATCH_LIMIT);
+        let error = gix_error::Error::from_error(error);
+        assert!(
+            error.is_resource_exhausted(),
+            "scratch quota remains classified through I/O wrappers"
+        );
+        assert_eq!(
+            error.dominant_class(),
+            Some(gix_error::Class::ResourceExhaustion(
+                gix_error::ResourceExhaustionKind::ScratchLimit
+            ))
+        );
+        assert!(error.downcast_any_ref::<ScratchLimit>().is_some());
+        let disk_full = gix_error::Error::from_error(io::Error::from(io::ErrorKind::StorageFull));
+        assert!(
+            !disk_full.is_resource_exhausted(),
+            "filesystem exhaustion is not an application quota"
+        );
+        assert_eq!(
+            disk_full.downcast_any_ref::<io::Error>().map(io::Error::kind),
+            Some(io::ErrorKind::StorageFull)
+        );
         first.rewind()?;
         first.write_all(&[3])?; // overwriting is not growth
         assert_eq!(budget.usage().0, SCRATCH_LIMIT);
