@@ -110,7 +110,7 @@ where
             .iter()
             .filter_map(|r| r.try_id().map(|id| (id.detach(), r)))
             .collect();
-        let items: Vec<Item<'_>> = item_ids
+        let mut items: Vec<Item<'_>> = item_ids
             .iter()
             .map(|(id, r)| Item {
                 full_ref_name: r.name().as_bstr(),
@@ -118,6 +118,21 @@ where
                 object: None,
             })
             .collect();
+        // HEAD is outside refs/ and can be detached. Include it only for an
+        // explicit source so wildcard pushes keep their ordinary ref inventory.
+        let head_id = parsed_refspecs
+            .iter()
+            .any(|spec| spec.to_ref().source().is_some_and(|name| name == "HEAD"))
+            .then(|| repo.head_id().map(|id| id.detach()))
+            .transpose()
+            .map_err(|error| Error::Resolve(Box::new(error)))?;
+        if let Some(id) = &head_id {
+            items.push(Item {
+                full_ref_name: "HEAD".into(),
+                target: id.as_ref(),
+                object: None,
+            });
+        }
 
         let group = MatchGroup::from_push_specs(parsed_refspecs.iter().map(|s| s.to_ref()));
         let (push_outcome, _fixes) = group
@@ -166,6 +181,10 @@ where
 
         for mapping in &mappings {
             let (local_name, new_oid) = match &mapping.lhs {
+                SourceRef::FullName(name) if name.as_ref() == "HEAD" => (
+                    BString::from("HEAD"),
+                    head_id.expect("HEAD is matched only after resolving its target"),
+                ),
                 SourceRef::FullName(name) if !name.is_empty() => {
                     // Resolve the local ref to its peeled object ID.
                     let mut reference = repo

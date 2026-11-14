@@ -49,6 +49,50 @@ fn remote(repo: &Path) -> Result<tempfile::TempDir> {
 }
 
 #[test]
+fn explicit_head_source_preserves_git_hook_input_and_rejection() -> Result<()> {
+    let repo = TestRepo::new("pre-push-head")?;
+    let remote = remote(repo.path())?;
+    for detached in [false, true] {
+        if detached {
+            git(repo.path(), &["checkout", "--detach"])?;
+        }
+        let destination = if detached {
+            "refs/heads/detached"
+        } else {
+            "refs/heads/attached"
+        };
+        let spec = format!("HEAD:{destination}");
+        let args = ["push", "origin", &spec];
+        let before = repo.head_id()?;
+        hook(repo.path(), "cat >hook-input; exit 1")?;
+        let stock = gix_testtools::git_command(repo.path()).args(args).output()?;
+        ensure!(!stock.status.success(), "stock hook rejects");
+        let expected = fs::read(repo.path().join("hook-input"))?;
+        fs::remove_file(repo.path().join("hook-input"))?;
+        let output = brit(repo.path(), &args)?;
+        ensure!(!output.status.success(), "Brit hook rejects");
+        ensure!(
+            repo.path().join("hook-input").is_file(),
+            "hook must run: {}",
+            output.stderr
+        );
+        assert_eq!(fs::read(repo.path().join("hook-input"))?, expected);
+        assert_eq!(
+            git(remote.path(), &["for-each-ref", "--format=%(refname)", destination])?,
+            ""
+        );
+        assert_eq!(repo.head_id()?, before);
+        hook(repo.path(), "cat >hook-input")?;
+        let output = brit(repo.path(), &args)?;
+        ensure!(output.status.success(), "{}", output.stderr);
+        assert_eq!(fs::read(repo.path().join("hook-input"))?, expected);
+        assert_eq!(git(remote.path(), &["rev-parse", destination])?, before);
+        assert_eq!(repo.head_id()?, before);
+    }
+    Ok(())
+}
+
+#[test]
 fn resolved_create_update_delete_match_git_and_rejection_changes_nothing() -> Result<()> {
     let repo = TestRepo::new("pre-push-updates")?;
     let remote = remote(repo.path())?;
