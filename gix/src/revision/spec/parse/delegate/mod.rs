@@ -174,14 +174,14 @@ impl Delegate<'_> {
 
     fn disambiguate_objects_by_fallback_hint_delay_errors(&mut self, hint: Option<ObjectKindHint>) {
         fn require_object_kind(repo: &Repository, obj: &gix_hash::oid, kind: gix_object::Kind) -> ExnResult {
-            let obj = repo.find_object(obj).or_erased()?;
-            if obj.kind == kind {
+            let header = repo.find_header(obj).or_erased()?;
+            if header.kind() == kind {
                 Ok(())
             } else {
                 Err(message!(
                     "Object {oid} was a {actual}, but needed it to be a {kind}",
-                    actual = obj.kind,
-                    oid = obj.id.attach(repo).shorten_or_id(),
+                    actual = header.kind(),
+                    oid = obj.to_owned().attach(repo).shorten_or_id(),
                 )
                 .raise_erased())
             }
@@ -269,12 +269,7 @@ impl Delegate<'_> {
 }
 
 fn peel(repo: &Repository, obj: &gix_hash::oid, kind: gix_object::Kind) -> ExnResult<ObjectId> {
-    if repo.find_header(obj).or_erased()?.kind() == kind {
-        return Ok(obj.to_owned());
-    }
-    let budget = gix_utils::stream::Budget::new(&std::env::temp_dir()).or_erased()?;
-    crate::object::bounded::Source::new(repo, budget)
-        .or_erased()?
+    crate::object::bounded::Source::deferred(repo)
         .peel(obj.to_owned(), kind)
         .or_erased()
 }

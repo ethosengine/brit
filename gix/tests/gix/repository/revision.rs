@@ -1,6 +1,53 @@
 use gix_testtools::TestResult;
 
 #[test]
+fn revision_expressions_preserve_results_across_buffering_policies() -> TestResult {
+    let (repo, _tmp) = crate::util::basic_rw_repo()?;
+    let expressions = [
+        "HEAD^",
+        "HEAD~1",
+        "HEAD^{}",
+        "HEAD^{object}",
+        "HEAD^{commit}",
+        "HEAD^{/c1}",
+        ":/c1",
+    ];
+    let expected = expressions
+        .iter()
+        .map(|expression| repo.rev_parse_single(*expression).map(|id| id.detach()))
+        .collect::<Result<Vec<_>, _>>()?;
+    for limit in [1, 1024 * 1024 * 1024] {
+        let repo = gix::open_opts(
+            repo.git_dir(),
+            gix::open::Options::isolated().cli_overrides([format!("gitoxide.objects.allocLimit={limit}")]),
+        )?;
+        for (expression, expected) in expressions.iter().zip(&expected) {
+            assert_eq!(repo.rev_parse_single(*expression)?.detach(), *expected, "{expression}");
+        }
+    }
+    Ok(())
+}
+
+#[test]
+fn revision_expressions_do_not_hide_missing_ancestors() -> TestResult {
+    let (repo, _tmp) = crate::util::basic_rw_repo()?;
+    let parent = repo.rev_parse_single("HEAD^")?.to_string();
+    std::fs::remove_file(repo.git_dir().join("objects").join(&parent[..2]).join(&parent[2..]))?;
+    for limit in [1, 1024 * 1024 * 1024] {
+        let repo = gix::open_opts(
+            repo.git_dir(),
+            gix::open::Options::isolated().cli_overrides([format!("gitoxide.objects.allocLimit={limit}")]),
+        )?;
+        for expression in ["HEAD~1", "HEAD^{/c1}", ":/c1"] {
+            let error = repo.rev_parse_single(expression).expect_err("history is incomplete");
+            assert!(error.is_not_found(), "{expression}: {error:#}");
+            assert!(format!("{error:#}").contains(&parent), "{expression}: {error:#}");
+        }
+    }
+    Ok(())
+}
+
+#[test]
 fn merge_base_graphs_preserve_ancestors_across_buffering_policies() -> TestResult {
     let (repo, _tmp) = crate::util::basic_rw_repo()?;
     let head = repo.head_id()?.detach();

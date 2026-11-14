@@ -125,6 +125,18 @@ fn large_commit(reduced: bool) -> Result<()> {
     );
     let head = git(root, &["rev-parse", "HEAD"])?;
     let parent = String::from_utf8(git(root, &["rev-parse", "HEAD^"])?)?;
+    let expressions = [
+        "HEAD^",
+        "HEAD~1",
+        "HEAD^{}",
+        "HEAD^{object}",
+        "HEAD^{commit}",
+        "HEAD^{/large governance decision}",
+        ":/large governance decision",
+    ]
+    .into_iter()
+    .map(|expression| Ok((expression, git(root, &["rev-parse", expression])?)))
+    .collect::<Result<Vec<_>>>()?;
     let index = fs::read(root.join(".git/index"))?;
     let expected = root.join(".git/expected-log");
     output_file(
@@ -163,6 +175,10 @@ fn large_commit(reduced: bool) -> Result<()> {
                 fs::read_to_string(&actual)? == parent,
                 "merge-base changed the common ancestor"
             );
+            for (expression, expected) in &expressions {
+                brit(root, &["revision", "resolve", expression], &actual, limit)?;
+                ensure!(fs::read(&actual)? == *expected, "revision expression {expression}");
+            }
             brit(root, &["revision", "resolve", "HEAD"], &actual, limit)?;
             ensure!(
                 fs::read(&actual)? == head,
@@ -615,6 +631,10 @@ fn annotated_tag(reduced: bool) -> Result<()> {
             assert_eq!(fs::read(&actual)?, b"blob\nrelease [tag name: payload-name, signed]\n");
             brit(root, &["revision", "resolve", "tag-alias"], &actual, limit)?;
             ensure!(fs::read(&actual)? == commit, "large tag peeling changed the target");
+            for expression in ["release^{}", "release^{commit}", "release~0"] {
+                brit(root, &["revision", "resolve", expression], &actual, limit)?;
+                ensure!(fs::read(&actual)? == commit, "large tag expression {expression}");
+            }
         }
     }
     Ok(())

@@ -90,17 +90,27 @@ impl<'repo> Source<'repo> {
     }
 
     /// Follow tags and commits to `kind`, reading only headers for the terminal object.
-    pub fn peel(&self, mut id: gix_hash::ObjectId, kind: Kind) -> Result<gix_hash::ObjectId> {
+    pub fn peel(&self, id: gix_hash::ObjectId, kind: Kind) -> Result<gix_hash::ObjectId> {
+        self.peel_inner(id, Some(kind))
+    }
+
+    /// Follow tags to the first non-tag object, reading only its header.
+    pub fn peel_tags(&self, id: gix_hash::ObjectId) -> Result<gix_hash::ObjectId> {
+        self.peel_inner(id, None)
+    }
+
+    fn peel_inner(&self, mut id: gix_hash::ObjectId, kind: Option<Kind>) -> Result<gix_hash::ObjectId> {
         let mut buffer = Buffer::default();
         let mut seen = std::collections::HashSet::new();
         loop {
             let actual = self.repo.find_header(id)?.kind();
-            if actual == kind {
+            if kind.map_or(actual != Kind::Tag, |kind| actual == kind) {
                 return Ok(id);
             }
             if !seen.insert(id) {
                 bail!(gix_error::corruption(format!(
-                    "Object cycle while peeling {id} to {kind}"
+                    "Object cycle while peeling {id} to {}",
+                    kind.map_or_else(|| "a non-tag object".to_owned(), |kind| kind.to_string())
                 )));
             }
             match actual {
@@ -120,9 +130,10 @@ impl<'repo> Source<'repo> {
                 }
                 Kind::Tree | Kind::Blob => {
                     bail!(gix_error::validation(format!(
-                        "Last encountered object {} was {} while trying to peel to {kind}",
+                        "Last encountered object {} was {} while trying to peel to {}",
                         id.attach(self.repo).shorten().unwrap_or_else(|_| id.into()),
-                        actual
+                        actual,
+                        kind.expect("non-tag objects already returned when peeling tags")
                     )));
                 }
             }

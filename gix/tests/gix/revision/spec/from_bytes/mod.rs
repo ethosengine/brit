@@ -465,7 +465,7 @@ fn bad_objects_are_valid_until_they_are_actually_read_from_the_odb() {
         delegate.peel_until(ValidObject) failed, input="{object}"
 
         Caused by:
-            0: Could not read loose object, path="$GIT_DIR/objects/e3/2851d29feb48953c6f40b2e06d630a3c49608a"
+            0: Could not read loose object header, path="$GIT_DIR/objects/e3/2851d29feb48953c6f40b2e06d630a3c49608a"
             1: The object header contained an unknown object kind.
             2: Unknown object kind, input="bad"
         "#);
@@ -482,7 +482,7 @@ fn bad_objects_are_valid_until_they_are_actually_read_from_the_odb() {
         delegate.peel_until(ValidObject) failed, input="{object}"
 
         Caused by:
-            0: Could not read loose object, path="$GIT_DIR/objects/ca/fea31147e840161a1860c50af999917ae1536b"
+            0: Could not read loose object header, path="$GIT_DIR/objects/ca/fea31147e840161a1860c50af999917ae1536b"
             1: Could not decode zip stream
             2: Invalid input data
         "#);

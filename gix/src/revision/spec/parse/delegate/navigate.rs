@@ -4,6 +4,7 @@ use std::borrow::Cow;
 use gix_error::{ErrorExt, Exn, OptionExt, ResultExt, bail, message};
 use gix_hash::ObjectId;
 use gix_index::entry::Stage;
+use gix_object::find::{Buffer, Source};
 use gix_revision::spec::parse::{
     delegate,
     delegate::{PeelTo, Traversal},
@@ -11,7 +12,7 @@ use gix_revision::spec::parse::{
 
 use crate::revision::spec::parse::delegate::peel;
 use crate::{
-    Object, Repository,
+    Repository,
     bstr::{BStr, ByteSlice},
     ext::ObjectIdExt,
     revision::spec::parse::{Delegate, delegate::Replacements},
@@ -31,17 +32,22 @@ impl delegate::Navigate for Delegate<'_> {
             }
         };
         let repo = self.repo;
+        let source = crate::object::bounded::Source::deferred(repo);
+        let mut buffer = Buffer::default();
 
         for obj in objs.iter() {
             match kind {
-                Traversal::NthParent(num) => match self.repo.find_object(*obj).and_then(Object::peel_to_commit) {
-                    Ok(commit) => match commit.parent_ids().nth(num.saturating_sub(1)) {
-                        Some(id) => replacements.push((*obj, id.detach())),
+                Traversal::NthParent(num) => match source
+                    .peel(*obj, gix_object::Kind::Commit)
+                    .and_then(|id| source.find_commit(&id, &mut buffer).map(|commit| (id, commit)))
+                {
+                    Ok((id, commit)) => match commit.parent_ids().nth(num.saturating_sub(1)) {
+                        Some(id) => replacements.push((*obj, id)),
                         None => errors.push((
                             *obj,
                             message!(
                                 "Commit {oid} has {available} parents and parent number {desired} is out of range",
-                                oid = commit.id().shorten_or_id(),
+                                oid = id.attach(repo).shorten_or_id(),
                                 desired = num,
                                 available = commit.parent_ids().count(),
                             )
@@ -58,28 +64,9 @@ impl delegate::Navigate for Delegate<'_> {
                             continue;
                         }
                     };
-                    match id
-                        .ancestors()
-                        .first_parent_only()
-                        .all()
-                        .expect("cannot fail without sorting")
-                        .skip(num)
-                        .find_map(Result::ok)
-                    {
-                        Some(commit) => replacements.push((*obj, commit.id)),
-                        None => errors.push((
-                            *obj,
-                                message!("Commit {oid} has {available} ancestors along the first parent and ancestor number {num} is out of range",
-                                    oid = id.shorten_or_id(),
-                                    available = id
-                                        .ancestors()
-                                        .first_parent_only()
-                                        .all()
-                                        .expect("cannot fail without sorting")
-                                        .skip(1)
-                                        .count()
-                                ).raise_erased()
-                        )),
+                    match nth_ancestor(id, num) {
+                        Ok(id) => replacements.push((*obj, id)),
+                        Err(err) => errors.push((*obj, err.raise_erased())),
                     }
                 }
             }
@@ -101,8 +88,10 @@ impl delegate::Navigate for Delegate<'_> {
 
         match kind {
             PeelTo::ValidObject => {
+                let source = crate::object::bounded::Source::deferred(repo);
+                let mut buffer = Buffer::default();
                 for obj in objs.iter() {
-                    if let Err(err) = repo.find_object(*obj) {
+                    if let Err(err) = source.load(obj, &mut buffer) {
                         errors.push((*obj, err.raise_erased()));
                     }
                 }
@@ -124,8 +113,7 @@ impl delegate::Navigate for Delegate<'_> {
                     if path.is_empty() {
                         return Ok::<_, Exn>((tree_id, gix_object::tree::EntryKind::Tree.into()));
                     }
-                    let budget = gix_utils::stream::Budget::new(&std::env::temp_dir()).or_erased()?;
-                    let source = crate::object::bounded::Source::new(repo, budget).or_erased()?;
+                    let source = crate::object::bounded::Source::deferred(repo);
                     let entry = source
                         .lookup_entry(tree_id, &gix_path::from_bstr(path).or_erased()?)
                         .or_erased()?
@@ -153,9 +141,10 @@ impl delegate::Navigate for Delegate<'_> {
                 }
             }
             PeelTo::RecursiveTagObject => {
+                let source = crate::object::bounded::Source::deferred(repo);
                 for oid in objs.iter() {
-                    match oid.attach(repo).object().and_then(Object::peel_tags_to_end) {
-                        Ok(obj) => replacements.push((*oid, obj.id)),
+                    match source.peel_tags(*oid) {
+                        Ok(id) => replacements.push((*oid, id)),
                         Err(err) => errors.push((*oid, err.raise_erased())),
                     }
                 }
@@ -187,6 +176,8 @@ impl delegate::Navigate for Delegate<'_> {
                 bail!(err);
             }
         };
+        let source = crate::object::bounded::Source::deferred(self.repo);
+        let mut buffer = Buffer::default();
 
         match self.objs[self.idx].as_mut() {
             Some(objs) => {
@@ -208,23 +199,32 @@ impl delegate::Navigate for Delegate<'_> {
                     {
                         Ok(iter) => {
                             let mut matched = false;
+                            let mut failed = false;
                             let mut count = 0;
-                            let commits =
-                                iter.map(|res| res.and_then(|commit| commit.id().object().map(Object::into_commit)));
+                            let commits = iter.map(|res| {
+                                res.and_then(|commit| {
+                                    message_matches(&source, commit.id, &mut buffer, &matches)
+                                        .map(|matched| (commit.id, matched))
+                                })
+                            });
                             for commit in commits {
                                 count += 1;
                                 match commit {
-                                    Ok(commit) => {
-                                        if matches(commit.message_raw_sloppy()) {
-                                            replacements.push((*oid, commit.id));
+                                    Ok((id, matches)) => {
+                                        if matches {
+                                            replacements.push((*oid, id));
                                             matched = true;
                                             break;
                                         }
                                     }
-                                    Err(err) => errors.push((*oid, err.raise_erased())),
+                                    Err(err) => {
+                                        errors.push((*oid, err.raise_erased()));
+                                        failed = true;
+                                        break;
+                                    }
                                 }
                             }
-                            if !matched {
+                            if !matched && !failed {
                                 errors.push((
                                     *oid,
                                     message!(
@@ -250,35 +250,33 @@ impl delegate::Navigate for Delegate<'_> {
             None => {
                 let references = self.repo.references()?;
                 let references = references.all()?;
+                let mut tips = Vec::new();
+                for reference in references
+                    .peeled()
+                    .or_raise(|| message("Couldn't configure iterator for peeling"))?
+                {
+                    let reference = reference?;
+                    if reference.id().header()?.kind().is_commit() {
+                        tips.extend(reference.detach().peeled);
+                    }
+                }
                 let iter = self
                     .repo
-                    .rev_walk(
-                        references
-                            .peeled()
-                            .or_raise(|| message("Couldn't configure iterator for peeling"))?
-                            .filter_map(Result::ok)
-                            .filter(|r| r.id().header().ok().is_some_and(|obj| obj.kind().is_commit()))
-                            .filter_map(|r| r.detach().peeled),
-                    )
+                    .rev_walk(tips)
                     .sorting(crate::revision::walk::Sorting::ByCommitTime(Default::default()))
                     .all()?;
                 let mut matched = false;
                 let mut count = 0;
-                let commits = iter.map(|res| res.and_then(|commit| commit.id().object().map(Object::into_commit)));
-                for commit in commits {
+                for commit in iter {
                     count += 1;
-                    match commit {
-                        Ok(commit) => {
-                            if matches(commit.message_raw_sloppy()) {
-                                let objs = self.objs[self.idx].get_or_insert_with(Vec::new);
-                                if !objs.contains(&commit.id) {
-                                    objs.push(commit.id);
-                                }
-                                matched = true;
-                                break;
-                            }
+                    let commit = commit?;
+                    if message_matches(&source, commit.id, &mut buffer, &matches)? {
+                        let objs = self.objs[self.idx].get_or_insert_with(Vec::new);
+                        if !objs.contains(&commit.id) {
+                            objs.push(commit.id);
                         }
-                        Err(err) => self.delayed_errors.push(err.raise_erased()),
+                        matched = true;
+                        break;
                     }
                 }
                 if matched {
@@ -366,6 +364,38 @@ fn to_repo_relative_path<'a>(repo: &Repository, path: &'a BStr) -> Result<Cow<'a
     repo.prefix()?
         .ok_or_raise(|| message("Relative path syntax can't be used outside of a worktree"))?;
     repo.normalize_path(path)
+}
+
+fn nth_ancestor(id: crate::Id<'_>, num: usize) -> Result<ObjectId> {
+    let mut available = 0;
+    for (distance, commit) in id.ancestors().first_parent_only().all()?.enumerate() {
+        let commit = commit?;
+        if distance == num {
+            return Ok(commit.id);
+        }
+        available = distance;
+    }
+    bail!(
+        "Commit {oid} has {available} ancestors along the first parent and ancestor number {num} is out of range",
+        oid = id.shorten_or_id()
+    )
+}
+
+fn message_matches(
+    source: &crate::object::bounded::Source<'_>,
+    id: ObjectId,
+    buffer: &mut Buffer,
+    matches: impl Fn(&BStr) -> bool,
+) -> Result<bool> {
+    source.find_commit(&id, buffer)?;
+    let data = buffer.as_ref();
+    // Preserve Commit::message_raw_sloppy's exact message boundary and malformed-message semantics.
+    Ok(matches(
+        data.find(b"\n\n")
+            .map(|pos| &data[pos + 2..])
+            .unwrap_or_default()
+            .as_bstr(),
+    ))
 }
 
 fn handle_errors_and_replacements(
