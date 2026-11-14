@@ -1320,3 +1320,189 @@ fn status_patterns_twenty_mib() -> Result<()> {
 fn status_patterns_twenty_mib_reduced_trust() -> Result<()> {
     attribute_pathspec(20 * 1024 * 1024, true, false, true)
 }
+
+fn describe_metadata(size: usize, reduced: bool) -> Result<()> {
+    let repo = TestRepo::new("memory-describe")?;
+    let root = repo.path();
+    let message = root.join(".git/describe-message");
+    let mut file = BufWriter::new(fs::File::create(&message)?);
+    file.write_all(b"governance decision\n\n")?;
+    let chunk = [b'x'; 65536];
+    for _ in 0..size / chunk.len() {
+        file.write_all(&chunk)?;
+    }
+    file.write_all(b"\n")?;
+    file.flush()?;
+    drop(file);
+    git(
+        root,
+        &[
+            "commit",
+            "--allow-empty",
+            "-q",
+            "-F",
+            message.to_str().expect("fixture path"),
+        ],
+    )?;
+    git(
+        root,
+        &["tag", "-a", "large-tag", "-F", message.to_str().expect("fixture path")],
+    )?;
+    git(root, &["commit", "--allow-empty", "-qm", "small intermediate"])?;
+    git(
+        root,
+        &[
+            "commit",
+            "--allow-empty",
+            "-q",
+            "-F",
+            message.to_str().expect("fixture path"),
+        ],
+    )?;
+    let head = git(root, &["rev-parse", "HEAD"])?;
+    let index = fs::read(root.join(".git/index"))?;
+    reduced_trust(root, reduced)?;
+    let expected = root.join(".git/describe-expected");
+    let actual = root.join(".git/describe-actual");
+    for packed in [false, true] {
+        if packed {
+            git(root, &["-c", "pack.threads=1", "repack", "-ad"])?;
+        }
+        for limit in [Some("1073741824"), None, Some("16777216"), Some("1024")] {
+            for revision in ["HEAD", "HEAD^", "HEAD~2"] {
+                for annotated in [false, true] {
+                    let mut args = vec!["describe", "--long", "--always"];
+                    if !annotated {
+                        args.push("--tags");
+                    }
+                    args.push(revision);
+                    output_file(oracle(root), &args, &expected)?;
+                    let mut args = vec!["commit", "describe", "--long", "--always"];
+                    if annotated {
+                        args.push("--annotated-tags");
+                    }
+                    args.push(revision);
+                    brit(root, &args, &actual, limit)?;
+                    same_bytes(&expected, &actual)?;
+                }
+            }
+        }
+        if !packed {
+            let tag = String::from_utf8(git(root, &["rev-parse", "refs/tags/large-tag"])?)?;
+            let tag = tag.trim();
+            let path = root.join(".git/objects").join(&tag[..2]).join(&tag[2..]);
+            let original = fs::read(&path)?;
+            let permissions = fs::metadata(&path)?.permissions();
+            let mut writable = permissions.clone();
+            #[cfg(unix)]
+            {
+                use std::os::unix::fs::PermissionsExt;
+                writable.set_mode(writable.mode() | 0o200);
+            }
+            #[cfg(not(unix))]
+            writable.set_readonly(false);
+            fs::set_permissions(&path, writable)?;
+            fs::write(&path, b"corrupt retained tag")?;
+            for annotated in [false, true] {
+                let mut command = Command::new(brit_bin().expect("built Brit"));
+                gix_testtools::configure_git_environment(&mut command, root);
+                command.current_dir(root).args(["commit", "describe", "--always"]);
+                if annotated {
+                    command.arg("--annotated-tags");
+                }
+                let result = command.output()?;
+                ensure!(
+                    !result.status.success(),
+                    "corrupt tag must not become an object-ID fallback"
+                );
+                ensure!(String::from_utf8_lossy(&result.stderr).contains("object"));
+            }
+            fs::write(&path, original)?;
+            fs::set_permissions(path, permissions)?;
+        }
+    }
+    let superproject = TestRepo::new("memory-describe-submodule")?;
+    let parent = superproject.path();
+    // The stock-Git upload-pack child checks the source gitdir's ownership.
+    // This process-local exception does not change Brit's ownership-derived trust.
+    let source_allow_list = format!("safe.directory={}", root.join(".git").display());
+    git(
+        parent,
+        &[
+            "-c",
+            &source_allow_list,
+            "-c",
+            "protocol.file.allow=always",
+            "submodule",
+            "add",
+            "--",
+            root.to_str().expect("fixture path"),
+            "child",
+        ],
+    )?;
+    let mut modules = fs::OpenOptions::new().append(true).open(parent.join(".gitmodules"))?;
+    modules.write_all(b"\n#")?;
+    for _ in 0..size / chunk.len() {
+        modules.write_all(&chunk)?;
+    }
+    modules.write_all(b"\n")?;
+    drop(modules);
+    git(parent, &["add", ".gitmodules", "child"])?;
+    git(parent, &["commit", "-qm", "nested metadata"])?;
+    let parent_head = git(parent, &["rev-parse", "HEAD"])?;
+    let parent_index = fs::read(parent.join(".git/index"))?;
+    reduced_trust(parent, reduced)?;
+    if reduced {
+        #[cfg(target_os = "linux")]
+        {
+            use std::os::unix::fs::chown;
+            chown(parent.join("child"), Some(65534), None)?;
+            chown(parent.join(".git/modules/child"), Some(65534), None)?;
+            let trust = parent.join(".git/child-trust");
+            brit(parent, &["free", "trust", "child", ".git/modules/child"], &trust, None)?;
+            ensure!(
+                fs::read_to_string(trust)?
+                    .lines()
+                    .filter(|line| line.starts_with("Reduced"))
+                    .count()
+                    == 2
+            );
+        }
+    }
+    let expected = parent.join(".git/submodule-expected");
+    let actual = parent.join(".git/submodule-actual");
+    brit(parent, &["submodule", "list"], &expected, Some("1073741824"))?;
+    ensure!(fs::read_to_string(&expected)?.contains("(main)"));
+    for indexed in [false, true] {
+        if indexed {
+            fs::remove_file(parent.join(".gitmodules"))?;
+        }
+        for limit in [None, Some("16777216"), Some("1024")] {
+            brit(parent, &["submodule", "list"], &actual, limit)?;
+            same_bytes(&expected, &actual)?;
+        }
+    }
+    ensure!(git(parent, &["rev-parse", "HEAD"])? == parent_head);
+    ensure!(fs::read(parent.join(".git/index"))? == parent_index);
+    ensure!(git(root, &["rev-parse", "HEAD"])? == head);
+    ensure!(fs::read(root.join(".git/index"))? == index);
+    Ok(())
+}
+
+#[test]
+fn describe_preserves_large_metadata_and_tag_selection() -> Result<()> {
+    describe_metadata(128 * 1024, false)
+}
+
+#[test]
+#[ignore = "resource qualification: requires BRIT_BIN and delegated cgroup"]
+fn describe_twenty_mib_metadata() -> Result<()> {
+    describe_metadata(20 * 1024 * 1024, false)
+}
+
+#[cfg(target_os = "linux")]
+#[test]
+#[ignore = "resource qualification: requires BRIT_BIN, delegated cgroup and chown authority"]
+fn describe_twenty_mib_metadata_reduced_trust() -> Result<()> {
+    describe_metadata(20 * 1024 * 1024, true)
+}

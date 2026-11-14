@@ -83,6 +83,18 @@ impl<'repo> Id<'repo> {
 }
 
 impl<'repo> Id<'repo> {
+    /// Describe this commit using its identity and bounded history reads.
+    /// The object must be a commit; checking its kind does not load its body.
+    #[cfg(feature = "revision")]
+    pub fn describe(&self) -> Result<crate::commit::describe::Platform<'repo>> {
+        let kind = self.header()?.kind();
+        gix_error::ensure!(
+            kind == gix_object::Kind::Commit,
+            gix_error::validation(format!("Expected commit {}, found {kind}", self.inner))
+        );
+        Ok(crate::commit::describe::Platform::new(*self))
+    }
+
     /// Obtain a platform for traversing ancestors of this commit.
     pub fn ancestors(&self) -> crate::revision::walk::Platform<'repo> {
         crate::revision::walk::Platform::new(Some(self.inner), self.repo)

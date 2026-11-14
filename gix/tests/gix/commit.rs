@@ -52,7 +52,11 @@ mod describe {
     #[test]
     fn tags_are_sorted_by_date_and_lexicographically() -> TestResult {
         let repo = named_repo("make_commit_describe_multiple_tags.sh")?;
-        let mut describe = repo.head_commit()?.describe();
+        assert!(
+            repo.head_tree_id()?.describe().is_err(),
+            "a tree cannot be described as a commit"
+        );
+        let mut describe = repo.head_id()?.describe()?;
         for filter in &[AnnotatedTags, AllTags, AllRefs] {
             describe = describe.names(*filter);
             assert_eq!(describe.format()?.to_string(), "v4", "{filter:?}");

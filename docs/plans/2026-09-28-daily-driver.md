@@ -3867,6 +3867,38 @@ owned helper is retired, with errors preserved. Probe:
 `memory_attributes_baseline`; whole-operation scratch and final-source acceptance
 remain open.
 
+### Describe and submodule metadata
+
+Commit description now starts from a validated commit ID without buffering its
+message. Annotated-tag selection reuses the bounded object source and reclaims
+each input promptly; reference/read failures propagate even with `--always`.
+The existing priority, tag-date, reverse-lexicographic ordering and history
+algorithm remain unchanged, including the existing malformed-tagger date-zero
+fallback. Submodule descriptions use the same ID-based path.
+
+The public fixture compares stock Git and buffered/mapped results with 20 MiB
+commit messages, annotated tags and `.gitmodules`, loose/packed objects,
+worktree/index fallback, full/actual-reduced trust, and default/1 GiB/16 MiB/1 KiB
+policies. Corrupt annotated tags refuse instead of becoming an ID fallback.
+Three cases per hash pass in delegated 1 GiB swap-disabled groups at
+134,283,264 B / 134,438,912 B peaks in 97.974 / 372.653 s, with zero OOM,
+surviving children or executable changes. The initial reduced-trust fixture's
+stock-Git clone refusal is retained; the corrected fixture gives only that
+child a process-local safe-directory declaration and leaves Brit trust intact.
+Binary SHA-256: `e8e9dfffeac5a3c358237ff84ceb2900c63ff69e80a6e8ef9cff8f8d67defff3`.
+Private evidence: `bounded-memory/describe-fixed-*` and `describe-*.log`.
+
+All 531 active repository tests (two existing ignores), five describe tests
+under SHA-256, strict affected Clippy, formatting, 12 readiness contracts and
+the declared Rust-style scope pass. These receipts still lack an aggregate
+scratch peak and do not qualify the final committed source or larger reference
+selections. Other authoring consumers of large commit metadata remain open.
+
+Story station: bounded description / between object identification and history
+selection / message size cannot change the chosen description, while corrupt
+tag reads remain failures. Probe: `memory_metadata` describe cases and native
+commit describe tests.
+
 ### Public-command audit in progress
 
 The command boundary is `src/plumbing/options/mod.rs` plus
@@ -3891,7 +3923,7 @@ behavior or working-tree bytes. The separate legacy `ein` porcelain exposes
 | `switch`, `pull`, `rebase`, `merge`, `commit` | Switch/pull raw recovery payloads and streamed dirty checks are repaired and measured at 20/64/256 MiB. Replay working-file journals now use raw payloads and retained-copy capture streams, with 20/64 MiB public cases passing; 64 MiB conflict/abort and preserved large edits also pass after raw-custody repair; interrupted conflict handoff preserves exact child authority; 64 MiB authored-object retention and 20 MiB edit-scope continuation/abort pass after streamed custody fixes. Journal metadata remains open. Three-sided 64 MiB filesystem and object-backed file/tree/commit merge fixtures pass, with bounded rename inputs and recursive-base conformance. External Git merge-file drivers pass 20/64 MiB in both hashes with unchanged inputs; external scratch/cancellation, large journals and resource-bound recovery/death fixtures remain open. |
 | `blame`, `log`, `revision`, `merge-base`, `tree` | Blame initial/history blobs, rename similarity and rendering are repaired and measured, including actual reduced trust and a million unique lines; large history metadata remains open. Ordinary log traverses commits without reading blobs or the index; 20 MiB commit metadata now uses mapped storage above policy and passes both hashes and actual reduced trust. Path-filtered log was already unsupported. Tree listing/statistics and revision path lookup now pass the 240,000-entry metadata matrices described above. Text revision listing now reads large commits through the shared bounded storage and refuses parent-read failures instead of inventing timestamp zero. Merge-base starting points and shared graphs now pass both-hash large-metadata qualification; parent/tag/object/message expressions and ambiguity descriptions also pass both-hash metadata checks; short prefixes now use the repository hash. Reflog queries and streamed previous-branch output now pass the 200,000-entry both-hash fixture described above. Shallow-boundary failure handling and large-metadata pruning pass the both-hash matrix above. The tested SVG handoff is qualified above; larger layouts, real-viewer lifetime and remaining history consumers stay open. |
 | `fetch`, `push`, `odb`, `fsck`, `verify`, `commit-graph` | Pack decode diagnostics improved; 64/256 MiB local transfer passes without worker/cache changes. Loose blob verification streams; both packed verification algorithms now use bounded storage above configured allocation limits. All decode modes pass 20/64/256 MiB explicit-limit cases in both hashes, including 64 MiB OFS/REF histories, and actual reduced-trust 20/64 MiB cases. ODB inspection, connectivity and pack create/index/explode pass in both hashes; the SHA-256 writer now uses the repository hash format. Connectivity passes both-hash large commit/tree metadata and fault/retry checks. Loose metadata verification now maps above policy, and both verification algorithms/all decode modes pass the large commit/tree matrices described above. Additional protocols, other metadata families and final-source qualification stay open. |
-| `branch`, `tag`, `remote`, `submodule`, `config`, `config-tree`, `attributes`, `exclude`, `mailmap` | Large config/packed-ref fixtures pass in both hashes and actual reduced trust. Mailmap object reads/output and annotated-tag reads are repaired and measured as above. Remote/submodule/path metadata and helper dispatch remain open. Attribute/exclude queries pass the 200,000-pattern both-hash metadata matrix above. `attributes validate-baseline` now uses charged spools, complete path comparison and owned helpers, with qualification recorded above; status predicates now preserve read errors and pass the both-hash pattern/rename matrix above. Repository directory walking now preserves them and passes the both-hash attribute/ignore matrix above. Attached pathspec queries, index listing and clean post-filtering now pass the bounded/error-preservation fixture above. These are affected open paths, not unaffected classifications. |
+| `branch`, `tag`, `remote`, `submodule`, `config`, `config-tree`, `attributes`, `exclude`, `mailmap` | Large config/packed-ref fixtures pass in both hashes and actual reduced trust. Mailmap object reads/output and annotated-tag reads are repaired and measured as above. Commit/submodule descriptions and large `.gitmodules` now pass the both-hash metadata matrix above. Remaining remote/submodule/path metadata and helper dispatch stay open. Attribute/exclude queries pass the 200,000-pattern both-hash metadata matrix above. `attributes validate-baseline` now uses charged spools, complete path comparison and owned helpers, with qualification recorded above; status predicates now preserve read errors and pass the both-hash pattern/rename matrix above. Repository directory walking now preserves them and passes the both-hash attribute/ignore matrix above. Attached pathspec queries, index listing and clean post-filtering now pass the bounded/error-preservation fixture above. These are affected open paths, not unaffected classifications. |
 | `credential`, `env`, `editor`, `completions`, `free`, `corpus`, `tix` | Applicable metadata/output/owned-child audit remains open. Existing unsupported behavior cannot be relabeled a memory success. |
 | `snapshot`, `build`, `run`, `graph`, `affected`, `plan`, `fingerprint`, `baseline`, `integrate`, `context` | Snapshot seal/verify/export/restore are measured on 20/64 MiB, aggregate and reduced-trust fixtures; the existing per-object 64 MiB native limit is preserved. `build fingerprint` and SHA-1 `build plan` now release streamed inputs and pass the aggregate 3×256 MiB workload; SHA-256 fingerprinting passes, while revision plan/affected retain the independently reproduced pre-existing Rakia limitation described above. Capture and other first-party metadata/output paths remain open; arbitrary external tasks are outside a universal success guarantee, but owned children still count in measured workloads. |
 | `tix` | The compiled surface has 29 leaves covering browsing, operation history, enrichment, editing, replay and worktrunk. The 20 MiB commit refusal is repaired for show/ref-tree/worktrunk-show/op-log, with both-hash and actual reduced-trust receipts above. Operation-queue log/undo/redo/clear now pass the separate 20 MiB metadata fixture above, with all 807 active native tests passing. Other editing, interactive loads, large notes/journals, CLI-only worker override propagation, retained edit state and owned processes stay open. Successful ordinary log or authoring checks do not qualify this separate surface. |

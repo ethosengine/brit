@@ -61,9 +61,9 @@ pub fn describe(
     }: describe::Options,
 ) -> Result<()> {
     repo.object_cache_size_if_unset(4 * 1024 * 1024);
-    let commit = match rev_spec {
-        Some(spec) => repo.rev_parse_single(spec)?.object()?.try_into_commit()?,
-        None => repo.head_commit()?,
+    let commit_id = match rev_spec {
+        Some(spec) => repo.rev_parse_single(spec)?,
+        None => repo.head_id()?,
     };
     use gix::commit::describe::SelectRef::*;
     let select_ref = if all_refs {
@@ -73,14 +73,14 @@ pub fn describe(
     } else {
         Default::default()
     };
-    let resolution = commit
-        .describe()
+    let resolution = commit_id
+        .describe()?
         .names(select_ref)
         .traverse_first_parent(first_parent)
         .id_as_fallback(always)
         .max_candidates(max_candidates)
         .try_resolve()?
-        .ok_or_raise(|| message!("Did not find a single candidate ref for naming id '{}'", commit.id))?;
+        .ok_or_raise(|| message!("Did not find a single candidate ref for naming id '{commit_id}'"))?;
 
     if statistics {
         writeln!(err, "traversed {} commits", resolution.outcome.commits_seen).or_error()?;

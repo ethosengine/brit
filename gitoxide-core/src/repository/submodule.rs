@@ -54,8 +54,8 @@ fn print_sm(sm: Submodule<'_>, dirty_suffix: Option<&str>, out: &mut impl std::i
                 // TODO(name-revision): this is the simple version, `git` gives it
                 //                      multiple tries https://github.com/git/git/blob/fac96dfbb1c24369ba7d37a5affd8adfe6c650fd/builtin/submodule--helper.c#L161
                 //                      and even uses `git name-rev`/`git describe --contains` which we can't do yet.
-                repo.head_commit()?
-                    .describe()
+                repo.head_id()?
+                    .describe()?
                     .names(SelectRef::AllRefs)
                     .id_as_fallback(true)
                     .try_resolve()?

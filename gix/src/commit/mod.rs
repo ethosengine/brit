@@ -107,35 +107,46 @@ pub mod describe {
     impl SelectRef {
         fn names(&self, repo: &Repository) -> Result<HashMap<ObjectId, Cow<'static, BStr>>> {
             let platform = repo.references()?;
+            let objects = crate::object::bounded::Source::deferred(repo);
+            let mut buffer = gix_object::find::Buffer::default();
 
             Ok(match self {
                 SelectRef::AllTags | SelectRef::AllRefs => {
-                    let mut refs: Vec<_> = match self {
+                    let references = match self {
                         SelectRef::AllRefs => platform.all()?,
                         SelectRef::AllTags => platform.tags()?,
                         _ => unreachable!(),
-                    }
-                    .filter_map(std::result::Result::ok)
-                    .filter_map(|mut r: crate::Reference<'_>| {
-                        let target_id = r.target().try_id().map(ToOwned::to_owned);
-                        let peeled_id = r.peel_to_id().ok()?;
+                    };
+                    let mut refs = Vec::new();
+                    for reference in references {
+                        let mut reference = reference?;
+                        let target_id = reference.target().try_id().map(ToOwned::to_owned);
+                        let peeled_id = reference.peel_to_id()?;
                         let (prio, tag_time) = match target_id {
                             Some(target_id) if peeled_id != *target_id => {
-                                let tag = repo.find_object(target_id).ok()?.try_into_tag().ok()?;
-                                let tag_time = tag.tagger().ok().and_then(|s| s.map(|s| s.seconds())).unwrap_or(0);
+                                let tag = objects.load(&target_id, &mut buffer)?;
+                                if tag.kind != gix_object::Kind::Tag {
+                                    continue;
+                                }
+                                // Preserve the existing zero-time fallback for malformed taggers.
+                                let tag_time = gix_object::TagRefIter::from_bytes(tag.data, target_id.kind())
+                                    .tagger()
+                                    .ok()
+                                    .flatten()
+                                    .map(|s| s.seconds())
+                                    .unwrap_or(0);
                                 (1, tag_time)
                             }
                             _ => (0, 0),
                         };
-                        (
+                        buffer.clear();
+                        refs.push((
                             peeled_id.inner,
                             prio,
                             tag_time,
-                            Cow::from(r.inner.name.shorten().to_owned()),
-                        )
-                            .into()
-                    })
-                    .collect();
+                            Cow::from(reference.inner.name.shorten().to_owned()),
+                        ));
+                    }
                     // By priority, then by time ascending, then lexicographically.
                     // More recent entries overwrite older ones due to collection into hashmap.
                     refs.sort_by(
@@ -149,18 +160,32 @@ pub mod describe {
                     refs.into_iter().map(|(a, _, _, b)| (a, b)).collect()
                 }
                 SelectRef::AnnotatedTags => {
-                    let mut peeled_commits_and_tag_date: Vec<_> = platform
-                        .tags()?
-                        .filter_map(std::result::Result::ok)
-                        .filter_map(|r: crate::Reference<'_>| {
-                            // TODO: we assume direct refs for tags, which is the common case, but it doesn't have to be
-                            //       so rather follow symrefs till the first object and then peel tags after the first object was found.
-                            let tag = r.try_id()?.object().ok()?.try_into_tag().ok()?;
-                            let tag_time = tag.tagger().ok().and_then(|s| s.map(|s| s.seconds())).unwrap_or(0);
-                            let commit_id = tag.target_id().ok()?.object().ok()?.try_into_commit().ok()?.id;
-                            Some((commit_id, tag_time, Cow::<BStr>::from(r.name().shorten().to_owned())))
-                        })
-                        .collect();
+                    let mut peeled_commits_and_tag_date = Vec::new();
+                    for reference in platform.tags()? {
+                        let reference = reference?;
+                        // Preserve the existing direct-reference and direct-commit selection.
+                        let Some(tag_id) = reference.try_id() else { continue };
+                        if tag_id.header()?.kind() != gix_object::Kind::Tag {
+                            continue;
+                        }
+                        let tag = objects.load(&tag_id, &mut buffer)?;
+                        let tag_time = gix_object::TagRefIter::from_bytes(tag.data, tag_id.kind())
+                            .tagger()
+                            .ok()
+                            .flatten()
+                            .map(|s| s.seconds())
+                            .unwrap_or(0);
+                        let commit_id = gix_object::TagRefIter::from_bytes(tag.data, tag_id.kind()).target_id()?;
+                        buffer.clear();
+                        if repo.find_header(commit_id)?.kind() != gix_object::Kind::Commit {
+                            continue;
+                        }
+                        peeled_commits_and_tag_date.push((
+                            commit_id,
+                            tag_time,
+                            Cow::<BStr>::from(reference.name().shorten().to_owned()),
+                        ));
+                    }
                     // Sort by time ascending, then lexicographically.
                     // More recent entries overwrite older ones due to collection into hashmap.
                     peeled_commits_and_tag_date.sort_by(|(_a_id, a_time, a_name), (_b_id, b_time, b_name)| {
@@ -187,6 +212,17 @@ pub mod describe {
     }
 
     impl<'repo> Platform<'repo> {
+        pub(crate) fn new(id: crate::Id<'repo>) -> Self {
+            Self {
+                id: id.inner,
+                repo: id.repo,
+                select: Default::default(),
+                first_parent: false,
+                id_as_fallback: false,
+                max_candidates: 10,
+            }
+        }
+
         /// Configure which names to `select` from which describe can chose.
         pub fn names(mut self, select: SelectRef) -> Self {
             self.select = select;
