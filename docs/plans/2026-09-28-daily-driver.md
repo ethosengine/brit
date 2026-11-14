@@ -3998,6 +3998,47 @@ acceptance remain open. The preceding restore/switch slice also passes the
 three blocking-client-only core tests omitted by the default core feature set,
 including pull synchronization ordering (39 core tests across the two runs).
 
+### Commit authoring metadata
+
+Ordinary commit and amendment reuse a bounded, borrowed HEAD commit rather than
+loading and cloning the complete object. Tree comparison reuses its decoded tree
+ID, and the source buffer is released before the new object is written. Existing
+hook ordering, publication guards, author/message selection and parent semantics
+remain intact. The initial regression refused a 131,300-byte HEAD at a 1 KiB
+allocation policy.
+
+Normal `commit -m`, `commit -F`, `--amend --no-edit` and `--amend -m` match stock
+Git's exact commit IDs, index and working bytes with 20 MiB parent/HEAD messages,
+loose/packed objects, full/actual-reduced trust and default/1 GiB/16 MiB/1 KiB
+policies. Three cases per hash pass in delegated 1 GiB swap-disabled groups:
+145,510,400 B / 143,659,008 B peaks, 75.268 / 196.310 s, zero OOM, surviving
+children or executable identity changes. Binary SHA-256:
+`bbe479d2dc7bda57af03026d11a7fbfc23bde18427972dd5334c4f762d7bb658`;
+evidence: `bounded-memory/commit-metadata-reclaim-*`.
+The retained 79 ordinary authoring/amendment/attribution/cleanup/merge/native
+journeys and strict affected Clippy pass. Library-only message flags are not
+new public CLI support. Signature, replay and other metadata consumers, aggregate
+scratch and final-source acceptance remain open.
+
+### Real monorepo acceptance boundary
+
+The 2026-11-14 operator review adds the journal's failing worktree creation,
+worktree fetch/commit and revision-range commands on linked worktrees of the
+Elohim monorepo on both shem and ethosengine under the same fixed whole-group
+memory cap. The 80,000-ref fixture cannot substitute for the observed 49-pack-index,
+unmapped-owner, linked-worktree shape. Pin/release integration stays held until
+this proof and the remaining acceptance matrix pass.
+
+A first local detached worktree at Elohim commit
+`c12445f02000c81b3230c44c7b6a42551397bd52` was created successfully in 56.640 s,
+with an 18,890,752 B group peak and zero OOM or surviving children, using the
+commit-authoring candidate above. This device has 20 pack indexes; repository
+owner UID 1234 is unmapped and the invoking process is root. Evidence:
+`bounded-memory/monorepo-linked-worktree-create`. This is only creation proof
+on this device; it does not qualify the second device, hooks, fetch/push or the
+separate temporary-storage ceiling. Shared dirty checkouts and existing worktrees
+were left in place.
+
 ### Public-command audit in progress
 
 The command boundary is `src/plumbing/options/mod.rs` plus

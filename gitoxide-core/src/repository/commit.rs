@@ -184,6 +184,21 @@ pub struct CreateOptions {
     pub only: bool,
 }
 
+fn read_commit<'a>(
+    objects: &gix::object::bounded::Source<'_>,
+    id: gix::ObjectId,
+    buffer: &'a mut gix::objs::find::Buffer,
+) -> Result<gix::objs::CommitRef<'a>> {
+    let data = objects.load(&id, buffer)?;
+    if data.kind != gix::object::Kind::Commit {
+        bail!(gix::error::validation(format!(
+            "Expected commit {id}, found {}",
+            data.kind
+        )));
+    }
+    gix::objs::CommitRef::from_bytes(data.data, id.kind()).or_raise(|| message!("Decode authoring commit {id}"))
+}
+
 /// Create a Git commit from the index, honoring repository commit hooks.
 pub fn create(
     repo: gix::Repository,
@@ -325,15 +340,18 @@ pub fn create(
         }
     }
     let head_id = original_head.id();
-    let head_commit = head_id
-        .map(|id| -> Result<_> { Ok(id.object()?.try_into_commit()?) })
-        .transpose()?;
+    let objects = gix::object::bounded::Source::deferred(&repo);
+    let mut head_buffer = gix::objs::find::Buffer::default();
+    let head_commit = match head_id {
+        Some(id) => Some(read_commit(&objects, id.detach(), &mut head_buffer)?),
+        None => None,
+    };
     if amend && head_commit.is_none() {
         bail!("HEAD must point at a commit for --amend");
     }
 
     if amend {
-        let decoded = head_commit.as_ref().context("amend requires HEAD")?.decode()?;
+        let decoded = head_commit.as_ref().context("amend requires HEAD")?;
         std::str::from_utf8(decoded.message).context("amend does not support non-UTF-8 commit messages")?;
         if decoded.encoding.is_some() || !decoded.extra_headers.is_empty() {
             bail!("amend does not support encoding or extra commit headers (including signatures)");
@@ -452,8 +470,7 @@ pub fn create(
     }
 
     if no_edit {
-        std::str::from_utf8(head_commit.as_ref().context("amend requires HEAD")?.message_raw()?)?
-            .clone_into(&mut composed);
+        std::str::from_utf8(head_commit.as_ref().context("amend requires HEAD")?.message)?.clone_into(&mut composed);
     }
 
     // No editor is launched by this authoring path: Git maps both default and
@@ -529,29 +546,19 @@ pub fn create(
     // Read after hooks, which may stage changes. Never substitute worktree bytes.
     let merge_locks = merge.as_ref().map(|merge| merge.lock(&repo)).transpose()?;
     let tree_id = super::authoring::index_tree(&repo)?;
-    let comparison_commit = if amend {
+    let previous_tree = if amend {
         head_commit
             .as_ref()
             .context("amend requires HEAD")?
-            .parent_ids()
+            .parents()
             .next()
-            .map(|id| -> Result<_> { Ok(id.object()?.try_into_commit()?) })
+            .map(|id| repo.tree_id_of_commit(id).map(gix::Id::detach))
             .transpose()?
     } else {
-        head_commit.clone()
+        head_commit.as_ref().map(gix::objs::CommitRef::tree)
     };
-    let previous_tree = comparison_commit
-        .as_ref()
-        .map(|commit| commit.tree_id().map(|id| id.detach()))
-        .transpose()?;
-    let is_merge = merge.is_some()
-        || amend
-            && head_commit
-                .as_ref()
-                .context("amend requires HEAD")?
-                .parent_ids()
-                .count()
-                > 1;
+    let is_merge =
+        merge.is_some() || amend && head_commit.as_ref().context("amend requires HEAD")?.parents().count() > 1;
     if !allow_empty
         && !is_merge
         && previous_tree.unwrap_or_else(|| gix::ObjectId::empty_tree(repo.object_hash())) == tree_id
@@ -569,12 +576,7 @@ pub fn create(
     // replace HEAD itself). For --allow-empty, the new commit's
     // parent is HEAD.
     let mut parent_ids: Vec<gix::ObjectId> = if amend {
-        head_commit
-            .as_ref()
-            .context("amend requires HEAD")?
-            .parent_ids()
-            .map(gix::Id::detach)
-            .collect()
+        head_commit.as_ref().context("amend requires HEAD")?.parents().collect()
     } else {
         head_id.into_iter().map(gix::Id::detach).collect()
     };
@@ -615,6 +617,9 @@ pub fn create(
         .context("committer identity not configured")?
         .context("invalid committer time configuration")?
         .to_owned()?;
+
+    drop(head_commit);
+    head_buffer.clear();
 
     let new_id = if amend || merge.is_some() {
         // Amendments and resolved merges publish through the same pinned ref
