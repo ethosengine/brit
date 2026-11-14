@@ -3215,6 +3215,41 @@ mask an allocation-policy failure. Strict affected Clippy passes. The expanded
 Tix cgroup runs and Tix-specific readers are recorded separately when complete;
 these native checks do not establish whole-command resource acceptance.
 
+### Tix history browsing
+
+Tix history traversal, incremental graph refresh, row metadata, change/patch IDs
+and internal-commit checks now use the shared immutable object reader. Completed
+walks release their byte buffer before edit-metadata inspection. Commit-graph
+selection, topology, hidden boundaries, tie-breaking and metadata parsing remain
+unchanged. Internal rebase detection no longer turns read failures into an
+ordinary selectable commit; corruption has a native regression check.
+
+The public fixture uses a 20 MiB commit with TODO and checks-passed enrichments.
+It compares `tix show`, `ref-tree`, `worktrunk show` and `op log` byte for byte
+against buffered results in both hashes, loose/packed storage, full/actual
+reduced trust and default/explicit 16 MiB policy. HEAD, index and all refs remain
+unchanged. This exercises a large history commit with small enrichment/undo
+metadata, not a large recovery journal. Two cases per hash pass under the fixed
+whole-group cap: SHA-1 peaks at 80,793,600 B in 42.405 s; SHA-256 at 53,211,136 B
+in 192.801 s. Both have zero OOM kills, survivors or executable changes.
+The executable SHA-256 is
+`a3424ad7a9bcddd615d4ba9b578211e570bde97b3a0b2894861b9e86f466a893`;
+receipts are `bounded-memory/tix-status-repaired-sha1` and `-sha256`.
+
+All 804 Tix native tests pass. Shared-reader native checks, strict affected
+Clippy, formatting, readiness and declared style pass as recorded above.
+Worktree workers reopen repositories with default options, so propagation of
+CLI-only overrides remains an explicit audit item; the ownership-derived
+reduced-trust case forces their bounded read path independently. Editing, large
+notes/journals, interactive loads, aggregate scratch and final-source acceptance
+remain open.
+
+Story-harvest station: **history browsing / between graph metadata → populated
+worktree table / status prerequisites must also read bounded metadata**. The
+history view passed while status still buffered HEAD through submodule discovery,
+even in a repository without submodules. The public `memory_tix` fixture and
+native HEAD fallback tests now observe both stations.
+
 ### Public-command audit in progress
 
 The command boundary is `src/plumbing/options/mod.rs` plus
@@ -3238,7 +3273,7 @@ explicitly does not attest behavior or working-tree bytes.
 | `branch`, `tag`, `remote`, `submodule`, `config`, `config-tree`, `attributes`, `exclude`, `mailmap` | Large config/packed-ref fixtures pass in both hashes and actual reduced trust. Mailmap object reads/output and annotated-tag reads are repaired and measured as above. Remote/submodule/path metadata and helper dispatch remain open. |
 | `credential`, `env`, `editor`, `completions`, `free`, `corpus`, `tix` | Applicable metadata/output/owned-child audit remains open. Existing unsupported behavior cannot be relabeled a memory success. |
 | `snapshot`, `build`, `run`, `graph`, `affected`, `plan`, `fingerprint`, `baseline`, `integrate`, `context` | Snapshot seal/verify/export/restore are measured on 20/64 MiB, aggregate and reduced-trust fixtures; the existing per-object 64 MiB native limit is preserved. `build fingerprint` and SHA-1 `build plan` now release streamed inputs and pass the aggregate 3×256 MiB workload; SHA-256 fingerprinting passes, while revision plan/affected retain the independently reproduced pre-existing Rakia limitation described above. Capture and other first-party metadata/output paths remain open; arbitrary external tasks are outside a universal success guarantee, but owned children still count in measured workloads. |
-| `tix` | The compiled surface has 29 leaves covering browsing, operation history, enrichment, editing, replay and worktrunk. `tix show` now has a measured 20 MiB commit failure during reference peeling under explicit 16 MiB and actual reduced trust (`bounded-memory/tix-history-before`); its fix and the remaining object readers, retained edit state and owned processes stay open. Successful ordinary log or authoring checks do not qualify this separate surface. |
+| `tix` | The compiled surface has 29 leaves covering browsing, operation history, enrichment, editing, replay and worktrunk. The 20 MiB commit refusal is repaired for show/ref-tree/worktrunk-show/op-log, with both-hash and actual reduced-trust receipts above. Native Tix804 passes. Editing, interactive loads, large notes/journals, CLI-only worker override propagation, retained edit state and owned processes stay open. Successful ordinary log or authoring checks do not qualify this separate surface. |
 | `credential`, `editor` | Credential input/helper output and editor child lifetime need explicit qualification. `gix-credentials/src/program/main.rs` and `helper/invoke.rs` retain complete protocol input/output; `gitoxide-core/src/repository/editor.rs` passes paths to a child and waits. No blob-memory success is inferred for these owned-child paths. |
 | `env`, `config-tree`, `completions`, help/version/surface output | Unaffected by repository blob or metadata growth, by implementation trace: `gitoxide-core/src/lib.rs::env` writes installation paths; `src/plumbing/progress.rs::show_progress` enumerates the compiled config schema; completion dispatch in `src/plumbing/main.rs` uses the compiled Clap tree; `brit-cli/src/main.rs` and `surface.rs` generate help/version/parser output before object access. `brit-cli/tests/unified.rs` checks the public help/version surface. Their allocations depend on the fixed executable/schema and process arguments, not repository contents. Output I/O and owned installation-path helper checks remain part of the ordinary fault/child suite. |
 | `free` metadata and transport helpers | Eighteen leaves include pack operations, mailmap verification, commit graphs, indexes, remote advertisement, discovery and ownership-derived trust. Pack round trips and actual trust probes are measured above; remaining metadata and transport helper coverage stays open. Optional corpus/query commands are absent from the candidate max-pure parser, not inferred successful. |

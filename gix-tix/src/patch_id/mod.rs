@@ -95,15 +95,11 @@ impl RefreshOutcome {
 
 /// Read only commit metadata. Missing, stale, and pending identities are not displayable.
 pub(crate) fn for_commit(repo: &gix::Repository, commit_id: ObjectId) -> Result<Option<PatchId>> {
-    let commit = repo
-        .find_commit(commit_id)
+    let objects = crate::history::object_source(repo)?;
+    let mut buffer = gix::objs::find::Buffer::default();
+    let commit = crate::history::decode_object(&objects, commit_id, &mut buffer)
         .or_raise(|| message("could not read the patch identity commit"))?;
-    current(
-        repo,
-        &commit
-            .decode()
-            .or_raise(|| message("could not decode the patch identity commit"))?,
-    )
+    current(repo, &commit)
 }
 
 pub(crate) fn current(repo: &gix::Repository, commit: &gix::objs::CommitRef<'_>) -> Result<Option<PatchId>> {
@@ -229,12 +225,8 @@ fn stored<'a>(mut values: impl Iterator<Item = &'a BStr>) -> Result<Option<Heade
 
 fn parent_tree(repo: &gix::Repository, parent_commit_id: Option<ObjectId>) -> Result<ObjectId> {
     match parent_commit_id {
-        Some(parent_commit_id) => repo
-            .find_commit(parent_commit_id)
-            .or_raise(|| message("could not read the patch's first parent"))?
-            .tree_id()
-            .map(gix::Id::detach)
-            .or_raise(|| message("could not read the patch's base tree ID")),
+        Some(parent_commit_id) => crate::enrich::tree_id(repo, parent_commit_id)
+            .or_raise(|| message("could not read the patch's first parent tree ID")),
         None => Ok(repo.object_hash().empty_tree()),
     }
 }

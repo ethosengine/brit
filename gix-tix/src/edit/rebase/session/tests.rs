@@ -4,6 +4,24 @@ use std::path::Path;
 use super::*;
 use crate::edit::{self, rebase};
 
+#[test]
+fn internal_commit_probe_does_not_hide_object_read_failure() -> gix_testtools::Result {
+    let fixture = gix_testtools::scripted_fixture_writable("rebase_edit.sh")?;
+    let repo = crate::test_repository::open(fixture.path())?;
+    let id = repo.head_id()?.detach();
+    assert!(!is_commit(&repo, id)?);
+    assert!(!is_commit(&repo, repo.object_hash().null())?);
+    assert!(!is_commit(&repo, repo.write_blob(b"not a commit")?.detach())?);
+
+    let hex = id.to_string();
+    let path = repo.git_dir().join("objects").join(&hex[..2]).join(&hex[2..]);
+    assert!(path.is_file(), "the fixture commit is loose");
+    std::fs::write(path, b"invalid compressed object")?;
+    let error = is_commit(&repo, id).expect_err("an unreadable internal commit is not an ordinary commit");
+    assert!(error.is_corrupted(), "{error:?}");
+    Ok(())
+}
+
 fn git(path: &Path, args: &[&str]) -> gix_testtools::Result {
     let output = gix_testtools::git_command(path).args(args).output()?;
     assert!(

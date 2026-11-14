@@ -392,6 +392,13 @@ without trading responsiveness for metadata that is not visible.
   repeated ODB decoding during a walk.
 - Metadata already decoded from ODB is retained. Metadata omitted because a
   commit came from the commit-graph is populated lazily for visible rows.
+- History object reads retain the repository's allocation and trust policy.
+  Larger commit and tag bodies use verified, immutable temporary mappings through
+  the shared object reader. A walk reuses one byte buffer and scratch budget;
+  completed history operations retain detached graph/row data, never mapped bodies.
+  Commit-graph selection, topology ordering, hidden boundaries and metadata parsing
+  are the same for buffered and mapped reads. Resource and I/O failures while
+  checking internal rebase commits remain errors, not ordinary selectable commits.
 - The persistent graph is append-only and index-addressed, with one compact copy
   of each commit and flat parent edges. View refreshes project rows from this
   cache and stop walking when complete cached ancestry is reached.

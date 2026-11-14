@@ -49,10 +49,16 @@ pub(crate) fn is_ref(name: &BStr) -> bool {
 }
 
 pub(crate) fn is_commit(repo: &gix::Repository, commit_id: ObjectId) -> Result<bool> {
-    let Ok(commit) = repo.find_commit(commit_id) else {
+    use gix::traverse::commit::topo::source::Source as _;
+    let Some(header) = repo.try_find_header(commit_id)? else {
         return Ok(false);
     };
-    let message = commit.message_raw()?;
+    if header.kind() != gix::objs::Kind::Commit {
+        return Ok(false);
+    }
+    let objects = crate::history::object_source(repo)?;
+    let mut buffer = gix::objs::find::Buffer::default();
+    let message = objects.find_commit(&commit_id, &mut buffer)?.message()?;
     Ok(message.starts_with(format!("{TITLE}\n\n[rebase]").as_bytes()))
 }
 

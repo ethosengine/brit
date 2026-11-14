@@ -57,9 +57,9 @@ pub(crate) fn ref_chain_reaches(repo: &gix::Repository, name: &FullNameRef) -> R
 }
 
 pub(crate) fn is_checkpoint(repo: &gix::Repository, commit_id: ObjectId) -> Result<bool> {
-    Ok(repo
-        .find_commit(commit_id)?
-        .decode()?
+    let objects = crate::history::object_source(repo)?;
+    let mut buffer = gix::objs::find::Buffer::default();
+    Ok(crate::history::decode_object(&objects, commit_id, &mut buffer)?
         .extra_headers()
         .find("tix-replay-checkpoint")
         .is_some())

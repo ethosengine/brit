@@ -20,8 +20,9 @@ pub(crate) fn effective<'a>(commit_id: ObjectId, mut values: impl Iterator<Item 
 }
 
 pub(crate) fn for_commit(repo: &gix::Repository, id: ObjectId) -> Result<ChangeId> {
-    let object = repo.find_commit(id)?;
-    let commit = object.decode()?;
+    let objects = crate::history::object_source(repo)?;
+    let mut buffer = gix::objs::find::Buffer::default();
+    let commit = crate::history::decode_object(&objects, id, &mut buffer)?;
     Ok(effective(id, commit.extra_headers().find_all(HEADER)))
 }
 
@@ -117,12 +118,13 @@ pub(crate) struct Scan {
 }
 
 pub(crate) fn scan(repo: &gix::Repository, ids: &[ObjectId]) -> Result<Scan> {
+    let objects = crate::history::object_source(repo)?;
+    let mut buffer = gix::objs::find::Buffer::default();
     let mut overrides = HashMap::new();
     let mut first_by_change = HashMap::new();
     let mut duplicates = HashSet::new();
     for &id in ids {
-        let object = repo.find_commit(id)?;
-        let commit = object.decode()?;
+        let commit = crate::history::decode_object(&objects, id, &mut buffer)?;
         let change_id = effective(id, commit.extra_headers().find_all(HEADER));
         if change_id != ChangeId::from(id) {
             overrides.insert(id, change_id);

@@ -735,15 +735,15 @@ fn unique_tix_boundary(
 }
 
 fn diffstat(repository: &gix::Repository, base_id: gix::ObjectId, head_id: gix::ObjectId) -> Result<(u64, u64)> {
+    let base_tree_id =
+        crate::enrich::tree_id(repository, base_id).or_raise(|| message("could not read the Tix base commit"))?;
     let base = repository
-        .find_commit(base_id)
-        .or_raise(|| message("could not read the Tix base commit"))?
-        .tree()
+        .find_tree(base_tree_id)
         .or_raise(|| message("could not read the Tix base tree"))?;
+    let head_tree_id =
+        crate::enrich::tree_id(repository, head_id).or_raise(|| message("could not read the logical head commit"))?;
     let head = repository
-        .find_commit(head_id)
-        .or_raise(|| message("could not read the logical head commit"))?
-        .tree()
+        .find_tree(head_tree_id)
         .or_raise(|| message("could not read the logical head tree"))?;
     let stats = base
         .changes()

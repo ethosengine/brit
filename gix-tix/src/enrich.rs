@@ -145,7 +145,10 @@ fn load_config(notes: &mut gix::note::Platform, object_id: ObjectId) -> Result<O
 }
 
 pub(crate) fn tree_id(repo: &gix::Repository, commit_id: ObjectId) -> Result<ObjectId> {
-    Ok(repo.find_commit(commit_id)?.tree_id()?.detach())
+    use gix::traverse::commit::topo::source::Source as _;
+    crate::history::object_source(repo)?
+        .find_commit(&commit_id, &mut gix::objs::find::Buffer::default())?
+        .tree_id()
 }
 
 pub(crate) fn toggle(repo: &gix::Repository, commit_id: ObjectId) -> Result<Enrichment> {

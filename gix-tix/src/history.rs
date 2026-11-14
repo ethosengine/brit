@@ -9,10 +9,18 @@ use gix::{
     Error, ObjectId, Result,
     bstr::{BStr, BString, ByteSlice, ByteVec},
     error::{ErrorExt, OptionExt, ResultExt, message},
+    object::bounded::Source,
     objs::commit::ref_iter::Token,
+    objs::find::Buffer,
+    traverse::commit::topo::source::Source as _,
 };
 
 use crate::app::{Attribution, AttributionKind, Author, Commit, LoadedCommits, Metadata, SignatureState};
+
+/// Temporary object ownership belongs to a bounded history operation, never idle UI state.
+pub(crate) fn object_source(repo: &gix::Repository) -> Result<Source<'_>> {
+    Source::new(repo, gix::utils::stream::Budget::new(&std::env::temp_dir()).or_error()?)
+}
 
 pub(crate) type SharedAuthors = gix::parallel::OwnShared<gix::parallel::Mutable<Authors>>;
 static EMPTY_AUTHOR: std::sync::LazyLock<Author> = std::sync::LazyLock::new(|| Author {
@@ -229,12 +237,14 @@ impl HistoryGraph {
             .flat_map(|commits| commits.iter().copied().collect::<Vec<_>>())
             .collect();
         let commit_graph = repo.commit_graph_if_enabled()?;
-        let mut buf = Vec::new();
+        let objects = object_source(repo)?;
+        let mut buf = Buffer::default();
         for id in ids {
-            graph.ensure_commit(repo, commit_graph.as_ref(), &shallow, *id, &mut buf)?;
+            graph.ensure_commit(&objects, commit_graph.as_ref(), &shallow, *id, &mut buf)?;
         }
         graph.set_current_view(ids);
         graph.edit_scope.extend(ids.iter().copied());
+        buf.clear();
         graph.inspect_edit_metadata(repo)?;
         Ok(graph)
     }
@@ -294,12 +304,13 @@ impl HistoryGraph {
     }
 
     fn inspect_edit_metadata(&mut self, repo: &gix::Repository) -> Result<()> {
+        let objects = object_source(repo)?;
+        let mut buffer = Buffer::default();
         for commit_id in self.edit_commit_ids() {
             if self.edit_metadata_checked.contains(&commit_id) {
                 continue;
             }
-            let commit = repo.find_commit(commit_id)?;
-            let decoded = commit.decode()?;
+            let decoded = decode_object(&objects, commit_id, &mut buffer)?;
             if decoded
                 .extra_headers()
                 .find_all(crate::patch_id::HEADER)
@@ -366,7 +377,10 @@ impl HistoryGraph {
     pub(crate) fn parents_or_load(&self, repo: &gix::Repository, commit_id: ObjectId) -> Result<Vec<ObjectId>> {
         match self.parents_of(commit_id) {
             Some(parents) => Ok(parents),
-            None => Ok(repo.find_commit(commit_id)?.parent_ids().map(gix::Id::detach).collect()),
+            None => Ok(object_source(repo)?
+                .find_commit(&commit_id, &mut Buffer::default())?
+                .parent_ids()
+                .collect()),
         }
     }
 
@@ -492,17 +506,23 @@ impl HistoryGraph {
 
     fn ensure_commit(
         &mut self,
-        repo: &gix::Repository,
+        objects: &Source<'_>,
         cache: Option<&gix::commitgraph::Graph>,
         shallow: &HashSet<ObjectId>,
         id: ObjectId,
-        buf: &mut Vec<u8>,
+        buf: &mut Buffer,
     ) -> Result<CommitIndex> {
         let index = self.intern(id)?;
         if self.commits[index.as_usize()].state & NODE_LOADED != 0 {
             return Ok(index);
         }
-        let commit = gix::traverse::commit::find(cache, &repo.objects, &id, buf)?;
+        let commit = match cache.and_then(|cache| cache.commit_by_id(id)) {
+            Some(commit) => {
+                buf.clear();
+                gix::traverse::commit::Either::CachedCommit(commit)
+            }
+            None => gix::traverse::commit::Either::CommitRefIter(objects.find_commit(&id, buf)?),
+        };
         let (mut parents, commit_time, generation) = match commit {
             gix::traverse::commit::Either::CommitRefIter(iter) => {
                 let mut parents = gix::traverse::commit::ParentIds::new();
@@ -557,16 +577,16 @@ impl HistoryGraph {
     #[expect(clippy::too_many_arguments)]
     fn schedule_cached(
         &mut self,
-        repo: &gix::Repository,
+        objects: &Source<'_>,
         cache: Option<&gix::commitgraph::Graph>,
         shallow: &HashSet<ObjectId>,
         states: &mut Vec<WalkState>,
         queue: &mut gix::revwalk::PriorityQueue<gix::date::SecondsSinceUnixEpoch, CommitIndex>,
-        buf: &mut Vec<u8>,
+        buf: &mut Buffer,
         id: ObjectId,
         flags: u8,
     ) -> Result<()> {
-        let index = self.ensure_commit(repo, cache, shallow, id, buf)?;
+        let index = self.ensure_commit(objects, cache, shallow, id, buf)?;
         states.resize(self.commits.len(), WalkState::default());
         let state = &mut states[index.as_usize()];
         if state.flags & flags != flags {
@@ -798,10 +818,11 @@ impl HistoryGraph {
         let mut tracking = HashMap::new();
         let mut states = vec![WalkState::default(); self.commits.len()];
         let mut queue = gix::revwalk::PriorityQueue::new();
-        let mut buf = Vec::new();
+        let objects = object_source(repo)?;
+        let mut buf = Buffer::default();
         for id in refs.view_tips.iter().chain(&refs.hidden_tips).copied() {
             self.schedule_cached(
-                repo,
+                &objects,
                 cache.as_ref(),
                 &shallow,
                 &mut states,
@@ -813,7 +834,7 @@ impl HistoryGraph {
         }
         for &id in expand {
             self.schedule_cached(
-                repo,
+                &objects,
                 cache.as_ref(),
                 &shallow,
                 &mut states,
@@ -831,7 +852,7 @@ impl HistoryGraph {
             let tracked = resolve_tracking(repo, names)?;
             if tracked.iter().any(|reference| reference.upstream.flatten().is_some()) {
                 self.schedule_cached(
-                    repo,
+                    &objects,
                     cache.as_ref(),
                     &shallow,
                     &mut states,
@@ -843,7 +864,7 @@ impl HistoryGraph {
             }
             for upstream in tracked.iter().filter_map(|reference| reference.upstream.flatten()) {
                 self.schedule_cached(
-                    repo,
+                    &objects,
                     cache.as_ref(),
                     &shallow,
                     &mut states,
@@ -881,7 +902,7 @@ impl HistoryGraph {
                     let tracked = resolve_tracking(repo, names)?;
                     if tracked.iter().any(|reference| reference.upstream.flatten().is_some()) {
                         self.schedule_cached(
-                            repo,
+                            &objects,
                             cache.as_ref(),
                             &shallow,
                             &mut states,
@@ -893,7 +914,7 @@ impl HistoryGraph {
                     }
                     for upstream in tracked.iter().filter_map(|reference| reference.upstream.flatten()) {
                         self.schedule_cached(
-                            repo,
+                            &objects,
                             cache.as_ref(),
                             &shallow,
                             &mut states,
@@ -909,9 +930,9 @@ impl HistoryGraph {
                     let metadata = if self.commits[index.as_usize()].generation().is_some() {
                         None
                     } else {
-                        let object = repo.find_commit(id)?;
+                        let object = objects.find_commit(&id, &mut buf)?;
                         let mut authors = gix::parallel::lock(authors);
-                        Some(decode_metadata(object.iter(), &mut authors, &mut attributions)?)
+                        Some(decode_metadata(object, &mut authors, &mut attributions)?)
                     };
                     let metadata_loaded = metadata.is_some();
                     let Metadata {
@@ -960,7 +981,7 @@ impl HistoryGraph {
             }
             for parent in parent_indices {
                 self.schedule_cached(
-                    repo,
+                    &objects,
                     cache.as_ref(),
                     &shallow,
                     &mut states,
@@ -978,6 +999,7 @@ impl HistoryGraph {
         }
         self.tracking.extend(tracking);
         self.switch_view(&refs.view_tips, &refs.hidden_tips);
+        buf.clear();
         self.inspect_edit_metadata(repo)?;
         let decorations = match authors {
             Some(_) => decorations(repo, &refs.pins, &refs.worktrees)?,
@@ -1086,16 +1108,16 @@ struct WalkState {
 #[expect(clippy::too_many_arguments)]
 fn schedule(
     graph: &mut HistoryGraph,
-    repo: &gix::Repository,
+    objects: &Source<'_>,
     cache: Option<&gix::commitgraph::Graph>,
     states: &mut Vec<Node>,
     queue: &mut gix::revwalk::PriorityQueue<gix::date::SecondsSinceUnixEpoch, CommitIndex>,
     shallow: &HashSet<ObjectId>,
-    buf: &mut Vec<u8>,
+    buf: &mut Buffer,
     id: ObjectId,
     flags: u8,
 ) -> Result<()> {
-    let index = graph.ensure_commit(repo, cache, shallow, id, buf)?;
+    let index = graph.ensure_commit(objects, cache, shallow, id, buf)?;
     states.resize(graph.commits.len(), Node::default());
     let state = &mut states[index.as_usize()];
     if state.flags & flags != flags {
@@ -1118,10 +1140,11 @@ fn hidden_frontier(
     }
     let mut flags = Vec::<u8>::new();
     let mut queue = gix::revwalk::PriorityQueue::<GenThenTime, CommitIndex>::new();
-    let mut buf = Vec::new();
+    let objects = object_source(repo)?;
+    let mut buf = Buffer::default();
     for (tips, flag) in [(visible_tips, VISIBLE), (hidden_tips, HIDDEN)] {
         for &id in tips {
-            let index = graph.ensure_commit(repo, cache, shallow, id, &mut buf)?;
+            let index = graph.ensure_commit(&objects, cache, shallow, id, &mut buf)?;
             flags.resize(graph.commits.len(), 0);
             flags[index.as_usize()] |= flag;
             queue.insert(GenThenTime::from(&graph.commits[index.as_usize()]), index);
@@ -1137,7 +1160,7 @@ fn hidden_frontier(
         let parents = graph.known_parents(index).to_vec();
         for parent in parents {
             let parent_id = graph.id(parent);
-            let parent = graph.ensure_commit(repo, cache, shallow, parent_id, &mut buf)?;
+            let parent = graph.ensure_commit(&objects, cache, shallow, parent_id, &mut buf)?;
             flags.resize(graph.commits.len(), 0);
             let parent_flags = &mut flags[parent.as_usize()];
             if *parent_flags & propagated != propagated {
@@ -1246,17 +1269,18 @@ pub(crate) fn load(
         let mut rows = Vec::with_capacity(hidden_tips.len());
         let mut attributions = Vec::new();
         let mut authors = gix::parallel::lock(authors);
-        let mut buf = Vec::new();
+        let objects = object_source(repo)?;
+        let mut buf = Buffer::default();
         for &id in &hidden_tips {
             if cancelled.load(Ordering::Relaxed) {
                 emit(Event::Cancelled);
                 return Ok(());
             }
-            let index = graph.ensure_commit(repo, commit_graph.as_ref(), &shallow, id, &mut buf)?;
+            let index = graph.ensure_commit(&objects, commit_graph.as_ref(), &shallow, id, &mut buf)?;
             if graph.commits[index.as_usize()].state & NODE_STORED != 0 {
                 continue;
             }
-            rows.push(decode_commit(repo, id, &mut authors, &mut attributions)?);
+            rows.push(decode_commit(&objects, id, &mut buf, &mut authors, &mut attributions)?);
             graph.commits[index.as_usize()].state |= NODE_STORED;
             graph.stored_order.push(index);
         }
@@ -1266,6 +1290,7 @@ pub(crate) fn load(
         }
         emit(Event::VisibleComplete);
         graph.switch_view(&tips, &hidden_tips);
+        buf.clear();
         graph.inspect_edit_metadata(repo)?;
         emit(Event::Complete(graph));
         return Ok(());
@@ -1290,11 +1315,12 @@ pub(crate) fn load(
     let mut tracking = HashMap::new();
     let mut states = vec![Node::default(); graph.commits.len()];
     let mut queue = gix::revwalk::PriorityQueue::new();
-    let mut buf = Vec::new();
+    let objects = object_source(repo)?;
+    let mut buf = Buffer::default();
     for &tip in &tips {
         schedule(
             &mut graph,
-            repo,
+            &objects,
             commit_graph.as_ref(),
             &mut states,
             &mut queue,
@@ -1336,7 +1362,7 @@ pub(crate) fn load(
             if refs.iter().any(|reference| reference.upstream.flatten().is_some()) {
                 schedule(
                     &mut graph,
-                    repo,
+                    &objects,
                     commit_graph.as_ref(),
                     &mut states,
                     &mut queue,
@@ -1349,7 +1375,7 @@ pub(crate) fn load(
             for upstream in refs.iter().filter_map(|reference| reference.upstream.flatten()) {
                 schedule(
                     &mut graph,
-                    repo,
+                    &objects,
                     commit_graph.as_ref(),
                     &mut states,
                     &mut queue,
@@ -1364,9 +1390,9 @@ pub(crate) fn load(
         let metadata = if !should_emit || generation.is_some() {
             None
         } else {
-            let object = repo.find_commit(id)?;
+            let object = objects.find_commit(&id, &mut buf)?;
             let mut authors = gix::parallel::lock(authors);
-            Some(decode_metadata(object.iter(), &mut authors, &mut attributions)?)
+            Some(decode_metadata(object, &mut authors, &mut attributions)?)
         };
         if should_emit {
             let metadata_loaded = metadata.is_some();
@@ -1434,7 +1460,7 @@ pub(crate) fn load(
             if parent_flags != 0 {
                 schedule(
                     &mut graph,
-                    repo,
+                    &objects,
                     commit_graph.as_ref(),
                     &mut states,
                     &mut queue,
@@ -1472,8 +1498,8 @@ pub(crate) fn load(
                 emit(Event::Cancelled);
                 return Ok(());
             }
-            rows.push(decode_commit(repo, id, &mut authors, &mut attributions)?);
-            let index = graph.ensure_commit(repo, commit_graph.as_ref(), &shallow, id, &mut buf)?;
+            rows.push(decode_commit(&objects, id, &mut buf, &mut authors, &mut attributions)?);
+            let index = graph.ensure_commit(&objects, commit_graph.as_ref(), &shallow, id, &mut buf)?;
             if graph.commits[index.as_usize()].state & NODE_STORED == 0 {
                 graph.commits[index.as_usize()].state |= NODE_STORED;
                 graph.stored_order.push(index);
@@ -1486,6 +1512,7 @@ pub(crate) fn load(
     emit(Event::VisibleComplete);
     graph.tracking = tracking;
     graph.switch_view(&tips, &hidden_tips);
+    buf.clear();
     graph.inspect_edit_metadata(repo)?;
     emit(Event::Complete(graph));
     Ok(())
@@ -1915,21 +1942,23 @@ pub(crate) fn load_metadata(
     id: ObjectId,
     authors: &SharedAuthors,
 ) -> Result<(Metadata<BString>, Vec<Attribution>)> {
-    let object = repo.find_commit(id)?;
+    let mut buffer = Buffer::default();
+    let object = object_source(repo)?.find_commit(&id, &mut buffer)?;
     let mut attributions = Vec::new();
     let mut authors = gix::parallel::lock(authors);
-    let metadata = decode_metadata(object.iter(), &mut authors, &mut attributions)?;
+    let metadata = decode_metadata(object, &mut authors, &mut attributions)?;
     Ok((metadata, attributions))
 }
 
 fn decode_commit(
-    repo: &gix::Repository,
+    objects: &Source<'_>,
     id: ObjectId,
+    buffer: &mut Buffer,
     authors: &mut Authors,
     attributions: &mut Vec<Attribution>,
 ) -> Result<Commit<BString>> {
-    let object = repo.find_commit(id)?;
-    let parent_ids = object.parent_ids().map(gix::Id::detach).collect();
+    let object = objects.find_commit(&id, buffer)?;
+    let parent_ids = object.parent_ids().collect();
     let Metadata {
         committer_time,
         author_time,
@@ -1940,7 +1969,7 @@ fn decode_commit(
         is_review,
         has_merge_replay,
         signature,
-    } = decode_metadata(object.iter(), authors, attributions)?;
+    } = decode_metadata(object, authors, attributions)?;
     Ok(Commit {
         id,
         parent_ids,
@@ -1955,6 +1984,19 @@ fn decode_commit(
         has_merge_replay,
         signature,
     })
+}
+
+pub(crate) fn decode_object<'a>(
+    objects: &Source<'_>,
+    id: ObjectId,
+    buffer: &'a mut Buffer,
+) -> Result<gix::objs::CommitRef<'a>> {
+    let data = objects.load(&id, buffer)?;
+    gix::error::ensure!(
+        data.kind == gix::objs::Kind::Commit,
+        message!("Expected commit {id}").validation()
+    );
+    gix::objs::CommitRef::from_bytes(data.data, id.kind())
 }
 
 fn decode_metadata<'a>(
@@ -2171,11 +2213,10 @@ pub(crate) fn resolve_revision(
     let id = spec
         .single()
         .ok_or_raise(|| message("revision does not name a single object"))?
-        .object()
-        .or_raise(|| message("could not read revision"))?
-        .peel_to_kind(gix::object::Kind::Commit)
-        .or_raise(|| message("revision does not resolve to a commit"))?
-        .id;
+        .detach();
+    let id = object_source(repo)?
+        .peel(id, gix::object::Kind::Commit)
+        .or_raise(|| message("revision does not resolve to a commit"))?;
     gix::error::ensure!(
         !crate::edit::undo::is_internal_commit(repo, id)?,
         message("internal Tix state is not a selectable revision")
@@ -2248,8 +2289,10 @@ pub(crate) fn decorations_excluding(
         }
         if full_name.as_bstr().starts_with(REVIEW_STASH_PREFIX) {
             let leaf: Result<Option<ObjectId>> = (|| {
-                let stash = repo.find_commit(reference.peel_to_id()?)?;
-                Ok(stash.parent_ids().next().map(gix::Id::detach))
+                let mut buffer = Buffer::default();
+                let objects = object_source(repo)?;
+                let stash = objects.find_commit(&reference.peel_to_id()?.detach(), &mut buffer)?;
+                Ok(stash.parent_ids().next())
             })();
             let leaf = match leaf {
                 Ok(leaf) => leaf,
