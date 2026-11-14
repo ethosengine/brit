@@ -3623,7 +3623,7 @@ Credential decoding now copies recognized fields once and does not allocate
 values for ignored fields. The command releases serialized input after parsing
 and moves its context into the helper cascade, retaining only the URL needed
 for a missing-credential diagnostic. Protocol parsing and helper selection are
-unchanged. All 78 credential native/doc tests and strict affected gates pass.
+unchanged. All 78 credential test cases and strict affected gates pass.
 A synthetic 20 MiB password exercises `credential fill` from input and helper
 output, plus `approve` and `reject` helper input. Fields and outcomes agree with
 stock Git without logging protocol data; HEAD and index are unchanged.
@@ -3637,6 +3637,20 @@ explicit-policy coverage, protocol-writer faults, adversarial helpers and
 aggregate scratch/final-source acceptance remain open. In particular, helper
 input closure must retain existing fallback behavior when correcting writer
 error handling; it is distinct from successful delivery of CLI output.
+
+The writer follow-up reproduces and repairs successful returns after partial
+output and filesystem exhaustion. The serializer preserves I/O errors; helper
+transport alone tolerates a closed input pipe so existing helper fallback still
+works. All 81 credential test executions pass, including every output boundary
+and the early-closing-helper regression. The expanded public matrix adds actual
+reduced trust, explicit 16 MiB/one-byte object policies and `/dev/full`; all three
+cases per hash pass at 147,443,712 B / 141,037,568 B in 8.630 / 8.559 s with zero
+OOM, survivors or identity changes. Command-line helper settings retain their
+existing explicit-user authority. Binary:
+`ba453d60f3644cf9fad0d30c5fb50c12b2e649e260b3031e818e590431d8b93b`.
+Private evidence: `bounded-memory/credentials-writer-*`. Strict affected gates
+pass. Adversarial helper lifetimes, aggregate scratch and final-source
+qualification remain open.
 
 ### Public-command audit in progress
 

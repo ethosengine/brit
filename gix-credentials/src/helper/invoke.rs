@@ -8,7 +8,16 @@ impl Action {
     /// Send ourselves to the given `write` which is expected to be credentials-helper compatible
     pub fn send(&self, write: &mut dyn std::io::Write) -> std::io::Result<()> {
         match self {
-            Action::Get(ctx) => ctx.write_to(write),
+            // A helper may close its input without consuming the context. Keep
+            // reading its response/status so a failed helper permits fallback.
+            // This exception belongs to helper transport, not protocol output.
+            Action::Get(ctx) => ctx.write_to(write).or_else(|err| {
+                if err.kind() == std::io::ErrorKind::BrokenPipe {
+                    Ok(())
+                } else {
+                    Err(err)
+                }
+            }),
             Action::Store(last) | Action::Erase(last) => {
                 write.write_all(last).ok();
                 write.write_all(b"\n").ok();

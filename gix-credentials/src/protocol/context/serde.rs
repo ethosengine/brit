@@ -38,7 +38,7 @@ mod write {
             for (key, value) in [("url", url), ("path", path)] {
                 if let Some(value) = value {
                     validate(key, value.as_slice().into(), *protect_protocol).map_err(std::io::Error::other)?;
-                    write_key(&mut out, key, value.as_ref()).ok();
+                    write_key(&mut out, key, value.as_ref())?;
                 }
             }
             for (key, value) in [
@@ -50,19 +50,19 @@ mod write {
             ] {
                 if let Some(value) = value {
                     validate(key, value.as_str().into(), *protect_protocol).map_err(std::io::Error::other)?;
-                    write_key(&mut out, key, value.as_bytes().as_bstr()).ok();
+                    write_key(&mut out, key, value.as_bytes().as_bstr())?;
                 }
             }
             if let Some(value) = password_expiry_utc {
                 let key = "password_expiry_utc";
                 let value = value.to_string();
                 validate(key, value.as_str().into(), *protect_protocol).map_err(std::io::Error::other)?;
-                write_key(&mut out, key, value.as_bytes().as_bstr()).ok();
+                write_key(&mut out, key, value.as_bytes().as_bstr())?;
             }
             for value in www_authenticate {
                 let key = "wwwauth[]";
                 validate(key, value.as_ref(), *protect_protocol).map_err(std::io::Error::other)?;
-                write_key(&mut out, key, value.as_ref()).ok();
+                write_key(&mut out, key, value.as_ref())?;
             }
             Ok(())
         }

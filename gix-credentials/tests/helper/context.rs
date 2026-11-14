@@ -63,6 +63,37 @@ mod write_to {
     use gix_credentials::protocol::{Context, ContextOptions};
 
     #[test]
+    fn partial_output_failures_are_reported_at_every_boundary() -> gix_testtools::TestResult {
+        struct FailsAfter(usize);
+        impl std::io::Write for FailsAfter {
+            fn write(&mut self, bytes: &[u8]) -> std::io::Result<usize> {
+                if self.0 == 0 {
+                    return Err(std::io::ErrorKind::StorageFull.into());
+                }
+                let n = bytes.len().min(self.0);
+                self.0 -= n;
+                Ok(n)
+            }
+            fn flush(&mut self) -> std::io::Result<()> {
+                Ok(())
+            }
+        }
+        let context = Context::from_bytes(
+            b"url=https://example.invalid\npath=repo\nprotocol=https\nhost=example.invalid\nusername=fixture\npassword=synthetic\noauth_refresh_token=synthetic\npassword_expiry_utc=1600000000\nwwwauth[]=Basic\n",
+            ContextOptions::default(),
+        )?;
+        let mut output = Vec::new();
+        context.write_to(&mut output)?;
+        for boundary in 0..output.len() {
+            let error = context
+                .write_to(FailsAfter(boundary))
+                .expect_err("partial protocol delivery is not success");
+            assert_eq!(error.kind(), std::io::ErrorKind::StorageFull);
+        }
+        Ok(())
+    }
+
+    #[test]
     fn quit_is_not_serialized_but_can_be_parsed() -> gix_testtools::TestResult {
         let mut buf = Vec::<u8>::new();
         Context {

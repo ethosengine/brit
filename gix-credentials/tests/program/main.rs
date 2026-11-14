@@ -4,6 +4,31 @@ use gix_error::Result;
 use std::{ffi::OsString, io::Cursor};
 
 #[test]
+fn output_failure_is_not_success() {
+    struct Full;
+    impl std::io::Write for Full {
+        fn write(&mut self, _: &[u8]) -> std::io::Result<usize> {
+            Err(std::io::ErrorKind::StorageFull.into())
+        }
+        fn flush(&mut self) -> std::io::Result<()> {
+            Ok(())
+        }
+    }
+    let error = main(
+        ["fill".into()],
+        Cursor::new(b"protocol=https\nhost=example.invalid\nusername=fixture\npassword=synthetic\n"),
+        Full,
+        Default::default(),
+        |_, context| Ok(Some(context)),
+    )
+    .expect_err("a full output destination must fail the command");
+    assert_eq!(
+        error.downcast_any_ref::<std::io::Error>().expect("I/O cause").kind(),
+        std::io::ErrorKind::StorageFull
+    );
+}
+
+#[test]
 fn action_aliases_are_accepted() -> gix_testtools::TestResult {
     for (input, expected) in [
         ("get", "get"),
