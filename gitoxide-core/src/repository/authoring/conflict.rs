@@ -79,7 +79,7 @@ impl Preservation {
         let (raw_state, _) =
             gix::index::State::from_bytes(&raw_index, original.timestamp(), repo.object_hash(), Default::default())?;
         ensure!(raw_state.link().is_none(), "split index unsupported");
-        let base = repo.index_from_tree(&repo.head_commit()?.tree_id()?)?;
+        let base = repo.index_from_tree(&repo.head_tree_id()?)?;
         let original_entries = entries(&original);
         let mut preserved = changed(&entries(&base), &original_entries);
         let budget = gix::utils::stream::Budget::new(&std::env::temp_dir())?;
@@ -1430,7 +1430,7 @@ impl Session {
         );
         self.clean(repo, &self.state.private)?;
         if self.state.kind == StopKind::Edit {
-            let committed = repo.index_from_tree(&repo.head_commit()?.tree_id()?)?;
+            let committed = repo.index_from_tree(&repo.head_tree_id()?)?;
             ensure!(
                 changed(&self.state.private, &entries(&committed)).is_empty(),
                 "staged edit work must be committed before completion"

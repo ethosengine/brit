@@ -201,7 +201,7 @@ impl Session {
             .collect::<Vec<_>>();
         preservation.validate_scope(&active)?;
         let root = repo.workdir().context("worktree required")?;
-        let original_tree = repo.index_from_tree(&repo.find_commit(selection.original)?.tree_id()?)?;
+        let original_tree = repo.index_from_tree(&repo.tree_id_of_commit(selection.original)?)?;
         let witness = crate::repository::authoring::conflict::worktree_witness(repo, &active)?;
         let mut work = Vec::new();
         for path in active {
@@ -508,9 +508,7 @@ impl Session {
                 let _guard = switch::shared_guard(repo)?;
                 self.validate_current(repo)?;
                 let index = repo.index_from_tree(
-                    &repo
-                        .find_commit(gix::ObjectId::from_hex(self.state.original.as_bytes())?)?
-                        .tree_id()?,
+                    &repo.tree_id_of_commit(gix::ObjectId::from_hex(self.state.original.as_bytes())?)?,
                 )?;
                 let mut bytes = Vec::new();
                 index.write_to(&mut bytes, Default::default())?;
@@ -603,7 +601,7 @@ impl Session {
         self.validate_current(repo)?;
         if self.state.phase == "pre-approved" {
             let tip = gix::ObjectId::from_hex(self.state.upstream.as_bytes())?;
-            let tree = repo.find_commit(tip)?.tree_id()?.detach();
+            let tree = repo.tree_id_of_commit(tip)?.detach();
             let private = repo.index_from_tree(&tree)?;
             let (mut after, transition) =
                 self.checkout_transition(repo, tree, &private, tip, super::transition::Kind::Checkout)?;
@@ -804,7 +802,7 @@ impl Session {
             .as_ref()
             .and_then(|interactive| interactive.edit.as_ref())
         {
-            let private = repo.index_from_tree(&repo.find_commit(self.tip()?)?.tree_id()?)?;
+            let private = repo.index_from_tree(&repo.tree_id_of_commit(self.tip()?)?)?;
             let active = edit.active.iter().cloned().map(Into::into).collect::<Vec<BString>>();
             crate::repository::authoring::conflict::Session::prepare_owned(
                 repo,
@@ -1092,7 +1090,7 @@ impl Session {
         }
         let invocation = self.directory.join("post-rewrite");
         let index = self.directory.join("index.post-rewrite");
-        let private = repo.index_from_tree(&repo.find_commit(self.tip()?)?.tree_id()?)?;
+        let private = repo.index_from_tree(&repo.tree_id_of_commit(self.tip()?)?)?;
         let mut bytes = Vec::new();
         private.write_to(&mut bytes, Default::default())?;
         match fs::symlink_metadata(&index) {
@@ -1153,7 +1151,7 @@ impl Session {
 
     fn validate_published_resources(&self, repo: &gix::Repository) -> Result<()> {
         ensure!(
-            repo.head_commit()?.id == self.tip()?,
+            super::head_commit_id(repo)? == self.tip()?,
             "published branch or detached HEAD moved from final tip"
         );
         ensure!(
@@ -1411,11 +1409,8 @@ impl Session {
         active.dedup();
         self.state.preservation.validate_scope(&active)?;
         let root = repo.workdir().context("worktree required")?;
-        let original = repo.index_from_tree(
-            &repo
-                .find_commit(gix::ObjectId::from_hex(self.state.original.as_bytes())?)?
-                .tree_id()?,
-        )?;
+        let original =
+            repo.index_from_tree(&repo.tree_id_of_commit(gix::ObjectId::from_hex(self.state.original.as_bytes())?)?)?;
         for path in active
             .iter()
             .filter(|p| !self.state.work.iter().any(|c| c.path == **p))
@@ -1488,7 +1483,7 @@ impl Session {
         let edit = self.current_command()? == Command::Edit;
         let mut active = BTreeSet::new();
         if edit {
-            let parent = repo.index_from_tree(&repo.find_commit(self.tip()?)?.tree_id()?)?;
+            let parent = repo.index_from_tree(&repo.tree_id_of_commit(self.tip()?)?)?;
             changed_index_paths(&parent, &private, &mut active)?;
             let active = active.iter().cloned().collect::<Vec<_>>();
             after.authorized_stop = Some(stop_digest(
@@ -1578,7 +1573,7 @@ impl Session {
             .map(|edit| gix::ObjectId::from_hex(edit.parent.as_bytes()))
             .transpose()?
             .unwrap_or(self.tip()?);
-        let tree = repo.find_commit(target)?.tree_id()?.detach();
+        let tree = repo.tree_id_of_commit(target)?.detach();
         let private = repo.index_from_tree(&tree)?;
         let (mut after, transition) =
             self.checkout_transition(repo, tree, &private, target, super::transition::Kind::Skip)?;
@@ -1785,7 +1780,7 @@ impl Session {
         );
         if self.state.phase == "completed" {
             ensure!(
-                repo.head_commit()?.id == self.tip()?
+                super::head_commit_id(repo)? == self.tip()?
                     && switch::snapshot(&repo.git_dir().join("HEAD"))? == self.state.head,
                 "published branch or HEAD moved before cleanup"
             );
@@ -2103,7 +2098,7 @@ impl Session {
             self.state.copies,
             original,
             tip,
-            repo.head_commit()?.id,
+            super::head_commit_id(repo)?,
             &members,
         )
     }
@@ -2183,7 +2178,7 @@ impl Session {
         );
         ensure!(
             switch::snapshot(&repo.git_dir().join("HEAD"))? == session.state.head
-                && repo.head_commit()?.id == gix::ObjectId::from_hex(session.state.original.as_bytes())?,
+                && super::head_commit_id(repo)? == gix::ObjectId::from_hex(session.state.original.as_bytes())?,
             "foreign original HEAD movement"
         );
         ensure!(
@@ -2278,7 +2273,7 @@ impl Session {
             "foreign HEAD movement"
         );
         ensure!(
-            repo.head_commit()?.id == gix::ObjectId::from_hex(self.state.original.as_bytes())?,
+            super::head_commit_id(repo)? == gix::ObjectId::from_hex(self.state.original.as_bytes())?,
             "original branch moved"
         );
         ensure!(

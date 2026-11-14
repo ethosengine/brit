@@ -1,4 +1,4 @@
-//! Checkout and restoration must not buffer unrelated commit messages.
+//! Authoring operations must not buffer unrelated commit messages.
 use anyhow::{ensure, Result};
 use cli_journey::support::{runner::brit_bin, test_repo::TestRepo};
 use std::{
@@ -251,4 +251,98 @@ fn worktree_twenty_mib_commit_and_tag_metadata() -> Result<()> {
 #[ignore = "requires chown authority: qualification runs this explicitly"]
 fn worktree_twenty_mib_commit_and_tag_metadata_reduced_trust() -> Result<()> {
     worktree_metadata(20 * 1024 * 1024, true)
+}
+
+#[cfg(target_os = "linux")]
+fn replay_metadata(size: usize, reduced: bool) -> Result<()> {
+    let repo = TestRepo::new("memory-replay-metadata")?;
+    let root = repo.path();
+    let message = root.join(".git/message");
+    let mut file = BufWriter::new(fs::File::create(&message)?);
+    file.write_all(b"governance decision\n\n")?;
+    let chunk = [b'x'; 65536];
+    for _ in 0..size / chunk.len() {
+        file.write_all(&chunk)?;
+    }
+    file.write_all(b"\n")?;
+    file.flush()?;
+    drop(file);
+    fs::write(root.join("base"), b"base\n")?;
+    git(root, &["add", "base"])?;
+    git(root, &["commit", "-F", message.to_str().expect("message path")])?;
+    let base = String::from_utf8(git(root, &["rev-parse", "HEAD"])?)?;
+    git(root, &["switch", "-c", "upstream"])?;
+    fs::write(root.join("upstream"), b"upstream\n")?;
+    git(root, &["add", "upstream"])?;
+    git(root, &["commit", "-F", message.to_str().expect("message path")])?;
+    let upstream = git(root, &["rev-parse", "HEAD"])?;
+    git(root, &["switch", "main"])?;
+    fs::write(root.join("topic"), b"topic\n")?;
+    git(root, &["add", "topic"])?;
+    git(root, &["commit", "-F", message.to_str().expect("message path")])?;
+    let topic = String::from_utf8(git(root, &["rev-parse", "HEAD"])?)?;
+    let config = fs::read(root.join(".git/config"))?;
+    fs::write(root.join("unrelated"), b"preserved\n")?;
+    if reduced {
+        use std::os::unix::fs::{chown, MetadataExt};
+        ensure!(fs::metadata(root)?.uid() == 0, "requires chown authority");
+        // Repository discovery takes the lower trust of these two owners.
+        // Recovery requires private metadata to remain owned by the actor.
+        chown(root, Some(65534), None)?;
+        let trust = String::from_utf8(brit(root, &["free", "trust", ".", ".git"], None)?)?;
+        ensure!(trust.lines().filter(|line| line.starts_with("Reduced")).count() == 1);
+        ensure!(trust.lines().filter(|line| line.starts_with("Full")).count() == 1);
+    }
+    for packed in [false, true] {
+        if packed {
+            git(root, &["-c", "pack.threads=1", "repack", "-ad"])?;
+        }
+        for limit in [Some("1024"), None, Some("16777216"), Some("1073741824")] {
+            git(root, &["reset", "--hard", topic.trim()])?;
+            brit(root, &["rebase", "main"], limit)?;
+            ensure!(git(root, &["rev-parse", "HEAD"])? == topic.as_bytes());
+            git(root, &["reset", "--hard", base.trim()])?;
+            brit(root, &["rebase", "upstream"], limit)?;
+            ensure!(git(root, &["rev-parse", "HEAD"])? == upstream);
+            let mut expected = Vec::new();
+            for use_brit in [false, true] {
+                git(root, &["reset", "--hard", topic.trim()])?;
+                if use_brit {
+                    brit(root, &["rebase", "upstream"], limit)?;
+                    ensure!(
+                        git(root, &["rev-parse", "HEAD"])? == expected,
+                        "replayed commit differs from Git"
+                    );
+                } else {
+                    git(root, &["rebase", "upstream"])?;
+                    expected = git(root, &["rev-parse", "HEAD"])?;
+                }
+                ensure!(fs::read(root.join("topic"))? == b"topic\n");
+                ensure!(fs::read(root.join("upstream"))? == b"upstream\n");
+                ensure!(fs::read(root.join("unrelated"))? == b"preserved\n");
+                ensure!(fs::read(root.join(".git/config"))? == config);
+            }
+        }
+    }
+    Ok(())
+}
+
+#[cfg(target_os = "linux")]
+#[test]
+fn replay_preserves_large_commit_metadata() -> Result<()> {
+    replay_metadata(128 * 1024, false)
+}
+
+#[cfg(target_os = "linux")]
+#[test]
+#[ignore = "large metadata: qualification runs this explicitly"]
+fn replay_twenty_mib_commit_metadata() -> Result<()> {
+    replay_metadata(20 * 1024 * 1024, false)
+}
+
+#[cfg(target_os = "linux")]
+#[test]
+#[ignore = "requires chown authority: qualification runs this explicitly"]
+fn replay_twenty_mib_commit_metadata_reduced_trust() -> Result<()> {
+    replay_metadata(20 * 1024 * 1024, true)
 }

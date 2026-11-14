@@ -79,7 +79,7 @@ impl Selection {
             "alternate indexes are unsupported"
         );
         selection_interrupt()?;
-        let original = repo.head_commit()?.id;
+        let original = head_commit_id(repo)?;
         let attachment = repo.head_name()?.map(|name| name.as_bstr().to_owned());
         let upstream_id = resolve_upstream(repo, upstream)?;
         selection_interrupt()?;
@@ -121,7 +121,7 @@ impl Selection {
 
     /// An attachment change is foreign movement even if the commit stays equal.
     pub fn validate_head(&self, repo: &gix::Repository) -> Result<()> {
-        ensure!(repo.head_commit()?.id == self.original, "original HEAD moved");
+        ensure!(head_commit_id(repo)? == self.original, "original HEAD moved");
         ensure!(
             repo.head_name()?.map(|name| name.as_bstr().to_owned()) == self.attachment,
             "original HEAD attachment changed"
@@ -225,11 +225,27 @@ fn collect_trees(
 
 fn commit_tree(repo: &gix::Repository, commit: gix::ObjectId) -> Result<gix::ObjectId> {
     selection_interrupt()?;
-    let commit = repo.find_commit(commit)?;
-    selection_interrupt()?;
-    let tree = commit.tree_id()?.detach();
+    let tree = repo.tree_id_of_commit(commit)?.detach();
     selection_interrupt()?;
     Ok(tree)
+}
+
+fn read_commit<'a>(
+    repo: &gix::Repository,
+    id: gix::ObjectId,
+    buffer: &'a mut gix::objs::find::Buffer,
+) -> Result<gix::objs::CommitRef<'a>> {
+    let source = gix::object::bounded::Source::deferred(repo);
+    let data = source.load(&id, buffer)?;
+    ensure!(data.kind == gix::objs::Kind::Commit, "expected commit {id}");
+    Ok(gix::objs::CommitRef::from_bytes(data.data, repo.object_hash())?)
+}
+
+fn head_commit_id(repo: &gix::Repository) -> Result<gix::ObjectId> {
+    let id = repo.head_id()?.detach();
+    let mut buffer = gix::objs::find::Buffer::default();
+    read_commit(repo, id, &mut buffer)?;
+    Ok(id)
 }
 
 #[cfg(all(target_os = "linux", feature = "switch-test-faults"))]
@@ -318,7 +334,9 @@ fn changed_index_paths(
 
 fn resolve_upstream(repo: &gix::Repository, argument: &BStr) -> Result<gix::ObjectId> {
     if argument.len() == repo.object_hash().len_in_hex() && argument.iter().all(u8::is_ascii_hexdigit) {
-        return Ok(repo.find_commit(gix::ObjectId::from_hex(argument)?)?.id);
+        let id = gix::ObjectId::from_hex(argument)?;
+        read_commit(repo, id, &mut gix::objs::find::Buffer::default())?;
+        return Ok(id);
     }
     let prefixes: &[&[u8]] = if argument.starts_with(b"refs/") {
         ensure!(
@@ -336,7 +354,8 @@ fn resolve_upstream(repo: &gix::Repository, argument: &BStr) -> Result<gix::Obje
         let mut name = prefix.to_vec();
         name.extend_from_slice(argument);
         if let Some(mut reference) = repo.try_find_reference(name.as_bstr())? {
-            matches.push(reference.peel_to_commit()?.id);
+            let source = gix::object::bounded::Source::deferred(repo);
+            matches.push(source.peel(reference.peel_to_id()?.detach(), gix::objs::Kind::Commit)?);
         }
     }
     ensure!(
@@ -364,15 +383,18 @@ impl Step {
     pub fn merge(repo: &gix::Repository, candidate: &Candidate, tip: gix::ObjectId) -> Result<Self> {
         selection_interrupt()?;
         validate_execution_policy(repo)?;
-        let original = repo.find_commit(candidate.commit)?;
-        let parents: Vec<_> = original.parent_ids().map(gix::Id::detach).collect();
+        let mut buffer = gix::objs::find::Buffer::default();
+        let original = read_commit(repo, candidate.commit, &mut buffer)?;
+        let parents: Vec<_> = original.parents().collect();
         ensure!(
             parents == [candidate.parent],
             "candidate parent does not match pinned selection"
         );
+        let theirs = original.tree();
+        drop(original);
+        buffer.clear();
         let base = commit_tree(repo, candidate.parent)?;
         let ours = commit_tree(repo, tip)?;
-        let theirs = original.tree_id()?.detach();
         selection_interrupt()?;
         let options = repo.tree_merge_options()?;
         selection_interrupt()?;
@@ -461,8 +483,8 @@ impl Step {
             !repo.config_snapshot().try_boolean("commit.gpgSign")?.unwrap_or(false),
             "required signing is unsupported"
         );
-        let original = repo.find_commit(author_source)?;
-        let original = original.decode()?;
+        let mut buffer = gix::objs::find::Buffer::default();
+        let original = read_commit(repo, author_source, &mut buffer)?;
         let mut committer = Vec::new();
         repo.committer()
             .context("committer identity required")??

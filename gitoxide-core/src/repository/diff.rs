@@ -663,13 +663,22 @@ fn quote_patch_path(path: &[u8], quote_high: bool) -> BString {
 /// worktree attributes, external drivers or the public index.
 pub fn pinned_commit(repo: &gix::Repository, out: &mut dyn std::io::Write, commit: ObjectId) -> Result<()> {
     use std::collections::{BTreeMap, BTreeSet};
-    let commit = repo.find_commit(commit)?;
-    let parent = commit
-        .parent_ids()
-        .next()
-        .ok_or_else(|| message("root patch is unsupported"))?;
-    let before = repo.index_from_tree(&repo.find_commit(parent)?.tree_id()?)?;
-    let after = repo.index_from_tree(&commit.tree_id()?)?;
+    let (parent, tree) = {
+        let source = gix::object::bounded::Source::deferred(repo);
+        let mut buffer = gix::objs::find::Buffer::default();
+        let data = source.load(&commit, &mut buffer)?;
+        if data.kind != gix::objs::Kind::Commit {
+            bail!(message!("Expected commit {commit}"));
+        }
+        let commit = gix::objs::CommitRef::from_bytes(data.data, repo.object_hash()).or_error()?;
+        let parent = commit
+            .parents()
+            .next()
+            .ok_or_else(|| message("root patch is unsupported"))?;
+        (parent, commit.tree())
+    };
+    let before = repo.index_from_tree(&repo.tree_id_of_commit(parent)?)?;
+    let after = repo.index_from_tree(&tree)?;
     let entries = |index: &gix::index::State| -> BTreeMap<BString, (u32, ObjectId)> {
         index
             .entries()

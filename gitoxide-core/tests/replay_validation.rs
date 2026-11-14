@@ -98,3 +98,70 @@ fn a_verified_blob_cannot_be_reused_as_a_tree() -> Result<()> {
     assert!(!repo.git_dir().join("brit-rebase").exists());
     Ok(())
 }
+
+fn pinned_patch_metadata(size: usize) -> Result<()> {
+    if gix_testtools::run_in_isolated_process().map_err(anyhow::Error::from_boxed)? {
+        return Ok(());
+    }
+    let (temp, repo) = fixture()?;
+    let message = format!("governance decision\n\n{}\n", "x".repeat(size));
+    let mut commits = Vec::new();
+    for content in [b"before\n".as_slice(), b"after\n"] {
+        let tree_id = repo
+            .write_object(&Tree {
+                entries: vec![Entry {
+                    mode: EntryKind::Blob.into(),
+                    filename: "selected".into(),
+                    oid: repo.write_blob(content)?.detach(),
+                }],
+            })?
+            .detach();
+        commits.push(
+            repo.commit("HEAD", message.as_str(), tree_id, commits.last().copied())?
+                .detach(),
+        );
+    }
+    drop(message);
+    let head = repo.head_id()?.detach();
+    drop(repo);
+    let expected = gix_testtools::git_command(temp.path())
+        .args(["diff", "--no-ext-diff", "--no-textconv", "--no-renames", "--no-color"])
+        .args(commits.iter().map(ToString::to_string))
+        .output()?;
+    ensure!(expected.status.success());
+    ensure!(!expected.stdout.is_empty());
+    for packed in [false, true] {
+        if packed {
+            ensure!(
+                gix_testtools::git_command(temp.path())
+                    .args(["-c", "pack.threads=1", "repack", "-ad"])
+                    .status()?
+                    .success()
+            );
+        }
+        for limit in [None, Some(1024), Some(16 * 1024 * 1024), Some(1024 * 1024 * 1024)] {
+            let repo = gix::open_opts(
+                temp.path(),
+                gix::open::Options::isolated()
+                    .cli_overrides(limit.map(|size| format!("gitoxide.objects.allocLimit={size}"))),
+            )?;
+            let mut patch = Vec::new();
+            gitoxide_core::repository::diff::pinned_commit(&repo, &mut patch, head)?;
+            assert_eq!(patch, expected.stdout, "packed={packed}, limit={limit:?}");
+            assert_eq!(repo.head_id()?.detach(), head);
+            assert!(!repo.index_path().exists(), "inspection must not publish an index");
+        }
+    }
+    Ok(())
+}
+
+#[test]
+fn pinned_patch_preserves_large_commit_metadata() -> Result<()> {
+    pinned_patch_metadata(128 * 1024)
+}
+
+#[test]
+#[ignore = "large metadata: qualification runs this explicitly"]
+fn pinned_patch_twenty_mib_commit_metadata() -> Result<()> {
+    pinned_patch_metadata(20 * 1024 * 1024)
+}
