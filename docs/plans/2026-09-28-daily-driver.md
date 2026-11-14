@@ -4020,6 +4020,29 @@ journeys and strict affected Clippy pass. Library-only message flags are not
 new public CLI support. Signature, replay and other metadata consumers, aggregate
 scratch and final-source acceptance remain open.
 
+### Resolved merge commit metadata
+
+Resolved merge admission reads `MERGE_HEAD`'s object through bounded storage and
+releases it before ancestry validation. It still consumes the complete object,
+retains read failures and checks its type; a header-only check would omit that
+read validation. The initial regression refused a 131,279-byte commit at a 1 KiB
+allocation policy.
+
+The ordinary regression and 20 MiB full/actual-reduced-trust cases match Git's
+exact merge commit IDs across loose/packed objects and default/1 KiB/16 MiB/1 GiB
+policies. Index-derived tree identity, working files, unrelated files, configuration
+and completed merge cleanup are checked. Three cases per hash pass in delegated
+1 GiB swap-disabled groups, peaking at 192,503,808 B / 191,705,088 B in
+68.774 / 135.424 s; zero OOM, survivors or executable changes. Binary SHA-256:
+`6dbb0a7ab6a328b138bd2208144c80a1aed1c82683f32795317bbe9573362665`;
+evidence: `bounded-memory/resolved-merge-metadata-*`.
+
+All seven ordinary merge journeys and nine fault-enabled journeys per hash pass,
+including foreign locks, hook interference, cancellation and interrupted cleanup.
+Strict affected Clippy, formatting, readiness and declared style pass. Large
+merge-state files, other replay metadata consumers, aggregate scratch and final
+qualification remain open.
+
 ### Commit signature metadata
 
 `commit verify` now verifies directly from bounded object storage through an

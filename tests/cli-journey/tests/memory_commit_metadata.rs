@@ -133,3 +133,90 @@ fn commit_twenty_mib_metadata() -> Result<()> {
 fn commit_twenty_mib_metadata_reduced_trust() -> Result<()> {
     commit_metadata(20 * 1024 * 1024, true)
 }
+
+fn resolved_merge_metadata(size: usize, reduced: bool) -> Result<()> {
+    let repo = TestRepo::new("memory-resolved-merge")?;
+    let root = repo.path();
+    let message = root.join(".git/message");
+    fs::write(&message, vec![b'x'; size])?;
+    fs::write(root.join("base"), b"base\n")?;
+    git(root, &["add", "base"])?;
+    git(root, &["commit", "-F", message.to_str().expect("message path")])?;
+    git(root, &["branch", "right"])?;
+    fs::write(root.join("left"), b"left\n")?;
+    git(root, &["add", "left"])?;
+    git(root, &["commit", "-F", message.to_str().expect("message path")])?;
+    let left = String::from_utf8(git(root, &["rev-parse", "HEAD"])?)?;
+    git(root, &["switch", "right"])?;
+    fs::write(root.join("right"), b"right\n")?;
+    git(root, &["add", "right"])?;
+    git(root, &["commit", "-F", message.to_str().expect("message path")])?;
+    git(root, &["switch", "main"])?;
+    fs::write(root.join("unrelated"), b"preserved\n")?;
+    let config = fs::read(root.join(".git/config"))?;
+    if reduced {
+        #[cfg(target_os = "linux")]
+        {
+            use std::os::unix::fs::{chown, MetadataExt};
+            ensure!(fs::metadata(root)?.uid() == 0, "requires chown authority");
+            chown(root, Some(65534), None)?;
+            chown(root.join(".git"), Some(65534), None)?;
+            let trust = brit(root, &["free", "trust", ".", ".git"], None)?;
+            ensure!(
+                String::from_utf8(trust)?
+                    .lines()
+                    .filter(|line| line.starts_with("Reduced"))
+                    .count()
+                    == 2
+            );
+        }
+        #[cfg(not(target_os = "linux"))]
+        anyhow::bail!("reduced trust qualification runs on Linux");
+    }
+    for packed in [false, true] {
+        if packed {
+            git(root, &["-c", "pack.threads=1", "repack", "-ad"])?;
+        }
+        for limit in [Some("1024"), None, Some("16777216"), Some("1073741824")] {
+            let mut expected = Vec::new();
+            for use_brit in [false, true] {
+                git(root, &["reset", "--hard", left.trim()])?;
+                git(root, &["merge", "--no-commit", "--no-ff", "right"])?;
+                if use_brit {
+                    brit(root, &["commit", "-m", "resolved merge"], limit)?;
+                    ensure!(
+                        git(root, &["rev-parse", "HEAD"])? == expected,
+                        "merge commit differs from Git"
+                    );
+                } else {
+                    git(root, &["commit", "-m", "resolved merge"])?;
+                    expected = git(root, &["rev-parse", "HEAD"])?;
+                }
+                ensure!(fs::read(root.join("left"))? == b"left\n");
+                ensure!(fs::read(root.join("right"))? == b"right\n");
+                ensure!(fs::read(root.join("unrelated"))? == b"preserved\n");
+                ensure!(fs::read(root.join(".git/config"))? == config);
+                ensure!(!root.join(".git/MERGE_HEAD").exists());
+            }
+        }
+    }
+    Ok(())
+}
+
+#[test]
+fn resolved_merge_preserves_large_metadata() -> Result<()> {
+    resolved_merge_metadata(128 * 1024, false)
+}
+
+#[test]
+#[ignore = "large metadata: qualification runs this explicitly"]
+fn resolved_merge_twenty_mib_metadata() -> Result<()> {
+    resolved_merge_metadata(20 * 1024 * 1024, false)
+}
+
+#[cfg(target_os = "linux")]
+#[test]
+#[ignore = "requires chown authority: qualification runs this explicitly"]
+fn resolved_merge_twenty_mib_metadata_reduced_trust() -> Result<()> {
+    resolved_merge_metadata(20 * 1024 * 1024, true)
+}

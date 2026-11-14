@@ -80,9 +80,12 @@ impl ResolvedMerge {
             "MERGE_HEAD must contain exactly one full commit ID; octopus merges are unsupported"
         );
         let commit_id = gix::ObjectId::from_hex(hex).context("invalid MERGE_HEAD commit ID")?;
-        repo.find_object(commit_id)?
-            .try_into_commit()
-            .context("MERGE_HEAD must name a commit")?;
+        {
+            let source = gix::object::bounded::Source::deferred(repo);
+            let mut buffer = gix::objs::find::Buffer::default();
+            let data = source.load(&commit_id, &mut buffer)?;
+            ensure!(data.kind == gix::objs::Kind::Commit, "MERGE_HEAD must name a commit");
+        }
         let original_commit_id = repo.head_id().context("merge commit requires initialized HEAD")?;
         ensure!(
             repo.merge_base(original_commit_id, commit_id)?
