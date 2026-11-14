@@ -1147,10 +1147,16 @@ mod tests {
         }
         assert!(is_internal_commit(&repository, sentinel)?);
         let hex = sentinel.to_string();
-        std::fs::write(
-            repository.git_dir().join("objects").join(&hex[..2]).join(&hex[2..]),
-            b"corrupt compressed object",
-        )?;
+        let object = repository.git_dir().join("objects").join(&hex[..2]).join(&hex[2..]);
+        // Replace the read-only loose object in this disposable repository.
+        #[cfg(windows)]
+        {
+            let mut permissions = std::fs::metadata(&object)?.permissions();
+            permissions.set_readonly(false);
+            std::fs::set_permissions(&object, permissions)?;
+        }
+        std::fs::remove_file(&object)?;
+        std::fs::write(object, b"corrupt compressed object")?;
         let repository = crate::test_repository::open(fixture.path())?;
         assert!(
             is_internal_commit(&repository, head).is_err(),

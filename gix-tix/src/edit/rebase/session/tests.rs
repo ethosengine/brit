@@ -16,6 +16,13 @@ fn internal_commit_probe_does_not_hide_object_read_failure() -> gix_testtools::R
     let hex = id.to_string();
     let path = repo.git_dir().join("objects").join(&hex[..2]).join(&hex[2..]);
     assert!(path.is_file(), "the fixture commit is loose");
+    #[cfg(windows)]
+    {
+        let mut permissions = std::fs::metadata(&path)?.permissions();
+        permissions.set_readonly(false);
+        std::fs::set_permissions(&path, permissions)?;
+    }
+    std::fs::remove_file(&path)?;
     std::fs::write(path, b"invalid compressed object")?;
     let error = is_commit(&repo, id).expect_err("an unreadable internal commit is not an ordinary commit");
     assert!(error.is_corrupted(), "{error:?}");
