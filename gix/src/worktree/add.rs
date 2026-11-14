@@ -147,15 +147,14 @@ impl crate::Repository {
                 let mut reference = source
                     .find_reference(name.as_ref())
                     .or_raise(|| message("The local branch could not be found"))?;
-                let commit = reference.peel_to_commit()?;
-                let root_tree_id = commit.tree_id()?.detach();
-                (gix_ref::Target::Symbolic(name), commit.id, root_tree_id)
+                let commit_id = reference.peel_to_id()?.detach();
+                let root_tree_id = source.tree_id_of_commit(commit_id)?.detach();
+                (gix_ref::Target::Symbolic(name), commit_id, root_tree_id)
             }
             Head::Detached(commit_id) => {
                 let root_tree_id = repo
-                    .find_commit(commit_id)
+                    .tree_id_of_commit(commit_id)
                     .or_raise(|| message("The detached target is not an existing commit"))?
-                    .tree_id()?
                     .detach();
                 (gix_ref::Target::Object(commit_id), commit_id, root_tree_id)
             }

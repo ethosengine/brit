@@ -59,7 +59,8 @@ where
                 .commit_ish
                 .as_ref()
                 .map_or(b"HEAD".as_bstr(), |spec| spec.as_bstr());
-            let commit_id = repo.rev_parse_single(start_point)?.object()?.peel_to_commit()?.id;
+            let commit_id = gix::object::bounded::Source::deferred(&repo)
+                .peel(repo.rev_parse_single(start_point)?.detach(), gix::object::Kind::Commit)?;
             match branch.filter(|_| options.new_branch.is_some() || options.commit_ish.is_none()) {
                 Some(name) => {
                     let mut reflog_message: BString = "branch: Created from ".into();

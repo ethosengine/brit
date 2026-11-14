@@ -3971,6 +3971,33 @@ Strict fixture Clippy, formatting, readiness and declared style pass. This
 qualifies the declared reference workload, not arbitrary remote sizes/protocols,
 aggregate scratch or final-source acceptance.
 
+### Linked-worktree commit and tag metadata
+
+Linked-worktree preparation now resolves attached and detached commit tree IDs
+through the bounded reader; CLI tag/start-point resolution uses the same source.
+The first regression reproduced a 131,307-byte commit refusal at 1 KiB.
+Existing-branch, new-branch and detached checkout/removal now pass 20 MiB commit
+and annotated-tag messages, loose/packed objects, full/actual-reduced trust and
+default/1 GiB/16 MiB/1 KiB policies. Git-oracle content/index identities match;
+source HEAD/index and retained branch IDs survive creation/removal.
+
+Three cases per hash pass in delegated 1 GiB swap-disabled groups, peaking at
+66,904,064 B / 66,568,192 B in 42.921 / 170.855 s, with zero OOM, survivors or
+identity changes. Binary SHA-256:
+`e020ee22ee07f8c74dbaa3a422491f66b9966108773c4a0860c7cf1c7b831c5c`;
+evidence: `bounded-memory/worktree-metadata-isolated-*`.
+The first cgroup fixtures placed sibling destinations beneath the shared parent
+checkout, correctly causing writer-guard contention between workers. Corrected
+fixtures place all destinations inside their own disposable repository; production
+guard behavior is unchanged. Failed receipts remain in `worktree-metadata-*`.
+
+Repository531, SHA-256 worktree-related59, eight existing bounded-worktree
+journeys (including cancellation, I/O and filter rollback), the new ordinary
+regression and strict affected gates pass. Aggregate scratch and final-source
+acceptance remain open. The preceding restore/switch slice also passes the
+three blocking-client-only core tests omitted by the default core feature set,
+including pull synchronization ordering (39 core tests across the two runs).
+
 ### Public-command audit in progress
 
 The command boundary is `src/plumbing/options/mod.rs` plus
@@ -3991,7 +4018,7 @@ behavior or working-tree bytes. The separate legacy `ein` porcelain exposes
 | --- | --- |
 | `diff`, `cat`, `add`, `restore`, `archive` | Shared readers repaired as above; large converted archive and clean/status fixtures pass; pinned diff, larger aggregate selections and remaining fault cases stay open. `diff file` and diff-format reads now use the streamed/mapped shared conversion path and pass the added 20/64/256 MiB matrix. Other comparison-cache consumers remain open. |
 | `status`, `is-clean`, `is-changed`, `index`, `dirwalk`, `clean` | Hash-only status paths stream ordinary files; filtered status and a 200,000-entry index crossing 16 MiB are measured. Other metadata, dirwalk and clean paths still need complete tracing. |
-| `worktree`, `clone` checkout | Existing bounded checkout, OFS/REF delta and filter machinery retained. Whole-cgroup 64/256 MiB worktree checkout/recovery passes; 64/256 MiB local clone/fetch/push also passes; other protocols and reduced-trust transfer paths remain open. |
+| `worktree`, `clone` checkout | Existing bounded checkout, OFS/REF delta and filter machinery retained. Whole-cgroup 64/256 MiB worktree checkout/recovery passes; 20 MiB commit/tag metadata now passes attached/new/detached creation and removal under both hashes and actual reduced trust, as above. 64/256 MiB local clone/fetch/push also passes; other protocols and reduced-trust transfer paths remain open. |
 | `switch`, `pull`, `rebase`, `merge`, `commit` | Switch/pull raw recovery payloads and streamed dirty checks are repaired and measured at 20/64/256 MiB. Replay working-file journals now use raw payloads and retained-copy capture streams, with 20/64 MiB public cases passing; 64 MiB conflict/abort and preserved large edits also pass after raw-custody repair; interrupted conflict handoff preserves exact child authority; 64 MiB authored-object retention and 20 MiB edit-scope continuation/abort pass after streamed custody fixes. Restore/switch commit metadata now passes the both-hash 20 MiB matrix above. Other authoring and journal metadata remains open. Three-sided 64 MiB filesystem and object-backed file/tree/commit merge fixtures pass, with bounded rename inputs and recursive-base conformance. External Git merge-file drivers pass 20/64 MiB in both hashes with unchanged inputs; external scratch/cancellation, large journals and resource-bound recovery/death fixtures remain open. |
 | `blame`, `log`, `revision`, `merge-base`, `tree` | Blame initial/history blobs, rename similarity and rendering are repaired and measured, including actual reduced trust and a million unique lines; large history metadata remains open. Ordinary log traverses commits without reading blobs or the index; 20 MiB commit metadata now uses mapped storage above policy and passes both hashes and actual reduced trust. Path-filtered log was already unsupported. Tree listing/statistics and revision path lookup now pass the 240,000-entry metadata matrices described above. Text revision listing now reads large commits through the shared bounded storage and refuses parent-read failures instead of inventing timestamp zero. Merge-base starting points and shared graphs now pass both-hash large-metadata qualification; parent/tag/object/message expressions and ambiguity descriptions also pass both-hash metadata checks; short prefixes now use the repository hash. Reflog queries and streamed previous-branch output now pass the 200,000-entry both-hash fixture described above. Shallow-boundary failure handling and large-metadata pruning pass the both-hash matrix above. The tested SVG handoff is qualified above; larger layouts, real-viewer lifetime and remaining history consumers stay open. |
 | `fetch`, `push`, `odb`, `fsck`, `verify`, `commit-graph` | Pack decode diagnostics improved; 64/256 MiB local transfer passes without worker/cache changes. Loose blob verification streams; both packed verification algorithms now use bounded storage above configured allocation limits. All decode modes pass 20/64/256 MiB explicit-limit cases in both hashes, including 64 MiB OFS/REF histories, and actual reduced-trust 20/64 MiB cases. ODB inspection, connectivity and pack create/index/explode pass in both hashes; the SHA-256 writer now uses the repository hash format. Connectivity passes both-hash large commit/tree metadata and fault/retry checks. Loose metadata verification now maps above policy, and both verification algorithms/all decode modes pass the large commit/tree matrices described above. Additional protocols, other metadata families and final-source qualification stay open. |
