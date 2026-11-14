@@ -246,12 +246,13 @@ impl super::Store {
         gix_trace::detail!("verify loose ODBs").into_scope(|| -> Result<_> {
             for loose_db in &*index.loose_dbs {
                 let out = loose_db
-                    .verify_integrity(
+                    .verify_integrity_with_budget(
                         &mut progress.add_child_with_id(
                             loose_db.path().display().to_string(),
                             integrity::ProgressId::VerifyLooseObjectDbPath.into(),
                         ),
                         should_interrupt,
+                        options.decode_budget.as_ref(),
                     )
                     .or_raise(|| Message::new("Could not verify loose object database").with("path", loose_db.path()))
                     .map(|statistics| integrity::LooseObjectStatistics {

@@ -1,13 +1,17 @@
 use gix_error::Result;
 use std::{
     io::Read,
-    sync::atomic::{AtomicBool, Ordering},
+    sync::{
+        Arc,
+        atomic::{AtomicBool, Ordering},
+    },
     time::Instant,
 };
 
 use gix_error::{Class, ClassificationMarker, Message, OptionExt, ResultExt, bail, message, retryable};
 
 use gix_utils::progress::{Count, DynNestedProgress, Progress};
+use gix_utils::stream::{self, Budget};
 
 use crate::loose::Store;
 
@@ -48,7 +52,17 @@ impl Store {
         progress: &mut dyn DynNestedProgress,
         should_interrupt: &AtomicBool,
     ) -> Result<integrity::Statistics> {
-        let mut buf = Vec::new();
+        self.verify_integrity_with_budget(progress, should_interrupt, None)
+    }
+
+    pub(crate) fn verify_integrity_with_budget(
+        &self,
+        progress: &mut dyn DynNestedProgress,
+        should_interrupt: &AtomicBool,
+        budget: Option<&Arc<Budget>>,
+    ) -> Result<integrity::Statistics> {
+        let mut buf = gix_object::find::Buffer::default();
+        let mut budget = budget.cloned();
 
         let mut num_objects = 0;
         let start = Instant::now();
@@ -72,7 +86,13 @@ impl Store {
                 continue;
             }
             let object = self
-                .try_find(&id, &mut buf)
+                .read_for_verification(
+                    &id,
+                    &mut buf,
+                    &mut budget,
+                    header.is_some_and(|(size, _)| self.alloc_limit_bytes.is_some_and(|limit| size > limit as u64)),
+                    should_interrupt,
+                )
                 .or_raise(|| {
                     Message::new("Could not read loose object during verification").with("object_id", id.to_string())
                 })?
@@ -85,15 +105,49 @@ impl Store {
             gix_object::compute_hash(self.object_hash, object.kind, object.data)
                 .and_then(|actual| actual.verify(&id))
                 .or_raise(context)?;
-            object.decode().or_raise(context)?;
+            object.decode().or_raise(|| context().corrupted())?;
 
             progress.inc();
             num_objects += 1;
+            buf.clear();
             check_interrupt(should_interrupt)?;
         }
         progress.show_throughput(start);
 
         Ok(integrity::Statistics { num_objects })
+    }
+
+    fn read_for_verification<'a>(
+        &self,
+        id: &gix_hash::oid,
+        buffer: &'a mut gix_object::find::Buffer,
+        budget: &mut Option<Arc<Budget>>,
+        mapped: bool,
+        interrupt: &AtomicBool,
+    ) -> Result<Option<gix_object::Data<'a>>> {
+        if !mapped {
+            return self.try_find(id, buffer.owned());
+        }
+        buffer.clear();
+        if budget.is_none() {
+            *budget = Some(Budget::new(&std::env::temp_dir()).or_error()?);
+        }
+        let file = std::fs::File::open(self.object_path(id)).or_error()?;
+        let (kind, size, reader) = super::stream::reader(file)?;
+        let mut spool = budget.as_ref().expect("budget initialized").spool().or_error()?;
+        let copied = stream::copy(&mut reader.take(size.saturating_add(1)), &mut spool, interrupt).or_error()?;
+        if copied != size {
+            bail!(
+                gix_error::corruption("Loose object size mismatch")
+                    .with("actual", copied)
+                    .with("expected", size)
+            );
+        }
+        Ok(Some(gix_object::Data::new(
+            buffer.set_external(spool.into_mapped().or_error()?),
+            kind,
+            self.object_hash,
+        )))
     }
 
     fn verify_blob(&self, id: &gix_hash::oid, interrupt: &AtomicBool) -> Result<()> {

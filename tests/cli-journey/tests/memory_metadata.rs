@@ -94,6 +94,17 @@ fn same_bytes(left: &Path, right: &Path) -> Result<()> {
     }
 }
 
+fn verify_metadata(root: &Path, output: &Path, limit: Option<&str>) -> Result<()> {
+    for algorithm in ["less-time", "less-memory"] {
+        for mode in [None, Some("--decode"), Some("--re-encode")] {
+            let mut args = vec!["--threads", "1", "verify", "--algorithm", algorithm];
+            args.extend(mode);
+            brit(root, &args, output, limit)?;
+        }
+    }
+    Ok(())
+}
+
 fn large_commit(reduced: bool) -> Result<()> {
     let repo = TestRepo::new("memory-commit-metadata")?;
     let root = repo.path();
@@ -171,6 +182,7 @@ fn large_commit(reduced: bool) -> Result<()> {
                 fs::metadata(&actual)?.len() == 0,
                 "complete history has no missing objects"
             );
+            verify_metadata(root, &actual, limit)?;
             brit(root, &["log", "-n", "1"], &actual, limit)?;
             same_bytes(&expected, &actual)?;
             brit(root, &["revision", "list", "--long-hashes", "HEAD"], &actual, limit)?;
@@ -329,6 +341,7 @@ fn large_tree(reduced: bool) -> Result<()> {
                 fs::metadata(&actual)?.len() == 0,
                 "complete tree has no missing objects"
             );
+            verify_metadata(root, &actual, limit)?;
             for (spec, recursive) in [(wide.trim(), false), ("HEAD", true)] {
                 for extended in [false, true] {
                     let expected = root.join(".git/expected-tree");

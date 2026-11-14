@@ -107,6 +107,74 @@ fn verify_integrity() -> gix_testtools::TestResult {
 }
 
 #[test]
+fn metadata_verification_maps_without_relaxing_buffered_limits() -> gix_testtools::TestResult {
+    use gix_object::{Kind, Write};
+    for kind in [Kind::Commit, Kind::Tag, Kind::Tree] {
+        let tmp = gix_testtools::tempfile::tempdir()?;
+        let hash = gix_testtools::object_hash();
+        let id = gix_hash::ObjectId::null(hash);
+        let data = match kind {
+            Kind::Commit => format!("tree {id}\nauthor Fixture <fixture@example.com> 0 +0000\ncommitter Fixture <fixture@example.com> 0 +0000\n\n{}", "message\n".repeat(16384)).into_bytes(),
+            Kind::Tag => format!("object {id}\ntype commit\ntag fixture\ntagger Fixture <fixture@example.com> 0 +0000\n\n{}", "message\n".repeat(16384)).into_bytes(),
+            Kind::Tree => (0..4096).flat_map(|n| {
+                let mut entry = format!("100644 file-{n:05}\0").into_bytes();
+                entry.extend_from_slice(id.as_slice());
+                entry
+            }).collect(),
+            Kind::Blob => unreachable!("metadata only"),
+        };
+        let db = Store::at(tmp.path(), hash);
+        let written = db.write_buf(kind, &data)?;
+        for limit in [1, 1024 * 1024] {
+            let limited = Store::at_opts(
+                tmp.path(),
+                hash,
+                Options {
+                    alloc_limit_bytes: Some(limit),
+                    ..Default::default()
+                },
+            );
+            assert_eq!(
+                limited
+                    .verify_integrity(&mut progress::Discard, &AtomicBool::new(false))?
+                    .num_objects,
+                1
+            );
+            if limit == 1 {
+                assert_eq!(
+                    limited
+                        .try_find(&written, &mut Vec::new())
+                        .expect_err("ordinary allocation policy remains enforced")
+                        .dominant_class(),
+                    Some(gix_error::Class::ResourceExhaustion(
+                        gix_error::ResourceExhaustionKind::AllocationLimit
+                    ))
+                );
+            }
+        }
+        std::fs::remove_file(db.object_path(&written))?;
+        // A correctly hashed malformed object must still reach the original structural decoder.
+        let malformed = db.write_buf(kind, b"malformed metadata")?;
+        for limit in [1, 1024 * 1024] {
+            let limited = Store::at_opts(
+                tmp.path(),
+                hash,
+                Options {
+                    alloc_limit_bytes: Some(limit),
+                    ..Default::default()
+                },
+            );
+            let error = limited
+                .verify_integrity(&mut progress::Discard, &AtomicBool::new(false))
+                .expect_err("malformed metadata must refuse");
+            assert!(error.is_corrupted(), "{error:?}");
+            assert!(error.to_string().contains(&malformed.to_string()), "{error:?}");
+        }
+    }
+    Ok(())
+}
+
+#[test]
 fn streamed_blob_verification_preserves_limits_and_rejects_corruption() -> gix_testtools::TestResult {
     use std::io::Write;
     let tmp = gix_testtools::tempfile::tempdir()?;

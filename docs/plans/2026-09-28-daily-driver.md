@@ -3422,6 +3422,43 @@ must be distinguished from failed access, and retries must not inherit success
 from an incomplete visited set**. Remaining verification metadata, corpus tasks,
 aggregate scratch and the broader command matrix stay open.
 
+### Default corpus and loose metadata verification
+
+The normal default `max` build exposed two corpus failures at the allocation
+boundary: SWTR loaded the entire HEAD commit, while VERI streamed loose blobs
+but buffered commit/tree/tag metadata. SWTR now uses the existing bounded
+HEAD-tree lookup. Loose verification maps metadata above policy, shares the
+pack verifier's scratch budget, releases each object's storage and retains the
+existing structural parser. Structural parse failures now explicitly report
+corruption with the original parser error and object ID. Ordinary buffered
+lookup still enforces the configured allocation limit. Task names, algorithms
+and existing versioned database records are preserved.
+
+The corpus fixture uses a 64 MiB blob and 20 MiB commit. It checks all four
+persisted task outcomes, since command exit alone does not report task failures,
+and checks HEAD, index and working-blob identity. Loose/packed, default/explicit
+and actual reduced-trust runs pass with both hashes. With default-max binary
+`d0963faf35e99aa4dde23f06413eb0a6359baad763ba6e58a13ff5a9b50fd185`,
+SHA-1 peaks at 188,452,864 B in 13.118 s and SHA-256 at 186,462,208 B in
+65.910 s; neither run has OOM kills, surviving children or identity changes.
+An earlier parallel run correctly refused a shared parent-repository lock;
+fixture database outputs now live inside each private repository, with no lock
+bypass. Private receipts are `bounded-memory/corpus-owned-*`.
+
+All 94 object-database native tests and two doctests pass. The new
+buffered/mapped commit, tag and tree checks also pass with SHA-256, including
+correctly hashed malformed metadata. Strict affected Clippy, formatting,
+readiness and declared style pass. Public commit/tree metadata verification
+passes both algorithms and all hash/decode/re-encode modes with one configured
+worker, loose/packed objects, explicit policy and actual reduced trust. The five
+metadata cases per hash (including the annotated-tag regression) peak at
+95,944,704 B / 92,053,504 B in 303.309 / 686.043 s, with zero OOM, surviving
+children or identity changes. Receipts are `bounded-memory/verify-metadata-*`.
+Aggregate scratch and final-source qualification remain open.
+
+Story-harvest station: **corpus command completion → task success / inspect
+persisted task errors and durations before accepting a successful process exit**.
+
 ### Public-command audit in progress
 
 The command boundary is `src/plumbing/options/mod.rs` plus
@@ -3445,7 +3482,7 @@ behavior or working-tree bytes. The separate legacy `ein` porcelain exposes
 | `worktree`, `clone` checkout | Existing bounded checkout, OFS/REF delta and filter machinery retained. Whole-cgroup 64/256 MiB worktree checkout/recovery passes; 64/256 MiB local clone/fetch/push also passes; other protocols and reduced-trust transfer paths remain open. |
 | `switch`, `pull`, `rebase`, `merge`, `commit` | Switch/pull raw recovery payloads and streamed dirty checks are repaired and measured at 20/64/256 MiB. Replay working-file journals now use raw payloads and retained-copy capture streams, with 20/64 MiB public cases passing; 64 MiB conflict/abort and preserved large edits also pass after raw-custody repair; interrupted conflict handoff preserves exact child authority; 64 MiB authored-object retention and 20 MiB edit-scope continuation/abort pass after streamed custody fixes. Journal metadata remains open. Three-sided 64 MiB filesystem and object-backed file/tree/commit merge fixtures pass, with bounded rename inputs and recursive-base conformance. External Git merge-file drivers pass 20/64 MiB in both hashes with unchanged inputs; external scratch/cancellation, large journals and resource-bound recovery/death fixtures remain open. |
 | `blame`, `log`, `revision`, `merge-base`, `tree` | Blame initial/history blobs, rename similarity and rendering are repaired and measured, including actual reduced trust and a million unique lines; large history metadata remains open. Ordinary log traverses commits without reading blobs or the index; 20 MiB commit metadata now uses mapped storage above policy and passes both hashes and actual reduced trust. Path-filtered log was already unsupported. Tree listing/statistics and revision path lookup now pass the 240,000-entry metadata matrices described above. Text revision listing now reads large commits through the shared bounded storage and refuses parent-read failures instead of inventing timestamp zero. Merge-base starting points and shared graphs now pass both-hash large-metadata qualification; parent/tag/object/message expressions also pass both-hash metadata checks; ambiguity diagnostics, reflog/shallow handling and remaining history consumers still need qualification. |
-| `fetch`, `push`, `odb`, `fsck`, `verify`, `commit-graph` | Pack decode diagnostics improved; 64/256 MiB local transfer passes without worker/cache changes. Loose blob verification streams; both packed verification algorithms now use bounded storage above configured allocation limits. All decode modes pass 20/64/256 MiB explicit-limit cases in both hashes, including 64 MiB OFS/REF histories, and actual reduced-trust 20/64 MiB cases. ODB inspection, connectivity and pack create/index/explode pass in both hashes; the SHA-256 writer now uses the repository hash format. Connectivity now passes both-hash large commit/tree metadata and fault/retry checks described above. Additional protocols and remaining verification metadata stay open. |
+| `fetch`, `push`, `odb`, `fsck`, `verify`, `commit-graph` | Pack decode diagnostics improved; 64/256 MiB local transfer passes without worker/cache changes. Loose blob verification streams; both packed verification algorithms now use bounded storage above configured allocation limits. All decode modes pass 20/64/256 MiB explicit-limit cases in both hashes, including 64 MiB OFS/REF histories, and actual reduced-trust 20/64 MiB cases. ODB inspection, connectivity and pack create/index/explode pass in both hashes; the SHA-256 writer now uses the repository hash format. Connectivity passes both-hash large commit/tree metadata and fault/retry checks. Loose metadata verification now maps above policy, and both verification algorithms/all decode modes pass the large commit/tree matrices described above. Additional protocols, other metadata families and final-source qualification stay open. |
 | `branch`, `tag`, `remote`, `submodule`, `config`, `config-tree`, `attributes`, `exclude`, `mailmap` | Large config/packed-ref fixtures pass in both hashes and actual reduced trust. Mailmap object reads/output and annotated-tag reads are repaired and measured as above. Remote/submodule/path metadata and helper dispatch remain open. |
 | `credential`, `env`, `editor`, `completions`, `free`, `corpus`, `tix` | Applicable metadata/output/owned-child audit remains open. Existing unsupported behavior cannot be relabeled a memory success. |
 | `snapshot`, `build`, `run`, `graph`, `affected`, `plan`, `fingerprint`, `baseline`, `integrate`, `context` | Snapshot seal/verify/export/restore are measured on 20/64 MiB, aggregate and reduced-trust fixtures; the existing per-object 64 MiB native limit is preserved. `build fingerprint` and SHA-1 `build plan` now release streamed inputs and pass the aggregate 3×256 MiB workload; SHA-256 fingerprinting passes, while revision plan/affected retain the independently reproduced pre-existing Rakia limitation described above. Capture and other first-party metadata/output paths remain open; arbitrary external tasks are outside a universal success guarantee, but owned children still count in measured workloads. |
@@ -3453,7 +3490,7 @@ behavior or working-tree bytes. The separate legacy `ein` porcelain exposes
 | `credential`, `editor` | Credential input/helper output and editor child lifetime need explicit qualification. `gix-credentials/src/program/main.rs` and `helper/invoke.rs` retain complete protocol input/output; `gitoxide-core/src/repository/editor.rs` passes paths to a child and waits. No blob-memory success is inferred for these owned-child paths. |
 | `env`, `config-tree`, `completions`, help/version/surface output | Unaffected by repository blob or metadata growth, by implementation trace: `gitoxide-core/src/lib.rs::env` writes installation paths; `src/plumbing/progress.rs::show_progress` enumerates the compiled config schema; completion dispatch in `src/plumbing/main.rs` uses the compiled Clap tree; `brit-cli/src/main.rs` and `surface.rs` generate help/version/parser output before object access. `brit-cli/tests/unified.rs` checks the public help/version surface. Their allocations depend on the fixed executable/schema and process arguments, not repository contents. Output I/O and owned installation-path helper checks remain part of the ordinary fault/child suite. |
 | `free` metadata and transport helpers | Eighteen leaves include pack operations, mailmap verification, commit graphs, indexes, remote advertisement, discovery and ownership-derived trust. Pack round trips and actual trust probes are measured above; remaining metadata and transport helper coverage stays open. |
-| `corpus refresh/run` (normal default `max`) | The 64 MiB blob / 20 MiB commit fixture checks persisted outcomes for all four tasks, not just command exit. Baseline reduced-trust and explicit-limit cases expose whole-commit loading in SWTR and loose-metadata loading in VERI; both remain under repair. The existing versioned task records and task algorithms must be preserved. |
+| `corpus refresh/run` (normal default `max`) | The 64 MiB blob / 20 MiB commit fixture now passes persisted outcomes for all four tasks in both hashes, loose/packed, explicit policy and actual reduced trust, as described above. SWTR uses bounded HEAD metadata and VERI bounds loose metadata. Existing task identities and algorithms remain. Aggregate scratch and final-source qualification stay open. |
 
 Outstanding acceptance also includes broader reduced-trust command coverage,
 broader hash/alternate/replacement combinations beyond the expanded daily matrices, additional

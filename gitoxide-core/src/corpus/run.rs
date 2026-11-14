@@ -81,7 +81,7 @@ impl Execute for WorktreeStream {
         let repo = gix::open_opts(repo, gix::open::Options::isolated())?;
         let (stream, _) = {
             let _span = gix::trace::coarse!("read index and create worktree stream");
-            repo.worktree_stream(repo.head_commit()?.tree_id()?)?
+            repo.worktree_stream(repo.head_tree_id()?)?
         };
         progress.init(None, gix::progress::bytes());
         std::io::copy(
