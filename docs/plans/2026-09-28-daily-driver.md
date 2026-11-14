@@ -4347,6 +4347,28 @@ Clippy, formatting, declared Rust-style and 12 readiness checks pass. Receipts:
 working-source receipts still have unmeasured aggregate scratch; they are not
 final committed-source qualification.
 
+Credential helpers now send context and drain output concurrently, without
+cloning the input or changing terminal/process-group behavior. A synthetic
+20 MiB authentication challenge plus 20 MiB reply, with the helper writing
+before reading, reproduced the prior pipe deadlock and failed at the fixture's
+15-second deadline. The repaired exchange and failed-helper fallback pass;
+the complete four-case credential resource suite passes both hashes at
+237,318,144 B / 237,694,976 B (13.925 s / 13.709 s), with zero OOM kills or
+survivors. Existing full/actual reduced trust, explicit object policies, Git
+field parity and output-failure checks remain included. The native credential
+suite passes 81 test executions; strict affected Clippy, formatting, declared
+style and readiness pass. Receipts: `bounded-memory/credentials-duplex-v16-*`.
+These results do not qualify unbounded helper output, interactive cancellation
+or aggregate external scratch. The earlier v15 probe used an oversized URL
+username and refused before reaching the helper; v16 uses the protocol's
+authentication-challenge field and is the actual deadlock regression.
+
+CI run `43621344383` now passes both i386 and ARM32 jobs, along with macOS,
+Linux, MSRV and style. Its main test job reached the final shell-mode scan and
+found `qualify-memory.sh` missing its executable bit. Commit `fb60a2ed2` repairs
+that mode; the complete native `it check-mode` scan and shell syntax check pass.
+Advisories remain red and other jobs are still pending. No release or pin moved.
+
 The command boundary is `src/plumbing/options/mod.rs` plus
 `brit-cli/src/main.rs` and its composed bridge. This table is interim audit
 coverage in the existing readiness document, **not final classification**.

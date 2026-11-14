@@ -178,3 +178,74 @@ fn credential_output_failure_is_not_success() -> Result<()> {
     );
     Ok(())
 }
+
+#[test]
+#[ignore = "resource qualification: requires BRIT_BIN and coreutils timeout; synthetic duplex helper"]
+fn helper_can_write_large_output_before_reading_large_input() -> Result<()> {
+    let repo = TestRepo::new("memory-credential-duplex")?;
+    let root = repo.path();
+    let head = repo.head_id()?;
+    let index = fs::read(root.join(".git/index"))?;
+    let query = root.join(".git/query");
+    let reply = root.join(".git/reply");
+    for (path, prefix) in [
+        (&query, &b"protocol=https\nhost=example.invalid\nwwwauth[]="[..]),
+        (&reply, &b"username=fixture\npassword="[..]),
+    ] {
+        let mut file = BufWriter::new(fs::File::create(path)?);
+        file.write_all(prefix)?;
+        for _ in 0..320 {
+            file.write_all(&[b's'; 65536])?;
+        }
+        file.write_all(b"\n\n")?;
+        file.flush()?;
+    }
+    for failed_first in [false, true] {
+        let actual = root.join(".git/actual");
+        let received = root.join(".git/received");
+        // The timeout owns a fresh process group, including the helper shell and
+        // its cats. A regression must fail promptly without orphaned writers.
+        let mut command = Command::new("timeout");
+        gix_testtools::configure_git_environment(&mut command, root);
+        command
+            .current_dir(root)
+            .args(["--signal=KILL", "15s"])
+            .arg(brit_bin().expect("built Brit"))
+            .args(["-c", "credential.helper="]);
+        if failed_first {
+            command.args([
+                "-c",
+                "credential.helper=!f() { cat \"$BRIT_TEST_CREDENTIAL_OUTPUT\"; cat > /dev/null; exit 1; }; f",
+            ]);
+        }
+        let result = command
+            .args([
+                "-c",
+                "credential.helper=!f() { cat \"$BRIT_TEST_CREDENTIAL_OUTPUT\"; cat > \"$BRIT_TEST_CREDENTIAL_INPUT\"; }; f",
+                "credential",
+                "fill",
+            ])
+            .env("GIT_TERMINAL_PROMPT", "0")
+            .env("BRIT_TEST_CREDENTIAL_INPUT", &received)
+            .env("BRIT_TEST_CREDENTIAL_OUTPUT", &reply)
+            .stdin(Stdio::from(fs::File::open(&query)?))
+            .stdout(Stdio::from(fs::File::create(&actual)?))
+            .output()?;
+        ensure!(
+            result.status.success(),
+            "duplex credential exchange failed: {}",
+            result.status
+        );
+        let output = fields(&actual)?;
+        let expected = fields(&reply)?;
+        for name in [b"username".as_slice(), b"password"] {
+            ensure!(output.get(name) == expected.get(name), "helper field differs");
+        }
+        ensure!(
+            fields(&received)? == fields(&query)?,
+            "helper must receive the complete query"
+        );
+    }
+    ensure!(repo.head_id()? == head && fs::read(root.join(".git/index"))? == index);
+    Ok(())
+}

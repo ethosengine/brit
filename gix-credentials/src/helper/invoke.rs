@@ -75,22 +75,41 @@ pub(crate) fn raw(helper: &mut crate::Program, action: &Action) -> Result<Option
     if let (Action::Get(_), None) = (&action, &stdout) {
         panic!("BUG: `Helper` impls must return an output handle to read output from if Action::Get is provided")
     }
-    action.send(&mut stdin).or_raise(communication_error)?;
-    drop(stdin);
-    let stdout = stdout
-        .map(|mut stdout| {
+    let exchange = match stdout {
+        Some(mut stdout) => std::thread::scope(|scope| -> Result<_> {
+            // Helpers may write before consuming their input. Drain both pipes
+            // concurrently without copying the context or changing their terminal.
+            let sender = std::thread::Builder::new()
+                .name("gix-credential-input".into())
+                .spawn_scoped(scope, move || action.send(&mut stdin))
+                .or_raise(communication_error)?;
             let mut buf = Vec::new();
-            stdout.read_to_end(&mut buf).map(|_| buf)
-        })
-        .transpose()
-        .map_err(|err| HelperFailure(err).raise())?;
-    helper.finish().map_err(|err| {
+            let received = stdout.read_to_end(&mut buf);
+            drop(stdout);
+            sender
+                .join()
+                .map_err(|_| message("Credentials helper input writer panicked"))?
+                .or_raise(communication_error)?;
+            received.map_err(|err| HelperFailure(err).raise())?;
+            Ok(Some(buf))
+        }),
+        None => {
+            let sent = action.send(&mut stdin).or_raise(communication_error);
+            drop(stdin);
+            sent.map(|()| None)
+        }
+    };
+    // Reap the helper even if either pipe failed. Preserve communication errors
+    // ahead of its status, and the existing failed-helper fallback classification.
+    let finished = helper.finish().map_err(|err| {
         if err.kind() == std::io::ErrorKind::Other {
             HelperFailure(err).raise()
         } else {
             err.and_raise(communication_error())
         }
-    })?;
+    });
+    let stdout = exchange?;
+    finished?;
 
     match matches!(action, Action::Get(_)).then(|| stdout).flatten() {
         None => Ok(None),
