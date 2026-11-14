@@ -189,6 +189,103 @@ fn actual_reduced_trust_large_reflog() -> Result<()> {
     large_reflog(true)
 }
 
+#[cfg(target_os = "linux")]
+fn svg_history(reduced: bool) -> Result<()> {
+    use std::os::unix::fs::PermissionsExt;
+
+    let repo = TestRepo::new("memory-svg-history")?;
+    let root = repo.path();
+    for n in 0..63 {
+        git(root, &["commit", "--allow-empty", "-q", "-m", &format!("history {n}")])?;
+    }
+    let message = root.join(".git/message-input");
+    let mut input = BufWriter::new(fs::File::create(&message)?);
+    for _ in 0..320 {
+        input.write_all(&[b'x'; 65536])?;
+    }
+    input.flush()?;
+    drop(input);
+    git(
+        root,
+        &[
+            "commit",
+            "--allow-empty",
+            "-q",
+            "-F",
+            message.to_str().expect("fixture path"),
+        ],
+    )?;
+    let head = repo.head_id()?;
+    let index = fs::read(root.join(".git/index"))?;
+    let ids = String::from_utf8(git(root, &["rev-list", "--abbrev-commit", "HEAD"])?)?;
+    let helpers = root.join(".git/viewer-bin");
+    fs::create_dir(&helpers)?;
+    let helper = helpers.join("xdg-open");
+    fs::write(
+        &helper,
+        "#!/bin/sh\nprintf '%s\\n' \"$1\" > \"$BRIT_TEST_VIEWER_RECEIPT\"\n",
+    )?;
+    fs::set_permissions(&helper, fs::Permissions::from_mode(0o755))?;
+    let receipt = root.join(".git/viewer-receipt");
+    let svg = root.join(".git/history.svg");
+    let expected = root.join(".git/expected.svg");
+    reduced_trust(root, reduced)?;
+    for packed in [false, true] {
+        if packed {
+            git(root, &["-c", "pack.threads=1", "repack", "-ad"])?;
+        }
+        for limit in [None, Some("1073741824"), Some("16777216"), Some("1")] {
+            let mut command = Command::new(brit_bin().expect("built Brit"));
+            gix_testtools::configure_git_environment(&mut command, root);
+            command
+                .current_dir(root)
+                .env("PATH", &helpers)
+                .env("BRIT_TEST_VIEWER_RECEIPT", &receipt);
+            if let Some(limit) = limit {
+                command.args(["-c", &format!("gitoxide.objects.allocLimit={limit}")]);
+            }
+            if receipt.exists() {
+                fs::remove_file(&receipt)?;
+            }
+            output_file(
+                command,
+                &["revision", "list", "--svg", svg.to_str().expect("fixture path"), "HEAD"],
+                &root.join(".git/svg-stdout"),
+            )?;
+            ensure!(fs::read_to_string(&receipt)?.trim() == svg.to_str().expect("fixture path"));
+            let rendered = fs::read_to_string(&svg)?;
+            ensure!(rendered.contains("<svg"));
+            for id in ids.lines() {
+                ensure!(rendered.contains(id), "SVG omitted history node {id}");
+            }
+            if expected.exists() {
+                same_bytes(&expected, &svg)?;
+            } else {
+                fs::copy(&svg, &expected)?;
+            }
+        }
+    }
+    ensure!(
+        String::from_utf8(git(root, &["rev-parse", "HEAD"])?)?.trim() == head
+            && fs::read(root.join(".git/index"))? == index
+    );
+    Ok(())
+}
+
+#[cfg(target_os = "linux")]
+#[test]
+#[ignore = "resource qualification: requires BRIT_BIN; isolated viewer handoff, no GUI"]
+fn svg_history_with_twenty_mib_commit() -> Result<()> {
+    svg_history(false)
+}
+
+#[cfg(target_os = "linux")]
+#[test]
+#[ignore = "resource qualification: requires BRIT_BIN and chown authority"]
+fn actual_reduced_trust_svg_history() -> Result<()> {
+    svg_history(true)
+}
+
 fn large_commit_graph(reduced: bool) -> Result<()> {
     let repo = TestRepo::new("memory-commit-graph")?;
     let root = repo.path();

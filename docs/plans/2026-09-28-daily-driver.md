@@ -3599,6 +3599,24 @@ explicit ignores). Strict affected Clippy, formatting, readiness and declared
 style pass. Evidence: `bounded-memory/parent-errors-*`; this diagnostic slice
 does not constitute a new resource receipt or final-source qualification.
 
+### SVG history qualification
+
+The existing graph layout completes 65 commits, including a 20 MiB commit
+message, without changing its algorithm or containers. Both hashes preserve
+byte-identical SVG across loose/packed storage, full/actual reduced trust and
+default/1 GiB/16 MiB/one-byte allocation policies. Every Git-visible abbreviated
+ID appears in the output. A private `xdg-open` helper verifies the exact output
+path and exits; this measures viewer handoff, not a real desktop application's
+resources. HEAD and index remain unchanged. Two cases per hash peak at
+150,265,856 B / 150,577,152 B in 8.349 / 31.576 s, with zero OOM, survivors or
+identity changes, using binary
+`d272ebc39f976edac87f968369b1414bd9e875845d71a65e4bb53a69a748384b`.
+Private evidence: `bounded-memory/svg-fixed-*`. The first run's final Git
+state check lacked the disposable repository's explicit trust allowance;
+that fixture failure is retained under `svg-*`. Aggregate scratch telemetry,
+larger graph workloads, cancellation and final-source qualification remain
+open; this does not qualify unbounded graph layout.
+
 ### Public-command audit in progress
 
 The command boundary is `src/plumbing/options/mod.rs` plus
