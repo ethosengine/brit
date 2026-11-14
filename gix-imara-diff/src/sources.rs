@@ -191,8 +191,7 @@ impl<'a> TokenSource for BStrLines<'a> {
     }
 
     fn estimate_tokens(&self) -> u32 {
-        let len: usize = self.take(20).map(|line| line.len()).sum();
-        (self.0.len() * 20).checked_div(len).unwrap_or(100) as u32
+        ByteLines(self.0).estimate_tokens()
     }
 }
 
@@ -227,6 +226,22 @@ impl<'a> TokenSource for ByteLines<'a> {
 
     fn estimate_tokens(&self) -> u32 {
         let len: usize = self.take(20).map(|line| line.len()).sum();
-        (self.0.len() * 20).checked_div(len).unwrap_or(100) as u32
+        estimate_lines(self.0.len(), len)
+    }
+}
+
+fn estimate_lines(total_bytes: usize, sample_bytes: usize) -> u32 {
+    // Multiplying a 256 MiB input length by 20 overflows usize on 32-bit.
+    // Widen only the estimate's arithmetic, preserving its sampling and result.
+    ((total_bytes as u128 * 20).checked_div(sample_bytes as u128)).unwrap_or(100) as u32
+}
+
+#[cfg(test)]
+mod tests {
+    #[test]
+    fn line_estimate_handles_large_inputs_on_every_pointer_width() {
+        assert_eq!(super::estimate_lines(256 * 1024 * 1024, 20 * 512), 524_288);
+        assert_eq!(super::estimate_lines(u32::MAX as usize, 20), u32::MAX);
+        assert_eq!(super::estimate_lines(0, 0), 100);
     }
 }
