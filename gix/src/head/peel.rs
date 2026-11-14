@@ -68,14 +68,17 @@ impl<'repo> Head<'repo> {
                 if id.header()?.kind() == gix_object::Kind::Commit {
                     id
                 } else {
-                    {
-                        let obj = id.object()?.peel_tags_to_end()?;
-                        self.kind = Kind::Detached {
-                            peeled: Some(obj.id),
-                            target: *target,
-                        };
-                        obj.id()
-                    }
+                    let mut reference = gix_ref::Reference {
+                        name: "HEAD".try_into().expect("valid pseudo reference"),
+                        target: gix_ref::Target::Object(*target),
+                        peeled: None,
+                    };
+                    let peeled = crate::reference::peel_reference(&mut reference, self.repo, None)?;
+                    self.kind = Kind::Detached {
+                        peeled: Some(peeled),
+                        target: *target,
+                    };
+                    peeled.attach(self.repo)
                 }
             }
             Kind::Symbolic(r) => {

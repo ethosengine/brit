@@ -3196,6 +3196,25 @@ formatting, readiness contracts and the declared Rust-style checker pass.
 This closes the shared reference reader, not Tix's remaining commit readers.
 Aggregate scratch and complete-command qualification remain open.
 
+### HEAD metadata in status and discovery
+
+Tix's expanded 20 MiB fixture exposed two additional shared status prerequisites:
+HEAD-to-tree lookup and submodule discovery both buffered the commit body. The
+second is exercised even when `.gitmodules` is absent. These paths now reuse
+the shared immutable reader; submodule lookup also uses bounded tree traversal
+and reads the selected config object through that reader. Missing-index
+reconstruction uses the same HEAD-tree helper. Detached tag-backed HEADs reuse
+the existing reference peeler, retaining terminal IDs without reading their bodies.
+Wrong-kind HEADs fail from the header with their object ID and actual kind.
+
+The shared gix suite passes 519 tests with one existing platform ignore. Eight
+focused HEAD checks include a one-byte object policy, all four HEAD attachment
+shapes, wrong-kind diagnostics, missing objects, and missing-index/submodule
+fallbacks. The latter opens a fresh handle so an existing reusable buffer cannot
+mask an allocation-policy failure. Strict affected Clippy passes. The expanded
+Tix cgroup runs and Tix-specific readers are recorded separately when complete;
+these native checks do not establish whole-command resource acceptance.
+
 ### Public-command audit in progress
 
 The command boundary is `src/plumbing/options/mod.rs` plus

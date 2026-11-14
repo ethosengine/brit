@@ -242,16 +242,36 @@ impl crate::Repository {
     /// is freshly initialized and doesn't have any commits yet. It could also fail if the
     /// head does not point to a commit.
     pub fn head_tree_id(&self) -> Result<crate::Id<'_>> {
-        self.head_commit()?.tree_id()
+        self.tree_id_of_commit(self.head_id()?.detach())
+    }
+
+    pub(super) fn tree_id_of_commit(&self, id: ObjectId) -> Result<crate::Id<'_>> {
+        use crate::ext::ObjectIdExt;
+        use gix_traverse::commit::topo::source::Source as _;
+        let kind = self.find_header(id)?.kind();
+        gix_error::ensure!(
+            kind == gix_object::Kind::Commit,
+            validation(format!(
+                "Object named {id} was supposed to be of kind commit, but was kind {kind}."
+            ))
+        );
+        let objects = crate::object::bounded::Source::new(
+            self,
+            gix_utils::stream::Budget::new(&std::env::temp_dir()).or_error()?,
+        )?;
+        Ok(objects
+            .find_commit(&id, &mut gix_object::find::Buffer::default())?
+            .tree_id()?
+            .attach(self))
     }
 
     /// Like [`Self::head_tree_id()`], but will return an empty tree hash if the repository HEAD is unborn.
     pub fn head_tree_id_or_empty(&self) -> Result<crate::Id<'_>> {
-        let mut head = self.head()?;
+        let head = self.head()?;
         if head.is_unborn() {
             Ok(self.empty_tree().id())
         } else {
-            head.peel_to_commit()?.tree_id()
+            self.tree_id_of_commit(head.into_peeled_id()?.detach())
         }
     }
 
@@ -274,7 +294,7 @@ impl crate::Repository {
     /// # Ok(()) }
     /// ```
     pub fn head_tree(&self) -> Result<crate::Tree<'_>> {
-        self.head_commit()?.tree()
+        self.find_tree(self.head_tree_id()?)
     }
 
     /// Find the reference with the given partial or full `name`, like `main`, `HEAD`, `heads/branch` or `origin/other`,

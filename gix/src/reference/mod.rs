@@ -289,7 +289,7 @@ mod impls {
 
 /// Preserve the reference store's following/caching behavior while reading only
 /// terminal headers and retaining large tags in the shared immutable buffer.
-fn peel_reference(
+pub(crate) fn peel_reference(
     reference: &mut gix_ref::Reference,
     repo: &crate::Repository,
     packed: Option<&gix_ref::packed::Buffer>,

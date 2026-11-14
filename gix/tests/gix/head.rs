@@ -22,6 +22,65 @@ mod peel {
     }
 
     #[test]
+    fn ids_and_tree_ids_preserve_peeling_below_object_allocation_size() -> TestResult {
+        for name in ["detached", "symbolic", "tag-detached", "tag-symbolic"] {
+            let buffered = named_subrepo_opts("make_head_repos.sh", name, gix::open::Options::isolated())?;
+            let bounded = named_subrepo_opts(
+                "make_head_repos.sh",
+                name,
+                gix::open::Options::isolated().config_overrides(["gitoxide.objects.allocLimit=1"]),
+            )?;
+            assert_eq!(bounded.head_id()?, buffered.head_id()?);
+            assert_eq!(bounded.head_tree_id()?, buffered.head_tree_id()?);
+            assert_eq!(bounded.head_tree_id_or_empty()?, buffered.head_tree_id_or_empty()?);
+            assert!(
+                bounded.head_commit().is_err(),
+                "the explicit buffered allocation limit remains active"
+            );
+        }
+        let (mut repo, _keep) = crate::basic_rw_repo()?;
+        let blob = repo.write_blob(b"not a commit")?.detach();
+        repo.reference("HEAD", blob, gix::refs::transaction::PreviousValue::Any, "")?;
+        let mut config = repo.config_snapshot_mut();
+        config.append_config(["gitoxide.objects.allocLimit=1"], gix::config::Source::Api)?;
+        config.commit()?;
+        let error = repo.head_tree_id().expect_err("a blob is not a commit");
+        assert!(!error.is_resource_exhausted(), "{error:?}");
+        assert!(error.to_string().contains("was kind blob"), "{error:?}");
+        Ok(())
+    }
+
+    #[test]
+    fn index_and_submodule_discovery_do_not_buffer_head_metadata() -> TestResult {
+        let (repo, _keep) = crate::basic_rw_repo()?;
+        let mut commit = repo.head_commit()?.decode()?.into_owned()?;
+        commit.message = vec![b'x'; 4096].into();
+        let id = repo.write_object(&commit)?.detach();
+        repo.reference("HEAD", id, gix::refs::transaction::PreviousValue::Any, "")?;
+        let entries = repo.index_or_load_from_head()?.entries().len();
+        if repo.index_path().is_file() {
+            std::fs::remove_file(repo.index_path())?;
+        }
+        // A fresh handle prevents the writer's reusable byte buffer from satisfying the read.
+        let repo = gix::open_opts(
+            repo.git_dir(),
+            gix::open::Options::isolated().config_overrides(["gitoxide.objects.allocLimit=1024"]),
+        )?;
+        assert!(
+            repo.head_commit().is_err(),
+            "the commit exceeds the buffered allocation policy"
+        );
+        assert_eq!(repo.index_or_load_from_head()?.entries().len(), entries);
+        assert_eq!(repo.index_or_load_from_head_or_empty()?.entries().len(), entries);
+        assert!(repo.modules()?.is_none(), "an absent .gitmodules remains absent");
+        assert!(
+            !repo.index_path().exists(),
+            "fallback index construction remains in memory"
+        );
+        Ok(())
+    }
+
+    #[test]
     fn a_missing_detached_head_object_is_not_an_empty_tree() -> TestResult {
         let (repo, _keep) = crate::basic_rw_repo()?;
         let mut missing_id = repo.object_hash().null();

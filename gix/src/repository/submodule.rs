@@ -50,6 +50,10 @@ impl Repository {
         )? {
             Some(m) => Ok(Some(m)),
             None => {
+                let objects = crate::object::bounded::Source::new(
+                    self,
+                    gix_utils::stream::Budget::new(&std::env::temp_dir()).or_error()?,
+                )?;
                 let id = match self.try_index()?.and_then(|index| {
                     index
                         .entry_by_path(submodule::MODULES_FILE.into())
@@ -60,12 +64,10 @@ impl Repository {
                         .head()?
                         .try_peel_to_id()?
                         .map(|id| -> Result<Option<_>> {
-                            Ok(id
-                                .object()?
-                                .peel_to_commit()?
-                                .tree()?
-                                .find_entry(submodule::MODULES_FILE)
-                                .map(|entry| entry.inner.oid.to_owned()))
+                            let tree_id = self.tree_id_of_commit(id.detach())?;
+                            Ok(objects
+                                .lookup_entry(tree_id.detach(), std::path::Path::new(submodule::MODULES_FILE))?
+                                .map(|entry| entry.oid))
                         })
                         .transpose()?
                         .flatten()
@@ -74,8 +76,10 @@ impl Repository {
                         None => return Ok(None),
                     },
                 };
+                let mut buffer = gix_object::find::Buffer::default();
                 Ok(Some(gix_parallel::OwnShared::new(
-                    self.modules_from_bytes(&self.find_object(id)?.data, None)?.into(),
+                    self.modules_from_bytes(objects.load(&id, &mut buffer)?.data, None)?
+                        .into(),
                 )))
             }
         }
