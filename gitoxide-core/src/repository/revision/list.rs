@@ -55,10 +55,7 @@ pub(crate) mod function {
         let id = repo
             .rev_parse_single(spec)
             .or_raise(|| message("Only single revisions are currently supported"))?;
-        let source = gix::object::bounded::Source::new(
-            &repo,
-            gix::utils::stream::Budget::new(&std::env::temp_dir()).or_error()?,
-        )?;
+        let source = gix::object::bounded::Source::deferred(&repo);
         let id = source
             .peel(id.detach(), gix::object::Kind::Commit)
             .or_raise(|| message("Need committish as starting point"))?

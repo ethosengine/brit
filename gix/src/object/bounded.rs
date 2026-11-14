@@ -1,5 +1,5 @@
 //! Operation-owned object bytes with the repository's existing allocation policy.
-use std::sync::Arc;
+use std::{cell::OnceCell, rc::Rc, sync::Arc};
 
 use gix_error::{OptionExt, ResultExt, bail, message};
 use gix_object::{Data, FindExt, FindStream, Kind, find::Buffer};
@@ -12,20 +12,51 @@ use crate::{Repository, Result};
 #[derive(Clone)]
 pub struct Source<'repo> {
     repo: &'repo Repository,
-    budget: Arc<Budget>,
-    buffer_limit: u64,
+    budget: Rc<OnceCell<Arc<Budget>>>,
+    buffer_limit: OnceCell<u64>,
 }
 
 impl<'repo> Source<'repo> {
     /// Share the operation's scratch quota and preserve the effective allocation limit.
     pub fn new(repo: &'repo Repository, budget: Arc<Budget>) -> Result<Self> {
-        Ok(Self {
+        let source = Self {
             repo,
-            budget,
-            buffer_limit: repo
-                .allocation_limit()
-                .map_or(repo.big_file_threshold()?, |limit| limit as u64),
-        })
+            budget: Rc::new(OnceCell::from(budget)),
+            buffer_limit: OnceCell::new(),
+        };
+        source.buffer_limit()?;
+        Ok(source)
+    }
+
+    /// Resolve buffering policy on first read and create scratch only when mapping is required.
+    ///
+    /// This keeps infallible graph construction and cached/header-only operations independent of
+    /// temporary storage. Reads return policy or scratch setup failures. Clones share the budget.
+    pub fn deferred(repo: &'repo Repository) -> Self {
+        Self {
+            repo,
+            budget: Rc::new(OnceCell::new()),
+            buffer_limit: OnceCell::new(),
+        }
+    }
+
+    fn buffer_limit(&self) -> Result<u64> {
+        if let Some(limit) = self.buffer_limit.get() {
+            return Ok(*limit);
+        }
+        let limit = self
+            .repo
+            .allocation_limit()
+            .map_or_else(|| self.repo.big_file_threshold(), |limit| Ok(limit as u64))?;
+        Ok(*self.buffer_limit.get_or_init(|| limit))
+    }
+
+    fn budget(&self) -> Result<&Arc<Budget>> {
+        if let Some(budget) = self.budget.get() {
+            return Ok(budget);
+        }
+        let budget = Budget::new(&std::env::temp_dir()).or_error()?;
+        Ok(self.budget.get_or_init(|| budget))
     }
 
     /// Read one object, replacing the previous bytes retained by `buffer`.
@@ -35,7 +66,7 @@ impl<'repo> Source<'repo> {
             buffer.owned().clear();
             return Ok(Data::new(AsRef::<[u8]>::as_ref(&*buffer), Kind::Tree, id.kind()));
         }
-        if self.repo.find_header(id)?.size() <= self.buffer_limit {
+        if self.repo.find_header(id)?.size() <= self.buffer_limit()? {
             return self
                 .repo
                 .objects
@@ -43,10 +74,13 @@ impl<'repo> Source<'repo> {
                 .or_raise(|| message!("Could not read object {id}"));
         }
         buffer.clear();
+        let budget = self
+            .budget()
+            .or_raise(|| message!("Could not create scratch for object {id}"))?;
         let (kind, spool) = self
             .repo
             .objects
-            .find_stream(id, &self.budget, &crate::interrupt::IS_INTERRUPTED)
+            .find_stream(id, budget, &crate::interrupt::IS_INTERRUPTED)
             .or_raise(|| message!("Could not stream object {id}"))?;
         Ok(Data::new(
             buffer.set_external(spool.into_mapped().or_raise(|| message!("Could not map object {id}"))?),

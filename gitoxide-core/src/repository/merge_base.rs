@@ -37,5 +37,6 @@ pub fn merge_base(
 }
 
 fn commit_id(repo: &gix::Repository, revspec: &str) -> Result<gix::ObjectId> {
-    Ok(repo.rev_parse_single(revspec)?.object()?.peel_to_commit()?.id)
+    gix::object::bounded::Source::deferred(repo)
+        .peel(repo.rev_parse_single(revspec)?.detach(), gix::object::Kind::Commit)
 }

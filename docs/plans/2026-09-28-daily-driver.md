@@ -3333,6 +3333,36 @@ Story-harvest station: **bounded history → date-filtered history / failed pare
 reads must refuse rather than fabricate a sorting timestamp**. The forced-error
 regression observes the omission that otherwise looked like successful filtering.
 
+### Shared merge-base metadata and lazy scratch
+
+The separate `merge-base` starting-object reader reproduced the 20 MiB commit
+refusal at explicit 16 MiB and actual reduced trust. Starting-point peeling now
+uses headers where possible, and `Repository::revision_graph` uses the shared
+bounded object source. Pairwise, many-head and octopus algorithms, commit-graph
+caching and replacement handling remain unchanged. The source defers policy
+lookup until bytes are needed and scratch setup until mapping is required;
+clones share that deferred budget. Missing scratch reports the affected object.
+
+The repository suite passes 521 cases with one existing platform ignore. A new
+native check compares buffered and mapped pairwise/many/octopus results and graph
+reuse in both hashes. Unix public tests prove small queries succeed with an
+unavailable `TMPDIR`, while forced mapping reports the filesystem failure.
+Strict affected Clippy, formatting, 12 readiness checks and the declared style
+checker pass.
+
+The two public 20 MiB metadata cases per hash pass loose/packed, default/explicit
+and actual reduced-trust paths with executable
+`a7aeeab8dca5384c3f045420e3a9430ad22e85e43acf92e9416a02602c1f8506`.
+Whole-group peaks are 50,843,648 B in 15.403 s (SHA-1) and 49,573,888 B in
+101.925 s (SHA-256), with zero OOM kills, surviving children or identity changes.
+Private receipts are `bounded-memory/merge-base-*`. Aggregate scratch is still
+unmeasured; these receipts do not establish complete command qualification.
+
+Story-harvest station: **revision graph construction → first mapped read / defer
+scratch requirements until the operation actually needs temporary storage**.
+Parent/ancestor and message-search revision operators, shallow-walk error
+handling, other metadata consumers and final-source qualification remain open.
+
 ### Public-command audit in progress
 
 The command boundary is `src/plumbing/options/mod.rs` plus
@@ -3351,7 +3381,7 @@ explicitly does not attest behavior or working-tree bytes.
 | `status`, `is-clean`, `is-changed`, `index`, `dirwalk`, `clean` | Hash-only status paths stream ordinary files; filtered status and a 200,000-entry index crossing 16 MiB are measured. Other metadata, dirwalk and clean paths still need complete tracing. |
 | `worktree`, `clone` checkout | Existing bounded checkout, OFS/REF delta and filter machinery retained. Whole-cgroup 64/256 MiB worktree checkout/recovery passes; 64/256 MiB local clone/fetch/push also passes; other protocols and reduced-trust transfer paths remain open. |
 | `switch`, `pull`, `rebase`, `merge`, `commit` | Switch/pull raw recovery payloads and streamed dirty checks are repaired and measured at 20/64/256 MiB. Replay working-file journals now use raw payloads and retained-copy capture streams, with 20/64 MiB public cases passing; 64 MiB conflict/abort and preserved large edits also pass after raw-custody repair; interrupted conflict handoff preserves exact child authority; 64 MiB authored-object retention and 20 MiB edit-scope continuation/abort pass after streamed custody fixes. Journal metadata remains open. Three-sided 64 MiB filesystem and object-backed file/tree/commit merge fixtures pass, with bounded rename inputs and recursive-base conformance. External Git merge-file drivers pass 20/64 MiB in both hashes with unchanged inputs; external scratch/cancellation, large journals and resource-bound recovery/death fixtures remain open. |
-| `blame`, `log`, `revision`, `merge-base`, `tree` | Blame initial/history blobs, rename similarity and rendering are repaired and measured, including actual reduced trust and a million unique lines; large history metadata remains open. Ordinary log traverses commits without reading blobs or the index; 20 MiB commit metadata now uses mapped storage above policy and passes both hashes and actual reduced trust. Path-filtered log was already unsupported. Tree listing/statistics and revision path lookup now pass the 240,000-entry metadata matrices described above. Text revision listing now reads large commits through the shared bounded storage and refuses parent-read failures instead of inventing timestamp zero. Remaining revision/history operators and merge-base metadata still need qualification. |
+| `blame`, `log`, `revision`, `merge-base`, `tree` | Blame initial/history blobs, rename similarity and rendering are repaired and measured, including actual reduced trust and a million unique lines; large history metadata remains open. Ordinary log traverses commits without reading blobs or the index; 20 MiB commit metadata now uses mapped storage above policy and passes both hashes and actual reduced trust. Path-filtered log was already unsupported. Tree listing/statistics and revision path lookup now pass the 240,000-entry metadata matrices described above. Text revision listing now reads large commits through the shared bounded storage and refuses parent-read failures instead of inventing timestamp zero. Merge-base starting points and shared graphs now pass both-hash large-metadata qualification; remaining revision/history operators still need qualification. |
 | `fetch`, `push`, `odb`, `fsck`, `verify`, `commit-graph` | Pack decode diagnostics improved; 64/256 MiB local transfer passes without worker/cache changes. Loose blob verification streams; both packed verification algorithms now use bounded storage above configured allocation limits. All decode modes pass 20/64/256 MiB explicit-limit cases in both hashes, including 64 MiB OFS/REF histories, and actual reduced-trust 20/64 MiB cases. ODB inspection, connectivity and pack create/index/explode pass in both hashes; the SHA-256 writer now uses the repository hash format. Additional protocols and large metadata remain open. |
 | `branch`, `tag`, `remote`, `submodule`, `config`, `config-tree`, `attributes`, `exclude`, `mailmap` | Large config/packed-ref fixtures pass in both hashes and actual reduced trust. Mailmap object reads/output and annotated-tag reads are repaired and measured as above. Remote/submodule/path metadata and helper dispatch remain open. |
 | `credential`, `env`, `editor`, `completions`, `free`, `corpus`, `tix` | Applicable metadata/output/owned-child audit remains open. Existing unsupported behavior cannot be relabeled a memory success. |

@@ -17,7 +17,10 @@ impl crate::Repository {
         &self,
         cache: Option<&'cache gix_commitgraph::Graph>,
     ) -> gix_revwalk::Graph<'_, 'cache, T> {
-        gix_revwalk::Graph::new(&self.objects, cache.filter(|_| !self.has_object_replacements()))
+        gix_revwalk::Graph::with_source(
+            crate::object::bounded::Source::deferred(self),
+            cache.filter(|_| !self.has_object_replacements()),
+        )
     }
 
     /// Return a cache for commits and their graph structure, as managed by `git commit-graph`, for accelerating commit walks on

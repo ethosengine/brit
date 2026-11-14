@@ -2,7 +2,7 @@ use gix_hash::ObjectId;
 use gix_object::find::Source;
 use gix_traverse::commit::simple::CommitTimeOrder;
 
-use crate::{Repository, Result, error::ResultExt, ext::ObjectIdExt, revision};
+use crate::{Repository, Result, ext::ObjectIdExt, revision};
 
 /// Specify how to sort commits during a [revision::Walk] traversal.
 ///
@@ -280,10 +280,7 @@ impl<'repo> Platform<'repo> {
                 .then(|| repo.commit_graph().ok())
                 .flatten())
         };
-        let source = crate::object::bounded::Source::new(
-            repo,
-            gix_utils::stream::Budget::new(&std::env::temp_dir()).or_error()?,
-        )?;
+        let source = crate::object::bounded::Source::deferred(repo);
         Ok(revision::Walk {
             repo,
             inner: Box::new(

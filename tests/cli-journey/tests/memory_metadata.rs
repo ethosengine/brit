@@ -124,6 +124,7 @@ fn large_commit(reduced: bool) -> Result<()> {
             > 20 * 1024 * 1024
     );
     let head = git(root, &["rev-parse", "HEAD"])?;
+    let parent = String::from_utf8(git(root, &["rev-parse", "HEAD^"])?)?;
     let index = fs::read(root.join(".git/index"))?;
     let expected = root.join(".git/expected-log");
     output_file(
@@ -157,6 +158,11 @@ fn large_commit(reduced: bool) -> Result<()> {
             same_bytes(&expected, &actual)?;
             brit(root, &["revision", "list", "--long-hashes", "HEAD"], &actual, limit)?;
             same_bytes(&expected_revisions, &actual)?;
+            brit(root, &["merge-base", "HEAD", parent.trim()], &actual, limit)?;
+            ensure!(
+                fs::read_to_string(&actual)? == parent,
+                "merge-base changed the common ancestor"
+            );
             brit(root, &["revision", "resolve", "HEAD"], &actual, limit)?;
             ensure!(
                 fs::read(&actual)? == head,
@@ -203,6 +209,42 @@ fn large_commit(reduced: bool) -> Result<()> {
 #[test]
 fn commit_metadata_over_twenty_mib_preserves_log_title() -> Result<()> {
     large_commit(false)
+}
+
+#[cfg(unix)] // std::env::temp_dir uses TMPDIR on Unix; Windows needs its own environment fixture.
+#[test]
+fn small_revision_queries_only_require_scratch_when_mapping() -> Result<()> {
+    let repo = TestRepo::new("memory-revision-scratch")?;
+    let root = repo.path();
+    let missing = root.join("missing-scratch-directory");
+    for args in [
+        vec!["revision", "list", "--long-hashes", "HEAD"],
+        vec!["merge-base", "HEAD", "HEAD"],
+    ] {
+        let mut command = Command::new(brit_bin().expect("built Brit"));
+        gix_testtools::configure_git_environment(&mut command, root);
+        let output = command.current_dir(root).env("TMPDIR", &missing).args(&args).output()?;
+        ensure!(
+            output.status.success(),
+            "buffered {args:?}: {}",
+            String::from_utf8_lossy(&output.stderr)
+        );
+    }
+    let mut command = Command::new(brit_bin().expect("built Brit"));
+    gix_testtools::configure_git_environment(&mut command, root);
+    let output = command
+        .current_dir(root)
+        .env("TMPDIR", &missing)
+        .args(["-c", "gitoxide.objects.allocLimit=1", "revision", "list", "HEAD"])
+        .output()?;
+    ensure!(
+        !output.status.success()
+            && String::from_utf8_lossy(&output.stderr).contains("Could not create scratch for object"),
+        "mapping must report the real scratch setup failure: {}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    ensure!(!missing.exists());
+    Ok(())
 }
 
 #[cfg(target_os = "linux")]

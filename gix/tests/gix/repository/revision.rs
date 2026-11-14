@@ -1,6 +1,35 @@
 use gix_testtools::TestResult;
 
 #[test]
+fn merge_base_graphs_preserve_ancestors_across_buffering_policies() -> TestResult {
+    let (repo, _tmp) = crate::util::basic_rw_repo()?;
+    let head = repo.head_id()?.detach();
+    let parent = repo.rev_parse_single("HEAD^")?.detach();
+    for limit in [1, 1024 * 1024 * 1024] {
+        let repo = gix::open_opts(
+            repo.git_dir(),
+            gix::open::Options::isolated().cli_overrides([format!("gitoxide.objects.allocLimit={limit}")]),
+        )?;
+        let mut graph = repo.revision_graph(None);
+        assert_eq!(
+            repo.merge_base_with_graph(head, parent, &mut graph)?
+                .map(|id| id.detach()),
+            Some(parent)
+        );
+        graph.clear();
+        let bases = repo.merge_bases_many_with_graph(head, &[parent], &mut graph)?;
+        assert_eq!(bases.into_iter().map(|id| id.detach()).collect::<Vec<_>>(), [parent]);
+        graph.clear();
+        assert_eq!(
+            repo.merge_base_octopus_with_graph([head, parent], &mut graph)?
+                .map(|id| id.detach()),
+            Some(parent)
+        );
+    }
+    Ok(())
+}
+
+#[test]
 fn missing_objects_info_does_not_prevent_merge_base() -> TestResult {
     let (repo, _tmp) = crate::util::basic_rw_repo()?;
     let info_dir = repo.objects.store_ref().path().join("info");
