@@ -112,17 +112,44 @@ impl<'repo> Pathspec<'repo> {
         relative_path: impl Into<&'a BStr>,
         is_dir: Option<bool>,
     ) -> Option<gix_pathspec::search::Match<'_>> {
-        self.search.pattern_matching_relative_path(
+        self.try_pattern_matching_relative_path(relative_path, is_dir)
+            .ok()
+            .flatten()
+    }
+
+    /// Match a path while retaining attribute read, parsing and resource failures.
+    /// The infallible variant treats these failures as non-matches for compatibility.
+    pub fn try_pattern_matching_relative_path<'a>(
+        &mut self,
+        relative_path: impl Into<&'a BStr>,
+        is_dir: Option<bool>,
+    ) -> Result<Option<gix_pathspec::search::Match<'_>>> {
+        let source = crate::object::bounded::Source::deferred(self.repo);
+        let mut failure = None;
+        let matched = self.search.pattern_matching_relative_path(
             relative_path.into(),
             is_dir,
             &mut |relative_path, case, is_dir, out| {
+                if failure.is_some() {
+                    return false;
+                }
                 let stack = self.stack.as_mut().expect("initialized in advance");
-                stack
+                match stack
                     .set_case(case)
-                    .at_entry(relative_path, Some(is_dir_to_mode(is_dir)), &self.repo.objects)
-                    .is_ok_and(|platform| platform.matching_attributes(out))
+                    .at_path_with_source(relative_path, Some(is_dir_to_mode(is_dir)), &source)
+                {
+                    Ok(platform) => platform.matching_attributes(out),
+                    Err(error) => {
+                        failure = Some(error);
+                        false
+                    }
+                }
             },
-        )
+        );
+        if let Some(error) = failure {
+            return Err(error).or_error();
+        }
+        Ok(matched)
     }
 
     /// The simplified version of [`pattern_matching_relative_path()`](Self::pattern_matching_relative_path()) which returns
@@ -130,6 +157,41 @@ impl<'repo> Pathspec<'repo> {
     pub fn is_included<'a>(&mut self, relative_path: impl Into<&'a BStr>, is_dir: Option<bool>) -> bool {
         self.pattern_matching_relative_path(relative_path, is_dir)
             .is_some_and(|m| !m.is_excluded())
+    }
+
+    /// Like [`Self::is_included()`], retaining failures from attribute lookups.
+    pub fn try_is_included<'a>(&mut self, relative_path: impl Into<&'a BStr>, is_dir: Option<bool>) -> Result<bool> {
+        Ok(self
+            .try_pattern_matching_relative_path(relative_path, is_dir)?
+            .is_some_and(|m| !m.is_excluded()))
+    }
+
+    /// Iterate matching index entries, reporting the first attribute failure and then stopping.
+    pub fn try_index_entries_with_paths<'s: 'repo, 'a: 'repo>(
+        &'s mut self,
+        index: &'a gix_index::State,
+    ) -> Option<impl Iterator<Item = Result<(&'a BStr, &'a gix_index::Entry)>> + 'repo + 's> {
+        index.prefixed_entries(self.search.common_prefix()).map(|entries| {
+            let mut entries = entries.iter();
+            let mut failed = false;
+            std::iter::from_fn(move || {
+                if failed {
+                    return None;
+                }
+                loop {
+                    let entry = entries.next()?;
+                    let path = entry.path(index);
+                    match self.try_is_included(path, Some(false)) {
+                        Ok(true) => return Some(Ok((path, entry))),
+                        Ok(false) => {}
+                        Err(error) => {
+                            failed = true;
+                            return Some(Err(error));
+                        }
+                    }
+                }
+            })
+        })
     }
 
     /// Return an iterator over all entries along with their path if the path matches the pathspec, or `None` if the pathspec is

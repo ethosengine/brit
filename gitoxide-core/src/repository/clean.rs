@@ -137,7 +137,7 @@ pub(crate) mod function {
                     .pathspec_match
                     .is_some_and(|m| m != gix::dir::entry::PathspecMatch::Excluded),
                 Some(pathspec) => pathspec
-                    .pattern_matching_relative_path(entry.rela_path.as_bstr(), entry.disk_kind.map(|k| k.is_dir()))
+                    .try_pattern_matching_relative_path(entry.rela_path.as_bstr(), entry.disk_kind.map(|k| k.is_dir()))?
                     .is_some_and(|m| !m.is_excluded()),
             };
             pruned_entries += usize::from(!pathspec_includes_entry);

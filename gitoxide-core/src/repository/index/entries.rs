@@ -162,6 +162,7 @@ pub(crate) mod function {
 
                 // Note that we intentionally ignore `_case` so that we act like git does, attribute matching case is determined
                 // by the repository, not the pathspec.
+                let mut attribute_error = None;
                 let entry_is_excluded = pathspec
                     .pattern_matching_relative_path(
                         entry.path(&index),
@@ -177,17 +178,22 @@ pub(crate) mod function {
                                             matched
                                         }
                                         // The user doesn't want attributes, so we set the cache position on demand only
-                                        None => cache
-                                            .at_entry(rela_path, Some(is_dir_to_mode(is_dir)))
-                                            .ok()
-                                            .map(|platform| platform.matching_attributes(out))
-                                            .unwrap_or_default(),
+                                        None => match cache.at_entry(rela_path, Some(is_dir_to_mode(is_dir))) {
+                                            Ok(platform) => platform.matching_attributes(out),
+                                            Err(error) => {
+                                                attribute_error.get_or_insert(error);
+                                                false
+                                            }
+                                        },
                                     }
                                 })
                                 .unwrap_or_default()
                         },
                     )
                     .is_none_or(|m| m.is_excluded());
+                if let Some(error) = attribute_error {
+                    return Err(error);
+                }
 
                 let entry_is_submodule = entry.mode.is_submodule();
                 if entry_is_excluded && (!entry_is_submodule || !recurse_submodules) {

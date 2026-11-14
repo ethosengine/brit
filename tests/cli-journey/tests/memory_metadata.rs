@@ -1118,3 +1118,110 @@ fn attributes_and_excludes_over_twenty_mib() -> Result<()> {
 fn actual_reduced_trust_large_attributes_and_excludes() -> Result<()> {
     large_attributes_and_excludes(true)
 }
+
+fn attribute_pathspec(size: usize, reduced: bool, faults: bool) -> Result<()> {
+    let repo = TestRepo::new("memory-attribute-pathspec")?;
+    let root = repo.path();
+    repo.commit_file("selected", "selected bytes\n")?;
+    repo.commit_file("other", "other bytes\n")?;
+    let mut patterns = BufWriter::new(fs::File::create(root.join(".gitattributes"))?);
+    for _ in 0..size / 65536 {
+        patterns.write_all(&[b'#'; 65536])?;
+    }
+    patterns.write_all(b"\nselected custom=yes\nuntracked custom=yes\nother custom=no\n")?;
+    patterns.flush()?;
+    drop(patterns);
+    git(root, &["add", ".gitattributes"])?;
+    git(root, &["commit", "-qm", "indexed attributes"])?;
+    let attr_id = String::from_utf8(git(root, &["rev-parse", "HEAD:.gitattributes"])?)?
+        .trim()
+        .to_owned();
+    fs::remove_file(root.join(".gitattributes"))?;
+    fs::write(root.join("untracked"), "untracked bytes\n")?;
+    ensure!(git(root, &["ls-files", "--", ":(attr:custom=yes)"])? == b"selected\n");
+    let head = git(root, &["rev-parse", "HEAD"])?;
+    let index = fs::read(root.join(".git/index"))?;
+    reduced_trust(root, reduced)?;
+    let commands: [&[&str]; 3] = [
+        &["attributes", "query", ":(attr:custom=yes)selected"],
+        &["index", "entries", "--no-attributes", ":(attr:custom=yes)"],
+        &["clean", "--pathspec-matches-result", ":(attr:custom=yes)"],
+    ];
+    let output = root.join(".git/pathspec-output");
+    for packed in [false, true] {
+        if packed {
+            if faults {
+                break;
+            }
+            git(root, &["-c", "pack.threads=1", "repack", "-ad"])?;
+        }
+        for (n, args) in commands.iter().enumerate() {
+            let expected = root.join(format!(".git/pathspec-expected-{n}"));
+            brit(root, args, &expected, Some("1073741824"))?;
+            let bytes = fs::read_to_string(&expected)?;
+            ensure!(
+                bytes.contains(if n == 2 { "untracked" } else { "selected" }) && !bytes.contains("other"),
+                "expected selected result: {bytes:?}"
+            );
+            for limit in [None, Some("16777216"), Some("1024")] {
+                brit(root, args, &output, limit)?;
+                same_bytes(&expected, &output)?;
+            }
+        }
+    }
+    if faults {
+        fs::write(
+            root.join(".git/objects").join(&attr_id[..2]).join(&attr_id[2..]),
+            b"corrupt object",
+        )?;
+        for args in commands {
+            let mut command = Command::new(brit_bin().expect("built Brit"));
+            gix_testtools::configure_git_environment(&mut command, root);
+            command
+                .current_dir(root)
+                .args(["-c", "gitoxide.objects.allocLimit=1024"])
+                .args(args);
+            if args[0] == "clean" {
+                command.arg("--execute");
+            }
+            let result = command.output()?;
+            ensure!(
+                !result.status.success(),
+                "{args:?} must preserve a failed attribute read"
+            );
+            let diagnostic = String::from_utf8_lossy(&result.stderr);
+            ensure!(
+                diagnostic.contains(&attr_id) || diagnostic.contains(&attr_id[2..]),
+                "{args:?} must identify the failed pattern object or loose-object path: {diagnostic}"
+            );
+        }
+    }
+    ensure!(git(root, &["rev-parse", "HEAD"])? == head);
+    ensure!(fs::read(root.join(".git/index"))? == index);
+    for (name, content) in [
+        ("selected", "selected bytes\n"),
+        ("other", "other bytes\n"),
+        ("untracked", "untracked bytes\n"),
+    ] {
+        ensure!(fs::read(root.join(name))? == content.as_bytes(), "preserve {name}");
+    }
+    Ok(())
+}
+
+#[test]
+fn attribute_pathspec_preserves_selection_and_read_failures() -> Result<()> {
+    attribute_pathspec(128 * 1024, false, true)
+}
+
+#[test]
+#[ignore = "resource qualification: requires BRIT_BIN and delegated cgroup"]
+fn attribute_pathspec_twenty_mib() -> Result<()> {
+    attribute_pathspec(20 * 1024 * 1024, false, false)
+}
+
+#[cfg(target_os = "linux")]
+#[test]
+#[ignore = "resource qualification: requires BRIT_BIN, delegated cgroup and chown authority"]
+fn attribute_pathspec_twenty_mib_reduced_trust() -> Result<()> {
+    attribute_pathspec(20 * 1024 * 1024, true, false)
+}

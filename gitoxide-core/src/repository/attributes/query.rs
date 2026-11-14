@@ -63,8 +63,9 @@ pub(crate) mod function {
                         .adjust_for_bare(repo.is_bare()),
                 )?;
                 let mut pathspec_matched_entry = false;
-                if let Some(it) = pathspec.index_entries_with_paths(&index) {
-                    for (path, entry) in it {
+                if let Some(it) = pathspec.try_index_entries_with_paths(&index) {
+                    for entry in it {
+                        let (path, entry) = entry?;
                         pathspec_matched_entry = true;
                         let entry = cache.at_entry(path, entry.mode.into())?;
                         if !entry.matching_attributes(&mut matches) {
