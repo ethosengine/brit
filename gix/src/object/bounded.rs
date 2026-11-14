@@ -77,11 +77,17 @@ impl<'repo> Source<'repo> {
             return Ok(Data::new(AsRef::<[u8]>::as_ref(&*buffer), Kind::Tree, id.kind()));
         }
         if self.repo.objects.header(id)?.size() <= self.buffer_limit()? {
-            return self
-                .repo
-                .objects
-                .find(id, buffer.owned())
-                .or_raise(|| message!("Could not read object {id}"));
+            match self.repo.objects.find(id, buffer.owned()).map(|data| data.kind) {
+                Ok(kind) => return Ok(Data::new(AsRef::<[u8]>::as_ref(&*buffer), kind, id.kind())),
+                // A small result may need a larger delta base or instruction buffer.
+                // Only a configured allocation limit selects the streamed retry.
+                Err(error)
+                    if error.classify().any(|class| {
+                        class.class()
+                            == gix_error::Class::ResourceExhaustion(gix_error::ResourceExhaustionKind::AllocationLimit)
+                    }) => {}
+                Err(error) => return Err(error).or_raise(|| message!("Could not read object {id}")),
+            }
         }
         buffer.clear();
         let budget = self

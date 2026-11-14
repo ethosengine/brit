@@ -3667,6 +3667,20 @@ This qualifies the tested noninteractive handoff, not arbitrary editor
 programs or public-editor terminal/cancellation behavior. The latter remains
 distinct from the existing authoring editor supervision suite.
 
+### Small packed results with larger decode requirements
+
+Tix qualification exposed a shared reader gap: the final object fits the
+configured allocation limit, but buffered delta decoding requires a larger
+base or instruction buffer. The bounded reader now retries only a typed
+configured-allocation-limit failure through its existing verified stream and
+immutable mapping. Other errors propagate. The ordinary buffered API continues
+to refuse above its explicit limit; no policy is increased. Both-hash OFS/REF
+regressions use a 16-byte result with a 2 KiB base and verify exact bytes,
+retained scratch accounting and reclamation. All 530 active repository tests,
+strict affected Clippy, formatting, readiness and declared style pass. Private
+evidence: `bounded-memory/small-delta-*`. Aggregate scratch and final-source
+acceptance remain open.
+
 ### Public-command audit in progress
 
 The command boundary is `src/plumbing/options/mod.rs` plus

@@ -5,6 +5,80 @@ mod tree;
 use gix_testtools::size_ok;
 
 #[test]
+fn small_delta_results_stream_when_their_base_exceeds_allocation_policy() -> gix_testtools::TestResult {
+    use gix::objs::FindExt;
+    use std::{io::Write, sync::Arc};
+
+    for refs in [false, true] {
+        let dir = gix_testtools::tempfile::tempdir()?;
+        assert!(
+            gix_testtools::git_command(dir.path())
+                .args(["init", "-q"])
+                .status()?
+                .success()
+        );
+        let repo = gix::open_opts(
+            dir.path(),
+            gix::open::Options::isolated().cli_overrides(["gitoxide.objects.allocLimit=16"]),
+        )?;
+        let kind = repo.object_hash();
+        let base = vec![b'x'; 2048];
+        let expected = [b'x'; 16];
+        let id = gix::objs::compute_hash(kind, gix::objs::Kind::Blob, &expected)?;
+        let base_id = gix::objs::compute_hash(kind, gix::objs::Kind::Blob, &base)?;
+        let mut pack = gix_pack::data::header::encode(gix_pack::data::Version::V2, 2).to_vec();
+        let base_offset = pack.len();
+        gix_pack::data::entry::Header::Blob.write_to(base.len() as u64, &mut pack)?;
+        let compress = |data: &[u8]| -> std::io::Result<Vec<u8>> {
+            let mut output = gix::zlib::stream::deflate::Write::new(Vec::new(), gix::zlib::Compression::BEST_SPEED);
+            output.write_all(data)?;
+            output.flush()?;
+            Ok(output.into_inner())
+        };
+        pack.extend(compress(&base)?);
+        let header = if refs {
+            gix_pack::data::entry::Header::RefDelta { base_id }
+        } else {
+            gix_pack::data::entry::Header::OfsDelta {
+                base_distance: (pack.len() - base_offset) as u64,
+            }
+        };
+        // Base size 2048, result size 16, copy 16 bytes from offset zero.
+        let delta = [0x80, 0x10, 0x10, 0x90, 0x10];
+        header.write_to(delta.len() as u64, &mut pack)?;
+        pack.extend(compress(&delta)?);
+        let mut hash = gix::hash::hasher(kind);
+        hash.update(&pack);
+        let pack_id = hash.try_finalize()?;
+        pack.extend_from_slice(pack_id.as_slice());
+        let path = repo.git_dir().join(format!("objects/pack/pack-{pack_id}.pack"));
+        std::fs::write(&path, pack)?;
+        assert!(
+            gix_testtools::git_command(dir.path())
+                .arg("index-pack")
+                .arg(&path)
+                .output()?
+                .status
+                .success()
+        );
+        let error = repo
+            .objects
+            .find(&id, &mut Vec::new())
+            .expect_err("ordinary buffering keeps its explicit limit");
+        assert!(error.classify().any(|class| class.class()
+            == gix::error::Class::ResourceExhaustion(gix::error::ResourceExhaustionKind::AllocationLimit)));
+        let budget = gix::utils::stream::Budget::new(dir.path())?;
+        let source = gix::object::bounded::Source::new(&repo, Arc::clone(&budget))?;
+        let mut buffer = gix::objs::find::Buffer::default();
+        assert_eq!(source.load(&id, &mut buffer)?.data, expected);
+        assert_eq!(budget.usage().0, 16, "only the mapped result remains charged");
+        drop(buffer);
+        assert_eq!(budget.usage().0, 0);
+    }
+    Ok(())
+}
+
+#[test]
 fn public_errors_use_the_crate_result_and_preserve_diagnostics() -> gix_testtools::TestResult {
     let repo = crate::basic_repo()?;
     let mut commit = repo.head_commit()?;
