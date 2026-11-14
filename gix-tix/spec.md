@@ -201,6 +201,14 @@ without trading responsiveness for metadata that is not visible.
   operation commands are also available under `gix tix`. They replace
   `tix admin clear-undo` without retaining the `admin` group or compatibility
   aliases.
+- Operation queue reads reuse one bounded object buffer across entries. Large
+  commit bodies use immutable mappings above the repository allocation policy;
+  parsing retains only detached titles and reference changes, not copied commit
+  bodies. Undo/redo worktree tree lookup uses the same bounded reader. Queue
+  validation, retention-parent ordering and checked reference updates do not
+  depend on the storage path selected. Failed object reads while detecting
+  internal queue commits remain errors; they cannot expose an unread queue
+  commit as an ordinary selectable commit.
 - `tix enrich commit todo [--clear] [REVSPEC]`, `tix enrich commit note
   [REVSPEC] [-m MESSAGE ... | -f FILE]`, `tix enrich commit git-note
   [REVSPEC] [-m MESSAGE ... | -f FILE]`, `tix enrich tree

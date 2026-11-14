@@ -8,6 +8,7 @@ use gix::{
     bstr::{BStr, BString, ByteSlice},
     config::File,
     error::{ErrorExt, OptionExt, ResultExt, bail, message},
+    objs::find::Source as _,
     refs::{
         FullName, FullNameRef, Target,
         transaction::{Change, LogChange, PreviousValue, RefEdit, RefLog},
@@ -170,12 +171,15 @@ pub(crate) fn is_internal_commit(repo: &gix::Repository, needle: ObjectId) -> Re
         return Ok(false);
     };
     let mut seen = HashSet::new();
+    let source = gix::object::bounded::Source::deferred(repo);
+    let mut buffer = gix::objs::find::Buffer::default();
     loop {
         gix::error::ensure!(
             seen.insert(id),
             message("the undo queue first-parent chain contains a cycle")
         );
-        let Ok(stored) = parse_commit(repo, id) else {
+        let commit = crate::history::decode_object(&source, id, &mut buffer)?;
+        let Ok(stored) = parse_commit(repo, commit) else {
             return Ok(false);
         };
         if id == needle {
@@ -600,11 +604,12 @@ fn tree_id(repo: &gix::Repository, commit: Option<ObjectId>) -> Result<ObjectId>
     commit.map_or_else(
         || Ok(ObjectId::empty_tree(repo.object_hash())),
         |commit| {
-            Ok(repo
-                .find_commit(commit)
+            let source = gix::object::bounded::Source::deferred(repo);
+            let mut buffer = gix::objs::find::Buffer::default();
+            source
+                .find_commit(&commit, &mut buffer)
                 .or_raise(|| message("a worktree HEAD target is not a commit"))?
-                .tree_id()?
-                .detach())
+                .tree_id()
         },
     )
 }
@@ -884,12 +889,14 @@ fn load(repo: &gix::Repository) -> Result<Option<Queue>> {
     let mut seen = HashSet::new();
     let mut entries = Vec::new();
     let sentinel;
+    let source = gix::object::bounded::Source::deferred(repo);
+    let mut buffer = gix::objs::find::Buffer::default();
     loop {
         gix::error::ensure!(
             seen.insert(id),
             message("the undo queue first-parent chain contains a cycle")
         );
-        let stored = parse_commit(repo, id)?;
+        let stored = parse_commit(repo, crate::history::decode_object(&source, id, &mut buffer)?)?;
         match stored.parent {
             Some(parent) => {
                 entries.push(StoredEntry {
@@ -943,13 +950,12 @@ struct ParsedCommit {
     changes: Vec<RefChange>,
 }
 
-fn parse_commit(repo: &gix::Repository, id: ObjectId) -> Result<ParsedCommit> {
-    let commit = repo.find_commit(id)?.decode()?.into_owned()?;
+fn parse_commit(repo: &gix::Repository, commit: gix::objs::CommitRef<'_>) -> Result<ParsedCommit> {
     gix::error::ensure!(
-        commit.tree == ObjectId::empty_tree(repo.object_hash()),
+        commit.tree() == ObjectId::empty_tree(repo.object_hash()),
         message("an undo queue commit does not use the empty tree")
     );
-    let message = gix::objs::commit::MessageRef::from_bytes(&commit.message);
+    let message = gix::objs::commit::MessageRef::from_bytes(commit.message);
     let title = message
         .title
         .to_str()
@@ -960,7 +966,7 @@ fn parse_commit(repo: &gix::Repository, id: ObjectId) -> Result<ParsedCommit> {
         .body
         .ok_or_raise(|| gix::error::message("an undo queue commit has no metadata body"))?;
     let changes = parse_config(repo, body)?;
-    let parent = commit.parents.first().copied();
+    let parent = commit.parents().next();
     match parent {
         None => {
             gix::error::ensure!(
@@ -979,7 +985,7 @@ fn parse_commit(repo: &gix::Repository, id: ObjectId) -> Result<ParsedCommit> {
             );
             let expected = retention_parents(repo, parent, &changes)?;
             gix::error::ensure!(
-                commit.parents.as_slice() == expected,
+                commit.parents().eq(expected),
                 gix::error::message("an undo commit has invalid retention parents")
             );
         }
@@ -1050,6 +1056,228 @@ mod tests {
             "no-op entries are rejected"
         );
         Ok(())
+    }
+
+    #[test]
+    fn padded_queue_metadata_preserves_undo_redo_under_small_allocation_policy() -> TestResult {
+        let (fixture, repository) = repo()?;
+        let branch = name("refs/heads/undo-padded")?;
+        let head = repository.head_id()?.detach();
+        set(&repository, branch.clone(), State::Missing, State::Object(head))?;
+        let entry = record(
+            &repository,
+            "create padded branch",
+            &[RefChange {
+                name: branch.clone(),
+                before: State::Missing,
+                after: State::Object(head),
+            }],
+        )?
+        .expect("recorded change");
+        let mut commit = repository.find_commit(entry)?.decode()?.into_owned()?;
+        commit.message.extend_from_slice(b"\n#");
+        commit.message.extend_from_slice(&vec![b'x'; 128 * 1024]);
+        commit.message.extend_from_slice(b"\n");
+        let padded = repository.write_object(&commit)?.detach();
+        drop(commit);
+        for reference in [TIP_REF, CURSOR_REF] {
+            set(
+                &repository,
+                name(reference)?,
+                State::Object(entry),
+                State::Object(padded),
+            )?;
+        }
+        for limit in ["1073741824", "1024"] {
+            let repository =
+                crate::test_repository::open_with(fixture.path(), [format!("gitoxide.objects.allocLimit={limit}")])?;
+            assert_eq!(
+                tree_id(&repository, Some(padded))?,
+                ObjectId::empty_tree(repository.object_hash())
+            );
+            assert_eq!(history(&repository)?.titles, ["create padded branch"]);
+            plan_undo(&repository)?.expect("one operation").apply(&repository)?;
+            assert!(repository.try_find_reference(branch.as_ref())?.is_none());
+            plan_redo(&repository)?.expect("one redo").apply(&repository)?;
+            assert_eq!(repository.find_reference(branch.as_ref())?.id(), head);
+            assert_eq!(repository.head_id()?.detach(), head);
+        }
+        let repository = crate::test_repository::open_with(fixture.path(), ["gitoxide.objects.allocLimit=1"])?;
+        assert_eq!(
+            history(&repository)?.applied,
+            1,
+            "read-only queue loading maps above policy"
+        );
+        let error = plan_undo(&repository)?
+            .expect("one operation")
+            .apply(&repository)
+            .expect_err("the explicit one-byte limit still protects index allocations");
+        assert!(format!("{error:#}").contains("Index decode requested"));
+        assert_eq!(repository.find_reference(branch.as_ref())?.id(), head);
+        assert_eq!(read_queue_ref(&repository, CURSOR_REF)?, Some(padded));
+        Ok(())
+    }
+
+    #[test]
+    fn borrowed_queue_parsing_preserves_actor_validation() -> TestResult {
+        let (_fixture, repository) = repo()?;
+        let valid = "Fixture <fixture@example.com> 1600000000 +0000";
+        for (author, committer) in [("malformed", valid), (valid, "malformed")] {
+            let data = format!(
+                "tree {}\nauthor {author}\ncommitter {committer}\n\n{START_TITLE}\n\n[undo]\nversion=1\n",
+                ObjectId::empty_tree(repository.object_hash())
+            );
+            let parsed = gix::objs::CommitRef::from_bytes(data.as_bytes(), repository.object_hash())
+                .and_then(|commit| parse_commit(&repository, commit));
+            assert!(
+                parsed.is_err(),
+                "borrowed decoding still rejects malformed actor signatures"
+            );
+        }
+        Ok(())
+    }
+
+    #[test]
+    fn unreadable_queue_is_not_an_ordinary_commit() -> TestResult {
+        let (fixture, repository) = repo()?;
+        let head = repository.head_id()?.detach();
+        let sentinel = write_commit(&repository, START_TITLE, &serialize_config(&[])?, &[])?;
+        for reference in [TIP_REF, CURSOR_REF] {
+            set(&repository, name(reference)?, State::Missing, State::Object(sentinel))?;
+        }
+        assert!(is_internal_commit(&repository, sentinel)?);
+        let hex = sentinel.to_string();
+        std::fs::write(
+            repository.git_dir().join("objects").join(&hex[..2]).join(&hex[2..]),
+            b"corrupt compressed object",
+        )?;
+        let repository = crate::test_repository::open(fixture.path())?;
+        assert!(
+            is_internal_commit(&repository, head).is_err(),
+            "failed queue read must remain an error"
+        );
+        Ok(())
+    }
+
+    #[cfg(target_os = "linux")]
+    fn qualify_public_undo(reduced: bool) -> TestResult {
+        use std::{
+            fs,
+            os::unix::fs::{MetadataExt, chown},
+            process::Command,
+        };
+        let (fixture, repository) = repo()?;
+        let root = fixture.path();
+        let head = repository.head_id()?.detach();
+        let index = fs::read(repository.git_dir().join("index"))?;
+        let tracked = fs::read(root.join("tracked"))?;
+        let untracked = fs::read(root.join("untracked"))?;
+        let branch = name("refs/heads/undo-public")?;
+        set(&repository, branch.clone(), State::Missing, State::Object(head))?;
+        let entry = record(
+            &repository,
+            "create public branch",
+            &[RefChange {
+                name: branch.clone(),
+                before: State::Missing,
+                after: State::Object(head),
+            }],
+        )?
+        .expect("recorded change");
+        let mut commit = repository.find_commit(entry)?.decode()?.into_owned()?;
+        commit.message.extend_from_slice(b"\n#");
+        commit.message.extend_from_slice(&vec![b'x'; 20 * 1024 * 1024]);
+        commit.message.extend_from_slice(b"\n");
+        let padded = repository.write_object(&commit)?.detach();
+        drop(commit);
+        for reference in [TIP_REF, CURSOR_REF] {
+            set(
+                &repository,
+                name(reference)?,
+                State::Object(entry),
+                State::Object(padded),
+            )?;
+        }
+        let run = |args: &[&str], limit: Option<&str>| -> Result<std::process::Output> {
+            let mut command = Command::new(std::env::var_os("BRIT_BIN").expect("built Brit"));
+            gix_testtools::configure_git_environment(&mut command, root);
+            command.current_dir(root);
+            if let Some(limit) = limit {
+                command.args(["-c", &format!("gitoxide.objects.allocLimit={limit}")]);
+            }
+            command.args(args).output().or_error()
+        };
+        if reduced {
+            assert_eq!(fs::metadata(root)?.uid(), 0, "qualification requires chown authority");
+            chown(root, Some(65534), None)?;
+            chown(repository.git_dir(), Some(65534), None)?;
+            let trust = run(&["free", "trust", ".", ".git"], None)?;
+            assert!(trust.status.success());
+            assert_eq!(
+                String::from_utf8(trust.stdout)?
+                    .lines()
+                    .filter(|line| line.starts_with("Reduced"))
+                    .count(),
+                2
+            );
+        }
+        for packed in [false, true] {
+            if packed {
+                assert!(
+                    gix_testtools::git_command(root)
+                        .args([
+                            "-c",
+                            &format!("safe.directory={}", root.display()),
+                            "-c",
+                            "pack.threads=1",
+                            "repack",
+                            "-ad"
+                        ])
+                        .status()?
+                        .success()
+                );
+            }
+            for limit in [None, Some("1073741824"), Some("16777216"), Some("1024")] {
+                let output = run(&["tix", "op", "log"], limit)?;
+                assert!(output.status.success(), "{}", String::from_utf8_lossy(&output.stderr));
+                assert!(String::from_utf8_lossy(&output.stdout).contains("create public branch"));
+                let output = run(&["tix", "op", "undo"], limit)?;
+                assert!(output.status.success(), "{}", String::from_utf8_lossy(&output.stderr));
+                assert!(repository.try_find_reference(branch.as_ref())?.is_none());
+                let output = run(&["tix", "op", "redo"], limit)?;
+                assert!(output.status.success(), "{}", String::from_utf8_lossy(&output.stderr));
+                assert_eq!(repository.find_reference(branch.as_ref())?.id(), head);
+                assert_eq!(read_queue_ref(&repository, CURSOR_REF)?, Some(padded));
+            }
+        }
+        let output = run(&["tix", "op", "undo"], Some("1"))?;
+        assert!(!output.status.success());
+        assert!(String::from_utf8_lossy(&output.stderr).contains("Index decode requested"));
+        assert_eq!(read_queue_ref(&repository, CURSOR_REF)?, Some(padded));
+        assert_eq!(repository.find_reference(branch.as_ref())?.id(), head);
+        let output = run(&["tix", "op", "clear"], None)?;
+        assert!(output.status.success(), "{}", String::from_utf8_lossy(&output.stderr));
+        assert!(read_queue_ref(&repository, TIP_REF)?.is_none());
+        assert!(read_queue_ref(&repository, CURSOR_REF)?.is_none());
+        assert_eq!(repository.head_id()?.detach(), head);
+        assert_eq!(fs::read(repository.git_dir().join("index"))?, index);
+        assert_eq!(fs::read(root.join("tracked"))?, tracked);
+        assert_eq!(fs::read(root.join("untracked"))?, untracked);
+        Ok(())
+    }
+
+    #[cfg(target_os = "linux")]
+    #[test]
+    #[ignore = "resource qualification: requires BRIT_BIN and delegated cgroup"]
+    fn public_undo_twenty_mib_metadata() -> TestResult {
+        qualify_public_undo(false)
+    }
+
+    #[cfg(target_os = "linux")]
+    #[test]
+    #[ignore = "resource qualification: requires BRIT_BIN, delegated cgroup and chown authority"]
+    fn public_undo_twenty_mib_metadata_reduced_trust() -> TestResult {
+        qualify_public_undo(true)
     }
 
     #[test]
