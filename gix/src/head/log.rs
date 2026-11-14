@@ -20,15 +20,30 @@ impl<'repo> Head<'repo> {
     /// being the first entry of the list, and the most recent is the last, along with the commit they were pointing to
     /// at the time.
     pub fn prior_checked_out_branches(&self) -> Result<Option<Vec<(BString, ObjectId)>>> {
-        Ok(self.log_iter().all().or_error()?.map(|log| {
-            log.filter_map(std::result::Result::ok)
-                .filter_map(|line| {
-                    line.message
+        self.prior_checked_out_branches_iter()?
+            .map(Iterator::collect)
+            .transpose()
+    }
+
+    /// Stream previous checkouts in oldest-to-newest order, retaining read and parse failures.
+    /// Unlike the collecting variant, memory does not grow with the number of reflog entries.
+    pub fn prior_checked_out_branches_iter(
+        &self,
+    ) -> Result<Option<impl Iterator<Item = Result<(BString, ObjectId)>> + use<>>> {
+        Ok(self.log_iter().stream()?.map(|log| {
+            log.filter_map(|line| {
+                if let Err(err) = gix_utils::stream::check(&crate::interrupt::IS_INTERRUPTED).or_error() {
+                    return Some(Err(err));
+                }
+                match line {
+                    Err(err) => Some(Err(err)),
+                    Ok(line) => line
+                        .message
                         .strip_prefix(b"checkout: moving from ")
                         .and_then(|from_to| from_to.find(" to ").map(|pos| &from_to[..pos]))
-                        .map(|from_branch| (from_branch.as_bstr().to_owned(), line.previous_oid()))
-                })
-                .collect()
+                        .map(|from_branch| Ok((from_branch.as_bstr().to_owned(), line.previous_oid))),
+                }
+            })
         }))
     }
 }

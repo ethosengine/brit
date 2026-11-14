@@ -47,6 +47,25 @@ pub struct Platform<'a, 's> {
 }
 
 impl Platform<'_, '_> {
+    /// Read entries oldest to newest, retaining only one line and a small I/O buffer.
+    pub fn stream(&self) -> Result<Option<Stream<std::io::BufReader<std::fs::File>>>> {
+        let path = self.store.reflog_path(self.name)?;
+        if path.is_dir() {
+            return Ok(None);
+        }
+        match std::fs::File::open(&path) {
+            Ok(file) => Ok(Some(Stream {
+                reader: std::io::BufReader::new(file),
+                line: Vec::new(),
+                count: 0,
+                path,
+                done: false,
+            })),
+            Err(err) if err.kind() == std::io::ErrorKind::NotFound => Ok(None),
+            Err(err) => Err(err).or_raise(|| Message::new("Could not read reflog").with("path", path)),
+        }
+    }
+
     /// Return a forward iterator over all log-lines, most recent to oldest.
     pub fn rev(&mut self) -> std::io::Result<Option<log::iter::Reverse<'_, std::fs::File>>> {
         self.buf.clear();
@@ -66,6 +85,45 @@ impl Platform<'_, '_> {
             .reflog_path(self.name)
             .map_err(|err| std::io::Error::new(std::io::ErrorKind::InvalidInput, err))?;
         self.store.reflog_iter_inner(&path, &mut self.buf)
+    }
+}
+
+/// A forward reflog reader which releases each parsed entry to its caller.
+pub struct Stream<R> {
+    reader: R,
+    line: Vec<u8>,
+    count: usize,
+    path: std::path::PathBuf,
+    done: bool,
+}
+
+impl<R: std::io::BufRead> Iterator for Stream<R> {
+    type Item = Result<crate::log::Line>;
+
+    fn next(&mut self) -> Option<Self::Item> {
+        if self.done {
+            return None;
+        }
+        self.line.clear();
+        match self.reader.read_until(b'\n', &mut self.line) {
+            Ok(0) => {
+                self.done = true;
+                None
+            }
+            Ok(_) => {
+                self.count += 1;
+                let line = self.line.as_bstr().lines().next().expect("read a nonempty line");
+                Some(
+                    log::LineRef::from_bytes(line)
+                        .map(Into::into)
+                        .or_raise(|| invalid_reflog_entry(self.count, false).with("path", self.path.clone())),
+                )
+            }
+            Err(err) => {
+                self.done = true;
+                Some(Err(err).or_raise(|| Message::new("Could not read reflog").with("path", self.path.clone())))
+            }
+        }
     }
 }
 
@@ -191,6 +249,7 @@ where
 
 fn invalid_reflog_entry(line: usize, from_end: bool) -> Message {
     Message::new("Invalid reflog entry")
+        .corrupted()
         .with("line", line)
         .with("from_end", from_end)
 }

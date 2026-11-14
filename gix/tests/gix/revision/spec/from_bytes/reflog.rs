@@ -7,6 +7,154 @@ use crate::{
 };
 
 #[test]
+fn reflog_failures_are_not_absence_or_older_entries() -> TestResult {
+    use gix::objs::{Kind, Write};
+    let cases: &[bool] = if cfg!(unix) { &[true, false] } else { &[true] };
+    for &corrupt in cases {
+        let fixture = gix_testtools::tempfile::tempdir()?;
+        assert!(
+            gix_testtools::git_command(fixture.path())
+                .args(["init", "-q", "--initial-branch=main"])
+                .status()?
+                .success()
+        );
+        let repo = gix::open_opts(fixture.path(), gix::open::Options::isolated())?;
+        let tree = repo.objects.write_buf(Kind::Tree, b"")?;
+        let commit = format!(
+            "tree {tree}\nauthor Fixture <fixture@example.com> 1600000000 +0000\ncommitter Fixture <fixture@example.com> 1600000000 +0000\n\nfixture\n"
+        );
+        let id = repo.objects.write_buf(Kind::Commit, commit.as_bytes())?;
+        std::fs::write(repo.git_dir().join("refs/heads/main"), format!("{id}\n"))?;
+        let line = format!(
+            "{id} {id} Fixture <fixture@example.com> 1600000000 +0000\tcheckout: moving from main to main\nmalformed reflog\n"
+        );
+        std::fs::create_dir_all(repo.git_dir().join("logs/refs/heads"))?;
+        for name in ["HEAD", "refs/heads/main"] {
+            let path = repo.git_dir().join("logs").join(name);
+            if corrupt {
+                std::fs::write(path, &line)?;
+            } else if name != "HEAD" {
+                std::fs::write(path, line.strip_suffix("malformed reflog\n").expect("fixture suffix"))?;
+            } else {
+                #[cfg(unix)]
+                std::os::unix::fs::symlink(path.file_name().expect("reflog filename"), &path)?;
+            }
+        }
+        for spec in ["HEAD@{0}", "HEAD@{2010-01-01 00:00:00 +0000}", "@{-1}"] {
+            let error = repo
+                .rev_parse(spec)
+                .expect_err("failed reads must not become an older result");
+            if corrupt {
+                assert!(error.is_corrupted(), "{spec}: {error:?}");
+            } else {
+                assert!(
+                    error
+                        .iter_errors()
+                        .any(|cause| cause.downcast_ref::<std::io::Error>().is_some()),
+                    "{spec}: {error:?}"
+                );
+            }
+        }
+        let error = repo
+            .head()?
+            .prior_checked_out_branches()
+            .expect_err("listing retains failures");
+        if corrupt {
+            assert!(error.is_corrupted());
+        } else {
+            assert!(
+                error
+                    .iter_errors()
+                    .any(|cause| cause.downcast_ref::<std::io::Error>().is_some())
+            );
+        }
+    }
+    Ok(())
+}
+
+#[test]
+fn prior_checkout_uses_current_reference_without_loading_its_object() -> TestResult {
+    let fixture = gix_testtools::tempfile::tempdir()?;
+    for args in [
+        vec!["init", "-q", "--initial-branch=main"],
+        vec!["commit", "--allow-empty", "-qm", "initial"],
+    ] {
+        assert!(
+            gix_testtools::git_command(fixture.path())
+                .args(args)
+                .status()?
+                .success()
+        );
+    }
+    let repo = gix::open_opts(fixture.path(), gix::open::Options::isolated())?;
+    let old = repo.head_id()?.detach();
+    let mut current = gix::ObjectId::null(repo.object_hash());
+    current.as_mut_slice()[0] = 1;
+    std::fs::write(repo.git_dir().join("refs/heads/main"), format!("{current}\n"))?;
+    std::fs::write(
+        repo.git_dir().join("logs/HEAD"),
+        format!("{old} {old} Fixture <fixture@example.com> 1600000000 +0000\tcheckout: moving from main to main\n"),
+    )?;
+    let oracle = gix_testtools::git_command(fixture.path())
+        .args(["rev-parse", "--verify", "@{-1}"])
+        .output()?;
+    assert!(oracle.status.success(), "{}", String::from_utf8_lossy(&oracle.stderr));
+    assert_eq!(oracle.stdout, format!("{current}\n").as_bytes());
+    assert_eq!(
+        repo.rev_parse_single("@{-1}")?.detach(),
+        current,
+        "the current reference wins over the old reflog ID"
+    );
+    Ok(())
+}
+
+#[test]
+fn reflog_queries_observe_cancellation() -> TestResult {
+    if gix_testtools::run_in_isolated_process()? {
+        return Ok(());
+    }
+    let fixture = gix_testtools::tempfile::tempdir()?;
+    for args in [
+        vec!["init", "-q", "--initial-branch=main"],
+        vec!["commit", "--allow-empty", "-qm", "initial"],
+    ] {
+        assert!(
+            gix_testtools::git_command(fixture.path())
+                .args(args)
+                .status()?
+                .success()
+        );
+    }
+    let repo = gix::open_opts(fixture.path(), gix::open::Options::isolated())?;
+    let id = repo.head_id()?.detach();
+    std::fs::write(
+        repo.git_dir().join("logs/HEAD"),
+        format!("{id} {id} Fixture <fixture@example.com> 1600000000 +0000\tcheckout: moving from main to main\n"),
+    )?;
+    for spec in ["HEAD@{0}", "HEAD@{2010-01-01 00:00:00 +0000}", "@{-1}"] {
+        gix::interrupt::IS_INTERRUPTED.store(true, std::sync::atomic::Ordering::SeqCst);
+        let start = std::time::Instant::now();
+        let result = repo.rev_parse(spec);
+        let elapsed = start.elapsed();
+        gix::interrupt::IS_INTERRUPTED.store(false, std::sync::atomic::Ordering::SeqCst);
+        assert!(
+            result.expect_err("cancelled query must refuse").is_cancelled(),
+            "{spec}"
+        );
+        assert!(elapsed < std::time::Duration::from_secs(1), "{spec}: {elapsed:?}");
+    }
+    let head = repo.head()?;
+    gix::interrupt::IS_INTERRUPTED.store(true, std::sync::atomic::Ordering::SeqCst);
+    let start = std::time::Instant::now();
+    let result = head.prior_checked_out_branches();
+    let elapsed = start.elapsed();
+    gix::interrupt::IS_INTERRUPTED.store(false, std::sync::atomic::Ordering::SeqCst);
+    assert!(result.expect_err("cancelled listing").is_cancelled());
+    assert!(elapsed < std::time::Duration::from_secs(1));
+    Ok(())
+}
+
+#[test]
 fn symbolic_references_use_their_own_log_or_the_final_targets() -> gix_testtools::TestResult {
     let fixture = gix_testtools::scripted_fixture_read_only("make_symbolic_ref_reflogs.sh")?;
     let repo = gix::open_opts(fixture, crate::restricted())?;

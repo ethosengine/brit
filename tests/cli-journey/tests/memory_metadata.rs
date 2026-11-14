@@ -105,6 +105,90 @@ fn verify_metadata(root: &Path, output: &Path, limit: Option<&str>) -> Result<()
     Ok(())
 }
 
+fn large_reflog(reduced: bool) -> Result<()> {
+    let repo = TestRepo::new("memory-reflog")?;
+    let root = repo.path();
+    let first = repo.head_id()?;
+    let second = repo.commit_file("tracked", "unchanged working content\n")?;
+    let index = fs::read(root.join(".git/index"))?;
+    let log = root.join(".git/logs/HEAD");
+    let mut output = BufWriter::new(fs::File::create(&log)?);
+    let expected_branches = root.join(".git/expected-branches");
+    let mut branches = BufWriter::new(fs::File::create(&expected_branches)?);
+    for n in 0..200_000 {
+        let (old, new) = if n % 2 == 0 {
+            (&second, &first)
+        } else {
+            (&first, &second)
+        };
+        writeln!(
+            output,
+            "{old} {new} Fixture <fixture@example.com> {} +0000\tcheckout: moving from main to main",
+            1_600_000_000 + n
+        )?;
+        writeln!(branches, "{old} main")?;
+    }
+    output.flush()?;
+    drop(output);
+    branches.flush()?;
+    drop(branches);
+    ensure!(fs::metadata(&log)?.len() > 20 * 1024 * 1024);
+    let saved = root.join(".git/expected-reflog");
+    fs::copy(&log, &saved)?;
+    reduced_trust(root, reduced)?;
+    let actual = root.join(".git/actual-revision");
+    let expected_json = root.join(".git/expected-branches.json");
+    brit(
+        root,
+        &["--format", "json", "revision", "previous-branches"],
+        &expected_json,
+        None,
+    )?;
+    ensure!(fs::metadata(&expected_json)?.len() > 16 * 1024 * 1024);
+    for limit in [None, Some("16777216"), Some("1")] {
+        brit(root, &["revision", "previous-branches"], &actual, limit)?;
+        same_bytes(&expected_branches, &actual)?;
+        brit(
+            root,
+            &["--format", "json", "revision", "previous-branches"],
+            &actual,
+            limit,
+        )?;
+        same_bytes(&expected_json, &actual)?;
+    }
+    for spec in [
+        "HEAD@{0}",
+        "HEAD@{199999}",
+        "HEAD@{2020-09-14 00:00:00 +0000}",
+        "@{-1}",
+        "@{-200000}",
+    ] {
+        let expected = git(root, &["rev-parse", "--verify", spec])?;
+        for limit in [None, Some("16777216"), Some("1")] {
+            brit(root, &["revision", "resolve", spec], &actual, limit)?;
+            ensure!(fs::read(&actual)? == expected, "reflog query {spec} differs from Git");
+        }
+    }
+    same_bytes(&log, &saved)?;
+    ensure!(git(root, &["rev-parse", "HEAD"])? == format!("{second}\n").as_bytes());
+    ensure!(fs::read(root.join(".git/index"))? == index);
+    ensure!(fs::read(root.join("tracked"))? == b"unchanged working content\n");
+    Ok(())
+}
+
+#[test]
+#[ignore = "resource qualification: requires BRIT_BIN"]
+fn reflog_over_twenty_mib_preserves_revision_queries() -> Result<()> {
+    large_reflog(false)
+}
+
+#[cfg(target_os = "linux")]
+#[test]
+#[ignore = "resource qualification: requires BRIT_BIN and chown authority"]
+fn actual_reduced_trust_large_reflog() -> Result<()> {
+    large_reflog(true)
+}
+
 fn large_commit(reduced: bool) -> Result<()> {
     let repo = TestRepo::new("memory-commit-metadata")?;
     let root = repo.path();

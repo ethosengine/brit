@@ -17,6 +17,7 @@ impl file::Store {
     /// Please note that this method shouldn't be used to check if a log exists before trying to read it, but instead
     /// is meant to be the fastest possible way to determine if a log exists or not.
     /// If the caller needs to know if it's readable, try to read the log instead with a reverse or forward iterator.
+    /// Metadata failures retain their I/O cause and resolved `path`; they are not reported as absence.
     pub fn reflog_exists<'a, Name, E>(&self, name: Name) -> Result<bool>
     where
         Name: TryInto<&'a FullNameRef, Error = E>,
@@ -25,7 +26,19 @@ impl file::Store {
         let name = name
             .try_into()
             .or_raise(|| message("The reflog name or path is not a valid ref name"))?;
-        Ok(self.reflog_path(name)?.is_file())
+        let path = self.reflog_path(name)?;
+        match path.metadata() {
+            Ok(metadata) => Ok(metadata.is_file()),
+            Err(err)
+                if matches!(
+                    err.kind(),
+                    std::io::ErrorKind::NotFound | std::io::ErrorKind::NotADirectory
+                ) =>
+            {
+                Ok(false)
+            }
+            Err(err) => Err(err).or_raise(|| read_reflog_error(path)),
+        }
     }
 
     /// Return a reflog reverse iterator for the given fully qualified `name`, reading chunks from the back into the fixed buffer `buf`.

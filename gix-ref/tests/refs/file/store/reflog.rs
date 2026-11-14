@@ -14,6 +14,53 @@ fn store() -> Result<crate::file::Store> {
 mod iter_and_iter_rev {
     use crate::file::store::reflog::store;
 
+    #[test]
+    fn streamed_forward_matches_buffered_and_retains_corruption() -> gix_testtools::TestResult {
+        let fixture = gix_testtools::tempfile::tempdir()?;
+        let store = crate::file::Store::at_opts(fixture.path().into(), crate::fixture_hash_kind(), Default::default());
+        let mut platform = gix_ref::file::log::iter::Platform {
+            store: &store,
+            name: "HEAD".try_into()?,
+            buf: Vec::new(),
+        };
+        assert!(platform.stream()?.is_none());
+        std::fs::create_dir_all(fixture.path().join("logs"))?;
+        let null = crate::fixture_hash_kind().null();
+        let line = format!(
+            "{null} {null} Fixture <fixture@example.com> 1600000000 +0000\t{}",
+            "long message".repeat(8192)
+        );
+        for suffix in ["", "\n", "\r\n"] {
+            std::fs::write(fixture.path().join("logs/HEAD"), format!("{line}{suffix}"))?;
+            let expected = platform
+                .all()?
+                .expect("exists")
+                .map(|line| line.map(Into::into))
+                .collect::<gix_error::Result<Vec<gix_ref::log::Line>>>()?;
+            let actual = platform
+                .stream()?
+                .expect("exists")
+                .collect::<gix_error::Result<Vec<_>>>()?;
+            assert_eq!(actual, expected, "streaming preserves long lines and endings");
+        }
+        std::fs::write(fixture.path().join("logs/HEAD"), format!("{line}\nmalformed\n{line}\n"))?;
+        let mut entries = platform.stream()?.expect("exists");
+        assert!(entries.next().expect("first").is_ok());
+        let error = entries.next().expect("second").expect_err("malformed entry");
+        assert!(error.is_corrupted());
+        assert_eq!(
+            error.metadata().next().expect("entry context")["line"],
+            gix_error::MetadataValue::from(2usize)
+        );
+        assert!(
+            entries.next().expect("third").is_ok(),
+            "the driver chooses whether to stop"
+        );
+        assert!(entries.next().is_none());
+        assert!(entries.next().is_none());
+        Ok(())
+    }
+
     #[cfg(unix)]
     #[test]
     fn read_failures_preserve_context() -> gix_testtools::TestResult {
