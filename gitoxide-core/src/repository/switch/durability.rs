@@ -490,6 +490,12 @@ fn replay_steps_final_abort_and_cleanup_power_loss_follow_real_sync_boundaries()
         proof
             .decisions
             .sort_by_key(|(_, _, value)| value["ordinal"].as_u64().expect("decision ordinal"));
+        let metadata_payload_ids = proof
+            .decisions
+            .iter()
+            .flat_map(|(_, _, decision)| metadata_payloads(&decision["after"]))
+            .map(|(name, _)| identity(&root.join(name)))
+            .collect::<Result<BTreeSet<_>>>()?;
         for (_, _, decision) in &proof.decisions {
             for value in decision["after"]["closure"].as_array().expect("closure") {
                 let oid = value.as_str().expect("object ID");
@@ -531,6 +537,9 @@ fn replay_steps_final_abort_and_cleanup_power_loss_follow_real_sync_boundaries()
         let events = TRACE.with(|trace| trace.borrow_mut().take().expect("trace enabled"));
         check_replay_execution_trace(&events, &proof)?;
         let mut omissions = vec!["decision", "new-object", "retained-member", "retained-directory"];
+        if !metadata_payload_ids.is_empty() {
+            omissions.push("metadata-payload");
+        }
         if !proof.children.is_empty() {
             omissions.extend(["child-decision", "child-namespace"]);
         }
@@ -575,6 +584,7 @@ fn replay_steps_final_abort_and_cleanup_power_loss_follow_real_sync_boundaries()
                         return true;
                     }
                     match (omission, event) {
+                        ("metadata-payload", Event::File(id, _)) => !metadata_payload_ids.contains(id),
                         ("decision", Event::File(_, state)) => {
                             !proof.decisions.iter().any(|(_, expected, _)| expected == state)
                         }
@@ -850,6 +860,30 @@ fn loose_object_id(state: &State, hash: gix::hash::Kind) -> Result<gix::ObjectId
     Ok(gix::objs::compute_hash(hash, kind, &decoded[header_len..])?)
 }
 
+fn metadata_payloads(state: &serde_json::Value) -> impl Iterator<Item = (PathBuf, State)> + '_ {
+    [
+        "index",
+        "original_index_state",
+        "log",
+        "original_log",
+        "original_branch_log",
+        "published_branch_log",
+    ]
+    .into_iter()
+    .filter_map(move |field| {
+        let image = state[field].get("StoredFile")?;
+        let checksum = image["checksum"].as_str().expect("metadata payload checksum");
+        Some((
+            PathBuf::from(format!(".git/brit-rebase/payload-{checksum}")),
+            State::StoredFile {
+                mode: 0o600,
+                size: image["size"].as_u64().expect("metadata payload size"),
+                checksum: checksum.to_owned(),
+            },
+        ))
+    })
+}
+
 fn check_replay_execution_trace(events: &[Event], proof: &ReplayTraceProof) -> Result<()> {
     let mut durable = Durable::default();
     let mut decisions = BTreeSet::new();
@@ -870,6 +904,14 @@ fn check_replay_execution_trace(events: &[Event], proof: &ReplayTraceProof) -> R
         }
         for (name, expected, decision) in &proof.decisions {
             if !decisions.contains(name) && durable.state(proof.root_id, name) == *expected {
+                for (path, expected) in metadata_payloads(&decision["after"]) {
+                    assert_eq!(
+                        durable.state(proof.root_id, &path),
+                        expected,
+                        "decision precedes metadata payload durability at sync {position}: {}",
+                        path.display()
+                    );
+                }
                 for oid in decision["after"]["closure"].as_array().expect("decision closure") {
                     let oid = oid.as_str().expect("object ID");
                     let object = PathBuf::from(".git/objects").join(&oid[..2]).join(&oid[2..]);

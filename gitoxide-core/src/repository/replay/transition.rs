@@ -131,7 +131,13 @@ impl Transition {
         for change in &self.metadata {
             self.validate_metadata(repo, change)?;
             switch::verify_locks(&locks)?;
-            switch::publish_metadata_at(repo, staging, change, &mut locks)?;
+            switch::publish_metadata_at(
+                repo,
+                staging.parent().context("replay payload directory")?,
+                staging,
+                change,
+                &mut locks,
+            )?;
             switch::checkpoint("replay-metadata-publication")?;
         }
         switch::verify_locks(&locks)?;
@@ -329,18 +335,7 @@ impl Transition {
             allowed.iter().any(|p| p == path.as_ref()) || (self.kind == Kind::Final && branch),
             "unowned replay metadata resource"
         );
-        let parent = path.parent().context("metadata parent")?;
-        // Inspect the original traversal before normalizing: `link/..` must not
-        // hide a symlink even when it resolves to the same lexical location.
-        let mut cursor = PathBuf::new();
-        for component in parent.components() {
-            cursor.push(component);
-            ensure!(fs::symlink_metadata(&cursor)?.is_dir(), "unsafe metadata ancestor");
-        }
-        let normalized =
-            gix::path::normalize(parent.into(), repo.current_dir()).context("invalid metadata ancestor")?;
-        ensure!(fs::canonicalize(parent)? == normalized, "unsafe metadata ancestor");
-        let current = switch::snapshot(&path)?;
+        let current = metadata_image(repo, &path)?;
         ensure!(
             current == change.before || current == change.after,
             "third-state replay metadata refuses recovery"
@@ -350,7 +345,7 @@ impl Transition {
 
     fn validate_branch(&self, repo: &gix::Repository) -> Result<()> {
         ensure!(
-            switch::snapshot(&repo.common_dir().join("packed-refs"))? == self.packed_refs,
+            switch::payload::fingerprint(&repo.common_dir().join("packed-refs"))? == self.packed_refs,
             "packed reference store changed during replay transition"
         );
         if let Some((name, original)) = &self.branch {
@@ -367,6 +362,21 @@ impl Transition {
         }
         Ok(())
     }
+}
+
+/// Inspect the original traversal before reading a pinned metadata image.
+pub(super) fn metadata_image(repo: &gix::Repository, path: &Path) -> Result<State> {
+    let parent = path.parent().context("metadata parent")?;
+    // Inspect the original traversal before normalizing: `link/..` must not
+    // hide a symlink even when it resolves to the same lexical location.
+    let mut cursor = PathBuf::new();
+    for component in parent.components() {
+        cursor.push(component);
+        ensure!(fs::symlink_metadata(&cursor)?.is_dir(), "unsafe metadata ancestor");
+    }
+    let normalized = gix::path::normalize(parent.into(), repo.current_dir()).context("invalid metadata ancestor")?;
+    ensure!(fs::canonicalize(parent)? == normalized, "unsafe metadata ancestor");
+    switch::payload::fingerprint(path)
 }
 
 #[derive(Serialize, Deserialize)]

@@ -1130,6 +1130,21 @@ fn make_legacy_inline(repo: &gix::Repository) -> Result<Vec<u8>> {
             ]});
         }
     }
+    for field in [
+        "index",
+        "original_index_state",
+        "log",
+        "original_log",
+        "original_branch_log",
+        "published_branch_log",
+    ] {
+        if let Some(image) = state[field].get("StoredFile") {
+            let hash = image["checksum"].as_str().expect("metadata payload hash");
+            state[field] = serde_json::json!({"File": {
+                "mode": image["mode"], "bytes": fs::read(directory.join(format!("payload-{hash}")))?
+            }});
+        }
+    }
     state["version"] = 1.into();
     state.as_object_mut().expect("state").remove("payloads");
     let payload = serde_json::to_vec(&state)?;
@@ -1142,6 +1157,80 @@ fn make_legacy_inline(repo: &gix::Repository) -> Result<Vec<u8>> {
         fs::remove_file(directory.join(format!("payload-{hash}")))?;
     }
     Ok(bytes)
+}
+
+#[test]
+fn long_reflogs_are_raw_payloads_and_survive_final_publication() -> Result<()> {
+    if gix_testtools::run_in_isolated_process().map_err(anyhow::Error::from_boxed)? {
+        return Ok(());
+    }
+    let temp = divergent_fixture(false)?;
+    let root = temp.path();
+    let message = root.join(".git/long-message");
+    fs::write(&message, vec![b'x'; 128 * 1024])?;
+    git(
+        root,
+        &["commit", "--amend", "-q", "-F", message.to_str().expect("fixture path")],
+    )?;
+    let head_log = fs::read(root.join(".git/logs/HEAD"))?;
+    let branch_log = fs::read(root.join(".git/logs/refs/heads/main"))?;
+    let repo = gix::open(root)?;
+    let mut session = Session::prepare(&repo, b"upstream".as_bstr())?.expect("divergence");
+    let encoded = fs::read(session.directory().join("state.json"))?;
+    assert!(
+        encoded.len() < 64 * 1024,
+        "long reflogs must not amplify parent metadata"
+    );
+    let envelope: serde_json::Value = serde_json::from_slice(&encoded)?;
+    let payload: Vec<u8> = serde_json::from_value(envelope["payload"].clone())?;
+    let state: serde_json::Value = serde_json::from_slice(&payload)?;
+    for field in [
+        "index",
+        "original_index_state",
+        "log",
+        "original_log",
+        "original_branch_log",
+    ] {
+        let image = state[field].get("StoredFile").expect("raw metadata identity");
+        let hash = image["checksum"].as_str().expect("payload hash");
+        assert_eq!(
+            fs::metadata(session.directory().join(format!("payload-{hash}")))?.len(),
+            image["size"].as_u64().expect("payload size")
+        );
+    }
+    loop {
+        match session.advance(&gix::open(root)?)? {
+            Advance::Started | Advance::Step { .. } => {}
+            Advance::ReadyFinal => break,
+            other => anyhow::bail!("unexpected long-subject replay stop: {other:?}"),
+        }
+    }
+    session.finish(&gix::open(root)?)?;
+    assert!(fs::read(root.join(".git/logs/HEAD"))?.starts_with(&head_log));
+    assert!(fs::read(root.join(".git/logs/refs/heads/main"))?.starts_with(&branch_log));
+    Ok(())
+}
+
+#[test]
+fn replay_without_reflogs_preserves_their_absence() -> Result<()> {
+    if gix_testtools::run_in_isolated_process().map_err(anyhow::Error::from_boxed)? {
+        return Ok(());
+    }
+    let temp = divergent_fixture(false)?;
+    let root = temp.path();
+    git(root, &["config", "core.logAllRefUpdates", "false"])?;
+    fs::remove_dir_all(root.join(".git/logs"))?;
+    let mut session = Session::prepare(&gix::open(root)?, b"upstream".as_bstr())?.expect("divergence");
+    loop {
+        match session.advance(&gix::open(root)?)? {
+            Advance::Started | Advance::Step { .. } => {}
+            Advance::ReadyFinal => break,
+            other => anyhow::bail!("unexpected replay stop without reflogs: {other:?}"),
+        }
+    }
+    session.finish(&gix::open(root)?)?;
+    assert!(!root.join(".git/logs").exists(), "disabled reflogs stay absent");
+    Ok(())
 }
 
 fn legacy_aborting_fixture(repo: &gix::Repository) -> Result<gitoxide_core::repository::replay::retained::Receipt> {

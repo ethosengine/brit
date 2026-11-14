@@ -348,3 +348,77 @@ fn replay_twenty_mib_commit_metadata() -> Result<()> {
 fn replay_twenty_mib_commit_metadata_reduced_trust() -> Result<()> {
     replay_metadata(20 * 1024 * 1024, true)
 }
+
+#[cfg(target_os = "linux")]
+fn replay_long_subject(size: usize, reduced: bool) -> Result<()> {
+    let limits = if reduced {
+        vec![None]
+    } else {
+        vec![Some("1073741824"), Some("16777216")]
+    };
+    for limit in limits {
+        let repo = TestRepo::new("memory-replay-subject")?;
+        let root = repo.path();
+        eprintln!("owned long-subject fixture: {}", root.display());
+        repo.commit_file("base", "base\n")?;
+        git(root, &["switch", "-qc", "upstream"])?;
+        repo.commit_file("upstream", "upstream\n")?;
+        git(root, &["switch", "-q", "main"])?;
+        let message = root.join(".git/long-subject");
+        let mut file = BufWriter::new(fs::File::create(&message)?);
+        let chunk = [b'x'; 65536];
+        for _ in 0..size / chunk.len() {
+            file.write_all(&chunk)?;
+        }
+        file.write_all(b"\n")?;
+        file.flush()?;
+        drop(file);
+        fs::write(root.join("topic"), b"topic\n")?;
+        git(root, &["add", "topic"])?;
+        git(root, &["commit", "-q", "-F", message.to_str().expect("message path")])?;
+        let topic = String::from_utf8(git(root, &["rev-parse", "HEAD"])?)?;
+        git(root, &["rebase", "upstream"])?;
+        let expected = git(root, &["rev-parse", "HEAD"])?;
+        git(root, &["reset", "--hard", topic.trim()])?;
+        if limit == Some("16777216") || reduced {
+            git(root, &["-c", "pack.threads=1", "repack", "-ad"])?;
+        }
+        if reduced {
+            use std::os::unix::fs::{chown, MetadataExt};
+            ensure!(fs::metadata(root)?.uid() == 0, "requires chown authority");
+            chown(root, Some(65534), None)?;
+            let trust = String::from_utf8(brit(root, &["free", "trust", ".", ".git"], None)?)?;
+            ensure!(trust.lines().filter(|line| line.starts_with("Reduced")).count() == 1);
+            ensure!(trust.lines().filter(|line| line.starts_with("Full")).count() == 1);
+        }
+        brit(root, &["rebase", "upstream"], limit)?;
+        ensure!(
+            git(root, &["rev-parse", "HEAD"])? == expected,
+            "long-subject replay differs from Git"
+        );
+        ensure!(!root.join(".git/brit-rebase").exists(), "completed journal reclaimed");
+        ensure!(fs::read(root.join("topic"))? == b"topic\n");
+        git(root, &["fsck", "--full", "--no-dangling"])?;
+    }
+    Ok(())
+}
+
+#[cfg(target_os = "linux")]
+#[test]
+fn replay_preserves_long_commit_subject() -> Result<()> {
+    replay_long_subject(128 * 1024, false)
+}
+
+#[cfg(target_os = "linux")]
+#[test]
+#[ignore = "large reflog metadata: qualification runs this explicitly"]
+fn replay_twenty_mib_commit_subject() -> Result<()> {
+    replay_long_subject(20 * 1024 * 1024, false)
+}
+
+#[cfg(target_os = "linux")]
+#[test]
+#[ignore = "requires chown authority: qualification runs this explicitly"]
+fn replay_twenty_mib_commit_subject_reduced_trust() -> Result<()> {
+    replay_long_subject(20 * 1024 * 1024, true)
+}

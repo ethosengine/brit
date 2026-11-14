@@ -1585,12 +1585,13 @@ fn apply_files(repo: &gix::Repository, state: &mut Manifest) -> Result<()> {
     Ok(())
 }
 fn publish_metadata(repo: &gix::Repository, change: &Change, locks: &mut [HeldLock]) -> Result<()> {
-    publish_metadata_at(repo, &journal(repo), change, locks)
+    publish_metadata_at(repo, &journal(repo), &journal(repo), change, locks)
 }
 
 /// Publish the exact metadata image using the shared owned-lock protocol.
 pub(crate) fn publish_metadata_at(
     repo: &gix::Repository,
+    payload_root: &Path,
     staging: &Path,
     change: &Change,
     locks: &mut [HeldLock],
@@ -1599,7 +1600,7 @@ pub(crate) fn publish_metadata_at(
     let resource = path(&change.path)?;
     #[cfg(feature = "blocking-client")]
     pull::validate_metadata_ancestors(repo, &resource)?;
-    let actual = snapshot(&resource)?;
+    let actual = payload::fingerprint(&resource)?;
     ensure!(
         actual == change.before || actual == change.after,
         "foreign metadata state at {}",
@@ -1625,8 +1626,15 @@ pub(crate) fn publish_metadata_at(
         "metadata lock changed"
     );
     if change.after == State::Absent {
-        ensure!(snapshot(&resource)? == actual, "metadata changed before deletion");
+        ensure!(
+            payload::fingerprint(&resource)? == actual,
+            "metadata changed before deletion"
+        );
         fs::remove_file(&resource)?;
+        return sync_dir(resource.parent().context("metadata parent")?);
+    }
+    if let State::StoredFile { mode, size, checksum } = &change.after {
+        payload::publish(payload_root, staging, &resource, *mode, *size, checksum, &actual)?;
         return sync_dir(resource.parent().context("metadata parent")?);
     }
     let State::File { mode, bytes } = &change.after else {
@@ -1641,7 +1649,7 @@ pub(crate) fn publish_metadata_at(
     sync_path(&staged)?;
     sync_dir(staging)?;
     ensure!(
-        snapshot(&resource)? == actual,
+        payload::fingerprint(&resource)? == actual,
         "metadata changed before publication: {}",
         resource.display()
     );

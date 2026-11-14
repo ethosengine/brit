@@ -352,6 +352,73 @@ mod tests {
     use super::*;
 
     #[test]
+    fn stored_metadata_publication_preserves_guards_and_rejects_corruption() -> Result<()> {
+        if gix_testtools::run_in_isolated_process().map_err(anyhow::Error::from_boxed)? {
+            return Ok(());
+        }
+        let root = tempfile::tempdir()?;
+        ensure!(
+            gix_testtools::git_command(root.path())
+                .args(["init", "-q"])
+                .status()?
+                .success()
+        );
+        let repo = gix::open(root.path())?;
+        let directory = repo.git_dir().join("brit-rebase");
+        fs::create_dir(&directory)?;
+        fs::set_permissions(&directory, fs::Permissions::from_mode(0o700))?;
+        let staging = directory.join("transition-test");
+        fs::create_dir(&staging)?;
+        let resource = repo.index_path();
+        fs::write(&resource, b"original metadata")?;
+        let before = super::super::snapshot(&resource)?;
+        let budget = Budget::new(repo.git_dir())?;
+        let bytes = b"replacement metadata";
+        let mut source = budget.spool()?;
+        source.write_all(bytes)?;
+        let size = source.len();
+        let hash = checksum(&mut bytes.as_slice(), size)?;
+        persist(&directory, source, size, &hash)?;
+        let change = Change {
+            path: raw(&resource)?,
+            before,
+            after: State::StoredFile {
+                mode: 0o644,
+                size,
+                checksum: hash.clone(),
+            },
+        };
+        let mut locks = acquire_recorded_locks(&staging, std::slice::from_ref(&resource), "metadata-test", |_| Ok(()))?;
+        let payload = directory.join(format!("payload-{hash}"));
+        fs::write(&payload, b"corrupt")?;
+        assert!(publish_metadata_at(&repo, &directory, &staging, &change, &mut locks).is_err());
+        assert_eq!(
+            fs::read(&resource)?,
+            b"original metadata",
+            "invalid raw content cannot reach metadata"
+        );
+        fs::write(&payload, bytes)?;
+        publish_metadata_at(&repo, &directory, &staging, &change, &mut locks)?;
+        assert_eq!(fingerprint(&resource)?, change.after);
+        verify_locks(&locks)?;
+        publish_metadata_at(&repo, &directory, &staging, &change, &mut locks)?;
+        fs::write(&resource, b"foreign edit")?;
+        assert!(publish_metadata_at(&repo, &directory, &staging, &change, &mut locks).is_err());
+        assert_eq!(
+            fs::read(&resource)?,
+            b"foreign edit",
+            "recovery never overwrites a foreign postimage"
+        );
+        verify_locks(&locks)?;
+        drop(locks);
+        assert!(
+            !resource.with_extension("lock").exists(),
+            "the exact owned index lock is released"
+        );
+        Ok(())
+    }
+
+    #[test]
     fn nested_publication_and_metadata_share_the_journal_limit() -> Result<()> {
         let root = tempfile::tempdir()?;
         fs::write(root.path().join("state.json"), [b'x'; 8])?;

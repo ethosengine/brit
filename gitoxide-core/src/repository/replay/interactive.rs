@@ -771,9 +771,9 @@ impl Session {
                 self.state.work.push(change.clone());
             }
         }
-        self.state.index = switch::snapshot(&repo.index_path())?;
+        self.state.index = self.capture_payload(repo, &repo.index_path())?;
         self.state.head = switch::snapshot(&repo.git_dir().join("HEAD"))?;
-        self.state.log = switch::snapshot(&repo.git_dir().join("logs/HEAD"))?;
+        self.state.log = self.capture_payload(repo, &repo.git_dir().join("logs/HEAD"))?;
         self.state.tip = head.to_string();
         self.state.witness = crate::repository::authoring::conflict::worktree_witness(
             repo,

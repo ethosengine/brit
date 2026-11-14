@@ -4385,12 +4385,64 @@ Strict affected Clippy, formatting, declared style and readiness pass.
 Receipts: `bounded-memory/diff-identity-v17-*`; aggregate scratch and final-source
 qualification remain open.
 
+Replay index and reflog snapshots now reuse the existing licensed raw payloads,
+including interactive child adoption, instead of copying bytes into every
+parent state and transition. Reflog appends stream; metadata publication keeps
+the existing ordinary-lock, identity and before/after checks. Legacy inline
+journals remain readable, and existing foreign metadata is refused before new
+final-publication licenses are written. A regression bounds the parent journal
+below 64 KiB for a 128 KiB subject while preserving complete reflog prefixes;
+disabled reflogs remain absent.
+
+Public 128 KiB long-subject replay passes both hashes at 35,520,512 B /
+28,696,576 B in 8.174 / 8.877 s. The 20 MiB subject cases cover loose/packed
+objects, explicit allocation policies and actual reduced trust, with rewritten
+commit identity matching stock Git. Both hashes pass at 1,073,741,824 B in
+427.144 / 586.241 s, with zero OOM events, kills or surviving children. These
+runs reached the cap; they establish no memory headroom. Receipts are
+`bounded-memory/replay-raw-metadata-v18-subject-{small,large}-*`; the frozen
+public executable is `f58f25a8090acd5874befc4de86d6ec7ebf8c7abc64517ec8940fa6528b39aeb`.
+All 178 ordinary core checks pass per hash at 127,651,840 B / 125,067,264 B.
+The 42 ordinary and 73 fault-enabled public checks also pass per hash, with the
+retained-copy helper pinned alongside the CLI. The strengthened 32-mode
+durability proof passes both hashes at 91,516,928 B / 104,886,272 B, including
+omission controls that reject missing raw-metadata synchronization; the 35
+fault-enabled conflict-authoring checks pass per hash too. The full 186-check
+fault recovery run passes SHA-256 at 180,260,864 B. SHA-1's first run hit the
+existing 20-second cleanup-checkpoint timeout under concurrent I/O after its
+42 library checks passed. The fresh exact case passes; all 144 checks in its
+seven recovery suites subsequently pass serially at 170,426,368 B in 1,068.160 s,
+with the timeout unchanged. Every completed successful group has zero OOM events,
+kills or survivors. The first public-suite attempt omitted the retained-copy
+helper and correctly failed before that test invoked Brit; both initial failures
+are retained as evidence. Aggregate scratch and final committed-source
+qualification remain open. Strict affected Clippy, full formatting, readiness
+contracts and the declared Rust-style check pass for this batch.
+
 The bounded replay/push/tree metadata and credential fixes through
 `4205253bd8842c4ed81ff4b297c94eb12a5ce03c` were published on the isolated CI branch
 with protected hooks enabled. Native Brit push passed at 78,114,816 B / 7.336 s,
-zero OOM kills or survivors. New CI run `43624277471` passes lint, style, MSRV,
-documentation, WebAssembly and packaging checks so far; advisories remain red
-and remaining jobs are running. The installed pin and release remain unchanged.
+zero OOM kills or survivors. CI run `43624277471` completed with every functional,
+platform, lint, style, MSRV, documentation, WebAssembly and packaging job green,
+including Windows ARM fixtures. The advisory gate remains red and publication
+was skipped. The installed pin and release remain unchanged.
+
+Pin acceptance also requires verified reads of both legacy flat (epoch-1) build
+receipts and epoch-2 envelopes. The integrator observed valid epoch-2 notes being
+rejected by the installed gate reader, vetoing reuse. This candidate still decodes
+flat `BuildAttestationContentNode` values and has no epoch-envelope decoder, so
+compatibility remains open. Preserve those notes and reuse the producer's owning
+schema, canonicalization and signature contract; accepting the JSON shape alone
+would not establish verified compatibility. Qualify both formats through the
+actual gate reader before changing the pin.
+
+Ethosengine supplied an unavailable-worker receipt on 2026-11-14: its container
+cgroup holds 41 processes and has no memory-controlled subtree; the empty pod
+ancestor belongs to the kubelet and is not delegated. A dedicated sibling leaf
+or separate 1 GiB/no-swap worker awaits its steward. No peer process was moved,
+controller enabled or limit resized, and no address-space probe substitutes for
+qualification. The current repository has 15 pack indexes; the historical
+49-index failure remains recorded separately. Cross-device acceptance is open.
 
 The command boundary is `src/plumbing/options/mod.rs` plus
 `brit-cli/src/main.rs` and its composed bridge. This table is interim audit

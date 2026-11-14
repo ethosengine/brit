@@ -17,7 +17,102 @@ struct ChildPayloadLicense {
     checksum: String,
 }
 
+impl ParentState {
+    pub(super) fn metadata_images(&self) -> impl Iterator<Item = &switch::State> {
+        [&self.index, &self.original_index_state, &self.log, &self.original_log]
+            .into_iter()
+            .chain(self.original_branch_log.iter())
+            .chain(self.published_branch_log.iter())
+    }
+
+    fn metadata_sources(&self, repo: &gix::Repository) -> Result<Vec<(std::path::PathBuf, &switch::State)>> {
+        let mut sources = vec![
+            (repo.index_path(), &self.index),
+            (repo.index_path(), &self.original_index_state),
+            (repo.git_dir().join("logs/HEAD"), &self.log),
+            (repo.git_dir().join("logs/HEAD"), &self.original_log),
+        ];
+        if let Some(name) = &self.attachment {
+            let path = repo
+                .common_dir()
+                .join("logs")
+                .join(gix::path::from_bstr(name.as_bstr())?.as_ref());
+            for image in self.original_branch_log.iter().chain(self.published_branch_log.iter()) {
+                sources.push((path.clone(), image));
+            }
+        }
+        Ok(sources)
+    }
+}
+
 impl Session {
+    /// Refuse pre-existing foreign metadata before licensing new final payloads.
+    /// Publication still acquires and rechecks the ordinary locks afterward.
+    pub(super) fn validate_final_metadata(&self, repo: &gix::Repository) -> Result<()> {
+        let mut resources = vec![
+            (repo.index_path(), Some(&self.state.index)),
+            (repo.git_dir().join("HEAD"), Some(&self.state.head)),
+            (repo.git_dir().join("ORIG_HEAD"), Some(&self.state.original_orig_head)),
+        ];
+        let logging = repo.config_snapshot().try_boolean("core.logAllRefUpdates")? != Some(false);
+        if logging {
+            resources.push((repo.git_dir().join("logs/HEAD"), Some(&self.state.log)));
+        }
+        if let Some(name) = &self.state.attachment {
+            let relative = gix::path::from_bstr(name.as_bstr())?;
+            resources.push((repo.common_dir().join(relative.as_ref()), None));
+            resources.push((repo.common_dir().join("packed-refs"), None));
+            if let Some(image) = self.state.original_branch_log.as_ref().filter(|_| logging) {
+                resources.push((repo.common_dir().join("logs").join(relative.as_ref()), Some(image)));
+            }
+        }
+        for (path, expected) in resources {
+            let current = super::transition::metadata_image(repo, &path)?;
+            ensure!(
+                expected.is_none_or(|expected| current == *expected),
+                "foreign final metadata at {}",
+                path.display()
+            );
+            let mut lock = path.into_os_string();
+            lock.push(".lock");
+            match fs::symlink_metadata(&lock) {
+                Err(error) if error.kind() == std::io::ErrorKind::NotFound => {}
+                Err(error) => return Err(error.into()),
+                Ok(_) => anyhow::bail!("foreign final metadata lock at {}", Path::new(&lock).display()),
+            }
+        }
+        Ok(())
+    }
+
+    /// Append a reflog record without retaining or cloning its previous contents.
+    pub(super) fn append_metadata(
+        &mut self,
+        repo: &gix::Repository,
+        before: switch::State,
+        line: gix::refs::log::Line,
+    ) -> Result<switch::State> {
+        let budget = Budget::new(repo.git_dir())?;
+        let charge = switch::payload::charge(&budget, &self.directory)?;
+        let mut source = budget.spool()?;
+        match before {
+            switch::State::Absent => {}
+            switch::State::File { bytes, .. } => {
+                gix::utils::stream::copy(&mut bytes.as_slice(), &mut source, &gix::interrupt::IS_INTERRUPTED)?;
+            }
+            switch::State::StoredFile { size, checksum, .. } => {
+                gix::utils::stream::copy(
+                    &mut switch::payload::open(&self.directory, size, &checksum)?,
+                    &mut source,
+                    &gix::interrupt::IS_INTERRUPTED,
+                )?;
+            }
+            _ => anyhow::bail!("unsafe replay metadata image"),
+        }
+        line.write_to(&mut source)?;
+        drop(charge);
+        self.store_payload(repo, source, 0o644)
+    }
+
     fn child_payload_owner(repo: &gix::Repository, binding: &ParentBinding) -> Result<Self> {
         validate_child_binding(repo, binding)?;
         let parent = Self::open(repo)?;
@@ -157,6 +252,7 @@ impl Session {
             .filter(|image| matches!(image, switch::State::StoredFile { .. }))
             .cloned()
             .chain(self.state.preservation.raw_images().map(|(_, image)| image))
+            .chain(self.state.metadata_images().cloned())
         {
             if let switch::State::StoredFile { size, checksum, .. } = image {
                 ensure!(
@@ -181,41 +277,44 @@ impl Session {
             .map(|change| (change.path.as_slice(), change.before.clone()))
             .chain(self.state.preservation.raw_images())
         {
-            let switch::State::StoredFile { size, checksum, .. } = &image else {
-                continue;
-            };
-            if fs::symlink_metadata(self.directory.join(format!("payload-{checksum}"))).is_ok() {
-                switch::payload::open(&self.directory, *size, checksum)?;
-                continue;
-            }
             let path = repo
                 .workdir()
                 .context("worktree required")?
                 .join(gix::path::from_bstr(path.as_bstr())?.as_ref());
-            ensure!(
-                switch::payload::fingerprint(&path)? == image,
-                "preparation source changed: {}",
-                path.display()
-            );
-            let _charge = switch::payload::charge(&budget, &self.directory)?;
-            let mut source = budget.spool()?;
-            gix::utils::stream::copy(
-                &mut fs::File::open(&path)?,
-                &mut source,
-                &gix::interrupt::IS_INTERRUPTED,
-            )?;
-            source.rewind()?;
-            ensure!(
-                source.len() == *size && switch::payload::checksum(&mut source, *size)? == *checksum,
-                "preparation source changed: {}",
-                path.display()
-            );
-            source.rewind()?;
-            switch::checkpoint("replay-payload-intent")?;
-            switch::payload::persist(&self.directory, source, *size, checksum)?;
-            switch::checkpoint("replay-payload-persisted")?;
+            self.prepare_payload_at(&budget, &path, &image)?;
+        }
+        for (path, image) in self.state.metadata_sources(repo)? {
+            self.prepare_payload_at(&budget, &path, image)?;
         }
         self.validate_payloads()
+    }
+
+    fn prepare_payload_at(&self, budget: &std::sync::Arc<Budget>, path: &Path, image: &switch::State) -> Result<()> {
+        let switch::State::StoredFile { size, checksum, .. } = image else {
+            return Ok(());
+        };
+        if fs::symlink_metadata(self.directory.join(format!("payload-{checksum}"))).is_ok() {
+            switch::payload::open(&self.directory, *size, checksum)?;
+            return Ok(());
+        }
+        ensure!(
+            switch::payload::fingerprint(path)? == *image,
+            "preparation source changed: {}",
+            path.display()
+        );
+        let _charge = switch::payload::charge(budget, &self.directory)?;
+        let mut source = budget.spool()?;
+        gix::utils::stream::copy(&mut fs::File::open(path)?, &mut source, &gix::interrupt::IS_INTERRUPTED)?;
+        source.rewind()?;
+        ensure!(
+            source.len() == *size && switch::payload::checksum(&mut source, *size)? == *checksum,
+            "preparation source changed: {}",
+            path.display()
+        );
+        source.rewind()?;
+        switch::checkpoint("replay-payload-intent")?;
+        switch::payload::persist(&self.directory, source, *size, checksum)?;
+        switch::checkpoint("replay-payload-persisted")
     }
 
     pub(super) fn capture_payload(&mut self, repo: &gix::Repository, path: &Path) -> Result<switch::State> {

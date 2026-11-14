@@ -299,18 +299,18 @@ impl Session {
             tip: selection.original.to_string(),
             attachment: selection.attachment.as_ref().map(|p| p.to_vec()),
             work,
-            index: switch::snapshot(&repo.index_path())?,
+            index: switch::payload::fingerprint(&repo.index_path())?,
             head: switch::snapshot(&repo.git_dir().join("HEAD"))?,
-            log: switch::snapshot(&repo.git_dir().join("logs/HEAD"))?,
-            original_log: switch::snapshot(&repo.git_dir().join("logs/HEAD"))?,
-            original_index_state: switch::snapshot(&repo.index_path())?,
+            log: switch::payload::fingerprint(&repo.git_dir().join("logs/HEAD"))?,
+            original_log: switch::payload::fingerprint(&repo.git_dir().join("logs/HEAD"))?,
+            original_index_state: switch::payload::fingerprint(&repo.index_path())?,
             original_head_state: switch::snapshot(&repo.git_dir().join("HEAD"))?,
             original_orig_head: switch::snapshot(&repo.git_dir().join("ORIG_HEAD"))?,
             original_branch_log: selection
                 .attachment
                 .as_ref()
                 .map(|name| {
-                    switch::snapshot(
+                    switch::payload::fingerprint(
                         &repo
                             .common_dir()
                             .join("logs")
@@ -332,6 +332,14 @@ impl Session {
                 .then(|| interactive::Interactive::new(&selection.candidates))
                 .transpose()?,
         };
+        let metadata_payloads = state
+            .metadata_images()
+            .filter_map(|image| match image {
+                switch::State::StoredFile { size, checksum, .. } => Some((checksum.clone(), *size)),
+                _ => None,
+            })
+            .collect::<Vec<_>>();
+        state.payloads.extend(metadata_payloads);
         // All preservation and metadata reads precede journal allocation. Once
         // save_bytes starts, interruption leaves a recoverable preparation record.
         switch::checkpoint("replay-before-journal")?;
@@ -539,8 +547,8 @@ impl Session {
                 self.validate_current(repo)?;
                 ensure!(
                     switch::snapshot(&repo.git_dir().join("HEAD"))? == self.state.head
-                        && switch::snapshot(&repo.index_path())? == self.state.index
-                        && switch::snapshot(&repo.git_dir().join("logs/HEAD"))? == self.state.log,
+                        && switch::payload::fingerprint(&repo.index_path())? == self.state.index
+                        && switch::payload::fingerprint(&repo.git_dir().join("logs/HEAD"))? == self.state.log,
                     "replay metadata changed before pre-rebase launch"
                 );
                 for change in &self.state.work {
@@ -861,7 +869,6 @@ impl Session {
         self.state.closure.extend(closure.iter().map(ToString::to_string));
         self.state.closure.sort();
         self.state.closure.dedup();
-        self.state.index = switch::snapshot(&repo.index_path())?;
         self.capture_after(repo)?;
         Ok(())
     }
@@ -911,7 +918,7 @@ impl Session {
             newly_empty: false,
         };
         if self.needs_message()? {
-            self.state.index = switch::snapshot(&repo.index_path())?;
+            self.state.index = self.capture_payload(repo, &repo.index_path())?;
             self.capture_after(repo)?;
             self.state.accepted_child = Some((completion.binding, completion.receipt));
             let mut closure = BTreeSet::new();
@@ -944,7 +951,7 @@ impl Session {
         }
         switch::sync_path(&path)?;
         switch::sync_dir(&self.directory)?;
-        self.state.index = switch::snapshot(&repo.index_path())?;
+        self.state.index = self.capture_payload(repo, &repo.index_path())?;
         self.capture_after(repo)?;
         self.state.accepted_child = Some((completion.binding, completion.receipt));
         self.state.phase = "step-proposed".into();
@@ -964,10 +971,11 @@ impl Session {
                 "replay has not reached final publication"
             );
             if self.state.phase == "ready-final" {
+                self.validate_final_metadata(repo)?;
                 let mut after = self.state.clone();
                 after.phase = "final-published".into();
                 let mut metadata = Vec::new();
-                if let Some(name) = &self.state.attachment {
+                if let Some(name) = self.state.attachment.clone() {
                     let branch = repo.common_dir().join(gix::path::from_bstr(name.as_bstr())?.as_ref());
                     metadata.push(switch::Change {
                         path: gix::path::into_bstr(branch.clone())?.to_vec(),
@@ -993,12 +1001,7 @@ impl Session {
                             .original_branch_log
                             .clone()
                             .context("original branch log was not pinned")?;
-                        let mut bytes = match &before {
-                            switch::State::Absent => Vec::new(),
-                            switch::State::File { bytes, .. } => bytes.clone(),
-                            _ => anyhow::bail!("unsafe original branch log"),
-                        };
-                        gix::refs::log::Line {
+                        let line = gix::refs::log::Line {
                             previous_oid: gix::ObjectId::from_hex(self.state.original.as_bytes())?,
                             new_oid: self.tip()?,
                             signature: repo
@@ -1006,9 +1009,8 @@ impl Session {
                                 .context("committer required for final reflog")??
                                 .to_owned()?,
                             message: format!("brit rebase {} finish", self.state.nonce).into(),
-                        }
-                        .write_to(&mut bytes)?;
-                        let desired = switch::State::File { mode: 0o644, bytes };
+                        };
+                        let desired = self.append_metadata(repo, before.clone(), line)?;
                         after.published_branch_log = Some(desired.clone());
                         metadata.push(switch::Change {
                             path: gix::path::into_bstr(path)?.to_vec(),
@@ -1018,12 +1020,7 @@ impl Session {
                     }
                 }
                 if repo.config_snapshot().try_boolean("core.logAllRefUpdates")? != Some(false) {
-                    let mut bytes = match &self.state.log {
-                        switch::State::Absent => Vec::new(),
-                        switch::State::File { bytes, .. } => bytes.clone(),
-                        _ => anyhow::bail!("unsafe HEAD reflog"),
-                    };
-                    gix::refs::log::Line {
+                    let line = gix::refs::log::Line {
                         previous_oid: self.tip()?,
                         new_oid: self.tip()?,
                         signature: repo
@@ -1031,9 +1028,8 @@ impl Session {
                             .context("committer required for final reflog")??
                             .to_owned()?,
                         message: format!("brit rebase {} finish", self.state.nonce).into(),
-                    }
-                    .write_to(&mut bytes)?;
-                    after.log = switch::State::File { mode: 0o644, bytes };
+                    };
+                    after.log = self.append_metadata(repo, self.state.log.clone(), line)?;
                     metadata.push(switch::Change {
                         path: gix::path::into_bstr(repo.git_dir().join("logs/HEAD"))?.to_vec(),
                         before: self.state.log.clone(),
@@ -1068,7 +1064,7 @@ impl Session {
                         .clone()
                         .map(|name| (name, self.state.original.clone())),
                     final_tip: Some(self.state.tip.clone()),
-                    packed_refs: switch::snapshot(&repo.common_dir().join("packed-refs"))?,
+                    packed_refs: switch::payload::fingerprint(&repo.common_dir().join("packed-refs"))?,
                 };
                 self.publish_decision(repo, after, transition)?;
             }
@@ -1156,8 +1152,8 @@ impl Session {
         );
         ensure!(
             switch::snapshot(&repo.git_dir().join("HEAD"))? == self.state.head
-                && switch::snapshot(&repo.index_path())? == self.state.index
-                && switch::snapshot(&repo.git_dir().join("logs/HEAD"))? == self.state.log,
+                && switch::payload::fingerprint(&repo.index_path())? == self.state.index
+                && switch::payload::fingerprint(&repo.git_dir().join("logs/HEAD"))? == self.state.log,
             "published replay metadata changed"
         );
         let orig_head = switch::State::File {
@@ -1170,7 +1166,7 @@ impl Session {
         );
         if let (Some(name), Some(expected)) = (&self.state.attachment, &self.state.published_branch_log) {
             ensure!(
-                switch::snapshot(
+                switch::payload::fingerprint(
                     &repo
                         .common_dir()
                         .join("logs")
@@ -1687,8 +1683,8 @@ impl Session {
         self.validate_branch(repo, None)?;
         ensure!(
             switch::snapshot(&repo.git_dir().join("HEAD"))? == self.state.head
-                && switch::snapshot(&repo.index_path())? == self.state.index
-                && switch::snapshot(&repo.git_dir().join("logs/HEAD"))? == self.state.log,
+                && switch::payload::fingerprint(&repo.index_path())? == self.state.index
+                && switch::payload::fingerprint(&repo.git_dir().join("logs/HEAD"))? == self.state.log,
             "foreign replay metadata before abort"
         );
         self.state.preservation.validate_observed(repo, &*repo.open_index()?)?;
@@ -1764,7 +1760,7 @@ impl Session {
                     .clone()
                     .map(|name| (name, self.state.original.clone())),
                 final_tip: None,
-                packed_refs: switch::snapshot(&repo.common_dir().join("packed-refs"))?,
+                packed_refs: switch::payload::fingerprint(&repo.common_dir().join("packed-refs"))?,
             },
         )?;
         Ok(receipt)
@@ -2182,7 +2178,7 @@ impl Session {
             "foreign original HEAD movement"
         );
         ensure!(
-            switch::snapshot(&repo.index_path())? == session.state.index,
+            switch::payload::fingerprint(&repo.index_path())? == session.state.index,
             "foreign index mutation during preparation"
         );
         let pending = session.directory.join("state.pending");
@@ -2277,7 +2273,7 @@ impl Session {
             "original branch moved"
         );
         ensure!(
-            switch::snapshot(&repo.index_path())? == self.state.index,
+            switch::payload::fingerprint(&repo.index_path())? == self.state.index,
             "foreign index mutation"
         );
         let pending = self.directory.join("state.pending");
@@ -2554,6 +2550,8 @@ impl Session {
             }
         }
         after.decisions = self.state.decisions + 1;
+        after.version = self.state.version;
+        after.payloads.extend(self.state.payloads.clone());
         let decision = Decision {
             version: 1,
             nonce: self.state.nonce.clone(),
@@ -2577,7 +2575,7 @@ impl Session {
         let observed = repo.open_index()?;
         self.state.preservation.validate_observed(repo, &observed)?;
         ensure!(
-            switch::snapshot(&repo.index_path())? == self.state.index,
+            switch::payload::fingerprint(&repo.index_path())? == self.state.index,
             "foreign replay index change"
         );
         ensure!(
@@ -2585,7 +2583,7 @@ impl Session {
             "foreign replay HEAD change"
         );
         ensure!(
-            switch::snapshot(&repo.git_dir().join("logs/HEAD"))? == self.state.log,
+            switch::payload::fingerprint(&repo.git_dir().join("logs/HEAD"))? == self.state.log,
             "foreign replay HEAD reflog change"
         );
         let root = repo.workdir().context("worktree required")?;
@@ -2705,9 +2703,9 @@ impl Session {
             &after.work.iter().map(|change| change.path.clone()).collect::<Vec<_>>(),
         )?;
         let public = self.state.preservation.public_index(repo, private)?;
-        let mut bytes = Vec::new();
-        gix::index::File::from_state(public, repo.index_path()).write_to(&mut bytes, Default::default())?;
-        after.index = switch::State::File { mode: 0o644, bytes };
+        let mut source = budget.spool()?;
+        gix::index::File::from_state(public, repo.index_path()).write_to(&mut source, Default::default())?;
+        after.index = self.store_payload(repo, source, 0o644)?;
         after.head = switch::State::File {
             mode: 0o644,
             bytes: format!("{tip}\n").into_bytes(),
@@ -2715,12 +2713,7 @@ impl Session {
         if gix::ObjectId::from_hex(self.state.tip.as_bytes())? != tip
             && repo.config_snapshot().try_boolean("core.logAllRefUpdates")? != Some(false)
         {
-            let mut bytes = match &after.log {
-                switch::State::Absent => Vec::new(),
-                switch::State::File { bytes, .. } => bytes.clone(),
-                _ => anyhow::bail!("unsafe replay HEAD log"),
-            };
-            gix::refs::log::Line {
+            let line = gix::refs::log::Line {
                 previous_oid: gix::ObjectId::from_hex(self.state.tip.as_bytes())?,
                 new_oid: tip,
                 signature: repo
@@ -2728,9 +2721,8 @@ impl Session {
                     .context("committer required for replay log")??
                     .to_owned()?,
                 message: format!("brit rebase {} step {} {:?}", self.state.nonce, self.state.step, kind).into(),
-            }
-            .write_to(&mut bytes)?;
-            after.log = switch::State::File { mode: 0o644, bytes };
+            };
+            after.log = self.append_metadata(repo, after.log.clone(), line)?;
         }
         after.tip = tip.to_string();
         let mut metadata = Vec::new();
@@ -2759,7 +2751,7 @@ impl Session {
                     .clone()
                     .map(|name| (name, self.state.original.clone())),
                 final_tip: None,
-                packed_refs: switch::snapshot(&repo.common_dir().join("packed-refs"))?,
+                packed_refs: switch::payload::fingerprint(&repo.common_dir().join("packed-refs"))?,
             },
         ))
     }
