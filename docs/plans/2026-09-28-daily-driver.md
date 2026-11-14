@@ -3588,6 +3588,17 @@ Story-harvest station: **shallow boundary → cached walk / failure to read a
 boundary cannot become either successful cache output or silent pruning**.
 SVG/viewer behavior and remaining history consumers are still under audit.
 
+The parent-expression follow-up reproduces Git rejecting a commit with a valid
+first parent followed by malformed parent metadata. Brit previously returned
+the first parent or described the malformed second parent as out of range.
+Parent lookup now validates the parent list while retaining only the selected
+ID and count; stored parent decode failures, including shallow boundaries,
+are classified as corruption with the affected commit ID. Both hashes pass
+buffered and mapped checks, and all 529 active repository tests pass (two
+explicit ignores). Strict affected Clippy, formatting, readiness and declared
+style pass. Evidence: `bounded-memory/parent-errors-*`; this diagnostic slice
+does not constitute a new resource receipt or final-source qualification.
+
 ### Public-command audit in progress
 
 The command boundary is `src/plumbing/options/mod.rs` plus

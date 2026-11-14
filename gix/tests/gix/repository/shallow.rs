@@ -111,6 +111,9 @@ mod traverse {
                         .by_ref()
                         .find_map(|entry| entry.err())
                         .expect("failed shallow-boundary read must survive the cache");
+                    if fault == "parents" {
+                        assert!(error.is_corrupted(), "stored parent metadata is corruption: {error:?}");
+                    }
                     assert!(
                         format!("{error:?}").contains(&boundary.to_string()),
                         "cache={cache}, fault={fault}: {error:?}"

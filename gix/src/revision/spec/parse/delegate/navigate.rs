@@ -41,18 +41,9 @@ impl delegate::Navigate for Delegate<'_> {
                     .peel(*obj, gix_object::Kind::Commit)
                     .and_then(|id| source.find_commit(&id, &mut buffer).map(|commit| (id, commit)))
                 {
-                    Ok((id, commit)) => match commit.parent_ids().nth(num.saturating_sub(1)) {
-                        Some(id) => replacements.push((*obj, id)),
-                        None => errors.push((
-                            *obj,
-                            message!(
-                                "Commit {oid} has {available} parents and parent number {desired} is out of range",
-                                oid = id.attach(repo).shorten_or_id(),
-                                desired = num,
-                                available = commit.parent_ids().count(),
-                            )
-                            .raise_erased(),
-                        )),
+                    Ok((id, commit)) => match nth_parent(id.attach(repo), num, commit) {
+                        Ok(id) => replacements.push((*obj, id)),
+                        Err(err) => errors.push((*obj, err.raise_erased())),
                     },
                     Err(err) => errors.push((*obj, err.raise_erased())),
                 },
@@ -364,6 +355,30 @@ fn to_repo_relative_path<'a>(repo: &Repository, path: &'a BStr) -> Result<Cow<'a
     repo.prefix()?
         .ok_or_raise(|| message("Relative path syntax can't be used outside of a worktree"))?;
     repo.normalize_path(path)
+}
+
+fn nth_parent(id: crate::Id<'_>, num: usize, commit: gix_object::CommitRefIter<'_>) -> Result<ObjectId> {
+    let mut selected = None;
+    let mut available = 0;
+    for token in commit {
+        match token.or_raise(|| message!("Could not decode parents of stored commit {id}").corrupted())? {
+            gix_object::commit::ref_iter::Token::Tree { .. } => {}
+            gix_object::commit::ref_iter::Token::Parent { id } => {
+                if available == num.saturating_sub(1) {
+                    selected = Some(id);
+                }
+                available += 1;
+            }
+            _ => break,
+        }
+    }
+    selected.ok_or_raise(|| {
+        message!(
+            "Commit {oid} has {available} parents and parent number {desired} is out of range",
+            oid = id.shorten_or_id(),
+            desired = num,
+        )
+    })
 }
 
 fn nth_ancestor(id: crate::Id<'_>, num: usize) -> Result<ObjectId> {

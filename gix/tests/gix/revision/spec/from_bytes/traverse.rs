@@ -7,6 +7,48 @@ use crate::{
 };
 
 #[test]
+fn malformed_parent_metadata_is_corruption_in_both_storage_paths() -> TestResult {
+    use gix::objs::{Kind, Write};
+    let fixture = gix_testtools::tempfile::tempdir()?;
+    assert!(
+        gix_testtools::git_command(fixture.path())
+            .args(["init", "-q", "--initial-branch=main"])
+            .status()?
+            .success()
+    );
+    let repo = gix::open_opts(fixture.path(), gix::open::Options::isolated())?;
+    let tree = repo.objects.write_buf(Kind::Tree, b"")?;
+    let signature = "author Fixture <fixture@example.com> 1600000000 +0000\ncommitter Fixture <fixture@example.com> 1600000000 +0000\n\n";
+    let parent = repo
+        .objects
+        .write_buf(Kind::Commit, format!("tree {tree}\n{signature}parent\n").as_bytes())?;
+    let data = format!(
+        "tree {tree}\nparent {parent}\nparent malformed\n{signature}{}",
+        "padding\n".repeat(8192)
+    );
+    let broken = repo.objects.write_buf(Kind::Commit, data.as_bytes())?;
+    for number in [1, 2] {
+        let spec = format!("{broken}^{number}");
+        let oracle = gix_testtools::git_command(fixture.path())
+            .args(["rev-parse", "--verify", &spec])
+            .output()?;
+        assert!(!oracle.status.success(), "Git rejects malformed parent lists");
+        for limit in ["1", "1073741824"] {
+            let repo = gix::open_opts(
+                fixture.path(),
+                gix::open::Options::isolated().cli_overrides([format!("gitoxide.objects.allocLimit={limit}")]),
+            )?;
+            let error = repo
+                .rev_parse_single(spec.as_str())
+                .expect_err("malformed stored parents must fail");
+            assert!(error.is_corrupted(), "{spec}, limit={limit}: {error:?}");
+            assert!(!format!("{error:?}").contains("out of range"));
+        }
+    }
+    Ok(())
+}
+
+#[test]
 fn complex() -> TestResult {
     let repo = &repo("complex_graph")?;
 

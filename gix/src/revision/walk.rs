@@ -315,7 +315,12 @@ impl<'repo> Platform<'repo> {
                                         .find_commit(&id, &mut buf)
                                         .and_then(|commit| {
                                             for token in commit {
-                                                match token? {
+                                                match token.or_raise(|| {
+                                                    gix_error::message!(
+                                                        "Could not decode shallow-boundary parents of {id}"
+                                                    )
+                                                    .corrupted()
+                                                })? {
                                                     gix_object::commit::ref_iter::Token::Tree { .. } => {}
                                                     gix_object::commit::ref_iter::Token::Parent { id } => {
                                                         grafted_parents_to_skip.push(id);
