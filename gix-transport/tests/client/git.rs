@@ -232,14 +232,13 @@ async fn handshake_v1_and_request() -> TestResult {
         ))
         .collect::<Vec<_>>()
     );
-    let mut lines = res.refs.as_mut().expect("v1 protocol provides refs").lines();
     let mut refs = Vec::new();
-    // needed in async version of test
-    while let Some(line) = lines.next().await {
-        refs.push(line?);
+    {
+        let mut lines = res.refs.as_mut().expect("v1 protocol provides refs").lines();
+        while let Some(line) = lines.next().await.transpose()? {
+            refs.push(line);
+        }
     }
-    // needed for non-async version
-    drop(lines);
 
     assert_eq!(
         refs,
@@ -449,8 +448,8 @@ async fn push_v1_simulated() -> TestResult {
         let mut lines = read.lines();
         let mut info = Vec::new();
         // needed in async version of test
-        while let Some(line) = lines.next().await {
-            info.push(line?);
+        while let Some(line) = lines.next().await.transpose()? {
+            info.push(line);
         }
         assert_eq!(
             info,
@@ -619,11 +618,12 @@ async fn handshake_v2_and_request_inner() -> TestResult {
         )
         .await?;
 
-    let mut lines = reader.lines();
     let mut refs = Vec::new();
-    // needed in async version of test
-    while let Some(line) = lines.next().await {
-        refs.push(line?);
+    {
+        let mut lines = reader.lines();
+        while let Some(line) = lines.next().await.transpose()? {
+            refs.push(line);
+        }
     }
     assert_eq!(
         refs,
@@ -633,7 +633,6 @@ async fn handshake_v2_and_request_inner() -> TestResult {
         ],
         "ref discovery returns the independently recorded Git commit ID"
     );
-    drop(lines);
 
     let want = format!("want {}", baseline.commit_id_hex);
     let mut reader = c

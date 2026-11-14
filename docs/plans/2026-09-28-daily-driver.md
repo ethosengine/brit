@@ -4482,3 +4482,20 @@ allocation and I/O faults, corruption, cancellation/death, cross-platform checks
 ordinary and fault-enabled recovery suites, and committed-source receipts.
 The habit remains RED. Release and parent-pin changes wait for the complete
 required matrix and coordination with the existing 0.1.14 integration owner.
+
+The CI advisory repair updates the locked Hickory net/proto/resolver packages
+from 0.26.1 to 0.26.2 and rustix from 1.1.4 to 1.1.6. These are the published
+DNSSEC and extended-attribute fixes; their declared Rust minimums remain within
+Brit's existing 1.88 contract. Unrelated lockfile dependency selections are
+preserved and `cargo test --locked` accepts the resulting resolution. All 127
+transport and utility checks pass in each hash fixture mode, with the reqwest
+Hickory backend enabled, covering HTTP behavior, shared scratch accounting and
+owned-child cancellation. All 24 async transport checks pass per hash as well.
+Strict all-target Clippy passes both blocking and async configurations after
+removing redundant formatting borrows and scoping shared test readers; line
+errors still propagate and no lint suppression was added. Formatting, readiness
+contracts and the declared style check pass. Private evidence is
+`bounded-memory/advisory-patch-*`.
+This is a dependency integration result, not another full memory qualification.
+The SQLite advisory and pin-utils maintenance advisory remain unresolved; no
+advisory exception, minimum-toolchain change, release or parent-pin move is made.
