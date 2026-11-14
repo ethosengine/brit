@@ -143,6 +143,30 @@ fn resolved_create_update_delete_match_git_and_rejection_changes_nothing() -> Re
 }
 
 #[test]
+fn new_branch_reuses_history_advertised_under_another_ref() -> Result<()> {
+    let repo = TestRepo::new("pre-push-advertised-history")?;
+    let remote = remote(repo.path())?;
+    repo.commit_file("already-present", &"old content\n".repeat(200_000))?;
+    git(repo.path(), &["push", "origin", "main:main"])?;
+    let common = repo.head_id()?;
+    for (destination, advance) in [("copy", false), ("next", true)] {
+        if advance {
+            repo.commit_file("new-small-file", "new content")?;
+        }
+        let spec = format!("HEAD:refs/heads/{destination}");
+        let output = brit(
+            repo.path(),
+            &["-c", "gitoxide.objects.allocLimit=1024", "push", "origin", &spec],
+        )?;
+        ensure!(output.status.success(), "{}", output.stderr);
+        assert_eq!(git(remote.path(), &["rev-parse", destination])?, repo.head_id()?);
+        assert_eq!(git(remote.path(), &["rev-parse", "main"])?, common);
+        git(remote.path(), &["fsck", "--full"])?;
+    }
+    Ok(())
+}
+
+#[test]
 fn dry_run_and_noop_run_hook_but_no_verify_skips_it() -> Result<()> {
     let repo = TestRepo::new("pre-push-dry-run")?;
     let remote = remote(repo.path())?;

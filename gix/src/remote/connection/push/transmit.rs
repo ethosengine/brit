@@ -327,7 +327,7 @@ where
         // NOTE: This is correct but not maximally efficient — re-compression is
         // more expensive than pack-copying.  A follow-up task should switch to
         // `iter_from_counts` + `InOrderIter` for pack-copy mode.  See Task 7.1 plan.
-        let entries = build_pack_entries(repo, &commands, hash_kind, should_interrupt)?;
+        let entries = build_pack_entries(repo, &commands, remote_oid_by_name.values().copied(), should_interrupt)?;
 
         // ── Step 7: Dry run early return ─────────────────────────────────────
         // Lookup table: remote refname → (old_oid, new_oid) for status rendering.
@@ -388,7 +388,7 @@ where
 }
 
 /// Collect `gix_pack::data::output::Entry` items for all objects reachable from
-/// non-delete commands' `new_oid` but not already present via `old_oid`.
+/// non-delete commands' `new_oid` but not already present via advertised commits.
 ///
 /// # Design note
 ///
@@ -399,13 +399,13 @@ where
 fn build_pack_entries(
     repo: &crate::Repository,
     commands: &[gix_protocol::send_pack::Command],
-    _hash_kind: gix_hash::Kind,
+    advertised: impl IntoIterator<Item = gix_hash::ObjectId>,
     should_interrupt: &AtomicBool,
 ) -> Result<Vec<gix_pack::data::output::Entry>, Error> {
     use gix_pack::data::output::{Entry, count::objects::ObjectExpansion};
     use gix_traverse::commit::Simple;
 
-    let tips: Vec<gix_hash::ObjectId> = commands
+    let mut tips: Vec<gix_hash::ObjectId> = commands
         .iter()
         .filter(|c| !c.is_delete() && !c.new_oid.is_null())
         .map(|c| c.new_oid)
@@ -416,33 +416,33 @@ fn build_pack_entries(
         return Ok(Vec::new());
     }
 
-    // An explicit lease may name advertised history absent from this clone.
-    // Such history cannot prune our walk; send all reachable local objects instead.
-    let hides: Vec<gix_hash::ObjectId> = commands
-        .iter()
-        .filter(|c| !c.old_oid.is_null() && repo.has_object(c.old_oid))
-        .map(|c| c.old_oid)
-        .collect();
-
-    // Walk commits reachable from tips but hidden behind hides.
-    // `Simple::new` + `.hide()` encodes "new_oid reachable minus old_oid reachable".
-    //
-    // `Simple::new` requires `gix_object::Find`; `repo.objects` implements that
-    // via `Proxy<T>: gix_object::Find`.
-    let mut commit_ids: Vec<gix_hash::ObjectId> = Simple::new(tips.iter().copied(), &repo.objects)
-        .hide(hides)
-        .map_err(|e| Error::Walk(e.to_string()))?
-        .filter_map(Result::ok)
-        .map(|info| info.id)
-        .collect();
-
-    // Include the tip commits themselves (`.hide()` seeds them; they may not be
-    // re-emitted by the iterator when old_oid is null and no ancestors exist).
-    for &tip in &tips {
-        if !commit_ids.contains(&tip) {
-            commit_ids.push(tip);
+    // Every advertised commit is a common boundary, including refs other than
+    // the destination. Unknown remote history cannot prune the local walk.
+    let mut hides = std::collections::HashSet::new();
+    for id in advertised {
+        if repo
+            .try_find_header(id)
+            .map_err(|error| Error::Resolve(Box::new(error)))?
+            .is_some_and(|header| header.kind() == gix_object::Kind::Commit)
+        {
+            hides.insert(id);
         }
     }
+    tips.retain(|id| !hides.contains(id));
+    if tips.is_empty() {
+        return Ok(Vec::new());
+    }
+
+    // Walk commits reachable from tips but hidden behind hides.
+    // Simple includes visible tips itself. Re-inserting hidden tips would
+    // rebuild trees which the receiver already has.
+    let commit_ids: Vec<gix_hash::ObjectId> =
+        Simple::new(tips.iter().copied(), crate::object::bounded::Source::deferred(repo))
+            .hide(hides)
+            .map_err(|e| Error::Walk(e.to_string()))?
+            .map(|info| info.map(|info| info.id))
+            .collect::<Result<_, _>>()
+            .map_err(|error| Error::Walk(error.to_string()))?;
 
     if commit_ids.is_empty() {
         return Ok(Vec::new());
