@@ -245,7 +245,10 @@ impl crate::Repository {
         self.tree_id_of_commit(self.head_id()?.detach())
     }
 
-    pub(super) fn tree_id_of_commit(&self, id: ObjectId) -> Result<crate::Id<'_>> {
+    /// Return the tree ID of a commit using bounded object storage.
+    ///
+    /// The object must be a commit; annotated tags are not peeled by this method.
+    pub fn tree_id_of_commit(&self, id: ObjectId) -> Result<crate::Id<'_>> {
         use crate::ext::ObjectIdExt;
         use gix_traverse::commit::topo::source::Source as _;
         let kind = self.find_header(id)?.kind();
@@ -255,10 +258,7 @@ impl crate::Repository {
                 "Object named {id} was supposed to be of kind commit, but was kind {kind}."
             ))
         );
-        let objects = crate::object::bounded::Source::new(
-            self,
-            gix_utils::stream::Budget::new(&std::env::temp_dir()).or_error()?,
-        )?;
+        let objects = crate::object::bounded::Source::deferred(self);
         Ok(objects
             .find_commit(&id, &mut gix_object::find::Buffer::default())?
             .tree_id()?

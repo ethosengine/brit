@@ -313,7 +313,7 @@ fn restore_index_paths(repo: gix::Repository, paths: &[BString]) -> Result<()> {
         bail!("Unicode precomposition requires Git for non-ASCII paths".unsupported());
     }
 
-    let head = repo.index_from_tree(&repo.head_commit()?.tree_id()?)?;
+    let head = repo.index_from_tree(&repo.head_tree_id()?)?;
     let mut replacements = Vec::new();
     for path in &paths {
         let existing = index.entry_by_path(path.as_bstr());

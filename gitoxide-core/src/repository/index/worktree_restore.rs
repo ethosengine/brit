@@ -31,7 +31,7 @@ pub fn restore_worktree(repo: gix::Repository, paths: &[BString], from_head: boo
         bail!("Unicode precomposition requires Git for non-ASCII paths".unsupported());
     }
     let head = if from_head {
-        Some(repo.index_from_tree(&repo.head_commit()?.tree_id()?)?)
+        Some(repo.index_from_tree(&repo.head_tree_id()?)?)
     } else {
         None
     };

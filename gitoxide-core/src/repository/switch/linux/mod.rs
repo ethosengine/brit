@@ -610,7 +610,10 @@ fn branch_oid(repo: &gix::Repository, name: &[u8]) -> Result<String> {
         "symbolic branch references require Git"
     );
     let oid = reference.id();
-    oid.object()?.try_into_commit()?;
+    ensure!(
+        oid.header()?.kind() == gix::object::Kind::Commit,
+        "branch {oid} must name a commit"
+    );
     Ok(oid.to_string())
 }
 fn occupancy(repo: &gix::Repository, branch: &[u8]) -> Result<()> {
@@ -887,7 +890,12 @@ fn execute_locked(repo: gix::Repository, branch: &BStr, _shared: fs::File, pinne
         );
         branch_oid(&repo, source)?;
     }
-    let source_oid = repo.head_commit()?.id().to_string();
+    let source_id = repo.head_id()?;
+    ensure!(
+        source_id.header()?.kind() == gix::object::Kind::Commit,
+        "HEAD must name a commit"
+    );
+    let source_oid = source_id.to_string();
     if let Some(previous) = &pinned {
         ensure!(
             previous.source == source
@@ -979,11 +987,9 @@ fn execute_locked(repo: gix::Repository, branch: &BStr, _shared: fs::File, pinne
         "HEAD changed before lock acquisition"
     );
     let index = read_index(&repo)?;
-    let source = repo.index_from_tree(&repo.head_commit()?.tree_id()?)?;
-    let target_commit = repo
-        .find_object(gix::ObjectId::from_hex(state.target_oid.as_bytes())?)?
-        .try_into_commit()?;
-    let destination = repo.index_from_tree(&target_commit.tree_id()?)?;
+    let source = repo.index_from_tree(&repo.head_tree_id()?)?;
+    let target_tree = repo.tree_id_of_commit(gix::ObjectId::from_hex(state.target_oid.as_bytes())?)?;
+    let destination = repo.index_from_tree(&target_tree)?;
     let source_entries = tree_entries(&source);
     let destination_entries = tree_entries(&destination);
     let index_entries = tree_entries(&index);
