@@ -176,8 +176,8 @@ where
                 match output_statistics {
                     Some(OutputFormat::Human) => {
                         for (index_name, stats) in multi_index.index_names().iter().zip(res.pack_traverse_statistics) {
-                            writeln!(out, "{}", index_name.display()).ok();
-                            drop(print_statistics(&mut out, &stats));
+                            writeln!(out, "{}", index_name.display()).or_error()?;
+                            print_statistics(&mut out, &stats).or_error()?;
                         }
                     }
                     #[cfg(feature = "serde")]
@@ -206,7 +206,7 @@ where
     if let Some(stats) = res.1.as_ref() {
         #[cfg_attr(not(feature = "serde"), allow(clippy::single_match))]
         match output_statistics {
-            Some(OutputFormat::Human) => drop(print_statistics(&mut out, stats)),
+            Some(OutputFormat::Human) => print_statistics(&mut out, stats).or_error()?,
             #[cfg(feature = "serde")]
             Some(OutputFormat::Json) => serde_json::to_writer_pretty(out, stats).or_error()?,
             _ => {}

@@ -143,7 +143,7 @@ mod refs_impl {
             ),
             refs::Kind::Remote => {
                 match format {
-                    OutputFormat::Human => drop(print(out, &map.remote_refs)),
+                    OutputFormat::Human => print(out, &map.remote_refs).or_error()?,
                     #[cfg(feature = "serde")]
                     OutputFormat::Json => serde_json::to_writer_pretty(
                         out,

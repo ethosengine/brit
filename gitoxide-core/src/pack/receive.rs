@@ -321,7 +321,7 @@ fn receive_pack_blocking(
     }
 
     match format {
-        OutputFormat::Human => drop(print(&mut out, outcome, refs)),
+        OutputFormat::Human => print(&mut out, outcome, refs)?,
         #[cfg(feature = "serde")]
         OutputFormat::Json => {
             serde_json::to_writer_pretty(&mut out, &JsonOutcome::from_outcome_and_refs(outcome, refs))?;

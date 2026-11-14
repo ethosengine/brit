@@ -3899,6 +3899,26 @@ selection / message size cannot change the chosen description, while corrupt
 tag reads remain failures. Probe: `memory_metadata` describe cases and native
 commit describe tests.
 
+### Remote and pack output failures
+
+Remote reference rendering, received-pack summaries and pack-index statistics
+now propagate write failures. A Linux `/dev/full` regression requires nonempty
+successful output before testing failure, covering repository/free remote refs,
+ref-map, free pack receive, index verification and multi-index verification.
+It preserves HEAD, index and configuration. Bare `.pack` verification only checks
+the checksum and emits no statistics; it correctly succeeds without a write.
+Repository-free pack commands receive their declared object hash explicitly.
+The first fixtures omitted these two distinctions; their failed logs remain.
+
+Both hash fixtures pass in delegated 1 GiB swap-disabled groups at
+13,238,272 B / 12,840,960 B in 0.782 / 0.778 s, with zero OOM, survivors or
+identity changes. Binary SHA-256:
+`dbbcf18b4df7c9ca5701ee6b81791dd2606d942844dd802e135fbf4f96f6b4e9`;
+evidence: `bounded-memory/output-errors-hash-*`. Strict core/CLI Clippy,
+formatting, readiness contracts and declared style pass. This qualifies these
+output errors, not large reference selections, all filesystem failures,
+aggregate scratch or final committed-source acceptance.
+
 ### Public-command audit in progress
 
 The command boundary is `src/plumbing/options/mod.rs` plus
