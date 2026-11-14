@@ -4172,7 +4172,161 @@ other legacy writers are live. Treat compatible feedback capability and store
 readiness as prerequisites for contextual tool integration; broader consumer
 admission and that shared-store cutover remain with the EPR integration work.
 
+The operator's requirement applies to apps and tools generally: contextual
+feedback is a core integration requirement, not an optional trailing diagnostic.
+The present EPR promotion check qualifies only EPR and Brit, and automatic capture
+admits only the declared producers. That is measured coverage, not a universal
+capability claim. Preserve explicit executable overrides and store ownership;
+do not hide the gap, silently choose another release, or migrate live writers.
+The required station is:
+
+- Chain: shared tool arrival and feedback readiness.
+- Between: compatible installed producer/recorder pair → retained automatic outcomes.
+- Missing node: the effective session executable and selected private store retain
+  an invocation's structured outcome while recorder refusal preserves the command result.
+- Probe: resolve the executable actually launched, run the existing isolated pair
+  qualification, then capture and read back an ordinary invocation in the selected store.
+- Current state: green for this owned worktree with EPR 0.3.3; red for the inherited
+  host override to EPR 0.3.2 and the shared legacy store. Additional producers remain
+  unqualified. The existing policy and admission boundary own that extension.
+
+Native push now passes in the actual local linked monorepo with the protected
+hook enabled: 259,530,752 B whole-group peak, 26.205 s, zero OOM and survivors.
+Source and local receiver both read back `b6d26bd59a3ef2a3b8f18e3636ea9abbdd51a6e1`;
+the source remains clean. Receipt-note push initially refused because the shared
+absolute `core.hooksPath` selected the older main checkout's hook, which applies
+source gates to note trees. The linked worktree's checked-in hook already excludes
+notes from source-only gates. Selecting that protected hook for this operation
+alone passes at 25,001,984 B / 1.127 s and preserves the exact note object at the
+local receiver. Shared configuration and hooks were not changed. Evidence:
+`bounded-memory/monorepo-linked-push-local-v5`,
+`bounded-memory/monorepo-linked-push-notes-v5` (refusal), and
+`bounded-memory/monorepo-linked-push-notes-current-hook-v5` (pass).
+This is local transport proof, not ethosengine qualification or aggregate scratch proof.
+
+A further real-monorepo test creates a new receiver branch from explicit `HEAD`.
+It exposed two defects: HEAD was absent from ref matching, and a new branch
+rebuilt history already advertised under another receiver ref. The latter was
+OOM-killed at the unchanged 1,073,741,824 B ceiling after 189.449 s. Source state
+remained clean and the new receiver ref was absent. The repair resolves explicit
+HEAD without loading its commit, excludes all locally available advertised commit
+boundaries, avoids re-inserting hidden tips, and uses the existing bounded walk
+with errors preserved. Ten public hook/push tests pass in each hash. The same
+protected-hook monorepo operation then passes at 259,387,392 B / 27.751 s, zero
+OOM/survivors, and exact receiver commit equality. Evidence:
+`bounded-memory/monorepo-linked-push-head-v8` (OOM),
+`bounded-memory/monorepo-linked-push-head-v9` (pass), and
+`bounded-memory/push-common-history-v9-*`. This fixes unnecessary common-history
+retention; accumulating wholly new pack entries remains an open audit path.
+
 ### Public-command audit in progress
+
+The first remote CI run of the memory branch, `43608889350` at
+`3193e47799a96ebd9750557a8ef687bef9fe0622`, is red. It exposed a missing
+direct streaming feature in the standalone archive crate, a private rustdoc
+link, read-only corruption fixtures that local root execution had concealed,
+a stale positional-add parser assertion, and platform assumptions in new
+journeys. The 32-bit workers also exposed multiplication overflow in the
+line-count estimate for 256 MiB input. That estimate needs wider arithmetic;
+the diff algorithms and their selection stay unchanged. The arithmetic fix
+passes all ten engine unit tests and strict Clippy. The archive dependency and
+public documentation link pass isolated compilation and warnings-denied rustdoc.
+The corrected corruption fixtures pass as unprivileged UID65534: eleven ordinary
+metadata cases peak at 259,608,576 B / 235,483,136 B for SHA-1 / SHA-256, five attribute-baseline cases at
+10,887,168 B, and checkout at 8,863,744 B under the delegated cap, with zero OOM
+or survivors. These Linux checks do not replace the pending cross-platform CI
+rerun. Both Tix corruption probes also pass as UID65534 in both hashes, with
+strict affected-crate Clippy. Evidence: `bounded-memory/ci-*-nonroot-v5-*`,
+`bounded-memory/ci-tix-nonroot-v6-*` and associated build logs.
+The advisory job reports dependency findings separately and remains unresolved.
+Private selected-job logs are retained under `bounded-memory/ci-job-*.log`.
+
+The corrections are published at `edc2523524c29814d4dd6d9007bb7938a8e2b1e1`
+on the existing CI feature branch; replacement CI run `43617075381` is red
+while other jobs are still running.
+Native push with protected hooks peaks at 73,474,048 B / 7.460 s with zero OOM
+or survivors. An initial `HEAD:refs/heads/...` attempt refused before transmission;
+remote and local state were inspected before using the explicit source branch.
+That HEAD-source compatibility defect is repaired by `f440fe941`, and advertised
+common-history exclusion by `d1dde0a64`, with the real-monorepo proof above.
+The replacement CI run also exposed a fixture dependency on optional revision
+parsing in the minimal-feature build; `bc6d43bb5` uses the basic commit API and
+passes the isolated minimal-feature compile and both-hash non-root regression.
+Both 32-bit jobs found another multiplication overflow in the newline-stripping
+diff adapter at 256 MiB. Its estimate now widens the arithmetic without changing
+sampling or comparison algorithms; the six native library tests pass. These later
+fixes are not yet part of that remote run.
+
+Push's base-entry encoder now uses the shared bounded object reader. Eleven
+public pre-push tests pass per hash, including an empty receiver and a blob above
+an explicit 1 KiB allocation limit. The 64/256 MiB clone/fetch/push matrix passes
+for both hashes, with default, 16 MiB and 1 KiB push policies, exact receiver
+objects and Git verification. Both groups reach 1,073,741,824 B, with zero OOM
+events, kills or survivors (80.822 s / 222.594 s). This is little memory headroom,
+not final qualification: scratch peaks are unmeasured and compressed entries remain
+retained together. This v10 snapshot predates the bounded pack-counting repair below.
+Receipts: `bounded-memory/push-transfer-v10-{sha1,sha256}`.
+
+Large-message replay is also still under verification. Provisional frozen-binary
+20 MiB body probes pass full trust for SHA-1 and SHA-256 at 435,961,856 B and
+436,043,776 B whole-group peaks, with zero OOM or survivors. Actual reduced-trust
+success uses a foreign-owned worktree and actor-owned private Git metadata;
+recovery's existing ownership protection is not relaxed. A different fixture
+with a long single-line commit subject amplified reflogs into 131,254,739 B of
+recovery JSON for 128 KiB messages. That measured failure remains open; using a
+short subject for governance-style large bodies does not qualify long subjects.
+The current-patch reader also uses bounded parent/child commit metadata and
+releases it before constructing indexes. Its 128 KiB and 20 MiB SHA-1 tests
+match Git patch bytes across loose/packed storage and four policies at
+93,360,128 B, with zero OOM or survivors (`bounded-memory/pinned-patch-metadata-v5-sha1`).
+SHA-256 pinned-patch parity also passes at 93,405,184 B. Native rebuilt SHA-1
+replay passes all three cases at 436,396,032 B / 2,014.260 s with zero OOM or
+survivors (`bounded-memory/replay-metadata-v5-sha1`). SHA-256 passes the same
+three cases at 432,627,712 B / 4,530.705 s. The bounded replay and pinned-patch
+readers are committed in `89bf37eca`;
+the rebuilt fault suites pass 110 active cases per hash, including recursive
+journal scratch inventory and foreign-symlink preservation. Public rebase passes
+eight cases per hash with its matching retained-object helper. Aggregate scratch
+and final committed-source qualification remain pending.
+
+The second 32-bit estimate repair (`9c73629ed`), minimal-feature fixture repair
+and bounded push blob inputs (`283591dbb`) are now published at
+`283591dbbc7abbbb83838fcf5643412cadc30e4a` on the existing CI feature branch.
+Fresh run `43621344383` is queued. The protected hook rejected `HEAD` as a source
+because Brit's reach gate requires a named local branch; remote state remained
+at `edc252352`. A subsequent explicit-branch push passed at 73,637,888 B / 5.958 s,
+with zero OOM or survivors. This is a hook policy distinction from the repaired
+native HEAD refspec handling. No release or installed pin moved.
+
+Shared tree comparison now accepts bounded storage (`4fd179be4`), retains the
+existing public reusable vector fields, and releases external bytes on success,
+cancellation and read failure. Pack counting uses this same algorithm with
+bounded commit/tree inputs; malformed commit/tag headers return errors instead
+of panicking, and push retains underlying walk/pack error classifications.
+The original 128 KiB commit-message push failure is reproduced before repair.
+Thirteen public push tests pass per hash after repair, and five initial-push
+cases per hash pass at 171,761,664 B / 138,194,944 B (23.009 s / 57.530 s).
+These include 20 MiB commit bodies, full/actual reduced trust, loose/packed
+objects and default/1 GiB/16 MiB/1 KiB policies. Reduced trust deliberately
+ignores foreign repository remote configuration; that fixture names the local
+receiver explicitly, preserving the protection. The initial named-remote
+refusal remains in the v12 evidence.
+
+An incompressible binary history with two versions at each of 64 MiB and
+256 MiB also passes under both hashes: 1,073,741,824 B peaks, 95.920 s /
+116.249 s, zero OOM events, kills or survivors. Receiver refs match and stock
+Git verifies the resulting objects. The measured fixture succeeds with existing
+compressed-entry retention; this does not qualify unlimited pack histories or
+compression cancellation latency. Existing object/pack/diff suites pass 445
+tests plus seven focused count cases for SHA-1 and 446 for SHA-256, including
+external-storage lifetime, malformed metadata and exact merge-parent count/order
+parity. Strict affected Clippy, formatting, readiness and declared style pass.
+The 240,000-entry nested-tree metadata matrix, now also pushing each loose/packed
+fixture to a fresh receiver, passes both full and actual reduced trust for both
+hashes at 153,780,224 B / 168,296,448 B (279.867 s / 448.433 s), with zero OOM
+or survivors and unchanged source HEAD/index. Tree sizes are 26,400,000 B / 29,280,000 B.
+Evidence: `bounded-memory/push-metadata-v13-*`, `binary-push-v13-*` and
+`tree-push-metadata-v13-*`; aggregate scratch remains unmeasured.
 
 The command boundary is `src/plumbing/options/mod.rs` plus
 `brit-cli/src/main.rs` and its composed bridge. This table is interim audit
