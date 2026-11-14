@@ -552,14 +552,20 @@ fn replay_steps_final_abort_and_cleanup_power_loss_follow_real_sync_boundaries()
             ]);
         }
         for omission in omissions {
-            let baseline_objects: Vec<_> = events[..proof.baseline_len]
+            let baseline_objects: BTreeSet<_> = events[..proof.baseline_len]
                 .iter()
                 .filter_map(|event| match event {
-                    Event::File(_, state) if proof.objects.values().any(|expected| expected == state) => {
-                        Some(state.clone())
-                    }
+                    Event::File(_, state) => loose_object_id(state, repo.object_hash()).ok(),
                     _ => None,
                 })
+                .collect();
+            let new_objects: BTreeSet<_> = proof
+                .objects
+                .values()
+                .map(|state| loose_object_id(state, repo.object_hash()))
+                .collect::<Result<BTreeSet<_>>>()?
+                .difference(&baseline_objects)
+                .copied()
                 .collect();
             let reduced = events
                 .iter()
@@ -573,8 +579,7 @@ fn replay_steps_final_abort_and_cleanup_power_loss_follow_real_sync_boundaries()
                             !proof.decisions.iter().any(|(_, expected, _)| expected == state)
                         }
                         ("new-object", Event::File(_, state)) => {
-                            baseline_objects.contains(state)
-                                || !proof.objects.values().any(|expected| expected == state)
+                            !loose_object_id(state, repo.object_hash()).is_ok_and(|id| new_objects.contains(&id))
                         }
                         ("retained-member", Event::File(_, state)) => {
                             !proof.retained.values().any(|expected| expected == state)
@@ -693,6 +698,35 @@ fn collect_replay_child_proofs(root: &Path, parent: &Path) -> Result<Vec<ChildTr
         let envelope: Envelope = serde_json::from_slice(&fs::read(path)?)?;
         Ok(serde_json::from_slice(&envelope.payload)?)
     }
+    fn retained_object(path: &Path) -> Result<(gix::objs::Kind, Vec<u8>)> {
+        let bytes = fs::read(path)?;
+        let (kind, data) = if bytes.starts_with(b"{") {
+            let envelope: Envelope = serde_json::from_slice(&bytes)?;
+            ensure!(
+                digest(&envelope.payload)? == envelope.checksum,
+                "legacy receipt checksum"
+            );
+            let object: serde_json::Value = serde_json::from_slice(&envelope.payload)?;
+            (
+                gix::objs::Kind::from_bytes(object["kind"].as_str().context("retained object kind")?.as_bytes())?,
+                serde_json::from_value::<Vec<u8>>(object["data"].clone())?,
+            )
+        } else {
+            let (kind, size, header_len) = gix::objs::decode::loose_header(&bytes)?;
+            ensure!(size == (bytes.len() - header_len) as u64, "raw receipt size");
+            ensure!(
+                bytes[..header_len] == *gix::objs::encode::loose_header(kind, size),
+                "canonical raw receipt header"
+            );
+            (kind, bytes[header_len..].to_vec())
+        };
+        let id = gix::ObjectId::from_hex(path.file_name().context("raw object name")?.as_encoded_bytes())?;
+        ensure!(
+            gix::objs::compute_hash(id.kind(), kind, &data)? == id,
+            "retained object identity"
+        );
+        Ok((kind, data))
+    }
     let mut out = Vec::new();
     for entry in fs::read_dir(parent)? {
         let entry = entry?;
@@ -709,7 +743,7 @@ fn collect_replay_child_proofs(root: &Path, parent: &Path) -> Result<Vec<ChildTr
                         .context("raw object name")?
                         .to_string_lossy()
                         .into_owned(),
-                    (path.clone(), payload(&path)?),
+                    (path.clone(), retained_object(&path)?),
                 );
             }
         }
@@ -744,7 +778,7 @@ fn collect_replay_child_proofs(root: &Path, parent: &Path) -> Result<Vec<ChildTr
                     if !visited.insert(id.clone()) {
                         continue;
                     }
-                    let Some((path, object)) = raw.get(&id) else {
+                    let Some((path, (kind, data))) = raw.get(&id) else {
                         let original_head: Vec<u8> = serde_json::from_value(value["before"]["original_head"].clone())?;
                         let baseline = std::str::from_utf8(&original_head)?.trim();
                         ensure!(
@@ -754,20 +788,20 @@ fn collect_replay_child_proofs(root: &Path, parent: &Path) -> Result<Vec<ChildTr
                         continue;
                     };
                     required_raw.push(member(root, &archive, path)?);
-                    let data: Vec<u8> = serde_json::from_value(object["data"].clone())?;
-                    match object["kind"].as_str().context("retained object kind")? {
-                        "commit" => {
-                            let commit = gix::objs::CommitRef::from_bytes(&data, gix::hash::Kind::Sha1)?;
+                    let hash = gix::ObjectId::from_hex(id.as_bytes())?.kind();
+                    match kind {
+                        gix::objs::Kind::Commit => {
+                            let commit = gix::objs::CommitRef::from_bytes(data, hash)?;
                             stack.push(commit.tree().to_string());
                             stack.extend(commit.parents().map(|parent| parent.to_string()));
                         }
-                        "tree" => stack.extend(
-                            gix::objs::TreeRef::from_bytes(&data, gix::hash::Kind::Sha1)?
+                        gix::objs::Kind::Tree => stack.extend(
+                            gix::objs::TreeRef::from_bytes(data, hash)?
                                 .entries
                                 .iter()
                                 .map(|entry| entry.oid.to_string()),
                         ),
-                        "blob" => {}
+                        gix::objs::Kind::Blob => {}
                         kind => anyhow::bail!("unexpected child raw kind {kind}"),
                     }
                 }
@@ -803,6 +837,19 @@ fn collect_replay_child_proofs(root: &Path, parent: &Path) -> Result<Vec<ChildTr
     Ok(out)
 }
 
+fn loose_object_id(state: &State, hash: gix::hash::Kind) -> Result<gix::ObjectId> {
+    let State::File { bytes, .. } = state else {
+        anyhow::bail!("loose object is not durably present");
+    };
+    let mut compressed = bytes.as_slice();
+    let mut decoded = Vec::new();
+    gix::zlib::stream::inflate::Reader::new(&mut compressed).read_to_end(&mut decoded)?;
+    ensure!(compressed.is_empty(), "trailing loose object bytes");
+    let (kind, size, header_len) = gix::objs::decode::loose_header(&decoded)?;
+    ensure!(size == (decoded.len() - header_len) as u64, "loose object size");
+    Ok(gix::objs::compute_hash(hash, kind, &decoded[header_len..])?)
+}
+
 fn check_replay_execution_trace(events: &[Event], proof: &ReplayTraceProof) -> Result<()> {
     let mut durable = Durable::default();
     let mut decisions = BTreeSet::new();
@@ -826,9 +873,20 @@ fn check_replay_execution_trace(events: &[Event], proof: &ReplayTraceProof) -> R
                 for oid in decision["after"]["closure"].as_array().expect("decision closure") {
                     let oid = oid.as_str().expect("object ID");
                     let object = PathBuf::from(".git/objects").join(&oid[..2]).join(&oid[2..]);
+                    let id = gix::ObjectId::from_hex(oid.as_bytes())?;
+                    let state = durable.state(proof.root_id, &object);
+                    assert!(
+                        matches!(
+                            (&state, &proof.objects[&object]),
+                            (State::File { mode: actual, .. }, State::File { mode: expected, .. }) if actual == expected
+                        ),
+                        "decision precedes object mode durability at sync {position}"
+                    );
+                    // Streaming and buffered writers can produce different valid
+                    // deflate bytes. Durability protects the object, not its encoding.
                     assert_eq!(
-                        durable.state(proof.root_id, &object),
-                        proof.objects[&object],
+                        loose_object_id(&state, id.kind())?,
+                        id,
                         "decision precedes object durability at sync {position}"
                     );
                 }

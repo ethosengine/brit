@@ -1559,10 +1559,7 @@ pub fn run_with_command(args: Args, command: clap::Command) -> Result<()> {
                     let repo = repository(Mode::Strict)?;
                     let pathspecs = if pathspec.is_empty() {
                         PathsOrPatterns::Paths(Box::new(
-                            stdin_or_bail()?
-                                .byte_lines()
-                                .filter_map(std::result::Result::ok)
-                                .map(BString::from),
+                            stdin_or_bail()?.byte_lines().map(|line| line.map(BString::from)),
                         ))
                     } else {
                         PathsOrPatterns::Patterns(pathspec)
@@ -1583,12 +1580,9 @@ pub fn run_with_command(args: Args, command: clap::Command) -> Result<()> {
                 move |progress, out, err| {
                     core::repository::attributes::validate_baseline(
                         repository(Mode::StrictWithGitInstallConfig)?,
-                        stdin_or_bail().ok().map(|stdin| {
-                            stdin
-                                .byte_lines()
-                                .filter_map(std::result::Result::ok)
-                                .map(gix::bstr::BString::from)
-                        }),
+                        stdin_or_bail()
+                            .ok()
+                            .map(|stdin| stdin.byte_lines().map(|line| line.map(gix::bstr::BString::from))),
                         progress,
                         out,
                         err,
@@ -1611,10 +1605,7 @@ pub fn run_with_command(args: Args, command: clap::Command) -> Result<()> {
                 let repo = repository(Mode::Strict)?;
                 let paths = if paths.is_empty() {
                     PathsOrPatterns::Paths(Box::new(
-                        stdin_or_bail()?
-                            .byte_lines()
-                            .filter_map(std::result::Result::ok)
-                            .map(BString::from),
+                        stdin_or_bail()?.byte_lines().map(|line| line.map(BString::from)),
                     ))
                 } else {
                     PathsOrPatterns::Patterns(paths)

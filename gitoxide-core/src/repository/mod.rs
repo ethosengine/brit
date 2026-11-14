@@ -73,7 +73,7 @@ pub fn init(directory: Option<PathBuf>) -> Result<gix::discover::repository::Pat
 }
 
 pub enum PathsOrPatterns {
-    Paths(Box<dyn std::iter::Iterator<Item = BString>>),
+    Paths(Box<dyn std::iter::Iterator<Item = std::io::Result<BString>>>),
     Patterns(Vec<BString>),
 }
 

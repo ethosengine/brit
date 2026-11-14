@@ -47,11 +47,13 @@ pub fn query(
         Default::default(),
     )?;
 
-    let paths: Box<dyn Iterator<Item = gix::bstr::BString>> = match input {
+    let paths: Box<dyn Iterator<Item = std::io::Result<gix::bstr::BString>>> = match input {
         PathsOrPatterns::Paths(paths) => paths,
-        PathsOrPatterns::Patterns(paths) => Box::new(paths.into_iter()),
+        PathsOrPatterns::Patterns(paths) => Box::new(paths.into_iter().map(Ok)),
     };
     for path in paths {
+        let path = path.or_error()?;
+        gix::utils::stream::check(&gix::interrupt::IS_INTERRUPTED).or_error()?;
         let mode = gix::path::from_bstr(Cow::Borrowed(path.as_ref()))?
             .metadata()
             .ok()
@@ -67,7 +69,7 @@ pub fn query(
 
     if let Some(stats) = statistics.then(|| cache.take_statistics()) {
         out.flush().or_error()?;
-        writeln!(err, "{stats:#?}").ok();
+        writeln!(err, "{stats:#?}").or_error()?;
     }
     Ok(())
 }
