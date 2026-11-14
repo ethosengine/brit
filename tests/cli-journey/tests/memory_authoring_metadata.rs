@@ -100,6 +100,8 @@ fn checkout_metadata(size: usize, reduced: bool) -> Result<()> {
             ensure!(git(root, &["show", ":selected"])? == b"main contents\n");
             ensure!(fs::read(root.join("selected"))? == b"staged edit\n");
             brit(root, &["restore", "--worktree", "--", "selected"], limit)?;
+            // Durable switch is supported only on Linux; restore remains portable.
+            #[cfg(target_os = "linux")]
             for (branch, contents) in [
                 ("target", b"target contents\n".as_slice()),
                 ("main", b"main contents\n"),
