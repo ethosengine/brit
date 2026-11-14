@@ -3527,6 +3527,39 @@ is not absence, and current reference identity does not require loading its
 target object**. Commit-graph starting-point reads, shallow walks and SVG/viewer
 behavior remain under audit.
 
+### Commit-graph consumers
+
+`commit-graph list` previously refused a 20 MiB starting commit at explicit
+16 MiB policy. It now reuses bounded peeling and polls cancellation while
+emitting results. Repository and standalone graph verification preserve human
+output I/O errors and poll cancellation instead of using a no-op processor.
+The existing read-only mapped graph, structural verifier and traversal ordering
+remain unchanged. A feature-specific Clippy finding in the earlier revision
+message helper is corrected by borrowing its predicate in the helper signature;
+regex and literal-search behavior are unchanged.
+
+Both-hash native checks cover interruption under one second and output failures
+for all three entry points; all 61 active revision tests per hash pass. Strict
+affected Clippy, formatting, readiness and declared style pass. The public
+listing fixture compares include/range results with Git on loose/packed 20 MiB
+commits, at default/16 MiB/one-byte allocation policies and actual reduced trust.
+With default-max binary
+`8700f09a3d8670e9340fe4e8a90ab4f9a63a0c2ef9d967736614e9ab306b9be1`,
+the two cases per hash peak at 151,339,008 B / 149,557,248 B in 9.039 / 43.039 s.
+
+A separate 400,000-entry linear graph has 22,401,100 B of SHA-1 metadata or
+32,001,112 B of SHA-256 metadata. Its synthetic IDs exercise structural cache
+verification, not object existence. Both public verifiers preserve its checksum
+and report the exact commit/parent/generation statistics under explicit settings
+and actual reduced trust. Two cases per hash peak at 55,394,304 B / 43,429,888 B
+in 9.793 / 36.143 s. All four workers have zero OOM, survivors or identity changes.
+Private receipts are `bounded-memory/commitgraph-final-*`; aggregate scratch,
+shallow-boundary failure handling and final-source acceptance remain open.
+
+Story-harvest station: **graph cache → history / metadata-only work must not
+load large commit bodies unnecessarily, and successful verification includes
+successful output delivery**.
+
 ### Public-command audit in progress
 
 The command boundary is `src/plumbing/options/mod.rs` plus

@@ -385,7 +385,7 @@ fn message_matches(
     source: &crate::object::bounded::Source<'_>,
     id: ObjectId,
     buffer: &mut Buffer,
-    matches: impl Fn(&BStr) -> bool,
+    matches: &impl Fn(&BStr) -> bool,
 ) -> Result<bool> {
     source.find_commit(&id, buffer)?;
     let data = buffer.as_ref();

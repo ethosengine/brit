@@ -44,6 +44,7 @@ pub(crate) mod function {
             }
         };
         for commit in commits {
+            gix::utils::stream::check(&gix::interrupt::IS_INTERRUPTED).or_error()?;
             let commit = commit?;
             writeln!(
                 out,
@@ -68,11 +69,102 @@ pub(crate) mod function {
     }
 
     fn connected_commit_id(repo: &gix::Repository, id: gix::ObjectId) -> Result<gix::Id<'_>> {
-        Ok(id
-            .attach(repo)
-            .object()?
-            .peel_to_kind(gix::object::Kind::Commit)
+        Ok(gix::object::bounded::Source::deferred(repo)
+            .peel(id, gix::object::Kind::Commit)
             .or_raise(|| message("Need committish as starting point"))?
-            .id())
+            .attach(repo))
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use gix::error::ResultExt;
+
+    #[test]
+    fn cancellation_and_output_errors() -> gix_testtools::TestResult {
+        if gix_testtools::run_in_isolated_process()? {
+            return Ok(());
+        }
+        let fixture = gix_testtools::tempfile::tempdir().or_error()?;
+        for args in [
+            vec!["init", "-q", "--initial-branch=main"],
+            vec!["commit", "--allow-empty", "-qm", "initial"],
+            vec!["commit-graph", "write", "--reachable"],
+        ] {
+            assert!(
+                gix_testtools::git_command(fixture.path())
+                    .args(args)
+                    .status()
+                    .or_error()?
+                    .success()
+            );
+        }
+        let repo = gix::open_opts(fixture.path(), gix::open::Options::isolated())?;
+        gix::interrupt::IS_INTERRUPTED.store(true, std::sync::atomic::Ordering::SeqCst);
+        let start = std::time::Instant::now();
+        let result = super::function::list(
+            repo.clone(),
+            "HEAD".into(),
+            std::io::sink(),
+            true,
+            crate::OutputFormat::Human,
+        );
+        let elapsed = start.elapsed();
+        gix::interrupt::IS_INTERRUPTED.store(false, std::sync::atomic::Ordering::SeqCst);
+        assert!(result.expect_err("cancelled listing").is_cancelled());
+        assert!(elapsed < std::time::Duration::from_secs(1));
+        struct Broken;
+        impl std::io::Write for Broken {
+            fn write(&mut self, _: &[u8]) -> std::io::Result<usize> {
+                Err(std::io::ErrorKind::BrokenPipe.into())
+            }
+            fn flush(&mut self) -> std::io::Result<()> {
+                Ok(())
+            }
+        }
+        let error = super::function::list(repo.clone(), "HEAD".into(), Broken, true, crate::OutputFormat::Human)
+            .expect_err("output failure");
+        assert_eq!(
+            error.downcast_any_ref::<std::io::Error>().expect("IO cause").kind(),
+            std::io::ErrorKind::BrokenPipe
+        );
+        for free in [false, true] {
+            gix::interrupt::IS_INTERRUPTED.store(true, std::sync::atomic::Ordering::SeqCst);
+            let start = std::time::Instant::now();
+            let result = verify(&repo, std::io::sink(), free);
+            let elapsed = start.elapsed();
+            gix::interrupt::IS_INTERRUPTED.store(false, std::sync::atomic::Ordering::SeqCst);
+            assert!(result.expect_err("cancelled verification").is_cancelled());
+            assert!(elapsed < std::time::Duration::from_secs(1));
+            let error = verify(&repo, Broken, free).expect_err("statistics output failure");
+            assert_eq!(
+                error.downcast_any_ref::<std::io::Error>().expect("IO cause").kind(),
+                std::io::ErrorKind::BrokenPipe
+            );
+        }
+        Ok(())
+    }
+
+    fn verify(repo: &gix::Repository, out: impl std::io::Write, free: bool) -> gix::Result<()> {
+        if free {
+            crate::commitgraph::verify(
+                repo.git_dir().join("objects/info"),
+                crate::commitgraph::verify::Context {
+                    err: std::io::sink(),
+                    out,
+                    output_statistics: Some(crate::OutputFormat::Human),
+                },
+            )?;
+        } else {
+            crate::repository::commitgraph::verify(
+                repo.clone(),
+                crate::repository::commitgraph::verify::Context {
+                    err: std::io::sink(),
+                    out,
+                    output_statistics: Some(crate::OutputFormat::Human),
+                },
+            )?;
+        }
+        Ok(())
     }
 }

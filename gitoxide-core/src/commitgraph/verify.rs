@@ -21,7 +21,6 @@ impl Default for Context<Vec<u8>, Vec<u8>> {
 
 pub(crate) mod function {
     use gix::Result;
-    #[cfg(feature = "serde")]
     use gix::error::ResultExt;
     use std::{io, path::Path};
 
@@ -40,17 +39,13 @@ pub(crate) mod function {
         W1: io::Write,
         W2: io::Write,
     {
+        gix::utils::stream::check(&gix::interrupt::IS_INTERRUPTED).or_error()?;
         let g = Graph::at(path.as_ref())?;
-
-        #[expect(clippy::unnecessary_wraps)]
-        fn noop_processor(_commit: &gix::commitgraph::file::Commit<'_>) -> std::result::Result<(), std::fmt::Error> {
-            Ok(())
-        }
-        let stats = g.verify_integrity(noop_processor)?;
+        let stats = g.verify_integrity(|_| gix::utils::stream::check(&gix::interrupt::IS_INTERRUPTED))?;
 
         #[cfg_attr(not(feature = "serde"), allow(clippy::single_match))]
         match output_statistics {
-            Some(OutputFormat::Human) => drop(print_human_output(&mut out, &stats)),
+            Some(OutputFormat::Human) => print_human_output(&mut out, &stats).or_error()?,
             #[cfg(feature = "serde")]
             Some(OutputFormat::Json) => serde_json::to_writer_pretty(out, &stats).or_error()?,
             _ => {}

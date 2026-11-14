@@ -189,6 +189,85 @@ fn actual_reduced_trust_large_reflog() -> Result<()> {
     large_reflog(true)
 }
 
+fn large_commit_graph(reduced: bool) -> Result<()> {
+    let repo = TestRepo::new("memory-commit-graph")?;
+    let root = repo.path();
+    let message = root.join(".git/message-input");
+    let mut input = BufWriter::new(fs::File::create(&message)?);
+    for _ in 0..320 {
+        input.write_all(&[b'x'; 65536])?;
+    }
+    input.flush()?;
+    drop(input);
+    git(
+        root,
+        &[
+            "commit",
+            "--allow-empty",
+            "-q",
+            "-F",
+            message.to_str().expect("fixture path"),
+        ],
+    )?;
+    let head = git(root, &["rev-parse", "HEAD"])?;
+    let index = fs::read(root.join(".git/index"))?;
+    let mut expectations = Vec::new();
+    for spec in ["HEAD", "HEAD^..HEAD"] {
+        let mut expected = Vec::new();
+        for row in String::from_utf8(git(
+            root,
+            &["rev-list", "--timestamp", "--parents", "--date-order", spec],
+        )?)?
+        .lines()
+        {
+            let mut fields = row.split_whitespace();
+            let time = fields.next().expect("timestamp");
+            let id = fields.next().expect("commit identity");
+            let tree = String::from_utf8(git(root, &["rev-parse", &format!("{id}^{{tree}}")])?)?;
+            let generation = String::from_utf8(git(root, &["rev-list", "--count", id])?)?;
+            writeln!(
+                expected,
+                "{id} {time} {} {} {}",
+                fields.count(),
+                tree.trim(),
+                generation.trim()
+            )?;
+        }
+        expectations.push((spec, expected));
+    }
+    reduced_trust(root, reduced)?;
+    for packed in [false, true] {
+        if packed {
+            git(root, &["-c", "pack.threads=1", "repack", "-ad"])?;
+        }
+        git(root, &["commit-graph", "write", "--reachable"])?;
+        let graph = fs::read(root.join(".git/objects/info/commit-graph"))?;
+        for limit in [None, Some("16777216"), Some("1")] {
+            for (spec, expected) in &expectations {
+                let actual = root.join(".git/actual-graph");
+                brit(root, &["commit-graph", "list", "--long-hashes", spec], &actual, limit)?;
+                ensure!(fs::read(actual)? == *expected, "commit-graph {spec} differs from Git");
+            }
+        }
+        ensure!(fs::read(root.join(".git/objects/info/commit-graph"))? == graph);
+    }
+    ensure!(git(root, &["rev-parse", "HEAD"])? == head && fs::read(root.join(".git/index"))? == index);
+    Ok(())
+}
+
+#[test]
+#[ignore = "resource qualification: requires BRIT_BIN"]
+fn commit_graph_with_twenty_mib_commit() -> Result<()> {
+    large_commit_graph(false)
+}
+
+#[cfg(target_os = "linux")]
+#[test]
+#[ignore = "resource qualification: requires BRIT_BIN and chown authority"]
+fn actual_reduced_trust_large_commit_graph() -> Result<()> {
+    large_commit_graph(true)
+}
+
 fn large_commit(reduced: bool) -> Result<()> {
     let repo = TestRepo::new("memory-commit-metadata")?;
     let root = repo.path();
