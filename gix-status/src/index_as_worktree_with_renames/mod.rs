@@ -64,6 +64,7 @@ pub(super) mod function {
     {
         let mut tracked_file_modifications = options.tracked_file_modifications;
         tracked_file_modifications.fscache = options.fscache;
+        let budget = gix_utils::stream::Budget::new(&std::env::temp_dir()).or_error()?;
         gix_parallel::threads(|scope| -> Result<Outcome> {
             let (tx, rx) = std::sync::mpsc::channel();
             let walk_outcome = options
@@ -81,6 +82,7 @@ pub(super) mod function {
                                 };
                                 let dirwalk_ctx = ctx.dirwalk;
                                 let objects = objects.clone();
+                                let budget = budget.clone();
                                 let mut excludes = match ctx.resource_cache.attr_stack.state() {
                                     State::CreateDirectoryAndAttributesStack { .. } | State::AttributesStack(_) => None,
                                     State::AttributesAndIgnoreStack { .. } | State::IgnoreStack(_) => {
@@ -94,7 +96,14 @@ pub(super) mod function {
                                     .then(|| ctx.resource_cache.attr_stack.clone());
                                 let mut pathspec = ctx.pathspec.clone();
                                 move || {
-                                    gix_dir::walk(
+                                    let source = gix_object::find::WithStream {
+                                        objects: &objects,
+                                        streamed: &objects,
+                                        budget: &budget,
+                                        interrupt: ctx.should_interrupt,
+                                    };
+                                    let mut attribute_error = None;
+                                    let walked = gix_dir::walk(
                                         worktree,
                                         gix_dir::walk::Context {
                                             should_interrupt: Some(ctx.should_interrupt),
@@ -104,21 +113,35 @@ pub(super) mod function {
                                             ignore_case_index_lookup: dirwalk_ctx.ignore_case_index_lookup,
                                             pathspec: &mut pathspec,
                                             pathspec_attributes: &mut |relative_path, case, is_dir, out| {
+                                                if attribute_error.is_some() {
+                                                    return false;
+                                                }
                                                 let stack = pathspec_attr_stack
                                                     .as_mut()
                                                     .expect("can only be called if attributes are used in patterns");
-                                                stack
-                                                    .set_case(case)
-                                                    .at_entry(relative_path, Some(is_dir_to_mode(is_dir)), &objects)
-                                                    .is_ok_and(|platform| platform.matching_attributes(out))
+                                                match stack.set_case(case).at_entry_with_source(
+                                                    relative_path,
+                                                    Some(is_dir_to_mode(is_dir)),
+                                                    &source,
+                                                ) {
+                                                    Ok(platform) => platform.matching_attributes(out),
+                                                    Err(error) => {
+                                                        attribute_error = Some(error);
+                                                        false
+                                                    }
+                                                }
                                             },
                                             excludes: excludes.as_mut(),
-                                            objects: &objects,
+                                            objects: &source,
                                             explicit_traversal_root: Some(worktree),
                                         },
                                         options,
                                         &mut collect,
-                                    )
+                                    );
+                                    if let Some(error) = attribute_error {
+                                        return Err(error).or_error();
+                                    }
+                                    walked
                                 }
                             }),
                         )
@@ -173,6 +196,12 @@ pub(super) mod function {
                 .zip(filter);
             let rewrite_outcome = match tracker {
                 Some((mut tracker, (mut filter, mut attrs))) => {
+                    let source = gix_object::find::WithStream {
+                        objects: &objects,
+                        streamed: &objects,
+                        budget: &budget,
+                        interrupt: ctx.should_interrupt,
+                    };
                     let mut entries_for_sorting = options.sorting.map(|_| Vec::new());
                     let mut buf = Vec::new();
                     for event in rx {
@@ -192,7 +221,7 @@ pub(super) mod function {
                                             entry.rela_path.as_bstr(),
                                             &mut filter,
                                             &mut attrs,
-                                            &objects,
+                                            &source,
                                             &mut buf,
                                             ctx.should_interrupt,
                                         )?,
@@ -222,7 +251,7 @@ pub(super) mod function {
                     });
 
                     let outcome = tracker
-                        .emit(
+                        .emit_with_resource_loader(
                             |dest, src| {
                                 match src {
                                     None => {
@@ -284,7 +313,22 @@ pub(super) mod function {
                                 std::ops::ControlFlow::Continue(())
                             },
                             &mut ctx.resource_cache,
-                            &objects,
+                            &mut |cache, id, mode, path, kind| {
+                                match options.buffer_limit {
+                                    Some(limit) => cache.set_resource_bounded(
+                                        id,
+                                        mode,
+                                        path,
+                                        kind,
+                                        &objects,
+                                        &budget,
+                                        limit,
+                                        ctx.should_interrupt,
+                                    )?,
+                                    None => cache.set_resource(id, mode, path, kind, &objects)?,
+                                }
+                                Ok(())
+                            },
                             |_cb| {
                                 // NOTE: to make this work, we'd want to wait the index modification check to complete.
                                 //       Then it's possible to efficiently emit the tracked files along with what we already sent,
@@ -519,7 +563,7 @@ pub(super) mod function {
             rela_path: &BStr,
             filter: &mut gix_filter::Pipeline,
             attrs: &mut gix_worktree::Stack,
-            objects: &dyn gix_object::Find,
+            objects: &dyn gix_object::find::Source,
             buf: &mut Vec<u8>,
             should_interrupt: &std::sync::atomic::AtomicBool,
         ) -> Result<gix_hash::ObjectId> {
@@ -533,7 +577,7 @@ pub(super) mod function {
                     return Ok(object_hash.null());
                 }
                 Kind::File => {
-                    let platform = attrs.at_entry(rela_path, None, objects).or_raise(|| {
+                    let platform = attrs.at_entry_with_source(rela_path, None, objects).or_raise(|| {
                         message!("Failed to change the attribute context for worktree path {rela_path:?}")
                     })?;
                     let rela_path = gix_path::from_bstr(rela_path)?;

@@ -291,6 +291,9 @@ pub struct Options<'a> {
     ///
     /// If `None`, no tracking will occur, which means that all output becomes visible to the delegate immediately.
     pub rewrites: Option<gix_diff::Rewrites>,
+    /// Buffer at most this many bytes per comparison resource, mapping larger inputs.
+    /// `None` retains the ordinary buffered loader for plumbing callers.
+    pub buffer_limit: Option<usize>,
 }
 
 /// The context for [index_as_worktree_with_renames()`](crate::index_as_worktree_with_renames()).

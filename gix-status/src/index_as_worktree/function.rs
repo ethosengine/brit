@@ -296,19 +296,39 @@ impl<'index> State<'_, 'index> {
             return None;
         }
         let path = entry.path_in(self.path_backing);
+        let source = gix_object::find::WithStream {
+            objects,
+            streamed: objects,
+            budget: &self.budget,
+            interrupt: self.should_interrupt,
+        };
+        let mut attribute_error = None;
         let is_excluded = pathspec
             .pattern_matching_relative_path(
                 path,
                 Some(entry.mode.is_submodule()),
                 &mut |relative_path, case, is_dir, out| {
-                    self.attr_stack
-                        .set_case(case)
-                        .at_entry(relative_path, Some(is_dir_to_mode(is_dir)), objects)
-                        .is_ok_and(|platform| platform.matching_attributes(out))
+                    if attribute_error.is_some() {
+                        return false;
+                    }
+                    match self.attr_stack.set_case(case).at_entry_with_source(
+                        relative_path,
+                        Some(is_dir_to_mode(is_dir)),
+                        &source,
+                    ) {
+                        Ok(platform) => platform.matching_attributes(out),
+                        Err(error) => {
+                            attribute_error = Some(error);
+                            false
+                        }
+                    }
                 },
             )
             .is_none_or(|m| m.is_excluded());
 
+        if let Some(error) = attribute_error {
+            return Some(Err(error).or_error());
+        }
         if is_excluded {
             self.skipped_by_pathspec.fetch_add(1, Ordering::Relaxed);
             return None;
@@ -638,9 +658,15 @@ where
             }
         } else {
             self.buf.clear();
+            let source = gix_object::find::WithStream {
+                objects: &self.objects,
+                streamed: &self.objects,
+                budget: self.budget,
+                interrupt: self.should_interrupt,
+            };
             let platform = self
                 .attr_stack
-                .at_entry(self.rela_path, Some(self.entry.mode), &self.objects)
+                .at_entry_with_source(self.rela_path, Some(self.entry.mode), &source)
                 .map_err(gix_hash::io::from_std_io)?;
             let mut file = std::fs::File::open(self.path).map_err(gix_hash::io::from_std_io)?;
             if !self

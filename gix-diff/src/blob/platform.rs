@@ -843,13 +843,23 @@ impl Platform {
         if self.diff_cache.contains_key(storage) {
             return Ok(());
         }
-        let entry =
-            self.attr_stack
-                .at_entry(rela_path, None, objects)
-                .or_raise_typed(|| set_resource::Error::Attributes {
-                    kind,
-                    rela_path: rela_path.into(),
-                })?;
+        let entry = match streamed.as_ref() {
+            Some(streamed) => self.attr_stack.at_entry_with_source(
+                rela_path,
+                None,
+                &gix_object::find::WithStream {
+                    objects,
+                    streamed: streamed.objects,
+                    budget: streamed.budget,
+                    interrupt: streamed.interrupt,
+                },
+            ),
+            None => self.attr_stack.at_entry(rela_path, None, objects),
+        }
+        .or_raise_typed(|| set_resource::Error::Attributes {
+            kind,
+            rela_path: rela_path.into(),
+        })?;
         let (out, buffer) = if let Some(streamed) = streamed {
             let (out, bytes) = self
                 .filter

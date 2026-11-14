@@ -48,6 +48,56 @@ impl Source for &dyn Source {
     }
 }
 
+/// Retry a configured buffered allocation limit through the store's verified stream.
+///
+/// Other failures are returned unchanged. The caller supplies the operation's scratch
+/// budget and cancellation flag; mapped bytes remain owned by the destination buffer.
+#[cfg(feature = "stream")]
+pub struct WithStream<'a> {
+    /// The ordinary reader, including its configured allocation policy.
+    pub objects: &'a dyn crate::Find,
+    /// The same store's streaming reader.
+    pub streamed: &'a dyn crate::FindStream,
+    /// Scratch shared with the calling operation.
+    pub budget: &'a std::sync::Arc<gix_utils::stream::Budget>,
+    /// Cancellation for object decoding and copying.
+    pub interrupt: &'a std::sync::atomic::AtomicBool,
+}
+
+#[cfg(feature = "stream")]
+impl Source for WithStream<'_> {
+    fn try_find<'a>(&self, id: &gix_hash::oid, buffer: &'a mut Buffer) -> Result<Option<crate::Data<'a>>> {
+        gix_utils::stream::check(self.interrupt).or_error()?;
+        match self
+            .objects
+            .try_find(id, buffer.owned())
+            .map(|data| data.map(|data| data.kind))
+        {
+            Ok(kind) => {
+                let bytes = AsRef::<[u8]>::as_ref(&*buffer);
+                return Ok(kind.map(|kind| crate::Data::new(bytes, kind, id.kind())));
+            }
+            Err(error)
+                if error.classify().any(|class| {
+                    class.class()
+                        == gix_error::Class::ResourceExhaustion(gix_error::ResourceExhaustionKind::AllocationLimit)
+                }) => {}
+            Err(error) => return Err(error),
+        }
+        buffer.clear();
+        let (kind, spool) = self.streamed.find_stream(id, self.budget, self.interrupt)?;
+        Ok(Some(crate::Data::new(
+            buffer.set_external(
+                spool
+                    .into_mapped()
+                    .or_raise(|| gix_error::message!("Could not map object {id}"))?,
+            ),
+            kind,
+            id.kind(),
+        )))
+    }
+}
+
 pub(crate) fn not_found(id: &gix_hash::oid) -> gix_error::Error {
     gix_error::message!("An object with id {id} could not be found").not_found_error()
 }

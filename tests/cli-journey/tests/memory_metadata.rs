@@ -1119,7 +1119,7 @@ fn actual_reduced_trust_large_attributes_and_excludes() -> Result<()> {
     large_attributes_and_excludes(true)
 }
 
-fn attribute_pathspec(size: usize, reduced: bool, faults: bool) -> Result<()> {
+fn attribute_pathspec(size: usize, reduced: bool, faults: bool, status: bool) -> Result<()> {
     let repo = TestRepo::new("memory-attribute-pathspec")?;
     let root = repo.path();
     repo.commit_file("selected", "selected bytes\n")?;
@@ -1127,7 +1127,7 @@ fn attribute_pathspec(size: usize, reduced: bool, faults: bool) -> Result<()> {
     for (name, tail) in [
         (
             ".gitattributes",
-            b"\nselected custom=yes\nuntracked custom=yes\nother custom=no\n".as_slice(),
+            b"\nselected custom=yes\nuntracked custom=yes\nrename-* custom=yes\nother custom=no\n".as_slice(),
         ),
         (".gitignore", b"\nignored\n".as_slice()),
     ] {
@@ -1149,15 +1149,42 @@ fn attribute_pathspec(size: usize, reduced: bool, faults: bool) -> Result<()> {
     fs::write(root.join("ignored"), "ignored bytes\n")?;
     fs::write(root.join("untracked"), "untracked bytes\n")?;
     ensure!(git(root, &["ls-files", "--", ":(attr:custom=yes)"])? == b"selected\n");
+    let mut renamed = String::new();
+    for n in 0..32 {
+        use std::fmt::Write as _;
+        writeln!(renamed, "line {n}")?;
+    }
+    if status {
+        repo.commit_file("rename-source", &renamed)?;
+        fs::remove_file(root.join("rename-source"))?;
+        fs::write(root.join("rename-target"), format!("{renamed}added line\n"))?;
+        fs::write(root.join("selected"), "selected staged bytes\n")?;
+        git(root, &["add", "selected"])?;
+        fs::write(root.join("selected"), "selected working bytes\n")?;
+    }
     let head = git(root, &["rev-parse", "HEAD"])?;
     let index = fs::read(root.join(".git/index"))?;
     reduced_trust(root, reduced)?;
-    let commands: [&[&str]; 4] = [
-        &["attributes", "query", ":(attr:custom=yes)selected"],
-        &["index", "entries", "--no-attributes", ":(attr:custom=yes)"],
-        &["clean", "--pathspec-matches-result", ":(attr:custom=yes)"],
-        &["clean", ":(attr:custom=yes)"],
-    ];
+    let commands: Vec<&[&str]> = if status {
+        vec![
+            &["status", "--no-write", ":(attr:custom=yes)"],
+            &["status", "--no-write", "--untracked=no", ":(attr:custom=yes)"],
+            &[
+                "status",
+                "--no-write",
+                "--index-worktree-renames=50",
+                ":(attr:custom=yes)",
+            ],
+            &["status", "--no-write"],
+        ]
+    } else {
+        vec![
+            &["attributes", "query", ":(attr:custom=yes)selected"],
+            &["index", "entries", "--no-attributes", ":(attr:custom=yes)"],
+            &["clean", "--pathspec-matches-result", ":(attr:custom=yes)"],
+            &["clean", ":(attr:custom=yes)"],
+        ]
+    };
     let output = root.join(".git/pathspec-output");
     for packed in [false, true] {
         if packed {
@@ -1171,12 +1198,39 @@ fn attribute_pathspec(size: usize, reduced: bool, faults: bool) -> Result<()> {
             brit(root, args, &expected, Some("1073741824"))?;
             let bytes = fs::read_to_string(&expected)?;
             ensure!(
-                bytes.contains(if n >= 2 { "untracked" } else { "selected" }) && !bytes.contains("other"),
+                bytes.contains(if !status && n >= 2 { "untracked" } else { "selected" }) && !bytes.contains("other"),
                 "expected selected result: {bytes:?}"
             );
+            if status && n == 2 {
+                ensure!(
+                    bytes.contains("R rename-source → rename-target"),
+                    "similarity rename: {bytes:?}"
+                );
+            }
+            if status {
+                ensure!(
+                    bytes.contains(" M  selected\n") && bytes.contains("  M selected\n"),
+                    "both status planes: {bytes:?}"
+                );
+            }
             for limit in [None, Some("16777216"), Some("1024")] {
                 brit(root, args, &output, limit)?;
-                same_bytes(&expected, &output)?;
+                if status {
+                    // Staged and working-tree producers share a channel. Their existing
+                    // interleaving varies even between two buffered runs; preserve each record.
+                    let actual = fs::read_to_string(&output)?;
+                    ensure!(actual.ends_with('\n'));
+                    let mut expected_records = bytes.lines().collect::<Vec<_>>();
+                    let mut actual_records = actual.lines().collect::<Vec<_>>();
+                    expected_records.sort_unstable();
+                    actual_records.sort_unstable();
+                    ensure!(
+                        expected_records == actual_records,
+                        "status records differ: {bytes:?} / {actual:?}"
+                    );
+                } else {
+                    same_bytes(&expected, &output)?;
+                }
             }
         }
     }
@@ -1210,30 +1264,59 @@ fn attribute_pathspec(size: usize, reduced: bool, faults: bool) -> Result<()> {
     ensure!(git(root, &["rev-parse", "HEAD"])? == head);
     ensure!(fs::read(root.join(".git/index"))? == index);
     for (name, content) in [
-        ("selected", "selected bytes\n"),
+        (
+            "selected",
+            if status {
+                "selected working bytes\n"
+            } else {
+                "selected bytes\n"
+            },
+        ),
         ("other", "other bytes\n"),
         ("untracked", "untracked bytes\n"),
         ("ignored", "ignored bytes\n"),
     ] {
         ensure!(fs::read(root.join(name))? == content.as_bytes(), "preserve {name}");
     }
+    if status {
+        ensure!(!root.join("rename-source").exists());
+        ensure!(fs::read_to_string(root.join("rename-target"))? == format!("{renamed}added line\n"));
+    }
     Ok(())
 }
 
 #[test]
 fn attribute_pathspec_preserves_selection_and_read_failures() -> Result<()> {
-    attribute_pathspec(128 * 1024, false, true)
+    attribute_pathspec(128 * 1024, false, true, false)
 }
 
 #[test]
 #[ignore = "resource qualification: requires BRIT_BIN and delegated cgroup"]
 fn attribute_pathspec_twenty_mib() -> Result<()> {
-    attribute_pathspec(20 * 1024 * 1024, false, false)
+    attribute_pathspec(20 * 1024 * 1024, false, false, false)
 }
 
 #[cfg(target_os = "linux")]
 #[test]
 #[ignore = "resource qualification: requires BRIT_BIN, delegated cgroup and chown authority"]
 fn attribute_pathspec_twenty_mib_reduced_trust() -> Result<()> {
-    attribute_pathspec(20 * 1024 * 1024, true, false)
+    attribute_pathspec(20 * 1024 * 1024, true, false, false)
+}
+
+#[test]
+fn status_patterns_preserve_selection_and_read_failures() -> Result<()> {
+    attribute_pathspec(128 * 1024, false, true, true)
+}
+
+#[test]
+#[ignore = "resource qualification: requires BRIT_BIN and delegated cgroup"]
+fn status_patterns_twenty_mib() -> Result<()> {
+    attribute_pathspec(20 * 1024 * 1024, false, false, true)
+}
+
+#[cfg(target_os = "linux")]
+#[test]
+#[ignore = "resource qualification: requires BRIT_BIN, delegated cgroup and chown authority"]
+fn status_patterns_twenty_mib_reduced_trust() -> Result<()> {
+    attribute_pathspec(20 * 1024 * 1024, true, false, true)
 }

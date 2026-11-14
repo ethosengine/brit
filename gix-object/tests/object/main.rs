@@ -10,6 +10,102 @@ mod signature_format;
 mod tag;
 mod tree;
 
+#[cfg(feature = "stream")]
+#[test]
+fn streaming_source_retries_only_configured_allocation_limits() -> gix_testtools::TestResult {
+    use gix_error::ErrorExt;
+    use gix_object::find::{Buffer, Source, WithStream};
+    use std::{cell::Cell, io::Write as _};
+
+    struct Store {
+        error: Option<fn() -> gix_error::Error>,
+        missing: bool,
+        streams: Cell<usize>,
+    }
+    impl Find for Store {
+        fn try_find<'a>(
+            &self,
+            id: &gix_hash::oid,
+            buffer: &'a mut Vec<u8>,
+        ) -> gix_error::Result<Option<gix_object::Data<'a>>> {
+            if let Some(error) = self.error {
+                return Err(error());
+            }
+            if self.missing {
+                return Ok(None);
+            }
+            buffer.clear();
+            buffer.extend_from_slice(b"content");
+            Ok(Some(gix_object::Data::new(buffer, gix_object::Kind::Blob, id.kind())))
+        }
+    }
+    impl gix_object::FindStream for Store {
+        fn find_stream(
+            &self,
+            _: &gix_hash::oid,
+            budget: &std::sync::Arc<gix_utils::stream::Budget>,
+            _: &AtomicBool,
+        ) -> gix_error::Result<(gix_object::Kind, gix_utils::stream::Spool)> {
+            use gix_error::ResultExt;
+            self.streams.set(self.streams.get() + 1);
+            let mut spool = budget.spool().or_error()?;
+            spool.write_all(b"content").or_error()?;
+            Ok((gix_object::Kind::Blob, spool))
+        }
+    }
+    let dir = gix_testtools::tempfile::tempdir()?;
+    let budget = gix_utils::stream::Budget::new(dir.path())?;
+    let interrupt = AtomicBool::default();
+    let id = gix_object::compute_hash(gix_hash::Kind::default(), gix_object::Kind::Blob, b"content")?;
+    let mut buffer = Buffer::default();
+    let mut store = Store {
+        error: None,
+        missing: false,
+        streams: Cell::default(),
+    };
+    for mapped in [false, true] {
+        store.error = mapped.then_some(|| gix_error::allocation_limit("test limit").raise());
+        let source = WithStream {
+            objects: &store,
+            streamed: &store,
+            budget: &budget,
+            interrupt: &interrupt,
+        };
+        assert_eq!(source.find_blob(&id, &mut buffer)?.data, b"content");
+        assert_eq!(budget.usage().0, if mapped { 7 } else { 0 });
+        assert_eq!(store.streams.get(), usize::from(mapped));
+        buffer.clear();
+        assert_eq!(budget.usage().0, 0, "mapped bytes are reclaimed with their buffer");
+    }
+    for error in [
+        (|| gix_error::allocation_failure("actual allocation failure").raise()) as fn() -> gix_error::Error,
+        || gix_error::corruption("corrupt object").raise(),
+        || gix_error::cancelled("cancelled").raise(),
+        || std::io::Error::other("read failure").raise(),
+    ] {
+        store.error = Some(error);
+        let source = WithStream {
+            objects: &store,
+            streamed: &store,
+            budget: &budget,
+            interrupt: &interrupt,
+        };
+        assert!(source.find_blob(&id, &mut buffer).is_err());
+        assert_eq!(store.streams.get(), 1, "non-policy failures must not retry");
+    }
+    store.error = None;
+    store.missing = true;
+    let source = WithStream {
+        objects: &store,
+        streamed: &store,
+        budget: &budget,
+        interrupt: &interrupt,
+    };
+    assert!(source.try_find(&id, &mut buffer)?.is_none());
+    assert_eq!(store.streams.get(), 1);
+    Ok(())
+}
+
 #[test]
 fn compute_hash() -> gix_testtools::TestResult {
     for hk in gix_hash::Kind::all() {

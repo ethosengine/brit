@@ -350,27 +350,44 @@ fn fixture_filtered_detailed(
         dirwalk,
         sorting: Some(Sorting::ByPathCaseSensitive),
         rewrites,
+        buffer_limit: None,
     };
 
-    let mut recorder = Recorder::default();
     let objects = crate::odb_at(&git_dir, object_hash);
-    let outcome = index_as_worktree_with_renames(
-        &index,
-        &worktree,
-        &mut recorder,
-        FastEq,
-        crate::index_as_worktree::SubmoduleStatusMock { dirty: false },
-        objects,
-        &mut gix_utils::progress::Discard,
-        context,
-        options,
-    )
-    .unwrap();
+    let mut final_outcome = None;
+    for buffer_limit in [None, Some(0), Some(usize::MAX)] {
+        let mut recorder = Recorder::default();
+        let outcome = index_as_worktree_with_renames(
+            &index,
+            &worktree,
+            &mut recorder,
+            FastEq,
+            crate::index_as_worktree::SubmoduleStatusMock { dirty: false },
+            objects.clone(),
+            &mut gix_utils::progress::Discard,
+            Context {
+                pathspec: context.pathspec.clone(),
+                resource_cache: context.resource_cache.clone(),
+                should_interrupt: context.should_interrupt,
+                dirwalk: DirwalkContext {
+                    git_dir_realpath: &git_dir_real,
+                    current_dir: &cwd,
+                    ignore_case_index_lookup: None,
+                },
+            },
+            Options {
+                buffer_limit,
+                ..options.clone()
+            },
+        )
+        .unwrap();
 
-    let actual = records_to_expectations(&recorder.records);
-    assert_eq!(actual, expected);
-    assert_summary(&recorder.records, expected);
-    cleanup(outcome)
+        let actual = records_to_expectations(&recorder.records);
+        assert_eq!(actual, expected, "buffer_limit={buffer_limit:?}");
+        assert_summary(&recorder.records, expected);
+        final_outcome = Some(cleanup(outcome));
+    }
+    final_outcome.expect("three storage policies checked")
 }
 
 fn assert_summary(entries: &[Entry<(), ()>], expected: &[Expectation]) {

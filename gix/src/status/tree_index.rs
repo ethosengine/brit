@@ -1,4 +1,5 @@
 use crate::{Repository, Result, config::tree};
+use gix_error::ResultExt;
 
 /// Specify how to perform rewrite tracking [Repository::tree_index_status()].
 #[derive(Default, Debug, Copy, Clone)]
@@ -92,6 +93,8 @@ impl Repository {
 
         let pathspec =
             pathspec.unwrap_or_else(|| pathspec_storage.as_mut().expect("set if pathspec isn't set by user"));
+        let source = crate::object::bounded::Source::deferred(pathspec.repo);
+        let mut attribute_error = None;
         let rewrite = gix_diff::index(
             &tree_index,
             worktree_index,
@@ -105,17 +108,27 @@ impl Repository {
                 }),
             &mut pathspec.search,
             &mut |relative_path, case, is_dir, out| {
+                if attribute_error.is_some() {
+                    return false;
+                }
                 let stack = pathspec.stack.as_mut().expect("initialized in advance");
-                stack
-                    .set_case(case)
-                    .at_entry(
-                        relative_path,
-                        Some(crate::pathspec::is_dir_to_mode(is_dir)),
-                        &pathspec.repo.objects,
-                    )
-                    .is_ok_and(|platform| platform.matching_attributes(out))
+                match stack.set_case(case).at_entry_with_source(
+                    relative_path,
+                    Some(crate::pathspec::is_dir_to_mode(is_dir)),
+                    &source,
+                ) {
+                    Ok(platform) => platform.matching_attributes(out),
+                    Err(error) => {
+                        attribute_error = Some(error);
+                        false
+                    }
+                }
             },
-        )?;
+        );
+        if let Some(error) = attribute_error {
+            return Err(error).or_error();
+        }
+        let rewrite = rewrite?;
 
         Ok(Outcome { rewrite, tree_index })
     }

@@ -145,6 +145,10 @@ impl Repository {
                 fscache,
                 dirwalk: options.dirwalk_options.map(Into::into),
                 rewrites: options.rewrites,
+                buffer_limit: Some(
+                    self.allocation_limit()
+                        .unwrap_or(usize::try_from(self.big_file_threshold()?).unwrap_or(usize::MAX)),
+                ),
             },
         )?;
         Ok(out)
