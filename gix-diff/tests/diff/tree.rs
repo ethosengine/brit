@@ -1,4 +1,62 @@
 #[test]
+fn borrowed_state_releases_external_tree_storage_on_every_return() -> crate::Result {
+    use gix_error::ErrorExt;
+    use std::sync::Arc;
+
+    struct Source {
+        bytes: Arc<[u8]>,
+        failure: u8,
+    }
+
+    impl gix_object::find::Source for &Source {
+        fn try_find<'a>(
+            &self,
+            id: &gix_hash::oid,
+            buffer: &'a mut gix_object::find::Buffer,
+        ) -> gix_error::Result<Option<gix_object::Data<'a>>> {
+            let bytes = buffer.set_external(self.bytes.clone());
+            match self.failure {
+                1 => Err(gix_error::cancelled("injected cancellation").raise()),
+                2 => Err(std::io::Error::other("injected tree read failure").raise()),
+                _ => Ok(Some(gix_object::Data::new(bytes, gix_object::Kind::Tree, id.kind()))),
+            }
+        }
+    }
+
+    let hash = crate::fixture_hash_kind();
+    let id = gix_hash::ObjectId::empty_blob(hash);
+    let mut root = b"40000 dir\0".to_vec();
+    root.extend(id.as_bytes());
+    let mut bytes = b"100644 file\0".to_vec();
+    bytes.extend(id.as_bytes());
+    let bytes: Arc<[u8]> = bytes.into();
+    let mut state = gix_diff::tree::State::default();
+    for reverse in [false, true] {
+        for failure in 0..3 {
+            let source = Source {
+                bytes: bytes.clone(),
+                failure,
+            };
+            let (lhs, rhs) = if reverse {
+                (root.as_slice(), &[][..])
+            } else {
+                (&[][..], root.as_slice())
+            };
+            let result = gix_diff::tree(
+                gix_object::TreeRefIter::from_bytes(lhs, hash),
+                gix_object::TreeRefIter::from_bytes(rhs, hash),
+                &mut state,
+                &source,
+                &mut gix_diff::tree::Recorder::default(),
+            );
+            assert_eq!(result.is_err(), failure != 0);
+            assert_eq!(Arc::strong_count(&bytes), 2, "only fixture and source retain bytes");
+        }
+    }
+    Ok(())
+}
+
+#[test]
 fn cancellation_is_intrinsically_classified_and_failure_sources_survive() {
     use gix_error::ErrorExt;
 

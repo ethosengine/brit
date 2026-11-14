@@ -34,6 +34,16 @@ pub trait Source {
                     .ok_or_else(|| wrong_kind(id, data.kind, crate::Kind::Commit))
             })
     }
+
+    /// Find a tree with the same missing-object and kind diagnostics as [`crate::FindExt`].
+    fn find_tree<'a>(&self, id: &gix_hash::oid, buffer: &'a mut Buffer) -> Result<crate::TreeRefIter<'a>> {
+        self.try_find(id, buffer)?
+            .ok_or_else(|| not_found(id))
+            .and_then(|data| {
+                data.try_into_tree_iter()
+                    .ok_or_else(|| wrong_kind(id, data.kind, crate::Kind::Tree))
+            })
+    }
 }
 
 impl<T: crate::Find> Source for T {

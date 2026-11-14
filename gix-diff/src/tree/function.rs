@@ -1,6 +1,6 @@
 use std::{borrow::BorrowMut, collections::VecDeque};
 
-use gix_object::{FindExt, TreeRefIter, tree::EntryRef};
+use gix_object::{TreeRefIter, tree::EntryRef};
 
 use crate::tree::{
     Error, State, TreeInfoTuple, Visit,
@@ -32,7 +32,7 @@ pub fn diff<StateMut>(
     lhs: TreeRefIter<'_>,
     rhs: TreeRefIter<'_>,
     mut state: StateMut,
-    objects: impl gix_object::Find,
+    objects: impl gix_object::find::Source,
     delegate: &mut impl Visit,
 ) -> Result<(), Error>
 where
@@ -40,6 +40,25 @@ where
 {
     let state = state.borrow_mut();
     state.clear();
+    let mut buf1 = std::mem::take(&mut state.buf1).into();
+    let mut buf2 = std::mem::take(&mut state.buf2).into();
+    let result = diff_inner(lhs, rhs, state, objects, delegate, &mut buf1, &mut buf2);
+    // A borrowed reusable state must not retain operation-owned mappings after
+    // success, cancellation or an object-read failure.
+    state.buf1 = buf1.into_owned();
+    state.buf2 = buf2.into_owned();
+    result
+}
+
+fn diff_inner(
+    lhs: TreeRefIter<'_>,
+    rhs: TreeRefIter<'_>,
+    state: &mut State,
+    objects: impl gix_object::find::Source,
+    delegate: &mut impl Visit,
+    buf1: &mut gix_object::find::Buffer,
+    buf2: &mut gix_object::find::Buffer,
+) -> Result<(), Error> {
     let mut lhs_entries = peekable(lhs);
     let mut rhs_entries = peekable(rhs);
     let mut relation = None;
@@ -57,17 +76,17 @@ where
                     Some((None, Some(rhs), relation_to_propagate)) => {
                         delegate.pop_front_tracked_path_and_set_current();
                         relation = relation_to_propagate;
-                        rhs_entries = peekable(objects.find_tree_iter(&rhs, &mut state.buf2)?);
+                        rhs_entries = peekable(objects.find_tree(&rhs, buf2)?);
                     }
                     Some((Some(lhs), Some(rhs), relation_to_propagate)) => {
                         delegate.pop_front_tracked_path_and_set_current();
-                        lhs_entries = peekable(objects.find_tree_iter(&lhs, &mut state.buf1)?);
-                        rhs_entries = peekable(objects.find_tree_iter(&rhs, &mut state.buf2)?);
+                        lhs_entries = peekable(objects.find_tree(&lhs, buf1)?);
+                        rhs_entries = peekable(objects.find_tree(&rhs, buf2)?);
                         relation = relation_to_propagate;
                     }
                     Some((Some(lhs), None, relation_to_propagate)) => {
                         delegate.pop_front_tracked_path_and_set_current();
-                        lhs_entries = peekable(objects.find_tree_iter(&lhs, &mut state.buf1)?);
+                        lhs_entries = peekable(objects.find_tree(&lhs, buf1)?);
                         relation = relation_to_propagate;
                     }
                     Some((None, None, _)) => unreachable!("BUG: it makes no sense to fill the stack with empties"),
