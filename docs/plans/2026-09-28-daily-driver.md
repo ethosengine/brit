@@ -4369,6 +4369,29 @@ found `qualify-memory.sh` missing its executable bit. Commit `fb60a2ed2` repairs
 that mode; the complete native `it check-mode` scan and shell syntax check pass.
 Advisories remain red and other jobs are still pending. No release or pin moved.
 
+Working diff/stat now compares the already-computed canonical worktree hash and
+effective mode with the index before loading the old blob. This removes a
+redundant object read for unchanged files while preserving path/conversion
+validation and external-filter refusals. A Git-oracle regression proves an
+unchanged binary file does not require its index blob to be loaded; changing
+that file still requires the missing original and refuses atomically. All 15
+ordinary and 16 fault-enabled diff/stat cases pass per hash, including converted
+bytes, symlinks/modes and the five sub-second pre-output cancellation variants.
+The allocation-boundary, two-sided 64/256 MiB and million-line matrices pass
+both hashes at 1,073,741,824 B peaks (129.337 s / 646.318 s), with zero OOM events,
+kills or survivors. Reaching the cap is not memory headroom. Large conversion
+also passes at 218,288,128 B / 216,977,408 B (24.225 s / 40.568 s).
+Strict affected Clippy, formatting, declared style and readiness pass.
+Receipts: `bounded-memory/diff-identity-v17-*`; aggregate scratch and final-source
+qualification remain open.
+
+The bounded replay/push/tree metadata and credential fixes through
+`4205253bd8842c4ed81ff4b297c94eb12a5ce03c` were published on the isolated CI branch
+with protected hooks enabled. Native Brit push passed at 78,114,816 B / 7.336 s,
+zero OOM kills or survivors. New CI run `43624277471` passes lint, style, MSRV,
+documentation, WebAssembly and packaging checks so far; advisories remain red
+and remaining jobs are running. The installed pin and release remain unchanged.
+
 The command boundary is `src/plumbing/options/mod.rs` plus
 `brit-cli/src/main.rs` and its composed bridge. This table is interim audit
 coverage in the existing readiness document, **not final classification**.

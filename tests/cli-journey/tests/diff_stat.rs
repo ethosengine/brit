@@ -458,6 +458,31 @@ fn unsupported_indexes_attributes_and_external_commands_refuse_atomically() -> R
 }
 
 #[test]
+fn unchanged_worktree_identity_does_not_require_loading_the_index_blob() -> Result<()> {
+    let repo = TestRepo::new("diff-unchanged-object")?;
+    repo.commit_file("a-changed", "old\n")?;
+    repo.commit_file("z-unchanged", "canonical\0bytes\n")?;
+    let blob = String::from_utf8(git(repo.path(), &["rev-parse", ":z-unchanged"])?)?;
+    let blob = blob.trim();
+    fs::remove_file(repo.path().join(".git/objects").join(&blob[..2]).join(&blob[2..]))?;
+    fs::write(repo.path().join("a-changed"), "new\n")?;
+    // Git also skips the absent object when the worktree identity agrees with
+    // the index. Changed paths still require the original object and must fail.
+    parity(repo.path(), &["diff", "--stat"], &[])?;
+    let expected = git(repo.path(), &["diff", "--no-ext-diff", "--no-color"])?;
+    let before = snapshot(repo.path())?;
+    let actual = brit(repo.path(), &["diff"])?;
+    ensure!(actual.status.success(), "unchanged worktree blob must not be loaded");
+    assert_eq!(actual.stdout, expected);
+    assert_eq!(snapshot(repo.path())?, before);
+    fs::write(repo.path().join("z-unchanged"), "different\0bytes\n")?;
+    for args in [&["diff"][..], &["diff", "--stat"]] {
+        refuse(repo.path(), args, "")?;
+    }
+    Ok(())
+}
+
+#[test]
 fn unchanged_attributed_files_do_not_block_working_statistics() -> Result<()> {
     let repo = TestRepo::new("stat-unchanged-attributes")?;
     repo.commit_file("a-ordinary", "old\n")?;

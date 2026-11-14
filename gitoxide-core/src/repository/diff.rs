@@ -352,10 +352,6 @@ fn working_output(
                 "submodule patches are not supported; select ordinary files or use git diff"
             ));
         }
-        let old = before
-            .get(&path)
-            .map(|&(mode, blob_id)| load_patch_blob(&repo, mode, blob_id, &budget))
-            .transpose()?;
         let new = if cached {
             after
                 .get(&path)
@@ -364,16 +360,21 @@ fn working_output(
         } else {
             worktree_patch_blob(&repo, &index, &path, &budget)?
         };
-        // Only canonical content and effective mode prove a worktree entry unchanged.
-        // Read through the authoring path first, retaining validation and filter refusals.
+        // Canonical identity and effective mode prove a worktree entry unchanged
+        // without loading the index blob. The authoring read above still validates
+        // paths and conversions and retains external-filter refusals.
         if !cached
-            && old
-                .as_ref()
+            && before
+                .get(&path)
                 .zip(new.as_ref())
-                .is_some_and(|(old, new)| old.mode == new.mode && old.data.as_slice() == new.data.as_slice())
+                .is_some_and(|(&(mode, blob_id), new)| mode == new.mode && blob_id == new.blob_id)
         {
             continue;
         }
+        let old = before
+            .get(&path)
+            .map(|&(mode, blob_id)| load_patch_blob(&repo, mode, blob_id, &budget))
+            .transpose()?;
         attrs.at_entry(&path, None)?.matching_attributes(&mut matches);
         if matches.iter().any(|m| m.assignment.name.as_str() == "diff") {
             bail!(unsupported(
