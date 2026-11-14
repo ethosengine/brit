@@ -78,7 +78,12 @@ mod traverse {
             }
             let repo = gix::open_opts(fixture.path(), gix::open::Options::isolated())?;
             let head = repo.head_id()?.detach();
-            let boundary = repo.rev_parse_single("HEAD^")?.detach();
+            let boundary = repo
+                .head_commit()?
+                .parent_ids()
+                .next()
+                .expect("the fixture tip has one parent")
+                .detach();
             std::fs::write(repo.git_dir().join("shallow"), format!("{boundary}\n"))?;
             let hex = boundary.to_string();
             let object = repo.git_dir().join("objects").join(&hex[..2]).join(&hex[2..]);
