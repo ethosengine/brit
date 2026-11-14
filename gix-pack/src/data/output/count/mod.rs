@@ -41,7 +41,7 @@ impl Count {
 
 #[path = "objects/mod.rs"]
 mod objects_impl;
-pub use objects_impl::{objects, objects_unthreaded};
+pub use objects_impl::{objects, objects_unthreaded, objects_unthreaded_with_source};
 
 ///
 pub mod objects {

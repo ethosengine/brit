@@ -713,6 +713,27 @@ fn large_tree(reduced: bool) -> Result<()> {
                 brit(root, &["revision", "resolve", &spec], &actual, limit)?;
                 same_bytes(&expected, &actual)?;
             }
+            let receiver = tempfile::tempdir()?;
+            git(receiver.path(), &["init", "--bare", "-q"])?;
+            git(
+                root,
+                &[
+                    "remote",
+                    "add",
+                    "memory-push",
+                    receiver.path().to_str().expect("receiver path"),
+                ],
+            )?;
+            let actual = root.join(".git/tree-push");
+            let destination = if reduced {
+                receiver.path().to_str().expect("receiver path")
+            } else {
+                "memory-push"
+            };
+            brit(root, &["push", destination, "HEAD:refs/heads/main"], &actual, limit)?;
+            ensure!(git(receiver.path(), &["rev-parse", "main"])? == head);
+            git(receiver.path(), &["fsck", "--full"])?;
+            git(root, &["remote", "remove", "memory-push"])?;
             ensure!(git(root, &["rev-parse", "HEAD"])? == head && fs::read(root.join(".git/index"))? == index);
         }
     }

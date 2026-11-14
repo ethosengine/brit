@@ -2,6 +2,7 @@ use gix_error::Result;
 use std::{cell::RefCell, sync::atomic::AtomicBool};
 
 use gix_hash::ObjectId;
+use gix_object::find::Buffer;
 use gix_parallel as parallel;
 
 use crate::data::output;
@@ -64,8 +65,8 @@ where
         {
             move |_| {
                 (
-                    Vec::new(), // object data buffer
-                    Vec::new(), // object data buffer 2 to hold two objects at a time
+                    Buffer::default(), // object data buffer
+                    Buffer::default(), // object data buffer 2 to hold two objects at a time
                     objects.clone(),
                 )
             }
@@ -74,7 +75,7 @@ where
             let seen_objs = &seen_objs;
             move |oids: Vec<_>, (buf1, buf2, objects)| {
                 expand::this(
-                    &db,
+                    ObjectSource::Packed(&db),
                     input_object_expansion,
                     seen_objs,
                     &mut oids.into_iter(),
@@ -98,9 +99,45 @@ pub fn objects_unthreaded(
     should_interrupt: &AtomicBool,
     input_object_expansion: ObjectExpansion,
 ) -> Result<(Vec<output::Count>, Outcome)> {
+    count_unthreaded(
+        ObjectSource::Packed(db),
+        object_ids,
+        objects,
+        should_interrupt,
+        input_object_expansion,
+    )
+}
+
+/// Like [`objects_unthreaded()`], using caller-owned object storage for metadata.
+///
+/// Pack locations are not looked up; the resulting counts are suitable for base
+/// entry encoding. Traversal, deduplication and tree comparison are unchanged.
+pub fn objects_unthreaded_with_source(
+    source: &dyn gix_object::find::Source,
+    object_ids: &mut dyn Iterator<Item = Result<ObjectId>>,
+    objects: &dyn gix_utils::progress::Count,
+    should_interrupt: &AtomicBool,
+    input_object_expansion: ObjectExpansion,
+) -> Result<(Vec<output::Count>, Outcome)> {
+    count_unthreaded(
+        ObjectSource::Bounded(source),
+        object_ids,
+        objects,
+        should_interrupt,
+        input_object_expansion,
+    )
+}
+
+fn count_unthreaded(
+    db: ObjectSource<'_>,
+    object_ids: &mut dyn Iterator<Item = Result<ObjectId>>,
+    objects: &dyn gix_utils::progress::Count,
+    should_interrupt: &AtomicBool,
+    input_object_expansion: ObjectExpansion,
+) -> Result<(Vec<output::Count>, Outcome)> {
     let seen_objs = RefCell::new(gix_hashtable::HashSet::default());
 
-    let (mut buf1, mut buf2) = (Vec::new(), Vec::new());
+    let (mut buf1, mut buf2) = (Buffer::default(), Buffer::default());
     expand::this(
         db,
         input_object_expansion,
@@ -114,6 +151,41 @@ pub fn objects_unthreaded(
     )
 }
 
+#[derive(Clone, Copy)]
+enum ObjectSource<'a> {
+    Packed(&'a dyn crate::Find),
+    Bounded(&'a dyn gix_object::find::Source),
+}
+
+impl ObjectSource<'_> {
+    fn try_find<'a>(
+        &self,
+        id: &gix_hash::oid,
+        buffer: &'a mut Buffer,
+    ) -> Result<Option<(gix_object::Data<'a>, Option<crate::data::entry::Location>)>> {
+        match self {
+            Self::Packed(db) => db.try_find(id, buffer.owned()),
+            Self::Bounded(source) => Ok(source.try_find(id, buffer)?.map(|data| (data, None))),
+        }
+    }
+
+    fn find<'a>(
+        &self,
+        id: &gix_hash::oid,
+        buffer: &'a mut Buffer,
+    ) -> Result<(gix_object::Data<'a>, Option<crate::data::entry::Location>)> {
+        self.try_find(id, buffer)?
+            .ok_or_else(|| gix_error::message!("An object with id {id} could not be found").not_found_error())
+    }
+
+    fn location_by_oid(&self, id: &gix_hash::oid, buffer: &mut Buffer) -> Result<Option<crate::data::entry::Location>> {
+        match self {
+            Self::Packed(db) => db.location_by_oid(id, buffer.owned()),
+            Self::Bounded(_) => Ok(None),
+        }
+    }
+}
+
 mod expand {
     use gix_error::Result;
     use std::{
@@ -123,26 +195,23 @@ mod expand {
 
     use gix_error::{ResultExt, bail, cancelled, message};
     use gix_hash::{ObjectId, oid};
-    use gix_object::{CommitRefIter, TagRefIter};
+    use gix_object::{CommitRefIter, TagRefIter, find::Buffer};
 
     use super::{
-        tree,
+        ObjectSource, tree,
         types::{ObjectExpansion, Outcome},
         util,
     };
-    use crate::{
-        FindExt,
-        data::{output, output::count::PackLocation},
-    };
+    use crate::data::{output, output::count::PackLocation};
 
     #[expect(clippy::too_many_arguments)]
     pub fn this(
-        db: &dyn crate::Find,
+        db: ObjectSource<'_>,
         input_object_expansion: ObjectExpansion,
         seen_objs: &impl util::InsertImmutable,
         oids: &mut dyn Iterator<Item = Result<ObjectId>>,
-        buf1: &mut Vec<u8>,
-        buf2: &mut Vec<u8>,
+        buf1: &mut Buffer,
+        buf2: &mut Buffer,
         objects: &gix_utils::progress::AtomicStep,
         should_interrupt: &AtomicBool,
         allow_pack_lookups: bool,
@@ -178,9 +247,7 @@ mod expand {
                         match obj.kind {
                             Tree | Blob => break,
                             Tag => {
-                                id = TagRefIter::from_bytes(obj.data, obj.object_hash)
-                                    .target_id()
-                                    .expect("every tag has a target");
+                                id = TagRefIter::from_bytes(obj.data, obj.object_hash).target_id()?;
                                 let tmp = db.find(&id, buf1)?;
 
                                 obj = tmp.0;
@@ -192,7 +259,7 @@ mod expand {
                             Commit => {
                                 let current_tree_iter = {
                                     let mut commit_iter = CommitRefIter::from_bytes(obj.data, obj.object_hash);
-                                    let tree_id = commit_iter.tree_id().expect("every commit has a tree");
+                                    let tree_id = commit_iter.tree_id()?;
                                     parent_commit_ids.clear();
                                     for token in commit_iter {
                                         match token {
@@ -234,8 +301,7 @@ mod expand {
                                                 parent_commit_obj.data,
                                                 parent_commit_obj.object_hash,
                                             )
-                                            .tree_id()
-                                            .expect("every commit has a tree")
+                                            .tree_id()?
                                         };
                                         let parent_tree = {
                                             let (parent_tree_obj, location) = db.find(&parent_tree_id, buf2)?;
@@ -259,7 +325,7 @@ mod expand {
                                             parent_tree,
                                             current_tree_iter,
                                             &mut tree_diff_state,
-                                            &objects,
+                                            &objects as &dyn gix_object::find::Source,
                                             &mut changes_delegate,
                                         )
                                         .or_raise(|| message("Could not compare trees while generating pack"))?;
@@ -300,18 +366,14 @@ mod expand {
                                 break;
                             }
                             Commit => {
-                                id = CommitRefIter::from_bytes(obj.0.data, obj.0.object_hash)
-                                    .tree_id()
-                                    .expect("every commit has a tree");
+                                id = CommitRefIter::from_bytes(obj.0.data, obj.0.object_hash).tree_id()?;
                                 stats.expanded_objects += 1;
                                 obj = db.find(&id, buf1)?;
                                 continue;
                             }
                             Blob => break,
                             Tag => {
-                                id = TagRefIter::from_bytes(obj.0.data, obj.0.object_hash)
-                                    .target_id()
-                                    .expect("every tag has a target");
+                                id = TagRefIter::from_bytes(obj.0.data, obj.0.object_hash).target_id()?;
                                 stats.expanded_objects += 1;
                                 obj = db.find(&id, buf1)?;
                                 continue;
@@ -349,8 +411,8 @@ mod expand {
 
     #[inline]
     fn id_to_count(
-        db: &dyn crate::Find,
-        buf: &mut Vec<u8>,
+        db: ObjectSource<'_>,
+        buf: &mut Buffer,
         id: &oid,
         objects: &gix_utils::progress::AtomicStep,
         statistics: &mut Outcome,
@@ -370,11 +432,11 @@ mod expand {
 
     struct CountingObjects<'a> {
         decoded_objects: std::cell::RefCell<usize>,
-        objects: &'a dyn crate::Find,
+        objects: ObjectSource<'a>,
     }
 
     impl<'a> CountingObjects<'a> {
-        fn new(objects: &'a dyn crate::Find) -> Self {
+        fn new(objects: ObjectSource<'a>) -> Self {
             Self {
                 decoded_objects: Default::default(),
                 objects,
@@ -386,8 +448,8 @@ mod expand {
         }
     }
 
-    impl gix_object::Find for CountingObjects<'_> {
-        fn try_find<'a>(&self, id: &oid, buffer: &'a mut Vec<u8>) -> Result<std::option::Option<gix_object::Data<'a>>> {
+    impl gix_object::find::Source for CountingObjects<'_> {
+        fn try_find<'a>(&self, id: &oid, buffer: &'a mut Buffer) -> Result<std::option::Option<gix_object::Data<'a>>> {
             let res = Ok(self.objects.try_find(id, buffer)?.map(|t| t.0));
             *self.decoded_objects.borrow_mut() += 1;
             res
@@ -399,12 +461,12 @@ mod expand {
         expanded_objects: std::cell::RefCell<usize>,
         out: std::cell::RefCell<Vec<output::Count>>,
         objects_count: &'a gix_utils::progress::AtomicStep,
-        objects: &'a dyn crate::Find,
+        objects: ObjectSource<'a>,
     }
 
     impl<'a> ExpandedCountingObjects<'a> {
         fn new(
-            objects: &'a dyn crate::Find,
+            objects: ObjectSource<'a>,
             out: Vec<output::Count>,
             objects_count: &'a gix_utils::progress::AtomicStep,
         ) -> Self {
@@ -424,8 +486,14 @@ mod expand {
         }
     }
 
-    impl gix_object::Find for ExpandedCountingObjects<'_> {
-        fn try_find<'a>(&self, id: &oid, buffer: &'a mut Vec<u8>) -> Result<std::option::Option<gix_object::Data<'a>>> {
+    impl gix_traverse::tree::source::Source for &ExpandedCountingObjects<'_> {
+        fn find_tree<'a>(&self, id: &oid, buffer: &'a mut Buffer) -> Result<gix_object::TreeRefIter<'a>> {
+            gix_object::find::Source::find_tree(*self, id, buffer)
+        }
+    }
+
+    impl gix_object::find::Source for ExpandedCountingObjects<'_> {
+        fn try_find<'a>(&self, id: &oid, buffer: &'a mut Buffer) -> Result<std::option::Option<gix_object::Data<'a>>> {
             let maybe_obj = self.objects.try_find(id, buffer)?;
             *self.decoded_objects.borrow_mut() += 1;
             match maybe_obj {

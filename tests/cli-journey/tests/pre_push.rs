@@ -1,5 +1,5 @@
 //! Public pre-push contract: resolved updates, stock-Git input and rejection safety.
-use std::{fs, path::Path};
+use std::{fs, io::Write, path::Path};
 
 use anyhow::{ensure, Result};
 use cli_journey::support::{
@@ -8,7 +8,10 @@ use cli_journey::support::{
 };
 
 fn git(repo: &Path, args: &[&str]) -> Result<String> {
-    let output = gix_testtools::git_command(repo).args(args).output()?;
+    let output = gix_testtools::git_command(repo)
+        .args(["-c", &format!("safe.directory={}", repo.display())])
+        .args(args)
+        .output()?;
     ensure!(
         output.status.success(),
         "git {args:?}: {}",
@@ -180,6 +183,114 @@ fn initial_push_reads_blobs_above_the_configured_allocation_limit() -> Result<()
     assert_eq!(
         git(remote.path(), &["show", "main:large"])?,
         git(repo.path(), &["show", "HEAD:large"])?
+    );
+    git(remote.path(), &["fsck", "--full"])?;
+    Ok(())
+}
+
+fn push_commit_metadata(size: usize, reduced: bool) -> Result<()> {
+    let repo = TestRepo::new("pre-push-bounded-commit")?;
+    let message = repo.path().join(".git/large-message");
+    let mut file = fs::File::create(&message)?;
+    file.write_all(b"short subject\n\n")?;
+    let chunk = [b'x'; 8192];
+    for _ in 0..size / chunk.len() {
+        file.write_all(&chunk)?;
+    }
+    file.write_all(b"\n")?;
+    drop(file);
+    git(repo.path(), &["commit", "--allow-empty", "-F", ".git/large-message"])?;
+    let before = repo.head_id()?;
+    if reduced {
+        #[cfg(target_os = "linux")]
+        {
+            use std::os::unix::fs::{chown, MetadataExt};
+            ensure!(fs::metadata(repo.path())?.uid() == 0, "requires chown authority");
+            chown(repo.path(), Some(65534), None)?;
+            chown(repo.path().join(".git"), Some(65534), None)?;
+            let trust = brit(repo.path(), &["free", "trust", ".", ".git"])?;
+            ensure!(trust.status.success(), "{}", trust.stderr);
+            ensure!(trust.stdout.lines().filter(|line| line.starts_with("Reduced")).count() == 2);
+        }
+        #[cfg(not(target_os = "linux"))]
+        anyhow::bail!("ownership qualification runs on Linux");
+    }
+    for packed in [false, true] {
+        if packed {
+            git(repo.path(), &["-c", "pack.threads=1", "repack", "-ad"])?;
+        }
+        for limit in [None, Some("1073741824"), Some("16777216"), Some("1024")] {
+            let remote = remote(repo.path())?;
+            let mut args = Vec::new();
+            let setting;
+            if let Some(limit) = limit {
+                setting = format!("gitoxide.objects.allocLimit={limit}");
+                args.extend(["-c", &setting]);
+            }
+            // Reduced trust intentionally ignores foreign repository remote config.
+            let destination = if reduced {
+                remote.path().to_str().expect("receiver path")
+            } else {
+                "origin"
+            };
+            args.extend(["push", destination, "main:main"]);
+            let output = brit(repo.path(), &args)?;
+            ensure!(
+                output.status.success(),
+                "packed {packed}, limit {limit:?}: {}",
+                output.stderr
+            );
+            assert_eq!(git(remote.path(), &["rev-parse", "main"])?, before);
+            assert_eq!(
+                git(remote.path(), &["cat-file", "commit", "main"])?,
+                git(repo.path(), &["cat-file", "commit", "HEAD"])?
+            );
+            git(remote.path(), &["fsck", "--full"])?;
+            git(repo.path(), &["remote", "remove", "origin"])?;
+        }
+    }
+    assert_eq!(git(repo.path(), &["rev-parse", "HEAD"])?, before);
+    Ok(())
+}
+
+#[test]
+fn initial_push_reads_commit_metadata_above_the_configured_allocation_limit() -> Result<()> {
+    push_commit_metadata(128 * 1024, false)
+}
+
+#[test]
+#[ignore = "resource qualification: requires BRIT_BIN"]
+fn initial_push_twenty_mib_commit_metadata() -> Result<()> {
+    push_commit_metadata(20 * 1024 * 1024, false)
+}
+
+#[test]
+#[cfg(target_os = "linux")]
+#[ignore = "resource qualification: requires BRIT_BIN and chown authority"]
+fn initial_push_twenty_mib_commit_metadata_reduced_trust() -> Result<()> {
+    push_commit_metadata(20 * 1024 * 1024, true)
+}
+
+#[test]
+fn initial_push_compares_nested_trees_above_the_allocation_limit() -> Result<()> {
+    let repo = TestRepo::new("pre-push-bounded-tree")?;
+    let remote = remote(repo.path())?;
+    fs::create_dir(repo.path().join("dir"))?;
+    for n in 0..128 {
+        fs::write(repo.path().join(format!("dir/file-{n:03}")), b"first\n")?;
+    }
+    git(repo.path(), &["add", "dir"])?;
+    git(repo.path(), &["commit", "-m", "wide nested tree"])?;
+    repo.commit_file("dir/file-064", "changed\n")?;
+    let output = brit(
+        repo.path(),
+        &["-c", "gitoxide.objects.allocLimit=1024", "push", "origin", "main:main"],
+    )?;
+    ensure!(output.status.success(), "{}", output.stderr);
+    assert_eq!(git(remote.path(), &["rev-parse", "main"])?, repo.head_id()?);
+    assert_eq!(
+        git(remote.path(), &["ls-tree", "-r", "main"])?,
+        git(repo.path(), &["ls-tree", "-r", "HEAD"])?
     );
     git(remote.path(), &["fsck", "--full"])?;
     Ok(())

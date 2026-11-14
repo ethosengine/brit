@@ -507,6 +507,44 @@ fn large_local_clone_fetch_and_push_preserve_objects() -> Result<()> {
 }
 
 #[test]
+#[ignore = "resource qualification: requires BRIT_BIN and a fixed memory cgroup"]
+fn initial_push_of_two_incompressible_binary_versions() -> Result<()> {
+    for size in [64 * 1024 * 1024, 256 * 1024 * 1024] {
+        let source = TestRepo::new("memory-binary-push")?;
+        let root = source.path();
+        let mut state = 0x1234_5678_9abc_def0_u64;
+        let mut chunk = [0_u8; 65536];
+        for version in ["first", "second"] {
+            let mut file = fs::File::create(root.join("binary"))?;
+            for _ in 0..size / chunk.len() {
+                for word in chunk.chunks_exact_mut(8) {
+                    state ^= state << 13;
+                    state ^= state >> 7;
+                    state ^= state << 17;
+                    word.copy_from_slice(&state.to_le_bytes());
+                }
+                file.write_all(&chunk)?;
+            }
+            drop(file);
+            git(root, &["add", "binary"])?;
+            git(root, &["commit", "-qm", version])?;
+        }
+        let receiver = tempfile::tempdir()?;
+        git(receiver.path(), &["init", "--bare", "-q"])?;
+        let pushed = BritInvocation::new(brit_bin().expect("built Brit"))
+            .current_dir(root)
+            .arg("push")
+            .arg(receiver.path().as_os_str())
+            .arg("HEAD:refs/heads/main")
+            .run()?;
+        ensure!(pushed.status.success(), "{size}-byte binary history: {}", pushed.stderr);
+        ensure!(git(receiver.path(), &["rev-parse", "main"])? == git(root, &["rev-parse", "HEAD"])?);
+        git(receiver.path(), &["fsck", "--full"])?;
+    }
+    Ok(())
+}
+
+#[test]
 fn append_only_blame_reclaims_completed_comparisons() -> Result<()> {
     let repo = TestRepo::new("memory-blame")?;
     let root = repo.path();

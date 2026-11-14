@@ -480,6 +480,35 @@ fn traversals() -> gix_testtools::TestResult {
 }
 
 #[test]
+fn malformed_commit_and_tag_metadata_return_errors_during_counting() {
+    struct Source(gix_object::Kind);
+    impl gix_object::find::Source for Source {
+        fn try_find<'a>(
+            &self,
+            id: &gix_hash::oid,
+            _buffer: &'a mut gix_object::find::Buffer,
+        ) -> gix_error::Result<Option<gix_object::Data<'a>>> {
+            Ok(Some(gix_object::Data::new(b"broken\n", self.0, id.kind())))
+        }
+    }
+    for kind in [gix_object::Kind::Commit, gix_object::Kind::Tag] {
+        for expansion in [
+            count::objects::ObjectExpansion::TreeContents,
+            count::objects::ObjectExpansion::TreeAdditionsComparedToAncestor,
+        ] {
+            let result = count::objects_unthreaded_with_source(
+                &Source(kind),
+                &mut std::iter::once(Ok(object_hash().null())),
+                &progress::Discard,
+                &AtomicBool::new(false),
+                expansion,
+            );
+            assert!(result.is_err(), "malformed {kind} must return an error, never panic");
+        }
+    }
+}
+
+#[test]
 fn tree_additions_from_each_merge_parent_are_kept() -> gix_testtools::TestResult {
     use gix_object::Write;
 
@@ -521,6 +550,32 @@ fn tree_additions_from_each_merge_parent_are_kept() -> gix_testtools::TestResult
         &AtomicBool::new(false),
         count::objects::ObjectExpansion::TreeAdditionsComparedToAncestor,
     )?;
+
+    struct ExternalSource<'a>(&'a gix_pack::testing::Memory);
+    impl gix_object::find::Source for ExternalSource<'_> {
+        fn try_find<'a>(
+            &self,
+            id: &gix_hash::oid,
+            buffer: &'a mut gix_object::find::Buffer,
+        ) -> gix_error::Result<Option<gix_object::Data<'a>>> {
+            let kind = gix_pack::Find::try_find(self.0, id, buffer.owned())?.map(|(data, _)| data.kind);
+            let bytes = std::mem::take(buffer.owned());
+            let bytes = buffer.set_external(bytes);
+            Ok(kind.map(|kind| gix_object::Data::new(bytes, kind, id.kind())))
+        }
+    }
+    let (external_counts, external_stats) = output::count::objects_unthreaded_with_source(
+        &ExternalSource(&db),
+        &mut std::iter::once(Ok(merge_commit_id)),
+        &progress::Discard,
+        &AtomicBool::new(false),
+        count::objects::ObjectExpansion::TreeAdditionsComparedToAncestor,
+    )?;
+    assert_eq!(
+        external_counts, counts,
+        "external storage preserves object selection and order"
+    );
+    assert_eq!(format!("{external_stats:?}"), format!("{stats:?}"));
 
     let expected_ids = std::collections::BTreeSet::from([
         added_blob_id,

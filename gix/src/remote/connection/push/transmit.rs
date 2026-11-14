@@ -1,4 +1,4 @@
-use std::{ops::Deref, sync::atomic::AtomicBool};
+use std::sync::atomic::AtomicBool;
 
 use gix_transport::client::blocking_io::Transport;
 
@@ -439,43 +439,36 @@ fn build_pack_entries(
     let commit_ids: Vec<gix_hash::ObjectId> =
         Simple::new(tips.iter().copied(), crate::object::bounded::Source::deferred(repo))
             .hide(hides)
-            .map_err(|e| Error::Walk(e.to_string()))?
+            .map_err(Error::Walk)?
             .map(|info| info.map(|info| info.id))
             .collect::<Result<_, _>>()
-            .map_err(|error| Error::Walk(error.to_string()))?;
+            .map_err(Error::Walk)?;
 
     if commit_ids.is_empty() {
         return Ok(Vec::new());
     }
 
-    // `objects_unthreaded` requires `&dyn gix_pack::Find`.
-    // `repo.objects` is `Proxy<Cache<Handle<Arc<Store>>>>`.
-    // `Proxy<T>` implements `Deref<Target = T>`, and `Cache<S>` implements
-    // `gix_pack::Find` when `S` implements it.  So `&*repo.objects` gives us
-    // a `&Cache<Handle<Arc<Store>>>` which implements `gix_pack::Find`.
-    let odb_pack: &dyn gix_pack::Find = repo.objects.deref();
+    let source = crate::object::bounded::Source::deferred(repo);
 
     let progress_discard = crate::progress::Discard;
-    let (counts, _) = gix_pack::data::output::count::objects_unthreaded(
-        odb_pack,
+    let (counts, _) = gix_pack::data::output::count::objects_unthreaded_with_source(
+        &source,
         &mut commit_ids.iter().map(|id| Ok::<_, gix_error::Error>(*id)),
         &progress_discard,
         should_interrupt,
         ObjectExpansion::TreeAdditionsComparedToAncestor,
     )
-    .map_err(|e| Error::Pack(e.to_string()))?;
+    .map_err(Error::Pack)?;
 
     // Base-entry encoding needs bytes, not a pack location. Reuse bounded
     // operation-owned storage and release each input before reading its successor.
-    let source = crate::object::bounded::Source::deferred(repo);
     let mut buf = gix_object::find::Buffer::default();
     let mut entries = Vec::with_capacity(counts.len());
     for count in &counts {
         let obj = source
             .load(&count.id, &mut buf)
             .map_err(|source| Error::ReadObject { id: count.id, source })?;
-        let entry =
-            Entry::from_data(count, &obj, gix_zlib::Compression::DEFAULT).map_err(|e| Error::Pack(e.to_string()))?;
+        let entry = Entry::from_data(count, &obj, gix_zlib::Compression::DEFAULT).map_err(Error::Pack)?;
         entries.push(entry);
         buf.clear();
     }

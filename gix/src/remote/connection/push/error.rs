@@ -26,10 +26,10 @@ pub enum Error {
     ReferencesInit(#[source] gix_error::Error),
     #[error("resolve local ref to object id")]
     Resolve(#[source] Box<dyn std::error::Error + Send + Sync + 'static>),
-    #[error("revision walk: {0}")]
-    Walk(String),
-    #[error("build pack entries: {0}")]
-    Pack(String),
+    #[error("revision walk")]
+    Walk(#[source] gix_error::Error),
+    #[error("build pack entries")]
+    Pack(#[source] gix_error::Error),
     #[error("read object {id} while building push pack")]
     ReadObject {
         id: gix_hash::ObjectId,
