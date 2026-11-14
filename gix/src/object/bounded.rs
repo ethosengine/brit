@@ -3,6 +3,7 @@ use std::{cell::OnceCell, rc::Rc, sync::Arc};
 
 use gix_error::{OptionExt, ResultExt, bail, message};
 use gix_object::{Data, FindExt, FindStream, Kind, find::Buffer};
+use gix_odb::{Header, HeaderExt};
 use gix_utils::stream::Budget;
 
 use crate::ext::ObjectIdExt;
@@ -14,6 +15,7 @@ pub struct Source<'repo> {
     repo: &'repo Repository,
     budget: Rc<OnceCell<Arc<Budget>>>,
     buffer_limit: OnceCell<u64>,
+    synthesize_empty_tree: bool,
 }
 
 impl<'repo> Source<'repo> {
@@ -23,6 +25,7 @@ impl<'repo> Source<'repo> {
             repo,
             budget: Rc::new(OnceCell::from(budget)),
             buffer_limit: OnceCell::new(),
+            synthesize_empty_tree: true,
         };
         source.buffer_limit()?;
         Ok(source)
@@ -37,7 +40,14 @@ impl<'repo> Source<'repo> {
             repo,
             budget: Rc::new(OnceCell::new()),
             buffer_limit: OnceCell::new(),
+            synthesize_empty_tree: true,
         }
+    }
+
+    /// Require stored bytes, including for the canonical empty tree, when checking connectivity.
+    pub fn stored_only(mut self) -> Self {
+        self.synthesize_empty_tree = false;
+        self
     }
 
     fn buffer_limit(&self) -> Result<u64> {
@@ -62,11 +72,11 @@ impl<'repo> Source<'repo> {
     /// Read one object, replacing the previous bytes retained by `buffer`.
     pub fn load<'a>(&self, id: &gix_hash::oid, buffer: &'a mut Buffer) -> Result<Data<'a>> {
         gix_utils::stream::check(&crate::interrupt::IS_INTERRUPTED).or_error()?;
-        if id == gix_hash::ObjectId::empty_tree(self.repo.object_hash()) {
+        if self.synthesize_empty_tree && id == gix_hash::ObjectId::empty_tree(self.repo.object_hash()) {
             buffer.owned().clear();
             return Ok(Data::new(AsRef::<[u8]>::as_ref(&*buffer), Kind::Tree, id.kind()));
         }
-        if self.repo.find_header(id)?.size() <= self.buffer_limit()? {
+        if self.repo.objects.header(id)?.size() <= self.buffer_limit()? {
             return self
                 .repo
                 .objects
@@ -157,9 +167,21 @@ impl<'repo> Source<'repo> {
     }
 }
 
+impl gix_object::Exists for Source<'_> {
+    fn exists(&self, id: &gix_hash::oid) -> bool {
+        gix_object::Exists::exists(&self.repo.objects, id)
+    }
+    fn try_exists(&self, id: &gix_hash::oid) -> Result<bool> {
+        gix_utils::stream::check(&crate::interrupt::IS_INTERRUPTED).or_error()?;
+        self.repo.objects.try_header(id).map(|header| header.is_some())
+    }
+}
+
 impl gix_object::find::Source for Source<'_> {
     fn try_find<'a>(&self, id: &gix_hash::oid, buffer: &'a mut Buffer) -> Result<Option<Data<'a>>> {
-        if id != gix_hash::ObjectId::empty_tree(self.repo.object_hash()) && self.repo.try_find_header(id)?.is_none() {
+        if !(self.synthesize_empty_tree && id == gix_hash::ObjectId::empty_tree(self.repo.object_hash()))
+            && self.repo.objects.try_header(id)?.is_none()
+        {
             buffer.clear();
             return Ok(None);
         }

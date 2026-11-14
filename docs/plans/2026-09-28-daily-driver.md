@@ -3390,6 +3390,38 @@ SVG/viewer behavior and other metadata consumers remain under audit.
 Story-harvest station: **revision expression → usable ancestry / an unreadable
 ancestor must remain a read failure, not become an absent match or range limit**.
 
+### Bounded connectivity and faithful failures
+
+The public `fsck` starting point and connectivity scanner now use bounded object
+storage and the existing sequential commit/tree parsers. A failed tree read no
+longer becomes a missing-tree report; fallible blob presence checks retain their
+I/O failure, and a failed scan clears its visited cache before retry. Missing
+objects retain the existing listing behavior. Output exhaustion returns the
+original I/O error instead of panicking. Connectivity requires physically stored
+empty trees; comparison readers retain their synthetic empty-tree behavior.
+
+The original 20 MiB commit / 240,000-entry tree fixture failed all four cases:
+commits refused the allocation limit and large trees were falsely reported as
+missing. Six native connectivity cases pass in both hashes, including injected
+allocation-limit, allocator, scratch, corruption, cancellation and filesystem
+errors. Two output/empty-tree regressions pass in both hashes. All 523 active
+repository tests pass (one existing platform ignore), along with the object
+suite, strict affected Clippy, formatting, readiness and declared Rust style.
+
+The normal default `max` binary
+`e924a4703c516685f23839091cebb7fe80d1451d3a04eb6f1305d1b9e7384e0b`
+passes five public metadata cases per hash, including loose/packed objects,
+explicit 16 MiB policy and actual reduced trust. SHA-1 peaks at 114,843,648 B
+in 275.178 s; SHA-256 at 95,023,104 B in 520.218 s. Both have zero OOM kills,
+surviving children or identity changes. Private receipts are
+`bounded-memory/fsck-stored-*`. Aggregate scratch remains unmeasured, and these
+working-tree receipts do not establish final committed-source acceptance.
+
+Story-harvest station: **connectivity lookup → missing-object report / absence
+must be distinguished from failed access, and retries must not inherit success
+from an incomplete visited set**. Remaining verification metadata, corpus tasks,
+aggregate scratch and the broader command matrix stay open.
+
 ### Public-command audit in progress
 
 The command boundary is `src/plumbing/options/mod.rs` plus
@@ -3397,10 +3429,14 @@ The command boundary is `src/plumbing/options/mod.rs` plus
 coverage in the existing readiness document, **not final classification**.
 Every open row must finish qualified, traced/tested unaffected, or already
 unsupported independently of this effort. No open row is accepted as deferred.
-The candidate's existing `--cli-surface-json` projection enumerates 129
-non-help parser leaves for `max-pure`, plus default command modes and aliases.
-Its private capture is `bounded-memory/public-surface.json`; the projection
-explicitly does not attest behavior or working-tree bytes.
+The candidate's existing `--cli-surface-json` projection enumerates 131
+non-help parser leaves for the normal default `max` build and 129 for `max-pure`,
+plus default command modes and aliases. Both enable SHA-1 and SHA-256 repository
+support. The extra default leaves are `corpus refresh` and `corpus run`.
+Private captures are `bounded-memory/public-surface-default-max.json` and
+`bounded-memory/public-surface.json`; the projection explicitly does not attest
+behavior or working-tree bytes. The separate legacy `ein` porcelain exposes
+`query`; Brit composes the plumbing parser and does not expose that command.
 
 | Public command family | Observed path / remaining proof |
 | --- | --- |
@@ -3409,14 +3445,15 @@ explicitly does not attest behavior or working-tree bytes.
 | `worktree`, `clone` checkout | Existing bounded checkout, OFS/REF delta and filter machinery retained. Whole-cgroup 64/256 MiB worktree checkout/recovery passes; 64/256 MiB local clone/fetch/push also passes; other protocols and reduced-trust transfer paths remain open. |
 | `switch`, `pull`, `rebase`, `merge`, `commit` | Switch/pull raw recovery payloads and streamed dirty checks are repaired and measured at 20/64/256 MiB. Replay working-file journals now use raw payloads and retained-copy capture streams, with 20/64 MiB public cases passing; 64 MiB conflict/abort and preserved large edits also pass after raw-custody repair; interrupted conflict handoff preserves exact child authority; 64 MiB authored-object retention and 20 MiB edit-scope continuation/abort pass after streamed custody fixes. Journal metadata remains open. Three-sided 64 MiB filesystem and object-backed file/tree/commit merge fixtures pass, with bounded rename inputs and recursive-base conformance. External Git merge-file drivers pass 20/64 MiB in both hashes with unchanged inputs; external scratch/cancellation, large journals and resource-bound recovery/death fixtures remain open. |
 | `blame`, `log`, `revision`, `merge-base`, `tree` | Blame initial/history blobs, rename similarity and rendering are repaired and measured, including actual reduced trust and a million unique lines; large history metadata remains open. Ordinary log traverses commits without reading blobs or the index; 20 MiB commit metadata now uses mapped storage above policy and passes both hashes and actual reduced trust. Path-filtered log was already unsupported. Tree listing/statistics and revision path lookup now pass the 240,000-entry metadata matrices described above. Text revision listing now reads large commits through the shared bounded storage and refuses parent-read failures instead of inventing timestamp zero. Merge-base starting points and shared graphs now pass both-hash large-metadata qualification; parent/tag/object/message expressions also pass both-hash metadata checks; ambiguity diagnostics, reflog/shallow handling and remaining history consumers still need qualification. |
-| `fetch`, `push`, `odb`, `fsck`, `verify`, `commit-graph` | Pack decode diagnostics improved; 64/256 MiB local transfer passes without worker/cache changes. Loose blob verification streams; both packed verification algorithms now use bounded storage above configured allocation limits. All decode modes pass 20/64/256 MiB explicit-limit cases in both hashes, including 64 MiB OFS/REF histories, and actual reduced-trust 20/64 MiB cases. ODB inspection, connectivity and pack create/index/explode pass in both hashes; the SHA-256 writer now uses the repository hash format. Additional protocols and large metadata remain open. |
+| `fetch`, `push`, `odb`, `fsck`, `verify`, `commit-graph` | Pack decode diagnostics improved; 64/256 MiB local transfer passes without worker/cache changes. Loose blob verification streams; both packed verification algorithms now use bounded storage above configured allocation limits. All decode modes pass 20/64/256 MiB explicit-limit cases in both hashes, including 64 MiB OFS/REF histories, and actual reduced-trust 20/64 MiB cases. ODB inspection, connectivity and pack create/index/explode pass in both hashes; the SHA-256 writer now uses the repository hash format. Connectivity now passes both-hash large commit/tree metadata and fault/retry checks described above. Additional protocols and remaining verification metadata stay open. |
 | `branch`, `tag`, `remote`, `submodule`, `config`, `config-tree`, `attributes`, `exclude`, `mailmap` | Large config/packed-ref fixtures pass in both hashes and actual reduced trust. Mailmap object reads/output and annotated-tag reads are repaired and measured as above. Remote/submodule/path metadata and helper dispatch remain open. |
 | `credential`, `env`, `editor`, `completions`, `free`, `corpus`, `tix` | Applicable metadata/output/owned-child audit remains open. Existing unsupported behavior cannot be relabeled a memory success. |
 | `snapshot`, `build`, `run`, `graph`, `affected`, `plan`, `fingerprint`, `baseline`, `integrate`, `context` | Snapshot seal/verify/export/restore are measured on 20/64 MiB, aggregate and reduced-trust fixtures; the existing per-object 64 MiB native limit is preserved. `build fingerprint` and SHA-1 `build plan` now release streamed inputs and pass the aggregate 3×256 MiB workload; SHA-256 fingerprinting passes, while revision plan/affected retain the independently reproduced pre-existing Rakia limitation described above. Capture and other first-party metadata/output paths remain open; arbitrary external tasks are outside a universal success guarantee, but owned children still count in measured workloads. |
 | `tix` | The compiled surface has 29 leaves covering browsing, operation history, enrichment, editing, replay and worktrunk. The 20 MiB commit refusal is repaired for show/ref-tree/worktrunk-show/op-log, with both-hash and actual reduced-trust receipts above. Native Tix804 passes. Editing, interactive loads, large notes/journals, CLI-only worker override propagation, retained edit state and owned processes stay open. Successful ordinary log or authoring checks do not qualify this separate surface. |
 | `credential`, `editor` | Credential input/helper output and editor child lifetime need explicit qualification. `gix-credentials/src/program/main.rs` and `helper/invoke.rs` retain complete protocol input/output; `gitoxide-core/src/repository/editor.rs` passes paths to a child and waits. No blob-memory success is inferred for these owned-child paths. |
 | `env`, `config-tree`, `completions`, help/version/surface output | Unaffected by repository blob or metadata growth, by implementation trace: `gitoxide-core/src/lib.rs::env` writes installation paths; `src/plumbing/progress.rs::show_progress` enumerates the compiled config schema; completion dispatch in `src/plumbing/main.rs` uses the compiled Clap tree; `brit-cli/src/main.rs` and `surface.rs` generate help/version/parser output before object access. `brit-cli/tests/unified.rs` checks the public help/version surface. Their allocations depend on the fixed executable/schema and process arguments, not repository contents. Output I/O and owned installation-path helper checks remain part of the ordinary fault/child suite. |
-| `free` metadata and transport helpers | Eighteen leaves include pack operations, mailmap verification, commit graphs, indexes, remote advertisement, discovery and ownership-derived trust. Pack round trips and actual trust probes are measured above; remaining metadata and transport helper coverage stays open. Optional corpus/query commands are absent from the candidate max-pure parser, not inferred successful. |
+| `free` metadata and transport helpers | Eighteen leaves include pack operations, mailmap verification, commit graphs, indexes, remote advertisement, discovery and ownership-derived trust. Pack round trips and actual trust probes are measured above; remaining metadata and transport helper coverage stays open. |
+| `corpus refresh/run` (normal default `max`) | The 64 MiB blob / 20 MiB commit fixture checks persisted outcomes for all four tasks, not just command exit. Baseline reduced-trust and explicit-limit cases expose whole-commit loading in SWTR and loose-metadata loading in VERI; both remain under repair. The existing versioned task records and task algorithms must be preserved. |
 
 Outstanding acceptance also includes broader reduced-trust command coverage,
 broader hash/alternate/replacement combinations beyond the expanded daily matrices, additional

@@ -3,6 +3,14 @@ use gix_error::Result;
 pub trait Exists {
     /// Returns `true` if the object exists in the database.
     fn exists(&self, id: &gix_hash::oid) -> bool;
+
+    /// Check presence while retaining lookup failures when the store supports them.
+    ///
+    /// The default preserves existing boolean-only stores; implementations with fallible
+    /// metadata access should override this method rather than report an error as absence.
+    fn try_exists(&self, id: &gix_hash::oid) -> Result<bool> {
+        Ok(self.exists(id))
+    }
 }
 
 /// Find an object in the object store.
@@ -47,6 +55,9 @@ mod _impls {
         fn exists(&self, id: &oid) -> bool {
             (*self).exists(id)
         }
+        fn try_exists(&self, id: &oid) -> Result<bool> {
+            (*self).try_exists(id)
+        }
     }
 
     impl<T> crate::FindObjectOrHeader for T where T: crate::Find + crate::FindHeader {}
@@ -88,6 +99,9 @@ mod _impls {
         fn exists(&self, id: &oid) -> bool {
             self.deref().exists(id)
         }
+        fn try_exists(&self, id: &oid) -> Result<bool> {
+            self.deref().try_exists(id)
+        }
     }
 
     impl<T> crate::Exists for Rc<T>
@@ -96,6 +110,9 @@ mod _impls {
     {
         fn exists(&self, id: &oid) -> bool {
             self.deref().exists(id)
+        }
+        fn try_exists(&self, id: &oid) -> Result<bool> {
+            self.deref().try_exists(id)
         }
     }
 
@@ -141,6 +158,9 @@ mod _impls {
     {
         fn exists(&self, id: &oid) -> bool {
             self.deref().exists(id)
+        }
+        fn try_exists(&self, id: &oid) -> Result<bool> {
+            self.deref().try_exists(id)
         }
     }
 

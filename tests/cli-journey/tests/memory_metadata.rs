@@ -166,6 +166,11 @@ fn large_commit(reduced: bool) -> Result<()> {
         }
         for limit in [None, Some("16777216")] {
             let actual = root.join(".git/actual-log");
+            brit(root, &["fsck", "HEAD"], &actual, limit)?;
+            ensure!(
+                fs::metadata(&actual)?.len() == 0,
+                "complete history has no missing objects"
+            );
             brit(root, &["log", "-n", "1"], &actual, limit)?;
             same_bytes(&expected, &actual)?;
             brit(root, &["revision", "list", "--long-hashes", "HEAD"], &actual, limit)?;
@@ -318,6 +323,12 @@ fn large_tree(reduced: bool) -> Result<()> {
             git(root, &["-c", "pack.threads=1", "repack", "-ad"])?;
         }
         for limit in [None, Some("16777216")] {
+            let actual = root.join(".git/actual-connectivity");
+            brit(root, &["fsck", "HEAD"], &actual, limit)?;
+            ensure!(
+                fs::metadata(&actual)?.len() == 0,
+                "complete tree has no missing objects"
+            );
             for (spec, recursive) in [(wide.trim(), false), ("HEAD", true)] {
                 for extended in [false, true] {
                     let expected = root.join(".git/expected-tree");

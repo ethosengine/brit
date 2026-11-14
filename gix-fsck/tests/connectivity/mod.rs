@@ -82,3 +82,161 @@ fn missing_trees() {
     );
     assert_eq!(check_missing("treeless", all_commits()), expected);
 }
+
+#[test]
+fn tree_read_failures_are_not_missing_objects() -> gix_testtools::TestResult {
+    use gix_object::{Exists, FindExt};
+    struct FailingTree<'a> {
+        db: &'a gix_odb::Handle,
+        tree: ObjectId,
+        class: gix_error::Class,
+    }
+    impl gix_object::Find for FailingTree<'_> {
+        fn try_find<'a>(
+            &self,
+            id: &gix_hash::oid,
+            buffer: &'a mut Vec<u8>,
+        ) -> gix_error::Result<Option<gix_object::Data<'a>>> {
+            use gix_error::ErrorExt;
+            if id == self.tree {
+                return Err(gix_error::message!("Failed tree read {id}")
+                    .with_class(self.class)
+                    .raise());
+            }
+            gix_object::Find::try_find(self.db, id, buffer)
+        }
+    }
+    impl Exists for FailingTree<'_> {
+        fn exists(&self, id: &gix_hash::oid) -> bool {
+            self.db.exists(id)
+        }
+    }
+    let fixture = gix_testtools::scripted_fixture_read_only("make_test_repos.sh")?;
+    let db = gix_odb::at(fixture.join("base/.git/objects"), gix_testtools::object_hash())?;
+    let commit = all_commits()[0];
+    let tree = db.find_commit(&commit, &mut Vec::new())?.tree();
+    for class in [
+        gix_error::Class::ResourceExhaustion(gix_error::ResourceExhaustionKind::AllocationLimit),
+        gix_error::Class::ResourceExhaustion(gix_error::ResourceExhaustionKind::AllocationFailure),
+        gix_error::Class::ResourceExhaustion(gix_error::ResourceExhaustionKind::ScratchLimit),
+        gix_error::Class::Cancelled,
+        gix_error::Class::Corruption,
+        gix_error::Class::NotFound,
+        gix_error::Class::PermissionDenied,
+    ] {
+        let mut check = Connectivity::new(FailingTree { db: &db, tree, class }, |oid, kind| {
+            panic!("a failed read must not be reported as missing {kind} {oid}")
+        });
+        for _ in 0..2 {
+            let error = check
+                .check_commit(&commit)
+                .expect_err("a failed scan must not enter the visited cache");
+            assert_eq!(error.dominant_class(), Some(class));
+            assert!(format!("{error:#}").contains(&tree.to_string()));
+        }
+    }
+    Ok(())
+}
+
+#[test]
+fn malformed_objects_remain_corruption_and_do_not_poison_retries() -> gix_testtools::TestResult {
+    struct Malformed {
+        commit: ObjectId,
+        tree: ObjectId,
+        bad_commit: bool,
+    }
+    impl gix_object::Find for Malformed {
+        fn try_find<'a>(
+            &self,
+            id: &gix_hash::oid,
+            buffer: &'a mut Vec<u8>,
+        ) -> gix_error::Result<Option<gix_object::Data<'a>>> {
+            buffer.clear();
+            let kind = if id == self.commit {
+                buffer.extend_from_slice(format!("tree {}\n", self.tree).as_bytes());
+                buffer.extend_from_slice(if self.bad_commit {
+                    b"malformed author header\n"
+                } else {
+                    b"author Fixture <fixture@example.com> 1 +0000\ncommitter Fixture <fixture@example.com> 1 +0000\n\nmessage\n"
+                });
+                Kind::Commit
+            } else {
+                buffer.extend_from_slice(b"malformed tree entry");
+                Kind::Tree
+            };
+            Ok(Some(gix_object::Data::new(buffer, kind, id.kind())))
+        }
+    }
+    impl gix_object::Exists for Malformed {
+        fn exists(&self, _: &gix_hash::oid) -> bool {
+            true
+        }
+    }
+    let commit = all_commits()[0];
+    let tree = hex_to_id("20317ffa7614f49b2702a057bf2833918ea9fd24");
+    for bad_commit in [false, true] {
+        let mut check = Connectivity::new(
+            Malformed {
+                commit,
+                tree,
+                bad_commit,
+            },
+            |_, _| panic!("malformed data is not a missing object"),
+        );
+        for _ in 0..2 {
+            let error = check.check_commit(&commit).expect_err("malformed object must refuse");
+            assert!(error.is_corrupted(), "{error:#}");
+            assert!(format!("{error:#}").contains(&if bad_commit { commit } else { tree }.to_string()));
+        }
+    }
+    Ok(())
+}
+
+#[test]
+fn blob_lookup_errors_survive_pointer_wrappers() -> gix_testtools::TestResult {
+    use gix_object::Exists;
+    #[derive(Clone)]
+    struct FailingHeader(std::path::PathBuf);
+    impl gix_object::Find for FailingHeader {
+        fn try_find<'a>(
+            &self,
+            id: &gix_hash::oid,
+            buffer: &'a mut Vec<u8>,
+        ) -> gix_error::Result<Option<gix_object::Data<'a>>> {
+            use gix_error::ResultExt;
+            let db = gix_odb::at(&self.0, id.kind()).or_error()?;
+            gix_object::Find::try_find(&db, id, buffer)
+        }
+    }
+    impl Exists for FailingHeader {
+        fn exists(&self, _: &gix_hash::oid) -> bool {
+            panic!("a fallible store must not be reduced to a boolean")
+        }
+        fn try_exists(&self, id: &gix_hash::oid) -> gix_error::Result<bool> {
+            use gix_error::ErrorExt;
+            Err(gix_error::message!("Cannot inspect blob {id}")
+                .with_class(gix_error::Class::PermissionDenied)
+                .raise())
+        }
+    }
+    fn assert_error<T: Exists>(db: T, blob: &gix_hash::oid) {
+        let error = db.try_exists(blob).expect_err("metadata lookup failed");
+        assert_eq!(error.dominant_class(), Some(gix_error::Class::PermissionDenied));
+        assert!(format!("{error:#}").contains(&blob.to_string()));
+    }
+    let fixture = gix_testtools::scripted_fixture_read_only("make_test_repos.sh")?;
+    let source = FailingHeader(fixture.join("base/.git/objects"));
+    let blob = hex_to_id("4cdeaab5b01f9a9fbbb2fb6c08404cf12b7bdab1");
+    assert_error::<&FailingHeader>(&source, &blob);
+    assert_error(Box::new(source.clone()), &blob);
+    assert_error(std::rc::Rc::new(source.clone()), &blob);
+    assert_error(std::sync::Arc::new(source.clone()), &blob);
+    let mut check = Connectivity::new(source, |_, _| panic!("lookup failure is not absence"));
+    for _ in 0..2 {
+        let error = check
+            .check_commit(&all_commits()[0])
+            .expect_err("blob metadata lookup failed");
+        assert_eq!(error.dominant_class(), Some(gix_error::Class::PermissionDenied));
+    }
+    Ok(())
+}
