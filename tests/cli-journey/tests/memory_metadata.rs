@@ -1124,28 +1124,39 @@ fn attribute_pathspec(size: usize, reduced: bool, faults: bool) -> Result<()> {
     let root = repo.path();
     repo.commit_file("selected", "selected bytes\n")?;
     repo.commit_file("other", "other bytes\n")?;
-    let mut patterns = BufWriter::new(fs::File::create(root.join(".gitattributes"))?);
-    for _ in 0..size / 65536 {
-        patterns.write_all(&[b'#'; 65536])?;
+    for (name, tail) in [
+        (
+            ".gitattributes",
+            b"\nselected custom=yes\nuntracked custom=yes\nother custom=no\n".as_slice(),
+        ),
+        (".gitignore", b"\nignored\n".as_slice()),
+    ] {
+        let mut patterns = BufWriter::new(fs::File::create(root.join(name))?);
+        for _ in 0..size / 65536 {
+            patterns.write_all(&[b'#'; 65536])?;
+        }
+        patterns.write_all(tail)?;
+        patterns.flush()?;
     }
-    patterns.write_all(b"\nselected custom=yes\nuntracked custom=yes\nother custom=no\n")?;
-    patterns.flush()?;
-    drop(patterns);
-    git(root, &["add", ".gitattributes"])?;
+    git(root, &["add", ".gitattributes", ".gitignore"])?;
     git(root, &["commit", "-qm", "indexed attributes"])?;
     let attr_id = String::from_utf8(git(root, &["rev-parse", "HEAD:.gitattributes"])?)?
         .trim()
         .to_owned();
+    git(root, &["update-index", "--skip-worktree", ".gitignore"])?;
     fs::remove_file(root.join(".gitattributes"))?;
+    fs::remove_file(root.join(".gitignore"))?;
+    fs::write(root.join("ignored"), "ignored bytes\n")?;
     fs::write(root.join("untracked"), "untracked bytes\n")?;
     ensure!(git(root, &["ls-files", "--", ":(attr:custom=yes)"])? == b"selected\n");
     let head = git(root, &["rev-parse", "HEAD"])?;
     let index = fs::read(root.join(".git/index"))?;
     reduced_trust(root, reduced)?;
-    let commands: [&[&str]; 3] = [
+    let commands: [&[&str]; 4] = [
         &["attributes", "query", ":(attr:custom=yes)selected"],
         &["index", "entries", "--no-attributes", ":(attr:custom=yes)"],
         &["clean", "--pathspec-matches-result", ":(attr:custom=yes)"],
+        &["clean", ":(attr:custom=yes)"],
     ];
     let output = root.join(".git/pathspec-output");
     for packed in [false, true] {
@@ -1160,7 +1171,7 @@ fn attribute_pathspec(size: usize, reduced: bool, faults: bool) -> Result<()> {
             brit(root, args, &expected, Some("1073741824"))?;
             let bytes = fs::read_to_string(&expected)?;
             ensure!(
-                bytes.contains(if n == 2 { "untracked" } else { "selected" }) && !bytes.contains("other"),
+                bytes.contains(if n >= 2 { "untracked" } else { "selected" }) && !bytes.contains("other"),
                 "expected selected result: {bytes:?}"
             );
             for limit in [None, Some("16777216"), Some("1024")] {
@@ -1202,6 +1213,7 @@ fn attribute_pathspec(size: usize, reduced: bool, faults: bool) -> Result<()> {
         ("selected", "selected bytes\n"),
         ("other", "other bytes\n"),
         ("untracked", "untracked bytes\n"),
+        ("ignored", "ignored bytes\n"),
     ] {
         ensure!(fs::read(root.join(name))? == content.as_bytes(), "preserve {name}");
     }

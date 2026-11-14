@@ -176,8 +176,18 @@ impl Stack {
         mode: Option<gix_index::entry::Mode>,
         objects: &dyn gix_object::Find,
     ) -> std::io::Result<Platform<'_>> {
+        self.at_entry_with_source(relative, mode, &objects)
+    }
+
+    /// Like [`Self::at_entry()`], allowing immutable external object storage.
+    pub fn at_entry_with_source<'r>(
+        &mut self,
+        relative: impl Into<&'r BStr>,
+        mode: Option<gix_index::entry::Mode>,
+        objects: &dyn gix_object::find::Source,
+    ) -> std::io::Result<Platform<'_>> {
         let relative = relative.into();
-        self.at_path(
+        self.at_path_with_source(
             relative,
             mode.or_else(|| relative.ends_with_str("/").then_some(gix_index::entry::Mode::DIR)),
             objects,

@@ -250,7 +250,7 @@ pub struct Context<'a> {
     /// operation when trying to add ignored files to a repository.
     pub excludes: Option<&'a mut gix_worktree::Stack>,
     /// Access to the object database for use with `excludes` - it's possible to access `.gitignore` files in the index if configured.
-    pub objects: &'a dyn gix_object::Find,
+    pub objects: &'a dyn gix_object::find::Source,
     /// If not `None`, override the traversal root that is computed and use this one instead.
     ///
     /// This can be useful if the traversal root may be a file, in which case the traversal will

@@ -170,7 +170,7 @@ pub fn path(
                 .as_mut()
                 .map_or(Ok(None), |stack| {
                     stack
-                        .at_entry(
+                        .at_entry_with_source(
                             rela_path.as_bstr(),
                             disk_kind.map(|ft| is_dir_to_mode(ft.is_dir())),
                             ctx.objects,
@@ -253,7 +253,7 @@ pub fn path(
         .filter(|_| !rela_path.is_empty())
         .map_or(Ok(None), |stack| {
             stack
-                .at_entry(rela_path.as_bstr(), is_dir, ctx.objects)
+                .at_entry_with_source(rela_path.as_bstr(), is_dir, ctx.objects)
                 .map(|platform| platform.excluded_kind())
         })
         .or_raise(|| message("Failed to update the excludes stack to see if a path is excluded"))?

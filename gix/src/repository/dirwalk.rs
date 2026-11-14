@@ -84,7 +84,9 @@ impl Repository {
                 opts.worktree_relative_worktree_dirs = Some(&worktree_relative_worktree_dirs_storage);
             }
         }
-        let (outcome, traversal_root) = gix_dir::walk(
+        let source = crate::object::bounded::Source::deferred(self);
+        let mut attribute_error = None;
+        let walked = gix_dir::walk(
             workdir,
             gix_dir::walk::Context {
                 should_interrupt: Some(should_interrupt),
@@ -94,22 +96,36 @@ impl Repository {
                 ignore_case_index_lookup: accelerate_lookup.as_ref(),
                 pathspec: &mut pathspec.search,
                 pathspec_attributes: &mut |relative_path, case, is_dir, out| {
+                    if attribute_error.is_some() {
+                        return false;
+                    }
                     let stack = pathspec
                         .stack
                         .as_mut()
                         .expect("can only be called if attributes are used in patterns");
-                    stack
-                        .set_case(case)
-                        .at_entry(relative_path, Some(is_dir_to_mode(is_dir)), &self.objects)
-                        .is_ok_and(|platform| platform.matching_attributes(out))
+                    match stack.set_case(case).at_entry_with_source(
+                        relative_path,
+                        Some(is_dir_to_mode(is_dir)),
+                        &source,
+                    ) {
+                        Ok(platform) => platform.matching_attributes(out),
+                        Err(error) => {
+                            attribute_error = Some(error);
+                            false
+                        }
+                    }
                 },
                 excludes: Some(&mut excludes.inner),
-                objects: &self.objects,
+                objects: &source,
                 explicit_traversal_root: (!options.empty_patterns_match_prefix).then_some(workdir),
             },
             opts,
             delegate,
-        )?;
+        );
+        if let Some(error) = attribute_error {
+            return Err(error).or_error();
+        }
+        let (outcome, traversal_root) = walked?;
 
         Ok(dirwalk::Outcome {
             dirwalk: outcome,
