@@ -90,6 +90,8 @@ impl<'cache, T> Graph<'_, 'cache, T> {
     /// Remove all data from the graph to start over.
     pub fn clear(&mut self) {
         self.map.clear();
+        self.buf.clear();
+        self.parent_buf.clear();
     }
 
     /// Insert the parents of commit named `id` to the graph and associate new parents with data
@@ -184,12 +186,20 @@ impl<'find, 'cache, T> Graph<'find, 'cache, T> {
     /// Furthermore, **none-existing commits should not trigger the pack-db to be refreshed.** Otherwise, performance may be sub-optimal
     /// in shallow repositories as running into non-existing commits will trigger a refresh of the `packs` directory.
     pub fn new(objects: impl gix_object::Find + 'find, cache: Option<&'cache gix_commitgraph::Graph>) -> Self {
+        Self::with_source(objects, cache)
+    }
+
+    /// Create a graph with immutable external or buffered commit storage, preserving graph semantics.
+    pub fn with_source(
+        objects: impl gix_object::find::Source + 'find,
+        cache: Option<&'cache gix_commitgraph::Graph>,
+    ) -> Self {
         Graph {
             find: Box::new(objects),
             cache,
             map: gix_hashtable::HashMap::default(),
-            buf: Vec::new(),
-            parent_buf: Vec::new(),
+            buf: Default::default(),
+            parent_buf: Default::default(),
         }
     }
 }
@@ -325,13 +335,14 @@ impl<'cache, T> Graph<'_, 'cache, T> {
 
 fn try_lookup<'graph, 'cache>(
     id: &gix_hash::oid,
-    objects: &dyn gix_object::Find,
+    objects: &dyn gix_object::find::Source,
     cache: Option<&'cache gix_commitgraph::Graph>,
-    buf: &'graph mut Vec<u8>,
+    buf: &'graph mut gix_object::find::Buffer,
 ) -> Result<Option<LazyCommit<'graph, 'cache>>> {
     if let Some(cache) = cache
         && let Some(pos) = cache.lookup(id)
     {
+        buf.clear();
         return Ok(Some(LazyCommit {
             object_hash: id.kind(),
             backing: Either::Right((cache, pos)),
@@ -340,7 +351,7 @@ fn try_lookup<'graph, 'cache>(
     Ok(match objects.try_find(id, buf)? {
         Some(data) => data.kind.is_commit().then_some(LazyCommit {
             object_hash: data.object_hash,
-            backing: Either::Left(buf),
+            backing: Either::Left(data.data),
         }),
         None => None,
     })

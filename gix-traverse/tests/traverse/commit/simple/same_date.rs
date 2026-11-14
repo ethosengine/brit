@@ -12,6 +12,62 @@ fn same_date_repo() -> Result<(std::path::PathBuf, gix_odb::Handle)> {
 }
 
 #[test]
+fn failed_parent_time_lookup_never_becomes_a_zero_timestamp() -> gix_testtools::TestResult {
+    struct FailingParent<'a> {
+        odb: &'a gix_odb::Handle,
+        parent: ObjectId,
+        class: gix_error::Class,
+    }
+    impl gix_object::find::Source for FailingParent<'_> {
+        fn try_find<'a>(
+            &self,
+            id: &oid,
+            buffer: &'a mut gix_object::find::Buffer,
+        ) -> gix_error::Result<Option<gix_object::Data<'a>>> {
+            use gix_error::ErrorExt;
+            if id == self.parent {
+                return Err(gix_error::message!("Failed parent lookup {id}")
+                    .with_class(self.class)
+                    .raise());
+            }
+            gix_object::Find::try_find(self.odb, id, buffer.owned())
+        }
+    }
+    let (_dir, odb) = same_date_repo()?;
+    let tip = hex_to_id("9556057aee5abb06912922e9f26c46386a816822");
+    let parent = hex_to_id("17d78c64cef6c33a10a604573fd2c429e477fd63");
+    for class in [
+        gix_error::Class::ResourceExhaustion(gix_error::ResourceExhaustionKind::AllocationLimit),
+        gix_error::Class::ResourceExhaustion(gix_error::ResourceExhaustionKind::AllocationFailure),
+        gix_error::Class::ResourceExhaustion(gix_error::ResourceExhaustionKind::ScratchLimit),
+        gix_error::Class::Cancelled,
+        gix_error::Class::Corruption,
+        gix_error::Class::NotFound,
+        gix_error::Class::PermissionDenied,
+    ] {
+        let mut walk = Simple::new(
+            [tip],
+            FailingParent {
+                odb: &odb,
+                parent,
+                class,
+            },
+        )
+        .sorting(Sorting::ByCommitTimeCutoff {
+            order: CommitTimeOrder::NewestFirst,
+            seconds: 1,
+        })?;
+        let error = walk
+            .next()
+            .expect("the visible tip is queued")
+            .expect_err("a failed lookup must refuse instead of silently pruning the parent at timestamp zero");
+        assert_eq!(error.dominant_class(), Some(class));
+        assert!(format!("{error:#}").contains(&parent.to_string()));
+    }
+    Ok(())
+}
+
+#[test]
 fn c4_breadth_first() -> gix_testtools::TestResult {
     let (repo_dir, odb) = same_date_repo()?;
 

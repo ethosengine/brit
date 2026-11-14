@@ -1,6 +1,44 @@
 use gix_error::Result;
 use gix_error::ResultExt;
 
+/// Object access with caller-owned buffered or immutable external storage.
+///
+/// Existing [`crate::Find`] implementations use the ordinary reusable byte buffer.
+pub trait Source {
+    /// Find an object, retaining its bytes in `buffer`, or return `None` for a missing object.
+    fn try_find<'a>(&self, id: &gix_hash::oid, buffer: &'a mut Buffer) -> Result<Option<crate::Data<'a>>>;
+
+    /// Find a commit with the same missing-object and kind diagnostics as [`crate::FindExt`].
+    fn find_commit<'a>(&self, id: &gix_hash::oid, buffer: &'a mut Buffer) -> Result<crate::CommitRefIter<'a>> {
+        self.try_find(id, buffer)?
+            .ok_or_else(|| not_found(id))
+            .and_then(|data| {
+                data.try_into_commit_iter()
+                    .ok_or_else(|| wrong_kind(id, data.kind, crate::Kind::Commit))
+            })
+    }
+}
+
+impl<T: crate::Find> Source for T {
+    fn try_find<'a>(&self, id: &gix_hash::oid, buffer: &'a mut Buffer) -> Result<Option<crate::Data<'a>>> {
+        crate::Find::try_find(self, id, buffer.owned())
+    }
+}
+
+impl Source for &dyn Source {
+    fn try_find<'a>(&self, id: &gix_hash::oid, buffer: &'a mut Buffer) -> Result<Option<crate::Data<'a>>> {
+        (**self).try_find(id, buffer)
+    }
+}
+
+pub(crate) fn not_found(id: &gix_hash::oid) -> gix_error::Error {
+    gix_error::message!("An object with id {id} could not be found").not_found_error()
+}
+
+pub(crate) fn wrong_kind(id: &gix_hash::oid, actual: crate::Kind, expected: crate::Kind) -> gix_error::Error {
+    gix_error::message!("Expected object of kind {expected} but got {actual} at {id}").validation_error()
+}
+
 /// Reusable object storage, optionally backed by immutable operation-owned bytes.
 #[derive(Default, Clone)]
 pub struct Buffer {

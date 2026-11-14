@@ -131,6 +131,21 @@ fn large_commit(reduced: bool) -> Result<()> {
         &["log", "-n", "1", "--date-order", "--abbrev=8", "--format=%h %s"],
         &expected,
     )?;
+    let expected_revisions = root.join(".git/expected-revisions");
+    let mut revisions = BufWriter::new(fs::File::create(&expected_revisions)?);
+    for row in String::from_utf8(git(
+        root,
+        &["rev-list", "--timestamp", "--parents", "--date-order", "HEAD"],
+    )?)?
+    .lines()
+    {
+        let mut fields = row.split_whitespace();
+        let time = fields.next().expect("Git commit timestamp");
+        let id = fields.next().expect("Git commit identity");
+        writeln!(revisions, "{id} {time} {}", fields.count())?;
+    }
+    revisions.flush()?;
+    drop(revisions);
     reduced_trust(root, reduced)?;
     for packed in [false, true] {
         if packed {
@@ -140,6 +155,8 @@ fn large_commit(reduced: bool) -> Result<()> {
             let actual = root.join(".git/actual-log");
             brit(root, &["log", "-n", "1"], &actual, limit)?;
             same_bytes(&expected, &actual)?;
+            brit(root, &["revision", "list", "--long-hashes", "HEAD"], &actual, limit)?;
+            same_bytes(&expected_revisions, &actual)?;
             brit(root, &["revision", "resolve", "HEAD"], &actual, limit)?;
             ensure!(
                 fs::read(&actual)? == head,

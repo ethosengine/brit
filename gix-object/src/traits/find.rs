@@ -164,17 +164,11 @@ mod _impls {
 }
 
 mod ext {
-    use gix_error::{Error, Result, ResultExt, message};
+    use gix_error::{Result, ResultExt, message};
 
     use crate::{BlobRef, CommitRef, CommitRefIter, Kind, ObjectRef, TagRef, TagRefIter, TreeRef, TreeRefIter};
 
-    fn not_found(id: &gix_hash::oid) -> Error {
-        gix_error::message!("An object with id {id} could not be found").not_found_error()
-    }
-
-    fn wrong_kind(id: &gix_hash::oid, actual: Kind, expected: Kind) -> Error {
-        message!("Expected object of kind {expected} but got {actual} at {id}").validation_error()
-    }
+    use crate::find::{not_found, wrong_kind};
 
     macro_rules! make_obj_lookup {
         ($method:ident, $object_variant:path, $object_kind:path, $object_type:ty) => {

@@ -27,15 +27,15 @@
 /// everything related to commit traversal in our own hashmap.
 pub struct Graph<'find, 'cache, T> {
     /// A way to resolve a commit from the object database.
-    find: Box<dyn gix_object::Find + 'find>,
+    find: Box<dyn gix_object::find::Source + 'find>,
     /// A way to speedup commit access, essentially a multi-file commit database.
     cache: Option<&'cache gix_commitgraph::Graph>,
     /// The set of cached commits that we have seen once, along with data associated with them.
     map: graph::IdMap<T>,
     /// A buffer for writing commit data into.
-    buf: Vec<u8>,
+    buf: gix_object::find::Buffer,
     /// Another buffer we typically use to store parents.
-    parent_buf: Vec<u8>,
+    parent_buf: gix_object::find::Buffer,
 }
 
 ///

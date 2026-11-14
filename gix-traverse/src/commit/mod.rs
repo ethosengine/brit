@@ -115,3 +115,18 @@ where
         None => objects.find_commit_iter(id, buf).map(Either::CommitRefIter),
     }
 }
+
+pub(crate) fn find_with_source<'cache, 'buf>(
+    cache: Option<&'cache gix_commitgraph::Graph>,
+    objects: &impl gix_object::find::Source,
+    id: &gix_hash::oid,
+    buffer: &'buf mut gix_object::find::Buffer,
+) -> Result<Either<'buf, 'cache>> {
+    match cache.and_then(|cache| cache.commit_by_id(id).map(Either::CachedCommit)) {
+        Some(commit) => {
+            buffer.clear();
+            Ok(commit)
+        }
+        None => objects.find_commit(id, buffer).map(Either::CommitRefIter),
+    }
+}

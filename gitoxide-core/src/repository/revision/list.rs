@@ -24,6 +24,7 @@ pub(crate) mod function {
         Progress, Result,
         error::{ResultExt, bail, message},
         hashtable::HashMap,
+        prelude::ObjectIdExt,
         revision::walk::Sorting,
     };
     use layout::{
@@ -54,11 +55,15 @@ pub(crate) mod function {
         let id = repo
             .rev_parse_single(spec)
             .or_raise(|| message("Only single revisions are currently supported"))?;
-        let commits = id
-            .object()?
-            .peel_to_kind(gix::object::Kind::Commit)
+        let source = gix::object::bounded::Source::new(
+            &repo,
+            gix::utils::stream::Budget::new(&std::env::temp_dir()).or_error()?,
+        )?;
+        let id = source
+            .peel(id.detach(), gix::object::Kind::Commit)
             .or_raise(|| message("Need committish as starting point"))?
-            .id()
+            .attach(&repo);
+        let commits = id
             .ancestors()
             .sorting(Sorting::ByCommitTime(Default::default()))
             .all()?;

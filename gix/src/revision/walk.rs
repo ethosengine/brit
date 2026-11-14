@@ -1,8 +1,8 @@
 use gix_hash::ObjectId;
-use gix_object::FindExt;
+use gix_object::find::Source;
 use gix_traverse::commit::simple::CommitTimeOrder;
 
-use crate::{Repository, Result, ext::ObjectIdExt, revision};
+use crate::{Repository, Result, error::ResultExt, ext::ObjectIdExt, revision};
 
 /// Specify how to sort commits during a [revision::Walk] traversal.
 ///
@@ -280,15 +280,19 @@ impl<'repo> Platform<'repo> {
                 .then(|| repo.commit_graph().ok())
                 .flatten())
         };
+        let source = crate::object::bounded::Source::new(
+            repo,
+            gix_utils::stream::Budget::new(&std::env::temp_dir()).or_error()?,
+        )?;
         Ok(revision::Walk {
             repo,
             inner: Box::new(
-                gix_traverse::commit::Simple::filtered(tips, &repo.objects, {
+                gix_traverse::commit::Simple::filtered(tips, source.clone(), {
                     // Note that specific shallow handling for commit-graphs isn't needed as these contain
                     // all information there is, and exclude shallow parents to be structurally consistent.
                     let shallow_commits = repo.shallow_commits()?;
                     let mut grafted_parents_to_skip = Vec::new();
-                    let mut buf = Vec::new();
+                    let mut buf = gix_object::find::Buffer::default();
                     move |id| {
                         if !filter(id) {
                             return false;
@@ -304,7 +308,7 @@ impl<'repo> Platform<'repo> {
                                     return false;
                                 }
                                 if commits.binary_search(&id).is_ok()
-                                    && let Ok(commit) = repo.objects.find_commit_iter(&id, &mut buf)
+                                    && let Ok(commit) = source.find_commit(&id, &mut buf)
                                 {
                                     grafted_parents_to_skip.extend(commit.parent_ids());
                                     grafted_parents_to_skip.sort();

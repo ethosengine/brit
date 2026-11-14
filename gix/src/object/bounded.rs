@@ -112,6 +112,16 @@ impl<'repo> Source<'repo> {
     }
 }
 
+impl gix_object::find::Source for Source<'_> {
+    fn try_find<'a>(&self, id: &gix_hash::oid, buffer: &'a mut Buffer) -> Result<Option<Data<'a>>> {
+        if id != gix_hash::ObjectId::empty_tree(self.repo.object_hash()) && self.repo.try_find_header(id)?.is_none() {
+            buffer.clear();
+            return Ok(None);
+        }
+        self.load(id, buffer).map(Some)
+    }
+}
+
 impl gix_traverse::commit::topo::source::Source for Source<'_> {
     fn find_commit<'a>(&self, id: &gix_hash::oid, buffer: &'a mut Buffer) -> Result<gix_object::CommitRefIter<'a>> {
         self.load(id, buffer)?

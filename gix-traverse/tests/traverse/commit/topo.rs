@@ -1,3 +1,4 @@
+use super::MappedSource;
 use crate::Result;
 use crate::hex_to_id;
 use crate::util::{commit_graph, fixture, fixture_odb};
@@ -12,31 +13,6 @@ fn odb() -> Result<gix_odb::Handle> {
 
 fn fixture_dir() -> Result<PathBuf> {
     fixture("make_repo_for_topo.sh")
-}
-
-struct MappedSource<'a> {
-    odb: &'a gix_odb::Handle,
-    budget: std::sync::Arc<gix_utils::stream::Budget>,
-}
-
-impl topo::source::Source for MappedSource<'_> {
-    fn find_commit<'a>(
-        &self,
-        id: &oid,
-        buffer: &'a mut topo::source::Buffer,
-    ) -> gix_error::Result<gix_object::CommitRefIter<'a>> {
-        use gix_error::ResultExt;
-        use gix_object::FindStream;
-        buffer.clear();
-        let (kind, bytes) = self
-            .odb
-            .find_stream(id, &self.budget, &std::sync::atomic::AtomicBool::new(false))?;
-        assert_eq!(kind, gix_object::Kind::Commit);
-        Ok(gix_object::CommitRefIter::from_bytes(
-            buffer.set_external(bytes.into_mapped().or_error()?),
-            id.kind(),
-        ))
-    }
 }
 
 /// Run a topo traversal with both commit-graph enabled and disabled to ensure consistency.

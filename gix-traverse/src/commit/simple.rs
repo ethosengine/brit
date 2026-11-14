@@ -126,7 +126,7 @@ pub(super) struct State {
     /// `next`, but keeps it ordered by commit time instead of insertion order.
     queue: CommitDateQueue,
     /// Backing storage for the currently yielded commit.
-    buf: Vec<u8>,
+    buf: gix_object::find::Buffer,
     /// The object hash kind of the currently yielded commit data in `buf`.
     /// It's used to know the kind of hash to expect when a new iterator is returned from `buf`
     /// via `Simple::commit_iter()`.
@@ -140,7 +140,7 @@ pub(super) struct State {
     /// These are consumed on the first call ot `next` to compute the hidden frontier once.
     hidden_tips: Vec<ObjectId>,
     /// Scratch buffer for parent commit lookups when commit times are loaded from the object database.
-    parents_buf: Vec<u8>,
+    parents_buf: gix_object::find::Buffer,
     /// Reusable parent id/time storage populated from the commit-graph cache.
     parent_ids: SmallVec<[(ObjectId, SecondsSinceUnixEpoch); 2]>,
 }
@@ -167,10 +167,13 @@ fn to_queue_key(i: i64, order: CommitTimeOrder) -> QueueKey<i64> {
 fn compute_hidden_frontier(
     visible_tips: &[ObjectId],
     hidden_tips: &[ObjectId],
-    objects: &impl gix_object::Find,
+    objects: &impl gix_object::find::Source,
     cache: Option<&gix_commitgraph::Graph>,
 ) -> Result<gix_revwalk::graph::IdMap<()>> {
-    let mut graph = gix_revwalk::Graph::<gix_revwalk::graph::Commit<PaintFlags>>::new(objects, cache);
+    let mut graph = gix_revwalk::Graph::<gix_revwalk::graph::Commit<PaintFlags>>::with_source(
+        objects as &dyn gix_object::find::Source,
+        cache,
+    );
     let mut queue = gix_revwalk::PriorityQueue::<GenThenTime, ObjectId>::new();
 
     for &visible in visible_tips {
@@ -232,7 +235,7 @@ mod init {
     use gix_date::SecondsSinceUnixEpoch;
     use gix_error::{ErrorExt, Result, ResultExt, corruption};
     use gix_hash::{ObjectId, oid};
-    use gix_object::{CommitRefIter, FindExt};
+    use gix_object::CommitRefIter;
     use std::{cmp::Reverse, collections::VecDeque};
 
     impl Default for State {
@@ -240,12 +243,12 @@ mod init {
             State {
                 next: Default::default(),
                 queue: gix_revwalk::PriorityQueue::new(),
-                buf: vec![],
+                buf: Default::default(),
                 object_hash: gix_hash::Kind::shortest(),
                 seen: Default::default(),
                 hidden: Default::default(),
                 hidden_tips: Vec::new(),
-                parents_buf: vec![],
+                parents_buf: Default::default(),
                 parent_ids: Default::default(),
             }
         }
@@ -287,7 +290,7 @@ mod init {
     /// Builder methods
     impl<Find, Predicate> Simple<Find, Predicate>
     where
-        Find: gix_object::Find,
+        Find: gix_object::find::Source,
     {
         /// Set the `sorting` method.
         pub fn sorting(mut self, sorting: Sorting) -> Result<Self> {
@@ -383,10 +386,10 @@ mod init {
         order: CommitTimeOrder,
         cutoff_time: Option<SecondsSinceUnixEpoch>,
         queue: &mut CommitDateQueue,
-        objects: &impl gix_object::Find,
-        buf: &mut Vec<u8>,
+        objects: &impl gix_object::find::Source,
+        buf: &mut gix_object::find::Buffer,
     ) -> Result {
-        let commit_iter = objects.find_commit_iter(&commit_id, buf)?;
+        let commit_iter = objects.find_commit(&commit_id, buf)?;
         let time = commit_iter
             .committer()
             .or_raise(|| corruption("A commit could not be decoded during traversal"))?
@@ -403,7 +406,7 @@ mod init {
     /// Lifecycle methods
     impl<Find> Simple<Find, fn(&oid) -> bool>
     where
-        Find: gix_object::Find,
+        Find: gix_object::find::Source,
     {
         /// Create a new instance.
         ///
@@ -420,7 +423,7 @@ mod init {
 
     impl<Find, Predicate> Simple<Find, Predicate>
     where
-        Find: gix_object::Find,
+        Find: gix_object::find::Source,
         Predicate: FnMut(&oid) -> bool,
     {
         /// Create a new instance with commit filtering enabled.
@@ -469,13 +472,13 @@ mod init {
 
         /// Return the current commits' raw data, which can be parsed using [`gix_object::CommitRef::from_bytes()`].
         pub fn commit_data(&self) -> &[u8] {
-            &self.state.buf
+            self.state.buf.as_ref()
         }
     }
 
     impl<Find, Predicate> Iterator for Simple<Find, Predicate>
     where
-        Find: gix_object::Find,
+        Find: gix_object::find::Source,
         Predicate: FnMut(&oid) -> bool,
     {
         type Item = Result<Info>;
@@ -504,7 +507,7 @@ mod init {
     /// Utilities
     impl<Find, Predicate> Simple<Find, Predicate>
     where
-        Find: gix_object::Find,
+        Find: gix_object::find::Source,
         Predicate: FnMut(&oid) -> bool,
     {
         fn next_by_commit_date(
@@ -526,7 +529,7 @@ mod init {
                 let mut parents: ParentIds = Default::default();
                 let generation;
 
-                match super::super::find(self.cache.as_ref(), &self.objects, &oid, &mut state.buf) {
+                match super::super::find_with_source(self.cache.as_ref(), &self.objects, &oid, &mut state.buf) {
                     Ok(Either::CachedCommit(commit)) => {
                         generation = Some(commit.generation());
                         if !collect_parents(&mut state.parent_ids, self.cache.as_ref(), commit.iter_parents()) {
@@ -536,7 +539,7 @@ mod init {
                         }
                         for (id, parent_commit_time) in state.parent_ids.drain(..) {
                             parents.push(id);
-                            insert_into_seen_and_queue(
+                            if let Err(error) = insert_into_seen_and_queue(
                                 &mut state.seen,
                                 &state.hidden,
                                 id,
@@ -544,8 +547,10 @@ mod init {
                                 next,
                                 order,
                                 cutoff,
-                                || parent_commit_time,
-                            );
+                                || Ok(parent_commit_time),
+                            ) {
+                                return Some(Err(error));
+                            }
                         }
                     }
                     Ok(Either::CommitRefIter(commit_iter)) => {
@@ -555,7 +560,7 @@ mod init {
                                 Ok(gix_object::commit::ref_iter::Token::Tree { .. }) => continue,
                                 Ok(gix_object::commit::ref_iter::Token::Parent { id }) => {
                                     parents.push(id);
-                                    insert_into_seen_and_queue(
+                                    if let Err(error) = insert_into_seen_and_queue(
                                         &mut state.seen,
                                         &state.hidden,
                                         id,
@@ -565,14 +570,19 @@ mod init {
                                         cutoff,
                                         || {
                                             let parent =
-                                                self.objects.find_commit_iter(id.as_ref(), &mut state.parents_buf).ok();
+                                                self.objects.find_commit(id.as_ref(), &mut state.parents_buf)?;
                                             parent
-                                                .and_then(|parent| {
-                                                    parent.committer().ok().map(|committer| committer.seconds())
+                                                .committer()
+                                                .or_raise(|| {
+                                                    corruption(format!(
+                                                        "Parent commit {id} could not be decoded during traversal"
+                                                    ))
                                                 })
-                                                .unwrap_or_default()
+                                                .map(|committer| committer.seconds())
                                         },
-                                    );
+                                    ) {
+                                        return Some(Err(error));
+                                    }
                                 }
                                 Ok(_unused_token) => break,
                                 Err(err) => {
@@ -608,7 +618,7 @@ mod init {
                 let mut parents: ParentIds = Default::default();
                 let generation;
 
-                match super::super::find(self.cache.as_ref(), &self.objects, &oid, &mut state.buf) {
+                match super::super::find_with_source(self.cache.as_ref(), &self.objects, &oid, &mut state.buf) {
                     Ok(Either::CachedCommit(commit)) => {
                         generation = Some(commit.generation());
                         if !collect_parents(&mut state.parent_ids, self.cache.as_ref(), commit.iter_parents()) {
@@ -689,19 +699,20 @@ mod init {
         queue: &mut CommitDateQueue,
         order: CommitTimeOrder,
         cutoff: Option<SecondsSinceUnixEpoch>,
-        get_parent_commit_time: impl FnOnce() -> gix_date::SecondsSinceUnixEpoch,
-    ) {
+        get_parent_commit_time: impl FnOnce() -> Result<gix_date::SecondsSinceUnixEpoch>,
+    ) -> Result<()> {
         if hidden.contains_key(&parent_id) {
-            return;
+            return Ok(());
         }
         if seen.insert(parent_id) && predicate(&parent_id) {
-            let parent_commit_time = get_parent_commit_time();
+            let parent_commit_time = get_parent_commit_time()?;
             let key = to_queue_key(parent_commit_time, order);
             match cutoff {
                 Some(cutoff_older_than) if parent_commit_time < cutoff_older_than => {}
                 Some(_) | None => queue.insert(key, parent_id),
             }
         }
+        Ok(())
     }
 }
 
