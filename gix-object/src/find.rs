@@ -8,6 +8,23 @@ pub trait Source {
     /// Find an object, retaining its bytes in `buffer`, or return `None` for a missing object.
     fn try_find<'a>(&self, id: &gix_hash::oid, buffer: &'a mut Buffer) -> Result<Option<crate::Data<'a>>>;
 
+    /// Find a blob with the same empty-object, decoding and kind semantics as [`crate::FindExt`].
+    fn find_blob<'a>(&self, id: &gix_hash::oid, buffer: &'a mut Buffer) -> Result<crate::BlobRef<'a>> {
+        if id == gix_hash::ObjectId::empty_blob(id.kind()) {
+            return Ok(crate::BlobRef { data: &[] });
+        }
+        self.try_find(id, buffer)?
+            .ok_or_else(|| not_found(id))
+            .and_then(|data| {
+                data.decode()
+                    .or_raise(|| gix_error::message!("Could not decode object at {id}").corrupted())
+            })
+            .and_then(|object| match object {
+                crate::ObjectRef::Blob(blob) => Ok(blob),
+                object => Err(wrong_kind(id, object.kind(), crate::Kind::Blob)),
+            })
+    }
+
     /// Find a commit with the same missing-object and kind diagnostics as [`crate::FindExt`].
     fn find_commit<'a>(&self, id: &gix_hash::oid, buffer: &'a mut Buffer) -> Result<crate::CommitRefIter<'a>> {
         self.try_find(id, buffer)?

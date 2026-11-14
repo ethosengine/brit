@@ -2,7 +2,6 @@ use std::path::Path;
 
 use bstr::{BStr, ByteSlice};
 use gix_glob::pattern::Case;
-use gix_object::FindExt;
 
 use crate::{
     PathIdMapping,
@@ -185,9 +184,9 @@ impl Ignore {
         root: &Path,
         dir: &Path,
         rela_dir: &BStr,
-        buf: &mut Vec<u8>,
+        buf: &mut gix_object::find::Buffer,
         id_mappings: &[PathIdMapping],
-        objects: &dyn gix_object::Find,
+        objects: &dyn gix_object::find::Source,
         case: Case,
         stats: &mut Statistics,
     ) -> std::io::Result<()> {
@@ -225,7 +224,7 @@ impl Ignore {
                     dir.join(".gitignore"),
                     false,
                     Some(root),
-                    buf,
+                    buf.owned(),
                     self.parse,
                 )?;
                 stats.pattern_files += usize::from(added);

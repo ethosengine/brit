@@ -994,3 +994,127 @@ fn annotated_tag(reduced: bool) -> Result<()> {
 fn actual_reduced_trust_large_annotated_tag() -> Result<()> {
     annotated_tag(true)
 }
+
+fn large_attributes_and_excludes(reduced: bool) -> Result<()> {
+    let repo = TestRepo::new("memory-attributes")?;
+    let root = repo.path();
+    repo.commit_file("selected", "unchanged\n")?;
+    for name in [".gitattributes", ".gitignore"] {
+        let mut file = BufWriter::new(fs::File::create(root.join(name))?);
+        for n in 0..200_000 {
+            write!(file, "unused-{n:06}-{}", "x".repeat(96))?;
+            if name == ".gitattributes" {
+                write!(file, " custom=value")?;
+            }
+            writeln!(file)?;
+        }
+        if name == ".gitattributes" {
+            writeln!(file, "selected text\nselected -text custom=last")?;
+        } else {
+            writeln!(file, "*.tmp\n!keep.tmp")?;
+        }
+        file.flush()?;
+        ensure!(fs::metadata(root.join(name))?.len() > 20 * 1024 * 1024);
+    }
+    git(root, &["add", ".gitattributes", ".gitignore"])?;
+    git(root, &["commit", "-qm", "large pattern metadata"])?;
+    git(root, &["update-index", "--skip-worktree", ".gitignore"])?;
+    let head = git(root, &["rev-parse", "HEAD"])?;
+    let index = fs::read(root.join(".git/index"))?;
+    let expected = root.join(".git/expected-excludes");
+    output_file(
+        oracle(root),
+        &["check-ignore", "-nv", "discard.tmp", "keep.tmp", "plain"],
+        &expected,
+    )?;
+    let attrs = git(root, &["check-attr", "--all", "selected"])?;
+    ensure!(
+        attrs == b"selected: text: unset\nselected: custom: last\n",
+        "stock Git must establish the selected attribute values"
+    );
+    reduced_trust(root, reduced)?;
+    let output = root.join(".git/pattern-output");
+    for packed in [false, true] {
+        if packed {
+            git(root, &["-c", "pack.threads=1", "repack", "-ad"])?;
+        }
+        for from_object in [false, true] {
+            if from_object {
+                fs::rename(root.join(".gitattributes"), root.join(".git/saved-attributes"))?;
+                fs::rename(root.join(".gitignore"), root.join(".git/saved-ignore"))?;
+                output_file(
+                    oracle(root),
+                    &["check-ignore", "-nv", "discard.tmp", "keep.tmp", "plain"],
+                    &expected,
+                )?;
+            }
+            for limit in [None, Some("1073741824"), Some("16777216"), Some("1024")] {
+                brit(root, &["attributes", "query", "selected"], &output, limit)?;
+                let attributes = fs::read_to_string(&output)?;
+                let mut assignments: Vec<_> = attributes
+                    .lines()
+                    .map(|line| line.rsplit('\t').next().expect("assignment"))
+                    .collect();
+                assignments.sort_unstable();
+                ensure!(
+                    assignments == ["-text", "custom=last"],
+                    "selected attribute values differ: {attributes}"
+                );
+                brit(
+                    root,
+                    &[
+                        "exclude",
+                        "query",
+                        "--show-ignore-patterns",
+                        "discard.tmp",
+                        "keep.tmp",
+                        "plain",
+                    ],
+                    &output,
+                    limit,
+                )?;
+                let actual = fs::read_to_string(&output)?;
+                let root_prefix = format!("{}/", root.display());
+                let actual = actual
+                    .lines()
+                    .map(|line| {
+                        let line = line.strip_prefix(&root_prefix).unwrap_or(line);
+                        line.strip_prefix("./").unwrap_or(line)
+                    })
+                    .collect::<Vec<_>>()
+                    .join("\n")
+                    + "\n";
+                ensure!(
+                    fs::read_to_string(&expected)? == actual,
+                    "exclude output differs: {actual:?}"
+                );
+            }
+            if from_object {
+                fs::rename(root.join(".git/saved-attributes"), root.join(".gitattributes"))?;
+                fs::rename(root.join(".git/saved-ignore"), root.join(".gitignore"))?;
+            }
+        }
+    }
+    ensure!(git(root, &["rev-parse", "HEAD"])? == head);
+    ensure!(fs::read(root.join(".git/index"))? == index);
+    ensure!(fs::read(root.join("selected"))? == b"unchanged\n");
+    ensure!(git(root, &["hash-object", ".gitignore"])? == git(root, &["rev-parse", "HEAD:.gitignore"])?);
+    git(
+        root,
+        &["diff", "--exit-code", "--", ".gitattributes", ".gitignore", "selected"],
+    )?;
+    Ok(())
+}
+
+#[test]
+#[ignore = "resource qualification: requires BRIT_BIN and delegated cgroup"]
+fn attributes_and_excludes_over_twenty_mib() -> Result<()> {
+    large_attributes_and_excludes(false)
+}
+
+#[cfg(target_os = "linux")]
+#[test]
+#[ignore = "resource qualification: requires BRIT_BIN, delegated cgroup and chown authority"]
+fn actual_reduced_trust_large_attributes_and_excludes() -> Result<()> {
+    large_attributes_and_excludes(true)
+}

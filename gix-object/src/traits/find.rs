@@ -76,7 +76,7 @@ mod _impls {
 
     impl<T> crate::Find for &T
     where
-        T: crate::Find,
+        T: crate::Find + ?Sized,
     {
         fn try_find<'a>(&self, id: &oid, buffer: &'a mut Vec<u8>) -> Result<Option<Data<'a>>> {
             (*self).try_find(id, buffer)

@@ -47,8 +47,9 @@ impl AttributeStack<'_> {
         relative: impl AsRef<std::path::Path>,
         mode: Option<gix_index::entry::Mode>,
     ) -> Result<gix_worktree::stack::Platform<'_>> {
+        let source = crate::object::bounded::Source::deferred(self.repo);
         self.inner
-            .at_path(relative.as_ref(), mode, &self.repo.objects)
+            .at_path_with_source(relative.as_ref(), mode, &source)
             .or_error()
     }
 
@@ -61,6 +62,7 @@ impl AttributeStack<'_> {
         relative: impl ToNormalPathComponents,
         mode: Option<gix_index::entry::Mode>,
     ) -> Result<gix_worktree::stack::Platform<'_>> {
-        self.inner.at_path(relative, mode, &self.repo.objects).or_error()
+        let source = crate::object::bounded::Source::deferred(self.repo);
+        self.inner.at_path_with_source(relative, mode, &source).or_error()
     }
 }

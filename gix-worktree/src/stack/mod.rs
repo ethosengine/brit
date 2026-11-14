@@ -78,7 +78,7 @@ impl Stack {
             state,
             reject_terminal_symlinks: false,
             case,
-            buf,
+            buf: buf.into(),
             id_mappings,
             statistics: Statistics::default(),
         }
@@ -129,6 +129,17 @@ impl Stack {
         mode: Option<gix_index::entry::Mode>,
         objects: &dyn gix_object::Find,
     ) -> std::io::Result<Platform<'_>> {
+        self.at_path_with_source(relative, mode, &objects)
+    }
+
+    /// Like [`Self::at_path()`], with object storage that can be immutable and disk-backed.
+    /// Matching and source precedence are unchanged; parsed input storage is reclaimed promptly.
+    pub fn at_path_with_source(
+        &mut self,
+        relative: impl ToNormalPathComponents,
+        mode: Option<gix_index::entry::Mode>,
+        objects: &dyn gix_object::find::Source,
+    ) -> std::io::Result<Platform<'_>> {
         self.statistics.platforms += 1;
         let mut delegate = StackDelegate {
             state: &mut self.state,
@@ -140,7 +151,9 @@ impl Stack {
             reject_temrinal_symlinks: self.reject_terminal_symlinks,
             statistics: &mut self.statistics,
         };
-        self.stack.make_relative_path_current(relative, &mut delegate)?;
+        let result = self.stack.make_relative_path_current(relative, &mut delegate);
+        self.buf.clear();
+        result?;
         let relative_path = gix_path::to_unix_separators_on_windows(
             gix_path::into_bstr(self.stack.current_relative()).map_err(std::io::Error::other)?,
         );

@@ -2,7 +2,6 @@ use std::path::{Path, PathBuf};
 
 use bstr::{BStr, ByteSlice};
 use gix_glob::pattern::Case;
-use gix_object::FindExt;
 
 use crate::{
     PathIdMapping, Stack,
@@ -89,9 +88,9 @@ impl Attributes {
         root: &Path,
         dir: &Path,
         rela_dir: &BStr,
-        buf: &mut Vec<u8>,
+        buf: &mut gix_object::find::Buffer,
         id_mappings: &[PathIdMapping],
-        objects: &dyn gix_object::Find,
+        objects: &dyn gix_object::find::Source,
         stats: &mut Statistics,
     ) -> std::io::Result<()> {
         let attr_path_relative = gix_path::join_bstr_unix_pathsep(rela_dir, ".gitattributes");
@@ -124,7 +123,7 @@ impl Attributes {
                         dir.join(".gitattributes"),
                         no_follow_symlinks,
                         Some(root),
-                        buf,
+                        buf.owned(),
                         &mut self.collection,
                         read_macros_as_dir_is_root,
                     )?;
@@ -137,7 +136,7 @@ impl Attributes {
                     dir.join(".gitattributes"),
                     no_follow_symlinks,
                     Some(root),
-                    buf,
+                    buf.owned(),
                     &mut self.collection,
                     read_macros_as_dir_is_root,
                 )?;
@@ -175,7 +174,7 @@ impl Attributes {
                 info_attr,
                 true,
                 None,
-                buf,
+                buf.owned(),
                 &mut self.collection,
                 true, /* read macros */
             )?;

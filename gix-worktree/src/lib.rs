@@ -53,7 +53,7 @@ pub struct Stack {
     /// Whether to reject terminal non-directory symlinks on Windows.
     reject_terminal_symlinks: bool,
     /// A buffer used when reading attribute or ignore files or their respective objects from the object database.
-    buf: Vec<u8>,
+    buf: gix_object::find::Buffer,
     /// If case folding should happen when looking up attributes or exclusions.
     case: gix_glob::pattern::Case,
     /// A lookup table for object ids to read from in some situations when looking up attributes or exclusions.

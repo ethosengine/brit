@@ -18,11 +18,11 @@ pub struct Statistics {
 
 pub(crate) struct StackDelegate<'a, 'find> {
     pub state: &'a mut State,
-    pub buf: &'a mut Vec<u8>,
+    pub buf: &'a mut gix_object::find::Buffer,
     #[cfg_attr(not(feature = "attributes"), allow(dead_code))]
     pub mode: Option<gix_index::entry::Mode>,
     pub id_mappings: &'a Vec<PathIdMapping>,
-    pub objects: &'find dyn gix_object::Find,
+    pub objects: &'find dyn gix_object::find::Source,
     pub case: gix_glob::pattern::Case,
     pub reject_temrinal_symlinks: bool,
     pub statistics: &'a mut super::Statistics,

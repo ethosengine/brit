@@ -138,3 +138,98 @@ mod baseline {
         }
     }
 }
+
+#[test]
+fn external_pattern_storage_is_reclaimed_after_parsing() -> TestResult {
+    use std::sync::{
+        Arc,
+        atomic::{AtomicUsize, Ordering},
+    };
+    struct Input {
+        bytes: &'static [u8],
+        live: Arc<AtomicUsize>,
+    }
+    impl AsRef<[u8]> for Input {
+        fn as_ref(&self) -> &[u8] {
+            self.bytes
+        }
+    }
+    impl Drop for Input {
+        fn drop(&mut self) {
+            self.live.fetch_sub(1, Ordering::Relaxed);
+        }
+    }
+    struct Source {
+        attributes: gix_hash::ObjectId,
+        live: Arc<AtomicUsize>,
+    }
+    impl gix_object::find::Source for Source {
+        fn try_find<'a>(
+            &self,
+            id: &gix_hash::oid,
+            buffer: &'a mut gix_object::find::Buffer,
+        ) -> gix_error::Result<Option<gix_object::Data<'a>>> {
+            let bytes = if id == self.attributes {
+                b"*.txt custom=yes\n".as_slice()
+            } else {
+                b"ignored.txt\n"
+            };
+            self.live.fetch_add(1, Ordering::Relaxed);
+            let data = buffer.set_external(Input {
+                bytes,
+                live: self.live.clone(),
+            });
+            Ok(Some(gix_object::Data::new(data, gix_object::Kind::Blob, id.kind())))
+        }
+    }
+    let root = gix_testtools::tempfile::TempDir::new()?;
+    let attributes = gix_hash::ObjectId::from_hex(b"1111111111111111111111111111111111111111")?;
+    let ignore = gix_hash::ObjectId::from_hex(b"2222222222222222222222222222222222222222")?;
+    let live = Arc::new(AtomicUsize::new(0));
+    let source = Source {
+        attributes,
+        live: live.clone(),
+    };
+    let state = gix_worktree::stack::State::AttributesAndIgnoreStack {
+        attributes: state::Attributes::new(
+            Default::default(),
+            None,
+            state::attributes::Source::IdMapping,
+            Default::default(),
+        ),
+        ignore: state::Ignore::new(
+            Default::default(),
+            Default::default(),
+            None,
+            state::ignore::Source::IdMapping,
+            Default::default(),
+        ),
+    };
+    let mut stack = gix_worktree::Stack::new(
+        root.path(),
+        state,
+        gix_glob::pattern::Case::Sensitive,
+        Vec::new(),
+        vec![(".gitattributes".into(), attributes), (".gitignore".into(), ignore)],
+    );
+    let mut matches = stack.attribute_matches();
+    let entry = stack.at_path_with_source("ignored.txt", None, &source)?;
+    assert!(entry.is_excluded());
+    assert!(entry.matching_attributes(&mut matches));
+    assert_eq!(
+        matches.iter().map(|m| m.assignment.to_string()).collect::<Vec<_>>(),
+        ["custom=yes"]
+    );
+    assert_eq!(
+        live.load(Ordering::Relaxed),
+        0,
+        "parsed patterns do not retain their input mappings"
+    );
+    assert!(
+        stack
+            .at_path("ignored.txt", None, &gix_object::find::Never::panic_on_access())?
+            .is_excluded(),
+        "the populated cache needs no further object reads"
+    );
+    Ok(())
+}
