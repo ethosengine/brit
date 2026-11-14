@@ -3652,6 +3652,21 @@ Private evidence: `bounded-memory/credentials-writer-*`. Strict affected gates
 pass. Adversarial helper lifetimes, aggregate scratch and final-source
 qualification remain open.
 
+### Noninteractive editor handoff
+
+`editor` passes paths to the configured child without reading their contents.
+The public fixture runs a Python editor that loads and hashes 64 MiB and
+256 MiB files, verifies exact paths containing spaces, and exercises success
+and exit 37 under default and one-byte object policies. Both hashes preserve
+HEAD, index and file bytes. One case per hash peaks at 283,443,200 B /
+282,955,776 B in 13.547 / 14.247 s, including the child, with zero OOM,
+survivors or identity changes. Binary:
+`ba453d60f3644cf9fad0d30c5fb50c12b2e649e260b3031e818e590431d8b93b`;
+private evidence: `bounded-memory/editor-*`. Strict affected gates pass.
+This qualifies the tested noninteractive handoff, not arbitrary editor
+programs or public-editor terminal/cancellation behavior. The latter remains
+distinct from the existing authoring editor supervision suite.
+
 ### Public-command audit in progress
 
 The command boundary is `src/plumbing/options/mod.rs` plus
