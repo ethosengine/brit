@@ -4098,6 +4098,31 @@ report reduced trust; the freshly created linked worktree and its Git directory
 report full trust. This distinction remains part of the two-device qualification.
 Evidence: `bounded-memory/monorepo-linked-fetch` and `monorepo-linked-commit`.
 
+The second device's read-only inspection reports 15 pack indexes now; 49 is the
+historical failure shape, not a manufactured fixture requirement. Its populated
+container cgroup has no delegated memory subtree. Its owner has requested a
+steward-created 1 GiB, swap-disabled worker; no peer processes or controller
+settings were changed. An address-space limit remains supplementary only.
+
+### Native HTTPS push with reach gates
+
+The tested source through `3193e47799a96ebd9750557a8ef687bef9fe0622` is published
+on `run-ci/bounded-memory-20261114` from a clean, separately owned checkout.
+Brit's native HTTPS push to GitHub passed with the checked-in reach hook,
+native readiness and exact-commit Rust-style evaluation enabled. Whole-group
+peak: 999,698,432 B in 170.771 s, zero OOM, survivors or executable changes.
+Binary SHA-256:
+`6dbb0a7ab6a328b138bd2208144c80a1aed1c82683f32795317bbe9573362665`;
+evidence: `bounded-memory/ci-branch-native-push`.
+
+This is successful branch transport after a green Brit reach hook, not final
+monorepo push/notes qualification or aggregate scratch proof. The existing CI
+workflow is running on that source; queued/running jobs are not acceptance.
+The in-progress replay metadata work is excluded. No main/dev landing,
+installed pin or release was changed. The branch's explicit first-push baseline
+was set through a recorded Git fallback because Brit configuration has no write
+operation; no hooks or trust settings were changed.
+
 ### Session-start CLI friction
 
 `brit add path` now accepts positional literal paths; `--` remains available for
@@ -4139,6 +4164,13 @@ writer coordination. The shared EPR owner has the missing lifecycle station:
 effective session executable and selected store readiness must connect compatible
 tool arrival to retained automatic feedback. Evidence remains in the existing
 private `bounded-memory/epr-feedback-*` files, not a second registry.
+
+The host's Brit-first guard still reports a feedback gap when it runs in the
+inherited environment against the shared legacy store. Correcting command-scoped
+selection does not repair a host hook's environment or authorize migration while
+other legacy writers are live. Treat compatible feedback capability and store
+readiness as prerequisites for contextual tool integration; broader consumer
+admission and that shared-store cutover remain with the EPR integration work.
 
 ### Public-command audit in progress
 
