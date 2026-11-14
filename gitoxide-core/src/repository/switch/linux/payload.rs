@@ -138,12 +138,21 @@ impl PartialEq for State {
 
 fn usage(root: &Path) -> Result<u64> {
     let mut size = 0u64;
-    for entry in fs::read_dir(root)? {
-        let metadata = entry?.metadata()?;
-        if metadata.is_file() {
-            size = size
-                .checked_add(metadata.len())
-                .context("journal scratch size overflow")?;
+    let mut pending = vec![root.to_owned()];
+    while let Some(directory) = pending.pop() {
+        stream::check(&gix::interrupt::IS_INTERRUPTED)?;
+        for entry in fs::read_dir(directory)? {
+            stream::check(&gix::interrupt::IS_INTERRUPTED)?;
+            let path = entry?.path();
+            let metadata = fs::symlink_metadata(&path)?;
+            if metadata.is_dir() {
+                pending.push(path);
+            } else {
+                ensure!(metadata.is_file(), "unsafe journal scratch member {}", path.display());
+                size = size
+                    .checked_add(metadata.len())
+                    .context("journal scratch size overflow")?;
+            }
         }
     }
     Ok(size)
@@ -336,4 +345,39 @@ pub(super) fn publish(
     );
     fs::rename(&staged, destination)?;
     sync_dir(staging)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn nested_publication_and_metadata_share_the_journal_limit() -> Result<()> {
+        let root = tempfile::tempdir()?;
+        fs::write(root.path().join("state.json"), [b'x'; 8])?;
+        let transition = root.path().join("transition-1");
+        fs::create_dir(&transition)?;
+        // Sparse bytes count just like holes in charged spools, without allocating 1 GiB.
+        fs::File::create(transition.join("publication"))?.set_len(SCRATCH_LIMIT - 8)?;
+        check_growth(root.path(), 0)?;
+        let error = check_growth(root.path(), 1).expect_err("nested content must participate in the same quota");
+        let limit = error.downcast_ref::<ScratchLimit>().context("typed scratch refusal")?;
+        assert_eq!((limit.live, limit.requested), (SCRATCH_LIMIT, 1));
+        assert_eq!(limit.path, root.path());
+        Ok(())
+    }
+
+    #[test]
+    fn inventory_refuses_foreign_links_without_following_or_removing_them() -> Result<()> {
+        let root = tempfile::tempdir()?;
+        let foreign = tempfile::tempdir()?;
+        fs::write(foreign.path().join("owned-elsewhere"), b"preserved")?;
+        let link = root.path().join("foreign");
+        std::os::unix::fs::symlink(foreign.path(), &link)?;
+        let error = check_growth(root.path(), 0).expect_err("a journal cannot borrow foreign directories");
+        assert!(error.to_string().contains("unsafe journal scratch member"));
+        assert!(fs::symlink_metadata(link)?.file_type().is_symlink());
+        assert_eq!(fs::read(foreign.path().join("owned-elsewhere"))?, b"preserved");
+        Ok(())
+    }
 }
