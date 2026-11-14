@@ -14,6 +14,31 @@ fn fixture_dir() -> Result<PathBuf> {
     fixture("make_repo_for_topo.sh")
 }
 
+struct MappedSource<'a> {
+    odb: &'a gix_odb::Handle,
+    budget: std::sync::Arc<gix_utils::stream::Budget>,
+}
+
+impl topo::source::Source for MappedSource<'_> {
+    fn find_commit<'a>(
+        &self,
+        id: &oid,
+        buffer: &'a mut topo::source::Buffer,
+    ) -> gix_error::Result<gix_object::CommitRefIter<'a>> {
+        use gix_error::ResultExt;
+        use gix_object::FindStream;
+        buffer.clear();
+        let (kind, bytes) = self
+            .odb
+            .find_stream(id, &self.budget, &std::sync::atomic::AtomicBool::new(false))?;
+        assert_eq!(kind, gix_object::Kind::Commit);
+        Ok(gix_object::CommitRefIter::from_bytes(
+            buffer.set_external(bytes.into_mapped().or_error()?),
+            id.kind(),
+        ))
+    }
+}
+
 /// Run a topo traversal with both commit-graph enabled and disabled to ensure consistency.
 fn traverse_both(
     tips: impl IntoIterator<Item = ObjectId> + Clone,
@@ -33,7 +58,7 @@ fn traverse_both(
 
     // With commit graph
     let graph = commit_graph(odb.store_ref());
-    let with_graph: Vec<_> = topo::Builder::from_iters(odb, tips, Some(ends))
+    let with_graph: Vec<_> = topo::Builder::from_iters(odb, tips.clone(), Some(ends.clone()))
         .sorting(sorting)
         .with_commit_graph(graph)
         .parents(parents)
@@ -45,6 +70,30 @@ fn traverse_both(
         without_graph, with_graph,
         "results must be consistent with and without commit-graph"
     );
+    let scratch = gix_testtools::tempfile::tempdir()?;
+    let budget = gix_utils::stream::Budget::new(scratch.path())?;
+    for graph in [None, commit_graph(odb.store_ref())] {
+        let mapped = topo::Builder::from_iters(
+            MappedSource {
+                odb,
+                budget: budget.clone(),
+            },
+            tips.clone(),
+            Some(ends.clone()),
+        )
+        .sorting(sorting)
+        .with_commit_graph(graph)
+        .parents(parents)
+        .build()?
+        .map(|result| result.map(|info| info.id))
+        .collect::<std::result::Result<Vec<_>, _>>()?;
+        assert_eq!(
+            mapped, without_graph,
+            "mapped storage preserves ordering and parent selection"
+        );
+        assert_eq!(budget.usage().0, 0, "completed traversal releases every mapping");
+    }
+    assert!(budget.usage().1 > 0, "the mapped path must run");
     Ok(with_graph)
 }
 

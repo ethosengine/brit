@@ -4,8 +4,11 @@ use gix_revwalk::PriorityQueue;
 use smallvec::SmallVec;
 
 use crate::commit::{
-    Either, Info, Parents, Topo, find,
-    topo::{Sorting, WalkFlags},
+    Either, Info, Parents, Topo,
+    topo::{
+        Sorting, WalkFlags,
+        source::{Buffer, Source, find},
+    },
 };
 
 pub(in crate::commit) type GenAndCommitTime = (u32, i64);
@@ -59,7 +62,7 @@ impl Queue {
 
 impl<Find, Predicate> Topo<Find, Predicate>
 where
-    Find: gix_object::Find,
+    Find: Source,
 {
     pub(super) fn compute_indegrees_to_depth(&mut self, gen_cutoff: u32) -> Result {
         while let Some(((generation, _), _)) = self.indegree_queue.peek() {
@@ -226,7 +229,7 @@ where
 
 impl<Find, Predicate> Iterator for Topo<Find, Predicate>
 where
-    Find: gix_object::Find,
+    Find: Source,
     Predicate: FnMut(&oid) -> bool,
 {
     type Item = Result<Info>;
@@ -247,16 +250,16 @@ where
 
 fn collect_parents<Find>(
     cache: &mut Option<gix_commitgraph::Graph>,
-    f: Find,
+    f: &Find,
     id: &oid,
     first_only: bool,
-    buf: &mut Vec<u8>,
+    buf: &mut Buffer,
 ) -> Result<SmallVec<[(ObjectId, GenAndCommitTime); 1]>>
 where
-    Find: gix_object::Find,
+    Find: Source,
 {
     let mut parents = SmallVec::<[(ObjectId, GenAndCommitTime); 1]>::new();
-    match find(cache.as_ref(), &f, id, buf)? {
+    match find(cache.as_ref(), f, id, buf)? {
         Either::CommitRefIter(c) => {
             for token in c {
                 use gix_object::commit::ref_iter::Token as T;
@@ -277,7 +280,7 @@ where
             // Need to check the cache again. That a commit is not in the cache
             // doesn't mean a parent is not.
             for (id, gen_time) in parents.iter_mut() {
-                let commit = find(cache.as_ref(), &f, id, buf)?;
+                let commit = find(cache.as_ref(), f, id, buf)?;
                 *gen_time = gen_and_commit_time(commit)?;
             }
         }

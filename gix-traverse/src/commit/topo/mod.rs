@@ -54,4 +54,6 @@ pub enum Sorting {
 mod init;
 pub use init::Builder;
 
+pub mod source;
+
 pub(super) mod iter;

@@ -143,6 +143,90 @@ fn three_sided_sixty_four_mib_object_merge() -> Result<()> {
     compare_merge(64 * 1024 * 1024)
 }
 
+#[cfg(unix)]
+fn external_driver(size: usize) -> Result<()> {
+    use std::process::{Command, Stdio};
+
+    let repo = fixture(size)?;
+    let root = repo.path();
+    let expected = root.join(".git/expected-merge");
+    let mut oracle = gix_testtools::git_command(root);
+    let status = oracle
+        .args(["merge-file", "-p", "ours", "base", "theirs"])
+        .stdout(Stdio::from(fs::File::create(&expected)?))
+        .status()?;
+    ensure!(status.success(), "Git merge oracle");
+    let expected_id = git(root, &["hash-object", expected.to_str().expect("fixture path")])?;
+    let head = git(root, &["rev-parse", "HEAD"])?;
+    let index = fs::read(root.join(".git/index"))?;
+    let inputs = git(root, &["hash-object", "base", "ours", "theirs"])?;
+    // Object-only merges read index attributes; info attributes also apply without a worktree root.
+    fs::write(root.join(".git/info/attributes"), b"* merge=fixture\n")?;
+    fs::write(
+        root.join("driver.sh"),
+        b"printf 'called\\n' >> .git/driver-ran\nexec git merge-file \"$1\" \"$2\" \"$3\"\n",
+    )?;
+    git(root, &["config", "merge.fixture.driver", "sh driver.sh %A %O %B"])?;
+    let mut calls = 0;
+    for packed in [false, true] {
+        if packed {
+            git(root, &["-c", "pack.threads=1", "repack", "-ad"])?;
+        }
+        for limit in ["1073741824", "16777216"] {
+            eprintln!("external merge size={size}, packed={packed}, limit={limit}");
+            let output_path = root.join(".git/actual-merge");
+            let mut command = Command::new(brit_bin().expect("built Brit"));
+            gix_testtools::configure_git_environment(&mut command, root);
+            let output = command
+                .current_dir(root)
+                .args([
+                    "-c",
+                    &format!("gitoxide.objects.allocLimit={limit}"),
+                    "merge",
+                    "file",
+                    "HEAD:ours",
+                    "HEAD:base",
+                    "HEAD:theirs",
+                ])
+                .stdout(Stdio::from(fs::File::create(&output_path)?))
+                .output()?;
+            ensure!(
+                output.status.success(),
+                "external merge: {}",
+                String::from_utf8_lossy(&output.stderr)
+            );
+            calls += 1;
+            ensure!(
+                fs::read_to_string(root.join(".git/driver-ran"))?.lines().count() == calls,
+                "the configured external driver must actually run"
+            );
+            ensure!(
+                git(root, &["hash-object", output_path.to_str().expect("fixture path")])? == expected_id,
+                "external merge output matches Git"
+            );
+            ensure!(
+                git(root, &["rev-parse", "HEAD"])? == head
+                    && fs::read(root.join(".git/index"))? == index
+                    && git(root, &["hash-object", "base", "ours", "theirs"])? == inputs,
+                "external merge preserves repository and input files"
+            );
+        }
+    }
+    Ok(())
+}
+
+#[cfg(unix)]
+#[test]
+fn external_driver_twenty_mib() -> Result<()> {
+    external_driver(20 * 1024 * 1024)
+}
+
+#[cfg(unix)]
+#[test]
+fn external_driver_sixty_four_mib() -> Result<()> {
+    external_driver(64 * 1024 * 1024)
+}
+
 #[cfg(target_os = "linux")]
 #[test]
 #[ignore = "requires chown authority: qualification runs this explicitly"]

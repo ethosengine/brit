@@ -3095,6 +3095,48 @@ Private receipts remain in `bounded-memory/pack-*`. Aggregate scratch telemetry,
 final committed-source qualification and the remaining command audit stay open;
 these memory receipts do not establish full acceptance.
 
+### Large commit metadata and external merge qualification
+
+A 20 MiB commit message made `log` refuse at the explicit 16 MiB allocation
+setting and at actual reduced trust. The topological walker now permits
+operation-owned immutable byte storage while retaining the same commit parser,
+queues, graph-cache behavior, ordering and parent selection. Ordinary object
+stores keep their existing buffered implementation. The CLI selects the shared
+verified stream/mapping above its effective allocation policy and releases each
+rendered commit; it no longer clones the title or loads an unrelated index.
+Symbolic references use the existing reference-following routine before tag
+peeling, so they do not force a buffered terminal commit read.
+
+The initial repaired two-case matrix passes both hashes, loose/packed objects,
+default/explicit allocation settings and actual reduced trust: 69,386,240 B
+in 8.050 s (SHA-1) and 49,311,744 B in 52.452 s (SHA-256). The final SHA-1
+matrix adds a symbolic-reference chain and passes at 69,406,720 B in 10.947 s.
+The final diagnostic build also rejects a large blob at HEAD using its header,
+naming the object without an allocation-limit error and preserving HEAD/index.
+Both complete cases pass again at 54,587,392 B in 11.414 s and 65,085,440 B
+in 75.954 s. The executable SHA-256 is
+`a10b284b0764d72106b0f359edb7c19f96e34625bc7ed48167627c5d13341314`;
+receipts are `commit-metadata-diagnostics-sha1` and `-sha256`. All 42 native
+traversal checks pass per hash, the four public log feedback checks pass, and
+strict affected-crate Clippy passes.
+Every successful worker has zero OOM kills, surviving children and executable
+identity changes. Native traversal fixtures compare mapped and buffered input
+with and without commit graphs, including date/topological ordering and
+first/all-parent selection. Private receipts are `bounded-memory/log-*` and
+`commit-metadata-*`; aggregate scratch telemetry and complete history metadata
+qualification remain open.
+
+External merge drivers required no algorithm change for the declared three-sided
+20/64 MiB fixtures. A real Git merge-file child runs for every loose/packed,
+1 GiB/16 MiB allocation case; an invocation marker prevents accidentally
+qualifying the builtin driver. Output hashes match Git and HEAD, index and input
+files remain unchanged. Both hashes pass under the whole-group limit:
+749,256,704 B in 25.553 s and 748,777,472 B in 83.258 s, zero OOM or survivors.
+The fixture uses repository info attributes because object-only merges do not
+read untracked worktree attributes. The failed initial setup remains private
+evidence, not acceptance. External temporary-file accounting and interruption
+still belong to the open scratch/recovery qualification.
+
 ### Public-command audit in progress
 
 The command boundary is `src/plumbing/options/mod.rs` plus
@@ -3102,18 +3144,25 @@ The command boundary is `src/plumbing/options/mod.rs` plus
 coverage in the existing readiness document, **not final classification**.
 Every open row must finish qualified, traced/tested unaffected, or already
 unsupported independently of this effort. No open row is accepted as deferred.
+The candidate's existing `--cli-surface-json` projection enumerates 129
+non-help parser leaves for `max-pure`, plus default command modes and aliases.
+Its private capture is `bounded-memory/public-surface.json`; the projection
+explicitly does not attest behavior or working-tree bytes.
 
 | Public command family | Observed path / remaining proof |
 | --- | --- |
 | `diff`, `cat`, `add`, `restore`, `archive` | Shared readers repaired as above; large converted archive and clean/status fixtures pass; pinned diff, larger aggregate selections and remaining fault cases stay open. `diff file` and diff-format reads now use the streamed/mapped shared conversion path and pass the added 20/64/256 MiB matrix. Other comparison-cache consumers remain open. |
 | `status`, `is-clean`, `is-changed`, `index`, `dirwalk`, `clean` | Hash-only status paths stream ordinary files; filtered status and a 200,000-entry index crossing 16 MiB are measured. Other metadata, dirwalk and clean paths still need complete tracing. |
 | `worktree`, `clone` checkout | Existing bounded checkout, OFS/REF delta and filter machinery retained. Whole-cgroup 64/256 MiB worktree checkout/recovery passes; 64/256 MiB local clone/fetch/push also passes; other protocols and reduced-trust transfer paths remain open. |
-| `switch`, `pull`, `rebase`, `merge`, `commit` | Switch/pull raw recovery payloads and streamed dirty checks are repaired and measured at 20/64/256 MiB. Replay working-file journals now use raw payloads and retained-copy capture streams, with 20/64 MiB public cases passing; 64 MiB conflict/abort and preserved large edits also pass after raw-custody repair; interrupted conflict handoff preserves exact child authority; 64 MiB authored-object retention and 20 MiB edit-scope continuation/abort pass after streamed custody fixes. Journal metadata remains open. Three-sided 64 MiB filesystem and object-backed file/tree/commit merge fixtures pass, with bounded rename inputs and recursive-base conformance. External merge drivers, large journals and resource-bound recovery/death fixtures remain open. |
-| `blame`, `log`, `revision`, `merge-base`, `tree` | Blame initial/history blobs, rename similarity and rendering are repaired and measured, including actual reduced trust and a million unique lines; large history metadata remains open. Ordinary log traverses commits without reading blobs; path-filtered log was already unsupported. Tree listing streams output and uses headers for sizes; its traversal metadata remains to qualify. |
+| `switch`, `pull`, `rebase`, `merge`, `commit` | Switch/pull raw recovery payloads and streamed dirty checks are repaired and measured at 20/64/256 MiB. Replay working-file journals now use raw payloads and retained-copy capture streams, with 20/64 MiB public cases passing; 64 MiB conflict/abort and preserved large edits also pass after raw-custody repair; interrupted conflict handoff preserves exact child authority; 64 MiB authored-object retention and 20 MiB edit-scope continuation/abort pass after streamed custody fixes. Journal metadata remains open. Three-sided 64 MiB filesystem and object-backed file/tree/commit merge fixtures pass, with bounded rename inputs and recursive-base conformance. External Git merge-file drivers pass 20/64 MiB in both hashes with unchanged inputs; external scratch/cancellation, large journals and resource-bound recovery/death fixtures remain open. |
+| `blame`, `log`, `revision`, `merge-base`, `tree` | Blame initial/history blobs, rename similarity and rendering are repaired and measured, including actual reduced trust and a million unique lines; large history metadata remains open. Ordinary log traverses commits without reading blobs or the index; 20 MiB commit metadata now uses mapped storage above policy and passes both hashes and actual reduced trust. Path-filtered log was already unsupported. Tree listing streams output and uses headers for sizes; its traversal metadata remains to qualify. |
 | `fetch`, `push`, `odb`, `fsck`, `verify`, `commit-graph` | Pack decode diagnostics improved; 64/256 MiB local transfer passes without worker/cache changes. Loose blob verification streams; both packed verification algorithms now use bounded storage above configured allocation limits. All decode modes pass 20/64/256 MiB explicit-limit cases in both hashes, including 64 MiB OFS/REF histories, and actual reduced-trust 20/64 MiB cases. ODB inspection, connectivity and pack create/index/explode pass in both hashes; the SHA-256 writer now uses the repository hash format. Additional protocols and large metadata remain open. |
 | `branch`, `tag`, `remote`, `submodule`, `config`, `config-tree`, `attributes`, `exclude`, `mailmap` | Large config/packed-ref fixtures pass in both hashes and actual reduced trust. Mailmap object reads/output and annotated-tag reads are repaired and measured as above. Remote/submodule/path metadata and helper dispatch remain open. |
 | `credential`, `env`, `editor`, `completions`, `free`, `corpus`, `tix` | Applicable metadata/output/owned-child audit remains open. Existing unsupported behavior cannot be relabeled a memory success. |
 | `snapshot`, `build`, `run`, `graph`, `affected`, `plan`, `fingerprint`, `baseline`, `integrate`, `context` | Snapshot seal/verify/export/restore are measured on 20/64 MiB, aggregate and reduced-trust fixtures; the existing per-object 64 MiB native limit is preserved. `build fingerprint` and SHA-1 `build plan` now release streamed inputs and pass the aggregate 3×256 MiB workload; SHA-256 fingerprinting passes, while revision plan/affected retain the independently reproduced pre-existing Rakia limitation described above. Capture and other first-party metadata/output paths remain open; arbitrary external tasks are outside a universal success guarantee, but owned children still count in measured workloads. |
+| `tix` | The compiled surface has 29 leaves covering browsing, operation history, enrichment, editing, replay and worktrunk. Their object readers, retained edit state and owned processes remain open; successful ordinary log or authoring checks do not qualify this separate surface. |
+| `credential`, `editor`, `env`, `completions`, help/version/surface output | Credential input/helper output and editor child lifetime need explicit qualification. Environment-path and parser-generated output do not read blob bodies, but their source trace and bounded fixture evidence still need recording before final classification. |
+| `free` metadata and transport helpers | Eighteen leaves include pack operations, mailmap verification, commit graphs, indexes, remote advertisement, discovery and ownership-derived trust. Pack round trips and actual trust probes are measured above; remaining metadata and transport helper coverage stays open. Optional corpus/query commands are absent from the candidate max-pure parser, not inferred successful. |
 
 Outstanding acceptance also includes broader reduced-trust command coverage,
 broader hash/alternate/replacement combinations beyond the expanded daily matrices, additional

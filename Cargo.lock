@@ -3944,6 +3944,7 @@ dependencies = [
  "gix-revwalk 0.37.1",
  "gix-testtools",
  "gix-traverse 0.63.1",
+ "gix-utils 0.5.2",
  "insta",
  "smallvec",
 ]

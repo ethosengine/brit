@@ -94,6 +94,97 @@ fn same_bytes(left: &Path, right: &Path) -> Result<()> {
     }
 }
 
+fn large_commit(reduced: bool) -> Result<()> {
+    let repo = TestRepo::new("memory-commit-metadata")?;
+    let root = repo.path();
+    let message = root.join(".git/message-input");
+    let mut file = BufWriter::new(fs::File::create(&message)?);
+    file.write_all(b"large governance decision\n\n")?;
+    let mut chunk = [b'x'; 65536];
+    chunk[65535] = b'\n';
+    for _ in 0..320 {
+        file.write_all(&chunk)?;
+    }
+    file.flush()?;
+    drop(file);
+    git(
+        root,
+        &[
+            "commit",
+            "--allow-empty",
+            "-q",
+            "-F",
+            message.to_str().expect("fixture path"),
+        ],
+    )?;
+    ensure!(
+        String::from_utf8(git(root, &["cat-file", "-s", "HEAD"])?)?
+            .trim()
+            .parse::<usize>()?
+            > 20 * 1024 * 1024
+    );
+    let head = git(root, &["rev-parse", "HEAD"])?;
+    let index = fs::read(root.join(".git/index"))?;
+    let expected = root.join(".git/expected-log");
+    output_file(
+        oracle(root),
+        &["log", "-n", "1", "--date-order", "--abbrev=8", "--format=%h %s"],
+        &expected,
+    )?;
+    reduced_trust(root, reduced)?;
+    for packed in [false, true] {
+        if packed {
+            git(root, &["-c", "pack.threads=1", "repack", "-ad"])?;
+        }
+        for limit in [None, Some("16777216")] {
+            let actual = root.join(".git/actual-log");
+            brit(root, &["log", "-n", "1"], &actual, limit)?;
+            same_bytes(&expected, &actual)?;
+            ensure!(git(root, &["rev-parse", "HEAD"])? == head && fs::read(root.join(".git/index"))? == index);
+        }
+    }
+    git(root, &["symbolic-ref", "refs/heads/alias", "refs/heads/main"])?;
+    git(root, &["symbolic-ref", "HEAD", "refs/heads/alias"])?;
+    let actual = root.join(".git/actual-symbolic-log");
+    brit(root, &["log", "-n", "1"], &actual, Some("16777216"))?;
+    same_bytes(&expected, &actual)?;
+    ensure!(git(root, &["rev-parse", "HEAD"])? == head && fs::read(root.join(".git/index"))? == index);
+    // A malformed HEAD naming a large blob must be rejected from its header,
+    // without misreporting an allocation limit while trying to read the body.
+    let blob = git(root, &["hash-object", "-w", message.to_str().expect("fixture path")])?;
+    let saved_head = fs::read(root.join(".git/HEAD"))?;
+    fs::write(root.join(".git/HEAD"), &blob)?;
+    let mut command = Command::new(brit_bin().expect("built Brit"));
+    gix_testtools::configure_git_environment(&mut command, root);
+    let rejected = command
+        .current_dir(root)
+        .args(["-c", "gitoxide.objects.allocLimit=16777216", "log", "-n", "1"])
+        .output()?;
+    let error = String::from_utf8_lossy(&rejected.stderr);
+    ensure!(
+        !rejected.status.success()
+            && error.contains("does not point to a commit")
+            && error.contains(std::str::from_utf8(&blob)?.trim())
+            && !error.contains("allocation limit"),
+        "header refusal: {error}"
+    );
+    ensure!(fs::read(root.join(".git/HEAD"))? == blob && fs::read(root.join(".git/index"))? == index);
+    fs::write(root.join(".git/HEAD"), saved_head)?;
+    Ok(())
+}
+
+#[test]
+fn commit_metadata_over_twenty_mib_preserves_log_title() -> Result<()> {
+    large_commit(false)
+}
+
+#[cfg(target_os = "linux")]
+#[test]
+#[ignore = "requires chown authority: qualification runs this explicitly"]
+fn actual_reduced_trust_large_commit_metadata() -> Result<()> {
+    large_commit(true)
+}
+
 #[test]
 fn config_over_sixteen_mib_preserves_values_and_formatting() -> Result<()> {
     config(false)

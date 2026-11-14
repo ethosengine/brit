@@ -6,8 +6,12 @@ use gix_hash::{ObjectId, oid};
 use gix_revwalk::{PriorityQueue, graph::IdMap};
 
 use crate::commit::{
-    Info, Parents, Topo, find,
-    topo::{Sorting, WalkFlags, iter::gen_and_commit_time},
+    Info, Parents, Topo,
+    topo::{
+        Sorting, WalkFlags,
+        iter::gen_and_commit_time,
+        source::{Source, find},
+    },
 };
 
 /// Builder for [`Topo`].
@@ -24,7 +28,7 @@ pub struct Builder<Find, Predicate> {
 
 impl<Find> Builder<Find, fn(&oid) -> bool>
 where
-    Find: gix_object::Find,
+    Find: Source,
 {
     /// Create a new `Builder` for a [`Topo`] that reads commits from a repository with `find`.
     /// starting at the `tips` and ending at the `ends`. Like `git rev-list
@@ -75,7 +79,7 @@ where
 
 impl<Find, Predicate> Builder<Find, Predicate>
 where
-    Find: gix_object::Find,
+    Find: Source,
     Predicate: FnMut(&oid) -> bool,
 {
     /// Add commits to start reading from.
@@ -132,7 +136,7 @@ where
             topo_queue: super::iter::Queue::new(self.sorting),
             parents: self.parents,
             min_gen: gix_commitgraph::GENERATION_NUMBER_INFINITY,
-            buf: vec![],
+            buf: Default::default(),
         };
 
         // Initial flags for the states of the tips and ends. All of them are

@@ -35,7 +35,7 @@ pub struct Topo<Find, Predicate> {
     topo_queue: topo::iter::Queue,
     parents: Parents,
     min_gen: u32,
-    buf: Vec<u8>,
+    buf: topo::source::Buffer,
 }
 
 pub mod topo;
