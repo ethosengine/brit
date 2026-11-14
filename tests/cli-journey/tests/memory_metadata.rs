@@ -1506,3 +1506,123 @@ fn describe_twenty_mib_metadata() -> Result<()> {
 fn describe_twenty_mib_metadata_reduced_trust() -> Result<()> {
     describe_metadata(20 * 1024 * 1024, true)
 }
+
+fn remote_refs_metadata(count: usize, reduced: bool) -> Result<()> {
+    use std::io::BufRead;
+
+    let source = TestRepo::new("memory-remote-source")?;
+    let source_root = source.path();
+    let id = source.head_id()?;
+    let packed_refs = source_root.join(".git/packed-refs");
+    let mut file = BufWriter::new(fs::File::create(&packed_refs)?);
+    writeln!(file, "# pack-refs with: peeled fully-peeled sorted")?;
+    let suffix = "x".repeat(180);
+    for namespace in ["heads", "tags"] {
+        for n in 0..count {
+            writeln!(file, "{id} refs/{namespace}/n{n:06}-{suffix}")?;
+        }
+    }
+    file.flush()?;
+    drop(file);
+    if count >= 40_000 {
+        ensure!(fs::metadata(&packed_refs)?.len() > 16 * 1024 * 1024);
+    }
+    let before = git(
+        source_root,
+        &["hash-object", packed_refs.to_str().expect("fixture path")],
+    )?;
+    let local = TestRepo::new("memory-remote-client")?;
+    let root = local.path();
+    let url = source_root.to_str().expect("fixture path");
+    git(root, &["remote", "add", "origin", url])?;
+    let head_before = fs::read(root.join(".git/HEAD"))?;
+    let index_before = fs::read(root.join(".git/index"))?;
+    let config_before = fs::read(root.join(".git/config"))?;
+    reduced_trust(root, reduced)?;
+    let expected = root.join(".git/expected-remote");
+    output_file(oracle(root), &["ls-remote", url], &expected)?;
+    // Reduced trust intentionally filters repository-configured remotes. An
+    // explicit operator URL/refspec exercises transport without relaxing trust.
+    let commands = if reduced {
+        let mut command = Command::new(brit_bin().expect("built Brit"));
+        gix_testtools::configure_git_environment(&mut command, root);
+        let refused = command.current_dir(root).args(["remote", "refs"]).output()?;
+        ensure!(!refused.status.success());
+        ensure!(String::from_utf8_lossy(&refused.stderr).contains("No configured remote"));
+        [
+            vec!["remote", "--name", url, "refs"],
+            vec!["free", "remote", "refs", url],
+            vec![
+                "remote",
+                "--name",
+                url,
+                "ref-map",
+                "--show-unmapped-remote-refs",
+                "refs/heads/*:refs/remotes/origin/*",
+            ],
+            vec!["--format", "json", "remote", "--name", url, "refs"],
+        ]
+    } else {
+        [
+            vec!["remote", "refs"],
+            vec!["free", "remote", "refs", url],
+            vec!["remote", "ref-map", "--show-unmapped-remote-refs"],
+            vec!["--format", "json", "remote", "refs"],
+        ]
+    };
+    for (command_index, args) in commands.iter().enumerate() {
+        let baseline = root.join(format!(".git/baseline-remote-{command_index}"));
+        brit(root, args, &baseline, Some("1073741824"))?;
+        if command_index < 2 {
+            let mut expected = std::io::BufReader::new(fs::File::open(&expected)?).lines();
+            let actual = std::io::BufReader::new(fs::File::open(&baseline)?).lines();
+            for line in actual {
+                let line = line?;
+                let mut fields = line.split_whitespace();
+                let object = fields.next().expect("object field");
+                let name = fields.next().expect("name field");
+                // Brit additionally prints HEAD's symbolic target; compare Git's
+                // advertised identity/name pair without hiding ordering or duplicates.
+                let want = expected.next().transpose()?.expect("expected reference");
+                ensure!(want == format!("{object}\t{name}"), "reference mismatch");
+            }
+            ensure!(expected.next().is_none(), "missing advertised references");
+        } else if command_index == 3 {
+            let json: serde_json::Value = serde_json::from_reader(fs::File::open(&baseline)?)?;
+            ensure!(json.as_array().expect("reference array").len() == count * 2 + 2);
+        }
+        for limit in [None, Some("16777216"), Some("1024")] {
+            let actual = root.join(".git/actual-remote");
+            brit(root, args, &actual, limit)?;
+            same_bytes(&baseline, &actual)?;
+        }
+    }
+    ensure!(fs::read(root.join(".git/HEAD"))? == head_before);
+    ensure!(fs::read(root.join(".git/index"))? == index_before);
+    ensure!(fs::read(root.join(".git/config"))? == config_before);
+    ensure!(
+        git(
+            source_root,
+            &["hash-object", packed_refs.to_str().expect("fixture path")]
+        )? == before
+    );
+    Ok(())
+}
+
+#[test]
+fn remote_reference_metadata_preserves_output_and_state() -> Result<()> {
+    remote_refs_metadata(32, false)
+}
+
+#[test]
+#[ignore = "large remote metadata: qualification runs this explicitly"]
+fn remote_reference_metadata_over_sixteen_mib() -> Result<()> {
+    remote_refs_metadata(40_000, false)
+}
+
+#[cfg(target_os = "linux")]
+#[test]
+#[ignore = "requires chown authority: qualification runs this explicitly"]
+fn remote_reference_metadata_reduced_trust() -> Result<()> {
+    remote_refs_metadata(40_000, true)
+}
