@@ -3617,6 +3617,27 @@ that fixture failure is retained under `svg-*`. Aggregate scratch telemetry,
 larger graph workloads, cancellation and final-source qualification remain
 open; this does not qualify unbounded graph layout.
 
+### Credential copy reclamation
+
+Credential decoding now copies recognized fields once and does not allocate
+values for ignored fields. The command releases serialized input after parsing
+and moves its context into the helper cascade, retaining only the URL needed
+for a missing-credential diagnostic. Protocol parsing and helper selection are
+unchanged. All 78 credential native/doc tests and strict affected gates pass.
+A synthetic 20 MiB password exercises `credential fill` from input and helper
+output, plus `approve` and `reject` helper input. Fields and outcomes agree with
+stock Git without logging protocol data; HEAD and index are unchanged.
+
+The original full-trust fixture peaks at 157,401,088 B. After reclamation, one
+case per hash peaks at 141,393,920 B / 143,691,776 B in 1.990 / 1.963 s, with
+zero OOM, survivors or identity changes. The binary is
+`ee286785f1b493c991a74f0af368a6400cdb32581caf882a9f441046f2e64a3f`;
+private evidence is `bounded-memory/credentials-copies-*`. Reduced trust,
+explicit-policy coverage, protocol-writer faults, adversarial helpers and
+aggregate scratch/final-source acceptance remain open. In particular, helper
+input closure must retain existing fallback behavior when correcting writer
+error handling; it is distinct from successful delivery of CLI output.
+
 ### Public-command audit in progress
 
 The command boundary is `src/plumbing/options/mod.rs` plus

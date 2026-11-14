@@ -114,9 +114,7 @@ pub mod decode {
                     it.next().and_then(|k| k.to_str().ok()),
                     it.next().map(ByteSlice::as_bstr),
                 ) {
-                    (Some(key), Some(value)) => {
-                        validate(key, value, options.protect_protocol).map(|_| (key, value.to_owned()))
-                    }
+                    (Some(key), Some(value)) => validate(key, value, options.protect_protocol).map(|_| (key, value)),
                     _ => Err(validation("Invalid format, expecting key=value")
                         .with_input(line)
                         .raise()),
@@ -141,13 +139,11 @@ pub mod decode {
                     "password_expiry_utc" => {
                         *password_expiry_utc = value.to_str().ok().and_then(|value| value.parse().ok());
                     }
-                    "url" => *url = Some(value),
-                    "path" => *path = Some(value),
-                    "wwwauth[]" => www_authenticate.push(value),
+                    "url" => *url = Some(value.into()),
+                    "path" => *path = Some(value.into()),
+                    "wwwauth[]" => www_authenticate.push(value.into()),
                     "quit" => {
-                        *quit = gix_config_value::Boolean::try_from(value.as_bstr())
-                            .ok()
-                            .map(Into::into);
+                        *quit = gix_config_value::Boolean::try_from(value).ok().map(Into::into);
                     }
                     _ => {}
                 }

@@ -82,20 +82,22 @@ pub(crate) mod function {
         let mut buf = Vec::<u8>::with_capacity(512);
         stdin.read_to_end(&mut buf).or_error()?;
         let ctx = Context::from_bytes(&buf, options)?;
+        drop(buf);
         if ctx.url.is_none() && (ctx.protocol.is_none() || ctx.host.is_none()) {
             bail!(validation(
                 "Either 'url' field or both 'protocol' and 'host' fields must be provided"
             ));
         }
-        let res = credentials(action, ctx.clone())?;
+        let missing_url = matches!(action, Action::Get).then(|| {
+            ctx.url
+                .clone()
+                .or_else(|| ctx.to_url())
+                .expect("URL is available either directly or via protocol+host which we checked for")
+        });
+        let res = credentials(action, ctx)?;
         match (action, res) {
             (Action::Get, None) => {
-                let ctx_for_error = ctx;
-                let url = ctx_for_error
-                    .url
-                    .clone()
-                    .or_else(|| ctx_for_error.to_url())
-                    .expect("URL is available either directly or via protocol+host which we checked for");
+                let url = missing_url.expect("get retains the error URL, not the credential context");
                 bail!("Credentials for {url:?} could not be obtained".unauthenticated());
             }
             (Action::Get, Some(mut ctx)) => {
