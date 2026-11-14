@@ -59,6 +59,73 @@ mod traverse {
     use crate::util::{hex_to_id, named_subrepo_opts};
 
     #[test]
+    fn shallow_boundary_read_errors_are_not_cached_history() -> TestResult {
+        for fault in ["missing", "compressed", "parents"] {
+            let fixture = gix_testtools::tempfile::tempdir()?;
+            for args in [
+                vec!["init", "-q", "--initial-branch=main"],
+                vec!["commit", "--allow-empty", "-qm", "initial"],
+                vec!["commit", "--allow-empty", "-qm", "boundary"],
+                vec!["commit", "--allow-empty", "-qm", "tip"],
+                vec!["commit-graph", "write", "--reachable"],
+            ] {
+                assert!(
+                    gix_testtools::git_command(fixture.path())
+                        .args(args)
+                        .status()?
+                        .success()
+                );
+            }
+            let repo = gix::open_opts(fixture.path(), gix::open::Options::isolated())?;
+            let head = repo.head_id()?.detach();
+            let boundary = repo.rev_parse_single("HEAD^")?.detach();
+            std::fs::write(repo.git_dir().join("shallow"), format!("{boundary}\n"))?;
+            let hex = boundary.to_string();
+            let object = repo.git_dir().join("objects").join(&hex[..2]).join(&hex[2..]);
+            match fault {
+                "missing" => std::fs::remove_file(object)?,
+                "compressed" => std::fs::write(object, b"not a compressed object")?,
+                "parents" => {
+                    use gix::objs::Write;
+                    let malformed = repo
+                        .objects
+                        .write_buf(
+                            gix::objs::Kind::Commit,
+                            format!("tree {}\nparent malformed\n", repo.head_tree_id()?).as_bytes(),
+                        )?
+                        .to_string();
+                    std::fs::copy(
+                        repo.git_dir()
+                            .join("objects")
+                            .join(&malformed[..2])
+                            .join(&malformed[2..]),
+                        object,
+                    )?;
+                }
+                _ => unreachable!(),
+            }
+            for cache in [false, true] {
+                for start in [head, boundary] {
+                    let mut walk = repo.rev_walk([start]).use_commit_graph(cache).all()?;
+                    let error = walk
+                        .by_ref()
+                        .find_map(|entry| entry.err())
+                        .expect("failed shallow-boundary read must survive the cache");
+                    assert!(
+                        format!("{error:?}").contains(&boundary.to_string()),
+                        "cache={cache}, fault={fault}: {error:?}"
+                    );
+                    assert!(
+                        walk.next().is_none(),
+                        "failed walks stop instead of resuming cached history"
+                    );
+                }
+            }
+        }
+        Ok(())
+    }
+
+    #[test]
     #[parallel]
     fn boundary_is_detected_triggering_no_error() -> TestResult {
         for sorting in [

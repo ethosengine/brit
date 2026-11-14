@@ -1,3 +1,4 @@
+use gix_error::ResultExt;
 use gix_hash::ObjectId;
 use gix_object::find::Source;
 use gix_traverse::commit::simple::CommitTimeOrder;
@@ -281,12 +282,14 @@ impl<'repo> Platform<'repo> {
                 .flatten())
         };
         let source = crate::object::bounded::Source::deferred(repo);
+        let filter_error = gix_parallel::OwnShared::new(gix_parallel::MutableOnDemand::new(None));
         Ok(revision::Walk {
             repo,
+            filter_error: filter_error.clone(),
             inner: Box::new(
                 gix_traverse::commit::Simple::filtered(tips, source.clone(), {
-                    // Note that specific shallow handling for commit-graphs isn't needed as these contain
-                    // all information there is, and exclude shallow parents to be structurally consistent.
+                    // Repository shallow boundaries remain authoritative even if the cache
+                    // was written before those boundaries were introduced.
                     let shallow_commits = repo.shallow_commits()?;
                     let mut grafted_parents_to_skip = Vec::new();
                     let mut buf = gix_object::find::Buffer::default();
@@ -300,14 +303,33 @@ impl<'repo> Platform<'repo> {
                         }
                         match shallow_commits.as_ref() {
                             Some(commits) => {
+                                if gix_parallel::get_ref(&filter_error).is_some() {
+                                    return false;
+                                }
                                 if let Ok(idx) = grafted_parents_to_skip.binary_search(&id) {
                                     grafted_parents_to_skip.remove(idx);
                                     return false;
                                 }
-                                if commits.binary_search(&id).is_ok()
-                                    && let Ok(commit) = source.find_commit(&id, &mut buf)
-                                {
-                                    grafted_parents_to_skip.extend(commit.parent_ids());
+                                if commits.binary_search(&id).is_ok() {
+                                    let result = source
+                                        .find_commit(&id, &mut buf)
+                                        .and_then(|commit| {
+                                            for token in commit {
+                                                match token? {
+                                                    gix_object::commit::ref_iter::Token::Tree { .. } => {}
+                                                    gix_object::commit::ref_iter::Token::Parent { id } => {
+                                                        grafted_parents_to_skip.push(id);
+                                                    }
+                                                    _ => break,
+                                                }
+                                            }
+                                            Ok(())
+                                        })
+                                        .or_raise(|| gix_error::message!("Could not read shallow boundary {id}"));
+                                    if let Err(error) = result {
+                                        *gix_parallel::get_mut(&filter_error) = Some(error);
+                                        return false;
+                                    }
                                     grafted_parents_to_skip.sort();
                                 }
                                 true
@@ -342,15 +364,25 @@ pub(crate) mod iter_impl {
         /// The owning repository.
         pub repo: &'repo crate::Repository,
         pub(crate) inner: Box<dyn Iterator<Item = Result<gix_traverse::commit::Info>> + 'repo>,
+        pub(crate) filter_error: gix_parallel::OwnShared<gix_parallel::MutableOnDemand<Option<crate::Error>>>,
     }
 
     impl<'repo> Iterator for Walk<'repo> {
         type Item = Result<super::Info<'repo>>;
 
         fn next(&mut self) -> Option<Self::Item> {
-            self.inner
-                .next()
-                .map(|res| res.map(|info| super::Info::new(info, self.repo)))
+            // A boolean pruning callback must not turn a failed shallow read into
+            // missing history, including when a cache avoids subsequent object reads.
+            let result = if gix_parallel::get_ref(&self.filter_error).is_some() {
+                None
+            } else {
+                self.inner.next()
+            };
+            if let Some(error) = gix_parallel::get_mut(&self.filter_error).take() {
+                self.inner = Box::new(std::iter::empty());
+                return Some(Err(error));
+            }
+            result.map(|res| res.map(|info| super::Info::new(info, self.repo)))
         }
     }
 }

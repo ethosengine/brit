@@ -250,6 +250,32 @@ fn large_commit_graph(reduced: bool) -> Result<()> {
             }
         }
         ensure!(fs::read(root.join(".git/objects/info/commit-graph"))? == graph);
+        fs::write(root.join(".git/shallow"), &head)?;
+        let visible = git(root, &["rev-list", "--date-order", "HEAD"])?;
+        let mut baseline = None;
+        for cache in ["core.commitGraph=true", "core.commitGraph=false"] {
+            for limit in [None, Some("16777216"), Some("1")] {
+                let actual = root.join(".git/actual-shallow");
+                brit(
+                    root,
+                    &["-c", cache, "revision", "list", "--long-hashes", "HEAD"],
+                    &actual,
+                    limit,
+                )?;
+                let bytes = fs::read(actual)?;
+                let mut ids = String::new();
+                for row in std::str::from_utf8(&bytes)?.lines() {
+                    ids.push_str(row.split_whitespace().next().expect("commit identity"));
+                    ids.push('\n');
+                }
+                ensure!(ids.as_bytes() == visible, "shallow visible history differs from Git");
+                ensure!(
+                    *baseline.get_or_insert_with(|| bytes.clone()) == bytes,
+                    "buffered/mapped or cached shallow output differs"
+                );
+            }
+        }
+        fs::remove_file(root.join(".git/shallow"))?;
     }
     ensure!(git(root, &["rev-parse", "HEAD"])? == head && fs::read(root.join(".git/index"))? == index);
     Ok(())
@@ -266,6 +292,44 @@ fn commit_graph_with_twenty_mib_commit() -> Result<()> {
 #[ignore = "resource qualification: requires BRIT_BIN and chown authority"]
 fn actual_reduced_trust_large_commit_graph() -> Result<()> {
     large_commit_graph(true)
+}
+
+#[test]
+#[ignore = "resource qualification: requires BRIT_BIN"]
+fn commit_graph_does_not_hide_failed_shallow_boundary() -> Result<()> {
+    for corrupt in [false, true] {
+        let repo = TestRepo::new("memory-shallow-failure")?;
+        let root = repo.path();
+        let boundary = repo.commit_file("tracked", "boundary\n")?;
+        let head = repo.commit_file("tracked", "tip\n")?;
+        let index = fs::read(root.join(".git/index"))?;
+        git(root, &["commit-graph", "write", "--reachable"])?;
+        fs::write(root.join(".git/shallow"), format!("{boundary}\n"))?;
+        let object = root.join(".git/objects").join(&boundary[..2]).join(&boundary[2..]);
+        if corrupt {
+            fs::write(object, b"invalid compressed object")?;
+        } else {
+            fs::remove_file(object)?;
+        }
+        for cache in ["core.commitGraph=true", "core.commitGraph=false"] {
+            let actual = root.join(".git/failed-shallow-output");
+            let error = brit(
+                root,
+                &["-c", cache, "revision", "list", "--long-hashes", "HEAD"],
+                &actual,
+                Some("1"),
+            )
+            .expect_err("failed boundary lookup must not become cached history");
+            let diagnostic = format!("{error:#}");
+            ensure!(
+                diagnostic.contains("Could not read shallow boundary") && diagnostic.contains(&boundary),
+                "{diagnostic}"
+            );
+        }
+        ensure!(git(root, &["rev-parse", "HEAD"])? == format!("{head}\n").as_bytes());
+        ensure!(fs::read(root.join(".git/index"))? == index && fs::read(root.join("tracked"))? == b"tip\n");
+    }
+    Ok(())
 }
 
 fn large_commit(reduced: bool) -> Result<()> {
