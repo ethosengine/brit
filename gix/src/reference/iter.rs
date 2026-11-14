@@ -5,7 +5,6 @@ use crate::error::Error;
 use gix_error::ResultExt;
 
 use gix_path::RelativePath;
-use gix_ref::file::ReferenceExt;
 
 use crate::Result;
 
@@ -110,11 +109,7 @@ impl<'r> Iterator for Iter<'_, 'r> {
         self.inner.next().map(|res| {
             let mut r = res?;
             if self.peel {
-                r.peel_to_id_packed(
-                    &self.repo.refs,
-                    &self.repo.objects,
-                    self.peel_with_packed.as_ref().map(|p| &***p),
-                )?;
+                super::peel_reference(&mut r, self.repo, self.peel_with_packed.as_ref().map(|p| &***p))?;
             }
             Ok(crate::Reference::from_ref(r, self.repo))
         })

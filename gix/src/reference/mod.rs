@@ -76,8 +76,7 @@ impl<'repo> Reference<'repo> {
     /// the chain of symbolic refs and annotated tags.
     #[deprecated = "Use `peel_to_id()` instead"]
     pub fn peel_to_id_in_place(&mut self) -> Result<Id<'repo>> {
-        let oid = self.inner.peel_to_id(&self.repo.refs, &self.repo.objects)?;
-        Ok(Id::from_id(oid, self.repo))
+        self.peel_to_id()
     }
 
     /// Follow all symbolic targets this reference might point to and peel all annotated tags
@@ -105,8 +104,8 @@ impl<'repo> Reference<'repo> {
     /// # Ok(()) }
     /// ```
     pub fn peel_to_id(&mut self) -> Result<Id<'repo>> {
-        let oid = self.inner.peel_to_id(&self.repo.refs, &self.repo.objects)?;
-        Ok(Id::from_id(oid, self.repo))
+        let packed = self.repo.refs.cached_packed_buffer()?;
+        self.peel_to_id_packed(packed.as_ref().map(|p| &***p))
     }
 
     /// Follow all symbolic targets this reference might point to and peel all annotated tags
@@ -116,10 +115,7 @@ impl<'repo> Reference<'repo> {
     /// the chain of symbolic refs and annotated tags.
     #[deprecated = "Use `peel_to_id_packed()` instead"]
     pub fn peel_to_id_in_place_packed(&mut self, packed: Option<&gix_ref::packed::Buffer>) -> Result<Id<'repo>> {
-        let oid = self
-            .inner
-            .peel_to_id_packed(&self.repo.refs, &self.repo.objects, packed)?;
-        Ok(Id::from_id(oid, self.repo))
+        self.peel_to_id_packed(packed)
     }
 
     /// Follow all symbolic targets this reference might point to and peel all annotated tags
@@ -131,9 +127,7 @@ impl<'repo> Reference<'repo> {
     /// Note that this method mutates `self` in place if it does not already point to a
     /// non-symbolic object.
     pub fn peel_to_id_packed(&mut self, packed: Option<&gix_ref::packed::Buffer>) -> Result<Id<'repo>> {
-        let oid = self
-            .inner
-            .peel_to_id_packed(&self.repo.refs, &self.repo.objects, packed)?;
+        let oid = peel_reference(&mut self.inner, self.repo, packed)?;
         Ok(Id::from_id(oid, self.repo))
     }
 
@@ -291,4 +285,53 @@ mod impls {
             std::fmt::Debug::fmt(&self.inner, f)
         }
     }
+}
+
+/// Preserve the reference store's following/caching behavior while reading only
+/// terminal headers and retaining large tags in the shared immutable buffer.
+fn peel_reference(
+    reference: &mut gix_ref::Reference,
+    repo: &crate::Repository,
+    packed: Option<&gix_ref::packed::Buffer>,
+) -> Result<gix_hash::ObjectId> {
+    use gix_error::{OptionExt, ResultExt, message};
+    let mut source = None;
+    let mut buffer = gix_object::find::Buffer::default();
+    reference.peel_to_id_packed_with(&repo.refs, packed, &mut |object_id, name| {
+        let context = || {
+            message("Could not peel reference to an object")
+                .with("object_id", object_id.to_string())
+                .with("reference", name.as_bstr())
+        };
+        let header = repo.try_find_header(object_id).or_raise(context)?.ok_or_raise(|| {
+            gix_error::not_found("Could not peel reference to an object: object could not be found")
+                .with("object_id", object_id.to_string())
+                .with("reference", name.as_bstr())
+        })?;
+        if header.kind() != gix_object::Kind::Tag {
+            return Ok(None);
+        }
+        if source.is_none() {
+            source = Some(crate::object::bounded::Source::new(
+                repo,
+                gix_utils::stream::Budget::new(&std::env::temp_dir()).or_raise(context)?,
+            )?);
+        }
+        source
+            .as_ref()
+            .expect("initialized for tag lookup")
+            .load(object_id, &mut buffer)
+            .or_raise(context)?
+            .try_into_tag_iter()
+            .ok_or_raise(|| message!("Expected tag {object_id}").corrupted())?
+            .target_id()
+            .or_raise(|| {
+                message!(
+                    "Could not decode tag {object_id} as referred to by {:?}",
+                    name.as_bstr()
+                )
+                .corrupted()
+            })
+            .map(Some)
+    })
 }

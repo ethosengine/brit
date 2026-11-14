@@ -63,6 +63,17 @@ pub trait ReferenceExt: Sealed {
         packed: Option<&packed::Buffer>,
     ) -> Result<ObjectId>;
 
+    /// Like [`ReferenceExt::peel_to_id_packed()`], with operation-owned object access.
+    /// `tag_target` returns a tag's target, or `None` for an existing non-tag object.
+    /// Missing objects and lookup/decoding errors must remain errors. The reference
+    /// name is supplied so the reader can preserve diagnostic context.
+    fn peel_to_id_packed_with(
+        &mut self,
+        store: &file::Store,
+        packed: Option<&packed::Buffer>,
+        tag_target: &mut dyn FnMut(&gix_hash::oid, &crate::FullNameRef) -> Result<Option<ObjectId>>,
+    ) -> Result<ObjectId>;
+
     /// Like [`ReferenceExt::follow()`], but follows all symbolic references while gracefully handling loops,
     /// altering this instance in place.
     #[deprecated = "Use `follow_to_object_packed()` instead"]
@@ -129,6 +140,47 @@ impl ReferenceExt for Reference {
         objects: &dyn gix_object::Find,
         packed: Option<&packed::Buffer>,
     ) -> Result<ObjectId> {
+        let mut buf = Vec::new();
+        self.peel_to_id_packed_with(store, packed, &mut |object_id, name| {
+            let gix_object::Data {
+                kind,
+                data,
+                object_hash,
+            } = objects
+                .try_find(object_id, &mut buf)
+                .or_raise(|| {
+                    Message::new("Could not peel reference to an object")
+                        .with("object_id", object_id.to_string())
+                        .with("reference", name.as_bstr())
+                })?
+                .ok_or_raise(|| {
+                    not_found("Could not peel reference to an object: object could not be found")
+                        .with("object_id", object_id.to_string())
+                        .with("reference", name.as_bstr())
+                })?;
+            if kind == gix_object::Kind::Tag {
+                gix_object::TagRefIter::from_bytes(data, object_hash)
+                    .target_id()
+                    .or_raise(|| {
+                        message!(
+                            "Could not decode tag {object_id} as referred to by {:?}",
+                            name.as_bstr()
+                        )
+                        .corrupted()
+                    })
+                    .map(Some)
+            } else {
+                Ok(None)
+            }
+        })
+    }
+
+    fn peel_to_id_packed_with(
+        &mut self,
+        store: &file::Store,
+        packed: Option<&packed::Buffer>,
+        tag_target: &mut dyn FnMut(&gix_hash::oid, &crate::FullNameRef) -> Result<Option<ObjectId>>,
+    ) -> Result<ObjectId> {
         match self.peeled {
             Some(peeled) => {
                 self.target = Target::Object(peeled.to_owned());
@@ -136,36 +188,10 @@ impl ReferenceExt for Reference {
             }
             None => {
                 let mut object_id = self.follow_to_object_packed(store, packed)?;
-                let mut buf = Vec::new();
-                let peeled_id = loop {
-                    let gix_object::Data {
-                        kind,
-                        data,
-                        object_hash: hash_kind,
-                    } = objects
-                        .try_find(&object_id, &mut buf)
-                        .or_raise(|| {
-                            Message::new("Could not peel reference to an object")
-                                .with("object_id", object_id.to_string())
-                                .with("reference", self.name.as_bstr())
-                        })?
-                        .ok_or_raise(|| {
-                            not_found("Could not peel reference to an object: object could not be found")
-                                .with("object_id", object_id.to_string())
-                                .with("reference", self.name.as_bstr())
-                        })?;
-                    match kind {
-                        gix_object::Kind::Tag => {
-                            object_id = gix_object::TagRefIter::from_bytes(data, hash_kind)
-                                .target_id()
-                                .or_raise(|| {
-                                    message!("Could not decode tag {object_id} as referred to by {:?}", self.name.0)
-                                        .corrupted()
-                                })?;
-                        }
-                        _ => break object_id,
-                    }
-                };
+                while let Some(target) = tag_target(&object_id, self.name.as_ref())? {
+                    object_id = target;
+                }
+                let peeled_id = object_id;
                 self.peeled = Some(peeled_id);
                 self.target = Target::Object(peeled_id);
                 Ok(peeled_id)

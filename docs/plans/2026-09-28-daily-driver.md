@@ -3173,6 +3173,29 @@ and tests `HEAD:branch` and a leaf path through supported `revision resolve`.
 Private receipts remain in `bounded-memory/tree-*`. Aggregate scratch and the
 remaining command audit stay open.
 
+### Reference peeling under allocation policy
+
+Reference resolution now reads terminal object headers and uses the shared
+immutable reader for annotated tags. The reference store retains symbolic-chain,
+packed-ref and cached-target behavior; missing-object diagnostics retain their
+classification, object ID and reference name. Existing buffered plumbing callers
+retain their API. Both single-reference and iterator peeling use this path.
+
+Two 20 MiB commit cases per hash pass direct/symbolic `revision resolve`, log
+parity, loose/packed objects, default/explicit 16 MiB policy and actual reduced
+trust. Peaks are 70,705,152 B / 52,891,648 B in 11.522 / 73.440 s. Two large
+annotated-tag cases per hash also pass symbolic peeling and listing parity at
+71,557,120 B / 70,754,304 B in 5.711 / 22.056 s. All four whole-group runs have
+zero OOM kills, survivors or executable changes. The executable SHA-256 is
+`d1b9d73aea26a844bc841e51da35e219cddf88b7b94ae56e77e78c974a5f5f3e`;
+private receipts are `bounded-memory/ref-peel-*`. Native coverage passes 174
+reference-store tests (two existing ignores), 49 revision tests and the broader
+518-test gix suite (one existing platform ignore). Strict affected Clippy,
+formatting, readiness contracts and the declared Rust-style checker pass.
+
+This closes the shared reference reader, not Tix's remaining commit readers.
+Aggregate scratch and complete-command qualification remain open.
+
 ### Public-command audit in progress
 
 The command boundary is `src/plumbing/options/mod.rs` plus

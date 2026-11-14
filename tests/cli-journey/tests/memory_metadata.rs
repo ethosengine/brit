@@ -140,6 +140,11 @@ fn large_commit(reduced: bool) -> Result<()> {
             let actual = root.join(".git/actual-log");
             brit(root, &["log", "-n", "1"], &actual, limit)?;
             same_bytes(&expected, &actual)?;
+            brit(root, &["revision", "resolve", "HEAD"], &actual, limit)?;
+            ensure!(
+                fs::read(&actual)? == head,
+                "reference resolution must not read the commit body"
+            );
             ensure!(git(root, &["rev-parse", "HEAD"])? == head && fs::read(root.join(".git/index"))? == index);
         }
     }
@@ -148,6 +153,11 @@ fn large_commit(reduced: bool) -> Result<()> {
     let actual = root.join(".git/actual-symbolic-log");
     brit(root, &["log", "-n", "1"], &actual, Some("16777216"))?;
     same_bytes(&expected, &actual)?;
+    brit(root, &["revision", "resolve", "HEAD"], &actual, Some("16777216"))?;
+    ensure!(
+        fs::read(&actual)? == head,
+        "symbolic reference resolution changed the target"
+    );
     ensure!(git(root, &["rev-parse", "HEAD"])? == head && fs::read(root.join(".git/index"))? == index);
     // A malformed HEAD naming a large blob must be rejected from its header,
     // without misreporting an allocation limit while trying to read the body.
@@ -526,6 +536,8 @@ fn annotated_tag(reduced: bool) -> Result<()> {
         &["hash-object", "-t", "tag", "-w", source.to_str().expect("path")],
     )?)?;
     git(root, &["update-ref", "refs/tags/release", id.trim()])?;
+    git(root, &["symbolic-ref", "refs/heads/tag-alias", "refs/tags/release"])?;
+    let commit = git(root, &["rev-parse", "HEAD"])?;
     assert_eq!(
         git(root, &["for-each-ref", "--format=%(objecttype) %(tag)", "refs/tags"])?,
         b"tag payload-name\n"
@@ -541,7 +553,9 @@ fn annotated_tag(reduced: bool) -> Result<()> {
         for limit in [None, Some("16777216")] {
             let actual = root.join(".git/actual-tags");
             brit(root, &["tag", "list"], &actual, limit)?;
-            assert_eq!(fs::read(actual)?, b"blob\nrelease [tag name: payload-name, signed]\n");
+            assert_eq!(fs::read(&actual)?, b"blob\nrelease [tag name: payload-name, signed]\n");
+            brit(root, &["revision", "resolve", "tag-alias"], &actual, limit)?;
+            ensure!(fs::read(&actual)? == commit, "large tag peeling changed the target");
         }
     }
     Ok(())
