@@ -12,10 +12,14 @@ pub use gix_object::signature::{
 };
 
 pub(crate) fn verify(commit: &crate::Commit<'_>) -> Result<Option<Outcome>> {
-    let Some((signature, signed_data)) = commit.signature()? else {
+    verify_data(commit.repo, &commit.data, commit.id.kind())
+}
+
+pub(crate) fn verify_data(repo: &crate::Repository, data: &[u8], hash: gix_hash::Kind) -> Result<Option<Outcome>> {
+    let Some((signature, signed_data)) = gix_object::CommitRefIter::signature(data, hash)? else {
         return Ok(None);
     };
-    let config = commit.repo.config_snapshot();
+    let config = repo.config_snapshot();
     let minimum_trust = config
         .string(Gpg::MIN_TRUST_LEVEL)
         .map(|value| Gpg::MIN_TRUST_LEVEL.try_into_trust_level(value))
@@ -55,9 +59,9 @@ pub(crate) fn verify(commit: &crate::Commit<'_>) -> Result<Option<Outcome>> {
                 program,
                 program_arguments: Vec::new(),
                 environment: Vec::new(),
-                allowed_signers: resolve_relative_to_repository(commit.repo, allowed_signers),
-                revocation_file: revocation_file.map(|path| resolve_relative_to_repository(commit.repo, path)),
-                verify_time: commit.time()?,
+                allowed_signers: resolve_relative_to_repository(repo, allowed_signers),
+                revocation_file: revocation_file.map(|path| resolve_relative_to_repository(repo, path)),
+                verify_time: gix_object::CommitRefIter::from_bytes(data, hash).committer()?.time()?,
                 minimum_trust,
             }
         }

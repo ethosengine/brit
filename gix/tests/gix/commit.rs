@@ -142,6 +142,7 @@ mod signature {
             .verify_signature()?
             .expect("Git created a signed commit");
         assert!(outcome.is_valid(), "the Git-generated signature is valid");
+        assert!(repo.head_id()?.verify_signature()?.expect("signed commit").is_valid());
         assert_eq!(outcome.format, gix::commit::verify::Format::Ssh);
         assert_eq!(
             outcome.signer.as_ref().map(|signer| signer.as_slice()),

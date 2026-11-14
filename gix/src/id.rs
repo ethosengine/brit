@@ -83,6 +83,20 @@ impl<'repo> Id<'repo> {
 }
 
 impl<'repo> Id<'repo> {
+    /// Verify a commit signature using bounded object storage and the repository's trusted configuration.
+    /// Returns `None` for unsigned commits; inspect the outcome's validity for signed commits.
+    #[cfg(feature = "command")]
+    pub fn verify_signature(&self) -> Result<Option<crate::commit::verify::Outcome>> {
+        let source = crate::object::bounded::Source::deferred(self.repo);
+        let mut buffer = gix_object::find::Buffer::default();
+        let data = source.load(self, &mut buffer)?;
+        gix_error::ensure!(
+            data.kind == gix_object::Kind::Commit,
+            gix_error::validation(format!("Expected commit {}, found {}", self.inner, data.kind))
+        );
+        crate::commit::verify::verify_data(self.repo, data.data, self.inner.kind())
+    }
+
     /// Describe this commit using its identity and bounded history reads.
     /// The object must be a commit; checking its kind does not load its body.
     #[cfg(feature = "revision")]

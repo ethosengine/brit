@@ -5,15 +5,10 @@ use gix::{
     error::{OptionExt, ResultExt, bail, message},
 };
 
-/// Note that this is a quick implementation of commit signature verification that ignores a lot of what
-/// git does and can do, while focussing on the gist of it.
-/// For this to go into `gix`, one will have to implement many more options and various validation programs.
+/// Verify a commit signature using repository configuration and report the verifier's outcome.
 pub fn verify(repo: gix::Repository, rev_spec: Option<&str>) -> Result<()> {
     let rev_spec = rev_spec.unwrap_or("HEAD");
-    let commit = repo
-        .rev_parse_single(format!("{rev_spec}^{{commit}}").as_str())?
-        .object()?
-        .into_commit();
+    let commit = repo.rev_parse_single(format!("{rev_spec}^{{commit}}").as_str())?;
     let outcome = commit
         .verify_signature()
         .or_raise(|| message("Could not verify commit signature"))?
@@ -28,18 +23,26 @@ pub fn verify(repo: gix::Repository, rev_spec: Option<&str>) -> Result<()> {
 /// Sign an unsigned commit using repository configuration and print its object ID.
 pub fn sign(repo: gix::Repository, rev_spec: Option<&str>, mut out: impl std::io::Write) -> Result<()> {
     let rev_spec = rev_spec.unwrap_or("HEAD");
-    let commit = repo
-        .rev_parse_single(format!("{rev_spec}^{{commit}}").as_str())?
-        .object()?
-        .into_commit();
-    if commit.signature()?.is_some() {
-        gix::trace::info!("The commit {id} is already signed, did nothing", id = commit.id);
-        writeln!(out, "{id}", id = commit.id).or_error()?;
+    let commit_id = repo.rev_parse_single(format!("{rev_spec}^{{commit}}").as_str())?;
+    let source = gix::object::bounded::Source::deferred(&repo);
+    let mut buffer = gix::objs::find::Buffer::default();
+    let data = source.load(&commit_id, &mut buffer)?;
+    gix::error::ensure!(
+        data.kind == gix::object::Kind::Commit,
+        gix::error::validation(format!("Expected commit {commit_id}, found {}", data.kind))
+    );
+    if gix::objs::CommitRefIter::signature(data.data, commit_id.kind())?.is_some() {
+        gix::trace::info!("The commit {commit_id} is already signed, did nothing");
+        writeln!(out, "{commit_id}").or_error()?;
         return Ok(());
     }
 
-    let signed = commit.signed()?;
-    writeln!(out, "{id}", id = signed.id).or_error()?;
+    let signed = gix::objs::CommitRef::from_bytes(data.data, commit_id.kind())?
+        .sign(repo.commit_signing_options()?)
+        .or_raise(|| message!("Could not sign commit {commit_id}"))?;
+    buffer.clear();
+    let signed_id = repo.write_object(&signed)?;
+    writeln!(out, "{signed_id}").or_error()?;
 
     Ok(())
 }

@@ -4020,6 +4020,33 @@ journeys and strict affected Clippy pass. Library-only message flags are not
 new public CLI support. Signature, replay and other metadata consumers, aggregate
 scratch and final-source acceptance remain open.
 
+### Commit signature metadata
+
+`commit verify` now verifies directly from bounded object storage through an
+ID-based library entry point; existing `Commit` callers share the same verifier.
+`commit sign` uses bounded input, retains existing signature detection and signer
+configuration, releases input before writing, and avoids loading the signed
+object again just to print its ID. A 131,279-byte unsigned commit previously
+failed at 1 KiB before reporting that it was unsigned.
+
+Three public SSH cases per hash now pass at 128 KiB/20 MiB, loose/packed,
+full/actual-reduced trust and default/1 KiB/16 MiB/1 GiB allocation policies.
+Reduced trust is observed, and signer paths are explicitly supplied on the
+command line without trusting repository configuration. Git accepts Brit's
+signatures; repeat signing returns the same ID, messages/trees match, unsigned
+verification refuses accurately, and HEAD/config are preserved. Fixed-group
+peaks are 170,831,872 B / 171,401,216 B in 113.901 / 176.647 s, with zero OOM,
+survivors or executable changes. Binary SHA-256:
+`51c6a24a1994b649fa332dd9953cea261a0b1613dae5f8f821301dc5c373b6d3`;
+evidence: `bounded-memory/commit-signatures-*`.
+
+Six native signing/configuration checks pass per hash, including verification of
+a Git-generated signature through both APIs; the two ordinary signing-refusal
+journeys, new ordinary regression and strict affected gates also pass. This is
+the declared SSH workload, not qualification of arbitrary signing programs,
+large OpenPGP/X.509 helpers, cancellation or aggregate helper temporary storage.
+Those remain open alongside the broader final-source acceptance matrix.
+
 ### Real monorepo acceptance boundary
 
 The 2026-11-14 operator review adds the journal's failing worktree creation,
