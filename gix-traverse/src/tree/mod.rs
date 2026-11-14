@@ -63,6 +63,8 @@ pub mod visit {
 ///
 pub mod recorder;
 
+pub mod source;
+
 ///
 pub mod breadthfirst;
 pub use breadthfirst::function::breadthfirst;

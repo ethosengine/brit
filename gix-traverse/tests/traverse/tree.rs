@@ -6,6 +6,83 @@ fn odb() -> Result<gix_odb::Handle> {
     fixture_odb("make_traversal_repo_for_trees.sh")
 }
 
+#[test]
+fn mapped_trees_preserve_both_traversal_orders_and_release_storage() -> gix_testtools::TestResult {
+    use gix_object::{FindExt, FindStream, find::Buffer};
+    use gix_traverse::tree::{self, source::Source};
+    struct MappedSource<'a>(&'a gix_odb::Handle, std::sync::Arc<gix_utils::stream::Budget>);
+    impl Source for MappedSource<'_> {
+        fn find_tree<'a>(
+            &self,
+            id: &gix_hash::oid,
+            buffer: &'a mut Buffer,
+        ) -> gix_error::Result<gix_object::TreeRefIter<'a>> {
+            use gix_error::ResultExt;
+            buffer.clear();
+            let (kind, spool) = self
+                .0
+                .find_stream(id, &self.1, &std::sync::atomic::AtomicBool::new(false))?;
+            assert_eq!(kind, gix_object::Kind::Tree);
+            Ok(gix_object::TreeRefIter::from_bytes(
+                buffer.set_external(spool.into_mapped().or_error()?),
+                id.kind(),
+            ))
+        }
+    }
+    let db = odb()?;
+    let mut commit = Vec::new();
+    let tree_id = db
+        .find_commit(&hex_to_id("85df34aa34848b8138b2b3dcff5fb5c2b734e0ce"), &mut commit)?
+        .tree();
+    let scratch = gix_testtools::tempfile::tempdir()?;
+    let budget = gix_utils::stream::Budget::new(scratch.path())?;
+    for location in [
+        None,
+        Some(tree::recorder::Location::FileName),
+        Some(tree::recorder::Location::Path),
+    ] {
+        for depthfirst in [false, true] {
+            let mut expected = tree::Recorder::default().track_location(location);
+            let mut actual = tree::Recorder::default().track_location(location);
+            if depthfirst {
+                tree::depthfirst(tree_id, tree::depthfirst::State::default(), &db, &mut expected)?;
+                tree::depthfirst(
+                    tree_id,
+                    tree::depthfirst::State::default(),
+                    MappedSource(&db, budget.clone()),
+                    &mut actual,
+                )?;
+            } else {
+                let mut buffer = Vec::new();
+                tree::breadthfirst(
+                    db.find_tree_iter(&tree_id, &mut buffer)?,
+                    tree::breadthfirst::State::default(),
+                    &db,
+                    &mut expected,
+                )?;
+                let source = MappedSource(&db, budget.clone());
+                let mut buffer = Buffer::default();
+                let mut state = tree::breadthfirst::State::default();
+                tree::breadthfirst(
+                    source.find_tree(&tree_id, &mut buffer)?,
+                    &mut state,
+                    source,
+                    &mut actual,
+                )?;
+                drop(buffer);
+                assert_eq!(budget.usage().0, 0, "borrowed state releases the last mapping too");
+            }
+            assert_eq!(
+                actual.records, expected.records,
+                "storage must not change traversal ordering"
+            );
+            assert_eq!(budget.usage().0, 0, "completed trees release their spools");
+        }
+    }
+    assert!(budget.usage().1 > 0, "mapped reads must run");
+    Ok(())
+}
+
 mod depthfirst {
     use gix_object::FindExt;
     use gix_testtools::normalize_debug_snapshot;

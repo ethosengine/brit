@@ -124,9 +124,10 @@ impl delegate::Navigate for Delegate<'_> {
                     if path.is_empty() {
                         return Ok::<_, Exn>((tree_id, gix_object::tree::EntryKind::Tree.into()));
                     }
-                    let mut tree = repo.find_object(tree_id).or_erased()?.into_tree();
-                    let entry = tree
-                        .peel_to_entry_by_path(gix_path::from_bstr(path).or_erased()?)
+                    let budget = gix_utils::stream::Budget::new(&std::env::temp_dir()).or_erased()?;
+                    let source = crate::object::bounded::Source::new(repo, budget).or_erased()?;
+                    let entry = source
+                        .lookup_entry(tree_id, &gix_path::from_bstr(path).or_erased()?)
                         .or_erased()?
                         .ok_or_raise_erased(|| {
                             message!(
@@ -136,7 +137,7 @@ impl delegate::Navigate for Delegate<'_> {
                                 tree = tree_id.attach(repo).shorten_or_id(),
                             )
                         })?;
-                    Ok((entry.object_id(), entry.mode()))
+                    Ok((entry.oid, entry.mode))
                 };
                 for obj in objs.iter() {
                     match lookup_path(obj) {

@@ -28,7 +28,7 @@ pub(super) mod function {
 
     use gix_error::ResultExt;
     use gix_hash::ObjectId;
-    use gix_object::{FindExt, TreeRefIter};
+    use gix_object::{TreeRefIter, find::Buffer};
 
     use super::State;
     use crate::tree::Visit;
@@ -39,14 +39,14 @@ pub(super) mod function {
     /// `state` can be passed to re-use memory during multiple invocations.
     pub fn depthfirst<StateMut, Find, V>(root: ObjectId, mut state: StateMut, objects: Find, delegate: &mut V) -> Result
     where
-        Find: gix_object::Find,
+        Find: crate::tree::source::Source,
         StateMut: BorrowMut<State>,
         V: Visit,
     {
         enum Machine {
             GetTree(ObjectId),
             Iterate {
-                tree_buf: Vec<u8>,
+                tree_buf: Buffer,
                 byte_offset_to_next_entry: usize,
             },
         }
@@ -56,8 +56,8 @@ pub(super) mod function {
         'outer: while let Some(item) = stack.pop() {
             match item {
                 Machine::GetTree(id) => {
-                    let mut buf = state.pop_buf();
-                    objects.find_tree_iter(&id, &mut buf)?;
+                    let mut buf = Buffer::from(state.pop_buf());
+                    objects.find_tree(&id, &mut buf)?;
                     stack.push(Machine::Iterate {
                         tree_buf: buf,
                         byte_offset_to_next_entry: 0,
@@ -67,7 +67,7 @@ pub(super) mod function {
                     tree_buf: buf,
                     byte_offset_to_next_entry,
                 } => {
-                    let mut iter = TreeRefIter::from_bytes(&buf[byte_offset_to_next_entry..], root.kind());
+                    let mut iter = TreeRefIter::from_bytes(&buf.as_ref()[byte_offset_to_next_entry..], root.kind());
                     delegate.pop_back_tracked_path_and_set_current();
                     while let Some(entry) = iter.next() {
                         let entry = entry.or_raise(|| corruption("A tree could not be decoded during traversal"))?;
@@ -85,7 +85,7 @@ pub(super) mod function {
                             delegate.push_back_tracked_path_component(entry.filename);
                             let recurse_tree = Machine::GetTree(entry.oid.to_owned());
                             let continue_at_next_entry = Machine::Iterate {
-                                byte_offset_to_next_entry: iter.offset_to_next_entry(&buf),
+                                byte_offset_to_next_entry: iter.offset_to_next_entry(buf.as_ref()),
                                 tree_buf: buf,
                             };
                             stack.push(continue_at_next_entry);
@@ -99,7 +99,7 @@ pub(super) mod function {
                             delegate.pop_path_component();
                         }
                     }
-                    state.push_buf(buf);
+                    state.push_buf(buf.into_owned());
                 }
             }
         }

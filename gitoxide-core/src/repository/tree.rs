@@ -1,8 +1,15 @@
-use std::{borrow::Cow, io, io::BufWriter};
+use std::{
+    borrow::Cow,
+    io,
+    io::{BufWriter, Write},
+};
 
 use gix::{
-    Result, Tree,
+    Result,
     error::{ResultExt, bail, unsupported},
+    object::bounded::Source,
+    objs::find::Buffer,
+    traverse::tree::source::Source as _,
 };
 
 use crate::OutputFormat;
@@ -35,6 +42,7 @@ mod entries {
 
     pub struct Traverse<'repo, 'a> {
         pub stats: Statistics,
+        error: Option<gix::Error>,
         repo: Option<&'repo gix::Repository>,
         out: Option<&'a mut dyn std::io::Write>,
         path: BString,
@@ -45,10 +53,26 @@ mod entries {
         pub fn new(repo: Option<&'repo gix::Repository>, out: Option<&'a mut dyn std::io::Write>) -> Self {
             Traverse {
                 stats: Default::default(),
+                error: None,
                 repo,
                 out,
                 path: BString::default(),
                 path_deque: VecDeque::new(),
+            }
+        }
+
+        pub fn result(&mut self, result: gix::Result<()>) -> gix::Result<()> {
+            self.error.take().map_or(result, Err)
+        }
+
+        fn check_interrupt(&mut self) -> bool {
+            use gix::error::ResultExt;
+            match gix::utils::stream::check(&gix::interrupt::IS_INTERRUPTED).or_error() {
+                Ok(()) => true,
+                Err(error) => {
+                    self.error = Some(error);
+                    false
+                }
             }
         }
 
@@ -94,16 +118,32 @@ mod entries {
         }
 
         fn visit_tree(&mut self, _entry: &EntryRef<'_>) -> Action {
+            if !self.check_interrupt() {
+                return std::ops::ControlFlow::Break(());
+            }
             self.stats.num_trees += 1;
             std::ops::ControlFlow::Continue(true)
         }
 
         fn visit_nontree(&mut self, entry: &EntryRef<'_>) -> Action {
-            let size = self
-                .repo
-                .and_then(|repo| repo.find_header(entry.oid).map(|h| h.size()).ok());
-            if let Some(out) = &mut self.out {
-                format_entry(out, entry, self.path.as_bstr(), size).ok();
+            use gix::error::ResultExt;
+            if !self.check_interrupt() {
+                return std::ops::ControlFlow::Break(());
+            }
+            let size = match self.repo.map(|repo| repo.find_header(entry.oid)).transpose() {
+                Ok(header) => header.map(|header| header.size()),
+                // Gitlink commits need not be present in the superproject.
+                Err(_) if entry.mode.is_commit() => None,
+                Err(error) => {
+                    self.error = Some(error);
+                    return std::ops::ControlFlow::Break(());
+                }
+            };
+            if let Some(out) = &mut self.out
+                && let Err(error) = format_entry(out, entry, self.path.as_bstr(), size).or_error()
+            {
+                self.error = Some(error);
+                return std::ops::ControlFlow::Break(());
             }
             if let Some(size) = size {
                 self.stats.num_bytes += size;
@@ -135,10 +175,21 @@ pub fn info(
         writeln!(err, "Only JSON is implemented - using that instead").or_error()?;
     }
 
-    let tree = treeish_to_tree(treeish, &repo)?;
+    let tree_id = treeish_to_tree(treeish, &repo)?;
+    let source = Source::new(
+        &repo,
+        gix::utils::stream::Budget::new(&std::env::temp_dir()).or_error()?,
+    )?;
+    let mut buffer = Buffer::default();
 
     let mut delegate = entries::Traverse::new(extended.then_some(&repo), None);
-    tree.traverse().breadthfirst(&mut delegate)?;
+    let result = gix::traverse::tree::breadthfirst(
+        source.find_tree(&tree_id, &mut buffer)?,
+        gix::traverse::tree::breadthfirst::State::default(),
+        source.clone(),
+        &mut delegate,
+    );
+    delegate.result(result)?;
 
     #[cfg(feature = "serde")]
     {
@@ -155,37 +206,52 @@ pub fn entries(
     recursive: bool,
     extended: bool,
     format: OutputFormat,
-    mut out: impl io::Write,
+    out: impl io::Write,
 ) -> Result<()> {
     if format != OutputFormat::Human {
         bail!(unsupported("Only human output format is supported at the moment"));
     }
 
-    let tree = treeish_to_tree(treeish, &repo)?;
+    let tree_id = treeish_to_tree(treeish, &repo)?;
+    let source = Source::new(
+        &repo,
+        gix::utils::stream::Budget::new(&std::env::temp_dir()).or_error()?,
+    )?;
 
+    let mut write = BufWriter::new(out);
     if recursive {
-        let mut write = BufWriter::new(out);
         let mut delegate = entries::Traverse::new(extended.then_some(&repo), Some(&mut write));
-        tree.traverse().depthfirst(&mut delegate)?;
+        let result = gix::traverse::tree::depthfirst(
+            tree_id,
+            gix::traverse::tree::depthfirst::State::default(),
+            source,
+            &mut delegate,
+        );
+        delegate.result(result)?;
     } else {
-        for entry in tree.iter() {
+        let mut buffer = Buffer::default();
+        for entry in source.find_tree(&tree_id, &mut buffer)? {
+            gix::utils::stream::check(&gix::interrupt::IS_INTERRUPTED).or_error()?;
             let entry = entry?;
             format_entry(
-                &mut out,
-                &entry.inner,
-                entry.inner.filename,
-                extended.then(|| entry.id().header().map(|o| o.size())).transpose()?,
+                &mut write,
+                &entry,
+                entry.filename,
+                extended
+                    .then(|| repo.find_header(entry.oid).map(|o| o.size()))
+                    .transpose()?,
             )
             .or_error()?;
         }
     }
+    write.flush().or_error()?;
 
     Ok(())
 }
 
-fn treeish_to_tree<'repo>(treeish: Option<&str>, repo: &'repo gix::Repository) -> Result<Tree<'repo>> {
+fn treeish_to_tree(treeish: Option<&str>, repo: &gix::Repository) -> Result<gix::ObjectId> {
     let spec = treeish.map_or_else(|| "@^{tree}".into(), |spec| format!("{spec}^{{tree}}"));
-    Ok(repo.rev_parse_single(spec.as_str())?.object()?.into_tree())
+    Ok(repo.rev_parse_single(spec.as_str())?.detach())
 }
 
 fn format_entry(

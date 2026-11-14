@@ -2,33 +2,7 @@
 use gix_error::Result;
 use gix_object::{CommitRefIter, FindExt};
 
-/// Reusable storage for one commit, optionally backed by immutable operation-owned bytes.
-#[derive(Default)]
-pub struct Buffer {
-    owned: Vec<u8>,
-    external: Option<Box<dyn AsRef<[u8]> + Send + Sync>>,
-}
-
-impl Buffer {
-    /// Release the previous object before acquiring its replacement.
-    pub fn clear(&mut self) {
-        self.owned = Vec::new();
-        self.external = None;
-    }
-
-    /// Reuse the ordinary object buffer, releasing any previous external storage.
-    pub fn owned(&mut self) -> &mut Vec<u8> {
-        self.external = None;
-        &mut self.owned
-    }
-
-    /// Retain immutable bytes until the next lookup or until this buffer is dropped.
-    pub fn set_external(&mut self, data: impl AsRef<[u8]> + Send + Sync + 'static) -> &[u8] {
-        self.clear();
-        self.external = Some(Box::new(data));
-        self.external.as_deref().expect("just set").as_ref()
-    }
-}
+pub use gix_object::find::Buffer;
 
 /// Read a commit using the existing parser while letting the caller own its byte storage.
 pub trait Source {

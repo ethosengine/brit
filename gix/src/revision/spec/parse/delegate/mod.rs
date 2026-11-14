@@ -269,10 +269,14 @@ impl Delegate<'_> {
 }
 
 fn peel(repo: &Repository, obj: &gix_hash::oid, kind: gix_object::Kind) -> ExnResult<ObjectId> {
-    let mut obj = repo.find_object(obj).or_erased()?;
-    obj = obj.peel_to_kind(kind).or_erased()?;
-    debug_assert_eq!(obj.kind, kind, "bug in Object::peel_to_kind() which didn't deliver");
-    Ok(obj.id)
+    if repo.find_header(obj).or_erased()?.kind() == kind {
+        return Ok(obj.to_owned());
+    }
+    let budget = gix_utils::stream::Budget::new(&std::env::temp_dir()).or_erased()?;
+    crate::object::bounded::Source::new(repo, budget)
+        .or_erased()?
+        .peel(obj.to_owned(), kind)
+        .or_erased()
 }
 
 mod navigate;

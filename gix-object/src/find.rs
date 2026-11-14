@@ -1,6 +1,51 @@
 use gix_error::Result;
 use gix_error::ResultExt;
 
+/// Reusable object storage, optionally backed by immutable operation-owned bytes.
+#[derive(Default, Clone)]
+pub struct Buffer {
+    owned: Vec<u8>,
+    external: Option<std::sync::Arc<dyn AsRef<[u8]> + Send + Sync>>,
+}
+
+impl Buffer {
+    /// Release the previous object before acquiring its replacement.
+    pub fn clear(&mut self) {
+        self.owned = Vec::new();
+        self.external = None;
+    }
+
+    /// Reuse the ordinary object buffer, releasing any previous external storage.
+    pub fn owned(&mut self) -> &mut Vec<u8> {
+        self.external = None;
+        &mut self.owned
+    }
+
+    /// Retain immutable bytes until the next lookup or until this buffer is dropped.
+    pub fn set_external(&mut self, data: impl AsRef<[u8]> + Send + Sync + 'static) -> &[u8] {
+        self.clear();
+        self.external = Some(std::sync::Arc::new(data));
+        self.external.as_deref().expect("just set").as_ref()
+    }
+
+    /// Release external storage and return the ordinary buffer for reuse.
+    pub fn into_owned(self) -> Vec<u8> {
+        self.owned
+    }
+}
+
+impl From<Vec<u8>> for Buffer {
+    fn from(owned: Vec<u8>) -> Self {
+        Self { owned, external: None }
+    }
+}
+
+impl AsRef<[u8]> for Buffer {
+    fn as_ref(&self) -> &[u8] {
+        self.external.as_deref().map_or(&self.owned, AsRef::as_ref)
+    }
+}
+
 /// An implementation of object access traits that stores nothing and finds nothing.
 /// Use [`Never::panic_on_access()`] to panic on object access instead.
 #[derive(Debug, Copy, Clone)]

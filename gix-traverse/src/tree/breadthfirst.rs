@@ -6,13 +6,13 @@ use gix_hash::ObjectId;
 #[derive(Default, Clone)]
 pub struct State {
     next: VecDeque<ObjectId>,
-    buf: Vec<u8>,
+    buf: gix_object::find::Buffer,
 }
 
 impl State {
     fn clear(&mut self) {
         self.next.clear();
-        self.buf.clear();
+        self.buf.owned().clear();
     }
 }
 
@@ -21,7 +21,7 @@ pub(super) mod function {
     use std::borrow::BorrowMut;
 
     use gix_error::{ResultExt, bail, cancelled};
-    use gix_object::{FindExt, TreeRefIter};
+    use gix_object::TreeRefIter;
 
     use super::State;
     use crate::tree::Visit;
@@ -47,12 +47,25 @@ pub(super) mod function {
         delegate: &mut V,
     ) -> Result
     where
-        Find: gix_object::Find,
+        Find: crate::tree::source::Source,
         StateMut: BorrowMut<State>,
         V: Visit,
     {
         let state = state.borrow_mut();
         state.clear();
+        let result = traverse(root, state, objects, delegate);
+        // Retain reusable Vec capacity, but never retain an operation-owned mapping
+        // after completion, cancellation or a failed lookup in a borrowed state.
+        state.buf.owned();
+        result
+    }
+
+    fn traverse<Find: crate::tree::source::Source, V: Visit>(
+        root: TreeRefIter<'_>,
+        state: &mut State,
+        objects: Find,
+        delegate: &mut V,
+    ) -> Result {
         let mut tree = root;
         loop {
             for entry in tree {
@@ -82,7 +95,7 @@ pub(super) mod function {
             match state.next.pop_front() {
                 Some(oid) => {
                     delegate.pop_front_tracked_path_and_set_current();
-                    tree = objects.find_tree_iter(&oid, &mut state.buf)?;
+                    tree = objects.find_tree(&oid, &mut state.buf)?;
                 }
                 None => break Ok(()),
             }

@@ -12,6 +12,7 @@ pub(crate) mod cache {
 
 ///
 pub mod blob;
+pub mod bounded;
 ///
 pub mod commit;
 mod impls;

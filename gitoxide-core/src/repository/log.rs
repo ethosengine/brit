@@ -2,52 +2,9 @@ use gix::{
     Result,
     bstr::{BString, ByteSlice},
     error::{OptionExt, ResultExt, bail, message, unsupported},
-    objs::{FindExt, FindStream, Kind},
-    traverse::commit::topo::source::{Buffer, Source},
+    object::bounded::Source,
+    objs::{Kind, find::Buffer},
 };
-
-#[derive(Clone)]
-struct CommitSource<'a> {
-    repo: &'a gix::Repository,
-    budget: std::sync::Arc<gix::utils::stream::Budget>,
-    buffer_limit: u64,
-}
-
-impl CommitSource<'_> {
-    fn load<'a>(&self, id: &gix::hash::oid, buffer: &'a mut Buffer) -> Result<gix::objs::Data<'a>> {
-        gix::utils::stream::check(&gix::interrupt::IS_INTERRUPTED).or_error()?;
-        if self.repo.find_header(id)?.size() <= self.buffer_limit {
-            return self
-                .repo
-                .objects
-                .find(id, buffer.owned())
-                .or_raise(|| message!("Could not read history object {id}"));
-        }
-        buffer.clear();
-        let (kind, spool) = self
-            .repo
-            .objects
-            .find_stream(id, &self.budget, &gix::interrupt::IS_INTERRUPTED)
-            .or_raise(|| message!("Could not stream history object {id}"))?;
-        Ok(gix::objs::Data::new(
-            buffer.set_external(
-                spool
-                    .into_mapped()
-                    .or_raise(|| message!("Could not map history object {id}"))?,
-            ),
-            kind,
-            id.kind(),
-        ))
-    }
-}
-
-impl Source for CommitSource<'_> {
-    fn find_commit<'a>(&self, id: &gix::hash::oid, buffer: &'a mut Buffer) -> Result<gix::objs::CommitRefIter<'a>> {
-        self.load(id, buffer)?
-            .try_into_commit_iter()
-            .ok_or_raise(|| message!("Expected commit {id}").validation())
-    }
-}
 
 pub fn log(repo: gix::Repository, out: &mut dyn std::io::Write, path: Option<BString>) -> Result<()> {
     log_limited(repo, out, path, None)
@@ -70,13 +27,10 @@ fn log_all(repo: gix::Repository, out: &mut dyn std::io::Write, max_count: Optio
     if max_count == Some(0) {
         return Ok(());
     }
-    let source = CommitSource {
-        repo: &repo,
-        budget: gix::utils::stream::Budget::new(&std::env::temp_dir()).or_error()?,
-        buffer_limit: repo
-            .allocation_limit()
-            .map_or(repo.big_file_threshold()?, |limit| limit as u64),
-    };
+    let source = Source::new(
+        &repo,
+        gix::utils::stream::Budget::new(&std::env::temp_dir()).or_error()?,
+    )?;
     // Follow symbolic references without loading their terminal commit into a Vec.
     let mut head = repo.find_reference("HEAD")?.follow_to_object()?.detach();
     let mut seen = std::collections::HashSet::new();
@@ -116,7 +70,7 @@ fn log_file(_repo: gix::Repository, _out: &mut dyn std::io::Write, _path: BStrin
 }
 
 fn write_info(
-    source: &CommitSource<'_>,
+    source: &Source<'_>,
     buffer: &mut Buffer,
     mut out: impl std::io::Write,
     info: &gix::traverse::commit::Info,

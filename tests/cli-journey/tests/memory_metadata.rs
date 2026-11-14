@@ -185,6 +185,107 @@ fn actual_reduced_trust_large_commit_metadata() -> Result<()> {
     large_commit(true)
 }
 
+fn large_tree(reduced: bool) -> Result<()> {
+    const ENTRIES: u64 = 240_000;
+    let repo = TestRepo::new("memory-tree-metadata")?;
+    let root = repo.path();
+    let input = root.join(".git/tree-input");
+    fs::write(&input, b"x")?;
+    let blob = String::from_utf8(git(
+        root,
+        &["hash-object", "-w", input.to_str().expect("fixture path")],
+    )?)?;
+    let decode_id = |hex: &str| -> Result<Vec<u8>> {
+        hex.trim()
+            .as_bytes()
+            .chunks_exact(2)
+            .map(|pair| Ok(u8::from_str_radix(std::str::from_utf8(pair)?, 16)?))
+            .collect()
+    };
+    let blob_id = decode_id(&blob)?;
+    let mut file = BufWriter::new(fs::File::create(&input)?);
+    let suffix = "metadata-entry-".repeat(5);
+    for n in 0..ENTRIES {
+        write!(file, "100644 {n:06}-{suffix}\0")?;
+        file.write_all(&blob_id)?;
+    }
+    file.flush()?;
+    drop(file);
+    ensure!(fs::metadata(&input)?.len() > 20 * 1024 * 1024);
+    let wide = String::from_utf8(git(
+        root,
+        &["hash-object", "-w", "-t", "tree", input.to_str().expect("fixture path")],
+    )?)?;
+    let mut parent = b"40000 branch\0".to_vec();
+    parent.extend(decode_id(&wide)?);
+    fs::write(&input, parent)?;
+    let tree = String::from_utf8(git(
+        root,
+        &["hash-object", "-w", "-t", "tree", input.to_str().expect("fixture path")],
+    )?)?;
+    let commit = String::from_utf8(git(root, &["commit-tree", tree.trim(), "-m", "large tree metadata"])?)?;
+    git(root, &["update-ref", "refs/heads/main", commit.trim()])?;
+    let head = git(root, &["rev-parse", "HEAD"])?;
+    let index = fs::read(root.join(".git/index"))?;
+    reduced_trust(root, reduced)?;
+    for packed in [false, true] {
+        if packed {
+            git(root, &["-c", "pack.threads=1", "repack", "-ad"])?;
+        }
+        for limit in [None, Some("16777216")] {
+            for (spec, recursive) in [(wide.trim(), false), ("HEAD", true)] {
+                for extended in [false, true] {
+                    let expected = root.join(".git/expected-tree");
+                    let format = if extended {
+                        "--format=BLOB %(objectname) %(objectsize) %(path)"
+                    } else {
+                        "--format=BLOB %(objectname) %(path)"
+                    };
+                    output_file(oracle(root), &["ls-tree", "-r", format, spec], &expected)?;
+                    let actual = root.join(".git/actual-tree");
+                    let mut args = vec!["tree", "entries", spec];
+                    if recursive {
+                        args.push("--recursive");
+                    }
+                    if extended {
+                        args.push("--extended");
+                    }
+                    brit(root, &args, &actual, limit)?;
+                    same_bytes(&expected, &actual)?;
+                }
+            }
+            let actual = root.join(".git/tree-info");
+            brit(root, &["tree", "info", "--extended"], &actual, limit)?;
+            let info: serde_json::Value = serde_json::from_slice(&fs::read(actual)?)?;
+            ensure!(info["num_trees"] == 1 && info["num_blobs"] == ENTRIES && info["bytes"] == ENTRIES);
+            for spec in [
+                "HEAD:branch".to_owned(),
+                format!("HEAD:branch/{:06}-{suffix}", ENTRIES - 1),
+            ] {
+                let expected = root.join(".git/expected-revision");
+                output_file(oracle(root), &["rev-parse", &spec], &expected)?;
+                let actual = root.join(".git/actual-revision");
+                brit(root, &["revision", "resolve", &spec], &actual, limit)?;
+                same_bytes(&expected, &actual)?;
+            }
+            ensure!(git(root, &["rev-parse", "HEAD"])? == head && fs::read(root.join(".git/index"))? == index);
+        }
+    }
+    Ok(())
+}
+
+#[test]
+fn tree_metadata_over_twenty_mib_preserves_entries_and_statistics() -> Result<()> {
+    large_tree(false)
+}
+
+#[cfg(target_os = "linux")]
+#[test]
+#[ignore = "requires chown authority: qualification runs this explicitly"]
+fn actual_reduced_trust_large_tree_metadata() -> Result<()> {
+    large_tree(true)
+}
+
 #[test]
 fn config_over_sixteen_mib_preserves_values_and_formatting() -> Result<()> {
     config(false)
