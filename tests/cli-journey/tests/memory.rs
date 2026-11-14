@@ -482,21 +482,26 @@ fn large_local_clone_fetch_and_push_preserve_objects() -> Result<()> {
         brit(&cloned, &["fetch"], "gitoxide.objects.allocLimit=1073741824")?;
         let expected = git(root, &["rev-parse", "HEAD"])?;
         ensure!(git(&cloned, &["rev-parse", "refs/remotes/origin/main"])? == expected);
-        let bare = destinations.path().join("pushed.git");
-        let initialized = gix_testtools::git_command(root)
-            .args(["init", "--bare", "-q"])
-            .arg(&bare)
-            .output()?;
-        ensure!(initialized.status.success(), "initialize bare destination");
-        let pushed = BritInvocation::new(brit_bin().expect("built Brit"))
-            .current_dir(root)
-            .arg("push")
-            .arg(bare.as_os_str())
-            .arg("refs/heads/main:refs/heads/main")
-            .run()?;
-        ensure!(pushed.status.success(), "push: {}", pushed.stderr);
-        ensure!(git(&bare, &["rev-parse", "refs/heads/main"])? == expected);
-        git(&bare, &["fsck", "--full"])?;
+        for limit in ["default", "16777216", "1024"] {
+            let bare = destinations.path().join(format!("pushed-{limit}.git"));
+            let initialized = gix_testtools::git_command(root)
+                .args(["init", "--bare", "-q"])
+                .arg(&bare)
+                .output()?;
+            ensure!(initialized.status.success(), "initialize bare destination");
+            let mut invocation = BritInvocation::new(brit_bin().expect("built Brit")).current_dir(root);
+            if limit != "default" {
+                invocation = invocation.args(["-c", &format!("gitoxide.objects.allocLimit={limit}")]);
+            }
+            let pushed = invocation
+                .arg("push")
+                .arg(bare.as_os_str())
+                .arg("refs/heads/main:refs/heads/main")
+                .run()?;
+            ensure!(pushed.status.success(), "push with limit {limit}: {}", pushed.stderr);
+            ensure!(git(&bare, &["rev-parse", "refs/heads/main"])? == expected);
+            git(&bare, &["fsck", "--full"])?;
+        }
     }
     Ok(())
 }

@@ -465,20 +465,19 @@ fn build_pack_entries(
     )
     .map_err(|e| Error::Pack(e.to_string()))?;
 
-    // Convert Count → Entry by reading each object from the ODB and encoding it
-    // as a base (non-delta) entry.  We use `gix_pack::Find::try_find` here
-    // (not `gix_object::Find::try_find`) because it returns the pack location
-    // alongside the object data, which we pass through to `Entry::from_data`.
-    let mut buf = Vec::new();
+    // Base-entry encoding needs bytes, not a pack location. Reuse bounded
+    // operation-owned storage and release each input before reading its successor.
+    let source = crate::object::bounded::Source::deferred(repo);
+    let mut buf = gix_object::find::Buffer::default();
     let mut entries = Vec::with_capacity(counts.len());
     for count in &counts {
-        let (obj, _loc) = odb_pack
-            .try_find(&count.id, &mut buf)
-            .map_err(|e| Error::Pack(e.to_string()))?
-            .ok_or_else(|| Error::Pack(format!("object {} missing during pack build", count.id)))?;
+        let obj = source
+            .load(&count.id, &mut buf)
+            .map_err(|source| Error::ReadObject { id: count.id, source })?;
         let entry =
             Entry::from_data(count, &obj, gix_zlib::Compression::DEFAULT).map_err(|e| Error::Pack(e.to_string()))?;
         entries.push(entry);
+        buf.clear();
     }
     Ok(entries)
 }

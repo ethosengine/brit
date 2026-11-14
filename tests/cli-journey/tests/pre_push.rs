@@ -167,6 +167,25 @@ fn new_branch_reuses_history_advertised_under_another_ref() -> Result<()> {
 }
 
 #[test]
+fn initial_push_reads_blobs_above_the_configured_allocation_limit() -> Result<()> {
+    let repo = TestRepo::new("pre-push-bounded-blob")?;
+    let remote = remote(repo.path())?;
+    repo.commit_file("large", &"transfer content\n".repeat(8192))?;
+    let output = brit(
+        repo.path(),
+        &["-c", "gitoxide.objects.allocLimit=1024", "push", "origin", "main:main"],
+    )?;
+    ensure!(output.status.success(), "{}", output.stderr);
+    assert_eq!(git(remote.path(), &["rev-parse", "main"])?, repo.head_id()?);
+    assert_eq!(
+        git(remote.path(), &["show", "main:large"])?,
+        git(repo.path(), &["show", "HEAD:large"])?
+    );
+    git(remote.path(), &["fsck", "--full"])?;
+    Ok(())
+}
+
+#[test]
 fn dry_run_and_noop_run_hook_but_no_verify_skips_it() -> Result<()> {
     let repo = TestRepo::new("pre-push-dry-run")?;
     let remote = remote(repo.path())?;

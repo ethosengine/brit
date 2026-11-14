@@ -30,6 +30,12 @@ pub enum Error {
     Walk(String),
     #[error("build pack entries: {0}")]
     Pack(String),
+    #[error("read object {id} while building push pack")]
+    ReadObject {
+        id: gix_hash::ObjectId,
+        #[source]
+        source: gix_error::Error,
+    },
     #[error("send-pack")]
     SendPack(#[from] gix_protocol::send_pack::Error),
     #[error("no refspecs given — nothing to push")]
