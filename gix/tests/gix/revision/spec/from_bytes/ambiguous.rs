@@ -16,6 +16,131 @@ use gix::{
 use gix_testtools::TestResult;
 
 #[test]
+fn candidate_descriptions_preserve_allocation_policy_and_order() -> TestResult {
+    candidate_descriptions(32768, false)
+}
+
+#[cfg(target_os = "linux")]
+#[test]
+#[ignore = "resource qualification: requires BRIT_BIN and chown authority"]
+fn twenty_mib_candidate_descriptions_public() -> TestResult {
+    candidate_descriptions(4_194_304, true)
+}
+
+fn candidate_descriptions(repeats: usize, public: bool) -> TestResult {
+    use gix::objs::{Kind, Write};
+    let fixture = gix_testtools::tempfile::tempdir()?;
+    assert!(
+        gix_testtools::git_command(fixture.path())
+            .args(["init", "-q"])
+            .status()?
+            .success()
+    );
+    let repo = gix::open_opts(fixture.path(), gix::open::Options::isolated())?;
+    let tree = repo.objects.write_buf(Kind::Tree, b"")?;
+    let commit = format!(
+        "tree {tree}\nauthor Fixture <fixture@example.com> 1600000000 +0000\ncommitter Fixture <fixture@example.com> 1600000000 +0000\n\n  candidate title  \n\n{}",
+        "body\n".repeat(repeats)
+    );
+    let commit = repo.objects.write_buf(Kind::Commit, commit.as_bytes())?;
+    let prefix = &commit.to_string()[..4];
+    let colliding = (0..2_000_000)
+        .find_map(|n| {
+            let data = format!("candidate blob {n}");
+            let hash = gix::objs::compute_hash(repo.object_hash(), Kind::Blob, data.as_bytes()).expect("fixture hash");
+            (hash.as_slice()[..2] == commit.as_slice()[..2] && hash.as_slice()[2] >> 4 != commit.as_slice()[2] >> 4)
+                .then_some(data)
+        })
+        .expect("deterministic short-prefix collision");
+    let blob = repo.objects.write_buf(Kind::Blob, colliding.as_bytes())?;
+    let describe = |limit| -> TestResult<String> {
+        let repo = gix::open_opts(
+            fixture.path(),
+            gix::open::Options::isolated().cli_overrides([format!("gitoxide.objects.allocLimit={limit}")]),
+        )?;
+        let hex = commit.to_string();
+        for len in [7, 8, 40, hex.len()] {
+            assert_eq!(repo.rev_parse_single(&hex[..len])?.detach(), commit);
+        }
+        let error = repo
+            .rev_parse(prefix)
+            .expect_err("two different kinds share the prefix");
+        let Some(Error::AmbiguousPrefix { candidates, .. }) = error.downcast_any_ref::<Error>() else {
+            panic!("{error:?}");
+        };
+        assert_eq!(candidates.len(), 2);
+        assert!(matches!(candidates[0].1, CandidateInfo::Commit { .. }), "{error:?}");
+        assert!(
+            matches!(candidates[1].1, CandidateInfo::Object { kind: Kind::Blob }),
+            "{error:?}"
+        );
+        Ok(error.to_string())
+    };
+    let expected = describe(1024 * 1024 * 1024)?;
+    assert_eq!(describe(1)?, expected);
+    assert_eq!(describe(16 * 1024 * 1024)?, expected);
+    if public {
+        let binary = std::env::var_os("BRIT_BIN").expect("resource qualification requires an explicit executable");
+        let run = |limit: Option<&str>| -> TestResult<Vec<u8>> {
+            let mut command = std::process::Command::new(&binary);
+            gix_testtools::configure_git_environment(&mut command, fixture.path());
+            command.current_dir(fixture.path());
+            if let Some(limit) = limit {
+                command.args(["-c", &format!("gitoxide.objects.allocLimit={limit}")]);
+            }
+            let output = command.args(["revision", "resolve", prefix]).output()?;
+            assert!(!output.status.success(), "ambiguous input remains ambiguous");
+            assert!(output.stdout.is_empty());
+            let diagnostic = String::from_utf8_lossy(&output.stderr);
+            assert!(diagnostic.contains(&expected), "{diagnostic}");
+            assert!(!diagnostic.contains("lookup error"), "{diagnostic}");
+            Ok(output.stderr)
+        };
+        for (name, id) in [("refs/heads/main", commit), ("refs/tags/candidate-blob", blob)] {
+            assert!(
+                gix_testtools::git_command(fixture.path())
+                    .args(["update-ref", name, &id.to_string()])
+                    .status()?
+                    .success()
+            );
+        }
+        for packed in [false, true] {
+            if packed {
+                assert!(
+                    gix_testtools::git_command(fixture.path())
+                        .args(["-c", "pack.threads=1", "repack", "-ad"])
+                        .status()?
+                        .success()
+                );
+            }
+            let baseline = run(Some("1073741824"))?;
+            assert_eq!(run(None)?, baseline);
+            assert_eq!(run(Some("16777216"))?, baseline);
+            assert_eq!(run(Some("1"))?, baseline);
+            #[cfg(target_os = "linux")]
+            {
+                use std::os::unix::fs::{MetadataExt, chown};
+                assert_eq!(
+                    std::fs::metadata(fixture.path())?.uid(),
+                    0,
+                    "qualification requires chown authority"
+                );
+                chown(fixture.path(), Some(65534), None)?;
+                chown(repo.git_dir(), Some(65534), None)?;
+                assert_eq!(
+                    gix::open_opts(fixture.path(), gix::open::Options::isolated())?.allocation_limit(),
+                    Some(16777216)
+                );
+                assert_eq!(run(None)?, baseline);
+                chown(repo.git_dir(), Some(0), None)?;
+                chown(fixture.path(), Some(0), None)?;
+            }
+        }
+    }
+    Ok(())
+}
+
+#[test]
 fn prefix() -> TestResult {
     let mut error_snapshots = Vec::new();
     {
@@ -68,8 +193,8 @@ fn prefix() -> TestResult {
         }
         insta::assert_debug_snapshot!(gix_testtools::redact_debug_snapshot(&format_args!("{}", normalize_repo_path(&format!("{err:#?}"), &repo)), &[]), "ambiguous prefixes retain the lookup failure for each malformed candidate", @"
         Short id bad0 is ambiguous. Candidates are:
-        \tbad0853 lookup error: Could not read loose object, path=\"$GIT_DIR/objects/ba/d0853730d9d114ac789f0ce89039d224bf66c9\"
-        \tbad0bd4 lookup error: Could not read loose object, path=\"$GIT_DIR/objects/ba/d0bd4672dee1b4d3b8088534ed5a0362bc8d59\"
+        \tbad0853 lookup error: Could not read loose object header, path=\"$GIT_DIR/objects/ba/d0853730d9d114ac789f0ce89039d224bf66c9\"
+        \tbad0bd4 lookup error: Could not read loose object header, path=\"$GIT_DIR/objects/ba/d0bd4672dee1b4d3b8088534ed5a0362bc8d59\"
         ");
     };
     insta::assert_debug_snapshot!(error_snapshots, "ambiguous object prefixes list the matching candidates", @r#"

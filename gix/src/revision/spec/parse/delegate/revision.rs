@@ -38,6 +38,25 @@ impl delegate::Revision for Delegate<'_> {
         _must_be_commit: Option<delegate::PrefixHint<'_>>,
     ) -> Result<()> {
         self.last_call_was_disambiguate_prefix[self.idx] = true;
+        // The syntax parser infers a hash kind from the text length. Short IDs are
+        // repository-relative, including 40-digit abbreviations in SHA-256 repositories.
+        let prefix = if prefix.as_oid().kind() != self.repo.object_hash() {
+            let mut id = ObjectId::null(self.repo.object_hash());
+            let len = prefix.hex_len().div_ceil(2);
+            if len > id.as_slice().len() {
+                bail!(
+                    message!(
+                        "Object prefix {prefix} exceeds the repository's {} hash length",
+                        self.repo.object_hash()
+                    )
+                    .validation()
+                );
+            }
+            id.as_mut_slice()[..len].copy_from_slice(&prefix.as_oid().as_bytes()[..len]);
+            gix_hash::Prefix::new(&id, prefix.hex_len())?
+        } else {
+            prefix
+        };
         let mut candidates = Some(HashSet::default());
         self.prefix[self.idx] = Some(prefix);
 

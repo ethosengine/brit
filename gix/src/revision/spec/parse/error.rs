@@ -92,58 +92,66 @@ fn candidate_info(candidates: Vec<ObjectId>, repo: &Repository) -> Vec<(gix_hash
         Blob,
         Invalid,
     }
-    let candidates = {
-        let mut c: Vec<_> = candidates
-            .into_iter()
-            .map(|object_id| {
-                let obj = repo.find_object(object_id);
-                let order = match &obj {
-                    Err(_) => Order::Invalid,
-                    Ok(obj) => match obj.kind {
-                        gix_object::Kind::Tag => Order::Tag,
-                        gix_object::Kind::Commit => Order::Commit,
-                        gix_object::Kind::Tree => Order::Tree,
-                        gix_object::Kind::Blob => Order::Blob,
-                    },
+    let source = crate::object::bounded::Source::deferred(repo);
+    let mut buffer = gix_object::find::Buffer::default();
+    let mut candidates: Vec<_> = candidates
+        .into_iter()
+        .map(|object_id| {
+            let mut order = Order::Invalid;
+            let info = (|| -> crate::Result<CandidateInfo> {
+                let kind = repo.find_header(object_id)?.kind();
+                if matches!(kind, gix_object::Kind::Tree | gix_object::Kind::Blob) {
+                    order = if kind == gix_object::Kind::Tree {
+                        Order::Tree
+                    } else {
+                        Order::Blob
+                    };
+                    return Ok(CandidateInfo::Object { kind });
+                }
+                let object = source.load(&object_id, &mut buffer)?;
+                order = match object.kind {
+                    gix_object::Kind::Tag => Order::Tag,
+                    gix_object::Kind::Commit => Order::Commit,
+                    gix_object::Kind::Tree => Order::Tree,
+                    gix_object::Kind::Blob => Order::Blob,
                 };
-                (object_id, obj, order)
-            })
-            .collect();
-        c.sort_by(|lhs, rhs| lhs.2.cmp(&rhs.2).then_with(|| lhs.0.cmp(&rhs.0)));
-        c
-    };
+                Ok(match object.decode()? {
+                    gix_object::ObjectRef::Tree(_) => CandidateInfo::Object {
+                        kind: gix_object::Kind::Tree,
+                    },
+                    gix_object::ObjectRef::Blob(_) => CandidateInfo::Object {
+                        kind: gix_object::Kind::Blob,
+                    },
+                    gix_object::ObjectRef::Tag(tag) => CandidateInfo::Tag { name: tag.name.into() },
+                    gix_object::ObjectRef::Commit(commit) => {
+                        use bstr::ByteSlice;
+                        let date = match commit.committer() {
+                            Ok(signature) => signature.time.trim().to_owned(),
+                            Err(_) => {
+                                let committer = commit.committer;
+                                let manually_parsed_best_effort = committer
+                                    .rfind_byte(b'>')
+                                    .map(|pos| committer[pos + 1..].trim().as_bstr().to_string());
+                                manually_parsed_best_effort.unwrap_or_default()
+                            }
+                        };
+                        CandidateInfo::Commit {
+                            date,
+                            title: commit.message().title.trim().into(),
+                        }
+                    }
+                })
+            })()
+            .unwrap_or_else(|source| CandidateInfo::FindError { source });
+            // Only the rendered description survives; release each candidate's full bytes promptly.
+            buffer.clear();
+            (object_id, info, order)
+        })
+        .collect();
+    candidates.sort_by(|lhs, rhs| lhs.2.cmp(&rhs.2).then_with(|| lhs.0.cmp(&rhs.0)));
     candidates
         .into_iter()
-        .map(|(object_id, find_result, _)| {
-            let info = find_result
-                .and_then(|obj| {
-                    Ok(match obj.kind {
-                        gix_object::Kind::Tree | gix_object::Kind::Blob => CandidateInfo::Object { kind: obj.kind },
-                        gix_object::Kind::Tag => {
-                            let tag = obj.try_to_tag_ref()?;
-                            CandidateInfo::Tag { name: tag.name.into() }
-                        }
-                        gix_object::Kind::Commit => {
-                            use bstr::ByteSlice;
-                            let commit = obj.try_to_commit_ref()?;
-                            let date = match commit.committer() {
-                                Ok(signature) => signature.time.trim().to_owned(),
-                                Err(_) => {
-                                    let committer = commit.committer;
-                                    let manually_parsed_best_effort = committer
-                                        .rfind_byte(b'>')
-                                        .map(|pos| committer[pos + 1..].trim().as_bstr().to_string());
-                                    manually_parsed_best_effort.unwrap_or_default()
-                                }
-                            };
-                            CandidateInfo::Commit {
-                                date,
-                                title: commit.message().title.trim().into(),
-                            }
-                        }
-                    })
-                })
-                .unwrap_or_else(|source| CandidateInfo::FindError { source });
+        .map(|(object_id, info, _)| {
             (
                 object_id.attach(repo).shorten().unwrap_or_else(|_| object_id.into()),
                 info,
