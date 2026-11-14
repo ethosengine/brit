@@ -511,6 +511,18 @@ fn large_commit(reduced: bool) -> Result<()> {
             same_bytes(&expected, &actual)?;
             brit(root, &["revision", "list", "--long-hashes", "HEAD"], &actual, limit)?;
             same_bytes(&expected_revisions, &actual)?;
+            for range in ["HEAD^..HEAD", "HEAD..HEAD^", "HEAD..HEAD"] {
+                brit(root, &["revision", "list", "--long-hashes", range], &actual, limit)?;
+                let rows = fs::read_to_string(&actual)?;
+                let ids: Vec<_> = rows
+                    .lines()
+                    .map(|row| row.split_whitespace().next().expect("OID"))
+                    .collect();
+                ensure!(
+                    ids.join("\n") == String::from_utf8(git(root, &["rev-list", range])?)?.trim(),
+                    "large commit revision range {range}"
+                );
+            }
             brit(root, &["merge-base", "HEAD", parent.trim()], &actual, limit)?;
             ensure!(
                 fs::read_to_string(&actual)? == parent,

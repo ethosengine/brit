@@ -60,6 +60,11 @@ fn parity(actual: &Path, oracle: &Path, args: &[&str]) -> Result<()> {
 #[test]
 fn directories_and_flags_select_exactly_the_git_scope() -> Result<()> {
     for args in [
+        vec!["add", "scope"],
+        vec!["add", "scope/modified", "scope/new"],
+        vec!["add", "-u", "scope"],
+        vec!["add", "scope", "-u"],
+        vec!["add", "-A", "scope/"],
         vec!["add", "--", "scope"],
         vec!["add", "--", "scope/."],
         vec!["add", "-u", "--", "scope"],
@@ -345,14 +350,23 @@ fn locks_filters_and_case_aliases_refuse_atomically() -> Result<()> {
 fn object_write_failure_preserves_index_and_working_files() -> Result<()> {
     let repo = fixture()?;
     let before = index(repo.path())?;
-    let hash = String::from_utf8(git(repo.path(), &["hash-object", "scope/new"])?)?;
-    let obstruction = repo.path().join(".git/objects").join(&hash[..2]);
-    ensure!(!obstruction.exists(), "fixture requires unused loose-object fanout");
+    let mut selected = None;
+    for n in 0..256 {
+        let contents = format!("new obstruction fixture {n}\n");
+        fs::write(repo.path().join("scope/new"), &contents)?;
+        let hash = String::from_utf8(git(repo.path(), &["hash-object", "scope/new"])?)?;
+        let obstruction = repo.path().join(".git/objects").join(&hash[..2]);
+        if !obstruction.exists() {
+            selected = Some((obstruction, contents));
+            break;
+        }
+    }
+    let (obstruction, contents) = selected.expect("small fixture has an unused object fanout");
     fs::write(&obstruction, "another owner's obstruction\n")?;
     ensure!(!brit(repo.path(), &["add", "--", "scope"])?.status.success());
     assert_eq!(index(repo.path())?, before);
     assert_eq!(fs::read(obstruction)?, b"another owner's obstruction\n");
-    assert_eq!(fs::read(repo.path().join("scope/new"))?, b"new\n");
+    assert_eq!(fs::read_to_string(repo.path().join("scope/new"))?, contents);
     ensure!(!repo.path().join(".git/index.lock").exists());
     Ok(())
 }

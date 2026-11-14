@@ -52,17 +52,31 @@ pub(crate) mod function {
         repo.objects.refresh = RefreshMode::Never;
 
         let spec = gix::path::os_str_into_bstr(&spec)?;
-        let id = repo
-            .rev_parse_single(spec)
-            .or_raise(|| message("Only single revisions are currently supported"))?;
         let source = gix::object::bounded::Source::deferred(&repo);
+        let (id, hidden) = match repo.rev_parse(spec)?.detach() {
+            gix::revision::plumbing::Spec::Include(id) | gix::revision::plumbing::Spec::ExcludeParents(id) => {
+                (id, None)
+            }
+            gix::revision::plumbing::Spec::Range { from, to } => (
+                to,
+                Some(
+                    source
+                        .peel(from, gix::object::Kind::Commit)
+                        .or_raise(|| message("Need committish as excluded range endpoint"))?,
+                ),
+            ),
+            _ => bail!(gix::error::unsupported(
+                "Revision listing supports a single revision or A..B; use revision resolve to inspect other specifications"
+            )),
+        };
         let id = source
-            .peel(id.detach(), gix::object::Kind::Commit)
+            .peel(id, gix::object::Kind::Commit)
             .or_raise(|| message("Need committish as starting point"))?
             .attach(&repo);
         let commits = id
             .ancestors()
             .sorting(Sorting::ByCommitTime(Default::default()))
+            .with_hidden(hidden)
             .all()?;
 
         let mut vg = match text {

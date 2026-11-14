@@ -4039,6 +4039,57 @@ on this device; it does not qualify the second device, hooks, fetch/push or the
 separate temporary-storage ceiling. Shared dirty checkouts and existing worktrees
 were left in place.
 
+The same owned linked checkout also passes configured-origin fetch (up to date)
+and an empty commit with the existing protected hooks enabled. Their group peaks
+are 12,845,056 B and 169,783,296 B, with zero OOM or surviving children. The commit
+retains native session attribution; its tree matches its parent. These runs do
+not exercise an incoming pack or a push. The main checkout/common directory
+report reduced trust; the freshly created linked worktree and its Git directory
+report full trust. This distinction remains part of the two-device qualification.
+Evidence: `bounded-memory/monorepo-linked-fetch` and `monorepo-linked-commit`.
+
+### Session-start CLI friction
+
+`brit add path` now accepts positional literal paths; `--` remains available for
+option-like names. Scoped `-u`/`-A`, mixed option placement, failed batches and
+foreign index locks retain Git-oracle selection and preservation behavior.
+`brit revision resolve HEAD` already exposes an object identity. Revision listing
+now accepts `A..B` through the existing hidden-ancestry walker, including annotated
+endpoints, divergence, empty ranges and skewed commit dates. Other range forms
+retain explicit refusal; this does not change the comparison algorithms.
+
+The actual linked monorepo's `HEAD..origin/dev` matches stock Git at default,
+1 KiB and 16 MiB policies, with stable endpoints, a 12,349,440 B whole-group peak,
+zero OOM and no survivors (`bounded-memory/monorepo-linked-range`). Candidate
+SHA-256: `48bb9364db24f23619ee9899c284a4c0ba0c62b1b097a948a6511c423137d739`.
+The 38 staging/authoring/range journeys pass in each hash, plus two surface checks.
+SHA-256 exposed two fixture assumptions: fixed 40-character zero IDs and an
+already occupied loose-object fanout. Fixtures now derive ID width and select
+an unused fanout without deleting any objects. The ordinary memory suites and
+range journey are included in the existing CI selectors; ignored resource cases
+still require explicit cgroup qualification.
+
+The extended 20 MiB commit fixture also passes range queries in loose/packed
+storage, full/actual-reduced trust and allocation-policy paths: two cases per
+hash, 94,547,968 B / 92,446,720 B peaks in 101.622 / 405.174 s, zero OOM,
+survivors or executable identity changes. Evidence:
+`bounded-memory/revision-ranges-metadata-*`. Strict affected-crate Clippy,
+formatting, readiness12 and the declared Rust-style scope pass; workflow YAML
+parses locally. Remote CI, aggregate scratch and final committed-source
+qualification are separate pending checks.
+
+The repeated feedback warning was traced to a stale session `EPR_BIN` overriding
+an already upgraded device release, then to an uninitialized fresh-worktree
+feedback store. The installed EPR/Brit pair and this candidate pair pass the
+existing isolated feedback qualification. This session selects the verified
+installed EPR, and real Brit status capture/list passes in its newly initialized
+owned worktree without the warning. No warning suppression, daemon replacement
+or device-wide pin change was used. Shared legacy-store migration still requires
+writer coordination. The shared EPR owner has the missing lifecycle station:
+effective session executable and selected store readiness must connect compatible
+tool arrival to retained automatic feedback. Evidence remains in the existing
+private `bounded-memory/epr-feedback-*` files, not a second registry.
+
 ### Public-command audit in progress
 
 The command boundary is `src/plumbing/options/mod.rs` plus

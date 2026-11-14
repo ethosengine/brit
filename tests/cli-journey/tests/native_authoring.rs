@@ -106,7 +106,7 @@ fn invalid_batches_and_lock_contention_preserve_index_and_worktree() -> Result<(
         vec!["add", "--", "selected", "missing"],
         vec!["restore", "--staged", "--", "selected", "missing"],
         vec!["add", "--", "*.txt"],
-        vec!["add", "selected"],
+        vec!["add", "selected", "missing"],
         vec!["restore", "--staged", "--worktree", "--", "selected"],
         vec!["restore", "--", "selected"],
     ] {
@@ -118,6 +118,7 @@ fn invalid_batches_and_lock_contention_preserve_index_and_worktree() -> Result<(
     let lock = repo.path().join(".git/index.lock");
     fs::write(&lock, "other owner")?;
     for args in [
+        vec!["add", "selected"],
         vec!["add", "--", "selected"],
         vec!["restore", "--staged", "--", "selected"],
     ] {
@@ -499,7 +500,7 @@ fn special_index_states_refuse_without_rewriting_any_entries() -> Result<()> {
                     .spawn()?;
                 {
                     let input = child.stdin.as_mut().expect("piped index-info input");
-                    writeln!(input, "0 {}\tneighbor", "0".repeat(40))?;
+                    writeln!(input, "0 {}\tneighbor", "0".repeat(blob.trim().len()))?;
                     writeln!(input, "100644 {} 1\tneighbor", blob.trim())?;
                     writeln!(input, "100644 {} 2\tneighbor", blob.trim())?;
                 }
@@ -646,7 +647,7 @@ fn conflict_entries(repo: &Path, path: &str, stages: &[u8]) -> Result<()> {
         .spawn()?;
     {
         let input = child.stdin.as_mut().expect("piped index input");
-        writeln!(input, "0 {}\t{path}", "0".repeat(40))?;
+        writeln!(input, "0 {}\t{path}", "0".repeat(blob.trim().len()))?;
         for stage in stages {
             writeln!(input, "100644 {} {stage}\t{path}", blob.trim())?;
         }

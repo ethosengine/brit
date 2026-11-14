@@ -461,13 +461,13 @@ jobs:
           cargo build --locked -p brit-cli --bin brit --bin brit-rebase-retained
           cargo test --locked -p brit-bridge
           debug_dir="$(just dbg)"
-          BRIT_BIN="$debug_dir/brit" BRIT_REBASE_RETAINED_BIN="$debug_dir/brit-rebase-retained" cargo test --locked -p cli-journey --test rebase --test shared_tree --test authoring --test commit_attribution --test pre_push --test explicit_leases --test commit_cleanup --test commit_amend --test commit_merge --test worktree_restore --test worktree_bounded --test switch --test pull --test broader_staging --test daily_driver --test native_authoring --test diff_stat --test context --test cli_surface
+          BRIT_BIN="$debug_dir/brit" BRIT_REBASE_RETAINED_BIN="$debug_dir/brit-rebase-retained" cargo test --locked -p cli-journey --test rebase --test shared_tree --test authoring --test commit_attribution --test pre_push --test explicit_leases --test commit_cleanup --test commit_amend --test commit_merge --test worktree_restore --test worktree_bounded --test switch --test pull --test broader_staging --test revision_ranges --test daily_driver --test native_authoring --test diff_stat --test context --test cli_surface
       - name: Check allocation-boundary output and state parity
         run: |
           set -euo pipefail
           debug_dir="$(just dbg)"
           # Functional coverage only. Whole-group enforcement is separately recorded by qualify-memory.sh.
-          BRIT_BIN="$debug_dir/brit" cargo test --locked -p cli-journey --test memory --test memory_recovery --test memory_snapshot --test memory_diff_resources --test memory_object_store --test memory_merge_resources --test memory_replay --test memory_metadata --test memory_build -- --test-threads=1
+          BRIT_BIN="$debug_dir/brit" cargo test --locked -p cli-journey --test memory --test memory_recovery --test memory_snapshot --test memory_diff_resources --test memory_object_store --test memory_merge_resources --test memory_replay --test memory_metadata --test memory_build --test memory_authoring_metadata --test memory_commit_metadata --test memory_tix --test memory_credentials --test memory_editor --test memory_attributes_baseline --test memory_output -- --test-threads=1
       - name: Characterize stock Git rebase (design evidence, not Brit support)
         run: cargo test --locked -p cli-journey --test git_rebase_characterization
       - name: Prove internal conflict-aware authoring preservation

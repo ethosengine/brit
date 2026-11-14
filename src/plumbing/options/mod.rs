@@ -200,7 +200,7 @@ pub enum Subcommands {
         #[clap(short = 'A', long)]
         all: bool,
         /// Literal file or directory paths. Pathspec patterns are unsupported.
-        #[clap(last = true, required_unless_present_any = ["update", "all"], value_parser = crate::shared::AsBString)]
+        #[clap(required_unless_present_any = ["update", "all"], value_parser = crate::shared::AsBString)]
         paths: Vec<BString>,
     },
     /// Restore literal files in either the index or the worktree.
@@ -1297,7 +1297,7 @@ pub mod revision {
     #[derive(Debug, clap::Subcommand)]
     #[clap(visible_alias = "rev", visible_alias = "r")]
     pub enum Subcommands {
-        /// List all commits reachable from the given rev-spec.
+        /// List commits reachable from a revision, or B excluding A's ancestry for A..B.
         #[clap(visible_alias = "l")]
         List {
             /// Display long hashes, instead of expensively shortened versions for best performance.
