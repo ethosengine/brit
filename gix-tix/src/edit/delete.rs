@@ -124,9 +124,12 @@ pub(super) fn preflight_tree_transition(
         gix::tempfile::AutoRemove::Tempfile,
     )
     .or_raise(|| message("could not create a temporary index for delete preflight"))?;
-    index
-        .write_all(&std::fs::read(repo.index_path()).or_raise(|| message("could not read the index before deleting"))?)
-        .or_raise(|| message("could not copy the index for delete preflight"))?;
+    gix::utils::stream::copy(
+        &mut std::fs::File::open(repo.index_path()).or_raise(|| message("could not open the index before deleting"))?,
+        &mut index,
+        &gix::interrupt::IS_INTERRUPTED,
+    )
+    .or_raise(|| message("could not copy the index for delete preflight"))?;
     index
         .flush()
         .or_raise(|| message("could not flush the delete preflight index"))?;
@@ -184,6 +187,83 @@ mod tests {
 
     fn open(path: &Path) -> gix_testtools::Result<gix::Repository> {
         Ok(crate::test_repository::open(path)?)
+    }
+
+    #[test]
+    fn cancelled_index_copy_preserves_repository_state() -> gix_testtools::Result {
+        if gix_testtools::run_in_isolated_process()? {
+            return Ok(());
+        }
+        let fixture = gix_testtools::scripted_fixture_writable("forget_commit.sh")?;
+        let repository = open(fixture.path())?;
+        let top = repository.head_id()?.detach();
+        let before = gix_testtools::repository::snapshot(fixture.path())?;
+        gix::interrupt::trigger();
+        let started = std::time::Instant::now();
+        let result = preflight_tree_transition(&repository, fixture.path(), top, top);
+        let elapsed = started.elapsed();
+        gix::interrupt::reset();
+        let error = result.expect_err("cancellation must stop before invoking the transition helpers");
+        assert!(error.classify().is_cancelled(), "{error:?}");
+        assert!(
+            elapsed < std::time::Duration::from_secs(1),
+            "controlled cancellation took {elapsed:?}"
+        );
+        assert_eq!(gix_testtools::repository::snapshot(fixture.path())?, before);
+        Ok(())
+    }
+
+    #[test]
+    #[ignore = "whole-group qualification runs the 20 MiB index extension explicitly"]
+    fn preflight_preserves_twenty_mib_index_metadata() -> gix_testtools::Result {
+        let fixture = gix_testtools::scripted_fixture_writable("forget_commit.sh")?;
+        crate::test_repository::disable_autocrlf(fixture.path())?;
+        let repository = open(fixture.path())?;
+        let top = repository.head_id()?.detach();
+        let parent = repository
+            .find_commit(top)?
+            .parent_ids()
+            .next()
+            .expect("top has a parent")
+            .detach();
+        let index_path = repository.index_path();
+        let mut original = std::fs::read(&index_path)?;
+        original.truncate(original.len() - repository.object_hash().len_in_bytes());
+        let mut index = std::fs::File::create(&index_path)?;
+        let mut hash = gix::hash::hasher(repository.object_hash());
+        let mut append = |bytes: &[u8]| -> std::io::Result<()> {
+            index.write_all(bytes)?;
+            hash.update(bytes);
+            Ok(())
+        };
+        append(&original)?;
+        // An uppercase signature is an optional extension: Git may discard it in its private copy.
+        append(b"BRTQ")?;
+        append(&(20_u32 * 1024 * 1024).to_be_bytes())?;
+        let chunk = [b'x'; 64 * 1024];
+        for _ in 0..320 {
+            append(&chunk)?;
+        }
+        index.write_all(hash.try_finalize()?.as_slice())?;
+        drop(index);
+        let saved_index = repository.git_dir().join("preflight-original-index");
+        std::fs::copy(&index_path, &saved_index)?;
+
+        preflight_tree_transition(&repository, fixture.path(), top, parent)?;
+
+        assert!(
+            gix::utils::stream::equal(
+                std::fs::File::open(&index_path)?,
+                std::fs::File::open(saved_index)?,
+                &gix::interrupt::IS_INTERRUPTED,
+            )?,
+            "preflight must preserve every original index byte, including optional metadata"
+        );
+        assert_eq!(repository.head_id()?, top, "preflight must not advance HEAD");
+        assert_eq!(std::fs::read(fixture.path().join("tracked"))?, b"top\n");
+        assert_eq!(std::fs::read(fixture.path().join("added"))?, b"added\n");
+        assert_eq!(std::fs::read(fixture.path().join("untracked"))?, b"untracked\n");
+        Ok(())
     }
 
     #[test]

@@ -1742,6 +1742,11 @@ views.
 - Deleting an attached root deletes the branch and leaves symbolic `HEAD`
   unborn. A selected detached root is rejected because it cannot produce a valid
   unborn `HEAD`. Success refreshes history and selects the parent when present.
+- Delete preflight copies the index into its private temporary file with bounded
+  transfer storage and cancellation checks between chunks. Index metadata does
+  not require a second whole-file allocation, and preflight preserves the original
+  index bytes, refs and worktree. Git still owns validation and mutation of the
+  private copy; this does not establish an aggregate scratch bound for its children.
 
 ### Transactional rebases
 
