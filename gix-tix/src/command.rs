@@ -20,6 +20,33 @@ mod rebase;
 mod reword;
 mod travel;
 
+/// Keep invocation settings across editor waits without retaining repository caches or stale ownership trust.
+struct Reopen {
+    path: PathBuf,
+    worktree: Option<PathBuf>,
+    trust: gix::sec::Trust,
+    options: gix::open::Options,
+}
+
+impl Reopen {
+    fn new(repository: &gix::Repository) -> Self {
+        Self {
+            path: repository.git_dir().to_owned(),
+            worktree: repository.workdir().map(ToOwned::to_owned),
+            trust: repository.git_dir_trust(),
+            options: repository.open_options().clone(),
+        }
+    }
+
+    fn open(&self) -> Result<gix::Repository> {
+        let current_dir = std::env::current_dir().or_raise(|| message("could not determine current directory"))?;
+        let trust =
+            gix::discover::repository::trust(&self.path, self.worktree.as_deref(), &current_dir, (&self.path, None))?
+                .min(self.trust);
+        gix::open_opts(&self.path, self.options.clone().with(trust).open_path_as_is(true))
+    }
+}
+
 /// Arguments and commands shared by the standalone `tix` binary and `gix tix`.
 #[derive(Debug, clap::Args)]
 pub struct Platform {
@@ -999,8 +1026,7 @@ fn resolve_spill_paths(repository: &gix::Repository, paths: &[OsString]) -> Resu
 }
 
 fn split(repository: gix::Repository, graph: &crate::history::HistoryGraph, args: Split) -> Result<()> {
-    let repository_path = repository.git_dir().to_owned();
-    let bare = repository.is_bare();
+    let reopen = Reopen::new(&repository);
     let mut prepared = crate::edit::split::prepare(repository, args.todo)?;
     let editor = prepared.editor.take().expect("prepared splits have an editor");
     let Some(edited) = crate::edit::edit_document_without_terminal(
@@ -1012,11 +1038,13 @@ fn split(repository: gix::Repository, graph: &crate::history::HistoryGraph, args
         println!("no split performed: no input was provided");
         return Ok(());
     };
-    let mut repository = crate::open_repository(&repository_path, bare, false)
+    let mut repository = reopen
+        .open()
         .or_raise(|| message("could not reopen repository after editing split"))?;
     repository.object_cache_size(None);
     let outcome = crate::edit::split::apply_reporting(repository, graph, prepared, &edited, |_| {})?;
-    let output_repository = crate::open_repository(&repository_path, bare, false)
+    let output_repository = reopen
+        .open()
         .or_raise(|| message("could not reopen repository after splitting"))?;
     let selected = outcome
         .selected
@@ -1076,6 +1104,63 @@ mod tests {
     use clap::{CommandFactory, error::ErrorKind};
 
     use super::*;
+
+    #[test]
+    fn reopen_retains_policy_and_refreshes_config_without_upgrading_trust() -> gix_testtools::Result {
+        for trust in [gix::sec::Trust::Full, gix::sec::Trust::Reduced] {
+            let fixture = gix_testtools::scripted_fixture_writable("create_commit.sh")?;
+            let repository = gix::open_opts(
+                fixture.path(),
+                crate::test_repository::options()
+                    .with(trust)
+                    .cli_overrides(["gitoxide.objects.allocLimit=1024"]),
+            )?;
+            let reopen = Reopen::new(&repository);
+            drop(repository);
+            std::fs::OpenOptions::new()
+                .append(true)
+                .open(fixture.path().join(".git/config"))?
+                .write_all(b"\n[reopen]\nobserved = after\n")?;
+            let repository = reopen.open()?;
+            assert_eq!(repository.allocation_limit(), Some(1024));
+            assert_eq!(repository.git_dir_trust(), trust);
+            assert_eq!(
+                repository.config_snapshot().string("reopen.observed"),
+                Some("after".into())
+            );
+        }
+        Ok(())
+    }
+
+    #[cfg(target_os = "linux")]
+    #[test]
+    #[ignore = "requires chown authority: qualification runs this explicitly"]
+    fn reopen_rechecks_git_directory_and_worktree_ownership() -> gix_testtools::Result {
+        use std::os::unix::fs::{MetadataExt, chown};
+
+        for change_worktree in [false, true] {
+            let fixture = gix_testtools::scripted_fixture_writable("create_commit.sh")?;
+            let repository = crate::test_repository::open(fixture.path())?;
+            assert_eq!(repository.git_dir_trust(), gix::sec::Trust::Full);
+            assert_eq!(
+                std::fs::metadata(fixture.path())?.uid(),
+                0,
+                "qualification requires chown authority"
+            );
+            let reopen = Reopen::new(&repository);
+            drop(repository);
+            let changed = if change_worktree {
+                fixture.path().to_owned()
+            } else {
+                reopen.path.clone()
+            };
+            chown(changed, Some(65534), None)?;
+            let repository = reopen.open()?;
+            assert_eq!(repository.git_dir_trust(), gix::sec::Trust::Reduced);
+            assert_eq!(repository.allocation_limit(), Some(16 * 1024 * 1024));
+        }
+        Ok(())
+    }
 
     #[test]
     fn tui_recovers_a_cli_pause_and_observes_cli_amend_continue_and_stop() -> gix_testtools::Result {
@@ -3298,10 +3383,15 @@ mod tests {
         let fixture = gix_testtools::scripted_fixture_writable("split_commit.sh")?;
         let repository = crate::test_repository::open_with(
             fixture.path(),
-            [format!(
-                "core.editor={}",
-                crate::test_repository::replacing_editor("what", "split")
-            )],
+            [
+                format!(
+                    "core.editor={}",
+                    crate::test_repository::replacing_editor("what", "split")
+                ),
+                "committer.name=Invocation Committer".into(),
+                "committer.email=invocation@example.com".into(),
+                "gitoxide.objects.allocLimit=1024".into(),
+            ],
         )?;
         let graph = crate::edit::loaded_view_graph(&repository)?;
         let original = repository.head_id()?.detach();
@@ -3309,6 +3399,10 @@ mod tests {
         split(repository, &graph, Split { todo: true })?;
 
         assert_eq!(git(fixture.path(), &["log", "-1", "--format=%s"])?, b"split\n");
+        assert_eq!(
+            git(fixture.path(), &["log", "-1", "--format=%cn <%ce>"])?,
+            b"Invocation Committer <invocation@example.com>\n"
+        );
         assert_eq!(git(fixture.path(), &["show", "HEAD^:unstaged"])?, b"worktree\n");
         assert_eq!(git(fixture.path(), &["show", "HEAD:staged"])?, b"staged\n");
         assert!(git(fixture.path(), &["diff", "--exit-code"])?.is_empty());

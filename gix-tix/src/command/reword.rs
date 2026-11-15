@@ -74,8 +74,7 @@ pub(super) fn run(repository: gix::Repository, args: Args) -> Result<()> {
         );
     }
 
-    let repository_path = repository.git_dir().to_owned();
-    let bare = repository.is_bare();
+    let reopen = super::Reopen::new(&repository);
     let change_id = crate::change_id::for_commit(&repository, target)?;
     let (editor, document) = crate::edit::reword::document_with_author(&repository, target, author.map(AsRef::as_ref))?;
     drop(repository);
@@ -93,7 +92,8 @@ pub(super) fn run(repository: gix::Repository, args: Args) -> Result<()> {
         }
     };
 
-    let mut repository = crate::open_repository(&repository_path, bare, false)
+    let mut repository = reopen
+        .open()
         .or_raise(|| message("could not reopen repository after editing commit"))?;
     repository.object_cache_size(None);
     let (graph, target) = crate::edit::reword::relocate_after_editor(&repository, &[], &hidden, change_id)?;
@@ -353,13 +353,28 @@ mod tests {
         let author_date = git(fixture.path(), &["log", "-1", "--format=%aI"])?;
         let mut reword = args("HEAD");
         reword.edit.author = Some("Agent <agent@example.com>".into());
-        run(open(fixture.path(), ":")?, reword)?;
+        run(
+            gix::open_opts(
+                fixture.path(),
+                crate::test_repository::options().cli_overrides([
+                    "core.editor=:",
+                    "committer.name=Invocation Committer",
+                    "committer.email=invocation@example.com",
+                    "gitoxide.objects.allocLimit=1024",
+                ]),
+            )?,
+            reword,
+        )?;
 
         assert_eq!(git(fixture.path(), &["log", "-1", "--format=%B"])?, message);
         assert_eq!(git(fixture.path(), &["log", "-1", "--format=%aI"])?, author_date);
         assert_eq!(
             git(fixture.path(), &["log", "-1", "--format=%an <%ae>"])?,
             b"Agent <agent@example.com>\n"
+        );
+        assert_eq!(
+            git(fixture.path(), &["log", "-1", "--format=%cn <%ce>"])?,
+            b"Invocation Committer <invocation@example.com>\n"
         );
 
         let old = git(fixture.path(), &["rev-parse", "HEAD"])?;

@@ -47,8 +47,7 @@ pub(super) fn run(repository: gix::Repository, args: Args) -> Result<()> {
         .map(gix::path::os_str_into_bstr)
         .transpose()
         .or_raise(|| message("author is not valid UTF-8"))?;
-    let repository_path = repository.git_dir().to_owned();
-    let bare = repository.is_bare();
+    let reopen = super::Reopen::new(&repository);
     let mut prepared = crate::edit::create::prepare_from(repository, parent, source, author, args.todo)?;
     if prepared.is_empty && !args.allow_empty {
         bail!("the new commit would be empty; use --allow-empty to create it anyway");
@@ -56,7 +55,8 @@ pub(super) fn run(repository: gix::Repository, args: Args) -> Result<()> {
 
     let explicit = super::reword::explicit_message(&args.edit.message, args.edit.file.as_deref(), std::io::stdin())?;
     let outcome = if let Some(message) = explicit {
-        let mut repository = crate::open_repository(&repository_path, bare, false)
+        let mut repository = reopen
+            .open()
             .or_raise(|| gix::error::message("could not reopen repository before creating commit"))?;
         repository.object_cache_size(None);
         crate::edit::create::apply_message_reporting(repository, &graph, prepared, &message)?
@@ -71,12 +71,14 @@ pub(super) fn run(repository: gix::Repository, args: Args) -> Result<()> {
             println!("no commit created: no input was provided");
             return Ok(());
         };
-        let mut repository = crate::open_repository(&repository_path, bare, false)
+        let mut repository = reopen
+            .open()
             .or_raise(|| message("could not reopen repository after editing commit"))?;
         repository.object_cache_size(None);
         crate::edit::create::apply_reporting(repository, &graph, prepared, &edited)?
     };
-    let repository = crate::open_repository(&repository_path, bare, false)
+    let repository = reopen
+        .open()
         .or_raise(|| message("could not reopen repository after creating commit"))?;
     let selected = outcome
         .selected
@@ -171,6 +173,25 @@ mod tests {
         std::fs::write(path.join("new"), b"new\n")?;
         git(path, &["add", "new"])?;
         Ok(head)
+    }
+
+    #[test]
+    fn creation_retains_cli_committer_after_preparation() -> gix_testtools::Result {
+        let fixture = gix_testtools::scripted_fixture_writable("create_commit.sh")?;
+        let repository = gix::open_opts(
+            fixture.path(),
+            crate::test_repository::options().cli_overrides([
+                "committer.name=Invocation Committer",
+                "committer.email=invocation@example.com",
+                "gitoxide.objects.allocLimit=1024",
+            ]),
+        )?;
+        run(repository, args())?;
+        assert_eq!(
+            git(fixture.path(), &["log", "-1", "--format=%cn <%ce>"])?,
+            b"Invocation Committer <invocation@example.com>\n"
+        );
+        Ok(())
     }
 
     #[test]

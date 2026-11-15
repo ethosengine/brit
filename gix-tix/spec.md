@@ -1413,6 +1413,13 @@ views.
   inferred hidden base as the history view. Unrelated refs do not broaden their
   descendant rewrite scope, while mutable refs pointing into that scope are
   still retargeted.
+- Command-line creation, rewording and splitting retain invocation configuration,
+  including explicit allocation limits, when reopening after preparation or an
+  editor wait. Only paths and opening options survive the wait, not repository
+  caches. Each reopen rechecks git-directory, common-directory and worktree
+  ownership and reloads on-disk configuration; retaining options cannot by itself
+  raise the previously established trust level. Existing `safe.directory`
+  handling still applies.
 - After any command-line amend, spill, split, reword, new, rebase, or pending
   time-travel replay, successfully retargeted commit refs are printed after the
   command's existing result as sorted `full/ref/name: old-id -> new-id` lines.
