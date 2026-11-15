@@ -91,8 +91,8 @@ crossbeam-channel = { version = "0.5.15", optional = true }
 smallvec = { version = "1.15.1", optional = true }
 
 # for 'query' and 'corpus'
-# Specific version needed for MSRV 1.88
-rusqlite = { version = "0.39.0", optional = true, features = ["bundled", "fallible_uint"] }
+# Patched bundled SQLite (RUSTSEC-2026-0459); these features require Rust 1.89.
+rusqlite = { version = "0.41.1", optional = true, features = ["bundled", "fallible_uint"] }
 
 # for 'corpus'
 parking_lot = { version = "0.12.4", optional = true }
@@ -112,7 +112,7 @@ open = "5.3.5"
 document-features = { version = "0.2.0", optional = true }
 
 [target.'cfg(target_os = "linux")'.dependencies]
-nix = { version = "0.26.4", default-features = false, features = ["signal", "process"] }
+nix = { version = "0.31.3", default-features = false, features = ["signal", "process"] }
 
 [dev-dependencies]
 # Exercise optional functionality in tests without enabling it for dependents.

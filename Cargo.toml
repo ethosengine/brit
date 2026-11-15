@@ -8,8 +8,8 @@ authors = ["Sebastian Thiel <sebastian.thiel@icloud.com>"]
 edition = "2024"
 license = "MIT OR Apache-2.0"
 version = "0.60.7"
-# Rust 1.88 is required by `dua-core` 4.0, used for worktree removal.
-rust-version = "1.88"
+# Rust 1.89 is required by patched `rusqlite` for query/corpus support.
+rust-version = "1.89"
 include = ["/src/**/*", "/build.rs", "/LICENSE-*", "/README.md"]
 resolver = "2"
 

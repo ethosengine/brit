@@ -98,9 +98,10 @@ read credential for the private `elohim` Cargo registry configured in
 local storage or the process environment; never put tokens in tracked files.
 Cargo also needs a credential provider such as `cargo:token`.
 
-The frontend declares Rust 1.88, but the dedicated MSRV CI job currently checks
-`gix`, not the whole frontend. The shared-tree local qualification used Rust 1.98;
-use that qualified toolchain or verify your chosen toolchain independently.
+The frontend declares Rust 1.89 for the patched bundled SQLite used by query and
+corpus commands. The dedicated MSRV CI job checks `gix` at Rust 1.88, not the whole
+frontend. Builds and release qualification use the pinned Rust 1.100 toolchain;
+verify another toolchain independently.
 
 From the repository root, choose an **unused** install prefix and an external
 target directory. In an Elohim workspace, follow its Cargo pool policy instead

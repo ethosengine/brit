@@ -4499,3 +4499,36 @@ contracts and the declared style check pass. Private evidence is
 This is a dependency integration result, not another full memory qualification.
 The SQLite advisory and pin-utils maintenance advisory remain unresolved; no
 advisory exception, minimum-toolchain change, release or parent-pin move is made.
+
+### 2026-11-15 — remaining dependency advisories
+
+The release candidate now selects rusqlite 0.41.1, libsqlite3-sys 0.39.1 and
+hashlink 0.12.2, removing RUSTSEC-2026-0459's vulnerable bundled SQLite. The
+frontend minimum is explicitly 1.89; the pinned build toolchain remains 1.100
+and the separate gix library minimum remains 1.88. Linux process control uses
+nix 0.31.3 with the existing signal/process feature selection. No process-control
+or recovery semantics are intentionally changed.
+
+The default `max` and delivered `max-pure` normal/build dependency graphs contain
+no pin-utils. The all-feature graph retains it through async-std 1.13.2 only.
+RUSTSEC-2026-0441 is an explicit maintenance exception tied to the existing
+async-std exception and retires with that runtime; it is not a vulnerability
+waiver or removal of async compatibility. cargo-deny 0.20.2 passes the workspace
+all-feature advisory check; its unrelated async-executor 1.14.0 yanked-version
+warning remains visible.
+
+Forty-two native recovery tests and two process-invocation tests pass per hash.
+The SHA-256 executions run in 1 GiB/swap-zero groups at 122,654,720 B and
+12,496,896 B respectively. Both hashes also pass the two 64 MiB corpus/20 MiB
+commit-metadata fixtures, including loose/packed objects, explicit limits and
+actual reduced trust: 258,842,624 B / 15.900 s and 232,103,936 B / 72.553 s.
+All measured groups have zero OOM kills, surviving processes or executable changes.
+Scratch peaks remain unmeasured. Receipts and exact binary identities live in the
+existing isolated `bounded-memory/release-sqlite-nix-*` evidence.
+
+Release preparation separately found all 70 allocated registry versions already
+published. The publisher correctly refuses the changed gix-utils 0.5.2 payload;
+fresh versions are required before release, including Brit 0.1.15. No immutable
+package is overwritten and no release or consumer pin has moved. Remaining
+command coverage, aggregate scratch, both-device admission and final-source
+qualification still block the complete memory guarantee.
