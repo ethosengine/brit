@@ -8,8 +8,8 @@ edition = "2024"
 cargo-fuzz = true
 
 [dependencies]
-gix-utils = { version = "^0.5.1", path = "../../gix-utils", registry = "elohim", features = ["progress"] }
-gix-error = { version = "^0.5.1", path = "../../gix-error", registry = "elohim" }
+gix-utils = { version = "^0.5.3", path = "../../gix-utils", registry = "elohim", features = ["progress"] }
+gix-error = { version = "^0.5.2", path = "../../gix-error", registry = "elohim" }
 libfuzzer-sys = "0.4"
 
 [dependencies.gix-zlib]

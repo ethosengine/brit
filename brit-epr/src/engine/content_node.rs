@@ -13,7 +13,7 @@ pub trait ContentNode: Serialize + DeserializeOwned {
     /// Serialize to canonical DAG-CBOR bytes (RFC 8949 §4.2.1 deterministic:
     /// sorted keys, shortest-form ints, no indefinite-length items).
     fn canonical_bytes(&self) -> Result<Vec<u8>, CborError> {
-        serde_ipld_dagcbor::to_vec(self).map_err(|e| CborError(e.to_string()))
+        serde_ipld_dagcbor::to_vec(self).map_err(|e| CborError::new(e.to_string()))
     }
 
     /// Compute the CIDv1 (dag-cbor) over the canonical bytes.

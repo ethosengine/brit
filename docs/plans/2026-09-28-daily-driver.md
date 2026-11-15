@@ -4544,3 +4544,34 @@ fresh versions are required before release, including Brit 0.1.15. No immutable
 package is overwritten and no release or consumer pin has moved. Remaining
 command coverage, aggregate scratch, both-device admission and final-source
 qualification still block the complete memory guarantee.
+
+### 2026-11-15 — fresh release package allocation
+
+Brit 0.1.15 and 67 changed or dependent library packages now have unused registry
+versions; every versioned local dependency, including dev/target/fuzz edges, is
+updated to the prepared package. Cargo accepts the locked resolution without
+changing external selections. The dependency-ordered publisher audits all 70
+packages: 68 absent versions and two unchanged versions already present.
+The unchanged gix-macros 0.2.0 and gix-sequencer 0.0.0 package payloads compare
+equivalent with the registry archives, including normalized manifests and locks.
+The private packaging probe permits dirty inputs only to compare these two
+archives; publication still requires the ordinary clean committed-source gate.
+
+The earlier candidate at 435236146 passes nonpublishing release run43654337539
+on Linux x86-64, Windows x86-64 and macOS Intel/ARM, including source preparation
+and installed delivery checks. That run does not qualify the newer dependency,
+receipt or version commits. No registry upload, release tag or consumer pin move
+has occurred. The complete resource matrix remains required.
+
+The combined engine-only frontend build exposed an unused receipt error
+constructor when the protocol feature is disabled. Canonical node encoding now
+uses that existing constructor as well; this preserves the error bytes and
+avoids a feature-specific warning without a suppression. The publisher's 25
+contract tests and all 12 readiness contracts pass.
+
+The prepared 0.1.15 frontend passes all 36 max-pure CLI checks. The engine-only
+receipt library passes 52 checks and strict all-target Clippy. The initial CLI
+attempt inherited RUST_BACKTRACE=1 and failed its fixed diagnostic-string
+assertion; that evidence is retained. Repeating with the declared no-backtrace
+diagnostic environment passes, with no production diagnostic change. The combined
+all-feature advisory check, format check and declared style check also pass.

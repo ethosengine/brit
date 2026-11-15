@@ -2,7 +2,7 @@ lints.workspace = true
 
 [package]
 name = "gix-revision"
-version = "0.51.1"
+version = "0.51.2"
 repository = "https://github.com/GitoxideLabs/gitoxide"
 license = "MIT OR Apache-2.0"
 description = "A crate of the gitoxide project dealing with finding names for revisions and parsing specifications"
@@ -31,14 +31,14 @@ merge_base = ["dep:gix-trace", "dep:bitflags"]
 serde = ["dep:serde", "gix-hash/serde", "gix-object/serde"]
 
 [dependencies]
-gix-error = { version = "^0.5.1", path = "../gix-error", registry = "elohim", features = ["bstr"] }
-gix-hash = { version = "^0.28.1", path = "../gix-hash", registry = "elohim" }
-gix-object = { version = "^0.66.1", path = "../gix-object", registry = "elohim" }
-gix-date = { version = "^0.18.0", path = "../gix-date", registry = "elohim" }
-gix-hashtable = { version = "^0.18.1", path = "../gix-hashtable", registry = "elohim", optional = true }
-gix-revwalk = { version = "^0.37.1", path = "../gix-revwalk", registry = "elohim" }
-gix-commitgraph = { version = "^0.41.1", path = "../gix-commitgraph", registry = "elohim" }
-gix-trace = { version = "^0.3.0", path = "../gix-trace", registry = "elohim", optional = true }
+gix-error = { version = "^0.5.2", path = "../gix-error", registry = "elohim", features = ["bstr"] }
+gix-hash = { version = "^0.28.2", path = "../gix-hash", registry = "elohim" }
+gix-object = { version = "^0.66.2", path = "../gix-object", registry = "elohim" }
+gix-date = { version = "^0.18.1", path = "../gix-date", registry = "elohim" }
+gix-hashtable = { version = "^0.18.2", path = "../gix-hashtable", registry = "elohim", optional = true }
+gix-revwalk = { version = "^0.37.2", path = "../gix-revwalk", registry = "elohim" }
+gix-commitgraph = { version = "^0.41.2", path = "../gix-commitgraph", registry = "elohim" }
+gix-trace = { version = "^0.3.1", path = "../gix-trace", registry = "elohim", optional = true }
 
 bstr = { version = "1.12.0", default-features = false, features = ["std"] }
 bitflags = { version = "2", optional = true }

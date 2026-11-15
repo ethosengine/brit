@@ -4,6 +4,15 @@ All notable changes to `brit-epr` (and the brit crates released with it) are rec
 The format follows [Keep a Changelog](https://keepachangelog.com/en/1.0.0/); versions follow
 [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## 0.2.1 — prepared with Brit 0.1.15
+
+- Retain the original versioned-note verification contract alongside frozen legacy
+  signatures and record addresses.
+- Stream record and payload hashing without retaining entire input files; test
+  byte parity and I/O failures at buffer boundaries.
+- Isolate Git-backed receipt fixtures and verify the existing gate adapter against
+  a retained epoch-2 note. Publication remains subject to final qualification.
+
 ## 0.2.0 — the address crossing (re-genesis 1)
 
 Released together with `brit-graph` 0.2.0 (follows the `BritCid` type), `brit-build-ref` 0.1.6
