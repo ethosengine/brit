@@ -5299,3 +5299,38 @@ The release gate is exactly these six stations:
 - [ ] Obtain a green nonpublishing `brit release` workflow run on the final commit. Serves brit-native-daily-driver.
 - [ ] Tag `brit-v0.2.0` and publish. Serves brit-native-daily-driver.
 - [ ] Move the Elohim parent pin and install on both devices. Serves brit-native-daily-driver.
+
+### 2026-11-15 — 0.2.0 released; the pack-slot repair is not on main
+
+Brit 0.2.0 is released at `e70fc8ad`: main CI run 43723903580 passed and
+published the crates, the tag `brit-v0.2.0` release run 43730600758 passed on
+Linux, Windows and both macOS targets, and the Elohim parent pin moved to that
+commit at `e239f3393`. The shem device follows it. Stations one to five of the
+scope ruling are met; station six is met on shem and pending on ethosengine.
+
+The second device completed the 28-case `memory_metadata` batch on the frozen
+`d459` build: 22 passed, none failed a Brit assertion, four failed in stock
+Git's `submodule add` local clone on the FUSE scratch mount, and two reflog
+cases exceeded the 600 s allowance. One native run per hash of that reflog test
+then passed in 63.5 s and 83.5 s with its final reflog, HEAD, index and tracked
+file checks. Scratch remains unmeasured. These are second-device reports, not
+measurements repeated on shem.
+
+The second device's follow refused with `non-descendant`: its installed 0.1.13
+came from `10d18eac`, a seven-commit side line that never merged. Six of those
+commits are represented on main. The seventh, `a1263002`, was not: build
+commands rebuild the object database with disk-sized slots once trust settles,
+so a repository with more than 32 pack indexes and no multi-pack index still
+resolves revisions. 0.2.0 therefore lacks that repair.
+
+Applying `a1263002` unchanged onto `e70fc8ad` does not compile: CI run
+43736699752 on `run-ci/brit-0.2.1-pack-slots` (`5c6b52fd`) fails in `brit-cli`.
+The commit was written against the crates.io gix 0.81 object-store interface;
+main's in-tree gix differs. The compiler reports `gix::discover::Error` not
+found, `gix::odb::store::load_index` private, `store::init::Options` without an
+`object_hash` field and not iterable, and a store constructor taking four
+arguments where three are supplied. The repair needs a port to the in-tree
+interface with its own `repository_slots` tests. Until then a device at reduced
+trust should stay under 32 pack indexes.
+
+- [ ] Port the `a1263002` pack-slot repair to main's in-tree gix object-store interface, with its 33-pack regression tests, and release it as 0.2.1. Serves brit-native-daily-driver.

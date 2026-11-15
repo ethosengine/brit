@@ -119,10 +119,22 @@ requirements below, as they do for the other affected command families.
 - [ ] Fault-enabled recovery suites remain open.
 - [ ] Committed-source receipts and final-source qualification remain open.
 
+## Found while releasing 0.2.0
+
+- [ ] Port `a1263002` (build commands rebuild the object database with disk-sized slots once trust settles; more than 32 pack indexes) to main's in-tree gix object-store interface. First 0.2.1 item; see the plan's 2026-11-15 release section for the compile errors.
+- [ ] `epr bin follow` cannot carry a lineage ruling: it refuses `non-descendant` before building, and `--rebase-lineage` exists only on `epr bin land`, which needs an ingested record; a device whose registry predates `brit-rebase-retained` then refuses the release closure with `checksums-mismatch` (second-device report).
+- [ ] `brit tag` only lists; a release tag cannot be created, and the pre-push reach gate refuses tag targets ("only a remote branch is supported").
+- [ ] `brit config` has no write form; setting `branch.<name>.britReachBase` needed `git config`.
+- [ ] No command stages a submodule gitlink at a named commit without a checked-out submodule; the parent pin move needed `git update-index --cacheinfo`.
+- [ ] `brit diff <revision>` is refused as an unexpected argument in 0.2.0.
+- [ ] No patch-apply or cherry-pick command; porting one reviewed commit needed `git apply --3way`.
+- [ ] `epr bin follow --tool brit` builds Brit from source although the published `brit-build-<sha>` release exists for the same commit.
+- [ ] `json` `revision previous-branches` under an allocation limit is the step most sensitive to scratch-filesystem throughput: over a 200,000-entry reflog it exceeded 600 s on single-threaded fuse2fs and finished in 64-84 s natively (second-device observation, not a defect claim).
+
 ## Usage feedback across commands
 
-- [ ] Restore feedback capture on the shem device. The installed Brit 0.1.13 prints `brit: feedback capture gap; command result unchanged` after every command. Observed cause, 2026-11-15: Brit's recorder runs `epr feedback capture`, and the installed `epr` (elohim-epr-cli 0.3.2) answers ``unknown command `feedback` ``, so the recorder exits non-zero. `brit-cli/src/feedback.rs` is unchanged in 0.2.0; the cure is a current `epr` on the device, not a Brit change. Usage feedback is now the prioritisation input.
+- [ ] Feedback capture on the shem device was failing because the launching terminal exported a stale `EPR_BIN` pointing at elohim-epr-cli 0.3.2, which has no `feedback` verb; the device's installed `epr` 0.3.3 has it, and with the override removed the gap line stops. Corrects the earlier entry that blamed the installed `epr`. Remaining: a device check that reports a session `EPR_BIN` older than the installed head.
 - [ ] Say why the recorder refused: `Feedback::record` discards the recorder's stderr, so a missing `epr feedback` verb reads the same as any other refusal.
 - [ ] `brit diff` in a worktree of this repository refuses with "diff attributes and text conversion are not supported; use git diff" (observed with installed 0.1.13 on 2026-11-15, reviewing this document's own change).
 
-63 items
+72 items
