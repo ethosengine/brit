@@ -4886,14 +4886,68 @@ creation. The earlier success-expecting reduced-trust receipt remains failed;
 no trust settings were raised. Reflogs and unreachable objects are not asserted
 byte-identical, and native aggregate scratch remains unmeasured.
 
-The public invocation-policy matrix does not prove every reopened repository
-retains CLI settings: `command/new.rs` currently reopens with default options
-between preparation and publication. Native library tests retain the supplied
-repository policy; CLI reopen/worker propagation remains an explicit open audit
-item. Other editing, retained state, recovery and final-source acceptance also
+That public invocation-policy matrix did not prove every reopened repository
+retained CLI settings: at `1335368b0`, `command/new.rs` reopened with default
+options between preparation and publication. Native library tests retained the
+supplied policy. The command-specific repair and qualification follow below;
+other UI/worker propagation remains an explicit open audit item. Other editing,
+retained state, recovery and final-source acceptance also
 remain open. Evidence: `bounded-memory/tix-create-metadata-*`,
 `tix-create-public-*`, `tix-create-trust-*`, `scratch-local-tix-create-1335-*`,
 and the retained source patches and frozen runners.
+
+#### Tix command reopen policy (2026-11-15)
+
+Commit `ab0328555d57523835068007ad5bbcd6068fa366` retains opening options across
+creation, editor-based rewording and splitting. A regression first reproduced
+loss of an explicit committer setting during creation. The operation retains
+only paths, the original trust ceiling and opening options; it releases repository
+caches before editor waits. Each reopen rechecks Git-directory, common-directory
+and worktree ownership through the existing discovery helper, then reloads
+configuration with the original invocation settings. Existing `safe.directory`
+rules remain in force. No trust upgrade comes from reusing options alone.
+
+All 814 active native tests pass per hash at 64,933,888 / 49,209,344 B memory in
+27.196 / 27.378 s. Explicit ownership-change cases separately prove that changing
+either the Git-directory or worktree owner lowers trust and restores the reduced
+allocation default, at 3,403,776 / 3,284,992 B in 53 / 54 ms. The frozen runner
+is `5abd8f06358579fff1fa8f12bdc0d8f4848234c7c449d2d2ef4a8bcfcf2f62ea`.
+Initial harness failures from omitted hash features and the wrong fixture CWD
+are retained separately; successful runs use both hash features and the crate CWD.
+
+Public regression `28573d4b0` asserts the CLI committer survives while repository
+configuration remains byte-identical. It removes the fixture's committer
+environment variables, which correctly take precedence over configuration;
+the first public assertion omitted that removal and its failed receipts remain
+recorded. With the corrected fixture, the earlier binary fails and the rebuilt
+binary passes. All five ordinary public journeys pass per hash, along with
+strict affected Clippy, formatting, 12 readiness contracts and declared style.
+The rebuilt executable is
+`17f5da6e49944a20a4890f1856eaf58a1d29056385c6ce5424b9d37031ff49d6`, and
+the corrected public runner is
+`d57e67e5ee4abeab0aab187b9b0489ad716acd12beb1f8730a3d165d484dd587`.
+
+Fresh 20 MiB creation cases cover loose/packed parents, staged/empty selections
+and default/1 GiB/16 MiB/1 KiB policies through preparation and publication:
+
+| Hash / expected outcome | Memory peak | Elapsed |
+| --- | ---: | ---: |
+| SHA-1 / full-trust creation | 130,899,968 B | 35.940 s |
+| SHA-256 / full-trust creation | 131,088,384 B | 111.758 s |
+| SHA-1 / preserved ownership refusal | 131,063,808 B | 37.256 s |
+| SHA-256 / preserved ownership refusal | 130,711,552 B | 136.230 s |
+
+Separate full-trust V2 scratch cases pass at 133,038,080 / 133,234,688 B memory
+in 58.228 / 135.625 s, with 63,164,416 B additional filesystem allocation each.
+The separate 53,063,680 B baseline, unchanged tool identities and clean teardown
+are recorded; free space returns to baseline. All groups have zero OOM kills or
+survivors. Native aggregate scratch, other UI/worker reopens, large post-editor
+mutation, remaining commands and final-source acceptance remain open.
+Evidence: `bounded-memory/tix-reopen-*`, `scratch-local-tix-create-ab03-*` and
+their immutable runner/source records. Story-graph station: between accepting
+an invocation policy and qualifying an edit, every repository reopened during
+that edit must retain the policy while refreshing ownership; these regressions
+measure the creation/reword/split station without weakening release acceptance.
 
 The command boundary is `src/plumbing/options/mod.rs` plus
 `brit-cli/src/main.rs` and its composed bridge. This table is interim audit
