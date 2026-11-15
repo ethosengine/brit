@@ -4575,3 +4575,13 @@ attempt inherited RUST_BACKTRACE=1 and failed its fixed diagnostic-string
 assertion; that evidence is retained. Repeating with the declared no-backtrace
 diagnostic environment passes, with no production diagnostic change. The combined
 all-feature advisory check, format check and declared style check also pass.
+
+The release target is now **Brit 0.2.0**, reflecting the command-wide bounded
+object handling, recovery changes, receipt compatibility and resource
+qualification in this effort. The 0.1.15 candidate measurements above retain
+their original source and executable identities; changing the version does not
+qualify a new build. The public frontend manifest and lockfile agree on 0.2.0.
+The existing library version allocation is unchanged. The complete 1 GiB
+whole-process-group matrix, separate 1 GiB scratch proof and linked-monorepo
+qualification on both devices remain release requirements. No incremental
+release waiver, tag, registry upload or consumer pin move is implied.
