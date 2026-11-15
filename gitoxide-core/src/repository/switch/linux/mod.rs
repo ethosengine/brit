@@ -287,6 +287,7 @@ pub fn mutation_guard(repo: &gix::Repository) -> Result<fs::File> {
 }
 pub(crate) fn shared_guard(repo: &gix::Repository) -> Result<fs::File> {
     use std::os::unix::fs::OpenOptionsExt;
+    let path = repo.common_dir().join("brit-mutation.guard");
     let file = fs::OpenOptions::new()
         .read(true)
         .write(true)
@@ -294,7 +295,8 @@ pub(crate) fn shared_guard(repo: &gix::Repository) -> Result<fs::File> {
         .truncate(false)
         .mode(0o600)
         .custom_flags(rustix::fs::OFlags::NOFOLLOW.bits() as i32)
-        .open(repo.common_dir().join("brit-mutation.guard"))?;
+        .open(&path)
+        .with_context(|| format!("could not open Brit mutation guard at {}", path.display()))?;
     rustix::fs::flock(&file, rustix::fs::FlockOperation::NonBlockingLockExclusive)
         .context("another Brit mutation is active")?;
     Ok(file)

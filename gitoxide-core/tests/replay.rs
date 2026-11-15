@@ -58,6 +58,35 @@ fn snapshot(root: &Path) -> Result<BTreeMap<std::path::PathBuf, Vec<u8>>> {
 }
 
 #[test]
+fn mutation_guard_open_errors_identify_path_and_preserve_io_cause() -> Result<()> {
+    if gix_testtools::run_in_isolated_process().map_err(anyhow::Error::from_boxed)? {
+        return Ok(());
+    }
+    let temp = fixture()?;
+    let root = temp.path();
+    let repo = gix::open(root)?;
+    let guard_path = repo.common_dir().join("brit-mutation.guard");
+    fs::create_dir(&guard_path)?;
+    fs::write(guard_path.join("foreign"), b"must remain untouched")?;
+    let before = snapshot(root)?;
+    let error = gitoxide_core::repository::switch::mutation_guard(&repo).expect_err("a directory cannot be the guard");
+    assert!(error.to_string().contains(&guard_path.display().to_string()));
+    assert_eq!(
+        error
+            .downcast_ref::<std::io::Error>()
+            .expect("I/O cause retained")
+            .kind(),
+        std::io::ErrorKind::IsADirectory
+    );
+    assert_eq!(
+        snapshot(root)?,
+        before,
+        "an inaccessible guard never permits mutation or cleanup"
+    );
+    Ok(())
+}
+
+#[test]
 fn equal_and_ancestor_upstreams_are_metadata_identical_noops() -> Result<()> {
     if gix_testtools::run_in_isolated_process().map_err(anyhow::Error::from_boxed)? {
         return Ok(());

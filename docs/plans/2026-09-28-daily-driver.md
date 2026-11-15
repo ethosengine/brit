@@ -4492,10 +4492,31 @@ existing private `bounded-memory/fetch-filter-*` evidence. The owner-run real
 fixture failed before creation at 6,909,952 B / 48 ms with `Permission denied`:
 the shared mutation guard is root-owned mode 0600, and other shared directories
 are also not writable by UID 1234. Target and registration remained absent.
-Those shared permissions are preserved; an independent snapshot retaining the
-real repository's pack layout is being preflighted. Path-specific guard I/O
-diagnostics, successful default fetch and protected-hook cases remain open.
-Final-source reruns and separate scratch proof remain required.
+Those shared permissions are preserved. Guard-open errors now identify the
+guard path while retaining the original I/O cause. A regression verifies that
+an obstructing directory and every repository byte survive the refusal; all
+60 ordinary replay tests pass for each hash.
+
+An independently owned snapshot preserves 6,513 object/ref/metadata files,
+the actual 15-pack layout and shallow boundary without repacking or hardlinks.
+Foreign worktree registrations, submodule stores, signing keys and writer
+locks are excluded explicitly. Protected hook bytes are copied unchanged, with
+only the snapshot's hook path redirected to its own copy. The first destination
+was beside the snapshot: the output-path guard correctly discovered the enclosing
+shared repository and refused its inaccessible guard before creating anything.
+That fixture error and the diagnostic retry are retained. Moving the proposed
+destination inside the independently owned snapshot preserves the guard rule.
+
+As UID/GID 1234, with no inherited credentials or capabilities and a fresh
+1 GiB/no-swap group per operation, the nested linked checkout passes at
+389,353,472 B / 20.927 s and default `fetch --dry-run` passes at
+11,976,704 B / 315 ms. Config inspection confirms full trust, with no trust or
+remote override. Both have zero memory events/survivors, unchanged executable
+identities and preserved existing refs. These are interim `3cace21d8` receipts
+over the real object corpus, distinct from the original shared-worktree and
+reduced-trust evidence; exclusions do not disappear from qualification claims.
+Ref-writing fetch, protected-hook cases, feedback capture, final-source reruns
+and separate scratch proof remain required.
 
 The command boundary is `src/plumbing/options/mod.rs` plus
 `brit-cli/src/main.rs` and its composed bridge. This table is interim audit
