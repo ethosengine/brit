@@ -5129,7 +5129,7 @@ metadata families over 16 MiB, aggregate scratch accounting and telemetry,
 allocation and I/O faults, corruption, cancellation/death, cross-platform checks,
 ordinary and fault-enabled recovery suites, and committed-source receipts.
 The habit remains RED. Release and parent-pin changes wait for the complete
-required matrix and coordination with the existing 0.1.14 integration owner.
+required matrix and coordination with the existing 0.1.14 integration owner. (Superseded by [the 0.2.0 scope ruling](#2026-11-15--020-release-scope-ruling) below.)
 
 The CI advisory repair updates the locked Hickory net/proto/resolver packages
 from 0.26.1 to 0.26.2 and rustix from 1.1.4 to 1.1.6. These are the published
@@ -5273,4 +5273,29 @@ qualify a new build. The public frontend manifest and lockfile agree on 0.2.0.
 The existing library version allocation is unchanged. The complete 1 GiB
 whole-process-group matrix, separate 1 GiB scratch proof and linked-monorepo
 qualification on both devices remain release requirements. No incremental
-release waiver, tag, registry upload or consumer pin move is implied.
+release waiver, tag, registry upload or consumer pin move is implied. (Superseded by [the 0.2.0 scope ruling](#2026-11-15--020-release-scope-ruling) below.)
+
+### 2026-11-15 — 0.2.0 release scope ruling
+
+Matthew, steward of record, rules that the full-matrix gate overshot a sprint's
+definition of done. The goal is a more reliable Brit for daily-driver use,
+released incrementally, with the next release prioritised from the feedback
+logs of our own Brit usage. Brit 0.2.0 releases what is measured.
+
+This ruling supersedes the earlier sentences that make the complete public-command
+matrix, separate scratch proof and both-device qualification release requirements,
+including the earlier prohibition on an incremental release waiver. The matrix
+under “Public-command audit in progress” is frozen as the record of what was
+measured at `387c8a3a`; its open clauses and scratch-cap measurement move to the
+[bounded-memory backlog](2026-11-15-bounded-memory-backlog.md). Historical
+measurements retain their recorded source and executable identities. The habit
+stays RED: this changes the release gate, not the habit's invariant.
+
+The release gate is exactly these six stations:
+
+- [ ] Freeze the public-command matrix as the measured record at `387c8a3a` and move every open clause and the scratch-cap measurement to the [bounded-memory backlog](2026-11-15-bounded-memory-backlog.md). Serves brit-native-daily-driver.
+- [ ] Classify ethosengine case 11 of the 28-case `memory_metadata` batch as a harness/fixture limitation, not a Brit blocker: the second device's report records 10 cases passed, then SHA-1 `describe_preserves_large_metadata_and_tag_selection` failed in stock Git's `submodule add` local clone with “hardlink different from source” on the FUSE scratch mount, after the Brit assertions before it passed; 17 cases had not run. Serves brit-native-daily-driver.
+- [ ] Run the remaining 17 second-device cases once, without stopping on fixture failures; only Brit data loss or corruption blocks the release. Serves brit-native-daily-driver.
+- [ ] Obtain a green nonpublishing `brit release` workflow run on the final commit. Serves brit-native-daily-driver.
+- [ ] Tag `brit-v0.2.0` and publish. Serves brit-native-daily-driver.
+- [ ] Move the Elohim parent pin and install on both devices. Serves brit-native-daily-driver.
