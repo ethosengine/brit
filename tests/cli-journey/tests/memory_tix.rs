@@ -141,7 +141,7 @@ fn tix_history_with_actual_reduced_trust() -> Result<()> {
     history(true)
 }
 
-fn reword(bytes: usize, reduced: bool) -> Result<()> {
+fn reword(bytes: usize, reduced: bool, editor: bool) -> Result<()> {
     for packed in [false, true] {
         for limit in [None, Some("1073741824"), Some("16777216"), Some("1024")] {
             let repo = TestRepo::new("memory-tix-reword")?;
@@ -159,6 +159,7 @@ fn reword(bytes: usize, reduced: bool) -> Result<()> {
             git(root, &["commit", "--allow-empty", "-q", "-F", input_arg])?;
             let target = String::from_utf8(git(root, &["rev-parse", "HEAD"])?)?;
             git(root, &["commit", "--allow-empty", "-q", "-F", input_arg])?;
+            let tip = git(root, &["rev-parse", "HEAD"])?;
             let message = git(root, &["show", "-s", "--format=%B", "HEAD"])?;
             let tree = git(root, &["rev-parse", "HEAD^{tree}"])?;
             let index = fs::read(root.join(".git/index"))?;
@@ -187,14 +188,26 @@ fn reword(bytes: usize, reduced: bool) -> Result<()> {
                 #[cfg(not(target_os = "linux"))]
                 anyhow::bail!("ownership qualification runs on Linux");
             }
-            eprintln!("qualifying Tix reword: packed={packed}, reduced={reduced}");
-            run(
-                root,
-                &["tix", "reword", target.trim(), "-m", "rewritten metadata"],
-                limit,
-                &output,
-            )?;
-            ensure!(git(root, &["show", "-s", "--format=%B", "HEAD^"])? == b"rewritten metadata\n\n");
+            eprintln!("qualifying Tix reword: packed={packed}, reduced={reduced}, editor={editor}");
+            if editor {
+                run(
+                    root,
+                    &["-c", "core.editor=:", "tix", "reword", target.trim()],
+                    limit,
+                    &output,
+                )?;
+                ensure!(fs::read_to_string(&output)?.contains("the editor document was unchanged"));
+                ensure!(git(root, &["rev-parse", "HEAD"])? == tip);
+                ensure!(git(root, &["show", "-s", "--format=%B", "HEAD^"])? == message);
+            } else {
+                run(
+                    root,
+                    &["tix", "reword", target.trim(), "-m", "rewritten metadata"],
+                    limit,
+                    &output,
+                )?;
+                ensure!(git(root, &["show", "-s", "--format=%B", "HEAD^"])? == b"rewritten metadata\n\n");
+            }
             ensure!(git(root, &["show", "-s", "--format=%B", "HEAD"])? == message);
             ensure!(git(root, &["show", "-s", "--format=%B", target.trim()])? == message);
             ensure!(git(root, &["rev-parse", "HEAD^{tree}"])? == tree);
@@ -207,20 +220,38 @@ fn reword(bytes: usize, reduced: bool) -> Result<()> {
 
 #[test]
 fn tix_reword_preserves_metadata_above_buffer_policy() -> Result<()> {
-    reword(128 * 1024, false)
+    reword(128 * 1024, false, false)
 }
 
 #[test]
 #[ignore = "whole-group qualification runs the 20 MiB editing matrix explicitly"]
 fn tix_reword_with_twenty_mib_metadata() -> Result<()> {
-    reword(20 * 1024 * 1024, false)
+    reword(20 * 1024 * 1024, false, false)
 }
 
 #[cfg(target_os = "linux")]
 #[test]
 #[ignore = "requires chown authority: qualification runs this explicitly"]
 fn tix_reword_metadata_with_actual_reduced_trust() -> Result<()> {
-    reword(20 * 1024 * 1024, true)
+    reword(20 * 1024 * 1024, true, false)
+}
+
+#[test]
+fn tix_reword_editor_preserves_metadata_above_buffer_policy() -> Result<()> {
+    reword(128 * 1024, false, true)
+}
+
+#[test]
+#[ignore = "whole-group qualification runs the 20 MiB editor handoff explicitly"]
+fn tix_reword_editor_with_twenty_mib_metadata() -> Result<()> {
+    reword(20 * 1024 * 1024, false, true)
+}
+
+#[cfg(target_os = "linux")]
+#[test]
+#[ignore = "requires chown authority: qualification runs this explicitly"]
+fn tix_reword_editor_metadata_with_actual_reduced_trust() -> Result<()> {
+    reword(20 * 1024 * 1024, true, true)
 }
 
 fn notes(bytes: usize, reduced: bool) -> Result<()> {
