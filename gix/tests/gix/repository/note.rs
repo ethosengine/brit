@@ -1,4 +1,118 @@
 use gix_testtools::{Result, TestResult};
+
+#[test]
+fn visiting_notes_preserves_bytes_order_and_callback_errors_above_buffer_policy() -> TestResult {
+    let (repo, _tmp) = crate::util::basic_rw_repo()?;
+    let target = repo.write_blob(b"annotated")?.detach();
+    let large = vec![b'n'; 64 * 1024];
+    repo.notes()?.replace("first", target, &large)?;
+    repo.notes()?.replace("second", target, b"second\0note")?;
+    // Reopen so a write buffer already large enough cannot satisfy later reads.
+    let repo = gix::open_opts(
+        repo.git_dir(),
+        gix::open::Options::isolated().config_overrides(["gitoxide.objects.allocLimit=1024"]),
+    )?;
+
+    let mut notes = repo.notes()?.with_refs(["refs/notes/first", "refs/notes/second"])?;
+    assert!(
+        notes.get(target).is_err(),
+        "the owned-blob API retains its explicit allocation limit"
+    );
+    let mut found = Vec::new();
+    notes.for_each(target, |reference, bytes| {
+        found.push((reference.to_string(), bytes.to_vec()));
+        Ok(())
+    })?;
+    assert_eq!(
+        found,
+        [
+            ("refs/notes/first".into(), large),
+            ("refs/notes/second".into(), b"second\0note".to_vec())
+        ],
+        "bounded visits preserve the configured order and exact bytes"
+    );
+    let mut calls = 0;
+    let error = notes
+        .for_each(target, |_, _| {
+            calls += 1;
+            Err(gix::error::message("visitor stopped").into())
+        })
+        .expect_err("callback failure stops visitation");
+    assert_eq!(calls, 1, "a failed visitor never receives a later note");
+    assert!(
+        error.to_string().contains("visitor stopped"),
+        "the callback diagnostic is preserved"
+    );
+    Ok(())
+}
+
+#[test]
+fn visiting_notes_maps_large_tree_metadata_and_rejects_non_blob_notes() -> TestResult {
+    use gix::objs::{
+        Tree,
+        tree::{Entry, EntryKind},
+    };
+    use gix::refs::transaction::PreviousValue;
+
+    let (repo, _tmp) = crate::util::basic_rw_repo()?;
+    let target = repo.write_blob(b"annotated")?.detach();
+    let note_blob_id = repo.write_blob(b"note bytes")?.detach();
+    let mut tree = Tree {
+        entries: vec![Entry {
+            mode: EntryKind::Blob.into(),
+            filename: target.to_string().into(),
+            oid: note_blob_id,
+        }],
+    };
+    tree.entries.extend((0..128).map(|index| Entry {
+        mode: EntryKind::Blob.into(),
+        filename: format!("non-note-{index:04}").into(),
+        oid: note_blob_id,
+    }));
+    tree.entries.sort();
+    let root_tree_id = repo.write_object(&tree)?.detach();
+    repo.reference(
+        "refs/notes/large-tree",
+        root_tree_id,
+        PreviousValue::MustNotExist,
+        "test notes",
+    )?;
+    tree.entries[0].oid = root_tree_id;
+    let corrupt_tree_id = repo.write_object(&tree)?.detach();
+    repo.reference(
+        "refs/notes/wrong-kind",
+        corrupt_tree_id,
+        PreviousValue::MustNotExist,
+        "test wrong kind",
+    )?;
+    let repo = gix::open_opts(
+        repo.git_dir(),
+        gix::open::Options::isolated().config_overrides(["gitoxide.objects.allocLimit=1024"]),
+    )?;
+    assert!(
+        repo.find_object(root_tree_id).is_err(),
+        "the tree independently exceeds the buffering policy"
+    );
+    let mut calls = 0;
+    repo.notes()?
+        .with_refs(["refs/notes/large-tree"])?
+        .for_each(target, |_, bytes| {
+            assert_eq!(bytes, b"note bytes", "large metadata still resolves the original note");
+            calls += 1;
+            Ok(())
+        })?;
+    assert_eq!(calls, 1);
+    let error = repo
+        .notes()?
+        .with_refs(["refs/notes/wrong-kind"])?
+        .for_each(target, |_, _| {
+            panic!("a tree masquerading as a note must never reach the visitor")
+        })
+        .expect_err("note object kind is validated even when mapped");
+    assert!(error.to_string().contains("to be a blob"));
+    Ok(())
+}
+
 #[test]
 fn query_and_mutate_a_configured_notes_ref() -> TestResult {
     let (mut repo, _tmp) = crate::util::basic_rw_repo()?;

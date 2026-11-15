@@ -132,16 +132,28 @@ fn patch_enrichment(config: &File, patch_id: crate::patch_id::PatchId) -> Result
 }
 
 fn load_config(notes: &mut gix::note::Platform, object_id: ObjectId) -> Result<Option<File>> {
-    let found = notes
-        .get(object_id)
-        .or_raise(|| message("could not load the tix enrichment"))?;
-    found
-        .first()
-        .map(|note| {
-            File::try_from(note.blob.data.as_bstr())
-                .or_raise(|| message("could not parse the tix enrichment as Git config"))
+    let mut config = None;
+    notes
+        .for_each(object_id, |_, bytes| {
+            if config.is_none() {
+                config = Some(
+                    File::try_from(bytes.as_bstr())
+                        .or_raise(|| message("could not parse the tix enrichment as Git config"))?,
+                );
+            }
+            Ok(())
         })
-        .transpose()
+        .or_raise(|| message("could not load the tix enrichment"))?;
+    Ok(config)
+}
+
+pub(crate) fn note_contents(notes: &mut gix::note::Platform, object_id: ObjectId) -> Result<Vec<BString>> {
+    let mut contents = Vec::new();
+    notes.for_each(object_id, |_, bytes| {
+        contents.push(bytes.into());
+        Ok(())
+    })?;
+    Ok(contents)
 }
 
 pub(crate) fn tree_id(repo: &gix::Repository, commit_id: ObjectId) -> Result<ObjectId> {

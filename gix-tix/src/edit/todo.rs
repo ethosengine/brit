@@ -785,10 +785,13 @@ fn anchor_title(repo: &gix::Repository, id: ObjectId) -> Result<String> {
     let mut notes = repo
         .notes()
         .or_raise(|| gix::error::message("could not open Git notes for the rebase anchor"))?;
-    let has_notes = !notes
-        .get(id)
-        .or_raise(|| gix::error::message("could not load rebase anchor notes"))?
-        .is_empty();
+    let mut has_notes = false;
+    notes
+        .for_each(id, |_, _| {
+            has_notes = true;
+            Ok(())
+        })
+        .or_raise(|| gix::error::message("could not load rebase anchor notes"))?;
     let mut out = String::new();
     if crate::history::contains_agent_marker(&message) {
         out.push_str("[A] ");

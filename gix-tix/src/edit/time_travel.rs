@@ -3035,6 +3035,8 @@ mod tests {
             "the checked-out merge tree contains conflict markers"
         );
         crate::test_repository::clear_autocrlf(fixture.path())?;
+        let settings = crate::test_repository::snapshot_settings(&repository);
+        let _scope = settings.bind_to_scope();
         insta::assert_snapshot!(
             "accepted-pending-rebase-conflict",
             gix_testtools::repository::snapshot_portable(fixture.path())?
@@ -3296,7 +3298,7 @@ mod tests {
             &repository.find_commit(pending_tip)?.decode()?.into_owned()?
         ));
 
-        let missing_parent = ObjectId::Sha1([0x42; 20]);
+        let missing_parent = ObjectId::try_from(vec![0x42; repository.object_hash().len_in_bytes()].as_slice())?;
         let mut unrelated = repository.find_commit(pending_tip)?.decode()?.into_owned()?;
         unrelated.parents = [missing_parent].into_iter().collect();
         unrelated.message = "unrelated incomplete history".into();

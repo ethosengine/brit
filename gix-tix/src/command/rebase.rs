@@ -672,11 +672,12 @@ mod tests {
             source_commit_ids.push(repo.head_id()?.detach());
         }
         let original_head_commit_id = repo.head_id()?.detach();
+        let full_hash = format!("core.abbrev={}", repo.object_hash().len_in_hex());
         let oracle_todo = String::from_utf8(git(
             fixture.path(),
             &[
                 "-c",
-                "core.abbrev=40",
+                &full_hash,
                 "-c",
                 "rebase.updateRefs=false",
                 "rebase",

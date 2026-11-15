@@ -1425,6 +1425,8 @@ mod tests {
             "the checked-out review return path is fully replayed"
         );
         crate::test_repository::clear_autocrlf(fixture.path())?;
+        let settings = crate::test_repository::snapshot_settings(&repo);
+        let _scope = settings.bind_to_scope();
         insta::assert_snapshot!(
             "changed-review-with-successors",
             gix_testtools::repository::snapshot_portable(fixture.path())?.to_string()

@@ -2754,6 +2754,9 @@ fn note_rewrite_edits(
     rewrites: &[(ObjectId, ObjectId)],
     committer: &gix::actor::Signature,
 ) -> Result<super::stash::RewriteEdits> {
+    use gix::objs::find::{Buffer, Source as _};
+    use std::io::Read as _;
+
     let empty = || super::stash::RewriteEdits {
         forward: Vec::new(),
         rollback: Vec::new(),
@@ -2765,44 +2768,45 @@ fn note_rewrite_edits(
     let Some(name) = notes.default_ref().map(ToOwned::to_owned) else {
         return Ok(empty());
     };
+    let objects = gix::object::bounded::Source::deferred(repo);
     let (original_root, parent) = match repo.try_find_reference(name.as_ref())? {
-        Some(mut reference) => {
+        Some(reference) => {
             let parent = reference
                 .try_id()
                 .ok_or_raise(|| message("the default Git notes reference must be direct"))?
                 .detach();
-            let root = reference
-                .peel_to_tree()
-                .or_raise(|| message("could not read the default Git notes tree"))?
-                .id;
+            let root = objects
+                .peel(parent, gix::objs::Kind::Tree)
+                .or_raise(|| message("could not read the default Git notes tree"))?;
             (root, Some(parent))
         }
         None => (ObjectId::empty_tree(repo.object_hash()), None),
     };
-    let mut source_state = gix::note::plumbing::State::new(original_root, repo)?;
-    let mut destination_state = gix::note::plumbing::State::new(original_root, repo)?;
+    let mut source_state = gix::note::plumbing::State::new(original_root, &objects)?;
+    let mut destination_state = gix::note::plumbing::State::new(original_root, &objects)?;
     for &(old, new) in rewrites {
-        let Some(source) = source_state
-            .get(&old, repo)
+        let Some(source_blob_id) = source_state
+            .get(&old, &objects)
             .or_raise(|| message("could not find a Git note to copy"))?
         else {
             continue;
         };
-        let source = repo.find_blob(source)?;
+        let mut source_buffer = Buffer::default();
+        let source = objects.find_blob(&source_blob_id, &mut source_buffer)?;
         let destination = destination_state
-            .get(&new, repo)
+            .get(&new, &objects)
             .or_raise(|| message("could not inspect the successor Git note"))?;
-        let data = match destination {
-            Some(destination) => {
-                let destination = repo.find_blob(destination)?;
-                let mut data = destination.data.clone();
-                data.extend_from_slice(b"\n\n");
-                data.extend_from_slice(&source.data);
-                data
+        let note = match destination {
+            Some(destination_blob_id) => {
+                let mut destination_buffer = Buffer::default();
+                let destination = objects.find_blob(&destination_blob_id, &mut destination_buffer)?;
+                let size = destination.data.len() as u64 + 2 + source.data.len() as u64;
+                let input = destination.data.chain(b"\n\n".as_slice()).chain(source.data);
+                repo.objects
+                    .write_stream(gix::objs::Kind::Blob, size, &mut gix::interrupt::Read::new(input))?
             }
-            None => source.data.clone(),
+            None => source_blob_id,
         };
-        let note = repo.write_blob(data)?.detach();
         destination_state
             .replace(new, note, repo)
             .or_raise(|| message("could not copy a Git note onto its successor"))?;
@@ -4462,6 +4466,8 @@ mod tests {
                 "each rewritten commit retains the identity of its predecessor"
             );
         }
+        let settings = crate::test_repository::snapshot_settings(&repo);
+        let _scope = settings.bind_to_scope();
         insta::assert_snapshot!(
             "reworded-middle-stack",
             gix_testtools::repository::snapshot_portable(fixture.path())?.to_string()
@@ -4557,6 +4563,65 @@ mod tests {
         assert!(
             repo.try_find_reference("refs/notes/review")?.is_some(),
             "the configured default notes ref is updated"
+        );
+        Ok(())
+    }
+
+    #[test]
+    fn rewriting_large_git_notes_preserves_concatenation_and_rollback_below_buffer_policy() -> gix_testtools::Result {
+        rewriting_git_notes_below_buffer_policy(64 * 1024)
+    }
+
+    #[test]
+    #[ignore = "whole-group qualification runs the 20 MiB note concatenation explicitly"]
+    fn rewriting_twenty_mib_git_notes_preserves_concatenation_and_rollback() -> gix_testtools::Result {
+        rewriting_git_notes_below_buffer_policy(20 * 1024 * 1024)
+    }
+
+    fn rewriting_git_notes_below_buffer_policy(bytes: usize) -> gix_testtools::Result {
+        let fixture = gix_testtools::scripted_fixture_writable("rebase_edit.sh")?;
+        let repo = open(fixture.path())?;
+        let old = repo.rev_parse_single("HEAD~1")?.detach();
+        let new = repo.head_id()?.detach();
+        let bare_target = repo.write_blob(b"target without a note")?.detach();
+        let source = vec![b's'; bytes];
+        let destination = vec![b'd'; bytes];
+        set_git_note(&repo, old, &source)?;
+        set_git_note(&repo, new, &destination)?;
+        let original_notes = repo.find_reference("refs/notes/review")?.id().detach();
+        let repo = crate::test_repository::open_with(
+            fixture.path(),
+            ["core.notesRef=refs/notes/review", "gitoxide.objects.allocLimit=1024"],
+        )?;
+        let committer = repo.committer().expect("fixture committer")?.to_owned()?;
+        let edits = super::note_rewrite_edits(&repo, &[(old, new), (old, bare_target)], &committer)?;
+        assert_eq!(
+            repo.find_reference("refs/notes/review")?.id(),
+            original_notes,
+            "preparing note rewrites does not publish them"
+        );
+        repo.edit_references(edits.forward)?;
+        let mut notes = repo.notes()?;
+        let mut combined = destination.clone();
+        combined.extend_from_slice(b"\n\n");
+        combined.extend_from_slice(&source);
+        for (target, expected) in [(old, &source), (new, &combined), (bare_target, &source)] {
+            let mut visits = 0;
+            notes.for_each(target, |_, bytes| {
+                assert_eq!(
+                    bytes, expected,
+                    "predecessor, concatenation order and copied bytes are preserved"
+                );
+                visits += 1;
+                Ok(())
+            })?;
+            assert_eq!(visits, 1);
+        }
+        repo.edit_references(edits.rollback)?;
+        assert_eq!(
+            repo.find_reference("refs/notes/review")?.id(),
+            original_notes,
+            "rollback restores the original notes history exactly"
         );
         Ok(())
     }

@@ -639,13 +639,12 @@ fn write_history(
     let mut note_ids = HashSet::new();
     let mut notes = repository.notes().or_raise(|| message("could not open Git notes"))?;
     for row in &app.rows {
-        if !notes
-            .get(row.id)
-            .or_raise(|| message("could not load displayed commit notes"))?
-            .is_empty()
-        {
-            note_ids.insert(row.id);
-        }
+        notes
+            .for_each(row.id, |_, _| {
+                note_ids.insert(row.id);
+                Ok(())
+            })
+            .or_raise(|| message("could not load displayed commit notes"))?;
     }
 
     let mut todo_ids = HashSet::new();

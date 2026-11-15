@@ -32,6 +32,15 @@ pub(crate) fn open(path: impl AsRef<Path>) -> Result<gix::Repository> {
     gix::open_opts(path.as_ref(), options())
 }
 
+/// Keep the existing SHA-1 snapshots and select separate expectations for other hashes.
+pub(crate) fn snapshot_settings(repo: &gix::Repository) -> insta::Settings {
+    let mut settings = insta::Settings::clone_current();
+    if repo.object_hash() != gix::hash::Kind::Sha1 {
+        settings.set_snapshot_suffix(repo.object_hash().to_string());
+    }
+    settings
+}
+
 pub(crate) fn open_with<I, S>(path: impl AsRef<Path>, overrides: I) -> Result<gix::Repository>
 where
     I: IntoIterator<Item = S>,

@@ -4456,6 +4456,26 @@ controller enabled or limit resized, and no address-space probe substitutes for
 qualification. The current repository has 15 pack indexes; the historical
 49-index failure remains recorded separately. Cross-device acceptance is open.
 
+On 2026-11-15 the ethosengine owner reported a steward-authorized, exclusively
+owned cgroup at `/sys/fs/cgroup/elohim-brit-acceptance`, outside the kubelet
+hierarchy, with `memory.max=1073741824` and `memory.swap.max=0`. Its smoke test
+accepted 600 MB and killed a 1.5 GiB allocation inside the leaf. The original
+linked-worktree creation case has been handed off with frozen source identity
+`3cace21d8994d108008277673d4d195811e4db94`, default `max`, recorded toolchain
+and executable hashes, and preservation of foreign state. The first build
+refused the host compiler's implicit x86-64-v3 baseline before any candidate
+operation ran. The build's documented `CFLAGS=-march=x86-64-v2` correction is
+authorized and recorded as a device-specific input. The owner subsequently
+returned a successful creation receipt at Elohim commit
+`8369cecd2daf86e26f73361e683ec700a6ac9b85`: 460,730,368 B / 15.075 s, zero
+memory events and zero survivors, with candidate hash
+`721ce9694e59f35ad53972b009b37d07c4924c649759d5db83736b767c3709a5`
+unchanged before/after. The common checkout belongs to UID 1234 and currently
+has 15 pack indexes; the new checkout and private registration are root-owned.
+Configured-origin fetch and protected-hook commit cases are next. This is
+interim memory evidence only; final-source reruns and separate scratch proof
+remain required.
+
 The command boundary is `src/plumbing/options/mod.rs` plus
 `brit-cli/src/main.rs` and its composed bridge. This table is interim audit
 coverage in the existing readiness document, **not final classification**.
@@ -4481,7 +4501,7 @@ behavior or working-tree bytes. The separate legacy `ein` porcelain exposes
 | `branch`, `tag`, `remote`, `submodule`, `config`, `config-tree`, `attributes`, `exclude`, `mailmap` | Large config/packed-ref fixtures pass in both hashes and actual reduced trust. Mailmap object reads/output and annotated-tag reads are repaired and measured as above. Commit/submodule descriptions and large `.gitmodules` now pass the both-hash metadata matrix above. Remote reference/ref-map/JSON listing passes the 80,000-ref local-transport matrix above. Other remote/submodule/path metadata and helper dispatch stay open. Attribute/exclude queries pass the 200,000-pattern both-hash metadata matrix above. `attributes validate-baseline` now uses charged spools, complete path comparison and owned helpers, with qualification recorded above; status predicates now preserve read errors and pass the both-hash pattern/rename matrix above. Repository directory walking now preserves them and passes the both-hash attribute/ignore matrix above. Attached pathspec queries, index listing and clean post-filtering now pass the bounded/error-preservation fixture above. These are affected open paths, not unaffected classifications. |
 | `credential`, `env`, `editor`, `completions`, `free`, `corpus`, `tix` | Applicable metadata/output/owned-child audit remains open. Existing unsupported behavior cannot be relabeled a memory success. |
 | `snapshot`, `build`, `run`, `graph`, `affected`, `plan`, `fingerprint`, `baseline`, `integrate`, `context` | Snapshot seal/verify/export/restore are measured on 20/64 MiB, aggregate and reduced-trust fixtures; the existing per-object 64 MiB native limit is preserved. `build fingerprint` and SHA-1 `build plan` now release streamed inputs and pass the aggregate 3×256 MiB workload; SHA-256 fingerprinting passes, while revision plan/affected retain the independently reproduced pre-existing Rakia limitation described above. Capture and other first-party metadata/output paths remain open; arbitrary external tasks are outside a universal success guarantee, but owned children still count in measured workloads. |
-| `tix` | The compiled surface has 29 leaves covering browsing, operation history, enrichment, editing, replay and worktrunk. The 20 MiB commit refusal is repaired for show/ref-tree/worktrunk-show/op-log, with both-hash and actual reduced-trust receipts above. Operation-queue log/undo/redo/clear now pass the separate 20 MiB metadata fixture above, with all 807 active native tests passing. Other editing, interactive loads, large notes/journals, CLI-only worker override propagation, retained edit state and owned processes stay open. Successful ordinary log or authoring checks do not qualify this separate surface. |
+| `tix` | The compiled surface has 29 leaves covering browsing, operation history, enrichment, editing, replay and worktrunk. The 20 MiB commit refusal is repaired for show/ref-tree/worktrunk-show/op-log, with both-hash and actual reduced-trust receipts above. Operation-queue log/undo/redo/clear pass the separate 20 MiB metadata fixture above. Notes now use bounded visitation, and rewriting streams concatenation while reusing unchanged blob identities. All 808 active native tests pass with both hash features enabled; the separate 20 MiB note concatenation/rollback case passes both hashes under the memory cap, as detailed below. The public 20 MiB note matrix also passes both hashes, full and actual reduced trust, loose and packed objects, four policies and rewriting. Other editing, interactive loads, large journals and notes-tree populations, CLI-only worker override propagation, retained edit state and owned processes stay open. Successful ordinary log or authoring checks do not qualify this separate surface. |
 | `credential`, `editor` | Synthetic 20 MiB credential input/helper output and 64/256 MiB noninteractive editor handoff pass the both-hash fixtures above, including owned children. Credential copies are reclaimed promptly and protocol writer errors propagate. Adversarial helpers and interactive editor lifetime remain open; these measurements do not qualify arbitrary programs. |
 | `env`, `config-tree`, `completions`, help/version/surface output | Unaffected by repository blob or metadata growth, by implementation trace: `gitoxide-core/src/lib.rs::env` writes installation paths; `src/plumbing/progress.rs::show_progress` enumerates the compiled config schema; completion dispatch in `src/plumbing/main.rs` uses the compiled Clap tree; `brit-cli/src/main.rs` and `surface.rs` generate help/version/parser output before object access. `brit-cli/tests/unified.rs` checks the public help/version surface. Their allocations depend on the fixed executable/schema and process arguments, not repository contents. Output I/O and owned installation-path helper checks remain part of the ordinary fault/child suite. |
 | `free` metadata and transport helpers | Eighteen leaves include pack operations, mailmap verification, commit graphs, indexes, remote advertisement, discovery and ownership-derived trust. Pack round trips and actual trust probes are measured above; remaining metadata and transport helper coverage stays open. |
@@ -4511,6 +4531,59 @@ contracts and the declared style check pass. Private evidence is
 This is a dependency integration result, not another full memory qualification.
 The SQLite advisory and pin-utils maintenance advisory remain unresolved; no
 advisory exception, minimum-toolchain change, release or parent-pin move is made.
+
+### 2026-11-15 — bounded note reads and rewrite inputs
+
+The public note regression first reproduced a 64 KiB note read failing with an
+explicit 1 KiB allocation policy. Bounded note visitation now loads each input
+through the existing reader, preserving selected-reference order and exact
+bytes while reclaiming each input promptly. Notes-tree reads accept that same
+reader. The original virtual empty-tree behavior remains: the fanout parity
+test caught its loss during this change, and all 17 plumbing tests now pass.
+Eight porcelain note tests cover buffered-policy refusal in the legacy owned
+API, bounded visitation, callback failure, independent oversized tree metadata
+and wrong-kind corruption. Fresh reader handles are essential to the allocation
+regression; the writer's already allocated buffer can otherwise satisfy a read.
+
+Tix display and direct editing use this visitation path. Note rewriting reuses
+the source blob when no destination note exists, and streams the existing
+destination, two newlines and source when notes converge. Publication and
+rollback retain their existing reference transaction. All 808 active native
+Tix tests pass in both SHA-1 and SHA-256 fixture repositories. An initial
+standalone invocation omitted the hash features and is retained as a test-setup
+failure. The broader SHA-256 run exposed a test helper missing SHA-256 support,
+four SHA-1-specific fixture assumptions and three snapshots needing separate
+SHA-256 expectations. Those fixtures now use the repository hash, preserving
+the existing SHA-1 snapshots. No production hash defaults or rewrite algorithms
+changed. Strict all-target Clippy passes for gix-note, gix, gix-tix and
+cli-journey; formatting, readiness contracts and the declared style check pass.
+
+The explicit 20 MiB + 20 MiB concatenation/rollback case passes in the fixed
+1 GiB/swap-disabled cgroup at 138,424,320 B / 1.613 s for SHA-1 and
+132,993,024 B / 15.234 s for SHA-256, with zero OOM kills, surviving processes or
+executable identity changes. These are interim uncommitted-source native test
+measurements, with scratch peaks unmeasured. The initial runner invocation used
+the wrong fixture working directory and failed before fixture creation; its
+receipt is preserved. Evidence: existing `bounded-memory/tix-notes-*` logs,
+frozen-runner manifest and qualification receipts.
+
+The default-max public executable passes all three note cases per hash: a
+64 KiB regression and 20 MiB full/actual-reduced-trust workloads, each loose and
+packed, with default, 1 KiB, 16 MiB and 1 GiB buffering policies. Unchanged notes
+preserve every reference; rewording preserves the exact note blob on both
+predecessor and successor. Group peaks are 115,261,440 B / 14.522 s for SHA-1
+and 114,728,960 B / 42.528 s for SHA-256, with zero OOM kills or survivors. The
+frozen executable SHA-256 is
+`3ae3bde404c3cf2cb5417c5ccbd7132e57956deeb3a36e795404bdeba967e1d4`.
+These are still interim source measurements with unmeasured scratch peaks.
+Large notes-tree populations and final committed-source qualification remain
+open.
+
+Story-graph seam: within `brit-native-daily-driver`, between bounded history
+reading and qualified Tix editing, large notes must retain their bytes and
+rewrite/rollback semantics under the same allocation policy. The runnable
+regressions are `memory_tix.rs` and the explicit note-rewrite resource test in
+`gix-tix/src/edit/rebase.rs`; the full release assertion remains unchanged.
 
 ### 2026-11-15 — remaining dependency advisories
 

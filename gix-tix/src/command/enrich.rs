@@ -264,10 +264,9 @@ fn edit_git_note(repository: &gix::Repository, args: &NoteTarget) -> Result<()> 
         .ok_or_raise(|| message("no default Git notes reference is configured"))?
         .to_owned();
     let mut notes = notes.with_refs([reference.as_bstr()])?;
-    let document = notes
-        .get(target)?
-        .first()
-        .map(|note| note.blob.data.clone())
+    let document = crate::enrich::note_contents(&mut notes, target)?
+        .into_iter()
+        .next()
         .unwrap_or_default();
     let cleaned = note_message(
         repository,

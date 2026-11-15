@@ -6,8 +6,9 @@ use gix_error::Result;
 use gix_error::{ResultExt, bail, message, validation};
 use gix_hash::{ObjectId, oid};
 use gix_object::{
-    Find, FindExt, Tree, Write,
+    Find, Tree, Write,
     bstr::{BStr, BString, ByteSlice},
+    find::{Buffer, Source},
     tree::{Editor, Entry, EntryKind, EntryMode},
 };
 
@@ -46,7 +47,7 @@ pub struct State {
 
 impl State {
     /// Initialize state from `root_tree_id`, loading only its root tree from `objects`.
-    pub fn new(root_tree_id: ObjectId, objects: &impl Find) -> Result<Self> {
+    pub fn new(root_tree_id: ObjectId, objects: &impl Source) -> Result<Self> {
         let mut root = InternalNode::default();
         let mut non_notes = Vec::new();
         load_subtree(
@@ -88,7 +89,7 @@ impl State {
     /// Fanout subtrees on the lookup path are materialized once and retained for
     /// subsequent operations. Entries that do not conform to Git's notes layout
     /// are ignored.
-    pub fn get(&mut self, annotated_object_id: &oid, objects: &impl Find) -> Result<Option<ObjectId>> {
+    pub fn get(&mut self, annotated_object_id: &oid, objects: &impl Source) -> Result<Option<ObjectId>> {
         validate_annotated_hash_kind(self.root_tree_id.kind(), annotated_object_id)?;
         self.reset_on_error(|state| state.root.get(annotated_object_id, 0, objects, &mut state.non_notes))
     }
@@ -142,7 +143,7 @@ impl State {
         &mut self,
         annotated_object_id: ObjectId,
         note_blob_id: Option<ObjectId>,
-        objects: &impl Find,
+        objects: &impl Source,
     ) -> Result<Option<ObjectId>> {
         if let Some(note_blob_id) = note_blob_id {
             validate_replace_hash_kinds(
@@ -299,7 +300,7 @@ impl InternalNode {
         &mut self,
         annotated_object_id: &oid,
         nibble: usize,
-        objects: &impl Find,
+        objects: &impl Source,
         non_notes: &mut Vec<TreeEntry>,
     ) -> Result<Option<ObjectId>> {
         if self.load_matching_subtree(annotated_object_id, nibble, objects, non_notes)? {
@@ -325,7 +326,7 @@ impl InternalNode {
         }
     }
 
-    fn insert(&mut self, entry: Node, nibble: usize, objects: &impl Find, non_notes: &mut Vec<TreeEntry>) -> Result {
+    fn insert(&mut self, entry: Node, nibble: usize, objects: &impl Source, non_notes: &mut Vec<TreeEntry>) -> Result {
         if self.load_matching_subtree(entry.key(), nibble, objects, non_notes)? {
             return self.insert(entry, nibble, objects, non_notes);
         }
@@ -371,7 +372,7 @@ impl InternalNode {
         entry: Node,
         index: usize,
         nibble: usize,
-        objects: &impl Find,
+        objects: &impl Source,
         non_notes: &mut Vec<TreeEntry>,
     ) -> Result {
         let mut child = InternalNode::default();
@@ -385,7 +386,7 @@ impl InternalNode {
         &mut self,
         annotated_object_id: &oid,
         nibble: usize,
-        objects: &impl Find,
+        objects: &impl Source,
         non_notes: &mut Vec<TreeEntry>,
     ) -> Result<Option<ObjectId>> {
         if self.load_matching_subtree(annotated_object_id, nibble, objects, non_notes)? {
@@ -426,7 +427,7 @@ impl InternalNode {
         &mut self,
         key: &oid,
         nibble: usize,
-        objects: &impl Find,
+        objects: &impl Source,
         non_notes: &mut Vec<TreeEntry>,
     ) -> Result<bool> {
         let is_match = self.children[0]
@@ -470,10 +471,15 @@ fn load_subtree(
     subtree: Subtree,
     node: &mut InternalNode,
     nibble: usize,
-    objects: &impl Find,
+    objects: &impl Source,
     non_notes: &mut Vec<TreeEntry>,
 ) -> Result {
-    let mut buf = Vec::new();
+    // Notes may begin at Git's virtual empty tree, even when no object stores it.
+    // Preserve the previous FindExt::find_tree() behavior for any Source.
+    if subtree.tree_id == ObjectId::empty_tree(subtree.tree_id.kind()) {
+        return Ok(());
+    }
+    let mut buf = Buffer::default();
     let tree = objects
         .find_tree(&subtree.tree_id, &mut buf)
         .or_raise(|| message!("Could not load notes tree {}", subtree.tree_id))?;
@@ -482,7 +488,8 @@ fn load_subtree(
     let mut prefix_hex = gix_hash::Kind::hex_buf();
     prefix_hex.fill(b'0');
     let _ = subtree.prefix.hex_to_buf(&mut prefix_hex);
-    for entry in tree.entries {
+    for entry in tree {
+        let entry = entry?;
         if entry.mode.is_blob() && entry.filename.len() + prefix_hex_len == hex_len {
             let mut hex = prefix_hex;
             hex[prefix_hex_len..hex_len].copy_from_slice(entry.filename);
@@ -568,7 +575,7 @@ impl InternalNode {
         &mut self,
         nibble: usize,
         fanout: usize,
-        objects: &impl Find,
+        objects: &impl Source,
         non_notes: &mut Vec<TreeEntry>,
         notes: &mut Vec<TreeEntry>,
     ) -> Result {

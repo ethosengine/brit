@@ -7108,15 +7108,8 @@ fn draw(
         if !notes_to_load.is_empty() {
             let mut notes = repository.notes().or_raise(|| message("could not open Git notes"))?;
             for id in notes_to_load {
-                let loaded = notes
-                    .get(id)
-                    .or_raise(|| message("could not load visible commit notes"))?
-                    .into_iter()
-                    .map(|note| {
-                        let mut blob = note.blob;
-                        BString::from(blob.take_data())
-                    })
-                    .collect();
+                let loaded = enrich::note_contents(&mut notes, id)
+                    .or_raise(|| message("could not load visible commit notes"))?;
                 app.set_notes(id, loaded);
             }
         }
@@ -7776,10 +7769,9 @@ fn edit_git_note(
             .ok_or_raise(|| message("no default Git notes reference is configured"))?
             .to_owned();
         let mut notes = notes.with_refs([reference.as_bstr()])?;
-        let document = notes
-            .get(id)?
-            .first()
-            .map(|note| note.blob.data.clone())
+        let document = enrich::note_contents(&mut notes, id)?
+            .into_iter()
+            .next()
             .unwrap_or_default();
         (editor, reference, document)
     };
@@ -7909,15 +7901,7 @@ pub(crate) fn load_rebase_todo_commits(
                 .or_raise(|| message("could not load editable commit metadata"))?;
             app.set_metadata(index, metadata, attributions);
         }
-        let loaded = notes
-            .get(*id)
-            .or_raise(|| message("could not load commit notes"))?
-            .into_iter()
-            .map(|note| {
-                let mut blob = note.blob;
-                BString::from(blob.take_data())
-            })
-            .collect();
+        let loaded = enrich::note_contents(&mut notes, *id).or_raise(|| message("could not load commit notes"))?;
         app.set_notes(*id, loaded);
     }
     let mailmap = repository.open_mailmap();

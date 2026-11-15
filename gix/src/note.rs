@@ -155,6 +155,41 @@ impl<'repo> Platform<'repo> {
         Ok(out)
     }
 
+    /// Visit notes in configured display order, releasing each input before loading the next.
+    ///
+    /// Large note blobs use the repository's bounded reader and immutable scratch mapping.
+    /// The callback may retain its parsed result without retaining a second complete blob.
+    pub fn for_each(
+        &mut self,
+        object: impl Into<gix_hash::ObjectId>,
+        mut visit: impl FnMut(&FullNameRef, &[u8]) -> Result<()>,
+    ) -> Result<()> {
+        let annotated_object_id = object.into();
+        let source = crate::object::bounded::Source::deferred(self.repo);
+        for selected in &mut self.roots {
+            let Some(root_tree_id) = selected.tree_id(self.repo)? else {
+                continue;
+            };
+            let state = state_for(&mut self.states, root_tree_id, self.repo)?;
+            if let Some(note_blob_id) = state
+                .get(&annotated_object_id, &source)
+                .or_raise(|| message!("Could not find notes for {annotated_object_id}"))?
+            {
+                let reference = selected.reference.as_ref();
+                let mut buffer = gix_object::find::Buffer::default();
+                let blob = source
+                    .load(&note_blob_id, &mut buffer)
+                    .or_raise(|| message!("Could not load note {note_blob_id} from {reference}"))?;
+                gix_error::ensure!(
+                    blob.kind == gix_object::Kind::Blob,
+                    message!("Expected note {note_blob_id} from {reference} to be a blob").validation()
+                );
+                visit(reference, blob.data)?;
+            }
+        }
+        Ok(())
+    }
+
     /// Replace a note in `notes_ref`, assigned to `object`, or add it if absent, returning the previous note id.
     ///
     /// * `notes_ref` identifies the notes reference to update. It may be given as `review`,
@@ -264,13 +299,12 @@ impl<'repo> Platform<'repo> {
                     .follow_to_object()
                     .or_raise(|| message!("Could not follow notes reference {notes_ref} to an object"))?
                     .detach();
-                let root_tree_id = self
-                    .repo
-                    .find_commit(parent_commit_id)
+                let source = crate::object::bounded::Source::deferred(self.repo);
+                let mut buffer = gix_object::find::Buffer::default();
+                let root_tree_id = gix_object::find::Source::find_commit(&source, &parent_commit_id, &mut buffer)
                     .or_raise(|| message!("Notes reference {notes_ref} must point to a commit"))?
                     .tree_id()
-                    .or_raise(|| message!("Could not read the tree of notes commit {parent_commit_id}"))?
-                    .detach();
+                    .or_raise(|| message!("Could not read the tree of notes commit {parent_commit_id}"))?;
                 Ok(EditRoot {
                     root_tree_id,
                     parent_commit_id: Some(parent_commit_id),
@@ -326,7 +360,7 @@ fn state_for<'a>(
     }
     let index = states.len();
     states.push(
-        gix_note::State::new(root_tree_id, repo)
+        gix_note::State::new(root_tree_id, &crate::object::bounded::Source::deferred(repo))
             .or_raise(|| message!("Could not initialize notes tree {root_tree_id}"))?,
     );
     Ok(&mut states[index])
@@ -360,10 +394,9 @@ impl Root {
             .or_raise(|| message!("Could not find notes reference {name}"))?
         {
             Some(mut reference) => Some(
-                reference
-                    .peel_to_tree()
-                    .or_raise(|| message!("Could not peel notes reference {name} to a tree"))?
-                    .id,
+                crate::object::bounded::Source::deferred(repo)
+                    .peel(reference.follow_to_object()?.detach(), gix_object::Kind::Tree)
+                    .or_raise(|| message!("Could not peel notes reference {name} to a tree"))?,
             ),
             None => None,
         };

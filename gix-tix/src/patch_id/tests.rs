@@ -152,9 +152,11 @@ fn metadata_and_unchanged_leaf_deltas_avoid_blob_work() -> gix_testtools::Result
 fn reads_validate_witnesses_without_loading_trees_and_hide_pending_states() -> gix_testtools::Result {
     let fixture = gix_testtools::scripted_fixture_writable("history.sh")?;
     let repo = crate::test_repository::open(fixture.path())?;
-    let base_tree_id = ObjectId::from_hex(b"1111111111111111111111111111111111111111")?;
-    let tree_id = ObjectId::from_hex(b"2222222222222222222222222222222222222222")?;
-    let id = PatchId(ObjectId::from_hex(b"3333333333333333333333333333333333333333")?);
+    let base_tree_id = ObjectId::try_from(vec![0x11; repo.object_hash().len_in_bytes()].as_slice())?;
+    let tree_id = ObjectId::try_from(vec![0x22; repo.object_hash().len_in_bytes()].as_slice())?;
+    let id = PatchId(ObjectId::try_from(
+        vec![0x33; repo.object_hash().len_in_bytes()].as_slice(),
+    )?);
     let mut original = patch(&repo, base_tree_id, tree_id)?;
     store(&mut original, format!("v1 {id} {base_tree_id} {tree_id}").into());
     let commit_id = repo.write_object(&original)?.detach();
@@ -254,8 +256,8 @@ fn modes_paths_binary_bytes_and_submodules_are_part_of_the_identity() -> gix_tes
     let mut different_binary = text_patch(&repo, b"old\0bytes", b"NEW\0bytes")?;
     assert_ne!(refresh(&repo, &mut different_binary)?.id, binary_id.id);
 
-    let old_commit_id = ObjectId::from_hex(b"4444444444444444444444444444444444444444")?;
-    let new_commit_id = ObjectId::from_hex(b"5555555555555555555555555555555555555555")?;
+    let old_commit_id = ObjectId::try_from(vec![0x44; repo.object_hash().len_in_bytes()].as_slice())?;
+    let new_commit_id = ObjectId::try_from(vec![0x55; repo.object_hash().len_in_bytes()].as_slice())?;
     let mut submodule = patch(
         &repo,
         entries(&repo, &[(b"submodule", EntryKind::Commit, old_commit_id)])?,
@@ -327,7 +329,7 @@ fn malformed_headers_fail_reads_and_missing_old_witness_objects_only_disable_reu
         "duplicate cache headers are ambiguous"
     );
 
-    let missing_tree_id = ObjectId::from_hex(b"6666666666666666666666666666666666666666")?;
+    let missing_tree_id = ObjectId::try_from(vec![0x66; repo.object_hash().len_in_bytes()].as_slice())?;
     let stale = format!("v1 {id} {missing_tree_id} {}", original.tree).into();
     store(&mut original, stale);
     let refreshed = refresh(&repo, &mut original)?;

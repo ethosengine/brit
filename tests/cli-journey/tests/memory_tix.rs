@@ -140,3 +140,103 @@ fn tix_history_with_twenty_mib_commit_metadata() -> Result<()> {
 fn tix_history_with_actual_reduced_trust() -> Result<()> {
     history(true)
 }
+
+fn notes(bytes: usize, reduced: bool) -> Result<()> {
+    let repo = TestRepo::new("memory-tix-notes")?;
+    let root = repo.path();
+    let message = root.join(".git/note-input");
+    let mut file = fs::File::create(&message)?;
+    let mut chunk = [b'n'; 65536];
+    chunk[65535] = b'\n';
+    for _ in 0..bytes / chunk.len() {
+        file.write_all(&chunk)?;
+    }
+    drop(file);
+    let output = root.join(".git/note-output");
+    let message_arg = message.to_str().expect("fixture path");
+    git(root, &["notes", "add", "-F", message_arg, "HEAD"])?;
+    run(
+        root,
+        &["tix", "enrich", "commit", "note", "-f", message_arg, "HEAD"],
+        Some("1073741824"),
+        &output,
+    )?;
+    let head = git(root, &["rev-parse", "HEAD"])?;
+    let refs = git(root, &["for-each-ref", "--format=%(refname) %(objectname)"])?;
+    if reduced {
+        #[cfg(target_os = "linux")]
+        {
+            use std::os::unix::fs::{chown, MetadataExt};
+            ensure!(fs::metadata(root)?.uid() == 0, "qualification requires chown authority");
+            chown(root, Some(65534), None)?;
+            chown(root.join(".git"), Some(65534), None)?;
+            run(root, &["free", "trust", ".", ".git"], None, &output)?;
+            ensure!(
+                fs::read_to_string(&output)?
+                    .lines()
+                    .filter(|line| line.starts_with("Reduced"))
+                    .count()
+                    == 2
+            );
+        }
+        #[cfg(not(target_os = "linux"))]
+        anyhow::bail!("actual ownership qualification requires Linux");
+    }
+    for packed in [false, true] {
+        if packed {
+            git(root, &["-c", "pack.threads=1", "repack", "-ad"])?;
+        }
+        for limit in [Some("1073741824"), Some("16777216"), Some("1024"), None] {
+            for kind in ["git-note", "note"] {
+                run(
+                    root,
+                    &["tix", "enrich", "commit", kind, "-f", message_arg, "HEAD"],
+                    limit,
+                    &output,
+                )?;
+                ensure!(
+                    String::from_utf8_lossy(&fs::read(&output)?).contains("unchanged"),
+                    "an identical note must remain unchanged"
+                );
+                ensure!(git(root, &["rev-parse", "HEAD"])? == head);
+                ensure!(git(root, &["for-each-ref", "--format=%(refname) %(objectname)"])? == refs);
+            }
+        }
+    }
+    let old_head = String::from_utf8(head)?.trim().to_owned();
+    let note_blob = git(root, &["notes", "list", "HEAD"])?;
+    run(
+        root,
+        &["tix", "reword", "-m", "rewritten with a large note", "HEAD"],
+        Some("1024"),
+        &output,
+    )?;
+    ensure!(String::from_utf8(git(root, &["rev-parse", "HEAD"])?)?.trim() != old_head);
+    ensure!(
+        git(root, &["notes", "list", "HEAD"])? == note_blob,
+        "successor retains the exact note blob"
+    );
+    ensure!(
+        git(root, &["notes", "list", &old_head])? == note_blob,
+        "predecessor retains its note"
+    );
+    Ok(())
+}
+
+#[test]
+fn tix_notes_preserve_bytes_above_explicit_buffer_limit() -> Result<()> {
+    notes(65536, false)
+}
+
+#[test]
+#[ignore = "whole-group qualification runs the 20 MiB note matrix explicitly"]
+fn tix_notes_with_twenty_mib_payloads() -> Result<()> {
+    notes(20 * 1024 * 1024, false)
+}
+
+#[cfg(target_os = "linux")]
+#[test]
+#[ignore = "requires chown authority: qualification runs this explicitly"]
+fn tix_notes_with_actual_reduced_trust() -> Result<()> {
+    notes(20 * 1024 * 1024, true)
+}

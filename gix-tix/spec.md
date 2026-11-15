@@ -538,6 +538,13 @@ without trading responsiveness for metadata that is not visible.
   purple `[A]` before its title.
 - A commit with notes in the configured notes ref receives a matching `[N]`.
   Notes are loaded lazily for visible commits.
+- Note display and editing use the repository's effective allocation policy:
+  blobs above the buffering limit are read through immutable charged scratch.
+  Each input is released after parsing or copying the display value. Policy does
+  not change note bytes, reference order, empty-note removal or no-op detection.
+  Rewriting notes reuses an unchanged blob's identity and streams concatenation
+  of converging notes in the existing destination-then-source order, preserving
+  the two-newline separator and the existing publication and rollback boundary.
 - `n g` edits the selected commit's note in `core.notesRef`, or
   `refs/notes/commits` when it is unset. The action is available on every
   selected commit, including immutable hidden boundaries. Empty content removes
