@@ -4610,6 +4610,84 @@ That conservative recovery-state admission is not changed by the index-copy
 fix; the native completion path is not qualified by a Git fallback. Evidence:
 `bounded-memory/post-cherry-pick-auto-merge-refusal.json`.
 
+#### Fixed-cap comparison scratch evidence (2026-11-15)
+
+The non-converter `memory_diff_resources` cases now have an externally bounded
+scratch filesystem as well as the existing whole-group memory limit. Each case
+uses a fresh, fully allocated 1,073,741,824-byte regular image, mounted by
+`fuse2fs` in a private mount namespace. The foreground filesystem daemon,
+test runner, Brit and their children all inherit `memory.max=1073741824`,
+`memory.swap.max=0` and `memory.oom.group=1`. No host block/loop device,
+shared quota or production runtime sandbox is involved.
+
+The mountpoint is outside repository and feedback-policy ancestry. Source
+tracing covers fixture creation, repository files, isolated child config and
+comparison spools through `TMPDIR` for these three non-converter tests only.
+The image contains fixture inputs and metadata as well as temporary files,
+so its capacity is a conservative bound. With the verified e2fsprogs 1.47.1
+configuration, effective available capacity is **913,305,600 bytes** and
+65,525 free inodes. `fuse2fs` reserves ten percent even for root with `-m 0`;
+`bfree` is not the usable write bound. A separate 64 MiB image control reaches
+`ENOSPC` after 50,593,792 written bytes, below its available capacity, with
+clean cleanup and no OOM.
+
+Ethosengine's source `cdb05b8777b4ee70d15fc696056ebf0d40361076` passes the
+20/64/256 MiB comparison cases under both hash formats. Both 256 MiB cases
+reach the memory ceiling, with 22,910/22,230 `memory.max` events and no OOM
+kill or surviving process. The FUSE daemon and client cache costs are included;
+these figures must not be compared directly with native-filesystem runs.
+Local source `d459a391df218066bc1b666766366db7420a1916` also passes the
+20/64/256 MiB cases under both hashes. Its frozen
+Brit is `7452ea27cac85b8ec7a623749841dc383b3f50b851df39471e84a4fa792e398a`;
+the matching runner and runtime closure are recorded beside the receipts.
+The first local 256 MiB SHA-256 run hits the harness's 180-second timeout:
+exit 124, no OOM, one remaining process at the pre-cleanup observation. The
+owned cgroup is subsequently killed and removed, and the private mountpoint
+is unmounted and removed. Its image and failed receipt are preserved; this is
+not a passing case or a controlled-cancellation latency result.
+A fresh 256 MiB SHA-256 fixture with a 600-second wall-time allowance passes
+in 224.003 seconds, with the original memory and disk ceilings, zero OOM,
+zero surviving processes and clean unmount/daemon exit. Both local 256 MiB
+cases reach the memory ceiling. The earlier timeout remains a failed receipt;
+extending wall time does not turn it into successful evidence.
+
+Ethosengine additionally validates private `fuse2fs` instrumentation against
+five allocation controls: create, in-place rewrite, truncate/unlink,
+open-unlinked growth and transient allocation. The block callbacks retain the
+minimum superblock free count; they do not change allocation behavior.
+Baseline/final counts agree exactly with `statfs` in each control, including
+released open-unlinked data. The range callback is registered but unexercised;
+its argument-count bug is avoided by reading the superblock count. Only clean
+unmount emits a receipt; an absent receipt remains unmeasured.
+
+All six instrumented comparison cases pass at source `cdb05b87`. Measured
+peak **additional filesystem allocation**, including fixture inputs and
+metadata, is identical for both hashes:
+
+| Fixture size | Peak additional allocation | Initial allocated baseline |
+| --- | ---: | ---: |
+| 20 MiB | 63,537,152 B | 53,063,680 B |
+| 64 MiB | 201,994,240 B | 53,063,680 B |
+| 256 MiB | 806,174,720 B | 53,063,680 B |
+
+These are conservative upper bounds on scratch for the traced paths, not
+scratch-only attribution. Every run releases all additional blocks, unmounts
+cleanly, has no surviving processes and retains artifact/runtime identities.
+Both instrumented 256 MiB cases reach the memory ceiling with no OOM.
+The private instrumentation patch is
+`ba22489453be1707c1de5254aca238e143f7a197f146b2336e0a807e0a10cfa2`;
+the instrumented helper is
+`caada8241a945805e6c17209d9c3de0224bdfc349abdbf455f8b5c7288ffcfc0`.
+
+**This filesystem does not journal writes.** It cannot replace native
+crash/durability qualification. Capacity checks alone do not measure peak
+scratch use, and writes outside the traced paths remain unqualified. Private
+block-allocation telemetry has the scoped validation above; no full matrix or
+release acceptance follows from these comparison cases. Evidence remains in
+the existing isolated `bounded-memory/scratch-tools`, `scratch-local-d459-*`
+and `release-020-watch-receipts.json` records, including tool provenance,
+unchanged before/after hashes, mount identities and separate cleanup outcomes.
+
 The command boundary is `src/plumbing/options/mod.rs` plus
 `brit-cli/src/main.rs` and its composed bridge. This table is interim audit
 coverage in the existing readiness document, **not final classification**.
