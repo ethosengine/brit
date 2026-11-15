@@ -5027,6 +5027,71 @@ application, preparing and parsing the self-contained todo must preserve its
 scope and bytes above the allocation policy. The native and public regressions
 measure that station without substituting it for replay acceptance.
 
+#### Tix rebase plan application (2026-11-15)
+
+Commit `5154752a312c782165fd304ac534da197d07b5b4` extends the bounded commit
+source through plan validation, replay metadata, saved sessions, retained replay
+resources and merge-input selection. Tree-only reads use bounded identity lookup.
+A valid merge input no longer disappears when its message exceeds the read-buffer
+policy, and an unavailable produced continuation object returns an error instead
+of panicking. Valid non-commit references remain excluded. Replay ordering,
+reference transactions and conflict publication retain their existing semantics.
+
+The native regression reproduces the previous 128 KiB / 1 KiB refusal, then
+compares unchanged and reordered plans with large base/middle/tip messages across
+loose/packed storage and three policies. Rewritten object identities, parent order,
+message bytes, final tree, refs and index agree. All 817 active native tests pass
+per hash, with 10 resource tests left explicitly ignored in the ordinary suite.
+The 20 MiB plan case is separately executed under the fixed group ceiling:
+
+| Native workload / hash | Group peak | Elapsed |
+| --- | ---: | ---: |
+| 817 active tests / SHA-1 | 89,030,656 B | 29.023 s |
+| 817 active tests / SHA-256 | 47,366,144 B | 29.866 s |
+| 20 MiB plan matrix / SHA-1 | 196,677,632 B | 137.055 s |
+| 20 MiB plan matrix / SHA-256 | 196,997,120 B | 731.764 s |
+
+All four groups have zero OOM kills and surviving processes. The native runner
+`2f44f40837f391de4e26928534daea68fca671d07a0053aaf9c4a5ee3314acf5`
+was frozen before launch and independently rehashed after all runs. These receipts
+identify the timeout wrapper automatically; the separate runner identity receipt
+supplies the before/after test-binary proof, rather than relabeling the wrapper.
+Source is retained as the provisional commit plus exact patch
+`1d0bf2cb9e0a30e49ee1c3a2027a448256b8a28f945da848b1a14d5af4cd5940`.
+Native aggregate scratch remains unmeasured. Strict affected all-target Clippy,
+formatting, readiness contracts and declared style pass.
+
+The public CLI regression applies a generated plan onto a different base.
+It fails on `c56891d8d` at the explicit 1 KiB policy and passes on the rebuilt
+`5154752a3` executable. All eight ordinary public journeys pass per hash; the
+final ownership-refusal extension also passes both affected ordinary rebase tests
+per hash. The executable is
+`1690b799b1fdf01204a0b026e6cce0f3002adcdb6f3b8cc8776ce6f1e2056755`.
+The full-trust 20 MiB SHA-1 application passes at 325,222,400 B / 123.758 s.
+Its V2 scratch run passes at 326,299,648 B / 297.184 s, allocates 84,176,896 B
+beyond the 53,063,680 B filesystem baseline and reclaims it completely. Both
+have zero OOM kills, survivors or executable changes, with clean scratch teardown.
+The corresponding SHA-256 application and scratch runs are pending at this update.
+Concurrent independent cohorts make these elapsed figures observations, not a
+performance comparison.
+
+Actual reduced-trust application reaches an owned Git child's existing dubious
+ownership refusal. A default-policy 128 KiB control reproduces the same refusal
+on both the previous and repaired executables under both hashes, preserving HEAD,
+all refs, index and config with a clean fsck. This is already unsupported
+independently of the memory change; it is not successful reduced-trust application.
+The initial success-expecting 20 MiB failure is retained. Explicit 20 MiB refusal
+and state-preservation matrices are pending; trust is not promoted to make them
+succeed. Arbitrarily large journals, retained candidate sets, wide trees,
+resource-bound recovery, remaining command paths and final-source acceptance
+remain open. Evidence stays in `bounded-memory/tix-plan-*` and
+`scratch-local-tix-plan-5154-*`.
+
+Story-graph station: between a bounded, parseable todo and accepted rebase
+publication, applying the plan must preserve rewritten identities above the
+allocation policy and report continuation-read failures. The native and public
+regressions measure that station without claiming full recovery qualification.
+
 The command boundary is `src/plumbing/options/mod.rs` plus
 `brit-cli/src/main.rs` and its composed bridge. This table is interim audit
 coverage in the existing readiness document, **not final classification**.
@@ -5052,7 +5117,7 @@ behavior or working-tree bytes. The separate legacy `ein` porcelain exposes
 | `branch`, `tag`, `remote`, `submodule`, `config`, `config-tree`, `attributes`, `exclude`, `mailmap` | Large config/packed-ref fixtures pass in both hashes and actual reduced trust. Mailmap object reads/output and annotated-tag reads are repaired and measured as above. Commit/submodule descriptions and large `.gitmodules` now pass the both-hash metadata matrix above. Remote reference/ref-map/JSON listing passes the 80,000-ref local-transport matrix above. Other remote/submodule/path metadata and helper dispatch stay open. Attribute/exclude queries pass the 200,000-pattern both-hash metadata matrix above. `attributes validate-baseline` now uses charged spools, complete path comparison and owned helpers, with qualification recorded above; status predicates now preserve read errors and pass the both-hash pattern/rename matrix above. Repository directory walking now preserves them and passes the both-hash attribute/ignore matrix above. Attached pathspec queries, index listing and clean post-filtering now pass the bounded/error-preservation fixture above. These are affected open paths, not unaffected classifications. |
 | `credential`, `env`, `editor`, `completions`, `free`, `corpus`, `tix` | Applicable metadata/output/owned-child audit remains open. Existing unsupported behavior cannot be relabeled a memory success. |
 | `snapshot`, `build`, `run`, `graph`, `affected`, `plan`, `fingerprint`, `baseline`, `integrate`, `context` | Snapshot seal/verify/export/restore are measured on 20/64 MiB, aggregate and reduced-trust fixtures; the existing per-object 64 MiB native limit is preserved. `build fingerprint` and SHA-1 `build plan` now release streamed inputs and pass the aggregate 3×256 MiB workload; SHA-256 fingerprinting passes, while revision plan/affected retain the independently reproduced pre-existing Rakia limitation described above. Capture and other first-party metadata/output paths remain open; arbitrary external tasks are outside a universal success guarantee, but owned children still count in measured workloads. |
-| `tix` | The compiled surface has 29 leaves covering browsing, operation history, enrichment, editing, replay and worktrunk. The 20 MiB commit refusal is repaired for show/ref-tree/worktrunk-show/op-log, with both-hash and actual reduced-trust receipts above. Operation-queue log/undo/redo/clear pass the separate 20 MiB metadata fixture above. Notes now use bounded visitation, and rewriting streams concatenation while reusing unchanged blob identities. The latest 815 active native tests pass with both hash features enabled. Explicit-message rewording, controlled edited-title application, normal/empty creation and todo preparation/parsing now have the scoped both-hash metadata proofs above. The separate 20 MiB note concatenation/rollback case passes both hashes under the memory cap, as detailed below. The public 20 MiB note matrix also passes both hashes, full and actual reduced trust, loose and packed objects, four policies and rewriting. Other editing, interactive loads, large journals and notes-tree populations, CLI-only worker override propagation, retained edit state and owned processes stay open. Successful ordinary log or authoring checks do not qualify this separate surface. |
+| `tix` | The compiled surface has 29 leaves covering browsing, operation history, enrichment, editing, replay and worktrunk. The 20 MiB commit refusal is repaired for show/ref-tree/worktrunk-show/op-log, with both-hash and actual reduced-trust receipts above. Operation-queue log/undo/redo/clear pass the separate 20 MiB metadata fixture above. Notes now use bounded visitation, and rewriting streams concatenation while reusing unchanged blob identities. The latest 817 active native tests pass with both hash features enabled. Explicit-message rewording, controlled edited-title application, normal/empty creation, todo preparation/parsing and the scoped plan application now have the scoped both-hash metadata proofs above. The separate 20 MiB note concatenation/rollback case passes both hashes under the memory cap, as detailed below. The public 20 MiB note matrix also passes both hashes, full and actual reduced trust, loose and packed objects, four policies and rewriting. Other editing, interactive loads, large journals and notes-tree populations, CLI-only worker override propagation, retained edit state and owned processes stay open. Successful ordinary log or authoring checks do not qualify this separate surface. |
 | `credential`, `editor` | Synthetic 20 MiB credential input/helper output and 64/256 MiB noninteractive editor handoff pass the both-hash fixtures above, including owned children. Credential copies are reclaimed promptly and protocol writer errors propagate. Adversarial helpers and interactive editor lifetime remain open; these measurements do not qualify arbitrary programs. |
 | `env`, `config-tree`, `completions`, help/version/surface output | Unaffected by repository blob or metadata growth, by implementation trace: `gitoxide-core/src/lib.rs::env` writes installation paths; `src/plumbing/progress.rs::show_progress` enumerates the compiled config schema; completion dispatch in `src/plumbing/main.rs` uses the compiled Clap tree; `brit-cli/src/main.rs` and `surface.rs` generate help/version/parser output before object access. `brit-cli/tests/unified.rs` checks the public help/version surface. Their allocations depend on the fixed executable/schema and process arguments, not repository contents. Output I/O and owned installation-path helper checks remain part of the ordinary fault/child suite. |
 | `free` metadata and transport helpers | Eighteen leaves include pack operations, mailmap verification, commit graphs, indexes, remote advertisement, discovery and ownership-derived trust. Pack round trips and actual trust probes are measured above; remaining metadata and transport helper coverage stays open. |
