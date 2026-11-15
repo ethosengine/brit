@@ -1,8 +1,16 @@
-//! `BritCid` — content identifier: CIDv1 over canonical bytes.
+//! `BritCid` — content identifier: a self-describing CIDv1.
 //!
-//! Nodes use multicodec 0x71 (dag-cbor); raw blobs use 0x55 (raw).
-//! Multihash is 0x12 (sha2-256). Byte-identical to the protocol's
-//! `elohim-epr` codec. BLAKE3 is for non-address fingerprints only.
+//! Three profiles declared by the Rust addressing kernel (`elohim-address`).
+//! Streaming readers preserve the same addresses without retaining the input:
+//!
+//! | Plane | Constructor | Codec | Multihash | Renders as |
+//! |---|---|---|---|---|
+//! | records (canonical DAG-CBOR nodes) | [`BritCid::compute`] | dag-cbor `0x71` | sha2-256 | `bafyrei…` |
+//! | bytes (files, manifests, artifacts) | [`BritCid::compute_bytes`] | raw `0x55` | BLAKE3-256 | `bafkr4i…` |
+//! | citations (cite fingerprints over canonical bodies) | [`BritCid::compute_raw`] | raw `0x55` | sha2-256 | `bafkrei…` |
+//!
+//! A CID names its own multihash, so a historical `bafkrei…` address stays verifiable under
+//! its own profile; no cross-profile equality is promised.
 
 use std::{fmt, str::FromStr};
 
@@ -10,23 +18,17 @@ use cid::Cid;
 use multihash_codetable::{Code, MultihashDigest};
 use serde::{Deserialize, Serialize};
 
-/// Multicodec for dag-cbor content (the IPLD multicodec table).
-const DAG_CBOR_CODEC: u64 = 0x71;
-/// Multicodec for raw bytes.
-const RAW_CODEC: u64 = 0x55;
-
-/// A content identifier — a CIDv1 wrapping the sha2-256 of canonical bytes.
+/// A content identifier — a CIDv1 under one of the three profiles above.
 ///
-/// Displayed and parsed as base32 (`bafyrei…` for dag-cbor, `bafkrei…` for raw).
+/// Displayed and parsed as base32 (`bafyrei…` records, `bafkr4i…` bytes, `bafkrei…` citations).
 #[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord, Hash, Serialize, Deserialize)]
 #[serde(transparent)]
 pub struct BritCid(Cid);
 
 impl BritCid {
-    /// Compute a dag-cbor CID (codec 0x71) over already-canonical DAG-CBOR bytes.
+    /// Compute a record CID (dag-cbor `0x71` + sha2-256) over already-canonical DAG-CBOR bytes.
     pub fn compute(canonical_bytes: &[u8]) -> Self {
-        let mh = Code::Sha2_256.digest(canonical_bytes);
-        Self(Cid::new_v1(DAG_CBOR_CODEC, mh))
+        Self(elohim_address::compute_record_cid(canonical_bytes))
     }
 
     /// Compute the same dag-cbor CID as [`Self::compute`] without retaining the input.
@@ -49,13 +51,40 @@ impl BritCid {
         let mh = Code::Sha2_256
             .wrap(&hash.finalize())
             .expect("SHA-256 produces a supported 32-byte multihash");
-        Ok(Self(Cid::new_v1(DAG_CBOR_CODEC, mh)))
+        Ok(Self(Cid::new_v1(0x71, mh)))
     }
 
-    /// Compute a raw-blob CID (codec 0x55) over arbitrary file bytes.
+    /// Address payload bytes (a file, a manifest, an artifact) under the epoch-0 byte profile:
+    /// raw `0x55` + BLAKE3-256 (`bafkr4i…`).
+    pub fn compute_bytes(bytes: &[u8]) -> Self {
+        Self(elohim_address::compute_bytes_cid(bytes).into())
+    }
+
+    /// Address payload bytes without retaining them; I/O and cancellation errors propagate.
+    pub fn compute_bytes_reader(input: impl std::io::Read) -> std::io::Result<Self> {
+        let mut hash = blake3::Hasher::new();
+        hash.update_reader(input)?;
+        Ok(Self(
+            elohim_address::ByteCid::from_digest(*hash.finalize().as_bytes()).into(),
+        ))
+    }
+
+    /// Address a canonical body under the **citation** profile: raw `0x55` + sha2-256
+    /// (`bafkrei…`). Citations only — the cite fingerprint is this CID's [`short_fingerprint`];
+    /// payload bytes are addressed by [`BritCid::compute_bytes`].
+    ///
+    /// [`short_fingerprint`]: BritCid::short_fingerprint
     pub fn compute_raw(bytes: &[u8]) -> Self {
-        let mh = Code::Sha2_256.digest(bytes);
-        Self(Cid::new_v1(RAW_CODEC, mh))
+        Self(elohim_address::compute_raw_sha2_cid(bytes))
+    }
+
+    /// Admit a byte-profile address from text by the kernel's full decode (`bafkr4i…`, 59
+    /// characters, header `01 55 1e 20`, canonical padding and re-encoding). Any other spelling
+    /// — a `bafkrei…` citation, a record CID, a malformed header — is refused.
+    pub fn parse_bytes(text: &str) -> Result<Self, CidParseError> {
+        elohim_address::ByteCid::parse(text)
+            .map(|cid| Self(cid.into()))
+            .map_err(|e| CidParseError(e.to_string()))
     }
 
     /// Borrow the underlying multiformats CID.
@@ -63,17 +92,16 @@ impl BritCid {
         &self.0
     }
 
-    /// The cite **short-form**: `"sha256:" + hex(multihash digest)[:16]`. The same first-16-hex of
-    /// sha2-256 that [`drift_fingerprint`] emits — a short projection of THIS CID's digest. For a
-    /// [`compute_raw`] CID over a canonical body, it equals the doc's `drift_fingerprint` exactly:
-    /// one sha2-256 digest, two renderings (full CID `bafkrei…` ↔ `sha256:hex16`). Mirrors
-    /// `eprfs_core::BlobCid::short_fingerprint`.
+    /// The cite **short-form**: `"sha256:" + hex(multihash digest)[:16]`, for sha2-256 CIDs
+    /// only. For a [`compute_raw`] CID over a canonical body it equals the doc's
+    /// [`drift_fingerprint`] exactly: one sha2-256 digest, two renderings (full CID `bafkrei…`
+    /// ↔ `sha256:hex16`). `None` for any other multihash — a BLAKE3 byte CID has no `sha256:`
+    /// short form, and labelling one would be a lie.
     ///
     /// [`drift_fingerprint`]: crate::engine::frontmatter::drift_fingerprint
     /// [`compute_raw`]: BritCid::compute_raw
-    pub fn short_fingerprint(&self) -> String {
-        let hex = hex::encode(self.0.hash().digest());
-        format!("sha256:{}", &hex[..16])
+    pub fn short_fingerprint(&self) -> Option<String> {
+        elohim_address::short_fingerprint(&self.0).ok()
     }
 }
 
@@ -109,9 +137,24 @@ mod tests {
     }
 
     #[test]
-    fn raw_blob_is_bafkrei() {
+    fn cite_cid_is_bafkrei() {
         let cid = BritCid::compute_raw(b"hello world");
         assert!(cid.to_string().starts_with("bafkrei"), "got {cid}");
+    }
+
+    #[test]
+    fn byte_cid_is_bafkr4i_and_has_no_sha256_short_form() {
+        let cid = BritCid::compute_bytes(b"hello world");
+        assert!(cid.to_string().starts_with("bafkr4i"), "got {cid}");
+        assert_eq!(cid.to_string().len(), 59);
+        assert_eq!(cid.short_fingerprint(), None);
+        assert_eq!(BritCid::parse_bytes(&cid.to_string()), Ok(cid));
+    }
+
+    #[test]
+    fn parse_bytes_refuses_other_profiles() {
+        assert!(BritCid::parse_bytes(&BritCid::compute_raw(b"x").to_string()).is_err());
+        assert!(BritCid::parse_bytes(&BritCid::compute(b"x").to_string()).is_err());
     }
 
     #[test]
@@ -126,6 +169,10 @@ mod tests {
         for size in [0, 1, 65535, 65536, 65537, 200000] {
             let bytes: Vec<_> = (0..size).map(|n| (n % 251) as u8).collect();
             assert_eq!(BritCid::compute_reader(bytes.as_slice())?, BritCid::compute(&bytes));
+            assert_eq!(
+                BritCid::compute_bytes_reader(bytes.as_slice())?,
+                BritCid::compute_bytes(&bytes)
+            );
         }
         struct Failure;
         impl Read for Failure {
@@ -135,6 +182,13 @@ mod tests {
         }
         let input = (&b"valid prefix"[..]).chain(Failure);
         assert_eq!(BritCid::compute_reader(input).unwrap_err().to_string(), "input failed");
+        let input = (&b"valid prefix"[..]).chain(Failure);
+        assert_eq!(
+            BritCid::compute_bytes_reader(input)
+                .expect_err("reader fails")
+                .to_string(),
+            "input failed"
+        );
         Ok(())
     }
 

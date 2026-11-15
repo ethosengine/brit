@@ -4427,14 +4427,26 @@ platform, lint, style, MSRV, documentation, WebAssembly and packaging job green,
 including Windows ARM fixtures. The advisory gate remains red and publication
 was skipped. The installed pin and release remain unchanged.
 
-Pin acceptance also requires verified reads of both legacy flat (epoch-1) build
-receipts and epoch-2 envelopes. The integrator observed valid epoch-2 notes being
-rejected by the installed gate reader, vetoing reuse. This candidate still decodes
-flat `BuildAttestationContentNode` values and has no epoch-envelope decoder, so
-compatibility remains open. Preserve those notes and reuse the producer's owning
-schema, canonicalization and signature contract; accepting the JSON shape alone
-would not establish verified compatibility. Qualify both formats through the
-actual gate reader before changing the pin.
+Pin acceptance requires verified reads of both legacy flat (epoch-1) build
+receipts and epoch-2 envelopes. The 2026-11-15 integration restores the original
+producer contract from `10d18eacc0bdde95329a4ed37db25c2b791b5667`, reusing
+elohim-epr 0.2 signature transcripts and elohim-address 0.1 CID profiles. Legacy
+preimages and record CIDs remain stable; epoch-2 verification binds the scheme,
+epoch, prefixed key and canonical body. Unknown formats remain held, and the CLI
+returns verified flat rows that the existing gate adapter already understands.
+Byte-profile hashing streams files instead of allocating whole manifests.
+
+All 169 checks across brit-epr, brit-build-ref, brit-graph and brit-verify pass,
+including frozen legacy/envelope fixtures, tampering, unsupported formats,
+concurrent notes writes and streamed-hash parity. Strict all-target Clippy passes.
+The actual `readBuildNote` gate adapter verifies the retained epoch-2 ark note
+at `18759e18e` with the expected inputs hash and signature representation, under
+1 GiB/swap-zero whole-group enforcement: 18,317,312 B peak, 158 ms, zero OOM,
+survivors or executable changes. The historical epoch-1 commit is absent from
+this monorepo; its failed lookup is retained and legacy coverage uses the frozen
+fixture, not an invented successful live lookup. Evidence and helper hashes are
+in the existing isolated `bounded-memory/receipt-*` directory. Scratch remains
+unmeasured, and installed-tool promotion and complete pin acceptance remain open.
 
 Ethosengine supplied an unavailable-worker receipt on 2026-11-14: its container
 cgroup holds 41 processes and has no memory-controlled subtree; the empty pod

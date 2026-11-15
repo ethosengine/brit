@@ -6,5 +6,7 @@ pub mod build;
 pub mod covenant;
 /// Deploy attestation — records an agent confirming an artifact is live.
 pub mod deploy;
+/// Versioned notes: the frozen legacy format (epoch 1) and the envelope format (epoch 2).
+pub mod note;
 /// Validation attestation — records a named check applied to an artifact.
 pub mod validation;

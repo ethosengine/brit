@@ -26,3 +26,10 @@ pub trait ContentNode: Serialize + DeserializeOwned {
 #[derive(Debug, thiserror::Error)]
 #[error("dag-cbor encode error: {0}")]
 pub struct CborError(String);
+
+impl CborError {
+    /// An encode error carrying `message`.
+    pub(crate) fn new(message: String) -> Self {
+        Self(message)
+    }
+}

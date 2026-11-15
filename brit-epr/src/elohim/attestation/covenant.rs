@@ -7,6 +7,7 @@
 
 use serde::{Deserialize, Serialize};
 
+use super::note::{decode_note, Decoded, NoteBody, VersionedNote};
 use crate::engine::{cid::BritCid, content_node::ContentNode, signing::Signed};
 
 /// What a clause says.
@@ -113,7 +114,8 @@ pub fn validate_payload(kind: CovenantClauseKind, payload: &serde_json::Value) -
     .map_err(|e| format!("invalid payload for {}: {e}", kind.as_str()))
 }
 
-/// A signed record of one thing a party said about a session's covenant.
+/// A signed record of one thing a party said about a session's covenant — the frozen legacy
+/// (epoch 1) clause; its serializer is the signature preimage of every historical clause.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
 pub struct CovenantClauseContentNode {
@@ -159,17 +161,98 @@ impl Signed for CovenantClauseContentNode {
     }
 }
 
+/// What a clause says, signed in the envelope format (`brit.covenant@2`): the legacy clause's
+/// fields without `signature`.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub struct CovenantClauseBody {
+    /// What the clause says.
+    pub kind: CovenantClauseKind,
+    /// The agent session the clause binds (opaque to brit).
+    pub session: String,
+    /// Who spoke, e.g. `human:matthew`; recorded, never judged.
+    pub party: String,
+    /// The party's own words, verbatim.
+    pub quote: String,
+    /// Kind-specific payload (see the `*Payload` types; checked by [`validate_payload`]).
+    pub payload: serde_json::Value,
+    /// ISO-8601 start of validity.
+    pub valid_from: String,
+    /// ISO-8601 end of validity; `None` means until the session ends.
+    pub valid_until: Option<String>,
+    /// An earlier clause this one restates.
+    pub supersedes: Option<BritCid>,
+    /// The recording device's raw ed25519 public key (hex); the envelope key must be `ed 01 ‖` it.
+    pub agent_id: String,
+}
+
+impl NoteBody for CovenantClauseBody {
+    type Legacy = CovenantClauseContentNode;
+    const FORMAT: &'static str = "brit.covenant@2";
+    const DOMAIN: &'static [u8] = b"brit:covenant@2:";
+
+    fn agent_id(&self) -> &str {
+        &self.agent_id
+    }
+
+    fn from_legacy(legacy: &CovenantClauseContentNode) -> Self {
+        Self {
+            kind: legacy.kind,
+            session: legacy.session.clone(),
+            party: legacy.party.clone(),
+            quote: legacy.quote.clone(),
+            payload: legacy.payload.clone(),
+            valid_from: legacy.valid_from.clone(),
+            valid_until: legacy.valid_until.clone(),
+            supersedes: legacy.supersedes.clone(),
+            agent_id: legacy.agent_id.clone(),
+        }
+    }
+}
+
+/// A clause in either format.
+pub type CovenantClause = VersionedNote<CovenantClauseBody>;
+
+impl From<&CovenantClauseContentNode> for CovenantClause {
+    fn from(legacy: &CovenantClauseContentNode) -> Self {
+        Self::Legacy(legacy.clone())
+    }
+}
+
+impl From<&CovenantClause> for CovenantClause {
+    fn from(clause: &CovenantClause) -> Self {
+        clause.clone()
+    }
+}
+
 /// The stored form of a clause: the blob at `refs/notes/brit/covenant/<session>/<cid>`.
 ///
-/// `cid` is the CID of the signed clause's canonical bytes; a reader recomputes it from `clause`
-/// rather than trusting it.
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
-#[serde(deny_unknown_fields)]
+/// `cid` is the CID of the signed clause's canonical bytes (the whole stored clause, in its own
+/// format); a reader recomputes it from `clause` rather than trusting it. Records are read only
+/// through [`decode_covenant_record`] and the verified reads.
+#[derive(Debug, Clone, PartialEq, Serialize)]
 pub struct CovenantRecord {
     /// CID (string form) of the signed clause.
     pub cid: String,
     /// The signed clause.
-    pub clause: CovenantClauseContentNode,
+    pub clause: CovenantClause,
+}
+
+/// The stored record with its clause still as stored bytes, so the clause decodes from exactly
+/// what was stored (duplicate or unknown keys are refused, never resolved).
+#[derive(Deserialize)]
+#[serde(deny_unknown_fields)]
+struct StoredRecord<'a> {
+    cid: String,
+    #[serde(borrow)]
+    clause: &'a serde_json::value::RawValue,
+}
+
+/// Decode a stored record strictly: its `cid` string and its clause, dispatched on the clause's
+/// epoch like any note. `Err` is why the bytes are not a record.
+pub fn decode_covenant_record(bytes: &[u8]) -> Result<(String, Decoded<CovenantClauseBody>), String> {
+    let StoredRecord { cid, clause } = serde_json::from_slice(bytes).map_err(|e| format!("does not decode: {e}"))?;
+    Ok((cid, decode_note(clause.get().as_bytes())?))
 }
 
 #[cfg(test)]
@@ -258,12 +341,19 @@ mod tests {
         assert!(serde_json::from_value::<CovenantClauseContentNode>(clause).is_err());
         let mut record = serde_json::to_value(CovenantRecord {
             cid: node.compute_cid().unwrap().to_string(),
-            clause: node,
+            clause: (&node).into(),
         })
         .unwrap();
-        assert!(serde_json::from_value::<CovenantRecord>(record.clone()).is_ok());
+        let decode = |v: &serde_json::Value| decode_covenant_record(&serde_json::to_vec(v).unwrap());
+        assert!(matches!(
+            decode(&record),
+            Ok((_, Decoded::Note(VersionedNote::Legacy(_))))
+        ));
         record["standing"] = serde_json::Value::Bool(true);
-        assert!(serde_json::from_value::<CovenantRecord>(record).is_err());
+        assert!(decode(&record).is_err());
+        record.as_object_mut().unwrap().remove("standing");
+        record["clause"]["admitted"] = serde_json::Value::Bool(true);
+        assert!(decode(&record).is_err());
     }
 
     #[test]

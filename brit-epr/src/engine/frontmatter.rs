@@ -5,8 +5,6 @@
 //! trimmed body — byte-matching the parent cite oracle's recipe so a
 //! metadata/cites edit never trips staleness.
 
-use multihash_codetable::{Code, MultihashDigest};
-
 /// Split a document into `(frontmatter_yaml, body)`. Frontmatter is the block
 /// between a leading `---` line and the next `---` line. Returns `None`
 /// frontmatter when the content does not open with `---`.
@@ -43,9 +41,8 @@ pub fn canonical_body(content: &str) -> String {
 /// (`genesis/docs/superpowers/specs/2026-07-12-cite-fingerprint-cid-convergence-design.md`).
 pub fn drift_fingerprint(content: &str) -> String {
     let body = canonical_body(content);
-    let mh = Code::Sha2_256.digest(body.as_bytes());
-    let hex = hex::encode(mh.digest());
-    format!("sha256:{}", &hex[..16])
+    elohim_address::short_fingerprint(&elohim_address::compute_raw_sha2_cid(body.as_bytes()))
+        .expect("a citation CID is sha2-256, which always has a short form")
 }
 
 #[cfg(test)]

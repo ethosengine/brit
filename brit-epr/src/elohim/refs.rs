@@ -7,6 +7,11 @@
 //! admitted or standing flag. Whether that key is a recognized device, and whether its holder had
 //! standing, is the reader's to decide.
 //!
+//! Each read is an [`Admission`]: `Verified`, `Invalid`, or `Held` — a note framed in an epoch
+//! or signature scheme this reader does not implement (see
+//! [`crate::elohim::attestation::note`]). Held is typed all the way out ([`Lookup::Held`],
+//! [`Scan::held`]); it is never folded into the invalid, and a held note confers no effect.
+//!
 //! Absence is established, never inferred: a record is absent only when git answered the lookup
 //! and nothing is stored there. A git subprocess that fails is an error, not a miss.
 //!
@@ -20,17 +25,16 @@ use std::{
     process::Command,
 };
 
+pub use crate::elohim::attestation::note::HeldReason;
 use crate::{
     elohim::attestation::{
-        build::BuildAttestationContentNode,
-        covenant::{CovenantClauseContentNode, CovenantRecord},
-        deploy::DeployAttestationContentNode,
-        validation::ValidationAttestationContentNode,
+        build::{BuildBody, BuildNote},
+        covenant::{decode_covenant_record, CovenantClause, CovenantRecord},
+        deploy::{DeployBody, DeployNote},
+        note::{decode_note, Decoded, NoteBody, VersionedNote},
+        validation::{ValidationBody, ValidationNote},
     },
-    engine::{
-        content_node::ContentNode,
-        signing::{verify_signed_node, Signed},
-    },
+    engine::signing::AgentKeyError,
 };
 
 const BUILD_PREFIX: &str = "refs/notes/brit/build/";
@@ -62,6 +66,14 @@ pub enum Lookup<T> {
         /// Why it was not returned.
         reason: String,
     },
+    /// A record is stored there in a note epoch or signature scheme this reader does not
+    /// implement. It is neither authentic nor forged here, is not returned, and confers nothing.
+    Held {
+        /// Where it was found.
+        at: String,
+        /// The frame this reader does not implement.
+        reason: HeldReason,
+    },
     /// The record decodes strictly, verifies against its own signer and binds to where it was found.
     Verified(T),
 }
@@ -73,6 +85,9 @@ pub struct Scan<T> {
     pub verified: Vec<(String, T)>,
     /// `(where, reason)` for each stored record that failed verification.
     pub unverifiable: Vec<(String, String)>,
+    /// `(where, reason)` for each stored record this reader holds (an epoch or scheme it does not
+    /// implement). Never verified, never selected, never a reuse candidate.
+    pub held: Vec<(String, HeldReason)>,
 }
 
 impl<T> Default for Scan<T> {
@@ -80,33 +95,102 @@ impl<T> Default for Scan<T> {
         Self {
             verified: Vec::new(),
             unverifiable: Vec::new(),
+            held: Vec::new(),
         }
     }
 }
 
-/// Decode `bytes` strictly into `T`, verify its signature against its own `agentId`, then check
-/// `bind` — that it belongs where it was found. `Err` is the reason it is unverifiable.
+/// What the verified read decided about one stored record.
+#[derive(Debug, Clone, PartialEq)]
+pub enum Admission<T> {
+    /// It decodes strictly, its signature verifies against the signer it names, and it binds to
+    /// where it was found.
+    Verified(T),
+    /// It is framed in a note epoch or signature scheme this reader does not implement: neither
+    /// authentic nor forged here. It confers no effect — no reuse, no standing, no index entry —
+    /// and is reported apart from the invalid.
+    Held {
+        /// The frame this reader does not implement.
+        reason: HeldReason,
+    },
+    /// It does not decode, its signature or key witness does not hold, or it does not bind.
+    Invalid {
+        /// Why it was refused.
+        reason: String,
+    },
+}
+
+impl<T> Admission<T> {
+    /// The verified record, or a sentence saying why there is none. For write paths only, where
+    /// any outcome but `Verified` refuses the write; reads keep the typed outcome.
+    fn verified_or_reason(self) -> Result<T, String> {
+        match self {
+            Self::Verified(node) => Ok(node),
+            Self::Held { reason } => Err(format!("held: {reason}")),
+            Self::Invalid { reason } => Err(reason),
+        }
+    }
+
+    /// Where this record goes in a [`Lookup`] at `at`.
+    fn into_lookup(self, at: String) -> Lookup<T> {
+        match self {
+            Self::Verified(node) => Lookup::Verified(node),
+            Self::Held { reason } => Lookup::Held { at, reason },
+            Self::Invalid { reason } => Lookup::Unverifiable { at, reason },
+        }
+    }
+}
+
+/// Decode `bytes` strictly as a note of kind `B` (dispatching on its epoch), verify its
+/// signature against the signer it names, then check `bind` against what it attests — that it
+/// belongs where it was found.
 ///
 /// The bytes are parsed as stored: never repaired, never read through a lossy UTF-8 conversion.
-pub fn read_verified<T: Signed>(bytes: &[u8], bind: impl FnOnce(&T) -> Result<(), String>) -> Result<T, String> {
-    let node: T = serde_json::from_slice(bytes).map_err(|e| format!("does not decode: {e}"))?;
-    admit(node, bind)
+pub fn read_verified<B: NoteBody>(
+    bytes: &[u8],
+    bind: impl FnOnce(&B) -> Result<(), String>,
+) -> Admission<VersionedNote<B>> {
+    match decode_note::<B>(bytes) {
+        Ok(Decoded::Note(note)) => admit(note, bind),
+        Ok(Decoded::Held(reason)) => Admission::Held { reason },
+        Err(reason) => Admission::Invalid { reason },
+    }
 }
 
-/// Verify a decoded node's signature against its own signer, then `bind` it.
-fn admit<T: Signed>(node: T, bind: impl FnOnce(&T) -> Result<(), String>) -> Result<T, String> {
-    match verify_signed_node(&node) {
+/// Verify a decoded note through its own format — the frozen legacy path or the envelope path —
+/// then `bind` what it attests. An epoch or scheme this reader does not implement is
+/// [`Admission::Held`], never [`Admission::Invalid`], and is not bound.
+pub fn admit<B: NoteBody>(
+    note: VersionedNote<B>,
+    bind: impl FnOnce(&B) -> Result<(), String>,
+) -> Admission<VersionedNote<B>> {
+    match note.verify() {
         Ok(true) => {}
         Ok(false) => {
-            return Err(format!(
-                "signature does not verify against agentId {:?}",
-                node.agent_id()
-            ))
+            return Admission::Invalid {
+                reason: format!("signature does not verify against agentId {:?}", note.agent_id()),
+            }
         }
-        Err(e) => return Err(format!("signature does not verify: {e}")),
+        Err(AgentKeyError::HeldEpoch(epoch)) => {
+            return Admission::Held {
+                reason: HeldReason::Epoch(epoch),
+            }
+        }
+        Err(AgentKeyError::HeldScheme(scheme)) => {
+            return Admission::Held {
+                reason: HeldReason::Scheme(scheme),
+            }
+        }
+        Err(e) => {
+            return Admission::Invalid {
+                reason: format!("signature does not verify: {e}"),
+            }
+        }
     }
-    bind(&node)?;
-    Ok(node)
+    match bind(&note.body()) {
+        Ok(()) => Admission::Verified(note),
+        Err(reason) => Admission::Invalid { reason },
+    }
 }
 
 fn bound(field: &str, stored: &str, expected: &str) -> Result<(), String> {
@@ -220,15 +304,13 @@ impl Drop for Scratch<'_> {
 const SCRATCH_DELETE_ATTEMPTS: u32 = 8;
 
 /// A build note: verified, and bound to the step whose ref it was found under.
-fn read_build(bytes: &[u8], step_name: &str) -> Result<BuildAttestationContentNode, String> {
-    read_verified(bytes, |n: &BuildAttestationContentNode| {
-        bound("stepName", &n.step_name, step_name)
-    })
+fn read_build(bytes: &[u8], step_name: &str) -> Admission<BuildNote> {
+    read_verified(bytes, |n: &BuildBody| bound("stepName", &n.step_name, step_name))
 }
 
 /// A deploy attestation: verified, and bound to the step and environment of its ref.
-fn read_deploy(bytes: &[u8], step_name: &str, env: &str) -> Result<DeployAttestationContentNode, String> {
-    read_verified(bytes, |n: &DeployAttestationContentNode| {
+fn read_deploy(bytes: &[u8], step_name: &str, env: &str) -> Admission<DeployNote> {
+    read_verified(bytes, |n: &DeployBody| {
         bound("stepName", &n.step_name, step_name)?;
         bound("environmentLabel", &n.environment_label, env)
     })
@@ -236,26 +318,40 @@ fn read_deploy(bytes: &[u8], step_name: &str, env: &str) -> Result<DeployAttesta
 
 /// A validation attestation: verified, and bound to the check of its ref. The node carries no
 /// step, so the step segment of the ref is the ref's own claim, not the signer's.
-fn read_validation(bytes: &[u8], check_name: &str) -> Result<ValidationAttestationContentNode, String> {
-    read_verified(bytes, |n: &ValidationAttestationContentNode| {
+fn read_validation(bytes: &[u8], check_name: &str) -> Admission<ValidationNote> {
+    read_verified(bytes, |n: &ValidationBody| {
         bound("checkName", &n.check_name, check_name)
     })
 }
 
 /// A covenant record: strict decode, the clause's signature, the stored CID recomputed from the
-/// clause, and the ref's session and CID segments.
-fn read_covenant(bytes: &[u8], session_segment: &str, cid_segment: &str) -> Result<CovenantRecord, String> {
-    let CovenantRecord { cid, clause } = serde_json::from_slice(bytes).map_err(|e| format!("does not decode: {e}"))?;
-    let clause = admit(clause, |c| {
-        let computed = c
-            .compute_cid()
-            .map_err(|e| format!("clause does not encode: {e}"))?
-            .to_string();
+/// whole stored clause, and the ref's session and CID segments.
+fn read_covenant(bytes: &[u8], session_segment: &str, cid_segment: &str) -> Admission<CovenantRecord> {
+    let (cid, decoded) = match decode_covenant_record(bytes) {
+        Ok(record) => record,
+        Err(reason) => return Admission::Invalid { reason },
+    };
+    let clause: CovenantClause = match decoded {
+        Decoded::Note(clause) => clause,
+        Decoded::Held(reason) => return Admission::Held { reason },
+    };
+    let computed = match clause.compute_cid() {
+        Ok(computed) => computed.to_string(),
+        Err(e) => {
+            return Admission::Invalid {
+                reason: format!("clause does not encode: {e}"),
+            }
+        }
+    };
+    match admit(clause, |c| {
         bound("cid", &cid, &computed)?;
         bound("cid", &BritRefManager::encode_segment(&cid), cid_segment)?;
         bound("session", &BritRefManager::encode_segment(&c.session), session_segment)
-    })?;
-    Ok(CovenantRecord { cid, clause })
+    }) {
+        Admission::Verified(clause) => Admission::Verified(CovenantRecord { cid, clause }),
+        Admission::Held { reason } => Admission::Held { reason },
+        Admission::Invalid { reason } => Admission::Invalid { reason },
+    }
 }
 
 /// Called as `hook(ref_name, attempt)` before a write publishes; see [`BritRefManager::before_publish`].
@@ -309,31 +405,23 @@ impl BritRefManager {
     /// the notes head it was built on. A race lost to a note on another commit is rebuilt on the
     /// new head (at most three publications); a race lost to a change of this commit's
     /// own note is refused with [`RefError::Concurrent`], unless that change wrote these same bytes.
-    pub fn put_build_ref(
-        &self,
-        step_name: &str,
-        commit_rev: &str,
-        node: &BuildAttestationContentNode,
-    ) -> Result<(), RefError> {
+    pub fn put_build_ref(&self, step_name: &str, commit_rev: &str, node: impl Into<BuildNote>) -> Result<(), RefError> {
+        let node: BuildNote = node.into();
         let ref_name = Self::build_ref(step_name);
-        let read = |b: &[u8]| read_build(b, step_name);
+        let read = |b: &[u8]| read_build(b, step_name).verified_or_reason();
         // A note's bytes as `git notes add -m` has always stored them: the JSON, then a newline.
-        let mut bytes = record_bytes(&ref_name, node)?;
+        let mut bytes = record_bytes(&ref_name, &node)?;
         bytes.push(b'\n');
-        admissible(&ref_name, node, read(&bytes))?;
+        admissible(&ref_name, &node, read(&bytes))?;
         let commit_sha = self.resolve_rev(commit_rev)?;
-        self.write_note(&ref_name, &commit_sha, &bytes, read, node)
+        self.write_note(&ref_name, &commit_sha, &bytes, read, &node)
     }
 
     /// The build attestation noted on `commit_rev` for `step_name`.
     ///
     /// A note binds to its step: its `stepName` must be `step_name`. The note does not sign the
     /// commit it annotates — that association is the notes tree's, not the signer's.
-    pub fn get_build_ref(
-        &self,
-        step_name: &str,
-        commit_rev: &str,
-    ) -> Result<Lookup<BuildAttestationContentNode>, RefError> {
+    pub fn get_build_ref(&self, step_name: &str, commit_rev: &str) -> Result<Lookup<BuildNote>, RefError> {
         let commit_sha = self.resolve_rev(commit_rev)?;
         let Some((note, _)) = self
             .notes(&Self::build_ref(step_name))?
@@ -343,8 +431,8 @@ impl BritRefManager {
             return Ok(Lookup::Absent);
         };
         let body = self.cat_blobs(vec![note])?.remove(0);
-        Ok(match body.and_then(|b| read_build(&b, step_name)) {
-            Ok(node) => Lookup::Verified(node),
+        Ok(match body {
+            Ok(bytes) => read_build(&bytes, step_name).into_lookup(commit_sha),
             Err(reason) => Lookup::Unverifiable { at: commit_sha, reason },
         })
     }
@@ -355,26 +443,31 @@ impl BritRefManager {
     }
 
     /// Every verified build attestation under this step's notes ref whose `inputsHash` equals
-    /// `inputs_hash`, as `(commit_sha, node)` in `git notes list` order, plus every note under
-    /// the ref that failed verification, whatever closure it claims.
+    /// `inputs_hash`, as `(commit_sha, note)` in `git notes list` order, plus every note under
+    /// the ref that failed verification and every note this reader holds (an epoch or scheme it
+    /// does not implement), whatever closure either claims. A held note is never in `verified`:
+    /// it is never a reuse candidate.
     ///
     /// The notes are keyed by commit, but the question a gate asks is "has this exact input
     /// closure already been built?" — and that answer must not depend on which commit carried
     /// the closure. One `git notes list` plus one `git cat-file --batch` over the note objects;
     /// a step with no notes ref yet is an empty scan.
-    pub fn find_build_by_inputs(
-        &self,
-        step_name: &str,
-        inputs_hash: &str,
-    ) -> Result<Scan<BuildAttestationContentNode>, RefError> {
+    pub fn find_build_by_inputs(&self, step_name: &str, inputs_hash: &str) -> Result<Scan<BuildNote>, RefError> {
         let pairs = self.notes(&Self::build_ref(step_name))?;
         let bodies = self.cat_blobs(pairs.iter().map(|(note, _)| note.clone()).collect())?;
         let mut scan = Scan::default();
         for ((_, commit), body) in pairs.into_iter().zip(bodies) {
-            match body.and_then(|b| read_build(&b, step_name)) {
-                Ok(node) if node.inputs_hash == inputs_hash => scan.verified.push((commit, node)),
-                Ok(_) => {}
-                Err(reason) => scan.unverifiable.push((commit, reason)),
+            let admission = match body {
+                Ok(bytes) => read_build(&bytes, step_name),
+                Err(reason) => Admission::Invalid { reason },
+            };
+            match admission {
+                Admission::Verified(note) if note.body().inputs_hash == inputs_hash => {
+                    scan.verified.push((commit, note));
+                }
+                Admission::Verified(_) => {}
+                Admission::Held { reason } => scan.held.push((commit, reason)),
+                Admission::Invalid { reason } => scan.unverifiable.push((commit, reason)),
             }
         }
         Ok(scan)
@@ -395,22 +488,18 @@ impl BritRefManager {
     /// The node must bind to `step_name` and `env` and verify, or nothing is written and no git
     /// command runs. If the ref moves after it was observed, the write is refused, never retried
     /// against the new value.
-    pub fn put_deploy_ref(
-        &self,
-        step_name: &str,
-        env: &str,
-        node: &DeployAttestationContentNode,
-    ) -> Result<(), RefError> {
+    pub fn put_deploy_ref(&self, step_name: &str, env: &str, node: impl Into<DeployNote>) -> Result<(), RefError> {
+        let node: DeployNote = node.into();
         let ref_name = Self::deploy_ref(step_name, env);
-        let read = |b: &[u8]| read_deploy(b, step_name, env);
-        let bytes = record_bytes(&ref_name, node)?;
-        admissible(&ref_name, node, read(&bytes))?;
+        let read = |b: &[u8]| read_deploy(b, step_name, env).verified_or_reason();
+        let bytes = record_bytes(&ref_name, &node)?;
+        admissible(&ref_name, &node, read(&bytes))?;
         let observed = self.ref_oid(&ref_name)?;
-        self.write_ref_blob(&ref_name, &bytes, observed, Prior::Replace, read, node)
+        self.write_ref_blob(&ref_name, &bytes, observed, Prior::Replace, read, &node)
     }
 
     /// The deploy attestation for `step_name` at `env`; it binds to both.
-    pub fn get_deploy_ref(&self, step_name: &str, env: &str) -> Result<Lookup<DeployAttestationContentNode>, RefError> {
+    pub fn get_deploy_ref(&self, step_name: &str, env: &str) -> Result<Lookup<DeployNote>, RefError> {
         self.read_blob_ref(&Self::deploy_ref(step_name, env), |b| read_deploy(b, step_name, env))
     }
 
@@ -436,25 +525,22 @@ impl BritRefManager {
         &self,
         step_name: &str,
         check_name: &str,
-        node: &ValidationAttestationContentNode,
+        node: impl Into<ValidationNote>,
     ) -> Result<(), RefError> {
+        let node: ValidationNote = node.into();
         let ref_name = Self::validate_ref(step_name, check_name);
-        let read = |b: &[u8]| read_validation(b, check_name);
-        let bytes = record_bytes(&ref_name, node)?;
-        admissible(&ref_name, node, read(&bytes))?;
+        let read = |b: &[u8]| read_validation(b, check_name).verified_or_reason();
+        let bytes = record_bytes(&ref_name, &node)?;
+        admissible(&ref_name, &node, read(&bytes))?;
         let observed = self.ref_oid(&ref_name)?;
-        self.write_ref_blob(&ref_name, &bytes, observed, Prior::Replace, read, node)
+        self.write_ref_blob(&ref_name, &bytes, observed, Prior::Replace, read, &node)
     }
 
     /// The validation attestation for `check_name` under `step_name`.
     ///
     /// It binds to its check. The node carries no step, so the step segment of the ref is the
     /// ref's own claim, not the signer's.
-    pub fn get_validate_ref(
-        &self,
-        step_name: &str,
-        check_name: &str,
-    ) -> Result<Lookup<ValidationAttestationContentNode>, RefError> {
+    pub fn get_validate_ref(&self, step_name: &str, check_name: &str) -> Result<Lookup<ValidationNote>, RefError> {
         self.read_blob_ref(&Self::validate_ref(step_name, check_name), |b| {
             read_validation(b, check_name)
         })
@@ -475,20 +561,22 @@ impl BritRefManager {
     /// bytes is a no-op, one that holds other bytes is refused with [`RefError::Exists`], and one
     /// created underneath this write is refused with [`RefError::Concurrent`]. Nothing is ever
     /// overwritten.
-    pub fn put_covenant_clause(&self, clause: &CovenantClauseContentNode) -> Result<String, RefError> {
+    pub fn put_covenant_clause(&self, clause: impl Into<CovenantClause>) -> Result<String, RefError> {
+        let clause: CovenantClause = clause.into();
+        let session = clause.body().session;
         let cid = clause
             .compute_cid()
             .map_err(|e| RefError::WouldNotVerify {
-                ref_name: format!("{COVENANT_PREFIX}{}", Self::encode_segment(&clause.session)),
+                ref_name: format!("{COVENANT_PREFIX}{}", Self::encode_segment(&session)),
                 reason: format!("clause does not encode: {e}"),
             })?
             .to_string();
-        let ref_name = Self::covenant_ref(&clause.session, &cid);
-        let (session_segment, cid_segment) = (Self::encode_segment(&clause.session), Self::encode_segment(&cid));
-        let read = |b: &[u8]| read_covenant(b, &session_segment, &cid_segment);
+        let ref_name = Self::covenant_ref(&session, &cid);
+        let (session_segment, cid_segment) = (Self::encode_segment(&session), Self::encode_segment(&cid));
+        let read = |b: &[u8]| read_covenant(b, &session_segment, &cid_segment).verified_or_reason();
         let record = CovenantRecord {
             cid: cid.clone(),
-            clause: clause.clone(),
+            clause,
         };
         let bytes = record_bytes(&ref_name, &record)?;
         admissible(&ref_name, &record, read(&bytes))?;
@@ -510,7 +598,7 @@ impl BritRefManager {
             .collect();
         let mut scan = self.covenant_scan(refs, Some(session))?;
         scan.verified
-            .sort_by(|(_, a), (_, b)| (&a.clause.valid_from, &a.cid).cmp(&(&b.clause.valid_from, &b.cid)));
+            .sort_by_cached_key(|(_, r)| (r.clause.body().valid_from, r.cid.clone()));
         Ok(scan)
     }
 
@@ -527,8 +615,11 @@ impl BritRefManager {
         if !scan.verified.is_empty() {
             return Ok(Lookup::Verified(scan.verified.remove(0).1));
         }
-        Ok(match scan.unverifiable.into_iter().next() {
-            Some((at, reason)) => Lookup::Unverifiable { at, reason },
+        if let Some((at, reason)) = scan.unverifiable.into_iter().next() {
+            return Ok(Lookup::Unverifiable { at, reason });
+        }
+        Ok(match scan.held.into_iter().next() {
+            Some((at, reason)) => Lookup::Held { at, reason },
             None => Lookup::Absent,
         })
     }
@@ -549,20 +640,31 @@ impl BritRefManager {
         let bodies = self.cat_blobs(refs.iter().map(|(_, oid)| oid.clone()).collect())?;
         let mut scan = Scan::default();
         for ((name, _), body) in refs.into_iter().zip(bodies) {
-            let verified = body.and_then(|b| {
-                let (session_segment, cid_segment) = name
-                    .strip_prefix(COVENANT_PREFIX)
-                    .and_then(|rest| rest.rsplit_once('/'))
-                    .ok_or_else(|| "not a <session>/<cid> covenant ref".to_string())?;
-                let record = read_covenant(&b, session_segment, cid_segment)?;
-                if let Some(session) = session {
-                    bound("requested session", &record.clause.session, session)?;
+            let segments = name
+                .strip_prefix(COVENANT_PREFIX)
+                .and_then(|rest| rest.rsplit_once('/'));
+            let admission = match (body, segments) {
+                (Err(reason), _) => Admission::Invalid { reason },
+                (Ok(_), None) => Admission::Invalid {
+                    reason: "not a <session>/<cid> covenant ref".to_string(),
+                },
+                (Ok(bytes), Some((session_segment, cid_segment))) => {
+                    match read_covenant(&bytes, session_segment, cid_segment) {
+                        Admission::Verified(record) => match session {
+                            Some(session) => match bound("requested session", &record.clause.body().session, session) {
+                                Ok(()) => Admission::Verified(record),
+                                Err(reason) => Admission::Invalid { reason },
+                            },
+                            None => Admission::Verified(record),
+                        },
+                        other => other,
+                    }
                 }
-                Ok(record)
-            });
-            match verified {
-                Ok(record) => scan.verified.push((name, record)),
-                Err(reason) => scan.unverifiable.push((name, reason)),
+            };
+            match admission {
+                Admission::Verified(record) => scan.verified.push((name, record)),
+                Admission::Held { reason } => scan.held.push((name, reason)),
+                Admission::Invalid { reason } => scan.unverifiable.push((name, reason)),
             }
         }
         Ok(scan)
@@ -574,14 +676,14 @@ impl BritRefManager {
     fn read_blob_ref<T>(
         &self,
         ref_name: &str,
-        read: impl FnOnce(&[u8]) -> Result<T, String>,
+        read: impl FnOnce(&[u8]) -> Admission<T>,
     ) -> Result<Lookup<T>, RefError> {
         let Some(oid) = self.ref_oid(ref_name)? else {
             return Ok(Lookup::Absent);
         };
         let body = self.cat_blobs(vec![oid])?.remove(0);
-        Ok(match body.and_then(|b| read(&b)) {
-            Ok(node) => Lookup::Verified(node),
+        Ok(match body {
+            Ok(bytes) => read(&bytes).into_lookup(ref_name.to_string()),
             Err(reason) => Lookup::Unverifiable {
                 at: ref_name.to_string(),
                 reason,

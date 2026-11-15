@@ -1,4 +1,18 @@
 //! Agent signing — ed25519 keypair management for attestation signatures.
+//!
+//! Two note formats exist, told apart by their object epoch:
+//!
+//! - **epoch 1, the frozen legacy format** — every note brit wrote before the address crossing.
+//!   Its signature is hex ed25519 over the node's canonical DAG-CBOR with `"signature": ""`
+//!   present; the signer is the raw 32-byte key in `agentId`. [`verify_signed_node`] is that
+//!   path, byte-for-byte unchanged: historical notes are never re-encoded or rewritten.
+//! - **epoch 2, the envelope format** (`brit.<kind>@2`) — a scheme code, a multikey and the
+//!   signature bytes over a transcript that binds the note's domain, epoch, scheme and key
+//!   (`elohim_epr::signature`, transcript v1). Implemented by the elohim app schema.
+//!
+//! A reader that meets an epoch or scheme it does not implement HOLDS the note
+//! ([`AgentKeyError::HeldEpoch`], [`AgentKeyError::HeldScheme`]): neither authentic nor forged,
+//! conferring no effect.
 
 use std::{
     fs::{self, OpenOptions},
@@ -78,6 +92,17 @@ impl AgentKey {
         hex::encode(sig.to_bytes())
     }
 
+    /// Sign `payload` and return the raw 64-byte ed25519 signature (the envelope format's
+    /// signature bytes; the legacy format hex-encodes the same bytes, [`AgentKey::sign`]).
+    pub fn sign_raw(&self, payload: &[u8]) -> [u8; 64] {
+        self.signing_key.sign(payload).to_bytes()
+    }
+
+    /// The agent's raw 32-byte public key.
+    pub fn public_key_bytes(&self) -> [u8; 32] {
+        self.signing_key.verifying_key().to_bytes()
+    }
+
     /// The agent's public key as a 64-character hex string.
     pub fn agent_id(&self) -> String {
         hex::encode(self.signing_key.verifying_key().to_bytes())
@@ -154,10 +179,30 @@ fn fsync_parent_dir(_path: &Path) -> std::io::Result<()> {
     Ok(())
 }
 
-/// Trait for ContentNodes that carry a signature field.
+/// The object epoch of the frozen legacy note format (no `epoch` field on the wire).
+pub const LEGACY_NOTE_EPOCH: u16 = 1;
+/// The object epoch of the envelope note format (`brit.<kind>@2`).
+pub const ENVELOPE_NOTE_EPOCH: u16 = 2;
+/// Scheme code of strict Ed25519 — the only scheme the legacy format ever carried.
+pub const ED25519_SCHEME: u16 = 0;
+/// Multicodec prefix of an Ed25519 public-key multikey (`varint(0xed)` = `ed 01`).
+pub const ED25519_MULTIKEY_PREFIX: [u8; 2] = [0xed, 0x01];
+
+/// The Ed25519 multikey (`ed 01 ‖ key`) of a hex `agentId`, or `None` when the hex is not a
+/// 32-byte key. The legacy identity is the raw key; this is the multikey it is equal to.
+pub fn ed25519_multikey_of_agent_id(agent_id_hex: &str) -> Option<Vec<u8>> {
+    let raw: [u8; 32] = hex::decode(agent_id_hex).ok()?.try_into().ok()?;
+    let mut key = ED25519_MULTIKEY_PREFIX.to_vec();
+    key.extend_from_slice(&raw);
+    Some(key)
+}
+
+/// Trait for ContentNodes that carry a signature field — the frozen legacy (epoch 1) format.
 ///
 /// Implementors provide access to the signature and agent_id, plus the
-/// ability to produce an unsigned clone for verification.
+/// ability to produce an unsigned clone for verification. `epoch`, `scheme` and `key` describe
+/// the legacy frame in the envelope format's terms: epoch 1, scheme 0 (Ed25519), and the
+/// multikey `ed 01 ‖ agentId`.
 pub trait Signed: crate::engine::content_node::ContentNode + Clone {
     /// The hex-encoded signature.
     fn signature(&self) -> &str;
@@ -165,6 +210,19 @@ pub trait Signed: crate::engine::content_node::ContentNode + Clone {
     fn agent_id(&self) -> &str;
     /// Return a clone with the signature field set to empty string.
     fn without_signature(&self) -> Self;
+    /// The note's object epoch: [`LEGACY_NOTE_EPOCH`] for the frozen format.
+    fn epoch(&self) -> u16 {
+        LEGACY_NOTE_EPOCH
+    }
+    /// The signature scheme code: [`ED25519_SCHEME`] for the frozen format.
+    fn scheme(&self) -> u16 {
+        ED25519_SCHEME
+    }
+    /// The signer's key as multikey bytes: `ed 01 ‖ agentId` for the frozen format, empty when
+    /// `agentId` is not a 32-byte hex key.
+    fn key(&self) -> Vec<u8> {
+        ed25519_multikey_of_agent_id(self.agent_id()).unwrap_or_default()
+    }
 }
 
 /// Verify a signed ContentNode's signature.
@@ -204,6 +262,12 @@ pub enum AgentKeyError {
     /// Public key hex is invalid.
     #[error("invalid public key hex")]
     InvalidPubkeyHex,
+    /// A signature scheme this build does not implement: the note is held, not invalid.
+    #[error("held: signature scheme {0} is not implemented by this reader")]
+    HeldScheme(u16),
+    /// A note epoch this build does not implement: the note is held, not invalid.
+    #[error("held: note epoch {0} is not implemented by this reader")]
+    HeldEpoch(u16),
 }
 
 #[cfg(test)]

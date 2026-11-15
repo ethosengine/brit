@@ -15,7 +15,7 @@ name = "brit-build-ref"
 path = "src/main.rs"
 
 [dependencies]
-brit-epr = { version = "0.1.6", registry = "elohim", path = "../brit-epr" }
+brit-epr = { version = "0.2.0", registry = "elohim", path = "../brit-epr" }
 clap = { version = "4", features = ["derive"] }
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
@@ -25,3 +25,4 @@ anyhow = "1"
 [dev-dependencies]
 tempfile = "3"
 serde_ipld_dagcbor = "0.6"
+gix-testtools = { path = "../tests/tools", default-features = false, features = ["sha1", "sha256"] }

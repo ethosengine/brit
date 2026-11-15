@@ -459,6 +459,7 @@ dependencies = [
  "brit-epr",
  "chrono",
  "clap",
+ "gix-testtools",
  "serde",
  "serde_ipld_dagcbor",
  "serde_json",
@@ -492,16 +493,20 @@ dependencies = [
 
 [[package]]
 name = "brit-epr"
-version = "0.1.6"
+version = "0.2.0"
 dependencies = [
+ "blake3",
  "cid",
  "ed25519-dalek",
+ "elohim-address",
  "elohim-epr",
  "gix-object 0.66.1",
+ "gix-testtools",
  "hex",
  "multihash-codetable",
  "rand 0.8.8",
  "serde",
+ "serde_bytes",
  "serde_ipld_dagcbor",
  "serde_json",
  "sha2 0.10.9",
@@ -511,7 +516,7 @@ dependencies = [
 
 [[package]]
 name = "brit-graph"
-version = "0.1.6"
+version = "0.2.0"
 dependencies = [
  "brit-epr",
  "gix 0.89.3",
@@ -530,6 +535,15 @@ version = "0.0.0"
 dependencies = [
  "brit-epr",
  "gix 0.89.3",
+]
+
+[[package]]
+name = "bs58"
+version = "0.5.1"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "bf88ba1141d185c399bee5288d850d63b8369520c1eafc32a0430b5b6c287bf4"
+dependencies = [
+ "tinyvec",
 ]
 
 [[package]]
@@ -1457,14 +1471,30 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "91622ff5e7162018101f2fea40d6ebf4a78bbe5a49736a2020649edf9693679e"
 
 [[package]]
-name = "elohim-epr"
+name = "elohim-address"
 version = "0.1.0"
 source = "sparse+https://nexus.ethosengine.com/repository/cargo-internal/"
-checksum = "85bd4b2604ef286089bf43b8dd8b4102efeef0fca06c4701030d3188feefb9e0"
+checksum = "ebd45db407dd191e77379298b6e2c89a73e4a9c2ee3c08b18d4dfa1c6a542679"
 dependencies = [
+ "cid",
+ "data-encoding",
+ "multihash-codetable",
+ "thiserror",
+]
+
+[[package]]
+name = "elohim-epr"
+version = "0.2.0"
+source = "sparse+https://nexus.ethosengine.com/repository/cargo-internal/"
+checksum = "d735fd97c20c9e4a986a53286d3c797ac5d95b3169756c74124604d55cc88b28"
+dependencies = [
+ "base64",
+ "bs58",
  "chrono",
  "cid",
  "ed25519-dalek",
+ "elohim-address",
+ "fastcdc",
  "hex",
  "ipld-core",
  "multihash-codetable",
@@ -1666,6 +1696,12 @@ name = "fast-srgb8"
 version = "1.0.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "dd2e7510819d6fbf51a5545c8f922716ecfb14df168a3242f7d33e0239efe6a1"
+
+[[package]]
+name = "fastcdc"
+version = "5.0.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "0431c3132902a1bed6fe77dcfa5d03844e083f263b81288246a2d43dd7d4b2ad"
 
 [[package]]
 name = "faster-hex"

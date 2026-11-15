@@ -25,8 +25,8 @@ pub fn seal(repo: &Path, dir: &Path) -> anyhow::Result<()> {
 
     let mut entries = Vec::new();
     for path in &files {
-        let bytes = std::fs::read(path)?;
-        let cid = BritCid::compute_raw(&bytes);
+        // File entries are payload bytes: the byte profile (`bafkr4i…`).
+        let cid = BritCid::compute_bytes_reader(std::fs::File::open(path)?)?;
         let name = path
             .file_name()
             .and_then(|n| n.to_str())
