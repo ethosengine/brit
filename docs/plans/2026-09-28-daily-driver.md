@@ -4810,6 +4810,91 @@ Story-graph seam: between bounded Tix history and qualified editing, selected
 and retained descendant metadata must survive the same policy; the new reword
 regressions measure that station without changing the full release assertion.
 
+#### Tix editor and creation metadata follow-up (2026-11-15)
+
+Editor preparation independently reproduced the allocation refusal with a
+128 KiB message and a 1 KiB policy. Bounding its first read exposed the same
+failure in its diff summary. Commit `50eaa3af2b58218b051150b90963a008e85bf877`
+bounds both paths, extracting tree and ordered parent identities without keeping
+message storage alive during tree access. Full editor documents remain identical
+across policies, including headers, trailers and parent-aware summaries. All 811
+active native tests pass per hash; the 20 MiB selected/parent document fixture
+peaks at 165,023,744 / 152,170,496 B, with zero OOM kills or survivors.
+
+Public regression `919b307a274f8df0417f9f589b948e5e6a01bb28` proves unchanged
+editor handoff through the rebuilt executable
+`fa7d20738c7b532e39caa69a1bcd24971e5324dd4d2b21af526d583132725749`.
+All four ordinary Tix journeys pass per hash. The large public matrix passes
+loose/packed storage and four policies while preserving messages, original
+objects, HEAD, parent order, trees and the index:
+
+| Repository hash / trust | Memory peak | Elapsed |
+| --- | ---: | ---: |
+| SHA-1 / full | 172,589,056 B | 50.164 s |
+| SHA-1 / actual reduced | 173,096,960 B | 50.605 s |
+| SHA-256 / full | 172,503,040 B | 146.170 s |
+| SHA-256 / actual reduced | 172,535,808 B | 193.929 s |
+
+Separate full-trust V2 scratch runs pass at 174,407,680 / 174,379,008 B memory,
+79.918 / 181.775 s, and 84,160,512 B additional filesystem allocation each.
+All measured groups have zero OOM kills or survivors and unchanged identities;
+the filesystem returns to its baseline. These cases use a no-op editor and
+qualify preparation and unchanged handoff, not arbitrary editor lifetime or
+post-edit mutation. Native reduced-trust scratch is still unmeasured.
+Evidence: `bounded-memory/tix-editor-metadata-*`, `tix-editor-public-*` and
+`scratch-local-tix-editor-50ea-*`, with their frozen runner identities.
+
+Creation next reproduced a 131,254-byte parent refusal under a 1 KiB policy.
+Commit `1335368b077c206e3943f16b125ae7d26ee1842e` resolves its tree once through
+bounded storage and uses the existing bounded decoder for pending-parent checks.
+Normal and empty creation preserve selection and publication order. The regression
+compares the normal tree with Git `write-tree`, retains parent-message bytes,
+and preserves the index and local files. All 812 active native tests pass per
+hash. The explicit 20 MiB cases peak at 169,385,984 / 131,084,288 B, take
+10.234 / 31.950 s and have zero OOM kills or survivors. Strict affected Clippy,
+formatting and declared style pass.
+
+Public regression `c9a3514ce` in `tests/cli-journey/tests/memory_tix.rs`
+compares staged and empty selections with Git, loose and packed parents, and
+default/1 GiB/16 MiB/1 KiB invocation policies. Its 128 KiB parent reproduces
+the allocation refusal on the earlier `50eaa3af2` executable. The rebuilt
+`1335368b0` executable has SHA-256
+`3a40fa20c836bfa33da6b8d36da936e863a95dd22617e339879406426010b5f6`.
+Its full-trust 20 MiB cases pass at 130,519,040 / 130,703,360 B memory in
+36.157 / 85.604 s (SHA-1 / SHA-256). Separate V2 scratch cases pass at
+132,382,720 / 132,554,752 B memory in 52.596 / 105.827 s, each with
+63,152,128 B additional filesystem allocation above the 53,063,680 B baseline.
+All have zero OOM kills or survivors; identities remain unchanged and scratch
+returns to baseline.
+
+All five ordinary public Tix journeys pass per hash; strict all-target
+`cli-journey` Clippy, formatting, the 12 readiness contracts and declared style
+also pass. The updated frozen refusal runner is
+`e4b9ec563fc170e76800c9533e9bbb2515bf9ea0d5b0d7e257a08554df9e0f54`;
+earlier creation scratch receipts retain their original runner identity.
+
+Actual reduced trust exposes an independent, pre-existing boundary: the owned
+Git `reset --mixed` refuses the foreign-owned repository. A separate 128 KiB,
+default-policy regression reproduces that exact refusal on both `50eaa3af2`
+and `1335368b0`, in both hash formats. HEAD, refs, parent message, index bytes
+and local files are preserved, and Git `fsck --full` passes. The fresh 20 MiB
+refusal matrix also passes those recovery assertions across all four invocation
+policies at 130,637,824 / 130,781,184 B in 36.493 / 145.673 s, zero OOM or
+survivors. This classifies foreign-owned creation through the owned Git reset
+as already unsupported independently of this memory change, not as a successful
+creation. The earlier success-expecting reduced-trust receipt remains failed;
+no trust settings were raised. Reflogs and unreachable objects are not asserted
+byte-identical, and native aggregate scratch remains unmeasured.
+
+The public invocation-policy matrix does not prove every reopened repository
+retains CLI settings: `command/new.rs` currently reopens with default options
+between preparation and publication. Native library tests retain the supplied
+repository policy; CLI reopen/worker propagation remains an explicit open audit
+item. Other editing, retained state, recovery and final-source acceptance also
+remain open. Evidence: `bounded-memory/tix-create-metadata-*`,
+`tix-create-public-*`, `tix-create-trust-*`, `scratch-local-tix-create-1335-*`,
+and the retained source patches and frozen runners.
+
 The command boundary is `src/plumbing/options/mod.rs` plus
 `brit-cli/src/main.rs` and its composed bridge. This table is interim audit
 coverage in the existing readiness document, **not final classification**.
