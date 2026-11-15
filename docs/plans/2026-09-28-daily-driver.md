@@ -4515,8 +4515,100 @@ remote override. Both have zero memory events/survivors, unchanged executable
 identities and preserved existing refs. These are interim `3cace21d8` receipts
 over the real object corpus, distinct from the original shared-worktree and
 reduced-trust evidence; exclusions do not disappear from qualification claims.
-Ref-writing fetch, protected-hook cases, feedback capture, final-source reruns
-and separate scratch proof remain required.
+The same owner fixture also passes a ref-writing fetch at 11,145,216 B / 336 ms:
+only the intended qualification ref is created at `8369cecd2`. These receipts
+do not qualify arbitrary shared ownership layouts or the historical 49-pack case.
+
+The worker rebuilt clean source `cdb05b8777b4ee70d15fc696056ebf0d40361076`
+with Rust 1.100.0 and the recorded x86-64-v2 compiler input. Its frozen default
+executable has SHA-256
+`f2f3b9f405a9b0bb149128aa4074dee53f0540961ca1eae7bcaa1a6f605c67c8`.
+The original reduced-trust fetch now refuses with the correct remote/config/trust
+diagnosis at 12,881,920 B / 127 ms, preserving refs. The owner-snapshot full-trust
+dry fetch succeeds at 19,607,552 B / 481 ms. Successful fetch and accurately
+diagnosed refusal remain different classifications.
+
+A second independently owned snapshot uses the worker's actual root/native
+session context, with no copied keys or foreign session records. Its linked
+checkout passes at 389,558,272 B / 16.173 s. The initially misresolved hook stub
+and inherited human author are preserved as inadequate commit evidence. After
+repairing only the private hook path, a new explicitly agent-authored empty
+commit `f47b9da6d10b92dec5883d1547b5a2f25b0ce48a` passes at 32,976,896 B /
+772 ms, carrying the observed Claude session/model and a generated Change-Id.
+Its tree and staged entries are unchanged. The pre-commit index bytes were not
+retained, so the exact cache update remains unproven; the hook's `git write-tree`
+is a candidate explanation, not a byte-preservation claim.
+
+The protected local-receiver push then passes at 552,202,240 B / 91.021 s.
+Its unchanged checked-out monorepo hook passes Rust discipline over 2,230 files
+and 89 crates; the empty tree diff selects no project gates. The hook's missing
+security-paydown ledger remains explicitly unmeasured. The receiver advances
+its sole qualification branch from `1531bf625` to `f47b9da6d`, while source HEAD,
+native/shared refs and both retained raw index copies remain unchanged. All
+owned hook and receiver children inherit the fixed memory group. Fixture setup
+is recorded separately: exact pinned Brit/Rakia/Sophia checkouts consume 776 MB
+of Git metadata, and offline frozen dependencies use 1.4 GB of hardlinked store
+inputs. No shared store bytes, hook implementation, main/dev ref or pin change.
+
+Owned fixture feedback stores were migrated explicitly and qualify with EPR
+0.3.3. Fetch, commit and push create actual records without the capture-gap
+warning. One migration's piped stdout caused exit 101 and lost its raw stderr;
+that invocation remains failed. Unpiped state/capacity/list and pair checks
+verify the resulting version-2 store without replaying the migration. Shared
+host adapter selection and shared legacy-store migration remain open.
+
+The exact `cdb05b87` public Tix notes runner passes three cases per hash on
+ethosengine: 116,908,032 B / 8.415 s for SHA-1 and 116,453,376 B / 12.352 s for
+SHA-256. It covers the explicit-limit regression and 20 MiB full/actual-reduced
+notes, loose/packed objects and four allocation policies. The runner SHA-256 is
+`b7de644bc229ab7b5bfe6c90c103407f68206d882d7ab9b9d670c3ab7cd031fd`.
+The same runner also passes both 20 MiB history cases per hash, including
+actual reduced trust: 97,652,736 B / 17.717 s and 97,517,568 B / 41.749 s.
+The rebuilt diff resource runner passes five cases per hash, including two-sided
+64/256 MiB inputs and conversion/cancellation cases. Both groups reach exactly
+1,073,741,824 B, with 919/922 `memory.max` events and elapsed times of
+26.282/53.448 s. These are successful runs under pressure, not evidence of spare
+capacity; no sampled `memory.stat` separates file cache from anonymous memory.
+The seven merge resource cases per hash also pass, including three-sided
+64 MiB, external drivers, actual reduced trust and million-line inputs, at
+969,482,240/967,847,936 B and 88.381/140.027 s, with no memory events.
+The frozen diff and merge runner SHA-256 identities are respectively
+`c68df1972690aa45becf666f92d6c9f2c4cdae24e0272bc7ab4a6ca26900ba6c` and
+`6a14a27dd513786820361a7954eae706f74d93ff4780f229a8e2876a7075ca52`.
+All these measured successes have zero OOM kills, survivors or executable
+identity changes. Scratch peaks remain unmeasured. Worker receipts are retained
+in `genesis/local-dev/brit-qual/` on ethosengine; received reports and limitations
+are in the existing private `bounded-memory/release-020-watch-receipts.json`.
+
+CI run 43665032300 on `cdb05b87` succeeds with 31 green jobs and the registry
+publisher skipped. Nonpublishing release run 43665104728 succeeds for all four
+delivery targets. These source-specific results do not close the remaining
+command matrix, aggregate scratch proof or qualification of subsequent changes.
+No tag, package publication or consumer pin has moved.
+
+Tix delete preflight separately copied the complete index through an owned
+byte vector. It now reuses the fixed-chunk, interruptible stream copier while
+retaining the existing temporary-index and Git transition behavior. All 809
+active native tests pass per hash; the SHA-256 suite runs in the fixed group at
+52,809,728 B / 32.947 s. A new controlled cancellation check returns within one
+second and preserves the repository snapshot. An independently large optional
+20 MiB index extension passes preflight with identical original index bytes,
+refs and worktree: 69,484,544 B / 280 ms for SHA-1 and 69,337,088 B / 1.548 s
+for SHA-256. These are interim native-runner measurements with no OOM or
+survivors; they do not qualify every public editing path or child-created scratch.
+The runner SHA-256 is
+`f4d3bc234b0146c2a0934c195fb1a239ae37b64dc6a490948665f2a0278f88be`.
+The first cancellation assertion incorrectly inspected only the outer error
+message; it now checks the preserved cancellation classification. A standalone
+run from the wrong fixture directory also remains recorded as a setup failure.
+Evidence is the existing `bounded-memory/tix-index-copy-*` receipt family.
+The local integration also exposes an independent interoperability refusal:
+after a successful Git-bridge cherry-pick, native commit rejects a residual
+`AUTO_MERGE` without `MERGE_HEAD`. Its timestamp matches the cherry-pick,
+and the completed HEAD, staged documentation and marker bytes are retained.
+That conservative recovery-state admission is not changed by the index-copy
+fix; the native completion path is not qualified by a Git fallback. Evidence:
+`bounded-memory/post-cherry-pick-auto-merge-refusal.json`.
 
 The command boundary is `src/plumbing/options/mod.rs` plus
 `brit-cli/src/main.rs` and its composed bridge. This table is interim audit
