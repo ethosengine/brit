@@ -141,6 +141,88 @@ fn tix_history_with_actual_reduced_trust() -> Result<()> {
     history(true)
 }
 
+fn reword(bytes: usize, reduced: bool) -> Result<()> {
+    for packed in [false, true] {
+        for limit in [None, Some("1073741824"), Some("16777216"), Some("1024")] {
+            let repo = TestRepo::new("memory-tix-reword")?;
+            let root = repo.path();
+            let input = root.join(".git/large-message");
+            let mut file = fs::File::create(&input)?;
+            file.write_all(b"large edit metadata\n\n")?;
+            let mut chunk = [b'x'; 65536];
+            chunk[65535] = b'\n';
+            for _ in 0..bytes / chunk.len() {
+                file.write_all(&chunk)?;
+            }
+            drop(file);
+            let input_arg = input.to_str().expect("fixture path");
+            git(root, &["commit", "--allow-empty", "-q", "-F", input_arg])?;
+            let target = String::from_utf8(git(root, &["rev-parse", "HEAD"])?)?;
+            git(root, &["commit", "--allow-empty", "-q", "-F", input_arg])?;
+            let message = git(root, &["show", "-s", "--format=%B", "HEAD"])?;
+            let tree = git(root, &["rev-parse", "HEAD^{tree}"])?;
+            let index = fs::read(root.join(".git/index"))?;
+            if packed {
+                git(root, &["-c", "pack.threads=1", "repack", "-ad"])?;
+            }
+            let output = root.join(".git/reword-output");
+            run(root, &["tix", "pin", "HEAD"], Some("1073741824"), &output)?;
+            if reduced {
+                #[cfg(target_os = "linux")]
+                {
+                    use std::os::unix::fs::{chown, MetadataExt};
+                    ensure!(fs::metadata(root)?.uid() == 0, "qualification requires chown authority");
+                    chown(root, Some(65534), None)?;
+                    chown(root.join(".git"), Some(65534), None)?;
+                    run(root, &["free", "trust", ".", ".git"], None, &output)?;
+                    ensure!(
+                        fs::read_to_string(&output)?
+                            .lines()
+                            .filter(|line| line.starts_with("Reduced"))
+                            .count()
+                            == 2,
+                        "both paths have actual reduced trust"
+                    );
+                }
+                #[cfg(not(target_os = "linux"))]
+                anyhow::bail!("ownership qualification runs on Linux");
+            }
+            eprintln!("qualifying Tix reword: packed={packed}, reduced={reduced}");
+            run(
+                root,
+                &["tix", "reword", target.trim(), "-m", "rewritten metadata"],
+                limit,
+                &output,
+            )?;
+            ensure!(git(root, &["show", "-s", "--format=%B", "HEAD^"])? == b"rewritten metadata\n\n");
+            ensure!(git(root, &["show", "-s", "--format=%B", "HEAD"])? == message);
+            ensure!(git(root, &["show", "-s", "--format=%B", target.trim()])? == message);
+            ensure!(git(root, &["rev-parse", "HEAD^{tree}"])? == tree);
+            ensure!(git(root, &["rev-parse", "HEAD^^"])? == git(root, &["rev-parse", &format!("{}^", target.trim())])?);
+            ensure!(fs::read(root.join(".git/index"))? == index);
+        }
+    }
+    Ok(())
+}
+
+#[test]
+fn tix_reword_preserves_metadata_above_buffer_policy() -> Result<()> {
+    reword(128 * 1024, false)
+}
+
+#[test]
+#[ignore = "whole-group qualification runs the 20 MiB editing matrix explicitly"]
+fn tix_reword_with_twenty_mib_metadata() -> Result<()> {
+    reword(20 * 1024 * 1024, false)
+}
+
+#[cfg(target_os = "linux")]
+#[test]
+#[ignore = "requires chown authority: qualification runs this explicitly"]
+fn tix_reword_metadata_with_actual_reduced_trust() -> Result<()> {
+    reword(20 * 1024 * 1024, true)
+}
+
 fn notes(bytes: usize, reduced: bool) -> Result<()> {
     let repo = TestRepo::new("memory-tix-notes")?;
     let root = repo.path();
