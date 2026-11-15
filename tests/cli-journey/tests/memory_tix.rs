@@ -148,7 +148,40 @@ fn tix_history_with_actual_reduced_trust() -> Result<()> {
     history(true)
 }
 
-fn reword(bytes: usize, reduced: bool, editor: bool) -> Result<()> {
+#[derive(Clone, Copy, Debug)]
+enum Reword {
+    Message,
+    UnchangedEditor,
+    EditedTitle,
+}
+
+fn title_editor(root: &Path) -> Result<String> {
+    #[cfg(windows)]
+    {
+        let _ = root;
+        let script = Path::new(env!("CARGO_MANIFEST_DIR")).join("../../gix-tix/tests/fixtures/replace-editor.ps1");
+        Ok(format!(
+            "pwsh -NoProfile -File \"{}\" \"large edit metadata\" \"edited metadata\"",
+            script.display()
+        ))
+    }
+    #[cfg(not(windows))]
+    {
+        fs::write(
+            root.join(".git/reword-editor.sh"),
+            br#"#!/bin/sh
+set -eu
+temporary="$1.brit-test"
+trap 'rm -f "$temporary"' EXIT HUP INT TERM
+sed 's/^large edit metadata$/edited metadata/' "$1" > "$temporary"
+cat "$temporary" > "$1"
+"#,
+        )?;
+        Ok("sh .git/reword-editor.sh".into())
+    }
+}
+
+fn reword(bytes: usize, reduced: bool, method: Reword) -> Result<()> {
     for packed in [false, true] {
         for limit in [None, Some("1073741824"), Some("16777216"), Some("1024")] {
             let repo = TestRepo::new("memory-tix-reword")?;
@@ -195,8 +228,8 @@ fn reword(bytes: usize, reduced: bool, editor: bool) -> Result<()> {
                 #[cfg(not(target_os = "linux"))]
                 anyhow::bail!("ownership qualification runs on Linux");
             }
-            eprintln!("qualifying Tix reword: packed={packed}, reduced={reduced}, editor={editor}");
-            if editor {
+            eprintln!("qualifying Tix reword: packed={packed}, reduced={reduced}, method={method:?}");
+            if let Reword::UnchangedEditor = method {
                 run(
                     root,
                     &["-c", "core.editor=:", "tix", "reword", target.trim()],
@@ -206,6 +239,13 @@ fn reword(bytes: usize, reduced: bool, editor: bool) -> Result<()> {
                 ensure!(fs::read_to_string(&output)?.contains("the editor document was unchanged"));
                 ensure!(git(root, &["rev-parse", "HEAD"])? == tip);
                 ensure!(git(root, &["show", "-s", "--format=%B", "HEAD^"])? == message);
+            } else if let Reword::EditedTitle = method {
+                let editor = format!("core.editor={}", title_editor(root)?);
+                run(root, &["-c", &editor, "tix", "reword", target.trim()], limit, &output)?;
+                let mut expected = b"edited metadata".to_vec();
+                expected.extend_from_slice(&message[b"large edit metadata".len()..]);
+                ensure!(git(root, &["show", "-s", "--format=%B", "HEAD^"])? == expected);
+                ensure!(git(root, &["rev-parse", "HEAD"])? != tip);
             } else {
                 run(
                     root,
@@ -227,38 +267,56 @@ fn reword(bytes: usize, reduced: bool, editor: bool) -> Result<()> {
 
 #[test]
 fn tix_reword_preserves_metadata_above_buffer_policy() -> Result<()> {
-    reword(128 * 1024, false, false)
+    reword(128 * 1024, false, Reword::Message)
 }
 
 #[test]
 #[ignore = "whole-group qualification runs the 20 MiB editing matrix explicitly"]
 fn tix_reword_with_twenty_mib_metadata() -> Result<()> {
-    reword(20 * 1024 * 1024, false, false)
+    reword(20 * 1024 * 1024, false, Reword::Message)
 }
 
 #[cfg(target_os = "linux")]
 #[test]
 #[ignore = "requires chown authority: qualification runs this explicitly"]
 fn tix_reword_metadata_with_actual_reduced_trust() -> Result<()> {
-    reword(20 * 1024 * 1024, true, false)
+    reword(20 * 1024 * 1024, true, Reword::Message)
 }
 
 #[test]
 fn tix_reword_editor_preserves_metadata_above_buffer_policy() -> Result<()> {
-    reword(128 * 1024, false, true)
+    reword(128 * 1024, false, Reword::UnchangedEditor)
 }
 
 #[test]
 #[ignore = "whole-group qualification runs the 20 MiB editor handoff explicitly"]
 fn tix_reword_editor_with_twenty_mib_metadata() -> Result<()> {
-    reword(20 * 1024 * 1024, false, true)
+    reword(20 * 1024 * 1024, false, Reword::UnchangedEditor)
 }
 
 #[cfg(target_os = "linux")]
 #[test]
 #[ignore = "requires chown authority: qualification runs this explicitly"]
 fn tix_reword_editor_metadata_with_actual_reduced_trust() -> Result<()> {
-    reword(20 * 1024 * 1024, true, true)
+    reword(20 * 1024 * 1024, true, Reword::UnchangedEditor)
+}
+
+#[test]
+fn tix_reword_edited_title_preserves_metadata_above_buffer_policy() -> Result<()> {
+    reword(128 * 1024, false, Reword::EditedTitle)
+}
+
+#[test]
+#[ignore = "whole-group qualification runs the 20 MiB edited title explicitly"]
+fn tix_reword_edited_title_with_twenty_mib_metadata() -> Result<()> {
+    reword(20 * 1024 * 1024, false, Reword::EditedTitle)
+}
+
+#[cfg(target_os = "linux")]
+#[test]
+#[ignore = "requires chown authority: qualification runs this explicitly"]
+fn tix_reword_edited_title_with_actual_reduced_trust() -> Result<()> {
+    reword(20 * 1024 * 1024, true, Reword::EditedTitle)
 }
 
 fn create(bytes: usize, reduced: bool) -> Result<()> {
