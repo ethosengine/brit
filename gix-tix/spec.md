@@ -301,6 +301,14 @@ without trading responsiveness for metadata that is not visible.
   exports its saved remaining todo without requiring a hidden boundary. Its
   `--edit-and-apply` form edits that continuation. Scope and target options are
   rejected until the active operation is completed or stopped.
+- Rebase todo preparation, continuation rendering and parsing read commit
+  metadata through the existing bounded object source. Above the effective
+  repository allocation policy, immutable mapped storage replaces the read
+  buffer; editable representations are released after each commit. Existence
+  checks validate the commit payload without copying its message. Allocation
+  policy does not change todo bytes, scope order or autosquash selection, and
+  object corruption remains an error. This does not bound arbitrarily large
+  todo documents or every subsequent replay operation.
 - `tix show`, `tix ref-tree`, and `tix rebase todo` automatically inspect symbolic
   `refs/remotes/<remote>/HEAD` references. Their targets are reverse-mapped
   through each remote's fetch refspec, and existing local commit branches are

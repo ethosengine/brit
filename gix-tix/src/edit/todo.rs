@@ -117,10 +117,8 @@ pub(crate) fn prepare(
     onto_kind: OntoKind,
     show_change_ids: bool,
 ) -> Result<Prepared> {
-    repo.find_commit(base)
-        .or_raise(|| message("could not find the selected rebase base"))?;
-    repo.find_commit(onto)
-        .or_raise(|| message("could not find the rebase target"))?;
+    validate_commit(repo, base).or_raise(|| message("could not find the selected rebase base"))?;
+    validate_commit(repo, onto).or_raise(|| message("could not find the rebase target"))?;
     let head_state = repo.head()?;
     let head = head_state
         .id()
@@ -158,7 +156,7 @@ pub(crate) fn prepare(
         let commit = by_id
             .get(&id)
             .ok_or_raise(|| message("the checkout ancestry is incomplete"))?;
-        let decoded = repo.find_commit(id)?.decode()?.into_owned()?;
+        let decoded = super::read_commit(repo, id)?;
         if rebase::is_pending(&decoded) {
             has_pending = true;
             break;
@@ -304,7 +302,7 @@ pub(crate) fn prepare(
         }
         for id in &section.commits {
             let commit = by_id[id];
-            let decoded = repo.find_commit(*id)?.decode()?.into_owned()?;
+            let decoded = super::read_commit(repo, *id)?;
             let parents = rebase::replay_parents(&decoded)?.unwrap_or_else(|| decoded.parents.to_vec());
             let ordinary_merge = parents.len() > 1 && !super::auto_merge::is_auto_merge(&decoded);
             let marker = if marker_required && *id == checkout_commit_id {
@@ -400,7 +398,7 @@ pub(crate) fn prepare_continuation(
         .collect();
     for step in &plan.steps {
         if let Some(id) = step.commit.source() {
-            let parent = repo.find_commit(id)?.parent_ids().next().map(gix::Id::detach);
+            let parent = super::read_commit(repo, id)?.parents.first().copied();
             if parent.is_some_and(|parent| parent != plan.base && !scope.contains(&parent)) {
                 continuation_sources.push(id);
             }
@@ -500,7 +498,7 @@ pub(crate) fn prepare_continuation(
             | rebase::PlanCommit::Copy(id)
             | rebase::PlanCommit::FrozenCopy(id)
             | rebase::PlanCommit::Resolved(id) => {
-                let decoded = repo.find_commit(id)?.decode()?.into_owned()?;
+                let decoded = super::read_commit(repo, id)?;
                 let ordinary_merge = step.parents.len() > 1 && !super::auto_merge::is_auto_merge(&decoded);
                 let verb = if ordinary_merge { "merge" } else { "pick" };
                 let mut value = if matches!(step.commit, rebase::PlanCommit::Resolved(_)) {
@@ -710,7 +708,7 @@ fn commit_states(
     patch_enrichments: &mut gix::note::Platform,
     id: ObjectId,
 ) -> Result<String> {
-    let commit = repo.find_commit(id)?.decode()?.into_owned()?;
+    let commit = super::read_commit(repo, id)?;
     let pending = commit.extra_headers.iter().any(|(name, _)| name == "tix-rebase-parent");
     let mut empty_signature = false;
     let mut signature = false;
@@ -781,7 +779,7 @@ fn commit_states(
 }
 
 fn anchor_title(repo: &gix::Repository, id: ObjectId) -> Result<String> {
-    let message = repo.find_commit(id)?.message_raw()?.to_owned();
+    let message = super::read_commit(repo, id)?.message;
     let mut notes = repo
         .notes()
         .or_raise(|| gix::error::message("could not open Git notes for the rebase anchor"))?;
@@ -855,7 +853,7 @@ fn autosquash(repo: &gix::Repository, order: &[ObjectId], commits: &HashMap<Obje
         if commits[commit_id].parents.len() != 1 {
             continue;
         }
-        let commit = repo.find_commit(*commit_id)?.decode()?.into_owned()?;
+        let commit = super::read_commit(repo, *commit_id)?;
         if !super::auto_merge::is_auto_merge(&commit) {
             let (subject, _) = rebase::message_subject_and_body(&commit.message);
             subjects.insert(
@@ -1140,10 +1138,8 @@ fn parse_state(repo: &gix::Repository, input: &str) -> Result<Option<State>> {
 }
 
 fn validate_state(repo: &gix::Repository, state: &State) -> Result<()> {
-    repo.find_commit(state.base)
-        .or_raise(|| message("could not find the recorded rebase base"))?;
-    repo.find_commit(state.onto)
-        .or_raise(|| message("could not find the recorded rebase target"))?;
+    validate_commit(repo, state.base).or_raise(|| message("could not find the recorded rebase base"))?;
+    validate_commit(repo, state.onto).or_raise(|| message("could not find the recorded rebase target"))?;
     let scope: HashSet<_> = state.scope.iter().copied().collect();
     let continuation_sources: HashSet<_> = state.continuation_sources.iter().copied().collect();
     if scope.len() != state.scope.len() {
@@ -1157,7 +1153,7 @@ fn validate_state(repo: &gix::Repository, state: &State) -> Result<()> {
         if !refs.insert(reference.name.as_bstr()) {
             bail!("the rebase state contains duplicate refs");
         }
-        repo.find_commit(reference.source)
+        validate_commit(repo, reference.source)
             .or_raise(|| message("could not find a captured reference's source commit"))?;
     }
     if let Some(name) = &state.head_ref
@@ -1170,17 +1166,14 @@ fn validate_state(repo: &gix::Repository, state: &State) -> Result<()> {
         bail!("the recorded HEAD ref is not editable");
     }
     for tip in &state.tips {
-        repo.find_commit(*tip)
-            .or_raise(|| message("could not find a recorded rebase tip"))?;
+        validate_commit(repo, *tip).or_raise(|| message("could not find a recorded rebase tip"))?;
     }
     for id in &state.scope {
-        let commit = repo
-            .find_commit(*id)
-            .or_raise(|| message("could not find a recorded scope commit"))?;
+        let commit = super::read_commit(repo, *id).or_raise(|| message("could not find a recorded scope commit"))?;
         let parent = commit
-            .parent_ids()
-            .next()
-            .map(gix::Id::detach)
+            .parents
+            .first()
+            .copied()
             .ok_or_raise(|| message("a recorded scope commit has no parent"))?;
         if parent != state.base && !scope.contains(&parent) && !continuation_sources.contains(id) {
             bail!("a recorded scope commit is disconnected from the rebase base");
@@ -1199,16 +1192,14 @@ fn validate_state(repo: &gix::Repository, state: &State) -> Result<()> {
     );
     gix::error::ensure!(eager.is_subset(&scope), "an eager commit is outside the rebase scope");
     if let Some(id) = state.selection {
-        repo.find_commit(id)
-            .or_raise(|| message("could not find the recorded result selection"))?;
+        validate_commit(repo, id).or_raise(|| message("could not find the recorded result selection"))?;
     }
     if let Some(id) = state.existing_checkout {
         gix::error::ensure!(
             state.checkout_allowed && !state.marker_required,
             "an existing checkout conflicts with the rebase checkout state"
         );
-        repo.find_commit(id)
-            .or_raise(|| message("could not find the recorded existing checkout"))?;
+        validate_commit(repo, id).or_raise(|| message("could not find the recorded existing checkout"))?;
     }
     Ok(())
 }
@@ -1376,7 +1367,7 @@ pub(crate) fn parse(repo: &gix::Repository, edited: &[u8]) -> Result<Option<Pars
                 if picked.contains_key(&id) {
                     bail!("a commit is picked more than once");
                 }
-                let source = repo.find_commit(id)?.decode()?.into_owned()?;
+                let source = super::read_commit(repo, id)?;
                 let source_parents = rebase::replay_parents(&source)?.unwrap_or_else(|| source.parents.to_vec());
                 let automatic = super::auto_merge::is_auto_merge(&source);
                 if verb == "merge" {
@@ -1509,6 +1500,14 @@ pub(crate) fn parse(repo: &gix::Repository, edited: &[u8]) -> Result<Option<Pars
     }))
 }
 
+// Validate the payload without retaining or copying a potentially large commit message.
+fn validate_commit(repo: &gix::Repository, id: ObjectId) -> Result<()> {
+    let objects = gix::object::bounded::Source::deferred(repo);
+    let mut buffer = gix::objs::find::Buffer::default();
+    crate::history::decode_object(&objects, id, &mut buffer)?;
+    Ok(())
+}
+
 fn resolve_commit(repo: &gix::Repository, value: &str) -> Result<ObjectId> {
     if value.len() < 4 || !value.bytes().all(|byte| byte.is_ascii_hexdigit()) {
         bail!("{value:?} is not a commit ID prefix");
@@ -1516,10 +1515,7 @@ fn resolve_commit(repo: &gix::Repository, value: &str) -> Result<ObjectId> {
     let id = repo
         .rev_parse_single(value)
         .or_raise(|| message!("could not resolve commit ID {value:?}"))?;
-    id.object()
-        .or_raise(|| message("could not load a todo object"))?
-        .try_into_commit()
-        .or_raise(|| message("a todo ID does not name a commit"))?;
+    validate_commit(repo, id.detach()).or_raise(|| message("could not load a todo commit"))?;
     Ok(id.detach())
 }
 
@@ -1701,6 +1697,92 @@ mod tests {
         _head: Option<ObjectId>,
     ) -> TestResult<Prepared> {
         Ok(prepare(repo, base, onto, commits, &[], OntoKind::UpdatedBase, true)?)
+    }
+
+    fn large_metadata(bytes: usize) -> TestResult {
+        let (fixture, writer) = repo()?;
+        let (old_base, old_middle, old_tip, _) = commits(&writer)?;
+        let mut parent = None;
+        let mut ids = Vec::new();
+        for (old_id, title) in [(old_base, "base"), (old_middle, "middle"), (old_tip, "tip")] {
+            let mut commit = writer.find_commit(old_id)?.decode()?.into_owned()?;
+            commit.parents = parent.into_iter().collect();
+            commit.message = format!("{title}\n\n{}\n", "x".repeat(bytes)).into();
+            let id = writer.write_object(&commit)?.detach();
+            ids.push(id);
+            parent = Some(id);
+        }
+        for (name, id) in [
+            ("refs/heads/main", ids[2]),
+            ("refs/patches/middle", ids[1]),
+            ("refs/patches/tip", ids[2]),
+        ] {
+            writer.reference(
+                name,
+                id,
+                gix::refs::transaction::PreviousValue::Any,
+                "large todo fixture",
+            )?;
+        }
+        drop(writer);
+        let index = std::fs::read(fixture.path().join(".git/index"))?;
+        let selections = vec![
+            Commit {
+                id: ids[2],
+                parents: vec![ids[1]],
+                info: "tip".into(),
+            },
+            Commit {
+                id: ids[1],
+                parents: vec![ids[0]],
+                info: "middle".into(),
+            },
+        ];
+        for packed in [false, true] {
+            if packed {
+                let output = gix_testtools::git_command(fixture.path())
+                    .args(["-c", "pack.threads=1", "repack", "-ad"])
+                    .output()?;
+                assert!(output.status.success(), "fixture repack: {output:?}");
+            }
+            let mut expected = None;
+            for policy in ["1073741824", "16777216", "1024"] {
+                let repository = crate::test_repository::open_with(
+                    fixture.path(),
+                    [format!("gitoxide.objects.allocLimit={policy}"), "core.abbrev=7".into()],
+                )?;
+                let prepared = prepare_test(&repository, ids[0], ids[0], &selections, Some(ids[2]))?;
+                if let Some(expected) = &expected {
+                    assert_eq!(&prepared.document, expected, "policy must preserve todo bytes");
+                } else {
+                    expected = Some(prepared.document.clone());
+                }
+                let plan = parse_plan(&repository, &prepared.document)?;
+                assert_eq!(plan.scope, vec![ids[2], ids[1]], "scope ordering is unchanged");
+                assert_eq!(
+                    repository.head_id()?.detach(),
+                    ids[2],
+                    "preparation and parsing are read-only"
+                );
+                assert_eq!(
+                    std::fs::read(repository.index_path())?,
+                    index,
+                    "index bytes are unchanged"
+                );
+            }
+        }
+        Ok(())
+    }
+
+    #[test]
+    fn todo_metadata_above_buffer_policy() -> TestResult {
+        large_metadata(128 * 1024)
+    }
+
+    #[test]
+    #[ignore = "whole-group qualification runs the 20 MiB todo metadata matrix explicitly"]
+    fn todo_with_twenty_mib_metadata() -> TestResult {
+        large_metadata(20 * 1024 * 1024)
     }
 
     fn parse_plan(repo: &gix::Repository, document: &[u8]) -> TestResult<rebase::Plan> {
