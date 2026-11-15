@@ -254,6 +254,139 @@ fn tix_reword_editor_metadata_with_actual_reduced_trust() -> Result<()> {
     reword(20 * 1024 * 1024, true, true)
 }
 
+fn create(bytes: usize, reduced: bool) -> Result<()> {
+    create_with_policies(
+        bytes,
+        reduced,
+        &[None, Some("1073741824"), Some("16777216"), Some("1024")],
+    )
+}
+
+fn create_with_policies(bytes: usize, reduced: bool, policies: &[Option<&str>]) -> Result<()> {
+    for packed in [false, true] {
+        for staged in [false, true] {
+            for &limit in policies {
+                let repo = TestRepo::new("memory-tix-create")?;
+                let root = repo.path();
+                let input = root.join(".git/large-parent");
+                let mut file = fs::File::create(&input)?;
+                file.write_all(b"large creation parent\n\n")?;
+                let mut chunk = [b'x'; 65536];
+                chunk[65535] = b'\n';
+                for _ in 0..bytes / chunk.len() {
+                    file.write_all(&chunk)?;
+                }
+                drop(file);
+                git(
+                    root,
+                    &[
+                        "commit",
+                        "--allow-empty",
+                        "-q",
+                        "-F",
+                        input.to_str().expect("fixture path"),
+                    ],
+                )?;
+                let parent = git(root, &["rev-parse", "HEAD"])?;
+                let message = git(root, &["show", "-s", "--format=%B", "HEAD"])?;
+                if packed {
+                    git(root, &["-c", "pack.threads=1", "repack", "-ad"])?;
+                }
+                fs::write(root.join("file"), b"staged bytes\n")?;
+                if staged {
+                    git(root, &["add", "file"])?;
+                }
+                fs::write(root.join("file"), b"local bytes\n")?;
+                let tree = git(root, &["write-tree"])?;
+                let index = root.join(".git/index");
+                let before_index = index.exists().then(|| fs::read(&index)).transpose()?;
+                let before_refs = git(root, &["for-each-ref", "--format=%(refname) %(objectname)"])?;
+                let output = root.join(".git/create-output");
+                if reduced {
+                    #[cfg(target_os = "linux")]
+                    {
+                        use std::os::unix::fs::{chown, MetadataExt};
+                        ensure!(fs::metadata(root)?.uid() == 0, "qualification requires chown authority");
+                        chown(root, Some(65534), None)?;
+                        chown(root.join(".git"), Some(65534), None)?;
+                        run(root, &["free", "trust", ".", ".git"], None, &output)?;
+                        ensure!(
+                            fs::read_to_string(&output)?
+                                .lines()
+                                .filter(|line| line.starts_with("Reduced"))
+                                .count()
+                                == 2
+                        );
+                    }
+                    #[cfg(not(target_os = "linux"))]
+                    anyhow::bail!("ownership qualification runs on Linux");
+                }
+                eprintln!("qualifying Tix create: packed={packed}, staged={staged}, reduced={reduced}");
+                let result = run(
+                    root,
+                    &[
+                        "-c",
+                        "core.editor=:",
+                        "tix",
+                        "new",
+                        "--allow-empty",
+                        "-m",
+                        "created metadata",
+                    ],
+                    limit,
+                    &output,
+                );
+                if reduced {
+                    let error = result.expect_err("the owned Git reset retains its ownership protection");
+                    let diagnostic = format!("{error:#}");
+                    ensure!(
+                        diagnostic.contains("git reset failed") && diagnostic.contains("dubious ownership"),
+                        "{diagnostic}"
+                    );
+                    ensure!(git(root, &["rev-parse", "HEAD"])? == parent);
+                    ensure!(git(root, &["show", "-s", "--format=%B", "HEAD"])? == message);
+                    ensure!(git(root, &["for-each-ref", "--format=%(refname) %(objectname)"])? == before_refs);
+                    git(root, &["fsck", "--full"])?;
+                } else {
+                    result?;
+                    ensure!(git(root, &["rev-parse", "HEAD^"])? == parent);
+                    ensure!(git(root, &["rev-parse", "HEAD^{tree}"])? == tree);
+                    ensure!(git(root, &["show", "-s", "--format=%B", "HEAD"])? == b"created metadata\n\n");
+                    ensure!(git(root, &["show", "-s", "--format=%B", "HEAD^"])? == message);
+                }
+                ensure!(fs::read(root.join("file"))? == b"local bytes\n");
+                ensure!(index.exists().then(|| fs::read(&index)).transpose()? == before_index);
+            }
+        }
+    }
+    Ok(())
+}
+
+#[test]
+fn tix_creation_preserves_metadata_above_buffer_policy() -> Result<()> {
+    create(128 * 1024, false)
+}
+
+#[test]
+#[ignore = "whole-group qualification runs the 20 MiB creation matrix explicitly"]
+fn tix_creation_with_twenty_mib_metadata() -> Result<()> {
+    create(20 * 1024 * 1024, false)
+}
+
+#[cfg(target_os = "linux")]
+#[test]
+#[ignore = "requires chown authority: qualification runs this explicitly"]
+fn tix_creation_metadata_retains_git_ownership_refusal() -> Result<()> {
+    create(20 * 1024 * 1024, true)
+}
+
+#[cfg(target_os = "linux")]
+#[test]
+#[ignore = "requires chown authority: isolates the pre-existing Git ownership boundary"]
+fn tix_creation_ownership_refusal_preserves_state() -> Result<()> {
+    create_with_policies(128 * 1024, true, &[None])
+}
+
 fn notes(bytes: usize, reduced: bool) -> Result<()> {
     let repo = TestRepo::new("memory-tix-notes")?;
     let root = repo.path();
