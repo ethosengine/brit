@@ -4735,8 +4735,26 @@ through the existing callback. Patch SHA-256 is
 Ethosengine's replacement executable is
 `16215e9c9e1e236a2aadb0c49452a7b1c4f8a0f195e55ee3b91bbd35dd3501df`.
 It passes all five allocation controls and the native-compared truncation
-control. Fresh workload qualification is in progress. Evidence remains in the
-existing isolated scratch directories and worker receipts, not a new registry.
+control. Fresh qualification subsequently passes all 26 assigned Ethosengine
+cases: six comparisons, eight merges and twelve metadata cases, under both
+hash formats. Every case uses a fresh image and memory group, finishes with
+zero OOM kills or survivors, reclaims the fixture allocation, and preserves
+tool identities. Mailmap now passes all twelve internal comparisons per hash.
+Large commit, annotated-tag, tree, config and packed-reference cases also pass.
+
+The corrected external-driver allocation peaks are 210,006,016 B at 20 MiB
+and 671,514,624 B at 64 MiB, each exactly one input size below the old helper's
+stale-file-inflated result. The old receipts remain recorded and are superseded
+for those cases. Other repeated allocation peaks are unchanged. Both devices
+pass all six corrected-helper comparisons, with peak additional filesystem
+allocation of 63,537,152 / 201,994,240 / 806,174,720 B at 20/64/256 MiB.
+The baseline filesystem allocation is a separate 53,063,680 B. Both 256 MiB
+comparisons reach the memory cap without OOM; the corrected local runs take
+98.649 / 220.709 s. These are bounded results for the named fixtures, with
+little memory headroom; they do not complete the command or recovery matrix.
+Evidence remains in the existing isolated scratch directories and worker
+receipts, not a new registry. Local corrected helper SHA-256 is
+`c6f08402e7d00579e2495528b9a1535f62ebc0f95cde012a557019cd730e3fd2`.
 
 #### Tix explicit-message metadata repair (2026-11-15)
 
@@ -4756,9 +4774,33 @@ The ordinary suites peak at 95,911,936 / 50,327,552 B. Strict affected all-targe
 Clippy, formatting, 12 readiness contracts and declared style pass. These are
 native-runner measurements of the recorded precommit source patch; the frozen
 runner is `82225c938885bbfcda378b5b3d6e778307a7580bf9c2cbc4b29d8a446811c2a0`.
-The committed default-max public executable is separately built and frozen;
-its public resource qualification remains open, as do other editing paths and
-aggregate scratch. Evidence is `bounded-memory/tix-edit-metadata-*`.
+The committed default-max public executable is separately built and frozen as
+`850d061e51c559c168d9e409d28c920fa95fca6739a726313a02ac74c1b4b693`.
+Public regression commit `7de64e07cf17cc9c3d02f7c6785cc125ce223db6` reproduces
+the d459 refusal and qualifies rewording through the repaired executable.
+Fresh loose/packed fixtures cover default, 1 GiB, 16 MiB and 1 KiB policies,
+checking original objects, descendant messages, parent order, trees and indexes.
+All three ordinary Tix journeys pass per hash, with strict all-target Clippy,
+formatting, readiness and declared committed-source style checks.
+
+The public 20 MiB matrix passes under the fixed native memory group:
+
+| Repository hash / trust | Memory peak | Elapsed |
+| --- | ---: | ---: |
+| SHA-1 / full | 200,183,808 B | 63.606 s |
+| SHA-1 / actual reduced | 199,380,992 B | 64.473 s |
+| SHA-256 / full | 199,696,384 B | 220.398 s |
+| SHA-256 / actual reduced | 199,254,016 B | 298.609 s |
+
+The separate full-trust V2 scratch runs pass at 201,322,496 / 201,842,688 B
+memory and 106.321 / 281.351 s. Both allocate at most 84,160,512 B beyond
+the filesystem baseline and reclaim it at completion. All six runs have zero
+OOM kills or survivors and unchanged executable identities. The frozen public
+runner is `3500432e2e515e09047db319362b3a7c0f594b098f6350e039357f4c64ce90fb`.
+Actual reduced trust is measured natively, not under V2's changed user identity;
+its aggregate scratch remains unmeasured. Other editing paths and final-source
+acceptance remain open. Evidence is `bounded-memory/tix-edit-metadata-*`,
+`tix-edit-public-*` and `scratch-local-tix-reword-086-*`.
 
 Native amend refuses the `change-id` header introduced when Tix replaces the
 local provisional author. The preserved index/HEAD were inspected before a
