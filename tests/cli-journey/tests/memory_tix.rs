@@ -319,7 +319,16 @@ fn tix_reword_edited_title_with_actual_reduced_trust() -> Result<()> {
     reword(20 * 1024 * 1024, true, Reword::EditedTitle)
 }
 
-fn rebase_todo(bytes: usize, reduced: bool) -> Result<()> {
+fn rebase_todo(bytes: usize, reduced: bool, apply: bool) -> Result<()> {
+    rebase_todo_with_policies(
+        bytes,
+        reduced,
+        apply,
+        &[None, Some("1073741824"), Some("16777216"), Some("1024")],
+    )
+}
+
+fn rebase_todo_with_policies(bytes: usize, reduced: bool, apply: bool, policies: &[Option<&str>]) -> Result<()> {
     let repo = TestRepo::new("memory-tix-todo")?;
     let root = repo.path();
     let input = root.join(".git/large-todo-message");
@@ -346,9 +355,35 @@ fn rebase_todo(bytes: usize, reduced: bool) -> Result<()> {
     let head = git(root, &["rev-parse", "HEAD"])?;
     let base = String::from_utf8(git(root, &["rev-parse", "HEAD~2"])?)?;
     let index = fs::read(root.join(".git/index"))?;
-    let refs = git(root, &["for-each-ref", "--format=%(refname) %(objectname)"])?;
+    let config = fs::read(root.join(".git/config"))?;
+    let ref_scope = if apply { "refs/heads/" } else { "refs/" };
+    let ref_args = ["for-each-ref", "--format=%(refname) %(objectname)", ref_scope];
+    let refs = git(root, &ref_args)?;
+    let message = apply
+        .then(|| git(root, &["show", "-s", "--format=%B", "HEAD"]))
+        .transpose()?;
+    let tree = git(root, &["rev-parse", "HEAD^{tree}"])?;
+    let onto = if apply {
+        Some(String::from_utf8(git(
+            root,
+            &[
+                "commit-tree",
+                "HEAD~2^{tree}",
+                "-p",
+                base.trim(),
+                "-m",
+                "alternate base",
+            ],
+        )?)?)
+    } else {
+        None
+    };
+    let mut expected_head = None;
     let output = root.join(".git/todo-output");
-    let args = ["tix", "rebase", "todo", "--no-auto-hide", "-x", base.trim(), "HEAD"];
+    let mut args = vec!["tix", "rebase", "todo", "--no-auto-hide", "-x", base.trim(), "HEAD"];
+    if let Some(onto) = &onto {
+        args.extend(["--onto", onto.trim()]);
+    }
     run(root, &args, Some("1073741824"), &output)?;
     let expected = fs::read(&output)?;
     ensure!(String::from_utf8_lossy(&expected).contains("large todo metadata"));
@@ -375,7 +410,7 @@ fn rebase_todo(bytes: usize, reduced: bool) -> Result<()> {
         if packed {
             git(root, &["-c", "pack.threads=1", "repack", "-ad"])?;
         }
-        for policy in [None, Some("1073741824"), Some("16777216"), Some("1024")] {
+        for &policy in policies {
             run(root, &args, policy, &output)?;
             ensure!(fs::read(&output)? == expected, "todo bytes are policy-equivalent");
             ensure!(
@@ -386,7 +421,55 @@ fn rebase_todo(bytes: usize, reduced: bool) -> Result<()> {
                 fs::read(root.join(".git/index"))? == index,
                 "index bytes remain unchanged"
             );
-            ensure!(git(root, &["for-each-ref", "--format=%(refname) %(objectname)"])? == refs);
+            ensure!(git(root, &ref_args)? == refs);
+            if let Some(onto) = &onto {
+                let application_output = root.join(".git/apply-output");
+                let before_refs = git(root, &["for-each-ref", "--format=%(refname) %(objectname)"])?;
+                let result = run(
+                    root,
+                    &["tix", "rebase", "apply", output.to_str().expect("fixture path")],
+                    policy,
+                    &application_output,
+                );
+                if reduced {
+                    let error = result.expect_err("the owned Git child retains its ownership protection");
+                    let diagnostic = format!("{error:#}");
+                    ensure!(diagnostic.contains("detected dubious ownership"), "{diagnostic}");
+                    ensure!(git(root, &["rev-parse", "HEAD"])? == head);
+                    ensure!(git(root, &["for-each-ref", "--format=%(refname) %(objectname)"])? == before_refs);
+                    ensure!(fs::read(root.join(".git/index"))? == index);
+                    ensure!(fs::read(root.join(".git/config"))? == config);
+                    git(root, &["fsck", "--full"])?;
+                    continue;
+                }
+                result?;
+                let rewritten = git(root, &["rev-parse", "HEAD"])?;
+                ensure!(rewritten != head, "applying onto a new base rewrites history");
+                if let Some(expected_head) = &expected_head {
+                    ensure!(&rewritten == expected_head, "policies produce identical commits");
+                } else {
+                    expected_head = Some(rewritten.clone());
+                }
+                ensure!(git(root, &["rev-parse", "HEAD~2"])? == onto.as_bytes());
+                for revision in ["HEAD", "HEAD^"] {
+                    ensure!(
+                        git(root, &["show", "-s", "--format=%B", revision])?
+                            == *message.as_ref().expect("apply message")
+                    );
+                }
+                ensure!(git(root, &["rev-parse", "HEAD^{tree}"])? == tree);
+                ensure!(fs::read(root.join(".git/index"))? == index);
+                git(
+                    root,
+                    &[
+                        "update-ref",
+                        "refs/heads/main",
+                        std::str::from_utf8(&head)?.trim(),
+                        std::str::from_utf8(&rewritten)?.trim(),
+                    ],
+                )?;
+                ensure!(git(root, &ref_args)? == refs);
+            }
         }
     }
     Ok(())
@@ -394,20 +477,45 @@ fn rebase_todo(bytes: usize, reduced: bool) -> Result<()> {
 
 #[test]
 fn tix_rebase_todo_preserves_metadata_above_buffer_policy() -> Result<()> {
-    rebase_todo(128 * 1024, false)
+    rebase_todo(128 * 1024, false, false)
 }
 
 #[test]
 #[ignore = "whole-group qualification runs the 20 MiB todo metadata matrix explicitly"]
 fn tix_rebase_todo_with_twenty_mib_metadata() -> Result<()> {
-    rebase_todo(20 * 1024 * 1024, false)
+    rebase_todo(20 * 1024 * 1024, false, false)
 }
 
 #[cfg(target_os = "linux")]
 #[test]
 #[ignore = "requires chown authority: qualification runs this explicitly"]
 fn tix_rebase_todo_with_actual_reduced_trust() -> Result<()> {
-    rebase_todo(20 * 1024 * 1024, true)
+    rebase_todo(20 * 1024 * 1024, true, false)
+}
+
+#[test]
+fn tix_rebase_plan_preserves_metadata_above_buffer_policy() -> Result<()> {
+    rebase_todo(128 * 1024, false, true)
+}
+
+#[test]
+#[ignore = "whole-group qualification runs the 20 MiB plan application matrix explicitly"]
+fn tix_rebase_plan_with_twenty_mib_metadata() -> Result<()> {
+    rebase_todo(20 * 1024 * 1024, false, true)
+}
+
+#[cfg(target_os = "linux")]
+#[test]
+#[ignore = "requires chown authority: qualification runs this explicitly"]
+fn tix_rebase_plan_metadata_retains_git_ownership_refusal() -> Result<()> {
+    rebase_todo(20 * 1024 * 1024, true, true)
+}
+
+#[cfg(target_os = "linux")]
+#[test]
+#[ignore = "requires chown authority: isolates the pre-existing Git ownership boundary"]
+fn tix_rebase_plan_ownership_refusal_preserves_state() -> Result<()> {
+    rebase_todo_with_policies(128 * 1024, true, true, &[None])
 }
 
 fn create(bytes: usize, reduced: bool) -> Result<()> {
