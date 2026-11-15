@@ -319,6 +319,97 @@ fn tix_reword_edited_title_with_actual_reduced_trust() -> Result<()> {
     reword(20 * 1024 * 1024, true, Reword::EditedTitle)
 }
 
+fn rebase_todo(bytes: usize, reduced: bool) -> Result<()> {
+    let repo = TestRepo::new("memory-tix-todo")?;
+    let root = repo.path();
+    let input = root.join(".git/large-todo-message");
+    let mut file = fs::File::create(&input)?;
+    file.write_all(b"large todo metadata\n\n")?;
+    let mut chunk = [b'x'; 65536];
+    chunk[65535] = b'\n';
+    for _ in 0..bytes / chunk.len() {
+        file.write_all(&chunk)?;
+    }
+    drop(file);
+    for _ in 0..3 {
+        git(
+            root,
+            &[
+                "commit",
+                "--allow-empty",
+                "-q",
+                "-F",
+                input.to_str().expect("fixture path"),
+            ],
+        )?;
+    }
+    let head = git(root, &["rev-parse", "HEAD"])?;
+    let base = String::from_utf8(git(root, &["rev-parse", "HEAD~2"])?)?;
+    let index = fs::read(root.join(".git/index"))?;
+    let refs = git(root, &["for-each-ref", "--format=%(refname) %(objectname)"])?;
+    let output = root.join(".git/todo-output");
+    let args = ["tix", "rebase", "todo", "--no-auto-hide", "-x", base.trim(), "HEAD"];
+    run(root, &args, Some("1073741824"), &output)?;
+    let expected = fs::read(&output)?;
+    ensure!(String::from_utf8_lossy(&expected).contains("large todo metadata"));
+    if reduced {
+        #[cfg(target_os = "linux")]
+        {
+            use std::os::unix::fs::{chown, MetadataExt};
+            ensure!(fs::metadata(root)?.uid() == 0, "qualification requires chown authority");
+            chown(root, Some(65534), None)?;
+            chown(root.join(".git"), Some(65534), None)?;
+            run(root, &["free", "trust", ".", ".git"], None, &output)?;
+            ensure!(
+                fs::read_to_string(&output)?
+                    .lines()
+                    .filter(|line| line.starts_with("Reduced"))
+                    .count()
+                    == 2
+            );
+        }
+        #[cfg(not(target_os = "linux"))]
+        anyhow::bail!("ownership qualification runs on Linux");
+    }
+    for packed in [false, true] {
+        if packed {
+            git(root, &["-c", "pack.threads=1", "repack", "-ad"])?;
+        }
+        for policy in [None, Some("1073741824"), Some("16777216"), Some("1024")] {
+            run(root, &args, policy, &output)?;
+            ensure!(fs::read(&output)? == expected, "todo bytes are policy-equivalent");
+            ensure!(
+                git(root, &["rev-parse", "HEAD"])? == head,
+                "preparing a todo must not move HEAD"
+            );
+            ensure!(
+                fs::read(root.join(".git/index"))? == index,
+                "index bytes remain unchanged"
+            );
+            ensure!(git(root, &["for-each-ref", "--format=%(refname) %(objectname)"])? == refs);
+        }
+    }
+    Ok(())
+}
+
+#[test]
+fn tix_rebase_todo_preserves_metadata_above_buffer_policy() -> Result<()> {
+    rebase_todo(128 * 1024, false)
+}
+
+#[test]
+#[ignore = "whole-group qualification runs the 20 MiB todo metadata matrix explicitly"]
+fn tix_rebase_todo_with_twenty_mib_metadata() -> Result<()> {
+    rebase_todo(20 * 1024 * 1024, false)
+}
+
+#[cfg(target_os = "linux")]
+#[test]
+#[ignore = "requires chown authority: qualification runs this explicitly"]
+fn tix_rebase_todo_with_actual_reduced_trust() -> Result<()> {
+    rebase_todo(20 * 1024 * 1024, true)
+}
+
 fn create(bytes: usize, reduced: bool) -> Result<()> {
     create_with_policies(
         bytes,
