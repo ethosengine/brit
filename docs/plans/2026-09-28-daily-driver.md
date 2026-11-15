@@ -4688,6 +4688,86 @@ the existing isolated `bounded-memory/scratch-tools`, `scratch-local-d459-*`
 and `release-020-watch-receipts.json` records, including tool provenance,
 unchanged before/after hashes, mount identities and separate cleanup outcomes.
 
+#### Scratch boundary and filesystem-control follow-up (2026-11-15)
+
+Both devices subsequently pass all six instrumented comparisons at exact source
+`d459a391df218066bc1b666766366db7420a1916`, with the same additional-allocation
+values above. Ethosengine also passes four nonrecovery merge cases per hash:
+20 MiB object merge, three-sided 64 MiB object merge, and external Git merge-file
+drivers at 20/64 MiB. Their additional filesystem peaks are respectively
+147,095,552 / 470,151,168 / 230,977,536 / 738,623,488 B. Native merge qualification
+separately passes all seven cases per hash at 970,940,416 / 970,313,728 B memory,
+including actual reduced trust, one million lines and cancellation. Native
+scratch remains unmeasured; the non-journaling filesystem cannot prove recovery.
+
+Tracing alone did not exclude successful writes outside `TMPDIR`. A private,
+qualification-only bubblewrap boundary now supplies recursive read-only root,
+one writable capped mount, private read-only `/dev` and `/proc`, dropped
+capabilities, and new mount/PID/user namespaces. Extra inherited descriptors are
+explicitly closed before execution: the original control exposed a real escape
+because bubblewrap closes them in its monitor/reaper, not the executed command.
+Child execution retains zero effective/permitted capabilities and `NoNewPrivs=1`;
+nested user namespaces are refused. The filesystem daemon remains in the parent
+namespace and the same memory group. Standard-output/error receipt descriptors
+are explicit measurement outputs; device endpoints are not spool storage.
+Controls verify outside data/metadata-write refusal, inside write success,
+descriptor closure and unchanged host mounts/namespace limits on both devices.
+This changes process identity and does not qualify native EPR sessions. No
+production sandbox, trust change or additional internal memory cap is introduced.
+
+All six comparisons pass on both devices under that boundary; all eight merge
+cases pass on Ethosengine, with identical allocation counts to earlier runs.
+Both 256 MiB comparisons and the worker's 64 MiB merges reach the memory ceiling
+without OOM or survivors. The final local SHA-256 comparison takes 226.307 s.
+
+**These filesystem receipts remain provisional.** The metadata matrix next
+passes config and packed references under both hashes, then fails a mailmap
+output-length comparison. Native mailmap passes at 202,346,496 B memory.
+An independent control confirms that the original `fuse2fs` helper mishandles
+`O_TRUNC`: replacing a 1 MiB file with three bytes leaves its old size and stale
+tail. Both Brit and the Git oracle use that filesystem, so matching output alone
+does not prove that earlier cases were unaffected. Original images, failures
+and identities remain available; no receipt is relabeled with another helper.
+
+A new private helper declines `FUSE_CAP_ATOMIC_O_TRUNC`, routing truncation
+through the existing callback. Patch SHA-256 is
+`fa9af32fdd8834a7d12513e34dbcb87a4743b7dd86278ecb207754252976aeab`;
+Ethosengine's replacement executable is
+`16215e9c9e1e236a2aadb0c49452a7b1c4f8a0f195e55ee3b91bbd35dd3501df`.
+It passes all five allocation controls and the native-compared truncation
+control. Fresh workload qualification is in progress. Evidence remains in the
+existing isolated scratch directories and worker receipts, not a new registry.
+
+#### Tix explicit-message metadata repair (2026-11-15)
+
+Commit `086a6bd85731a9403e05c095ad0ff9edb0fb1b35` repairs a reproduced
+128 KiB commit-message failure with a 1 KiB allocation policy. Tix rewording
+reuses bounded object storage for the selected commit, affected descendants,
+pending-ancestry checks, replay-resource inspection and worktree tree identities.
+Editable commits retain their existing owned representation; source buffers or
+mappings are released promptly, and tree comparisons do not copy messages.
+Replay algorithms, parent ordering, trust and publication order are unchanged.
+
+All 810 active native tests pass per hash. The separate 20 MiB selected-commit
+and descendant-message fixture passes under the fixed memory group at
+167,198,720 B / 10.477 s for SHA-1 and 152,375,296 B / 40.341 s for SHA-256,
+with identical message/tree/index assertions and zero OOM or survivors.
+The ordinary suites peak at 95,911,936 / 50,327,552 B. Strict affected all-target
+Clippy, formatting, 12 readiness contracts and declared style pass. These are
+native-runner measurements of the recorded precommit source patch; the frozen
+runner is `82225c938885bbfcda378b5b3d6e778307a7580bf9c2cbc4b29d8a446811c2a0`.
+The committed default-max public executable is separately built and frozen;
+its public resource qualification remains open, as do other editing paths and
+aggregate scratch. Evidence is `bounded-memory/tix-edit-metadata-*`.
+
+Native amend refuses the `change-id` header introduced when Tix replaces the
+local provisional author. The preserved index/HEAD were inspected before a
+hooked Git amend finalized this unshared commit with actual agent authorship
+and native session trailers. This is an interoperability gap, not memory proof.
+Story-graph seam: between bounded Tix history and qualified editing, selected
+and retained descendant metadata must survive the same policy; the new reword
+regressions measure that station without changing the full release assertion.
+
 The command boundary is `src/plumbing/options/mod.rs` plus
 `brit-cli/src/main.rs` and its composed bridge. This table is interim audit
 coverage in the existing readiness document, **not final classification**.
