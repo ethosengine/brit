@@ -124,9 +124,7 @@ fn prepare_inner(
     if parent.is_none() && !head.is_unborn() {
         bail!("an unborn history is required to create a root commit");
     }
-    if let Some(parent) = parent {
-        repo.find_commit(parent)?;
-    }
+    let parent_tree_id = parent.map(|id| super::commit_tree_id(&repo, id)).transpose()?;
     if parent.is_none() {
         head.referent_name()
             .ok_or_raise(|| message("an unborn HEAD must point to a branch"))?;
@@ -154,8 +152,8 @@ fn prepare_inner(
         .or_raise(|| message("could not resolve commit signing configuration"))?;
 
     repo = repo.with_object_memory();
-    let baseline = match parent {
-        Some(id) => repo.find_commit(id)?.tree()?,
+    let baseline = match parent_tree_id {
+        Some(id) => repo.find_tree(id)?,
         None => repo.empty_tree(),
     };
     let baseline_id = baseline.id;
@@ -454,6 +452,67 @@ mod tests {
 
     fn open(path: &Path) -> gix_testtools::Result<gix::Repository> {
         Ok(crate::test_repository::open(path)?)
+    }
+
+    fn create_above_large_metadata(size: usize) -> gix_testtools::Result {
+        for (limit, empty) in [
+            ("1073741824", false),
+            ("1024", false),
+            ("1073741824", true),
+            ("1024", true),
+        ] {
+            let fixture = gix_testtools::scripted_fixture_writable("create_commit.sh")?;
+            let repository = open(fixture.path())?;
+            let mut parent = repository.head_commit()?.decode()?.into_owned()?;
+            parent.message = b"large creation parent\n\n".as_bstr().into();
+            parent.message.extend_from_slice(&vec![b'x'; size]);
+            parent.message.push(b'\n');
+            let parent_id = repository.write_object(&parent)?.detach();
+            repository.reference(
+                "refs/heads/main",
+                parent_id,
+                gix::refs::transaction::PreviousValue::Any,
+                "large creation fixture",
+            )?;
+            let expected_tree = if empty {
+                parent.tree
+            } else {
+                ObjectId::from_hex(below_git(fixture.path(), &["write-tree"])?.trim())?
+            };
+            let before = gix_testtools::repository::snapshot(fixture.path())?;
+            drop(repository);
+            let repository =
+                crate::test_repository::open_with(fixture.path(), [format!("gitoxide.objects.allocLimit={limit}")])?;
+            let graph = super::super::loaded_graph(&repository)?;
+            let prepared = if empty {
+                prepare_empty(repository.clone(), Some(parent_id))?
+            } else {
+                prepare(repository.clone(), Some(parent_id))?
+            };
+            let outcome = apply_message_reporting(repository, &graph, prepared, b"new empty commit\n")?;
+            let selected = outcome.selected.expect("creation selects its new commit");
+            let repository = open(fixture.path())?;
+            let commit = repository.find_commit(selected)?.decode()?.into_owned()?;
+            assert_eq!(commit.parents.as_slice(), &[parent_id]);
+            assert_eq!(commit.tree, expected_tree);
+            assert_eq!(commit.message, b"new empty commit\n".as_bstr());
+            assert_eq!(repository.find_commit(parent_id)?.message_raw()?, parent.message);
+            let after = gix_testtools::repository::snapshot(fixture.path())?;
+            assert_eq!(after.index, before.index);
+            assert_eq!(after.worktree, before.worktree);
+        }
+        Ok(())
+    }
+
+    #[test]
+    fn creates_commit_above_metadata_larger_than_buffer_policy() -> gix_testtools::Result {
+        create_above_large_metadata(128 * 1024)
+    }
+
+    #[test]
+    #[ignore = "whole-group qualification runs the 20 MiB creation metadata fixture explicitly"]
+    fn creates_commit_above_twenty_mib_metadata() -> gix_testtools::Result {
+        create_above_large_metadata(20 * 1024 * 1024)
     }
 
     fn object_count(path: &Path) -> gix_testtools::Result<Vec<u8>> {

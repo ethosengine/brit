@@ -1763,6 +1763,10 @@ views.
   policies; preparation alone does not change HEAD or the index.
   Commit and branch diff summaries decode only the tree and ordered parent
   identities through bounded storage, releasing message bytes before tree access.
+- Normal and empty commit creation resolve the selected parent's tree once with
+  bounded metadata storage. A large parent message does not require an owned
+  copy or a larger buffering policy; staged and worktree selection rules stay
+  unchanged, and an explicit empty commit preserves both sets of local changes.
 - All edits share one in-memory rebase primitive.
   Forks and ordered merge parents are preserved, and all commit/tree
   preparation—including cherry-pick conflict detection—finishes before objects

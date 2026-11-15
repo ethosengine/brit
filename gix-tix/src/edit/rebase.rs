@@ -1062,7 +1062,7 @@ fn perform_inner(
     let extra_commits = usize::from(split_upper.is_some() || below);
 
     if inserted && let Some(parent_commit_id) = root {
-        let parent = repo.find_commit(parent_commit_id)?.decode()?.into_owned()?;
+        let parent = super::read_commit(&repo, parent_commit_id)?;
         gix::error::ensure!(
             auto_merge::is_auto_merge(&parent) || !is_pending(&parent),
             "the selected parent has a pending rebase; finish it before creating a commit"
