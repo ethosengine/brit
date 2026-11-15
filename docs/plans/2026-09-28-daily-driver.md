@@ -5333,4 +5333,32 @@ arguments where three are supplied. The repair needs a port to the in-tree
 interface with its own `repository_slots` tests. Until then a device at reduced
 trust should stay under 32 pack indexes.
 
-- [ ] Port the `a1263002` pack-slot repair to main's in-tree gix object-store interface, with its 33-pack regression tests, and release it as 0.2.1. Serves brit-native-daily-driver.
+- [x] Port the `a1263002` pack-slot repair to main's in-tree gix object-store interface, with its 33-pack regression tests, and release it as 0.2.1. Serves brit-native-daily-driver. Closed by the correction below: the repair was already on main, and no 0.2.1 is cut for it.
+
+### 2026-11-15 — correction: 0.2.0 already sizes slots from the final trust
+
+The section above is wrong where it says 0.2.0 lacks the pack-slot repair.
+`fe6da99ff` ("size object-store slots from the final trust, not the initial
+guess", 2026-10-29) is an ancestor of `e70fc8ad`. In-tree gix resolves the slot
+count after trust settles (`gix/src/open/options.rs`
+`resolve_object_store_slots`): a fully trusted repository sizes its slots from
+disk, and a repository that stays at reduced trust keeps the 32-slot cap.
+`a1263002` did the same job at the `brit-cli` layer for the crates.io gix it was
+written against, and it kept the same cap; main never needed it.
+
+Observed with the installed 0.2.0 on a 33-pack fixture owned by another uid:
+with a `safe.directory` entry `brit build fingerprint` resolves HEAD; without
+one it fails with "rev-spec is malformed". The second case is the cap working
+as designed, reported badly.
+
+What lands instead, with no version change: `brit-cli` reports slot exhaustion
+with its two numbers ("object database slots exhausted (current: 32, needed:
+33)") without printing other source text, and `brit-cli/tests/repository_slots.rs`
+holds five 33-pack cases (full trust, promotion through `safe.directory`,
+reduced trust keeping the cap, and the fingerprint command in both). Local
+runs: `cargo test -p brit-cli --test repository_slots` 6 passed, `cargo clippy
+-p brit-cli --all-targets -- -D warnings` clean. The ownership cases skip when
+`chown` is refused; they ran as uid 0 here.
+
+A device at reduced trust above 32 pack indexes still cannot resolve
+revisions. The cure is trust (`safe.directory`) or a repack, not a release.

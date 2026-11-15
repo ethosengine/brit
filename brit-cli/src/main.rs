@@ -12,6 +12,7 @@ mod error;
 mod feedback;
 mod native_task;
 mod output;
+mod repository;
 mod surface;
 mod tree;
 

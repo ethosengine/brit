@@ -121,7 +121,8 @@ requirements below, as they do for the other affected command families.
 
 ## Found while releasing 0.2.0
 
-- [ ] Port `a1263002` (build commands rebuild the object database with disk-sized slots once trust settles; more than 32 pack indexes) to main's in-tree gix object-store interface. First 0.2.1 item; see the plan's 2026-11-15 release section for the compile errors.
+- [x] Port `a1263002` (disk-sized object-store slots above 32 pack indexes). Not needed: `fe6da99ff`, already in 0.2.0, sizes slots from the final trust. Its 33-pack tests and a clearer slot-exhaustion message landed instead; see the plan's 2026-11-15 correction.
+- [ ] At reduced trust above 32 pack indexes, 0.2.0 reports "rev-spec is malformed" instead of naming the slot cap and its cure (`safe.directory` or a repack). The message is fixed on main after 0.2.0; it reaches devices with the next release.
 - [ ] `epr bin follow` cannot carry a lineage ruling: it refuses `non-descendant` before building, and `--rebase-lineage` exists only on `epr bin land`, which needs an ingested record; a device whose registry predates `brit-rebase-retained` then refuses the release closure with `checksums-mismatch` (second-device report).
 - [ ] `brit tag` only lists; a release tag cannot be created, and the pre-push reach gate refuses tag targets ("only a remote branch is supported").
 - [ ] `brit config` has no write form; setting `branch.<name>.britReachBase` needed `git config`.
@@ -137,4 +138,4 @@ requirements below, as they do for the other affected command families.
 - [ ] Say why the recorder refused: `Feedback::record` discards the recorder's stderr, so a missing `epr feedback` verb reads the same as any other refusal.
 - [ ] `brit diff` in a worktree of this repository refuses with "diff attributes and text conversion are not supported; use git diff" (observed with installed 0.1.13 on 2026-11-15, reviewing this document's own change).
 
-72 items
+73 items
