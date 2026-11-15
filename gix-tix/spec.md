@@ -1757,6 +1757,12 @@ views.
   storage promptly. Tree-identity comparisons do not copy commit messages.
   The allocation policy must not change message bytes, parent order, replay
   decisions or index contents. Read failures still prevent publication.
+- Preparing the reword editor uses the same bounded metadata reader and releases
+  its source storage before rendering the document. The complete editable message,
+  headers, trailers and parent-aware diff summary are identical across buffering
+  policies; preparation alone does not change HEAD or the index.
+  Commit and branch diff summaries decode only the tree and ordered parent
+  identities through bounded storage, releasing message bytes before tree access.
 - All edits share one in-memory rebase primitive.
   Forks and ordered merge parents are preserved, and all commit/tree
   preparation—including cherry-pick conflict detection—finishes before objects

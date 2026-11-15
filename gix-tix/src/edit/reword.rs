@@ -104,10 +104,15 @@ pub(crate) fn document_with_author(
         .editor_command()
         .or_raise(|| message("could not prepare Git editor"))?
         .ok_or_raise(|| message("no Git editor is available"))?;
-    let commit = repo.find_commit(id)?;
-    let commit = commit.decode()?;
-    let parent_commit_id = rebase::marked_parent_ref(&commit)?.unwrap_or_else(|| commit.parents().next());
-    let mut commit = commit.into_owned()?;
+    let (parent_commit_id, mut commit) = {
+        let objects = gix::object::bounded::Source::deferred(repo);
+        let mut buffer = gix::objs::find::Buffer::default();
+        let commit = crate::history::decode_object(&objects, id, &mut buffer)?;
+        (
+            rebase::marked_parent_ref(&commit)?.unwrap_or_else(|| commit.parents().next()),
+            commit.into_owned()?,
+        )
+    };
     super::auto_merge::ensure_editable(&commit)?;
     if let Some(author) = author {
         commit.author = actor(author, commit.author.time, "author")?;
@@ -614,6 +619,43 @@ pub(super) fn actor(value: &[u8], time: gix::date::Time, field: &str) -> Result<
 mod tests {
 
     use super::*;
+
+    fn large_editor_document(size: usize) -> gix_testtools::Result {
+        let fixture = gix_testtools::scripted_fixture_writable("history.sh")?;
+        let repository = crate::test_repository::open(fixture.path())?;
+        let mut commit = repository.head_commit()?.decode()?.into_owned()?;
+        commit.message = b"large editor metadata\n\n".as_bstr().into();
+        commit.message.extend_from_slice(&vec![b'x'; size]);
+        commit.message.push(b'\n');
+        let parent_id = repository.write_object(&commit)?.detach();
+        commit.parents = [parent_id].into_iter().collect();
+        let target = repository.write_object(&commit)?.detach();
+        let head = repository.head_id()?.detach();
+        let index = std::fs::read(repository.index_path())?;
+        let (_, expected) = document(&repository, target)?;
+        assert!(expected.find(&commit.message).is_some());
+        drop(repository);
+        for limit in ["1073741824", "16777216", "1024"] {
+            let repository =
+                crate::test_repository::open_with(fixture.path(), [format!("gitoxide.objects.allocLimit={limit}")])?;
+            let (_, actual) = document(&repository, target)?;
+            assert_eq!(actual, expected, "policy must not alter the editor document");
+            assert_eq!(repository.head_id()?.detach(), head);
+            assert_eq!(std::fs::read(repository.index_path())?, index);
+        }
+        Ok(())
+    }
+
+    #[test]
+    fn editor_document_preserves_metadata_above_buffer_policy() -> gix_testtools::Result {
+        large_editor_document(128 * 1024)
+    }
+
+    #[test]
+    #[ignore = "whole-group qualification runs the 20 MiB editor metadata fixture explicitly"]
+    fn editor_document_preserves_twenty_mib_metadata() -> gix_testtools::Result {
+        large_editor_document(20 * 1024 * 1024)
+    }
 
     fn reword_large_metadata(size: usize) -> gix_testtools::Result {
         for limit in ["1073741824", "1024"] {

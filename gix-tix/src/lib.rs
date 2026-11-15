@@ -8622,18 +8622,22 @@ fn load_changes_without_lines(repository: &gix::Repository, target: app::TreeDif
         let app::TreeDiffTarget::Branch { base, tip } = target else {
             unreachable!("all tree diff targets are covered")
         };
-        let old_tree = repository.find_commit(base)?.tree()?;
-        let new_tree = repository.find_commit(tip)?.tree()?;
+        let old_tree = repository.find_tree(edit::commit_tree_id(repository, base)?)?;
+        let new_tree = repository.find_tree(edit::commit_tree_id(repository, tip)?)?;
         let mut changes = load_tree_changes_without_lines(repository, Some(&old_tree), &new_tree, None)?;
         changes.range = Some(app::ComparedRange { base, tip });
         return Ok(changes);
     };
-    let commit = repository.find_commit(id)?;
-    let marked_parent = {
-        let decoded = commit.decode()?;
-        edit::rebase::marked_parent_ref(&decoded)?
+    let (tree_id, marked_parent, parents) = {
+        let objects = gix::object::bounded::Source::deferred(repository);
+        let mut buffer = gix::objs::find::Buffer::default();
+        let commit = history::decode_object(&objects, id, &mut buffer)?;
+        (
+            commit.tree(),
+            edit::rebase::marked_parent_ref(&commit)?,
+            commit.parents().collect::<Vec<_>>(),
+        )
     };
-    let parents: Vec<_> = commit.parent_ids().map(gix::Id::detach).collect();
     let parent_index = requested_parent.checked_rem(parents.len()).unwrap_or_default();
     let selected_parent = parents.get(parent_index).copied();
     let (parent, compared_parent) = match marked_parent {
@@ -8647,9 +8651,9 @@ fn load_changes_without_lines(repository: &gix::Repository, target: app::TreeDif
             }),
         ),
     };
-    let new_tree = commit.tree()?;
+    let new_tree = repository.find_tree(tree_id)?;
     let old_tree = match parent {
-        Some(parent) => Some(repository.find_commit(parent)?.tree()?),
+        Some(parent) => Some(repository.find_tree(edit::commit_tree_id(repository, parent)?)?),
         None => None,
     };
     load_tree_changes_without_lines(repository, old_tree.as_ref(), &new_tree, compared_parent)
