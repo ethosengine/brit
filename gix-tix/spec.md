@@ -308,7 +308,14 @@ without trading responsiveness for metadata that is not visible.
   checks validate the commit payload without copying its message. Allocation
   policy does not change todo bytes, scope order or autosquash selection, and
   object corruption remains an error. This does not bound arbitrarily large
-  todo documents or every subsequent replay operation.
+  todo documents, tree populations or retained candidate object sets.
+- Rebase plan validation, replay metadata, merge-input selection and saved
+  continuation reads use the same bounded commit source. A valid merge input
+  cannot disappear because its message exceeds the read-buffer policy; read
+  failures are reported, while valid non-commit references remain excluded.
+  Constructing a continuation returns object-read failures instead of panicking
+  on an unavailable produced commit. Parent order, replay selection, reference
+  transactions and accepted-conflict publication remain unchanged.
 - `tix show`, `tix ref-tree`, and `tix rebase todo` automatically inspect symbolic
   `refs/remotes/<remote>/HEAD` references. Their targets are reverse-mapped
   through each remote's fetch refspec, and existing local commit branches are

@@ -123,8 +123,7 @@ fn retain_resource(
     commit_id: ObjectId,
     edits: &mut stash::RewriteEdits,
 ) -> Result<()> {
-    repo.find_commit(commit_id)
-        .or_raise(|| message("a merge replay resource commit is unavailable"))?;
+    super::validate_commit(repo, commit_id).or_raise(|| message("a merge replay resource commit is unavailable"))?;
     if let Some(existing) = repo.try_find_reference(name.as_ref())? {
         ensure!(
             existing.target().try_id() == Some(commit_id.as_ref()),

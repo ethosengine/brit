@@ -494,7 +494,7 @@ pub(crate) fn rebuild(
     if eager {
         let mut accumulated = None;
         for input in &mut definition.inputs {
-            let input_commit = repo.find_commit(input.commit_id)?.decode()?.into_owned()?;
+            let input_commit = super::read_commit(repo, input.commit_id)?;
             input.muted = rebase::is_pending(&input_commit);
             if input.muted {
                 continue;
@@ -529,12 +529,12 @@ pub(crate) fn rebuild(
             accumulated = Some(repo.write_object(&intermediate)?.detach());
         }
         commit.tree = match accumulated {
-            Some(commit_id) => repo.find_commit(commit_id)?.tree_id()?.detach(),
+            Some(commit_id) => repo.tree_id_of_commit(commit_id)?.detach(),
             None => match repo
                 .merge_base_octopus(definition.inputs.iter().map(|input| input.commit_id))
                 .or_raise(|| message("could not find the common base of muted inputs"))?
             {
-                Some(base) => repo.find_commit(base)?.tree_id()?.detach(),
+                Some(base) => repo.tree_id_of_commit(base.detach())?.detach(),
                 None => repo.empty_tree().id,
             },
         };
@@ -570,7 +570,7 @@ pub(crate) fn checkout_path(
         if !graph.is_in_edit_scope(commit_id) || graph.is_read_only(commit_id) || !path.insert(commit_id) {
             continue;
         }
-        let commit = repo.find_commit(commit_id)?.decode()?.into_owned()?;
+        let commit = super::read_commit(repo, commit_id)?;
         if super::review::is_review(&commit) && !rebase::is_pending(&commit) {
             continue;
         }
@@ -618,7 +618,7 @@ pub(crate) fn prepare(
                 || affected_input
                 || force == Some(merge_commit_id)
                 || required.contains(&merge_commit_id)
-                    && rebase::is_pending(&repo.find_commit(merge_commit_id)?.decode()?.into_owned()?)
+                    && rebase::is_pending(&super::read_commit(repo, merge_commit_id)?)
             {
                 for commit_id in graph.descendants_in_parent_order(merge_commit_id).into_iter().flatten() {
                     if included.insert(commit_id) {
@@ -646,7 +646,7 @@ pub(crate) fn prepare(
         }
         let definition = match graph.auto_merges.get(&merge_commit_id) {
             Some(definition) => definition.clone(),
-            None => Definition::from_commit(&repo.find_commit(merge_commit_id)?.decode()?.into_owned()?)?
+            None => Definition::from_commit(&super::read_commit(repo, merge_commit_id)?)?
                 .ok_or_raise(|| message("an AutoMerge dependency lost its recipe"))?,
         };
         for input in definition.inputs {
@@ -664,7 +664,7 @@ pub(crate) fn prepare(
                 {
                     continue;
                 }
-                let commit = repo.find_commit(commit_id)?.decode()?.into_owned()?;
+                let commit = super::read_commit(repo, commit_id)?;
                 if is_auto_merge(&commit) {
                     queue.push(commit_id);
                     continue;
@@ -696,7 +696,7 @@ fn ordered(
     let included: HashSet<_> = ids.iter().copied().collect();
     let mut dependencies = HashMap::new();
     for &commit_id in ids {
-        let commit = repo.find_commit(commit_id)?.decode()?.into_owned()?;
+        let commit = super::read_commit(repo, commit_id)?;
         let definition = graph
             .auto_merges
             .get(&commit_id)
@@ -883,9 +883,11 @@ pub(crate) fn choices(repo: &gix::Repository) -> Result<Vec<Choice>> {
             continue;
         }
         let name = reference.name().to_owned();
-        let Ok(commit) = reference.peel_to_commit() else {
+        let commit_id = reference.peel_to_id()?.detach();
+        if repo.find_header(commit_id)?.kind() != gix::objs::Kind::Commit {
             continue;
-        };
+        }
+        super::validate_commit(repo, commit_id)?;
         let label = if name.as_bstr().starts_with(crate::history::PIN_PREFIX) {
             format!(
                 "📌 {} · {}",
@@ -893,7 +895,7 @@ pub(crate) fn choices(repo: &gix::Repository) -> Result<Vec<Choice>> {
                     .strip_prefix(crate::history::PIN_PREFIX)
                     .expect("the prefix was checked")
                     .as_bstr(),
-                commit.id.to_hex_with_len(7)
+                commit_id.to_hex_with_len(7)
             )
         } else if name.category() == Some(gix::refs::Category::Tag) {
             format!("tag: {}", name.shorten())
@@ -902,7 +904,7 @@ pub(crate) fn choices(repo: &gix::Repository) -> Result<Vec<Choice>> {
         };
         choices.push(Choice {
             reference: name,
-            commit_id: commit.id,
+            commit_id,
             label,
         });
     }
@@ -954,7 +956,7 @@ pub(crate) fn additions(repo: &gix::Repository, selected_commit_id: ObjectId) ->
             !contains(repo, selected_commit_id, head_commit_id)?,
             "the selected commit is already an ancestor of HEAD"
         );
-        if is_auto_merge(&repo.head_commit()?.decode()?.into_owned()?) {
+        if is_auto_merge(&super::read_commit(repo, repo.head_id()?.detach())?) {
             ensure!(
                 !contains(repo, head_commit_id, selected_commit_id)?,
                 "an AutoMerge cannot track itself or its descendants"
@@ -1020,7 +1022,7 @@ pub(crate) fn perform(
             "AutoMerge and Remerge require the selected HEAD entry"
         );
     }
-    let original = repo.find_commit(selected_commit_id)?.decode()?.into_owned()?;
+    let original = super::read_commit(repo, selected_commit_id)?;
     let previous = Definition::from_commit(&original)?;
     let created = previous.is_none();
     let mut definition = match previous {
@@ -1226,7 +1228,7 @@ pub(crate) fn expand_plan(
         positions.insert(commit_id, plan.steps.len() + index);
     }
     for &commit_id in &extra {
-        let commit = repo.find_commit(commit_id)?.decode()?.into_owned()?;
+        let commit = super::read_commit(repo, commit_id)?;
         let parents = rebase::replay_parents(&commit)?
             .unwrap_or_else(|| commit.parents.to_vec())
             .into_iter()
@@ -1289,8 +1291,8 @@ pub(crate) fn order_plan(
                 ensure!(index < plan.steps.len(), "a rebase plan points to a missing step");
             }
             rebase::PlanParent::Existing(commit_id) => {
-                repo.find_commit(commit_id)
-                    .or_raise(|| message("a rebase plan points to a missing commit"))?;
+                super::validate_commit(repo, commit_id)
+                    .or_raise(|| message("could not validate a rebase plan commit"))?;
             }
         }
     }
@@ -1312,12 +1314,7 @@ pub(crate) fn order_plan(
             rebase::PlanCommit::Pick(commit_id) => Some((index, commit_id)),
             _ => None,
         })
-        .map(|(index, commit_id)| -> Result<_> {
-            Ok((
-                index,
-                is_auto_merge(&repo.find_commit(commit_id)?.decode()?.into_owned()?),
-            ))
-        })
+        .map(|(index, commit_id)| -> Result<_> { Ok((index, is_auto_merge(&super::read_commit(repo, commit_id)?))) })
         .collect::<Result<Vec<_>>>()?
         .into_iter()
         .filter_map(|(index, automatic)| automatic.then_some(index))
@@ -1336,10 +1333,10 @@ pub(crate) fn order_plan(
             if !plan.scope.contains(&commit_id) {
                 break rebase::PlanParent::Existing(commit_id);
             }
-            let Some(parent) = repo.find_commit(commit_id)?.parent_ids().next() else {
+            let Some(parent) = super::read_commit(repo, commit_id)?.parents.first().copied() else {
                 break rebase::PlanParent::Existing(plan.base);
             };
-            commit_id = parent.detach();
+            commit_id = parent;
         };
         if tip {
             let mut followed = HashSet::new();
@@ -1360,9 +1357,7 @@ pub(crate) fn order_plan(
     let mut placements = HashMap::new();
     for step in &plan.steps {
         let definition = match step.commit {
-            rebase::PlanCommit::Pick(commit_id) => {
-                Definition::from_commit(&repo.find_commit(commit_id)?.decode()?.into_owned()?)?
-            }
+            rebase::PlanCommit::Pick(commit_id) => Definition::from_commit(&super::read_commit(repo, commit_id)?)?,
             _ => None,
         };
         let mut parents = Vec::new();

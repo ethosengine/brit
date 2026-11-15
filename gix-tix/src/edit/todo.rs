@@ -117,8 +117,8 @@ pub(crate) fn prepare(
     onto_kind: OntoKind,
     show_change_ids: bool,
 ) -> Result<Prepared> {
-    validate_commit(repo, base).or_raise(|| message("could not find the selected rebase base"))?;
-    validate_commit(repo, onto).or_raise(|| message("could not find the rebase target"))?;
+    super::validate_commit(repo, base).or_raise(|| message("could not find the selected rebase base"))?;
+    super::validate_commit(repo, onto).or_raise(|| message("could not find the rebase target"))?;
     let head_state = repo.head()?;
     let head = head_state
         .id()
@@ -1138,8 +1138,8 @@ fn parse_state(repo: &gix::Repository, input: &str) -> Result<Option<State>> {
 }
 
 fn validate_state(repo: &gix::Repository, state: &State) -> Result<()> {
-    validate_commit(repo, state.base).or_raise(|| message("could not find the recorded rebase base"))?;
-    validate_commit(repo, state.onto).or_raise(|| message("could not find the recorded rebase target"))?;
+    super::validate_commit(repo, state.base).or_raise(|| message("could not find the recorded rebase base"))?;
+    super::validate_commit(repo, state.onto).or_raise(|| message("could not find the recorded rebase target"))?;
     let scope: HashSet<_> = state.scope.iter().copied().collect();
     let continuation_sources: HashSet<_> = state.continuation_sources.iter().copied().collect();
     if scope.len() != state.scope.len() {
@@ -1153,7 +1153,7 @@ fn validate_state(repo: &gix::Repository, state: &State) -> Result<()> {
         if !refs.insert(reference.name.as_bstr()) {
             bail!("the rebase state contains duplicate refs");
         }
-        validate_commit(repo, reference.source)
+        super::validate_commit(repo, reference.source)
             .or_raise(|| message("could not find a captured reference's source commit"))?;
     }
     if let Some(name) = &state.head_ref
@@ -1166,7 +1166,7 @@ fn validate_state(repo: &gix::Repository, state: &State) -> Result<()> {
         bail!("the recorded HEAD ref is not editable");
     }
     for tip in &state.tips {
-        validate_commit(repo, *tip).or_raise(|| message("could not find a recorded rebase tip"))?;
+        super::validate_commit(repo, *tip).or_raise(|| message("could not find a recorded rebase tip"))?;
     }
     for id in &state.scope {
         let commit = super::read_commit(repo, *id).or_raise(|| message("could not find a recorded scope commit"))?;
@@ -1192,14 +1192,14 @@ fn validate_state(repo: &gix::Repository, state: &State) -> Result<()> {
     );
     gix::error::ensure!(eager.is_subset(&scope), "an eager commit is outside the rebase scope");
     if let Some(id) = state.selection {
-        validate_commit(repo, id).or_raise(|| message("could not find the recorded result selection"))?;
+        super::validate_commit(repo, id).or_raise(|| message("could not find the recorded result selection"))?;
     }
     if let Some(id) = state.existing_checkout {
         gix::error::ensure!(
             state.checkout_allowed && !state.marker_required,
             "an existing checkout conflicts with the rebase checkout state"
         );
-        validate_commit(repo, id).or_raise(|| message("could not find the recorded existing checkout"))?;
+        super::validate_commit(repo, id).or_raise(|| message("could not find the recorded existing checkout"))?;
     }
     Ok(())
 }
@@ -1500,14 +1500,6 @@ pub(crate) fn parse(repo: &gix::Repository, edited: &[u8]) -> Result<Option<Pars
     }))
 }
 
-// Validate the payload without retaining or copying a potentially large commit message.
-fn validate_commit(repo: &gix::Repository, id: ObjectId) -> Result<()> {
-    let objects = gix::object::bounded::Source::deferred(repo);
-    let mut buffer = gix::objs::find::Buffer::default();
-    crate::history::decode_object(&objects, id, &mut buffer)?;
-    Ok(())
-}
-
 fn resolve_commit(repo: &gix::Repository, value: &str) -> Result<ObjectId> {
     if value.len() < 4 || !value.bytes().all(|byte| byte.is_ascii_hexdigit()) {
         bail!("{value:?} is not a commit ID prefix");
@@ -1515,7 +1507,7 @@ fn resolve_commit(repo: &gix::Repository, value: &str) -> Result<ObjectId> {
     let id = repo
         .rev_parse_single(value)
         .or_raise(|| message!("could not resolve commit ID {value:?}"))?;
-    validate_commit(repo, id.detach()).or_raise(|| message("could not load a todo commit"))?;
+    super::validate_commit(repo, id.detach()).or_raise(|| message("could not load a todo commit"))?;
     Ok(id.detach())
 }
 
@@ -1699,7 +1691,7 @@ mod tests {
         Ok(prepare(repo, base, onto, commits, &[], OntoKind::UpdatedBase, true)?)
     }
 
-    fn large_metadata(bytes: usize) -> TestResult {
+    fn large_metadata(bytes: usize, apply: bool) -> TestResult {
         let (fixture, writer) = repo()?;
         let (old_base, old_middle, old_tip, _) = commits(&writer)?;
         let mut parent = None;
@@ -1738,6 +1730,7 @@ mod tests {
                 info: "middle".into(),
             },
         ];
+        let mut expected_rewrite = None;
         for packed in [false, true] {
             if packed {
                 let output = gix_testtools::git_command(fixture.path())
@@ -1759,6 +1752,70 @@ mod tests {
                 }
                 let plan = parse_plan(&repository, &prepared.document)?;
                 assert_eq!(plan.scope, vec![ids[2], ids[1]], "scope ordering is unchanged");
+                if apply {
+                    assert!(
+                        super::super::auto_merge::choices(&repository)?
+                            .iter()
+                            .any(|choice| choice.commit_id == ids[2]),
+                        "allocation policy must not silently hide a valid merge input"
+                    );
+                    let graph = crate::edit::loaded_graph(&repository)?;
+                    let outcome = rebase::perform_plan(&repository, &graph, plan)?.complete()?;
+                    assert_eq!(
+                        outcome.selected,
+                        Some(ids[2]),
+                        "an unchanged plan retains the selected commit"
+                    );
+                    let edited = with_state(
+                        &prepared,
+                        &format!(
+                            "fork {}\npick {}\n(refs/patches/tip)\n@pick {}\n(@main, refs/patches/middle)\n",
+                            ids[0], ids[2], ids[1]
+                        ),
+                    );
+                    let outcome =
+                        rebase::perform_plan(&repository, &graph, parse_plan(&repository, &edited)?)?.complete()?;
+                    let rewritten = [
+                        outcome.map(ids[2]).expect("tip survives the reordered plan"),
+                        outcome.map(ids[1]).expect("middle survives the reordered plan"),
+                    ];
+                    assert_ne!(rewritten, [ids[2], ids[1]], "reordering rewrites both commits");
+                    if let Some(expected) = expected_rewrite {
+                        assert_eq!(
+                            rewritten, expected,
+                            "storage and allocation policy preserve object bytes"
+                        );
+                    } else {
+                        expected_rewrite = Some(rewritten);
+                    }
+                    assert_eq!(repository.head_id()?.detach(), rewritten[1]);
+                    for (id, original, parent) in [(rewritten[0], ids[2], ids[0]), (rewritten[1], ids[1], rewritten[0])]
+                    {
+                        let commit = super::super::read_commit(&repository, id)?;
+                        assert_eq!(commit.parents.as_slice(), &[parent]);
+                        assert_eq!(
+                            commit.message,
+                            super::super::read_commit(&repository, original)?.message
+                        );
+                    }
+                    assert_eq!(
+                        repository.tree_id_of_commit(rewritten[1])?,
+                        repository.tree_id_of_commit(ids[2])?
+                    );
+                    for (name, original, rewritten) in [
+                        ("refs/heads/main", ids[2], rewritten[1]),
+                        ("refs/patches/middle", ids[1], rewritten[1]),
+                        ("refs/patches/tip", ids[2], rewritten[0]),
+                    ] {
+                        assert_eq!(repository.find_reference(name)?.peel_to_id()?.detach(), rewritten);
+                        repository.reference(
+                            name,
+                            original,
+                            gix::refs::transaction::PreviousValue::MustExistAndMatch(rewritten.into()),
+                            "restore isolated fixture for the next allocation policy",
+                        )?;
+                    }
+                }
                 assert_eq!(
                     repository.head_id()?.detach(),
                     ids[2],
@@ -1776,13 +1833,24 @@ mod tests {
 
     #[test]
     fn todo_metadata_above_buffer_policy() -> TestResult {
-        large_metadata(128 * 1024)
+        large_metadata(128 * 1024, false)
     }
 
     #[test]
     #[ignore = "whole-group qualification runs the 20 MiB todo metadata matrix explicitly"]
     fn todo_with_twenty_mib_metadata() -> TestResult {
-        large_metadata(20 * 1024 * 1024)
+        large_metadata(20 * 1024 * 1024, false)
+    }
+
+    #[test]
+    fn plan_application_metadata_above_buffer_policy() -> TestResult {
+        large_metadata(128 * 1024, true)
+    }
+
+    #[test]
+    #[ignore = "whole-group qualification runs the 20 MiB rebase plan matrix explicitly"]
+    fn plan_application_with_twenty_mib_metadata() -> TestResult {
+        large_metadata(20 * 1024 * 1024, true)
     }
 
     fn parse_plan(repo: &gix::Repository, document: &[u8]) -> TestResult<rebase::Plan> {

@@ -78,10 +78,11 @@ pub(crate) fn load(repo: &gix::Repository) -> Result<Option<Session>> {
         .try_id()
         .ok_or_raise(|| gix::error::message("the rebase state reference must be direct"))?
         .detach();
-    let commit = repo
-        .find_commit(commit_id)
+    let objects = gix::object::bounded::Source::deferred(repo);
+    let mut buffer = gix::objs::find::Buffer::default();
+    let commit = crate::history::decode_object(&objects, commit_id, &mut buffer)
         .or_raise(|| gix::error::message("could not read the saved rebase"))?;
-    let message = commit.message_raw()?;
+    let message = commit.message;
     let body = message
         .strip_prefix(format!("{TITLE}\n\n").as_bytes())
         .ok_or_raise(|| gix::error::message("the rebase state commit has an invalid header"))?;
@@ -128,8 +129,8 @@ pub(crate) fn load(repo: &gix::Repository) -> Result<Option<Session>> {
             commit_id.kind() == repo.object_hash(),
             "saved rebase object uses the wrong hash kind"
         );
-        repo.find_commit(commit_id)
-            .or_raise(|| message!("the saved {key} commit is missing"))?;
+        crate::edit::validate_commit(repo, commit_id)
+            .or_raise(|| message!("could not validate the saved {key} commit"))?;
         Ok(commit_id)
     };
     let publishing = match value("publishing")?.as_slice() {
@@ -238,8 +239,8 @@ impl Session {
         );
         let mut current = self.clone();
         if head_commit_id != self.head_commit_id {
-            let previous = repo.find_commit(self.head_commit_id)?.decode()?.into_owned()?;
-            let replacement = repo.find_commit(head_commit_id)?.decode()?.into_owned()?;
+            let previous = crate::edit::read_commit(repo, self.head_commit_id)?;
+            let replacement = crate::edit::read_commit(repo, head_commit_id)?;
             ensure!(
                 previous.parents == replacement.parents,
                 "HEAD moved to an unrelated commit; return to the paused checkout or stop the rebase"

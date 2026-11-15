@@ -62,6 +62,30 @@ fn apply(repo: &gix::Repository, selected_commit_id: ObjectId, change: Change) -
 }
 
 #[test]
+fn merge_choices_skip_valid_noncommits_but_report_unreadable_targets() -> gix_testtools::Result {
+    let fixture = gix_testtools::scripted_fixture_writable("auto_merge.sh")?;
+    let repo = crate::test_repository::open(fixture.path())?;
+    let blob = repo.write_blob(b"not a merge input")?.detach();
+    repo.reference(
+        "refs/tags/blob",
+        blob,
+        gix::refs::transaction::PreviousValue::MustNotExist,
+        "noncommit selection fixture",
+    )?;
+    assert!(choices(&repo)?.iter().all(|choice| choice.commit_id != blob));
+    let missing = ObjectId::null(repo.object_hash());
+    repo.reference(
+        "refs/heads/unavailable",
+        missing,
+        gix::refs::transaction::PreviousValue::MustNotExist,
+        "unavailable selection fixture",
+    )?;
+    let error = choices(&repo).expect_err("an unreadable target must not silently disappear");
+    assert!(format!("{error:?}").contains(&missing.to_string()), "{error:?}");
+    Ok(())
+}
+
+#[test]
 fn freezing_replaces_only_the_subject_and_recipe() -> gix_testtools::Result {
     let fixture = gix_testtools::scripted_fixture_writable("auto_merge.sh")?;
     let repo = crate::test_repository::open(fixture.path())?;
@@ -245,7 +269,7 @@ fn frozen_copies_with_unchanged_parents_stay_final_even_after_an_earlier_conflic
             }
             rebase::PlanPerform::Conflict(conflict) => {
                 assert!(earlier_conflict, "freezing with unchanged parents cannot conflict");
-                let commit_id = conflict.continuation_plan().steps[frozen_step]
+                let commit_id = conflict.continuation_plan()?.steps[frozen_step]
                     .commit
                     .source()
                     .ok_or_raise(|| message("the frozen occurrence was produced"))?;
@@ -338,7 +362,7 @@ fn a_frozen_copy_and_its_live_original_survive_an_earlier_conflict_and_undo() ->
     };
     assert_eq!(conflict.original(), a.commit_id);
     conflict.persist_objects()?;
-    let continuation_plan = conflict.continuation_plan();
+    let continuation_plan = conflict.continuation_plan()?;
     let frozen_commit_id = continuation_plan.steps[2]
         .commit
         .source()
@@ -531,7 +555,7 @@ fn moving_live_auto_merges_can_continue_after_an_input_conflict_or_collapse() ->
             _ => assert_ne!(conflict.map(merge_commit_id), conflict.map(a.commit_id)),
         }
         conflict.persist_objects()?;
-        let continuation = conflict.continuation_plan();
+        let continuation = conflict.continuation_plan()?;
         let saved = super::super::todo::prepare_continuation(
             conflict.repository(),
             &continuation,
@@ -2316,7 +2340,7 @@ fn a_todo_conflict_continuation_maintains_auto_merge_descendants() -> gix_testto
     conflict.persist_objects()?;
     let continuation = super::super::todo::prepare_continuation(
         conflict.repository(),
-        &conflict.continuation_plan(),
+        &conflict.continuation_plan()?,
         vec![merge_commit_id],
         false,
     )?;

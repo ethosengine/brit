@@ -306,7 +306,7 @@ impl PlanConflict {
     pub(crate) fn save_continuation(&mut self, tips: Vec<ObjectId>, operation: &str) -> Result<Vec<u8>> {
         self.persist_objects()?;
         let document =
-            super::todo::prepare_continuation(self.repository(), &self.continuation_plan(), tips, true)?.document;
+            super::todo::prepare_continuation(self.repository(), &self.continuation_plan()?, tips, true)?.document;
         let previous = self.conflict.prepared.session.take();
         self.conflict.prepared.session = Some(session::Publication::pause(
             previous,
@@ -322,7 +322,7 @@ impl PlanConflict {
         self.rewritten.get(&id).copied().unwrap_or(Some(id))
     }
 
-    pub(crate) fn continuation_plan(&self) -> Plan {
+    pub(crate) fn continuation_plan(&self) -> Result<Plan> {
         let commit_at = |parent| match parent {
             PlanParent::Existing(commit_id) => commit_id,
             PlanParent::Step(index) => self.produced[index],
@@ -375,25 +375,16 @@ impl PlanConflict {
             PlanParent::Existing(id) => id,
             PlanParent::Step(parent) => self.produced[parent],
         };
-        Plan {
+        Ok(Plan {
             base,
             scope,
             steps: continued
                 .into_iter()
                 .map(|index| {
                     let step = &self.plan.steps[index];
-                    let commit = self
-                        .conflict
-                        .prepared
-                        .repo
-                        .find_commit(self.produced[index])
-                        .expect("the plan produced every continuation commit");
-                    let pending_merge = commit
-                        .decode()
-                        .expect("produced commits are valid")
-                        .extra_headers()
-                        .find(merge::HEADER)
-                        .is_some();
+                    let commit = super::read_commit(&self.conflict.prepared.repo, self.produced[index])
+                        .or_raise(|| message("could not read a produced continuation commit"))?;
+                    let pending_merge = commit.extra_headers.iter().any(|(name, _)| name == merge::HEADER);
                     let mut seen = HashSet::new();
                     let parents = step
                         .parents
@@ -405,7 +396,7 @@ impl PlanConflict {
                         .copied()
                         .map(remap)
                         .collect();
-                    PlanStep {
+                    Ok(PlanStep {
                         parents,
                         commit: if index == self.conflict_step {
                             PlanCommit::Resolved(self.produced[index])
@@ -413,9 +404,9 @@ impl PlanConflict {
                             PlanCommit::Pick(self.produced[index])
                         },
                         squash: self.remaining_squash[index].clone(),
-                    }
+                    })
                 })
-                .collect(),
+                .collect::<Result<_>>()?,
             checkout: self.plan.checkout.as_ref().map(|checkout| PlanCheckout {
                 target: remap(checkout.target),
                 reference: checkout.reference.clone(),
@@ -435,7 +426,7 @@ impl PlanConflict {
                 })
                 .collect(),
             selection: self.plan.selection.map(remap),
-        }
+        })
     }
 
     pub(crate) fn into_conflict(self) -> Conflict {
@@ -524,7 +515,7 @@ fn materialize_conflict(
         gix::error::bail!("could not apply conflict stages to the prepared index");
     }
     index.remove_tree();
-    let ours_tree = repo.find_commit(commit_id)?.tree_id()?.detach();
+    let ours_tree = repo.tree_id_of_commit(commit_id)?.detach();
     let workdir = repo
         .workdir()
         .ok_or_raise(|| message("materializing a conflict requires a worktree"))?;
@@ -614,8 +605,8 @@ pub(crate) fn squash_plan(
     source: ObjectId,
     target: ObjectId,
 ) -> Result<Plan> {
-    auto_merge::ensure_editable(&repo.find_commit(source)?.decode()?.into_owned()?)?;
-    auto_merge::ensure_editable(&repo.find_commit(target)?.decode()?.into_owned()?)?;
+    auto_merge::ensure_editable(&super::read_commit(repo, source)?)?;
+    auto_merge::ensure_editable(&super::read_commit(repo, target)?)?;
     if source == target || !graph.is_ancestor(target, source) {
         bail!("the squash target must be a strict ancestor of the source");
     }
@@ -1098,9 +1089,7 @@ fn perform_inner(
         checkout_path = auto_merge::checkout_path(&repo, replay_graph, repeat_checkout)?;
         let mut included: HashSet<_> = affected.iter().copied().collect();
         for commit_id in &checkout_path {
-            if graph.auto_merges.contains_key(commit_id)
-                || is_pending(&repo.find_commit(*commit_id)?.decode()?.into_owned()?)
-            {
+            if graph.auto_merges.contains_key(commit_id) || is_pending(&super::read_commit(&repo, *commit_id)?) {
                 for descendant_commit_id in graph.descendants_in_parent_order(*commit_id).into_iter().flatten() {
                     if included.insert(descendant_commit_id) {
                         affected.push(descendant_commit_id);
@@ -1160,7 +1149,7 @@ fn perform_inner(
             && root == Some(checkout)
             && replacement.as_ref().is_some_and(is_pending)
         {
-            repo.find_commit(checkout)?.decode()?.into_owned()?.parents.to_vec()
+            super::read_commit(&repo, checkout)?.parents.to_vec()
         } else {
             vec![checkout]
         };
@@ -1301,7 +1290,7 @@ fn perform_inner(
             && !resolving_merge_phase
         {
             gix::error::ensure!(
-                commit.tree == repo.find_commit(old_id)?.tree_id()?,
+                commit.tree == repo.tree_id_of_commit(old_id)?,
                 "time-travel to HEAD to finish the pending merge before amending its content"
             );
         }
@@ -1601,7 +1590,7 @@ pub(super) fn finish_review_with_progress(
         let old_parents = graph
             .parents_of(*old)
             .ok_or_raise(|| message("a review descendant is incomplete"))?;
-        let mut commit = repo.find_commit(*old)?.decode()?.into_owned()?;
+        let mut commit = super::read_commit(&repo, *old)?;
         let new_parents = if *old == root_commit_id {
             vec![tip]
         } else {
@@ -1672,7 +1661,7 @@ pub(super) fn finish_review_with_progress(
     rewritten.insert(tip, Some(finished_review));
     for old in natural_ids {
         let old_parents = graph.parents_or_load(&repo, old)?;
-        let mut commit = repo.find_commit(old)?.decode()?.into_owned()?;
+        let mut commit = super::read_commit(&repo, old)?;
         if auto_merge::is_auto_merge(&commit) {
             let eager = conflict.is_none() && auto.eager.contains(&old);
             let (commit_id, _, _) = replay.auto_merge(
@@ -1825,7 +1814,7 @@ pub(crate) fn perform_plan_with_progress(
     for step in &plan.steps {
         if step.commit.is_frozen() {
             let commit_id = step.commit.source().expect("a frozen step has a source");
-            auto_merge::ensure_freezable(&repo.find_commit(commit_id)?.decode()?.into_owned()?)?;
+            auto_merge::ensure_freezable(&super::read_commit(repo, commit_id)?)?;
             gix::error::ensure!(step.squash.is_empty(), "a frozen AutoMerge cannot be squashed into");
         }
     }
@@ -1848,7 +1837,7 @@ pub(crate) fn perform_plan_with_progress(
     for step in &plan.steps {
         gix::error::ensure!(!step.parents.is_empty(), "a rebase step must have a parent");
         if let PlanCommit::Copy(id) = step.commit
-            && auto_merge::is_auto_merge(&repo.find_commit(id)?.decode()?.into_owned()?)
+            && auto_merge::is_auto_merge(&super::read_commit(&repo, id)?)
         {
             bail!("copying an AutoMerge requires freezing its selected occurrence");
         }
@@ -1857,7 +1846,7 @@ pub(crate) fn perform_plan_with_progress(
             if !scope.contains(&id) || !picked.insert(id) {
                 bail!("a rebase plan contains an invalid or duplicate pick");
             }
-            let automatic = auto_merge::is_auto_merge(&repo.find_commit(id)?.decode()?.into_owned()?);
+            let automatic = auto_merge::is_auto_merge(&super::read_commit(&repo, id)?);
             if automatic && step.squash.iter().any(|fold| fold.commit_id == id) {
                 bail!("an AutoMerge cannot be squashed");
             }
@@ -1866,7 +1855,7 @@ pub(crate) fn perform_plan_with_progress(
             }
         }
         if let Some(commit_id) = step.commit.source() {
-            let commit = repo.find_commit(commit_id)?.decode()?.into_owned()?;
+            let commit = super::read_commit(&repo, commit_id)?;
             if step.commit.is_frozen() || !auto_merge::is_auto_merge(&commit) {
                 let original_parents = replay_parents(&commit)?.unwrap_or_else(|| commit.parents.to_vec());
                 gix::error::ensure!(
@@ -1910,10 +1899,7 @@ pub(crate) fn perform_plan_with_progress(
             _ => None,
         })
         .map(|(index, commit_id)| -> Result<_> {
-            Ok((
-                index,
-                auto_merge::is_auto_merge(&repo.find_commit(commit_id)?.decode()?.into_owned()?),
-            ))
+            Ok((index, auto_merge::is_auto_merge(&super::read_commit(&repo, commit_id)?)))
         })
         .collect::<Result<Vec<_>>>()?
         .into_iter()
@@ -1970,7 +1956,7 @@ pub(crate) fn perform_plan_with_progress(
         if automatic.contains(&index)
             && let PlanCommit::Pick(old_id) = step.commit
         {
-            let commit = repo.find_commit(old_id)?.decode()?.into_owned()?;
+            let commit = super::read_commit(&repo, old_id)?;
             let materialize = conflict.is_none() && (eager.contains(&index) || optional.contains(&index));
             let (new_id, pending, collapsed) = replay.auto_merge(
                 old_id,
@@ -2002,8 +1988,7 @@ pub(crate) fn perform_plan_with_progress(
             .iter()
             .map(|parent| match *parent {
                 PlanParent::Existing(id) => {
-                    repo.find_commit(id)
-                        .or_raise(|| message("could not find a fork target"))?;
+                    super::validate_commit(&repo, id).or_raise(|| message("could not validate a fork target"))?;
                     Ok(id)
                 }
                 PlanParent::Step(parent) => produced
@@ -2015,16 +2000,14 @@ pub(crate) fn perform_plan_with_progress(
         let parent = parents[0];
         let optional_input = optional.contains(&index) && !eager.contains(&index) && step.squash.is_empty();
         let mut commit = match &step.commit {
-            PlanCommit::Pick(id) | PlanCommit::Copy(id) | PlanCommit::FrozenCopy(id) => {
-                repo.find_commit(*id)?.decode()?.into_owned()?
-            }
+            PlanCommit::Pick(id) | PlanCommit::Copy(id) | PlanCommit::FrozenCopy(id) => super::read_commit(&repo, *id)?,
             PlanCommit::Resolved(planned) => {
-                let head = repo
-                    .head()?
-                    .peel_to_commit()
-                    .or_raise(|| message("could not resolve the conflicted HEAD commit"))?;
-                resolved_head = Some((*planned, head.id));
-                let mut commit = head.decode()?.into_owned()?;
+                let head_commit_id = repo
+                    .head_id()
+                    .or_raise(|| message("could not resolve the conflicted HEAD commit"))?
+                    .detach();
+                resolved_head = Some((*planned, head_commit_id));
+                let mut commit = super::read_commit(&repo, head_commit_id)?;
                 let index = repo
                     .index_or_empty()
                     .or_raise(|| message("could not load the resolved conflict index"))?;
@@ -2123,7 +2106,7 @@ pub(crate) fn perform_plan_with_progress(
         }
         let mut squashed = Vec::with_capacity(step.squash.len());
         for fold in &step.squash {
-            let source = repo.find_commit(fold.commit_id)?.decode()?.into_owned()?;
+            let source = super::read_commit(&repo, fold.commit_id)?;
             gix::error::ensure!(
                 !crate::patch_id::is_unavailable(&source),
                 message("resolve and amend the conflicting commit before squashing it")
@@ -2234,7 +2217,7 @@ pub(crate) fn perform_plan_with_progress(
     let dropped: Vec<_> = plan.scope.iter().copied().filter(|id| !picked.contains(id)).collect();
     let removed: HashSet<_> = dropped.iter().copied().collect();
     for id in &dropped {
-        let commit = repo.find_commit(*id)?.decode()?.into_owned()?;
+        let commit = super::read_commit(&repo, *id)?;
         delete_refs.extend(super::review::deletions(&repo, &commit)?);
     }
     for dropped in dropped {
@@ -2539,10 +2522,10 @@ impl Prepared {
             }
             let old_tree = match self.checkout_tree {
                 Some(tree_id) => tree_id,
-                None => self.repo.head_commit()?.tree_id()?.detach(),
+                None => self.repo.head_tree_id()?.detach(),
             };
             restore_current_tree = Some(old_tree);
-            let new_tree = self.repo.find_commit(selected)?.tree_id()?.detach();
+            let new_tree = self.repo.tree_id_of_commit(selected)?.detach();
             super::delete::preflight_tree_transition(&self.repo, workdir, old_tree, new_tree)?;
             Some(IndexBackup::capture(self.repo.index_path().to_owned())?)
         } else {
@@ -2723,7 +2706,7 @@ impl Prepared {
                             .workdir()
                             .ok_or_raise(|| message("conflict rollback requires a worktree"))?,
                         merged_tree,
-                        self.repo.head_commit()?.tree_id()?.detach(),
+                        self.repo.head_tree_id()?.detach(),
                     )
                 })();
                 if let Err(restore) = restored {
@@ -3007,7 +2990,7 @@ fn reset_index(reset: &mut IndexReset, paths: Option<&[BString]>) -> Result<()> 
 }
 
 fn reset_index_paths(repo: &gix::Repository, id: ObjectId, paths: &[BString]) -> Result<()> {
-    let tree = repo.find_commit(id)?.tree()?;
+    let tree = repo.find_tree(repo.tree_id_of_commit(id)?)?;
     let mut index = repo
         .open_index()
         .or_raise(|| message("could not load the index to update selected paths"))?;
@@ -3048,22 +3031,19 @@ fn validate(
 ) -> Result<()> {
     for (position, id) in affected.iter().enumerate() {
         let parents = graph.parents_or_load(repo, *id)?;
-        if parents.len() > 1
-            && position == 0
-            && removed
-            && !auto_merge::is_auto_merge(&repo.find_commit(*id)?.decode()?.into_owned()?)
+        if parents.len() > 1 && position == 0 && removed && !auto_merge::is_auto_merge(&super::read_commit(repo, *id)?)
         {
             bail!("a merge commit cannot be removed");
         }
         if repeat == Some(*id) {
-            let commit = repo.find_commit(*id)?.decode()?.into_owned()?;
+            let commit = super::read_commit(repo, *id)?;
             if !is_pending(&commit) && !auto_merge::is_auto_merge(&commit) {
                 bail!("the root of a repeated rebase must be pending");
             }
         }
     }
     if let Some(base) = repeat
-        && !auto_merge::is_auto_merge(&repo.find_commit(base)?.decode()?.into_owned()?)
+        && !auto_merge::is_auto_merge(&super::read_commit(repo, base)?)
         && parents_pending(repo, &graph.parents_or_load(repo, base)?, frozen_parents)?
     {
         bail!("the parent of a repeated rebase must not be pending");
@@ -3531,7 +3511,7 @@ impl<'repo> Replay<'repo> {
                 message("an AutoMerge cannot track itself or its descendants")
             );
         }
-        let original = self.repo.find_commit(old_id)?.decode()?.into_owned()?;
+        let original = super::read_commit(self.repo, old_id)?;
         if commit == original && !is_pending(&commit) {
             return Ok((old_id, false, false));
         }
@@ -3585,8 +3565,7 @@ impl<'repo> Replay<'repo> {
                 for (old, new) in old.inputs.iter().zip(&new.inputs) {
                     if old.source != new.source
                         || old.muted != new.muted
-                        || self.repo.find_commit(old.commit_id)?.tree_id()?
-                            != self.repo.find_commit(new.commit_id)?.tree_id()?
+                        || self.repo.tree_id_of_commit(old.commit_id)? != self.repo.tree_id_of_commit(new.commit_id)?
                     {
                         return Ok(false);
                     }
@@ -5395,14 +5374,25 @@ mod tests {
         let source = repo.head_id()?.detach();
         let before = gix_testtools::repository::snapshot(fixture.path())?;
 
-        let PlanPerform::Conflict(conflict) = perform_plan(&repo, &graph, squash_plan(&repo, &graph, source, target)?)?
+        let PlanPerform::Conflict(mut conflict) =
+            perform_plan(&repo, &graph, squash_plan(&repo, &graph, source, target)?)?
         else {
             return Err("the non-adjacent squash should suspend on its conflicting source delta".into());
         };
         assert_eq!(conflict.original(), source);
+        let produced = conflict.produced[conflict.continuation_start];
+        conflict.produced[conflict.continuation_start] = ObjectId::null(repo.object_hash());
+        let error = conflict
+            .continuation_plan()
+            .expect_err("an unavailable continuation object must return an error");
+        assert!(
+            format!("{error:?}").contains("could not read a produced continuation commit"),
+            "the failure identifies continuation reading: {error:?}"
+        );
+        conflict.produced[conflict.continuation_start] = produced;
         assert!(
             conflict
-                .continuation_plan()
+                .continuation_plan()?
                 .steps
                 .iter()
                 .any(|step| matches!(step.commit, PlanCommit::Resolved(_))),
@@ -5521,7 +5511,7 @@ mod tests {
                 before,
                 "preparing a fixup conflict leaves the repository unchanged"
             );
-            let continuation = conflict.continuation_plan();
+            let continuation = conflict.continuation_plan()?;
             let remaining_modes: Vec<_> = continuation.steps[0].squash.iter().map(|fold| fold.message).collect();
             assert_eq!(
                 remaining_modes,
@@ -6485,7 +6475,7 @@ mod tests {
         assert_eq!(conflict.original(), source);
         assert!(
             conflict
-                .continuation_plan()
+                .continuation_plan()?
                 .steps
                 .iter()
                 .any(|step| matches!(step.commit, PlanCommit::Resolved(_))),
@@ -6623,7 +6613,7 @@ mod tests {
         assert_eq!(conflict.original(), source);
         assert!(
             conflict
-                .continuation_plan()
+                .continuation_plan()?
                 .steps
                 .iter()
                 .any(|step| matches!(step.commit, PlanCommit::Resolved(_))),

@@ -502,7 +502,7 @@ fn converged_parent_slots_survive_amend_and_a_saved_continuation() -> gix_testto
         return Err("changing the first parent must conflict with the recorded resolution".into());
     };
     conflict.persist_objects()?;
-    let plan = conflict.continuation_plan();
+    let plan = conflict.continuation_plan()?;
     assert_eq!(
         plan.steps[0].parents.len(),
         3,

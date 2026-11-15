@@ -16,6 +16,14 @@ pub(super) fn read_commit(repo: &gix::Repository, id: gix::ObjectId) -> Result<g
     crate::history::decode_object(&objects, id, &mut buffer)?.into_owned()
 }
 
+/// Validate a commit payload without retaining or copying its message.
+pub(super) fn validate_commit(repo: &gix::Repository, id: gix::ObjectId) -> Result<()> {
+    let objects = gix::object::bounded::Source::deferred(repo);
+    let mut buffer = gix::objs::find::Buffer::default();
+    crate::history::decode_object(&objects, id, &mut buffer)?;
+    Ok(())
+}
+
 /// Tree comparisons need only the decoded identity, not an owned commit message.
 pub(super) fn commit_tree_id(repo: &gix::Repository, id: gix::ObjectId) -> Result<gix::ObjectId> {
     let objects = gix::object::bounded::Source::deferred(repo);
