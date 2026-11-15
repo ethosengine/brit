@@ -177,7 +177,7 @@ pub(super) fn prepare(
     published.dedup();
     let mut retained = HashSet::new();
     for owner_commit_id in published {
-        let commit = repo.find_commit(owner_commit_id)?.decode()?.into_owned()?;
+        let commit = super::read_commit(repo, owner_commit_id)?;
         let Some(checkpoint_commit_id) = rebase::replay_checkpoint(&commit)? else {
             continue;
         };

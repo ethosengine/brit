@@ -1750,6 +1750,13 @@ views.
 
 ### Transactional rebases
 
+- Explicit-message rewording reads the selected commit and replayed descendant
+  metadata through the shared bounded object reader. Above the configured
+  buffering policy, immutable mapped storage supplies the same decoded bytes;
+  editing retains one owned commit representation and releases its source
+  storage promptly. Tree-identity comparisons do not copy commit messages.
+  The allocation policy must not change message bytes, parent order, replay
+  decisions or index contents. Read failures still prevent publication.
 - All edits share one in-memory rebase primitive.
   Forks and ordered merge parents are preserved, and all commit/tree
   preparation—including cherry-pick conflict detection—finishes before objects

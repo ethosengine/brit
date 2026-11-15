@@ -9,6 +9,20 @@ pub(crate) fn is_internal_ref(name: &gix::bstr::BStr) -> bool {
     undo::is_queue_ref(name) || rebase::session::is_ref(name)
 }
 
+/// Keep the editable representation, releasing the source buffer or mapping before replay.
+pub(super) fn read_commit(repo: &gix::Repository, id: gix::ObjectId) -> Result<gix::objs::Commit> {
+    let objects = gix::object::bounded::Source::deferred(repo);
+    let mut buffer = gix::objs::find::Buffer::default();
+    crate::history::decode_object(&objects, id, &mut buffer)?.into_owned()
+}
+
+/// Tree comparisons need only the decoded identity, not an owned commit message.
+pub(super) fn commit_tree_id(repo: &gix::Repository, id: gix::ObjectId) -> Result<gix::ObjectId> {
+    let objects = gix::object::bounded::Source::deferred(repo);
+    let mut buffer = gix::objs::find::Buffer::default();
+    Ok(crate::history::decode_object(&objects, id, &mut buffer)?.tree())
+}
+
 #[cfg(test)]
 pub(super) fn loaded_graph(repo: &gix::Repository) -> Result<crate::history::HistoryGraph> {
     if repo.head_id().is_err() {

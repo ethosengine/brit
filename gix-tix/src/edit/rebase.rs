@@ -1013,8 +1013,9 @@ fn perform_inner(
                 target: commit_id,
                 commit,
             } => {
-                let original = repo.find_commit(*commit_id)?;
-                let original = original.decode()?;
+                let objects = gix::object::bounded::Source::deferred(&repo);
+                let mut buffer = gix::objs::find::Buffer::default();
+                let original = crate::history::decode_object(&objects, *commit_id, &mut buffer)?;
                 original.tree() == commit.tree && original.parents().eq(commit.parents.iter().copied())
             }
             _ => false,
@@ -1237,7 +1238,7 @@ fn perform_inner(
         let old_parents = graph.parents_or_load(&repo, old_id)?;
         let mut commit = match replacement.as_ref().filter(|_| Some(old_id) == root) {
             Some(commit) => commit.clone(),
-            None => repo.find_commit(old_id)?.decode()?.into_owned()?,
+            None => super::read_commit(&repo, old_id)?,
         };
         let new_parents: Vec<_> = match lower_commit_id.filter(|_| Some(old_id) == root) {
             Some(commit_id) => vec![commit_id],
@@ -1442,7 +1443,7 @@ fn perform_inner(
         let mut changed = HashSet::new();
         for old_commit_id in reset_indices {
             if let Some(Some(new_commit_id)) = rewritten.get(&old_commit_id)
-                && repo.find_commit(old_commit_id)?.tree_id()? != repo.find_commit(*new_commit_id)?.tree_id()?
+                && super::commit_tree_id(&repo, old_commit_id)? != super::commit_tree_id(&repo, *new_commit_id)?
             {
                 changed.insert(old_commit_id);
             }
@@ -3082,7 +3083,7 @@ fn reject_pending_checkout_path(
         if !is_in_scope(commit_id) || !seen.insert(commit_id) {
             continue;
         }
-        let commit = repo.find_commit(commit_id)?.decode()?.into_owned()?;
+        let commit = super::read_commit(repo, commit_id)?;
         if auto_merge::is_auto_merge(&commit) {
             continue;
         }
@@ -3292,7 +3293,7 @@ fn cherry_pick_tree_outcome(
 
 fn parent_tree(repo: &gix::Repository, parent: Option<ObjectId>) -> Result<ObjectId> {
     match parent {
-        Some(parent) => Ok(repo.find_commit(parent)?.tree_id()?.detach()),
+        Some(parent) => super::commit_tree_id(repo, parent),
         None => Ok(repo.empty_tree().id),
     }
 }
@@ -3309,7 +3310,7 @@ fn empty_commit_has_final_parent(
     let Some(parent) = rewritten_parent else {
         return Ok(true);
     };
-    Ok(!is_pending(&repo.find_commit(parent)?.decode()?.into_owned()?))
+    Ok(!is_pending(&super::read_commit(repo, parent)?))
 }
 
 fn marker(commit: &mut gix::objs::Commit, add: bool, original_parent: Option<ObjectId>) {
@@ -3379,9 +3380,7 @@ pub(crate) fn replay_checkpoint(commit: &gix::objs::Commit) -> Result<Option<Obj
 
 fn parents_pending(repo: &gix::Repository, parents: &[ObjectId], frozen_parents: &HashSet<ObjectId>) -> Result<bool> {
     for parent_commit_id in parents {
-        if !frozen_parents.contains(parent_commit_id)
-            && is_pending(&repo.find_commit(*parent_commit_id)?.decode()?.into_owned()?)
-        {
+        if !frozen_parents.contains(parent_commit_id) && is_pending(&super::read_commit(repo, *parent_commit_id)?) {
             return Ok(true);
         }
     }
@@ -3564,13 +3563,13 @@ impl<'repo> Replay<'repo> {
     }
 
     fn unchanged_parent_content(&self, predecessor_commit_id: ObjectId, commit: &gix::objs::Commit) -> Result<bool> {
-        let original = self.repo.find_commit(predecessor_commit_id)?.decode()?.into_owned()?;
+        let original = super::read_commit(self.repo, predecessor_commit_id)?;
         if is_pending(&original) || original.tree != commit.tree || original.parents.len() != commit.parents.len() {
             return Ok(false);
         }
         for (old_parent_commit_id, new_parent_commit_id) in original.parents.iter().zip(&commit.parents) {
-            let new_parent = self.repo.find_commit(*new_parent_commit_id)?.decode()?.into_owned()?;
-            if is_pending(&new_parent) || self.repo.find_commit(*old_parent_commit_id)?.tree_id()? != new_parent.tree {
+            let new_parent = super::read_commit(self.repo, *new_parent_commit_id)?;
+            if is_pending(&new_parent) || super::commit_tree_id(self.repo, *old_parent_commit_id)? != new_parent.tree {
                 return Ok(false);
             }
         }
@@ -3739,10 +3738,10 @@ fn worktree_transitions(
         }
         let old_tree = match checkout_tree.filter(|_| worktree_repo.git_dir() == repo.git_dir()) {
             Some(tree_id) => tree_id,
-            None => worktree_repo.find_commit(old)?.tree_id()?.detach(),
+            None => super::commit_tree_id(&worktree_repo, old)?,
         };
         let new_tree = match new {
-            Some(new) => repo.find_commit(new)?.tree_id()?.detach(),
+            Some(new) => super::commit_tree_id(repo, new)?,
             None if worktree_repo.head()?.referent_name().is_some() => repo.empty_tree().id,
             None => bail!("a detached checked-out root commit cannot be removed"),
         };

@@ -285,7 +285,7 @@ pub(crate) fn apply_conflict_reporting(
         bail!("the edited commit message is empty");
     }
 
-    let mut commit = repo.find_commit(old_id)?.decode()?.into_owned()?;
+    let mut commit = super::read_commit(&repo, old_id)?;
     let author = actor(edit.author, edit.author_time, "author")?;
     let commit_changed = author != commit.author || edit.message != commit.message;
     let (rebased, enrichment, enrich_change) = if commit_changed {
@@ -341,7 +341,7 @@ pub(crate) fn apply_message_reporting(
     if message.is_empty() {
         bail!("the edited commit message is empty");
     }
-    let mut commit = repo.find_commit(old_id)?.decode()?.into_owned()?;
+    let mut commit = super::read_commit(&repo, old_id)?;
     super::auto_merge::ensure_editable(&commit)?;
     let changed_author = author
         .map(|author| actor(author, commit.author.time, "author"))
@@ -614,6 +614,63 @@ pub(super) fn actor(value: &[u8], time: gix::date::Time, field: &str) -> Result<
 mod tests {
 
     use super::*;
+
+    fn reword_large_metadata(size: usize) -> gix_testtools::Result {
+        for limit in ["1073741824", "1024"] {
+            let fixture = gix_testtools::scripted_fixture_writable("history.sh")?;
+            let repository = crate::test_repository::open(fixture.path())?;
+            let original = repository.head_id()?.detach();
+            let mut commit = repository.find_commit(original)?.decode()?.into_owned()?;
+            commit.message = b"large edit target\n\n".as_bstr().into();
+            commit.message.extend_from_slice(&vec![b'x'; size]);
+            commit.message.push(b'\n');
+            let target = repository.write_object(&commit)?.detach();
+            commit.parents = [target].into_iter().collect();
+            commit.message[0] = b'L';
+            let tip = repository.write_object(&commit)?.detach();
+            repository.reference(
+                "refs/heads/main",
+                tip,
+                gix::refs::transaction::PreviousValue::Any,
+                "large metadata fixture",
+            )?;
+            let tree = commit.tree;
+            let expected_message = commit.message;
+            let index = std::fs::read(repository.index_path())?;
+            drop(repository);
+
+            let repository =
+                crate::test_repository::open_with(fixture.path(), [format!("gitoxide.objects.allocLimit={limit}")])?;
+            let graph = super::super::loaded_graph(&repository)?;
+            let outcome = apply_message_reporting(repository, &graph, target, b"rewritten metadata\n", None)?;
+            let rewritten = outcome.commit.expect("changed message produces a successor");
+            let repository = crate::test_repository::open(fixture.path())?;
+            let selected = repository.find_commit(rewritten)?.decode()?.into_owned()?;
+            assert_eq!(selected.message, b"rewritten metadata\n".as_bstr());
+            assert_eq!(selected.tree, tree);
+            let head = repository.head_commit()?.decode()?.into_owned()?;
+            assert_eq!(head.parents.as_slice(), &[rewritten]);
+            assert_eq!(
+                head.message, expected_message,
+                "descendant message bytes survive replay"
+            );
+            assert_eq!(head.tree, tree);
+            assert_eq!(std::fs::read(repository.index_path())?, index);
+            assert_eq!(repository.find_commit(target)?.message_raw()?.len(), size + 20);
+        }
+        Ok(())
+    }
+
+    #[test]
+    fn rewords_commit_metadata_above_buffer_policy() -> gix_testtools::Result {
+        reword_large_metadata(128 * 1024)
+    }
+
+    #[test]
+    #[ignore = "whole-group qualification runs the 20 MiB metadata fixture explicitly"]
+    fn rewords_twenty_mib_commit_metadata() -> gix_testtools::Result {
+        reword_large_metadata(20 * 1024 * 1024)
+    }
 
     fn diffstat(document: &[u8]) -> &[u8] {
         let heading = b"\n; Changes in this commit:\n";
