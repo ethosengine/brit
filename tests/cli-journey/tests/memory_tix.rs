@@ -22,8 +22,15 @@ fn git(root: &Path, args: &[&str]) -> Result<Vec<u8>> {
 }
 
 fn run(root: &Path, args: &[&str], limit: Option<&str>, output: &Path) -> Result<()> {
+    run_without_env(root, args, limit, output, &[])
+}
+
+fn run_without_env(root: &Path, args: &[&str], limit: Option<&str>, output: &Path, removed: &[&str]) -> Result<()> {
     let mut command = Command::new(brit_bin().expect("built Brit"));
     gix_testtools::configure_git_environment(&mut command, root);
+    for name in removed {
+        command.env_remove(name);
+    }
     command.current_dir(root);
     if let Some(limit) = limit {
         command.args(["-c", &format!("gitoxide.objects.allocLimit={limit}")]);
@@ -301,6 +308,7 @@ fn create_with_policies(bytes: usize, reduced: bool, policies: &[Option<&str>]) 
                 let index = root.join(".git/index");
                 let before_index = index.exists().then(|| fs::read(&index)).transpose()?;
                 let before_refs = git(root, &["for-each-ref", "--format=%(refname) %(objectname)"])?;
+                let before_config = fs::read(root.join(".git/config"))?;
                 let output = root.join(".git/create-output");
                 if reduced {
                     #[cfg(target_os = "linux")]
@@ -322,11 +330,15 @@ fn create_with_policies(bytes: usize, reduced: bool, policies: &[Option<&str>]) 
                     anyhow::bail!("ownership qualification runs on Linux");
                 }
                 eprintln!("qualifying Tix create: packed={packed}, staged={staged}, reduced={reduced}");
-                let result = run(
+                let result = run_without_env(
                     root,
                     &[
                         "-c",
                         "core.editor=:",
+                        "-c",
+                        "committer.name=Invocation Committer",
+                        "-c",
+                        "committer.email=invocation@example.com",
                         "tix",
                         "new",
                         "--allow-empty",
@@ -335,6 +347,7 @@ fn create_with_policies(bytes: usize, reduced: bool, policies: &[Option<&str>]) 
                     ],
                     limit,
                     &output,
+                    &["GIT_COMMITTER_NAME", "GIT_COMMITTER_EMAIL"],
                 );
                 if reduced {
                     let error = result.expect_err("the owned Git reset retains its ownership protection");
@@ -352,10 +365,15 @@ fn create_with_policies(bytes: usize, reduced: bool, policies: &[Option<&str>]) 
                     ensure!(git(root, &["rev-parse", "HEAD^"])? == parent);
                     ensure!(git(root, &["rev-parse", "HEAD^{tree}"])? == tree);
                     ensure!(git(root, &["show", "-s", "--format=%B", "HEAD"])? == b"created metadata\n\n");
+                    ensure!(
+                        git(root, &["show", "-s", "--format=%cn <%ce>", "HEAD"])?
+                            == b"Invocation Committer <invocation@example.com>\n"
+                    );
                     ensure!(git(root, &["show", "-s", "--format=%B", "HEAD^"])? == message);
                 }
                 ensure!(fs::read(root.join("file"))? == b"local bytes\n");
                 ensure!(index.exists().then(|| fs::read(&index)).transpose()? == before_index);
+                ensure!(fs::read(root.join(".git/config"))? == before_config);
             }
         }
     }
