@@ -128,7 +128,8 @@ impl crate::Repository {
     /// * use the current `HEAD` branch to find a configured remote
     /// * fall back to either a generally configured remote or the only configured remote.
     ///
-    /// Fail if no remote could be found despite all of the above.
+    /// Fail if no remote could be found despite all of the above. If named remotes exist but the
+    /// configuration filter excludes all of them, the error identifies an excluded remote and its source.
     ///
     /// # Examples
     ///
@@ -158,6 +159,27 @@ impl crate::Repository {
                 .map(Ok)
                 .or_else(|| self.find_default_remote(remote::Direction::Fetch))
                 .ok_or_else(|| {
+                    let filter = self.filter_config_section();
+                    let mut excluded = None;
+                    for section in self.config.resolved.sections_by_name("remote").into_iter().flatten() {
+                        let Some(name) = section.header().subsection_name() else {
+                            continue;
+                        };
+                        if filter(section.meta()) {
+                            // Trusted names exist, so selection is ambiguous rather than entirely filtered out.
+                            excluded = None;
+                            break;
+                        }
+                        excluded.get_or_insert((name, section.meta()));
+                    }
+                    if let Some((name, meta)) = excluded {
+                        return gix_error::message!(
+                            "Cannot select a fetch remote: configuration filter excluded remote {name:?} from {:?} (trust: {:?})",
+                            meta.path,
+                            meta.trust
+                        )
+                        .not_found_error();
+                    }
                     gix_error::message("No configured remote could be found, or too many were available")
                         .not_found_error()
                 })??,

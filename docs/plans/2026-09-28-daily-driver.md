@@ -4472,9 +4472,30 @@ memory events and zero survivors, with candidate hash
 `721ce9694e59f35ad53972b009b37d07c4924c649759d5db83736b767c3709a5`
 unchanged before/after. The common checkout belongs to UID 1234 and currently
 has 15 pack indexes; the new checkout and private registration are root-owned.
-Configured-origin fetch and protected-hook commit cases are next. This is
-interim memory evidence only; final-source reruns and separate scratch proof
-remain required.
+The subsequent default `fetch --dry-run` failed at 12,771,328 B / 123 ms with
+zero OOM events or survivors and unchanged refs. Read-only config inspection
+confirmed that Brit had loaded `origin` from the common directory but excluded
+that file as untrusted. The old error incorrectly reported missing or ambiguous
+remotes. This is a diagnostic failure, not a successful fetch qualification.
+Stock Git admits the root-owned private worktree in this case; Brit's existing
+per-file/common-directory trust protection remains intact. No `safe.directory`
+override or shared ownership change is used to turn the refusal into success.
+
+The corrected error names the excluded remote, configuration source and trust
+when all configured names are filtered out. An isolated detached-worktree
+regression verifies common-directory discovery at full trust, the specific
+refusal at reduced trust, and trusted command-line configuration without trust
+promotion. Absent and ambiguous allowed remotes retain their own diagnosis.
+All 269 repository tests pass for each hash. The initial failing diagnostic
+regression and the corrected ambiguous-fixture setup are retained in the
+existing private `bounded-memory/fetch-filter-*` evidence. The owner-run real
+fixture failed before creation at 6,909,952 B / 48 ms with `Permission denied`:
+the shared mutation guard is root-owned mode 0600, and other shared directories
+are also not writable by UID 1234. Target and registration remained absent.
+Those shared permissions are preserved; an independent snapshot retaining the
+real repository's pack layout is being preflighted. Path-specific guard I/O
+diagnostics, successful default fetch and protected-hook cases remain open.
+Final-source reruns and separate scratch proof remain required.
 
 The command boundary is `src/plumbing/options/mod.rs` plus
 `brit-cli/src/main.rs` and its composed bridge. This table is interim audit

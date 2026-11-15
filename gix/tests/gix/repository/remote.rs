@@ -611,6 +611,90 @@ mod find_fetch_remote {
     use gix_testtools::TestResult;
 
     #[test]
+    fn detached_linked_worktree_distinguishes_filtered_remote_configuration() -> TestResult {
+        let fixture = gix_testtools::scripted_fixture_writable("make_remote_repos.sh")?;
+        let source = fixture.path().join("clone-no-tags");
+        gix_testtools::git(&source, "worktree add --detach linked HEAD")?;
+        let linked = source.join("linked");
+        let repo = gix::open_opts(&linked, gix::open::Options::isolated())?;
+        assert!(repo.head()?.is_detached());
+        assert!(
+            !repo.git_dir().join("config").exists(),
+            "configuration lives in the common directory"
+        );
+        assert_eq!(
+            repo.find_fetch_remote(None)?.name().expect("named remote").as_bstr(),
+            "origin",
+            "a detached linked worktree discovers its sole trusted common-directory remote"
+        );
+
+        let repo = gix::open_opts(&linked, gix::open::Options::isolated().with(gix::sec::Trust::Reduced))?;
+        assert!(
+            repo.remote_names().is_empty(),
+            "reduced trust must continue to exclude local remote configuration"
+        );
+        let error = repo
+            .find_fetch_remote(None)
+            .expect_err("filtered remote must not be used")
+            .to_string();
+        assert!(
+            error.contains("configuration filter"),
+            "the refusal must explain filtered configuration: {error}"
+        );
+        assert!(
+            error.contains("origin"),
+            "the refusal identifies the excluded remote: {error}"
+        );
+        assert!(
+            error.contains("config"),
+            "the refusal identifies its configuration source: {error}"
+        );
+
+        let repo = gix::open_opts(
+            &linked,
+            gix::open::Options::isolated()
+                .with(gix::sec::Trust::Reduced)
+                .cli_overrides(["remote.approved.url=https://example.com/approved"]),
+        )?;
+        assert_eq!(repo.git_dir_trust(), gix::sec::Trust::Reduced);
+        assert_eq!(
+            repo.find_fetch_remote(None)?
+                .name()
+                .expect("explicitly configured remote")
+                .as_bstr(),
+            "approved",
+            "trusted command-line configuration remains usable without trusting the local configuration"
+        );
+        Ok(())
+    }
+
+    #[test]
+    fn absent_and_ambiguous_remotes_are_not_reported_as_filtered() -> TestResult {
+        for (fixture, config) in [
+            ("base", Vec::new()),
+            (
+                "clone-no-tags",
+                vec![
+                    "remote.one.url=https://example.com/one",
+                    "remote.two.url=https://example.com/two",
+                ],
+            ),
+        ] {
+            let repo = gix::open_opts(
+                remote::repo_path(fixture),
+                gix::open::Options::isolated()
+                    .with(gix::sec::Trust::Reduced)
+                    .cli_overrides(config),
+            )?;
+            let error = repo.find_default_remote(gix::remote::Direction::Fetch);
+            assert!(error.is_none());
+            let error = repo.find_fetch_remote(None).expect_err("no default remote").to_string();
+            assert!(!error.contains("configuration filter"), "{fixture}: {error}");
+        }
+        Ok(())
+    }
+
+    #[test]
     fn symbol_name() -> TestResult {
         let repo = remote::repo("clone-no-tags");
         assert_eq!(
