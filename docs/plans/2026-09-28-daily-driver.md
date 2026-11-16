@@ -5362,3 +5362,13 @@ runs: `cargo test -p brit-cli --test repository_slots` 6 passed, `cargo clippy
 
 A device at reduced trust above 32 pack indexes still cannot resolve
 revisions. The cure is trust (`safe.directory`) or a repack, not a release.
+
+### 2026-11-16 — brit-cli is 0.2.1 after all
+
+The correction above said the diagnostics would land with no version change.
+That was wrong for the registry: main CI run 43756399241 passed its tests and
+then refused to publish, "immutable version collision for brit-cli 0.2.0",
+because a published version cannot change its contents. `brit-cli` is therefore
+0.2.1. It carries only the slot-exhaustion message and the 33-pack tests. Any
+later change to a published crate's source on main needs its own version bump
+in the same commit.
