@@ -2,7 +2,7 @@ lints.workspace = true
 
 [package]
 name = "brit-build-ref"
-version = "0.1.7"
+version = "0.1.8"
 description = "Manage build, deploy, and validation attestation refs in a brit repo"
 repository = "https://github.com/ethosengine/brit"
 authors = ["Matthew Dowell <matthew@ethosengine.com>"]

@@ -96,6 +96,7 @@ limitations retained. Shared requirements are listed once; the habit stays RED.
 
 ## `free` metadata and transport helpers
 
+- [ ] Intermittent HTTPS `free pack receive` teardown abort: CI 43804826832 failed protocol 1 with `double free or corruption (out)` and 43807568719 attempt 1 failed protocol 2 with `corrupted double-linked list`; attempt 2's complete `test-journey` job passed on 2026-11-16 without source changes, on the same runner image as green 43783334614. Retain the test and rerun this job if it recurs on sprint-2 branches; cause remains unproven.
 - [ ] Remaining metadata coverage stays open.
 - [ ] Remaining transport helper coverage stays open.
 

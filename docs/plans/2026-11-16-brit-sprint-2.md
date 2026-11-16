@@ -57,7 +57,7 @@ Sizes: S is one function with a test; M is a new mode built on code that
 exists. Items 1 and 2 were not sized from source, so each begins with a
 reproduction and is capped by the stop rule like the rest.
 
-- [ ] **1. Build notes written at epoch 2 decode.** Reported 2026-11-14 from
+- [x] **1. Build notes written at epoch 2 decode.** Reported 2026-11-14 from
   the Elohim gate: notes shaped `{body, epoch: 2, key}` under
   `refs/notes/brit/build/*` could not be decoded by the pinned
   `brit-build-ref` crate (the Elohim repository pins Brit by submodule), and
@@ -73,6 +73,16 @@ reproduction and is capped by the stop rule like the rest.
   `unverifiable` or held line, and the same real note reads cleanly. If 0.2.1
   already reads it, the fixture test alone finishes the item; do not go
   looking for other epochs.
+  **Measured 2026-11-16:** the reader built from main `0fdbfd4b` (Brit 0.2.1)
+  reads Elohim's `gate:orchestrator` note on
+  `293da567277d5b8153c0f5eea3bcad1148dc25b9` through both `build get` and
+  `build find`, exit 0 and empty stderr. The exact note blob
+  `1bdf5cbe7498f185b9cfad86b79646271dbd30ff` is retained in
+  `brit-build-ref/tests/fixtures/epoch2-orchestrator-note.json` and exercised by
+  `real_epoch_two_gate_note_reads_without_diagnostics`. No decoder change was
+  needed. The full crate's 32 tests, strict all-target Clippy, both prescribed
+  formatting checks and the declared Rust-style checker pass; `brit-build-ref`
+  is bumped to 0.1.8 for its changed package contents.
 - [ ] **2. `brit push` to a branch completes after a passing hook.** Elohim
   still lands on `dev` with Git. Observed with Brit 0.1.12: the hook passed
   and the push then ended without sending. First step: reproduce with 0.2.1 against

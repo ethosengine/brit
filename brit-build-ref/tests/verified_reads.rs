@@ -183,6 +183,43 @@ fn signed_build(key: &AgentKey, step: &str, inputs: &str, success: bool) -> Buil
 
 // ─── build find ──────────────────────────────────────────────────────────────
 
+/// Captured verbatim from Elohim's `refs/notes/brit/build/gate%3Aorchestrator`,
+/// on commit 293da567277d5b8153c0f5eea3bcad1148dc25b9; note blob
+/// 1bdf5cbe7498f185b9cfad86b79646271dbd30ff. No signing key is needed to read it.
+#[test]
+fn real_epoch_two_gate_note_reads_without_diagnostics() {
+    let bytes = include_bytes!("fixtures/epoch2-orchestrator-note.json");
+    let stored: Value = serde_json::from_slice(bytes).expect("captured note is JSON");
+    assert_eq!(stored["epoch"], 2, "exercise the reported envelope epoch");
+    let step = stored["body"]["stepName"].as_str().expect("note names its step");
+    let inputs = stored["body"]["inputsHash"].as_str().expect("note names its inputs");
+    let tmp = repo();
+    let commit_id = git(tmp.path(), &["rev-parse", "HEAD"]);
+    write_note_bytes(
+        tmp.path(),
+        "refs/notes/brit/build/gate%3Aorchestrator",
+        &commit_id,
+        bytes,
+    );
+
+    let mut expected = stored["body"].clone();
+    for field in ["epoch", "scheme", "key", "sig"] {
+        expected[field] = stored[field].clone();
+    }
+    let out = brit(tmp.path(), &["build", "get", "--step", step, "--commit", &commit_id]);
+    assert!(out.status.success(), "get succeeds: {}", stderr(&out));
+    assert!(out.stderr.is_empty(), "no unverifiable or held line: {}", stderr(&out));
+    let actual: Value = serde_json::from_slice(&out.stdout).expect("get prints a verified note");
+    assert_eq!(actual, expected, "the real note's signed fields survive verification");
+
+    let (rows, err) = find(tmp.path(), step, inputs);
+    assert!(err.is_empty(), "find emits no unverifiable or held line: {err}");
+    assert_eq!(
+        rows,
+        [serde_json::json!({"commit": commit_id, "attestation": expected})]
+    );
+}
+
 #[test]
 fn find_drops_a_note_whose_success_was_flipped() {
     let tmp = repo();

@@ -453,7 +453,7 @@ dependencies = [
 
 [[package]]
 name = "brit-build-ref"
-version = "0.1.7"
+version = "0.1.8"
 dependencies = [
  "anyhow",
  "brit-epr",
