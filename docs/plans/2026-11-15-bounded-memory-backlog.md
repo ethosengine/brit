@@ -132,10 +132,22 @@ requirements below, as they do for the other affected command families.
 - [ ] `epr bin follow --tool brit` builds Brit from source although the published `brit-build-<sha>` release exists for the same commit.
 - [ ] `json` `revision previous-branches` under an allocation limit is the step most sensitive to scratch-filesystem throughput: over a 200,000-entry reflog it exceeded 600 s on single-threaded fuse2fs and finished in 64-84 s natively (second-device observation, not a defect claim).
 
+## Found dogfooding 0.2.0 across two devices (2026-11-15 and 16)
+
+- [ ] The feedback store is per checkout root, so every fresh worktree prints `feedback capture gap` and drops its usage records until that root's store is migrated. Usage feedback is the prioritisation input, and worktrees are where most agent work happens.
+- [ ] A hook refusal on push prints a `Stack backtrace` of `<unknown>` frames after the refusal text.
+- [ ] `brit pull` refuses with "shallow repositories require Git" and moves nothing; both devices fast-forwarded with `git pull --ff-only` or `git merge --ff-only`.
+- [ ] `brit rebase` refuses on the same shallow repository.
+- [ ] A stale `.git/worktrees/<name>/AUTO_MERGE` file makes `brit commit` refuse; it had to be cleared with Git.
+- [ ] No path restore, no stash or object-only snapshot, and no three-way file merge: bringing a dirty checkout onto `dev` needed `git checkout HEAD -- <paths>`, `git stash create` and `git merge-file`.
+- [ ] No remote-ref listing; reading a remote branch head needed `git ls-remote`.
+- [ ] No submodule init or update (`brit submodule` only lists); a fresh worktree needed `git submodule update --init` before its push hook would pass.
+- [ ] `brit log -- <path>` answers that file-based lookup is not implemented.
+
 ## Usage feedback across commands
 
 - [ ] Feedback capture on the shem device was failing because the launching terminal exported a stale `EPR_BIN` pointing at elohim-epr-cli 0.3.2, which has no `feedback` verb; the device's installed `epr` 0.3.3 has it, and with the override removed the gap line stops. Corrects the earlier entry that blamed the installed `epr`. Remaining: a device check that reports a session `EPR_BIN` older than the installed head.
 - [ ] Say why the recorder refused: `Feedback::record` discards the recorder's stderr, so a missing `epr feedback` verb reads the same as any other refusal.
 - [ ] `brit diff` in a worktree of this repository refuses with "diff attributes and text conversion are not supported; use git diff" (observed with installed 0.1.13 on 2026-11-15, reviewing this document's own change).
 
-73 items
+82 items
