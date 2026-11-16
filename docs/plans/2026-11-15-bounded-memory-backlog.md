@@ -5,6 +5,9 @@ serves: brit-native-daily-driver
 ---
 # Bounded-memory backlog
 
+> The work in flight is [Brit sprint 2](2026-11-16-brit-sprint-2.md): seven items drawn from this pool.
+> Add new findings here as one line each; do not work from this list directly.
+
 These items are not release gates; order is set by usage feedback, not by this
 list. The [0.2.0 scope ruling](2026-09-28-daily-driver.md#2026-11-15--020-release-scope-ruling)
 supersedes the complete-matrix release requirement. Open work below comes from
