@@ -1,5 +1,10 @@
 //! Public pre-push contract: resolved updates, stock-Git input and rejection safety.
-use std::{fs, io::Write, path::Path};
+use std::{
+    fs,
+    io::Write,
+    path::Path,
+    time::{Duration, Instant},
+};
 
 use anyhow::{ensure, Result};
 use cli_journey::support::{
@@ -49,6 +54,31 @@ fn remote(repo: &Path) -> Result<tempfile::TempDir> {
         &["remote", "add", "origin", remote.path().to_str().expect("temp path")],
     )?;
     Ok(remote)
+}
+
+#[test]
+fn delayed_passing_hook_delivers_branch_creation_and_update() -> Result<()> {
+    let repo = TestRepo::new("pre-push-delayed-hook")?;
+    let remote = remote(repo.path())?;
+    hook(repo.path(), "cat >hook-input; sleep 2; printf passed >hook-passed")?;
+    for payload in ["first payload", "updated payload"] {
+        let commit_id = repo.commit_file("payload", payload)?;
+        let started = Instant::now();
+        let output = brit(repo.path(), &["push", "origin", "main:main"])?;
+        ensure!(output.status.success(), "delayed hook push: {}", output.stderr);
+        ensure!(started.elapsed() >= Duration::from_secs(2), "push waited for the hook");
+        assert_eq!(fs::read(repo.path().join("hook-passed"))?, b"passed");
+        ensure!(
+            fs::read_to_string(repo.path().join("hook-input"))?.contains(&commit_id),
+            "the delayed hook saw this commit's update"
+        );
+        assert_eq!(git(remote.path(), &["rev-parse", "refs/heads/main"])?, commit_id);
+        assert_eq!(git(remote.path(), &["show", "main:payload"])?, payload);
+        assert_eq!(repo.head_id()?, commit_id, "push leaves the local branch unchanged");
+        fs::remove_file(repo.path().join("hook-passed"))?;
+    }
+    git(remote.path(), &["fsck", "--full"])?;
+    Ok(())
 }
 
 #[test]

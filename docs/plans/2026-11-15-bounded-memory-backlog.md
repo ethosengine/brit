@@ -8,6 +8,8 @@ serves: brit-native-daily-driver
 > The work in flight is [Brit sprint 2](2026-11-16-brit-sprint-2.md): seven items drawn from this pool.
 > Add new findings here as one line each; do not work from this list directly.
 
+- [ ] Hosted macOS runner capacity cancelled `test-fast (macos-latest)` before any step in CI 43875263842 (job 133326539872) and main CI 43973702902 (job 133672152524); both retries passed unchanged. GitHub refused a job retry while the other jobs were still running. Preserve the required check and retry runner acquisition.
+
 These items are not release gates; order is set by usage feedback, not by this
 list. The [0.2.0 scope ruling](2026-09-28-daily-driver.md#2026-11-15--020-release-scope-ruling)
 supersedes the complete-matrix release requirement. Open work below comes from
@@ -150,6 +152,8 @@ requirements below, as they do for the other affected command families.
 
 ## Usage feedback across commands
 
+- [ ] Sharing a Cargo target/profile between worktrees reused a `cli-journey` harness from another item: item 2 executed item 5's merge test, absent from its own source. Isolate test artifact profiles per checkout; frozen CLI executables alone do not isolate the harness.
+- [ ] Journey build tests still infer the surrounding Elohim checkout from the source path; sprint 2's full run hit an archived manifest with a missing `profile`. The blocking discovery test now uses a disposable manifest; the other checkout-dependent probes remain to isolate.
 - [ ] Feedback capture on the shem device was failing because the launching terminal exported a stale `EPR_BIN` pointing at elohim-epr-cli 0.3.2, which has no `feedback` verb; the device's installed `epr` 0.3.3 has it, and with the override removed the gap line stops. Corrects the earlier entry that blamed the installed `epr`. Remaining: a device check that reports a session `EPR_BIN` older than the installed head.
 - [ ] Say why the recorder refused: `Feedback::record` discards the recorder's stderr, so a missing `epr feedback` verb reads the same as any other refusal.
 - [ ] `brit diff` in a worktree of this repository refuses with "diff attributes and text conversion are not supported; use git diff" (observed with installed 0.1.13 on 2026-11-15, reviewing this document's own change).

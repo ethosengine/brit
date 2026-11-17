@@ -83,13 +83,30 @@ reproduction and is capped by the stop rule like the rest.
   needed. The full crate's 32 tests, strict all-target Clippy, both prescribed
   formatting checks and the declared Rust-style checker pass; `brit-build-ref`
   is bumped to 0.1.8 for its changed package contents.
-- [ ] **2. `brit push` to a branch completes after a passing hook.** Elohim
+- [x] **2. `brit push` to a branch completes after a passing hook.** Elohim
   still lands on `dev` with Git. Observed with Brit 0.1.12: the hook passed
   and the push then ended without sending. First step: reproduce with 0.2.1 against
   a scratch branch whose hook takes several minutes; the cause is not known.
   *Done when:* either the reproduction completes on 0.2.1 and a journey test
   pins a push whose hook passes after a delay, or the failure is fixed with
   that test; and one real branch push with a slow hook completes.
+  **Measured 2026-11-16:** unchanged Brit 0.2.1 from `0fdbfd4b` pushed
+  `dd21cd08` to GitHub branch `qual/sprint2-slow-hook-20261116`, exit 0,
+  after the protected hook passed readiness and Rust style and then waited
+  180 seconds (184 seconds total hook time). The destination was absent
+  during the hook and held the exact commit afterwards. This real probe
+  created a branch pointing to already advertised objects;
+  `delayed_passing_hook_delivers_branch_creation_and_update` separately
+  proves new object delivery for branch creation and fast-forward updates,
+  with a delayed passing hook, unchanged local HEAD and remote `fsck`.
+  That test passes on the unchanged 0.2.1 binary; no push-engine repair was
+  needed. Private receipts are in the existing `sprint2/item2` evidence directory.
+  **Verified 2026-11-17:** the full journey suite passes 409 tests (71 existing
+  opt-in tests remain ignored), followed by strict all-target Clippy. This run
+  uses an isolated Cargo profile and checksum-verified 0.2.1 tools from green
+  main CI 43973702902. The discovery fixture now owns a tracked disposable
+  manifest instead of depending on this checkout's ancestors. Formatting,
+  readiness contracts and the declared Rust-style checker pass.
 - [ ] **3. The feedback recorder says why it refused.** (S) Every command in
   a fresh worktree prints `brit: feedback capture gap; command result
   unchanged`, and a refusal reads the same as a timeout, because the

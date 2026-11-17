@@ -55,10 +55,12 @@ fn elohim_repo_root() -> Option<PathBuf> {
 
 #[test]
 fn graph_discover_emits_manifests_array() {
-    let Some(repo_root) = elohim_repo_root() else {
-        eprintln!("skip: not in elohim repo");
-        return;
-    };
+    let repo = TestRepo::new("graph-discover").expect("disposable manifest repository");
+    repo.commit_file(
+        "build-manifest.json",
+        r#"{"manifestVersion":"1.0","pipeline":"fixture","description":"fixture graph","steps":{},"gate":{},"deployment":{}}"#,
+    )
+    .expect("commit disposable manifest");
     let Some(bin) = brit_bin() else {
         eprintln!("skipping: rakia binary not built (run `cargo build -p brit-cli --release`)");
         return;
@@ -66,12 +68,14 @@ fn graph_discover_emits_manifests_array() {
     let cap = BritInvocation::new(bin)
         .arg("build")
         .args(["graph", "discover", "--repo"])
-        .arg(&repo_root)
+        .arg(repo.path())
         .normalize(true)
         .run()
         .expect("invoke");
     assert!(cap.status.success(), "exit: {:?} stderr: {}", cap.status, cap.stderr);
-    assert!(cap.stdout.contains("manifests"), "stdout: {}", cap.stdout);
+    let graph: serde_json::Value = serde_json::from_str(&cap.stdout).expect("manifest graph JSON");
+    assert_eq!(graph["manifests"][0]["pipeline"], "fixture");
+    assert_eq!(graph["manifests"][0]["path"], "build-manifest.json");
     staging_dump_path(&["brit", "build", "graph", "discover"], &cap.stdout);
 }
 
