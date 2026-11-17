@@ -314,9 +314,27 @@ fn run(capture: &mut feedback::Capture) -> Result<()> {
 
 fn diagnostic(error: &error::CliError) -> String {
     match error {
-        // Match the old `fn main() -> anyhow::Result<()>` termination output,
-        // including anyhow's multi-cause Debug formatting.
-        error::CliError::Git(cause) => format!("Error: {cause:?}"),
+        error::CliError::Git(cause) => {
+            use std::fmt::Write;
+
+            let mut output = format!("Error: {cause}");
+            let chain = cause.chain().skip(1);
+            let multiple = chain.len() > 1;
+            for (index, cause) in chain.enumerate() {
+                if index == 0 {
+                    output.push_str("\n\nCaused by:");
+                }
+                let indent = if multiple { "       " } else { "    " };
+                output.push('\n');
+                if multiple {
+                    write!(output, "{index:>5}: ").expect("writing to a String cannot fail");
+                } else {
+                    output.push_str(indent);
+                }
+                output.push_str(&cause.to_string().replace('\n', &format!("\n{indent}")));
+            }
+            output
+        }
         _ => format!("error: {error}"),
     }
 }
@@ -489,6 +507,30 @@ mod tests {
             diagnostic, "Error: operation failed\n\nCaused by:\n    root cause",
             "Git errors must keep the old anyhow::Result main output, including causes"
         );
+    }
+
+    #[test]
+    fn git_error_causes_keep_numbering_and_multiline_indentation() {
+        let cause = anyhow::anyhow!("root\nsecond line")
+            .context("middle")
+            .context("operation failed");
+        assert_eq!(
+            diagnostic(&error::CliError::Git(cause)),
+            "Error: operation failed\n\nCaused by:\n    0: middle\n    1: root\n       second line"
+        );
+    }
+
+    #[test]
+    fn git_error_diagnostics_ignore_backtrace_environment() {
+        for value in ["0", "1", "full"] {
+            let output = std::process::Command::new(std::env::current_exe().expect("test executable"))
+                .args(["--exact", "tests::git_errors_preserve_anyhow_main_diagnostics"])
+                .env("RUST_BACKTRACE", value)
+                .env("RUST_LIB_BACKTRACE", value)
+                .output()
+                .expect("isolated diagnostic test");
+            assert!(output.status.success(), "RUST_BACKTRACE={value}: {output:?}");
+        }
     }
 
     #[test]

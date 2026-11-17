@@ -127,7 +127,7 @@ reproduction and is capped by the stop rule like the rest.
   run reproduced the existing diagnostic-test failure addressed by item 4.
   `brit-cli` is 0.2.2. The local EPR refusal was an inherited `EPR_BIN`
   selecting 0.3.2, which lacks `feedback`; the current 0.3.3 supports it.
-- [ ] **4. A refusal prints no backtrace.** (S) A hook refusal on push is
+- [x] **4. A refusal prints no backtrace.** (S) A hook refusal on push is
   followed by `Stack backtrace:` and a column of `<unknown>` frames, because
   errors are printed with the debug format (`brit-cli/src/main.rs:319`).
   *Done when:* the cause chain prints without a backtrace whatever
@@ -135,6 +135,13 @@ reproduction and is capped by the stop rule like the rest.
   `git_errors_preserve_anyhow_main_diagnostics` (`main.rs:481`) pins the
   `Caused by:` lines; keep those lines, and if the test has to change, change
   only what it says about the backtrace.
+  **Measured 2026-11-17:** explicit cause-chain formatting preserves the
+  existing `Caused by:` assertion, numbered causes and multiline indentation
+  without formatting the captured backtrace. An isolated regression runs
+  that unchanged assertion with both backtrace variables set to `0`, `1`
+  and `full`. All 46 CLI tests pass with backtrace capture enabled; strict
+  all-target Clippy, formatting and declared Rust style pass. `brit-cli`
+  is 0.2.3 for this separate source change.
 - [ ] **5. A leftover `AUTO_MERGE` file does not block a commit.** (S)
   `brit commit` refuses with "merge metadata exists without MERGE_HEAD" when
   only `AUTO_MERGE` remains in a worktree's git directory
