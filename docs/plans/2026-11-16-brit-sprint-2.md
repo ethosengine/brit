@@ -218,3 +218,11 @@ Brit and needs the steward to grant one command; ask once, at the end, with
 the exact command. Then write three lines here: what shipped, what was
 skipped and why, and the three things that hurt most while doing it. Those
 three are the start of the next list. Do not start on them.
+
+CI interpretation for this sprint: `.github/workflows/ci.yml` declares
+`Tests pass` as its aggregate merge gate and checks that declaration in
+`check-blocking`. Its existing advisory job is explicitly non-blocking.
+Run 44116534675 reports the newly observed chrono maintenance and libz-sys
+security advisories recorded in the backlog; no advisory exception or workflow
+change is part of these seven fixes. Required jobs must still pass on each
+exact landing commit, and the advisory findings remain visible at release.

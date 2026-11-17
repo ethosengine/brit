@@ -152,6 +152,7 @@ requirements below, as they do for the other affected command families.
 
 ## Usage feedback across commands
 
+- [ ] Sprint 2 CI 44116534675 reports RUSTSEC-2026-0543 (chrono unmaintained; used directly and by EPR/Rakia/ts-rs) and RUSTSEC-2026-0544 (libz-sys 1.1.31 through curl; patched in >=1.1.33); remediate dependencies in their owners. The existing advisory job is explicitly non-blocking; no exception or gate change was added.
 - [ ] Sharing a Cargo target/profile between worktrees reused a `cli-journey` harness from another item: item 2 executed item 5's merge test, absent from its own source. Isolate test artifact profiles per checkout; frozen CLI executables alone do not isolate the harness.
 - [ ] Journey build tests still infer the surrounding Elohim checkout from the source path; sprint 2's full run hit an archived manifest with a missing `profile`. The blocking discovery test now uses a disposable manifest; the other checkout-dependent probes remain to isolate.
 - [ ] Feedback capture on the shem device was failing because the launching terminal exported a stale `EPR_BIN` pointing at elohim-epr-cli 0.3.2, which has no `feedback` verb; the device's installed `epr` 0.3.3 has it, and with the override removed the gap line stops. Corrects the earlier entry that blamed the installed `epr`. Remaining: a device check that reports a session `EPR_BIN` older than the installed head.
