@@ -1,6 +1,6 @@
 ---
 title: Brit sprint 2 — seven fixes from daily use
-status: active
+status: complete
 serves: brit-native-daily-driver
 ---
 # Brit sprint 2: seven fixes from daily use
@@ -226,3 +226,7 @@ Run 44116534675 reports the newly observed chrono maintenance and libz-sys
 security advisories recorded in the backlog; no advisory exception or workflow
 change is part of these seven fixes. Required jobs must still pass on each
 exact landing commit, and the advisory findings remain visible at release.
+
+**Delivered:** 7 of 7 on main at `1db7a955197b10bc7672c9aa544768a329bb9008`; all required final-source jobs and `Tests pass` succeeded in [CI 44117920990](https://github.com/ethosengine/brit/actions/runs/44117920990), the protected push passed, and the steward authorized `brit-v0.2.6`; binary publication is measured separately by [release 44145119161](https://github.com/ethosengine/brit/actions/runs/44145119161).
+**Skipped:** none; no reserve item was taken, and the existing nonblocking dependency advisories remain in the backlog without exceptions or gate changes.
+**Three pains:** hosted runner capacity cancelled jobs before execution; a stale inherited `EPR_BIN` selected a recorder without `feedback`; a shared Cargo profile reused another worktree's journey harness, requiring isolated profiles and frozen matching tools. These are backlog findings, not new work in this sprint.
