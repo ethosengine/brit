@@ -1,6 +1,7 @@
 //! Optional local EPR capture through the installed executable, like the context adapter.
 //! No sibling path dependency, raw argv, diagnostics, environment or network transmission.
 use std::{
+    io::{BufRead, BufReader, Read},
     path::PathBuf,
     process::{Command, Stdio},
     time::{Duration, Instant, SystemTime, UNIX_EPOCH},
@@ -61,8 +62,8 @@ impl Capture {
         });
         let Some(root) = root else { return };
         let result = self.record(root, code);
-        if result.is_err() {
-            eprintln!("brit: feedback capture gap; command result unchanged");
+        if let Err(error) = result {
+            eprintln!("brit: feedback capture gap: {error}; command result unchanged");
         }
     }
 
@@ -98,15 +99,52 @@ impl Capture {
             .arg(root)
             .stdin(Stdio::null())
             .stdout(Stdio::null())
-            .stderr(Stdio::null())
+            .stderr(Stdio::piped())
             .spawn()?;
         let deadline = Instant::now() + Duration::from_secs(2);
+        let mut stderr = child
+            .stderr
+            .take()
+            .ok_or_else(|| std::io::Error::other("recorder stderr unavailable"))?;
+        let (send, receive) = std::sync::mpsc::sync_channel(1);
+        // Drain concurrently so a verbose refusal cannot fill the pipe and become a
+        // false timeout. Bound the diagnostic, and never join a reader whose pipe
+        // may still be held by a descendant after the recorder exits.
+        if let Err(error) = std::thread::Builder::new()
+            .name("feedback-stderr".into())
+            .spawn(move || {
+                let mut line = Vec::new();
+                let diagnostic = BufReader::new(stderr.by_ref().take(4097))
+                    .read_until(b'\n', &mut line)
+                    .map(|_| {
+                        let truncated = line.len() > 4096;
+                        line.truncate(4096);
+                        let mut line = String::from_utf8_lossy(&line).trim_end_matches(['\r', '\n']).to_owned();
+                        if truncated {
+                            line.push_str(" [truncated]");
+                        }
+                        line
+                    });
+                let _ = send.send(diagnostic);
+                let _ = std::io::copy(&mut stderr, &mut std::io::sink());
+            })
+        {
+            let _ = child.kill();
+            let _ = child.wait();
+            return Err(error);
+        }
         loop {
             if let Some(status) = child.try_wait()? {
                 return if status.success() {
                     Ok(())
                 } else {
-                    Err(std::io::Error::other("recorder refused"))
+                    let diagnostic = receive
+                        .recv_timeout(deadline.saturating_duration_since(Instant::now()))
+                        .ok()
+                        .and_then(Result::ok)
+                        .filter(|line| !line.is_empty())
+                        .unwrap_or_else(|| format!("recorder refused ({status})"));
+                    Err(std::io::Error::other(diagnostic))
                 };
             }
             if Instant::now() >= deadline {

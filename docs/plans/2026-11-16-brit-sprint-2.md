@@ -107,7 +107,7 @@ reproduction and is capped by the stop rule like the rest.
   main CI 43973702902. The discovery fixture now owns a tracked disposable
   manifest instead of depending on this checkout's ancestors. Formatting,
   readiness contracts and the declared Rust-style checker pass.
-- [ ] **3. The feedback recorder says why it refused.** (S) Every command in
+- [x] **3. The feedback recorder says why it refused.** (S) Every command in
   a fresh worktree prints `brit: feedback capture gap; command result
   unchanged`, and a refusal reads the same as a timeout, because the
   recorder's stderr is discarded (`brit-cli/src/feedback.rs:101`). Usage
@@ -117,6 +117,16 @@ reproduction and is capped by the stop rule like the rest.
   `brit-cli/tests/feedback.rs:100`. If the cause of the worktree refusal turns
   out to be in `epr` and not in Brit, write that in one line here; do not fix
   `epr` from this repository.
+  **Measured 2026-11-17:** the gap reports the recorder's first stderr line
+  (at most 4096 bytes, with a truncation marker), exit status when silent,
+  or `timeout`. Concurrent draining prevents a verbose refusal from filling
+  the pipe; a descendant holding it open cannot extend the two-second wait.
+  The command's stdout and exit code remain unchanged. The feedback tests,
+  full CLI suite, strict all-target Clippy, formatting and declared style pass.
+  Full-suite validation used `RUST_BACKTRACE=0 RUST_LIB_BACKTRACE=0`; its first
+  run reproduced the existing diagnostic-test failure addressed by item 4.
+  `brit-cli` is 0.2.2. The local EPR refusal was an inherited `EPR_BIN`
+  selecting 0.3.2, which lacks `feedback`; the current 0.3.3 supports it.
 - [ ] **4. A refusal prints no backtrace.** (S) A hook refusal on push is
   followed by `Stack backtrace:` and a column of `<unknown>` frames, because
   errors are printed with the debug format (`brit-cli/src/main.rs:319`).

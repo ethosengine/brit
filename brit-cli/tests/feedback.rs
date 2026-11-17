@@ -84,7 +84,7 @@ fn capture_is_structured_correlated_and_subordinate_to_the_command() {
     let recorder = bin.join("epr");
     std::fs::write(
         &recorder,
-        "#!/bin/sh\nprintf '%s\\n' \"$@\" > \"$FEEDBACK_TEST_ARGS\"\nexit 47\n",
+        "#!/bin/sh\nprintf '%s\\n' \"$@\" > \"$FEEDBACK_TEST_ARGS\"\nprintf '%s\\n' 'epr: feedback policy refused' >&2\ni=0\nwhile [ \"$i\" -lt 10000 ]; do\n  printf '%s\\n' 'secondary recorder detail' >&2\n  i=$((i+1))\ndone\nexit 47\n",
     )
     .expect("recorder");
     std::fs::set_permissions(&recorder, std::fs::Permissions::from_mode(0o700)).expect("executable");
@@ -119,7 +119,15 @@ fn capture_is_structured_correlated_and_subordinate_to_the_command() {
         assert!(captured.contains("same-invocation"));
         assert!(!captured.contains("SECRET_ARGUMENT"));
         assert!(!captured.contains("unknown-secret-option"));
-        assert!(String::from_utf8_lossy(&out.stderr).contains("feedback capture gap"));
+        let stderr = String::from_utf8_lossy(&out.stderr);
+        assert!(
+            stderr.contains("feedback capture gap: epr: feedback policy refused; command result unchanged"),
+            "the recorder's first diagnostic is visible: {stderr}"
+        );
+        assert!(
+            !stderr.contains("secondary recorder detail"),
+            "only the first line is reported"
+        );
     }
 }
 
@@ -152,6 +160,12 @@ fn absent_or_stalled_recorder_cannot_change_command_results() {
                 .expect("brit");
             assert_eq!(out.status.code(), Some(code));
             assert!(String::from_utf8_lossy(&out.stderr).contains("feedback capture gap"));
+            if stalled {
+                assert!(
+                    String::from_utf8_lossy(&out.stderr).contains("timeout"),
+                    "a timeout is distinguished from a recorder refusal"
+                );
+            }
             assert!(start.elapsed() < Duration::from_secs(8), "bounded recorder wait");
         }
     }
