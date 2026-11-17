@@ -208,6 +208,44 @@ fn hooks_edit_message_stage_content_and_post_commit_observes_clean_state() -> Re
 }
 
 #[test]
+fn lone_auto_merge_allows_an_ordinary_commit_but_other_merge_files_still_guard_it() -> Result<()> {
+    for linked in [false, true] {
+        for name in ["AUTO_MERGE", "MERGE_MSG", "MERGE_MODE", "MERGE_HEAD"] {
+            let repo = TestRepo::new("lone-merge-metadata")?;
+            repo.commit_file("selected", "base\n")?;
+            let root = if linked {
+                git(repo.path(), &["worktree", "add", "-b", "linked", "linked"])?;
+                repo.path().join("linked")
+            } else {
+                repo.path().to_path_buf()
+            };
+            fs::write(root.join("selected"), "next\n")?;
+            git(&root, &["add", "selected"])?;
+            let head = git(&root, &["rev-parse", "HEAD"])?;
+            let metadata = git_path(&root, name)?;
+            let bytes = if name == "AUTO_MERGE" {
+                git(&root, &["rev-parse", "HEAD^{tree}"])?
+            } else {
+                b"interrupted metadata\n".to_vec()
+            };
+            fs::write(&metadata, &bytes)?;
+            let before = snapshot(&root)?;
+            let output = run(&root, true, &["commit", "-m", "ordinary commit"])?;
+            if name == "AUTO_MERGE" {
+                ensure!(output.status.success(), "linked={linked}: {output:?}");
+                assert_eq!(git(&root, &["show", "HEAD:selected"])?, b"next\n");
+                assert_eq!(git(&root, &["show", "-s", "--format=%P", "HEAD"])?, head);
+                assert!(!git_path(&root, "MERGE_HEAD")?.exists());
+            } else {
+                ensure!(!output.status.success(), "{name} must still guard commit");
+                unchanged(&before)?;
+            }
+        }
+    }
+    Ok(())
+}
+
+#[test]
 fn malformed_missing_noncommit_multiple_and_incorporated_heads_preserve_state() -> Result<()> {
     for kind in [
         "malformed",

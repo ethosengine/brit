@@ -142,13 +142,21 @@ reproduction and is capped by the stop rule like the rest.
   and `full`. All 46 CLI tests pass with backtrace capture enabled; strict
   all-target Clippy, formatting and declared Rust style pass. `brit-cli`
   is 0.2.3 for this separate source change.
-- [ ] **5. A leftover `AUTO_MERGE` file does not block a commit.** (S)
+- [x] **5. A leftover `AUTO_MERGE` file does not block a commit.** (S)
   `brit commit` refuses with "merge metadata exists without MERGE_HEAD" when
   only `AUTO_MERGE` remains in a worktree's git directory
   (`gitoxide-core/src/repository/authoring/merge.rs:64`). *Done when:* a lone
   `AUTO_MERGE` is not treated as merge state, with a case beside
   `tests/cli-journey/tests/commit_merge.rs:95`; the other three files keep
   refusing.
+  **Measured 2026-11-17:** a lone `AUTO_MERGE` permits an ordinary
+  single-parent commit in both normal and linked worktrees. Lone `MERGE_MSG`,
+  `MERGE_MODE` and invalid `MERGE_HEAD` still refuse without changing the
+  saved repository state. The regression first failed on the preceding CLI;
+  all eight merge-commit journeys, the full journey and affected-crate suites,
+  strict all-target Clippy, formatting, readiness contracts and declared Rust
+  style now pass. The published dependency closure is `gitoxide-core` 0.63.9,
+  `gitoxide` 0.60.9 and `brit-cli` 0.2.4.
 - [ ] **6. One command restores a path in both the index and the working
   tree.** (S) `brit restore --staged` and `--worktree` conflict, so putting a
   file back to `HEAD` takes two calls

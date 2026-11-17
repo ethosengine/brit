@@ -67,7 +67,13 @@ impl ResolvedMerge {
             .iter()
             .map(|name| read(&repo.git_dir().join(name)))
             .collect::<Result<_>>()?;
-        if files.iter().all(Option::is_none) {
+        // AUTO_MERGE can remain after another tool finishes a merge. Alone it
+        // describes no pending merge; the admission guards still own the other files.
+        if FILES
+            .iter()
+            .zip(&files)
+            .all(|(name, file)| *name == "AUTO_MERGE" || file.is_none())
+        {
             return Ok(None);
         }
         no_pending_work(repo)?;
