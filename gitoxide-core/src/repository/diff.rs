@@ -376,15 +376,11 @@ fn working_output(
             .map(|&(mode, blob_id)| load_patch_blob(&repo, mode, blob_id, &budget))
             .transpose()?;
         attrs.at_entry(&path, None)?.matching_attributes(&mut matches);
-        if matches.iter().any(|m| m.assignment.name.as_str() == "diff") {
-            bail!(unsupported(
-                "diff attributes and text conversion are not supported; use git diff"
-            ));
-        }
+        let binary = binary_attribute(&matches, &path)?;
         if stat {
-            collect_stat(&repo, &mut stats, &path, old.as_ref(), new.as_ref())?;
+            collect_stat(&repo, &mut stats, &path, old.as_ref(), new.as_ref(), binary)?;
         } else {
-            render_patch(&repo, &mut rendered, &path, old.as_ref(), new.as_ref())?;
+            render_patch(&repo, &mut rendered, &path, old.as_ref(), new.as_ref(), binary)?;
         }
     }
     if stat {
@@ -472,12 +468,27 @@ fn worktree_patch_blob(
     }))
 }
 
+fn binary_attribute(matches: &gix::attrs::search::Outcome, path: &BString) -> Result<bool> {
+    match matches
+        .iter()
+        .find(|m| m.assignment.name.as_str() == "diff")
+        .map(|m| m.assignment.state)
+    {
+        None | Some(gix::attrs::StateRef::Unspecified) => Ok(false),
+        Some(gix::attrs::StateRef::Unset) => Ok(true),
+        _ => bail!(unsupported(format!(
+            "diff attributes and text conversion are not supported for '{path}'; use git diff"
+        ))),
+    }
+}
+
 fn render_patch(
     repo: &gix::Repository,
     out: &mut dyn std::io::Write,
     path: &BString,
     old: Option<&PatchBlob>,
     new: Option<&PatchBlob>,
+    binary: bool,
 ) -> Result<()> {
     if old
         .zip(new)
@@ -489,8 +500,8 @@ fn render_patch(
         .zip(new)
         .is_some_and(|(old, new)| old.mode & 0o170000 != new.mode & 0o170000)
     {
-        render_patch(repo, out, path, old, None)?;
-        return render_patch(repo, out, path, None, new);
+        render_patch(repo, out, path, old, None, binary)?;
+        return render_patch(repo, out, path, None, new, binary);
     }
     let quote_high = repo.config_snapshot().try_boolean("core.quotePath")?.unwrap_or(true);
     let mut a_path = BString::from("a/");
@@ -555,7 +566,7 @@ fn render_patch(
     };
     let old_data = old.map_or(&[][..], |b| b.data.as_slice());
     let new_data = new.map_or(&[][..], |b| b.data.as_slice());
-    if is_binary(old_data, new_data) {
+    if binary || is_binary(old_data, new_data) {
         out.write_all(b"Binary files ").or_error()?;
         out.write_all(a_label).or_error()?;
         out.write_all(b" and ").or_error()?;
@@ -714,7 +725,7 @@ pub fn pinned_commit(repo: &gix::Repository, out: &mut dyn std::io::Write, commi
             .get(&path)
             .map(|&(mode, id)| load_patch_blob(repo, mode, id, &budget))
             .transpose()?;
-        render_patch(repo, &mut rendered, &path, old.as_ref(), new.as_ref())?;
+        render_patch(repo, &mut rendered, &path, old.as_ref(), new.as_ref(), false)?;
     }
     write_diff_output(out, &mut rendered)
 }
@@ -783,14 +794,11 @@ pub fn tree_stat(
         {
             bail!(unsupported("submodule patches are not supported; use git diff"));
         }
+        let mut binary = false;
         for attrs in [&mut old_attrs, &mut new_attrs] {
             let mut matches = attrs.attribute_matches();
             attrs.at_entry(path, None)?.matching_attributes(&mut matches);
-            if matches.iter().any(|m| m.assignment.name.as_str() == "diff") {
-                bail!(unsupported(
-                    "diff attributes and text conversion are not supported; use git diff"
-                ));
-            }
+            binary |= binary_attribute(&matches, path)?;
         }
         let old = before
             .get(path)
@@ -800,7 +808,7 @@ pub fn tree_stat(
             .get(path)
             .map(|&(mode, id)| load_patch_blob(&repo, mode, id, &budget))
             .transpose()?;
-        collect_stat(&repo, &mut stats, path, old.as_ref(), new.as_ref())?;
+        collect_stat(&repo, &mut stats, path, old.as_ref(), new.as_ref(), binary)?;
     }
     let mut rendered = std::io::BufWriter::new(budget.spool().or_error()?);
     render_stats(&stats, &mut rendered)?;
@@ -820,6 +828,7 @@ fn collect_stat(
     path: &BString,
     old: Option<&PatchBlob>,
     new: Option<&PatchBlob>,
+    binary: bool,
 ) -> Result<()> {
     if old
         .zip(new)
@@ -829,7 +838,7 @@ fn collect_stat(
     }
     let a = old.map_or(&[][..], |b| b.data.as_slice());
     let b = new.map_or(&[][..], |b| b.data.as_slice());
-    let binary = is_binary(a, b);
+    let binary = binary || is_binary(a, b);
     let type_changed = old
         .zip(new)
         .is_some_and(|(a, b)| a.mode & 0o170000 != b.mode & 0o170000);

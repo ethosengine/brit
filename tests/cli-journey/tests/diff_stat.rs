@@ -483,6 +483,62 @@ fn unchanged_worktree_identity_does_not_require_loading_the_index_blob() -> Resu
 }
 
 #[test]
+fn disabled_diff_and_binary_macro_preserve_mixed_patch_and_stat_output() -> Result<()> {
+    let repo = TestRepo::new("disabled-diff-attributes")?;
+    for name in ["a-disabled", "b-binary", "z-text"] {
+        repo.commit_file(name, "old\n")?;
+    }
+    repo.commit_file(".gitattributes", "a-disabled -diff\nb-binary binary\n")?;
+    let old = repo.head_id()?;
+    for name in ["a-disabled", "b-binary", "z-text"] {
+        fs::write(repo.path().join(name), "new\n")?;
+    }
+    for staged in [false, true] {
+        if staged {
+            git(repo.path(), &["add", "a-disabled", "b-binary", "z-text"])?;
+        }
+        let mut args = vec!["diff"];
+        if staged {
+            args.push("--cached");
+        }
+        let mut oracle = vec![
+            "-c",
+            "color.ui=false",
+            "diff",
+            "--no-ext-diff",
+            "--no-textconv",
+            "--no-renames",
+        ];
+        if staged {
+            oracle.push("--cached");
+        }
+        let expected = git(repo.path(), &oracle)?;
+        let before = snapshot(repo.path())?;
+        let actual = brit(repo.path(), &args)?;
+        ensure!(actual.status.success(), "mixed patch: {actual:?}");
+        assert_eq!(actual.stdout, expected);
+        let text = String::from_utf8_lossy(&actual.stdout);
+        ensure!(text.contains("Binary files a/a-disabled and b/a-disabled differ"));
+        ensure!(text.contains("Binary files a/b-binary and b/b-binary differ"));
+        ensure!(text.contains("-old\n+new\n"));
+        assert_eq!(snapshot(repo.path())?, before);
+        args.push("--stat");
+        let oracle = if staged { vec!["--cached"] } else { vec![] };
+        parity(repo.path(), &args, &oracle)?;
+    }
+    git(repo.path(), &["commit", "-m", "changes"])?;
+    let new = repo.head_id()?;
+    parity(repo.path(), &["diff", "tree", "--stat", &old, &new], &[&old, &new])?;
+    repo.commit_file(".gitattributes", "a-disabled diff=custom\nb-binary binary\n")?;
+    git(repo.path(), &["config", "diff.custom.textconv", "false"])?;
+    fs::write(repo.path().join("a-disabled"), "driver change\n")?;
+    for args in [&["diff"][..], &["diff", "--stat"][..]] {
+        refuse(repo.path(), args, "a-disabled")?;
+    }
+    Ok(())
+}
+
+#[test]
 fn unchanged_attributed_files_do_not_block_working_statistics() -> Result<()> {
     let repo = TestRepo::new("stat-unchanged-attributes")?;
     repo.commit_file("a-ordinary", "old\n")?;

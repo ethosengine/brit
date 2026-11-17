@@ -174,13 +174,23 @@ reproduction and is capped by the stop rule like the rest.
   journeys in aggregate (71 existing opt-in tests). Strict affected-crate
   Clippy, formatting, readiness and declared style pass. Versions are
   `gitoxide-core` 0.63.10, `gitoxide` 0.60.10 and `brit-cli` 0.2.5.
-- [ ] **7. `brit diff` works in a repository that marks files `-diff`.** (S)
+- [x] **7. `brit diff` works in a repository that marks files `-diff`.** (S)
   The whole diff is refused with "diff attributes and text conversion are not
   supported; use git diff" when any path carries a `diff` attribute, set or
   unset (`gitoxide-core/src/repository/diff.rs:379` and `:789`). In the Elohim
   repository that makes `brit diff` unusable. *Done when:* a path marked
   `-diff` or `binary` is reported as a binary change and the rest of the diff
   prints; a real text-conversion driver still refuses, naming the path.
+  **Measured 2026-11-17:** unset `diff` (including the `binary` macro)
+  forces binary rendering while neighboring text changes still print. The
+  mixed-attribute journey matches Git's working/staged patches and statistics,
+  checks tree statistics and unchanged repository state, and verifies an
+  actual named text-conversion driver still refuses atomically with its path.
+  All 17 fault-enabled diff-stat tests, 187 core and 54 CLI/root tests pass.
+  The ordinary whole journey run plus the two corrected item-6 target reruns
+  gives 413 passing tests (71 existing opt-in tests); strict affected Clippy,
+  formatting, readiness and declared style pass. Versions are `gitoxide-core`
+  0.63.11, `gitoxide` 0.60.11 and `brit-cli` 0.2.6.
 
 ## If an item is skipped
 
@@ -201,8 +211,9 @@ Each is sized M and is done when the named journey test passes:
 
 ## Ending the sprint
 
-When the count reaches 7 of 7, cut one release from `main`: `brit-v0.2.2`, or
-`brit-v0.3.0` if a reserve item added a command. The tag cannot be created by
+When the count reaches 7 of 7 green on main, cut one release from `main`:
+`brit-v0.2.6`, matching the CLI version after the required per-source-commit
+bumps. No reserve item was taken. The tag cannot be created by
 Brit and needs the steward to grant one command; ask once, at the end, with
 the exact command. Then write three lines here: what shipped, what was
 skipped and why, and the three things that hurt most while doing it. Those
