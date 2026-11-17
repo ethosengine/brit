@@ -69,8 +69,8 @@ jobs:
             target: x86_64-unknown-linux-gnu
           - os: macos-15-intel
             target: x86_64-apple-darwin
-          - os: macos-latest
-            target: aarch64-apple-darwin
+          # macOS ARM is suspended until a usable runtime is available; see the
+          # available-runtime release item in the bounded-memory backlog.
           - os: windows-latest
             target: x86_64-pc-windows-msvc
     runs-on: ${{ matrix.os }}
@@ -223,14 +223,14 @@ jobs:
       GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
       GH_REPO: ${{ github.repository }}
     steps:
-      - name: Download and verify all four release archives
+      - name: Download and verify all enabled release archives
         run: |
           set -euo pipefail
-          for target in x86_64-unknown-linux-gnu x86_64-apple-darwin aarch64-apple-darwin x86_64-pc-windows-msvc; do
+          for target in x86_64-unknown-linux-gnu x86_64-apple-darwin x86_64-pc-windows-msvc; do
             gh run download "$GITHUB_RUN_ID" --name "brit-delivery-$SOURCE_SHA-$GITHUB_RUN_ATTEMPT-$target" --dir .
           done
           count=$(find . -maxdepth 1 -name 'brit-*.sha256' -type f | wc -l)
-          test "$count" -eq 4
+          test "$count" -eq 3
           for sum in brit-*.sha256; do sha256sum -c "$sum"; done
           cat brit-*.sha256 > hashes.sha256
       - name: Create draft with all verified archives

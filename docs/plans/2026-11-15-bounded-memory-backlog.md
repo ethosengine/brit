@@ -8,7 +8,7 @@ serves: brit-native-daily-driver
 > The work in flight is [Brit sprint 2](2026-11-16-brit-sprint-2.md): seven items drawn from this pool.
 > Add new findings here as one line each; do not work from this list directly.
 
-- [ ] Hosted macOS runner capacity cancelled `test-fast (macos-latest)` before any step in CI 43875263842 (job 133326539872) and main CI 43973702902 (job 133672152524); both retries passed unchanged. GitHub refused a job retry while the other jobs were still running. Preserve the required check and retry runner acquisition.
+- [ ] Release Brit for every platform for which we can obtain a runtime to build and verify the installed artifact; restore macOS ARM when a usable runtime is available. The steward suspended hosted ARM on 2026-11-17 after release 44145119161 attempts 1–4 were cancelled before any ARM step; current releases cover Linux x86_64, macOS Intel and Windows x86_64, and ordinary macOS CI uses Intel. Record per-platform build, installation and operational evidence before enabling each target.
 
 These items are not release gates; order is set by usage feedback, not by this
 list. The [0.2.0 scope ruling](2026-09-28-daily-driver.md#2026-11-15--020-release-scope-ruling)

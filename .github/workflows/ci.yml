@@ -531,7 +531,8 @@ jobs:
         # parity for the gix crates. Windows coverage remains available via the
         # non-blocking test-fixtures-windows job.
         os:
-          - macos-latest
+          # Keep macOS coverage on an available runtime while hosted ARM is suspended.
+          - macos-15-intel
           - ubuntu-latest
           - ubuntu-24.04-arm
         include:
