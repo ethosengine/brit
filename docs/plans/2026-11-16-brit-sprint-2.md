@@ -157,11 +157,23 @@ reproduction and is capped by the stop rule like the rest.
   strict all-target Clippy, formatting, readiness contracts and declared Rust
   style now pass. The published dependency closure is `gitoxide-core` 0.63.9,
   `gitoxide` 0.60.9 and `brit-cli` 0.2.4.
-- [ ] **6. One command restores a path in both the index and the working
+- [x] **6. One command restores a path in both the index and the working
   tree.** (S) `brit restore --staged` and `--worktree` conflict, so putting a
   file back to `HEAD` takes two calls
   (`src/plumbing/options/mod.rs:207`). *Done when:* `brit restore --staged
   --worktree -- <path>` does both, with a journey test.
+  **Measured 2026-11-17:** combined restoration takes the index lock before
+  reading, prepares selected HEAD entries, restores working files from that
+  same HEAD snapshot, then publishes the index. Existing per-file worktree
+  atomicity is retained. Three added journeys cover Git parity, staged-added
+  deletion, untouched neighbors, foreign locks, invalid selections and indexed
+  attribute fallback when removing `.gitattributes`. All 17 restore journeys,
+  187 core and 54 CLI/root tests pass. The whole journey run found two obsolete
+  combined-mode refusal assertions; corrected full `daily_driver` and
+  `native_authoring` targets pass all 25 tests, giving 412 passing ordinary
+  journeys in aggregate (71 existing opt-in tests). Strict affected-crate
+  Clippy, formatting, readiness and declared style pass. Versions are
+  `gitoxide-core` 0.63.10, `gitoxide` 0.60.10 and `brit-cli` 0.2.5.
 - [ ] **7. `brit diff` works in a repository that marks files `-diff`.** (S)
   The whole diff is refused with "diff attributes and text conversion are not
   supported; use git diff" when any path carries a `diff` attribute, set or

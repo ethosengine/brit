@@ -253,7 +253,13 @@ pub fn add_paths(repo: gix::Repository, paths: &[BString]) -> Result<()> {
 
 /// Restore only named index entries from HEAD, without writing worktree files.
 pub fn restore_staged(repo: gix::Repository, paths: &[BString]) -> Result<()> {
-    restore_index_paths(repo, paths)
+    restore_index_paths(repo, paths, false)
+}
+
+/// Restore selected index entries and working files from the same HEAD snapshot.
+/// The index stays locked throughout; worktree publication remains atomic per file.
+pub fn restore_staged_and_worktree(repo: gix::Repository, paths: &[BString]) -> Result<()> {
+    restore_index_paths(repo, paths, true)
 }
 
 /// Read the original index form, refusing split-index expansion and special files.
@@ -286,7 +292,7 @@ pub(crate) fn read_index_for_staging(repo: &gix::Repository) -> Result<gix::inde
     Ok(index)
 }
 
-fn restore_index_paths(repo: gix::Repository, paths: &[BString]) -> Result<()> {
+fn restore_index_paths(repo: gix::Repository, paths: &[BString], worktree: bool) -> Result<()> {
     let mut lock =
         gix::lock::File::acquire_to_update_resource(repo.index_path(), gix::lock::acquire::Fail::Immediately, None, 0)
             .or_error()?;
@@ -358,6 +364,12 @@ fn restore_index_paths(repo: gix::Repository, paths: &[BString]) -> Result<()> {
     state.sort_entries();
     let output = gix::index::File::from_state(state, repo.index_path());
     output.write_to(&mut lock, Default::default())?;
-    lock.commit().or_error()?;
+    if worktree {
+        super::worktree_restore::restore_worktree_from_index(repo.clone(), &paths, Some(&head))?;
+        lock.commit()
+            .or_raise(|| gix::error::message("working files restored, but index publication failed"))?;
+    } else {
+        lock.commit().or_error()?;
+    }
     Ok(())
 }

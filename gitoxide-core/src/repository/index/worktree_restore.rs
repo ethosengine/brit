@@ -20,6 +20,20 @@ use super::authoring::{component_options, literal_paths, read_index, refuse_exte
 /// Restore literal worktree files from the index, or HEAD when `from_head` is set.
 /// The index is read only. Publication is atomic per file, not across the selection.
 pub fn restore_worktree(repo: gix::Repository, paths: &[BString], from_head: bool) -> Result<()> {
+    let head = if from_head {
+        Some(repo.index_from_tree(&repo.head_tree_id()?)?)
+    } else {
+        None
+    };
+    restore_worktree_from_index(repo, paths, head.as_deref())
+}
+
+pub(super) fn restore_worktree_from_index(
+    repo: gix::Repository,
+    paths: &[BString],
+    head: Option<&gix::index::State>,
+) -> Result<()> {
+    let from_head = head.is_some();
     // Attribute snapshots below are private objects, never additions to the repository.
     let repo = repo.with_object_memory();
     let index = read_index(&repo)?;
@@ -30,12 +44,7 @@ pub fn restore_worktree(repo: gix::Repository, paths: &[BString], from_head: boo
     {
         bail!("Unicode precomposition requires Git for non-ASCII paths".unsupported());
     }
-    let head = if from_head {
-        Some(repo.index_from_tree(&repo.head_tree_id()?)?)
-    } else {
-        None
-    };
-    let source: &gix::index::State = head.as_ref().map_or(&index, |head| head);
+    let source: &gix::index::State = head.unwrap_or(&index);
     let attribute_index = attribute_snapshot(&repo, &index, source, &paths)?;
     let mut attributes = repo.attributes_only(
         &attribute_index,

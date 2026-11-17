@@ -74,7 +74,6 @@ fn unsupported_public_mutations_refuse_and_preserve_all_bytes() -> Result<()> {
     let before = state(repo.path())?;
     for args in [
         vec!["add", "--force", "-A"],
-        vec!["restore", "--staged", "--worktree", "--", "tracked"],
         vec!["reset", "--hard", "HEAD"],
         vec!["rm", "--force", "tracked"],
         vec!["mv", "tracked", "moved"],

@@ -90,6 +90,85 @@ fn compare(actual: &Path, oracle: &Path, args: &[&str], paths: &[&str]) -> Resul
 }
 
 #[test]
+fn combined_restore_matches_git_conversion_when_removing_attributes() -> Result<()> {
+    let actual = fixture("restore-both-attributes")?;
+    let oracle = fixture("restore-both-attributes-oracle")?;
+    for repo in [&actual, &oracle] {
+        fs::write(repo.path().join(".gitattributes"), "selected text eol=crlf\n")?;
+        git(repo.path(), &["add", ".gitattributes"])?;
+    }
+    let args = ["restore", "--staged", "--worktree", "--", ".gitattributes", "selected"];
+    git(oracle.path(), &args)?;
+    let result = run(actual.path(), true, &args)?;
+    ensure!(result.status.success(), "restore both with attributes: {result:?}");
+    assert!(!actual.path().join(".gitattributes").exists());
+    assert_eq!(
+        fs::read(actual.path().join("selected"))?,
+        fs::read(oracle.path().join("selected"))?
+    );
+    assert_eq!(
+        git(actual.path(), &["ls-files", "--stage"])?,
+        git(oracle.path(), &["ls-files", "--stage"])?
+    );
+    Ok(())
+}
+
+#[test]
+fn staged_and_worktree_restore_head_together_and_preserve_neighbors() -> Result<()> {
+    for explicit_source in [false, true] {
+        let actual = fixture("restore-both")?;
+        let oracle = fixture("restore-both-oracle")?;
+        for repo in [&actual, &oracle] {
+            fs::write(repo.path().join("added"), "staged addition\n")?;
+            git(repo.path(), &["add", "added", "neighbor"])?;
+            fs::write(repo.path().join("neighbor"), "neighbor unstaged\n")?;
+        }
+        let head = git(actual.path(), &["rev-parse", "HEAD"])?;
+        let mut args = vec!["restore", "--staged", "--worktree"];
+        if explicit_source {
+            args.push("--source=HEAD");
+        }
+        args.extend(["--", "selected", "added"]);
+        git(oracle.path(), &args)?;
+        let result = run(actual.path(), true, &args)?;
+        ensure!(result.status.success(), "restore both: {result:?}");
+        assert_eq!(
+            git(actual.path(), &["ls-files", "--stage"])?,
+            git(oracle.path(), &["ls-files", "--stage"])?
+        );
+        assert_eq!(git(actual.path(), &["rev-parse", "HEAD"])?, head);
+        for name in ["selected", "neighbor", "private"] {
+            assert_eq!(fs::read(actual.path().join(name))?, fs::read(oracle.path().join(name))?);
+        }
+        assert!(!actual.path().join("added").exists());
+    }
+    Ok(())
+}
+
+#[test]
+fn combined_restore_refuses_before_writes_for_foreign_lock_or_invalid_selection() -> Result<()> {
+    for locked in [false, true] {
+        let repo = fixture("restore-both-refusal")?;
+        let before = index(repo.path())?;
+        if locked {
+            fs::write(repo.path().join(".git/index.lock"), "foreign lock")?;
+        }
+        let mut args = vec!["restore", "--staged", "--worktree", "--", "selected"];
+        if !locked {
+            args.push("absent");
+        }
+        let output = run(repo.path(), true, &args)?;
+        ensure!(!output.status.success(), "unsafe selection must refuse");
+        assert_eq!(index(repo.path())?, before);
+        assert_eq!(fs::read(repo.path().join("selected"))?, b"dirty\n");
+        if locked {
+            assert_eq!(fs::read(repo.path().join(".git/index.lock"))?, b"foreign lock");
+        }
+    }
+    Ok(())
+}
+
+#[test]
 fn both_sources_preserve_dirty_neighbors_and_index() -> Result<()> {
     for source in [None, Some("--source=HEAD")] {
         let actual = fixture("restore-source")?;
@@ -221,7 +300,6 @@ fn invalid_whole_selections_refuse_before_changing_any_file() -> Result<()> {
     for args in [
         vec!["restore", "--worktree", "selected"],
         vec!["restore", "--worktree", "--source=HEAD~1", "--", "selected"],
-        vec!["restore", "--staged", "--worktree", "--", "selected"],
     ] {
         ensure!(!run(repo.path(), true, &args)?.status.success(), "must refuse {args:?}");
         assert_eq!(index(repo.path())?, before);

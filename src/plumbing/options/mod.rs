@@ -203,12 +203,12 @@ pub enum Subcommands {
         #[clap(required_unless_present_any = ["update", "all"], value_parser = crate::shared::AsBString)]
         paths: Vec<BString>,
     },
-    /// Restore literal files in either the index or the worktree.
+    /// Restore literal files in the index, worktree, or both.
     Restore {
-        /// Restore the index from HEAD, leaving working files untouched.
-        #[clap(long, required_unless_present = "worktree", conflicts_with = "worktree")]
+        /// Restore the index from HEAD. Combine with --worktree to restore working files too.
+        #[clap(long, required_unless_present = "worktree")]
         staged: bool,
-        /// Restore working files, leaving the index untouched.
+        /// Restore working files. Combine with --staged to restore the index too.
         #[clap(long, required_unless_present = "staged")]
         worktree: bool,
         /// Worktree source: HEAD; defaults to the index when omitted.

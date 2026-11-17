@@ -107,7 +107,7 @@ fn invalid_batches_and_lock_contention_preserve_index_and_worktree() -> Result<(
         vec!["restore", "--staged", "--", "selected", "missing"],
         vec!["add", "--", "*.txt"],
         vec!["add", "selected", "missing"],
-        vec!["restore", "--staged", "--worktree", "--", "selected"],
+        vec!["restore", "--staged", "--worktree", "--", "selected", "missing"],
         vec!["restore", "--", "selected"],
     ] {
         ensure!(!brit(repo.path(), &args)?.status.success(), "must refuse {args:?}");
@@ -121,6 +121,7 @@ fn invalid_batches_and_lock_contention_preserve_index_and_worktree() -> Result<(
         vec!["add", "selected"],
         vec!["add", "--", "selected"],
         vec!["restore", "--staged", "--", "selected"],
+        vec!["restore", "--staged", "--worktree", "--", "selected"],
     ] {
         ensure!(
             !brit(repo.path(), &args)?.status.success(),
@@ -600,6 +601,7 @@ fn split_indexes_refuse_before_publication() -> Result<()> {
     for args in [
         vec!["add", "--", "selected"],
         vec!["restore", "--staged", "--", "selected"],
+        vec!["restore", "--staged", "--worktree", "--", "selected"],
     ] {
         ensure!(
             !brit(repo.path(), &args)?.status.success(),

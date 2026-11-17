@@ -101,7 +101,7 @@ pub mod entries;
 pub use entries::function::entries;
 
 pub mod authoring;
-pub use authoring::{add_paths, restore_staged};
+pub use authoring::{add_paths, restore_staged, restore_staged_and_worktree};
 
 mod staging;
 pub use staging::stage_paths;
