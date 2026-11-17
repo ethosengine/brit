@@ -1,0 +1,74 @@
+name: Intel filter spawn diagnostic
+
+on:
+  push:
+    branches: [diagnose/intel-filter-spawn]
+
+permissions:
+  contents: read
+
+jobs:
+  probe:
+    runs-on: macos-15-intel
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+        with:
+          persist-credentials: false
+      - name: Measure native spawn errors
+        shell: bash
+        run: |
+          set -euo pipefail
+          cd "$RUNNER_TEMP"
+          mkdir spawn-probe
+          cd spawn-probe
+          cat > probe.rs <<'RS'
+          use std::{os::unix::fs::symlink, process::{Command, Stdio}};
+          fn main() {
+              std::fs::create_dir("fixture").unwrap();
+              symlink("smudge.exe", "fixture/smudge.exe").unwrap();
+              symlink("loop", "fixture/loop").unwrap();
+              for path in ["fixture/smudge.exe", "fixture/loop/smudge.exe"] {
+                  let error = Command::new(path).stdin(Stdio::piped())
+                      .stdout(Stdio::piped()).spawn().unwrap_err();
+                  println!("{path}: {error:?}; kind={:?}; raw={:?}", error.kind(), error.raw_os_error());
+              }
+          }
+          RS
+          rustup toolchain install 1.100.0 --profile minimal --no-self-update
+          rustc +1.100.0 --version
+          rustc +1.100.0 --edition 2024 probe.rs -o probe
+          ./probe
+      - name: Measure released CLI filter cause chain
+        shell: bash
+        run: |
+          set -euo pipefail
+          cd "$RUNNER_TEMP"
+          archive=brit-max-pure-v0.2.6-x86_64-apple-darwin.tar.gz
+          base=https://github.com/ethosengine/brit/releases/download/brit-v0.2.6
+          curl --fail --location "$base/$archive" --output "$archive"
+          curl --fail --location "$base/$archive.sha256" --output "$archive.sha256"
+          shasum -a 256 -c "$archive.sha256"
+          mkdir released
+          tar -xzf "$archive" -C released
+          brit_bin="$RUNNER_TEMP/released/${archive%.tar.gz}/brit"
+          test -x "$brit_bin"
+          mkdir filter-repo
+          cd filter-repo
+          git init -q
+          git config user.name Probe
+          git config user.email probe@example.invalid
+          printf '*.txt filter=loop\n' > .gitattributes
+          printf 'fixture\n' > file.txt
+          git add .gitattributes file.txt
+          git commit -qm fixture
+          ln -s smudge.exe smudge.exe
+          git config filter.loop.smudge "$PWD/smudge.exe"
+          git config filter.loop.required true
+          rm file.txt
+          set +e
+          "$brit_bin" restore --worktree -- file.txt
+          result=$?
+          set -e
+          printf 'restore exit: %s\n' "$result"
+          test "$result" -ne 0
