@@ -438,14 +438,14 @@ dependencies = [
 
 [[package]]
 name = "brit-bridge"
-version = "0.1.5"
+version = "0.1.6"
 dependencies = [
  "anyhow",
  "async-trait",
  "bytes",
  "eprfs-core",
  "futures-lite",
- "gix 0.89.4",
+ "gix 0.89.5",
  "gix-testtools",
  "hex",
  "tempfile",
@@ -468,7 +468,7 @@ dependencies = [
 
 [[package]]
 name = "brit-cli"
-version = "0.2.6"
+version = "0.2.7"
 dependencies = [
  "anyhow",
  "brit-bridge",
@@ -480,7 +480,7 @@ dependencies = [
  "eprfs-local",
  "eprfs-storage",
  "gitoxide",
- "gix 0.89.4",
+ "gix 0.89.5",
  "gix-testtools",
  "petgraph",
  "rakia-brit",
@@ -516,10 +516,10 @@ dependencies = [
 
 [[package]]
 name = "brit-graph"
-version = "0.2.1"
+version = "0.2.2"
 dependencies = [
  "brit-epr",
- "gix 0.89.4",
+ "gix 0.89.5",
  "globset",
  "petgraph",
  "rustc-hash",
@@ -534,7 +534,7 @@ name = "brit-verify"
 version = "0.0.0"
 dependencies = [
  "brit-epr",
- "gix 0.89.4",
+ "gix 0.89.5",
 ]
 
 [[package]]
@@ -1978,7 +1978,7 @@ dependencies = [
 
 [[package]]
 name = "gitoxide"
-version = "0.60.11"
+version = "0.60.12"
 dependencies = [
  "anstream",
  "anyhow",
@@ -1989,7 +1989,7 @@ dependencies = [
  "env_logger",
  "futures-lite",
  "gitoxide-core",
- "gix 0.89.4",
+ "gix 0.89.5",
  "gix-tix",
  "prodash",
  "serde_derive",
@@ -1999,7 +1999,7 @@ dependencies = [
 
 [[package]]
 name = "gitoxide-core"
-version = "0.63.11"
+version = "0.63.12"
 dependencies = [
  "anyhow",
  "async-io",
@@ -2014,7 +2014,7 @@ dependencies = [
  "futures-io",
  "futures-lite",
  "gitoxide-core",
- "gix 0.89.4",
+ "gix 0.89.5",
  "gix-archive 0.38.3",
  "gix-config-value 0.21.2",
  "gix-fsck",
@@ -2101,11 +2101,11 @@ dependencies = [
 
 [[package]]
 name = "gix"
-version = "0.89.4"
+version = "0.89.5"
 dependencies = [
  "async-std",
  "document-features",
- "gix 0.89.4",
+ "gix 0.89.5",
  "gix-actor 0.44.1",
  "gix-archive 0.38.3",
  "gix-attributes 0.37.3",
@@ -2157,7 +2157,7 @@ dependencies = [
  "gix-utils 0.5.3",
  "gix-validate 0.13.1",
  "gix-worktree 0.58.4",
- "gix-worktree-state 0.36.4",
+ "gix-worktree-state 0.36.5",
  "gix-worktree-stream 0.38.3",
  "gix-zlib",
  "insta",
@@ -3857,12 +3857,12 @@ dependencies = [
 
 [[package]]
 name = "gix-tix"
-version = "0.5.4"
+version = "0.5.5"
 dependencies = [
  "clap",
  "crossterm",
  "directories",
- "gix 0.89.4",
+ "gix 0.89.5",
  "gix-testtools",
  "gix-trace 0.3.1",
  "gix-worktree 0.58.4",
@@ -4136,7 +4136,7 @@ dependencies = [
 
 [[package]]
 name = "gix-worktree-state"
-version = "0.36.4"
+version = "0.36.5"
 dependencies = [
  "bstr",
  "gix-error 0.5.2",
@@ -4152,7 +4152,7 @@ dependencies = [
  "gix-trace 0.3.1",
  "gix-utils 0.5.3",
  "gix-worktree 0.58.4",
- "gix-worktree-state 0.36.4",
+ "gix-worktree-state 0.36.5",
  "insta",
  "io-close",
  "walkdir",
@@ -4776,7 +4776,7 @@ name = "internal-tools"
 version = "0.0.0"
 dependencies = [
  "clap",
- "gix 0.89.4",
+ "gix 0.89.5",
  "gix-testtools",
  "regex",
 ]

@@ -363,11 +363,23 @@ fn filter_spawn_errors_are_not_collisions() -> TestResult {
     // A relative path with forward slashes makes spawning fail directly, without a shell.
     let dir = gix_testtools::tempfile::tempdir_in(".")?;
     let program = Path::new(dir.path().file_name().expect("temporary directories have a name")).join("smudge.exe");
-    // Both failures look like destination collisions, but occur while spawning the filter.
+    // Fail before the filter can run, rather than while writing a checkout destination.
     #[cfg(unix)]
     std::os::unix::fs::symlink("smudge.exe", &program)?;
     #[cfg(windows)]
     std::fs::create_dir(&program)?;
+
+    let spawn_error = std::process::Command::new(&program)
+        .spawn()
+        .expect_err("the fixture cannot be executed");
+    // macOS can report NotFound for an executable symlink loop. Preserve the
+    // runtime's actual cause; Linux and Windows still exercise collision-like errors.
+    assert!(
+        gix_fs::symlink::is_collision_error(&spawn_error)
+            || (cfg!(target_os = "macos") && spawn_error.kind() == std::io::ErrorKind::NotFound),
+        "unexpected fixture spawn error: {spawn_error:?}"
+    );
+    let spawn_error_kind = format!("{:?}", spawn_error.kind());
 
     for keep_going in [false, true] {
         let mut opts = opts_from_probe();
@@ -400,40 +412,28 @@ fn filter_spawn_errors_are_not_collisions() -> TestResult {
                 .downcast::<gix_error::Error>()
                 .expect("checkout retains the error chain")
         };
+        let diagnostic =
+            gix_testtools::redact_debug_snapshot(&(err), &[(&(program).to_string_lossy(), "<filter-program>")]);
         error_snapshots.push(gix_testtools::redact_debug_snapshot(
-            &(err),
-            &[(&(program).to_string_lossy(), "<filter-program>")],
+            &diagnostic,
+            &[(&spawn_error_kind, "<native-spawn-error>")],
         ));
-        assert!(
-            err.downcast_any_ref::<std::io::Error>()
-                .is_some_and(gix_fs::symlink::is_collision_error),
-            "the filter failure retains its collision-like I/O cause"
-        );
+        let cause = err
+            .downcast_any_ref::<std::io::Error>()
+            .expect("the filter failure retains its native I/O cause");
+        assert_eq!(cause.kind(), spawn_error.kind(), "{err:?}");
+        assert_eq!(cause.raw_os_error(), spawn_error.raw_os_error(), "{err:?}");
     }
-    #[cfg(not(windows))]
     insta::assert_debug_snapshot!(error_snapshots, "filter spawn errors are not collisions", @r#"
     [
         Failed to spawn driver: "<filter-program>", program="<filter-program>"
         
         Caused by:
-            0: FilesystemLoop,
+            0: <native-spawn-error>,
         Failed to spawn driver: "<filter-program>", program="<filter-program>"
         
         Caused by:
-            0: FilesystemLoop,
-    ]
-    "#);
-    #[cfg(windows)]
-    insta::assert_debug_snapshot!(error_snapshots, "filter spawn errors are not collisions", @r#"
-    [
-        Failed to spawn driver: "<filter-program>", program="<filter-program>"
-        
-        Caused by:
-            0: PermissionDenied,
-        Failed to spawn driver: "<filter-program>", program="<filter-program>"
-        
-        Caused by:
-            0: PermissionDenied,
+            0: <native-spawn-error>,
     ]
     "#);
     Ok(())

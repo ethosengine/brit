@@ -10,6 +10,7 @@ serves: brit-native-daily-driver
 
 - [ ] Release Brit for every platform for which we can obtain a runtime to build and verify the installed artifact; restore macOS ARM when a usable runtime is available. The steward suspended hosted ARM on 2026-11-17 after release 44145119161 attempts 1–4 were cancelled before any ARM step; current releases cover Linux x86_64, macOS Intel and Windows x86_64, and ordinary macOS CI uses Intel. Record per-platform build, installation and operational evidence before enabling each target.
 - [ ] Investigate archive cancellation cleanup on Linux ARM: CI 44165551814 job 134330507155 failed `archive_cancels_during_large_object_spooling` with "cancelled archive must reclaim its spools" (5,964 other tests passed); this workflow-only change leaves the archive and test source unchanged. Preserve the assertion and failure receipt; runner-capacity cancellations do not explain this executed test failure.
+- [ ] Investigate the intermittent Intel feedback diagnostic fixture timeout: CI 44169198431 job 134343393999 reached the two-second recorder deadline; unchanged retry 134371763105 passed. The separate filter-spawn failure reproduced twice and probe 44185287324 measured native macOS `NotFound` for the symlink loop, so its fixture now compares the preserved error with native spawning instead of prescribing Linux's errno.
 
 These items are not release gates; order is set by usage feedback, not by this
 list. The [0.2.0 scope ruling](2026-09-28-daily-driver.md#2026-11-15--020-release-scope-ruling)
