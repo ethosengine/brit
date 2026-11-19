@@ -370,7 +370,7 @@ fn run(capture: &mut feedback::Capture, read_only: &mut bool) -> Result<()> {
         .and_then(|name| std::path::PathBuf::from(name).file_stem().map(|stem| stem == "rakia"))
         .unwrap_or(false);
     if invoked_as_rakia {
-        eprintln!("warning: rakia is deprecated; use `brit build` with the same arguments");
+        brit_epr::diagnostic::emit("warning: rakia is deprecated; use `brit build` with the same arguments");
         capture.operation("build");
         plumbing::configure_mutation_guards(None, &public_command()).map_err(|err| error::CliError::Git(err.into()))?;
         let cli = Cli::try_parse_from(args).map_err(|error| {
@@ -385,7 +385,7 @@ fn run(capture: &mut feedback::Capture, read_only: &mut bool) -> Result<()> {
     // Bridged names are answered before clap sees them: brit prints the stock Git command and
     // never runs it.
     if let Some(line) = bridge::line(&args) {
-        eprintln!("{line}");
+        brit_epr::diagnostic::emit(line);
         capture.operation = "bridge";
         capture.outcome = Some("bridge-declared");
         return Err(error::CliError::ContextExit(bridge::EXIT_CODE));
@@ -487,12 +487,15 @@ fn main() -> ExitCode {
     let mut capture = feedback::Capture::new();
     let mut read_only = false;
     let outcome = run(&mut capture, &mut read_only);
+    // The status is decided first and never by the report: the report is attempted once with its
+    // result ignored (a reader of stderr may have closed, and `eprintln!` would then panic and exit
+    // 101), and the run is recorded after it whatever the write did.
     let (code, report) = exit_status(&outcome, read_only, gitoxide::shared::closed_reader::seen());
     if let (true, Err(e)) = (report, &outcome) {
-        eprintln!("{}", diagnostic(e));
         if matches!(e, error::CliError::Args(_)) {
             capture.outcome = Some("refused");
         }
+        let _ = writeln!(std::io::stderr(), "{}", diagnostic(e));
     }
     capture.finish(code);
     ExitCode::from(code as u8)

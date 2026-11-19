@@ -146,3 +146,73 @@ fn a_closed_reader_never_replaces_a_genuine_failure() -> Result<()> {
     }
     Ok(())
 }
+
+/// A command that fails for its own reason while its stderr reader is gone exits with its own code, not
+/// 101 from a panicking report, and its run is still recorded: the report is attempted with its result
+/// ignored and the recorder runs after it. One mutating and one read-only command.
+#[test]
+fn a_failure_reported_to_a_closed_stderr_keeps_its_code_and_is_recorded() -> Result<()> {
+    use std::os::unix::fs::PermissionsExt;
+
+    let repo = TestRepo::new("broken-pipe-recorded")?;
+    let fixture = tempfile::tempdir()?;
+    let bin = fixture.path().join("bin");
+    std::fs::create_dir(&bin)?;
+    let recorder = bin.join("epr");
+    std::fs::write(
+        &recorder,
+        "#!/bin/sh\nprintf '%s\\n' \"$@\" > \"$FEEDBACK_TEST_ARGS\"\n",
+    )?;
+    std::fs::set_permissions(&recorder, std::fs::Permissions::from_mode(0o700))?;
+    // A sibling test's fork can still hold the descriptor that wrote the stub: wait out ETXTBSY.
+    let probe = fixture.path().join("probe");
+    for attempt in 0.. {
+        match Command::new(&recorder).env("FEEDBACK_TEST_ARGS", &probe).output() {
+            Err(error) if error.raw_os_error() == Some(libc::ETXTBSY) && attempt < 400 => {
+                std::thread::sleep(std::time::Duration::from_millis(5));
+            }
+            result => {
+                ensure!(result?.status.success(), "the recorder stub runs");
+                break;
+            }
+        }
+    }
+    let path = std::env::join_paths(
+        std::iter::once(bin).chain(std::env::split_paths(&std::env::var_os("PATH").unwrap_or_default())),
+    )?;
+
+    for (args, operation) in [
+        (&["branch", "delete", "no-such-branch"][..], "branch"),
+        (&["log", "no-such-rev"][..], "log"),
+    ] {
+        let captured = fixture.path().join(format!("{operation}.args"));
+        let mut fds = [0; 2];
+        // SAFETY: `fds` has room for the two descriptors `pipe` writes.
+        ensure!(unsafe { libc::pipe(fds.as_mut_ptr()) } == 0, "pipe(2) failed");
+        // SAFETY: both descriptors were just created by `pipe` and are owned here exactly once.
+        let (reader, writer) = unsafe { (std::fs::File::from_raw_fd(fds[0]), std::fs::File::from_raw_fd(fds[1])) };
+        drop(reader);
+        let mut command = Command::new(brit_bin().expect("built Brit"));
+        gix_testtools::configure_git_environment(&mut command, repo.path());
+        let out = command
+            .current_dir(repo.path())
+            .args(args)
+            .env("PATH", &path)
+            .env("EPR_FEEDBACK_ROOT", fixture.path())
+            .env("EPR_FEEDBACK_INVOCATION", "closed-stderr")
+            .env("FEEDBACK_TEST_ARGS", &captured)
+            .env_remove("RUST_BACKTRACE")
+            .stderr(writer)
+            .output()?;
+        assert_eq!(out.status.code(), Some(1), "brit {args:?} with stderr closed: {out:?}");
+        let recorded = std::fs::read_to_string(&captured)
+            .map_err(|error| anyhow::anyhow!("brit {args:?} was not recorded: {error}"))?;
+        assert!(
+            recorded.contains(&format!("--operation\n{operation}\n")),
+            "brit {args:?}: {recorded}"
+        );
+        assert!(recorded.contains("--outcome\nfailed\n"), "brit {args:?}: {recorded}");
+        assert!(recorded.contains("closed-stderr"), "brit {args:?}: {recorded}");
+    }
+    Ok(())
+}
