@@ -194,88 +194,89 @@ impl Options {
     /// Return the object-store slots for a repository whose trust is final, after any `safe.directory` promotion.
     ///
     /// Slots set explicitly via [`Self::object_store_slots()`] always win. Otherwise fully trusted repositories size
-    /// their slots from disk. A repository that remains at reduced trust is sized from the pack indexes present in
-    /// `objects_dir` (anchored at `current_dir`) and its alternates, plus headroom for packs that arrive while it is
-    /// open, and is refused when it holds more than [`REDUCED_TRUST_MAX_PACK_INDEXES`].
+    /// their slots from disk. A repository that remains at reduced trust is sized from the index slots its store will
+    /// occupy, counted as the store counts them (`multi_pack_index_object_hash` is the store's object hash if it uses
+    /// multi-pack indices, and `alloc_limit_bytes` its allocation limit), in `objects_dir` (anchored at `current_dir`)
+    /// and its alternates, plus headroom for packs that arrive while it is open. It is refused when that exceeds
+    /// [`REDUCED_TRUST_MAX_PACK_INDEXES`].
     pub(crate) fn resolve_object_store_slots(
         slots: Option<gix_odb::store::init::Slots>,
         trust: gix_sec::Trust,
         objects_dir: &std::path::Path,
         current_dir: &std::path::Path,
+        multi_pack_index_object_hash: Option<gix_hash::Kind>,
+        alloc_limit_bytes: Option<usize>,
     ) -> crate::Result<gix_odb::store::init::Slots> {
         if let Some(slots) = slots {
             return Ok(slots);
         }
         Ok(match trust {
             gix_sec::Trust::Full => Default::default(),
-            gix_sec::Trust::Reduced => {
-                gix_odb::store::init::Slots::Given(reduced_trust_slots(objects_dir, current_dir)?)
-            }
+            gix_sec::Trust::Reduced => gix_odb::store::init::Slots::Given(reduced_trust_slots(
+                &current_dir.join(objects_dir),
+                current_dir,
+                multi_pack_index_object_hash,
+                alloc_limit_bytes,
+            )?),
         })
     }
 }
 
-/// The most pack indexes a repository at reduced trust may hold and still be opened.
+/// The most index slots a repository at reduced trust may need and still be opened.
 ///
-/// Reduced trust bounds what a repository owned by someone else can make this process do: every index is listed at
-/// open, memory-mapped when first searched, and a lookup of a missing object searches all of them. A bound in the
-/// hundreds keeps that work, and the address-space and map counts it costs, small and fixed, while sitting an order of
-/// magnitude above repositories git maintains itself: `gc.autoPackLimit` consolidates past 50 packs. Repositories
-/// whose packs are never consolidated (one more per fetch) reach it only after hundreds of fetches.
+/// Reduced trust bounds what a repository owned by someone else can make this process do: every index is
+/// memory-mapped when first searched, and a lookup of a missing object searches all of them. A bound in the hundreds
+/// keeps that work, and the address-space and map counts it costs, small and fixed, while sitting an order of
+/// magnitude above repositories git maintains itself: `gc.autoPackLimit` consolidates past 50 packs. Repositories whose
+/// packs are never consolidated (one more per fetch) reach it only after hundreds of fetches. A multi-pack index takes
+/// one slot however many packs it covers.
 pub const REDUCED_TRUST_MAX_PACK_INDEXES: usize = 512;
 
 /// Slots kept even for a repository with few packs, as before slots were sized at reduced trust.
 const REDUCED_TRUST_MIN_SLOTS: usize = 32;
 
-/// Slots for a reduced-trust repository with the pack indexes now in `objects_dir`: those indexes plus half as many
-/// again (at least 16) for packs written while it is open, at least [`REDUCED_TRUST_MIN_SLOTS`], and never more than
-/// [`REDUCED_TRUST_MAX_PACK_INDEXES`]. More indexes than that is an error naming both cures.
-fn reduced_trust_slots(objects_dir: &std::path::Path, current_dir: &std::path::Path) -> crate::Result<u16> {
-    use gix_error::ResultExt;
-
-    let objects_dir = current_dir.join(objects_dir);
-    let mut db_paths = gix_odb::alternate::resolve(objects_dir.clone(), current_dir)
-        .or_raise(|| gix_error::message("Could not resolve object database alternates"))?;
-    db_paths.insert(0, objects_dir);
-    let mut indexes = 0_usize;
-    'count: for db_path in db_paths {
-        let entries = match std::fs::read_dir(db_path.join("pack")) {
-            Ok(entries) => entries,
-            Err(err) if err.kind() == std::io::ErrorKind::NotFound => continue,
-            Err(err) => {
-                return Err(err).or_raise(|| gix_error::message("Could not read pack directory"));
-            }
-        };
-        for entry in entries.filter_map(std::result::Result::ok) {
-            let path = entry.path();
-            // What `Slots::AsNeededByDiskState` counts: an index with its pack.
-            if path.extension() == Some(std::ffi::OsStr::new("idx")) && path.with_extension("pack").is_file() {
-                indexes += 1;
-                if indexes > REDUCED_TRUST_MAX_PACK_INDEXES {
-                    // Stop listing: the work done for a repository we refuse stays bounded too.
-                    break 'count;
-                }
-            }
-        }
+/// Slots for a reduced-trust repository whose object databases (`objects_dir` and its alternates) now need `n` index
+/// slots: `n` plus half as many again (at least 16) for packs written while it is open, at least
+/// [`REDUCED_TRUST_MIN_SLOTS`], and never more than [`REDUCED_TRUST_MAX_PACK_INDEXES`]. A larger `n` is an error
+/// naming both cures.
+///
+/// An object database whose alternates or packs cannot be read counts as needing none here: the store reports that
+/// when it loads its indexes, as it did before slots were sized at reduced trust.
+fn reduced_trust_slots(
+    objects_dir: &std::path::Path,
+    current_dir: &std::path::Path,
+    multi_pack_index_object_hash: Option<gix_hash::Kind>,
+    alloc_limit_bytes: Option<usize>,
+) -> crate::Result<u16> {
+    let mut db_paths = gix_odb::alternate::resolve(objects_dir.to_owned(), current_dir).unwrap_or_default();
+    db_paths.insert(0, objects_dir.to_owned());
+    let needed: usize = db_paths
+        .into_iter()
+        .map(|db_path| {
+            gix_odb::Store::count_index_slots(vec![db_path], multi_pack_index_object_hash, alloc_limit_bytes)
+                .unwrap_or_default()
+        })
+        .sum();
+    if needed > REDUCED_TRUST_MAX_PACK_INDEXES {
+        return Err(too_many_index_slots(REDUCED_TRUST_MAX_PACK_INDEXES, needed));
     }
-    if indexes > REDUCED_TRUST_MAX_PACK_INDEXES {
-        return Err(too_many_pack_indexes(REDUCED_TRUST_MAX_PACK_INDEXES, indexes));
-    }
-    let slots = (indexes + (indexes / 2).max(16)).clamp(REDUCED_TRUST_MIN_SLOTS, REDUCED_TRUST_MAX_PACK_INDEXES);
+    let slots = (needed + (needed / 2).max(16)).clamp(REDUCED_TRUST_MIN_SLOTS, REDUCED_TRUST_MAX_PACK_INDEXES);
     Ok(u16::try_from(slots).expect("bounded by REDUCED_TRUST_MAX_PACK_INDEXES"))
 }
 
-/// The refusal of a reduced-trust repository whose pack indexes exceed `limit`, with the slot-capacity metadata
-/// `current` (slots available) and `needed` (additional slots) that `gix-odb` reports when it runs out of slots.
-fn too_many_pack_indexes(limit: usize, at_least: usize) -> crate::Error {
+/// The refusal of a reduced-trust repository that needs `needed` index slots, more than `limit`, with the
+/// slot-capacity metadata `current` (slots available) and `needed` (additional slots) that `gix-odb` reports when it
+/// runs out of slots.
+fn too_many_index_slots(limit: usize, needed: usize) -> crate::Error {
     crate::Error::from_error(
         gix_error::Message::new(format!(
-            "The repository has more than {limit} pack indexes, the most opened for a checkout the current user does \
-             not own. Consolidate its packs (`git repack -a -d`) or grant trust for this checkout with \
-             `safe.directory` (a global entry, `-c safe.directory=<path>` or GIT_CONFIG_COUNT)"
+            "The repository needs {needed} pack index slots, more than the {limit} opened for a checkout the current \
+             user does not own. Its owner can consolidate its packs (`git repack -a -d`), or, if this checkout is \
+             trusted, declare it with `safe.directory` (a global entry, `-c safe.directory=<path>` or \
+             GIT_CONFIG_COUNT)"
         ))
         .with("current", limit)
-        .with("needed", at_least - limit),
+        .with("needed", needed - limit),
     )
 }
 

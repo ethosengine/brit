@@ -72,8 +72,9 @@ pub(crate) fn slot_exhaustion_report(error: &(dyn std::error::Error + 'static)) 
     let (current, additional) = slot_exhaustion(error)?;
     Some(format!(
         "object database index slots exhausted: the repository needs at least {} index slots and this process \
-         may use {current}; consolidate its packs (`git repack -a -d`) or grant trust for this checkout with \
-         `safe.directory` (a global entry, `-c safe.directory=<path>` or GIT_CONFIG_COUNT)",
+         may use {current}; its owner can consolidate its packs (`git repack -a -d`), or, if this checkout is \
+         trusted, declare it with `safe.directory` (a global entry, `-c safe.directory=<path>` or \
+         GIT_CONFIG_COUNT)",
         current + additional
     ))
 }
@@ -150,8 +151,9 @@ mod tests {
         assert_eq!(
             format_error(&Lookup { source: exhausted }),
             "object database index slots exhausted: the repository needs at least 33 index slots and this \
-             process may use 32; consolidate its packs (`git repack -a -d`) or grant trust for this checkout with \
-             `safe.directory` (a global entry, `-c safe.directory=<path>` or GIT_CONFIG_COUNT)",
+             process may use 32; its owner can consolidate its packs (`git repack -a -d`), or, if this checkout is \
+             trusted, declare it with `safe.directory` (a global entry, `-c safe.directory=<path>` or \
+             GIT_CONFIG_COUNT)",
             "the targeted diagnostic names the cures without rendering its source or the outer wrapper"
         );
     }

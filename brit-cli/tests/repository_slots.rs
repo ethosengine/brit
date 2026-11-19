@@ -311,14 +311,122 @@ fn reduced_trust_ceiling_is_one_named_error_with_both_cures() -> TestResult {
     let rendered = build_error::format_error(&wrapped);
     assert_eq!(
         rendered,
-        format!(
-            "object database index slots exhausted: the repository needs at least {} index slots and this \
-             process may use {}; consolidate its packs (`git repack -a -d`) or grant trust for this checkout with \
-             `safe.directory` (a global entry, `-c safe.directory=<path>` or GIT_CONFIG_COUNT)",
+        named_slot_error(
             gix::open::REDUCED_TRUST_MAX_PACK_INDEXES + 1,
             gix::open::REDUCED_TRUST_MAX_PACK_INDEXES
         ),
         "one first-class error, not its wrapper"
+    );
+    Ok(())
+}
+
+fn named_slot_error(needed: usize, current: usize) -> String {
+    format!(
+        "object database index slots exhausted: the repository needs at least {needed} index slots and this process \
+         may use {current}; its owner can consolidate its packs (`git repack -a -d`), or, if this checkout is \
+         trusted, declare it with `safe.directory` (a global entry, `-c safe.directory=<path>` or GIT_CONFIG_COUNT)"
+    )
+}
+
+fn open_reduced(repo_path: &Path) -> gix::Result<gix::Repository> {
+    gix::open_opts(repo_path, gix::open::Options::default().with(gix::sec::Trust::Reduced))
+}
+
+fn fixture_with_pack_indexes(total: usize) -> TestResult<(gix_testtools::tempfile::TempDir, gix::ObjectId)> {
+    let fixture = gix_testtools::tempfile::tempdir()?;
+    let repo_path = fixture.path();
+    gix_testtools::git(repo_path, "init")?;
+    gix_testtools::git(repo_path, "commit --allow-empty -m fixture")?;
+    let head = gix_testtools::git(repo_path, "rev-parse HEAD")?;
+    create_pack_indexes(repo_path, head.trim(), total)?;
+    let head_id = gix::ObjectId::from_hex(head.trim().as_bytes())?;
+    Ok((fixture, head_id))
+}
+
+#[test]
+fn reduced_trust_counts_a_multi_pack_index_as_one_slot() -> TestResult {
+    if gix_testtools::run_in_isolated_process()? {
+        return Ok(());
+    }
+    let (fixture, head_id) = fixture_with_pack_indexes(gix::open::REDUCED_TRUST_MAX_PACK_INDEXES + 88)?;
+    gix_testtools::git(fixture.path(), "multi-pack-index write")?;
+    let repo = open_reduced(fixture.path())?;
+    assert_eq!(
+        repo.objects.store_ref().metrics().unused_slots,
+        32,
+        "600 packs under one multi-pack index need one slot, as the store counts them"
+    );
+    assert_eq!(repo.rev_parse_single("HEAD")?.detach(), head_id);
+    Ok(())
+}
+
+#[test]
+fn reduced_trust_ceiling_leaves_no_headroom_and_a_new_pack_is_the_named_error() -> TestResult {
+    if gix_testtools::run_in_isolated_process()? {
+        return Ok(());
+    }
+    let ceiling = gix::open::REDUCED_TRUST_MAX_PACK_INDEXES;
+    let (fixture, head_id) = fixture_with_pack_indexes(ceiling)?;
+    let repo = open_reduced(fixture.path())?;
+    assert_eq!(repo.objects.store_ref().metrics().unused_slots, ceiling);
+    assert_eq!(
+        repo.rev_parse_single("HEAD")?.detach(),
+        head_id,
+        "the ceiling itself opens"
+    );
+
+    // A concurrent fetch writes one more pack while the repository is open.
+    std::fs::write(fixture.path().join("late"), "arrived while open\n")?;
+    let late = gix_testtools::git(fixture.path(), "hash-object -w late")?;
+    git_with_input(
+        fixture.path(),
+        &["pack-objects", ".git/objects/pack/pack"],
+        format!("{}\n", late.trim()).as_bytes(),
+    )?;
+    gix_testtools::git(fixture.path(), "prune-packed")?;
+    let late = gix::ObjectId::from_hex(late.trim().as_bytes())?;
+    let err = repo
+        .find_object(late)
+        .expect_err("a store with no free slot cannot load the new pack");
+    assert_eq!(
+        build_error::format_error(&Wrapped { source: err }),
+        named_slot_error(ceiling + 1, ceiling),
+        "not a silent miss: the lookup fails with the named error and its cures"
+    );
+    Ok(())
+}
+
+#[test]
+#[cfg(unix)]
+fn an_unreadable_alternate_pack_directory_does_not_fail_the_open() -> TestResult {
+    use std::os::unix::fs::PermissionsExt;
+
+    let fixture = gix_testtools::tempfile::tempdir()?;
+    let probe = fixture.path().join("probe");
+    std::fs::write(&probe, "")?;
+    if std::fs::metadata(&probe)?.uid() == 0 {
+        // Root reads a mode-000 directory anyway, so the unreadable case cannot be staged.
+        eprintln!("skipping: running as root, which ignores directory permissions");
+        return Ok(());
+    }
+    let repo_path = fixture.path().join("repo");
+    std::fs::create_dir(&repo_path)?;
+    gix_testtools::git(&repo_path, "init")?;
+    gix_testtools::git(&repo_path, "commit --allow-empty -m fixture")?;
+    let alternate = fixture.path().join("alternate-objects");
+    std::fs::create_dir_all(alternate.join("pack"))?;
+    std::fs::write(
+        repo_path.join(".git/objects/info/alternates"),
+        format!("{}\n", alternate.display()),
+    )?;
+    std::fs::set_permissions(alternate.join("pack"), std::fs::Permissions::from_mode(0o000))?;
+    let opened = open_reduced(&repo_path);
+    std::fs::set_permissions(alternate.join("pack"), std::fs::Permissions::from_mode(0o755))?;
+    let repo = opened?;
+    assert_eq!(
+        repo.git_dir_trust(),
+        gix::sec::Trust::Reduced,
+        "an unreadable pack directory counts as none at open, as it did before slots were sized"
     );
     Ok(())
 }

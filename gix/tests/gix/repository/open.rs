@@ -154,8 +154,10 @@ fn reduced_trust_refuses_more_pack_indexes_than_its_ceiling() -> TestResult {
         .expect_err("one index above the ceiling is refused at reduced trust");
     let message = err.to_string();
     assert!(
-        message.contains(&format!("more than {ceiling} pack indexes"))
-            && message.contains("git repack -a -d")
+        message.contains(&format!(
+            "needs {} pack index slots, more than the {ceiling}",
+            ceiling + 1
+        )) && message.contains("git repack -a -d")
             && message.contains("safe.directory"),
         "the refusal says what happened and both cures: {message}"
     );
@@ -183,6 +185,25 @@ fn reduced_trust_refuses_more_pack_indexes_than_its_ceiling() -> TestResult {
     assert!(
         trusted.is_ok(),
         "full trust is not bounded by the reduced-trust ceiling"
+    );
+    Ok(())
+}
+
+#[test]
+fn reduced_trust_counts_index_slots_as_the_store_does() -> TestResult {
+    use gix_sec::Trust;
+
+    let fixture = gix_testtools::scripted_fixture_writable("make_many_packs.sh")?;
+    let pack_dir = fixture.path().join(".git/objects/pack");
+    // Neither is an index the store would load: a directory named like an index, and an index without its pack.
+    std::fs::create_dir(pack_dir.join("pack-directory.idx"))?;
+    std::fs::write(pack_dir.join("pack-directory.pack"), [])?;
+    std::fs::write(pack_dir.join("pack-orphan.idx"), [])?;
+    let repo = gix::open_opts(fixture.path(), gix::open::Options::isolated().with(Trust::Reduced))?;
+    assert_eq!(
+        repo.objects.store_ref().metrics().unused_slots,
+        61,
+        "only the 41 real index/pack pairs count"
     );
     Ok(())
 }

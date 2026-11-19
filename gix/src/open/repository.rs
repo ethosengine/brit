@@ -302,6 +302,7 @@ impl ThreadSafeRepository {
         let home = gix_path::env::home_dir().and_then(|home| env.home.check_opt(home));
 
         let mut filter_config_section = filter_config_section.unwrap_or(config::section::is_trusted);
+        let use_env_config = config.env;
         let mut config = config::Cache::from_stage_one(
             repo_config,
             common_dir_ref,
@@ -399,13 +400,36 @@ impl ThreadSafeRepository {
                 .is_some_and(|wd| !gix_sec::identity::is_path_owned_by_current_user(wd).unwrap_or(false))
         {
             // Like git, only protected configuration may grant trust: system, global, and the invoker's
-            // command scope (`-c` and `GIT_CONFIG_COUNT`), never the repository's own configuration.
-            let safe_dirs: Vec<BString> = config
+            // command scope (`GIT_CONFIG_COUNT` and `-c`), never the repository's own configuration. Git reads the
+            // command scope without a repository, so its conditional includes cannot match here either.
+            let mut safe_dirs: Vec<BString> = config
                 .resolved
-                .strings_filter(Safe::DIRECTORY, &mut Safe::protected_directory_filter)
-                .unwrap_or_default()
-                .into_iter()
-                .collect();
+                .strings_filter(Safe::DIRECTORY, &mut Safe::directory_filter)
+                .unwrap_or_default();
+            if use_env_config {
+                let includes = gix_config::file::includes::Options::follow(
+                    interpolate_context(git_install_dir.as_deref(), home.as_deref()),
+                    Default::default(),
+                );
+                let env = gix_config::File::from_env(gix_config::file::init::Options {
+                    includes,
+                    ..Default::default()
+                });
+                safe_dirs.extend(
+                    env.ok()
+                        .flatten()
+                        .and_then(|env| env.strings("safe.directory"))
+                        .unwrap_or_default(),
+                );
+            }
+            safe_dirs.extend(
+                config
+                    .resolved
+                    .strings_filter(Safe::DIRECTORY, |meta: &Metadata| {
+                        meta.source == gix_config::Source::Cli
+                    })
+                    .unwrap_or_default(),
+            );
             let test_dir = worktree_dir.as_deref().unwrap_or(git_dir.as_path());
             let res = check_safe_directories(
                 test_dir,
@@ -550,6 +574,8 @@ impl ThreadSafeRepository {
                             *git_dir_trust,
                             &common_dir_ref.join("objects"),
                             current_dir,
+                            config.use_multi_pack_index.then_some(config.object_hash),
+                            config.alloc_limit_bytes,
                         )?,
                         use_multi_pack_index: config.use_multi_pack_index,
                         alloc_limit_bytes: config.alloc_limit_bytes,

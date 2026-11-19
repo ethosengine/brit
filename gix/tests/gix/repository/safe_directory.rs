@@ -15,6 +15,12 @@ fn open_reduced(path: &std::path::Path, options: gix::open::Options) -> gix::Res
     gix::open_opts(path, options.with(Trust::Reduced))
 }
 
+/// `path` as configuration text: forward slashes, so a Windows path has no backslash for the parser to read as
+/// an escape. Git and gix accept forward slashes in Windows paths.
+fn config_text_path(path: &std::path::Path) -> TestResult<String> {
+    Ok(gix_path::to_unix_separators_on_windows(gix_path::into_bstr(path)?).to_string())
+}
+
 fn safe_directory(value: impl std::fmt::Display) -> String {
     format!("safe.directory={value}")
 }
@@ -125,8 +131,8 @@ fn neither_repository_nor_api_configuration_grants_trust() -> TestResult {
     std::io::Write::write_all(
         &mut config,
         format!(
-            "\n[safe]\n\tdirectory = {}\n\tdirectory = *\n[core]\n\thooksPath = repository-hooks\n",
-            root.display()
+            "\n[safe]\n\tdirectory = \"{}\"\n\tdirectory = *\n[core]\n\thooksPath = repository-hooks\n",
+            config_text_path(&root)?
         )
         .as_bytes(),
     )?;
@@ -162,5 +168,31 @@ fn neither_repository_nor_api_configuration_grants_trust() -> TestResult {
         repo.config_snapshot().trusted_path("core.hooksPath")?.is_some(),
         "once the invoker trusts the checkout its own configuration is trusted, as with a global entry"
     );
+    Ok(())
+}
+
+#[test]
+#[serial_test::serial]
+fn environment_conditional_includes_never_grant_trust() -> TestResult {
+    let fixture = fixture()?;
+    let dir = gix_testtools::tempfile::TempDir::new()?;
+    let include = dir.path().join("trust-everything.config");
+    std::fs::write(&include, "[safe]\n\tdirectory = *\n")?;
+    let include = include.display().to_string();
+    let gitdir_condition = format!("includeIf.gitdir:{}/.git.path", config_text_path(&fixture)?);
+    // Git reads the command scope without a repository, so these conditions never match there. The fixture's
+    // branch is `main` and its git directory is the one named, so they would match if evaluated against it.
+    for (key, expected) in [
+        ("includeIf.onbranch:main.path", Trust::Reduced),
+        (gitdir_condition.as_str(), Trust::Reduced),
+        ("include.path", Trust::Full),
+    ] {
+        let _environment = gix_testtools::isolate_git_environment()?
+            .set("GIT_CONFIG_COUNT", "1")
+            .set("GIT_CONFIG_KEY_0", key)
+            .set("GIT_CONFIG_VALUE_0", include.clone());
+        let repo = open_reduced(&fixture, gix::open::Options::default())?;
+        assert_eq!(repo.git_dir_trust(), expected, "GIT_CONFIG_KEY_0={key}");
+    }
     Ok(())
 }
