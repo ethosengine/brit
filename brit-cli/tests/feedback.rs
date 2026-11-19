@@ -40,13 +40,19 @@ fn bounded_history_supports_long_short_and_numeric_spellings() {
 }
 
 #[test]
-fn history_preserves_path_refusals_and_option_terminators() {
+fn history_keeps_numeric_paths_after_the_option_terminator() {
     let repo = gix_testtools::tempfile::tempdir().expect("fixture");
     gix_testtools::git(repo.path(), "init").expect("init");
-    for args in [
-        &["log", "-2", "file"][..],
-        &["log", "--", "-2"][..],
-        &["log", "-n", "2", "--", "-5"][..],
+    for n in 0..3 {
+        std::fs::write(repo.path().join("file"), n.to_string()).expect("write");
+        gix_testtools::git(repo.path(), "add file").expect("add");
+        gix_testtools::git(repo.path(), &format!("commit -m commit-{n}")).expect("commit");
+    }
+    // `-2` before `--` is a count; after it, `-2` and `-5` are paths no commit touched.
+    for (args, expected) in [
+        (&["log", "-2", "file"][..], 2),
+        (&["log", "--", "-2"][..], 0),
+        (&["log", "-n", "2", "--", "-5"][..], 0),
     ] {
         let mut command = Command::new(env!("CARGO_BIN_EXE_brit"));
         gix_testtools::configure_git_environment(&mut command, repo.path());
@@ -56,9 +62,12 @@ fn history_preserves_path_refusals_and_option_terminators() {
             .args(args)
             .output()
             .expect("brit");
-        assert!(!out.status.success());
-        assert!(out.stdout.is_empty());
-        assert!(String::from_utf8_lossy(&out.stderr).contains("File-based lookup isn't yet implemented"));
+        assert!(out.status.success(), "{}", String::from_utf8_lossy(&out.stderr));
+        assert_eq!(
+            String::from_utf8_lossy(&out.stdout).lines().count(),
+            expected,
+            "{args:?}"
+        );
     }
     for args in [&["log", "--max-count", "-1"][..], &["log", "-n", "many"][..]] {
         let mut command = Command::new(env!("CARGO_BIN_EXE_brit"));
