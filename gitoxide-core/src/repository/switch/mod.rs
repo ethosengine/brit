@@ -276,7 +276,7 @@ mod unavailable {
 #[cfg(not(target_os = "linux"))]
 pub use unavailable::{
     HOOK_MARKER, HOOK_WAIT, Held, WorktreeGuard, ensure_no_pending, execute, hook_marker, mutation_guard,
-    mutation_guard_waiting, other_worktree_guard, push_guard, reacquire_for_send, recover, status,
+    mutation_guard_waiting, other_worktree_guard, push_guard, reacquire_for_send, reacquire_shared, recover, status,
     worktree_mutation_guard, worktree_mutation_guard_waiting, worktree_writer_guard,
 };
 
