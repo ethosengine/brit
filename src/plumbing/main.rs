@@ -60,7 +60,8 @@ fn requires_mutation_guard(cmd: &Subcommands) -> bool {
         | Subcommands::Env
         | Subcommands::Diff(_)
         | Subcommands::Log(_)
-        | Subcommands::Blame { .. } => false,
+        | Subcommands::Blame { .. }
+        | Subcommands::RevParse(_) => false,
         Subcommands::Commit(commit::Platform {
             cmd: Some(commit::Subcommands::Verify { .. } | commit::Subcommands::Describe { .. }),
             ..
@@ -1416,6 +1417,17 @@ pub fn run_with_command(args: Args, command: clap::Command) -> Result<()> {
                 )
             }),
         },
+        Subcommands::RevParse(crate::plumbing::options::git_spellings::RevParse { args, options }) => {
+            prepare_and_run("rev-parse", verbose, None, move |_progress, out, err| {
+                core::repository::git_spellings::rev_parse::rev_parse(
+                    repository(Mode::Lenient)?,
+                    args,
+                    out,
+                    err,
+                    options,
+                )
+            })
+        }
         Subcommands::Cat { revspec } => prepare_and_run("cat", verbose, None, move |_progress, out, _err| {
             core::repository::cat(repository(Mode::Lenient)?, &revspec, out)
         }),

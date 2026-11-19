@@ -1,3 +1,4 @@
+pub mod git_spellings;
 pub mod rebase;
 use std::path::PathBuf;
 
@@ -257,6 +258,8 @@ pub enum Subcommands {
         #[clap(long,  value_parser=AsTime, value_name = "DATE")]
         since: Option<gix::date::Time>,
     },
+    /// Git's spelling of `brit revision resolve`, plus repository path queries, with Git's output.
+    RevParse(git_spellings::RevParse),
     /// Generate shell completions to stdout or a directory.
     #[clap(visible_alias = "generate-completions", visible_alias = "shell-completions")]
     Completions {
