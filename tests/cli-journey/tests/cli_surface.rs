@@ -75,6 +75,15 @@ fn compiled_surface_includes_composed_namespaces_and_version_provenance_without_
             .any(|arg| arg["long"] == "is-ancestor"),
         "merge-base --is-ancestor is a flag on the existing verb"
     );
+    let rebase = commands.iter().find(|command| command["name"] == "rebase").unwrap();
+    assert!(
+        rebase["options"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .any(|arg| arg["long"] == "retire"),
+        "rebase --retire is a flag on the existing verb"
+    );
     assert!(
         value["command"]["options"]
             .as_array()

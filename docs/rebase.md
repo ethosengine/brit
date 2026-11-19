@@ -14,6 +14,7 @@ brit rebase --status
 brit rebase --continue
 brit rebase --skip
 brit rebase --abort
+brit rebase --retire
 brit rebase --edit-todo
 brit rebase --show-current-patch
 ```
@@ -112,6 +113,59 @@ pre-hook permits inspection and abort only. An unknown post-hook follows an
 already published commit: explicit continuation acknowledges that uncertainty
 without rerunning the hook. Known-not-started post-authoring notifications remain
 queued durably and run once. Status distinguishes these cases from a clean stop.
+
+Every journal and retained copy lives under a 1 GiB scratch limit, and the limit
+decides only whether work starts or continues. A rebase is admitted only when its
+journal and the retained copy an abort or cleanup writes fit with a 5/4 safety
+factor: a cheap estimate refuses far-too-large repositories before any object is
+read, and the exact records are checked once preparation finishes (a refusal
+there cancels the preparation, so nothing is left behind). Admission allows for
+one stop and a resolution as large as the largest replayed step. Every later
+forward step (`--continue`, `--stage`, `--skip`, an edit) is reserved for before
+it writes anything; a refused step names `--abort`.
+
+`--abort` and cleanup are never refused by the limit, in any phase: the abort's
+own decisions, its records and the retained copy it writes, and the cleanup of a
+completed or aborted rebase are unmetered. Only real disk space bounds them. A
+write that fails on a full disk removes its own partial file, and the command
+says so; free space and run the same command again.
+
+A Brit command killed at any point, at the real limit or a lowered one, leaves a
+rebase that `--status` describes with a cure, that `--abort` restores exactly
+(unless its final decision was already durable, when `--continue` publishes it),
+and that `--continue` carries on. A record the killed command had written but not
+yet put in effect (an unrenamed `state.pending`, or a decision, proposal or
+retained-copy manifest cut short) is discarded or written again by the next
+command; `--status` says so. A preparation killed before it recorded anything has
+nothing to continue: `--abort` removes it.
+
+Brit's rebase is not available on repositories of roughly 180,000 objects or
+more, or whose history decompresses to about 0.9 GB, yet: every state image lists
+the whole object closure and the retained copy holds it, so such a rebase is
+refused in about a second, before anything is written. Use `git rebase` there.
+
+`brit rebase --retire` sets aside a rebase whose only remaining work is its
+retained copy, which can take long on a large repository or wait for disk space:
+a completed or aborted rebase whose cleanup is pending, or an abort that is
+retaining before it changed anything live. It deletes nothing and changes nothing
+live: it renames the journal to `brit-rebase-kept-<nonce>` beside it, leaves the
+`refs/brit-rebase-retain/<nonce>/*` references and any retained copy in place,
+and prints each kept piece, its size and the command that removes it. It refuses
+everything else, naming the command that applies: preparation and every phase
+with live state to restore (`--abort`), a decision in flight, and an open
+conflict-authoring session. A second run reports nothing to retire. Older Brit
+releases do not treat `brit-rebase-kept-*` as a journal or a cleanup receipt.
+
+A journal that does not open as this repository's own (the repository was moved
+or copied mid-rebase, the journal's permissions changed, or its checksum is
+corrupt) is touched by no Brit command. `--status` says what failed, warns that a
+copied repository's journal may describe another repository's live rebase, and
+names the directory, retention refs and lock files to deal with by hand; every
+other Brit mutation refuses until that is done. When the repository was moved and
+its old location is gone, `--status` names that location: move the repository
+back and run `brit rebase --abort` there, which restores it exactly. The manual
+steps remain the alternative, but they restore nothing and leave a checkout the
+rebase had begun changing part-way through it.
 
 Publication and cleanup are separate. A message saying **committed/published with
 warning** or **cleanup pending** must not be interpreted as an unpublished

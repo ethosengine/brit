@@ -183,14 +183,23 @@ impl Session {
         self.state.payloads.clone_from(&after.payloads);
         self.state.copies = after.copies;
         let pending = self.directory.join("state.pending");
-        if pending.try_exists()? {
-            let candidate = Self::open_record(repo, "state.pending")?;
-            let digest = json_digest(&candidate.state)?;
-            let complete = digest == json_digest(&after)?;
-            ensure!(
-                complete || digest == json_digest(&self.state)?,
-                "foreign pending payload upgrade"
-            );
+        // This upgrade's own successor, interrupted before its rename, is rolled
+        // forward: it is one of the two records below and no live write precedes
+        // either. Any other pending record, torn or not, was never in effect and
+        // `save` discards it. (The CLI's `settle_pending` discards even this
+        // upgrade's own successor first; the upgrade then simply runs again.)
+        let candidate = if pending.try_exists()? {
+            Self::open_record(repo, "state.pending").ok().filter(|candidate| {
+                json_digest(&candidate.state).is_ok_and(|digest| {
+                    json_digest(&after).is_ok_and(|after| digest == after)
+                        || json_digest(&self.state).is_ok_and(|current| digest == current)
+                })
+            })
+        } else {
+            None
+        };
+        if let Some(candidate) = candidate {
+            let complete = json_digest(&candidate.state)? == json_digest(&after)?;
             switch::sync_path(&pending)?;
             fs::rename(pending, self.directory.join("state.json"))?;
             switch::sync_dir(&self.directory)?;
@@ -233,7 +242,6 @@ impl Session {
             self.state.version == 2 || self.state.payloads.is_empty(),
             "legacy replay has raw payloads"
         );
-        switch::payload::check_growth(&self.directory, 0)?;
         self.child_payload_licenses()?;
         for (hash, size) in &self.state.payloads {
             ensure!(
@@ -347,6 +355,11 @@ impl Session {
         let saved = Self::open(repo)?;
         self.state.payloads.extend(saved.child_payload_licenses()?);
         let root = repo.workdir().context("worktree required")?;
+        // A resolution is the user's bytes: reserve for them before keeping any.
+        // An abort accepting and discarding its child is never metered.
+        if switch::payload::metered() {
+            self.reserve(repo, self.step_need(repo, None, true, &[])?)?;
+        }
         for ordinal in 0..self.state.work.len() {
             let path = root.join(gix::path::from_bstr(self.state.work[ordinal].path.as_bstr())?.as_ref());
             self.state.work[ordinal].after = self.capture_payload(repo, &path)?;

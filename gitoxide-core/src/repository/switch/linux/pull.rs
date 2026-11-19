@@ -573,6 +573,8 @@ pub(super) fn integrate(
     let retained = repo.clone();
     let result = execute_locked(repo, branch.as_bstr(), shared, Some(state));
     if result.is_err() && !gix::interrupt::is_triggered() {
+        // Releasing a start that changed nothing is cleanup: never metered.
+        let _recovery = payload::Recovery::enter();
         let pending = load(&retained)?;
         if pending.preparing {
             cleanup(&retained, &pending)?;

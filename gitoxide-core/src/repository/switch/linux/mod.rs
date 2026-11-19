@@ -179,10 +179,14 @@ fn private_output(path: &Path, write: impl FnOnce(&mut fs::File) -> Result<()>) 
         .create_new(true)
         .mode(0o600)
         .open(path)?;
-    io_fault("write", path)?;
-    write(&mut file)?;
-    sync_file(&file, path)?;
-    Ok(())
+    if let Err(error) = io_fault("write", path).and_then(|()| write(&mut file)) {
+        // This call created the name, so a failed write (a full disk) leaves no
+        // partial file a retry would mistake for a foreign or corrupt record.
+        drop(file);
+        let _ = fs::remove_file(path);
+        return Err(error);
+    }
+    sync_file(&file, path)
 }
 
 /// Dedicated fault builds can fail a real persistence boundary without filling
@@ -271,13 +275,58 @@ pub fn ensure_no_pending(repo: &gix::Repository) -> Result<()> {
             "pending conflict authoring in {}; recover its internal session",
             worktree.git_dir().display()
         );
-        ensure!(
-            !present(&journal(&worktree))?,
-            "pending switch or pull in {}; use brit switch --status or brit pull --status, then the named --continue or --abort command",
-            worktree.git_dir().display()
-        );
+        if present(&journal(&worktree))? {
+            ensure!(
+                !unrecorded(&worktree)?,
+                "pending switch or pull in {}: it stopped before its first record, recorded nothing and changed nothing; run brit switch --abort in that worktree to remove it",
+                worktree.git_dir().display()
+            );
+            bail!(
+                "pending switch or pull in {}; use brit switch --status or brit pull --status, then the named --continue or --abort command",
+                worktree.git_dir().display()
+            );
+        }
     }
     Ok(())
+}
+
+/// A journal directory without `manifest.json`: a switch or pull stopped after
+/// creating it and before publishing its first record. Both create the directory
+/// and publish that record before they take any lock or touch any live file, so
+/// such a directory holds at most an unpublished `manifest.next` and nothing live
+/// was changed.
+fn unrecorded(repo: &gix::Repository) -> Result<bool> {
+    let root = journal(repo);
+    Ok(present(&root)? && !present(&root.join("manifest.json"))?)
+}
+
+/// Remove an unrecorded journal. The caller holds the guard every switch and pull
+/// holds from before it creates its journal, so its creator is no longer running.
+fn release_unrecorded(repo: &gix::Repository) -> Result<()> {
+    use std::os::unix::fs::{MetadataExt, PermissionsExt};
+    let root = journal(repo);
+    let owner = fs::metadata(absolute(repo, repo.git_dir()))?.uid();
+    let metadata = fs::symlink_metadata(&root)?;
+    ensure!(
+        metadata.is_dir() && metadata.uid() == owner && metadata.permissions().mode().trailing_zeros() >= 6,
+        "unsafe unrecorded switch journal {}; evidence retained",
+        root.display()
+    );
+    let entries = fs::read_dir(&root)?.collect::<std::io::Result<Vec<_>>>()?;
+    for entry in &entries {
+        let member = fs::symlink_metadata(entry.path())?;
+        ensure!(
+            entry.file_name() == "manifest.next" && member.is_file() && member.uid() == owner,
+            "unknown member {:?} in an unrecorded switch journal; evidence retained",
+            entry.file_name()
+        );
+    }
+    for entry in entries {
+        fs::remove_file(entry.path())?;
+    }
+    sync_dir(&root)?;
+    fs::remove_dir(&root)?;
+    sync_dir(&absolute(repo, repo.git_dir()))
 }
 
 /// Serialize cooperating Brit writers across the shared repository.
@@ -362,10 +411,51 @@ pub(crate) fn shared_guard(repo: &gix::Repository) -> Result<guard::Held> {
     guard::acquire(repo, guard::Mode::Exclusive, true, super::mutation_wait())
 }
 
+/// `.brit-checkout-*` scratch directories in `git_dir` that no pending switch or
+/// pull journal names: left by a Brit process killed while it held them.
+pub fn scratch_leftovers(git_dir: &Path) -> Result<Vec<PathBuf>> {
+    let recorded = (|| -> Option<PathBuf> {
+        let bytes = fs::read(git_dir.join(JOURNAL).join("manifest.json")).ok()?;
+        let envelope: Envelope = serde_json::from_slice(&bytes).ok()?;
+        let state: Manifest = serde_json::from_slice(&envelope.payload).ok()?;
+        path(state.scratch?.path()).ok()
+    })();
+    let mut leftovers = Vec::new();
+    for entry in fs::read_dir(git_dir)? {
+        let entry = entry?;
+        if entry.file_name().as_encoded_bytes().starts_with(b".brit-checkout-")
+            && entry.file_type()?.is_dir()
+            && recorded.as_deref() != Some(entry.path().as_path())
+            && recorded.as_deref() != fs::canonicalize(entry.path()).ok().as_deref()
+        {
+            leftovers.push(entry.path());
+        }
+    }
+    leftovers.sort();
+    Ok(leftovers)
+}
+
 /// Inspect without mutating or automatically resuming an interrupted operation.
 pub fn status(repo: &gix::Repository, out: &mut dyn Write) -> Result<()> {
+    // Reporting writes nothing, so no quota ever applies to it.
+    let _recovery = payload::Recovery::enter();
+    for leftover in scratch_leftovers(&absolute(repo, repo.git_dir()))? {
+        writeln!(
+            out,
+            "Scratch left by a killed Brit process (blocks nothing): {}; once no Brit command is running, remove it with rm -rf '{}'",
+            leftover.display(),
+            leftover.display()
+        )?;
+    }
     if !present(&journal(repo))? {
         writeln!(out, "No switch or pull recovery pending")?;
+        return Ok(());
+    }
+    if unrecorded(repo)? {
+        writeln!(
+            out,
+            "Switch or pull start stopped before its first record: it recorded nothing and changed nothing; unless one is still starting, brit switch --abort (or brit pull --abort) removes it"
+        )?;
         return Ok(());
     }
     let state = load(repo)?;
@@ -1029,6 +1119,7 @@ fn execute_locked(repo: gix::Repository, branch: &BStr, _shared: guard::Held, pi
     sync_dir(git_dir)?;
     if pinned.is_none() {
         fs::DirBuilder::new().mode(0o700).create(journal(&repo))?;
+        checkpoint("journal-created")?;
     }
     let mut preparation = Preparation {
         directory: journal(&repo),
@@ -1439,8 +1530,17 @@ fn inspect_removed_directory(root: &Path, name: &[u8], changes: &BTreeMap<Vec<u8
 }
 
 pub(crate) fn checkpoint(name: &str) -> Result<()> {
+    // `name#N` pauses at the Nth time this process reaches `name` (default 1).
     #[cfg(feature = "switch-test-faults")]
-    if std::env::var("BRIT_SWITCH_CHECKPOINT").ok().as_deref() == Some(name) {
+    if std::env::var("BRIT_SWITCH_CHECKPOINT").ok().is_some_and(|wanted| {
+        static REACHED: std::sync::atomic::AtomicUsize = std::sync::atomic::AtomicUsize::new(0);
+        let (wanted, ordinal) = wanted
+            .split_once('#')
+            .map_or((wanted.as_str(), 1), |(wanted, ordinal)| {
+                (wanted, ordinal.parse().unwrap_or(usize::MAX))
+            });
+        wanted == name && REACHED.fetch_add(1, std::sync::atomic::Ordering::SeqCst) + 1 == ordinal
+    }) {
         let directory =
             PathBuf::from(std::env::var_os("BRIT_SWITCH_CHECKPOINT_DIR").context("checkpoint directory required")?);
         fs::write(directory.join(format!("{name}.reached")), b"reached")?;
@@ -1967,7 +2067,20 @@ fn recover_operation(repo: gix::Repository, abort: bool, pulling: bool) -> Resul
     if !present(&journal(&repo))? {
         bail!("no switch recovery pending");
     }
+    if unrecorded(&repo)? {
+        let operation = if pulling { "pull" } else { "switch" };
+        ensure!(
+            abort,
+            "the stopped {operation} recorded nothing to continue and changed nothing; use brit {operation} --abort to remove it"
+        );
+        return release_unrecorded(&repo);
+    }
+    // Opening a journal never applies the quota, and neither does undoing it or
+    // rolling a durable decision forward: only a continuation that has not yet
+    // decided is metered (`--abort` remains for it).
+    let opening = payload::Recovery::enter();
     let mut state = load(&repo)?;
+    let _recovery = (abort || state.decision).then_some(opening);
     ensure!(
         state.pull.is_some() == pulling,
         "pending {} operation; use brit {} --continue or --abort",

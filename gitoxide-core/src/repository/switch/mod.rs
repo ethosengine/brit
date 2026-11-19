@@ -167,7 +167,8 @@ pub use linux::{
     ensure_no_pending, execute,
     guard::{HOOK_MARKER, HOOK_WAIT, Held, WorktreeGuard, hook_marker},
     mutation_guard, mutation_guard_waiting, other_worktree_guard, push_guard, reacquire_for_send, reacquire_shared,
-    recover, status, worktree_mutation_guard, worktree_mutation_guard_waiting, worktree_writer_guard,
+    recover, scratch_leftovers, status, worktree_mutation_guard, worktree_mutation_guard_waiting,
+    worktree_writer_guard,
 };
 #[cfg(all(target_os = "linux", feature = "blocking-client"))]
 pub use linux::{pull_execute, pull_recover};
@@ -181,6 +182,10 @@ mod unavailable {
             Err(err) if err.kind() == std::io::ErrorKind::NotFound => Ok(false),
             Err(err) => Err(err.into()),
         }
+    }
+    /// Scratch from killed Brit processes is reported only where Brit journals.
+    pub fn scratch_leftovers(_: &std::path::Path) -> Result<Vec<std::path::PathBuf>> {
+        Ok(Vec::new())
     }
     /// Refuse mutation while a Linux-created switch journal is pending.
     pub fn ensure_no_pending(repo: &gix::Repository) -> Result<()> {
@@ -276,8 +281,8 @@ mod unavailable {
 #[cfg(not(target_os = "linux"))]
 pub use unavailable::{
     HOOK_MARKER, HOOK_WAIT, Held, WorktreeGuard, ensure_no_pending, execute, hook_marker, mutation_guard,
-    mutation_guard_waiting, other_worktree_guard, push_guard, reacquire_for_send, reacquire_shared, recover, status,
-    worktree_mutation_guard, worktree_mutation_guard_waiting, worktree_writer_guard,
+    mutation_guard_waiting, other_worktree_guard, push_guard, reacquire_for_send, reacquire_shared, recover,
+    scratch_leftovers, status, worktree_mutation_guard, worktree_mutation_guard_waiting, worktree_writer_guard,
 };
 
 #[cfg(test)]

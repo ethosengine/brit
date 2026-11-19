@@ -264,6 +264,53 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.0.0/); ver
 
 ### Fixed
 
+- `brit rebase --abort` cancels a rebase whose preparation failed or was killed, without
+  re-running it: it reads only the journal's own records and the pinned HEAD, index and branch,
+  never an object, and reports any live difference instead of refusing. Before, a preparation
+  that failed (for example on an uninitialised submodule's gitlink, which it looked up as a local
+  object) left a journal that neither `--abort` nor `--continue` could clear, and every Brit
+  mutation refused "pending replay". An interrupted cancellation is finished by the next
+  `--abort`.
+- `brit rebase` refuses a gitlink whose submodule directory is absent by name, before any
+  state, instead of failing after creating its journal. Gitlinks remain unsupported.
+- `brit rebase` no longer starts or continues work its 1 GiB scratch limit could not hold,
+  and the limit never refuses undoing. An estimate from object headers refuses far-too-large
+  repositories in about a second, saying brit rebase is not yet available at that size
+  (roughly 180,000 objects, or a closure near 0.9 GB) and that `git rebase` is the fallback;
+  once preparation knows its exact records, a rebase whose journal or retained copy could
+  exceed the limit with a 5/4 safety factor, allowing for one stop and its resolution, is
+  refused and its preparation cancelled; every later forward step (`--continue`, `--stage`,
+  `--skip`, an edit) is reserved for before it writes anything, and a refusal names
+  `--abort`. `--abort` and the cleanup of a completed or aborted rebase are never refused by
+  the limit, in any phase, so an admitted rebase can always be undone or finished; only the
+  disk bounds them, and a write that fails on a full disk removes its partial file so the
+  same command resumes. Opening a journal never applies the limit, so `--status` always
+  answers. (Earlier changes in this release admitted rebases that then stranded, and later
+  refused `--abort` itself at a large conflict resolution.)
+- `brit rebase --retire` sets aside a completed or aborted rebase whose retained copy is all
+  that remains (or an abort retaining before it changed anything live), deleting nothing and
+  changing nothing live: it keeps the journal as `brit-rebase-kept-<nonce>`, its retention
+  refs and retained copies, and prints how to remove each. It refuses every other phase,
+  naming `--abort` or `--continue`, and removes no lock.
+- A rebase journal that does not open as this repository's own (moved or copied repository,
+  changed permissions, corrupt checksum) is touched by no Brit command; `brit rebase
+  --status` says what failed, warns that a copied repository's journal may describe another
+  repository's live rebase, and names what to remove by hand.
+- `brit rebase --abort` declines to cancel a prepared hook invocation whose lease a live
+  supervisor still holds.
+- A rebase command killed after writing its next journal record and before putting it in
+  effect no longer strands the repository: the next `--abort`, `--continue` or `--skip`
+  discards that record, which never took effect, instead of refusing "foreign pending replay
+  state". A decision record, staged proposal or retained-copy manifest cut short by a kill or a
+  power loss is likewise written again, an `--abort` killed while holding its Git locks
+  releases them on the next `--abort`, and retained-copy manifests, completion markers and
+  cleanup receipts are now published whole. `brit rebase --status` names a cure in every phase,
+  says what is true of the decision actually pending, and, for a repository moved mid-rebase,
+  names its old location: moving it back and running `--abort` there restores it.
+- `brit switch --status` is never refused by the scratch limit, and `switch --abort`,
+  `pull --abort` and rolling a durable switch decision forward are not metered.
+- A `brit switch` or `brit pull` stopped before its first journal record no longer blocks the
+  repository: `--status` says it recorded and changed nothing, and `--abort` removes it.
 - `brit fetch` refuses a refspec naming one ref the remote does not advertise, checks again
   after reconnecting, and exits non-zero when a ref update is rejected.
 - A push that fails anywhere in the receive-pack request reports the cause (an HTTP status

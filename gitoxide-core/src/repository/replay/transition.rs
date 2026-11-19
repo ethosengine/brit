@@ -36,6 +36,29 @@ pub(super) struct Transition {
 impl Transition {
     /// The caller has persisted this exact decision and holds the shared guard.
     /// No new desired bytes or timestamps are generated during roll-forward.
+    /// The metadata resources this transition locks, in lock order.
+    fn resources(&self, repo: &gix::Repository) -> Result<Vec<PathBuf>> {
+        let mut resources: Vec<PathBuf> = self
+            .metadata
+            .iter()
+            .map(|change| gix::path::from_bstr(change.path.as_bstr()).map(|p| p.into_owned()))
+            .collect::<gix::Result<_>>()?;
+        if let Some((name, _)) = &self.branch {
+            resources.push(repo.common_dir().join(gix::path::from_bstr(name.as_bstr())?.as_ref()));
+            resources.push(repo.common_dir().join("packed-refs"));
+        }
+        resources.sort();
+        resources.dedup();
+        Ok(resources)
+    }
+
+    /// Release the locks a staged transition that was never decided recorded in
+    /// `staging`: each only when its receipt proves it this staging's own. The
+    /// transition wrote nothing live before its decision, so they guard nothing.
+    pub(super) fn release_undecided_locks(&self, repo: &gix::Repository, staging: &Path) -> Result<()> {
+        reclaim_locks(staging, &self.resources(repo)?)
+    }
+
     pub(super) fn apply(
         &self,
         repo: &gix::Repository,
@@ -54,17 +77,7 @@ impl Transition {
         for change in &self.metadata {
             self.validate_metadata(repo, change)?;
         }
-        let mut resources: Vec<PathBuf> = self
-            .metadata
-            .iter()
-            .map(|change| gix::path::from_bstr(change.path.as_bstr()).map(|p| p.into_owned()))
-            .collect::<gix::Result<_>>()?;
-        if let Some((name, _)) = &self.branch {
-            resources.push(repo.common_dir().join(gix::path::from_bstr(name.as_bstr())?.as_ref()));
-            resources.push(repo.common_dir().join("packed-refs"));
-        }
-        resources.sort();
-        resources.dedup();
+        let resources = self.resources(repo)?;
         reclaim_locks(staging, &resources)?;
         let owner = format!("brit-rebase-owner:{}", switch::digest(&serde_json::to_vec(self)?)?);
         let mut ordinal = 0;
@@ -223,17 +236,7 @@ impl Transition {
     }
 
     pub(super) fn cleanup_inventory(&self, repo: &gix::Repository, staging: &Path) -> Result<BTreeSet<Vec<u8>>> {
-        let mut resources = self
-            .metadata
-            .iter()
-            .map(|change| gix::path::from_bstr(change.path.as_bstr()).map(|p| p.into_owned()))
-            .collect::<gix::Result<Vec<_>>>()?;
-        if let Some((name, _)) = &self.branch {
-            resources.push(repo.common_dir().join(gix::path::from_bstr(name.as_bstr())?.as_ref()));
-            resources.push(repo.common_dir().join("packed-refs"));
-        }
-        resources.sort();
-        resources.dedup();
+        let resources = self.resources(repo)?;
         let mut allowed = BTreeSet::from([b"owner".to_vec(), b"plan.json".to_vec()]);
         for change in &self.work {
             let digest = switch::digest(&change.path)?;
