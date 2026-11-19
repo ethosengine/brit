@@ -73,6 +73,92 @@ pub(crate) fn pull_tracking(
     Ok(destinations.pop())
 }
 
+/// Git's opportunistic remote-tracking update (git 1.8.4, `get_ref_map` in `builtin/fetch.c`):
+/// a command-line refspec that names a branch but no destination still moves the
+/// remote-tracking ref the remote's configured fetch refspecs map that branch to.
+///
+/// Return one exact refspec per such mapping, carrying the configured spec's force flag, so
+/// the fetch updates only the named branch's tracking ref and leaves every other tracking ref
+/// alone. Refspecs with a destination, globs, negations and object ids contribute nothing,
+/// and neither does a URL remote, which has no configured refspecs. Unparsable refspecs are
+/// skipped here; replacing the remote's refspecs reports them.
+pub(crate) fn opportunistic_tracking_specs(
+    remote: &gix::Remote<'_>,
+    command_line: &[BString],
+) -> Vec<gix::refspec::RefSpec> {
+    use gix::bstr::{ByteSlice, ByteVec};
+    if remote.name().is_none() {
+        return Vec::new();
+    }
+    let configured = remote.refspecs(gix::remote::Direction::Fetch);
+    let parsed: Vec<_> = command_line
+        .iter()
+        .filter_map(|spec| gix::refspec::parse(spec.as_bstr(), gix::refspec::parse::Operation::Fetch).ok())
+        .collect();
+    let explicit_destinations: Vec<_> = parsed.iter().filter_map(|spec| spec.destination()).collect();
+    let null = gix::ObjectId::null(remote.repo().object_hash());
+    let mut candidates = Vec::new();
+    for spec in &parsed {
+        // Only a positive, destination-less refspec; it can never be a pattern.
+        let gix::refspec::Instruction::Fetch(gix::refspec::instruction::Fetch::Only { src: source }) =
+            spec.instruction()
+        else {
+            continue;
+        };
+        if gix::ObjectId::from_hex(source).is_ok() {
+            continue;
+        }
+        if source.starts_with(b"refs/") {
+            candidates.push(BString::from(source));
+            continue;
+        }
+        // The partial-name expansion the refspec matcher applies to advertised refs.
+        for (base, suffix) in [
+            ("refs/", ""),
+            ("refs/tags/", ""),
+            ("refs/heads/", ""),
+            ("refs/remotes/", ""),
+            ("refs/remotes/", "/HEAD"),
+        ] {
+            let mut name = BString::from(base);
+            name.push_str(source);
+            name.push_str(suffix);
+            candidates.push(name);
+        }
+    }
+    let matches = gix::refspec::MatchGroup::from_fetch_specs(configured.iter().map(gix::refspec::RefSpec::to_ref))
+        .match_lhs(candidates.iter().map(|name| gix::refspec::match_group::Item {
+            full_ref_name: name.as_bstr(),
+            target: &null,
+            object: None,
+        }));
+    let mut specs: Vec<gix::refspec::RefSpec> = Vec::new();
+    for mapping in &matches.mappings {
+        let (gix::refspec::match_group::SourceRef::FullName(source), Some(destination)) = (&mapping.lhs, &mapping.rhs)
+        else {
+            continue;
+        };
+        if !destination.starts_with(b"refs/") || explicit_destinations.contains(&destination.as_ref()) {
+            continue;
+        }
+        let mut text = BString::from(if configured[mapping.spec_index].allow_non_fast_forward() {
+            "+"
+        } else {
+            ""
+        });
+        text.push_str(source.as_ref());
+        text.push_byte(b':');
+        text.push_str(destination.as_ref());
+        if let Ok(spec) = gix::refspec::parse(text.as_bstr(), gix::refspec::parse::Operation::Fetch) {
+            let spec = spec.to_owned();
+            if !specs.contains(&spec) {
+                specs.push(spec);
+            }
+        }
+    }
+    specs
+}
+
 /// Receive only the selected branch, leaving every ref and FETCH_HEAD for the caller's journal.
 /// The callback runs after advertisement and before receiving any pack bytes.
 pub(crate) fn pull_receive(
@@ -189,13 +275,16 @@ pub(crate) mod function {
         }
 
         let mut remote = crate::repository::remote::by_name_or_url(&repo, remote.as_deref())?;
+        let mut ref_map_options = gix::remote::ref_map::Options::default();
         if !ref_specs.is_empty() {
+            // Read the configured mapping before the command line replaces it.
+            ref_map_options.extra_refspecs = super::opportunistic_tracking_specs(&remote, &ref_specs);
             remote.replace_refspecs(ref_specs.iter(), gix::remote::Direction::Fetch)?;
             remote = remote.with_fetch_tags(gix::remote::fetch::Tags::None);
         }
         let res: gix::remote::fetch::Outcome = remote
             .connect(gix::remote::Direction::Fetch)?
-            .prepare_fetch(&mut progress, Default::default())?
+            .prepare_fetch(&mut progress, ref_map_options)?
             .with_dry_run(dry_run)
             .with_shallow(shallow)
             .receive(&mut progress, &gix::interrupt::IS_INTERRUPTED)?;
@@ -449,12 +538,25 @@ pub(crate) mod function {
                 }
             }
         }
-        if map.remote_refs.len() - map.mappings.len() != 0 {
+        // Several refspecs may map the same tip, so count tips, not mappings.
+        let mapped: std::collections::BTreeSet<_> = map
+            .mappings
+            .iter()
+            .filter_map(|mapping| match &mapping.remote {
+                gix::remote::fetch::refmap::Source::Ref(r) => Some(r.unpack().0),
+                gix::remote::fetch::refmap::Source::ObjectId(_) => None,
+            })
+            .collect();
+        let filtered = map
+            .remote_refs
+            .iter()
+            .filter(|r| !mapped.contains(r.unpack().0))
+            .count();
+        if filtered != 0 {
             writeln!(
                 err,
-                "server sent {} tips, {} were filtered due to {} refspec(s).",
+                "server sent {} tips, {filtered} were filtered due to {} refspec(s).",
                 map.remote_refs.len(),
-                map.remote_refs.len().saturating_sub(map.mappings.len()),
                 refspecs.len()
             )
             .or_error()?;
