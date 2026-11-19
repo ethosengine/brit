@@ -172,3 +172,22 @@ pub struct ForEachRef {
     /// `refs/heads/feat-*`.
     pub patterns: Vec<String>,
 }
+
+/// `ls-remote` printing Git's `<oid>\t<refname>` lines.
+#[derive(Debug, clap::Parser)]
+pub struct LsRemote {
+    /// Only branches under `refs/heads/`.
+    #[clap(long, visible_alias = "branches")]
+    pub heads: bool,
+    /// Only tags under `refs/tags/`.
+    #[clap(long, short = 't')]
+    pub tags: bool,
+    /// Omit peeled tags (`^{}`) and pseudo-refs like `HEAD`.
+    #[clap(long)]
+    pub refs: bool,
+    /// A configured remote, URL or path; the current branch's remote (else `origin`) when omitted.
+    pub remote: Option<String>,
+    /// Show only refs whose name ends with a pattern at a `/` boundary, like `dev`, `refs/heads/dev` or
+    /// `refs/heads/feat/*`.
+    pub patterns: Vec<String>,
+}

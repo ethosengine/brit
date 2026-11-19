@@ -5,6 +5,8 @@
 //! points back to them.
 
 pub mod for_each_ref;
+#[cfg(any(feature = "blocking-client", feature = "async-client"))]
+pub mod ls_remote;
 pub mod rev_parse;
 
 /// Git's `shorten_unambiguous_ref()` in its default strict mode (`core.warnAmbiguousRefs`): the

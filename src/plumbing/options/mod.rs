@@ -262,6 +262,9 @@ pub enum Subcommands {
     RevParse(git_spellings::RevParse),
     /// List local refs like Git. Brit's own branch listing is `brit branch list`.
     ForEachRef(git_spellings::ForEachRef),
+    /// Git's spelling of `brit remote refs`, printing Git's `<oid>\t<refname>` lines.
+    #[cfg(any(feature = "gitoxide-core-async-client", feature = "gitoxide-core-blocking-client"))]
+    LsRemote(git_spellings::LsRemote),
     /// Generate shell completions to stdout or a directory.
     #[clap(visible_alias = "generate-completions", visible_alias = "shell-completions")]
     Completions {

@@ -85,6 +85,8 @@ fn requires_mutation_guard(cmd: &Subcommands) -> bool {
         Subcommands::Pull { .. } => false,
         #[cfg(any(feature = "gitoxide-core-async-client", feature = "gitoxide-core-blocking-client"))]
         Subcommands::Remote(_) => false,
+        #[cfg(any(feature = "gitoxide-core-async-client", feature = "gitoxide-core-blocking-client"))]
+        Subcommands::LsRemote(_) => false,
         _ => true,
     }
 }
@@ -1444,6 +1446,35 @@ pub fn run_with_command(args: Args, command: clap::Command) -> Result<()> {
                 },
             )
         }),
+        #[cfg(any(feature = "gitoxide-core-async-client", feature = "gitoxide-core-blocking-client"))]
+        Subcommands::LsRemote(crate::plumbing::options::git_spellings::LsRemote {
+            heads,
+            tags,
+            refs,
+            remote,
+            patterns,
+        }) => prepare_and_run(
+            "ls-remote",
+            verbose,
+            core::repository::remote::refs::PROGRESS_RANGE,
+            move |progress, out, _err| {
+                let res = core::repository::git_spellings::ls_remote::ls_remote(
+                    repository(Mode::LenientWithGitInstallConfig)?,
+                    progress,
+                    out,
+                    core::repository::git_spellings::ls_remote::Options {
+                        remote,
+                        patterns,
+                        heads,
+                        tags,
+                        refs,
+                    },
+                );
+                #[cfg(feature = "gitoxide-core-async-client")]
+                let res = futures_lite::future::block_on(res);
+                res
+            },
+        ),
         Subcommands::Cat { revspec } => prepare_and_run("cat", verbose, None, move |_progress, out, _err| {
             core::repository::cat(repository(Mode::Lenient)?, &revspec, out)
         }),
