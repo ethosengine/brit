@@ -12,14 +12,22 @@ pub enum Message {
 }
 #[derive(Debug)]
 pub enum Action {
-    Start { upstream: BString, interactive: bool },
+    Start {
+        upstream: BString,
+        interactive: bool,
+    },
     Status,
     Continue,
     Skip,
     Abort,
+    /// Retire a cleanup that cannot finish, keeping everything.
+    RetireCleanup,
     EditTodo,
     ShowCurrentPatch,
-    Stage { paths: Vec<BString>, expand: bool },
+    Stage {
+        paths: Vec<BString>,
+        expand: bool,
+    },
     Amend(Message),
     BeginSplit,
     Commit(Message),
@@ -37,6 +45,13 @@ pub fn run(mut repo: gix::Repository, action: Action, out: &mut dyn Write, err: 
     use gix::bstr::ByteSlice;
     repo.make_paths_absolute()?;
     let active = repo.git_dir().join("brit-rebase").try_exists()?;
+    if let Action::RetireCleanup = action {
+        match Session::retire_cleanup(&repo)? {
+            Some(retired) => report_retired(&retired, out)?,
+            None => writeln!(out, "No rebase cleanup to retire.")?,
+        }
+        return Ok(());
+    }
     if let Action::Start { upstream, interactive } = action {
         let session = if interactive {
             Session::prepare_interactive(&repo, upstream.as_bstr())?
@@ -66,6 +81,13 @@ pub fn run(mut repo: gix::Repository, action: Action, out: &mut dyn Write, err: 
                     writeln!(
                         out,
                         "Cancelled preparation not yet removed: {path:?}; brit rebase --abort finishes it"
+                    )?;
+                }
+                for path in kept_journals(&repo)? {
+                    writeln!(
+                        out,
+                        "Kept by --retire-cleanup (blocks nothing): {path:?}; remove it with rm -rf {}",
+                        shell_quote(&path)
                     )?;
                 }
                 return Ok(());
@@ -141,7 +163,7 @@ pub fn run(mut repo: gix::Repository, action: Action, out: &mut dyn Write, err: 
         }
         Action::Amend(message) => author(&repo, &mut session, message, out, err, true),
         Action::Commit(message) => author(&repo, &mut session, message, out, err, false),
-        Action::Start { .. } => unreachable!("start handled above"),
+        Action::Start { .. } | Action::RetireCleanup => unreachable!("handled above"),
     };
     result.with_context(|| format!("rebase phase {}; inspect with --status", session.phase()))
 }
@@ -294,6 +316,68 @@ fn cleanup(repo: &gix::Repository, session: &mut super::Session, out: &mut dyn W
         }
         Err(error) => anyhow::bail!("rebase {terminal}; cleanup pending, retained data remains: {error:#}"),
     }
+}
+
+#[cfg(target_os = "linux")]
+fn report_retired(retired: &super::Retired, out: &mut dyn Write) -> Result<()> {
+    writeln!(out, "Retired the rebase cleanup; nothing was deleted.")?;
+    if retired.unpublished {
+        writeln!(
+            out,
+            "The rebase never published: its branch still names {}, and nothing Brit changed live needs restoring.",
+            retired.original
+        )?;
+    } else {
+        writeln!(
+            out,
+            "The rebase is published at {} (it was {} before).",
+            retired.tip, retired.original
+        )?;
+    }
+    writeln!(
+        out,
+        "Kept journal: {:?} ({} bytes); remove it with: rm -rf {}",
+        retired.journal,
+        retired.journal_bytes,
+        shell_quote(&retired.journal)
+    )?;
+    if let Some((path, bytes)) = &retired.copies {
+        writeln!(
+            out,
+            "Kept retained copies: {path:?} ({bytes} bytes); remove them with: rm -rf {}",
+            shell_quote(path)
+        )?;
+    }
+    for (name, id) in &retired.refs {
+        writeln!(
+            out,
+            "Kept retention ref {name} -> {id} (keeps those commits from garbage collection); remove it with: git update-ref -d {name}"
+        )?;
+    }
+    Ok(())
+}
+
+#[cfg(target_os = "linux")]
+fn shell_quote(path: &std::path::Path) -> String {
+    format!("'{}'", path.display().to_string().replace('\'', r"'\''"))
+}
+
+/// Journals set aside by `--retire-cleanup`.
+#[cfg(target_os = "linux")]
+fn kept_journals(repo: &gix::Repository) -> Result<Vec<PathBuf>> {
+    let mut paths = Vec::new();
+    for entry in std::fs::read_dir(repo.git_dir())? {
+        let entry = entry?;
+        let name = entry.file_name();
+        if let Some(nonce) = name.as_encoded_bytes().strip_prefix(b"brit-rebase-kept-")
+            && nonce.len() == 40
+            && nonce.iter().all(u8::is_ascii_hexdigit)
+        {
+            paths.push(entry.path());
+        }
+    }
+    paths.sort();
+    Ok(paths)
 }
 
 /// Tombstones of cancelled preparations whose removal was interrupted, named by

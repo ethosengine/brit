@@ -1261,6 +1261,290 @@ mod recovery {
         Ok(())
     }
 
+    /// Kill `brit rebase upstream` once it reaches a switch checkpoint.
+    fn kill_rebase_at(root: &Path, point: &str) -> Result<()> {
+        let markers = tempfile::tempdir()?;
+        let mut child = launch(
+            root,
+            &["rebase", "upstream"],
+            &[
+                ("BRIT_SWITCH_CHECKPOINT", point.as_ref()),
+                ("BRIT_SWITCH_CHECKPOINT_DIR", markers.path().as_os_str()),
+            ],
+        )?;
+        wait_file(&mut child, &markers.path().join(format!("{point}.reached")))?;
+        interrupt(&mut child, "-KILL")
+    }
+
+    fn quota(root: &Path, args: &[&str], limit: &str) -> Result<std::process::Output> {
+        let mut command = Command::new(brit_bin().expect("fault-enabled artifact"));
+        gix_testtools::configure_git_environment(&mut command, root);
+        Ok(command
+            .current_dir(root)
+            .args(args)
+            .env("BRIT_TEST_SCRATCH_LIMIT", limit)
+            .env("GIT_EDITOR", ":")
+            .stdin(Stdio::null())
+            .output()?)
+    }
+
+    /// Every file under `.git` except the guard's own files, by path.
+    fn git_files(root: &Path) -> Result<std::collections::BTreeMap<PathBuf, Vec<u8>>> {
+        Ok(repository_bytes(&root.join(".git"))?
+            .into_iter()
+            .filter(|(path, _)| !path.to_string_lossy().starts_with("brit-mutation."))
+            .collect())
+    }
+
+    /// After `--retire-cleanup`, every file that existed is still there: the
+    /// journal's under `brit-rebase-kept-<nonce>`, everything else unchanged.
+    fn assert_all_kept(
+        before: &std::collections::BTreeMap<PathBuf, Vec<u8>>,
+        after: &std::collections::BTreeMap<PathBuf, Vec<u8>>,
+        kept: &Path,
+    ) -> Result<()> {
+        for (path, bytes) in before {
+            let moved = match path.strip_prefix("brit-rebase") {
+                Ok(rest) => kept.join(rest),
+                Err(_) => path.clone(),
+            };
+            ensure!(after.get(&moved) == Some(bytes), "{path:?} was not kept as {moved:?}");
+        }
+        Ok(())
+    }
+
+    fn kept_directory(root: &Path) -> Result<PathBuf> {
+        let kept = fs::read_dir(root.join(".git"))?
+            .map(|entry| Ok(entry?.file_name()))
+            .collect::<Result<Vec<_>>>()?
+            .into_iter()
+            .filter(|name| name.to_string_lossy().starts_with("brit-rebase-kept-"))
+            .collect::<Vec<_>>();
+        ensure!(kept.len() == 1, "one kept journal: {kept:?}");
+        Ok(PathBuf::from(&kept[0]))
+    }
+
+    /// A published rebase whose cleanup cannot fit the quota is stuck: `--abort`
+    /// refuses the final decision and `--continue` cannot finish. `--retire-cleanup`
+    /// returns the repository to service without deleting anything, refuses while
+    /// another process holds the guard, and is idempotent; afterwards a commit, a
+    /// switch and a fresh rebase all succeed.
+    #[test]
+    fn public_retire_cleanup_returns_a_stuck_rebase_to_service_keeping_everything() -> Result<()> {
+        let repo = big_blob_fixture(2_000_000)?;
+        let root = repo.path();
+        let original = git(root, &["rev-parse", "main"])?;
+        // Published, then killed as its cleanup copy began; the lowered quota
+        // then makes that cleanup impossible, as the 1 GiB one does for a large
+        // repository.
+        kill_rebase_at(root, "replay-retained-manifest")?;
+        let published = git(root, &["rev-parse", "main"])?;
+        assert_ne!(published, original, "the rebase published");
+        let stuck = quota(root, &["rebase", "--continue"], "1000000")?;
+        ensure!(
+            !stuck.status.success()
+                && String::from_utf8_lossy(&stuck.stderr).contains("retained copy cannot be written"),
+            "cleanup is stuck: {}",
+            String::from_utf8_lossy(&stuck.stderr)
+        );
+        refused(root, &["rebase", "--abort"])?;
+        refused(root, &["branch", "create", "blocked"])?;
+        let refs = git(root, &["for-each-ref", "refs/brit-rebase-retain"])?;
+        let before = git_files(root)?;
+        let worktree = fs::read(root.join("topic"))?;
+
+        // While another process holds the guard, nothing moves.
+        let guard = String::from_utf8(git(root, &["rev-parse", "--path-format=absolute", "--git-common-dir"])?)?;
+        let guard = PathBuf::from(guard.trim()).join("brit-mutation.guard");
+        let mut holder = Command::new("flock")
+            .arg(&guard)
+            .args(["sh", "-c", "printf ready; cat"])
+            .stdin(Stdio::piped())
+            .stdout(Stdio::piped())
+            .spawn()?;
+        let mut ready = [0; 5];
+        std::io::Read::read_exact(&mut holder.stdout.take().expect("piped"), &mut ready)?;
+        let held = invoke(root, &["rebase", "--retire-cleanup"])?;
+        drop(holder.stdin.take());
+        holder.wait()?;
+        ensure!(!held.status.success(), "retire waits for nobody: {}", held.stdout);
+        assert!(root.join(".git/brit-rebase").exists());
+
+        let retired = success(root, &["rebase", "--retire-cleanup"])?;
+        for expected in [
+            "nothing was deleted",
+            "published at",
+            "Kept journal",
+            "rm -rf",
+            "git update-ref -d refs/brit-rebase-retain/",
+        ] {
+            ensure!(
+                retired.stdout.contains(expected),
+                "report names {expected}: {}",
+                retired.stdout
+            );
+        }
+        let kept = kept_directory(root)?;
+        assert_all_kept(&before, &git_files(root)?, &kept)?;
+        assert_eq!(git(root, &["for-each-ref", "refs/brit-rebase-retain"])?, refs);
+        assert_eq!(git(root, &["rev-parse", "main"])?, published);
+        assert_eq!(fs::read(root.join("topic"))?, worktree);
+        let again = success(root, &["rebase", "--retire-cleanup"])?;
+        ensure!(again.stdout.contains("No rebase cleanup to retire"), "{}", again.stdout);
+        let status = success(root, &["rebase", "--status"])?;
+        ensure!(
+            status.stdout.contains("No active rebase") && status.stdout.matches("--retire-cleanup").count() == 1,
+            "status mentions the kept material once: {}",
+            status.stdout
+        );
+
+        // Every mutation works again.
+        fs::write(root.join("after"), b"after\n")?;
+        success(root, &["add", "after"])?;
+        success(root, &["commit", "-m", "after retire"])?;
+        success(root, &["switch", "upstream"])?;
+        success(root, &["switch", "main"])?;
+        git(root, &["switch", "-q", "-c", "small", "upstream"])?;
+        fs::write(root.join("small"), b"small\n")?;
+        git(root, &["add", "small"])?;
+        git(root, &["commit", "-q", "-m", "small"])?;
+        success(root, &["rebase", "main"])?;
+        assert!(!root.join(".git/brit-rebase").exists());
+        // The later commands changed HEAD and the index; the kept material is intact.
+        let operation = before
+            .into_iter()
+            .filter(|(path, _)| path.starts_with("brit-rebase") || path.starts_with("brit-rebase-retained"))
+            .collect();
+        assert_all_kept(&operation, &git_files(root)?, &kept)?;
+        assert!(git(root, &["for-each-ref", "refs/brit-rebase-retain"])?.starts_with(&refs));
+        Ok(())
+    }
+
+    /// An abort whose retained copy cannot be written stops in `retaining-abort`
+    /// before its first decision, the state an older Brit leaves over the quota.
+    /// `--retire-cleanup` takes that phase too, keeping everything: the branch was
+    /// never changed. Any later phase still refuses, naming the right command.
+    #[test]
+    fn public_retire_cleanup_takes_an_abort_stuck_before_its_first_decision() -> Result<()> {
+        let repo = big_blob_fixture(2_000_000)?;
+        let root = repo.path();
+        script(&root.join(".git/hooks/pre-rebase"), "exit 0")?;
+        let original = git(root, &["rev-parse", "main"])?;
+        let mut child = launch(
+            root,
+            &["rebase", "upstream"],
+            &[("BRIT_AUTHORING_INVOCATION_PAUSE", "after-start".as_ref())],
+        )?;
+        wait_file(&mut child, &root.join(".git/brit-rebase/pre-rebase/checkpoint"))?;
+        interrupt(&mut child, "-KILL")?;
+        let stuck = quota(root, &["rebase", "--abort"], "1000000")?;
+        ensure!(
+            String::from_utf8_lossy(&stuck.stderr).contains("retained copy cannot be written"),
+            "{}",
+            String::from_utf8_lossy(&stuck.stderr)
+        );
+        let status = success(root, &["rebase", "--status"])?;
+        ensure!(status.stdout.contains("retaining-abort"), "{}", status.stdout);
+        refused(root, &["branch", "create", "blocked"])?;
+        let before = git_files(root)?;
+        let retired = success(root, &["rebase", "--retire-cleanup"])?;
+        ensure!(retired.stdout.contains("never published"), "{}", retired.stdout);
+        assert_all_kept(&before, &git_files(root)?, &kept_directory(root)?)?;
+        assert_eq!(git(root, &["rev-parse", "main"])?, original);
+        preserved_neighbors_unchanged(root)?;
+        success(root, &["branch", "create", "unblocked"])?;
+
+        // Phases that are not stuck refuse, naming the command that applies.
+        let repo = fixture(true)?;
+        let root = repo.path();
+        refused(root, &["rebase", "upstream"])?;
+        let conflict = invoke(root, &["rebase", "--retire-cleanup"])?;
+        ensure!(
+            !conflict.status.success() && conflict.stderr.contains("--continue or --abort"),
+            "{}",
+            conflict.stderr
+        );
+        success(root, &["rebase", "--abort"])?;
+        Ok(())
+    }
+
+    fn preserved_neighbors_unchanged(root: &Path) -> Result<()> {
+        assert_eq!(fs::read(root.join("topic"))?, b"topic\n");
+        assert_eq!(git(root, &["status", "--porcelain"])?, b"");
+        Ok(())
+    }
+
+    /// The cancellation of a `prepared` journal with hook artifacts rests on one
+    /// claim: the hook is spawned only after its durable start records
+    /// `invoking-pre`. Before that save (paused where the invocation is prepared)
+    /// cancellation takes the journal and nothing runs; after it (paused before the
+    /// spawn, and after the spawn) cancellation declines and the full abort, which
+    /// writes a retained copy, owns it. One unexpected member and it declines too.
+    #[test]
+    fn public_prepared_hook_artifacts_are_cancelled_only_before_the_durable_start() -> Result<()> {
+        for case in [
+            "before-durable-start",
+            "after-start",
+            "after-launch",
+            "planted-launch",
+            "planted-member",
+        ] {
+            let repo = fixture(false)?;
+            let root = repo.path();
+            script(
+                &root.join(".git/hooks/pre-rebase"),
+                "printf ran > \"$GIT_DIR/hook-ran\"",
+            )?;
+            let original = git(root, &["rev-parse", "main"])?;
+            match case {
+                "after-start" | "after-launch" => {
+                    let mut child = launch(
+                        root,
+                        &["rebase", "upstream"],
+                        &[("BRIT_AUTHORING_INVOCATION_PAUSE", case.as_ref())],
+                    )?;
+                    wait_file(&mut child, &root.join(".git/brit-rebase/pre-rebase/checkpoint"))?;
+                    interrupt(&mut child, "-KILL")?;
+                }
+                _ => kill_rebase_at(root, "replay-operation-invocation-prepared")?,
+            }
+            let journal = root.join(".git/brit-rebase");
+            match case {
+                "planted-launch" => fs::write(journal.join("pre-rebase/launch.json"), b"{}")?,
+                "planted-member" => fs::write(journal.join("unexpected"), b"x")?,
+                _ => {}
+            }
+            let aborted = invoke(root, &["rebase", "--abort"])?;
+            let cancelled = aborted.stdout.contains("preparation cancelled");
+            let restored = aborted.stdout.contains("Original state restored");
+            if case == "before-durable-start" {
+                ensure!(
+                    aborted.status.success() && cancelled && !journal.exists(),
+                    "{case}: cancellation takes the unlaunched prepared journal: {}{}",
+                    aborted.stdout,
+                    aborted.stderr
+                );
+                ensure!(
+                    !root.join(".git/brit-rebase-retained").exists(),
+                    "{case}: cancellation writes no retained copy"
+                );
+            } else {
+                // A planted member also keeps the full abort's cleanup pending,
+                // as any unknown journal member does; the restoration happened.
+                ensure!(
+                    !cancelled && restored && root.join(".git/brit-rebase-retained").exists(),
+                    "{case}: the full abort owns this journal: {}{}",
+                    aborted.stdout,
+                    aborted.stderr
+                );
+            }
+            ensure!(!root.join(".git/hook-ran").exists(), "{case}: the hook never ran");
+            assert_eq!(git(root, &["rev-parse", "main"])?, original);
+            preserved(root)?;
+        }
+        Ok(())
+    }
+
     /// An interrupted cancellation finishes on the next `--abort`.
     #[test]
     fn public_interrupted_preparation_cancel_finishes_on_the_next_abort() -> Result<()> {

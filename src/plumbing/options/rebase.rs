@@ -3,7 +3,7 @@ use gix::bstr::BString;
 
 #[derive(Debug, clap::Args)]
 #[command(group(clap::ArgGroup::new("author").multiple(false).args(["amend", "commit"])), group(clap::ArgGroup::new("action").required(true).multiple(false).args([
-    "upstream", "status", "continue_", "skip", "abort", "edit_todo", "show_current_patch",
+    "upstream", "status", "continue_", "skip", "abort", "retire_cleanup", "edit_todo", "show_current_patch",
     "stage", "amend", "begin_split", "commit"
 ])))]
 pub struct Platform {
@@ -11,7 +11,7 @@ pub struct Platform {
     #[arg(value_parser = crate::shared::AsBString)]
     upstream: Option<BString>,
     /// Edit the complete candidate sequence before replay.
-    #[arg(short = 'i', long, requires = "upstream", conflicts_with_all = ["status", "continue_", "skip", "abort", "edit_todo", "show_current_patch", "stage", "amend", "begin_split", "commit"])]
+    #[arg(short = 'i', long, requires = "upstream", conflicts_with_all = ["status", "continue_", "skip", "abort", "retire_cleanup", "edit_todo", "show_current_patch", "stage", "amend", "begin_split", "commit"])]
     interactive: bool,
     /// Inspect state without recovery or mutation.
     #[arg(long)]
@@ -23,6 +23,12 @@ pub struct Platform {
     skip: bool,
     #[arg(long)]
     abort: bool,
+    /// Return a repository whose rebase cleanup cannot finish to service, deleting
+    /// nothing: a completed (published) rebase, or an abort stuck before its first
+    /// decision. Keeps the journal as `brit-rebase-kept-<nonce>`, its retention refs
+    /// and retained copies, and prints how to remove each.
+    #[arg(long)]
+    retire_cleanup: bool,
     #[arg(long)]
     edit_todo: bool,
     #[arg(long)]
@@ -70,6 +76,9 @@ impl Platform {
         }
         if self.abort {
             return Action::Abort;
+        }
+        if self.retire_cleanup {
+            return Action::RetireCleanup;
         }
         if self.edit_todo {
             return Action::EditTodo;

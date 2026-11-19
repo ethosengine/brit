@@ -14,6 +14,7 @@ brit rebase --status
 brit rebase --continue
 brit rebase --skip
 brit rebase --abort
+brit rebase --retire-cleanup
 brit rebase --edit-todo
 brit rebase --show-current-patch
 ```
@@ -112,6 +113,17 @@ pre-hook permits inspection and abort only. An unknown post-hook follows an
 already published commit: explicit continuation acknowledges that uncertainty
 without rerunning the hook. Known-not-started post-authoring notifications remain
 queued durably and run once. Status distinguishes these cases from a clean stop.
+
+A rebase whose cleanup cannot finish (its retained copy would exceed the scratch
+limit) blocks every Brit mutation. `brit rebase --retire-cleanup` returns such a
+repository to service without deleting anything. It accepts only a completed
+(published) rebase whose cleanup is pending, or an abort stopped in
+`retaining-abort` before its first decision (the branch was never changed); every
+other phase refuses and names the command that applies. It renames the journal to
+`brit-rebase-kept-<nonce>` beside it, leaves the `refs/brit-rebase-retain/<nonce>/*`
+references and any retained copy in place, and prints each kept piece, its size and
+the command that removes it later. A second run reports nothing to retire. Older
+Brit releases do not treat `brit-rebase-kept-*` as a journal or a cleanup receipt.
 
 Publication and cleanup are separate. A message saying **committed/published with
 warning** or **cleanup pending** must not be interpreted as an unpublished

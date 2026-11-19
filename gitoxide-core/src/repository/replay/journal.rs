@@ -22,6 +22,13 @@
 //! 4. If live state differs from the pinned fingerprints, cancellation still removes
 //!    Brit's own artifacts and reports each difference; it restores nothing.
 //!
+//! In phase `prepared`, `advance` may already have written two artifacts of fixed
+//! name before it records `invoking-pre`: the `index.pre-rebase` private index and a
+//! `pre-rebase` invocation directory. The hook is spawned only after that record is
+//! durable, so while the phase is `prepared` the hook never ran, and cancellation
+//! also removes exactly these two when the directory holds no launch or exit
+//! receipt. Any other member, or a later phase, leaves the journal to the full abort.
+//!
 //! Not covered: the scratch spool directory (`.brit-checkout-*` in the Git
 //! directory) of a process killed while copying a payload is named by no journal,
 //! so cancellation leaves it; it blocks no command.
@@ -2384,22 +2391,32 @@ impl Session {
                 }
             }
         }
+        let mut unlaunched = Vec::new();
         for entry in fs::read_dir(directory)? {
-            let name = entry?.file_name();
+            let entry = entry?;
+            let name = entry.file_name();
             let named = name == "state.json"
                 || current
                     .state
                     .payloads
                     .keys()
                     .any(|hash| name == format!("payload-{hash}").as_str());
-            if !named {
-                // `prepared` may already carry the first step's private index or
-                // a prepared hook invocation; those belong to the full abort.
-                if current.state.phase == "prepared" {
-                    return Ok(None);
-                }
-                anyhow::bail!("unknown replay journal member {name:?}; inspect it before cancelling");
+            if named {
+                continue;
             }
+            // `advance` may have written the pre-rebase private index and prepared
+            // the hook's invocation while the phase was still `prepared`. The hook
+            // is spawned only after its durable start records `invoking-pre`, so in
+            // `prepared` it never ran; both are private and cancellation removes them.
+            if current.state.phase != "preparing" && unlaunched_operation_artifact(&entry.path(), owner)? {
+                unlaunched.push(entry.path());
+                continue;
+            }
+            // Anything else beyond preparation belongs to the full abort.
+            if current.state.phase == "prepared" {
+                return Ok(None);
+            }
+            anyhow::bail!("unknown replay journal member {name:?}; inspect it before cancelling");
         }
         let differences = current.live_differences(repo)?;
         if current.state.phase != "cancelling-prepared" {
@@ -2407,6 +2424,19 @@ impl Session {
             // Unmetered: a journal the quota refuses must still be cancellable.
             current.save_bytes(&current.state_bytes()?, false)?;
         }
+        // Only the records cancellation names may reach the tombstone.
+        for path in unlaunched {
+            if fs::symlink_metadata(&path)?.is_dir() {
+                for member in fs::read_dir(&path)? {
+                    fs::remove_file(member?.path())?;
+                }
+                switch::sync_dir(&path)?;
+                fs::remove_dir(&path)?;
+            } else {
+                fs::remove_file(&path)?;
+            }
+        }
+        switch::sync_dir(directory)?;
         for (label, id) in [
             ("original", &current.state.original),
             ("upstream", &current.state.upstream),
@@ -2429,6 +2459,87 @@ impl Session {
         switch::checkpoint("replay-preparation-tombstoned")?;
         Self::cleanup_prepared_inner(repo, &tombstone)?;
         Ok(Some(differences))
+    }
+
+    /// Retire, without deleting anything, a journal whose cleanup cannot finish:
+    /// a `completed` rebase (published, cleanup pending), or an abort stuck in
+    /// `retaining-abort` before any decision was applied (its retained copy could
+    /// not be written, and nothing Brit changed live). The journal directory is
+    /// renamed to `brit-rebase-kept-<nonce>` beside it; its retention references
+    /// and any partial retained copy stay where they are. Returns `None` when there
+    /// is nothing to retire.
+    pub fn retire_cleanup(repo: &gix::Repository) -> Result<Option<Retired>> {
+        let _guard = switch::shared_guard(repo)?;
+        let directory = repo.git_dir().join("brit-rebase");
+        if !present(&directory)? {
+            return Ok(None);
+        }
+        let owner = fs::metadata(repo.git_dir())?.uid();
+        let metadata = fs::symlink_metadata(&directory)?;
+        ensure!(
+            metadata.is_dir() && metadata.permissions().mode().trailing_zeros() >= 6 && metadata.uid() == owner,
+            "unsafe replay directory"
+        );
+        ensure!(
+            present(&directory.join("state.json"))?,
+            "this rebase never recorded its preparation; brit rebase --abort cancels it"
+        );
+        // Quota-exempt: the journal being retired may itself be over the quota.
+        let session = Self::open_directory_checked(repo, directory.clone(), "state.json", false)?;
+        let state = &session.state;
+        let pending_decision = present(&directory.join(format!("decision-{}.json", state.decisions + 1)))?;
+        let unpublished = match state.phase.as_str() {
+            "completed" => false,
+            "retaining-abort" if state.decisions == 0 && !pending_decision => true,
+            "retaining-abort" => anyhow::bail!(
+                "this abort already applied replay decisions; finish it with brit rebase --abort or --continue"
+            ),
+            "preparing" | "prepared" | "cancelling-prepared" => {
+                anyhow::bail!("this rebase never started; brit rebase --abort cancels it")
+            }
+            "aborted" => anyhow::bail!("this rebase was aborted; brit rebase --continue finishes its cleanup"),
+            phase => anyhow::bail!(
+                "rebase phase {phase} is still in progress; --retire-cleanup only retires a completed rebase \
+                 whose cleanup cannot finish; use brit rebase --status, then --continue or --abort"
+            ),
+        };
+        let receipt = repo.git_dir().join(format!("brit-rebase-cleanup-{}.json", state.nonce));
+        ensure!(
+            !present(&receipt)?,
+            "cleanup already proved its retained copy and is releasing it; brit rebase --continue finishes it"
+        );
+        let kept = repo.git_dir().join(format!("brit-rebase-kept-{}", state.nonce));
+        ensure!(!present(&kept)?, "{} already exists; inspect it", kept.display());
+        let mut refs = Vec::new();
+        let prefix = format!("refs/brit-rebase-retain/{}/", state.nonce);
+        for reference in repo.references()?.prefixed(prefix.as_str())? {
+            let reference = reference.map_err(|error| anyhow::anyhow!("{error}"))?;
+            refs.push((reference.name().as_bstr().to_string(), reference.id().to_string()));
+        }
+        let copies = repo.git_dir().join("brit-rebase-retained").join(&state.nonce);
+        let nonce = state.nonce.clone();
+        let tip = state.tip.clone();
+        let original = state.original.clone();
+        drop(session);
+        let directory_bytes = tree_bytes(&directory)?;
+        let copy_bytes = if present(&copies)? {
+            Some(tree_bytes(&copies)?)
+        } else {
+            None
+        };
+        fs::rename(&directory, &kept)?;
+        switch::sync_dir(repo.git_dir())?;
+        switch::checkpoint("replay-cleanup-retired")?;
+        Ok(Some(Retired {
+            nonce,
+            unpublished,
+            tip,
+            original,
+            journal: kept,
+            journal_bytes: directory_bytes,
+            refs,
+            copies: copy_bytes.map(|bytes| (copies, bytes)),
+        }))
     }
 
     /// Release a journal directory that never published `state.json`. Preparation
@@ -3313,6 +3424,46 @@ fn sync_tree(path: &Path) -> Result<()> {
     }
 }
 
+/// What [`Session::retire_cleanup`] kept, and where.
+#[derive(Debug)]
+pub struct Retired {
+    /// The operation's nonce.
+    pub nonce: String,
+    /// `true` when the rebase never published (an abort stuck before its first
+    /// decision): the branch still names `original`. Otherwise it names `tip`.
+    pub unpublished: bool,
+    /// The published tip, or the original tip again for an unpublished rebase.
+    pub tip: String,
+    /// The original tip before the rebase.
+    pub original: String,
+    /// The kept journal directory.
+    pub journal: std::path::PathBuf,
+    /// Bytes under the kept journal directory.
+    pub journal_bytes: u64,
+    /// Retention references left in place, with the objects they keep alive.
+    pub refs: Vec<(String, String)>,
+    /// The operation's retained copies, if any, and their bytes.
+    pub copies: Option<(std::path::PathBuf, u64)>,
+}
+
+/// Bytes of regular files under `root`, without following links.
+pub(crate) fn tree_bytes(root: &Path) -> Result<u64> {
+    let mut total = 0u64;
+    let mut pending = vec![root.to_owned()];
+    while let Some(directory) = pending.pop() {
+        for entry in fs::read_dir(directory)? {
+            let entry = entry?;
+            let metadata = fs::symlink_metadata(entry.path())?;
+            if metadata.is_dir() {
+                pending.push(entry.path());
+            } else {
+                total = total.saturating_add(metadata.len());
+            }
+        }
+    }
+    Ok(total)
+}
+
 /// Read one journal record, refusing before allocation a file larger than any
 /// record the journal quota lets brit write.
 fn read_record(path: &Path) -> Result<Vec<u8>> {
@@ -3340,6 +3491,30 @@ fn present(path: &Path) -> Result<bool> {
         Ok(_) => Ok(true),
         Err(error) if error.kind() == std::io::ErrorKind::NotFound => Ok(false),
         Err(error) => Err(error.into()),
+    }
+}
+
+/// `index.pre-rebase`, or a `pre-rebase` invocation prepared but never launched:
+/// its directory holds no launch or exit receipt, only its own start records.
+fn unlaunched_operation_artifact(path: &Path, owner: u32) -> Result<bool> {
+    let metadata = fs::symlink_metadata(path)?;
+    let private = metadata.uid() == owner && metadata.permissions().mode().trailing_zeros() >= 6;
+    match path.file_name().and_then(|name| name.to_str()) {
+        Some("index.pre-rebase") => Ok(metadata.is_file() && private),
+        Some("pre-rebase") if metadata.is_dir() && private => {
+            for member in fs::read_dir(path)? {
+                let member = member?;
+                if !(["lease", "checkpoint", "start.json", "start.json.pending"]
+                    .iter()
+                    .any(|name| member.file_name() == *name)
+                    && owned_private_file(&member.path(), owner)?)
+                {
+                    return Ok(false);
+                }
+            }
+            Ok(true)
+        }
+        _ => Ok(false),
     }
 }
 

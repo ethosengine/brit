@@ -532,7 +532,7 @@ pub struct Proposal {
 }
 
 #[cfg(target_os = "linux")]
-pub use journal::{Advance, Session};
+pub use journal::{Advance, Retired, Session};
 #[cfg(target_os = "linux")]
 pub(crate) use journal::{
     ChildAuthorization, active_nonce, protect_child_commit, validate_accepted_child, validate_child_binding,

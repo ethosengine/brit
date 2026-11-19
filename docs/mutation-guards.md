@@ -80,4 +80,9 @@ would be a write the model reserves for `other_worktree_guard`.
 - A rebase whose preparation failed, or was killed, is cancelled by `brit rebase --abort`
   without being rolled forward: preparation changes nothing live, so the abort reads only the
   journal's own records and payloads and the pinned HEAD, index and branch, and restores
-  nothing. An interrupted cancellation is finished by the next `--abort`.
+  nothing. An interrupted cancellation is finished by the next `--abort`. A `prepared`
+  journal that already holds the pre-rebase private index and a prepared, never launched
+  hook invocation is cancelled the same way; once the hook's start is durable it is not.
+- A rebase whose cleanup cannot finish is retired with `brit rebase --retire-cleanup`, under
+  the same guards as `--abort`: the journal is kept as `brit-rebase-kept-<nonce>`, which no
+  writer treats as pending.
