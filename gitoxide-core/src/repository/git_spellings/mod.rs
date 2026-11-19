@@ -4,6 +4,7 @@
 //! `branch list`) stay the native interface; these exist so that a guessed Git spelling works and
 //! points back to them.
 
+pub mod check_ref_format;
 pub mod for_each_ref;
 #[cfg(any(feature = "blocking-client", feature = "async-client"))]
 pub mod ls_remote;

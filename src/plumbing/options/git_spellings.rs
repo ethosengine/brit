@@ -191,3 +191,14 @@ pub struct LsRemote {
     /// `refs/heads/feat/*`.
     pub patterns: Vec<String>,
 }
+
+/// `check-ref-format` answering through its exit code, like Git.
+#[derive(Debug, clap::Parser)]
+pub struct CheckRefFormat {
+    /// Accept a name without a `/`, like `main` or `HEAD`.
+    #[clap(long)]
+    pub allow_onelevel: bool,
+    /// The reference name to validate, like `refs/heads/main`.
+    #[clap(value_parser = crate::shared::AsBString)]
+    pub refname: gix::bstr::BString,
+}

@@ -265,6 +265,8 @@ pub enum Subcommands {
     /// Git's spelling of `brit remote refs`, printing Git's `<oid>\t<refname>` lines.
     #[cfg(any(feature = "gitoxide-core-async-client", feature = "gitoxide-core-blocking-client"))]
     LsRemote(git_spellings::LsRemote),
+    /// Validate a reference name like Git, answering only through the exit code.
+    CheckRefFormat(git_spellings::CheckRefFormat),
     /// Generate shell completions to stdout or a directory.
     #[clap(visible_alias = "generate-completions", visible_alias = "shell-completions")]
     Completions {

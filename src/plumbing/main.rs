@@ -62,7 +62,8 @@ fn requires_mutation_guard(cmd: &Subcommands) -> bool {
         | Subcommands::Log(_)
         | Subcommands::Blame { .. }
         | Subcommands::RevParse(_)
-        | Subcommands::ForEachRef(_) => false,
+        | Subcommands::ForEachRef(_)
+        | Subcommands::CheckRefFormat(_) => false,
         Subcommands::Commit(commit::Platform {
             cmd: Some(commit::Subcommands::Verify { .. } | commit::Subcommands::Describe { .. }),
             ..
@@ -1475,6 +1476,16 @@ pub fn run_with_command(args: Args, command: clap::Command) -> Result<()> {
                 res
             },
         ),
+        Subcommands::CheckRefFormat(crate::plumbing::options::git_spellings::CheckRefFormat {
+            allow_onelevel,
+            refname,
+        }) => {
+            if core::repository::git_spellings::check_ref_format::is_valid(refname.as_ref(), allow_onelevel) {
+                Ok(())
+            } else {
+                std::process::exit(1)
+            }
+        }
         Subcommands::Cat { revspec } => prepare_and_run("cat", verbose, None, move |_progress, out, _err| {
             core::repository::cat(repository(Mode::Lenient)?, &revspec, out)
         }),
