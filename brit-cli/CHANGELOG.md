@@ -80,6 +80,18 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.0.0/); ver
   through a directory link) by its object id, so moving a submodule pin or retargeting a link
   changes the step's fingerprint. Uncommitted files and a symlink's target file (unless a glob
   matches it) are still not keyed.
+- Build step globs mean the same on every platform: `\` escapes the next character, `*` and
+  `?` also match `/`, matching is case-sensitive, and empty alternates and unclosed classes are
+  invalid, on Windows as on Linux and macOS (whose fingerprints are unchanged). Before, a
+  Windows build read `\` as a path separator.
+- **Behaviour change** on every platform: `brit build fingerprint` and `brit build plan` refuse
+  a step glob with a backslash directly beside `**` (such as `src/**\[x\]`), naming the
+  pattern and the backslash's position, because such a glob cannot be given one meaning on
+  every platform. No pattern without a backslash is affected.
+- On non-Unix hosts, `brit build fingerprint` and `brit build plan` refuse a commit whose tree
+  holds a path containing a backslash (`tree path '…' contains a backslash; on this platform it
+  cannot be matched with the meaning it has elsewhere; fingerprint on a Unix host or rename the
+  path`), instead of keying it differently from Unix hosts.
 - C dependencies compile at the Rust target's CPU baseline: the `cc` build dependency is
   1.11.1, which passes `-march=x86-64` for x86_64 Linux, and the CPU-baseline build probe
   checks the command line `cc` actually gives dependencies
