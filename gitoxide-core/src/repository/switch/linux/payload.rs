@@ -14,6 +14,12 @@ pub(super) struct ScratchDirectory {
     identity: [u64; 2],
 }
 
+impl ScratchDirectory {
+    pub(super) fn path(&self) -> &[u8] {
+        &self.path
+    }
+}
+
 pub(super) fn attach_budget(repo: &gix::Repository, state: &mut Manifest) -> Result<()> {
     // Publication stays on the repository filesystem, even when TMPDIR is elsewhere.
     let budget = Budget::new(repo.git_dir())?;
@@ -174,13 +180,19 @@ pub(crate) fn scratch_limit() -> u64 {
 
 pub(crate) fn check_growth(root: &Path, requested: u64) -> Result<()> {
     let live = usage(root)?;
-    if live.checked_add(requested).is_none_or(|size| size > scratch_limit()) {
-        return Err(ScratchLimit {
+    let limit = scratch_limit();
+    if live.checked_add(requested).is_none_or(|size| size > limit) {
+        let error = anyhow::Error::from(ScratchLimit {
             requested,
             live,
             path: root.to_owned(),
-        }
-        .into());
+        });
+        // The typed error names the delivery limit; say when a test lowered it.
+        return Err(if limit == SCRATCH_LIMIT {
+            error
+        } else {
+            error.context(format!("test-lowered scratch limit of {limit} bytes exceeded"))
+        });
     }
     Ok(())
 }

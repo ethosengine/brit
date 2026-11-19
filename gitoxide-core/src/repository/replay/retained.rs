@@ -104,6 +104,17 @@ impl Content for Source<'_> {
     }
 }
 
+/// An upper bound of the `manifest.json` a copy of members with these logical
+/// path lengths writes. An entry's JSON is at most 4 bytes per path byte (a
+/// decimal array) plus 340 for its other fields; the checksummed envelope spells
+/// each JSON byte as a decimal number of at most 4 bytes.
+pub(crate) fn manifest_bound(paths: impl Iterator<Item = usize>) -> u64 {
+    let entries = paths.fold(1024u64, |total, length| {
+        total.saturating_add((length as u64).saturating_mul(4).saturating_add(340))
+    });
+    entries.saturating_mul(4).saturating_add(256)
+}
+
 fn fingerprint(source: &impl Content) -> Result<String> {
     crate::repository::authoring::conflict::file_fingerprint_reader(&mut source.reader()?, source.size()?)
 }
@@ -358,17 +369,18 @@ pub fn capture<D: Content>(
     members: &[Member<D>],
 ) -> Result<Receipt> {
     let owner = fs::metadata(repo.git_dir())?.uid();
-    // Every member is copied under the scratch quota. Refuse a copy whose member
-    // bytes alone exceed it before fingerprinting anything, so a copy that can
-    // never complete fails at once instead of after a full pass over its sources.
-    let mut planned = 0u64;
+    // Every member, and the manifest written before them, is copied under the
+    // scratch quota. Refuse a copy whose member bytes plus an upper bound of its
+    // manifest exceed it before fingerprinting or writing anything, so a copy that
+    // can never complete fails at once instead of part-way through.
+    let mut planned = manifest_bound(members.iter().map(|member| member.path.len()));
     for member in members {
         planned = planned.saturating_add(member.data.size()?);
     }
     let limit = switch::payload::scratch_limit();
     ensure!(
         planned <= limit,
-        "retained copy cannot be written: its {} members hold {planned} bytes, over the {limit}-byte scratch limit every retained copy lives under",
+        "retained copy cannot be written: its {} members and manifest need up to {planned} bytes, over the {limit}-byte scratch limit every retained copy lives under",
         members.len()
     );
     let manifest = Manifest {

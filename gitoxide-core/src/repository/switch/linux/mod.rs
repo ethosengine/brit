@@ -407,8 +407,40 @@ pub(crate) fn shared_guard(repo: &gix::Repository) -> Result<guard::Held> {
     guard::acquire(repo, guard::Mode::Exclusive, true, super::mutation_wait())
 }
 
+/// `.brit-checkout-*` scratch directories in `git_dir` that no pending switch or
+/// pull journal names: left by a Brit process killed while it held them.
+pub fn scratch_leftovers(git_dir: &Path) -> Result<Vec<PathBuf>> {
+    let recorded = (|| -> Option<PathBuf> {
+        let bytes = fs::read(git_dir.join(JOURNAL).join("manifest.json")).ok()?;
+        let envelope: Envelope = serde_json::from_slice(&bytes).ok()?;
+        let state: Manifest = serde_json::from_slice(&envelope.payload).ok()?;
+        path(&state.scratch?.path()).ok()
+    })();
+    let mut leftovers = Vec::new();
+    for entry in fs::read_dir(git_dir)? {
+        let entry = entry?;
+        if entry.file_name().as_encoded_bytes().starts_with(b".brit-checkout-")
+            && entry.file_type()?.is_dir()
+            && recorded.as_deref() != Some(entry.path().as_path())
+            && recorded.as_deref() != fs::canonicalize(entry.path()).ok().as_deref()
+        {
+            leftovers.push(entry.path());
+        }
+    }
+    leftovers.sort();
+    Ok(leftovers)
+}
+
 /// Inspect without mutating or automatically resuming an interrupted operation.
 pub fn status(repo: &gix::Repository, out: &mut dyn Write) -> Result<()> {
+    for leftover in scratch_leftovers(&absolute(repo, repo.git_dir()))? {
+        writeln!(
+            out,
+            "Scratch left by a killed Brit process (blocks nothing): {}; once no Brit command is running, remove it with rm -rf '{}'",
+            leftover.display(),
+            leftover.display()
+        )?;
+    }
     if !present(&journal(repo))? {
         writeln!(out, "No switch or pull recovery pending")?;
         return Ok(());

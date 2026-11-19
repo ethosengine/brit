@@ -233,7 +233,6 @@ impl Session {
             self.state.version == 2 || self.state.payloads.is_empty(),
             "legacy replay has raw payloads"
         );
-        switch::payload::check_growth(&self.directory, 0)?;
         self.child_payload_licenses()?;
         for (hash, size) in &self.state.payloads {
             ensure!(
@@ -347,6 +346,15 @@ impl Session {
         let saved = Self::open(repo)?;
         self.state.payloads.extend(saved.child_payload_licenses()?);
         let root = repo.workdir().context("worktree required")?;
+        // A resolution is the user's bytes: reserve for them before keeping any.
+        let mut requested = self.decision_bytes()?;
+        for change in &self.state.work {
+            if let Ok(metadata) = fs::symlink_metadata(root.join(gix::path::from_bstr(change.path.as_bstr())?.as_ref()))
+            {
+                requested = requested.saturating_add(metadata.len());
+            }
+        }
+        self.reserve(repo, requested)?;
         for ordinal in 0..self.state.work.len() {
             let path = root.join(gix::path::from_bstr(self.state.work[ordinal].path.as_bstr())?.as_ref());
             self.state.work[ordinal].after = self.capture_payload(repo, &path)?;

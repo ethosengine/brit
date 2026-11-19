@@ -81,8 +81,8 @@ fn compiled_surface_includes_composed_namespaces_and_version_provenance_without_
             .as_array()
             .unwrap()
             .iter()
-            .any(|arg| arg["long"] == "retire-cleanup"),
-        "rebase --retire-cleanup is a flag on the existing verb"
+            .any(|arg| arg["long"] == "retire"),
+        "rebase --retire is a flag on the existing verb"
     );
     assert!(
         value["command"]["options"]

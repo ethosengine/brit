@@ -2,6 +2,17 @@
 //!
 //! Read-only selection proves pinned local history. Linux sessions preserve the
 //! original staging/worktree distinction through separately journaled decisions.
+//!
+//! Not yet done: refusals that the index and two trees decide still run after the
+//! verification walk, which spools every blob. Moving them before it, each keeping
+//! its message: the refStorage check and branch occupancy (configuration and
+//! worktree HEADs only); multiple merge bases (`merge_bases_many` needs no walk);
+//! preservation's index-only refusals (unmerged and split index, gitlinks with or
+//! without a submodule directory). Belonging to the redesign: merge-bearing, root
+//! and non-linear ranges need a commit-only walk; moved gitlinks and external
+//! filters read unverified trees, so they would then precede corruption errors;
+//! dirty footprints and untracked collisions need dirtiness decided without
+//! spooling worktree files.
 use std::collections::{BTreeMap, BTreeSet};
 
 use anyhow::{Context, Result, ensure};

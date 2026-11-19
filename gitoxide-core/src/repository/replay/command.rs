@@ -20,8 +20,8 @@ pub enum Action {
     Continue,
     Skip,
     Abort,
-    /// Retire a cleanup that cannot finish, keeping everything.
-    RetireCleanup,
+    /// Retire a rebase no other action can finish or undo, keeping everything.
+    Retire,
     EditTodo,
     ShowCurrentPatch,
     Stage {
@@ -45,10 +45,10 @@ pub fn run(mut repo: gix::Repository, action: Action, out: &mut dyn Write, err: 
     use gix::bstr::ByteSlice;
     repo.make_paths_absolute()?;
     let active = repo.git_dir().join("brit-rebase").try_exists()?;
-    if let Action::RetireCleanup = action {
-        match Session::retire_cleanup(&repo)? {
+    if let Action::Retire = action {
+        match Session::retire(&repo)? {
             Some(retired) => report_retired(&retired, out)?,
-            None => writeln!(out, "No rebase cleanup to retire.")?,
+            None => writeln!(out, "No rebase to retire.")?,
         }
         return Ok(());
     }
@@ -83,10 +83,17 @@ pub fn run(mut repo: gix::Repository, action: Action, out: &mut dyn Write, err: 
                         "Cancelled preparation not yet removed: {path:?}; brit rebase --abort finishes it"
                     )?;
                 }
+                for path in crate::repository::switch::scratch_leftovers(repo.git_dir())? {
+                    writeln!(
+                        out,
+                        "Scratch left by a killed Brit process (blocks nothing): {path:?}; once no Brit command is running, remove it with rm -rf {}",
+                        shell_quote(&path)
+                    )?;
+                }
                 for path in kept_journals(&repo)? {
                     writeln!(
                         out,
-                        "Kept by --retire-cleanup (blocks nothing): {path:?}; remove it with rm -rf {}",
+                        "Kept by --retire (blocks nothing): {path:?}; remove it with rm -rf {}",
                         shell_quote(&path)
                     )?;
                 }
@@ -124,10 +131,21 @@ pub fn run(mut repo: gix::Repository, action: Action, out: &mut dyn Write, err: 
         }
         return Ok(());
     }
-    let mut session = Session::open(&repo)?;
+    let mut session = match Session::open(&repo) {
+        Ok(session) => session,
+        Err(error) if matches!(action, Action::Status) => {
+            writeln!(
+                out,
+                "A rebase journal exists but cannot be opened as this repository's: {error:#}. brit rebase --retire keeps it aside, deleting nothing."
+            )?;
+            return Ok(());
+        }
+        Err(error) => return Err(error),
+    };
     let result = match action {
         Action::Status => {
             session.status(out)?;
+            session.quota_status(&repo, out)?;
             session.child_status(&repo, out)
         }
         Action::ShowCurrentPatch => session.show_current_patch(&repo, out),
@@ -163,7 +181,7 @@ pub fn run(mut repo: gix::Repository, action: Action, out: &mut dyn Write, err: 
         }
         Action::Amend(message) => author(&repo, &mut session, message, out, err, true),
         Action::Commit(message) => author(&repo, &mut session, message, out, err, false),
-        Action::Start { .. } | Action::RetireCleanup => unreachable!("handled above"),
+        Action::Start { .. } | Action::Retire => unreachable!("handled above"),
     };
     result.with_context(|| format!("rebase phase {}; inspect with --status", session.phase()))
 }
@@ -320,8 +338,31 @@ fn cleanup(repo: &gix::Repository, session: &mut super::Session, out: &mut dyn W
 
 #[cfg(target_os = "linux")]
 fn report_retired(retired: &super::Retired, out: &mut dyn Write) -> Result<()> {
-    writeln!(out, "Retired the rebase cleanup; nothing was deleted.")?;
-    if retired.unpublished {
+    writeln!(
+        out,
+        "Retired the rebase; nothing was deleted and nothing live was changed."
+    )?;
+    if retired.foreign {
+        writeln!(
+            out,
+            "Its journal was recorded for another location of this repository (moved or copied), so no other command could use it."
+        )?;
+    }
+    if retired.unpublished && retired.midway {
+        let back = match &retired.attachment {
+            Some(branch) => format!(
+                "git checkout --force {}",
+                branch.strip_prefix("refs/heads/").unwrap_or(branch)
+            ),
+            None => format!("git checkout --force --detach {}", retired.original),
+        };
+        writeln!(
+            out,
+            "The rebase never published, but it had begun changing the checkout: HEAD, the index and the worktree may be part-way to a replayed state. Its branch still names {original}, which refs/brit-rebase-retain/{nonce}/original also keeps. To return to it, discarding the part-way checkout: {back}. Uncommitted work the rebase preserved is kept in the journal's payload-* files.",
+            original = retired.original,
+            nonce = retired.nonce,
+        )?;
+    } else if retired.unpublished {
         writeln!(
             out,
             "The rebase never published: its branch still names {}, and nothing Brit changed live needs restoring.",
@@ -341,6 +382,9 @@ fn report_retired(retired: &super::Retired, out: &mut dyn Write) -> Result<()> {
         retired.journal_bytes,
         shell_quote(&retired.journal)
     )?;
+    for lock in &retired.released {
+        writeln!(out, "Removed Brit's own lock {lock:?}, held by the part-way checkout.")?;
+    }
     if let Some((path, bytes)) = &retired.copies {
         writeln!(
             out,
@@ -362,7 +406,7 @@ fn shell_quote(path: &std::path::Path) -> String {
     format!("'{}'", path.display().to_string().replace('\'', r"'\''"))
 }
 
-/// Journals set aside by `--retire-cleanup`.
+/// Journals set aside by `--retire`.
 #[cfg(target_os = "linux")]
 fn kept_journals(repo: &gix::Repository) -> Result<Vec<PathBuf>> {
     let mut paths = Vec::new();

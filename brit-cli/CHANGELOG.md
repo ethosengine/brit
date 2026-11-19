@@ -178,11 +178,17 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.0.0/); ver
   `--abort`.
 - `brit rebase` refuses a gitlink whose submodule directory is absent by name, before any
   state, instead of failing after creating its journal. Gitlinks remain unsupported.
-- `brit rebase` refuses before it starts when its retained copy could not fit the 1 GiB scratch
-  limit, naming what it measured (object headers only, stopping once past the limit) and
-  pointing to `git rebase`. Before, such a rebase published and then could neither finish its
-  cleanup nor be aborted. A retained copy that is still too large now refuses before writing
-  any member.
+- `brit rebase` no longer starts a rebase its 1 GiB scratch limit could leave unfinishable.
+  An estimate from object headers refuses far-too-large repositories before any object is
+  read; once preparation knows its exact records, a rebase whose journal or retained copy
+  could exceed the limit with a 5/4 safety factor is refused and its preparation cancelled;
+  and every later step or staged resolution is reserved for before it writes anything, so
+  `--abort` always remains possible. (An earlier change in this release admitted rebases
+  from about 0.3 of the limit that then stranded; that bound undercounted.) Opening a
+  journal never applies the limit, so `--status` always answers.
+- `brit rebase --retire` returns to service a repository whose rebase no other action can
+  finish or undo, deleting nothing: it keeps the journal as `brit-rebase-kept-<nonce>`, its
+  retention refs and retained copies, and prints how to remove each.
 - A `brit switch` or `brit pull` stopped before its first journal record no longer blocks the
   repository: `--status` says it recorded and changed nothing, and `--abort` removes it.
 - `brit fetch` refuses a refspec naming one ref the remote does not advertise, checks again

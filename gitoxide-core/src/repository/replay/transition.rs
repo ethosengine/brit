@@ -386,6 +386,40 @@ struct LockReceipt {
     checksum: String,
 }
 
+/// Remove the ordinary Git locks a transition in `staging` recorded and still owns:
+/// only a `<resource>.lock` whose inode is the one its receipt pinned, which is the
+/// transition's own anchor. A replaced or foreign lock is left. Returns the locks
+/// removed.
+pub(super) fn release_recorded_locks(staging: &Path) -> Result<Vec<PathBuf>> {
+    use std::os::unix::fs::MetadataExt;
+    let mut released = Vec::new();
+    for entry in fs::read_dir(staging)? {
+        let entry = entry?;
+        let name = entry.file_name();
+        let name = name.as_encoded_bytes();
+        if !(name.starts_with(b"metadata-lock-") && name.ends_with(b".json")) {
+            continue;
+        }
+        let envelope: LockReceipt = serde_json::from_slice(&fs::read(entry.path())?)?;
+        ensure!(
+            switch::digest(&envelope.payload)? == envelope.checksum,
+            "corrupt replay lock receipt {}",
+            entry.path().display()
+        );
+        let lock: switch::Lock = serde_json::from_slice(&envelope.payload)?;
+        let external = gix::path::from_bstr(lock.path.as_bstr())?.into_owned();
+        if let Ok(metadata) = fs::symlink_metadata(&external)
+            && metadata.is_file()
+            && (metadata.dev(), metadata.ino()) == (lock.device, lock.inode)
+        {
+            fs::remove_file(&external)?;
+            switch::sync_dir(external.parent().context("lock parent")?)?;
+            released.push(external);
+        }
+    }
+    Ok(released)
+}
+
 fn reclaim_locks(staging: &Path, resources: &[PathBuf]) -> Result<()> {
     let mut owned = Vec::new();
     // Validate every external lock before removing any: a replacement is not

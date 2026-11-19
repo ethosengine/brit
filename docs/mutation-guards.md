@@ -83,6 +83,11 @@ would be a write the model reserves for `other_worktree_guard`.
   nothing. An interrupted cancellation is finished by the next `--abort`. A `prepared`
   journal that already holds the pre-rebase private index and a prepared, never launched
   hook invocation is cancelled the same way; once the hook's start is durable it is not.
-- A rebase whose cleanup cannot finish is retired with `brit rebase --retire-cleanup`, under
+- A rebase no other action can finish or undo is retired with `brit rebase --retire`, under
   the same guards as `--abort`: the journal is kept as `brit-rebase-kept-<nonce>`, which no
   writer treats as pending.
+- Opening a recovery journal never applies the scratch quota, so `--status` always answers.
+- A `.brit-checkout-*` directory in a Git directory is a scratch leftover: a Brit process
+  killed while it held one (a journal save, a payload copy, a switch or pull start) leaves it.
+  It is not a journal and blocks nothing; `rebase --status` and `switch --status` report it
+  and the command that removes it.

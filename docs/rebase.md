@@ -14,7 +14,7 @@ brit rebase --status
 brit rebase --continue
 brit rebase --skip
 brit rebase --abort
-brit rebase --retire-cleanup
+brit rebase --retire
 brit rebase --edit-todo
 brit rebase --show-current-patch
 ```
@@ -114,16 +114,27 @@ already published commit: explicit continuation acknowledges that uncertainty
 without rerunning the hook. Known-not-started post-authoring notifications remain
 queued durably and run once. Status distinguishes these cases from a clean stop.
 
-A rebase whose cleanup cannot finish (its retained copy would exceed the scratch
-limit) blocks every Brit mutation. `brit rebase --retire-cleanup` returns such a
-repository to service without deleting anything. It accepts only a completed
-(published) rebase whose cleanup is pending, or an abort stopped in
-`retaining-abort` before its first decision (the branch was never changed); every
-other phase refuses and names the command that applies. It renames the journal to
-`brit-rebase-kept-<nonce>` beside it, leaves the `refs/brit-rebase-retain/<nonce>/*`
-references and any retained copy in place, and prints each kept piece, its size and
-the command that removes it later. A second run reports nothing to retire. Older
-Brit releases do not treat `brit-rebase-kept-*` as a journal or a cleanup receipt.
+Every journal and retained copy lives under a 1 GiB scratch limit. A rebase is
+admitted only when its journal and the retained copy an abort or cleanup writes fit
+with a 5/4 safety factor: a cheap estimate refuses far-too-large repositories before
+any object is read, the exact records are checked once preparation finishes (a
+refusal there cancels the preparation, so nothing is left behind), and every later
+step or staged resolution is reserved for before it writes anything, so `--abort`
+always remains possible. Refusals name what was measured and point to `git rebase`.
+
+`brit rebase --retire` returns to service a repository whose rebase no other action
+can finish or undo, deleting nothing and changing nothing live. It accepts a
+completed or aborted rebase whose cleanup is pending, a skip or abort stopped while
+retaining, any phase the scratch limit leaves no room to abort, and a journal
+recorded for another location of the repository (it was moved or copied). It
+refuses preparation, which `--abort` always cancels, and any phase `--continue` or
+`--abort` can still finish. It renames the journal to `brit-rebase-kept-<nonce>`
+beside it, leaves the `refs/brit-rebase-retain/<nonce>/*` references and any
+retained copy in place, and prints each kept piece, its size and the command that
+removes it. For a rebase that had begun changing the checkout it says so and names
+the command that returns to the unchanged branch. A second run reports nothing to
+retire. Older Brit releases do not treat `brit-rebase-kept-*` as a journal or a
+cleanup receipt.
 
 Publication and cleanup are separate. A message saying **committed/published with
 warning** or **cleanup pending** must not be interpreted as an unpublished
