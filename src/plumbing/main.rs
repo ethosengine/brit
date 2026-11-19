@@ -180,6 +180,15 @@ fn explicit_write_paths(cmd: &Subcommands) -> Vec<&std::path::Path> {
     paths
 }
 
+/// Apply each `-C <dir>` in order, each relative to the one before, as Git does; empty values are ignored.
+fn change_dirs(dirs: &[std::ffi::OsString]) -> Result<()> {
+    for dir in dirs.iter().filter(|dir| !dir.is_empty()) {
+        std::env::set_current_dir(dir)
+            .or_raise(|| message!("cannot change to '{}'", std::path::Path::new(dir).display()))?;
+    }
+    Ok(())
+}
+
 /// Execute an already parsed plumbing command, allowing another CLI to compose its command tree.
 pub fn run(args: Args) -> Result<()> {
     run_with_command(args, Args::command())
@@ -187,6 +196,7 @@ pub fn run(args: Args) -> Result<()> {
 
 /// Execute a plumbing command with the public command tree used for generated completions.
 pub fn run_with_command(args: Args, command: clap::Command) -> Result<()> {
+    change_dirs(&args.change_dir)?;
     let thread_limit = args.threads;
     let verbose = args.verbose;
     let format = args.format;

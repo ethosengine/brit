@@ -13,6 +13,14 @@ use crate::shared::{AsRange, AsTime};
 #[clap(subcommand_required = true)]
 #[clap(arg_required_else_help = true)]
 pub struct Args {
+    /// Run as if Brit was started in this directory, like Git's `-C`; repeat to descend further.
+    ///
+    /// Each one is applied before anything else, relative to the previous one; an empty value is ignored.
+    /// Repository discovery and every relative path argument then start there, and `-r` is resolved
+    /// relative to the result. `-r` alone only selects the repository.
+    #[clap(short = 'C', value_name = "DIR", action = clap::ArgAction::Append, value_parser = clap::value_parser!(std::ffi::OsString))]
+    pub change_dir: Vec<std::ffi::OsString>,
+
     /// The repository to access.
     #[clap(short = 'r', long, default_value = ".")]
     pub repository: PathBuf,
