@@ -80,10 +80,12 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.0.0/); ver
   through a directory link) by its object id, so moving a submodule pin or retargeting a link
   changes the step's fingerprint. Uncommitted files and a symlink's target file (unless a glob
   matches it) are still not keyed.
-- Build step globs mean the same on every platform: `\` escapes the next character, `*` and
-  `?` also match `/`, matching is case-sensitive, and empty alternates and unclosed classes are
-  invalid, on Windows as on Linux and macOS (whose fingerprints are unchanged). Before, a
-  Windows build read `\` as a path separator.
+- Build step globs are fingerprinted with the same meaning on every platform: `\` escapes the
+  next character, `*` and `?` also match `/`, matching is case-sensitive, and empty alternates
+  and unclosed classes are invalid, on Windows as on Linux and macOS (whose fingerprints are
+  unchanged). Before, a Windows build read `\` as a path separator. Which steps `brit build
+  plan` and `brit build affected` select for a change is still decided by rakia-core's own
+  matcher, with globset's per-platform defaults.
 - **Behaviour change** on every platform: `brit build fingerprint` and `brit build plan` refuse
   a step glob with a backslash directly beside `**` (such as `src/**\[x\]`), naming the
   pattern and the backslash's position, because such a glob cannot be given one meaning on
