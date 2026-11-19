@@ -2270,15 +2270,17 @@ impl Session {
     }
 
     /// The bytes the retained copy of the current state needs at most (members
-    /// and an upper bound of its manifest), and the journal's own bytes.
-    fn quota_usage(&self, repo: &gix::Repository) -> Result<(u64, u64)> {
+    /// and an upper bound of its manifest), the bytes it certainly holds (its
+    /// members alone), and the journal's own bytes.
+    fn quota_usage(&self, repo: &gix::Repository) -> Result<(u64, u64, u64)> {
         use super::retained::Content;
         let members = self.current_members(repo)?;
-        let mut copy = super::retained::manifest_bound(members.iter().map(|member| member.path.len()));
+        let mut held = 0u64;
         for member in &members {
-            copy = copy.saturating_add(member.data.size()?);
+            held = held.saturating_add(member.data.size()?);
         }
-        Ok((copy, tree_bytes(&self.directory)?))
+        let copy = super::retained::manifest_bound(members.iter().map(|member| member.path.len())).saturating_add(held);
+        Ok((copy, held, tree_bytes(&self.directory)?))
     }
 
     /// The records one more decision adds at most: its state images (see
@@ -2356,8 +2358,8 @@ impl Session {
     /// the journal could exceed the quota with the safety factor (`requested` is
     /// what the step adds), or while the retained copy an abort would write
     /// already exceeds it. That copy is not metered (see the `copy_bound`
-    /// module), so it is neither projected nor reserved for: only a copy already
-    /// over the quota is certain. Recovery (an abort, a cleanup, a decision
+    /// module), so it is neither projected nor reserved for: only a copy whose
+    /// members alone are already over the quota is certain. Recovery (an abort, a cleanup, a decision
     /// nothing can undo) is never refused here.
     fn reserve(&self, repo: &gix::Repository, requested: u64) -> Result<()> {
         self.reserve_for(repo, requested, false)
@@ -2375,7 +2377,7 @@ impl Session {
             return Ok(());
         }
         let limit = switch::payload::scratch_limit();
-        let (copy, journal) = self.quota_usage(repo)?;
+        let (copy, held, journal) = self.quota_usage(repo)?;
         let need = |bytes: u64| super::copy_bound::with_safety(bytes.saturating_add(requested));
         ensure!(
             need(journal) <= limit,
@@ -2396,9 +2398,9 @@ impl Session {
             );
         } else {
             ensure!(
-                copy <= limit,
+                held <= limit,
                 "rebase refused this step before writing anything of it: the retained copy an abort would write \
-                 already holds {copy} bytes, over the {limit}-byte scratch limit; brit rebase --abort restores the \
+                 already holds {held} bytes, over the {limit}-byte scratch limit; brit rebase --abort restores the \
                  original state"
             );
         }
@@ -2412,12 +2414,13 @@ impl Session {
     /// publication's, what the replay writes ([`super::copy_bound::Plan`], with a
     /// stop and a resolution as large as the largest step) and the largest
     /// publication staged at once. The retained copy an abort or a cleanup writes
-    /// is not metered, so only its present size is tested, unscaled. Steps beyond
+    /// is not metered, so only the bytes it already certainly holds (its members,
+    /// without its manifest) are tested, unscaled. Steps beyond
     /// the plan (further stops, edits) are reserved for when they happen.
     fn admit(&self, repo: &gix::Repository) -> Result<()> {
         use super::copy_bound::{DECISION_IMAGES, STATE_BYTES_PER_OBJECT, with_safety};
         let limit = switch::payload::scratch_limit();
-        let (copy, journal) = self.quota_usage(repo)?;
+        let (_, held, journal) = self.quota_usage(repo)?;
         let replayed = self
             .state
             .candidates
@@ -2458,8 +2461,8 @@ impl Session {
             super::copy_bound::SAFETY.1
         );
         ensure!(
-            copy <= limit,
-            "rebase refused before it changed anything: the retained copy an abort would write already holds {copy} \
+            held <= limit,
+            "rebase refused before it changed anything: the retained copy an abort would write already holds {held} \
              bytes, over the {limit}-byte scratch limit; the preparation was cancelled and nothing was changed; git \
              rebase is the fallback"
         );

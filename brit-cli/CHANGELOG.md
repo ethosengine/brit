@@ -331,8 +331,8 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.0.0/); ver
   consequence of never refusing an abort. Measured on the 64 MiB memory fixtures it reached
   0.67 to 0.81 GB (0.94 GB with a conflict stop and a staged resolution) while the journal
   stayed under 0.34 GB. Only a copy that certainly cannot fit is refused, before anything
-  changes: a history whose objects alone exceed the limit, and a copy that already exceeds it
-  at admission or before a forward step.
+  changes: a history whose objects alone exceed the limit, and a copy whose members already
+  exceed it at admission or before a forward step.
 - `brit rebase --continue` at an edit stop no longer reserves for a state record many times
   larger than the one it writes: the edited file adopted from the authoring session was
   counted at its inline encoding (about twelve times its size, three times over) instead of as

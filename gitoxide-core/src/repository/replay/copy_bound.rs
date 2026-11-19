@@ -17,8 +17,9 @@
 //! before-image, its worktree file and up to three staged versions, plus a
 //! manifest; it can exceed the quota by at most that much, which is what never
 //! refusing an abort costs. Only what is certain is refused: a closure whose
-//! objects alone exceed the quota, at the preflight, and a copy that already
-//! exceeds it, at admission and before each forward step. A skip writes its
+//! objects alone exceed the quota, at the preflight, and a copy whose members
+//! alone already exceed it (its manifest's size is not yet known), at admission
+//! and before each forward step. A skip writes its
 //! retained copy under the quota, so a skip reserves for that copy as for its
 //! journal (`Session::reserve_with_copy`).
 //!
@@ -32,8 +33,8 @@
 //!    yet available at that size and that `git rebase` is the fallback.
 //! 2. Admission, once preparation knows its exact records (`Session::admit`),
 //!    projects the journal's peak from the real journal, refuses unless it fits
-//!    with the safety factor to spare, refuses a retained copy that already
-//!    exceeds the quota, and cancels the preparation, so nothing is left behind.
+//!    with the safety factor to spare, refuses a retained copy whose members
+//!    already exceed the quota, and cancels the preparation, so nothing is left behind.
 //!    It includes one stop and a resolution as large as the largest step, so the
 //!    first forward step after a stop is not refused for its journal.
 //!

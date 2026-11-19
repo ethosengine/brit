@@ -141,8 +141,9 @@ it can exceed the limit by at most that much. Measured on the 64 MiB fixtures of
 with a conflict stop and a staged resolution, while the journal stayed under
 0.34 GB. This is the consequence of never refusing an abort. Brit still refuses,
 before anything changes, a rebase whose retained copy would certainly not fit:
-one whose history's objects alone exceed the limit (at the start), or whose copy
-already exceeds it (once preparation finishes, and before each forward step).
+one whose history's objects alone exceed the limit (at the start), or whose copy's
+members already exceed it (once preparation finishes, and before each forward
+step).
 Those fixtures, which completed under the limit before the recovery rules were
 added, complete again.
 
