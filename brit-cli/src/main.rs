@@ -339,12 +339,30 @@ fn diagnostic(error: &error::CliError) -> String {
     }
 }
 
+fn is_broken_pipe(error: &error::CliError) -> bool {
+    let broken = |cause: &(dyn std::error::Error + 'static)| {
+        cause
+            .downcast_ref::<std::io::Error>()
+            .is_some_and(|io| io.kind() == std::io::ErrorKind::BrokenPipe)
+            // Errors converted on their way up keep only the operating system's message.
+            || cause.to_string().ends_with("Broken pipe (os error 32)")
+    };
+    match error {
+        error::CliError::Io(io) => io.kind() == std::io::ErrorKind::BrokenPipe,
+        error::CliError::Git(cause) => cause.chain().any(broken),
+        _ => false,
+    }
+}
+
 fn main() -> ExitCode {
     gix::utils::stream::Budget::share_process_quota();
     let mut capture = feedback::Capture::new();
     let code = match run(&mut capture) {
         Ok(()) => 0,
         Err(error::CliError::ContextExit(code)) => code,
+        // A reader that stopped early (`brit … | head`) is not a failure to report: end quietly with
+        // the status a shell shows for Git killed by SIGPIPE.
+        Err(e) if is_broken_pipe(&e) => 141,
         Err(e) => {
             eprintln!("{}", diagnostic(&e));
             if matches!(e, error::CliError::Args(_)) {
