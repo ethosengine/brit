@@ -206,7 +206,7 @@ impl Session {
 
     fn prepare_mode(repo: &gix::Repository, argument: &BStr, interactive: bool) -> Result<Option<Self>> {
         use std::{io::Read, os::unix::fs::DirBuilderExt};
-        let selection = Selection::prepare(repo, argument)?;
+        let selection = Selection::prepare_for_session(repo, argument, interactive, switch::payload::scratch_limit())?;
         if selection.kind == SelectionKind::Noop && (!interactive || selection.candidates.is_empty()) {
             return Ok(None);
         }

@@ -63,6 +63,19 @@ impl Selection {
     /// Resolve only explicit, local revisions and prove the selected linear chain.
     /// This function is read-only, including for no-op and fast-forward results.
     pub fn prepare(repo: &gix::Repository, upstream: &BStr) -> Result<Self> {
+        Self::prepare_inner(repo, upstream, None)
+    }
+
+    /// [`Self::prepare`] for a replay session that keeps its retained copy under
+    /// `limit` bytes. Before any object is verified or spooled, it refuses a rebase
+    /// whose retained copy could not fit, because such a rebase could publish and
+    /// then never finish its cleanup, nor be aborted. `interactive` says whether a
+    /// no-op selection would still replay its own commits.
+    pub fn prepare_for_session(repo: &gix::Repository, upstream: &BStr, interactive: bool, limit: u64) -> Result<Self> {
+        Self::prepare_inner(repo, upstream, Some((interactive, limit)))
+    }
+
+    fn prepare_inner(repo: &gix::Repository, upstream: &BStr, bound: Option<(bool, u64)>) -> Result<Self> {
         ensure!(!gix::interrupt::is_triggered(), "replay selection interrupted");
         ensure!(!upstream.is_empty(), "an explicit local upstream is required");
         validate_execution_policy(repo)?;
@@ -83,6 +96,9 @@ impl Selection {
         let attachment = repo.head_name()?.map(|name| name.as_bstr().to_owned());
         let upstream_id = resolve_upstream(repo, upstream)?;
         selection_interrupt()?;
+        if let Some((interactive, limit)) = bound {
+            copy_bound::preflight(repo, original, upstream_id, interactive, limit)?;
+        }
         let mut closure = BTreeSet::new();
         let mut validation = Validation::default();
         let ours = validation.history(repo, original, &mut closure)?;
@@ -247,6 +263,8 @@ fn head_commit_id(repo: &gix::Repository) -> Result<gix::ObjectId> {
     read_commit(repo, id, &mut buffer)?;
     Ok(id)
 }
+
+mod copy_bound;
 
 #[cfg(all(target_os = "linux", feature = "switch-test-faults"))]
 mod cancellation;

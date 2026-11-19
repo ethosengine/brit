@@ -358,6 +358,19 @@ pub fn capture<D: Content>(
     members: &[Member<D>],
 ) -> Result<Receipt> {
     let owner = fs::metadata(repo.git_dir())?.uid();
+    // Every member is copied under the scratch quota. Refuse a copy whose member
+    // bytes alone exceed it before fingerprinting anything, so a copy that can
+    // never complete fails at once instead of after a full pass over its sources.
+    let mut planned = 0u64;
+    for member in members {
+        planned = planned.saturating_add(member.data.size()?);
+    }
+    let limit = switch::payload::scratch_limit();
+    ensure!(
+        planned <= limit,
+        "retained copy cannot be written: its {} members hold {planned} bytes, over the {limit}-byte scratch limit every retained copy lives under",
+        members.len()
+    );
     let manifest = Manifest {
         version: 1,
         nonce: nonce.into(),

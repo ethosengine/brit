@@ -158,9 +158,23 @@ fn usage(root: &Path) -> Result<u64> {
     Ok(size)
 }
 
+/// The quota every journal and retained copy lives under: [`SCRATCH_LIMIT`].
+/// Fault-injection builds alone read `BRIT_TEST_SCRATCH_LIMIT` (bytes), so a test
+/// can reach the quota with a small repository; delivery builds never read it.
+pub(crate) fn scratch_limit() -> u64 {
+    #[cfg(feature = "switch-test-faults")]
+    if let Some(limit) = std::env::var("BRIT_TEST_SCRATCH_LIMIT")
+        .ok()
+        .and_then(|value| value.parse().ok())
+    {
+        return limit;
+    }
+    SCRATCH_LIMIT
+}
+
 pub(crate) fn check_growth(root: &Path, requested: u64) -> Result<()> {
     let live = usage(root)?;
-    if live.checked_add(requested).is_none_or(|size| size > SCRATCH_LIMIT) {
+    if live.checked_add(requested).is_none_or(|size| size > scratch_limit()) {
         return Err(ScratchLimit {
             requested,
             live,

@@ -1136,6 +1136,131 @@ mod recovery {
         preserved(root)
     }
 
+    /// A divergent repository whose shared history holds one `big`-byte blob.
+    fn big_blob_fixture(big: usize) -> Result<TestRepo> {
+        let repo = TestRepo::new("bounded-rebase")?;
+        let root = repo.path();
+        fs::write(root.join("big"), vec![0u8; big])?;
+        git(root, &["add", "big"])?;
+        repo.commit_file("base", "base\n")?;
+        git(root, &["switch", "-q", "-c", "upstream"])?;
+        repo.commit_file("upstream", "upstream\n")?;
+        git(root, &["switch", "-q", "main"])?;
+        repo.commit_file("topic", "topic\n")?;
+        Ok(repo)
+    }
+
+    /// Run a fault-enabled brit command to completion with a lowered scratch
+    /// quota, a private TMPDIR, and a rendezvous armed at the first object
+    /// verification, which only proves no verification happened if it is unused.
+    fn bounded(root: &Path, args: &[&str], limit: &str, markers: &Path, scratch: &Path) -> Result<bool> {
+        let mut child = launch(
+            root,
+            args,
+            &[
+                ("BRIT_TEST_SCRATCH_LIMIT", limit.as_ref()),
+                ("BRIT_SWITCH_CHECKPOINT", "replay-selection-object".as_ref()),
+                ("BRIT_SWITCH_CHECKPOINT_DIR", markers.as_os_str()),
+                ("TMPDIR", scratch.as_os_str()),
+            ],
+        )?;
+        let deadline = Instant::now() + Duration::from_secs(60);
+        loop {
+            if let Some(status) = child.0.try_wait()? {
+                return Ok(status.success());
+            }
+            ensure!(
+                !markers.join("replay-selection-object.reached").exists(),
+                "{args:?} verified an object before refusing"
+            );
+            ensure!(Instant::now() < deadline, "{args:?} did not finish");
+            std::thread::sleep(Duration::from_millis(10));
+        }
+    }
+
+    /// A rebase whose retained copy cannot fit the scratch quota is refused before
+    /// any journal or spool exists, instead of publishing and then being unable to
+    /// finish its cleanup or be aborted. The quota is lowered for the test only.
+    #[test]
+    fn public_rebase_whose_retained_copy_cannot_fit_refuses_before_any_state() -> Result<()> {
+        let repo = big_blob_fixture(2_000_000)?;
+        let root = repo.path();
+        let head = git(root, &["rev-parse", "HEAD"])?;
+        let index = fs::read(root.join(".git/index"))?;
+        let markers = tempfile::tempdir()?;
+        let scratch = tempfile::tempdir()?;
+        let mut command = Command::new(brit_bin().expect("fault-enabled artifact"));
+        gix_testtools::configure_git_environment(&mut command, root);
+        let output = command
+            .current_dir(root)
+            .args(["rebase", "upstream"])
+            .env("BRIT_TEST_SCRATCH_LIMIT", "1000000")
+            .env("TMPDIR", scratch.path())
+            .stdin(Stdio::null())
+            .output()?;
+        let message = String::from_utf8_lossy(&output.stderr);
+        ensure!(!output.status.success(), "oversized rebase must refuse");
+        ensure!(
+            message.contains("retained copy needs at least")
+                && message.contains("over the 1000000-byte scratch limit")
+                && message.contains("nothing was changed")
+                && message.contains("git rebase is the fallback"),
+            "named refusal: {message}"
+        );
+        assert_no_rebase_leftovers(root, scratch.path())?;
+        // The refusal precedes the first object verification, and so every spool.
+        ensure!(!bounded(
+            root,
+            &["rebase", "upstream"],
+            "1000000",
+            markers.path(),
+            scratch.path()
+        )?);
+        assert_no_rebase_leftovers(root, scratch.path())?;
+        assert_eq!(git(root, &["rev-parse", "HEAD"])?, head);
+        assert_eq!(fs::read(root.join(".git/index"))?, index);
+        success(root, &["branch", "create", "after-refusal"])?;
+        // Under the ordinary quota the same rebase proceeds and finishes.
+        success(root, &["rebase", "upstream"])?;
+        assert!(!root.join(".git/brit-rebase").exists());
+        Ok(())
+    }
+
+    /// The preflight's bound undercounts the journal, so a rebase close enough to
+    /// the quota can still publish with a retained copy too large to write. That
+    /// copy now refuses at once, by name, before writing any member.
+    #[test]
+    fn public_retained_copy_over_the_quota_refuses_before_writing_any_member() -> Result<()> {
+        let repo = big_blob_fixture(850_000)?;
+        let root = repo.path();
+        let mut command = Command::new(brit_bin().expect("fault-enabled artifact"));
+        gix_testtools::configure_git_environment(&mut command, root);
+        let output = command
+            .current_dir(root)
+            .args(["rebase", "upstream"])
+            .env("BRIT_TEST_SCRATCH_LIMIT", "1000000")
+            .stdin(Stdio::null())
+            .output()?;
+        let message = String::from_utf8_lossy(&output.stderr);
+        ensure!(!output.status.success(), "{message}");
+        ensure!(
+            String::from_utf8_lossy(&output.stdout).contains("Rebase published"),
+            "the rebase published: {message}"
+        );
+        ensure!(
+            message.contains("retained copy cannot be written")
+                && message.contains("over the 1000000-byte scratch limit"),
+            "named copy refusal: {message}"
+        );
+        let retained = root.join(".git/brit-rebase-retained");
+        ensure!(
+            !retained.exists() || fs::read_dir(&retained)?.next().is_none(),
+            "no retained member was written"
+        );
+        assert!(root.join(".git/brit-rebase").exists(), "the completed journal remains");
+        Ok(())
+    }
+
     /// An interrupted cancellation finishes on the next `--abort`.
     #[test]
     fn public_interrupted_preparation_cancel_finishes_on_the_next_abort() -> Result<()> {
