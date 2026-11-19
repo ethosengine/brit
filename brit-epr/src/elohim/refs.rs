@@ -571,9 +571,9 @@ impl BritRefManager {
     /// The session is one ref component (`session_segment`): distinct sessions never
     /// share a ref directory, and none nests under another. An empty session is refused.
     ///
-    /// One spelling per session: a session whose old, unescaped directory
-    /// (`legacy_session_segment`) already holds a record that verifies for exactly this
-    /// session keeps writing there, so a reader that knows only the old spelling (an older brit
+    /// One spelling per session: a session with no literal `%` in its label whose old, unescaped
+    /// directory (`legacy_session_segment`) already holds a record that verifies for
+    /// exactly this session keeps writing there, so a reader that knows only the old spelling (an older brit
     /// sharing these refs) sees every clause, a revocation included; otherwise the clause goes to
     /// the escaped spelling. Only such a verified same-session record makes the old directory the
     /// home: an unverifiable or other-session ref planted there does not steer the write.
@@ -608,7 +608,11 @@ impl BritRefManager {
         // signed session (a clause there is admitted only for the session it was signed for), and
         // a listing takes only direct children of a session's directory, so `victim/x/<cid>` never
         // reaches `victim`'s listing.
-        let segment = if legacy != current && self.holds_session(&legacy, &session)? {
+        // Only a label with no literal `%` may keep its old home: without one, the old spelling
+        // either contains `/` (which no escaped spelling does) or equals the escaped spelling, so
+        // it can never be another label's current directory. (The old spelling of `a%3Ab` is
+        // `a:b`'s directory.) Generation sessions need `/` and never `%`, so they keep theirs.
+        let segment = if legacy != current && !session.contains('%') && self.holds_session(&legacy, &session)? {
             &legacy
         } else {
             &current
@@ -650,6 +654,12 @@ impl BritRefManager {
     }
 
     /// Whether the session directory `segment` holds a record that verifies for exactly `session`.
+    ///
+    /// "Verifies" is the verified read: strict decode, the signature against the key the record
+    /// itself names, the CID recomputed from the clause, the binding to the ref it is filed under,
+    /// and a signed session equal to `session`. It deliberately does not judge the validity
+    /// window, revocation or which agent signed: those are the reader's. So a session's home is
+    /// decided by well-formed, self-consistent records alone, and never flips on expiry.
     fn holds_session(&self, segment: &str, session: &str) -> Result<bool, RefError> {
         let refs = self.covenant_session_refs(segment)?;
         if refs.is_empty() {

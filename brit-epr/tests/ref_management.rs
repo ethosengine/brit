@@ -733,6 +733,97 @@ fn planted_refs_in_an_old_directory_do_not_steer_a_put() -> Result<(), Box<dyn s
     Ok(())
 }
 
+/// A `%` label never makes its old spelling home: that spelling is another label's current
+/// directory (`a%3Ab` then, `a:b` now).
+#[test]
+fn a_percent_label_never_writes_into_another_labels_directory() -> Result<(), Box<dyn std::error::Error>> {
+    let tmp = init_git_repo();
+    let k = key(&tmp, "percent-home");
+    let mgr = BritRefManager::new(tmp.path())?;
+    let colon = mgr.put_covenant_clause(&clause(&k, "a:b", "2026-11-01T00:00:00Z", "colon"))?;
+    let first = mgr.put_covenant_clause(&clause(&k, "a%3Ab", "2026-11-02T00:00:00Z", "first"))?;
+    assert_eq!(
+        refs_under(tmp.path(), "refs/notes/brit/covenant/a%253Ab/"),
+        [format!("refs/notes/brit/covenant/a%253Ab/{first}")]
+    );
+
+    // Even with a clause of `a%3Ab` written by an old brit under the old spelling.
+    let old = clause(&k, "a%3Ab", "2026-10-01T00:00:00Z", "old");
+    let (old_cid, old_record) = covenant_record(&old);
+    raw_ref(
+        tmp.path(),
+        &format!("refs/notes/brit/covenant/a%3Ab/{old_cid}"),
+        &old_record,
+    );
+    let next = mgr.put_covenant_clause(&clause(&k, "a%3Ab", "2026-11-03T00:00:00Z", "next"))?;
+    let mut escaped = vec![
+        format!("refs/notes/brit/covenant/a%253Ab/{first}"),
+        format!("refs/notes/brit/covenant/a%253Ab/{next}"),
+    ];
+    escaped.sort();
+    assert_eq!(refs_under(tmp.path(), "refs/notes/brit/covenant/a%253Ab/"), escaped);
+    let mut colon_dir = vec![
+        format!("refs/notes/brit/covenant/a%3Ab/{colon}"),
+        format!("refs/notes/brit/covenant/a%3Ab/{old_cid}"),
+    ];
+    colon_dir.sort();
+    assert_eq!(refs_under(tmp.path(), "refs/notes/brit/covenant/a%3Ab/"), colon_dir);
+    let scan = mgr.list_covenant_clauses("a%3Ab")?;
+    let cids: Vec<&str> = scan.verified.iter().map(|(_, r)| r.cid.as_str()).collect();
+    assert_eq!(cids, [old_cid.as_str(), first.as_str(), next.as_str()]);
+    Ok(())
+}
+
+/// A clause filed in a session's old directory that binds there but is signed for another
+/// session does not make that directory the session's home. `p/q:r` and `p/q%3Ar` share the old
+/// spelling `p/q%3Ar`, so a `p/q%3Ar` clause there passes the ref binding and is stopped only by
+/// the requested-session check.
+#[test]
+fn another_sessions_clause_bound_to_the_old_directory_does_not_make_it_home() -> Result<(), Box<dyn std::error::Error>>
+{
+    let tmp = init_git_repo();
+    let k = key(&tmp, "other-bound");
+    let mgr = BritRefManager::new(tmp.path())?;
+    let stranger = clause(&k, "p/q%3Ar", "2026-11-01T00:00:00Z", "stranger");
+    let (stranger_cid, stranger_record) = covenant_record(&stranger);
+    let planted = format!("refs/notes/brit/covenant/p/q%3Ar/{stranger_cid}");
+    raw_ref(tmp.path(), &planted, &stranger_record);
+    assert!(
+        matches!(mgr.get_covenant_clause(&stranger_cid)?, Lookup::Verified(_)),
+        "the planted clause binds where it is filed"
+    );
+
+    let own = mgr.put_covenant_clause(&clause(&k, "p/q:r", "2026-11-02T00:00:00Z", "own"))?;
+    assert_eq!(
+        refs_under(tmp.path(), "refs/notes/brit/covenant/p%2Fq%3Ar/"),
+        [format!("refs/notes/brit/covenant/p%2Fq%3Ar/{own}")]
+    );
+    assert_eq!(refs_under(tmp.path(), "refs/notes/brit/covenant/p/q%3Ar/"), [planted]);
+    Ok(())
+}
+
+/// "Verifies" for placement means well-formed and self-consistent (decode, signature against the
+/// key the record names, CID, binding, exact session), not authorised: a same-session clause
+/// signed by any other key makes the old directory home.
+#[test]
+fn a_well_formed_clause_by_any_key_makes_the_old_directory_home() -> Result<(), Box<dyn std::error::Error>> {
+    let tmp = init_git_repo();
+    let mine = key(&tmp, "mine");
+    let theirs = key(&tmp, "theirs");
+    let mgr = BritRefManager::new(tmp.path())?;
+    let session = "env-5/generations/2";
+    let foreign = clause(&theirs, session, "2026-11-01T00:00:00Z", "foreign");
+    let (foreign_cid, foreign_record) = covenant_record(&foreign);
+    let legacy_prefix = "refs/notes/brit/covenant/env-5/generations/2/";
+    raw_ref(tmp.path(), &format!("{legacy_prefix}{foreign_cid}"), &foreign_record);
+
+    let own = mgr.put_covenant_clause(&clause(&mine, session, "2026-11-02T00:00:00Z", "own"))?;
+    let mut expected = vec![format!("{legacy_prefix}{foreign_cid}"), format!("{legacy_prefix}{own}")];
+    expected.sort();
+    assert_eq!(refs_under(tmp.path(), legacy_prefix), expected);
+    Ok(())
+}
+
 /// The same clause under both spellings (fetched later, or an older binary's put after a newer
 /// one's) lists once.
 #[test]
