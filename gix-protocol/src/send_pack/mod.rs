@@ -16,7 +16,10 @@
 //! speaks the same command-list dialect in both. However the *transport*
 //! handshake uses whichever protocol the caller negotiated; send-pack takes a
 //! post-handshake transport.
-#![allow(missing_docs)] // until the API settles
+#![allow(
+    missing_docs,
+    reason = "the send-pack API is still settling; types and errors document themselves by name and message"
+)]
 
 pub mod arguments;
 pub mod command_list;
