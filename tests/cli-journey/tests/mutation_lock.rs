@@ -715,3 +715,64 @@ fn removing_a_worktree_that_another_writer_holds_refuses() -> Result<()> {
     holder.wait()?;
     Ok(())
 }
+
+#[test]
+fn renaming_a_branch_checked_out_where_a_push_is_paused_refuses_until_it_finishes() -> Result<()> {
+    let Lanes {
+        repo,
+        remote,
+        other,
+        scratch,
+    } = lanes("lock-branch-move")?;
+    let pause = pause_dir(&scratch, "pause")?;
+    pausing_hook(repo.path(), &scratch.path().join("hooks"), "pre-push")?;
+    git(repo.path(), &["branch", "spare"])?;
+    let pushed = repo.commit_file("payload", "pushed\n")?;
+    let mut push = Background::spawn(
+        repo.path(),
+        &["push", "origin", "main:main"],
+        &[("BRIT_TEST_PAUSE", &pause)],
+    )?;
+    await_file(&pause.join("started"), &mut push)?;
+    let holder = push.pid().to_string();
+
+    // Repointing the paused worktree's HEAD would change the checkout under its gate.
+    let refs = git(repo.path(), &["for-each-ref"])?;
+    let refused = brit(&other, &["branch", "-m", "main", "trunk"])?;
+    ensure_refusal_names(
+        &refused,
+        "renaming the pushing worktree's branch from another worktree",
+        &[
+            "cannot rename branch 'main'",
+            "another Brit mutation is active",
+            holder.as_str(),
+            "push",
+        ],
+    )?;
+    ensure_refusal_names(
+        &brit(repo.path(), &["branch", "-m", "main", "trunk"])?,
+        "renaming the pushing worktree's branch from itself",
+        &["another Brit mutation is active", holder.as_str(), "push"],
+    )?;
+    assert_eq!(git(repo.path(), &["for-each-ref"])?, refs, "the refusals change no ref");
+    assert_eq!(git(repo.path(), &["symbolic-ref", "HEAD"])?, "refs/heads/main");
+    ensure!(
+        git(repo.path(), &["config", "--get-regexp", "^branch\\.trunk\\."]).is_err(),
+        "no configuration moved"
+    );
+    // A branch no paused worktree has checked out still renames.
+    let spare = brit(&other, &["branch", "-m", "spare", "spare-moved"])?;
+    ensure!(spare.status.success(), "rename beside a paused push: {}", spare.stderr);
+    ensure!(push.running()?, "the push is still inside its hook");
+
+    fs::write(pause.join("release"), "")?;
+    let push = push.finish()?;
+    ensure!(push.status.success(), "released push: {}", push.stderr);
+    assert_eq!(git(remote.path(), &["rev-parse", "refs/heads/main"])?, pushed);
+    let moved = brit(&other, &["branch", "-m", "main", "trunk"])?;
+    ensure!(moved.status.success(), "rename after the push: {}", moved.stderr);
+    assert_eq!(git(repo.path(), &["symbolic-ref", "HEAD"])?, "refs/heads/trunk");
+    assert_eq!(repo.head_id()?, pushed);
+    assert_eq!(git(&other, &["symbolic-ref", "HEAD"])?, "refs/heads/lane-b");
+    Ok(())
+}

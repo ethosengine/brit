@@ -98,12 +98,13 @@ enum Use {
 }
 
 /// A worktree as seen from `repo`: the name addressing its `HEAD` in `repo`'s ref transactions,
-/// its checkout (or Git directory), and the branch `HEAD` refers to.
+/// its checkout (or Git directory), the branch `HEAD` refers to, and the worktree opened on its own.
 struct Worktree {
     head: gix::refs::FullName,
     path: std::path::PathBuf,
     git_dir: std::path::PathBuf,
     head_name: Option<gix::refs::FullName>,
+    repo: gix::Repository,
 }
 
 fn worktrees(repo: &gix::Repository) -> Result<Vec<Worktree>> {
@@ -130,6 +131,7 @@ fn worktrees(repo: &gix::Repository) -> Result<Vec<Worktree>> {
                 path: worktree.workdir().unwrap_or(&git_dir).to_owned(),
                 head_name: worktree.head_name()?,
                 git_dir,
+                repo: worktree,
             })
         })
         .collect()
@@ -353,6 +355,28 @@ pub fn rename(repo: gix::Repository, old: &str, new: &str) -> Result<()> {
             path.display()
         )));
     }
+    // Every worktree whose HEAD follows the rename is rewritten, this one included. The
+    // repository guard is held, so take each worktree's guard without waiting: a writer that
+    // holds one (a push paused in its pre-push hook) refuses the rename before anything moves.
+    let _worktree_guards = if renaming {
+        worktrees
+            .iter()
+            .filter(|worktree| worktree.head_name.as_ref() == Some(&old_name))
+            .map(|worktree| {
+                crate::repository::switch::other_worktree_guard(&worktree.repo).map_err(|err| {
+                    gix::error::Error::from_boxed(
+                        err.context(format!(
+                            "cannot rename branch '{old}': the worktree at '{}' that has it checked out is in use by another Brit writer",
+                            worktree.path.display()
+                        ))
+                        .into_boxed_dyn_error(),
+                    )
+                })
+            })
+            .collect::<std::result::Result<Vec<_>, _>>()?
+    } else {
+        Vec::new()
+    };
     if renaming {
         refuse_directory_conflicts(&repo, &old_name, &new_name)?;
     }
