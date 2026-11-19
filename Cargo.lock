@@ -536,6 +536,7 @@ version = "0.0.0"
 dependencies = [
  "brit-epr",
  "gix 0.89.4",
+ "gix-testtools",
  "tempfile",
 ]
 

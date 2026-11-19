@@ -61,3 +61,22 @@ fn brit_backtrace_prints_it_before_the_error() {
         "{stderr}"
     );
 }
+
+#[test]
+fn a_closed_stderr_keeps_exit_code_one() {
+    let dir = tempfile::TempDir::new().expect("tempdir");
+    let mut command = Command::new(env!("CARGO_BIN_EXE_brit-build-ref"));
+    gix_testtools::configure_git_environment(&mut command, dir.path());
+    let mut child = command
+        .arg("--repo")
+        .arg(dir.path())
+        .arg("signer")
+        .current_dir(dir.path())
+        .stdout(std::process::Stdio::null())
+        .stderr(std::process::Stdio::piped())
+        .spawn()
+        .expect("brit-build-ref runs");
+    // Nobody reads stderr: the report hits a closed pipe and must not panic (exit 101).
+    drop(child.stderr.take());
+    assert_eq!(child.wait().expect("brit-build-ref exits").code(), Some(1));
+}

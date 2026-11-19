@@ -286,10 +286,7 @@ fn main() -> std::process::ExitCode {
         Ok(()) => std::process::ExitCode::SUCCESS,
         Err(error) => {
             // The shared printer: the cause chain, last, and a backtrace only on `BRIT_BACKTRACE`.
-            eprintln!(
-                "{}",
-                brit_epr::diagnostic::report(error.as_ref(), Some(error.backtrace()))
-            );
+            brit_epr::diagnostic::emit(brit_epr::diagnostic::report(error.as_ref(), Some(error.backtrace())));
             std::process::ExitCode::FAILURE
         }
     }

@@ -63,6 +63,37 @@ fn failures_end_with_the_error_and_print_no_backtrace_under_rust_backtrace() {
 }
 
 #[test]
+fn the_last_line_is_the_deepest_cause() {
+    let dir = gix_testtools::tempfile::TempDir::new().expect("tempdir");
+    let mut command = Command::new(env!("CARGO_BIN_EXE_brit"));
+    gix_testtools::configure_git_environment(&mut command, dir.path());
+    let output = command
+        .args(["log", "-n", "1"])
+        // Discovery stops at the temporary directory, so the chain does not depend on what lies above it.
+        .env(
+            "GIT_CEILING_DIRECTORIES",
+            dir.path().parent().expect("tempdir has a parent"),
+        )
+        .env("RUST_BACKTRACE", "1")
+        .env("RUST_LIB_BACKTRACE", "1")
+        .env_remove("BRIT_BACKTRACE")
+        .current_dir(dir.path())
+        .output()
+        .expect("brit runs");
+    let text = stderr(&output);
+    let lines: Vec<_> = text.lines().filter(|line| !line.trim().is_empty()).collect();
+    assert!(
+        text.starts_with("Error: Could not find a git repository"),
+        "the outer error leads: {text}"
+    );
+    assert_eq!(
+        lines[lines.len() - 2..],
+        ["Caused by:", "    NotFound"],
+        "the last line is the deepest cause of the chain: {text}"
+    );
+}
+
+#[test]
 fn brit_backtrace_prints_the_backtrace_before_the_error() {
     let dir = gix_testtools::tempfile::TempDir::new().expect("tempdir");
     let without = run(env!("CARGO_BIN_EXE_brit"), dir.path(), &["log", "-n", "1"], false);

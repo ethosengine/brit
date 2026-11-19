@@ -13,7 +13,10 @@
 
 use std::process::ExitCode;
 
-use brit_epr::{diagnostic::render_context, parse_pillar_trailers, validate_pillar_trailers};
+use brit_epr::{
+    diagnostic::{emit, render_context},
+    parse_pillar_trailers, validate_pillar_trailers,
+};
 
 fn main() -> ExitCode {
     let args: Vec<String> = std::env::args().collect();
@@ -21,7 +24,7 @@ fn main() -> ExitCode {
     let (rev, repo_path) = match parse_args(&args) {
         Ok(parsed) => parsed,
         Err(msg) => {
-            eprintln!("{msg}\n\nUsage: brit-verify <commit-rev> [--repo <path>]");
+            emit(format_args!("{msg}\n\nUsage: brit-verify <commit-rev> [--repo <path>]"));
             return ExitCode::from(2);
         }
     };
@@ -29,10 +32,7 @@ fn main() -> ExitCode {
     let repo = match gix::discover(&repo_path) {
         Ok(repo) => repo,
         Err(e) => {
-            eprintln!(
-                "{}",
-                render_context(format_args!("failed to open repo at {repo_path}"), &e)
-            );
+            emit(render_context(format_args!("failed to open repo at {repo_path}"), &e));
             return ExitCode::from(3);
         }
     };
@@ -42,20 +42,17 @@ fn main() -> ExitCode {
             Ok(obj) => match obj.try_into_commit() {
                 Ok(c) => c,
                 Err(_) => {
-                    eprintln!("rev {rev} does not point at a commit");
+                    emit(format_args!("rev {rev} does not point at a commit"));
                     return ExitCode::from(3);
                 }
             },
             Err(e) => {
-                eprintln!(
-                    "{}",
-                    render_context(format_args!("failed to load object for {rev}"), &e)
-                );
+                emit(render_context(format_args!("failed to load object for {rev}"), &e));
                 return ExitCode::from(3);
             }
         },
         Err(e) => {
-            eprintln!("{}", render_context(format_args!("failed to resolve rev {rev}"), &e));
+            emit(render_context(format_args!("failed to resolve rev {rev}"), &e));
             return ExitCode::from(3);
         }
     };
@@ -63,7 +60,7 @@ fn main() -> ExitCode {
     let decoded = match commit.decode() {
         Ok(c) => c,
         Err(e) => {
-            eprintln!("{}", render_context(format_args!("failed to decode commit {rev}"), &e));
+            emit(render_context(format_args!("failed to decode commit {rev}"), &e));
             return ExitCode::from(3);
         }
     };
@@ -90,7 +87,7 @@ fn main() -> ExitCode {
             ExitCode::SUCCESS
         }
         Err(e) => {
-            eprintln!("✗ pillar validation failed for {rev}: {e}");
+            emit(format_args!("✗ pillar validation failed for {rev}: {e}"));
             ExitCode::FAILURE
         }
     }

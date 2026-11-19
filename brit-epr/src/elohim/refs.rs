@@ -327,7 +327,9 @@ impl Drop for Scratch<'_> {
         // Drop cannot fail the write; a ref that could not be removed is said, not hidden.
         // `sweep_scratch` removes it once it is stale.
         if let Err(reason) = self.remove() {
-            eprintln!("warning: {reason}; it is swept once older than {SCRATCH_TTL_SECS} s");
+            crate::diagnostic::emit(format_args!(
+                "warning: {reason}; it is swept once older than {SCRATCH_TTL_SECS} s"
+            ));
         }
     }
 }
@@ -907,6 +909,7 @@ impl BritRefManager {
     /// failure, such as a repository git refuses for dubious ownership, is git's own error.
     fn resolve_rev(&self, rev: &str) -> Result<String, RefError> {
         let output = Command::new("git")
+            // `rev-parse --end-of-options` needs git 2.30 or newer (RelNotes/2.30.0, which names this very form).
             .args(["rev-parse", "--verify", "--quiet", "--end-of-options", rev])
             .current_dir(&self.repo_path)
             .output()
@@ -1181,7 +1184,7 @@ impl BritRefManager {
     /// writer sweeps again); it is reported on stderr with git's reason.
     fn sweep_scratch(&self) -> Result<(), RefError> {
         for failure in self.sweep_stale_scratch()? {
-            eprintln!("warning: {failure}");
+            crate::diagnostic::emit(format_args!("warning: {failure}"));
         }
         Ok(())
     }

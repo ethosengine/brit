@@ -37,6 +37,16 @@ pub fn report(error: &(dyn Error + 'static), backtrace: Option<&Backtrace>) -> S
     }
 }
 
+/// Write `message` and a newline to stderr, ignoring failure.
+///
+/// `eprintln!` panics when the write fails, as it does once stderr's reader has closed (Rust ignores `SIGPIPE`, so the
+/// write returns `EPIPE`): the process then exits 101 instead of its own code, and a panic inside `Drop` while
+/// unwinding aborts. Reporting must never be the reason a brit binary panics.
+pub fn emit(message: impl Display) {
+    use std::io::Write as _;
+    let _ = writeln!(std::io::stderr().lock(), "{message}");
+}
+
 /// Whether [`BACKTRACE_ENV`] asks for backtraces.
 pub fn backtrace_requested() -> bool {
     std::env::var_os(BACKTRACE_ENV).is_some_and(|value| !value.is_empty() && value != "0")
