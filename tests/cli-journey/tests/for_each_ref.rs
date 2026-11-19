@@ -2,7 +2,7 @@
 //! `--sort` keys agents use, refuses an unimplemented atom by name, and leads to `brit branch list`.
 use anyhow::Result;
 use cli_journey::support::{
-    parity::{assert_help_names, assert_same, brit, git_ok},
+    parity::{assert_help_names, assert_same, assert_same_streams, brit, git_ok},
     test_repo::TestRepo,
 };
 
@@ -69,6 +69,22 @@ fn for_each_ref_matches_git() -> Result<()> {
     ];
     for form in forms {
         assert_same(root, form)?;
+    }
+
+    // A descending key as its own argument, and escapes that are not two hex digits stay literal.
+    for form in [
+        &["for-each-ref", "--sort", "-refname", "--format=%(refname)"][..],
+        &[
+            "for-each-ref",
+            "--sort",
+            "-committerdate",
+            "--sort",
+            "refname",
+            "--format=%(refname)",
+        ],
+        &["for-each-ref", "--format=%+1 %-1 %4 %zz %41%(refname)", "refs/heads"],
+    ] {
+        assert_same_streams(root, form)?;
     }
 
     let refused = brit(root, &["for-each-ref", "--format=%(refname) %(authorname)"])?;

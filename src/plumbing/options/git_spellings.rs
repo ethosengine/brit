@@ -149,6 +149,9 @@ impl clap::FromArgMatches for RevParse {
 }
 
 /// `for-each-ref` with Git's default format, `--format` atoms and `--sort` keys in real use.
+///
+/// A ref name that is not UTF-8 is shortened lossily by `%(refname:short)`, and `refname:short`
+/// always shortens strictly, as if `core.warnAmbiguousRefs` were true.
 #[derive(Debug, clap::Parser)]
 pub struct ForEachRef {
     /// Interpolate `%(atom)` for each ref; implemented atoms: refname, refname:short, objectname,
@@ -159,7 +162,7 @@ pub struct ForEachRef {
     pub format: Option<String>,
     /// Sort by `refname` (the default) or `committerdate`; prefix `-` for descending. Repeat to add keys, the last
     /// one primary, like Git.
-    #[clap(long, value_name = "KEY", action = clap::ArgAction::Append)]
+    #[clap(long, value_name = "KEY", action = clap::ArgAction::Append, allow_hyphen_values = true)]
     pub sort: Vec<String>,
     /// Only refs matching these prefixes (at a `/` boundary) or `fnmatch` globs, like `refs/heads/` or
     /// `refs/heads/feat-*`.
@@ -167,10 +170,16 @@ pub struct ForEachRef {
 }
 
 /// `ls-remote` printing Git's `<oid>\t<refname>` lines.
+///
+/// `-h` means `--heads`, as in Git; help is `--help` only.
 #[derive(Debug, clap::Parser)]
+#[command(disable_help_flag = true)]
 pub struct LsRemote {
-    /// Only branches under `refs/heads/`.
-    #[clap(long, visible_alias = "branches")]
+    /// Print help.
+    #[clap(long, action = clap::ArgAction::Help)]
+    pub help: Option<bool>,
+    /// Only branches under `refs/heads/`; `-h` like Git.
+    #[clap(long, short = 'h', visible_alias = "branches", short_alias = 'b')]
     pub heads: bool,
     /// Only tags under `refs/tags/`.
     #[clap(long, short = 't')]
@@ -178,6 +187,12 @@ pub struct LsRemote {
     /// Omit peeled tags (`^{}`) and pseudo-refs like `HEAD`.
     #[clap(long)]
     pub refs: bool,
+    /// Exit with status 2 when no ref matched.
+    #[clap(long)]
+    pub exit_code: bool,
+    /// Do not print `From <url>` on stderr when the remote is omitted.
+    #[clap(long, short = 'q')]
+    pub quiet: bool,
     /// A configured remote, URL or path; the current branch's remote (else `origin`) when omitted.
     pub remote: Option<String>,
     /// Show only refs whose name ends with a pattern at a `/` boundary, like `dev`, `refs/heads/dev` or
@@ -186,12 +201,14 @@ pub struct LsRemote {
 }
 
 /// `check-ref-format` answering through its exit code, like Git.
+///
+/// A missing name, or an argument starting with `-` in its place, is a usage error with Git's status 129.
 #[derive(Debug, clap::Parser)]
 pub struct CheckRefFormat {
     /// Accept a name without a `/`, like `main` or `HEAD`.
     #[clap(long)]
     pub allow_onelevel: bool,
     /// The reference name to validate, like `refs/heads/main`.
-    #[clap(value_parser = crate::shared::AsBString)]
-    pub refname: gix::bstr::BString,
+    #[clap(value_parser = crate::shared::AsBString, allow_hyphen_values = true)]
+    pub refname: Option<gix::bstr::BString>,
 }

@@ -1,6 +1,24 @@
 //! `brit check-ref-format`: Git's reference-name validity check, answered by the exit code alone.
 
-use gix::bstr::BStr;
+use gix::bstr::{BStr, BString};
+
+/// Answer like `git check-ref-format [--allow-onelevel] <refname>`: `Ok` for a valid name, status 1 for
+/// an invalid one, and Git's usage status 129 when the name is missing or looks like an option.
+pub fn check(refname: Option<&BString>, allow_onelevel: bool) -> gix::Result<()> {
+    match refname {
+        Some(name) if !name.starts_with(b"-") => {
+            if is_valid(name.as_ref(), allow_onelevel) {
+                Ok(())
+            } else {
+                Err(super::exit(1))
+            }
+        }
+        _ => {
+            eprintln!("usage: brit check-ref-format [--allow-onelevel] <refname>");
+            Err(super::exit(129))
+        }
+    }
+}
 
 /// Whether `name` is a valid reference name for `git check-ref-format`: at least two components
 /// unless `allow_onelevel`, and every rule of [`gix::validate::reference::name_partial()`].

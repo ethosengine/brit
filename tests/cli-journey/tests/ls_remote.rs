@@ -3,7 +3,7 @@
 use anyhow::Result;
 use cli_journey::support::{
     mock_remote::MockRemote,
-    parity::{assert_help_names, assert_same, git_ok},
+    parity::{assert_help_names, assert_same, assert_same_streams, git_ok},
     test_repo::TestRepo,
 };
 
@@ -66,6 +66,28 @@ fn ls_remote_matches_git() -> Result<()> {
             "every line is `<oid>\\t<refname>`: {out:?}"
         );
     }
+
+    // `-h` lists heads as in Git, the omitted remote is named on stderr, and --exit-code reports no match.
+    for form in [
+        &["ls-remote", "-h", "origin"][..],
+        &["ls-remote", "-h", "origin", "dev"],
+        &["ls-remote", "-b", "origin"],
+        &["ls-remote"],
+        &["ls-remote", "-q"],
+        &["ls-remote", "--quiet", "--heads"],
+        &["ls-remote", "origin"],
+        &["ls-remote", "--exit-code", "origin", "nothing-matches"],
+        &["ls-remote", "--exit-code", "origin", "dev"],
+        &["ls-remote", "--exit-code", "--tags", "origin", "refs/heads/*"],
+    ] {
+        assert_same_streams(root, form)?;
+    }
+    let from = assert_same_streams(root, &["ls-remote", "--refs"])?;
+    assert_eq!(
+        from.stderr,
+        format!("From {url}\n"),
+        "the default remote's URL: {from:?}"
+    );
 
     assert_help_names("ls-remote", "brit remote refs")
 }

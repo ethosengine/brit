@@ -3,6 +3,18 @@
 //! Refs print in the server's order. An annotated tag prints its tag object and then its peeled
 //! object as `<refname>^{}`, and patterns match the tail of a ref name at a `/` boundary, both
 //! like Git. An unborn `HEAD` is not listed, as Git does not request it without `--symref`.
+//! With the remote omitted, `From <url>` goes to stderr as Git writes it.
+//!
+//! ### Known differences from Git
+//!
+//! - It needs a local repository even for an explicit path or URL, where Git can list from anywhere.
+//! - Ref names that are not UTF-8 are converted lossily before matching and printing.
+//! - `-h` alone lists the default remote's branches; Git prints its usage for a lone `-h`.
+//! - Like Git, it asks the configured credential helpers when the remote wants authentication, and a
+//!   helper may wait indefinitely (checked 2026-11-19 against a local HTTP 401 server: a helper that
+//!   sleeps held Brit until it was killed). A non-interactive caller passes `-c credential.helper=`, which
+//!   clears every configured helper, and sets `GIT_TERMINAL_PROMPT=0` (no terminal prompt) and an empty
+//!   or harmless `GIT_ASKPASS`; Brit then fails at once with status 1 naming the URL.
 
 use gix::{Result, bstr::BString, error::ResultExt, protocol::handshake};
 
@@ -18,6 +30,10 @@ pub struct Options {
     pub tags: bool,
     /// `--refs`
     pub refs: bool,
+    /// `--exit-code`: end with status 2 when no ref matched.
+    pub exit_code: bool,
+    /// `--quiet`: no `From <url>` line.
+    pub quiet: bool,
 }
 
 /// Git's `tail_match()`: `pattern` matches `name` when `*/<pattern>` matches `/<name>`.
@@ -46,9 +62,17 @@ pub async fn ls_remote(
     repo: gix::Repository,
     mut progress: impl gix::Progress,
     mut out: impl std::io::Write,
+    mut err: impl std::io::Write,
     options: Options,
 ) -> Result<()> {
     let remote = crate::repository::remote::by_name_or_url(&repo, options.remote.as_deref())?;
+    if options.remote.is_none()
+        && !options.quiet
+        && let Some(url) = remote.url(gix::remote::Direction::Fetch)
+    {
+        writeln!(err, "From {}", url.to_bstring()).or_error()?;
+    }
+    let mut matched = false;
     let (map, _handshake) = remote
         .connect(gix::remote::Direction::Fetch)
         .await?
@@ -81,14 +105,19 @@ pub async fn ls_remote(
         };
         let name = name.to_string();
         if selected(&options, &name) {
+            matched = true;
             writeln!(out, "{object}\t{name}").or_error()?;
         }
         if let Some(peeled) = peeled {
             let peeled_name = format!("{name}^{{}}");
             if selected(&options, &peeled_name) {
+                matched = true;
                 writeln!(out, "{peeled}\t{peeled_name}").or_error()?;
             }
         }
+    }
+    if options.exit_code && !matched {
+        return Err(super::exit(2));
     }
     Ok(())
 }

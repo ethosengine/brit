@@ -90,8 +90,10 @@ fn parse_format(format: &str) -> Result<Vec<Piece>> {
                 i += 2;
                 continue;
             }
+            // Git's `hex2chr()`: exactly two hex digits; `from_str_radix` alone would accept `%+1`.
             if let Some(byte) = bytes
                 .get(i + 1..i + 3)
+                .filter(|hex| hex.iter().all(u8::is_ascii_hexdigit))
                 .and_then(|hex| std::str::from_utf8(hex).ok())
                 .and_then(|hex| u8::from_str_radix(hex, 16).ok())
             {
@@ -281,5 +283,12 @@ mod tests {
             .expect("unimplemented atom");
         assert!(error.to_string().contains("%(authorname)"), "{error}");
         assert!(parse_format("%% %41 %(refname:short)").is_ok());
+        let literal = |format: &str| match parse_format(format).expect("valid format").as_slice() {
+            [super::Piece::Literal(text)] => text.clone(),
+            _ => panic!("{format} is one literal"),
+        };
+        assert_eq!(literal("%+1"), "%+1", "a sign is not a hex digit");
+        assert_eq!(literal("%-1"), "%-1");
+        assert_eq!(literal("%41"), "A");
     }
 }

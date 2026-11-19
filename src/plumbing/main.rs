@@ -1475,26 +1475,32 @@ pub fn run_with_command(args: Args, command: clap::Command) -> Result<()> {
         }),
         #[cfg(any(feature = "gitoxide-core-async-client", feature = "gitoxide-core-blocking-client"))]
         Subcommands::LsRemote(crate::plumbing::options::git_spellings::LsRemote {
+            help: _,
             heads,
             tags,
             refs,
+            exit_code,
+            quiet,
             remote,
             patterns,
         }) => prepare_and_run(
             "ls-remote",
             verbose,
             core::repository::remote::refs::PROGRESS_RANGE,
-            move |progress, out, _err| {
+            move |progress, out, err| {
                 let res = core::repository::git_spellings::ls_remote::ls_remote(
                     repository(Mode::LenientWithGitInstallConfig)?,
                     progress,
                     out,
+                    err,
                     core::repository::git_spellings::ls_remote::Options {
                         remote,
                         patterns,
                         heads,
                         tags,
                         refs,
+                        exit_code,
+                        quiet,
                     },
                 );
                 #[cfg(feature = "gitoxide-core-async-client")]
@@ -1505,13 +1511,7 @@ pub fn run_with_command(args: Args, command: clap::Command) -> Result<()> {
         Subcommands::CheckRefFormat(crate::plumbing::options::git_spellings::CheckRefFormat {
             allow_onelevel,
             refname,
-        }) => {
-            if core::repository::git_spellings::check_ref_format::is_valid(refname.as_ref(), allow_onelevel) {
-                Ok(())
-            } else {
-                std::process::exit(1)
-            }
-        }
+        }) => core::repository::git_spellings::check_ref_format::check(refname.as_ref(), allow_onelevel),
         Subcommands::Cat { revspec } => prepare_and_run("cat", verbose, None, move |_progress, out, _err| {
             core::repository::cat(repository(Mode::Lenient)?, &revspec, out)
         }),

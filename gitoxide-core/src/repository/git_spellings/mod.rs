@@ -3,6 +3,17 @@
 //! Each module answers one Git command name. Brit's own verbs (`revision resolve`, `remote refs`,
 //! `branch list`) stay the native interface; these exist so that a guessed Git spelling works and
 //! points back to them.
+//!
+//! ### Known differences shared by these spellings
+//!
+//! - A relative `GIT_DIR` is printed absolute by `rev-parse --git-dir`.
+//! - Short ref names are always strict, as if `core.warnAmbiguousRefs` were true: with a tag and a
+//!   branch both named `x` and the setting false, Git may print `x` where Brit prints `tags/x`.
+//! - Ref names that are not UTF-8 are shortened, matched and printed lossily.
+//! - `ls-remote` needs a local repository even for an explicit path or URL.
+//! - Brit's global `-r <dir>` starts discovery at `<dir>` and may find an ancestor; Git's
+//!   `--git-dir=<dir>` requires `<dir>` itself to be a Git directory. `GIT_DIR` overrides `-r`.
+//! - `ls-remote` may wait on a configured credential helper; see its module for how a caller avoids it.
 
 pub mod check_ref_format;
 pub mod for_each_ref;
