@@ -2,7 +2,22 @@
 use super::*;
 
 /// Local retention refs cannot protect alternate or virtualized object histories.
+///
+/// A shallow repository is refused too: rebase proves its retained copy complete from the copy
+/// alone, by walking every released commit to the roots, and a copy taken above a shallow
+/// boundary records no boundary to stop at.
 pub(crate) fn validate_local_history(repo: &gix::Repository) -> Result<()> {
+    local_history(repo, false)
+}
+
+/// [`validate_local_history`] for an operation whose history walks all stop at the shallow
+/// boundary and which refuses, naming the boundary commit, any decision that would need the
+/// history beneath it. A shallow boundary hides history without rewriting it.
+pub(crate) fn validate_local_history_above_shallow_boundary(repo: &gix::Repository) -> Result<()> {
+    local_history(repo, true)
+}
+
+fn local_history(repo: &gix::Repository, shallow_bounded: bool) -> Result<()> {
     ensure!(repo.namespace().is_none(), "reference namespaces require Git");
     for variable in [
         "GIT_INDEX_FILE",
@@ -12,7 +27,15 @@ pub(crate) fn validate_local_history(repo: &gix::Repository) -> Result<()> {
     ] {
         ensure!(std::env::var_os(variable).is_none(), "{variable} requires Git");
     }
-    ensure!(!repo.is_shallow()?, "shallow repositories require Git");
+    ensure!(
+        shallow_bounded || !repo.is_shallow()?,
+        "shallow repositories require Git"
+    );
+    // The bounded walks read the boundary Git itself maintains; a relocated list is not it.
+    ensure!(
+        !shallow_bounded || repo.shallow_file()? == repo.common_dir().join("shallow"),
+        "a relocated shallow file (gitoxide.core.shallowFile) requires Git"
+    );
     ensure!(
         repo.config_snapshot().string("extensions.partialClone").is_none(),
         "partial repositories require Git"
