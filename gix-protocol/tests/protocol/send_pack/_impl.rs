@@ -6,11 +6,7 @@
 //! Modelled on `gix-protocol/tests/protocol/fetch/_impl.rs` — adapted for the
 //! receive-pack direction where there is no multi-round negotiation.
 
-use std::{
-    any::Any,
-    borrow::Cow,
-    io::{Cursor, Read as _},
-};
+use std::{any::Any, borrow::Cow, io::Cursor};
 
 use bstr::{BStr, ByteSlice as _};
 use gix_packetline::{PacketLineRef, blocking_io::StreamingPeekableIter};
@@ -203,11 +199,11 @@ pub struct ScriptedRead {
 
 impl std::io::Read for ScriptedRead {
     fn read(&mut self, buf: &mut [u8]) -> std::io::Result<usize> {
-        let n = self.data.read(buf)?;
-        if n == 0 {
-            if let Some(err) = self.then.take() {
-                return Err(err);
-            }
+        let n = std::io::Read::read(&mut self.data, buf)?;
+        if n == 0
+            && let Some(err) = self.then.take()
+        {
+            return Err(err);
         }
         Ok(n)
     }
