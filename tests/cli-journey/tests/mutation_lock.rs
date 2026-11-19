@@ -1325,3 +1325,48 @@ fn renaming_a_branch_checked_out_where_a_push_is_paused_refuses_until_it_finishe
     assert_eq!(git(&other, &["symbolic-ref", "HEAD"])?, "refs/heads/lane-b");
     Ok(())
 }
+
+/// Git's read-only spellings take no guard, and `-C` decides whose guard a writer takes: while
+/// another process holds the repository guard exclusively, every spelling answers, and a write
+/// entered through `-C` from an unrelated directory refuses on that repository's guard, with
+/// `--wait` read beside `-C`, then succeeds once the guard is free.
+#[test]
+fn git_spellings_take_no_guard_and_dash_c_guards_the_repository_it_enters() -> Result<()> {
+    let repo = TestRepo::new("lock-git-spellings")?;
+    repo.commit_file("base", "base\n")?;
+    repo.commit_file("base", "more\n")?;
+    let path = repo.path().to_str().expect("temp path").to_owned();
+    let holder = ExternalHolder::hold(repo.path())?;
+    let pid = holder.child.id().to_string();
+    for args in [
+        &["rev-parse", "HEAD"][..],
+        &["for-each-ref"][..],
+        &["check-ref-format", "refs/heads/x"][..],
+        &["rev-list", "--count", "HEAD"][..],
+        &["merge-base", "--is-ancestor", "HEAD~1", "HEAD"][..],
+        &["ls-remote", &path][..],
+    ] {
+        let out = brit(repo.path(), args)?;
+        ensure!(out.status.success(), "{args:?} needs no guard: {}", out.stderr);
+    }
+    let away = tempfile::tempdir()?;
+    ensure_refusal_names(
+        &brit(away.path(), &["-C", &path, "branch", "create", "blocked"])?,
+        "a write through -C",
+        &["another Brit mutation is active", &pid],
+    )?;
+    ensure_refusal_names(
+        &brit(away.path(), &["-C", &path, "--wait=1", "branch", "create", "blocked"])?,
+        "a bounded wait through -C",
+        &[&pid, "after waiting"],
+    )?;
+    holder.release()?;
+    let created = brit(away.path(), &["-C", &path, "branch", "create", "after"])?;
+    ensure!(created.status.success(), "write through -C: {}", created.stderr);
+    git(repo.path(), &["rev-parse", "--verify", "refs/heads/after"])?;
+    ensure!(
+        git(repo.path(), &["rev-parse", "--verify", "-q", "refs/heads/blocked"]).is_err(),
+        "the refused writes changed nothing"
+    );
+    Ok(())
+}
