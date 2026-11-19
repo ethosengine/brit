@@ -2,8 +2,14 @@ use std::sync::atomic::AtomicBool;
 
 use gix_transport::client::blocking_io::Transport;
 
-use super::{Error, Prepare};
-use crate::remote::push::Outcome;
+use super::{
+    Authorized, Delivery, Error, MovedRef, Prepare,
+    prepare::{Contract, SignMode},
+};
+use crate::{
+    bstr::BString,
+    remote::{AuthenticateFn, Connection, Direction, push::Outcome},
+};
 
 impl<T> Prepare<'_, '_, '_, T>
 where
@@ -28,27 +34,49 @@ where
         progress: impl crate::progress::NestedProgress,
         should_interrupt: &AtomicBool,
     ) -> Result<Outcome, Error> {
-        self.transmit_with_before_send(progress, should_interrupt, |_| Ok(()))
+        self.transmit_with_before_send(progress, should_interrupt, |_| Ok(Authorized::OnThisConnection))
     }
 
     /// Resolve updates once, then let the caller authorize them before packing or sending.
     ///
     /// The callback also runs for dry runs and includes unchanged updates so leases can be checked.
     /// Returning an error prevents all transmission.
-    pub fn transmit_with_before_send(
-        mut self,
+    ///
+    /// What the callback returns decides which connection carries the push:
+    /// [`Authorized::OnThisConnection`] sends on the connection whose advertisement the callback
+    /// judged. [`Authorized::Revalidate`], which `()` converts to, drops that connection, connects
+    /// and performs the handshake again (asking for credentials again), and sends only if every
+    /// remote ref still has the id the callback judged and the capabilities the push relies on are
+    /// unchanged; otherwise nothing is sent. Dry runs never reconnect.
+    ///
+    /// If sending fails after the request was handed to the transport, one further handshake on a
+    /// fresh connection checks whether the remote refs carry the new ids, and the error says which
+    /// is the case. Nothing is resent.
+    pub fn transmit_with_before_send<A>(
+        self,
         _progress: impl crate::progress::NestedProgress,
         should_interrupt: &AtomicBool,
-        before_send: impl FnOnce(&[crate::remote::push::Update]) -> Result<(), Box<dyn std::error::Error + Send + Sync>>,
-    ) -> Result<Outcome, Error> {
-        use crate::bstr::BString;
+        before_send: impl FnOnce(&[crate::remote::push::Update]) -> Result<A, Box<dyn std::error::Error + Send + Sync>>,
+    ) -> Result<Outcome, Error>
+    where
+        A: Into<Authorized>,
+    {
         use gix_refspec::{
             MatchGroup,
             match_group::{Item, SourceRef},
             parse::Operation,
         };
 
-        if self.refspecs.is_empty() {
+        let Prepare {
+            connection,
+            refspecs,
+            dry_run,
+            prune,
+            push_options,
+            sign,
+        } = self;
+
+        if refspecs.is_empty() {
             return Err(Error::NoRefspecs);
         }
 
@@ -56,9 +84,8 @@ where
         // "the receiving end does not support push options" when the client
         // passed options but the server didn't advertise the `push-options`
         // capability during handshake (send-pack.c::check_push_options).
-        if !self.push_options.is_empty() {
-            let supported = self
-                .connection
+        if !push_options.is_empty() {
+            let supported = connection
                 .handshake
                 .as_ref()
                 .is_some_and(|h| h.capabilities.contains("push-options"));
@@ -72,9 +99,8 @@ where
         // SEND_PACK_PUSH_CERT_ALWAYS is requested but the server didn't
         // advertise the `push-cert` capability (send-pack.c::send_pack).
         // `--signed=if-asked` silently falls back to an unsigned push.
-        if matches!(self.sign, super::prepare::SignMode::Always) {
-            let supported = self
-                .connection
+        if matches!(sign, SignMode::Always) {
+            let supported = connection
                 .handshake
                 .as_ref()
                 .is_some_and(|h| h.capabilities.contains("push-cert"));
@@ -84,15 +110,14 @@ where
         }
 
         // ── Step 1: Parse refspecs ────────────────────────────────────────────
-        let parsed_refspecs: Vec<gix_refspec::RefSpec> = self
-            .refspecs
+        let parsed_refspecs: Vec<gix_refspec::RefSpec> = refspecs
             .iter()
             .map(|s| gix_refspec::parse(s.as_slice().into(), Operation::Push).map(|r| r.to_owned()))
             .collect::<Result<_, _>>()
             .map_err(Error::ParseRefspec)?;
 
         // ── Step 2: Enumerate local refs ──────────────────────────────────────
-        let repo = self.connection.remote.repo;
+        let repo = connection.remote.repo;
         let hash_kind = repo.object_hash();
 
         let local_refs: Vec<crate::Reference<'_>> = repo
@@ -142,38 +167,15 @@ where
         let mappings = push_outcome.mappings;
 
         if mappings.is_empty() {
-            let spec = self.refspecs.into_iter().next().expect("non-empty by guard above");
+            let spec = refspecs.into_iter().next().expect("non-empty by guard above");
             return Err(Error::NoMatch { spec });
         }
 
         // ── Step 4: Resolve OIDs + look up remote's current state ─────────────
-        let remote_refs: &[gix_protocol::handshake::Ref] = self
-            .connection
-            .handshake
-            .as_ref()
-            .and_then(|h| h.refs.as_deref())
-            .unwrap_or(&[]);
-
         let null_oid = hash_kind.null();
 
         // Map remote ref name → current ObjectId for O(1) lookup below.
-        let remote_oid_by_name: std::collections::HashMap<BString, gix_hash::ObjectId> = {
-            use gix_protocol::handshake::Ref;
-            remote_refs
-                .iter()
-                .filter_map(|r| {
-                    let (name, oid) = match r {
-                        Ref::Direct { full_ref_name, object } => (full_ref_name.clone(), *object),
-                        Ref::Peeled { full_ref_name, tag, .. } => (full_ref_name.clone(), *tag),
-                        Ref::Symbolic {
-                            full_ref_name, object, ..
-                        } => (full_ref_name.clone(), *object),
-                        Ref::Unborn { .. } => return None,
-                    };
-                    Some((name, oid))
-                })
-                .collect()
-        };
+        let remote_oid_by_name = advertised_ids(connection.handshake.as_ref());
 
         let mut commands: Vec<gix_protocol::send_pack::Command> = Vec::with_capacity(mappings.len());
         // Parallel vec: (local_name, remote_name) for populating RefStatus.
@@ -238,7 +240,7 @@ where
         // match_push_refs (vendor/git/remote.c). Only glob-style specs drive
         // pruning; a one-sided spec like `main` has no RHS pattern to match
         // remote names against.
-        if self.prune {
+        if prune {
             fn glob_match(pattern: &crate::bstr::BStr, name: &crate::bstr::BStr) -> bool {
                 use crate::bstr::ByteSlice as _;
                 match pattern.find_byte(b'*') {
@@ -286,7 +288,78 @@ where
                 new_oid: command.new_oid,
             })
             .collect();
-        before_send(&updates).map_err(Error::BeforeSend)?;
+        let authorized: Authorized = before_send(&updates).map_err(Error::BeforeSend)?.into();
+
+        let plan = Plan {
+            repo,
+            commands,
+            name_pairs,
+            dry_run,
+            should_interrupt,
+        };
+        if dry_run || authorized == Authorized::OnThisConnection {
+            return plan.deliver(connection);
+        }
+
+        // The callback may have run for a long time: the pre-hook connection may be stale (an idle
+        // HTTP connection the server dropped, a receive-pack process left waiting) and the remote
+        // may have moved. Close it, then judge the push again against a fresh advertisement.
+        let judged = Contract::of(connection.handshake.as_ref());
+        let Connection {
+            remote,
+            authenticate,
+            transport_options,
+            transport,
+            ..
+        } = connection;
+        drop(transport);
+        let fresh = reconnect(remote, authenticate, transport_options).map_err(|err| match err {
+            Error::Handshake(source) if is_authentication_failure(&source) => {
+                Error::ReconnectAuthentication(Box::new(Error::Handshake(source)))
+            }
+            err => Error::Reconnect(Box::new(err)),
+        })?;
+        if let Some(capability) = judged.first_difference(&Contract::of(fresh.handshake.as_ref())) {
+            return Err(Error::CapabilitiesChanged { capability });
+        }
+        let now = advertised_ids(fresh.handshake.as_ref());
+        let moved: Vec<MovedRef> = plan
+            .commands
+            .iter()
+            .filter_map(|command| {
+                let found = now.get(&command.refname).copied().unwrap_or(hash_kind.null());
+                (found != command.old_oid).then(|| MovedRef {
+                    refname: command.refname.clone(),
+                    expected: command.old_oid,
+                    found,
+                })
+            })
+            .collect();
+        if !moved.is_empty() {
+            return Err(Error::RemoteMoved { moved });
+        }
+        plan.deliver(fresh)
+    }
+}
+
+/// The updates a push resolved and authorized, independent of the connection that carries them.
+struct Plan<'repo, 'a> {
+    repo: &'repo crate::Repository,
+    commands: Vec<gix_protocol::send_pack::Command>,
+    /// Parallel to `commands`: (local_name, remote_name) for populating RefStatus.
+    name_pairs: Vec<(BString, BString)>,
+    dry_run: bool,
+    should_interrupt: &'a AtomicBool,
+}
+
+impl Plan<'_, '_> {
+    /// Pack against `connection`'s advertisement and send there; after a failed send,
+    /// verify on a fresh connection whether the updates arrived.
+    fn deliver<T: Transport>(self, mut connection: Connection<'_, '_, '_, T>) -> Result<Outcome, Error> {
+        let repo = self.repo;
+        let hash_kind = repo.object_hash();
+        let null_oid = hash_kind.null();
+        let handshake = connection.handshake.as_ref();
 
         // ── Step 5: Build the Request ─────────────────────────────────────────
         let (agent_key, agent_val) = repo.config.user_agent_tuple();
@@ -303,17 +376,12 @@ where
         // Echo the negotiated object format when the server advertises it.
         // Without this, a SHA-256 receive-pack rejects the command list and
         // closes the connection before it can report a ref status.
-        if self
-            .connection
-            .handshake
-            .as_ref()
-            .is_some_and(|h| h.capabilities.contains("object-format"))
-        {
+        if handshake.is_some_and(|h| h.capabilities.contains("object-format")) {
             capabilities.push(format!("object-format={hash_kind}").into());
         }
 
         let request = gix_protocol::send_pack::Request {
-            commands: commands.clone(),
+            commands: self.commands.clone(),
             capabilities,
         };
 
@@ -324,20 +392,30 @@ where
         // each commit to the tree + blob objects it introduces.  Entries are produced
         // by `Entry::from_data` which re-compresses objects as base entries.
         //
+        // The hides come from the advertisement of the connection that carries the
+        // pack, so a reconnect after the hook packs against what the remote has now.
+        //
         // NOTE: This is correct but not maximally efficient — re-compression is
         // more expensive than pack-copying.  A follow-up task should switch to
         // `iter_from_counts` + `InOrderIter` for pack-copy mode.  See Task 7.1 plan.
-        let entries = build_pack_entries(repo, &commands, remote_oid_by_name.values().copied(), should_interrupt)?;
+        let entries = build_pack_entries(
+            repo,
+            &self.commands,
+            advertised_ids(handshake).into_values(),
+            self.should_interrupt,
+        )?;
 
         // ── Step 7: Dry run early return ─────────────────────────────────────
         // Lookup table: remote refname → (old_oid, new_oid) for status rendering.
-        let cmd_oids: std::collections::HashMap<BString, (gix_hash::ObjectId, gix_hash::ObjectId)> = commands
+        let cmd_oids: std::collections::HashMap<BString, (gix_hash::ObjectId, gix_hash::ObjectId)> = self
+            .commands
             .iter()
             .map(|c| (c.refname.clone(), (c.old_oid, c.new_oid)))
             .collect();
 
         if self.dry_run {
-            let status = name_pairs
+            let status = self
+                .name_pairs
                 .into_iter()
                 .map(|(local, remote)| {
                     let (old_oid, new_oid) = cmd_oids.get(&remote).copied().unwrap_or((null_oid, null_oid));
@@ -354,13 +432,32 @@ where
         }
 
         // ── Step 8: Call send_pack ────────────────────────────────────────────
-        let protocol_outcome = gix_protocol::send_pack::send_pack(
-            self.connection.transport_mut(),
+        let protocol_outcome = match gix_protocol::send_pack::send_pack(
+            connection.transport_mut(),
             request,
             entries,
             gix_protocol::send_pack::Options::default(),
             hash_kind,
-        )?;
+        ) {
+            Ok(outcome) => outcome,
+            Err(source) => {
+                // The request may have reached the remote even though its answer did not
+                // reach us. Ask a fresh connection once; never resend.
+                let Connection {
+                    remote,
+                    authenticate,
+                    transport_options,
+                    transport,
+                    ..
+                } = connection;
+                drop(transport);
+                let delivery = match reconnect(remote, authenticate, transport_options) {
+                    Ok(fresh) => Delivery::judge(&self.commands, &advertised_ids(fresh.handshake.as_ref()), null_oid),
+                    Err(err) => Delivery::Unverified(Box::new(err)),
+                };
+                return Err(Error::SendFailed { delivery, source });
+            }
+        };
 
         // ── Step 9: Map to porcelain Outcome ─────────────────────────────────
         let status = protocol_outcome
@@ -368,7 +465,8 @@ where
             .refs
             .into_iter()
             .map(|r| {
-                let local = name_pairs
+                let local = self
+                    .name_pairs
                     .iter()
                     .find(|(_, remote)| remote == &r.refname)
                     .map(|(local, _)| local.clone())
@@ -385,6 +483,60 @@ where
             .collect();
         Ok(Outcome { status })
     }
+}
+
+/// Connect to `remote` again for pushing and perform the `receive-pack` handshake,
+/// reusing the credentials callback and transport options of the connection it replaces.
+///
+/// Per transport this is a new `git-receive-pack` process (file), a new `ssh` process and
+/// session (ssh), a new TCP connection (git://), or a new HTTP client with its own
+/// connection pool (http, https).
+fn reconnect<'remote, 'auth, 'repo>(
+    remote: &'remote crate::Remote<'repo>,
+    authenticate: Option<AuthenticateFn<'auth>>,
+    transport_options: Option<Box<dyn std::any::Any>>,
+) -> Result<Connection<'remote, 'auth, 'repo, Box<dyn Transport + Send>>, Error> {
+    let Connection { transport, trace, .. } = remote.connect(Direction::Push).map_err(Error::Connect)?;
+    Connection {
+        remote,
+        authenticate,
+        transport_options,
+        transport,
+        handshake: None,
+        trace,
+    }
+    .prepare_push(crate::progress::Discard)
+    .map(|prepare| prepare.connection)
+}
+
+fn is_authentication_failure(err: &gix_error::Error) -> bool {
+    err.is_unauthenticated()
+        || err
+            .downcast_any_ref::<gix_transport::client::AuthenticationRequired>()
+            .is_some()
+}
+
+/// Map every advertised remote ref name to the id it points at.
+fn advertised_ids(
+    handshake: Option<&gix_protocol::Handshake>,
+) -> std::collections::HashMap<BString, gix_hash::ObjectId> {
+    use gix_protocol::handshake::Ref;
+    handshake
+        .and_then(|h| h.refs.as_deref())
+        .unwrap_or(&[])
+        .iter()
+        .filter_map(|r| {
+            let (name, oid) = match r {
+                Ref::Direct { full_ref_name, object } => (full_ref_name.clone(), *object),
+                Ref::Peeled { full_ref_name, tag, .. } => (full_ref_name.clone(), *tag),
+                Ref::Symbolic {
+                    full_ref_name, object, ..
+                } => (full_ref_name.clone(), *object),
+                Ref::Unborn { .. } => return None,
+            };
+            Some((name, oid))
+        })
+        .collect()
 }
 
 /// Collect `gix_pack::data::output::Entry` items for all objects reachable from

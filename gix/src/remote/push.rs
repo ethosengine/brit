@@ -1,7 +1,7 @@
 use crate::bstr::BString;
 
 #[cfg(feature = "blocking-network-client")]
-pub use super::connection::push::{Error, SignMode};
+pub use super::connection::push::{Authorized, Delivery, Error, MovedRef, SignMode};
 
 /// An update resolved from the refspecs and the remote advertisement, before transmission.
 #[derive(Debug, Clone)]

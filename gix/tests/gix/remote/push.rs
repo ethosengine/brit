@@ -123,3 +123,100 @@ fn setup_push_repos() -> (std::path::PathBuf, std::path::PathBuf) {
     let tmp_path = tmp.keep();
     (tmp_path.join("src"), tmp_path.join("dst.git"))
 }
+
+/// Run `git` in `dir` and return its trimmed stdout.
+#[cfg(feature = "blocking-network-client")]
+fn git_out(dir: &std::path::Path, args: &[&str]) -> String {
+    let out = gix_testtools::git_command(dir)
+        .args(["-c", "user.email=test@example.com", "-c", "user.name=Test"])
+        .args(args)
+        .output()
+        .unwrap_or_else(|e| panic!("failed to spawn git {args:?}: {e}"));
+    assert!(out.status.success(), "git {args:?} in {dir:?}: {out:?}");
+    String::from_utf8(out.stdout).expect("utf8").trim().to_owned()
+}
+
+/// A remote with `main` at the source's first commit, and a second local commit to push.
+#[cfg(feature = "blocking-network-client")]
+fn setup_published_repos() -> (std::path::PathBuf, std::path::PathBuf, String, String) {
+    let (src, dst) = setup_push_repos();
+    let first = git_out(&src, &["rev-parse", "HEAD"]);
+    git_out(&src, &["push", "-q", dst.to_str().expect("utf8 path"), "main:main"]);
+    git_out(&src, &["commit", "--allow-empty", "-q", "-m", "second"]);
+    let second = git_out(&src, &["rev-parse", "HEAD"]);
+    (src, dst, first, second)
+}
+
+/// A callback that may have waited gets a fresh connection, and the push lands there.
+#[cfg(feature = "blocking-network-client")]
+#[test]
+fn revalidated_push_is_delivered_on_a_fresh_connection() {
+    let (src, dst, first, second) = setup_published_repos();
+    let repo = gix::open_opts(&src, gix::open::Options::isolated()).expect("open source repo");
+    let remote = repo
+        .remote_at(format!("file://{}", dst.display()).as_str())
+        .expect("url");
+    let mut judged = None;
+    let outcome = remote
+        .connect(gix::remote::Direction::Push)
+        .expect("connect")
+        .prepare_push(gix::progress::Discard)
+        .expect("handshake")
+        .with_refspecs(["refs/heads/main:refs/heads/main"])
+        .transmit_with_before_send(gix::progress::Discard, &Default::default(), |updates| {
+            judged = Some(updates[0].old_oid.to_string());
+            Ok(())
+        })
+        .expect("revalidated push");
+    assert!(outcome.status[0].result.is_ok(), "{outcome:?}");
+    assert_eq!(
+        judged.as_deref(),
+        Some(first.as_str()),
+        "the callback judged the prior id"
+    );
+    assert_eq!(git_out(&dst, &["rev-parse", "refs/heads/main"]), second);
+}
+
+/// A remote that moves while the callback runs refuses the push before any byte is sent.
+#[cfg(feature = "blocking-network-client")]
+#[test]
+fn remote_moved_during_before_send_refuses_and_sends_nothing() {
+    let (src, dst, first, second) = setup_published_repos();
+    let repo = gix::open_opts(&src, gix::open::Options::isolated()).expect("open source repo");
+    let remote = repo
+        .remote_at(format!("file://{}", dst.display()).as_str())
+        .expect("url");
+    let mut moved_to = String::new();
+    let err = remote
+        .connect(gix::remote::Direction::Push)
+        .expect("connect")
+        .prepare_push(gix::progress::Discard)
+        .expect("handshake")
+        .with_refspecs(["refs/heads/main:refs/heads/main"])
+        .transmit_with_before_send(gix::progress::Discard, &Default::default(), |_| {
+            let tree = git_out(&dst, &["rev-parse", "main^{tree}"]);
+            moved_to = git_out(&dst, &["commit-tree", &tree, "-p", "main", "-m", "elsewhere"]);
+            git_out(&dst, &["update-ref", "refs/heads/main", &moved_to]);
+            Ok(())
+        })
+        .expect_err("the remote moved");
+    let gix::remote::push::Error::RemoteMoved { moved } = &err else {
+        panic!("expected RemoteMoved, got {err:?}");
+    };
+    assert_eq!(moved.len(), 1);
+    assert_eq!(moved[0].refname, "refs/heads/main");
+    assert_eq!(moved[0].expected.to_string(), first);
+    assert_eq!(moved[0].found.to_string(), moved_to);
+    let message = err.to_string();
+    assert!(
+        message.contains("remote moved while pre-push ran; nothing was sent"),
+        "{message}"
+    );
+    assert!(message.contains(&first) && message.contains(&moved_to), "{message}");
+    assert_eq!(git_out(&dst, &["rev-parse", "refs/heads/main"]), moved_to);
+    let missing = gix_testtools::git_command(&dst)
+        .args(["cat-file", "-e", &second])
+        .status()
+        .expect("spawn git");
+    assert!(!missing.success(), "no object was sent");
+}

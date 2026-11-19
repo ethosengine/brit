@@ -1,7 +1,7 @@
 /// Errors from `Prepare::transmit` and
 /// [`Connection::prepare_push`](crate::remote::Connection::prepare_push).
 #[derive(Debug, thiserror::Error)]
-#[allow(missing_docs)]
+#[allow(missing_docs, reason = "variant names and messages document each failure")]
 pub enum Error {
     #[error("push rejected before transmission")]
     BeforeSend(#[source] Box<dyn std::error::Error + Send + Sync + 'static>),
@@ -38,6 +38,26 @@ pub enum Error {
     },
     #[error("send-pack")]
     SendPack(#[from] gix_protocol::send_pack::Error),
+    /// Sending failed; a fresh connection then checked whether the updates arrived anyway.
+    #[error("send-pack failed: {delivery}")]
+    SendFailed {
+        delivery: super::Delivery,
+        #[source]
+        source: gix_protocol::send_pack::Error,
+    },
+    #[error("could not connect to the remote")]
+    Connect(#[source] gix_error::Error),
+    #[error("could not reconnect to the remote after pre-push ran; nothing was sent")]
+    Reconnect(#[source] Box<Error>),
+    #[error("the remote refused authentication when reconnecting after pre-push ran; nothing was sent")]
+    ReconnectAuthentication(#[source] Box<Error>),
+    #[error(
+        "remote moved while pre-push ran; nothing was sent: {}",
+        super::MovedRef::list(moved)
+    )]
+    RemoteMoved { moved: Vec<super::MovedRef> },
+    #[error("the remote's `{capability}` capability changed while pre-push ran; nothing was sent")]
+    CapabilitiesChanged { capability: &'static str },
     #[error("no refspecs given — nothing to push")]
     NoRefspecs,
     #[error("push destination conflict: {0}")]
