@@ -169,6 +169,22 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.0.0/); ver
 
 ### Fixed
 
+- `brit rebase --abort` cancels a rebase whose preparation failed or was killed, without
+  re-running it: it reads only the journal's own records and the pinned HEAD, index and branch,
+  never an object, and reports any live difference instead of refusing. Before, a preparation
+  that failed (for example on an uninitialised submodule's gitlink, which it looked up as a local
+  object) left a journal that neither `--abort` nor `--continue` could clear, and every Brit
+  mutation refused "pending replay". An interrupted cancellation is finished by the next
+  `--abort`.
+- `brit rebase` refuses a gitlink whose submodule directory is absent by name, before any
+  state, instead of failing after creating its journal. Gitlinks remain unsupported.
+- `brit rebase` refuses before it starts when its retained copy could not fit the 1 GiB scratch
+  limit, naming what it measured (object headers only, stopping once past the limit) and
+  pointing to `git rebase`. Before, such a rebase published and then could neither finish its
+  cleanup nor be aborted. A retained copy that is still too large now refuses before writing
+  any member.
+- A `brit switch` or `brit pull` stopped before its first journal record no longer blocks the
+  repository: `--status` says it recorded and changed nothing, and `--abort` removes it.
 - `brit fetch` refuses a refspec naming one ref the remote does not advertise, checks again
   after reconnecting, and exits non-zero when a ref update is rejected.
 - A push that fails anywhere in the receive-pack request reports the cause (an HTTP status
