@@ -305,6 +305,17 @@ const READ_ONLY_COMMANDS: &[&[&str]] = &[
     &["show"],
     &["tag", "list"],
     &["remote", "url"],
+    // `remote refs`, `remote ref-map` and `ls-remote` are one function under three spellings and are
+    // treated alike. This list exists so that a command with an effect its caller must learn about never
+    // has its outcome replaced by 141. Their only effect is the credential helper's: approve after a
+    // successful authentication, erase after a failed one. After an erase the command has failed, and
+    // its own failure wins. After an approve the command otherwise succeeded; the stored credential is
+    // not something a caller reads from the exit status, and Git dies of SIGPIPE in the same pipeline
+    // having done the same thing. Gap: when authentication makes a helper or a prompt write, that output
+    // does not go through the watched writer, so on that path a closed reader is not guaranteed to be
+    // seen, and the command behaves as an unlisted one.
+    &["remote", "refs"],
+    &["remote", "ref-map"],
     &["revision", "previous-branches"],
     &["verify"],
     &["fsck"],
@@ -335,9 +346,6 @@ const READ_ONLY_COMMANDS: &[&[&str]] = &[
     //   answer a script reads; their status engine can also run a configured clean filter, an external
     //   program with inherited stderr.
     // - `commit describe`, `submodule list`: `--dirty-suffix` on the same path runs that status engine.
-    // - `remote refs`, `remote ref-map`: authentication can make a credential helper store or erase a
-    //   credential, and helper or askpass output bypasses the watched writer. `ls-remote`, admitted
-    //   earlier, has the same property; the three should be decided alike.
     // - bare `tag`: `tag <name>` creates a tag on the same path.
     // - `revision list`: `--svg` writes and opens a file on the same path.
     // - `commit verify`: runs the configured verifier and writes its output to an unwatched stderr.
@@ -851,6 +859,8 @@ mod tests {
         for args in [
             &["brit", "show", "HEAD"][..],
             &["brit", "tag", "list"],
+            &["brit", "remote", "refs"],
+            &["brit", "remote", "ref-map"],
             &["brit", "config"],
             &["brit", "submodule"],
             &["brit", "build", "graph", "discover"],
@@ -868,8 +878,6 @@ mod tests {
             &["brit", "is-changed"],
             &["brit", "commit", "describe"],
             &["brit", "submodule", "list"],
-            &["brit", "remote", "refs"],
-            &["brit", "remote", "ref-map"],
             &["brit", "config", "fmt"],
             &["brit", "build", "baseline", "write", "p", "HEAD"],
             &["brit", "build", "baseline", "migrate", "x.json"],

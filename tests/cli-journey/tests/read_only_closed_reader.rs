@@ -103,6 +103,8 @@ const PRINTING: &[&[&str]] = &[
     &["--no-verbose", "show", "HEAD:nonl"],
     &["--no-verbose", "tag", "list"],
     &["--no-verbose", "remote", "-n", "origin", "url"],
+    &["--no-verbose", "remote", "-n", "origin", "refs"],
+    &["--no-verbose", "remote", "-n", "origin", "ref-map"],
     &["--no-verbose", "revision", "previous-branches"],
     &["--no-verbose", "verify", "--statistics"],
     &["--no-verbose", "tree", "entries"],
