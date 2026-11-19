@@ -325,7 +325,10 @@ fn read_validation(bytes: &[u8], check_name: &str) -> Admission<ValidationNote> 
 }
 
 /// A covenant record: strict decode, the clause's signature, the stored CID recomputed from the
-/// whole stored clause, and the ref's session and CID segments.
+/// whole stored clause, and the ref's session and CID segments. The session segment is the
+/// clause's session in either spelling brit has written it under: escaped
+/// ([`BritRefManager::session_segment`]) or, for a record written before `/` and `%` were
+/// escaped, the nesting spelling ([`BritRefManager::legacy_session_segment`]).
 fn read_covenant(bytes: &[u8], session_segment: &str, cid_segment: &str) -> Admission<CovenantRecord> {
     let (cid, decoded) = match decode_covenant_record(bytes) {
         Ok(record) => record,
@@ -346,7 +349,10 @@ fn read_covenant(bytes: &[u8], session_segment: &str, cid_segment: &str) -> Admi
     match admit(clause, |c| {
         bound("cid", &cid, &computed)?;
         bound("cid", &BritRefManager::encode_segment(&cid), cid_segment)?;
-        bound("session", &BritRefManager::encode_segment(&c.session), session_segment)
+        if BritRefManager::legacy_session_segment(&c.session) == session_segment {
+            return Ok(());
+        }
+        bound("session", &BritRefManager::session_segment(&c.session), session_segment)
     }) {
         Admission::Verified(clause) => Admission::Verified(CovenantRecord { cid, clause }),
         Admission::Held { reason } => Admission::Held { reason },
@@ -561,25 +567,41 @@ impl BritRefManager {
     /// bytes is a no-op, one that holds other bytes is refused with [`RefError::Exists`], and one
     /// created underneath this write is refused with [`RefError::Concurrent`]. Nothing is ever
     /// overwritten.
+    ///
+    /// The session is one ref component ([`Self::session_segment`]): distinct sessions never
+    /// share a ref directory, and none nests under another. A clause already recorded under the
+    /// spelling brit used before `/` and `%` were escaped is answered there (same bytes: a no-op;
+    /// other bytes: [`RefError::Exists`]) rather than copied to the escaped name.
     pub fn put_covenant_clause(&self, clause: impl Into<CovenantClause>) -> Result<String, RefError> {
         let clause: CovenantClause = clause.into();
         let session = clause.body().session;
         let cid = clause
             .compute_cid()
             .map_err(|e| RefError::WouldNotVerify {
-                ref_name: format!("{COVENANT_PREFIX}{}", Self::encode_segment(&session)),
+                ref_name: format!("{COVENANT_PREFIX}{}", Self::session_segment(&session)),
                 reason: format!("clause does not encode: {e}"),
             })?
             .to_string();
-        let ref_name = Self::covenant_ref(&session, &cid);
-        let (session_segment, cid_segment) = (Self::encode_segment(&session), Self::encode_segment(&cid));
-        let read = |b: &[u8]| read_covenant(b, &session_segment, &cid_segment).verified_or_reason();
+        let cid_segment = Self::encode_segment(&cid);
         let record = CovenantRecord {
             cid: cid.clone(),
             clause,
         };
+        let (current, legacy) = (Self::session_segment(&session), Self::legacy_session_segment(&session));
+        let ref_name = Self::covenant_ref(&session, &cid);
         let bytes = record_bytes(&ref_name, &record)?;
-        admissible(&ref_name, &record, read(&bytes))?;
+        // Both spellings bind the same clause, so one admissibility check covers either.
+        let read_at = |segment: &str, b: &[u8]| read_covenant(b, segment, &cid_segment).verified_or_reason();
+        admissible(&ref_name, &record, read_at(&current, &bytes))?;
+        if legacy != current {
+            let legacy_ref = format!("{COVENANT_PREFIX}{legacy}/{cid_segment}");
+            if let Some(observed) = self.ref_oid(&legacy_ref)? {
+                let read = |b: &[u8]| read_at(&legacy, b);
+                self.write_ref_blob(&legacy_ref, &bytes, Some(observed), Prior::Absent, read, &record)?;
+                return Ok(cid);
+            }
+        }
+        let read = |b: &[u8]| read_at(&current, b);
         let observed = self.ref_oid(&ref_name)?;
         self.write_ref_blob(&ref_name, &bytes, observed, Prior::Absent, read, &record)?;
         Ok(cid)
@@ -587,15 +609,20 @@ impl BritRefManager {
 
     /// Every verified clause recorded for `session`, ordered by the clause's `validFrom` (ties
     /// broken by CID), plus every record under it that failed verification. An unknown session
-    /// has no verified records. Encoded ref segments can alias; the signed session must match
-    /// the requested label exactly, not merely its encoded spelling.
+    /// has no verified records. The signed session must match the requested label exactly, not
+    /// merely its encoded spelling.
+    ///
+    /// Clauses are read from the session's own ref directory and, for a label containing `/` or
+    /// `%`, also from the spelling brit wrote before those were escaped. That old spelling can be
+    /// another label's current directory (`a%3Ab` then, `a:b` now): a record there that is
+    /// correctly filed under its own session is that session's, and is not reported here.
     pub fn list_covenant_clauses(&self, session: &str) -> Result<Scan<CovenantRecord>, RefError> {
-        let prefix = format!("{COVENANT_PREFIX}{}/", Self::encode_segment(session));
-        let refs: Vec<(String, String)> = self
-            .for_each_ref(&prefix)?
-            .into_iter()
-            .filter(|(name, _)| name.strip_prefix(&prefix).is_some_and(|rest| !rest.contains('/')))
-            .collect();
+        let current = Self::session_segment(session);
+        let legacy = Self::legacy_session_segment(session);
+        let mut refs = self.covenant_session_refs(&current)?;
+        if legacy != current {
+            refs.extend(self.covenant_session_refs(&legacy)?);
+        }
         let mut scan = self.covenant_scan(refs, Some(session))?;
         scan.verified
             .sort_by_cached_key(|(_, r)| (r.clause.body().valid_from, r.cid.clone()));
@@ -627,9 +654,36 @@ impl BritRefManager {
     fn covenant_ref(session: &str, cid: &str) -> String {
         format!(
             "{COVENANT_PREFIX}{}/{}",
-            Self::encode_segment(session),
+            Self::session_segment(session),
             Self::encode_segment(cid)
         )
+    }
+
+    /// `(refname, object id)` for every ref exactly one component below
+    /// `refs/notes/brit/covenant/<segment>/`; deeper refs belong to other spellings.
+    fn covenant_session_refs(&self, segment: &str) -> Result<Vec<(String, String)>, RefError> {
+        let prefix = format!("{COVENANT_PREFIX}{segment}/");
+        Ok(self
+            .for_each_ref(&prefix)?
+            .into_iter()
+            .filter(|(name, _)| name.strip_prefix(&prefix).is_some_and(|rest| !rest.contains('/')))
+            .collect())
+    }
+
+    /// A covenant session as exactly one ref component, injectively: `%` and `/` are
+    /// percent-escaped first, then [`Self::encode_segment`] applies. Every `%` in the result opens
+    /// an escape, so distinct sessions never share a segment, and none contains `/`, so no
+    /// session's refs nest under another's. A session containing neither `%` nor `/` keeps the
+    /// spelling brit has always written ([`Self::legacy_session_segment`]).
+    fn session_segment(session: &str) -> String {
+        Self::encode_segment(&session.replace('%', "%25").replace('/', "%2F"))
+    }
+
+    /// The spelling brit wrote a covenant session under before `%` and `/` were escaped: not
+    /// injective (`a:b` and `a%3Ab` share it) and nesting (`victim/x` lies under `victim/`).
+    /// Read, and answered by a re-put, so clauses recorded then stay reachable; never written anew.
+    fn legacy_session_segment(session: &str) -> String {
+        Self::encode_segment(session)
     }
 
     fn covenant_scan(
@@ -651,10 +705,18 @@ impl BritRefManager {
                 (Ok(bytes), Some((session_segment, cid_segment))) => {
                     match read_covenant(&bytes, session_segment, cid_segment) {
                         Admission::Verified(record) => match session {
-                            Some(session) => match bound("requested session", &record.clause.body().session, session) {
-                                Ok(()) => Admission::Verified(record),
-                                Err(reason) => Admission::Invalid { reason },
-                            },
+                            Some(session) => {
+                                let signed = record.clause.body().session;
+                                if signed != session && Self::session_segment(&signed) == session_segment {
+                                    // Another session's clause in its own directory, reached only
+                                    // through the requested session's legacy spelling.
+                                    continue;
+                                }
+                                match bound("requested session", &signed, session) {
+                                    Ok(()) => Admission::Verified(record),
+                                    Err(reason) => Admission::Invalid { reason },
+                                }
+                            }
                             None => Admission::Verified(record),
                         },
                         other => other,
@@ -723,6 +785,11 @@ impl BritRefManager {
     /// `*`, `[`, `\`, `^`, `~`, space, DEL, or control characters. They also
     /// cannot contain `..` or end with `.lock`. We percent-encode a superset
     /// of forbidden characters to be safe.
+    ///
+    /// Neither `%` nor `/` is escaped, so this is not injective and a `/` nests: build, deploy
+    /// and validate refs keep it because their names are pushed between devices and mirrored by
+    /// other writers (a validate check such as `blob-durability/sha256:…` is written with its
+    /// `/`). Covenant sessions use [`Self::session_segment`].
     fn encode_segment(s: &str) -> String {
         let mut out = String::with_capacity(s.len());
         for c in s.chars() {

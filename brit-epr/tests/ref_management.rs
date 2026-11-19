@@ -453,6 +453,21 @@ fn a_blob_ref_to_a_missing_object_is_an_error_not_an_absence() {
     assert!(mgr.get_deploy_ref("s", "staging").is_err());
 }
 
+/// Every ref under `prefix`, as git lists it.
+fn refs_under(dir: &std::path::Path, prefix: &str) -> Vec<String> {
+    git(dir, &["for-each-ref", "--format=%(refname)", prefix])
+        .lines()
+        .map(str::to_string)
+        .collect()
+}
+
+/// A covenant record as brit stores it: `{"cid", "clause"}`.
+fn covenant_record(c: &CovenantClauseContentNode) -> (String, serde_json::Value) {
+    let cid = c.compute_cid().unwrap().to_string();
+    let value = serde_json::json!({"cid": cid, "clause": json(c)});
+    (cid, value)
+}
+
 #[test]
 fn covenant_listing_never_admits_another_signed_session() -> Result<(), Box<dyn std::error::Error>> {
     let tmp = init_git_repo();
@@ -471,16 +486,11 @@ fn covenant_listing_never_admits_another_signed_session() -> Result<(), Box<dyn 
             "only the requested session may be admitted: {session}"
         );
         assert_eq!(scan.verified[0].1.clause.body().session, session);
-        if session.starts_with("a") || session.starts_with("dots") {
-            assert_eq!(
-                scan.unverifiable.len(),
-                1,
-                "an alias must be reported, not silently discarded"
-            );
-            assert!(scan.unverifiable[0].1.contains("requested session"));
-        } else {
-            assert!(scan.unverifiable.is_empty(), "nested session paths are excluded");
-        }
+        assert!(
+            scan.unverifiable.is_empty(),
+            "distinct labels share no ref namespace: {session} {:?}",
+            scan.unverifiable
+        );
     }
     let record = clause(&k, "unwritten:alias", "2026-11-02T00:00:00Z", "unwritten alias");
     let cid = mgr.put_covenant_clause(&record)?;
@@ -488,6 +498,169 @@ fn covenant_listing_never_admits_another_signed_session() -> Result<(), Box<dyn 
     assert_eq!(verified(mgr.get_covenant_clause(&cid)?).clause, (&record).into());
     assert!(mgr.list_covenant_clauses("absent")?.verified.is_empty());
     Ok(())
+}
+
+#[test]
+fn covenant_session_segments_neither_alias_nor_nest() -> Result<(), Box<dyn std::error::Error>> {
+    let tmp = init_git_repo();
+    let k = key(&tmp, "segments");
+    let mgr = BritRefManager::new(tmp.path())?;
+    let put = |session: &str| -> Result<String, RefError> {
+        let cid = mgr.put_covenant_clause(&clause(&k, session, "2026-11-19T00:00:00Z", session))?;
+        Ok(cid)
+    };
+    let victim = put("victim")?;
+    let nested = put("victim/x")?;
+    let colon = put("a:b")?;
+    let escaped = put("a%3Ab")?;
+    let dots = put("dots..name")?;
+    let escaped_dots = put("dots%2E%2Ename")?;
+
+    // Nothing but victim's own clause lives under victim's ref directory.
+    assert_eq!(
+        refs_under(tmp.path(), "refs/notes/brit/covenant/victim/"),
+        [format!("refs/notes/brit/covenant/victim/{victim}")]
+    );
+    // Each label is exactly one ref component, and distinct labels never share it.
+    let covenant = "refs/notes/brit/covenant";
+    let mut names = refs_under(tmp.path(), "refs/notes/brit/covenant/");
+    names.sort();
+    let mut expected = vec![
+        format!("{covenant}/victim/{victim}"),
+        format!("{covenant}/victim%2Fx/{nested}"),
+        format!("{covenant}/a%3Ab/{colon}"),
+        format!("{covenant}/a%253Ab/{escaped}"),
+        format!("{covenant}/dots%2E%2Ename/{dots}"),
+        format!("{covenant}/dots%252E%252Ename/{escaped_dots}"),
+    ];
+    expected.sort();
+    assert_eq!(names, expected);
+    Ok(())
+}
+
+#[test]
+fn covenant_labels_without_slash_or_percent_keep_their_ref_names() -> Result<(), Box<dyn std::error::Error>> {
+    let tmp = init_git_repo();
+    let k = key(&tmp, "unchanged");
+    let mgr = BritRefManager::new(tmp.path())?;
+    for (session, segment) in [
+        (
+            "0e0924d5-52e0-4709-b329-ea2463064148",
+            "0e0924d5-52e0-4709-b329-ea2463064148",
+        ),
+        ("s:1", "s%3A1"),
+        ("lint@v1", "lint%40v1"),
+        ("dots..name", "dots%2E%2Ename"),
+    ] {
+        let cid = mgr.put_covenant_clause(&clause(&k, session, "2026-11-19T00:00:00Z", "q"))?;
+        let ref_name = format!("refs/notes/brit/covenant/{segment}/{cid}");
+        assert_eq!(
+            refs_under(tmp.path(), &ref_name),
+            [ref_name.as_str()],
+            "{session} keeps the name brit has always written"
+        );
+    }
+    Ok(())
+}
+
+#[test]
+fn covenant_refs_written_under_the_nesting_spelling_stay_readable() -> Result<(), Box<dyn std::error::Error>> {
+    let tmp = init_git_repo();
+    let k = key(&tmp, "legacy");
+    let mgr = BritRefManager::new(tmp.path())?;
+    // What epr's successor generations (`<envelope>/generations/<n>`) and a `%` label were stored
+    // under before session segments escaped `/` and `%`.
+    let generation = clause(&k, "env-1/generations/2", "2026-11-01T00:00:00Z", "gen");
+    let (generation_cid, generation_record) = covenant_record(&generation);
+    let generation_ref = format!("refs/notes/brit/covenant/env-1/generations/2/{generation_cid}");
+    raw_ref(tmp.path(), &generation_ref, &generation_record);
+    let percent = clause(&k, "a%3Ab", "2026-11-01T00:00:00Z", "percent");
+    let (percent_cid, percent_record) = covenant_record(&percent);
+    let percent_ref = format!("refs/notes/brit/covenant/a%3Ab/{percent_cid}");
+    raw_ref(tmp.path(), &percent_ref, &percent_record);
+
+    // Listing by label, and lookup by CID, still find both.
+    let scan = mgr.list_covenant_clauses("env-1/generations/2")?;
+    assert_eq!(scan.verified.len(), 1, "{:?}", scan.unverifiable);
+    assert_eq!(scan.verified[0].0, generation_ref);
+    assert_eq!(
+        verified(mgr.get_covenant_clause(&generation_cid)?).clause,
+        (&generation).into()
+    );
+    assert_eq!(
+        verified(mgr.get_covenant_clause(&percent_cid)?).clause,
+        (&percent).into()
+    );
+    assert!(mgr.list_covenant_clauses("env-1")?.verified.is_empty());
+
+    // Re-recording a clause already held under the old spelling is a no-op, not a second copy;
+    // a new clause of the same session lands under the escaped spelling and lists beside it.
+    assert_eq!(mgr.put_covenant_clause(&generation)?, generation_cid);
+    let next = clause(&k, "env-1/generations/2", "2026-11-02T00:00:00Z", "next");
+    let next_cid = mgr.put_covenant_clause(&next)?;
+    assert_eq!(
+        refs_under(tmp.path(), "refs/notes/brit/covenant/"),
+        [
+            format!("refs/notes/brit/covenant/a%3Ab/{percent_cid}"),
+            format!("refs/notes/brit/covenant/env-1%2Fgenerations%2F2/{next_cid}"),
+            generation_ref.clone(),
+        ]
+    );
+    let scan = mgr.list_covenant_clauses("env-1/generations/2")?;
+    let cids: Vec<&str> = scan.verified.iter().map(|(_, r)| r.cid.as_str()).collect();
+    assert_eq!(cids, [generation_cid.as_str(), next_cid.as_str()]);
+    assert!(scan.unverifiable.is_empty(), "{:?}", scan.unverifiable);
+
+    // The old `a%3Ab` spelling is the current spelling of `a:b`. Each label lists its own clause;
+    // the legacy record inside `a:b`'s namespace is reported there, and `a:b`'s own clause is not
+    // reported as a stranger when `a%3Ab` reads its old spelling.
+    let colon = clause(&k, "a:b", "2026-11-03T00:00:00Z", "colon");
+    let colon_cid = mgr.put_covenant_clause(&colon)?;
+    let scan = mgr.list_covenant_clauses("a%3Ab")?;
+    assert_eq!(scan.verified.len(), 1);
+    assert_eq!(scan.verified[0].1.cid, percent_cid);
+    assert!(scan.unverifiable.is_empty(), "{:?}", scan.unverifiable);
+    let scan = mgr.list_covenant_clauses("a:b")?;
+    assert_eq!(scan.verified.len(), 1);
+    assert_eq!(scan.verified[0].1.cid, colon_cid);
+    assert_eq!(scan.unverifiable.len(), 1, "the aliased legacy record is reported");
+    assert!(scan.unverifiable[0].1.contains("requested session"));
+
+    // A clause held under its old spelling with other bytes is refused, not shadowed.
+    let squatted = clause(&k, "env-1/generations/3", "2026-11-01T00:00:00Z", "squat");
+    let squat_ref = format!(
+        "refs/notes/brit/covenant/env-1/generations/3/{}",
+        squatted.compute_cid().unwrap()
+    );
+    raw_ref(tmp.path(), &squat_ref, &serde_json::json!({"squatter": true}));
+    assert!(matches!(mgr.put_covenant_clause(&squatted), Err(RefError::Exists(_))));
+    Ok(())
+}
+
+#[test]
+fn attestation_ref_names_keep_their_existing_spelling() {
+    let tmp = init_git_repo();
+    let k = key(&tmp, "names");
+    let mgr = BritRefManager::new(tmp.path()).unwrap();
+    // Build notes are pushed between devices under these names; the household attestation
+    // writer mirrors the validate spelling, `/` in a check included.
+    mgr.put_build_ref("gate:eprfs", "HEAD", &build(&k, "gate:eprfs", "c", true))
+        .unwrap();
+    let check = "blob-durability/sha256:10de4be36522f871";
+    mgr.put_validate_ref("a2o-household", check, &validation(&k, check, ValidationResult::Pass))
+        .unwrap();
+    assert_eq!(
+        refs_under(tmp.path(), "refs/notes/brit/"),
+        [
+            "refs/notes/brit/build/gate%3Aeprfs",
+            "refs/notes/brit/validate/a2o-household/blob-durability/sha256%3A10de4be36522f871",
+        ]
+    );
+    assert_eq!(mgr.list_build_refs(None).unwrap(), ["gate:eprfs"]);
+    assert!(matches!(
+        mgr.get_validate_ref("a2o-household", check).unwrap(),
+        Lookup::Verified(_)
+    ));
 }
 
 #[test]
