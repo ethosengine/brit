@@ -1201,7 +1201,8 @@ mod recovery {
         let message = String::from_utf8_lossy(&output.stderr);
         ensure!(!output.status.success(), "oversized rebase must refuse");
         ensure!(
-            message.contains("retained copy can need up to")
+            message.contains("can need up to")
+                && message.contains("not available on repositories of this size yet")
                 && message.contains("over the 1000000-byte scratch limit")
                 && message.contains("nothing was changed")
                 && message.contains("git rebase is the fallback"),
@@ -1271,7 +1272,8 @@ mod recovery {
     }
 
     /// A divergent repository for the boundary walk: a 400 KB file and 150 small
-    /// files in shared history, with `shape` naming what the replayed commit does.
+    /// files in shared history, with `shape` naming what the replayed commit does,
+    /// and the user's own unstaged edit of `notes`, which no shape touches.
     fn boundary_fixture(shape: &str) -> Result<TestRepo> {
         let repo = TestRepo::new("bounded-walk")?;
         let root = repo.path();
@@ -1281,10 +1283,12 @@ mod recovery {
             fs::write(root.join("d").join(format!("f{i}")), format!("file {i}\n"))?;
         }
         fs::write(root.join("a"), b"base\n")?;
+        fs::write(root.join("notes"), b"notes\n")?;
         git(root, &["add", "-A"])?;
         git(root, &["commit", "-q", "-m", "base"])?;
         git(root, &["switch", "-q", "-c", "upstream"])?;
-        let upstream_path = if shape == "conflict" { "a" } else { "u" };
+        let conflicting = matches!(shape, "conflict" | "resolution" | "skip");
+        let upstream_path = if conflicting { "a" } else { "u" };
         fs::write(root.join(upstream_path), b"upstream\n")?;
         git(root, &["add", "-A"])?;
         git(root, &["commit", "-q", "-m", "upstream"])?;
@@ -1304,7 +1308,7 @@ mod recovery {
                 }
                 fs::write(root.join("t"), b"t\n")?;
             }
-            "conflict" => fs::write(root.join("a"), b"topic\n")?,
+            "conflict" | "resolution" | "skip" => fs::write(root.join("a"), b"topic\n")?,
             "rename" => {
                 git(root, &["mv", "big", "big2"])?;
             }
@@ -1312,47 +1316,149 @@ mod recovery {
                 git(root, &["rm", "-q", "big"])?;
             }
             "mode" => fs::set_permissions(root.join("a"), fs::Permissions::from_mode(0o755))?,
+            "hook" | "edit" => fs::write(root.join("t"), b"t\n")?,
             _ => anyhow::bail!("unknown shape {shape}"),
         }
         git(root, &["add", "-A"])?;
         git(root, &["commit", "-q", "-m", "topic"])?;
+        if shape == "hook" {
+            script(&root.join(".git/hooks/pre-rebase"), "exit 0")?;
+        }
+        if shape == "edit" {
+            let topic = String::from_utf8(git(root, &["rev-parse", "HEAD"])?)?;
+            script(
+                &root.join(".git/sequence-editor"),
+                &format!("printf 'edit {}\\n' > \"$1\"", topic.trim()),
+            )?;
+        }
+        fs::write(root.join("notes"), b"notes\nthe user's own unstaged edit\n")?;
         Ok(repo)
     }
 
+    /// Start `shape`'s rebase under `limit` the way that shape stops: a pre-rebase
+    /// hook killed after its durable start, an interactive edit, or a plain run.
+    fn start_shape(root: &Path, shape: &str, limit: &str) -> Result<std::process::Output> {
+        match shape {
+            "hook" => {
+                let mut child = launch(
+                    root,
+                    &["rebase", "upstream"],
+                    &[
+                        ("BRIT_TEST_SCRATCH_LIMIT", limit.as_ref()),
+                        ("BRIT_AUTHORING_INVOCATION_PAUSE", "after-launch".as_ref()),
+                    ],
+                )?;
+                let checkpoint = root.join(".git/brit-rebase/pre-rebase/checkpoint");
+                let deadline = Instant::now() + Duration::from_secs(60);
+                loop {
+                    if let Some(status) = child.0.try_wait()? {
+                        // Refused at admission, before the hook was ever prepared.
+                        return Ok(std::process::Output {
+                            status,
+                            stdout: Vec::new(),
+                            stderr: Vec::new(),
+                        });
+                    }
+                    if checkpoint.exists() {
+                        let _cleanup = HookCleanup(root.join(".git/brit-rebase/pre-rebase"));
+                        interrupt(&mut child, "-KILL")?;
+                        return Ok(std::process::Output {
+                            status: child.0.wait()?,
+                            stdout: Vec::new(),
+                            stderr: Vec::new(),
+                        });
+                    }
+                    ensure!(Instant::now() < deadline, "hook shape did not stop");
+                    std::thread::sleep(Duration::from_millis(10));
+                }
+            }
+            "edit" => quota_env(
+                root,
+                &["rebase", "-i", "upstream"],
+                limit,
+                &[(
+                    "GIT_SEQUENCE_EDITOR",
+                    root.join(".git/sequence-editor").into_os_string(),
+                )],
+            ),
+            _ => quota(root, &["rebase", "upstream"], limit),
+        }
+    }
+
+    /// What a user does next at `shape`'s stop, under the same limit; each may be
+    /// refused, which must leave `--abort` able to restore everything.
+    fn follow_shape(root: &Path, shape: &str, limit: &str) -> Result<()> {
+        match shape {
+            "resolution" => {
+                fs::write(root.join("a"), noise(300_000, 9))?;
+                quota(root, &["rebase", "--stage", "--", "a"], limit)?;
+                quota(root, &["rebase", "--continue"], limit)?;
+            }
+            "skip" => {
+                quota(root, &["rebase", "--skip"], limit)?;
+            }
+            "conflict" => {
+                quota(root, &["rebase", "--continue"], limit)?;
+            }
+            "edit" => {
+                quota(root, &["rebase", "--continue"], limit)?;
+            }
+            _ => {}
+        }
+        Ok(())
+    }
+
     /// Walk the lowered limit from well under to well over what each shape needs.
-    /// Every outcome must leave the repository recoverable: refused with nothing
-    /// changed, finished, or stopped where `--abort` restores the original state.
-    /// No admitted rebase may end where both `--continue` and `--abort` fail.
+    /// At every limit the outcome is one of three, and no other: refused with
+    /// nothing changed; finished, keeping the user's own edit; or stopped, and then
+    /// (after the shape's own next step under the same limit, which may itself be
+    /// refused) `--abort` under that limit restores HEAD, the index, every branch
+    /// and every worktree file exactly and leaves no authoring session.
     #[test]
     fn public_boundary_walk_never_admits_a_rebase_that_cannot_finish_or_abort() -> Result<()> {
-        for shape in ["large", "many", "steps", "conflict", "rename", "deletion", "mode"] {
+        for shape in [
+            "large",
+            "many",
+            "steps",
+            "conflict",
+            "rename",
+            "deletion",
+            "mode",
+            "resolution",
+            "hook",
+            "skip",
+            "edit",
+        ] {
             let mut outcomes = Vec::new();
             let mut limit = 400_000u64;
             while limit <= 40_000_000 {
                 let repo = boundary_fixture(shape)?;
                 let root = repo.path();
-                let head = git(root, &["rev-parse", "HEAD"])?;
-                let index = fs::read(root.join(".git/index"))?;
-                let output = quota(root, &["rebase", "upstream"], &limit.to_string())?;
+                let before = live(root)?;
+                let limit_text = limit.to_string();
+                let output = start_shape(root, shape, &limit_text)?;
                 let journal = root.join(".git/brit-rebase").exists();
                 let outcome = if !journal && output.status.success() {
+                    ensure!(
+                        fs::read(root.join("notes"))? == b"notes\nthe user's own unstaged edit\n",
+                        "{shape} at {limit}: a finished rebase kept the user's edit"
+                    );
                     "finished"
                 } else if !journal {
                     ensure!(
-                        git(root, &["rev-parse", "HEAD"])? == head && fs::read(root.join(".git/index"))? == index,
-                        "{shape} at {limit}: a refusal changed the checkout"
+                        live(root)? == before,
+                        "{shape} at {limit}: a refusal changed nothing: {}",
+                        String::from_utf8_lossy(&output.stderr)
                     );
                     "refused"
                 } else {
-                    let aborted = quota(root, &["rebase", "--abort"], &limit.to_string())?;
-                    ensure!(
-                        aborted.status.success() && !root.join(".git/brit-rebase").exists(),
-                        "{shape} at {limit}: admitted, then neither finished nor abortable: {} / {}",
-                        String::from_utf8_lossy(&output.stderr),
-                        String::from_utf8_lossy(&aborted.stderr)
-                    );
-                    assert_eq!(git(root, &["rev-parse", "HEAD"])?, head);
-                    "aborted"
+                    follow_shape(root, shape, &limit_text)?;
+                    if root.join(".git/brit-rebase").exists() {
+                        abort_restores(root, &limit_text, &before, &format!("{shape} at {limit}"))?;
+                        "aborted"
+                    } else {
+                        "finished"
+                    }
                 };
                 outcomes.push(outcome);
                 limit *= 2;
@@ -1363,6 +1469,63 @@ mod recovery {
                 "{shape}: the walk spans the admission boundary: {outcomes:?}"
             );
         }
+        Ok(())
+    }
+
+    /// The live state an abort must restore exactly: HEAD, the index's bytes,
+    /// every branch, and every worktree file.
+    fn live(root: &Path) -> Result<std::collections::BTreeMap<PathBuf, Vec<u8>>> {
+        let mut state: std::collections::BTreeMap<PathBuf, Vec<u8>> = repository_bytes(root)?
+            .into_iter()
+            .filter(|(path, _)| !path.starts_with(".git"))
+            .collect();
+        state.insert(PathBuf::from(".git/HEAD"), fs::read(root.join(".git/HEAD"))?);
+        state.insert(PathBuf::from(".git/index"), fs::read(root.join(".git/index"))?);
+        state.insert(PathBuf::from("branches"), git(root, &["for-each-ref", "refs/heads"])?);
+        Ok(state)
+    }
+
+    /// `--abort` under `limit` succeeds, restores `before` exactly, and leaves no
+    /// rebase journal and no authoring session.
+    fn abort_restores(
+        root: &Path,
+        limit: &str,
+        before: &std::collections::BTreeMap<PathBuf, Vec<u8>>,
+        what: &str,
+    ) -> Result<()> {
+        let aborted = quota(root, &["rebase", "--abort"], limit)?;
+        ensure!(
+            aborted.status.success(),
+            "{what}: --abort refused: {}",
+            String::from_utf8_lossy(&aborted.stderr)
+        );
+        ensure!(
+            !root.join(".git/brit-rebase").exists() && !root.join(".git/brit-authoring").exists(),
+            "{what}: no rebase journal or authoring session remains"
+        );
+        let after = live(root)?;
+        let differing: Vec<_> = before
+            .keys()
+            .chain(after.keys())
+            .filter(|path| before.get(*path) != after.get(*path))
+            .collect();
+        ensure!(
+            differing.is_empty(),
+            "{what}: --abort restored exactly; differs: {differing:?}"
+        );
+        Ok(())
+    }
+
+    /// Every kind of Brit mutation works: no journal, session or lock is left over.
+    fn mutations_work(root: &Path) -> Result<()> {
+        let status = success(root, &["rebase", "--status"])?;
+        ensure!(status.stdout.contains("No active rebase"), "{}", status.stdout);
+        success(root, &["branch", "create", "after-recovery"])?;
+        fs::write(root.join("after-recovery"), b"after\n")?;
+        success(root, &["add", "after-recovery"])?;
+        success(root, &["commit", "-m", "after recovery"])?;
+        success(root, &["switch", "after-recovery"])?;
+        success(root, &["switch", "main"])?;
         Ok(())
     }
 
@@ -1379,78 +1542,225 @@ mod recovery {
             .collect()
     }
 
-    /// The review's `exp_c_midcopy.sh`: a copy whose members fit the quota but
-    /// whose manifest, written first, does not. The copy must refuse before it
-    /// writes anything, so no partial copy is left behind.
+    /// R3: a completed journal's cleanup always finishes on `--continue`, whatever
+    /// the limit. The cleanup copy is killed as it began and again part-way through
+    /// its members; under a 1,000-byte limit, far below the copy, `--continue`
+    /// finishes it and leaves one complete copy.
     #[test]
-    fn public_retained_copy_counts_its_manifest_before_writing_anything() -> Result<()> {
-        let repo = big_blob_fixture(400_000)?;
-        let root = repo.path();
-        // Published, then killed as its cleanup copy began.
-        kill_rebase_at(root, "replay-retained-manifest")?;
-        let leaf = |root: &Path| -> Result<Vec<PathBuf>> {
-            let mut leaves = Vec::new();
-            for operation in fs::read_dir(root.join(".git/brit-rebase-retained"))? {
-                for copy in fs::read_dir(operation?.path())? {
-                    leaves.push(copy?.path());
-                }
-            }
-            Ok(leaves)
-        };
-        for copy in leaf(root)? {
-            fs::remove_dir_all(copy)?;
+    fn public_cleanup_always_finishes_whatever_the_quota() -> Result<()> {
+        for point in ["replay-retained-manifest", "replay-retained-member"] {
+            let repo = big_blob_fixture(400_000)?;
+            let root = repo.path();
+            let original = git(root, &["rev-parse", "main"])?;
+            kill_rebase_at(root, point)?;
+            let published = git(root, &["rev-parse", "main"])?;
+            ensure!(
+                published != original,
+                "{point}: the rebase published before its cleanup"
+            );
+            let continued = quota(root, &["rebase", "--continue"], "1000")?;
+            ensure!(
+                continued.status.success(),
+                "{point}: cleanup finished under the quota: {}",
+                String::from_utf8_lossy(&continued.stderr)
+            );
+            assert!(!root.join(".git/brit-rebase").exists());
+            retained_leaf(root)?;
+            assert_eq!(git(root, &["rev-parse", "main"])?, published);
+            mutations_work(root)?;
         }
-        let probe = quota(root, &["rebase", "--continue"], "1000")?;
-        let message = String::from_utf8_lossy(&probe.stderr);
-        let members: u64 = message
-            .split("need up to ")
-            .nth(1)
-            .and_then(|rest| rest.split(' ').next())
-            .and_then(|number| number.parse().ok())
-            .ok_or_else(|| anyhow::anyhow!("copy refusal names its bytes: {message}"))?;
-        // Just under what the members and manifest need together.
-        let limit = (members - 1).to_string();
-        let refused = quota(root, &["rebase", "--continue"], &limit)?;
-        ensure!(
-            String::from_utf8_lossy(&refused.stderr).contains("retained copy cannot be written"),
-            "{}",
-            String::from_utf8_lossy(&refused.stderr)
-        );
-        ensure!(
-            leaf(root)?.iter().all(|copy| fs::read_dir(copy)
-                .map(|mut entries| entries.next().is_none())
-                .unwrap_or(true)),
-            "no member or manifest was written"
-        );
-        // Under the ordinary limit the same cleanup finishes.
-        success(root, &["rebase", "--continue"])?;
-        assert!(!root.join(".git/brit-rebase").exists());
         Ok(())
     }
 
-    /// The review's `exp_a_moved.sh`: a preparation journal in a moved repository
-    /// cannot be opened as this repository's own, so it cannot be cancelled. Status
-    /// still answers and names the cure; `--retire` keeps it aside; every mutation
-    /// works afterwards.
+    /// The review's `exp_a_moved.sh`, with its truthful outcome: a preparation
+    /// journal in a moved repository does not open as this repository's own. No
+    /// command touches it: `--status` says what failed and what to do by hand,
+    /// every recovery command and mutation refuses, and the journal and its refs
+    /// stay byte for byte. Following the printed manual step frees the repository.
     #[test]
-    fn public_journal_of_a_moved_repository_is_reported_and_retired() -> Result<()> {
+    fn public_journal_of_a_moved_repository_is_reported_and_never_touched() -> Result<()> {
         let repo = fixture(false)?;
         kill_rebase_at(repo.path(), "replay-retained")?;
         let parent = tempfile::tempdir()?;
         let moved = parent.path().join("moved");
         fs::rename(repo.path(), &moved)?;
+        let journal = repository_bytes(&moved.join(".git/brit-rebase"))?;
+        let refs = git(&moved, &["for-each-ref", "refs/brit-rebase-retain"])?;
         let status = success(&moved, &["rebase", "--status"])?;
-        ensure!(
-            status.stdout.contains("--retire"),
-            "status names the cure: {}",
-            status.stdout
-        );
-        refused(&moved, &["rebase", "--abort"])?;
-        refused(&moved, &["branch", "create", "blocked"])?;
-        let retired = success(&moved, &["rebase", "--retire"])?;
-        ensure!(retired.stdout.contains("another location"), "{}", retired.stdout);
+        for expected in [
+            "does not open as this repository's own",
+            "identity mismatch",
+            "No brit command will change, rename or remove it",
+            "ANOTHER",
+            "refs/brit-rebase-retain/",
+            "git update-ref -d",
+        ] {
+            ensure!(
+                status.stdout.contains(expected),
+                "status names {expected}: {}",
+                status.stdout
+            );
+        }
+        ensure!(!status.stdout.contains("--retire"), "no false cure: {}", status.stdout);
+        for args in [
+            &["rebase", "--abort"][..],
+            &["rebase", "--continue"],
+            &["rebase", "--retire"],
+            &["branch", "create", "blocked"],
+        ] {
+            refused(&moved, args)?;
+        }
+        assert_eq!(repository_bytes(&moved.join(".git/brit-rebase"))?, journal);
+        assert_eq!(git(&moved, &["for-each-ref", "refs/brit-rebase-retain"])?, refs);
+        // The manual step the status names.
+        fs::rename(
+            moved.join(".git/brit-rebase"),
+            moved.join(".git/brit-rebase-kept-manual"),
+        )?;
+        for line in String::from_utf8(refs)?.lines() {
+            let name = line.rsplit('\t').next().unwrap_or_default();
+            git(&moved, &["update-ref", "-d", name])?;
+        }
         success(&moved, &["branch", "create", "unblocked"])?;
         success(&moved, &["rebase", "upstream"])?;
+        Ok(())
+    }
+
+    /// The review's `exp2_retire_foreign.sh` (M2): a repository copied while its
+    /// rebase was part-way through a checkout, Git locks held. In the copy every
+    /// command refuses or only reports, and nothing changes in EITHER repository,
+    /// byte for byte, lock files included. The original still aborts exactly.
+    #[test]
+    fn public_a_copied_part_way_journal_is_touched_by_no_command_in_either_repository() -> Result<()> {
+        let repo = big_blob_fixture(400_000)?;
+        let root = repo.path();
+        user_work(root)?;
+        let before = live(root)?;
+        kill_rebase_at(root, "replay-worktree-publication")?;
+        ensure!(
+            root.join(".git/index.lock").exists(),
+            "the part-way checkout holds the index lock"
+        );
+        let parent = tempfile::tempdir()?;
+        let copy = parent.path().join("copy");
+        ensure!(Command::new("cp").arg("-a").arg(root).arg(&copy).status()?.success());
+        let unguarded = |root: &Path| -> Result<std::collections::BTreeMap<PathBuf, Vec<u8>>> {
+            Ok(repository_bytes(root)?
+                .into_iter()
+                .filter(|(path, _)| {
+                    !path
+                        .file_name()
+                        .is_some_and(|name| name.to_string_lossy().starts_with("brit-mutation."))
+                })
+                .collect())
+        };
+        let original_bytes = unguarded(root)?;
+        let copy_bytes = unguarded(&copy)?;
+        let status = success(&copy, &["rebase", "--status"])?;
+        for expected in [
+            "does not open as this repository's own",
+            "ANOTHER",
+            "index.lock",
+            "refs/brit-rebase-retain/",
+        ] {
+            ensure!(
+                status.stdout.contains(expected),
+                "status names {expected}: {}",
+                status.stdout
+            );
+        }
+        for args in [
+            &["rebase", "--retire"][..],
+            &["rebase", "--abort"],
+            &["rebase", "--continue"],
+            &["rebase", "--skip"],
+            &["branch", "create", "blocked"],
+        ] {
+            let output = refused(&copy, args)?;
+            ensure!(
+                !output.stderr.contains("Removed"),
+                "{args:?} removed nothing: {}",
+                output.stderr
+            );
+        }
+        ensure!(unguarded(&copy)? == copy_bytes, "nothing in the copy changed");
+        ensure!(unguarded(root)? == original_bytes, "nothing in the original changed");
+        abort_restores(root, "1000", &before, "the original")
+    }
+
+    /// The review's `exp2_foreign_misc.sh`: this repository's own part-way journal
+    /// with `state.json` at mode 0644, and with a corrupt checksum. `--status`
+    /// exits 0 and says exactly what failed, names no command as the cure, and every
+    /// command refuses without touching the journal. With the mode restored by hand,
+    /// `--abort` restores everything exactly.
+    #[test]
+    fn public_a_journal_with_a_wrong_mode_or_checksum_is_reported_truthfully() -> Result<()> {
+        for case in ["mode", "checksum"] {
+            let repo = big_blob_fixture(400_000)?;
+            let root = repo.path();
+            user_work(root)?;
+            let before = live(root)?;
+            kill_rebase_at(root, "replay-worktree-publication")?;
+            let state = root.join(".git/brit-rebase/state.json");
+            if case == "mode" {
+                fs::set_permissions(&state, fs::Permissions::from_mode(0o644))?;
+            } else {
+                let mut envelope: serde_json::Value = serde_json::from_slice(&fs::read(&state)?)?;
+                let checksum = envelope["checksum"]
+                    .as_str()
+                    .ok_or_else(|| anyhow::anyhow!("checksum"))?
+                    .to_owned();
+                let flipped = if checksum.starts_with('0') { "1" } else { "0" };
+                envelope["checksum"] = serde_json::Value::from(format!("{flipped}{}", &checksum[1..]));
+                fs::write(&state, serde_json::to_vec(&envelope)?)?;
+            }
+            let journal = repository_bytes(&root.join(".git/brit-rebase"))?;
+            let status = success(root, &["rebase", "--status"])?;
+            let failure = if case == "mode" {
+                "unsafe replay state"
+            } else {
+                "checksum mismatch"
+            };
+            for expected in [
+                "does not open as this repository's own",
+                failure,
+                "No brit command will change, rename or remove it",
+            ] {
+                ensure!(
+                    status.stdout.contains(expected),
+                    "{case}: status names {expected}: {}",
+                    status.stdout
+                );
+            }
+            ensure!(
+                !status.stdout.contains("--retire"),
+                "{case}: no false cure: {}",
+                status.stdout
+            );
+            for args in [
+                &["rebase", "--retire"][..],
+                &["rebase", "--abort"],
+                &["rebase", "--continue"],
+                &["branch", "create", "blocked"],
+            ] {
+                refused(root, args)?;
+            }
+            assert_eq!(repository_bytes(&root.join(".git/brit-rebase"))?, journal, "{case}");
+            if case == "mode" {
+                fs::set_permissions(&state, fs::Permissions::from_mode(0o600))?;
+                abort_restores(root, "1000", &before, case)?;
+                mutations_work(root)?;
+            }
+        }
+        Ok(())
+    }
+
+    /// The user's own uncommitted work beside a `big_blob_fixture` rebase: an
+    /// unstaged edit and a staged change, neither touched by the replay.
+    fn user_work(root: &Path) -> Result<()> {
+        fs::write(root.join("base"), b"base\nthe user's unstaged edit\n")?;
+        fs::write(root.join("staged"), b"the user's staged file\n")?;
+        git(root, &["add", "staged"])?;
         Ok(())
     }
 
@@ -1522,6 +1832,15 @@ mod recovery {
     }
 
     fn quota(root: &Path, args: &[&str], limit: &str) -> Result<std::process::Output> {
+        quota_env(root, args, limit, &[])
+    }
+
+    fn quota_env(
+        root: &Path,
+        args: &[&str],
+        limit: &str,
+        variables: &[(&str, std::ffi::OsString)],
+    ) -> Result<std::process::Output> {
         let mut command = Command::new(brit_bin().expect("fault-enabled artifact"));
         gix_testtools::configure_git_environment(&mut command, root);
         Ok(command
@@ -1529,6 +1848,7 @@ mod recovery {
             .args(args)
             .env("BRIT_TEST_SCRATCH_LIMIT", limit)
             .env("GIT_EDITOR", ":")
+            .envs(variables.iter().map(|(name, value)| (name, value)))
             .stdin(Stdio::null())
             .output()?)
     }
@@ -1569,29 +1889,19 @@ mod recovery {
         Ok(PathBuf::from(&kept[0]))
     }
 
-    /// A published rebase whose cleanup cannot fit the quota is stuck: `--abort`
-    /// refuses the final decision and `--continue` cannot finish. `--retire`
-    /// returns the repository to service without deleting anything, refuses while
-    /// another process holds the guard, and is idempotent; afterwards a commit, a
-    /// switch and a fresh rebase all succeed.
+    /// `--retire` sets aside a published rebase whose cleanup copy is all that
+    /// remains (here killed as that copy began; on a large repository it can take
+    /// long). It refuses while another process holds the guard, deletes nothing,
+    /// changes nothing live, removes no lock and gives no checkout advice, and is
+    /// idempotent; afterwards a commit, a switch and a fresh rebase all succeed.
     #[test]
-    fn public_retire_returns_a_stuck_rebase_to_service_keeping_everything() -> Result<()> {
+    fn public_retire_sets_aside_a_completed_rebase_keeping_everything() -> Result<()> {
         let repo = big_blob_fixture(2_000_000)?;
         let root = repo.path();
         let original = git(root, &["rev-parse", "main"])?;
-        // Published, then killed as its cleanup copy began; the lowered quota
-        // then makes that cleanup impossible, as the 1 GiB one does for a large
-        // repository.
         kill_rebase_at(root, "replay-retained-manifest")?;
         let published = git(root, &["rev-parse", "main"])?;
         assert_ne!(published, original, "the rebase published");
-        let stuck = quota(root, &["rebase", "--continue"], "1000000")?;
-        ensure!(
-            !stuck.status.success()
-                && String::from_utf8_lossy(&stuck.stderr).contains("retained copy cannot be written"),
-            "cleanup is stuck: {}",
-            String::from_utf8_lossy(&stuck.stderr)
-        );
         refused(root, &["rebase", "--abort"])?;
         refused(root, &["branch", "create", "blocked"])?;
         let refs = git(root, &["for-each-ref", "refs/brit-rebase-retain"])?;
@@ -1626,6 +1936,13 @@ mod recovery {
             ensure!(
                 retired.stdout.contains(expected),
                 "report names {expected}: {}",
+                retired.stdout
+            );
+        }
+        for absent in ["checkout", "lock"] {
+            ensure!(
+                !retired.stdout.contains(absent),
+                "no {absent} advice: {}",
                 retired.stdout
             );
         }
@@ -1665,13 +1982,14 @@ mod recovery {
         Ok(())
     }
 
-    /// An abort whose retained copy cannot be written stops in `retaining-abort`
-    /// before its first decision, the state an older Brit leaves over the quota.
-    /// `--retire` takes that phase too, keeping everything: the branch was
-    /// never changed. Any later phase still refuses, naming the right command.
+    /// An abort that stops while retaining, before the rebase's first checkout
+    /// decision (here after a pre-rebase hook's durable start), changed nothing
+    /// live: `--retire` sets it aside, keeping everything, and the branch and the
+    /// user's work are as they were. A conflict stop, where `--abort` has live
+    /// state to restore, refuses `--retire` and names `--abort`.
     #[test]
-    fn public_retire_takes_an_abort_stuck_before_its_first_decision() -> Result<()> {
-        let repo = big_blob_fixture(2_000_000)?;
+    fn public_retire_takes_an_abort_retaining_before_its_first_decision() -> Result<()> {
+        let repo = big_blob_fixture(400_000)?;
         let root = repo.path();
         script(&root.join(".git/hooks/pre-rebase"), "exit 0")?;
         let original = git(root, &["rev-parse", "main"])?;
@@ -1682,74 +2000,217 @@ mod recovery {
         )?;
         wait_file(&mut child, &root.join(".git/brit-rebase/pre-rebase/checkpoint"))?;
         interrupt(&mut child, "-KILL")?;
-        let stuck = quota(root, &["rebase", "--abort"], "1000000")?;
-        ensure!(
-            String::from_utf8_lossy(&stuck.stderr).contains("retained copy cannot be written"),
-            "{}",
-            String::from_utf8_lossy(&stuck.stderr)
-        );
+        let markers = tempfile::tempdir()?;
+        let mut abort = launch(
+            root,
+            &["rebase", "--abort"],
+            &[
+                ("BRIT_SWITCH_CHECKPOINT", "replay-retained-manifest".as_ref()),
+                ("BRIT_SWITCH_CHECKPOINT_DIR", markers.path().as_os_str()),
+            ],
+        )?;
+        wait_file(&mut abort, &markers.path().join("replay-retained-manifest.reached"))?;
+        interrupt(&mut abort, "-KILL")?;
         let status = success(root, &["rebase", "--status"])?;
         ensure!(status.stdout.contains("retaining-abort"), "{}", status.stdout);
         refused(root, &["branch", "create", "blocked"])?;
         let before = git_files(root)?;
         let retired = success(root, &["rebase", "--retire"])?;
-        ensure!(retired.stdout.contains("never published"), "{}", retired.stdout);
+        ensure!(retired.stdout.contains("did not publish"), "{}", retired.stdout);
         assert_all_kept(&before, &git_files(root)?, &kept_directory(root)?)?;
         assert_eq!(git(root, &["rev-parse", "main"])?, original);
         preserved_neighbors_unchanged(root)?;
         success(root, &["branch", "create", "unblocked"])?;
 
-        // Phases that are not stuck refuse, naming the command that applies.
         let repo = fixture(true)?;
         let root = repo.path();
         refused(root, &["rebase", "upstream"])?;
         let conflict = invoke(root, &["rebase", "--retire"])?;
         ensure!(
-            !conflict.status.success() && conflict.stderr.contains("--continue or --abort"),
+            !conflict.status.success() && conflict.stderr.contains("--abort"),
             "{}",
             conflict.stderr
         );
+        assert!(root.join(".git/brit-rebase").exists());
         success(root, &["rebase", "--abort"])?;
+        preserved(root)
+    }
+
+    /// The review's `exp2_retire_vs_abort.sh` (M3): wherever `--abort` can still
+    /// restore the original state, `--retire` refuses and names it, `--status`
+    /// never steers to `--retire`, and nothing of the journal changes, at any
+    /// limit; then `--abort`, under the lowest limit, restores HEAD, the index,
+    /// every branch and every worktree file, including the user's own uncommitted
+    /// work, exactly.
+    #[test]
+    fn public_retire_refuses_every_rebase_abort_can_restore() -> Result<()> {
+        for point in [
+            "replay-decision-durable",
+            "replay-worktree-publication",
+            "replay-decision-applied",
+        ] {
+            let repo = big_blob_fixture(400_000)?;
+            let root = repo.path();
+            user_work(root)?;
+            let before = live(root)?;
+            kill_rebase_at(root, point)?;
+            let journal = repository_bytes(&root.join(".git/brit-rebase"))?;
+            for limit in ["1000000", "1000"] {
+                let status = quota(root, &["rebase", "--status"], limit)?;
+                ensure!(
+                    status.status.success() && !String::from_utf8_lossy(&status.stdout).contains("--retire"),
+                    "{point}: status does not steer to --retire: {}",
+                    String::from_utf8_lossy(&status.stdout)
+                );
+                let retire = quota(root, &["rebase", "--retire"], limit)?;
+                ensure!(
+                    !retire.status.success() && String::from_utf8_lossy(&retire.stderr).contains("--abort"),
+                    "{point} at {limit}: retire refuses, naming --abort: {}",
+                    String::from_utf8_lossy(&retire.stderr)
+                );
+                ensure!(
+                    repository_bytes(&root.join(".git/brit-rebase"))? == journal,
+                    "{point}: retire changed nothing"
+                );
+            }
+            abort_restores(root, "1000", &before, point)?;
+            mutations_work(root)?;
+        }
         Ok(())
     }
 
-    /// A rebase killed with its first checkout decision durable but not applied is
-    /// part-way through changing the checkout. While `--abort` can still restore it,
-    /// `--retire` refuses; when the limit leaves no room to abort, `--retire` keeps
-    /// everything, says the checkout is part-way, and the command it names returns
-    /// to the unchanged branch.
-    #[test]
-    fn public_retire_takes_a_part_way_checkout_only_when_the_limit_blocks_its_abort() -> Result<()> {
-        let repo = big_blob_fixture(2_000_000)?;
+    /// A rebase stopped at a conflict, in the review's `exp2_conflict_resolution.sh`
+    /// fixture: a three-line file both sides change, the user's own unstaged edit
+    /// and staged change beside it.
+    fn conflict_fixture() -> Result<TestRepo> {
+        let repo = TestRepo::new("bounded-conflict")?;
         let root = repo.path();
-        let original = git(root, &["rev-parse", "main"])?;
-        kill_rebase_at(root, "replay-decision-durable")?;
-        let status = success(root, &["rebase", "--status"])?;
-        ensure!(status.stdout.contains("Durable decision pending"), "{}", status.stdout);
-        let refused_retire = invoke(root, &["rebase", "--retire"])?;
-        ensure!(
-            !refused_retire.status.success() && refused_retire.stderr.contains("--continue or --abort"),
-            "{}",
-            refused_retire.stderr
-        );
-        let blocked = quota(root, &["rebase", "--status"], "1000000")?;
-        ensure!(
-            String::from_utf8_lossy(&blocked.stdout).contains("brit rebase --retire"),
-            "status names the cure when the limit blocks: {}",
-            String::from_utf8_lossy(&blocked.stdout)
-        );
-        let retired = quota(root, &["rebase", "--retire"], "1000000")?;
-        let report = String::from_utf8_lossy(&retired.stdout);
-        ensure!(
-            retired.status.success() && report.contains("part-way") && report.contains("git checkout --force main"),
-            "{report}{}",
-            String::from_utf8_lossy(&retired.stderr)
-        );
-        assert_eq!(git(root, &["rev-parse", "main"])?, original);
-        success(root, &["branch", "create", "unblocked"])?;
-        git(root, &["checkout", "-q", "--force", "main"])?;
-        assert_eq!(git(root, &["rev-parse", "HEAD"])?, original);
+        fs::write(root.join("c"), b"a\nb\nc\n")?;
+        fs::write(root.join("base"), b"base\n")?;
+        git(root, &["add", "c", "base"])?;
+        git(root, &["commit", "-q", "-m", "base"])?;
+        git(root, &["switch", "-q", "-c", "upstream"])?;
+        fs::write(root.join("c"), b"a\nUP\nc\n")?;
+        git(root, &["commit", "-q", "-am", "upstream"])?;
+        git(root, &["switch", "-q", "main"])?;
+        fs::write(root.join("c"), b"a\nTOPIC\nc\n")?;
+        git(root, &["commit", "-q", "-am", "topic"])?;
+        fs::write(root.join("base"), b"base\nthe user's unstaged edit\n")?;
+        fs::write(root.join("staged"), b"the user's staged file\n")?;
+        git(root, &["add", "staged"])?;
+        Ok(repo)
+    }
+
+    /// The review's `exp2_conflict_sweep.sh` (M1): under a 1 MB limit, a staged
+    /// resolution of 200 B, 100 KB, 200 KB or 700 KB, with or without a
+    /// `--continue` first (which may be refused, naming `--abort`), never leaves the
+    /// rebase stuck: `--abort` restores everything exactly, no authoring session
+    /// remains, and every mutation works. A continue that is admitted finishes.
+    #[test]
+    fn public_any_staged_resolution_aborts_exactly_under_the_quota() -> Result<()> {
+        for size in [200usize, 100_000, 200_000, 700_000] {
+            for continued in [false, true] {
+                let what = format!("{size} bytes, continued first: {continued}");
+                let repo = conflict_fixture()?;
+                let root = repo.path();
+                let before = live(root)?;
+                let stopped = quota(root, &["rebase", "upstream"], "1000000")?;
+                ensure!(
+                    !stopped.status.success() && root.join(".git/brit-authoring").exists(),
+                    "{what}: the rebase stops at its conflict: {}",
+                    String::from_utf8_lossy(&stopped.stderr)
+                );
+                fs::write(root.join("c"), noise(size, 3))?;
+                let staged = quota(root, &["rebase", "--stage", "--", "c"], "1000000")?;
+                ensure!(
+                    staged.status.success() || String::from_utf8_lossy(&staged.stderr).contains("--abort"),
+                    "{what}: a refused stage names --abort: {}",
+                    String::from_utf8_lossy(&staged.stderr)
+                );
+                if continued {
+                    let output = quota(root, &["rebase", "--continue"], "1000000")?;
+                    if output.status.success() {
+                        ensure!(!root.join(".git/brit-rebase").exists(), "{what}: finished");
+                        ensure!(fs::read(root.join("base"))? == b"base\nthe user's unstaged edit\n");
+                        mutations_work(root)?;
+                        continue;
+                    }
+                    ensure!(
+                        String::from_utf8_lossy(&output.stderr).contains("--abort"),
+                        "{what}: a refused continue names --abort: {}",
+                        String::from_utf8_lossy(&output.stderr)
+                    );
+                }
+                abort_restores(root, "1000000", &before, &what)?;
+                mutations_work(root)?;
+            }
+        }
         Ok(())
+    }
+
+    /// R2: admission reserves what the first forward step after a stop needs. At
+    /// the smallest limit that admits the conflict fixture (walked up in 5% steps),
+    /// a trivial resolution stages and continues to the end.
+    #[test]
+    fn public_a_trivial_resolution_continues_at_the_smallest_admitted_limit() -> Result<()> {
+        let mut limit = 200_000u64;
+        loop {
+            ensure!(limit < 20_000_000, "the conflict fixture was never admitted");
+            let repo = conflict_fixture()?;
+            let root = repo.path();
+            let text = limit.to_string();
+            let started = quota(root, &["rebase", "upstream"], &text)?;
+            if !root.join(".git/brit-rebase").exists() {
+                ensure!(
+                    String::from_utf8_lossy(&started.stderr).contains("refused before"),
+                    "{limit}: {}",
+                    String::from_utf8_lossy(&started.stderr)
+                );
+                limit = limit * 21 / 20;
+                continue;
+            }
+            fs::write(root.join("c"), b"a\nresolved\nc\n")?;
+            let staged = quota(root, &["rebase", "--stage", "--", "c"], &text)?;
+            ensure!(
+                staged.status.success(),
+                "{limit}: stage: {}",
+                String::from_utf8_lossy(&staged.stderr)
+            );
+            let continued = quota(root, &["rebase", "--continue"], &text)?;
+            ensure!(
+                continued.status.success() && !root.join(".git/brit-rebase").exists(),
+                "{limit}: the first forward step after admission continues: {}",
+                String::from_utf8_lossy(&continued.stderr)
+            );
+            assert_eq!(git(root, &["show", "HEAD:c"])?, b"a\nresolved\nc\n");
+            return Ok(());
+        }
+    }
+
+    /// R3, bounded only by the disk: an abort whose retained copy hits `ENOSPC`
+    /// part-way says the disk is full, keeps the journal resumable, and the same
+    /// `--abort`, once space is back, restores everything exactly.
+    #[test]
+    fn public_an_abort_that_runs_out_of_disk_resumes_and_restores_exactly() -> Result<()> {
+        let repo = big_blob_fixture(400_000)?;
+        let root = repo.path();
+        user_work(root)?;
+        let before = live(root)?;
+        kill_rebase_at(root, "replay-decision-applied")?;
+        let full = quota_env(
+            root,
+            &["rebase", "--abort"],
+            "1000",
+            &[("BRIT_REPLAY_IO_FAULT", "write|28|brit-rebase-retained|3".into())],
+        )?;
+        let message = String::from_utf8_lossy(&full.stderr);
+        ensure!(
+            !full.status.success() && message.contains("disk is full") && message.contains("run the same"),
+            "{message}"
+        );
+        ensure!(root.join(".git/brit-rebase").exists(), "the journal remains to resume");
+        abort_restores(root, "1000", &before, "after the disk filled")?;
+        mutations_work(root)
     }
 
     fn preserved_neighbors_unchanged(root: &Path) -> Result<()> {

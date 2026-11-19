@@ -178,7 +178,44 @@ pub(crate) fn scratch_limit() -> u64 {
     SCRATCH_LIMIT
 }
 
+thread_local! {
+    /// How many [`Recovery`] scopes this thread is inside.
+    static RECOVERY: std::cell::Cell<usize> = const { std::cell::Cell::new(0) };
+}
+
+/// While held, this thread is undoing or finishing an operation Brit already
+/// started: an abort and its retained copy, the cleanup of a terminal journal,
+/// or the roll-forward of a decision that can no longer be abandoned. The scratch
+/// quota is a policy about starting and continuing work; refusing to undo or to
+/// finish is how a repository gets stuck, so inside a recovery scope
+/// [`check_growth`], [`charge`] and every caller that consults [`metered`] admit
+/// the write. Real disk space still bounds it, and an `ENOSPC` leaves the step
+/// resumable.
+#[must_use = "recovery lasts only while the scope is held"]
+pub(crate) struct Recovery(());
+
+impl Recovery {
+    pub(crate) fn enter() -> Self {
+        RECOVERY.with(|depth| depth.set(depth.get() + 1));
+        Self(())
+    }
+}
+
+impl Drop for Recovery {
+    fn drop(&mut self) {
+        RECOVERY.with(|depth| depth.set(depth.get().saturating_sub(1)));
+    }
+}
+
+/// `false` inside a [`Recovery`] scope: the scratch quota does not apply.
+pub(crate) fn metered() -> bool {
+    RECOVERY.with(|depth| depth.get() == 0)
+}
+
 pub(crate) fn check_growth(root: &Path, requested: u64) -> Result<()> {
+    if !metered() {
+        return Ok(());
+    }
     let live = usage(root)?;
     let limit = scratch_limit();
     if live.checked_add(requested).is_none_or(|size| size > limit) {
@@ -197,7 +234,13 @@ pub(crate) fn check_growth(root: &Path, requested: u64) -> Result<()> {
     Ok(())
 }
 
+/// Charge `root`'s bytes against `budget`, so the spool beside it and the
+/// journal together stay under the quota. Inside a [`Recovery`] scope nothing
+/// is charged for the journal; each spool still counts its own bytes.
 pub(crate) fn charge(budget: &Arc<Budget>, root: &Path) -> Result<Charge> {
+    if !metered() {
+        return Ok(budget.charge(0)?);
+    }
     Ok(budget.charge(usage(root)?)?)
 }
 

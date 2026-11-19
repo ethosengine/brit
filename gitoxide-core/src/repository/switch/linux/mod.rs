@@ -179,10 +179,14 @@ fn private_output(path: &Path, write: impl FnOnce(&mut fs::File) -> Result<()>) 
         .create_new(true)
         .mode(0o600)
         .open(path)?;
-    io_fault("write", path)?;
-    write(&mut file)?;
-    sync_file(&file, path)?;
-    Ok(())
+    if let Err(error) = io_fault("write", path).and_then(|()| write(&mut file)) {
+        // This call created the name, so a failed write (a full disk) leaves no
+        // partial file a retry would mistake for a foreign or corrupt record.
+        drop(file);
+        let _ = fs::remove_file(path);
+        return Err(error);
+    }
+    sync_file(&file, path)
 }
 
 /// Dedicated fault builds can fail a real persistence boundary without filling

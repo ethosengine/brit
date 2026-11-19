@@ -347,14 +347,10 @@ impl Session {
         self.state.payloads.extend(saved.child_payload_licenses()?);
         let root = repo.workdir().context("worktree required")?;
         // A resolution is the user's bytes: reserve for them before keeping any.
-        let mut requested = self.decision_bytes()?;
-        for change in &self.state.work {
-            if let Ok(metadata) = fs::symlink_metadata(root.join(gix::path::from_bstr(change.path.as_bstr())?.as_ref()))
-            {
-                requested = requested.saturating_add(metadata.len());
-            }
+        // An abort accepting and discarding its child is never metered.
+        if switch::payload::metered() {
+            self.reserve(repo, self.step_need(repo, None, true, &[])?)?;
         }
-        self.reserve(repo, requested)?;
         for ordinal in 0..self.state.work.len() {
             let path = root.join(gix::path::from_bstr(self.state.work[ordinal].path.as_bstr())?.as_ref());
             self.state.work[ordinal].after = self.capture_payload(repo, &path)?;

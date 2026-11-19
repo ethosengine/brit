@@ -145,24 +145,37 @@ fn validate_content(kind: &Kind, source: &impl Content, hash: gix::hash::Kind) -
     Ok(())
 }
 
-fn persist_content(path: &Path, owner: u32, source: &impl Content, entry: &Entry) -> Result<()> {
+fn persist_content(path: &Path, owner: u32, source: &impl Content, entry: &Entry, complete: bool) -> Result<()> {
     use std::os::unix::fs::OpenOptionsExt;
-    match fs::symlink_metadata(path) {
-        Ok(metadata) => ensure!(
-            metadata.is_file() && metadata.uid() == owner && metadata.permissions().mode().trailing_zeros() >= 6,
-            "unsafe retained member"
-        ),
-        Err(error) if error.kind() == std::io::ErrorKind::NotFound => {
-            switch::payload::check_growth(path.parent().context("retained member parent")?, entry.size)?;
-            let mut reader = source.reader()?;
-            switch::private_copy(path, &mut reader.by_ref().take(entry.size))?;
-            let mut extra = [0];
+    let present = match fs::symlink_metadata(path) {
+        Ok(metadata) => {
             ensure!(
-                reader.read(&mut extra)? == 0,
-                "retained-copy source grew during capture"
+                metadata.is_file() && metadata.uid() == owner && metadata.permissions().mode().trailing_zeros() >= 6,
+                "unsafe retained member"
             );
+            // Members are copied with exactly `entry.size` bytes, so in a copy
+            // not yet complete a shorter file is this copy's own write cut short
+            // (a kill; a failed write removes its own file). Its source is still
+            // pinned by the manifest, and the bytes are rewritten and verified.
+            if !complete && metadata.len() < entry.size {
+                fs::remove_file(path)?;
+                false
+            } else {
+                true
+            }
         }
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => false,
         Err(error) => return Err(error.into()),
+    };
+    if !present {
+        switch::payload::check_growth(path.parent().context("retained member parent")?, entry.size)?;
+        let mut reader = source.reader()?;
+        switch::private_copy(path, &mut reader.by_ref().take(entry.size))?;
+        let mut extra = [0];
+        ensure!(
+            reader.read(&mut extra)? == 0,
+            "retained-copy source grew during capture"
+        );
     }
     let mut file = fs::OpenOptions::new()
         .read(true)
@@ -369,20 +382,23 @@ pub fn capture<D: Content>(
     members: &[Member<D>],
 ) -> Result<Receipt> {
     let owner = fs::metadata(repo.git_dir())?.uid();
-    // Every member, and the manifest written before them, is copied under the
-    // scratch quota. Refuse a copy whose member bytes plus an upper bound of its
-    // manifest exceed it before fingerprinting or writing anything, so a copy that
-    // can never complete fails at once instead of part-way through.
-    let mut planned = manifest_bound(members.iter().map(|member| member.path.len()));
-    for member in members {
-        planned = planned.saturating_add(member.data.size()?);
+    // Outside recovery every member, and the manifest written before them, is
+    // copied under the scratch quota: a copy whose member bytes plus an upper
+    // bound of its manifest exceed it is refused before anything is written. The
+    // copy an abort or a cleanup needs is written whatever its size (see
+    // `switch::payload::Recovery`); only the disk bounds it.
+    if switch::payload::metered() {
+        let mut planned = manifest_bound(members.iter().map(|member| member.path.len()));
+        for member in members {
+            planned = planned.saturating_add(member.data.size()?);
+        }
+        let limit = switch::payload::scratch_limit();
+        ensure!(
+            planned <= limit,
+            "retained copy cannot be written: its {} members and manifest need up to {planned} bytes, over the {limit}-byte scratch limit every retained copy lives under",
+            members.len()
+        );
     }
-    let limit = switch::payload::scratch_limit();
-    ensure!(
-        planned <= limit,
-        "retained copy cannot be written: its {} members and manifest need up to {planned} bytes, over the {limit}-byte scratch limit every retained copy lives under",
-        members.len()
-    );
     let manifest = Manifest {
         version: 1,
         nonce: nonce.into(),
@@ -424,14 +440,17 @@ pub fn capture<D: Content>(
     directory(&leaf, owner)?;
     // A completed copy is immutable. Refuse a different capture before adding
     // even one member, which would otherwise invalidate the existing good copy.
-    match fs::symlink_metadata(leaf.join("COPY_COMPLETE")) {
-        Ok(_) => ensure!(
-            inspect(&leaf)?.receipt.digest == digest,
-            "retained copy already completes a different capture"
-        ),
-        Err(error) if error.kind() == std::io::ErrorKind::NotFound => {}
+    let complete = match fs::symlink_metadata(leaf.join("COPY_COMPLETE")) {
+        Ok(_) => {
+            ensure!(
+                inspect(&leaf)?.receipt.digest == digest,
+                "retained copy already completes a different capture"
+            );
+            true
+        }
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => false,
         Err(error) => return Err(error.into()),
-    }
+    };
     match fs::symlink_metadata(leaf.join("manifest.json")) {
         Ok(_) => ensure!(
             read_member(&leaf.join("manifest.json"), owner)? == bytes,
@@ -451,6 +470,7 @@ pub fn capture<D: Content>(
             owner,
             &member.data,
             &manifest.entries[ordinal],
+            complete,
         )?;
         switch::checkpoint("replay-retained-member")?;
     }

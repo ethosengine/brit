@@ -20,7 +20,7 @@ pub enum Action {
     Continue,
     Skip,
     Abort,
-    /// Retire a rebase no other action can finish or undo, keeping everything.
+    /// Set aside a finished or undone rebase whose retained copy is all that remains.
     Retire,
     EditTodo,
     ShowCurrentPatch,
@@ -39,7 +39,25 @@ pub fn run(_repo: gix::Repository, _action: Action, _out: &mut dyn Write, _err: 
 }
 
 #[cfg(target_os = "linux")]
-pub fn run(mut repo: gix::Repository, action: Action, out: &mut dyn Write, err: &mut dyn Write) -> Result<()> {
+pub fn run(repo: gix::Repository, action: Action, out: &mut dyn Write, err: &mut dyn Write) -> Result<()> {
+    run_action(repo, action, out, err).map_err(|error| {
+        let full = error
+            .chain()
+            .filter_map(|cause| cause.downcast_ref::<std::io::Error>())
+            .any(|cause| cause.kind() == std::io::ErrorKind::StorageFull);
+        if full {
+            error.context(
+                "the disk is full: nothing was lost, and a write that failed removed its own partial file; free \
+                 space, then run the same brit rebase command again, which resumes where it stopped",
+            )
+        } else {
+            error
+        }
+    })
+}
+
+#[cfg(target_os = "linux")]
+fn run_action(mut repo: gix::Repository, action: Action, out: &mut dyn Write, err: &mut dyn Write) -> Result<()> {
     use super::Session;
     use anyhow::{Context, ensure};
     use gix::bstr::ByteSlice;
@@ -119,6 +137,15 @@ pub fn run(mut repo: gix::Repository, action: Action, out: &mut dyn Write, err: 
             _ => anyhow::bail!("no rebase in progress"),
         }
     }
+    if let Err(error) = Session::check_own(&repo) {
+        if matches!(action, Action::Status) {
+            return report_unopenable(&repo, &error, out);
+        }
+        return Err(error.context(
+            "the rebase journal does not open as this repository's own, so no brit command will change, rename or \
+             remove it; nothing was changed; brit rebase --status says what failed and what to do by hand",
+        ));
+    }
     if matches!(action, Action::Abort)
         && let Some(differences) = Session::cancel_preparation(&repo)?
     {
@@ -134,10 +161,23 @@ pub fn run(mut repo: gix::Repository, action: Action, out: &mut dyn Write, err: 
     let mut session = match Session::open(&repo) {
         Ok(session) => session,
         Err(error) if matches!(action, Action::Status) => {
-            writeln!(
-                out,
-                "A rebase journal exists but cannot be opened as this repository's: {error:#}. brit rebase --retire keeps it aside, deleting nothing."
-            )?;
+            let journal = repo.git_dir().join("brit-rebase");
+            if ["state.json", "state.pending"]
+                .iter()
+                .any(|name| journal.join(name).symlink_metadata().is_ok())
+            {
+                writeln!(
+                    out,
+                    "A rebase journal of this repository exists but could not be read in full: {error:#}. Nothing \
+                     was changed; brit rebase --abort tries to restore the original state."
+                )?;
+            } else {
+                writeln!(
+                    out,
+                    "A rebase preparation stopped before it recorded anything and changed nothing live; brit rebase \
+                     --abort removes its directory {journal:?}."
+                )?;
+            }
             return Ok(());
         }
         Err(error) => return Err(error),
@@ -145,7 +185,6 @@ pub fn run(mut repo: gix::Repository, action: Action, out: &mut dyn Write, err: 
     let result = match action {
         Action::Status => {
             session.status(out)?;
-            session.quota_status(&repo, out)?;
             session.child_status(&repo, out)
         }
         Action::ShowCurrentPatch => session.show_current_patch(&repo, out),
@@ -342,37 +381,18 @@ fn report_retired(retired: &super::Retired, out: &mut dyn Write) -> Result<()> {
         out,
         "Retired the rebase; nothing was deleted and nothing live was changed."
     )?;
-    if retired.foreign {
+    if retired.published {
         writeln!(
             out,
-            "Its journal was recorded for another location of this repository (moved or copied), so no other command could use it."
-        )?;
-    }
-    if retired.unpublished && retired.midway {
-        let back = match &retired.attachment {
-            Some(branch) => format!(
-                "git checkout --force {}",
-                branch.strip_prefix("refs/heads/").unwrap_or(branch)
-            ),
-            None => format!("git checkout --force --detach {}", retired.original),
-        };
-        writeln!(
-            out,
-            "The rebase never published, but it had begun changing the checkout: HEAD, the index and the worktree may be part-way to a replayed state. Its branch still names {original}, which refs/brit-rebase-retain/{nonce}/original also keeps. To return to it, discarding the part-way checkout: {back}. Uncommitted work the rebase preserved is kept in the journal's payload-* files.",
-            original = retired.original,
-            nonce = retired.nonce,
-        )?;
-    } else if retired.unpublished {
-        writeln!(
-            out,
-            "The rebase never published: its branch still names {}, and nothing Brit changed live needs restoring.",
-            retired.original
+            "The rebase is published at {} (it was {} before); only its cleanup copy was left to build.",
+            retired.tip, retired.original
         )?;
     } else {
         writeln!(
             out,
-            "The rebase is published at {} (it was {} before).",
-            retired.tip, retired.original
+            "The rebase did not publish: its branch names {}, and HEAD, the index and the worktree are as they were \
+             before it; only its retained copy was left to build.",
+            retired.original
         )?;
     }
     writeln!(
@@ -382,9 +402,6 @@ fn report_retired(retired: &super::Retired, out: &mut dyn Write) -> Result<()> {
         retired.journal_bytes,
         shell_quote(&retired.journal)
     )?;
-    for lock in &retired.released {
-        writeln!(out, "Removed Brit's own lock {lock:?}, held by the part-way checkout.")?;
-    }
     if let Some((path, bytes)) = &retired.copies {
         writeln!(
             out,
@@ -399,6 +416,103 @@ fn report_retired(retired: &super::Retired, out: &mut dyn Write) -> Result<()> {
         )?;
     }
     Ok(())
+}
+
+/// `--status` for a journal that does not open as this repository's own: say what
+/// failed, that no Brit command will touch it, and what a person can do by hand.
+#[cfg(target_os = "linux")]
+fn report_unopenable(repo: &gix::Repository, error: &anyhow::Error, out: &mut dyn Write) -> Result<()> {
+    let directory = repo.git_dir().join("brit-rebase");
+    writeln!(
+        out,
+        "A rebase journal exists at {directory:?}, but it does not open as this repository's own: {error:#}."
+    )?;
+    writeln!(
+        out,
+        "No brit command will change, rename or remove it, or anything it names, while that is so; every Brit \
+         mutation refuses until it is resolved by hand."
+    )?;
+    writeln!(
+        out,
+        "If this repository was copied or moved while a rebase was in progress, the journal may describe ANOTHER \
+         repository's live rebase, at the location it records: finish or abort that rebase there, not here. HEAD, the \
+         index and the worktree of this copy may be part-way through it, and the journal's payload-* files hold the \
+         uncommitted work it preserved."
+    )?;
+    writeln!(
+        out,
+        "If it is this repository's own journal and only its permissions changed (Brit writes the directory mode \
+         0700 and its files mode 0600, owned by the repository's owner), restoring them lets --status, --abort and \
+         --continue use it again."
+    )?;
+    writeln!(
+        out,
+        "To set it aside by hand, once no Brit or Git command runs in this repository: move {} out of the way, for \
+         example to {}.",
+        shell_quote(&directory),
+        shell_quote(&repo.git_dir().join("brit-rebase-kept-manual"))
+    )?;
+    let mut references = Vec::new();
+    for reference in repo.references()?.prefixed("refs/brit-rebase-retain/")? {
+        let reference = reference.map_err(|error| anyhow::anyhow!("{error}"))?;
+        references.push(reference.name().as_bstr().to_string());
+    }
+    for name in references {
+        writeln!(
+            out,
+            "Retention ref {name} keeps that rebase's commits from garbage collection; remove it, once the journal \
+             is set aside, with: git update-ref -d {name}"
+        )?;
+    }
+    for lock in git_locks(repo)? {
+        writeln!(
+            out,
+            "Git lock {lock:?} exists; a rebase stopped part-way can leave it. Remove it by hand only once you are \
+             sure no process in this repository holds it."
+        )?;
+    }
+    let copies = repo.git_dir().join("brit-rebase-retained");
+    if copies.try_exists()? {
+        writeln!(
+            out,
+            "Retained copies under {copies:?} are independent of the journal; brit-rebase-retained inspects them."
+        )?;
+    }
+    Ok(())
+}
+
+/// The ordinary Git lock files a stopped rebase transition can leave: `*.lock`
+/// directly in the Git directory, and under `logs/`, `refs/` and beside
+/// `packed-refs` in the common directory. Symbolic links are not followed.
+#[cfg(target_os = "linux")]
+fn git_locks(repo: &gix::Repository) -> Result<Vec<PathBuf>> {
+    let mut locks = Vec::new();
+    let mut pending = vec![
+        (repo.git_dir().to_owned(), false),
+        (repo.git_dir().join("logs"), true),
+        (repo.common_dir().join("logs"), true),
+        (repo.common_dir().join("refs"), true),
+        (repo.common_dir().to_owned(), false),
+    ];
+    while let Some((directory, recurse)) = pending.pop() {
+        let entries = match std::fs::read_dir(&directory) {
+            Ok(entries) => entries,
+            Err(error) if error.kind() == std::io::ErrorKind::NotFound => continue,
+            Err(error) => return Err(error.into()),
+        };
+        for entry in entries {
+            let entry = entry?;
+            let kind = entry.file_type()?;
+            if kind.is_dir() && recurse {
+                pending.push((entry.path(), true));
+            } else if kind.is_file() && entry.file_name().as_encoded_bytes().ends_with(b".lock") {
+                locks.push(entry.path());
+            }
+        }
+    }
+    locks.sort();
+    locks.dedup();
+    Ok(locks)
 }
 
 #[cfg(target_os = "linux")]

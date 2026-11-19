@@ -23,13 +23,13 @@ pub struct Platform {
     skip: bool,
     #[arg(long)]
     abort: bool,
-    /// Return to service a repository whose rebase no other action can finish or
-    /// undo, deleting nothing and changing nothing live: a completed or aborted
-    /// rebase whose cleanup is pending, a skip or abort stopped while retaining, a
-    /// rebase the scratch limit leaves no room to abort, or a journal recorded for
-    /// another location of this repository. Keeps the journal as
-    /// `brit-rebase-kept-<nonce>`, its retention refs and retained copies, and prints
-    /// how to remove each.
+    /// Set aside a rebase whose only remaining work is its retained copy: a
+    /// completed or aborted rebase whose cleanup is pending, or an abort retaining
+    /// before it changed anything live. Deletes nothing and changes nothing live:
+    /// keeps the journal as `brit-rebase-kept-<nonce>`, its retention refs and
+    /// retained copies, and prints how to remove each. Every other rebase refuses,
+    /// naming --abort or --continue; a journal that does not open as this
+    /// repository's own is never touched (see --status).
     #[arg(long)]
     retire: bool,
     #[arg(long)]
