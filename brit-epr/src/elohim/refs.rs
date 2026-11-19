@@ -277,25 +277,57 @@ impl<'a> Scratch<'a> {
         }
         Ok(scratch)
     }
-}
 
-impl Drop for Scratch<'_> {
-    fn drop(&mut self) {
-        // It may not exist (no head, and `notes add` failed); either way it is gone after this.
-        // A delete takes `packed-refs.lock`, which concurrent writers' deletes hold too, so one
-        // that loses past git's own lock timeout is retried while the ref is still there.
+    /// Delete the scratch ref, `Ok` once git confirms it is gone.
+    ///
+    /// It may not exist (no head, and `notes add` failed). A delete takes `packed-refs.lock`,
+    /// which concurrent writers' deletes hold too, so one that loses past git's own lock timeout
+    /// is retried while the ref is still there. Only `show-ref`'s own "no such ref" answer
+    /// (exit 1) means absent: a probe git refuses (exit 128, as in a repository of dubious
+    /// ownership) is an error carrying git's message, never taken for absence.
+    fn remove(&self) -> Result<(), String> {
         let git = |args: &[&str]| {
             Command::new("git")
                 .args(args)
                 .current_dir(&self.refs.repo_path)
                 .output()
-                .is_ok_and(|o| o.status.success())
+                .map_err(|e| format!("git {}: {e}", args.join(" ")))
         };
+        let mut last_delete_failure = String::new();
         for attempt in 1..=SCRATCH_DELETE_ATTEMPTS {
-            if git(&["update-ref", "-d", &self.name]) || !git(&["show-ref", "--verify", "--quiet", &self.name]) {
-                return;
+            let delete = git(&["update-ref", "-d", &self.name])?;
+            if delete.status.success() {
+                return Ok(());
+            }
+            last_delete_failure = String::from_utf8_lossy(&delete.stderr).trim().to_string();
+            let probe = git(&["show-ref", "--verify", "--quiet", &self.name])?;
+            match probe.status.code() {
+                Some(1) => return Ok(()),
+                Some(0) => {}
+                _ => {
+                    return Err(format!(
+                        "scratch ref {} was not removed: delete failed ({last_delete_failure}) and git refused to say \
+                         whether it remains: {}",
+                        self.name,
+                        String::from_utf8_lossy(&probe.stderr).trim()
+                    ))
+                }
             }
             std::thread::sleep(std::time::Duration::from_millis(25 * u64::from(attempt)));
+        }
+        Err(format!(
+            "scratch ref {} is still present after {SCRATCH_DELETE_ATTEMPTS} deletes: {last_delete_failure}",
+            self.name
+        ))
+    }
+}
+
+impl Drop for Scratch<'_> {
+    fn drop(&mut self) {
+        // Drop cannot fail the write; a ref that could not be removed is said, not hidden.
+        // `sweep_scratch` removes it once it is stale.
+        if let Err(reason) = self.remove() {
+            eprintln!("warning: {reason}; it is swept once older than {SCRATCH_TTL_SECS} s");
         }
     }
 }
@@ -870,14 +902,23 @@ impl BritRefManager {
             .replace("%2E%2E", "..")
     }
 
+    /// The object id `rev` names. [`RefError::RevNotFound`] only when git answers that the
+    /// revision is unknown (`rev-parse --verify --quiet` exits 1 and prints nothing); any other
+    /// failure, such as a repository git refuses for dubious ownership, is git's own error.
     fn resolve_rev(&self, rev: &str) -> Result<String, RefError> {
         let output = Command::new("git")
-            .args(["rev-parse", rev])
+            .args(["rev-parse", "--verify", "--quiet", "--end-of-options", rev])
             .current_dir(&self.repo_path)
             .output()
             .map_err(RefError::GitCommand)?;
         if !output.status.success() {
-            return Err(RefError::RevNotFound(rev.to_string()));
+            if output.status.code() == Some(1) {
+                return Err(RefError::RevNotFound(rev.to_string()));
+            }
+            return Err(RefError::GitFailed(format!(
+                "rev-parse {rev}: {}",
+                String::from_utf8_lossy(&output.stderr).trim()
+            )));
         }
         Ok(String::from_utf8_lossy(&output.stdout).trim().to_string())
     }
@@ -1135,20 +1176,41 @@ impl BritRefManager {
     /// Delete scratch refs that a writer created more than [`SCRATCH_TTL_SECS`] ago and never
     /// removed (it died mid-write). A ref here that is not named `<pid>-<unix secs>-<hex>` is not
     /// brit's and is left alone; a delete that loses to another sweeper is no loss.
+    ///
+    /// A stale ref that stays because its delete failed does not stop this write (the next
+    /// writer sweeps again); it is reported on stderr with git's reason.
     fn sweep_scratch(&self) -> Result<(), RefError> {
+        for failure in self.sweep_stale_scratch()? {
+            eprintln!("warning: {failure}");
+        }
+        Ok(())
+    }
+
+    /// Delete every stale scratch ref; one message per stale ref that is still there afterwards.
+    /// A failure to run git at all, or to list or probe the refs, is an error.
+    fn sweep_stale_scratch(&self) -> Result<Vec<String>, RefError> {
         let now = unix_now();
+        let mut failures = Vec::new();
         for (name, oid) in self.for_each_ref(SCRATCH_PREFIX)? {
             let Some(created) = name.strip_prefix(SCRATCH_PREFIX).and_then(scratch_created) else {
                 continue;
             };
             if now.saturating_sub(created) > SCRATCH_TTL_SECS {
-                let _ = Command::new("git")
+                let output = Command::new("git")
                     .args(["update-ref", "-d", &name, &oid])
                     .current_dir(&self.repo_path)
-                    .output();
+                    .output()
+                    .map_err(RefError::GitCommand)?;
+                // Lost to another sweeper (gone, or moved on) is no loss; still there is.
+                if !output.status.success() && self.ref_oid(&name)?.as_deref() == Some(oid.as_str()) {
+                    failures.push(format!(
+                        "stale scratch ref {name} could not be deleted: {}",
+                        String::from_utf8_lossy(&output.stderr).trim()
+                    ));
+                }
             }
         }
-        Ok(())
+        Ok(failures)
     }
 
     /// Run git with `env` set; an error naming its stderr when it fails.
@@ -1391,5 +1453,105 @@ mod tests {
             }
         }
         assert!(seen.len() > 270_000, "the sweep covered {} labels", seen.len());
+    }
+
+    fn git(dir: &std::path::Path, args: &[&str]) -> String {
+        let out = std::process::Command::new("git")
+            .args(["-c", "user.email=test@test.com", "-c", "user.name=test"])
+            .args(args)
+            .current_dir(dir)
+            .output()
+            .expect("git runs");
+        assert!(
+            out.status.success(),
+            "git {args:?}: {}",
+            String::from_utf8_lossy(&out.stderr)
+        );
+        String::from_utf8_lossy(&out.stdout).trim().to_string()
+    }
+
+    fn repo() -> tempfile::TempDir {
+        let tmp = tempfile::TempDir::new().expect("tempdir");
+        git(tmp.path(), &["init", "--initial-branch=main"]);
+        git(tmp.path(), &["commit", "--allow-empty", "-m", "init"]);
+        tmp
+    }
+
+    fn exists(dir: &std::path::Path, name: &str) -> bool {
+        !git(dir, &["for-each-ref", "--format=%(refname)", name]).is_empty()
+    }
+
+    #[test]
+    fn scratch_removal_reports_a_refused_probe_instead_of_calling_it_gone() {
+        let tmp = repo();
+        let refs = BritRefManager::new(tmp.path()).expect("repository");
+        let head = git(tmp.path(), &["rev-parse", "HEAD"]);
+
+        let absent = super::Scratch {
+            refs: &refs,
+            name: format!("{}1-1-0a", super::SCRATCH_PREFIX),
+        };
+        assert_eq!(absent.remove(), Ok(()), "a scratch ref that never existed is gone");
+        std::mem::forget(absent);
+
+        let present = super::Scratch {
+            refs: &refs,
+            name: format!("{}1-1-0b", super::SCRATCH_PREFIX),
+        };
+        git(tmp.path(), &["update-ref", &present.name, &head]);
+        assert_eq!(present.remove(), Ok(()));
+        assert!(!exists(tmp.path(), &present.name), "a present scratch ref is deleted");
+        std::mem::forget(present);
+
+        let kept = super::Scratch {
+            refs: &refs,
+            name: format!("{}1-1-0c", super::SCRATCH_PREFIX),
+        };
+        git(tmp.path(), &["update-ref", &kept.name, &head]);
+        git(tmp.path(), &["config", "core.repositoryformatversion", "99"]);
+        let reason = kept.remove().expect_err("git refused both the delete and the probe");
+        assert!(
+            reason.contains(&kept.name) && reason.contains("repo version"),
+            "the report names the ref and git's refusal: {reason}"
+        );
+        std::mem::forget(kept);
+        // Git refuses the repository itself now, so restore its format through the file.
+        git(
+            tmp.path(),
+            &["config", "--file", ".git/config", "core.repositoryformatversion", "0"],
+        );
+        assert!(
+            exists(tmp.path(), &format!("{}1-1-0c", super::SCRATCH_PREFIX)),
+            "the refused scratch ref really is still there; calling it gone would leak it silently"
+        );
+    }
+
+    #[test]
+    fn a_stale_scratch_ref_that_cannot_be_deleted_is_reported() {
+        let tmp = repo();
+        let refs = BritRefManager::new(tmp.path()).expect("repository");
+        let head = git(tmp.path(), &["rev-parse", "HEAD"]);
+        let stale = format!("{}424242-{}-0123abcd", super::SCRATCH_PREFIX, super::unix_now() - 7200);
+        git(tmp.path(), &["update-ref", &stale, &head]);
+        // A held packed-refs lock makes the delete fail while the ref stays.
+        git(tmp.path(), &["config", "core.packedRefsTimeout", "0"]);
+        let lock = tmp.path().join(".git/packed-refs.lock");
+        std::fs::write(&lock, "").expect("lock file");
+
+        let failures = refs.sweep_stale_scratch().expect("git runs");
+        assert_eq!(failures.len(), 1, "the failed delete is reported: {failures:?}");
+        assert!(
+            failures[0].contains(&stale) && failures[0].contains("packed-refs.lock"),
+            "the report names the ref and git's reason: {}",
+            failures[0]
+        );
+        assert!(exists(tmp.path(), &stale));
+
+        std::fs::remove_file(&lock).expect("unlock");
+        assert_eq!(refs.sweep_stale_scratch().expect("git runs"), Vec::<String>::new());
+        assert!(
+            !exists(tmp.path(), &stale),
+            "once the lock is released the sweep deletes it"
+        );
     }
 }

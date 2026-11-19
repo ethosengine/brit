@@ -444,6 +444,32 @@ fn a_notes_ref_git_cannot_read_is_an_error_not_an_absence() {
 }
 
 #[test]
+fn an_unknown_revision_is_rev_not_found() {
+    let tmp = init_git_repo();
+    let mgr = BritRefManager::new(tmp.path()).unwrap();
+    match mgr.get_build_ref("s", "no-such-revision") {
+        Err(RefError::RevNotFound(rev)) => assert_eq!(rev, "no-such-revision"),
+        other => panic!("an unknown revision is RevNotFound, got {other:?}"),
+    }
+}
+
+#[test]
+fn a_repository_git_refuses_reports_git_not_a_missing_revision() {
+    let tmp = init_git_repo();
+    let mgr = BritRefManager::new(tmp.path()).unwrap();
+    // Git refuses every command in a repository from the future, as it refuses one of dubious
+    // ownership: a stand-in for the foreign-owned checkout that needs no root to stage.
+    git(tmp.path(), &["config", "core.repositoryformatversion", "99"]);
+    match mgr.get_build_ref("s", "HEAD") {
+        Err(RefError::GitFailed(reason)) => assert!(
+            reason.contains("repo version") && reason.contains("99"),
+            "git's own refusal is reported: {reason}"
+        ),
+        other => panic!("a refused repository is git's failure, not a missing revision: {other:?}"),
+    }
+}
+
+#[test]
 fn a_blob_ref_to_a_missing_object_is_an_error_not_an_absence() {
     let tmp = init_git_repo();
     let mgr = BritRefManager::new(tmp.path()).unwrap();
