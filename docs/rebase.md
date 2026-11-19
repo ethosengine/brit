@@ -114,21 +114,37 @@ already published commit: explicit continuation acknowledges that uncertainty
 without rerunning the hook. Known-not-started post-authoring notifications remain
 queued durably and run once. Status distinguishes these cases from a clean stop.
 
-Every journal and retained copy lives under a 1 GiB scratch limit, and the limit
-decides only whether work starts or continues. A rebase is admitted only when its
-journal and the retained copy an abort or cleanup writes fit with a 5/4 safety
-factor: a cheap estimate refuses far-too-large repositories before any object is
-read, and the exact records are checked once preparation finishes (a refusal
-there cancels the preparation, so nothing is left behind). Admission allows for
-one stop and a resolution as large as the largest replayed step. Every later
-forward step (`--continue`, `--stage`, `--skip`, an edit) is reserved for before
-it writes anything; a refused step names `--abort`.
+The rebase journal lives under a 1 GiB scratch limit, and the limit decides only
+whether work starts or continues. A rebase is admitted only when its journal fits
+with a 5/4 safety factor: a cheap estimate refuses far-too-large repositories
+before any object is read, and the exact records are checked once preparation
+finishes (a refusal there cancels the preparation, so nothing is left behind).
+Admission allows for one stop and a resolution as large as the largest replayed
+step. Every later forward step (`--continue`, `--stage`, `--skip`, an edit) is
+reserved for before it writes anything; a refused step names `--abort`. A
+`--skip` writes a retained copy under the limit too, and reserves for it the
+same way. Each refusal says whether the journal or a retained copy refused it.
 
 `--abort` and cleanup are never refused by the limit, in any phase: the abort's
 own decisions, its records and the retained copy it writes, and the cleanup of a
 completed or aborted rebase are unmetered. Only real disk space bounds them. A
 write that fails on a full disk removes its own partial file, and the command
 says so; free space and run the same command again.
+
+Because an abort and a cleanup are never refused, the retained copy they write is
+not projected or reserved for, and it can exceed the scratch limit. It holds every
+object of the rebase's history, the whole journal (which the limit bounds), the
+original and observed index files, and, for each path the rebase touches, its
+before-image, its worktree file and up to three staged versions, plus a manifest:
+it can exceed the limit by at most that much. Measured on the 64 MiB fixtures of
+`tests/cli-journey/tests/memory_replay.rs`, it reached 0.67 to 0.81 GB, and 0.94 GB
+with a conflict stop and a staged resolution, while the journal stayed under
+0.34 GB. This is the consequence of never refusing an abort. Brit still refuses,
+before anything changes, a rebase whose retained copy would certainly not fit:
+one whose history's objects alone exceed the limit (at the start), or whose copy
+already exceeds it (once preparation finishes, and before each forward step).
+Those fixtures, which completed under the limit before the recovery rules were
+added, complete again.
 
 A Brit command killed at any point (a `SIGKILL`, which cannot tear a record
 Brit writes; a crash or power loss before a record's fsync can, see
@@ -142,10 +158,11 @@ retained-copy manifest cut short) is discarded or written again by the next
 command; `--status` says so. A preparation killed before it recorded anything has
 nothing to continue: `--abort` removes it.
 
-Brit's rebase is not available on repositories of roughly 180,000 objects or
-more, or whose history decompresses to about 0.9 GB, yet: every state image lists
-the whole object closure and the retained copy holds it, so such a rebase is
-refused in about a second, before anything is written. Use `git rebase` there.
+Brit's rebase is not available on repositories whose history decompresses to
+more than 1 GiB, or of roughly 390,000 objects or more (fewer when many commits
+are replayed), yet: the retained copy holds the whole history, and every journal
+state image lists the whole object closure, so such a rebase is refused in about
+a second, before anything is written. Use `git rebase` there.
 
 `brit rebase --retire` sets aside a rebase whose only remaining work is its
 retained copy, which can take long on a large repository or wait for disk space:
@@ -204,9 +221,17 @@ A torn `index.pre-rebase` and a torn `proposal-N.json` are cleared by `--abort`.
 Not produced by anyone: a torn `directory-*.json` or `payload-license-*.json`, or a
 leftover `*.new` of the authoring child.
 
-Not established: that every caller of the journal's `save` writes nothing between
-"pending synced" and "renamed". The write-order table in
-`gitoxide-core/src/repository/replay/journal.rs` asserts it.
+Established by reading: nothing is written between "pending synced" and
+"renamed" (the write-order table in `gitoxide-core/src/repository/replay/journal.rs`).
+The window lies entirely inside the journal's `save` and `save_bytes`;
+`publish_state`, which performs the rename, has exactly those two callers. Between
+the sync and the rename the only code is the `replay-state-file-synced`
+checkpoint, which exists in every build: there it only checks for an interrupt
+and may return an error, and writes nothing (a fault-injection build also writes
+a marker file outside the repository). `state.pending` is renamed onto
+`state.json` in three other places, `recover_preparation`, `cancel_preparation`
+and the legacy-payload upgrade's roll-forward, each of which only reads or syncs
+between finding the record and renaming it.
 
 ## Inspect and extract a retained copy
 

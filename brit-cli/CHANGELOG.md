@@ -305,20 +305,39 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.0.0/); ver
   `--abort`.
 - `brit rebase` refuses a gitlink whose submodule directory is absent by name, before any
   state, instead of failing after creating its journal. Gitlinks remain unsupported.
-- `brit rebase` no longer starts or continues work its 1 GiB scratch limit could not hold,
-  and the limit never refuses undoing. An estimate from object headers refuses far-too-large
-  repositories in about a second, saying brit rebase is not yet available at that size
-  (roughly 180,000 objects, or a closure near 0.9 GB) and that `git rebase` is the fallback;
-  once preparation knows its exact records, a rebase whose journal or retained copy could
-  exceed the limit with a 5/4 safety factor, allowing for one stop and its resolution, is
-  refused and its preparation cancelled; every later forward step (`--continue`, `--stage`,
-  `--skip`, an edit) is reserved for before it writes anything, and a refusal names
-  `--abort`. `--abort` and the cleanup of a completed or aborted rebase are never refused by
-  the limit, in any phase, so an admitted rebase can always be undone or finished; only the
-  disk bounds them, and a write that fails on a full disk removes its partial file so the
-  same command resumes. Opening a journal never applies the limit, so `--status` always
-  answers. (Earlier changes in this release admitted rebases that then stranded, and later
-  refused `--abort` itself at a large conflict resolution.)
+- `brit rebase` no longer starts or continues work whose journal its 1 GiB scratch limit
+  could not hold, and the limit never refuses undoing. An estimate from object headers refuses
+  far-too-large repositories in about a second, saying brit rebase is not yet available at
+  that size (a history over 1 GiB decompressed, or roughly 390,000 objects for a one-commit
+  replay) and that `git rebase` is the fallback; once preparation knows its exact records, a
+  rebase whose journal could exceed the limit with a 5/4 safety factor, allowing for one stop
+  and its resolution, is refused and its preparation cancelled; every later forward step
+  (`--continue`, `--stage`, `--skip`, an edit) is reserved for before it writes anything, and a
+  refusal names `--abort`; a `--skip` reserves for the retained copy it writes the same way.
+  Each refusal says whether the journal or a retained copy refused it. `--abort` and the
+  cleanup of a completed or aborted rebase are never refused by the limit, in any phase, so an
+  admitted rebase can always be undone or finished; only the disk bounds them, and a write that
+  fails on a full disk removes its partial file so the same command resumes. Opening a journal
+  never applies the limit, so `--status` always answers. (Earlier changes in this release
+  admitted rebases that then stranded, later refused `--abort` itself at a large conflict
+  resolution, and then refused rebases that completed under the limit before, such as the
+  64 MiB fixtures of `tests/cli-journey/tests/memory_replay.rs`, by reserving for a projected
+  retained copy; those complete again.)
+- **Behaviour change:** the retained copy an abort or a cleanup writes is not metered, so it
+  is no longer projected or reserved for, and it can exceed the scratch limit: it holds every
+  object of the rebase's history, the whole journal (which the limit bounds), the original and
+  observed index files, and each touched path's before-image, worktree file and up to three
+  staged versions, plus a manifest, and can exceed the limit by at most that much. This is the
+  consequence of never refusing an abort. Measured on the 64 MiB memory fixtures it reached
+  0.67 to 0.81 GB (0.94 GB with a conflict stop and a staged resolution) while the journal
+  stayed under 0.34 GB. Only a copy that certainly cannot fit is refused, before anything
+  changes: a history whose objects alone exceed the limit, and a copy that already exceeds it
+  at admission or before a forward step.
+- `brit rebase --continue` at an edit stop no longer reserves for a state record many times
+  larger than the one it writes: the edited file adopted from the authoring session was
+  counted at its inline encoding (about twelve times its size, three times over) instead of as
+  the payload the record keeps. A 20 MiB edit with `--expand-scope` was refused at
+  `--continue` asking for 797,656,311 bytes; it now asks for 42,686,414 and completes.
 - `brit rebase --retire` sets aside a completed or aborted rebase whose retained copy is all
   that remains (or an abort, or a skip, retaining before the rebase changed anything live),
   deleting nothing and changing nothing live: it keeps the journal as
@@ -353,8 +372,11 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.0.0/); ver
   `--retire` refuse, with no cure named by `--status` (at an ordinary conflict stop the same
   undo lets `--abort` work). A torn `index.pre-rebase` and a torn `proposal-N.json` are
   cleared by `--abort`. Not produced by anyone: torn `directory-*.json` or
-  `payload-license-*.json`, a leftover `*.new` of the authoring child. Not established: that
-  every caller of the journal's `save` writes nothing between "pending synced" and "renamed".
+  `payload-license-*.json`, a leftover `*.new` of the authoring child. Established by reading:
+  nothing is written between "pending synced" and "renamed" (the window lies inside `save`
+  and `save_bytes`, the only callers of `publish_state`; the checkpoint between the sync and
+  the rename only checks for an interrupt; the three other renames of `state.pending` only
+  read or sync before renaming).
   See [docs/rebase.md](../docs/rebase.md#states-this-version-can-still-strand).
 - `brit switch --status` is never refused by the scratch limit, and `switch --abort`,
   `pull --abort` and rolling a durable switch decision forward are not metered.
