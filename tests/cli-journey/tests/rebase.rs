@@ -3162,9 +3162,12 @@ mod recovery {
     }
 
     /// An abort's retained copy is not metered and may exceed the limit: under a
-    /// limit that admits the rebase's journal but is smaller than the copy the
-    /// abort writes at the conflict stop, `--abort` still restores everything,
+    /// limit at which the rebase reaches its conflict stop but which is smaller
+    /// than the copy the abort then writes, `--abort` still restores everything,
     /// the user's own edit included, and `--status` is truthful before and after.
+    /// The limit is the smallest that reaches the stop plus 64 KiB: the records
+    /// spell a random nonce in decimal, so their size varies a little from run
+    /// to run.
     #[test]
     fn public_abort_whose_retained_copy_exceeds_the_limit_restores_exactly() -> Result<()> {
         let parent = tempfile::tempdir()?;
@@ -3184,6 +3187,7 @@ mod recovery {
                 low = middle;
             }
         }
+        let high = high + 64 * 1024;
         let limit = high.to_string();
         let root = boundary_repo(parent.path(), true)?;
         let before = live(&root)?;
