@@ -628,6 +628,12 @@ mod tests {
     }
 
     /// The walk calls the check for every entry it visits, with either flag.
+    ///
+    /// Unix only: Git for Windows refuses to stage a path containing a backslash, so
+    /// this fixture cannot be built there. The function-level test
+    /// `backslash_tree_path_is_refused_only_where_candidates_are_normalised` covers
+    /// both flag values on every platform.
+    #[cfg(unix)]
     #[test]
     fn fingerprint_walk_refuses_a_backslash_path_only_where_candidates_are_normalised() {
         use std::io::Write as _;
