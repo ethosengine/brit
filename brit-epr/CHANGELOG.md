@@ -13,6 +13,14 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.0.0/); ver
   old nested spelling stay readable, a session already holding verified clauses there
   keeps being written there (older readers still see revocations), and a clause held
   under both spellings lists once. An empty session label is refused.
+- New `diagnostic` module (unconditional, engine-agnostic): `render`, `render_context` and
+  `report` print an error as `Error:` and its `Caused by:` chain with the deepest real message
+  last (gix error classes folded in as a `(Class)` suffix; a new `gix-error` dependency), a
+  backtrace only with `BRIT_BACKTRACE`; `emit` writes to stderr and never panics.
+- `refs` reports Git's own failures: `resolve_rev` returns `RevNotFound` only for Git's
+  "unknown revision" answer and `GitFailed` with Git's message otherwise (it runs
+  `rev-parse --end-of-options`, Git 2.30 or newer); a scratch ref Git refuses to probe or
+  delete is reported as a warning instead of leaking silently.
 
 ## 0.2.1 — prepared with Brit 0.1.15
 

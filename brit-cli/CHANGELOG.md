@@ -166,6 +166,39 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.0.0/); ver
   builds keep curl's timeouts.
 - An HTTP push body up to `http.postBuffer` bytes (64 MiB when unset) is sent whole with a
   `Content-Length`; a larger one is streamed in chunks.
+- **Behaviour change:** command-scope `safe.directory` (`-c safe.directory=<path>` and
+  `GIT_CONFIG_COUNT`/`GIT_CONFIG_KEY_<n>`/`GIT_CONFIG_VALUE_<n>`) now grants ownership trust, as
+  in Git, beside the system and global files. Repository configuration, an `includeIf` in the
+  command scope, and an environment `include.path` when includes are not permitted never grant
+  it.
+- **Behaviour change:** a repository opened at reduced trust (owned by someone else and not
+  declared with `safe.directory`) sizes its object store from the pack indexes present at open,
+  plus headroom for packs written while it is open, instead of a fixed 32 slots; a
+  multi-pack-index counts as one. Up to 512 index slots are allowed. A repository needing more
+  is refused with one named error and its two cures: ``object database index slots exhausted:
+  the repository needs at least <n> index slots and this process may use <m>; its owner can
+  consolidate its packs (`git repack -a -d`), or, if this checkout is trusted, declare it with
+  `safe.directory` (a global entry, `-c safe.directory=<path>` or GIT_CONFIG_COUNT)``. The same
+  error replaces the outer "rev-spec is malformed" wrapper when a store runs out of slots later
+  (a pack written while a repository at the ceiling is open). Fully trusted repositories are
+  unchanged.
+- **Behaviour change:** every brit binary (`brit`, `brit-rebase-retained`, `brit-build-ref`,
+  `brit-verify`) prints a failure as `Error: <message>`, then its causes under `Caused by:`
+  (numbered when there are several), with the deepest real message last: a gix error class
+  such as `NotFound` is folded into the line it classifies (`Reference "x" could not be found
+  (NotFound)`) instead of ending the output on its own. `RUST_BACKTRACE` and
+  `RUST_LIB_BACKTRACE` no longer make brit print a backtrace; `BRIT_BACKTRACE=1` does, before
+  the error, so the error stays the last line. Build command errors keep their one-line
+  `error: …` form.
+- Known differences from Git in the trust decision: an `includeIf` in a global or system file
+  is evaluated against the repository being opened (so do not keep `safe.directory` behind a
+  conditional include); `-c include.path=…` is not followed; `GIT_CONFIG_PARAMETERS` (how
+  `git -c` reaches Git's children, such as a hook that runs brit) is not read;
+  `safe.directory=<R>/*` also trusts `<R>` itself; with `GIT_DIR` and its own `GIT_WORK_TREE`
+  set, the ownership check is still made. See
+  [docs/plans/2026-11-15-bounded-memory-backlog.md](../docs/plans/2026-11-15-bounded-memory-backlog.md).
+- The covenant ref manager resolves revisions with `git rev-parse --end-of-options`, which
+  needs Git 2.30 or newer.
 
 ### Fixed
 
@@ -184,3 +217,10 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.0.0/); ver
   0 and prints `warning: the server's report was lost (<cause>). A fresh advertisement shows
   every ref this push named at its requested id; it cannot show whether this push applied them,
   whether server-side hooks ran, or what the server printed.`
+- A command that fails while its stderr reader has closed exits with its own code (for example
+  1 for `brit log no-such-rev`, 128 for `brit rev-parse --verify missing`) and is still recorded
+  by the optional feedback capture, instead of exiting 101 from a panicking report. The same
+  holds for `brit-rebase-retained`, `brit-build-ref` and `brit-verify`.
+- A reduced-trust repository with 33 or more pack indexes (one more per unconsolidated fetch)
+  opens for reading again; before, every read failed with `too few index slots` or `The rev-spec
+  is malformed and misses a ref name`.
