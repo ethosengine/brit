@@ -81,7 +81,7 @@ pub fn run(repo: &Path, format: &str) -> Result<()> {
                 }
             }
             let dot = Dot::with_config(&g, &[Config::EdgeNoLabel]);
-            println!("{dot:?}");
+            crate::output::print_line(&format!("{dot:?}"))?;
         }
         other => {
             return Err(CliError::Args(format!("unknown format: {other}")));
