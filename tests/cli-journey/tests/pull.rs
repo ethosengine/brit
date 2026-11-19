@@ -1140,6 +1140,8 @@ fn shallow_history_missing_objects_above_the_boundary_refuse() -> Result<()> {
             f.original.clone()
         };
         fs::write(f.local.path().join(".git/shallow"), format!("{boundary}\n"))?;
+        let tracking = git(f.local.path(), &["rev-parse", "refs/remotes/origin/main"])?;
+        let fetch_head = fs::read(f.local.path().join(".git/FETCH_HEAD"))?;
         let spec = if missing == "tree" {
             format!("{own}^{{tree}}")
         } else {
@@ -1163,6 +1165,22 @@ fn shallow_history_missing_objects_above_the_boundary_refuse() -> Result<()> {
             stderr(&out)
         );
         assert_eq!(f.local.head_id()?, own, "{missing}: HEAD unchanged");
+        // The connectivity proof refused after the target was pinned and before anything
+        // was published: tracking ref and FETCH_HEAD are untouched and the pull is pending.
+        assert_eq!(
+            git(f.local.path(), &["rev-parse", "refs/remotes/origin/main"])?,
+            tracking,
+            "{missing}: tracking ref unpublished"
+        );
+        assert_eq!(
+            fs::read(f.local.path().join(".git/FETCH_HEAD"))?,
+            fetch_head,
+            "{missing}: FETCH_HEAD unpublished"
+        );
+        ensure!(
+            f.local.path().join(".git/brit-switch").exists(),
+            "{missing}: corruption leaves the pinned pull pending for --abort"
+        );
     }
     Ok(())
 }
@@ -1180,6 +1198,118 @@ fn relocated_shallow_file_refuses() -> Result<()> {
     ensure!(!out.status.success(), "relocated shallow file must refuse");
     ensure!(stderr(&out).contains("relocated shallow file"), "{}", stderr(&out));
     assert_eq!(head(&local)?, before);
+    Ok(())
+}
+
+/// The proof must reach EVERY hidden boundary from HEAD. Here HEAD (c3) reaches c2 but is a
+/// real ancestor of the tip only through c4, which it cannot reach: the answer stays open and
+/// names c4, never "Not possible to fast-forward" for what is a real fast-forward.
+#[test]
+fn shallow_proof_needs_every_hidden_boundary() -> Result<()> {
+    let remote = TestRepo::new("pull-partial-remote")?;
+    remote.commit_file("one", "1\n")?;
+    let c2 = remote.commit_file("two", "2\n")?;
+    let c3 = remote.commit_file("three", "3\n")?;
+    let c4 = remote.commit_file("four", "4\n")?;
+    git(remote.path(), &["branch", "four", &c4])?;
+    remote.commit_file("five", "5\n")?;
+    git(remote.path(), &["switch", "-q", "-c", "side", &c2])?;
+    remote.commit_file("side", "s\n")?;
+    git(remote.path(), &["switch", "-q", "main"])?;
+    git(remote.path(), &["merge", "-q", "--no-ff", "-m", "merge side", "side"])?;
+    let local = TestRepo::new("pull-partial-local")?;
+    let url = remote.path().to_str().expect("fixture UTF-8");
+    git(local.path(), &["remote", "add", "origin", url])?;
+    git(local.path(), &["fetch", "-q", "origin", "four"])?;
+    git(local.path(), &["reset", "-q", "--hard", &c3])?;
+    fs::write(local.path().join(".git/shallow"), format!("{c2}\n{c4}\n"))?;
+    let out = pull(local.path(), true)?;
+    ensure!(!out.status.success(), "unprovable fast-forward must refuse");
+    let message = stderr(&out);
+    ensure!(
+        message.contains(&c4) && message.contains("--deepen") && !message.contains("Not possible to fast-forward"),
+        "the open question names c4: {message}"
+    );
+    assert_eq!(local.head_id()?, c3);
+    ensure!(!local.path().join(".git/brit-switch").exists());
+    Ok(())
+}
+
+fn keep_files(path: &Path) -> Result<Vec<std::path::PathBuf>> {
+    Ok(fs::read_dir(path.join(".git/objects/pack"))?
+        .map(|entry| Ok(entry?.path()))
+        .collect::<Result<Vec<_>>>()?
+        .into_iter()
+        .filter(|path| path.extension().is_some_and(|extension| extension == "keep"))
+        .collect())
+}
+
+/// A non-forced tracking update that is not a fast-forward changes nothing, so it leaves
+/// nothing pending: no journal and no pack protection, and the next pull behaves the same.
+#[test]
+fn non_fast_forward_tracking_refusal_leaves_nothing_pending() -> Result<()> {
+    let f = fixture()?;
+    git(
+        f.local.path(),
+        &["config", "remote.origin.fetch", "refs/heads/*:refs/remotes/origin/*"],
+    )?;
+    git(
+        f.remote.path(),
+        &["reset", "-q", "--hard", &format!("{}~1", f.original)],
+    )?;
+    f.remote.commit_file("selected", "rewritten\n")?;
+    let tracking = git(f.local.path(), &["rev-parse", "refs/remotes/origin/main"])?;
+    let fetch_head = fs::read(f.local.path().join(".git/FETCH_HEAD"))?;
+    for attempt in 0..2 {
+        let out = pull(f.local.path(), true)?;
+        ensure!(
+            !out.status.success(),
+            "attempt {attempt}: non-fast-forward tracking refuses"
+        );
+        let message = stderr(&out);
+        ensure!(
+            message.contains("non-fast-forward remote tracking update refused") && !message.contains("--continue"),
+            "attempt {attempt}: {message}"
+        );
+        ensure!(
+            !f.local.path().join(".git/brit-switch").exists(),
+            "attempt {attempt}: nothing pending"
+        );
+        ensure!(
+            keep_files(f.local.path())?.is_empty(),
+            "attempt {attempt}: no .keep left"
+        );
+        assert_eq!(
+            git(f.local.path(), &["rev-parse", "refs/remotes/origin/main"])?,
+            tracking
+        );
+        assert_eq!(fs::read(f.local.path().join(".git/FETCH_HEAD"))?, fetch_head);
+        assert_eq!(f.local.head_id()?, f.original);
+    }
+    Ok(())
+}
+
+/// A malformed shallow list refuses in preflight, before any state exists, every time.
+#[test]
+fn malformed_shallow_file_refuses_before_any_state() -> Result<()> {
+    let f = fixture()?;
+    fs::write(f.local.path().join(".git/shallow"), "not-an-object-id\n")?;
+    let fetch_head = fs::read(f.local.path().join(".git/FETCH_HEAD"))?;
+    for attempt in 0..2 {
+        let out = pull(f.local.path(), true)?;
+        ensure!(!out.status.success(), "attempt {attempt}: malformed shallow refuses");
+        ensure!(
+            !f.local.path().join(".git/brit-switch").exists(),
+            "attempt {attempt}: nothing pending: {}",
+            stderr(&out)
+        );
+        ensure!(
+            keep_files(f.local.path())?.is_empty(),
+            "attempt {attempt}: no pack received"
+        );
+        assert_eq!(fs::read(f.local.path().join(".git/FETCH_HEAD"))?, fetch_head);
+        assert_eq!(f.local.head_id()?, f.original);
+    }
     Ok(())
 }
 
