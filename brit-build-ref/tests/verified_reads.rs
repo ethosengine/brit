@@ -899,9 +899,10 @@ fn covenant_list_drops_a_clause_filed_under_another_session() {
 fn covenant_list_never_returns_a_clause_put_under_another_label() {
     let tmp = repo();
     let own = put_clause(tmp.path(), "victim", "mine");
-    for label in ["victim/x", "victim%2Fx", "victim/", "victim%"] {
-        put_clause(tmp.path(), label, "not victim's");
-    }
+    let others: Vec<(&str, Value)> = ["victim/x", "victim%2Fx", "victim/", "victim%"]
+        .into_iter()
+        .map(|label| (label, put_clause(tmp.path(), label, "not victim's")))
+        .collect();
     let colon = put_clause(tmp.path(), "a:b", "colon");
     let percent = put_clause(tmp.path(), "a%3Ab", "percent");
 
@@ -913,6 +914,9 @@ fn covenant_list_never_returns_a_clause_put_under_another_label() {
         rows.as_array().expect("list prints an array").clone()
     };
     assert_eq!(list("victim"), [own]);
+    for (label, row) in others {
+        assert_eq!(list(label), [row], "{label} lists only its own clause");
+    }
     assert_eq!(list("a:b"), [colon]);
     assert_eq!(list("a%3Ab"), [percent]);
     assert_eq!(
