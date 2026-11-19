@@ -13,6 +13,8 @@ pub(crate) fn validate_local_history(repo: &gix::Repository) -> Result<()> {
 /// [`validate_local_history`] for an operation whose history walks all stop at the shallow
 /// boundary and which refuses, naming the boundary commit, any decision that would need the
 /// history beneath it. A shallow boundary hides history without rewriting it.
+/// Only pull uses it, and pull exists only with the blocking client.
+#[cfg(feature = "blocking-client")]
 pub(crate) fn validate_local_history_above_shallow_boundary(repo: &gix::Repository) -> Result<()> {
     local_history(repo, true)
 }
