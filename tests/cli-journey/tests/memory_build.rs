@@ -78,13 +78,16 @@ fn fingerprint(size: usize, count: usize, expected: &str, reduced: bool) -> Resu
             &format!("120000,{},src/ignored-link", link.trim()),
         ],
     )?;
+    // A gitlink that `src/**` cannot reach stays out of the key, so the goldens
+    // below keep the blob-only contract. A gitlink a glob reaches is keyed by
+    // its pinned commit (brit-graph and brit-cli gitlink tests).
     git(
         root,
         &[
             "update-index",
             "--add",
             "--cacheinfo",
-            &format!("160000,{},src/ignored-submodule", repo.head_id()?),
+            &format!("160000,{},vendor/ignored-submodule", repo.head_id()?),
         ],
     )?;
     let manifest = root.join("build-manifest.json");
