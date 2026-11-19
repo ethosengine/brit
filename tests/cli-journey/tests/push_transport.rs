@@ -4,7 +4,11 @@
 //! Every shipped brit is built `max-pure` and speaks HTTP through reqwest, while a default
 //! build uses curl. Each journey therefore runs against both: the curl build is the usual
 //! `BRIT_BIN` (or the profile binary), the reqwest build is named by `BRIT_REQWEST_BIN`.
-//! CI must set `BRIT_REQWEST_BIN`; without it these journeys fail there rather than skip.
+//! The dedicated CI step sets `BRIT_REQWEST_BIN` and `BRIT_REQWEST_REQUIRED=1`; with the
+//! latter, a missing reqwest build fails the journeys instead of skipping its leg.
+//!
+//! Linux only, like the other journeys that run hooks and `git http-backend`.
+#![cfg(target_os = "linux")]
 use std::{
     fs,
     path::{Path, PathBuf},
@@ -44,8 +48,8 @@ fn presets(bin: &Path) -> String {
 fn reqwest_build() -> Option<Build> {
     let Some(path) = std::env::var_os("BRIT_REQWEST_BIN") else {
         assert!(
-            std::env::var_os("CI").is_none(),
-            "BRIT_REQWEST_BIN must name a max-pure brit in CI: the shipped HTTP backend is otherwise untested"
+            std::env::var_os("BRIT_REQWEST_REQUIRED").is_none(),
+            "BRIT_REQWEST_BIN must name a max-pure brit: the shipped HTTP backend is otherwise untested"
         );
         eprintln!("BRIT_REQWEST_BIN is unset: the reqwest journeys did NOT run");
         return None;
@@ -92,13 +96,22 @@ fn git(dir: &Path, args: &[&str]) -> Result<String> {
 }
 
 fn push(build: &Build, repo: &Path) -> Result<Capture> {
-    BritInvocation::new(&build.bin)
+    push_with(build, repo, &[])
+}
+
+fn push_with(build: &Build, repo: &Path, env: &[(&str, &str)]) -> Result<Capture> {
+    let mut invocation = BritInvocation::new(&build.bin)
         .args(["push", "origin", "main:main"])
         .current_dir(repo)
-        .deadline(DEADLINE)
-        .run()
-        .with_context(|| format!("{} push", build.http))
+        .deadline(DEADLINE);
+    for (key, value) in env {
+        invocation = invocation.env(key, value);
+    }
+    invocation.run().with_context(|| format!("{} push", build.http))
 }
+
+/// The test knob that replaces the 60 s request deadline of the reqwest backend.
+const SHORT_DEADLINE: (&str, &str) = ("BRIT_HTTP_REQUEST_DEADLINE_SECONDS", "3");
 
 /// A local repository whose `main` is published to a bare `r.git` below a project root.
 struct Published {
@@ -302,10 +315,10 @@ fn lost_report_after_delivery_says_the_push_arrived() -> Result<()> {
             out.stderr
         );
         ensure!(
-            out.stderr.contains("the server's report was lost")
+            out.stderr.matches("the server's report was lost").count() == 1
                 && out
                     .stderr
-                    .contains("a fresh handshake shows every update on the remote"),
+                    .contains("A fresh advertisement shows every ref this push named at its requested id"),
             "{}: the lost report is noted:\n{}\nserver: {:?}",
             build.http,
             out.stderr,
@@ -399,21 +412,69 @@ fn hook_input_old_id_is_the_remote_prior_id() -> Result<()> {
     Ok(())
 }
 
-/// The push upload has no deadline: a remote answering after 35 s still completes the push.
-/// This is the regression test for the production failure, so it runs by default on the
-/// reqwest build (the build that had a 30 s cap).
+/// The rule and its exception, in seconds: with the request deadline shortened to 3 s, a push
+/// whose response the remote holds for 5 s still completes, because the push upload has no
+/// deadline, while a handshake GET held for 5 s fails naming a timeout. This is the regression
+/// test for the production failure (a 30 s cap on every request), so it runs by default.
 #[test]
-fn response_held_past_thirty_seconds_completes() -> Result<()> {
+fn push_upload_has_no_deadline_while_handshakes_keep_theirs() -> Result<()> {
     let Some(build) = reqwest_build() else {
         return Ok(());
     };
     let published = Published::new("push-transport-held")?;
-    let server = HttpRemote::start(published.root.path(), Mode::HoldResponse(Duration::from_secs(35)))?;
+    let server = HttpRemote::start(published.root.path(), Mode::HoldResponse(Duration::from_secs(5)))?;
     published.origin(&server.url("r.git"))?;
     let new = published.repo.commit_file("payload", "second")?;
-    let out = push(&build, published.repo.path())?;
-    ensure!(out.status.success(), "{}\nserver: {:?}", out.stderr, server.log());
+    let out = push_with(&build, published.repo.path(), &[SHORT_DEADLINE])?;
+    ensure!(
+        out.status.success(),
+        "the held push response is past the deadline but the upload has none:\n{}\nserver: {:?}",
+        out.stderr,
+        server.log()
+    );
     assert_eq!(published.remote_main()?, new);
+
+    let published = Published::new("push-transport-held-get")?;
+    let server = HttpRemote::start(published.root.path(), Mode::HoldGet(Duration::from_secs(5)))?;
+    published.origin(&server.url("r.git"))?;
+    published.repo.commit_file("payload", "second")?;
+    let started = std::time::Instant::now();
+    let out = push_with(&build, published.repo.path(), &[SHORT_DEADLINE])?;
+    let took = started.elapsed();
+    ensure!(!out.status.success(), "the held handshake must fail");
+    ensure!(
+        out.stderr.to_lowercase().contains("timed out"),
+        "a timeout is named:\n{}",
+        out.stderr
+    );
+    ensure!(took < Duration::from_secs(5), "cut at the 3 s deadline, took {took:?}");
+    assert_eq!(published.remote_main()?, published.first);
+    Ok(())
+}
+
+/// `http.postBuffer` decides how a push body is sent: whole with a `Content-Length` up to it,
+/// streamed in chunks above it.
+#[test]
+fn post_buffer_switches_between_whole_and_streamed_bodies() -> Result<()> {
+    for build in builds() {
+        for (size, framing) in [(32 * 1024, "(content-length"), (128 * 1024, "(chunked)")] {
+            let what = format!("{} {size} bytes", build.http);
+            let published = Published::new(&format!("push-transport-postbuffer-{}", build.http))?;
+            git(published.repo.path(), &["config", "http.postBuffer", "65536"])?;
+            let server = HttpRemote::start(published.root.path(), Mode::Serve)?;
+            published.origin(&server.url("r.git"))?;
+            let new = published.commit_bytes(size)?;
+            let out = push(&build, published.repo.path())?;
+            ensure!(out.status.success(), "{what}: {}", out.stderr);
+            assert_eq!(published.remote_main()?, new, "{what}");
+            let log = server.log();
+            ensure!(
+                log.iter()
+                    .any(|line| line.starts_with("POST /r.git/git-receive-pack") && line.contains(framing)),
+                "{what}: the body was sent {framing}: {log:?}"
+            );
+        }
+    }
     Ok(())
 }
 

@@ -470,7 +470,8 @@ jobs:
           cargo build --locked -p brit-cli --bin brit --no-default-features --features brit-cli/max-pure
           install -D -m 0755 "$debug_dir/brit" "$RUNNER_TEMP/brit-max-pure/brit"
           cargo build --locked -p brit-cli --bin brit
-          BRIT_BIN="$debug_dir/brit" BRIT_REQWEST_BIN="$RUNNER_TEMP/brit-max-pure/brit" cargo test --locked -p cli-journey --test push_transport
+          BRIT_BIN="$debug_dir/brit" BRIT_REQWEST_BIN="$RUNNER_TEMP/brit-max-pure/brit" BRIT_REQWEST_REQUIRED=1 \
+            cargo test --locked -p cli-journey --test push_transport
       - name: Check allocation-boundary output and state parity
         run: |
           set -euo pipefail

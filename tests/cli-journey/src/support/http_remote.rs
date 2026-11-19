@@ -295,7 +295,18 @@ fn serve_connection(shared: &Shared, stream: &TcpStream) -> io::Result<()> {
             return Ok(());
         };
         served += 1;
-        shared.note(format!("{} {}", request.method, request.target));
+        let framing = if request
+            .header("Transfer-Encoding")
+            .is_some_and(|value| value.eq_ignore_ascii_case("chunked"))
+        {
+            " (chunked)".to_owned()
+        } else {
+            request
+                .header("Content-Length")
+                .map(|length| format!(" (content-length {length})"))
+                .unwrap_or_default()
+        };
+        shared.note(format!("{} {}{framing}", request.method, request.target));
 
         if request.is_receive_pack_post() {
             match shared.mode {
