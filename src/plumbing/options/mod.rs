@@ -481,6 +481,11 @@ pub mod merge_base {
         pub first: String,
         /// Revspecs for the other commits to compute the merge-base with.
         pub others: Vec<String>,
+        /// Answer through the exit code alone, like Git: 0 when the first commit is an ancestor of the
+        /// one other commit (or the same), 1 when it is not, 128 for a revision that names no commit or
+        /// for more than two revisions. Brit's own answer without the flag lists every merge base.
+        #[clap(long)]
+        pub is_ancestor: bool,
     }
 }
 

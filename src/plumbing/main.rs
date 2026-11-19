@@ -420,11 +420,16 @@ pub fn run_with_command(args: Args, command: clap::Command) -> Result<()> {
                 )
             }),
         },
-        Subcommands::MergeBase(crate::plumbing::options::merge_base::Command { first, others }) => {
-            prepare_and_run("merge-base", verbose, None, move |_progress, out, _err| {
-                core::repository::merge_base(repository(Mode::Lenient)?, first, others, out, format)
-            })
-        }
+        Subcommands::MergeBase(crate::plumbing::options::merge_base::Command {
+            first,
+            others,
+            is_ancestor,
+        }) => prepare_and_run("merge-base", verbose, None, move |_progress, out, err| {
+            if is_ancestor {
+                return core::repository::merge_base_is_ancestor(repository(Mode::Lenient)?, &first, &others, err);
+            }
+            core::repository::merge_base(repository(Mode::Lenient)?, first, others, out, format)
+        }),
         Subcommands::Add { paths, update, all: _ } => {
             prepare_and_run("add", verbose, None, move |_progress, _out, _err| {
                 core::repository::index::stage_paths(repository(Mode::Strict)?, &paths, update)

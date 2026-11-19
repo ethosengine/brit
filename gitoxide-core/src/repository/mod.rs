@@ -48,6 +48,7 @@ pub mod index;
 pub mod log;
 pub mod mailmap;
 mod merge_base;
+pub use merge_base::is_ancestor as merge_base_is_ancestor;
 pub use merge_base::merge_base;
 pub mod merge;
 pub mod odb;
