@@ -285,6 +285,29 @@ fn listener_gone_after_the_advertisement_is_named() -> Result<()> {
     Ok(())
 }
 
+/// A report lost after the remote applied the push is said to be lost, not the push.
+#[test]
+fn lost_report_after_delivery_says_the_push_arrived() -> Result<()> {
+    for build in builds() {
+        let published = Published::new(&format!("push-transport-lost-{}", build.http))?;
+        let server = HttpRemote::start(published.root.path(), Mode::LoseReport)?;
+        published.origin(&server.url("r.git"))?;
+        let new = published.repo.commit_file("payload", "second")?;
+        let out = push(&build, published.repo.path())?;
+        ensure!(!out.status.success(), "{}: the report never arrived", build.http);
+        ensure!(
+            out.stderr.contains("the push was delivered, but its report was lost"),
+            "{}: delivery was verified:\n{}\nserver: {:?}",
+            build.http,
+            out.stderr,
+            server.log()
+        );
+        never_masked(&out.stderr)?;
+        assert_eq!(published.remote_main()?, new, "{}: the push arrived once", build.http);
+    }
+    Ok(())
+}
+
 /// The remote URLs each journey that applies to every transport runs against.
 fn remotes<'a>(published: &Published, server: &'a HttpRemote, builds: &'a [Build]) -> Vec<(String, &'a Build)> {
     let mut out = vec![(published.bare().display().to_string(), &builds[0])];

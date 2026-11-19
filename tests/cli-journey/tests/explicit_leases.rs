@@ -268,13 +268,24 @@ fn competing_writer_during_hook_is_rejected_by_transport() -> Result<()> {
             &[&lease(&old), "origin", "main:refs/heads/main"],
             false,
         )?;
-        ensure!(
-            stderr.contains("cannot lock ref")
-                || stderr.contains("incorrect old value provided")
-                || stderr.contains("failed to update ref")
-                || (stderr.contains("is at") && stderr.contains("expected")),
-            "race must fail at server CAS: {stderr}"
-        );
+        // Git leaves the race to receive-pack's compare-and-swap. Brit re-reads the
+        // advertisement on a fresh connection after the hook and refuses before sending.
+        if stock {
+            ensure!(
+                stderr.contains("cannot lock ref")
+                    || stderr.contains("incorrect old value provided")
+                    || stderr.contains("failed to update ref")
+                    || (stderr.contains("is at") && stderr.contains("expected")),
+                "race must fail at server CAS: {stderr}"
+            );
+        } else {
+            ensure!(
+                stderr.contains("remote moved while pre-push ran; nothing was sent")
+                    && stderr.contains(&old)
+                    && stderr.contains(&base),
+                "race must be refused before sending, naming both ids: {stderr}"
+            );
+        }
         assert_eq!(git(remote.path(), &["rev-parse", "main"])?, base);
         ensure!(fs::read_to_string(repo.path().join("hook-input"))?.contains(&old));
         assert_eq!(refs(remote.path())?, format!("refs/heads/main {base}"));

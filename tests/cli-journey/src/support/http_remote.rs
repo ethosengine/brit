@@ -12,6 +12,8 @@
 //!   its body (401 for expired credentials, 413 for a body too large).
 //! - [`Mode::GoneAfterGet`]: close the listener and the connection after the first GET.
 //! - [`Mode::HoldResponse`]: read the whole upload, then wait before answering.
+//! - [`Mode::LoseReport`]: apply a push, then close without answering, as a connection cut
+//!   after the server finished does.
 
 use std::{
     io::{self, BufRead, BufReader, Read, Write},
@@ -41,6 +43,8 @@ pub enum Mode {
     GoneAfterGet,
     /// Read a receive-pack POST completely, then wait this long before answering it.
     HoldResponse(Duration),
+    /// Apply each receive-pack POST, then close the connection without answering.
+    LoseReport,
 }
 
 /// A running fixture; dropping it stops the server.
@@ -224,6 +228,11 @@ fn serve_connection(shared: &Shared, stream: TcpStream) -> io::Result<()> {
             std::thread::sleep(hold);
         }
         let (status, headers, payload) = http_backend(&shared.root, &request, &body)?;
+        if matches!(shared.mode, Mode::LoseReport) && request.is_receive_pack_post() {
+            stream.shutdown(Shutdown::Both).ok();
+            shared.note(format!("applied the push ({status}) and closed without answering"));
+            return Ok(());
+        }
         write!(writer, "HTTP/1.1 {status}\r\n")?;
         for header in &headers {
             write!(writer, "{header}\r\n")?;
