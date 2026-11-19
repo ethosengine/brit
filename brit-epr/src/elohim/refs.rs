@@ -568,11 +568,11 @@ impl BritRefManager {
     /// created underneath this write is refused with [`RefError::Concurrent`]. Nothing is ever
     /// overwritten.
     ///
-    /// The session is one ref component ([`Self::session_segment`]): distinct sessions never
+    /// The session is one ref component (`session_segment`): distinct sessions never
     /// share a ref directory, and none nests under another. An empty session is refused.
     ///
     /// One spelling per session: a session whose old, unescaped directory
-    /// ([`Self::legacy_session_segment`]) already holds a record that verifies for exactly this
+    /// (`legacy_session_segment`) already holds a record that verifies for exactly this
     /// session keeps writing there, so a reader that knows only the old spelling (an older brit
     /// sharing these refs) sees every clause, a revocation included; otherwise the clause goes to
     /// the escaped spelling. Only such a verified same-session record makes the old directory the
