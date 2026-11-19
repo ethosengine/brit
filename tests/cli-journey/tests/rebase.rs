@@ -2219,6 +2219,45 @@ mod recovery {
         Ok(())
     }
 
+    /// Defence in depth beside the mutation guard: while any process holds the
+    /// lease of a prepared, never launched pre-rebase invocation, `--abort` will
+    /// not cancel it and changes nothing; once the lease is free it cancels.
+    #[test]
+    fn public_a_held_invocation_lease_blocks_cancelling_the_prepared_hook() -> Result<()> {
+        let repo = fixture(false)?;
+        let root = repo.path();
+        script(&root.join(".git/hooks/pre-rebase"), "exit 0")?;
+        kill_rebase_at(root, "replay-operation-invocation-prepared")?;
+        let lease = root.join(".git/brit-rebase/pre-rebase/lease");
+        ensure!(lease.is_file(), "the prepared invocation has its lease");
+        let journal = repository_bytes(&root.join(".git/brit-rebase"))?;
+        let mut holder = Command::new("flock")
+            .arg(&lease)
+            .args(["sh", "-c", "printf ready; cat"])
+            .stdin(Stdio::piped())
+            .stdout(Stdio::piped())
+            .spawn()?;
+        let mut ready = [0; 5];
+        std::io::Read::read_exact(&mut holder.stdout.take().expect("piped"), &mut ready)?;
+        let held = invoke(root, &["rebase", "--abort"])?;
+        drop(holder.stdin.take());
+        holder.wait()?;
+        ensure!(
+            !held.status.success() && held.stderr.contains("supervisor is live"),
+            "a held lease refuses cancellation: {}",
+            held.stderr
+        );
+        assert_eq!(repository_bytes(&root.join(".git/brit-rebase"))?, journal);
+        let cancelled = success(root, &["rebase", "--abort"])?;
+        ensure!(
+            cancelled.stdout.contains("preparation cancelled"),
+            "{}",
+            cancelled.stdout
+        );
+        assert!(!root.join(".git/brit-rebase").exists());
+        preserved(root)
+    }
+
     /// The cancellation of a `prepared` journal with hook artifacts rests on one
     /// claim: the hook is spawned only after its durable start records
     /// `invoking-pre`. Before that save (paused where the invocation is prepared)
