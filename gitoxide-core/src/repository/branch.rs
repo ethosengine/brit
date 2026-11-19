@@ -135,23 +135,38 @@ fn worktrees(repo: &gix::Repository) -> Result<Vec<Worktree>> {
         .collect()
 }
 
+/// Read an in-progress marker; only a missing marker means "not in progress", so an unreadable one fails closed.
+fn read_marker(worktree: &Worktree, file: &str) -> Result<Option<Vec<u8>>> {
+    match std::fs::read(worktree.git_dir.join(file)) {
+        Ok(bytes) => Ok(Some(bytes)),
+        Err(err) if err.kind() == std::io::ErrorKind::NotFound => Ok(None),
+        Err(err) => Err(err).or_raise(|| {
+            gix::error::message!(
+                "cannot tell whether the worktree at '{}' is rebasing or bisecting: '{file}' is unreadable",
+                worktree.path.display()
+            )
+        }),
+    }
+}
+
 /// Where a branch is in use: a worktree's `HEAD`, or the branch a worktree is rebasing or bisecting.
-fn worktree_using(worktrees: &[Worktree], name: &gix::refs::FullNameRef) -> Option<(Use, std::path::PathBuf)> {
-    worktrees.iter().find_map(|worktree| {
-        let in_progress = ["rebase-merge/head-name", "rebase-apply/head-name"]
-            .iter()
-            .filter_map(|file| std::fs::read(worktree.git_dir.join(file)).ok())
-            .any(|head_name| head_name.trim_ascii_end() == name.as_bstr().as_bytes())
-            || std::fs::read(worktree.git_dir.join("BISECT_START"))
-                .is_ok_and(|start| start.trim_ascii_end() == name.shorten().as_bytes());
-        if in_progress {
-            Some((Use::InProgress, worktree.path.clone()))
-        } else if worktree.head_name.as_ref().is_some_and(|head| head.as_ref() == name) {
-            Some((Use::CheckedOut, worktree.path.clone()))
-        } else {
-            None
+fn worktree_using(worktrees: &[Worktree], name: &gix::refs::FullNameRef) -> Result<Option<(Use, std::path::PathBuf)>> {
+    for worktree in worktrees {
+        let mut in_progress = false;
+        for file in ["rebase-merge/head-name", "rebase-apply/head-name"] {
+            in_progress |= read_marker(worktree, file)?
+                .is_some_and(|head_name| head_name.trim_ascii_end() == name.as_bstr().as_bytes());
         }
-    })
+        in_progress |= read_marker(worktree, "BISECT_START")?
+            .is_some_and(|start| start.trim_ascii_end() == name.shorten().as_bytes());
+        if in_progress {
+            return Ok(Some((Use::InProgress, worktree.path.clone())));
+        }
+        if worktree.head_name.as_ref().is_some_and(|head| head.as_ref() == name) {
+            return Ok(Some((Use::CheckedOut, worktree.path.clone())));
+        }
+    }
+    Ok(None)
 }
 
 /// The commit a branch tip must be contained in: its existing upstream, otherwise `HEAD`.
@@ -192,12 +207,16 @@ pub fn delete(
     let worktrees = worktrees(&repo)?;
     let mut edits = Vec::new();
     let mut reports = Vec::new();
+    let mut seen = std::collections::BTreeSet::new();
     for short in names {
         let name = local_branch_name(short.as_bytes().as_bstr())?;
+        if !seen.insert(name.clone()) {
+            continue;
+        }
         let Some(reference) = repo.try_find_reference(name.as_ref())? else {
             bail!(gix::error::not_found(format!("branch '{short}' not found")));
         };
-        if let Some((_, path)) = worktree_using(&worktrees, name.as_ref()) {
+        if let Some((_, path)) = worktree_using(&worktrees, name.as_ref())? {
             bail!(gix::error::validation(format!(
                 "cannot delete branch '{short}' used by worktree at '{}'",
                 path.display()
@@ -318,7 +337,8 @@ pub fn rename(repo: gix::Repository, old: &str, new: &str) -> Result<()> {
     let Some(reference) = repo.try_find_reference(old_name.as_ref())? else {
         bail!(gix::error::not_found(format!("no branch named '{old}'")));
     };
-    if repo.try_find_reference(new_name.as_ref())?.is_some() {
+    let renaming = old_name != new_name;
+    if renaming && repo.try_find_reference(new_name.as_ref())?.is_some() {
         bail!(gix::error::validation(format!("a branch named '{new}' already exists")));
     }
     let Target::Object(tip) = reference.target().into_owned() else {
@@ -327,21 +347,56 @@ pub fn rename(repo: gix::Repository, old: &str, new: &str) -> Result<()> {
         )));
     };
     let worktrees = worktrees(&repo)?;
-    if let Some((Use::InProgress, path)) = worktree_using(&worktrees, old_name.as_ref()) {
+    if let Some((Use::InProgress, path)) = worktree_using(&worktrees, old_name.as_ref())? {
         bail!(gix::error::validation(format!(
             "branch '{old}' is being rebased or bisected at '{}'",
             path.display()
         )));
     }
+    if renaming {
+        refuse_directory_conflicts(&repo, &old_name, &new_name)?;
+    }
     let message: BString = format!("Branch: renamed {} to {}", old_name.as_bstr(), new_name.as_bstr()).into();
     let log_path = |name: &gix::refs::FullName| -> Result<std::path::PathBuf> {
-        Ok(repo.common_dir().join("logs").join(gix::path::from_bstr(name.as_bstr())?))
+        Ok(repo
+            .common_dir()
+            .join("logs")
+            .join(gix::path::from_bstr(name.as_bstr())?))
     };
     let old_log = match std::fs::read(log_path(&old_name)?) {
         Ok(bytes) => Some(bytes),
         Err(err) if err.kind() == std::io::ErrorKind::NotFound => None,
         Err(err) => return Err(err).or_raise(|| gix::error::message!("Could not read the reflog of '{old}'")),
     };
+    let committer = repo
+        .committer()
+        .ok_or_raise(|| gix::error::validation("committer identity required for the rename reflog entry"))??
+        .to_owned()?;
+    // Like Git, keep the old history and record the rename as a no-op move of the tip.
+    let carried_log = |old_log: Vec<u8>| -> Result<()> {
+        let mut bytes = old_log;
+        gix::refs::log::Line {
+            previous_oid: tip,
+            new_oid: tip,
+            signature: committer.clone(),
+            message: message.clone(),
+        }
+        .write_to(&mut bytes)
+        .or_error()?;
+        let path = log_path(&new_name)?;
+        let mut lock =
+            gix::lock::File::acquire_to_update_resource(&path, gix::lock::acquire::Fail::Immediately, None, 0)
+                .or_raise(|| gix::error::message!("branch was renamed, but its reflog could not be locked"))?;
+        std::io::Write::write_all(&mut lock, &bytes).or_error()?;
+        lock.commit()
+            .map_err(|err| err.error)
+            .or_raise(|| gix::error::message!("branch was renamed, but its reflog could not be carried over"))?;
+        Ok(())
+    };
+    if !renaming {
+        // Git treats renaming a branch to itself as a no-op that still records the rename.
+        return old_log.map_or(Ok(()), carried_log);
+    }
     let log = || LogChange {
         mode: RefLog::AndReference,
         force_create_reflog: false,
@@ -383,30 +438,10 @@ pub fn rename(repo: gix::Repository, old: &str, new: &str) -> Result<()> {
                 deref: false,
             }),
     );
-    let committer = repo
-        .committer()
-        .ok_or_raise(|| gix::error::validation("committer identity required for the rename reflog entry"))??
-        .to_owned()?;
+    // Worktree HEADs follow without a HEAD reflog entry: gix writes no reflog for symbolic updates.
     repo.edit_references(edits)?;
     if let Some(old_log) = old_log {
-        // Like Git, keep the old history and record the rename as a no-op move of the tip.
-        let mut bytes = old_log;
-        gix::refs::log::Line {
-            previous_oid: tip,
-            new_oid: tip,
-            signature: committer,
-            message,
-        }
-        .write_to(&mut bytes)
-        .or_error()?;
-        let path = log_path(&new_name)?;
-        let mut lock =
-            gix::lock::File::acquire_to_update_resource(&path, gix::lock::acquire::Fail::Immediately, None, 0)
-                .or_raise(|| gix::error::message!("branch was renamed, but its reflog could not be locked"))?;
-        std::io::Write::write_all(&mut lock, &bytes).or_error()?;
-        lock.commit()
-            .map_err(|err| err.error)
-            .or_raise(|| gix::error::message!("branch was renamed, but its reflog could not be carried over"))?;
+        carried_log(old_log)?;
     }
     edit_local_config(&repo, |config| {
         config
@@ -419,4 +454,44 @@ pub fn rename(repo: gix::Repository, old: &str, new: &str) -> Result<()> {
             .is_ok()
     })
     .or_raise(|| gix::error::message("branch was renamed, but its configuration could not be moved"))
+}
+
+/// Refuse a rename whose target would need a directory where a ref file is, or the reverse,
+/// naming the conflicting ref as Git does. Loose and packed refs are both considered.
+fn refuse_directory_conflicts(
+    repo: &gix::Repository,
+    old_name: &gix::refs::FullName,
+    new_name: &gix::refs::FullName,
+) -> Result<()> {
+    let new = new_name.as_bstr();
+    let conflicts = |existing: &BStr| {
+        let nested = |outer: &BStr, inner: &BStr| {
+            inner.len() > outer.len() && inner.starts_with(outer) && inner[outer.len()] == b'/'
+        };
+        nested(existing, new) || nested(new, existing)
+    };
+    let mut conflict_with_old = false;
+    for reference in repo.references()?.all()? {
+        let reference = reference?;
+        let existing = reference.name().as_bstr();
+        if !conflicts(existing) {
+            continue;
+        }
+        if existing == old_name.as_bstr() {
+            conflict_with_old = true;
+        } else {
+            bail!(gix::error::validation(format!(
+                "'{existing}' exists; cannot create '{new}'"
+            )));
+        }
+    }
+    if conflict_with_old {
+        // Git deletes the old ref before creating the new one; one gix transaction cannot.
+        bail!(gix::error::unsupported(format!(
+            "cannot rename '{old}' to '{new}' in one transaction while '{old}' blocks the new path; \
+             rename it through an unrelated temporary name instead",
+            old = old_name.as_bstr()
+        )));
+    }
+    Ok(())
 }

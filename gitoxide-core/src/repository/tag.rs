@@ -219,8 +219,12 @@ pub fn delete(repo: gix::Repository, names: &[String], out: &mut dyn std::io::Wr
     use gix::refs::transaction::{Change, PreviousValue, RefEdit, RefLog};
     let mut edits = Vec::new();
     let mut reports = Vec::new();
+    let mut seen = std::collections::BTreeSet::new();
     for name in names {
         let full_name = tag_name(name)?;
+        if !seen.insert(full_name.clone()) {
+            continue;
+        }
         let Some(reference) = repo.try_find_reference(full_name.as_ref())? else {
             bail!(gix::error::not_found(format!("tag '{name}' not found.")));
         };
