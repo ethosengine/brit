@@ -277,6 +277,11 @@ fn normalize_log_counts(args: &mut [std::ffi::OsString], index: usize) {
 /// closes their output early may end them quietly; every other command's own outcome is reported.
 /// A path is admitted only when listed itself: a child of a listed command is not read-only until it
 /// is listed too.
+///
+/// This list is not a census of read-only commands. A path is admitted only after it was checked
+/// that the command changes nothing and that everything it prints goes through the watched writer.
+/// A read-only command that is not listed was not checked and keeps the previous behaviour on a
+/// closed reader.
 const READ_ONLY_COMMANDS: &[&[&str]] = &[
     &["rev-parse"],
     &["for-each-ref"],
