@@ -10,6 +10,35 @@ pub mod for_each_ref;
 pub mod ls_remote;
 pub mod rev_parse;
 
+/// A Git-shaped ending: its diagnostic, if any, was already written, and the process should exit with
+/// this status instead of reporting an error. Returned as the error of a spelling that answers
+/// through its exit code, so that buffered output is still forwarded before the process ends.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct Exit(pub i32);
+
+impl std::fmt::Display for Exit {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(f, "exit status {}", self.0)
+    }
+}
+
+impl std::error::Error for Exit {}
+
+/// End like Git with `code`.
+pub fn exit(code: i32) -> gix::Error {
+    gix::Error::from_error(Exit(code))
+}
+
+/// The status a Git-shaped ending in `error` asks for, if it is one.
+pub fn exit_status(error: &(dyn std::error::Error + 'static)) -> Option<i32> {
+    error.downcast_ref::<Exit>().map(|exit| exit.0).or_else(|| {
+        error
+            .downcast_ref::<gix::Error>()
+            .and_then(|error| error.downcast_any_ref::<Exit>())
+            .map(|exit| exit.0)
+    })
+}
+
 /// Git's `shorten_unambiguous_ref()` in its default strict mode (`core.warnAmbiguousRefs`): the
 /// shortest name that no other lookup rule resolves, where `exists` answers whether a full ref name exists.
 pub(crate) fn shorten_unambiguous(full_name: &str, exists: impl Fn(&str) -> bool) -> String {

@@ -2,7 +2,7 @@
 //! worktree, its subdirectory, and a linked worktree, and its help leads to `brit revision resolve`.
 use anyhow::Result;
 use cli_journey::support::{
-    parity::{assert_help_names, assert_same, brit, git_ok},
+    parity::{assert_help_names, assert_same, assert_same_streams, brit, git, git_ok},
     test_repo::TestRepo,
 };
 
@@ -103,4 +103,79 @@ fn rev_parse_matches_git_in_main_and_linked_worktrees() -> Result<()> {
     assert!(quiet.stderr.is_empty(), "--verify -q is silent: {quiet:?}");
 
     assert_help_names("rev-parse", "brit revision resolve")
+}
+
+/// Flags apply from their position, `--verify` lets exactly one revision and nothing else reach stdout,
+/// and the failures a script checks exit and write to stderr like Git.
+#[test]
+fn rev_parse_reads_arguments_in_order_like_git() -> Result<()> {
+    let repo = TestRepo::new("rev-parse-order")?;
+    let root = repo.path();
+    repo.commit_file("sub/f", "f\n")?;
+    repo.commit_file("g", "g\n")?;
+    git_ok(root, &["switch", "-q", "-c", "side", "HEAD~1"])?;
+    repo.commit_file("s", "s\n")?;
+    git_ok(root, &["switch", "-q", "main"])?;
+
+    let forms: &[&[&str]] = &[
+        // --verify: one revision, nothing else on stdout.
+        &["rev-parse", "--verify", "HEAD", "--", "x"],
+        &["rev-parse", "--verify", "HEAD", "--"],
+        &["rev-parse", "--verify", "^HEAD"],
+        &["rev-parse", "--verify", "HEAD~1..HEAD"],
+        &["rev-parse", "--verify", "-q", "HEAD~1..HEAD"],
+        &["rev-parse", "--verify", "main...side"],
+        &["rev-parse", "--verify", "missing", "--", "x"],
+        &["rev-parse", "HEAD", "--verify"],
+        // `--` is kept, and a missing revision before it is a bad revision.
+        &["rev-parse", "HEAD", "--"],
+        &["rev-parse", "HEAD", "--", "x", "y"],
+        &["rev-parse", "--", "x"],
+        &["rev-parse", "missing", "--", "x"],
+        &["rev-parse", "main...side"],
+        &["rev-parse", "side...main"],
+        // --short: Git's 4-digit minimum and positional effect.
+        &["rev-parse", "--short=", "HEAD"],
+        &["rev-parse", "--short=-1", "HEAD"],
+        &["rev-parse", "--short=0", "HEAD"],
+        &["rev-parse", "HEAD", "--short", "HEAD"],
+        &["rev-parse", "HEAD", "--short=5", "main"],
+        // Repeated path queries print once per occurrence.
+        &["rev-parse", "--git-dir", "--git-dir"],
+        &["rev-parse", "--git-dir", "HEAD", "--git-dir"],
+        // Diagnostics name the missing path.
+        &["rev-parse", "HEAD:missing"],
+        &["rev-parse", "HEAD:g", "HEAD:missing"],
+        &["rev-parse", ":missing"],
+        &["rev-parse", "HEAD", "missing"],
+        &["rev-parse", "sub/f", "--git-dir"],
+    ];
+    for form in forms {
+        assert_same_streams(root, form)?;
+    }
+
+    // Inside the Git directory there is no worktree.
+    let git_dir = root.join(".git");
+    for form in [
+        &["rev-parse", "--show-toplevel"][..],
+        &["rev-parse", "--git-dir", "HEAD"][..],
+        &["rev-parse", "--git-common-dir"][..],
+        &["rev-parse", "--show-toplevel", "HEAD"][..],
+    ] {
+        assert_same_streams(&git_dir, form)?;
+    }
+
+    // Global -v buffers output: a failure still forwards what was printed before it.
+    let verbose = brit(root, &["-v", "rev-parse", "HEAD", "missing"])?;
+    let expected = git(root, &["rev-parse", "HEAD", "missing"])?;
+    assert_eq!(
+        (&verbose.stdout, verbose.code),
+        (&expected.stdout, expected.code),
+        "brit -v: {verbose:?}"
+    );
+    assert!(
+        verbose.stderr.contains("ambiguous argument 'missing'"),
+        "brit -v forwards the diagnostic: {verbose:?}"
+    );
+    Ok(())
 }

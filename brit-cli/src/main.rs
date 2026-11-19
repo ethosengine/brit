@@ -205,6 +205,30 @@ fn command_prefix(args: &[std::ffi::OsString], command: &clap::Command) -> Optio
     })
 }
 
+/// The global `-C` directories given before the subcommand, read from the arguments up to it so that
+/// they are known even when clap stops at `--help` or a usage error after it.
+fn change_dirs_before_command(args: &[std::ffi::OsString], command: &clap::Command) -> Vec<std::ffi::OsString> {
+    args.iter()
+        .enumerate()
+        .skip(1)
+        .find_map(|(index, arg)| {
+            command.find_subcommand(arg.to_str()?)?;
+            let partial = command
+                .clone()
+                .ignore_errors(true)
+                .try_get_matches_from(&args[..=index])
+                .ok()?;
+            partial.subcommand_name()?;
+            Some(
+                partial
+                    .get_many::<std::ffi::OsString>("change_dir")
+                    .map(|dirs| dirs.cloned().collect())
+                    .unwrap_or_default(),
+            )
+        })
+        .unwrap_or_default()
+}
+
 fn normalize_log_counts(args: &mut [std::ffi::OsString], index: usize) {
     // Familiar bounded history spelling, scoped to log and before `--`. Never reinterpret
     // a path after the option terminator or a numeric argument to another command. Let
@@ -269,7 +293,12 @@ fn run(capture: &mut feedback::Capture) -> Result<()> {
         println!();
         return Ok(());
     }
-    let matches = command.clone().try_get_matches_from(args).map_err(|error| {
+    let matches = command.clone().try_get_matches_from(&args).map_err(|error| {
+        // Git enters every `-C` directory before it reads the command: a missing one wins over help and usage.
+        if plumbing::change_dirs(&change_dirs_before_command(&args, &command)).is_err() {
+            capture.outcome = Some("refused");
+            return error::CliError::ContextExit(128);
+        }
         let code = error.exit_code();
         capture.outcome = Some(if code == 0 { "passed" } else { "refused" });
         let _ = error.print();
@@ -360,6 +389,10 @@ fn main() -> ExitCode {
     let code = match run(&mut capture) {
         Ok(()) => 0,
         Err(error::CliError::ContextExit(code)) => code,
+        // A Git spelling that answers through its exit code already wrote its diagnostic.
+        Err(error::CliError::Git(cause)) if cause.chain().any(|cause| plumbing::exit_status(cause).is_some()) => {
+            cause.chain().find_map(plumbing::exit_status).unwrap_or(1)
+        }
         // A reader that stopped early (`brit … | head`) is not a failure to report: end quietly with
         // the status a shell shows for Git killed by SIGPIPE.
         Err(e) if is_broken_pipe(&e) => 141,

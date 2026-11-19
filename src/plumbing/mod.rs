@@ -1,5 +1,8 @@
 mod main;
 mod mutation;
+/// The status a Git-shaped ending asks for, when a command answers through its exit code.
+pub use gitoxide_core::repository::git_spellings::exit_status;
+pub use main::change_dirs;
 pub use main::main;
 pub use main::run;
 pub use main::run_with_command;

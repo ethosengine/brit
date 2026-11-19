@@ -15,7 +15,9 @@ use crate::shared::{AsRange, AsTime};
 pub struct Args {
     /// Run as if Brit was started in this directory, like Git's `-C`; repeat to descend further.
     ///
-    /// Each one is applied before anything else, relative to the previous one; an empty value is ignored.
+    /// Each one is applied relative to the previous one before the command runs, and before a subcommand's
+    /// `--help` or usage error; an empty value is ignored, and one that cannot be entered ends with Git's
+    /// `fatal: cannot change to '<dir>'` and status 128. Brit's own `--help` without a subcommand ignores it.
     /// Repository discovery and every relative path argument then start there, and `-r` is resolved
     /// relative to the result. `-r` alone only selects the repository.
     #[clap(short = 'C', value_name = "DIR", action = clap::ArgAction::Append, value_parser = clap::value_parser!(std::ffi::OsString))]

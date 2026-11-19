@@ -4,13 +4,16 @@
 //! shapes for the forms in real use, and their help names the native Brit verb.
 
 use clap::{Arg, ArgAction, ArgMatches, Command};
-use gitoxide_core::repository::git_spellings::rev_parse;
 
-/// `rev-parse`, parsed by hand so that path queries and revisions keep their command-line order.
+/// `rev-parse`, parsed by hand so that flags, path queries and revisions keep their command-line order.
+///
+/// Flags before the first revision are parsed by clap; from the first revision on, every argument
+/// (flags and `--` included) is taken verbatim, and all of them are read in order the way Git reads
+/// its argv, so `HEAD --short HEAD` prints a full and then a short object name.
 #[derive(Debug)]
 pub struct RevParse {
-    pub args: Vec<rev_parse::Arg>,
-    pub options: rev_parse::Options,
+    /// The arguments in command-line order, with each flag in its canonical spelling.
+    pub args: Vec<String>,
 }
 
 const REV: &str = "rev";
@@ -25,8 +28,14 @@ const VERIFY: &str = "verify";
 const QUIET: &str = "quiet";
 const ABBREV_REF: &str = "abbrev-ref";
 
+/// A flag that records every occurrence with its position; a counted flag keeps only the last one.
 fn flag(id: &'static str, help: &'static str) -> Arg {
-    Arg::new(id).long(id).action(ArgAction::Count).help(help)
+    Arg::new(id)
+        .long(id)
+        .action(ArgAction::Append)
+        .num_args(0)
+        .default_missing_value("")
+        .help(help)
 }
 
 impl clap::Args for RevParse {
@@ -36,7 +45,8 @@ impl clap::Args for RevParse {
                 .value_name("REV")
                 .action(ArgAction::Append)
                 .num_args(0..)
-                .help("Revisions like `HEAD`, `origin/dev`, `HEAD^{tree}`, `HEAD:path` or `A..B`"),
+                .allow_hyphen_values(true)
+                .help("Revisions like `HEAD`, `origin/dev`, `HEAD^{tree}`, `HEAD:path`, `A..B` or `A...B`; flags after the first one apply from their position, as in Git"),
         )
         .arg(
             Arg::new(PATHS)
@@ -44,7 +54,7 @@ impl clap::Args for RevParse {
                 .action(ArgAction::Append)
                 .num_args(0..)
                 .last(true)
-                .help("Printed verbatim after `--`, as Git does"),
+                .help("Printed verbatim after `--`, as Git does, unless --verify or --short came first"),
         )
         .arg(flag(SHOW_TOPLEVEL, "Print the absolute path of the worktree's top-level directory"))
         .arg(flag(
@@ -70,17 +80,15 @@ impl clap::Args for RevParse {
                 .value_name("N")
                 .num_args(0..=1)
                 .require_equals(true)
-                .default_missing_value("")
-                .action(ArgAction::Set)
-                .help("Print a unique abbreviation of at least N hex digits (core.abbrev when N is absent); implies --verify"),
+                .allow_hyphen_values(true)
+                // A NUL cannot arrive in argv, so it tells `--short` from an explicit empty `--short=`.
+                .default_missing_value("\0")
+                .action(ArgAction::Append)
+                .help("Print a unique abbreviation of at least N hex digits (core.abbrev when N is absent, at least 4); implies --verify"),
         )
-        .arg(flag(VERIFY, "Require exactly one revision and print its full object name"))
+        .arg(flag(VERIFY, "Require exactly one revision and print only its object name"))
         .arg(
-            Arg::new(QUIET)
-                .long(QUIET)
-                .short('q')
-                .action(ArgAction::Count)
-                .help("With --verify, print nothing on failure and exit with 1"),
+            flag(QUIET, "With --verify, print nothing on failure and exit with 1").short('q'),
         )
         .arg(flag(
             ABBREV_REF,
@@ -95,58 +103,43 @@ impl clap::Args for RevParse {
 
 impl clap::FromArgMatches for RevParse {
     fn from_arg_matches(matches: &ArgMatches) -> Result<Self, clap::Error> {
-        let mut ordered: Vec<(usize, rev_parse::Arg)> = Vec::new();
-        let mut take = |id: &str, item: &dyn Fn(Option<&String>) -> rev_parse::Arg| {
-            // Counted flags default to zero, and defaults have indices too: only typed arguments count.
+        let mut ordered: Vec<(usize, String)> = Vec::new();
+        let mut take = |id: &str, token: &dyn Fn(&str) -> String| {
             if matches.value_source(id) != Some(clap::parser::ValueSource::CommandLine) {
                 return;
             }
-            let values: Vec<Option<&String>> = matches
-                .try_get_many::<String>(id)
-                .ok()
-                .flatten()
-                .map(|values| values.map(Some).collect())
-                .unwrap_or_default();
-            for (position, index) in matches.indices_of(id).into_iter().flatten().enumerate() {
-                ordered.push((index, item(values.get(position).copied().flatten())));
+            let values: Vec<&String> = matches.get_many::<String>(id).into_iter().flatten().collect();
+            for (value, index) in values.into_iter().zip(matches.indices_of(id).into_iter().flatten()) {
+                ordered.push((index, token(value)));
             }
         };
-        take(REV, &|value| rev_parse::Arg::Rev(value.cloned().unwrap_or_default()));
-        take(SHOW_TOPLEVEL, &|_| rev_parse::Arg::ShowToplevel);
-        take(GIT_DIR, &|_| rev_parse::Arg::GitDir);
-        take(ABSOLUTE_GIT_DIR, &|_| rev_parse::Arg::AbsoluteGitDir);
-        take(GIT_COMMON_DIR, &|_| rev_parse::Arg::GitCommonDir);
-        take(PATH_FORMAT, &|value| {
-            rev_parse::Arg::PathFormat(if value.is_some_and(|v| v == "relative") {
-                rev_parse::PathFormat::Relative
+        take(REV, &str::to_owned);
+        for id in [
+            SHOW_TOPLEVEL,
+            GIT_DIR,
+            ABSOLUTE_GIT_DIR,
+            GIT_COMMON_DIR,
+            VERIFY,
+            ABBREV_REF,
+        ] {
+            take(id, &|_| format!("--{id}"));
+        }
+        take(QUIET, &|_| "--quiet".to_owned());
+        take(PATH_FORMAT, &|value| format!("--path-format={value}"));
+        take(SHORT, &|value| {
+            if value == "\0" {
+                "--short".to_owned()
             } else {
-                rev_parse::PathFormat::Absolute
-            })
+                format!("--short={value}")
+            }
         });
         ordered.sort_by_key(|(index, _)| *index);
         let mut args: Vec<_> = ordered.into_iter().map(|(_, arg)| arg).collect();
         if let Some(paths) = matches.get_many::<String>(PATHS) {
-            args.push(rev_parse::Arg::Paths(paths.cloned().collect()));
+            args.push("--".to_owned());
+            args.extend(paths.cloned());
         }
-        let short = match matches.get_one::<String>(SHORT) {
-            None => None,
-            Some(value) if value.is_empty() => Some(None),
-            Some(value) => Some(Some(value.parse::<usize>().map_err(|_| {
-                clap::Error::raw(
-                    clap::error::ErrorKind::InvalidValue,
-                    format!("--short expects a number of hex digits, got `{value}`\n"),
-                )
-            })?)),
-        };
-        Ok(RevParse {
-            args,
-            options: rev_parse::Options {
-                verify: matches.get_count(VERIFY) > 0,
-                quiet: matches.get_count(QUIET) > 0,
-                abbrev_ref: matches.get_count(ABBREV_REF) > 0,
-                short,
-            },
-        })
+        Ok(RevParse { args })
     }
 
     fn update_from_arg_matches(&mut self, matches: &ArgMatches) -> Result<(), clap::Error> {

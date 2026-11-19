@@ -2,7 +2,7 @@
 //! discovery and relative path arguments, repeatable, and composing with `-r`. Proven in a normal
 //! repository, a linked worktree, and from a superproject into a submodule.
 use anyhow::Result;
-use cli_journey::support::parity::{assert_same, brit, git_ok};
+use cli_journey::support::parity::{assert_same, assert_same_streams, brit, git_ok};
 
 fn s(path: &std::path::Path) -> &str {
     path.to_str().expect("UTF-8 temporary path")
@@ -67,12 +67,21 @@ fn change_dir_matches_git_in_a_repository_a_linked_worktree_and_a_submodule() ->
         let out = brit(away, args)?;
         assert_eq!(out.stdout, format!("{}\n", repo.display()), "{args:?}: {out:?}");
     }
-    let missing = brit(away, &["-C", "does-not-exist", "rev-parse", "HEAD"])?;
-    assert_ne!(missing.code, Some(0), "{missing:?}");
-    assert!(
-        missing.stderr.contains("cannot change to 'does-not-exist'"),
-        "{missing:?}"
-    );
+    // A directory that cannot be entered ends like Git, before the subcommand's help or usage.
+    for args in [
+        &["-C", "does-not-exist", "rev-parse", "HEAD"][..],
+        &["-C", "does-not-exist", "rev-parse", "--help"][..],
+        &["-C", "does-not-exist", "rev-parse", "--unknown-flag"][..],
+        &["-C", s(&repo), "-C", "does-not-exist", "for-each-ref"][..],
+    ] {
+        let missing = assert_same_streams(away, args)?;
+        assert!(
+            missing
+                .stderr
+                .starts_with("fatal: cannot change to 'does-not-exist': No such file or directory"),
+            "{args:?}: {missing:?}"
+        );
+    }
 
     // A linked worktree: its private Git directory differs from the shared one.
     for args in [

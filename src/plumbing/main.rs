@@ -181,12 +181,34 @@ fn explicit_write_paths(cmd: &Subcommands) -> Vec<&std::path::Path> {
 }
 
 /// Apply each `-C <dir>` in order, each relative to the one before, as Git does; empty values are ignored.
-fn change_dirs(dirs: &[std::ffi::OsString]) -> Result<()> {
+///
+/// A directory that cannot be entered ends like Git: `fatal: cannot change to '<dir>': <reason>` and 128.
+pub fn change_dirs(dirs: &[std::ffi::OsString]) -> Result<()> {
     for dir in dirs.iter().filter(|dir| !dir.is_empty()) {
-        std::env::set_current_dir(dir)
-            .or_raise(|| message!("cannot change to '{}'", std::path::Path::new(dir).display()))?;
+        if let Err(err) = std::env::set_current_dir(dir) {
+            let reason = err.to_string();
+            // Git prints `strerror()`, without Rust's `(os error N)` suffix.
+            let reason = reason.split(" (os error ").next().unwrap_or(&reason);
+            eprintln!(
+                "fatal: cannot change to '{}': {reason}",
+                std::path::Path::new(dir).display()
+            );
+            return Err(core::repository::git_spellings::exit(128));
+        }
     }
     Ok(())
+}
+
+/// Where discovery starts: the default `.` is made absolute when the current directory is a `.git`
+/// directory, where discovery from the relative `.` looks for `./.git/objects` and fails.
+fn discovery_start(repository: PathBuf) -> PathBuf {
+    if repository.as_os_str() == "."
+        && let Ok(cwd) = std::env::current_dir()
+        && cwd.file_name().is_some_and(|name| name == ".git")
+    {
+        return cwd;
+    }
+    repository
 }
 
 /// Execute an already parsed plumbing command, allowing another CLI to compose its command tree.
@@ -233,7 +255,7 @@ pub fn run_with_command(args: Args, command: clap::Command) -> Result<()> {
         .unwrap_or_default();
     let object_hash = args.object_hash;
     let config = args.config;
-    let repository = args.repository;
+    let repository = discovery_start(args.repository);
     let repository_path = repository.clone();
     enum Mode {
         Strict,
@@ -1431,15 +1453,9 @@ pub fn run_with_command(args: Args, command: clap::Command) -> Result<()> {
                 )
             }),
         },
-        Subcommands::RevParse(crate::plumbing::options::git_spellings::RevParse { args, options }) => {
+        Subcommands::RevParse(crate::plumbing::options::git_spellings::RevParse { args }) => {
             prepare_and_run("rev-parse", verbose, None, move |_progress, out, err| {
-                core::repository::git_spellings::rev_parse::rev_parse(
-                    repository(Mode::Lenient)?,
-                    args,
-                    out,
-                    err,
-                    options,
-                )
+                core::repository::git_spellings::rev_parse::rev_parse(repository(Mode::Lenient)?, args, out, err)
             })
         }
         Subcommands::ForEachRef(crate::plumbing::options::git_spellings::ForEachRef {
