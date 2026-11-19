@@ -301,6 +301,46 @@ const READ_ONLY_COMMANDS: &[&[&str]] = &[
     &["worktree", "list"],
     &["config-tree"],
     &["env"],
+    // Admitted after reading each path: no write, and every line through the watched writer.
+    &["show"],
+    &["tag", "list"],
+    &["remote", "url"],
+    // Network reads, like `ls-remote`; a credential helper may store or erase a credential.
+    &["remote", "refs"],
+    &["remote", "ref-map"],
+    &["commit", "describe"],
+    &["revision", "previous-branches"],
+    &["verify"],
+    &["fsck"],
+    &["tree", "entries"],
+    &["tree", "info"],
+    &["commit-graph", "list"],
+    &["commit-graph", "verify"],
+    &["mailmap", "entries"],
+    &["mailmap", "check"],
+    &["attributes", "query"],
+    &["exclude", "query"],
+    &["submodule"],
+    &["submodule", "list"],
+    &["is-clean"],
+    &["is-changed"],
+    &["config"],
+    &["config", "show"],
+    &["config", "list"],
+    &["index", "entries"],
+    &["dirwalk"],
+    // Their JSON and DOT output goes through `output::print_line`, the watched writer.
+    &["build", "graph", "discover"],
+    &["build", "graph", "show"],
+    &["build", "affected"],
+    &["build", "plan"],
+    &["build", "fingerprint"],
+    &["build", "baseline", "read"],
+    // Left out: bare `tag` creates a tag when given a name; `revision list --svg` writes and opens a
+    // file; `commit verify` runs the configured verifier and prints its output through an unwatched
+    // stderr; `attributes validate-baseline` runs `git check-attr`/`check-ignore` children whose output
+    // bypasses the watched writer; `build run`, `build baseline write|migrate`, `config fmt`, `index
+    // from-tree`, `tag delete`, `commit sign` write.
 ];
 
 fn read_only_path(path: &[&str]) -> bool {
@@ -335,6 +375,13 @@ fn is_closed_reader_write(error: &error::CliError) -> bool {
                 || broken(
                     cause
                         .downcast_ref::<serde_json::Error>()
+                        .and_then(serde_json::Error::io_error_kind),
+                )
+                // JSON written by a plumbing command, like `tree info`, arrives wrapped in a `gix::Error`.
+                || broken(
+                    cause
+                        .downcast_ref::<gix::Error>()
+                        .and_then(|error| error.downcast_any_ref::<serde_json::Error>())
                         .and_then(serde_json::Error::io_error_kind),
                 )
         }),
@@ -777,6 +824,57 @@ mod tests {
             "a path that only has a read-only prefix is not read-only"
         );
         assert!(!read_only_path(&["branch"]));
+    }
+
+    #[test]
+    fn the_extension_admits_read_only_paths_and_leaves_writers_out() {
+        let read_only = |args: &[&str]| {
+            read_only_command(
+                &public_command()
+                    .try_get_matches_from(args)
+                    .unwrap_or_else(|e| panic!("{args:?}: {e}")),
+            )
+        };
+        for args in [
+            &["brit", "show", "HEAD"][..],
+            &["brit", "tag", "list"],
+            &["brit", "remote", "refs"],
+            &["brit", "config"],
+            &["brit", "submodule"],
+            &["brit", "build", "graph", "discover"],
+            &["brit", "build", "fingerprint", "build-manifest.json"],
+            &["brit", "build", "baseline", "read", "p"],
+        ] {
+            assert!(read_only(args), "{args:?}");
+        }
+        for args in [
+            &["brit", "tag", "v1"][..],
+            &["brit", "tag"],
+            &["brit", "commit", "verify"],
+            &["brit", "attributes", "validate-baseline"],
+            &["brit", "config", "fmt"],
+            &["brit", "build", "baseline", "write", "p", "HEAD"],
+            &["brit", "build", "baseline", "migrate", "x.json"],
+        ] {
+            assert!(!read_only(args), "{args:?}");
+        }
+    }
+
+    #[test]
+    fn json_from_a_plumbing_command_that_met_the_closed_reader_is_recognised() {
+        let pipe = std::io::Error::from(std::io::ErrorKind::BrokenPipe);
+        let json = serde_json::Error::io(pipe);
+        let wrapped = error::CliError::Git(anyhow::Error::from(gix::Error::from_error(json)));
+        assert!(
+            is_closed_reader_write(&wrapped),
+            "`tree info` writes JSON through `.or_error()`"
+        );
+        let other = serde_json::from_str::<u8>("x").expect_err("not JSON");
+        let wrapped = error::CliError::Git(anyhow::Error::from(gix::Error::from_error(other)));
+        assert!(
+            !is_closed_reader_write(&wrapped),
+            "a JSON syntax error is not the closed reader"
+        );
     }
 
     #[test]
