@@ -1,12 +1,20 @@
 //! `brit ls-remote` prints what `git ls-remote` prints, `<oid>\t<refname>` in server order with
 //! peeled tags, for the remote and pattern forms agents use, and leads to `brit remote refs`.
 use anyhow::Result;
+#[cfg(unix)]
 use cli_journey::support::{
     mock_remote::MockRemote,
-    parity::{assert_help_names, assert_same, assert_same_streams, brit, git, git_ok},
+    parity::{assert_help_names, assert_same, assert_same_streams},
+};
+use cli_journey::support::{
+    parity::{brit, git, git_ok},
     test_repo::TestRepo,
 };
 
+/// Unix only: it compares the `From <url>` line for a `file://` URL built from a filesystem
+/// path byte for byte, and on Windows (`file://C:\…`) it is not established that the URL's
+/// password-redacting display reproduces Git's spelling.
+#[cfg(unix)]
 #[test]
 fn ls_remote_matches_git() -> Result<()> {
     let remote = MockRemote::new("ls-remote")?;

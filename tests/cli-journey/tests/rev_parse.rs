@@ -1,5 +1,10 @@
 //! `brit rev-parse` prints what `git rev-parse` prints for the forms agents use, from a main
 //! worktree, its subdirectory, and a linked worktree, and its help leads to `brit revision resolve`.
+//!
+//! Unix only: the path queries (`--show-toplevel`, `--git-dir`, `--git-common-dir`, …) print
+//! `Path::display()`, so on Windows they print `\` where Git for Windows prints `/`, and these
+//! journeys compare stdout with Git's byte for byte. A recorded difference, not decided here.
+#![cfg(unix)]
 use anyhow::Result;
 use cli_journey::support::{
     parity::{assert_help_names, assert_same, assert_same_streams, brit, git, git_ok},

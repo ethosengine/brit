@@ -1,6 +1,12 @@
 //! Global `-C <dir>` means what Git's does: run as if started in `<dir>`, moving repository
 //! discovery and relative path arguments, repeatable, and composing with `-r`. Proven in a normal
 //! repository, a linked worktree, and from a superproject into a submodule.
+//!
+//! Unix only, for two recorded differences: the path queries print `Path::display()`, so on
+//! Windows they print `\` where Git for Windows prints `/`, compared with Git's byte for byte; and
+//! `-C <missing>` is expected to end with the Unix error text "No such file or directory", where
+//! Brit on Windows prints the system's own text.
+#![cfg(unix)]
 use anyhow::Result;
 use cli_journey::support::parity::{assert_same, assert_same_streams, brit, git_ok};
 

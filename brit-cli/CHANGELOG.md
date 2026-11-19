@@ -61,7 +61,8 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.0.0/); ver
   arguments, shows Brit's help for `--help` after a revision, and inside a `.git` directory
   answers only `--show-toplevel` like Git; `rev-list --count` fails with 128 for a revision
   naming no commit (Git counts 0); `merge-base --is-ancestor` with no revision exits 2 where
-  Git exits 129. Brit's `-r <dir>` starts discovery at `<dir>` and may find an ancestor, where
+  Git exits 129. On Windows the `rev-parse` path queries print native `\` separators where Git
+  for Windows prints `/`. Brit's `-r <dir>` starts discovery at `<dir>` and may find an ancestor, where
   Git's `--git-dir` needs the directory itself; `GIT_DIR` overrides `-r`. `ls-remote` may wait
   on a configured credential helper; non-interactive callers pass `-c credential.helper=` and
   `GIT_TERMINAL_PROMPT=0`.
