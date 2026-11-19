@@ -1,8 +1,9 @@
 use gix::{
     Result,
     bstr::{BStr, BString, ByteSlice},
-    error::{ResultExt, bail, message},
+    error::{OptionExt, ResultExt, bail, message},
     objs::FindStream,
+    prelude::ObjectIdExt,
 };
 
 use crate::OutputFormat;
@@ -112,6 +113,136 @@ pub fn list(repo: gix::Repository, out: &mut dyn std::io::Write, format: OutputF
         writeln!(out, "{tag}").or_error()?;
     }
 
+    Ok(())
+}
+
+pub mod create {
+    /// What `brit tag [-a] [-m <msg>] [-f] <name> [<commit-ish>]` creates.
+    pub struct Options {
+        /// The tag's name below `refs/tags/`.
+        pub name: String,
+        /// The revision naming the object to tag.
+        pub target: String,
+        /// Write an annotated tag object, which requires a `message`.
+        pub annotate: bool,
+        /// The annotated tag's message; implies `annotate`.
+        pub message: Option<String>,
+        /// Replace an existing tag of the same name.
+        pub force: bool,
+    }
+}
+
+/// Validate `name` as Git's `check_tag_ref()` does and return its full reference name.
+fn tag_name(name: &str) -> Result<gix::refs::FullName> {
+    if name.starts_with('-') || name == "HEAD" {
+        bail!(gix::error::validation(format!("'{name}' is not a valid tag name")));
+    }
+    let full: BString = format!("refs/tags/{name}").into();
+    gix::validate::reference::name(full.as_bstr()).or_raise(|| message!("'{name}' is not a valid tag name"))?;
+    gix::refs::FullName::try_from(full).or_error()
+}
+
+/// Git's comment prefix for message cleanup: the last of `core.commentString` and `core.commentChar`.
+fn comment_prefix(repo: &gix::Repository) -> Result<String> {
+    let mut prefix = "#".to_owned();
+    if let Some(sections) = repo.config_snapshot().plumbing().sections_by_name("core") {
+        for section in sections.filter(|section| section.header().subsection_name().is_none()) {
+            if let Some(name) = section
+                .value_names()
+                .filter(|name| name.eq_ignore_ascii_case("commentString") || name.eq_ignore_ascii_case("commentChar"))
+                .last()
+                && let Some(value) = section.value(&name)
+            {
+                prefix = value.to_string();
+            }
+        }
+    }
+    if prefix == "auto" || prefix.is_empty() {
+        bail!(gix::error::unsupported(
+            "tag message cleanup with an automatic or empty comment prefix is not yet supported; use git tag"
+        ));
+    }
+    Ok(prefix)
+}
+
+/// Create a lightweight tag, or an annotated tag object tagged by the committer identity.
+pub fn create(repo: gix::Repository, options: create::Options, out: &mut dyn std::io::Write) -> Result<()> {
+    use gix::refs::transaction::PreviousValue;
+    let create::Options {
+        name,
+        target,
+        annotate,
+        message,
+        force,
+    } = options;
+    let full_name = tag_name(&name)?;
+    let object = repo.rev_parse_single(target.as_str())?.detach();
+    let existing = repo
+        .try_find_reference(full_name.as_ref())?
+        .map(|reference| reference.target().into_owned());
+    let constraint = match existing.clone() {
+        Some(_) if !force => bail!(gix::error::validation(format!("tag '{name}' already exists"))),
+        Some(previous) => PreviousValue::MustExistAndMatch(previous),
+        None => PreviousValue::MustNotExist,
+    };
+    if annotate || message.is_some() {
+        let message = message.ok_or_raise(|| {
+            gix::error::validation("annotated tags need a message given with -m <msg>; brit launches no editor")
+        })?;
+        let message = super::commit::clean_message(&message, Some(comment_prefix(&repo)?.as_str()));
+        if message.is_empty() {
+            // gix encodes an empty message without the blank separator line Git always writes.
+            bail!(gix::error::unsupported(
+                "an annotated tag needs a non-empty message after cleanup; use git tag for empty messages"
+            ));
+        }
+        let tagger = repo
+            .committer()
+            .ok_or_raise(|| gix::error::validation("tagger identity not configured"))??;
+        let kind = repo.find_header(object)?.kind();
+        repo.tag(&name, object, kind, Some(tagger), message, constraint)?;
+    } else {
+        repo.tag_reference(&name, object, constraint)?;
+    }
+    if let Some(gix::refs::Target::Object(previous)) = existing {
+        let current = repo.find_reference(full_name.as_ref())?.id().detach();
+        if previous != current {
+            let was = previous.attach(&repo).shorten_or_id();
+            writeln!(out, "Updated tag '{name}' (was {was})").or_error()?;
+        }
+    }
+    Ok(())
+}
+
+/// Delete tags as `git tag --delete` does, but all of them or none.
+pub fn delete(repo: gix::Repository, names: &[String], out: &mut dyn std::io::Write) -> Result<()> {
+    use gix::refs::transaction::{Change, PreviousValue, RefEdit, RefLog};
+    let mut edits = Vec::new();
+    let mut reports = Vec::new();
+    for name in names {
+        let full_name = tag_name(name)?;
+        let Some(reference) = repo.try_find_reference(full_name.as_ref())? else {
+            bail!(gix::error::not_found(format!("tag '{name}' not found.")));
+        };
+        let target = reference.target().into_owned();
+        let was = match &target {
+            gix::refs::Target::Object(id) => (*id).attach(&repo).shorten_or_id().to_string(),
+            gix::refs::Target::Symbolic(referent) => referent.as_bstr().to_string(),
+        };
+        reports.push(format!("Deleted tag '{name}' (was {was})"));
+        edits.push(RefEdit {
+            change: Change::Delete {
+                expected: PreviousValue::MustExistAndMatch(target),
+                log: RefLog::AndReference,
+            },
+            name: full_name,
+            deref: false,
+        });
+    }
+    repo.edit_references(edits)?;
+    for report in reports {
+        writeln!(out, "{report}").or_error()?;
+    }
     Ok(())
 }
 

@@ -818,7 +818,7 @@ pub fn create(
 /// Git's stripspace: preserve indentation, trim ASCII whitespace at each line's
 /// end, collapse blank lines, and terminate a nonempty message with one newline.
 /// Git's sane_ctype whitespace is space/tab/LF/CR; VT and FF are content.
-fn clean_message(message: &str, comment_prefix: Option<&str>) -> String {
+pub(crate) fn clean_message(message: &str, comment_prefix: Option<&str>) -> String {
     let mut result = String::with_capacity(message.len());
     let mut blank = false;
     for line in message.split('\n') {
