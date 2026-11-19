@@ -750,13 +750,17 @@ pub mod log {
 
     /// List commits reachable from revisions, optionally only those that change given paths.
     ///
-    /// Without paths, commits are selected and ordered like `git rev-list --date-order`.
-    /// With paths, they stream like `git log <revisions> -- <paths>` with Git's default
-    /// history simplification: a commit counts when it differs from its parent at a path, a
-    /// merge equal to one parent there is skipped and only that parent is followed, and a root
-    /// or shallow-boundary commit counts when the path exists. Commits reachable from an
-    /// excluded revision are never listed. A shallow boundary ends every walk, except that
-    /// the plain `brit log` follows a boundary's parents while they are present.
+    /// Without paths, the set is exactly the commits reachable from the included revisions
+    /// and not from the excluded ones, ordered like `git rev-list --date-order`. That is
+    /// Git's set except where clock skew makes Git's limiter stop early; commits with
+    /// identical commit times may be ordered differently from Git.
+    ///
+    /// With paths, commits are listed like `git log <revisions> -- <paths>`, following Git's
+    /// limiter and its default history simplification: a commit counts when it differs from
+    /// its parent at a path, a merge equal to one parent there is skipped and only that parent
+    /// is followed, and a root or shallow-boundary commit counts when the path exists.
+    ///
+    /// Every form stops at a shallow boundary, as Git does.
     #[derive(Debug, clap::Parser)]
     pub struct Platform {
         /// Stop after this many commits (Brit also accepts -N; zero prints none).

@@ -50,13 +50,19 @@ pub fn log_limited(
 /// List the commits selected by `options.revisions` (or reachable from `HEAD`), optionally only
 /// those changing `options.paths`.
 ///
-/// Without paths, commits are selected and ordered like `git rev-list --date-order`, and the plain
-/// listing keeps its historical bytes. With paths, commits stream like `git log <specs> -- <paths>`
-/// with Git's default history simplification: a commit changes a path when its entry there (kind
-/// and object) differs from its parent's, a commit equal to a parent at the paths is not listed and
+/// Without paths, the set is exactly the commits reachable from the included specs and not from
+/// the excluded ones, ordered newest first with ancestors after their descendants, like
+/// `git rev-list --date-order`. That equals Git's set except where clock skew makes Git's limiter
+/// stop early; the order of commits with identical commit times is unspecified.
+///
+/// With paths, commits are listed like `git log <specs> -- <paths>`, following Git's limiter and
+/// its default history simplification: a commit changes a path when its entry there (kind and
+/// object) differs from its parent's, a commit equal to a parent at the paths is not listed and
 /// only that parent is followed, and root and shallow-boundary commits change every path they
-/// contain. Commits reachable from an excluded revision are never listed. A trailing slash matches
-/// only directories (and submodules).
+/// contain. Ties in commit time keep Git's queue order. A trailing slash matches only directories
+/// (and submodules).
+///
+/// Every form stops at a shallow boundary, reading its commits as roots.
 pub fn log_with(repo: gix::Repository, out: &mut dyn std::io::Write, options: Options) -> Result<()> {
     let format = if options.oneline {
         Format::Oneline
@@ -98,10 +104,9 @@ pub fn log_with(repo: gix::Repository, out: &mut dyn std::io::Write, options: Op
         let walk = SimplifiedWalk::new(&repo, &source, &paths)?;
         return walk.run(&repo, out, &starts, remaining, format);
     }
-    // The plain listing keeps 0.2.6's bytes: it follows a shallow commit's parents while they are
-    // present. Every other form honours the shallow boundary, as Git does.
-    let honour_shallow = !options.revisions.is_empty() || shallow_parents_missing(&repo)?;
-    let shallow = if honour_shallow { repo.shallow_commits()? } else { None };
+    // Every form honours the shallow boundary, as Git does, even where the boundary's parents
+    // happen to be present.
+    let shallow = repo.shallow_commits()?;
     let (mut tips, mut ends) = (Vec::new(), Vec::new());
     for start in starts {
         if start.excluded {
@@ -541,28 +546,6 @@ fn read_node(
         .map(|path| lookup(source, buffer, tree, path))
         .collect::<Result<_>>()?;
     Ok(Node { time, parents, entries })
-}
-
-/// Return `true` if a shallow boundary commit names a parent this repository lacks.
-fn shallow_parents_missing(repo: &gix::Repository) -> Result<bool> {
-    let Some(commits) = repo.shallow_commits()? else {
-        return Ok(false);
-    };
-    let source = Source::deferred(repo);
-    let mut buffer = Buffer::default();
-    for id in commits.iter() {
-        if !repo.has_object(id) {
-            continue;
-        }
-        let commit = source
-            .load(id, &mut buffer)?
-            .try_into_commit_iter()
-            .ok_or_raise(|| message!("Expected shallow commit {id}").validation())?;
-        if commit.parent_ids().any(|parent| !repo.has_object(parent)) {
-            return Ok(true);
-        }
-    }
-    Ok(false)
 }
 
 /// The kind and object of a path's entry, which together say whether the path changed.

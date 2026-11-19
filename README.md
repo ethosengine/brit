@@ -163,9 +163,12 @@ brit diff tree --name-only origin/dev...HEAD  # paths changed since the merge ba
 brit diff tree --name-only A B              # two trees; also A..B and --merge-base A B
 ```
 
-Without paths, `brit log` selects and orders commits like `git rev-list --date-order`;
-with literal paths after `--` it lists them like `git log <revisions> -- <paths>`,
-including Git's default history simplification. `--name-only` lists paths like
+Without paths, `brit log` lists exactly the commits reachable from the included
+revisions and not from the excluded ones, ordered like `git rev-list --date-order`
+(Git's limiter can stop early under clock skew; the order of commits with identical
+commit times is unspecified). With literal paths after `--` it lists them like
+`git log <revisions> -- <paths>`, following Git's limiter and its default history
+simplification. Every form stops at a shallow boundary. `--name-only` lists paths like
 `git diff --name-only --no-renames`: a rename is its deleted and added path.
 
 For linear replay, edit-stop authoring and interrupted-operation recovery, see
