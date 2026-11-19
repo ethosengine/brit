@@ -25,6 +25,25 @@ Besides that, the tracing of all commands was greatly improved.
 
 ### New Features
 
+ - `brit log [REV] [--oneline] [-- PATH…]`
+   <!-- agent -->
+   Start the walk from any revision (default `HEAD`) and limit it to commits that change
+   literal paths, following Git's default history simplification; a trailing slash
+   matches only directories. `--oneline` prints the `core.abbrev` hash and title.
+ - branch deletion and renaming, tag creation and deletion
+   <!-- agent -->
+   `brit branch --delete`/`-d` (with `--force`), `-D` and `--move`/`-m` follow Git's
+   safety rules: a branch checked out in any worktree is never deleted, unmerged branches
+   need `--force`, and reflog and `branch.<name>` configuration travel with the branch.
+   `brit tag <name> [<commit-ish>]` creates lightweight or (`-a`/`-m`) annotated tags,
+   `-f` replaces one, and `brit tag --delete` removes several atomically.
+ - fetch updates tracking refs and follows Git's remote grammar
+   <!-- agent -->
+   `brit fetch [<remote>] [<refspec>…]` takes the remote positionally, updates the
+   configured remote-tracking ref for a branch fetched without a destination, refuses a
+   refspec naming a ref the remote does not advertise, and exits non-zero on a rejected
+   update. `brit pull --ff-only` fast-forwards a shallow repository above its boundary
+   and tells a shallow refusal apart from divergence.
  - <csr-id-bc278ac4b79c31ff9e9cc2a3f0c3d435ca7c7f8d/> make trace output independently configurable
    <!-- Byron -->
    
