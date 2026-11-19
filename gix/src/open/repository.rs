@@ -398,9 +398,11 @@ impl ThreadSafeRepository {
                 .as_deref()
                 .is_some_and(|wd| !gix_sec::identity::is_path_owned_by_current_user(wd).unwrap_or(false))
         {
+            // Like git, only protected configuration may grant trust: system, global, and the invoker's
+            // command scope (`-c` and `GIT_CONFIG_COUNT`), never the repository's own configuration.
             let safe_dirs: Vec<BString> = config
                 .resolved
-                .strings_filter(Safe::DIRECTORY, &mut Safe::directory_filter)
+                .strings_filter(Safe::DIRECTORY, &mut Safe::protected_directory_filter)
                 .unwrap_or_default()
                 .into_iter()
                 .collect();
