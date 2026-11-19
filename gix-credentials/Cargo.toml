@@ -2,7 +2,7 @@ lints.workspace = true
 
 [package]
 name = "gix-credentials"
-version = "0.42.2"
+version = "0.42.3"
 repository = "https://github.com/GitoxideLabs/gitoxide"
 license = "MIT OR Apache-2.0"
 description = "A crate of the gitoxide project to interact with git credentials helpers"
@@ -19,16 +19,16 @@ doctest = false
 serde = ["dep:serde", "bstr/serde", "gix-sec/serde"]
 
 [dependencies]
-gix-sec = { version = "^0.16.1", path = "../gix-sec", registry = "elohim" }
-gix-error = { version = "^0.5.2", path = "../gix-error", registry = "elohim", features = ["bstr"] }
-gix-url = { version = "^0.40.2", path = "../gix-url", registry = "elohim" }
-gix-path = { version = "^0.14.1", path = "../gix-path", registry = "elohim" }
-gix-quote = { version = "^0.10.2", path = "../gix-quote", registry = "elohim" }
-gix-command = { version = "^0.12.2", path = "../gix-command", registry = "elohim" }
-gix-config-value = { version = "^0.21.2", path = "../gix-config-value", registry = "elohim" }
-gix-prompt = { version = "^0.19.2", path = "../gix-prompt", registry = "elohim" }
+gix-sec = { version = "^0.16.2", path = "../gix-sec", registry = "elohim" }
+gix-error = { version = "^0.5.3", path = "../gix-error", registry = "elohim", features = ["bstr"] }
+gix-url = { version = "^0.40.3", path = "../gix-url", registry = "elohim" }
+gix-path = { version = "^0.14.2", path = "../gix-path", registry = "elohim" }
+gix-quote = { version = "^0.10.3", path = "../gix-quote", registry = "elohim" }
+gix-command = { version = "^0.12.3", path = "../gix-command", registry = "elohim" }
+gix-config-value = { version = "^0.21.3", path = "../gix-config-value", registry = "elohim" }
+gix-prompt = { version = "^0.19.3", path = "../gix-prompt", registry = "elohim" }
 gix-date = { version = "^0.19.0", path = "../gix-date", registry = "elohim" }
-gix-trace = { version = "^0.3.1", path = "../gix-trace", registry = "elohim" }
+gix-trace = { version = "^0.3.2", path = "../gix-trace", registry = "elohim" }
 
 serde = { version = "1.0.114", optional = true, default-features = false, features = ["derive"] }
 bstr = { version = "1.12.0", default-features = false, features = ["std"] }

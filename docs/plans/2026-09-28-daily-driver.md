@@ -5372,3 +5372,19 @@ because a published version cannot change its contents. `brit-cli` is therefore
 0.2.1. It carries only the slot-exhaustion message and the 33-pack tests. Any
 later change to a published crate's source on main needs its own version bump
 in the same commit.
+
+### 2026-11-19 — package versions for the gitoxide integration
+
+The gitoxide integration at 3e89f3b56 changed the payload of every crate in the
+publication closure. Of its 73 crates, 36 already carry a version the registry
+has never held, most of them gitoxide's own new releases. The other 37 kept a
+version that the registry holds with different bytes; a rehearsal of the
+publisher refused the first of them, `gix-error 0.5.2`, before any upload. Those
+37 now have the next unused patch version, and all 322 versioned local edges on
+them require it. The one new local edge without a registry route, `gix-sec`'s
+development dependency on `gix-error`, gains it. The lockfile changes only those
+37 packages; external selections are as they were.
+
+The registry index holds none of the 73 versions, and Cargo packages all 73 from
+this source without uploading. Nothing is published by this commit: publication
+runs on main after Tests pass.

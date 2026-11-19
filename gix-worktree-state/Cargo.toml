@@ -21,16 +21,16 @@ sha1 = ["gix-index/sha1"]
 sha256 = ["gix-index/sha256"]
 
 [dependencies]
-gix-trace = { version = "^0.3.1", path = "../gix-trace", registry = "elohim" }
-gix-utils = { version = "^0.5.3", path = "../gix-utils", registry = "elohim", features = ["stream", "interrupt", "progress"] }
-gix-parallel = { version = "^0.50.1", path = "../gix-parallel", registry = "elohim" }
+gix-trace = { version = "^0.3.2", path = "../gix-trace", registry = "elohim" }
+gix-utils = { version = "^0.5.4", path = "../gix-utils", registry = "elohim", features = ["stream", "interrupt", "progress"] }
+gix-parallel = { version = "^0.50.2", path = "../gix-parallel", registry = "elohim" }
 gix-worktree = { version = "^0.59.0", path = "../gix-worktree", registry = "elohim", default-features = false, features = ["attributes"] }
 gix-index = { version = "^0.58.0", path = "../gix-index", registry = "elohim" }
 gix-fs = { version = "^1.0.0", path = "../gix-fs", registry = "elohim", features = ["unstable"] }
-gix-object = { version = "^0.66.2", path = "../gix-object", registry = "elohim", features = ["stream"] }
-gix-error = { version = "^0.5.2", path = "../gix-error", registry = "elohim", features = ["bstr"] }
-gix-path = { version = "^0.14.1", path = "../gix-path", registry = "elohim" }
-gix-filter = { version = "^0.36.3", path = "../gix-filter", registry = "elohim" }
+gix-object = { version = "^0.66.3", path = "../gix-object", registry = "elohim", features = ["stream"] }
+gix-error = { version = "^0.5.3", path = "../gix-error", registry = "elohim", features = ["bstr"] }
+gix-path = { version = "^0.14.2", path = "../gix-path", registry = "elohim" }
+gix-filter = { version = "^0.36.4", path = "../gix-filter", registry = "elohim" }
 
 io-close = "0.3.7"
 bstr = { version = "1.12.0", default-features = false }

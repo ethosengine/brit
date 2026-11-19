@@ -20,11 +20,11 @@ daemon = ["server", "rustix/process", "dep:tempfile"]
 async-tokio = ["dep:tokio", "gix-notify?/async"]
 
 [dependencies]
-gix-command = { version = "^0.12.1", path = "../gix-command", registry = "elohim" }
-gix-trace = { version = "^0.3.1", path = "../gix-trace", registry = "elohim" }
-gix-error = { version = "^0.5.2", path = "../gix-error", registry = "elohim" }
-gix-path = { version = "^0.14.1", path = "../gix-path", registry = "elohim" }
-gix-packetline = { version = "^0.24.0", path = "../gix-packetline", registry = "elohim", features = ["blocking-io"] }
+gix-command = { version = "^0.12.3", path = "../gix-command", registry = "elohim" }
+gix-trace = { version = "^0.3.2", path = "../gix-trace", registry = "elohim" }
+gix-error = { version = "^0.5.3", path = "../gix-error", registry = "elohim" }
+gix-path = { version = "^0.14.2", path = "../gix-path", registry = "elohim" }
+gix-packetline = { version = "^0.24.2", path = "../gix-packetline", registry = "elohim", features = ["blocking-io"] }
 gix-macros = { version = "^0.2.1", path = "../gix-macros", registry = "elohim" }
 tokio = { version = "1.54.1", features = ["rt", "net", "time", "sync", "io-util", "macros", "process"], optional = true }
 bstr = { version = "1.12.0", default-features = false, features = ["std"] }
@@ -32,8 +32,8 @@ bstr = { version = "1.12.0", default-features = false, features = ["std"] }
 getrandom = { version = "0.4", features = ["std"], optional = true }
 gix-notify = { version = "^0.1.0", path = "../gix-notify", registry = "elohim", optional = true }
 
-gix-parallel = { version = "^0.50.1", path = "../gix-parallel", registry = "elohim", features = ["parallel"], optional = true }
-gix-utils = { version = "^0.5.2", path = "../gix-utils", registry = "elohim", features = ["bstr"], optional = true }
+gix-parallel = { version = "^0.50.2", path = "../gix-parallel", registry = "elohim", features = ["parallel"], optional = true }
+gix-utils = { version = "^0.5.4", path = "../gix-utils", registry = "elohim", features = ["bstr"], optional = true }
 
 [target.'cfg(unix)'.dependencies]
 tempfile = "3.26.0"

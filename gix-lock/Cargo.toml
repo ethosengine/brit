@@ -29,9 +29,9 @@ allowed-unstable-crates = ["gix_error"]
 
 [dependencies]
 gix-macros = { version = "^0.2.1", path = "../gix-macros", registry = "elohim" }
-gix-error = { version = "^0.5.2", path = "../gix-error", registry = "elohim" }
+gix-error = { version = "^0.5.3", path = "../gix-error", registry = "elohim" }
 gix-fs = { version = "^1.0.0", path = "../gix-fs", registry = "elohim" }
-gix-utils = { version = "^0.5.3", default-features = false, path = "../gix-utils", registry = "elohim" }
+gix-utils = { version = "^0.5.4", default-features = false, path = "../gix-utils", registry = "elohim" }
 gix-tempfile = { version = "^27.0.0", default-features = false, path = "../gix-tempfile", registry = "elohim" }
 
 [dev-dependencies]

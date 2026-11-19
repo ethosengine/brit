@@ -2,7 +2,7 @@ lints.workspace = true
 
 [package]
 name = "gix-submodule"
-version = "0.36.4"
+version = "0.36.5"
 repository = "https://github.com/GitoxideLabs/gitoxide"
 license = "MIT OR Apache-2.0"
 description = "A crate of the gitoxide project dealing git submodules"
@@ -21,12 +21,12 @@ sha1 = ["gix-refspec/sha1"]
 sha256 = ["gix-refspec/sha256"]
 
 [dependencies]
-gix-pathspec = { version = "^0.22.4", path = "../gix-pathspec", registry = "elohim" }
-gix-error = { version = "^0.5.2", path = "../gix-error", registry = "elohim", features = ["bstr"] }
-gix-refspec = { version = "^0.47.2", path = "../gix-refspec", registry = "elohim" }
-gix-config = { version = "^0.62.2", path = "../gix-config", registry = "elohim" }
-gix-path = { version = "^0.14.1", path = "../gix-path", registry = "elohim" }
-gix-url = { version = "^0.40.2", path = "../gix-url", registry = "elohim" }
+gix-pathspec = { version = "^0.22.5", path = "../gix-pathspec", registry = "elohim" }
+gix-error = { version = "^0.5.3", path = "../gix-error", registry = "elohim", features = ["bstr"] }
+gix-refspec = { version = "^0.47.3", path = "../gix-refspec", registry = "elohim" }
+gix-config = { version = "^0.62.3", path = "../gix-config", registry = "elohim" }
+gix-path = { version = "^0.14.2", path = "../gix-path", registry = "elohim" }
+gix-url = { version = "^0.40.3", path = "../gix-url", registry = "elohim" }
 
 bstr = { version = "1.12.0", default-features = false }
 

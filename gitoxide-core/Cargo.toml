@@ -58,16 +58,16 @@ tracing-cpu-time = ["tracing", "gix-trace/forest-cpu-time"]
 serde = ["gix/serde", "bytesize/serde"]
 
 [dependencies]
-gix-sequencer = { version = "^0.0.0", path = "../gix-sequencer", registry = "elohim", features = ["serde"] }
+gix-sequencer = { version = "^0.0.1", path = "../gix-sequencer", registry = "elohim", features = ["serde"] }
 anyhow = "1.0.102"
-gix-config-value = { version = "^0.21.2", path = "../gix-config-value", registry = "elohim" }
+gix-config-value = { version = "^0.21.3", path = "../gix-config-value", registry = "elohim" }
 # deselect everything else (like "performance") as this should be controllable by the parent application.
 gix = { version = "^0.90.0", path = "../gix", registry = "elohim", default-features = false, features = ["anyhow", "merge", "blob-diff", "blame", "revision", "mailmap", "excludes", "attributes", "worktree-mutation", "credentials", "interrupt", "status", "dirwalk", "command", "notify", "fsmonitor-daemon"] }
 gix-pack = { version = "^0.77.0", path = "../gix-pack", registry = "elohim", default-features = false, features = ["pack-cache-lru-dynamic", "pack-cache-lru-static", "generate", "streaming-input"] }
 gix-transport = { version = "^0.62.0", path = "../gix-transport", registry = "elohim", default-features = false }
 gix-archive = { version = "^0.39.0", path = "../gix-archive", registry = "elohim", optional = true, features = ["tar", "tar_gz"] }
 gix-status = { version = "^0.37.0", path = "../gix-status", registry = "elohim" }
-gix-fsck = { version = "^0.27.2", path = "../gix-fsck", registry = "elohim" }
+gix-fsck = { version = "^0.27.3", path = "../gix-fsck", registry = "elohim" }
 serde = { version = "1.0.114", default-features = false, features = ["derive"] }
 bytesize = "2.3.1"
 tempfile = "3.26.0"
@@ -84,7 +84,7 @@ blocking = { version = "1.6.2", optional = true }
 
 # for 'organize' functionality
 dua-core = { version = "6.1.0", optional = true }
-gix-url = { version = "^0.40.2", path = "../gix-url", registry = "elohim", optional = true }
+gix-url = { version = "^0.40.3", path = "../gix-url", registry = "elohim", optional = true }
 
 # for 'hours'
 crossbeam-channel = { version = "0.5.15", optional = true }
@@ -100,7 +100,7 @@ sysinfo = { version = "0.40.3", optional = true, default-features = false, featu
 serde_json = { version = "1.0.150" }
 
 # for 'tracing'
-gix-trace = { version = "^0.3.1", path = "../gix-trace", registry = "elohim", features = ["forest-ansi"], optional = true }
+gix-trace = { version = "^0.3.2", path = "../gix-trace", registry = "elohim", features = ["forest-ansi"], optional = true }
 tracing-subscriber = { version = "0.3.22", optional = true }
 tracing = { version = "0.1.43", optional = true }
 

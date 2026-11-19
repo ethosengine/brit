@@ -4,6 +4,10 @@ All notable changes to `brit-epr` (and the brit crates released with it) are rec
 The format follows [Keep a Changelog](https://keepachangelog.com/en/1.0.0/); versions follow
 [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## 0.2.2 — repackaged with the gitoxide 3e89f3b56 integration
+
+- No source change. The published manifest and lockfile follow the integrated workspace.
+
 ## 0.2.1 — prepared with Brit 0.1.15
 
 - Retain the original versioned-note verification contract alongside frozen legacy

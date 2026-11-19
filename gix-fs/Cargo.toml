@@ -34,11 +34,11 @@ allowed-unstable-crates = ["gix_error"]
 
 [dependencies]
 gix-macros = { version = "^0.2.1", path = "../gix-macros", registry = "elohim" }
-gix-parallel = { version = "^0.50.1", path = "../gix-parallel", registry = "elohim" }
+gix-parallel = { version = "^0.50.2", path = "../gix-parallel", registry = "elohim" }
 bstr = "1.12.0"
-gix-path = { version = "^0.14.1", path = "../gix-path", registry = "elohim" }
-gix-utils = { version = "^0.5.3", path = "../gix-utils", registry = "elohim" }
-gix-error = { version = "^0.5.2", path = "../gix-error", registry = "elohim" }
+gix-path = { version = "^0.14.2", path = "../gix-path", registry = "elohim" }
+gix-utils = { version = "^0.5.4", path = "../gix-utils", registry = "elohim" }
+gix-error = { version = "^0.5.3", path = "../gix-error", registry = "elohim" }
 
 serde = { version = "1.0.114", optional = true, default-features = false, features = [
     "std",
