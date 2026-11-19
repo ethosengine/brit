@@ -203,6 +203,11 @@ impl Deadline {
         }
     }
 
+    fn grace(grace: Duration) -> Self {
+        let now = Instant::now();
+        Self::At(now, now + grace)
+    }
+
     fn capped(&self) -> String {
         match self {
             Self::Capped(_, _, cap) => format!(
@@ -465,17 +470,42 @@ fn reentrant(holders: &[(u32, bool)], level: Level) -> Option<String> {
         })
 }
 
+/// How a lock wait treats its holders.
+#[derive(Clone, Copy, Default)]
+struct Waiting<'a> {
+    /// Proceed without the lock when every holder is a stopped process (a fairness lock only).
+    pass_stopped: bool,
+    /// The repository guard a turnstile holder is queued for, to name what really blocks.
+    queued_for: Option<&'a fs::File>,
+}
+
 fn lock(file: &fs::File, level: Level, mode: Mode, deadline: &Deadline) -> Result<()> {
+    lock_with(file, level, mode, deadline, Waiting::default()).map(|_| ())
+}
+
+/// `Ok(true)` when the lock is held, `Ok(false)` when passed because its holders are stopped.
+fn lock_with(file: &fs::File, level: Level, mode: Mode, deadline: &Deadline, waiting: Waiting<'_>) -> Result<bool> {
+    let describe_holders = |holders: &[(u32, bool)]| match waiting.queued_for {
+        Some(repository) => format!(
+            "{}, queued for the repository guard, which is held by {}",
+            render(holders, level),
+            render(&holders_of(repository), Level::Repository)
+        ),
+        None => render(holders, level),
+    };
     let mut retried = false;
     let mut announced = false;
     let mut pause = Duration::from_millis(20);
     loop {
         if try_lock(file, mode)? {
-            return Ok(());
+            return Ok(true);
         }
         let holders = holders_of(file);
         if let Some(reason) = reentrant(&holders, level) {
             return Err(would_block()).context(format!("another Brit mutation is active; {reason}"));
+        }
+        if waiting.pass_stopped && !holders.is_empty() && holders.iter().all(|(pid, _)| stopped(*pid)) {
+            return Ok(false);
         }
         if holders.is_empty() && !retried {
             // The holder may have released between the attempt and the lookup.
@@ -488,7 +518,7 @@ fn lock(file: &fs::File, level: Level, mode: Mode, deadline: &Deadline) -> Resul
                 format!(
                     "another Brit mutation is active{}; held by {}{}; retry with --wait[=SECONDS] or BRIT_MUTATION_WAIT=SECONDS",
                     deadline.waited(),
-                    render(&holders, level),
+                    describe_holders(&holders),
                     deadline.capped()
                 )
             });
@@ -496,7 +526,7 @@ fn lock(file: &fs::File, level: Level, mode: Mode, deadline: &Deadline) -> Resul
         if !announced {
             eprintln!(
                 "brit: waiting for the Brit mutation guard held by {}",
-                render(&holders, level)
+                describe_holders(&holders)
             );
             announced = true;
         }
@@ -512,11 +542,15 @@ fn lock_repository(repo: &gix::Repository, file: &fs::File, mode: Mode, deadline
     match mode {
         Mode::Exclusive => lock_repository_exclusive(repo, file, deadline),
         Mode::Shared => {
-            pass_turnstile(repo, deadline)?;
+            pass_turnstile(repo, file, deadline)?;
             lock(file, Level::Repository, Mode::Shared, deadline)
         }
     }
 }
+
+/// How long a shared acquirer that asked not to wait still waits at an engaged turnstile:
+/// the turnstile is a fairness device, not a holder.
+const TURNSTILE_GRACE: Duration = Duration::from_secs(1);
 
 /// Take the repository guard exclusively, queueing at the turnstile once it has to wait.
 fn lock_repository_exclusive(repo: &gix::Repository, file: &fs::File, deadline: &Deadline) -> Result<()> {
@@ -526,29 +560,58 @@ fn lock_repository_exclusive(repo: &gix::Repository, file: &fs::File, deadline: 
     if !deadline.waits() {
         return lock(file, Level::Repository, Mode::Exclusive, deadline);
     }
-    let turnstile = open(&repo.common_dir().join(TURNSTILE))?;
-    lock(&turnstile, Level::Turnstile, Mode::Exclusive, deadline)?;
+    // A turnstile that cannot be opened (another user's checkout) only loses fairness.
+    let turnstile = open(&repo.common_dir().join(TURNSTILE)).ok();
+    if let Some(turnstile) = &turnstile {
+        let waiting = Waiting {
+            pass_stopped: true,
+            queued_for: Some(file),
+        };
+        lock_with(turnstile, Level::Turnstile, Mode::Exclusive, deadline, waiting)?;
+    }
     lock(file, Level::Repository, Mode::Exclusive, deadline)
 }
 
 /// Let a shared acquirer through only when no exclusive writer is queued.
-fn pass_turnstile(repo: &gix::Repository, deadline: &Deadline) -> Result<()> {
+fn pass_turnstile(repo: &gix::Repository, repository: &fs::File, deadline: &Deadline) -> Result<()> {
     // A queued writer may be waiting for the shared hold of the command this hook runs under.
     if ancestor_holds_shared(repo) {
         return Ok(());
     }
     use std::os::unix::fs::OpenOptionsExt;
-    let path = repo.common_dir().join(TURNSTILE);
-    let turnstile = match fs::OpenOptions::new()
+    // Absent, or not ours to open: no exclusive writer is queued that we could honour.
+    let Ok(turnstile) = fs::OpenOptions::new()
         .read(true)
         .custom_flags(rustix::fs::OFlags::NOFOLLOW.bits() as i32)
-        .open(&path)
-    {
-        Ok(file) => file,
-        Err(err) if err.kind() == std::io::ErrorKind::NotFound => return Ok(()),
-        Err(err) => return Err(err).with_context(|| format!("could not open {}", path.display())),
+        .open(repo.common_dir().join(TURNSTILE))
+    else {
+        return Ok(());
     };
-    lock(&turnstile, Level::Turnstile, Mode::Shared, deadline)
+    let grace;
+    let deadline = if deadline.waits() {
+        deadline
+    } else {
+        grace = Deadline::grace(TURNSTILE_GRACE);
+        &grace
+    };
+    let waiting = Waiting {
+        pass_stopped: true,
+        queued_for: Some(repository),
+    };
+    lock_with(&turnstile, Level::Turnstile, Mode::Shared, deadline, waiting).map(|_| ())
+}
+
+/// Whether `pid` is stopped (`T`) or traced (`t`), per `/proc/<pid>/stat`.
+fn stopped(pid: u32) -> bool {
+    fs::read_to_string(format!("/proc/{pid}/stat"))
+        .ok()
+        .and_then(|stat| {
+            stat.get(stat.rfind(')')? + 2..)?
+                .split_whitespace()
+                .next()
+                .map(|state| matches!(state, "T" | "t"))
+        })
+        .unwrap_or(false)
 }
 
 /// Take `repo`'s worktree guard (when it has a worktree and `worktree` is set), then the
@@ -601,9 +664,10 @@ pub(crate) fn other_worktree(target: &gix::Repository) -> Result<Held> {
 
 fn role(level: Level, shared: bool) -> &'static str {
     match (level, shared) {
-        (Level::Repository, false) => "shared write",
-        (Level::Repository, true) | (Level::Worktree, _) => "worktree write",
-        (Level::Turnstile, _) => "queued shared write",
+        (Level::Repository, false) => "holds the repository guard exclusively",
+        (Level::Repository, true) => "holds the repository guard shared",
+        (Level::Worktree, _) => "holds this worktree's guard",
+        (Level::Turnstile, _) => "queued for the repository guard",
     }
 }
 
@@ -624,28 +688,45 @@ fn holders_of(file: &fs::File) -> Vec<(u32, bool)> {
         .and_then(|stat| {
             fs::read_to_string("/proc/locks")
                 .ok()
-                .map(|table| lock_holders(&table, &stat))
+                .map(|table| lock_holders(&table, &stat, |pid| holds_open(pid, &stat)))
         })
         .unwrap_or_default()
 }
 
+/// Whether `pid` has the file described by `stat` open, from its `/proc/<pid>/fd` entries.
+fn holds_open(pid: u32, stat: &rustix::fs::Stat) -> bool {
+    use std::os::unix::fs::MetadataExt;
+    fs::read_dir(format!("/proc/{pid}/fd")).is_ok_and(|entries| {
+        entries.filter_map(Result::ok).any(|entry| {
+            fs::metadata(entry.path()).is_ok_and(|meta| meta.dev() == stat.st_dev && meta.ino() == stat.st_ino)
+        })
+    })
+}
+
 /// `(pid, shared)` for each granted lock on the file, from a `/proc/locks` table.
-/// Device and inode must both match, so a lock on another filesystem is never named.
-fn lock_holders(table: &str, stat: &rustix::fs::Stat) -> Vec<(u32, bool)> {
+/// An entry whose device and inode both match is the file's. An entry matching only the inode
+/// (some filesystems report a different device there, such as btrfs subvolumes) counts only
+/// when `confirm` shows that process has this very file open.
+fn lock_holders(table: &str, stat: &rustix::fs::Stat, confirm: impl Fn(u32) -> bool) -> Vec<(u32, bool)> {
     let device = format!(
         "{:02x}:{:02x}:{}",
         rustix::fs::major(stat.st_dev),
         rustix::fs::minor(stat.st_dev),
         stat.st_ino
     );
+    let inode = stat.st_ino.to_string();
     let mut holders = Vec::new();
     for line in table.lines() {
         // `N: FLOCK  ADVISORY  WRITE 1234 08:02:131074 0 EOF`; blocked waiters carry `->`.
         let fields: Vec<_> = line.split_whitespace().collect();
-        if fields.len() < 6 || fields[1] != "FLOCK" || fields[5] != device {
+        if fields.len() < 6 || fields[1] != "FLOCK" {
             continue;
         }
-        if let Ok(pid) = fields[4].parse::<u32>() {
+        let Ok(pid) = fields[4].parse::<u32>() else {
+            continue;
+        };
+        let same_inode = fields[5].rsplit(':').next() == Some(inode.as_str());
+        if fields[5] == device || (same_inode && confirm(pid)) {
             holders.push((pid, fields[3] == "READ"));
         }
     }
@@ -743,7 +824,7 @@ mod tests {
     }
 
     #[test]
-    fn lock_holders_require_the_device_as_well_as_the_inode() {
+    fn lock_holders_match_by_device_or_by_a_confirmed_open_file() {
         let stat = rustix::fs::stat("/").expect("root is stat-able");
         let here = format!(
             "{:02x}:{:02x}:{}",
@@ -756,8 +837,15 @@ mod tests {
             "1: FLOCK  ADVISORY  WRITE 11 {here} 0 EOF\n\
              2: FLOCK  ADVISORY  READ  22 {here} 0 EOF\n\
              3: FLOCK  ADVISORY  WRITE 33 {elsewhere} 0 EOF\n\
-             4: POSIX  ADVISORY  WRITE 44 {here} 0 EOF\n"
+             4: FLOCK  ADVISORY  WRITE 44 {elsewhere} 0 EOF\n\
+             5: POSIX  ADVISORY  WRITE 55 {here} 0 EOF\n\
+             6: FLOCK  ADVISORY  WRITE 66 ff:ff:1{} 0 EOF\n",
+            stat.st_ino
         );
-        assert_eq!(super::lock_holders(&table, &stat), vec![(11, false), (22, true)]);
+        assert_eq!(
+            super::lock_holders(&table, &stat, |pid| pid == 33 || pid == 66),
+            vec![(11, false), (22, true), (33, false)],
+            "another device counts only when confirmed, and only for the same inode"
+        );
     }
 }

@@ -320,16 +320,21 @@ pub fn worktree_mutation_guard_waiting(
     Ok(lock)
 }
 
-/// Guard a push: the pushing worktree's guard (so its checkout cannot change under the
-/// pre-push gate) and the repository guard exclusively. Release only the repository guard
-/// across the hook with [`guard::Held::release_repository`], then [`reacquire_for_send`].
+/// Guard a push: the pushing worktree's guard exclusively (so its checkout cannot change under
+/// the pre-push gate) and the repository guard shared. Push writes no local state; resolving
+/// and packing need only exclusive writers (maintenance, journaled switch/pull/replay) kept
+/// out, and other lanes' commits cannot change the object IDs it resolved. Shared, it never
+/// queues at the turnstile. Release only the repository guard across the hook with
+/// [`guard::Held::release_repository`], then [`reacquire_for_send`].
 pub fn push_guard(repo: &gix::Repository) -> Result<guard::Held> {
-    worktree_writer_guard(repo)
+    let lock = guard::acquire(repo, guard::Mode::Shared, true, super::mutation_wait())?;
+    ensure_no_pending(repo)?;
+    Ok(lock)
 }
 
-/// Re-take the repository guard for send-pack after a passed pre-push hook.
+/// Re-take the repository guard (shared) for send-pack after a passed pre-push hook.
 pub fn reacquire_for_send(held: &mut guard::Held, repo: &gix::Repository, wait: super::MutationWait) -> Result<()> {
-    held.reacquire_repository(repo, guard::Mode::Exclusive, wait)?;
+    held.reacquire_repository(repo, guard::Mode::Shared, wait)?;
     ensure_no_pending(repo)
 }
 

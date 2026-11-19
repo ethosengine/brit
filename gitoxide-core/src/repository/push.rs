@@ -698,11 +698,11 @@ pub(crate) mod function {
                 Some(super::Signed::IfAsked) => gix::remote::push::SignMode::IfAsked,
                 Some(super::Signed::No) | None => gix::remote::push::SignMode::Never,
             };
-            // Guard reference resolution and send-pack against other Brit writers, but
-            // release the repository guard across the pre-push hook: the hook judges fixed
-            // object IDs, and those IDs are what is sent, so other lanes stay writable while a
-            // long gate runs. The pushing worktree's guard stays held throughout, so the
-            // checkout a gate builds and tests cannot change under it.
+            // Hold the repository guard shared for reference resolution and send-pack (push
+            // writes no local state), and not at all across the pre-push hook: the hook judges
+            // fixed object IDs, and those IDs are what is sent, so other lanes stay writable
+            // while a long gate runs. The pushing worktree's guard stays held throughout, so
+            // the checkout a gate builds and tests cannot change under it.
             let held = std::cell::RefCell::new(super::super::switch::push_guard(&repo)?);
             let result = prepare
                 .with_refspecs(specs_to_send.iter())

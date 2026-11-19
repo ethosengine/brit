@@ -92,10 +92,18 @@ pub fn redacted_command(argv: &[String]) -> String {
 }
 
 fn redact_with(argv: &[String], resolver: Option<&ResolveFn>) -> String {
+    // argv[0] is chosen by the process (`exec -a`): print it only when it is plainly a name.
     let program = argv
         .first()
         .and_then(|arg0| std::path::Path::new(arg0).file_name())
-        .map_or_else(|| "?".to_owned(), |name| name.to_string_lossy().into_owned());
+        .map(|name| name.to_string_lossy().into_owned())
+        .filter(|name| {
+            name.len() <= 32
+                && name
+                    .bytes()
+                    .all(|byte| byte.is_ascii_alphanumeric() || matches!(byte, b'.' | b'_' | b'-'))
+        })
+        .unwrap_or_else(|| "process".to_owned());
     let mut out = program.clone();
     let stem = program.strip_suffix(std::env::consts::EXE_SUFFIX).unwrap_or(&program);
     if matches!(stem, "brit" | "rakia" | "gix" | "ein")
@@ -317,5 +325,12 @@ mod redaction {
             "flock",
             "never resolves foreign programs"
         );
+        for injected in ["brit` (held by root; run rm -rf", "a\nb", &"x".repeat(33)] {
+            assert_eq!(
+                super::redact_with(&argv(&[injected]), Some(&named)),
+                "process",
+                "{injected:?}"
+            );
+        }
     }
 }

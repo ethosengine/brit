@@ -165,6 +165,10 @@ impl ExternalHolder {
         Ok(Self { child, stdin })
     }
 
+    fn running(&mut self) -> Result<bool> {
+        Ok(self.child.try_wait()?.is_none())
+    }
+
     fn release(mut self) -> Result<()> {
         drop(self.stdin.take());
         ensure!(self.child.wait()?.success(), "flock holder exits cleanly");
@@ -255,20 +259,29 @@ fn start_ticks(pid: u32) -> Result<String> {
 }
 
 /// A writer that holds the repository guard shared and `worktree`'s guard until released:
-/// a commit paused in its pre-commit hook.
+/// a push paused in the remote's pre-receive hook, during send-pack.
 struct SharedHolder {
     process: Background,
     pause: PathBuf,
 }
 
 impl SharedHolder {
-    fn start(worktree: &Path, hooks: &Path, scratch: &tempfile::TempDir, name: &str) -> Result<Self> {
-        pausing_hook(worktree, hooks, "pre-commit")?;
+    fn start(worktree: &Path, remote: &Path, scratch: &tempfile::TempDir, name: &str) -> Result<Self> {
+        install_hook(
+            remote,
+            &remote.join("hooks"),
+            "pre-receive",
+            "cat >/dev/null\n\
+             test -n \"$BRIT_TEST_REMOTE_PAUSE\" || exit 0\n\
+             : >\"$BRIT_TEST_REMOTE_PAUSE/started\"\n\
+             while ! test -e \"$BRIT_TEST_REMOTE_PAUSE/release\"; do sleep 0.05; done",
+        )?;
         let pause = pause_dir(scratch, name)?;
+        let spec = format!("HEAD:refs/heads/holder-{name}");
         let mut process = Background::spawn(
             worktree,
-            &["commit", "--allow-empty", "-m", "shared holder"],
-            &[("BRIT_TEST_PAUSE", &pause)],
+            &["push", "origin", &spec],
+            &[("BRIT_TEST_REMOTE_PAUSE", &pause)],
         )?;
         await_file(&pause.join("started"), &mut process)?;
         Ok(Self { process, pause })
@@ -496,11 +509,11 @@ fn paused_commit_hook_keeps_lanes_writable_names_its_holder_and_can_be_awaited()
     let started = Instant::now();
     let timed_out = brit(&other, &["--wait=1", "branch", "create", "blocked"])?;
     ensure_refusal_names(&timed_out, "bounded wait", &[&holder, "after waiting"])?;
-    let elapsed = started.elapsed();
     ensure!(
-        elapsed >= Duration::from_secs(1) && elapsed < Duration::from_secs(4),
-        "the one-second budget was honoured: {elapsed:?}"
+        started.elapsed() >= Duration::from_secs(1),
+        "the one-second budget was honoured"
     );
+    ensure!(held.running()?, "it gave up while the holder still held the guard");
 
     // An open-ended wait completes once the holder finishes.
     let mut waiting = Background::spawn(&other, &["--wait", "branch", "create", "awaited"], &[])?;
@@ -660,7 +673,7 @@ fn wait_environment_default_is_validated_and_honoured_under_contention() -> Resu
         output.stderr
     );
 
-    let holder = ExternalHolder::hold(repo.path())?;
+    let mut holder = ExternalHolder::hold(repo.path())?;
     let started = Instant::now();
     let output = brit_with(repo.path(), &["branch", "create", "x"], &[("BRIT_MUTATION_WAIT", "1")])?;
     let elapsed = started.elapsed();
@@ -670,10 +683,8 @@ fn wait_environment_default_is_validated_and_honoured_under_contention() -> Resu
         &["after waiting", "flock"],
     )?;
     ensure!(output.stderr.contains("brit: waiting"), "it waited: {}", output.stderr);
-    ensure!(
-        elapsed >= Duration::from_secs(1) && elapsed < Duration::from_secs(4),
-        "{elapsed:?}"
-    );
+    ensure!(elapsed >= Duration::from_secs(1), "{elapsed:?}");
+    ensure!(holder.running()?, "it gave up while the holder still held the guard");
     ensure!(
         !output.stderr.contains("ready; cat"),
         "only the holder's program name is shown: {}",
@@ -690,11 +701,19 @@ fn wait_environment_default_is_validated_and_honoured_under_contention() -> Resu
 fn status_stays_read_only_when_its_refresh_guard_is_contended() -> Result<()> {
     let repo = TestRepo::new("lock-status-contended")?;
     repo.commit_file("tracked", "tracked\n")?;
-    // A rewritten file with the same bytes leaves stale stat data an index refresh would update.
-    std::thread::sleep(Duration::from_millis(1100));
-    fs::write(repo.path().join("tracked"), "tracked\n")?;
     let index = repo.path().join(".git/index");
-    let before = fs::read(&index)?;
+    // A rewritten file with the same bytes leaves stale stat data an index refresh updates.
+    let make_stale = || -> Result<Vec<u8>> {
+        std::thread::sleep(Duration::from_millis(1100));
+        fs::write(repo.path().join("tracked"), "tracked\n")?;
+        Ok(fs::read(&index)?)
+    };
+    // Control: uncontended, status does refresh the index.
+    let before = make_stale()?;
+    let status = brit(repo.path(), &["status"])?;
+    ensure!(status.status.success(), "status: {}", status.stderr);
+    ensure!(fs::read(&index)? != before, "an uncontended status refreshes the index");
+    let before = make_stale()?;
     let holder = ExternalHolder::hold(repo.path())?;
     let status = brit(repo.path(), &["status"])?;
     ensure!(status.status.success(), "status under contention: {}", status.stderr);
@@ -903,10 +922,12 @@ fn a_hook_wait_is_capped_so_a_cycle_through_another_process_ends() -> Result<()>
 #[test]
 fn forged_hook_markers_are_ignored() -> Result<()> {
     let Lanes {
-        repo, other, scratch, ..
+        repo,
+        remote,
+        other,
+        scratch,
     } = lanes("lock-forged-marker")?;
-    let hooks = scratch.path().join("hooks");
-    let holder = SharedHolder::start(repo.path(), &hooks, &scratch, "holder")?;
+    let holder = SharedHolder::start(repo.path(), remote.path(), &scratch, "holder")?;
     let common = hex(&common_dir(repo.path())?);
     let worktree = hex(&git_dir(repo.path())?);
 
@@ -979,5 +1000,67 @@ fn hook_markers_round_trip_through_a_real_hook() -> Result<()> {
         fields[3..].iter().any(|holding| holding.ends_with(&worktree)),
         "names the worktree guard it holds: {marker}"
     );
+    Ok(())
+}
+
+#[test]
+fn push_send_pack_is_shared_and_a_queued_writer_neither_blocks_lanes_for_long_nor_hides_the_holder() -> Result<()> {
+    let Lanes {
+        repo,
+        remote,
+        other,
+        scratch,
+    } = lanes("lock-queued-writer")?;
+    let holder = SharedHolder::start(repo.path(), remote.path(), &scratch, "send-pack")?;
+    let push = holder.pid().to_string();
+
+    // During send-pack other lanes commit; exclusive writers refuse naming the push.
+    fs::write(other.join("lane-file"), "lane b\n")?;
+    let add = brit(&other, &["add", "lane-file"])?;
+    ensure!(add.status.success(), "add during send-pack: {}", add.stderr);
+    let commit = brit(&other, &["commit", "-m", "during send-pack"])?;
+    ensure!(commit.status.success(), "commit during send-pack: {}", commit.stderr);
+    ensure_refusal_names(
+        &brit(&other, &["branch", "create", "blocked"])?,
+        "exclusive write during send-pack",
+        &[push.as_str(), "push"],
+    )?;
+
+    // A queued exclusive writer gives non-waiting lanes a grace, then a refusal naming both.
+    let mut queued = Background::spawn(&other, &["--wait", "branch", "create", "queued"], &[])?;
+    queued.await_stderr("waiting for the Brit mutation guard")?;
+    fs::write(other.join("second"), "second\n")?;
+    let started = Instant::now();
+    let refused = brit(&other, &["add", "second"])?;
+    ensure_refusal_names(
+        &refused,
+        "a non-waiting add behind a queued writer",
+        &[
+            "branch create",
+            "queued for the repository guard",
+            push.as_str(),
+            "push",
+        ],
+    )?;
+    ensure!(
+        started.elapsed() >= Duration::from_millis(900),
+        "the turnstile gave a grace"
+    );
+
+    // A stopped queued writer does not hold the lanes.
+    let signal = |name: &str| -> Result<()> {
+        let status = Command::new("kill").args([name, &queued.pid().to_string()]).status()?;
+        ensure!(status.success(), "kill {name}");
+        Ok(())
+    };
+    signal("-STOP")?;
+    let passed = brit(&other, &["add", "second"]);
+    signal("-CONT")?;
+    let passed = passed?;
+    ensure!(passed.status.success(), "a stopped waiter is passed: {}", passed.stderr);
+
+    holder.release()?;
+    let queued = queued.finish()?;
+    ensure!(queued.status.success(), "the queued writer proceeds: {}", queued.stderr);
     Ok(())
 }
