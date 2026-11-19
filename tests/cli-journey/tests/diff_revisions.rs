@@ -484,12 +484,26 @@ fn one_revision_compares_with_the_working_files_or_the_index() -> Result<()> {
     }
     refuses(f.root(), &["--cached", "main", "topic"], "--cached")?;
     refuses(f.root(), &["main", "topic", "HEAD"], "at most two revisions")?;
-    refuses(f.root(), &["no-such-revision"], "")?;
+    refuses(
+        f.root(),
+        &["no-such-revision"],
+        "ambiguous argument 'no-such-revision': unknown revision or path not in the working tree; \
+         use '--' to separate paths from revisions",
+    )?;
+    refuses(
+        f.root(),
+        &["no-such-revision", "--", "shared"],
+        "bad revision 'no-such-revision'",
+    )?;
     // A name that is both a revision and a path is ambiguous without `--`, as in Git.
     f.write("topic", b"a file named like the branch\n")?;
     for args in [&["topic"][..], &["--name-only", "topic"]] {
         ensure!(!f.git_in(f.root(), &oracle_args(args))?.status.success());
-        refuses(f.root(), args, "ambiguous")?;
+        refuses(
+            f.root(),
+            args,
+            "ambiguous argument 'topic': both revision and filename; use '--' to separate paths from revisions",
+        )?;
     }
     parity(&f, &["--name-only", "topic", "--", "shared"])?;
     Ok(())

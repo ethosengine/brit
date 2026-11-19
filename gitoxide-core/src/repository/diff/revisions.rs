@@ -1,5 +1,20 @@
 //! `diff` between revisions: two trees, `A..B`, `A...B`, `--merge-base`, or one revision against
 //! the index or the working files. Every form is defined as Git's with `--no-renames`.
+//!
+//! Measured limits, each a refusal rather than different output unless said otherwise:
+//!
+//! * A path whose `diff` attribute names a driver (`diff=<driver>`, even a built-in one with
+//!   nothing configured) refuses the patch, `--stat` and `--numstat` forms; `-diff`/`binary` print
+//!   a binary change, and `--name-only`/`--name-status` never read attributes.
+//! * Intent-to-add, skip-worktree and assume-unchanged entries, sparse and split indexes and a
+//!   conflicted index refuse every form that reads the index; a submodule refuses comparisons with
+//!   the working files, whose side of it is the submodule's own checkout.
+//! * Line diffs use imara-diff's Myers with its own speed heuristics and Brit's slider (indent)
+//!   heuristic; Git uses xdiff's Myers with its cost-limit heuristic and `diff.indentHeuristic`.
+//!   Neither is minimal, and on very large, heavily changed files they can pick different
+//!   alignments: on the monorepo's `origin/main...origin/dev`, 3 of 26,673 files differ by two to
+//!   five lines on each side in `--numstat` (`elohim/Cargo.lock` 2725/84 against Git's 2723/82),
+//!   the patch text of those files differs in hunk placement, and `--name-status` is identical.
 
 use std::collections::BTreeMap;
 
@@ -157,7 +172,7 @@ fn split_positionals(
         let is_path = !after_separator && worktree_path(repo, name.as_bstr()).is_some();
         if !paths.is_empty() {
             if !is_path {
-                bail!(message!("ambiguous argument '{name}': unknown revision or path not in the working tree; use '--' to separate paths from revisions").validation());
+                bail!(message!("{}", unknown(name.as_bstr())).validation());
             }
             paths.push(name.clone());
             continue;
@@ -175,10 +190,18 @@ fn split_positionals(
             ),
             Ok(_) => revisions.push(name.clone()),
             Err(_) if is_path => paths.push(name.clone()),
-            Err(err) => return Err(err),
+            // Git's wording: without `--` a name may still be meant as a path.
+            Err(_) if !after_separator => bail!(message!("{}", unknown(name.as_bstr())).validation()),
+            Err(_) => bail!(message!("bad revision '{name}'").validation()),
         }
     }
     Ok((revisions, paths))
+}
+
+fn unknown(name: &BStr) -> String {
+    format!(
+        "ambiguous argument '{name}': unknown revision or path not in the working tree; use '--' to separate paths from revisions"
+    )
 }
 
 /// The objects to compare for `OLD NEW`, `--merge-base OLD NEW` or a lone `A..B` or `A...B`.
