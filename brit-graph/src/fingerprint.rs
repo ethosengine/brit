@@ -54,6 +54,12 @@ pub struct ContentFingerprint {
     pub cid: BritCid,
     /// Individual input hashes (name -> CID of that input's bytes).
     pub inputs: BTreeMap<String, BritCid>,
+    /// Gitlink (submodule) inputs: superproject path -> pinned commit id (hex).
+    ///
+    /// A gitlink is keyed by its pin, not by the submodule's content, so it can
+    /// be computed without the submodule's objects. Kept apart from `inputs` so
+    /// a gitlink can never be mistaken for a blob at the same path.
+    pub gitlinks: BTreeMap<String, String>,
 }
 
 impl ContentFingerprint {
@@ -72,8 +78,25 @@ impl ContentFingerprint {
         )
     }
 
+    /// Number of inputs the fingerprint covers: blobs plus gitlinks.
+    #[must_use]
+    pub fn input_count(&self) -> usize {
+        self.inputs.len() + self.gitlinks.len()
+    }
+
     /// Complete the same fingerprint after each input's content has been hashed and released.
     pub(crate) fn from_input_cids(individual: BTreeMap<String, BritCid>) -> Self {
+        Self::from_inputs(individual, BTreeMap::new())
+    }
+
+    /// Complete a fingerprint over blob inputs and gitlink inputs.
+    ///
+    /// Material: one `path NUL cid NUL` record per blob, in path order — the
+    /// contract every gitlink-free fingerprint keeps byte for byte. When any
+    /// gitlink is present, a section follows that opens with a NUL byte (an
+    /// empty name, which no blob record can have), the tag `gitlink`, NUL, and
+    /// then one `path NUL commit-hex NUL` record per gitlink in path order.
+    pub(crate) fn from_inputs(individual: BTreeMap<String, BritCid>, gitlinks: BTreeMap<String, String>) -> Self {
         let mut combined = Vec::new();
 
         for (name, input_cid) in &individual {
@@ -83,10 +106,26 @@ impl ContentFingerprint {
             combined.push(0);
         }
 
+        if !gitlinks.is_empty() {
+            combined.push(0);
+            combined.extend_from_slice(GITLINK_SECTION_TAG);
+            combined.push(0);
+            for (path, commit) in &gitlinks {
+                combined.extend_from_slice(path.as_bytes());
+                combined.push(0);
+                combined.extend_from_slice(commit.as_bytes());
+                combined.push(0);
+            }
+        }
+
         let cid = BritCid::compute(&combined);
         ContentFingerprint {
             cid,
             inputs: individual,
+            gitlinks,
         }
     }
 }
+
+/// Domain tag of the gitlink section in fingerprint material.
+const GITLINK_SECTION_TAG: &[u8] = b"gitlink";

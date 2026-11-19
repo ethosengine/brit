@@ -522,6 +522,7 @@ dependencies = [
  "gix 0.89.4",
  "globset",
  "petgraph",
+ "regex-automata",
  "rustc-hash",
  "serde",
  "serde_json",
