@@ -22,10 +22,6 @@ const ROWS: &[(&[&str], &str)] = &[
     ),
     (&["mv", "a", "b"], "brit: mv is a Git bridge operation; run: git mv a b"),
     (
-        &["show", "HEAD"],
-        "brit: show is a Git bridge operation; run: git show HEAD",
-    ),
-    (
         &["stash", "push", "-m", "wip item"],
         "brit: stash is a Git bridge operation; run: git stash push -m 'wip item'",
     ),

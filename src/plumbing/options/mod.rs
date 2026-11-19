@@ -107,6 +107,20 @@ pub struct Args {
     pub cmd: Subcommands,
 }
 
+impl Args {
+    /// Record that the command line held a `--`, which the parser does not report when no path
+    /// follows it: `diff` and `show` then read every name before it as a revision, like Git.
+    pub fn note_path_separator(&mut self) {
+        match &mut self.cmd {
+            Subcommands::Diff(diff::Platform {
+                cmd: None, separator, ..
+            })
+            | Subcommands::Show(show::Platform { separator, .. }) => *separator = true,
+            _ => {}
+        }
+    }
+}
+
 #[derive(Debug, clap::Subcommand)]
 pub enum Subcommands {
     /// Replay a linear history with durable local recovery.
@@ -264,6 +278,7 @@ pub enum Subcommands {
         abort: bool,
     },
     Diff(diff::Platform),
+    Show(show::Platform),
     Log(log::Platform),
     /// Interactively browse commits and their graph.
     #[cfg(feature = "tix")]
@@ -771,19 +786,61 @@ pub mod merge {
 pub mod diff {
     use gix::bstr::BString;
 
-    /// Show unstaged changes, staged changes, or compare two objects.
+    /// Show changes between the working files, the index and revisions, like `git diff --no-renames`.
+    ///
+    /// With no revision, working files are compared with the index (or, with `--cached`, the
+    /// index with HEAD). One revision is compared with the working files (or the index); two
+    /// revisions, `A..B` or `A...B` (the merge base of A and B against B) compare trees. Renames
+    /// are never detected: a rename is a deletion and an addition.
+    ///
+    /// Refused rather than printed differently: a path with a `diff=<driver>` attribute (even a
+    /// built-in driver with nothing configured) in the patch and count forms (--name-only and
+    /// --name-status still work); intent-to-add entries, skip-worktree or assume-unchanged entries,
+    /// sparse or split indexes and a conflicted index in the forms that read the index;
+    /// submodules in comparisons with the working files; pathspec patterns (`*`, `?`, `[`, `:`);
+    /// and, in comparisons with the index or working files, a trailing slash, an absolute path,
+    /// `..`, the repository root `.` and `.git` paths. Line counts can differ from Git's on
+    /// very large, heavily changed files, because Brit's Myers diff uses different heuristics.
     #[derive(Debug, clap::Parser)]
     #[clap(args_conflicts_with_subcommands = true)]
     pub struct Platform {
-        /// Compare the index with HEAD instead of working files with the index.
+        /// Compare the index with HEAD (or with REVISION) instead of the working files.
         #[clap(long, visible_alias = "staged")]
         pub cached: bool,
-        /// Show an 80-column summary instead of patches.
+        /// Compare the merge base of both revisions (or of REVISION and HEAD), like `git diff --merge-base`.
         #[clap(long)]
+        pub merge_base: bool,
+        /// Show an 80-column summary instead of patches, like `git diff --stat=80`.
+        #[clap(long, group = "output")]
         pub stat: bool,
-        /// Restrict changes to these literal file paths.
+        /// Show only the names of changed paths, like `git diff --name-only`.
+        #[clap(long, group = "output")]
+        pub name_only: bool,
+        /// Show the names and status letters (A, D, M, T) of changed paths, like `git diff --name-status`.
+        #[clap(long, group = "output")]
+        pub name_status: bool,
+        /// Show added and removed line counts per path, like `git diff --numstat`.
+        #[clap(long, group = "output")]
+        pub numstat: bool,
+        /// Exit with 1 if there are differences and 0 otherwise, like `git diff --exit-code`.
+        #[clap(long)]
+        pub exit_code: bool,
+        /// Print nothing and imply --exit-code, like `git diff --quiet`.
+        #[clap(long, group = "output")]
+        pub quiet: bool,
+        /// No revision, one revision, two revisions, or one range `A..B` or `A...B`.
+        ///
+        /// A name that is no revision but an existing worktree path starts the paths, as in Git.
+        #[clap(value_parser = crate::shared::AsBString, value_name = "REVISION")]
+        pub revisions: Vec<BString>,
+        /// Restrict changes to these literal paths: files, or directories with everything below them.
+        ///
+        /// Comparisons of two revisions also accept a trailing slash, which matches only a directory.
         #[clap(last = true, value_parser = crate::shared::AsBString)]
         pub paths: Vec<BString>,
+        /// Whether `--` was given; set by [`super::Args::note_path_separator()`].
+        #[clap(skip)]
+        pub separator: bool,
         #[clap(subcommand)]
         pub cmd: Option<SubCommands>,
     }
@@ -820,6 +877,55 @@ pub mod diff {
             #[clap(value_parser = crate::shared::AsBString)]
             new_revspec: BString,
         },
+    }
+}
+
+pub mod show {
+    use gix::bstr::BString;
+
+    /// Show commits with their changes, annotated tags, and blobs or trees, like `git show --no-renames`.
+    ///
+    /// A commit prints Git's medium header and its patch against its first parent (a root or
+    /// shallow-boundary commit against the empty tree), its message re-encoded to UTF-8 from a
+    /// declared encoding. A merge prints its header only, and with --stat or --numstat its
+    /// first-parent summary, as Git does. An annotated tag prints its header and message, then what
+    /// it points to. A blob (`REV:PATH`) prints its content, and a tree prints `tree <REVISION>`, a
+    /// blank line and its entry names (directories with a trailing slash), as Git does.
+    ///
+    /// Refused rather than printed differently: a merge whose result differs from every parent at
+    /// some path (Git's combined diff) in the patch, --oneline, --name-only and --name-status forms;
+    /// a declared encoding Brit cannot decode exactly as Git; a commit header, message or tagger that
+    /// is not ASCII when i18n.logOutputEncoding (or, when that is unset, i18n.commitEncoding) names
+    /// an encoding other than UTF-8; a range `A..B`; and the diff limits listed in `brit diff --help`.
+    #[derive(Debug, clap::Parser)]
+    pub struct Platform {
+        /// Show an 80-column summary instead of patches, like `git show --stat=80`.
+        #[clap(long, group = "output")]
+        pub stat: bool,
+        /// Show only the names of changed paths, like `git show --name-only`.
+        #[clap(long, group = "output")]
+        pub name_only: bool,
+        /// Show the names and status letters of changed paths, like `git show --name-status`.
+        #[clap(long, group = "output")]
+        pub name_status: bool,
+        /// Show added and removed line counts per path, like `git show --numstat`.
+        #[clap(long, group = "output")]
+        pub numstat: bool,
+        /// Show only the header of each commit, like `git show --no-patch`.
+        #[clap(long, short = 's', group = "output")]
+        pub no_patch: bool,
+        /// Print each commit as its abbreviated id and title, like `git show --oneline`.
+        #[clap(long)]
+        pub oneline: bool,
+        /// Revisions to show instead of HEAD: commits, tags, trees (`REV:`, `REV^{tree}`), or `REV:PATH`.
+        #[clap(value_parser = crate::shared::AsBString, value_name = "REVISION")]
+        pub revisions: Vec<BString>,
+        /// Only show changes to these literal paths; a commit that changes none of them is not shown.
+        #[clap(last = true, value_parser = crate::shared::AsBString, value_name = "PATH")]
+        pub paths: Vec<BString>,
+        /// Whether `--` was given; set by [`super::Args::note_path_separator()`].
+        #[clap(skip)]
+        pub separator: bool,
     }
 }
 

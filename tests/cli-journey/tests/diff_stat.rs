@@ -699,7 +699,7 @@ fn tree_attributes_come_from_both_requested_trees_and_ignore_working_index() -> 
 }
 
 #[test]
-fn changed_submodules_refuse_and_unchanged_staged_neighbors_are_skipped() -> Result<()> {
+fn gitlink_changes_summarize_and_unchanged_staged_neighbors_are_skipped() -> Result<()> {
     let repo = TestRepo::new("stat-submodule")?;
     repo.commit_file("ordinary", "old\n")?;
     let old = repo.head_id()?;
@@ -716,9 +716,17 @@ fn changed_submodules_refuse_and_unchanged_staged_neighbors_are_skipped() -> Res
         repo.path(),
         &["update-index", "--cacheinfo", &format!("160000,{new},sub")],
     )?;
-    refuse(repo.path(), &["diff", "--cached", "--stat"], "submodule")?;
+    // A gitlink move is one line out and one line in, as Git's `Subproject commit` patch.
+    parity(repo.path(), &["diff", "--cached", "--stat"], &["--cached"])?;
     git(repo.path(), &["commit", "-m", "changed gitlink"])?;
-    refuse(repo.path(), &["diff", "tree", "--stat", "HEAD~", "HEAD"], "submodule")?;
+    parity(
+        repo.path(),
+        &["diff", "tree", "--stat", "HEAD~", "HEAD"],
+        &["HEAD~", "HEAD"],
+    )?;
+    parity(repo.path(), &["diff", "--stat", "HEAD~", "HEAD"], &["HEAD~", "HEAD"])?;
+    // The working side of a submodule is its own checkout, which Brit does not read.
+    refuse(repo.path(), &["diff", "--stat"], "submodule")?;
     Ok(())
 }
 
@@ -774,14 +782,11 @@ fn bare_tree_summaries_and_invalid_arguments() -> Result<()> {
         &["HEAD~", "HEAD"],
     )?;
     for args in [
-        vec!["diff", "--stat", "HEAD"],
         vec!["diff", "--stat", "--width=80"],
-        vec!["diff", "--numstat"],
         vec!["diff", "--shortstat"],
         vec!["diff", "--cached", "tree", "--stat", "HEAD~", "HEAD"],
         vec!["diff", "tree", "--stat", "HEAD~", "HEAD", "--", "file"],
         vec!["diff", "file", "--stat", "HEAD~:file", "HEAD:file"],
-        vec!["diff", "--stat", "--", "untracked"],
         vec!["diff", "tree", "--stat", "HEAD", "missing-revision"],
     ] {
         refuse(repo.path(), &args, "")?;

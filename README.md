@@ -69,7 +69,7 @@ with status 2 and no change.
 
 | Owned by `brit` (daily verbs; `brit --help` lists all) | Bridged to stock Git (exit 2) |
 | --- | --- |
-| `status`, `diff`, `log`, `add`, `restore`, `switch`, `commit`, `tag`, `branch`, `merge`, `rebase`, `clone`, `fetch`, `pull`, `push`, `worktree` | `reset`, `rm`, `mv`, `show`, `stash`, `cherry-pick`, `revert`, `checkout`, `notes` |
+| `status`, `diff`, `show`, `log`, `add`, `restore`, `switch`, `commit`, `tag`, `branch`, `merge`, `rebase`, `clone`, `fetch`, `pull`, `push`, `worktree` | `reset`, `rm`, `mv`, `stash`, `cherry-pick`, `revert`, `checkout`, `notes` |
 | `submodule list` | `submodule update`, `submodule init`, `submodule sync` |
 | `build`, `snapshot`, `context`, `integrate`, `verify` | |
 

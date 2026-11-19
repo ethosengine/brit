@@ -242,7 +242,12 @@ impl gix::objs::find::Source for Grafted<'_, '_> {
 }
 
 /// The merge bases of `one` and `other`, as Git computes them in a shallow repository.
-fn merge_bases(repo: &gix::Repository, source: &Source<'_>, one: ObjectId, other: ObjectId) -> Result<Vec<ObjectId>> {
+pub(crate) fn merge_bases(
+    repo: &gix::Repository,
+    source: &Source<'_>,
+    one: ObjectId,
+    other: ObjectId,
+) -> Result<Vec<ObjectId>> {
     let commits = Grafted {
         source,
         shallow: repo.shallow_commits()?,
@@ -552,14 +557,14 @@ fn read_node(
 type Located = (EntryKind, ObjectId);
 
 /// A literal path filter in repository-relative components.
-struct Literal {
-    components: Vec<BString>,
+pub(crate) struct Literal {
+    pub(crate) components: Vec<BString>,
     /// Like Git, a trailing slash matches only a tree or a submodule at the path.
-    directory: bool,
+    pub(crate) directory: bool,
 }
 
 impl Literal {
-    fn new(repo: &gix::Repository, path: &BStr) -> Result<Self> {
+    pub(crate) fn new(repo: &gix::Repository, path: &BStr) -> Result<Self> {
         Ok(Literal {
             components: repo_relative(repo, path)?,
             directory: path.ends_with(b"/") || (cfg!(windows) && path.ends_with(b"\\")),
@@ -639,7 +644,7 @@ fn push_components(components: &mut Vec<BString>, path: &Path, original: &Path) 
 }
 
 /// Return `name` as a path filter if it names something in the worktree.
-fn worktree_path(repo: &gix::Repository, name: &BStr) -> Option<Literal> {
+pub(crate) fn worktree_path(repo: &gix::Repository, name: &BStr) -> Option<Literal> {
     let literal = Literal::new(repo, name).ok()?;
     let mut path = repo.workdir()?.to_owned();
     for component in &literal.components {
