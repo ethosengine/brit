@@ -824,11 +824,17 @@ pub mod fetch {
 
         /// The name of the remote to connect to, or the url of the remote to connect to directly.
         ///
-        /// If unset, the current branch will determine the remote.
+        /// If unset, the first positional selects the remote when it names a configured remote
+        /// (`brit fetch origin dev`); otherwise the current branch determines the remote.
         #[clap(long, short = 'r')]
         pub remote: Option<String>,
 
-        /// Override the built-in and configured ref-specs with one or more of the given ones.
+        /// `[<remote>] [<refspec>...]`: override the built-in and configured ref-specs with one or more of the given ones.
+        ///
+        /// Without `--remote`, a first value naming a configured remote selects that remote and the
+        /// rest are refspecs; with `--remote`, every value is a refspec. A refspec naming one ref
+        /// that the remote does not advertise is an error. A branch fetched without a destination
+        /// also updates the remote-tracking ref the remote's configured refspecs map it to.
         #[clap(value_parser = crate::shared::AsBString)]
         pub ref_spec: Vec<gix::bstr::BString>,
     }

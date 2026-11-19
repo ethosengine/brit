@@ -80,23 +80,29 @@ pub(crate) fn pull_tracking(
 /// Return one exact refspec per such mapping, carrying the configured spec's force flag, so
 /// the fetch updates only the named branch's tracking ref and leaves every other tracking ref
 /// alone. Refspecs with a destination, globs, negations and object ids contribute nothing,
-/// and neither does a URL remote, which has no configured refspecs. Unparsable refspecs are
-/// skipped here; replacing the remote's refspecs reports them.
+/// and neither does a URL remote (`named` false), which has no configured refspecs.
+/// Unparsable refspecs are skipped here; replacing the remote's refspecs reports them.
+///
+/// A short name resolves as Git resolves it: to the first of its expansions, in rev-parse
+/// order, that the remote `advertised`. Without the advertisement every expansion is a
+/// candidate, which the caller must narrow once the advertisement is known.
 pub(crate) fn opportunistic_tracking_specs(
-    remote: &gix::Remote<'_>,
+    configured: &[gix::refspec::RefSpec],
+    named: bool,
     command_line: &[BString],
+    hash: gix::hash::Kind,
+    advertised: Option<&std::collections::BTreeSet<BString>>,
 ) -> Vec<gix::refspec::RefSpec> {
     use gix::bstr::{ByteSlice, ByteVec};
-    if remote.name().is_none() {
+    if !named {
         return Vec::new();
     }
-    let configured = remote.refspecs(gix::remote::Direction::Fetch);
     let parsed: Vec<_> = command_line
         .iter()
         .filter_map(|spec| gix::refspec::parse(spec.as_bstr(), gix::refspec::parse::Operation::Fetch).ok())
         .collect();
     let explicit_destinations: Vec<_> = parsed.iter().filter_map(|spec| spec.destination()).collect();
-    let null = gix::ObjectId::null(remote.repo().object_hash());
+    let null = gix::ObjectId::null(hash);
     let mut candidates = Vec::new();
     for spec in &parsed {
         // Only a positive, destination-less refspec; it can never be a pattern.
@@ -108,22 +114,30 @@ pub(crate) fn opportunistic_tracking_specs(
         if gix::ObjectId::from_hex(source).is_ok() {
             continue;
         }
-        if source.starts_with(b"refs/") {
-            candidates.push(BString::from(source));
-            continue;
-        }
-        // The partial-name expansion the refspec matcher applies to advertised refs.
-        for (base, suffix) in [
-            ("refs/", ""),
-            ("refs/tags/", ""),
-            ("refs/heads/", ""),
-            ("refs/remotes/", ""),
-            ("refs/remotes/", "/HEAD"),
-        ] {
-            let mut name = BString::from(base);
-            name.push_str(source);
-            name.push_str(suffix);
-            candidates.push(name);
+        let expansions: Vec<BString> = if source.starts_with(b"refs/") {
+            vec![source.into()]
+        } else {
+            // Git's `ref_rev_parse_rules`, in order.
+            [
+                ("", ""),
+                ("refs/", ""),
+                ("refs/tags/", ""),
+                ("refs/heads/", ""),
+                ("refs/remotes/", ""),
+                ("refs/remotes/", "/HEAD"),
+            ]
+            .into_iter()
+            .map(|(base, suffix)| {
+                let mut name = BString::from(base);
+                name.push_str(source);
+                name.push_str(suffix);
+                name
+            })
+            .collect()
+        };
+        match advertised {
+            Some(advertised) => candidates.extend(expansions.into_iter().find(|name| advertised.contains(name))),
+            None => candidates.extend(expansions),
         }
     }
     let matches = gix::refspec::MatchGroup::from_fetch_specs(configured.iter().map(gix::refspec::RefSpec::to_ref))
@@ -157,6 +171,35 @@ pub(crate) fn opportunistic_tracking_specs(
         }
     }
     specs
+}
+
+/// The command-line refspecs that name one ref (not a pattern, negation or object id) yet
+/// matched nothing the remote advertised. Git refuses these: "couldn't find remote ref".
+pub(crate) fn unmatched_refspecs(
+    command_line: &[gix::refspec::RefSpec],
+    map: &gix::remote::fetch::RefMap,
+) -> Vec<BString> {
+    command_line
+        .iter()
+        .enumerate()
+        .filter_map(|(index, spec)| {
+            let source = match spec.to_ref().instruction() {
+                gix::refspec::Instruction::Fetch(
+                    gix::refspec::instruction::Fetch::Only { src }
+                    | gix::refspec::instruction::Fetch::AndUpdate { src, .. },
+                ) => src,
+                _ => return None,
+            };
+            if source.contains(&b'*') || gix::ObjectId::from_hex(source).is_ok() {
+                return None;
+            }
+            let matched = map
+                .mappings
+                .iter()
+                .any(|mapping| mapping.spec_index == gix::remote::fetch::refmap::SpecIndex::ExplicitInRemote(index));
+            (!matched).then(|| source.to_owned())
+        })
+        .collect()
 }
 
 /// Receive only the selected branch, leaving every ref and FETCH_HEAD for the caller's journal.
@@ -274,17 +317,75 @@ pub(crate) mod function {
             bail!(gix::error::unsupported("JSON output isn't yet supported for fetching."));
         }
 
+        use gix::bstr::ByteSlice;
+        // Git's spelling `fetch <remote> <refspec>...`: without `--remote`, a first positional
+        // naming a configured remote selects it. With `--remote`, every positional is a refspec.
+        let (remote, ref_specs) = match remote {
+            Some(remote) => (Some(remote), ref_specs),
+            None => match ref_specs.split_first() {
+                Some((first, rest)) if repo.remote_names().iter().any(|name| name.as_bstr() == first.as_bstr()) => {
+                    (Some(first.to_str_lossy().into_owned()), rest.to_vec())
+                }
+                _ => (None, ref_specs),
+            },
+        };
         let mut remote = crate::repository::remote::by_name_or_url(&repo, remote.as_deref())?;
-        let mut ref_map_options = gix::remote::ref_map::Options::default();
-        if !ref_specs.is_empty() {
-            // Read the configured mapping before the command line replaces it.
-            ref_map_options.extra_refspecs = super::opportunistic_tracking_specs(&remote, &ref_specs);
+        // Read the configured mapping before the command line replaces it.
+        let configured = remote.refspecs(gix::remote::Direction::Fetch).to_vec();
+        let named = remote.name().is_some();
+        let tracking = |advertised: Option<&std::collections::BTreeSet<gix::bstr::BString>>| {
+            super::opportunistic_tracking_specs(&configured, named, &ref_specs, repo.object_hash(), advertised)
+        };
+        let provisional = if ref_specs.is_empty() {
+            Vec::new()
+        } else {
             remote.replace_refspecs(ref_specs.iter(), gix::remote::Direction::Fetch)?;
             remote = remote.with_fetch_tags(gix::remote::fetch::Tags::None);
-        }
-        let res: gix::remote::fetch::Outcome = remote
+            tracking(None)
+        };
+        let options = |extra_refspecs| gix::remote::ref_map::Options {
+            extra_refspecs,
+            ..Default::default()
+        };
+        let mut prepared = remote
             .connect(gix::remote::Direction::Fetch)?
-            .prepare_fetch(&mut progress, ref_map_options)?
+            .prepare_fetch(&mut progress, options(provisional.clone()))?;
+        if !ref_specs.is_empty() {
+            let unmatched =
+                super::unmatched_refspecs(remote.refspecs(gix::remote::Direction::Fetch), prepared.ref_map());
+            if !unmatched.is_empty() {
+                bail!(gix::error::validation(format!(
+                    "couldn't find remote ref {}",
+                    unmatched
+                        .iter()
+                        .map(|name| name.to_str_lossy().into_owned())
+                        .collect::<Vec<_>>()
+                        .join(", ")
+                )));
+            }
+            // A short name that more than one advertised ref expands to resolves to the best
+            // one only; reconnect without the other candidates' tracking updates.
+            let advertised: std::collections::BTreeSet<gix::bstr::BString> = prepared
+                .ref_map()
+                .remote_refs
+                .iter()
+                .map(|r| r.unpack().0.to_owned())
+                .collect();
+            let needed = tracking(Some(&advertised));
+            let stray = prepared.ref_map().mappings.iter().any(|mapping| {
+                mapping
+                    .spec_index
+                    .implicit_index()
+                    .is_some_and(|index| !needed.contains(&provisional[index]))
+            });
+            if stray {
+                drop(prepared);
+                prepared = remote
+                    .connect(gix::remote::Direction::Fetch)?
+                    .prepare_fetch(&mut progress, options(needed))?;
+            }
+        }
+        let res: gix::remote::fetch::Outcome = prepared
             .with_dry_run(dry_run)
             .with_shallow(shallow)
             .receive(&mut progress, &gix::interrupt::IS_INTERRUPTED)?;
@@ -295,6 +396,7 @@ pub(crate) mod function {
         }
 
         let ref_specs = remote.refspecs(gix::remote::Direction::Fetch);
+        let rejected = rejected_updates(&res);
         match res.status {
             Status::NoPackReceived {
                 update_refs,
@@ -343,7 +445,43 @@ pub(crate) mod function {
         if dry_run {
             writeln!(out, "DRY-RUN: No ref was updated and no pack was received.").ok();
         }
+        if !rejected.is_empty() {
+            bail!(gix::error::validation(format!(
+                "rejected ref update(s): {}",
+                rejected.join(", ")
+            )));
+        }
         Ok(())
+    }
+
+    /// Every local ref whose update was refused, as `<ref> (<reason>)`. Git exits 1 for these.
+    fn rejected_updates(res: &gix::remote::fetch::Outcome) -> Vec<String> {
+        use gix::remote::fetch::refs::update::Mode;
+        let update_refs = match &res.status {
+            Status::NoPackReceived { update_refs, .. } | Status::Change { update_refs, .. } => update_refs,
+        };
+        update_refs
+            .updates
+            .iter()
+            .zip(&res.ref_map.mappings)
+            .filter(|(update, _)| {
+                matches!(
+                    update.mode,
+                    Mode::RejectedSourceObjectNotFound { .. }
+                        | Mode::RejectedTagUpdate
+                        | Mode::RejectedNonFastForward
+                        | Mode::RejectedToReplaceWithUnborn
+                        | Mode::RejectedCurrentlyCheckedOut { .. }
+                )
+            })
+            .map(|(update, mapping)| {
+                let name = mapping
+                    .local
+                    .as_ref()
+                    .map_or_else(|| "(no local ref)".to_owned(), ToString::to_string);
+                format!("{name} ({})", update.mode)
+            })
+            .collect()
     }
 
     fn render_graph(

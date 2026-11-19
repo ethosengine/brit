@@ -128,7 +128,7 @@ fn branch_fetch_without_a_configured_mapping_creates_no_tracking_ref() -> TestRe
     assert_eq!(rev(local.path(), "refs/heads/copy"), Some(expected.clone()));
     assert_eq!(
         rev(local.path(), "refs/remotes/origin/dev"),
-        Some(dev_before),
+        Some(dev_before.clone()),
         "an explicit destination is the only ref written"
     );
 
@@ -152,6 +152,165 @@ fn branch_fetch_without_a_configured_mapping_creates_no_tracking_ref() -> TestRe
         refs.lines().collect::<Vec<_>>(),
         ["refs/remotes/origin/dev", "refs/remotes/origin/main"],
         "no tracking ref without a configured mapping"
+    );
+    assert_eq!(
+        rev(local.path(), "refs/remotes/origin/dev"),
+        Some(dev_before),
+        "a URL or unmapped fetch leaves origin's tracking ref where it was"
+    );
+    Ok(())
+}
+
+fn add_remote(local: &Path, name: &str, url: &Path) -> TestResult {
+    let output = git_command(local).args(["remote", "add", name]).arg(url).output()?;
+    assert!(output.status.success(), "configure {name}: {output:?}");
+    Ok(())
+}
+
+fn stderr(output: &std::process::Output) -> String {
+    String::from_utf8_lossy(&output.stderr).into_owned()
+}
+
+/// `brit fetch <remote> <refspec>` is Git's spelling: a first positional naming a configured
+/// remote selects it. With `-r`, every positional is a refspec, and a refspec naming a ref
+/// the remote does not advertise is an error, never a silent success.
+#[test]
+fn positional_remote_selects_the_named_remote_and_unknown_refs_refuse() -> TestResult {
+    let (_origin, local) = two_branch_fixture()?;
+    let upstream = tempfile::tempdir()?;
+    git(upstream.path(), "init")?;
+    git(upstream.path(), "commit --allow-empty -m upstream-first")?;
+    git(upstream.path(), "branch dev")?;
+    add_remote(local.path(), "upstream", upstream.path())?;
+    let origin_dev = rev(local.path(), "refs/remotes/origin/dev");
+    let expected = advance(upstream.path(), "dev", "upstream-dev")?;
+
+    let output = brit(local.path(), &["fetch", "upstream", "dev"]);
+    assert!(output.status.success(), "positional remote: {output:?}");
+    assert_eq!(rev(local.path(), "refs/remotes/upstream/dev"), Some(expected));
+    assert_eq!(
+        rev(local.path(), "refs/remotes/origin/dev"),
+        origin_dev,
+        "origin untouched"
+    );
+
+    for (args, name) in [
+        (&["fetch", "-r", "origin", "upstream"][..], "upstream"),
+        (&["fetch", "-r", "origin", "nosuch"][..], "nosuch"),
+        (&["fetch", "origin", "nosuch:refs/heads/nosuch"][..], "nosuch"),
+    ] {
+        let output = brit(local.path(), args);
+        assert!(!output.status.success(), "{args:?} must refuse: {output:?}");
+        assert!(
+            stderr(&output).contains("couldn't find remote ref") && stderr(&output).contains(name),
+            "{args:?} names the missing ref: {}",
+            stderr(&output)
+        );
+    }
+    assert_eq!(rev(local.path(), "refs/heads/nosuch"), None);
+    Ok(())
+}
+
+/// A name that is both a tag and a branch resolves as Git resolves it, to one best match
+/// (tags come first), so the branch's tracking ref moves exactly when Git moves it.
+#[test]
+fn ambiguous_short_name_resolves_like_git() -> TestResult {
+    let (remote, brit_local) = two_branch_fixture()?;
+    let git_local = tempfile::tempdir()?;
+    git(git_local.path(), "init")?;
+    add_remote(git_local.path(), "origin", remote.path())?;
+    git(remote.path(), "tag dup")?;
+    git(remote.path(), "branch dup")?;
+    for local in [brit_local.path(), git_local.path()] {
+        let output = brit(local, &["fetch", "-r", "origin"]);
+        assert!(output.status.success(), "seed tracking refs: {output:?}");
+    }
+    let moved = advance(remote.path(), "dup", "branch-moves")?;
+
+    let output = brit(brit_local.path(), &["fetch", "origin", "dup"]);
+    assert!(output.status.success(), "brit: {output:?}");
+    git(git_local.path(), "fetch -q origin dup")?;
+    assert_eq!(
+        rev(brit_local.path(), "refs/remotes/origin/dup"),
+        rev(git_local.path(), "refs/remotes/origin/dup"),
+        "origin/dup moves exactly as Git moves it"
+    );
+    assert_ne!(
+        rev(git_local.path(), "refs/remotes/origin/dup"),
+        Some(moved),
+        "Git resolves dup to the tag and leaves the branch's tracking ref alone"
+    );
+    Ok(())
+}
+
+/// A non-fast-forward update the refspec does not force is rejected, the ref is named, and
+/// the fetch fails, for the configured, the implicit and the explicit forms alike.
+#[test]
+fn rejected_updates_fail_the_fetch_and_name_the_ref() -> TestResult {
+    let (remote, local) = two_branch_fixture()?;
+    git(
+        local.path(),
+        "config remote.origin.fetch refs/heads/*:refs/remotes/origin/*",
+    )?;
+    advance(remote.path(), "dev", "dev-moves")?;
+    let output = brit(local.path(), &["fetch", "-r", "origin"]);
+    assert!(output.status.success(), "fast-forward is accepted: {output:?}");
+    let before = rev(local.path(), "refs/remotes/origin/dev");
+    git(remote.path(), "switch -q dev")?;
+    git(remote.path(), "reset -q --hard HEAD~1")?;
+    git(remote.path(), "commit --allow-empty -m rewritten")?;
+
+    for args in [
+        &["fetch", "-r", "origin"][..],
+        &["fetch", "-r", "origin", "dev"][..],
+        &["fetch", "-r", "origin", "dev:refs/remotes/origin/dev"][..],
+    ] {
+        let output = brit(local.path(), args);
+        assert!(!output.status.success(), "{args:?} must fail: {output:?}");
+        assert!(
+            stderr(&output).contains("refs/remotes/origin/dev") && stderr(&output).contains("non-fast-forward"),
+            "{args:?} names the rejected ref: {}",
+            stderr(&output)
+        );
+        assert_eq!(rev(local.path(), "refs/remotes/origin/dev"), before, "{args:?}");
+    }
+    Ok(())
+}
+
+/// Every configured refspec that maps the branch is updated, and a configured negative
+/// refspec excluding it leaves its tracking ref alone (conservative, pinned).
+#[test]
+fn several_configured_mappings_and_negations() -> TestResult {
+    let (remote, local) = two_branch_fixture()?;
+    git(
+        local.path(),
+        "config --add remote.origin.fetch +refs/heads/dev:refs/remotes/mirror/dev",
+    )?;
+    let expected = advance(remote.path(), "dev", "dev-moves")?;
+    let output = brit(local.path(), &["fetch", "-r", "origin", "dev"]);
+    assert!(output.status.success(), "{output:?}");
+    assert_eq!(rev(local.path(), "refs/remotes/origin/dev"), Some(expected.clone()));
+    assert_eq!(rev(local.path(), "refs/remotes/mirror/dev"), Some(expected.clone()));
+
+    let output = brit(local.path(), &["remote", "-n", "origin", "ref-map", "-u"]);
+    assert!(
+        output.status.success(),
+        "ref-map with two mappings of one tip: {output:?}"
+    );
+
+    git(local.path(), "config --unset-all remote.origin.fetch")?;
+    git(
+        local.path(),
+        "config --add remote.origin.fetch +refs/heads/*:refs/remotes/origin/*",
+    )?;
+    git(local.path(), "config --add remote.origin.fetch ^refs/heads/dev")?;
+    advance(remote.path(), "dev", "dev-moves-again")?;
+    let output = brit(local.path(), &["fetch", "-r", "origin", "dev"]);
+    assert!(output.status.success(), "{output:?}");
+    assert_eq!(
+        rev(local.path(), "refs/remotes/origin/dev"),
+        Some(expected),
+        "a negated branch keeps its tracking ref"
     );
     Ok(())
 }

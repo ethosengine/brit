@@ -247,23 +247,29 @@ mod refs_impl {
                 }
             }
         }
-        if map.remote_refs.len() - map.mappings.len() != 0 {
+        // Several refspecs may map the same tip, so count the tips no mapping covers.
+        let filtered: Vec<_> = map
+            .remote_refs
+            .iter()
+            .filter(|r| {
+                !map.mappings.iter().any(|m| match &m.remote {
+                    Source::Ref(other) => other == *r,
+                    Source::ObjectId(_) => false,
+                })
+            })
+            .collect();
+        if !filtered.is_empty() {
             writeln!(
                 err,
                 "server sent {} tips, {} were filtered due to {} refspec(s).",
                 map.remote_refs.len(),
-                map.remote_refs.len() - map.mappings.len(),
+                filtered.len(),
                 refspecs.len()
             )
             .or_error()?;
             if show_unmapped_remotes {
                 writeln!(&mut out, "\nFiltered: ").or_error()?;
-                for remote_ref in map.remote_refs.iter().filter(|r| {
-                    !map.mappings.iter().any(|m| match &m.remote {
-                        Source::Ref(other) => other == *r,
-                        Source::ObjectId(_) => false,
-                    })
-                }) {
+                for remote_ref in filtered {
                     print_ref(&mut out, remote_ref).or_error()?;
                     writeln!(&mut out).or_error()?;
                 }
