@@ -10,48 +10,58 @@ use tempfile::TempDir;
 
 /// Initialize a temp git repo with a few files committed.
 /// Returns (TempDir keep-alive, repo path, head ObjectId).
+///
+/// Index-only: each blob is written from stdin and staged by path with
+/// `update-index --cacheinfo`, so no file is created in the worktree. Names
+/// with spaces, brackets or non-ASCII bytes, and the exact LF bytes, reach the
+/// tree the same way on every platform (no filesystem, pathspec or
+/// line-ending conversion is involved).
 fn init_repo_with_files(files: &[(&str, &str)]) -> (TempDir, std::path::PathBuf, gix::ObjectId) {
     let dir = TempDir::new().expect("temp");
     let path = dir.path().to_path_buf();
-    Command::new("git")
-        .args(["init", "-q"])
-        .current_dir(&path)
-        .status()
-        .expect("init");
-    Command::new("git")
-        .args(["config", "user.email", "t@t.t"])
-        .current_dir(&path)
-        .status()
-        .expect("");
-    Command::new("git")
-        .args(["config", "user.name", "t"])
-        .current_dir(&path)
-        .status()
-        .expect("");
-
+    git_in(&path, &["init", "-q"]);
+    git_in(&path, &["config", "user.email", "t@t.t"]);
+    git_in(&path, &["config", "user.name", "t"]);
     for (rel, contents) in files {
-        let abs = path.join(rel);
-        if let Some(parent) = abs.parent() {
-            std::fs::create_dir_all(parent).expect("mkdir");
-        }
-        std::fs::write(&abs, contents).expect("write");
-        Command::new("git")
-            .args(["add", rel])
-            .env("GIT_LITERAL_PATHSPECS", "1")
-            .current_dir(&path)
-            .status()
-            .expect("add");
+        stage_blob(&path, "100644", rel, contents.as_bytes());
     }
-    Command::new("git")
-        .args(["commit", "-q", "-m", "init"])
-        .current_dir(&path)
-        .status()
-        .expect("commit");
+    git_in(&path, &["commit", "-q", "-m", "init"]);
 
     let repo = gix::open(&path).expect("open");
     let head_id = repo.head_id().expect("head_id").detach();
 
     (dir, path, head_id)
+}
+
+/// Write `bytes` as a blob (from stdin, no path involved) and stage it at
+/// the repository path `rel` with `mode`.
+fn stage_blob(path: &std::path::Path, mode: &str, rel: &str, bytes: &[u8]) {
+    use std::io::Write as _;
+    let mut child = Command::new("git")
+        .args(["hash-object", "-w", "--stdin"])
+        .current_dir(path)
+        .stdin(std::process::Stdio::piped())
+        .stdout(std::process::Stdio::piped())
+        .stderr(std::process::Stdio::piped())
+        .spawn()
+        .expect("hash-object");
+    child.stdin.take().expect("stdin").write_all(bytes).expect("write blob");
+    let output = child.wait_with_output().expect("hash-object");
+    assert!(
+        output.status.success(),
+        "hash-object: {}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    let oid = String::from_utf8(output.stdout).expect("utf8");
+    git_in(
+        path,
+        &[
+            "update-index",
+            "--add",
+            "--cacheinfo",
+            &format!("{mode},{},{rel}", oid.trim()),
+        ],
+    );
 }
 
 #[test]
@@ -292,13 +302,7 @@ fn init_repo_with_symlinks(
 ) -> (TempDir, std::path::PathBuf, gix::ObjectId) {
     let (keep, path, _) = init_repo_with_files(files);
     for (link, target) in links {
-        let scratch = path.join(".git/link-target");
-        std::fs::write(&scratch, target).expect("write target");
-        let blob = git_in(&path, &["hash-object", "-w", scratch.to_str().expect("path")]);
-        git_in(
-            &path,
-            &["update-index", "--add", "--cacheinfo", &format!("120000,{blob},{link}")],
-        );
+        stage_blob(&path, "120000", link, target.as_bytes());
     }
     git_in(&path, &["commit", "-q", "-m", "links"]);
     let repo = gix::open(&path).expect("open");

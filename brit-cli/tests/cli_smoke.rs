@@ -190,9 +190,22 @@ fn fingerprint_steps(repo: &std::path::Path, commit: &str) -> serde_json::Value 
         String::from_utf8_lossy(&out.stderr)
     );
     let v: serde_json::Value = serde_json::from_slice(&out.stdout).expect("json");
-    v["fingerprints"]
-        .as_array()
-        .expect("fingerprints")
+    let steps = v["fingerprints"].as_array().expect("fingerprints");
+    // Listed gitlink and symlink paths are repository paths on every platform:
+    // `/`-separated, relative, never rendered with the host's separator.
+    for listed in steps
+        .iter()
+        .flat_map(|fp| ["gitlinks", "symlinks"].map(|key| fp.get(key)))
+        .flatten()
+        .flat_map(|entries| entries.as_array().expect("listing"))
+    {
+        let path = listed["path"].as_str().expect("path");
+        assert!(
+            !path.contains('\\') && !path.starts_with('/') && !path.contains(':'),
+            "listed path is not a repository path: {path}"
+        );
+    }
+    steps
         .iter()
         .map(|fp| (fp["step"].as_str().expect("step").to_string(), fp.clone()))
         .collect::<serde_json::Map<_, _>>()
@@ -235,15 +248,42 @@ fn fingerprint_keys_a_crossed_gitlink_pin_without_the_submodule() {
 }
 
 /// Record a symlink in the index (mode 120000; its blob is the target path).
+///
+/// The target goes through stdin and every argument is passed as its own
+/// argv entry: no filesystem path is rendered into a split command string,
+/// so Windows paths keep their backslashes.
 fn stage_symlink(repo: &std::path::Path, link: &str, target: &str) {
-    let scratch = repo.join(".git/link-target");
-    std::fs::write(&scratch, target).expect("write target");
-    let blob = gix_testtools::git(repo, &format!("hash-object -w {}", scratch.display())).expect("hash");
-    gix_testtools::git(
-        repo,
-        &format!("update-index --add --cacheinfo 120000,{},{link}", blob.trim()),
-    )
-    .expect("link");
+    use std::io::Write as _;
+    let mut child = gix_testtools::git_command(repo)
+        .args(["hash-object", "-w", "--stdin"])
+        .stdin(std::process::Stdio::piped())
+        .stdout(std::process::Stdio::piped())
+        .stderr(std::process::Stdio::piped())
+        .spawn()
+        .expect("hash-object");
+    child
+        .stdin
+        .take()
+        .expect("stdin")
+        .write_all(target.as_bytes())
+        .expect("write target");
+    let output = child.wait_with_output().expect("hash-object");
+    assert!(
+        output.status.success(),
+        "hash-object: {}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    let blob = String::from_utf8(output.stdout).expect("utf8");
+    let status = gix_testtools::git_command(repo)
+        .args([
+            "update-index",
+            "--add",
+            "--cacheinfo",
+            &format!("120000,{},{link}", blob.trim()),
+        ])
+        .status()
+        .expect("update-index");
+    assert!(status.success(), "stage symlink {link}");
 }
 
 /// A repository whose last commit edits `src/lib.txt` (so `plan --since
