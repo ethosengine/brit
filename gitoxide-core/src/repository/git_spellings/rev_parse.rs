@@ -496,7 +496,14 @@ fn print_path(mut out: impl Write, path: &Path, cwd: &Path, format: PathFormat) 
 }
 
 /// Git's `relative_path()`: `./` for the directory itself, `../` steps (with a trailing slash) for
-/// an ancestor, and a plain relative path otherwise.
+/// an ancestor, and a plain relative path otherwise, separated by `/` on every platform as Git
+/// prints it.
+///
+/// With no component in common, which only happens on Windows (a different drive, or a UNC path
+/// against a drive path), `rest` is the whole absolute path and every component of `base`, its
+/// prefix and root included, counts as a `../`: `C:\x\y` against `D:\z` gives `../../../C:/x/y`
+/// (before separators were converted, `../../../C:\x\y`). Git prints the absolute path unchanged
+/// there; that difference remains.
 fn relative_path(path: &Path, base: &Path) -> String {
     let path: Vec<Component<'_>> = path.components().collect();
     let base: Vec<Component<'_>> = base.components().collect();
@@ -505,9 +512,19 @@ fn relative_path(path: &Path, base: &Path) -> String {
     let rest: PathBuf = path[common..].iter().collect();
     match (ups, rest.as_os_str().is_empty()) {
         (0, true) => "./".into(),
-        (0, false) => rest.display().to_string(),
+        (0, false) => slash_separated(&rest),
         (ups, true) => "../".repeat(ups),
-        (ups, false) => format!("{}{}", "../".repeat(ups), rest.display()),
+        (ups, false) => format!("{}{}", "../".repeat(ups), slash_separated(&rest)),
+    }
+}
+
+/// `path` for display with `/` between its components on every platform; unchanged on Unix.
+///
+/// A Windows path that is not valid Unicode keeps `display()`'s native separators.
+fn slash_separated(path: &Path) -> String {
+    match gix::path::into_bstr(path) {
+        Ok(bytes) => gix::path::to_unix_separators_on_windows(bytes).to_string(),
+        Err(_) => path.display().to_string(),
     }
 }
 
