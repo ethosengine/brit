@@ -28,7 +28,7 @@ Identity is **CIDv1 · multicodec `0x71` dag-cbor · multihash `0x12` sha2-256**
 
 ## Dev-loop
 
-- `just test` = clippy + check + doc + unit-tests + doc-tests + journey-tests. `just check` = feature-matrix `cargo check`. `cargo test -p <crate>` for a single crate (nextest is not installed in this workspace).
+- `just qa` runs the checks affected by your change through gitoxide's QA scheduler (`tests/it/src/qa`, documented in `DEVELOPMENT.md`); `just qa-plan` shows what it would run, `just test` runs everything. `just unit-tests`, `just doc-tests` and `just check` are stages of the same scheduler. Its tasks run on the `stable` toolchain and need `cargo-nextest`, so `stable` must be at least the workspace MSRV. `cargo test -p <crate>` remains the direct route for a single crate (add `--features gix/sha1` when the crate does not select a hash itself).
 - Format: `cargo +nightly fmt -p <brit-crate> -- --config-path rustfmt-nightly.toml` then `cargo +stable fmt --check`. Scope the nightly pass to the `brit-*` crates — never run it over the workspace: its import grouping rewrites upstream `gix-*` files, and every such diff becomes merge noise against gitoxide (the 2026-09 upstream merge had to reset 63 of them).
 - Lints: clippy `pedantic` via root `[workspace.lints.clippy]`; every brit crate opts in with `lints.workspace = true`.
 

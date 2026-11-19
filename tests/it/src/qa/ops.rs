@@ -194,15 +194,23 @@ fn validate_workflow(document: &Value, ci: bool) -> Result<()> {
         }
     }
     if ci {
-        if jobs.keys().map(String::as_str).collect::<BTreeSet<_>>()
-            != BTreeSet::from(["plan", "run", "downstream", "tests-pass"])
+        // Brit: first-party jobs join the planned ones under the same gate. Their blocking
+        // declarations are checked against `.epr-meta/readiness.json` by `scripts/ci`.
+        if !jobs
+            .keys()
+            .map(String::as_str)
+            .collect::<BTreeSet<_>>()
+            .is_superset(&BTreeSet::from(["plan", "run", "downstream", "tests-pass"]))
         {
             bail!("CI checks must use the planned QA and downstream jobs");
         }
         if dependencies(&jobs["downstream"])? != ["plan"] || jobs["downstream"]["continue-on-error"] != true {
             bail!("Downstream checks must be planned and nonblocking");
         }
-        if dependencies(&jobs["tests-pass"])?.into_iter().collect::<BTreeSet<_>>() != BTreeSet::from(["plan", "run"])
+        if !dependencies(&jobs["tests-pass"])?
+            .into_iter()
+            .collect::<BTreeSet<_>>()
+            .is_superset(&BTreeSet::from(["plan", "run"]))
             || !jobs["tests-pass"]["if"]
                 .as_str()
                 .is_some_and(|condition| condition.contains("always()"))

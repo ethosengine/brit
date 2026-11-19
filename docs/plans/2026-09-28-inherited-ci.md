@@ -31,8 +31,44 @@ Keep captures private or in the existing evidence carrier; they are not another
 status ledger. The qualifier exits 0 only for complete required legs, 1 for unmet
 requirements and 2 for malformed input. It does not authenticate supplied JSON.
 `.epr-meta/readiness.json` declares the required job and step selectors; its test
-checks these against the workflow. Platform axes have explicit stable job names.
-Nonblocking upstream legs remain listed as debt. Publication remains separate.
+checks these against the workflow. Nonblocking upstream legs remain listed as debt,
+each with its reason. Publication remains separate.
+
+## Planned inherited jobs
+
+Gitoxide's QA scheduler (`tests/it/src/qa`, described in `DEVELOPMENT.md`) plans the
+inherited checks from each crate's `[package.metadata.qa]` table. `ci.yml` runs that
+plan in its `plan` and `run` jobs, so a check added upstream arrives with the merge
+that brings its manifest entry. Brit's first-party jobs stay ordinary jobs beside
+them, and `Tests pass` needs both.
+
+The scheduler decides which jobs exist. The `inherited-ci` milestone decides what
+each one means here, by the name the scheduler gives it (`<group>@<platform>`):
+
+- `required` legs with `"job": "run"` can fail `Tests pass`.
+- `deferred` legs run and report, without gating. Each carries its reason.
+- `replaced` legs leave the matrix because a first-party job covers them.
+- `disabled` entries never start.
+- `runners` moves a platform's jobs to a runner this repository can use.
+
+`scripts/ci/inherited_ci_policy.py` applies these in the `plan` job. It refuses a
+planned job the milestone does not name, and in an exhaustive plan it refuses a
+named job the scheduler no longer plans. A merge that adds or removes an upstream
+leg therefore stops at `plan` until the milestone records the decision.
+
+Preview the result for the current checkout without running any check:
+
+```sh
+planned="$(mktemp)" && governed="$(mktemp)"
+just qa-plan --all-platforms --mode exhaustive --github-output "$planned" >/dev/null
+python3 scripts/ci/inherited_ci_policy.py --planned "$planned" --github-output "$governed"
+```
+
+Planned jobs run on the `stable` toolchain, as upstream runs them; first-party jobs
+keep the `rust-toolchain.toml` pin. Two edits keep the scheduler usable in this
+fork and are marked `Brit:` in place: its workflow check accepts first-party jobs
+beside the planned ones, and `ci.yml` passes the planner's output through the
+milestone before the matrix starts.
 
 The foundation's new CI contract must itself run on the tested revision before
 that revision qualifies. A green run from before this contract cannot prove it.

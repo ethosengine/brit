@@ -72,3 +72,15 @@ CLAUDE.md requires risky integration to reach `run-ci/**` first; the passing loc
 checks support that CI-only push. Main integration and parent pin promotion still
 require exact-revision `Tests pass` evidence. The generic standalone evaluator
 incompatibility remains recorded rather than treated as package drift in Brit.
+
+DELTA 2026-11-19 (scheduler adoption; RED preserved): The 458-commit gitoxide
+integration at 3e89f3b56f88f7080d0b42e9619ae4b843ba8b5d replaces upstream's
+hand-written jobs with a manifest-driven QA scheduler, and the merged `justfile`
+already routes through it. `ci.yml` now runs the scheduler's plan for the inherited
+checks beside Brit's first-party jobs; the `inherited-ci` milestone declares each
+planned job required (17), deferred (15), replaced (2) or disabled, and
+`scripts/ci/inherited_ci_policy.py` refuses an undeclared one. Fifteen hand-copied
+jobs leave the workflow. Locally: 81 scheduler self-tests, 61 CI-helper tests, the
+scheduler's own workflow check, and a dry run of governed jobs from the real
+exhaustive plan pass. No planned job has run on a hosted runner at this revision;
+the required set is a first classification to be confirmed by exact-run evidence.

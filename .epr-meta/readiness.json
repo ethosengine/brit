@@ -35,9 +35,13 @@
           "steps": []
         },
         {
-          "job": "msrv-badge",
-          "name": "Check MSRV badge",
-          "steps": []
+          "job": "brit-feature-census",
+          "name": "brit-feature-census",
+          "steps": [
+            "Test census and boundary semantics",
+            "Verify pinned census freshness",
+            "Verify legacy shortcomings freshness"
+          ]
         },
         {
           "job": "pure-rust-build",
@@ -45,11 +49,6 @@
           "steps": [
             "Build standalone CLI without C tools"
           ]
-        },
-        {
-          "job": "test-doc",
-          "name": "test-doc",
-          "steps": []
         },
         {
           "job": "test-journey",
@@ -63,94 +62,167 @@
           ]
         },
         {
-          "job": "test-32bit-windows-size-doc",
-          "name": "test-32bit-windows-size-doc",
-          "steps": []
-        },
-        {
-          "job": "lint",
-          "name": "lint",
-          "steps": []
-        },
-        {
-          "job": "cargo-deny",
-          "name": "cargo-deny",
-          "steps": []
-        },
-        {
-          "job": "check-no-persist-credentials",
-          "name": "check-no-persist-credentials",
-          "steps": []
-        },
-        {
-          "job": "check-blocking",
-          "name": "check-blocking",
-          "steps": []
-        },
-        {
-          "job": "msrv",
-          "name": "cargo check MSRV (windows-2025)",
-          "steps": []
-        },
-        {
-          "job": "msrv",
-          "name": "cargo check MSRV (ubuntu-latest)",
-          "steps": []
-        },
-        {
-          "job": "test-fast",
-          "name": "test-fast (macos-15-intel)",
+          "job": "plan",
+          "name": "Select QA work",
           "steps": [
-            "Test (nextest)"
+            "Test the planner without building Git tooling",
+            "Select checks and distribute them across platforms",
+            "Apply Brit's inherited-CI contract to the planned jobs"
           ]
         },
         {
-          "job": "test-fast",
-          "name": "test-fast (ubuntu-latest)",
+          "job": "run",
+          "name": "housekeeping@linux-x86_64",
           "steps": [
-            "Test (nextest)"
+            "Run the selected checks"
           ]
         },
         {
-          "job": "test-fast",
-          "name": "test-fast (ubuntu-24.04-arm)",
+          "job": "run",
+          "name": "policy@linux-x86_64",
           "steps": [
-            "Test (nextest)"
+            "Run the selected checks"
           ]
         },
         {
-          "job": "test-fast",
-          "name": "test-fast (windows-11-arm)",
+          "job": "run",
+          "name": "lint@linux-x86_64",
           "steps": [
-            "Test (nextest)"
+            "Run the selected checks"
           ]
         },
         {
-          "job": "brit-feature-census",
-          "name": "brit-feature-census",
+          "job": "run",
+          "name": "docs@linux-x86_64",
           "steps": [
-            "Test census and boundary semantics",
-            "Verify pinned census freshness",
-            "Verify legacy shortcomings freshness"
+            "Run the selected checks"
           ]
         },
         {
-          "job": "auditable",
-          "name": "cargo-auditable build",
+          "job": "run",
+          "name": "features@linux-x86_64",
           "steps": [
-            "Check metadata based auditable builds on stable Rust"
+            "Run the selected checks"
+          ]
+        },
+        {
+          "job": "run",
+          "name": "feature-tests@linux-x86_64",
+          "steps": [
+            "Run the selected checks"
+          ]
+        },
+        {
+          "job": "run",
+          "name": "isolated-tests@linux-x86_64",
+          "steps": [
+            "Run the selected checks"
+          ]
+        },
+        {
+          "job": "run",
+          "name": "tests@linux-x86_64",
+          "steps": [
+            "Run the selected checks"
+          ]
+        },
+        {
+          "job": "run",
+          "name": "msrv@linux-x86_64",
+          "steps": [
+            "Run the selected checks"
+          ]
+        },
+        {
+          "job": "run",
+          "name": "auditable@linux-x86_64",
+          "steps": [
+            "Run the selected checks"
+          ]
+        },
+        {
+          "job": "run",
+          "name": "tests@linux-aarch64",
+          "steps": [
+            "Run the selected checks"
+          ]
+        },
+        {
+          "job": "run",
+          "name": "tests@macos-x86_64",
+          "steps": [
+            "Run the selected checks"
+          ]
+        },
+        {
+          "job": "run",
+          "name": "tests@windows-aarch64",
+          "steps": [
+            "Run the selected checks"
+          ]
+        },
+        {
+          "job": "run",
+          "name": "native-bins@windows-aarch64",
+          "steps": [
+            "Run the selected checks"
+          ]
+        },
+        {
+          "job": "run",
+          "name": "msrv@windows-x86_64",
+          "steps": [
+            "Run the selected checks"
+          ]
+        },
+        {
+          "job": "run",
+          "name": "size32@windows-x86_64",
+          "steps": [
+            "Run the selected checks"
+          ]
+        },
+        {
+          "job": "run",
+          "name": "docs@windows-x86_64",
+          "steps": [
+            "Run the selected checks"
           ]
         }
       ],
-      "deferred": [
-        "test",
-        "test-fixtures-windows",
-        "test-32bit",
-        "wasm",
-        "cargo-deny-advisories",
-        "publish"
-      ],
-      "meaning": "Inherited blocking matrix plus Brit journeys and successful parity measurement production. Legacy assertion failures remain observed outcomes, not parity acceptance. Excludes publication and native daily-driver acceptance."
+      "deferred": {
+        "advisories@linux-x86_64": "A newly announced advisory must not hold back unrelated integration.",
+        "size@linux-x86_64": "Package size is reported, never gating.",
+        "wasm@linux-x86_64": "Inherited WebAssembly builds; not a Brit delivery target.",
+        "api@linux-x86_64": "Self-validation of the inherited API checker; not yet qualified on this fork.",
+        "isolated-tests@linux-aarch64": "The gix-error variants are required once, on linux-x86_64.",
+        "isolated-tests@macos-x86_64": "The gix-error variants are required once, on linux-x86_64.",
+        "isolated-tests@windows-x86_64": "The gix-error variants are required once, on linux-x86_64.",
+        "isolated-tests@windows-aarch64": "The gix-error variants are required once, on linux-x86_64.",
+        "tests@linux-x86": "Inherited 32-bit container coverage; observed, not maintained by this fork.",
+        "isolated-tests@linux-x86": "Inherited 32-bit container coverage; observed, not maintained by this fork.",
+        "tests@linux-arm": "Inherited 32-bit container coverage; observed, not maintained by this fork.",
+        "isolated-tests@linux-arm": "Inherited 32-bit container coverage; observed, not maintained by this fork.",
+        "tests@windows-x86_64": "Inherited Windows x86-64 coverage with regenerated fixtures; observed, not maintained by this fork.",
+        "native-bins@windows-x86_64": "Inherited Windows x86-64 coverage with regenerated fixtures; observed, not maintained by this fork.",
+        "tests@freebsd-x86_64": "FreeBSD coverage of gix-notify in a virtual machine; not a Brit delivery target.",
+        "publish": "Runs on main after Tests pass; publication is evidenced separately."
+      },
+      "replaced": {
+        "journey@linux-x86_64": "test-journey",
+        "pure-rust@linux-x86_64": "pure-rust-build"
+      },
+      "disabled": {
+        "downstream": "Consumer builds compare third-party projects with upstream gix releases. Brit's consumer is the elohim monorepo, which attests its submodule pin."
+      },
+      "runners": {
+        "macos-aarch64": {
+          "platform": "macos-x86_64",
+          "runner": "macos-15-intel",
+          "reason": "Hosted macOS ARM is suspended for this repository; macOS coverage stays on Intel."
+        }
+      },
+      "meaning": "Brit's first-party jobs plus the inherited gitoxide checks its QA scheduler plans, each planned job declared required, deferred, replaced or disabled here. Legacy parity assertion failures remain observed outcomes, not parity acceptance. Excludes publication and native daily-driver acceptance."
     },
     "native-daily-driver": {
       "status": "unwired",

@@ -119,26 +119,34 @@ class ReadinessTests(unittest.TestCase):
 
     def test_contract_tracks_blocking_jobs_and_real_step_selectors(self):
         workflow = (Path(__file__).resolve().parents[2] / '.github/workflows/ci.yml').read_text()
-        blocks = dict(re.findall(r'^  ([a-z][\w-]*):\n(.*?)(?=^  [a-z][\w-]*:|\Z)', workflow, re.M | re.S))
+        jobs = workflow.split('\njobs:\n', 1)[1]
+        blocks = dict(re.findall(r'^  ([a-z][\w-]*):\n(.*?)(?=^  [a-z][\w-]*:|\Z)', jobs, re.M | re.S))
         needs_block = blocks['tests-pass'].split('    needs:\n', 1)[1].split('\n    if:', 1)[0]
         blocking = set(re.findall(r'^      - ([\w-]+)$', needs_block, re.M))
-        required = self.contract['milestones']['inherited-ci']['required']
+        marker = self.contract['milestones']['inherited-ci']
+        required = marker['required']
         self.assertEqual(blocking, {leg['job'] for leg in required})
+        # A job gates Tests pass or the contract says why it does not; nothing is left undecided.
+        excluded = {name for kind in ('deferred', 'disabled') for name in marker[kind] if '@' not in name}
+        self.assertFalse(blocking & excluded)
+        self.assertEqual(set(blocks), blocking | excluded | {'tests-pass'})
         for leg in required:
             name_line = re.search(r'^    name: (.+)$', blocks[leg['job']], re.M)
             display = name_line.group(1) if name_line else leg['job']
-            if '${{ matrix.os }}' in display:
-                axis = leg['name'].rsplit('(', 1)[1].rstrip(')')
-                display = display.replace('${{ matrix.os }}', axis)
-            self.assertEqual(display, leg['name'])
+            if display == '${{ matrix.id }}':
+                # The scheduler names planned jobs; the contract selects them by that name.
+                self.assertRegex(leg['name'], r'^[a-z0-9-]+@[a-z0-9_-]+$')
+                self.assertEqual(leg['steps'], ['Run the selected checks'])
+            else:
+                self.assertEqual(display, leg['name'])
             for step in leg['steps']:
                 self.assertIn('- name: ' + step, blocks[leg['job']])
         self.assertIn("contains(needs.*.result, 'skipped')", blocks['tests-pass'])
-        for job in ('msrv', 'test-fast'):
-            axes = re.findall(r'^          - ([\w-]+)$', blocks[job], re.M)
-            axes += re.findall(r'^          - os: ([\w-]+)$', blocks[job], re.M)
-            for axis in axes:
-                self.assertTrue(any(leg['job'] == job and leg['name'].endswith(f'({axis})') for leg in required))
+        self.assertIn('continue-on-error: ${{ !matrix.blocking }}', blocks['run'])
+        self.assertIn('steps.contract.outputs.matrix', blocks['plan'])
+        for planned, job in marker['replaced'].items():
+            self.assertIn('@', planned)
+            self.assertIn(job, blocking, f'{planned} is replaced by a job that does not gate')
 
 
 if __name__ == '__main__':

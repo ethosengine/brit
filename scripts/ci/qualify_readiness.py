@@ -35,7 +35,7 @@ def qualify(contract, milestone, sha, run, payload):
     marker = contract['milestones'][milestone]
     result = {'milestone': milestone, 'head_sha': sha, 'qualified': False,
               'evidence_kind': 'captured-actions-evidence-not-attestation',
-              'issues': [], 'jobs': [], 'deferred': marker.get('deferred', []),
+              'issues': [], 'jobs': [], 'deferred': sorted(marker.get('deferred', [])),
               'evidence_scope': marker.get('evidence_scope', 'automated-ci'),
               'establishes_human_acceptance': False}
     issues = result['issues']
