@@ -296,13 +296,27 @@ fn read_member(path: &Path, owner: u32) -> Result<Vec<u8>> {
     Ok(fs::read(path)?)
 }
 
-fn persist_exact(path: &Path, owner: u32, bytes: &[u8]) -> Result<()> {
+/// Write `bytes` as the record `path` of a copy, or accept the identical record a
+/// previous attempt wrote. A record is published whole: the bytes go to a private
+/// spool in a scratch directory of the Git directory (the same filesystem; a
+/// name in the copy would make the copy unreadable), which is renamed onto `path`
+/// and synchronized with its directory. So a kill leaves the record absent or
+/// whole, never partial; a loss of power before synchronization can still leave
+/// a prefix, which `capture` treats as its own write in a copy not yet complete.
+fn persist_exact(path: &Path, owner: u32, bytes: &[u8], scratch: &Path) -> Result<()> {
     match fs::symlink_metadata(path) {
         Ok(_) => ensure!(
             read_member(path, owner)? == bytes,
             "retained-copy source or member changed"
         ),
-        Err(error) if error.kind() == std::io::ErrorKind::NotFound => switch::private_write(path, bytes)?,
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => {
+            use std::io::Write;
+            let budget = gix::utils::stream::Budget::new(scratch)?;
+            let mut spool = budget.spool()?;
+            spool.write_all(bytes)?;
+            spool.flush()?;
+            switch::private_publish(path, spool)?;
+        }
         Err(error) => return Err(error.into()),
     }
     // A prior invocation may have created this name without synchronizing it.
@@ -440,29 +454,64 @@ pub fn capture<D: Content>(
     directory(&leaf, owner)?;
     // A completed copy is immutable. Refuse a different capture before adding
     // even one member, which would otherwise invalidate the existing good copy.
+    let marker = format!("{digest}\n");
     let complete = match fs::symlink_metadata(leaf.join("COPY_COMPLETE")) {
         Ok(_) => {
-            ensure!(
-                inspect(&leaf)?.receipt.digest == digest,
-                "retained copy already completes a different capture"
-            );
-            true
+            let written = read_member(&leaf.join("COPY_COMPLETE"), owner)?;
+            if written.len() < marker.len()
+                && marker.as_bytes().starts_with(&written)
+                && read_member(&leaf.join("manifest.json"), owner)? == bytes
+            {
+                // This capture's own marker, cut short before it was synchronized:
+                // the copy never completed. It is verified and marked again below.
+                fs::remove_file(leaf.join("COPY_COMPLETE"))?;
+                switch::sync_dir(&leaf)?;
+                false
+            } else {
+                ensure!(
+                    inspect(&leaf)?.receipt.digest == digest,
+                    "retained copy already completes a different capture"
+                );
+                true
+            }
         }
         Err(error) if error.kind() == std::io::ErrorKind::NotFound => false,
         Err(error) => return Err(error.into()),
     };
     match fs::symlink_metadata(leaf.join("manifest.json")) {
-        Ok(_) => ensure!(
+        Ok(_) if complete => ensure!(
             read_member(&leaf.join("manifest.json"), owner)? == bytes,
             "retained-copy source changed"
         ),
+        Ok(_) => {
+            if read_member(&leaf.join("manifest.json"), owner)? != bytes {
+                // A copy not yet complete licenses nothing, so its manifest is
+                // only this capture's intent: a manifest that differs (one cut
+                // short while written, or pinning sources since changed) is
+                // replaced, and the members it pinned are copied again.
+                for entry in fs::read_dir(&leaf)? {
+                    let entry = entry?;
+                    let name = entry.file_name();
+                    if name == "manifest.json"
+                        || name
+                            .to_str()
+                            .is_some_and(|name| name.len() == 8 && name.bytes().all(|byte| byte.is_ascii_digit()))
+                    {
+                        read_member(&entry.path(), owner)?;
+                        fs::remove_file(entry.path())?;
+                    }
+                }
+                switch::sync_dir(&leaf)?;
+            }
+        }
         Err(error) if error.kind() == std::io::ErrorKind::NotFound => {}
         Err(error) => return Err(error.into()),
     }
     // Pin all source digests before the first payload, including sources not yet
     // copied when an interruption occurs. COPY_COMPLETE distinguishes intent
     // from a copy that has actually been verified and synchronized.
-    persist_exact(&leaf.join("manifest.json"), owner, &bytes)?;
+    let scratch = fs::canonicalize(repo.git_dir())?;
+    persist_exact(&leaf.join("manifest.json"), owner, &bytes, &scratch)?;
     switch::checkpoint("replay-retained-manifest")?;
     for (ordinal, member) in members.iter().enumerate() {
         persist_content(
@@ -474,7 +523,7 @@ pub fn capture<D: Content>(
         )?;
         switch::checkpoint("replay-retained-member")?;
     }
-    persist_exact(&leaf.join("COPY_COMPLETE"), owner, format!("{digest}\n").as_bytes())?;
+    persist_exact(&leaf.join("COPY_COMPLETE"), owner, marker.as_bytes(), &scratch)?;
     for path in [&leaf, &operation, &root, &fs::canonicalize(repo.git_dir())?] {
         switch::sync_dir(path)?;
     }
@@ -746,6 +795,69 @@ mod tests {
         assert_eq!(fs::read(leaf.join(payload_name(0)))?, b"old");
         assert!(!leaf.join("COPY_COMPLETE").exists());
         assert!(inspect(&leaf).is_err());
+        Ok(())
+    }
+
+    fn two_members() -> Vec<Member> {
+        ["first", "second"]
+            .into_iter()
+            .map(|name| Member {
+                area: Area::Worktree,
+                path: name.as_bytes().to_vec(),
+                stage: None,
+                kind: Kind::File,
+                mode: 0o600,
+                data: format!("{name} payload").into_bytes(),
+            })
+            .collect()
+    }
+
+    fn cut(path: &Path, length: u64) -> Result<()> {
+        fs::OpenOptions::new().write(true).open(path)?.set_len(length)?;
+        Ok(())
+    }
+
+    /// M2: a copy not yet complete whose manifest is cut short (a kill inside its
+    /// write, or a loss of power before it was synchronized), or whose completion
+    /// marker is, is captured again to a complete copy instead of refused.
+    #[test]
+    fn a_torn_manifest_or_marker_in_an_incomplete_copy_is_written_again() -> Result<()> {
+        let id = gix::hash::Kind::Sha1.null();
+        let nonce = "a".repeat(40);
+        for record in ["manifest.json", "COPY_COMPLETE"] {
+            for length in [Some(0), Some(1), None] {
+                let temp = tempfile::tempdir()?;
+                let repo = gix::init(temp.path())?;
+                let receipt = capture(&repo, &nonce, 1, id, id, id, &two_members())?;
+                let leaf = receipt.path.clone();
+                if record == "manifest.json" {
+                    fs::remove_file(leaf.join("COPY_COMPLETE"))?;
+                }
+                let full = fs::metadata(leaf.join(record))?.len();
+                cut(&leaf.join(record), length.unwrap_or(full - 1))?;
+                assert!(inspect(&leaf).is_err(), "{record}: the cut copy is not complete");
+                let again = capture(&repo, &nonce, 1, id, id, id, &two_members())?;
+                assert_eq!(again.digest, receipt.digest, "{record} {length:?}");
+                inspect(&leaf)?;
+            }
+        }
+        Ok(())
+    }
+
+    /// A complete copy is immutable: a manifest that differs in it still refuses.
+    #[test]
+    fn a_differing_manifest_in_a_complete_copy_still_refuses() -> Result<()> {
+        let id = gix::hash::Kind::Sha1.null();
+        let nonce = "a".repeat(40);
+        let temp = tempfile::tempdir()?;
+        let repo = gix::init(temp.path())?;
+        let receipt = capture(&repo, &nonce, 1, id, id, id, &two_members())?;
+        let full = fs::metadata(receipt.path.join("manifest.json"))?.len();
+        cut(&receipt.path.join("manifest.json"), full - 1)?;
+        let before = fs::read(receipt.path.join("manifest.json"))?;
+        assert!(capture(&repo, &nonce, 1, id, id, id, &two_members()).is_err());
+        assert_eq!(fs::read(receipt.path.join("manifest.json"))?, before, "left as found");
+        assert!(receipt.path.join(payload_name(0)).exists());
         Ok(())
     }
 
