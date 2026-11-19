@@ -3,7 +3,7 @@
 use anyhow::Result;
 use cli_journey::support::{
     mock_remote::MockRemote,
-    parity::{assert_help_names, assert_same, assert_same_streams, git_ok},
+    parity::{assert_help_names, assert_same, assert_same_streams, brit, git, git_ok},
     test_repo::TestRepo,
 };
 
@@ -90,4 +90,40 @@ fn ls_remote_matches_git() -> Result<()> {
     );
 
     assert_help_names("ls-remote", "brit remote refs")
+}
+
+/// The `From <url>` line appears only once the default remote answered, and never shows a password.
+#[test]
+fn ls_remote_names_the_default_remote_only_after_it_answered_and_without_its_password() -> Result<()> {
+    let local = TestRepo::new("ls-remote-unreachable")?;
+    let root = local.path();
+    let missing = root.join("no-such-remote.git");
+    git_ok(
+        root,
+        &["remote", "add", "origin", missing.to_str().expect("UTF-8 path")],
+    )?;
+    let git_out = git(root, &["ls-remote"])?;
+    let out = brit(root, &["ls-remote"])?;
+    assert_ne!(git_out.code, Some(0), "{git_out:?}");
+    assert_ne!(out.code, Some(0), "an unreachable remote fails: {out:?}");
+    assert!(out.stdout.is_empty(), "{out:?}");
+    assert!(
+        !git_out.stderr.contains("From "),
+        "Git names no remote it could not reach: {git_out:?}"
+    );
+    assert!(!out.stderr.contains("From "), "nor does Brit: {out:?}");
+
+    // Nothing listens on port 1, so the connection is refused at once.
+    git_ok(
+        root,
+        &["remote", "set-url", "origin", "http://user:secret@127.0.0.1:1/repo.git"],
+    )?;
+    let out = brit(root, &["ls-remote"])?;
+    assert_ne!(out.code, Some(0), "{out:?}");
+    assert!(
+        !out.stderr.contains("secret"),
+        "the password never reaches stderr: {out:?}"
+    );
+    assert!(!out.stderr.contains("From "), "{out:?}");
+    Ok(())
 }

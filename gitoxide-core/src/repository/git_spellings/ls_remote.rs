@@ -3,7 +3,8 @@
 //! Refs print in the server's order. An annotated tag prints its tag object and then its peeled
 //! object as `<refname>^{}`, and patterns match the tail of a ref name at a `/` boundary, both
 //! like Git. An unborn `HEAD` is not listed, as Git does not request it without `--symref`.
-//! With the remote omitted, `From <url>` goes to stderr as Git writes it.
+//! With the remote omitted, `From <url>` goes to stderr once the remote answered, as Git writes it,
+//! except that a password in the URL is shown as `redacted`.
 //!
 //! ### Known differences from Git
 //!
@@ -56,6 +57,12 @@ fn selected(options: &Options, name: &str) -> bool {
     kind && refs_only && tail_matches(&options.patterns, name)
 }
 
+/// The `From <url>` line for an omitted remote. The URL's `Display` replaces a password with `redacted`,
+/// so a password in the configured URL never reaches stderr; Git prints the URL as configured.
+fn from_line(url: &gix::Url) -> String {
+    format!("From {url}")
+}
+
 /// List the remote's refs like `git ls-remote`.
 #[gix::protocol::bisync::bisync]
 pub async fn ls_remote(
@@ -66,12 +73,10 @@ pub async fn ls_remote(
     options: Options,
 ) -> Result<()> {
     let remote = crate::repository::remote::by_name_or_url(&repo, options.remote.as_deref())?;
-    if options.remote.is_none()
-        && !options.quiet
-        && let Some(url) = remote.url(gix::remote::Direction::Fetch)
-    {
-        writeln!(err, "From {}", url.to_bstring()).or_error()?;
-    }
+    // Named only once the remote answered, like Git, which prints nothing when the connection fails.
+    let from = (options.remote.is_none() && !options.quiet)
+        .then(|| remote.url(gix::remote::Direction::Fetch).map(from_line))
+        .flatten();
     let mut matched = false;
     let (map, _handshake) = remote
         .connect(gix::remote::Direction::Fetch)
@@ -84,6 +89,9 @@ pub async fn ls_remote(
             },
         )
         .await?;
+    if let Some(from) = from {
+        writeln!(err, "{from}").ok();
+    }
     for remote_ref in &map.remote_refs {
         let (name, object, peeled) = match remote_ref {
             handshake::Ref::Direct { full_ref_name, object } => (full_ref_name, object, None),
@@ -124,7 +132,17 @@ pub async fn ls_remote(
 
 #[cfg(test)]
 mod tests {
-    use super::tail_matches;
+    use super::{from_line, tail_matches};
+
+    #[test]
+    fn the_from_line_never_shows_a_password() {
+        let url = gix::Url::from_bytes("https://user:secret@example.com/repo.git".into()).expect("valid URL");
+        let line = from_line(&url);
+        assert!(!line.contains("secret"), "{line}");
+        assert_eq!(line, "From https://user:redacted@example.com/repo.git");
+        let url = gix::Url::from_bytes("/srv/repo.git".into()).expect("valid path");
+        assert_eq!(from_line(&url), "From /srv/repo.git", "a path prints as configured");
+    }
 
     #[test]
     fn tail_patterns_match_like_git() {
