@@ -1,8 +1,11 @@
 //! Printing a verified read without moving the contracts other tools parse.
 
-use brit_epr::elohim::{
-    attestation::note::{NoteBody, VersionedNote},
-    refs::{HeldReason, Lookup},
+use brit_epr::{
+    diagnostic::emit,
+    elohim::{
+        attestation::note::{NoteBody, VersionedNote},
+        refs::{HeldReason, Lookup},
+    },
 };
 
 /// Print a lookup's answer: a verified note's view ([`VersionedNote::view`]) as pretty JSON on
@@ -14,13 +17,13 @@ pub fn print<B: NoteBody>(lookup: Lookup<VersionedNote<B>>, miss: &str) -> anyho
     match lookup {
         // Emitted from the typed note, never from the stored bytes.
         Lookup::Verified(note) => println!("{}", serde_json::to_string_pretty(&note.view()?)?),
-        Lookup::Absent => eprintln!("{miss}"),
+        Lookup::Absent => emit(miss),
         Lookup::Unverifiable { at, reason } => {
-            eprintln!("{miss}");
+            emit(miss);
             unverifiable(&at, &reason);
         }
         Lookup::Held { at, reason } => {
-            eprintln!("{miss}");
+            emit(miss);
             held(&at, reason);
         }
     }
@@ -29,12 +32,12 @@ pub fn print<B: NoteBody>(lookup: Lookup<VersionedNote<B>>, miss: &str) -> anyho
 
 /// The one stderr line for a stored record that failed verification.
 pub fn unverifiable(at: &str, reason: &str) {
-    eprintln!("unverifiable: {at} {}", reason.replace('\n', " "));
+    emit(format_args!("unverifiable: {at} {}", reason.replace('\n', " ")));
 }
 
 /// The one stderr line for a stored record this reader holds: framed in a note epoch or
 /// signature scheme it does not implement. Never a row, never a reuse candidate, and not an
 /// `unverifiable:` line — it is neither authentic nor forged here.
 pub fn held(at: &str, reason: HeldReason) {
-    eprintln!("held: {at} {reason}");
+    emit(format_args!("held: {at} {reason}"));
 }

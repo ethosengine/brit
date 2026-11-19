@@ -472,6 +472,7 @@ version = "0.2.6"
 dependencies = [
  "anyhow",
  "brit-bridge",
+ "brit-epr",
  "brit-graph",
  "cc",
  "clap",
@@ -500,6 +501,7 @@ dependencies = [
  "ed25519-dalek",
  "elohim-address",
  "elohim-epr",
+ "gix-error 0.5.2",
  "gix-object 0.66.2",
  "gix-testtools",
  "hex",
@@ -536,6 +538,8 @@ version = "0.0.0"
 dependencies = [
  "brit-epr",
  "gix 0.89.4",
+ "gix-testtools",
+ "tempfile",
 ]
 
 [[package]]

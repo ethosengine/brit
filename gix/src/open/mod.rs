@@ -51,6 +51,7 @@ pub struct Options {
 }
 
 mod options;
+pub use options::REDUCED_TRUST_MAX_PACK_INDEXES;
 pub mod permissions;
 mod repository;
 

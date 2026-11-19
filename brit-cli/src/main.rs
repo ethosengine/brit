@@ -473,27 +473,11 @@ fn run(capture: &mut feedback::Capture, read_only: &mut bool) -> Result<()> {
 
 fn diagnostic(error: &error::CliError) -> String {
     match error {
-        error::CliError::Git(cause) => {
-            use std::fmt::Write;
-
-            let mut output = format!("Error: {cause}");
-            let chain = cause.chain().skip(1);
-            let multiple = chain.len() > 1;
-            for (index, cause) in chain.enumerate() {
-                if index == 0 {
-                    output.push_str("\n\nCaused by:");
-                }
-                let indent = if multiple { "       " } else { "    " };
-                output.push('\n');
-                if multiple {
-                    write!(output, "{index:>5}: ").expect("writing to a String cannot fail");
-                } else {
-                    output.push_str(indent);
-                }
-                output.push_str(&cause.to_string().replace('\n', &format!("\n{indent}")));
-            }
-            output
-        }
+        error::CliError::Git(cause) => match error::slot_exhaustion_report(cause.as_ref()) {
+            Some(report) => format!("Error: {report}"),
+            // The shared printer: the cause chain, last, and a backtrace only on `BRIT_BACKTRACE`.
+            None => brit_epr::diagnostic::report(cause.as_ref(), Some(cause.backtrace())),
+        },
         _ => format!("error: {error}"),
     }
 }

@@ -27,6 +27,7 @@ mod open;
 mod pathspec;
 mod reference;
 mod remote;
+mod safe_directory;
 mod shallow;
 mod state;
 #[cfg(feature = "attributes")]
