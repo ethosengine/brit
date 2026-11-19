@@ -35,22 +35,31 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.0.0/); ver
 
 ### Changed
 
-- Writer guards are scoped. `add` and `commit` hold their worktree's guard and the repository
-  guard shared, so writers in other worktrees keep working beside them; shared writes
-  (refs, configuration, worktree registrations) hold the repository guard exclusively;
-  `switch`, `pull`, `rebase`/replay, `restore`, `merge tree --update-head` and
-  `clean --execute` hold their worktree's guard and the repository guard. `push` keeps its
-  worktree's guard from before its pre-push hook until after send-pack and releases only the
-  repository guard across the hook, so other worktrees stay writable while it runs.
-- A refusal names each holder (pid, program and Brit subcommand path, working directory,
-  start time, session) from `/proc/locks`; option values, positionals and URLs are never
-  shown.
+- Writer guards are scoped ([docs/mutation-guards.md](../docs/mutation-guards.md)). `add` holds
+  its worktree's guard and the repository guard shared, so writers in other worktrees keep
+  working beside it; shared writes (refs, configuration, worktree registrations, `fetch`'s
+  whole transfer) hold the repository guard exclusively; `switch`, `pull`, `rebase`/replay,
+  `restore`, `merge tree --update-head` and `clean --execute` hold their worktree's guard and
+  the repository guard exclusively, including their own hooks.
+- `push` holds its own worktree's guard for its whole run, but the repository guard only
+  shared, never across its pre-push hook, and never queues behind an exclusive writer.
+- `commit` holds its worktree's guard for its whole run and the repository guard (shared)
+  only at its start and to publish the tree, commit and ref; it holds none during
+  `pre-commit`, `prepare-commit-msg` and `commit-msg`, and no guard at all during
+  `post-commit` and `post-rewrite`.
+- A refusal names each holder (pid, program and Brit subcommand path, role, working
+  directory, start time, session) from `/proc/locks`; option values, positionals and URLs are
+  never shown.
 - **Behaviour change:** `brit add`, `brit commit`, `brit switch` and `brit branch -m` of the
-  checked-out branch now refuse in a worktree whose push is still in its pre-push hook.
-- **Behaviour change:** once an exclusive writer is queued, a new shared writer without
-  `--wait` refuses instead of overtaking it, so overlapping worktree writers cannot starve it.
-- A hook or editor never waits for the command it runs under: a writer started from a Brit
-  hook (`BRIT_GUARD_HELD_BY`, or the process ancestry) refuses at once, saying so.
+  checked-out branch now refuse in a worktree whose push is still running, its pre-push hook
+  included.
+- **Behaviour change:** with no wait configured, a shared writer gets a 1 s grace behind a
+  queued exclusive writer before refusing (naming both), and `add` and a commit start get a 2 s
+  start patience behind a momentary exclusive holder; other writers still refuse at once.
+- Hooks never wait on their own command: a writer under a Brit hook (`BRIT_GUARD_HELD_BY`,
+  trusted only when that process is really its ancestor) refuses at once on a guard its
+  command holds, and any other wait under a hook is capped by `BRIT_HOOK_GUARD_WAIT`
+  (default 30 s).
 - **Behaviour change:** bare `brit log` in a shallow repository now stops at the shallow
   boundary, as Git does, even when the boundary's parents happen to be present (an interrupted
   deepen or a shared object store), so `brit log` equals `brit log HEAD`. Outside shallow
@@ -61,6 +70,15 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.0.0/); ver
   run at once; one below the boundary names the deepening fetch.
 - A commit whose branch was moved by another writer after its checks names that concurrent
   move and says no reference changed.
+- **Behaviour change:** `brit build fingerprint` keys every gitlink a step glob matches or can
+  reach by the commit it pins, and every matched or reached symlink (including a glob written
+  through a directory link) by its object id, so moving a submodule pin or retargeting a link
+  changes the step's fingerprint. Uncommitted files and a symlink's target file (unless a glob
+  matches it) are still not keyed.
+- C dependencies compile at the Rust target's CPU baseline: the `cc` build dependency is
+  1.11.1, which passes `-march=x86-64` for x86_64 Linux, and the CPU-baseline build probe
+  checks the command line `cc` actually gives dependencies
+  ([docs/cpu-compatibility.md](../docs/cpu-compatibility.md)).
 
 ### Fixed
 
