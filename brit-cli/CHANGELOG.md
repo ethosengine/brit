@@ -130,8 +130,10 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.0.0/); ver
   refusal names `--abort`; `--abort` and cleanup are never refused by the scratch limit, and
   neither are `switch --abort`, `pull --abort`, `switch --status` or rolling a durable switch
   decision forward; `--retire` applies only to this repository's own journal in `completed`,
-  `aborted` or `retaining-abort` with no decision taken; and a journal that does not open as
-  this repository's own is reported by `--status` and never touched. Before, a failed or
+  `aborted`, or `retaining-abort` or `retaining-skip` with no decision taken (no command
+  sequence reaches the last of these: every stop a skip starts from is a decision); and a
+  journal that does not open as this repository's own is reported by `--status` and never
+  touched. Before, a failed or
   killed preparation, a quota refusal at a large conflict resolution, or a killed command's
   unrenamed record could leave a journal that `--abort` and `--continue` both refused, and
   every Brit mutation then refused "pending replay". New `--status` lines: `Cancelled
@@ -318,8 +320,9 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.0.0/); ver
   answers. (Earlier changes in this release admitted rebases that then stranded, and later
   refused `--abort` itself at a large conflict resolution.)
 - `brit rebase --retire` sets aside a completed or aborted rebase whose retained copy is all
-  that remains (or an abort retaining before it changed anything live), deleting nothing and
-  changing nothing live: it keeps the journal as `brit-rebase-kept-<nonce>`, its retention
+  that remains (or an abort, or a skip, retaining before the rebase changed anything live),
+  deleting nothing and changing nothing live: it keeps the journal as
+  `brit-rebase-kept-<nonce>`, its retention
   refs and retained copies, and prints how to remove each. It refuses every other phase,
   naming `--abort` or `--continue`, and removes no lock.
 - A rebase journal that does not open as this repository's own (moved or copied repository,

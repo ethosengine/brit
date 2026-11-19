@@ -150,7 +150,12 @@ refused in about a second, before anything is written. Use `git rebase` there.
 `brit rebase --retire` sets aside a rebase whose only remaining work is its
 retained copy, which can take long on a large repository or wait for disk space:
 a completed or aborted rebase whose cleanup is pending, or an abort that is
-retaining before it changed anything live. It deletes nothing and changes nothing
+retaining before it changed anything live. It also accepts a skip retaining its
+copy before the rebase took any decision (phase `retaining-skip` with no decision),
+where likewise nothing live has changed, since the first live write of a rebase is
+its first decision; no command sequence reaches that state today, because every
+stop a skip starts from (`empty`, `authoring`) is itself published as a decision.
+It deletes nothing and changes nothing
 live: it renames the journal to `brit-rebase-kept-<nonce>` beside it, leaves the
 `refs/brit-rebase-retain/<nonce>/*` references and any retained copy in place,
 and prints each kept piece, its size and the command that removes it. It refuses
