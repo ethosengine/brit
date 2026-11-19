@@ -301,6 +301,62 @@ const READ_ONLY_COMMANDS: &[&[&str]] = &[
     &["worktree", "list"],
     &["config-tree"],
     &["env"],
+    // Admitted after reading each path: no write, and every line through the watched writer.
+    &["show"],
+    &["tag", "list"],
+    &["remote", "url"],
+    // `remote refs`, `remote ref-map` and `ls-remote` are one function under three spellings and are
+    // treated alike. This list exists so that a command with an effect its caller must learn about never
+    // has its outcome replaced by 141. Their only effect is the credential helper's: approve after a
+    // successful authentication, erase after a failed one. After an erase the command has failed, and
+    // its own failure wins. After an approve the command otherwise succeeded; the stored credential is
+    // not something a caller reads from the exit status, and Git dies of SIGPIPE in the same pipeline
+    // having done the same thing. Gap: when authentication makes a helper or a prompt write, that output
+    // does not go through the watched writer, so on that path a closed reader is not guaranteed to be
+    // seen, and the command behaves as an unlisted one.
+    &["remote", "refs"],
+    &["remote", "ref-map"],
+    &["revision", "previous-branches"],
+    &["verify"],
+    &["fsck"],
+    &["tree", "entries"],
+    &["tree", "info"],
+    &["commit-graph", "list"],
+    &["commit-graph", "verify"],
+    &["mailmap", "entries"],
+    &["mailmap", "check"],
+    &["attributes", "query"],
+    &["exclude", "query"],
+    // Bare `submodule` passes no `--dirty-suffix`, so it never runs the status engine.
+    &["submodule"],
+    &["config"],
+    &["config", "show"],
+    &["config", "list"],
+    &["index", "entries"],
+    &["dirwalk"],
+    // Their JSON and DOT output goes through `output::print_line`, the watched writer.
+    &["build", "graph", "discover"],
+    &["build", "graph", "show"],
+    &["build", "affected"],
+    &["build", "plan"],
+    &["build", "fingerprint"],
+    &["build", "baseline", "read"],
+    // Left out:
+    // - `is-clean`, `is-changed`: predicates whose answer is their exit status, so 141 would replace the
+    //   answer a script reads; their status engine can also run a configured clean filter, an external
+    //   program with inherited stderr.
+    // - `commit describe`, `submodule list`: `--dirty-suffix` on the same path runs that status engine.
+    // - bare `tag`: `tag <name>` creates a tag on the same path.
+    // - `revision list`: `--svg` writes and opens a file on the same path.
+    // - `commit verify`: runs the configured verifier and writes its output to an unwatched stderr.
+    // - `attributes validate-baseline`: its children's output is piped, but it reports a failed helper
+    //   or a mismatch with a fallible write before returning its own failure, so a closed reader would
+    //   replace that failure.
+    // - `build run`, `build baseline write|migrate`, `config fmt`, `index from-tree`, `tag delete`,
+    //   `commit sign`: they write.
+    // Known limits, not fixed here: `--trace` and the verbose progress renderer write to raw stderr
+    // outside the watched writer (shared plumbing); and a streaming query ends at its first failed write
+    // even if a later input would have failed, as Git killed by SIGPIPE does.
 ];
 
 fn read_only_path(path: &[&str]) -> bool {
@@ -335,6 +391,13 @@ fn is_closed_reader_write(error: &error::CliError) -> bool {
                 || broken(
                     cause
                         .downcast_ref::<serde_json::Error>()
+                        .and_then(serde_json::Error::io_error_kind),
+                )
+                // JSON written by a plumbing command, like `tree info`, arrives wrapped in a `gix::Error`.
+                || broken(
+                    cause
+                        .downcast_ref::<gix::Error>()
+                        .and_then(|error| error.downcast_any_ref::<serde_json::Error>())
                         .and_then(serde_json::Error::io_error_kind),
                 )
         }),
@@ -505,6 +568,11 @@ fn main() -> ExitCode {
     let mut capture = feedback::Capture::new();
     let mut read_only = false;
     let outcome = run(&mut capture, &mut read_only);
+    if read_only {
+        // Bytes still in stdout's line buffer (a short blob or `[]` without a newline) would otherwise
+        // meet a closed reader only at process exit, after the status was chosen.
+        let _ = gitoxide::shared::closed_reader::Watch(std::io::stdout()).flush();
+    }
     // The status is decided first and never by the report: the report is attempted once with its
     // result ignored (a reader of stderr may have closed, and `eprintln!` would then panic and exit
     // 101), and the run is recorded after it whatever the write did.
@@ -777,6 +845,62 @@ mod tests {
             "a path that only has a read-only prefix is not read-only"
         );
         assert!(!read_only_path(&["branch"]));
+    }
+
+    #[test]
+    fn the_extension_admits_read_only_paths_and_leaves_writers_out() {
+        let read_only = |args: &[&str]| {
+            read_only_command(
+                &public_command()
+                    .try_get_matches_from(args)
+                    .unwrap_or_else(|e| panic!("{args:?}: {e}")),
+            )
+        };
+        for args in [
+            &["brit", "show", "HEAD"][..],
+            &["brit", "tag", "list"],
+            &["brit", "remote", "refs"],
+            &["brit", "remote", "ref-map"],
+            &["brit", "config"],
+            &["brit", "submodule"],
+            &["brit", "build", "graph", "discover"],
+            &["brit", "build", "fingerprint", "build-manifest.json"],
+            &["brit", "build", "baseline", "read", "p"],
+        ] {
+            assert!(read_only(args), "{args:?}");
+        }
+        for args in [
+            &["brit", "tag", "v1"][..],
+            &["brit", "tag"],
+            &["brit", "commit", "verify"],
+            &["brit", "attributes", "validate-baseline"],
+            &["brit", "is-clean"],
+            &["brit", "is-changed"],
+            &["brit", "commit", "describe"],
+            &["brit", "submodule", "list"],
+            &["brit", "config", "fmt"],
+            &["brit", "build", "baseline", "write", "p", "HEAD"],
+            &["brit", "build", "baseline", "migrate", "x.json"],
+        ] {
+            assert!(!read_only(args), "{args:?}");
+        }
+    }
+
+    #[test]
+    fn json_from_a_plumbing_command_that_met_the_closed_reader_is_recognised() {
+        let pipe = std::io::Error::from(std::io::ErrorKind::BrokenPipe);
+        let json = serde_json::Error::io(pipe);
+        let wrapped = error::CliError::Git(anyhow::Error::from(gix::Error::from_error(json)));
+        assert!(
+            is_closed_reader_write(&wrapped),
+            "`tree info` writes JSON through `.or_error()`"
+        );
+        let other = serde_json::from_str::<u8>("x").expect_err("not JSON");
+        let wrapped = error::CliError::Git(anyhow::Error::from(gix::Error::from_error(other)));
+        assert!(
+            !is_closed_reader_write(&wrapped),
+            "a JSON syntax error is not the closed reader"
+        );
     }
 
     #[test]
