@@ -62,34 +62,45 @@ fn failures_end_with_the_error_and_print_no_backtrace_under_rust_backtrace() {
     }
 }
 
-#[test]
-fn the_last_line_is_the_deepest_cause() {
-    let dir = gix_testtools::tempfile::TempDir::new().expect("tempdir");
+/// `brit log` in `dir`, with discovery stopped at the temporary directory so the chain does not depend on what lies
+/// above it.
+fn brit_log(dir: &std::path::Path, args: &[&str]) -> Output {
     let mut command = Command::new(env!("CARGO_BIN_EXE_brit"));
-    gix_testtools::configure_git_environment(&mut command, dir.path());
-    let output = command
-        .args(["log", "-n", "1"])
-        // Discovery stops at the temporary directory, so the chain does not depend on what lies above it.
-        .env(
-            "GIT_CEILING_DIRECTORIES",
-            dir.path().parent().expect("tempdir has a parent"),
-        )
+    gix_testtools::configure_git_environment(&mut command, dir);
+    command
+        .arg("log")
+        .args(args)
+        .env("GIT_CEILING_DIRECTORIES", dir.parent().expect("tempdir has a parent"))
         .env("RUST_BACKTRACE", "1")
         .env("RUST_LIB_BACKTRACE", "1")
         .env_remove("BRIT_BACKTRACE")
-        .current_dir(dir.path())
+        .current_dir(dir)
         .output()
-        .expect("brit runs");
+        .expect("brit runs")
+}
+
+#[test]
+fn the_last_line_is_the_deepest_message_with_its_class_folded_in() {
+    // gix classifies "not found" with a class-only marker as the deepest source: it is folded into the message it
+    // classifies instead of ending the output as a bare `NotFound`.
+    let outside = gix_testtools::tempfile::TempDir::new().expect("tempdir");
+    let output = brit_log(outside.path(), &["-n", "1"]);
     let text = stderr(&output);
-    let lines: Vec<_> = text.lines().filter(|line| !line.trim().is_empty()).collect();
     assert!(
-        text.starts_with("Error: Could not find a git repository"),
-        "the outer error leads: {text}"
+        text.starts_with("Error: Could not find a git repository") && text.trim_end().ends_with("(NotFound)"),
+        "one line, classified: {text}"
     );
+    assert!(!text.contains("Caused by:"), "the marker was the only cause: {text}");
+
+    let repo = gix_testtools::tempfile::TempDir::new().expect("tempdir");
+    gix_testtools::git(repo.path(), "init").expect("git init");
+    gix_testtools::git(repo.path(), "commit --allow-empty -m one").expect("git commit");
+    let output = brit_log(repo.path(), &["no-such-rev"]);
+    let text = stderr(&output);
     assert_eq!(
-        lines[lines.len() - 2..],
-        ["Caused by:", "    NotFound"],
-        "the last line is the deepest cause of the chain: {text}"
+        last_line(&output),
+        "    Reference \"no-such-rev\" could not be found (NotFound)",
+        "the last line is the deepest real message: {text}"
     );
 }
 

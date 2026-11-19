@@ -80,3 +80,24 @@ fn a_closed_stderr_keeps_exit_code_one() {
     drop(child.stderr.take());
     assert_eq!(child.wait().expect("brit-build-ref exits").code(), Some(1));
 }
+
+#[test]
+fn a_lookup_miss_still_exits_zero_with_stderr_closed() {
+    let dir = tempfile::TempDir::new().expect("tempdir");
+    gix_testtools::git(dir.path(), "init").expect("git init");
+    gix_testtools::git(dir.path(), "commit --allow-empty -m one").expect("git commit");
+    let mut command = Command::new(env!("CARGO_BIN_EXE_brit-build-ref"));
+    gix_testtools::configure_git_environment(&mut command, dir.path());
+    let mut child = command
+        .arg("--repo")
+        .arg(dir.path())
+        .args(["build", "get", "--step", "never-built"])
+        .current_dir(dir.path())
+        .stdout(std::process::Stdio::null())
+        .stderr(std::process::Stdio::piped())
+        .spawn()
+        .expect("brit-build-ref runs");
+    // The miss line goes to a closed pipe: an answer that exits 0 must not become a panic (101).
+    drop(child.stderr.take());
+    assert_eq!(child.wait().expect("brit-build-ref exits").code(), Some(0));
+}

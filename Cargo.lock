@@ -501,6 +501,7 @@ dependencies = [
  "ed25519-dalek",
  "elohim-address",
  "elohim-epr",
+ "gix-error 0.5.2",
  "gix-object 0.66.2",
  "gix-testtools",
  "hex",

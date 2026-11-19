@@ -63,7 +63,9 @@ impl Capture {
         let Some(root) = root else { return };
         let result = self.record(root, code);
         if let Err(error) = result {
-            eprintln!("brit: feedback capture gap: {error}; command result unchanged");
+            brit_epr::diagnostic::emit(format_args!(
+                "brit: feedback capture gap: {error}; command result unchanged"
+            ));
         }
     }
 
