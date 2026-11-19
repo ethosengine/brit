@@ -55,7 +55,7 @@ pub struct MovedRef {
 }
 
 impl MovedRef {
-    fn id(id: &gix_hash::ObjectId) -> String {
+    pub(crate) fn id(id: &gix_hash::ObjectId) -> String {
         if id.is_null() { "absent".into() } else { id.to_string() }
     }
 

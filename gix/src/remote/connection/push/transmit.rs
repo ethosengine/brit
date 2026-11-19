@@ -334,19 +334,28 @@ where
         // | absent     | B (creation)        | C             | refuse: the ref was created elsewhere     |
         // | A          | absent (deletion)   | absent        | already deleted (also prune): satisfied   |
         // | A          | absent (deletion)   | C (not A)     | refuse: the deletion target moved         |
+        // | A          | A (no-op)           | C (not A)     | not re-validated: left alone, reported    |
+        // |            |                     |               | not pushed with C; the other refs proceed |
         //
         // Remote refs no command names are not looked at. A refusal sends nothing for any ref;
         // receive-pack's own compare-and-swap still guards the time after this handshake.
         let now = advertised_ids(fresh.handshake.as_ref());
         let mut moved = Vec::new();
-        let mut satisfied = Vec::new();
+        let mut settled = Vec::new();
         for (index, command) in plan.commands.iter().enumerate() {
             let found = now.get(&command.refname).copied().unwrap_or(hash_kind.null());
             if found == command.old_oid {
                 continue;
             }
-            if found == command.new_oid {
-                satisfied.push(index);
+            if command.old_oid == command.new_oid {
+                // Nothing was to change here, so nothing was judged: do not fail the others.
+                let reason = format!(
+                    "not pushed: it needed no update when judged, but moved to {} while the before-send callback ran",
+                    MovedRef::id(&found)
+                );
+                settled.push((index, Err(reason.into()), found));
+            } else if found == command.new_oid {
+                settled.push((index, Ok(()), command.new_oid));
             } else {
                 moved.push(MovedRef {
                     refname: command.refname.clone(),
@@ -358,7 +367,7 @@ where
         if !moved.is_empty() {
             return Err(Error::RemoteMoved { moved });
         }
-        plan.settle(&satisfied).deliver(fresh)
+        plan.settle(settled).deliver(fresh)
     }
 }
 
@@ -370,25 +379,28 @@ struct Plan<'repo, 'a> {
     name_pairs: Vec<(BString, BString)>,
     dry_run: bool,
     should_interrupt: &'a AtomicBool,
-    /// Updates the remote already shows, so they are reported up to date rather than sent.
+    /// Updates taken out of the request after re-validation, with their reported status.
     already: Vec<crate::remote::push::RefStatus>,
 }
 
 impl Plan<'_, '_> {
-    /// Take the commands at `indices` out of the request and report them as up to date.
-    fn settle(mut self, indices: &[usize]) -> Self {
-        for &index in indices.iter().rev() {
+    /// Take the commands at the given ascending indices out of the request and report each with
+    /// its result and the id the remote showed.
+    fn settle(mut self, settled: Vec<(usize, Result<(), BString>, gix_hash::ObjectId)>) -> Self {
+        let mut taken = Vec::with_capacity(settled.len());
+        for (index, result, found) in settled.into_iter().rev() {
             let command = self.commands.remove(index);
             let (local, remote) = self.name_pairs.remove(index);
-            self.already.push(crate::remote::push::RefStatus {
+            taken.push(crate::remote::push::RefStatus {
                 local,
                 remote,
-                result: Ok(()),
-                old_oid: command.new_oid,
+                result,
+                old_oid: found,
                 new_oid: command.new_oid,
             });
         }
-        self.already.reverse();
+        taken.reverse();
+        self.already.extend(taken);
         self
     }
 
@@ -504,7 +516,15 @@ impl Plan<'_, '_> {
             connection.transport_mut(),
             request,
             entries,
-            gix_protocol::send_pack::Options::default(),
+            gix_protocol::send_pack::Options {
+                // Git's `http.postBuffer`: the largest body sent whole, with its error path intact.
+                max_buffered_body: repo
+                    .config_snapshot()
+                    .integer("http.postBuffer")
+                    .and_then(|size| usize::try_from(size).ok())
+                    .filter(|size| *size > 0),
+                ..Default::default()
+            },
             hash_kind,
         ) {
             Ok(outcome) => outcome,
@@ -529,7 +549,7 @@ impl Plan<'_, '_> {
                 // Every ref shows its new id on a fresh handshake: the remote is in the
                 // requested state, only the report was lost.
                 let note = format!(
-                    "the server's report was lost ({}), but a fresh handshake shows every update on the remote",
+                    "the server's report was lost ({}). A fresh advertisement shows every ref this push named at its requested id; it cannot show whether this push applied them, whether server-side hooks ran, or what the server printed.",
                     error_chain(&source)
                 );
                 write_note(&note);

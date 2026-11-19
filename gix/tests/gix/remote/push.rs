@@ -439,3 +439,41 @@ fn delivery_check_names_refs_that_landed_and_refs_not_visible() {
     );
     assert!(!message.contains("not delivered"), "{message}");
 }
+
+/// Row: a ref that needed no update when judged, and moved remotely meanwhile, is left alone and
+/// reported with the id found; the refs that do need an update proceed.
+#[cfg(feature = "blocking-network-client")]
+#[test]
+fn revalidation_noop_ref_that_moved_does_not_fail_the_others() {
+    let (src, dst, first, second, elsewhere) = setup_branched_repos();
+    git_out(&src, &["branch", "-f", "other", &first]);
+    let outcome = push_while(
+        &src,
+        &dst,
+        &["refs/heads/main:refs/heads/main", "refs/heads/other:refs/heads/other"],
+        false,
+        || {
+            git_out(&dst, &["update-ref", "refs/heads/other", &elsewhere]);
+        },
+    )
+    .expect("main proceeds");
+    let main = outcome
+        .status
+        .iter()
+        .find(|status| status.remote == "refs/heads/main")
+        .expect("main reported");
+    assert!(main.result.is_ok(), "{outcome:?}");
+    let other = outcome
+        .status
+        .iter()
+        .find(|status| status.remote == "refs/heads/other")
+        .expect("other reported");
+    let reason = other.result.as_ref().expect_err("other was not pushed");
+    assert!(reason.to_string().contains(&elsewhere), "{reason}");
+    assert_eq!(other.old_oid.to_string(), elsewhere, "reported with the id found");
+    assert_eq!(remote_ref(&dst, "refs/heads/main").as_deref(), Some(second.as_str()));
+    assert_eq!(
+        remote_ref(&dst, "refs/heads/other").as_deref(),
+        Some(elsewhere.as_str())
+    );
+}

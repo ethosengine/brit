@@ -59,6 +59,9 @@ pub struct Outcome {
 /// | receive-pack POST (the push upload)     | none                | none             |
 ///
 /// The push upload and the server's processing of it are legitimately unbounded, as with Git.
+/// Unbounded by design, therefore: the receive-pack response, headers and body; and on macOS
+/// and Windows a peer that stops reading during the upload. In exchange a server that computes
+/// a fetch for more than 60 s without sending sideband keepalives now fails, where Git waits.
 /// `upload_body_unbounded` selects the receive-pack rule: the push re-configures its transport
 /// with it after the handshake, so that it only reaches the POST. A request-configuration hook
 /// makes the transport refuse to follow redirects, which is why it is not installed for the
@@ -86,13 +89,20 @@ pub(crate) fn reqwest_backend(
 
     /// The deadline every request gets unless it is the push upload.
     const DEADLINE: Duration = Duration::from_secs(60);
+    /// A test and diagnostic knob: seconds to use instead of [`DEADLINE`], so that journeys can
+    /// show the rule and its exception in seconds. Not a supported configuration.
+    const DEADLINE_OVERRIDE: &str = "BRIT_HTTP_REQUEST_DEADLINE_SECONDS";
     /// reqwest has no per-request "never"; a century is one without overflowing an `Instant`.
     const UNBOUNDED: Duration = Duration::from_secs(100 * 365 * 24 * 60 * 60);
 
+    let deadline = std::env::var(DEADLINE_OVERRIDE)
+        .ok()
+        .and_then(|seconds| seconds.parse().ok())
+        .map_or(DEADLINE, Duration::from_secs);
     let stall = (options.low_speed_limit_bytes_per_second > 0 && options.low_speed_time_seconds > 0)
         .then(|| Duration::from_secs(options.low_speed_time_seconds));
     let configure_client: Box<ConfigureClientFn> = Box::new(move |builder| {
-        let builder = builder.timeout(DEADLINE);
+        let builder = builder.timeout(deadline);
         #[cfg(any(target_os = "android", target_os = "fuchsia", target_os = "linux"))]
         let builder = match stall {
             Some(stall) => builder.tcp_user_timeout(stall),
