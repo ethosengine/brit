@@ -364,9 +364,16 @@ fn staged_diff_skips_unchanged_unsupported_paths_but_refuses_changed_ones() -> R
         repo.path(),
         &["update-index", "--cacheinfo", &format!("160000,{new_head},sub")],
     )?;
-    let refused = brit(repo.path(), &["diff", "--cached"])?;
-    ensure!(!refused.status.success() && refused.stderr.contains("submodule patches"));
-    ensure!(refused.stdout.is_empty());
+    // A staged gitlink move prints Git's `Subproject commit` patch.
+    let before = index(repo.path())?;
+    let gitlink = success(repo.path(), &["diff", "--cached"])?;
+    assert_eq!(
+        gitlink.stdout.as_bytes(),
+        git(repo.path(), &["diff", "--cached", "--no-ext-diff", "--no-color"])?
+    );
+    ensure!(gitlink.stdout.contains("+Subproject commit"), "{}", gitlink.stdout);
+    ensure!(gitlink.stderr.is_empty(), "{}", gitlink.stderr);
+    assert_eq!(index(repo.path())?, before, "inspection preserves index bytes");
     Ok(())
 }
 
@@ -450,7 +457,6 @@ fn legacy_diff_subcommands_remain_available_and_mixed_modes_refuse() -> Result<(
     for args in [
         vec!["diff", "--cached", "tree", "HEAD", "HEAD"],
         vec!["diff", "file", "--stat", "HEAD:selected", "HEAD:selected"],
-        vec!["diff", "--", "private"],
     ] {
         ensure!(
             !brit(repo.path(), &args)?.status.success(),
@@ -458,6 +464,24 @@ fn legacy_diff_subcommands_remain_available_and_mixed_modes_refuse() -> Result<(
         );
         assert_eq!(index(repo.path())?, before);
     }
+    // Like Git, an untracked path selects nothing: empty output and success, not a refusal.
+    let oracle = gix_testtools::git_command(repo.path())
+        .args(["diff", "--no-ext-diff", "--no-color", "--", "private"])
+        .output()?;
+    let untracked = brit(repo.path(), &["diff", "--", "private"])?;
+    ensure!(
+        oracle.status.success() && untracked.status.success(),
+        "{}",
+        untracked.stderr
+    );
+    assert_eq!(untracked.stdout.as_bytes(), oracle.stdout);
+    ensure!(
+        untracked.stdout.is_empty() && untracked.stderr.is_empty(),
+        "{}",
+        untracked.stderr
+    );
+    assert_eq!(index(repo.path())?, before);
+    assert_eq!(fs::read(repo.path().join("private"))?, b"private\n");
     Ok(())
 }
 
