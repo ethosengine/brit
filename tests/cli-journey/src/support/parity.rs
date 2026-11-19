@@ -53,6 +53,9 @@ pub fn brit(cwd: &Path, args: &[&str]) -> Result<Outcome> {
 }
 
 /// Assert that `brit <args>` prints the same stdout and exits like `git <args>` in `cwd`.
+///
+/// Stderr is shown on failure but not compared; use [`assert_same_streams()`] where a script
+/// would notice whether anything was written to it.
 pub fn assert_same(cwd: &Path, args: &[&str]) -> Result<Outcome> {
     let expected = git(cwd, args)?;
     let actual = brit(cwd, args)?;
@@ -60,6 +63,24 @@ pub fn assert_same(cwd: &Path, args: &[&str]) -> Result<Outcome> {
         (&actual.stdout, actual.code),
         (&expected.stdout, expected.code),
         "brit {args:?} in {} differs from git\nbrit stderr: {}\ngit stderr: {}",
+        cwd.display(),
+        actual.stderr,
+        expected.stderr
+    );
+    Ok(actual)
+}
+
+/// Like [`assert_same()`], and also require that stderr is empty exactly when Git's is.
+///
+/// Diagnostics are not compared byte for byte, but a script that treats any stderr as a warning,
+/// or that expects Git's `From <url>` line, sees the same thing from both.
+pub fn assert_same_streams(cwd: &Path, args: &[&str]) -> Result<Outcome> {
+    let expected = git(cwd, args)?;
+    let actual = brit(cwd, args)?;
+    assert_eq!(
+        (&actual.stdout, actual.code, actual.stderr.is_empty()),
+        (&expected.stdout, expected.code, expected.stderr.is_empty()),
+        "brit {args:?} in {} differs from git (stdout, status, empty stderr)\nbrit stderr: {}\ngit stderr: {}",
         cwd.display(),
         actual.stderr,
         expected.stderr
