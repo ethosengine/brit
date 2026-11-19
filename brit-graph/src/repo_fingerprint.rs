@@ -13,10 +13,8 @@ use gix::bstr::{BStr, BString, ByteSlice, ByteVec};
 use gix::{error::ResultExt, objs::FindStream, utils::stream::Budget};
 use globset::{Glob, GlobSet, GlobSetBuilder};
 use regex_automata::{
-    dfa::{dense, Automaton, StartKind},
-    nfa::thompson,
-    util::syntax,
-    Anchored, Input,
+    nfa::thompson::{self, State, WhichCaptures, NFA},
+    util::{primitives::StateID, syntax},
 };
 
 use crate::fingerprint::{ContentFingerprint, FingerprintError};
@@ -34,8 +32,10 @@ impl ContentFingerprint {
     /// match its path or a path beneath it: it is keyed by its path and the
     /// commit it pins, once per gitlink however many patterns reach it, and
     /// without reading the submodule's objects (they are often absent).
-    /// Symlinks are skipped. Empty pattern set or no matching entries
-    /// produces a stable empty-input fingerprint.
+    /// A symlink whose path a pattern matches is keyed by its own object id,
+    /// which changes when it is retargeted; it is not followed, so the file
+    /// it points to counts only if a pattern matches that file. Empty pattern
+    /// set or no matching entries produces a stable empty-input fingerprint.
     pub fn from_repo_globs(
         repo: &gix::Repository,
         commit_id: gix::ObjectId,
@@ -71,9 +71,11 @@ impl ContentFingerprint {
         let tree = commit.tree().map_err(|e| FingerprintError::TreeWalk(e.to_string()))?;
 
         // Step C: hash each matching blob, retaining only its path and CID;
-        // record each reached gitlink with its pinned commit.
+        // record each reached gitlink with its pinned commit and each matched
+        // symlink with its own object id.
         let mut inputs = BTreeMap::new();
         let mut gitlinks = BTreeMap::new();
+        let mut symlinks = BTreeMap::new();
         let mut walk_errors: Vec<String> = Vec::new();
 
         let mut visitor = TreeCollector {
@@ -82,6 +84,7 @@ impl ContentFingerprint {
             reach: GitlinkReach::new(&globset, &globs),
             inputs: &mut inputs,
             gitlinks: &mut gitlinks,
+            symlinks: &mut symlinks,
             errors: &mut walk_errors,
             path: BString::default(),
             path_deque: VecDeque::new(),
@@ -96,83 +99,161 @@ impl ContentFingerprint {
             return Err(FingerprintError::TreeWalk(walk_errors.join("; ")));
         }
 
-        // Step D: the sorted path/NUL/CID/NUL contract, plus a separate
-        // gitlink section only when a gitlink was reached.
-        Ok(Self::from_inputs(inputs, gitlinks))
+        // Step D: the sorted path/NUL/CID/NUL contract, plus separate gitlink
+        // and symlink sections only when one was reached or matched.
+        Ok(Self::from_inputs(inputs, gitlinks, symlinks))
     }
 }
 
+/// Upper bound on the heap a pattern's Thompson NFA may use. A pattern over
+/// it is answered "reaches" (over-keying), never "does not reach".
+const NFA_SIZE_LIMIT: usize = 1 << 20;
+
 /// Decides whether a step's patterns reach a gitlink: whether some pattern
-/// matches the gitlink path itself, or matches at least one path beneath it.
+/// matches the gitlink path itself, or could match at least one path beneath it.
 ///
-/// "Beneath" is decided against the same regex globset compiles for each
-/// pattern (so `*` crosses `/` exactly as it does for blob matching, since
-/// patterns are built with globset's defaults). Each pattern's regex is
-/// compiled once, lazily, into a minimized anchored DFA. After feeding
-/// `<gitlink>/`, a pattern can match beneath the gitlink iff some further
-/// non-empty input still reaches a match: minimization folds every state
-/// with no route to a match into the dead state, and globset's trailing `$`
-/// means a match is only ever confirmed at end of input.
+/// "Beneath" is decided on the Thompson NFA of the same regex globset compiles
+/// for each pattern, with globset's syntax options (so `*` crosses `/` exactly
+/// as it does for blob matching, since patterns are built with globset's
+/// defaults). The NFA is simulated over `<gitlink>/`; the pattern reaches the
+/// gitlink iff, from the live states, some byte transition leads on to a match
+/// state. That is a graph search, linear in the NFA's size: nothing is
+/// determinized, so no pattern can make it exponential.
+///
+/// Every doubt answers "reaches": look-around states are passable whatever
+/// the context (globset only anchors with `^`/`$`, so this can only add
+/// matches), and a pattern whose NFA cannot be built within the size limit
+/// reaches every gitlink. A wrong "reaches" over-keys a step; a wrong "does
+/// not reach" would reuse evidence, so the decision never errs that way.
 struct GitlinkReach<'a> {
     globset: &'a GlobSet,
     globs: &'a [Glob],
-    dfas: Option<Vec<dense::DFA<Vec<u32>>>>,
+    size_limit: usize,
+    /// One entry per pattern; `None` when its NFA could not be built.
+    nfas: Option<Vec<Option<NFA>>>,
 }
 
 impl<'a> GitlinkReach<'a> {
     fn new(globset: &'a GlobSet, globs: &'a [Glob]) -> Self {
+        Self::with_size_limit(globset, globs, NFA_SIZE_LIMIT)
+    }
+
+    fn with_size_limit(globset: &'a GlobSet, globs: &'a [Glob], size_limit: usize) -> Self {
         GitlinkReach {
             globset,
             globs,
-            dfas: None,
+            size_limit,
+            nfas: None,
         }
     }
 
-    fn reaches(&mut self, gitlink_path: &str) -> Result<bool, String> {
+    fn reaches(&mut self, gitlink_path: &str) -> bool {
         if self.globset.is_match(gitlink_path) {
-            return Ok(true);
+            return true;
         }
-        if self.dfas.is_none() {
-            let dfas = self
-                .globs
-                .iter()
-                .map(|glob| beneath_dfa(glob.regex()).map_err(|e| format!("pattern '{}': {e}", glob.glob())))
-                .collect::<Result<Vec<_>, _>>()?;
-            self.dfas = Some(dfas);
-        }
+        let (globs, size_limit) = (self.globs, self.size_limit);
+        let nfas = self
+            .nfas
+            .get_or_insert_with(|| globs.iter().map(|glob| beneath_nfa(glob.regex(), size_limit)).collect());
         let prefix = format!("{gitlink_path}/");
-        let dfas = self.dfas.as_ref().expect("just built");
-        for dfa in dfas {
-            if can_match_after(dfa, prefix.as_bytes())? {
-                return Ok(true);
-            }
-        }
-        Ok(false)
+        nfas.iter().any(|nfa| match nfa {
+            Some(nfa) => can_match_after(nfa, prefix.as_bytes()),
+            None => true,
+        })
     }
 }
 
-/// Compile a globset regex into a minimized DFA with globset's own syntax
-/// options (bytes, not UTF-8; `.` matches newline).
-fn beneath_dfa(regex: &str) -> Result<dense::DFA<Vec<u32>>, String> {
-    dense::Builder::new()
-        .configure(dense::Config::new().minimize(true).start_kind(StartKind::Anchored))
+/// Compile a globset regex into a Thompson NFA with globset's own syntax
+/// options (bytes, not UTF-8; `.` matches newline). `None` on any failure,
+/// including the size limit.
+fn beneath_nfa(regex: &str, size_limit: usize) -> Option<NFA> {
+    thompson::Compiler::new()
         .syntax(syntax::Config::new().utf8(false).dot_matches_new_line(true))
-        .thompson(thompson::Config::new().utf8(false))
+        .configure(
+            thompson::Config::new()
+                .utf8(false)
+                .nfa_size_limit(Some(size_limit))
+                .which_captures(WhichCaptures::None),
+        )
         .build(regex)
-        .map_err(|e| e.to_string())
+        .ok()
 }
 
-/// Whether some non-empty suffix `s` makes `prefix + s` a full match.
-fn can_match_after(dfa: &dense::DFA<Vec<u32>>, prefix: &[u8]) -> Result<bool, String> {
-    let input = Input::new(prefix).anchored(Anchored::Yes);
-    let mut state = dfa.start_state_forward(&input).map_err(|e| e.to_string())?;
+/// The state a byte transition of `state` leads to on `byte`, if any.
+fn step(nfa: &NFA, state: StateID, byte: u8) -> Option<StateID> {
+    match nfa.state(state) {
+        State::ByteRange { trans } => trans.matches_byte(byte).then_some(trans.next),
+        State::Sparse(sparse) => sparse.matches_byte(byte),
+        State::Dense(dense) => dense.matches_byte(byte),
+        _ => None,
+    }
+}
+
+/// The states `state` reaches without consuming a byte. Look-around is
+/// passable: that can only over-approximate the matches.
+fn epsilon_successors(nfa: &NFA, state: StateID) -> Vec<StateID> {
+    match nfa.state(state) {
+        State::Look { next, .. } | State::Capture { next, .. } => vec![*next],
+        State::Union { alternates } => alternates.to_vec(),
+        State::BinaryUnion { alt1, alt2 } => vec![*alt1, *alt2],
+        _ => Vec::new(),
+    }
+}
+
+/// The states a byte transition of `state` can lead to, on any byte.
+fn byte_successors(nfa: &NFA, state: StateID) -> Vec<StateID> {
+    match nfa.state(state) {
+        State::ByteRange { trans } => vec![trans.next],
+        State::Sparse(sparse) => sparse.transitions.iter().map(|trans| trans.next).collect(),
+        State::Dense(dense) => dense
+            .transitions
+            .iter()
+            .copied()
+            .filter(|next| *next != StateID::ZERO)
+            .collect(),
+        _ => Vec::new(),
+    }
+}
+
+/// Every state reachable from `start` by epsilon transitions, `start` included.
+fn epsilon_closure(nfa: &NFA, start: impl IntoIterator<Item = StateID>) -> Vec<StateID> {
+    let mut seen = vec![false; nfa.states().len()];
+    let mut stack: Vec<StateID> = start.into_iter().collect();
+    let mut closure = Vec::new();
+    while let Some(state) = stack.pop() {
+        if std::mem::replace(&mut seen[state.as_usize()], true) {
+            continue;
+        }
+        closure.push(state);
+        stack.extend(epsilon_successors(nfa, state));
+    }
+    closure
+}
+
+/// Whether some non-empty suffix `s` can make `prefix + s` a full match.
+fn can_match_after(nfa: &NFA, prefix: &[u8]) -> bool {
+    let mut live = epsilon_closure(nfa, [nfa.start_anchored()]);
     for &byte in prefix {
-        state = dfa.next_state(state, byte);
-        if dfa.is_dead_state(state) {
-            return Ok(false);
+        let next: Vec<StateID> = live.iter().filter_map(|&state| step(nfa, state, byte)).collect();
+        live = epsilon_closure(nfa, next);
+        if live.is_empty() {
+            return false;
         }
     }
-    Ok((0..=u8::MAX).any(|byte| !dfa.is_dead_state(dfa.next_state(state, byte))))
+    // Consume at least one byte, then search for any path to a match.
+    let mut seen = vec![false; nfa.states().len()];
+    let mut stack: Vec<StateID> = live.iter().flat_map(|&state| byte_successors(nfa, state)).collect();
+    while let Some(state) = stack.pop() {
+        if std::mem::replace(&mut seen[state.as_usize()], true) {
+            continue;
+        }
+        if matches!(nfa.state(state), State::Match { .. }) {
+            return true;
+        }
+        stack.extend(epsilon_successors(nfa, state));
+        stack.extend(byte_successors(nfa, state));
+    }
+    false
 }
 
 /// Whether the step's patterns reach the gitlink at `gitlink_path`.
@@ -184,9 +265,7 @@ fn patterns_reach_gitlink(patterns: &[&str], gitlink_path: &str) -> bool {
         builder.add(glob.clone());
     }
     let globset = builder.build().expect("valid set");
-    GitlinkReach::new(&globset, &globs)
-        .reaches(gitlink_path)
-        .expect("decidable")
+    GitlinkReach::new(&globset, &globs).reaches(gitlink_path)
 }
 
 /// Visitor that walks a tree, matches paths against globs, and collects
@@ -202,6 +281,8 @@ struct TreeCollector<'a> {
     inputs: &'a mut BTreeMap<String, BritCid>,
     /// Reached gitlinks: path -> pinned commit id (hex).
     gitlinks: &'a mut BTreeMap<String, String>,
+    /// Matched symlinks: path -> the link's own object id (hex).
+    symlinks: &'a mut BTreeMap<String, String>,
     errors: &'a mut Vec<String>,
     /// The current path prefix (built up as we traverse).
     path: BString,
@@ -265,16 +346,9 @@ impl<'a> gix::traverse::tree::Visit for TreeCollector<'a> {
     }
 
     fn visit_nontree(&mut self, entry: &gix::objs::tree::EntryRef<'_>) -> gix::traverse::tree::visit::Action {
-        // Blobs are hashed by content and gitlinks keyed by their pin; symlinks are skipped.
+        // Blobs are hashed by content, gitlinks keyed by their pin and
+        // symlinks by their own object id (their target path).
         let kind = entry.mode.kind();
-        if !matches!(
-            kind,
-            gix::objs::tree::EntryKind::Blob
-                | gix::objs::tree::EntryKind::BlobExecutable
-                | gix::objs::tree::EntryKind::Commit
-        ) {
-            return std::ops::ControlFlow::Continue(true);
-        }
 
         // At this point self.path already contains the full path (push_path_component
         // was called with entry.filename before visit_nontree).
@@ -289,18 +363,20 @@ impl<'a> gix::traverse::tree::Visit for TreeCollector<'a> {
         if kind == gix::objs::tree::EntryKind::Commit {
             // The submodule's objects are not read (they are often absent):
             // the gitlink's identity is the commit it pins.
-            match self.reach.reaches(&path_str) {
-                Ok(true) => {
-                    self.gitlinks.insert(path_str, entry.oid.to_hex().to_string());
-                }
-                Ok(false) => {}
-                Err(e) => self.errors.push(format!("gitlink {path_str}: {e}")),
+            if self.reach.reaches(&path_str) {
+                self.gitlinks.insert(path_str, entry.oid.to_hex().to_string());
             }
             return std::ops::ControlFlow::Continue(true);
         }
 
         // Glob match against the full path
         if !self.globset.is_match(&path_str) {
+            return std::ops::ControlFlow::Continue(true);
+        }
+
+        if kind == gix::objs::tree::EntryKind::Link {
+            // Not followed: the link's identity is its own blob, the target path.
+            self.symlinks.insert(path_str, entry.oid.to_hex().to_string());
             return std::ops::ControlFlow::Continue(true);
         }
 
@@ -339,7 +415,21 @@ impl<'a> gix::traverse::tree::Visit for TreeCollector<'a> {
 
 #[cfg(test)]
 mod tests {
-    use super::patterns_reach_gitlink;
+    use globset::{Glob, GlobSetBuilder};
+
+    use super::{patterns_reach_gitlink, GitlinkReach};
+
+    /// A pattern whose NFA exceeds the size limit reaches every gitlink: the
+    /// decision may over-key a step, never under-key it.
+    #[test]
+    fn size_limit_hit_answers_reaches() {
+        let globs = vec![Glob::new("elohim/other/**").expect("valid glob")];
+        let mut builder = GlobSetBuilder::new();
+        builder.add(globs[0].clone());
+        let globset = builder.build().expect("valid set");
+        assert!(!GitlinkReach::new(&globset, &globs).reaches("elohim/rakia"));
+        assert!(GitlinkReach::with_size_limit(&globset, &globs, 1).reaches("elohim/rakia"));
+    }
 
     /// Patterns are built with globset's defaults, as blob matching builds
     /// them: `*` and `?` cross `/` (no literal separator), `**` spans any
@@ -400,6 +490,34 @@ mod tests {
         ));
         assert!(!patterns_reach_gitlink(&["src/**", "elohim/other/**"], "elohim/rakia"));
         assert!(!patterns_reach_gitlink(&[], "elohim/rakia"));
+    }
+
+    /// Globs whose DFA is exponential in the number of `?` after a `*`
+    /// (each was 15 s to minutes, unbounded memory, with a determinized DFA).
+    #[test]
+    fn pathological_globs_are_decided_quickly() {
+        let reaching = [
+            format!("*a{}", "?".repeat(14)),
+            format!("*a{}", "?".repeat(16)),
+            "**/deps/*-????????????????.rlib".to_string(),
+            format!("*a{}", "?".repeat(64)),
+        ];
+        let not_reaching = [
+            format!("elohim/other/*a{}", "?".repeat(16)),
+            "elohim/other/**/deps/*-????????????????.rlib".to_string(),
+        ];
+        for (patterns, expected) in [(&reaching[..], true), (&not_reaching[..], false)] {
+            for pattern in patterns {
+                let started = std::time::Instant::now();
+                let reached = patterns_reach_gitlink(&[pattern.as_str()], "elohim/rakia");
+                let elapsed = started.elapsed();
+                assert_eq!(reached, expected, "{pattern}");
+                assert!(
+                    elapsed < std::time::Duration::from_millis(500),
+                    "{pattern} took {elapsed:?}"
+                );
+            }
+        }
     }
 
     #[test]

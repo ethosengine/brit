@@ -3,7 +3,9 @@
 //! Resolves each step's source + buildProcess globs against the git tree at
 //! the given commit (default HEAD), reads matching blob contents, and computes
 //! a deterministic ContentFingerprint per step. A gitlink a glob can reach is
-//! an input keyed by its pinned commit, listed under `gitlinks`.
+//! an input keyed by its pinned commit, listed under `gitlinks`; a symlink a
+//! glob matches is keyed by its own object id (its target path, not the file
+//! it points to), listed under `symlinks`.
 
 use std::path::Path;
 
@@ -23,12 +25,22 @@ struct StepFingerprint {
     pipeline: String,
     step: String,
     fingerprint: String,
-    /// Blob inputs plus gitlink inputs.
+    /// Blob, gitlink and symlink inputs.
     input_count: usize,
     /// Gitlinks the step's globs reach, keyed by their pinned commit. Omitted
     /// when there are none, so gitlink-free output is unchanged.
     #[serde(skip_serializing_if = "Vec::is_empty")]
     gitlinks: Vec<GitlinkInput>,
+    /// Symlinks the step's globs match, keyed by their own object id (the
+    /// target path); the link is not followed. Omitted when there are none.
+    #[serde(skip_serializing_if = "Vec::is_empty")]
+    symlinks: Vec<SymlinkInput>,
+}
+
+#[derive(Serialize)]
+struct SymlinkInput {
+    path: String,
+    object: String,
 }
 
 #[derive(Serialize)]
@@ -88,6 +100,14 @@ pub fn run(manifest_path: &Path, step_filter: Option<&str>, commit_ref: &str) ->
                 .map(|(path, commit)| GitlinkInput {
                     path: path.clone(),
                     commit: commit.clone(),
+                })
+                .collect(),
+            symlinks: fp
+                .symlinks
+                .iter()
+                .map(|(path, object)| SymlinkInput {
+                    path: path.clone(),
+                    object: object.clone(),
                 })
                 .collect(),
         });

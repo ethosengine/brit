@@ -60,6 +60,12 @@ pub struct ContentFingerprint {
     /// be computed without the submodule's objects. Kept apart from `inputs` so
     /// a gitlink can never be mistaken for a blob at the same path.
     pub gitlinks: BTreeMap<String, String>,
+    /// Symlink inputs: path -> the link's own object id (hex).
+    ///
+    /// A symlink's blob holds its target path, so its id changes exactly when
+    /// the link is retargeted. The link is not followed: the file it points
+    /// to is an input only if a pattern matches that file itself.
+    pub symlinks: BTreeMap<String, String>,
 }
 
 impl ContentFingerprint {
@@ -78,25 +84,30 @@ impl ContentFingerprint {
         )
     }
 
-    /// Number of inputs the fingerprint covers: blobs plus gitlinks.
+    /// Number of inputs the fingerprint covers: blobs, gitlinks and symlinks.
     #[must_use]
     pub fn input_count(&self) -> usize {
-        self.inputs.len() + self.gitlinks.len()
+        self.inputs.len() + self.gitlinks.len() + self.symlinks.len()
     }
 
     /// Complete the same fingerprint after each input's content has been hashed and released.
     pub(crate) fn from_input_cids(individual: BTreeMap<String, BritCid>) -> Self {
-        Self::from_inputs(individual, BTreeMap::new())
+        Self::from_inputs(individual, BTreeMap::new(), BTreeMap::new())
     }
 
-    /// Complete a fingerprint over blob inputs and gitlink inputs.
+    /// Complete a fingerprint over blob, gitlink and symlink inputs.
     ///
     /// Material: one `path NUL cid NUL` record per blob, in path order — the
-    /// contract every gitlink-free fingerprint keeps byte for byte. When any
-    /// gitlink is present, a section follows that opens with a NUL byte (an
-    /// empty name, which no blob record can have), the tag `gitlink`, NUL, and
-    /// then one `path NUL commit-hex NUL` record per gitlink in path order.
-    pub(crate) fn from_inputs(individual: BTreeMap<String, BritCid>, gitlinks: BTreeMap<String, String>) -> Self {
+    /// contract every fingerprint without gitlinks or symlinks keeps byte for
+    /// byte. Then, for each non-empty kind in the order gitlink, symlink, a
+    /// section that opens with a NUL byte (an empty name, which no record can
+    /// have), its tag (`gitlink` or `symlink`) and NUL, followed by one
+    /// `path NUL object-id-hex NUL` record per entry in path order.
+    pub(crate) fn from_inputs(
+        individual: BTreeMap<String, BritCid>,
+        gitlinks: BTreeMap<String, String>,
+        symlinks: BTreeMap<String, String>,
+    ) -> Self {
         let mut combined = Vec::new();
 
         for (name, input_cid) in &individual {
@@ -105,27 +116,37 @@ impl ContentFingerprint {
             combined.extend_from_slice(input_cid.to_string().as_bytes());
             combined.push(0);
         }
-
-        if !gitlinks.is_empty() {
-            combined.push(0);
-            combined.extend_from_slice(GITLINK_SECTION_TAG);
-            combined.push(0);
-            for (path, commit) in &gitlinks {
-                combined.extend_from_slice(path.as_bytes());
-                combined.push(0);
-                combined.extend_from_slice(commit.as_bytes());
-                combined.push(0);
-            }
-        }
+        push_section(&mut combined, GITLINK_SECTION_TAG, &gitlinks);
+        push_section(&mut combined, SYMLINK_SECTION_TAG, &symlinks);
 
         let cid = BritCid::compute(&combined);
         ContentFingerprint {
             cid,
             inputs: individual,
             gitlinks,
+            symlinks,
         }
+    }
+}
+
+/// Append a tagged section of `path NUL id NUL` records, or nothing when empty.
+fn push_section(combined: &mut Vec<u8>, tag: &[u8], entries: &BTreeMap<String, String>) {
+    if entries.is_empty() {
+        return;
+    }
+    combined.push(0);
+    combined.extend_from_slice(tag);
+    combined.push(0);
+    for (path, id) in entries {
+        combined.extend_from_slice(path.as_bytes());
+        combined.push(0);
+        combined.extend_from_slice(id.as_bytes());
+        combined.push(0);
     }
 }
 
 /// Domain tag of the gitlink section in fingerprint material.
 const GITLINK_SECTION_TAG: &[u8] = b"gitlink";
+
+/// Domain tag of the symlink section in fingerprint material.
+const SYMLINK_SECTION_TAG: &[u8] = b"symlink";

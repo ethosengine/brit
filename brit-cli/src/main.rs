@@ -51,6 +51,12 @@ enum Command {
     /// Compute a topologically-grouped build plan
     Plan(PlanArgs),
     /// Compute the content fingerprint of a step's inputs
+    ///
+    /// Keyed: each committed blob a step glob matches, by content; each
+    /// gitlink a glob matches or can match beneath, by the commit it pins
+    /// (the submodule's files are not read); each symlink a glob matches, by
+    /// its own object id, i.e. its target path. Not keyed: the file a symlink
+    /// points to unless a glob matches that file, and anything uncommitted.
     Fingerprint(FingerprintArgs),
     /// Manage rakia baseline refs
     #[command(subcommand)]

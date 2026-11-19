@@ -264,3 +264,203 @@ fn gitlink_input_is_domain_separated_from_a_blob_at_the_same_path() {
         assert_ne!(gitlink.cid, blob.cid);
     }
 }
+
+fn git_in(path: &std::path::Path, args: &[&str]) -> String {
+    let output = Command::new("git").args(args).current_dir(path).output().expect("git");
+    assert!(
+        output.status.success(),
+        "git {args:?}: {}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    String::from_utf8(output.stdout).expect("utf8").trim().to_string()
+}
+
+/// Commit a superproject holding `files` plus symlinks recorded directly in
+/// the index (mode 120000, blob = target path), in the order given.
+fn init_repo_with_symlinks(
+    files: &[(&str, &str)],
+    links: &[(&str, &str)],
+) -> (TempDir, std::path::PathBuf, gix::ObjectId) {
+    let (keep, path, _) = init_repo_with_files(files);
+    for (link, target) in links {
+        let scratch = path.join(".git/link-target");
+        std::fs::write(&scratch, target).expect("write target");
+        let blob = git_in(&path, &["hash-object", "-w", scratch.to_str().expect("path")]);
+        git_in(
+            &path,
+            &["update-index", "--add", "--cacheinfo", &format!("120000,{blob},{link}")],
+        );
+    }
+    git_in(&path, &["commit", "-q", "-m", "links"]);
+    let repo = gix::open(&path).expect("open");
+    let head = repo.head_id().expect("head_id").detach();
+    (keep, path, head)
+}
+
+fn symlink_fp(links: &[(&str, &str)], patterns: &[&str]) -> ContentFingerprint {
+    let mut files = pinned_fixture_files().to_vec();
+    files.extend([
+        ("src/prod.json", "{\"env\":\"prod\"}\n"),
+        ("src/dev.json", "{\"env\":\"dev\"}\n"),
+    ]);
+    let (_keep, path, head) = init_repo_with_symlinks(&files, links);
+    let repo = gix::open(&path).expect("open");
+    let patterns: Vec<String> = patterns.iter().map(|p| (*p).to_string()).collect();
+    ContentFingerprint::from_repo_globs(&repo, head, &patterns).expect("compute")
+}
+
+#[test]
+fn retargeting_a_matched_symlink_changes_the_fingerprint() {
+    let prod = symlink_fp(&[("src/config.json", "prod.json")], &["src/**"]);
+    let dev = symlink_fp(&[("src/config.json", "dev.json")], &["src/**"]);
+    assert_eq!(prod.inputs, dev.inputs, "blob inputs are unchanged");
+    assert_eq!(prod.symlinks.len(), 1);
+    assert!(prod.symlinks.contains_key("src/config.json"));
+    assert_eq!(prod.input_count(), prod.inputs.len() + 1);
+    assert_ne!(prod.cid, dev.cid, "a retarget must re-key the step");
+}
+
+#[test]
+fn symlink_outside_the_globs_keeps_the_pre_symlink_fingerprint() {
+    let (_keep, path, head) = init_repo_with_symlinks(
+        &pinned_fixture_files(),
+        &[("links/readme", "../README.md"), ("docs/a", "b")],
+    );
+    let repo = gix::open(&path).expect("open");
+    let patterns = vec!["src/**".to_string(), "README.md".to_string()];
+    let fp = ContentFingerprint::from_repo_globs(&repo, head, &patterns).expect("compute");
+    assert!(fp.symlinks.is_empty());
+    assert_eq!(fp.cid.to_string(), PINNED_NO_GITLINK_CID);
+}
+
+#[test]
+fn symlink_order_is_deterministic() {
+    let links = [
+        ("src/z-link", "prod.json"),
+        ("src/a-link", "dev.json"),
+        ("src/m/link", "../prod.json"),
+    ];
+    let forward = symlink_fp(&links, &["src/**"]);
+    let mut reversed_links = links;
+    reversed_links.reverse();
+    let reversed = symlink_fp(&reversed_links, &["src/**"]);
+    assert_eq!(forward.cid, reversed.cid);
+    assert_eq!(
+        forward.symlinks.keys().collect::<Vec<_>>(),
+        ["src/a-link", "src/m/link", "src/z-link"]
+    );
+}
+
+#[test]
+fn symlink_is_domain_separated_from_a_blob_with_the_same_bytes() {
+    // A regular file whose content is the link target has the same object id
+    // as the symlink; only the mode differs, and so must the fingerprint.
+    let link = symlink_fp(&[("src/config.json", "prod.json")], &["src/config.json"]);
+    let (_keep, path, head) = init_repo_with_files(&[("src/config.json", "prod.json")]);
+    let repo = gix::open(&path).expect("open");
+    let blob = ContentFingerprint::from_repo_globs(&repo, head, &["src/config.json".to_string()]).expect("compute");
+    assert_eq!(blob.inputs.len(), 1);
+    assert_eq!(link.symlinks.len(), 1);
+    assert_ne!(link.cid, blob.cid);
+}
+
+/// Probe paths a file beneath the gitlink could have.
+const BENEATH: &[&str] = &[
+    "elohim/rakia/a",
+    "elohim/rakia/Cargo.toml",
+    "elohim/rakia/.hidden",
+    "elohim/rakia/rakia",
+    "elohim/rakia/schemas/x.json",
+    "elohim/rakia/schemas/v1/release-manifest.schema.json",
+    "elohim/rakia/rakia-core/src/lib.rs",
+    "elohim/rakia/deps/x-0123456789abcdef.rlib",
+    "elohim/rakia/elohim/rakia/nested.json",
+];
+
+fn generated_globs() -> Vec<String> {
+    let components = [
+        "elohim",
+        "rakia",
+        "schemas",
+        "*",
+        "**",
+        "?lohim",
+        "rak?a",
+        "[r]akia",
+        "[!r]akia",
+        "{rakia,other}",
+        "{other,docs}",
+        "*.json",
+        "*akia",
+        "rakia*",
+        "deps",
+        "*-????????????????.rlib",
+        "\\*?\\[\\{",
+    ];
+    let mut globs: Vec<String> = Vec::new();
+    for a in components {
+        globs.push(a.to_string());
+        for b in components {
+            globs.push(format!("{a}/{b}"));
+            for c in components {
+                globs.push(format!("{a}/{b}/{c}"));
+            }
+        }
+    }
+    globs.extend(
+        [
+            "*a????????????????",
+            "**/deps/*-????????????????.rlib",
+            "elohim/rakia",
+            "elohim/rakia/",
+            "elohim/rakia.md",
+            "elohim/rakia*/**",
+            "{elohim/rakia,src}/**",
+            "elohim/rak\\ia/**",
+            "e*a/*",
+            "*/*/*/*.json",
+        ]
+        .map(String::from),
+    );
+    globs
+}
+
+/// For every generated glob: if the blob matcher hashes some file beneath
+/// `elohim/rakia` when it is a real directory, the same glob must reach the
+/// gitlink when `elohim/rakia` is a submodule. Over-keying is allowed.
+#[test]
+fn gitlink_reach_never_under_keys_against_a_twin_directory() {
+    let mut twin_files: Vec<(&str, &str)> = BENEATH.iter().map(|p| (*p, "beneath\n")).collect();
+    twin_files.push(("elohim/other/x.json", "sibling\n"));
+    let (_keep_twin, twin_path, twin_head) = init_repo_with_files(&twin_files);
+    let (_keep_link, link_path, link_head) = init_repo_with_gitlink(&[("elohim/other/x.json", "sibling\n")], PIN_A);
+    let twin = gix::open(&twin_path).expect("twin");
+    let linked = gix::open(&link_path).expect("linked");
+
+    let (mut checked, mut beneath, mut over_keyed, mut under_keyed) = (0usize, 0usize, 0usize, Vec::new());
+    for glob in generated_globs() {
+        let patterns = vec![glob.clone()];
+        let Ok(twin_fp) = ContentFingerprint::from_repo_globs(&twin, twin_head, &patterns) else {
+            continue; // not a valid glob
+        };
+        let hashes_beneath = twin_fp.inputs.keys().any(|path| path.starts_with("elohim/rakia/"));
+        let reached = !ContentFingerprint::from_repo_globs(&linked, link_head, &patterns)
+            .expect("same glob compiles")
+            .gitlinks
+            .is_empty();
+        checked += 1;
+        beneath += usize::from(hashes_beneath);
+        if hashes_beneath && !reached {
+            under_keyed.push(glob);
+        } else if reached && !hashes_beneath {
+            over_keyed += 1;
+        }
+    }
+    eprintln!("checked {checked} globs; hashed beneath {beneath}; over-keyed {over_keyed}");
+    assert!(checked > 4000, "generator produced {checked} valid globs");
+    assert!(
+        beneath > 400,
+        "only {beneath} globs hash a file beneath the twin directory"
+    );
+    assert!(under_keyed.is_empty(), "under-keyed globs: {under_keyed:#?}");
+}

@@ -233,3 +233,124 @@ fn fingerprint_keys_a_crossed_gitlink_pin_without_the_submodule() {
         first["local"]
     );
 }
+
+/// Record a symlink in the index (mode 120000; its blob is the target path).
+fn stage_symlink(repo: &std::path::Path, link: &str, target: &str) {
+    let scratch = repo.join(".git/link-target");
+    std::fs::write(&scratch, target).expect("write target");
+    let blob = gix_testtools::git(repo, &format!("hash-object -w {}", scratch.display())).expect("hash");
+    gix_testtools::git(
+        repo,
+        &format!("update-index --add --cacheinfo 120000,{},{link}", blob.trim()),
+    )
+    .expect("link");
+}
+
+/// A repository whose last commit edits `src/lib.txt` (so `plan --since
+/// HEAD~1` selects the step) and sets the rakia pin and the config link.
+fn plan_fixture(repo: &std::path::Path, pin: &str, config_target: &str) {
+    gix_testtools::git(repo, "init").expect("init");
+    std::fs::create_dir_all(repo.join("src")).expect("mkdir");
+    std::fs::write(repo.join("src/lib.txt"), "v1\n").expect("write");
+    std::fs::write(repo.join("src/prod.json"), "{}\n").expect("write");
+    std::fs::write(repo.join("src/dev.json"), "[]\n").expect("write");
+    std::fs::write(
+        repo.join(".gitmodules"),
+        "[submodule \"elohim/rakia\"]\n\tpath = elohim/rakia\n\turl = https://example.invalid/rakia.git\n",
+    )
+    .expect("write");
+    std::fs::write(
+        repo.join("build-manifest.json"),
+        r#"{
+            "manifestVersion":"1.0",
+            "pipeline":"plan-fixture",
+            "description":"plan fingerprints over a gitlink and a symlink",
+            "steps":{
+                "schemas":{
+                    "description":"reads src and the rakia schemas",
+                    "inputs":{"sources":["src/**","elohim/rakia/schemas/**"],"buildProcess":[]},
+                    "outputs":{"artifacts":[],"verify":null},
+                    "depends":[],
+                    "executor":{"stage":"test","function":null}
+                }
+            },
+            "gate":{},
+            "deployment":{}
+        }"#,
+    )
+    .expect("write");
+    gix_testtools::git(
+        repo,
+        "add build-manifest.json .gitmodules src/lib.txt src/prod.json src/dev.json",
+    )
+    .expect("add");
+    gix_testtools::git(
+        repo,
+        "update-index --add --cacheinfo 160000,3333333333333333333333333333333333333333,elohim/rakia",
+    )
+    .expect("pin");
+    stage_symlink(repo, "src/config.json", "prod.json");
+    gix_testtools::git(repo, "commit -m base").expect("commit");
+
+    std::fs::write(repo.join("src/lib.txt"), "v2\n").expect("write");
+    gix_testtools::git(repo, "add src/lib.txt").expect("add");
+    gix_testtools::git(repo, &format!("update-index --cacheinfo 160000,{pin},elohim/rakia")).expect("pin");
+    stage_symlink(repo, "src/config.json", config_target);
+    gix_testtools::git(repo, "commit -m change").expect("commit");
+}
+
+fn plan_fingerprint(pin: &str, config_target: &str) -> String {
+    let dir = gix_testtools::tempfile::tempdir().expect("temp");
+    let repo = dir.path();
+    plan_fixture(repo, pin, config_target);
+    let mut command = Command::new(brit_binary());
+    gix_testtools::configure_git_environment(&mut command, repo);
+    let out = command
+        .args(["build", "plan", "--since", "HEAD~1", "--repo"])
+        .arg(repo)
+        .current_dir(repo)
+        .output()
+        .expect("invoke brit build plan");
+    assert!(
+        out.status.success(),
+        "exit {} stderr: {}",
+        out.status,
+        String::from_utf8_lossy(&out.stderr)
+    );
+    let v: serde_json::Value = serde_json::from_slice(&out.stdout).expect("json");
+    assert_eq!(v["levels"][0][0]["qualifiedName"], "plan-fixture:schemas", "plan: {v}");
+    v["levels"][0][0]["fingerprint"]
+        .as_str()
+        .expect("fingerprint")
+        .to_string()
+}
+
+#[test]
+fn plan_fingerprint_keys_a_reached_gitlink_and_a_matched_symlink() {
+    let base = plan_fingerprint("1111111111111111111111111111111111111111", "prod.json");
+    assert!(base.starts_with("bafyrei"), "{base}");
+    let moved_pin = plan_fingerprint("2222222222222222222222222222222222222222", "prod.json");
+    let retargeted = plan_fingerprint("1111111111111111111111111111111111111111", "dev.json");
+    assert_ne!(base, moved_pin, "a pin move must re-key the planned step");
+    assert_ne!(base, retargeted, "a symlink retarget must re-key the planned step");
+    assert_eq!(
+        base,
+        plan_fingerprint("1111111111111111111111111111111111111111", "prod.json"),
+        "same tree, same planned fingerprint"
+    );
+}
+
+#[test]
+fn fingerprint_lists_a_matched_symlink_by_its_object() {
+    let dir = gix_testtools::tempfile::tempdir().expect("temp");
+    let repo = dir.path();
+    plan_fixture(repo, "1111111111111111111111111111111111111111", "dev.json");
+    let v = fingerprint_steps(repo, "HEAD");
+    let symlinks = v["schemas"]["symlinks"].as_array().expect("symlinks listed");
+    assert_eq!(symlinks.len(), 1);
+    assert_eq!(symlinks[0]["path"], "src/config.json");
+    let object = gix_testtools::git(repo, "rev-parse HEAD:src/config.json").expect("rev-parse");
+    assert_eq!(symlinks[0]["object"], object.trim());
+    // src/lib.txt, prod.json, dev.json, the gitlink and the symlink.
+    assert_eq!(v["schemas"]["input_count"], 5);
+}

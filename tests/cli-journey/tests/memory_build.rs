@@ -75,12 +75,12 @@ fn fingerprint(size: usize, count: usize, expected: &str, reduced: bool) -> Resu
             "update-index",
             "--add",
             "--cacheinfo",
-            &format!("120000,{},src/ignored-link", link.trim()),
+            &format!("120000,{},vendor/ignored-link", link.trim()),
         ],
     )?;
-    // A gitlink that `src/**` cannot reach stays out of the key, so the goldens
-    // below keep the blob-only contract. A gitlink a glob reaches is keyed by
-    // its pinned commit (brit-graph and brit-cli gitlink tests).
+    // The symlink above and this gitlink sit where `src/**` cannot reach, so
+    // the goldens below keep the blob-only contract. A matched symlink or a
+    // reached gitlink is keyed by its object id (brit-graph and brit-cli tests).
     git(
         root,
         &[
