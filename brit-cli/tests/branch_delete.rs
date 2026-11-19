@@ -299,6 +299,32 @@ fn move_matches_git_for_ref_reflog_config_and_head() -> TestResult {
 }
 
 #[test]
+fn move_renames_every_section_of_the_branch_like_git() -> TestResult {
+    use std::io::Write;
+    let dir = tempfile::tempdir()?;
+    let (ours, theirs, _) = twin_fixtures(dir.path())?;
+    for root in [&ours, &theirs] {
+        // A second `[branch "topic"]` section, as an edit by hand or an older tool leaves it.
+        let mut config = std::fs::OpenOptions::new()
+            .append(true)
+            .open(root.join(".git/config"))?;
+        write!(config, "[branch \"topic\"]\n\trebase = true\n")?;
+    }
+    let output = brit(&ours, &["branch", "-m", "topic", "moved"]);
+    assert!(output.status.success(), "{output:?}");
+    let oracle = git_command(&theirs).args(["branch", "-m", "topic", "moved"]).output()?;
+    assert!(oracle.status.success(), "{oracle:?}");
+    assert_eq!(branch_config(&ours, "topic")?, "", "no section keeps the old name");
+    assert_eq!(branch_config(&ours, "moved")?.lines().count(), 4);
+    assert_eq!(
+        renamed_state(&ours, "moved")?,
+        renamed_state(&theirs, "moved")?,
+        "both sections renamed as git renames them"
+    );
+    Ok(())
+}
+
+#[test]
 fn move_refuses_existing_missing_and_invalid_names() -> TestResult {
     let dir = tempfile::tempdir()?;
     let root = dir.path();
