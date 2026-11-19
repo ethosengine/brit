@@ -105,7 +105,11 @@ fn requires_mutation_guard(cmd: &Subcommands) -> bool {
         | Subcommands::Env
         | Subcommands::Diff(_)
         | Subcommands::Log(_)
-        | Subcommands::Blame { .. } => false,
+        | Subcommands::Blame { .. }
+        | Subcommands::RevParse(_)
+        | Subcommands::ForEachRef(_)
+        | Subcommands::CheckRefFormat(_)
+        | Subcommands::RevList(_) => false,
         Subcommands::Commit(commit::Platform {
             cmd: Some(commit::Subcommands::Verify { .. } | commit::Subcommands::Describe { .. }),
             ..
@@ -128,6 +132,8 @@ fn requires_mutation_guard(cmd: &Subcommands) -> bool {
         Subcommands::Pull { .. } => false,
         #[cfg(any(feature = "gitoxide-core-async-client", feature = "gitoxide-core-blocking-client"))]
         Subcommands::Remote(_) => false,
+        #[cfg(any(feature = "gitoxide-core-async-client", feature = "gitoxide-core-blocking-client"))]
+        Subcommands::LsRemote(_) => false,
         _ => true,
     }
 }
@@ -254,6 +260,29 @@ fn mutation_wait_from_environment() -> Result<Option<core::repository::switch::M
     }
 }
 
+/// Apply each `-C <dir>` in order, each relative to the one before, as Git does; empty values are ignored.
+///
+/// A directory that cannot be entered ends like Git: `fatal: cannot change to '<dir>': <reason>` and 128.
+pub fn change_dirs(dirs: &[std::ffi::OsString]) -> Result<()> {
+    use std::io::Write as _;
+    for dir in dirs.iter().filter(|dir| !dir.is_empty()) {
+        if let Err(err) = std::env::set_current_dir(dir) {
+            let reason = err.to_string();
+            // Git prints `strerror()`, without Rust's `(os error N)` suffix.
+            let reason = reason.split(" (os error ").next().unwrap_or(&reason);
+            // Written without `eprintln!`, which would panic on a closed stderr.
+            writeln!(
+                std::io::stderr(),
+                "fatal: cannot change to '{}': {reason}",
+                std::path::Path::new(dir).display()
+            )
+            .ok();
+            return Err(core::repository::git_spellings::exit(128));
+        }
+    }
+    Ok(())
+}
+
 /// Execute an already parsed plumbing command, allowing another CLI to compose its command tree.
 pub fn run(args: Args) -> Result<()> {
     run_with_command(args, Args::command())
@@ -261,6 +290,7 @@ pub fn run(args: Args) -> Result<()> {
 
 /// Execute a plumbing command with the public command tree used for generated completions.
 pub fn run_with_command(args: Args, command: clap::Command) -> Result<()> {
+    change_dirs(&args.change_dir)?;
     let thread_limit = args.threads;
     let verbose = args.verbose;
     let format = args.format;
@@ -469,11 +499,16 @@ pub fn run_with_command(args: Args, command: clap::Command) -> Result<()> {
                 )
             }),
         },
-        Subcommands::MergeBase(crate::plumbing::options::merge_base::Command { first, others }) => {
-            prepare_and_run("merge-base", verbose, None, move |_progress, out, _err| {
-                core::repository::merge_base(repository(Mode::Lenient)?, first, others, out, format)
-            })
-        }
+        Subcommands::MergeBase(crate::plumbing::options::merge_base::Command {
+            first,
+            others,
+            is_ancestor,
+        }) => prepare_and_run("merge-base", verbose, None, move |_progress, out, err| {
+            if is_ancestor {
+                return core::repository::merge_base_is_ancestor(repository(Mode::Lenient)?, &first, &others, err);
+            }
+            core::repository::merge_base(repository(Mode::Lenient)?, first, others, out, format)
+        }),
         Subcommands::Add { paths, update, all: _ } => {
             prepare_and_run("add", verbose, None, move |_progress, _out, _err| {
                 core::repository::index::stage_paths(repository(Mode::Strict)?, &paths, update)
@@ -1539,6 +1574,88 @@ pub fn run_with_command(args: Args, command: clap::Command) -> Result<()> {
                 )
             }),
         },
+        Subcommands::RevParse(crate::plumbing::options::git_spellings::RevParse { args }) => {
+            prepare_and_run("rev-parse", verbose, None, move |_progress, out, err| {
+                let repo = match repository(Mode::Lenient) {
+                    Ok(repo) => repo,
+                    Err(discovery) => {
+                        let cwd = std::env::current_dir().unwrap_or_default();
+                        return Err(core::repository::git_spellings::rev_parse::outside_work_tree(
+                            &args, &cwd, &mut *err,
+                        )
+                        .unwrap_or(discovery));
+                    }
+                };
+                core::repository::git_spellings::rev_parse::rev_parse(repo, args, out, err)
+            })
+        }
+        Subcommands::ForEachRef(crate::plumbing::options::git_spellings::ForEachRef {
+            format: ref_format,
+            sort,
+            patterns,
+        }) => prepare_and_run("for-each-ref", verbose, None, move |_progress, out, _err| {
+            core::repository::git_spellings::for_each_ref::for_each_ref(
+                repository(Mode::Lenient)?,
+                out,
+                core::repository::git_spellings::for_each_ref::Options {
+                    format: ref_format,
+                    sort,
+                    patterns,
+                },
+            )
+        }),
+        #[cfg(any(feature = "gitoxide-core-async-client", feature = "gitoxide-core-blocking-client"))]
+        Subcommands::LsRemote(crate::plumbing::options::git_spellings::LsRemote {
+            help: _,
+            heads,
+            tags,
+            refs,
+            exit_code,
+            quiet,
+            remote,
+            patterns,
+        }) => prepare_and_run(
+            "ls-remote",
+            verbose,
+            core::repository::remote::refs::PROGRESS_RANGE,
+            move |progress, out, err| {
+                let res = core::repository::git_spellings::ls_remote::ls_remote(
+                    repository(Mode::LenientWithGitInstallConfig)?,
+                    progress,
+                    out,
+                    err,
+                    core::repository::git_spellings::ls_remote::Options {
+                        remote,
+                        patterns,
+                        heads,
+                        tags,
+                        refs,
+                        exit_code,
+                        quiet,
+                    },
+                );
+                #[cfg(feature = "gitoxide-core-async-client")]
+                let res = futures_lite::future::block_on(res);
+                res
+            },
+        ),
+        Subcommands::CheckRefFormat(crate::plumbing::options::git_spellings::CheckRefFormat {
+            allow_onelevel,
+            refname,
+        }) => core::repository::git_spellings::check_ref_format::check(refname.as_ref(), allow_onelevel),
+        Subcommands::RevList(crate::plumbing::options::git_spellings::RevList {
+            count,
+            left_right,
+            revs,
+        }) => prepare_and_run("rev-list", verbose, None, move |_progress, out, err| {
+            core::repository::git_spellings::rev_list::rev_list(
+                repository(Mode::Lenient)?,
+                revs,
+                out,
+                err,
+                core::repository::git_spellings::rev_list::Options { count, left_right },
+            )
+        }),
         Subcommands::Cat { revspec } => prepare_and_run("cat", verbose, None, move |_progress, out, _err| {
             core::repository::cat(repository(Mode::Lenient)?, &revspec, out)
         }),

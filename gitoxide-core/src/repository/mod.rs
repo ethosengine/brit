@@ -27,6 +27,7 @@ pub mod diff;
 pub mod dirty;
 pub mod dirwalk;
 mod editor;
+pub mod git_spellings;
 pub use editor::function as editor;
 #[cfg(feature = "blocking-client")]
 pub mod clone;
@@ -47,6 +48,7 @@ pub mod index;
 pub mod log;
 pub mod mailmap;
 mod merge_base;
+pub use merge_base::is_ancestor as merge_base_is_ancestor;
 pub use merge_base::merge_base;
 pub mod merge;
 pub mod odb;

@@ -1,3 +1,4 @@
+pub mod git_spellings;
 pub mod rebase;
 use std::path::PathBuf;
 
@@ -12,6 +13,17 @@ use crate::shared::{AsRange, AsTime};
 #[clap(subcommand_required = true)]
 #[clap(arg_required_else_help = true)]
 pub struct Args {
+    /// Run as if Brit was started in this directory, like Git's `-C`; repeat to descend further.
+    ///
+    /// Each one is applied relative to the previous one before the command runs, and before a recognised
+    /// subcommand's `--help` or usage error (an unrecognised command gets clap's error first, and Brit's own
+    /// `--help` without a subcommand ignores it); an empty value is ignored, and one that cannot be entered
+    /// ends with Git's `fatal: cannot change to '<dir>'` and status 128.
+    /// Repository discovery and every relative path argument then start there, and `-r` is resolved
+    /// relative to the result. `-r` alone only selects the repository.
+    #[clap(short = 'C', value_name = "DIR", action = clap::ArgAction::Append, value_parser = clap::value_parser!(std::ffi::OsString))]
+    pub change_dir: Vec<std::ffi::OsString>,
+
     /// The repository to access.
     #[clap(short = 'r', long, default_value = ".")]
     pub repository: PathBuf,
@@ -275,6 +287,17 @@ pub enum Subcommands {
         #[clap(long,  value_parser=AsTime, value_name = "DATE")]
         since: Option<gix::date::Time>,
     },
+    /// Git's spelling of `brit revision resolve`, plus repository path queries, with Git's output.
+    RevParse(git_spellings::RevParse),
+    /// List local refs like Git. Brit's own branch listing is `brit branch list`.
+    ForEachRef(git_spellings::ForEachRef),
+    /// Git's spelling of `brit remote refs`, printing Git's `<oid>\t<refname>` lines.
+    #[cfg(any(feature = "gitoxide-core-async-client", feature = "gitoxide-core-blocking-client"))]
+    LsRemote(git_spellings::LsRemote),
+    /// Validate a reference name like Git, answering only through the exit code.
+    CheckRefFormat(git_spellings::CheckRefFormat),
+    /// Count commits like Git's `rev-list --count`. Brit's own walk is `brit revision list`.
+    RevList(git_spellings::RevList),
     /// Generate shell completions to stdout or a directory.
     #[clap(visible_alias = "generate-completions", visible_alias = "shell-completions")]
     Completions {
@@ -511,6 +534,11 @@ pub mod merge_base {
         pub first: String,
         /// Revspecs for the other commits to compute the merge-base with.
         pub others: Vec<String>,
+        /// Answer through the exit code alone, like Git: 0 when the first commit is an ancestor of the
+        /// one other commit (or the same), 1 when it is not, 128 for a revision that names no commit or
+        /// for more than two revisions. Brit's own answer without the flag lists every merge base.
+        #[clap(long)]
+        pub is_ancestor: bool,
     }
 }
 

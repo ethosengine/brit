@@ -1,6 +1,6 @@
 //! One executable for Git plumbing and build operations.
 
-use std::{path::PathBuf, process::ExitCode};
+use std::{io::Write, path::PathBuf, process::ExitCode};
 
 use clap::{parser::ValueSource, CommandFactory, FromArgMatches, Parser, Subcommand};
 use gitoxide::plumbing;
@@ -212,6 +212,49 @@ fn command_prefix(args: &[std::ffi::OsString], command: &clap::Command) -> Optio
     })
 }
 
+/// The global `-C` directories given before the subcommand, read from the arguments up to it so that
+/// they are known even when clap stops at `--help` or a usage error after it.
+fn change_dirs_before_command(args: &[std::ffi::OsString], command: &clap::Command) -> Vec<std::ffi::OsString> {
+    args.iter()
+        .enumerate()
+        .skip(1)
+        .find_map(|(index, arg)| {
+            command.find_subcommand(arg.to_str()?)?;
+            let partial = command
+                .clone()
+                .ignore_errors(true)
+                .try_get_matches_from(&args[..=index])
+                .ok()?;
+            partial.subcommand_name()?;
+            Some(
+                partial
+                    .get_many::<std::ffi::OsString>("change_dir")
+                    .map(|dirs| dirs.cloned().collect())
+                    .unwrap_or_default(),
+            )
+        })
+        .unwrap_or_default()
+}
+
+/// Print the long help of the subcommand `matches` selected, for a spelling whose own parser met
+/// `--help` among arguments it takes verbatim (like `rev-parse HEAD --help`), and exit with clap's status.
+fn subcommand_help(command: &clap::Command, matches: &clap::ArgMatches) -> error::CliError {
+    let mut argv = vec!["brit".to_owned()];
+    let mut current = matches;
+    while let Some((name, sub)) = current.subcommand() {
+        argv.push(name.to_owned());
+        current = sub;
+    }
+    argv.push("--help".to_owned());
+    match command.clone().try_get_matches_from(argv) {
+        Err(help) => {
+            let _ = help.print();
+            error::CliError::ContextExit(help.exit_code())
+        }
+        Ok(_) => error::CliError::ContextExit(0),
+    }
+}
+
 fn normalize_log_counts(args: &mut [std::ffi::OsString], index: usize) {
     // Familiar bounded history spelling, scoped to log and before `--`. Never reinterpret
     // a path after the option terminator or a numeric argument to another command. Let
@@ -230,7 +273,97 @@ fn normalize_log_counts(args: &mut [std::ffi::OsString], index: usize) {
     }
 }
 
-fn run(capture: &mut feedback::Capture) -> Result<()> {
+/// Commands whose only effect is what they print, each by its exact subcommand path. A reader that
+/// closes their output early may end them quietly; every other command's own outcome is reported.
+/// A path is admitted only when listed itself: a child of a listed command is not read-only until it
+/// is listed too.
+const READ_ONLY_COMMANDS: &[&[&str]] = &[
+    &["rev-parse"],
+    &["for-each-ref"],
+    &["ls-remote"],
+    &["check-ref-format"],
+    &["merge-base"],
+    &["rev-list"],
+    &["log"],
+    &["cat"],
+    &["blame"],
+    &["diff"],
+    &["diff", "tree"],
+    &["diff", "file"],
+    &["branch", "list"],
+    &["revision", "resolve"],
+    &["revision", "explain"],
+    &["worktree", "list"],
+    &["config-tree"],
+    &["env"],
+];
+
+fn read_only_path(path: &[&str]) -> bool {
+    READ_ONLY_COMMANDS.contains(&path)
+}
+
+fn read_only_command(matches: &clap::ArgMatches) -> bool {
+    let mut path = Vec::new();
+    let mut current = matches;
+    while let Some((name, sub)) = current.subcommand() {
+        path.push(name);
+        current = sub;
+    }
+    read_only_path(&path)
+}
+
+/// Whether `error` is a write that met a closed reader, by the typed `ErrorKind::BrokenPipe` of an I/O
+/// error in its chain. Message text is never consulted.
+fn is_closed_reader_write(error: &error::CliError) -> bool {
+    let broken = |kind: Option<std::io::ErrorKind>| kind == Some(std::io::ErrorKind::BrokenPipe);
+    match error {
+        error::CliError::Io(io) => broken(Some(io.kind())),
+        error::CliError::Json(json) => broken(json.io_error_kind()),
+        error::CliError::Git(cause) => cause.chain().any(|cause| {
+            broken(cause.downcast_ref::<std::io::Error>().map(std::io::Error::kind))
+                || broken(
+                    cause
+                        .downcast_ref::<gix::Error>()
+                        .and_then(|error| error.downcast_any_ref::<std::io::Error>())
+                        .map(std::io::Error::kind),
+                )
+                || broken(
+                    cause
+                        .downcast_ref::<serde_json::Error>()
+                        .and_then(serde_json::Error::io_error_kind),
+                )
+        }),
+        _ => false,
+    }
+}
+
+/// How a finished run ends: its exit status, and whether its error still has to be reported.
+///
+/// This is the one place the status is decided. The command's own result is judged first: an error,
+/// or a Git-shaped non-zero exit, keeps its own status whatever happened to the reader. Only a command
+/// that otherwise succeeded (`Ok`, a zero exit, or an error that is nothing but its write meeting the
+/// closed reader) ends with 141, the status of Git killed by SIGPIPE, and only when it is read-only
+/// (see [`READ_ONLY_COMMANDS`]) and `reader_closed` says a watched write to stdout or stderr failed
+/// with `ErrorKind::BrokenPipe`.
+fn exit_status(outcome: &Result<()>, read_only: bool, reader_closed: bool) -> (i32, bool) {
+    let quiet_pipe = read_only && reader_closed;
+    match outcome {
+        Ok(()) | Err(error::CliError::ContextExit(0)) if quiet_pipe => (141, false),
+        Ok(()) => (0, false),
+        Err(error::CliError::ContextExit(code)) => (*code, false),
+        // A Git spelling that answers through its exit code already wrote its diagnostic.
+        Err(error::CliError::Git(cause)) if cause.chain().any(|cause| plumbing::exit_status(cause).is_some()) => {
+            match cause.chain().find_map(plumbing::exit_status).unwrap_or(1) {
+                0 if quiet_pipe => (141, false),
+                code => (code, false),
+            }
+        }
+        Err(e) if quiet_pipe && is_closed_reader_write(e) => (141, false),
+        Err(e) => (e.exit_code(), true),
+    }
+}
+
+fn run(capture: &mut feedback::Capture, read_only: &mut bool) -> Result<()> {
     let mut args: Vec<_> = plumbing::args_os().collect();
     let invoked_as_rakia = args
         .first()
@@ -272,12 +405,18 @@ fn run(capture: &mut feedback::Capture) -> Result<()> {
         if args.len() != 2 {
             return Err(error::CliError::Args("--cli-surface-json must be used alone".into()));
         }
-        let stdout = std::io::stdout();
-        serde_json::to_writer_pretty(stdout.lock(), &surface::introspect(command)).map_err(anyhow::Error::from)?;
-        println!();
+        *read_only = true;
+        let mut stdout = gitoxide::shared::closed_reader::Watch(std::io::stdout().lock());
+        serde_json::to_writer_pretty(&mut stdout, &surface::introspect(command)).map_err(anyhow::Error::from)?;
+        writeln!(stdout)?;
         return Ok(());
     }
-    let matches = command.clone().try_get_matches_from(args).map_err(|error| {
+    let matches = command.clone().try_get_matches_from(&args).map_err(|error| {
+        // Git enters every `-C` directory before it reads the command: a missing one wins over help and usage.
+        if plumbing::change_dirs(&change_dirs_before_command(&args, &command)).is_err() {
+            capture.outcome = Some("refused");
+            return error::CliError::ContextExit(128);
+        }
         let code = error.exit_code();
         capture.outcome = Some(if code == 0 { "passed" } else { "refused" });
         let _ = error.print();
@@ -286,6 +425,7 @@ fn run(capture: &mut feedback::Capture) -> Result<()> {
     if let Some(name) = matches.subcommand_name() {
         capture.operation(name);
     }
+    *read_only = read_only_command(&matches);
     if matches.get_flag("cli-surface-json") {
         return Err(error::CliError::Args("--cli-surface-json must be used alone".into()));
     }
@@ -321,7 +461,12 @@ fn run(capture: &mut feedback::Capture) -> Result<()> {
             BuildNamespace::Snapshot(command) => tree::run(command).map_err(error::CliError::Git),
         }
     } else {
-        let args = plumbing::Args::from_arg_matches(&matches).map_err(|e| error::CliError::Args(e.to_string()))?;
+        let args = plumbing::Args::from_arg_matches(&matches).map_err(|e| {
+            if e.kind() == clap::error::ErrorKind::DisplayHelp {
+                return subcommand_help(&command, &matches);
+            }
+            error::CliError::Args(e.to_string())
+        })?;
         plumbing::run_with_command(args, command).map_err(|err| error::CliError::Git(err.into()))
     }
 }
@@ -356,17 +501,15 @@ fn diagnostic(error: &error::CliError) -> String {
 fn main() -> ExitCode {
     gix::utils::stream::Budget::share_process_quota();
     let mut capture = feedback::Capture::new();
-    let code = match run(&mut capture) {
-        Ok(()) => 0,
-        Err(error::CliError::ContextExit(code)) => code,
-        Err(e) => {
-            eprintln!("{}", diagnostic(&e));
-            if matches!(e, error::CliError::Args(_)) {
-                capture.outcome = Some("refused");
-            }
-            e.exit_code()
+    let mut read_only = false;
+    let outcome = run(&mut capture, &mut read_only);
+    let (code, report) = exit_status(&outcome, read_only, gitoxide::shared::closed_reader::seen());
+    if let (true, Err(e)) = (report, &outcome) {
+        eprintln!("{}", diagnostic(e));
+        if matches!(e, error::CliError::Args(_)) {
+            capture.outcome = Some("refused");
         }
-    };
+    }
     capture.finish(code);
     ExitCode::from(code as u8)
 }
@@ -545,6 +688,90 @@ mod tests {
                 .expect("isolated diagnostic test");
             assert!(output.status.success(), "RUST_BACKTRACE={value}: {output:?}");
         }
+    }
+
+    #[test]
+    fn a_closed_reader_never_replaces_the_commands_own_failure() {
+        let git = |text: &str| -> Result<()> { Err(error::CliError::Git(anyhow::anyhow!("{text}"))) };
+        let typed = |code: i32| -> Result<()> {
+            Err(error::CliError::Git(anyhow::Error::from(gix::Error::from_error(
+                plumbing::GitExit(code),
+            ))))
+        };
+        let pipe = || std::io::Error::from(std::io::ErrorKind::BrokenPipe);
+        let pipe_write = || -> Result<()> {
+            Err(error::CliError::Git(anyhow::Error::from(
+                gix::Error::from_error(pipe()),
+            )))
+        };
+
+        // Failed, and the reader closed too: the failure's own status.
+        assert_eq!(
+            exit_status(&typed(128), true, true),
+            (128, false),
+            "rev-parse --verify missing"
+        );
+        assert_eq!(exit_status(&typed(1), true, true), (1, false));
+        assert_eq!(exit_status(&git("bad revision"), true, true), (1, true));
+        assert_eq!(
+            exit_status(&git("could not read x: Broken pipe (os error 32)"), true, true),
+            (1, true),
+            "an error that merely contains the text is reported"
+        );
+        // Succeeded, or failed only at the write that met the closed reader: 141.
+        assert_eq!(exit_status(&Ok(()), true, true), (141, false));
+        assert_eq!(exit_status(&typed(0), true, true), (141, false));
+        assert_eq!(exit_status(&pipe_write(), true, true), (141, false));
+        assert_eq!(exit_status(&Err(error::CliError::Io(pipe())), true, true), (141, false));
+        // Not read-only, or no watched write saw the closed reader: reported as it is.
+        assert_eq!(
+            exit_status(&pipe_write(), false, true),
+            (1, true),
+            "a mutation's own outcome"
+        );
+        assert_eq!(
+            exit_status(&pipe_write(), true, false),
+            (1, true),
+            "an unwatched broken pipe"
+        );
+        assert_eq!(exit_status(&Ok(()), false, true), (0, false));
+        assert_eq!(exit_status(&Ok(()), true, false), (0, false));
+    }
+
+    #[test]
+    fn read_only_commands_are_classified_by_their_exact_path() {
+        let read_only = |args: &[&str]| {
+            read_only_command(
+                &public_command()
+                    .try_get_matches_from(args)
+                    .unwrap_or_else(|e| panic!("{args:?}: {e}")),
+            )
+        };
+        for args in [
+            &["brit", "rev-parse", "HEAD"][..],
+            &["brit", "for-each-ref"],
+            &["brit", "branch", "list"],
+            &["brit", "branches", "list"],
+            &["brit", "log"],
+            &["brit", "diff"],
+        ] {
+            assert!(read_only(args), "{args:?}");
+        }
+        for args in [
+            &["brit", "push", "origin", "main"][..],
+            &["brit", "branch", "create", "x"],
+            &["brit", "commit", "-m", "x"],
+            &["brit", "add", "x"],
+            &["brit", "revision", "list", "HEAD"],
+        ] {
+            assert!(!read_only(args), "{args:?}");
+        }
+        assert!(read_only_path(&["diff", "tree"]));
+        assert!(
+            !read_only_path(&["rev-parse", "child"]),
+            "a path that only has a read-only prefix is not read-only"
+        );
+        assert!(!read_only_path(&["branch"]));
     }
 
     #[test]
