@@ -219,25 +219,27 @@ pub fn configure_mutation_guards(
     wait: Option<core::repository::switch::MutationWait>,
     command: &clap::Command,
 ) -> Result<()> {
-    core::repository::switch::set_mutation_wait(match wait {
-        Some(wait) => wait,
+    if let Some(wait) = match wait {
+        Some(wait) => Some(wait),
         None => mutation_wait_from_environment()?,
-    });
+    } {
+        core::repository::switch::set_mutation_wait(wait);
+    }
     let command = command.clone();
     core::repository::switch::set_command_resolver(move |args| super::guard_label::subcommand_path(&command, args));
     Ok(())
 }
 
 /// The default writer wait from `BRIT_MUTATION_WAIT` (`SECONDS` or `forever`).
-fn mutation_wait_from_environment() -> Result<core::repository::switch::MutationWait> {
+fn mutation_wait_from_environment() -> Result<Option<core::repository::switch::MutationWait>> {
     match std::env::var_os("BRIT_MUTATION_WAIT") {
-        None => Ok(core::repository::switch::MutationWait::Refuse),
+        None => Ok(None),
         Some(value) => {
             let Some(value) = value.to_str() else {
                 bail!("BRIT_MUTATION_WAIT is not valid UTF-8")
             };
             match core::repository::switch::MutationWait::parse(value) {
-                Ok(wait) => Ok(wait),
+                Ok(wait) => Ok(Some(wait)),
                 Err(err) => bail!("invalid BRIT_MUTATION_WAIT: {err}"),
             }
         }

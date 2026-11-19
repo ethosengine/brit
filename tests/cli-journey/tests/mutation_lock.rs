@@ -621,8 +621,10 @@ fn a_hook_never_waits_for_the_command_it_runs_under() -> Result<()> {
     ensure!(!commit.status.success(), "the hook's refusal fails the commit");
     let refusal = fs::read_to_string(out.join("commit-add.err"))?;
     ensure!(
-        refusal.contains("the command this hook runs under") && refusal.contains("commit"),
-        "the hook's writer names its own command: {refusal}"
+        refusal.contains("the command this hook runs under")
+            && refusal.contains("commit")
+            && refusal.contains("must write the index directly"),
+        "the hook's writer names its own command and how to stage instead: {refusal}"
     );
 
     // A hook child whose environment was cleared (no marker) still refuses on direct re-entry.
@@ -1119,5 +1121,146 @@ fn push_send_pack_is_shared_and_a_queued_writer_neither_blocks_lanes_for_long_no
     holder.release()?;
     let queued = queued.finish()?;
     ensure!(queued.status.success(), "the queued writer proceeds: {}", queued.stderr);
+    Ok(())
+}
+
+#[test]
+fn add_and_commit_starts_wait_briefly_for_a_momentary_exclusive_writer() -> Result<()> {
+    let repo = TestRepo::new("lock-start-patience")?;
+    fs::write(repo.path().join("f"), "f\n")?;
+    for args in [&["add", "f"][..], &["commit", "-m", "patient"]] {
+        let holder = ExternalHolder::hold(repo.path())?;
+        let mut writer = Background::spawn(repo.path(), args, &[])?;
+        writer.await_stderr("waiting for the Brit mutation guard")?;
+        holder.release()?;
+        let writer = writer.finish()?;
+        ensure!(
+            writer.status.success(),
+            "{args:?} after a momentary holder: {}",
+            writer.stderr
+        );
+    }
+    assert_eq!(git(repo.path(), &["log", "-1", "--format=%s"])?, "patient");
+    // An explicit `--wait=0` still refuses at once.
+    let holder = ExternalHolder::hold(repo.path())?;
+    let refused = brit(repo.path(), &["--wait=0", "commit", "--allow-empty", "-m", "refused"])?;
+    ensure_refusal_names(
+        &refused,
+        "commit with --wait=0",
+        &["another Brit mutation is active", "flock"],
+    )?;
+    ensure!(
+        !refused.stderr.contains("brit: waiting"),
+        "it did not wait: {}",
+        refused.stderr
+    );
+    holder.release()?;
+    Ok(())
+}
+
+#[test]
+fn a_branch_moved_during_the_hooks_refuses_publication() -> Result<()> {
+    let repo = TestRepo::new("lock-branch-moved")?;
+    let scratch = tempfile::tempdir()?;
+    // A second worktree on the same branch, as `git worktree add --force` allows.
+    let twin = scratch.path().join("twin");
+    git(
+        repo.path(),
+        &["worktree", "add", "-q", "--force", twin.to_str().expect("utf8"), "main"],
+    )?;
+    pausing_hook(repo.path(), &scratch.path().join("hooks"), "pre-commit")?;
+    fs::write(repo.path().join("mine"), "mine\n")?;
+    git(repo.path(), &["add", "mine"])?;
+    let index = git_dir(repo.path())?.join("index");
+
+    let movers: [&dyn Fn() -> Result<()>; 2] = [
+        // Another worktree's commit to the same branch.
+        &|| {
+            fs::write(twin.join("theirs"), "theirs\n")?;
+            let add = brit(&twin, &["add", "theirs"])?;
+            ensure!(add.status.success(), "{}", add.stderr);
+            let commit = brit(&twin, &["commit", "-m", "theirs"])?;
+            ensure!(
+                commit.status.success(),
+                "the other worktree publishes: {}",
+                commit.stderr
+            );
+            Ok(())
+        },
+        // A fetch-like reference update.
+        &|| {
+            let tree = git(repo.path(), &["rev-parse", "HEAD^{tree}"])?;
+            let parent = git(repo.path(), &["rev-parse", "HEAD"])?;
+            let moved = git(repo.path(), &["commit-tree", &tree, "-p", &parent, "-m", "fetched"])?;
+            git(repo.path(), &["update-ref", "refs/heads/main", &moved])?;
+            Ok(())
+        },
+    ];
+    for (round, mover) in movers.iter().enumerate() {
+        let pause = pause_dir(&scratch, &format!("pause-{round}"))?;
+        let mut commit = Background::spawn(repo.path(), &["commit", "-m", "mine"], &[("BRIT_TEST_PAUSE", &pause)])?;
+        await_file(&pause.join("started"), &mut commit)?;
+        mover()?;
+        let moved_to = git(repo.path(), &["rev-parse", "refs/heads/main"])?;
+        let index_before = fs::read(&index)?;
+        fs::write(pause.join("release"), "")?;
+        let commit = commit.finish()?;
+        ensure_refusal_names(
+            &commit,
+            "a commit whose branch moved",
+            &["HEAD changed while commit hooks ran"],
+        )?;
+        assert_eq!(
+            git(repo.path(), &["rev-parse", "refs/heads/main"])?,
+            moved_to,
+            "nothing was published"
+        );
+        assert_eq!(fs::read(&index)?, index_before, "the index is as the hooks left it");
+        assert_eq!(fs::read_to_string(repo.path().join("mine"))?, "mine\n");
+    }
+    Ok(())
+}
+
+#[test]
+fn commit_hooks_stage_through_the_index_and_post_commit_hooks_may_write() -> Result<()> {
+    let Lanes { repo, scratch, .. } = lanes("lock-hook-staging")?;
+    let hooks = scratch.path().join("hooks");
+    let out = pause_dir(&scratch, "out")?;
+    fs::write(repo.path().join("hooked"), "hooked\n")?;
+    fs::write(repo.path().join("after"), "after\n")?;
+    install_hook(repo.path(), &hooks, "pre-commit", "git add hooked")?;
+    install_hook(
+        repo.path(),
+        &hooks,
+        "post-commit",
+        "\"$BRIT_TEST_BIN\" add after 2>\"$BRIT_TEST_OUT/post.err\"\n\
+         echo $? >\"$BRIT_TEST_OUT/post.status\"",
+    )?;
+    let commit = Background::spawn(
+        repo.path(),
+        &["commit", "-m", "staged by hook"],
+        &[("BRIT_TEST_OUT", &out)],
+    )?
+    .finish_within(Duration::from_secs(30))?;
+    ensure!(commit.status.success(), "{}", commit.stderr);
+    ensure!(
+        git(repo.path(), &["show", "--name-only", "--format=", "HEAD"])?
+            .lines()
+            .any(|name| name == "hooked"),
+        "a pre-commit `git add` is committed"
+    );
+    // post-commit runs holding no guard, so a Brit writer in this worktree succeeds.
+    assert_eq!(
+        fs::read_to_string(out.join("post.status"))?.trim(),
+        "0",
+        "post-commit's brit add: {}",
+        fs::read_to_string(out.join("post.err"))?
+    );
+    ensure!(
+        git(repo.path(), &["diff", "--cached", "--name-only"])?
+            .lines()
+            .any(|name| name == "after"),
+        "post-commit staged its file"
+    );
     Ok(())
 }

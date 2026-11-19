@@ -18,13 +18,15 @@ pub enum MutationWait {
 
 impl MutationWait {
     const FOREVER: u64 = u64::MAX;
+    /// Nothing configured: callers choose their own default.
+    const UNSET: u64 = u64::MAX - 1;
 
     fn encode(self) -> u64 {
         match self {
             Self::Refuse => 0,
             Self::For(duration) => u64::try_from(duration.as_millis())
-                .unwrap_or(Self::FOREVER - 1)
-                .clamp(1, Self::FOREVER - 1),
+                .unwrap_or(Self::UNSET - 1)
+                .clamp(1, Self::UNSET - 1),
             Self::Forever => Self::FOREVER,
         }
     }
@@ -63,16 +65,29 @@ impl MutationWait {
     }
 }
 
-static WAIT: AtomicU64 = AtomicU64::new(0);
+static WAIT: AtomicU64 = AtomicU64::new(MutationWait::UNSET);
 
 /// Set the process-wide policy for writers that find a guard held.
 pub fn set_mutation_wait(wait: MutationWait) {
     WAIT.store(wait.encode(), Ordering::Relaxed);
 }
 
-/// The process-wide policy for writers that find a guard held.
+/// How long `add` and a commit start wait by default for their first guard, so a momentary
+/// exclusive writer (a fetch, a branch command) does not fail them; `--wait=0` refuses at once.
+pub const WORKTREE_START_PATIENCE: Duration = Duration::from_secs(2);
+
+/// The process-wide policy for writers that find a guard held (refuse when none was configured).
 pub fn mutation_wait() -> MutationWait {
-    MutationWait::decode(WAIT.load(Ordering::Relaxed))
+    mutation_wait_or(MutationWait::Refuse)
+}
+
+/// The configured policy, or `default` when neither `--wait` nor `BRIT_MUTATION_WAIT` was given.
+/// An explicit `--wait=0` is configured: it refuses at once.
+pub fn mutation_wait_or(default: MutationWait) -> MutationWait {
+    match WAIT.load(Ordering::Relaxed) {
+        MutationWait::UNSET => default,
+        encoded => MutationWait::decode(encoded),
+    }
 }
 
 type ResolveFn = dyn Fn(&[String]) -> Vec<String> + Send + Sync;

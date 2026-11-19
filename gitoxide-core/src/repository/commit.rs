@@ -816,7 +816,10 @@ pub fn create(
         ))?;
     }
     drop(merge_locks);
-    guard.release_repository();
+    // Nothing below writes the worktree or its Git directory (merge metadata is already
+    // cleaned up), so post-commit and post-rewrite run holding no guard and may run Brit
+    // writers in this worktree.
+    drop(guard);
 
     // Post-commit cannot undo an already-created commit; report its failure as a warning.
     if let Err(err) = super::authoring::run_hook(&repo, "post-commit", &[]) {

@@ -306,8 +306,13 @@ pub fn worktree_writer_guard(repo: &gix::Repository) -> Result<guard::Held> {
 /// plus append-only object writes. Shared writers are excluded for the guard's lifetime;
 /// other worktrees' local writers are not. Shared reference updates made under this guard
 /// must be compare-and-swap transactions, since local writers in other worktrees run beside it.
+/// Without a configured wait it is patient for [`super::WORKTREE_START_PATIENCE`]: a momentary
+/// exclusive writer (a fetch, a branch command) must not fail an `add` or a commit start.
 pub fn worktree_mutation_guard(repo: &gix::Repository) -> Result<guard::WorktreeGuard> {
-    worktree_mutation_guard_waiting(repo, super::mutation_wait())
+    worktree_mutation_guard_waiting(
+        repo,
+        super::mutation_wait_or(super::MutationWait::For(super::WORKTREE_START_PATIENCE)),
+    )
 }
 
 /// [`worktree_mutation_guard`] with an explicit wait policy instead of the process-wide one.

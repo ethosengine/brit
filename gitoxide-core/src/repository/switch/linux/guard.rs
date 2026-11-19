@@ -397,6 +397,9 @@ fn ancestor_holds_shared(repo: &gix::Repository) -> bool {
         .any(|holding| holding.common == common && holding.repository == Some(Mode::Shared))
 }
 
+/// Appended when a hook asks for its own command's worktree guard.
+const STAGING_HINT: &str = "; a hook that stages files must write the index directly (for example with `git add`), not through Brit (see docs/mutation-guards.md)";
+
 /// A request the proven ancestor's holdings make impossible to grant while it waits for us.
 fn self_deadlock(repo: &gix::Repository, repository: Option<Mode>, worktree: bool) -> Option<String> {
     let Marker::Proven(pid, holdings) = marker() else {
@@ -417,8 +420,13 @@ fn self_deadlock(repo: &gix::Repository, repository: Option<Mode>, worktree: boo
             _ => None,
         }
     })?;
+    let hint = if held == "this worktree's guard" {
+        STAGING_HINT
+    } else {
+        ""
+    };
     Some(format!(
-        "another Brit mutation is active; {held} is held by {}, the command this hook runs under; a hook cannot wait for its own command's guard",
+        "another Brit mutation is active; {held} is held by {}, the command this hook runs under; a hook cannot wait for its own command's guard{hint}",
         describe(*pid, "hook's command")
     ))
 }
@@ -464,8 +472,9 @@ fn reentrant(holders: &[(u32, bool)], level: Level) -> Option<String> {
         .find(|(pid, _)| lineage.contains(pid))
         .map(|holder| {
             format!(
-                "the Brit mutation guard is held by {}, the command this hook runs under; a hook cannot wait for its own command's guard",
-                describe(holder.0, role(level, holder.1))
+                "the Brit mutation guard is held by {}, the command this hook runs under; a hook cannot wait for its own command's guard{}",
+                describe(holder.0, role(level, holder.1)),
+                if matches!(level, Level::Worktree) { STAGING_HINT } else { "" }
             )
         })
 }
@@ -486,11 +495,23 @@ fn lock(file: &fs::File, level: Level, mode: Mode, deadline: &Deadline) -> Resul
 /// `Ok(true)` when the lock is held, `Ok(false)` when passed because its holders are stopped.
 fn lock_with(file: &fs::File, level: Level, mode: Mode, deadline: &Deadline, waiting: Waiting<'_>) -> Result<bool> {
     let describe_holders = |holders: &[(u32, bool)]| match waiting.queued_for {
-        Some(repository) => format!(
-            "{}, queued for the repository guard, which is held by {}",
-            render(holders, level),
-            render(&holders_of(repository), Level::Repository)
-        ),
+        Some(repository) => {
+            let mut blocking = holders_of(repository);
+            if blocking.is_empty() {
+                // The holder may have released between the attempt and the lookup.
+                std::thread::sleep(Duration::from_millis(5));
+                blocking = holders_of(repository);
+            }
+            let blocking = if blocking.is_empty() {
+                "nobody now (the queued writer is about to take it)".to_owned()
+            } else {
+                render(&blocking, Level::Repository)
+            };
+            format!(
+                "{}, queued for the repository guard, which is held by {blocking}",
+                render(holders, level)
+            )
+        }
         None => render(holders, level),
     };
     let mut retried = false;
