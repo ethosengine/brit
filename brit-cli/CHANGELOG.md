@@ -32,6 +32,11 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.0.0/); ver
   remote is named in the refusal.
 - Global `--wait[=SECONDS]` and `BRIT_MUTATION_WAIT=SECONDS|forever` wait for another Brit
   writer's guard instead of refusing at once; bare `--wait` waits without limit.
+- Test and diagnostic only: `BRIT_HTTP_REQUEST_DEADLINE_SECONDS` replaces the 60 s HTTP
+  request deadline of max-pure builds (not supported configuration). The `cli-journey`
+  harness runs the `push_transport` journeys against a max-pure `brit` named by
+  `BRIT_REQWEST_BIN`, and with `BRIT_REQWEST_REQUIRED` set fails them instead of skipping that
+  leg when it is missing; neither variable affects `brit` itself.
 
 ### Changed
 
@@ -79,8 +84,40 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.0.0/); ver
   1.11.1, which passes `-march=x86-64` for x86_64 Linux, and the CPU-baseline build probe
   checks the command line `cc` actually gives dependencies
   ([docs/cpu-compatibility.md](../docs/cpu-compatibility.md)).
+- **Behaviour change:** `brit push` (except `--dry-run`) connects to the remote a second time
+  once its pre-push stage is over, with or without a hook, and asks for credentials again on
+  that connection. It sends only if every ref it names still has the id the hook judged and
+  the capabilities it relies on are unchanged; otherwise nothing is sent and the refusal names
+  each moved ref with both ids (`remote moved while the before-send callback ran; nothing was
+  sent: …`). A ref the remote already has at the requested id is reported up to date and not
+  sent; a ref that needed no update when judged and moved meanwhile is left alone and reported
+  as not pushed, while the other refs proceed.
+- **Behaviour change** (max-pure builds, whose HTTP backend is reqwest): every HTTP request
+  except the push upload has a 60 s deadline until the response headers and a 60 s stall
+  guard on each read of the body, for the handshakes of fetch, clone, pull and push and for
+  fetch's pack request; the receive-pack upload and its answer have none. reqwest's previous
+  30 s default cut off any push whose upload or server-side processing took longer. A server
+  that computes a fetch for more than 60 s without sending keepalives now fails where Git
+  waits. With `http.lowSpeedLimit` and `http.lowSpeedTime` both set, data sent but not
+  acknowledged for `lowSpeedTime` seconds aborts the connection on Linux. Default (curl)
+  builds keep curl's timeouts.
+- An HTTP push body up to `http.postBuffer` bytes (64 MiB when unset) is sent whole with a
+  `Content-Length`; a larger one is streamed in chunks.
 
 ### Fixed
 
 - `brit fetch` refuses a refspec naming one ref the remote does not advertise, checks again
   after reconnecting, and exits non-zero when a ref update is rejected.
+- A push that fails anywhere in the receive-pack request reports the cause (an HTTP status
+  such as 401 or 413, a reset, a timeout, a refused connection) instead of `sending on a closed
+  channel`. Above `http.postBuffer` the cause of a cut upload cannot be read, and the error says
+  so: `the transport closed while the pack was being streamed; the cause could not be read`.
+- A push no longer goes out on a keep-alive HTTP connection the server dropped while the
+  pre-push hook ran.
+- After a failed send, `brit push` checks once on a fresh connection whether its refs arrived,
+  and never resends. If any is missing it fails with `the push was not visible on the remote
+  when checked and may still be applied; nothing was resent: …`, naming the refs that did land.
+  **Behaviour change:** if every ref shows its new id, only the report was lost: the push exits
+  0 and prints `warning: the server's report was lost (<cause>). A fresh advertisement shows
+  every ref this push named at its requested id; it cannot show whether this push applied them,
+  whether server-side hooks ran, or what the server printed.`
