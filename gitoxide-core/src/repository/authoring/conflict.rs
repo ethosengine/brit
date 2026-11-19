@@ -1925,6 +1925,8 @@ impl Session {
             "replay-owned child restoration belongs to its parent"
         );
         let _guard = super::super::switch::shared_guard(repo)?;
+        // Undoing is never refused by the scratch quota (as for rebase --abort).
+        let _recovery = super::super::switch::payload::Recovery::enter();
         self.ownership(repo)?;
         ensure!(
             !self

@@ -437,6 +437,8 @@ pub fn scratch_leftovers(git_dir: &Path) -> Result<Vec<PathBuf>> {
 
 /// Inspect without mutating or automatically resuming an interrupted operation.
 pub fn status(repo: &gix::Repository, out: &mut dyn Write) -> Result<()> {
+    // Reporting writes nothing, so no quota ever applies to it.
+    let _recovery = payload::Recovery::enter();
     for leftover in scratch_leftovers(&absolute(repo, repo.git_dir()))? {
         writeln!(
             out,
@@ -1528,8 +1530,17 @@ fn inspect_removed_directory(root: &Path, name: &[u8], changes: &BTreeMap<Vec<u8
 }
 
 pub(crate) fn checkpoint(name: &str) -> Result<()> {
+    // `name#N` pauses at the Nth time this process reaches `name` (default 1).
     #[cfg(feature = "switch-test-faults")]
-    if std::env::var("BRIT_SWITCH_CHECKPOINT").ok().as_deref() == Some(name) {
+    if std::env::var("BRIT_SWITCH_CHECKPOINT").ok().is_some_and(|wanted| {
+        static REACHED: std::sync::atomic::AtomicUsize = std::sync::atomic::AtomicUsize::new(0);
+        let (wanted, ordinal) = wanted
+            .split_once('#')
+            .map_or((wanted.as_str(), 1), |(wanted, ordinal)| {
+                (wanted, ordinal.parse().unwrap_or(usize::MAX))
+            });
+        wanted == name && REACHED.fetch_add(1, std::sync::atomic::Ordering::SeqCst) + 1 == ordinal
+    }) {
         let directory =
             PathBuf::from(std::env::var_os("BRIT_SWITCH_CHECKPOINT_DIR").context("checkpoint directory required")?);
         fs::write(directory.join(format!("{name}.reached")), b"reached")?;
@@ -2064,7 +2075,12 @@ fn recover_operation(repo: gix::Repository, abort: bool, pulling: bool) -> Resul
         );
         return release_unrecorded(&repo);
     }
+    // Opening a journal never applies the quota, and neither does undoing it or
+    // rolling a durable decision forward: only a continuation that has not yet
+    // decided is metered (`--abort` remains for it).
+    let opening = payload::Recovery::enter();
     let mut state = load(&repo)?;
+    let _recovery = (abort || state.decision).then_some(opening);
     ensure!(
         state.pull.is_some() == pulling,
         "pending {} operation; use brit {} --continue or --abort",
