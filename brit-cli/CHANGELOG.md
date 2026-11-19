@@ -18,6 +18,33 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.0.0/); ver
   matches only directories. `--oneline` prints the `core.abbrev` hash and title.
 - `brit diff tree --name-only` lists changed paths like `git diff --name-only --no-renames`;
   `diff tree` also takes `--merge-base OLD NEW` and a lone `A..B` or `A...B`.
+- `brit diff [<revision>…] [-- <path>…]` compares like `git diff --no-renames`: no revision
+  (working files against the index, or with `--cached` the index against HEAD), one revision
+  (against the working files, or with `--cached` the index), two revisions, `A..B`, or `A...B`
+  (the merge base of A and B against B), with `--merge-base`, in every output form: patch,
+  `--stat`, `--name-only`, `--name-status`, `--numstat`, `--exit-code` and `--quiet` (status
+  1 when there are differences). A name that is both a revision and a file is ambiguous, as in
+  Git; `<name> --` reads it as a revision and `-- <name>` as a path. Unknown revisions are named
+  with Git's first line (`ambiguous argument '…': unknown revision or path not in the working
+  tree.`), followed by a shorter second line, and exit 1 where Git exits 128.
+- `brit show [<revision>…] [-- <path>…]` is Brit's own verb (it was a Git bridge operation):
+  commits with Git's medium header and their patch against the first parent, merges (header
+  only, or their first-parent summary with `--stat`/`--numstat`), annotated tags, blobs
+  (`REV:PATH`) and trees, like `git show --no-renames`, with `--stat`, `--name-only`,
+  `--name-status`, `--numstat`, `-s`/`--no-patch` and `--oneline`. A commit message is re-encoded
+  to UTF-8 from its declared `encoding`.
+- Measured limits of `diff` and `show`, each a refusal rather than different output unless
+  said otherwise: a path with a `diff=<driver>` attribute (even a built-in driver with nothing
+  configured) refuses the patch and count forms; intent-to-add, skip-worktree and
+  assume-unchanged entries, sparse and split indexes and a conflicted index refuse the forms
+  that read the index; a submodule refuses comparisons with the working files; a merge that
+  changes a path against every parent (Git's combined diff) refuses `show`'s patch,
+  `--oneline`, `--name-only` and `--name-status`; an encoding label Brit cannot decode exactly
+  as Git, and non-ASCII header or message text when the output encoding
+  (`i18n.logOutputEncoding`, else `i18n.commitEncoding`) is not UTF-8, refuse; `show` refuses a
+  range. Line counts can differ from Git's on very large, heavily changed files (different
+  Myers heuristics): three of 26,673 files on the monorepo's `origin/main...origin/dev`, by two
+  to five lines, with `--name-status` identical.
 - `brit branch --delete`/`-d` (with `--force`), `-D` and `--move`/`-m` follow Git's safety
   rules: a branch checked out, rebased or bisected in any worktree is never deleted, an
   unmerged branch needs `--force`, and the reflog and every `[branch "<name>"]` section
@@ -86,6 +113,9 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.0.0/); ver
 
 ### Changed
 
+- **Behaviour change:** `brit diff -- <path>` (and `brit show … -- <path>`) whose paths select
+  nothing exits 0 with no output, as Git does; `diff` exited 1 before. `brit show` is no longer
+  answered with the bridge line and exit 2.
 - **Behaviour change:** a read-only command whose reader closes its output early (`brit log |
   head`, `brit rev-parse … | head`) ends quietly with status 141, like Git killed by `SIGPIPE`,
   instead of reporting the broken pipe. This applies only to the commands listed by exact
