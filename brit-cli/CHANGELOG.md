@@ -111,8 +111,8 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.0.0/); ver
   `BRIT_REQWEST_BIN`, and with `BRIT_REQWEST_REQUIRED` set fails them instead of skipping that
   leg when it is missing; neither variable affects `brit` itself.
 - `brit rebase --retire`: sets aside a completed or aborted rebase whose retained copy is all
-  that remains, or an abort retaining before it changed anything live, keeping the journal as
-  `brit-rebase-kept-<nonce>` with its retention refs and retained copies and printing
+  that remains, or an abort or a skip retaining before it changed anything live, keeping the
+  journal as `brit-rebase-kept-<nonce>` with its retention refs and retained copies and printing
   `Retired the rebase; nothing was deleted and nothing live was changed.` and how to remove
   each piece (details under Fixed). `brit rebase --status` then lists it as
   `Kept by --retire (blocks nothing)`.
@@ -363,9 +363,10 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.0.0/); ver
   (apart from the states in the next entry), says what is true of the decision actually
   pending, and, for a repository moved mid-rebase, names its old location: moving it back and
   running `--abort` there restores it.
-- States this version can still strand, produced by the reviewer by killing a command at the
-  nearest checkpoint and cutting the record to half (a `SIGKILL` cannot realistically tear these
-  records; a crash or power loss before the fsync can): a torn `metadata-lock-N.json` in an
+- States this version can still strand, the first two produced by the reviewer by killing a
+  command at the nearest checkpoint and cutting the record to half (a `SIGKILL` cannot
+  realistically tear these records; a crash or power loss before the fsync can), the third
+  after an ordinary `SIGKILL` with no record torn: a torn `metadata-lock-N.json` in an
   abort transition or in the forward first checkout, and a torn `retention-N.json`, leave
   `--abort`, `--continue`, `--skip` and `--retire` all refusing, and `--status` then names a
   cure that does not work; a torn cleanup receipt left by an older Brit or a power loss leaves

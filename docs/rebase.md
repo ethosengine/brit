@@ -150,7 +150,8 @@ Those fixtures, which completed under the limit before the recovery rules were
 added, complete again.
 
 A Brit command killed at any point (a `SIGKILL`, which cannot tear a record
-Brit writes; a crash or power loss before a record's fsync can, see
+Brit writes; a crash or power loss before a record's fsync can, and stock Git
+staging after a killed `--abort` can strand the rebase too, see
 [States this version can still strand](#states-this-version-can-still-strand)),
 at the real limit or a lowered one, leaves a rebase that `--status` describes
 with a cure, that `--abort` restores exactly
@@ -204,10 +205,10 @@ a refusal, and do not use `git rebase --continue/--abort` to control Brit's stat
 
 ## States this version can still strand
 
-These were produced by the lane's reviewer by killing a command at the nearest
-checkpoint and cutting the named record to half its length. A `SIGKILL` cannot
-realistically tear these records; a crash or power loss before the record's fsync
-can.
+The first two were produced by the lane's reviewer by killing a command at the
+nearest checkpoint and cutting the named record to half its length. A `SIGKILL`
+cannot realistically tear these records; a crash or power loss before the
+record's fsync can. The third tears no record: it follows an ordinary `SIGKILL`.
 
 - A torn `metadata-lock-N.json` in an abort transition or in the forward first
   checkout, and a torn `retention-N.json`, leave `--abort`, `--continue`, `--skip`
