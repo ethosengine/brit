@@ -32,6 +32,9 @@ $**/fuzz/Cargo.lock
 .eprfs/
 /scripts/ci/__pycache__/
 
+# Advisory-cooldown state the parent monorepo's .epr-meta hook rewrites on every edit.
+/.claude/data/epr-meta-advice.json
+
 # Derived local parity comparison captures
 /etc/parity/__pycache__/
 # Share Zed tasks even when editor files are ignored globally; keep other Zed settings local.
