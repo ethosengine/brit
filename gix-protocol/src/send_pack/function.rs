@@ -16,6 +16,30 @@ pub use blocking::send_pack;
 
 #[cfg(feature = "blocking-client")]
 mod blocking {
+    /// Pass writes through to `inner`, keeping the first error it raised in `first`.
+    struct FirstError<'a, W: std::io::Write + ?Sized> {
+        inner: &'a mut W,
+        first: &'a mut Option<std::io::Error>,
+    }
+
+    impl<W: std::io::Write + ?Sized> FirstError<'_, W> {
+        fn keep(&mut self, err: std::io::Error) -> std::io::Error {
+            let echo = std::io::Error::new(err.kind(), err.to_string());
+            self.first.get_or_insert(err);
+            echo
+        }
+    }
+
+    impl<W: std::io::Write + ?Sized> std::io::Write for FirstError<'_, W> {
+        fn write(&mut self, buf: &[u8]) -> std::io::Result<usize> {
+            self.inner.write(buf).map_err(|err| self.keep(err))
+        }
+
+        fn flush(&mut self) -> std::io::Result<()> {
+            self.inner.flush().map_err(|err| self.keep(err))
+        }
+    }
+
     use gix_transport::client::{MessageKind, WriteMode, blocking_io::Transport};
 
     use crate::send_pack::{
@@ -66,17 +90,25 @@ mod blocking {
 
         // Acquire a request handle and immediately dissolve it.
         //
-        // `WriteMode::Binary` and `MessageKind::Flush` are placeholders — we
-        // never use the `Writer`'s framing or the `on_into_read` sentinel because
-        // we call `into_parts()` before any data is written.
+        // We never use the `Writer`'s framing or the `on_into_read` sentinel because
+        // we call `into_parts()` before any data is written; `MessageKind::Flush` is a
+        // placeholder, and the write mode only tells a stateless transport how to send the body.
         //
         // `into_parts()` returns (verbatim_writer, reader):
         //   - verbatim_writer: writes bytes straight to the socket, no framing.
         //   - reader: reads from the server's stdout (a `WithSidebands` wrapping
         //     a `StreamingPeekableIter` backed by the child process's stdout).
-        let (mut raw_writer, mut reader) = transport
-            .request(WriteMode::Binary, MessageKind::Flush, false)?
-            .into_parts();
+        //
+        // A stateless (HTTP) transport gets the body whole rather than streamed. The pack is in
+        // memory already, and a streamed body hides why an upload failed: reqwest's blocking
+        // client then reports only that its body forwarder lost its receiver, without reading
+        // the response or the connection error that says why (status, reset, timeout).
+        let write_mode = if transport.connection_persists_across_multiple_requests() {
+            WriteMode::Binary
+        } else {
+            WriteMode::OneLfTerminatedLinePerWriteCall
+        };
+        let (mut raw_writer, mut reader) = transport.request(write_mode, MessageKind::Flush, false)?.into_parts();
 
         // Step 1 — command list.
         //
@@ -96,15 +128,23 @@ mod blocking {
         // deadlocking on process-spawned transports where the write and read
         // channels share a single pipe pair.
         use std::io::Write as _;
-        let written = encode_into(&request, hash_kind, &mut raw_writer)
+        // The pack writer reports a failed write as its own error, which loses the
+        // transport's error kind; keep the first error the transport itself raised.
+        let mut first_error = None;
+        let mut sink = FirstError {
+            inner: &mut raw_writer,
+            first: &mut first_error,
+        };
+        let written = encode_into(&request, hash_kind, &mut sink)
             .and_then(|()| {
                 if has_updates {
-                    write_pack(pack_entries, hash_kind, &mut raw_writer).map(drop)
+                    write_pack(pack_entries, hash_kind, &mut sink).map(drop)
                 } else {
                     Ok(())
                 }
             })
-            .and_then(|()| raw_writer.flush());
+            .and_then(|()| sink.flush())
+            .map_err(|err| first_error.take().unwrap_or(err));
         drop(raw_writer);
         // Only a write the other side refused leaves an answer to read. Any other failure
         // may have left the remote waiting for the rest of the pack, so reading would hang.

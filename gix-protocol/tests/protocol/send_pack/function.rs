@@ -185,6 +185,45 @@ mod blocking {
         );
     }
 
+    /// A transport that gives up in the middle of the pack, as an HTTP worker does once the
+    /// server answered early or reset the connection: the pack writer must not hide the cause.
+    #[test]
+    fn upload_broken_mid_pack_reports_the_cause_the_transport_parked() {
+        let request = update_request();
+        let mut command_list = Vec::new();
+        gix_protocol::send_pack::command_list::encode_into(&request, gix_hash::Kind::Sha1, &mut command_list)
+            .expect("in-memory encoding");
+        let mut entry = gix_pack::data::output::Entry::invalid();
+        entry.id = gix_hash::ObjectId::from_hex(b"2222222222222222222222222222222222222222").expect("hex");
+        entry.decompressed_size = 64 * 1024;
+        entry.compressed_data = vec![7; 64 * 1024];
+        // Past the 12-byte pack header, well inside the entry.
+        let mut transport = BrokenUploadTransport::new(
+            command_list.len() + 12 + 1000,
+            Vec::new(),
+            Some(std::io::Error::other("Received HTTP status 413")),
+        );
+        let err = send_pack(
+            &mut transport,
+            request,
+            [entry],
+            Options::default(),
+            gix_hash::Kind::Sha1,
+        )
+        .expect_err("the upload broke mid-pack");
+        let chain = chain(&err);
+        assert!(
+            transport.written.len() > command_list.len() + 12,
+            "the failure happened inside the pack"
+        );
+        assert!(matches!(err, Error::SendInterrupted(_)), "{chain:?}");
+        assert!(chain.iter().any(|line| line.contains("413")), "{chain:?}");
+        assert!(
+            !chain.iter().any(|line| line.contains("closed channel")),
+            "the dropped channel is not the cause: {chain:?}"
+        );
+    }
+
     /// With nothing to say, the remote still gets named as the party that closed.
     #[test]
     fn broken_upload_without_a_reason_says_the_connection_closed() {
