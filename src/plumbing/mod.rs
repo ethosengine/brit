@@ -1,5 +1,7 @@
 mod main;
 mod mutation;
+/// The error a `diff --exit-code` or `--quiet` run returns when the compared versions differ.
+pub use gitoxide_core::repository::diff::Differences;
 pub use main::main;
 pub use main::run;
 pub use main::run_with_command;

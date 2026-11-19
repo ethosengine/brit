@@ -693,17 +693,47 @@ pub mod merge {
 pub mod diff {
     use gix::bstr::BString;
 
-    /// Show unstaged changes, staged changes, or compare two objects.
+    /// Show changes between the working files, the index and revisions, like `git diff --no-renames`.
+    ///
+    /// With no revision, working files are compared with the index (or, with `--cached`, the
+    /// index with HEAD). One revision is compared with the working files (or the index); two
+    /// revisions, `A..B` or `A...B` (the merge base of A and B against B) compare trees. Renames
+    /// are never detected: a rename is a deletion and an addition.
     #[derive(Debug, clap::Parser)]
     #[clap(args_conflicts_with_subcommands = true)]
     pub struct Platform {
-        /// Compare the index with HEAD instead of working files with the index.
+        /// Compare the index with HEAD (or with REVISION) instead of the working files.
         #[clap(long, visible_alias = "staged")]
         pub cached: bool,
-        /// Show an 80-column summary instead of patches.
+        /// Compare the merge base of both revisions (or of REVISION and HEAD), like `git diff --merge-base`.
         #[clap(long)]
+        pub merge_base: bool,
+        /// Show an 80-column summary instead of patches, like `git diff --stat=80`.
+        #[clap(long, group = "output")]
         pub stat: bool,
-        /// Restrict changes to these literal file paths.
+        /// Show only the names of changed paths, like `git diff --name-only`.
+        #[clap(long, group = "output")]
+        pub name_only: bool,
+        /// Show the names and status letters (A, D, M, T) of changed paths, like `git diff --name-status`.
+        #[clap(long, group = "output")]
+        pub name_status: bool,
+        /// Show added and removed line counts per path, like `git diff --numstat`.
+        #[clap(long, group = "output")]
+        pub numstat: bool,
+        /// Exit with 1 if there are differences and 0 otherwise, like `git diff --exit-code`.
+        #[clap(long)]
+        pub exit_code: bool,
+        /// Print nothing and imply --exit-code, like `git diff --quiet`.
+        #[clap(long, group = "output")]
+        pub quiet: bool,
+        /// No revision, one revision, two revisions, or one range `A..B` or `A...B`.
+        ///
+        /// A name that is no revision but an existing worktree path starts the paths, as in Git.
+        #[clap(value_parser = crate::shared::AsBString, value_name = "REVISION")]
+        pub revisions: Vec<BString>,
+        /// Restrict changes to these literal paths: files, or directories with everything below them.
+        ///
+        /// Comparisons of two revisions also accept a trailing slash, which matches only a directory.
         #[clap(last = true, value_parser = crate::shared::AsBString)]
         pub paths: Vec<BString>,
         #[clap(subcommand)]

@@ -450,15 +450,38 @@ pub fn run_with_command(args: Args, command: clap::Command) -> Result<()> {
         Subcommands::Diff(crate::plumbing::options::diff::Platform {
             cmd,
             cached,
+            merge_base,
             stat,
+            name_only,
+            name_status,
+            numstat,
+            exit_code,
+            quiet,
+            revisions,
             paths,
         }) => match cmd {
-            None => prepare_and_run("diff", verbose, None, move |_progress, out, _err| {
-                if stat {
-                    core::repository::diff::working_stat(repository(Mode::Strict)?, out, cached, &paths)
-                } else {
-                    core::repository::diff::working(repository(Mode::Strict)?, out, cached, &paths)
+            None => prepare_and_run("diff", verbose, None, move |_progress, out, err| {
+                use core::repository::diff::Format;
+                let format = match (stat, name_only, name_status, numstat, quiet) {
+                    (true, ..) => Format::Stat,
+                    (_, true, ..) => Format::NameOnly,
+                    (_, _, true, ..) => Format::NameStatus,
+                    (_, _, _, true, _) => Format::NumStat,
+                    (.., true) => Format::Quiet,
+                    _ => Format::Patch,
+                };
+                let request = core::repository::diff::Request {
+                    revisions,
+                    paths,
+                    cached,
+                    merge_base,
+                    format,
+                };
+                let differs = core::repository::diff::diff(repository(Mode::Strict)?, out, err, request)?;
+                if differs && (exit_code || quiet) {
+                    return Err(gix::Error::from_error(core::repository::diff::Differences));
                 }
+                Ok(())
             }),
             Some(crate::plumbing::options::diff::SubCommands::Tree {
                 stat,
@@ -466,11 +489,11 @@ pub fn run_with_command(args: Args, command: clap::Command) -> Result<()> {
                 merge_base,
                 old_treeish,
                 new_treeish,
-            }) => prepare_and_run("diff-tree", verbose, None, move |_progress, out, _err| {
+            }) => prepare_and_run("diff-tree", verbose, None, move |_progress, out, err| {
                 let mode = if stat || name_only { Mode::Strict } else { Mode::Lenient };
                 let repo = repository(mode)?;
                 let (old_treeish, new_treeish) =
-                    core::repository::diff::tree_endpoints(&repo, old_treeish, new_treeish, merge_base)?;
+                    core::repository::diff::tree_endpoints(&repo, err, old_treeish, new_treeish, merge_base)?;
                 if stat {
                     core::repository::diff::tree_stat(repo, out, old_treeish, new_treeish)
                 } else if name_only {

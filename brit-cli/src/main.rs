@@ -308,7 +308,14 @@ fn run(capture: &mut feedback::Capture) -> Result<()> {
         }
     } else {
         let args = plumbing::Args::from_arg_matches(&matches).map_err(|e| error::CliError::Args(e.to_string()))?;
-        plumbing::run_with_command(args, command).map_err(|err| error::CliError::Git(err.into()))
+        plumbing::run_with_command(args, command).map_err(|err| {
+            // `diff --exit-code` and `--quiet` report differences by status alone, like Git.
+            if err.downcast_any_ref::<plumbing::Differences>().is_some() {
+                error::CliError::ContextExit(1)
+            } else {
+                error::CliError::Git(err.into())
+            }
+        })
     }
 }
 
