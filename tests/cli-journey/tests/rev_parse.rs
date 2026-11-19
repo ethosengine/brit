@@ -215,3 +215,27 @@ fn a_worktree_named_dot_git_inside_another_repository_is_selected_like_git() -> 
     }
     Ok(())
 }
+
+/// Brit's own conventions after the first revision: `--path-format relative` as two arguments, and
+/// `--help` showing help unless it follows `--`.
+#[test]
+fn rev_parse_keeps_brits_conventions_after_a_revision() -> Result<()> {
+    let repo = TestRepo::new("rev-parse-conventions")?;
+    let root = repo.path();
+    let joined = brit(
+        root,
+        &["rev-parse", "HEAD", "--path-format=relative", "--git-common-dir"],
+    )?;
+    let split = brit(
+        root,
+        &["rev-parse", "HEAD", "--path-format", "relative", "--git-common-dir"],
+    )?;
+    assert_eq!(joined.code, Some(0), "{joined:?}");
+    assert_eq!(split, joined, "the two-argument spelling means the joined one");
+
+    let help = brit(root, &["rev-parse", "HEAD", "--help"])?;
+    assert_eq!(help.code, Some(0), "{help:?}");
+    assert!(help.stdout.contains("brit revision resolve"), "{help:?}");
+    assert_same_streams(root, &["rev-parse", "HEAD", "--", "--help"])?;
+    Ok(())
+}

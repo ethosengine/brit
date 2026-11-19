@@ -1,5 +1,7 @@
 //! `brit check-ref-format`: Git's reference-name validity check, answered by the exit code alone.
 
+use std::io::Write;
+
 use gix::bstr::{BStr, BString};
 
 /// Answer like `git check-ref-format [--allow-onelevel] <refname>`: `Ok` for a valid name, status 1 for
@@ -14,7 +16,12 @@ pub fn check(refname: Option<&BString>, allow_onelevel: bool) -> gix::Result<()>
             }
         }
         _ => {
-            eprintln!("usage: brit check-ref-format [--allow-onelevel] <refname>");
+            // A closed stderr must not turn the usage error into a panic.
+            writeln!(
+                std::io::stderr(),
+                "usage: brit check-ref-format [--allow-onelevel] <refname>"
+            )
+            .ok();
             Err(super::exit(129))
         }
     }

@@ -38,7 +38,8 @@ pub fn merge_base(
 
 /// `merge-base --is-ancestor <first> <second>`, answered through the exit code like Git: `Ok` when `first`
 /// is an ancestor of `second` or the same commit, status 1 when it is not, 128 for a revision that names
-/// no commit or for more than two revisions, and the usage status 129 for one.
+/// no commit or for more than two revisions, and the usage status 129 for one. With no revision at all,
+/// clap's required `first` answers with its usage status 2 where Git exits 129 (a known difference).
 pub fn is_ancestor(
     mut repo: gix::Repository,
     first: &str,
@@ -49,18 +50,18 @@ pub fn is_ancestor(
     let second = match others {
         [second] => second,
         [] => {
-            writeln!(err, "usage: brit merge-base --is-ancestor <commit> <commit>").or_error()?;
+            writeln!(err, "usage: brit merge-base --is-ancestor <commit> <commit>").ok();
             return Err(exit(129));
         }
         _ => {
-            writeln!(err, "fatal: --is-ancestor takes exactly two commits").or_error()?;
+            writeln!(err, "fatal: --is-ancestor takes exactly two commits").ok();
             return Err(exit(128));
         }
     };
     repo.object_cache_size_if_unset(50 * 1024 * 1024);
     let mut commit = |name: &str| -> Result<gix::ObjectId> {
         let Ok(id) = repo.rev_parse_single(name).map(gix::Id::detach) else {
-            writeln!(err, "fatal: Not a valid object name {name}").or_error()?;
+            writeln!(err, "fatal: Not a valid object name {name}").ok();
             return Err(exit(128));
         };
         match gix::object::bounded::Source::deferred(&repo).peel(id, gix::object::Kind::Commit) {
@@ -68,9 +69,9 @@ pub fn is_ancestor(
             Err(_) => {
                 let kind = repo.find_header(id).map(|header| header.kind().to_string());
                 if let Ok(kind) = kind {
-                    writeln!(err, "error: object {id} is a {kind}, not a commit").or_error()?;
+                    writeln!(err, "error: object {id} is a {kind}, not a commit").ok();
                 }
-                writeln!(err, "fatal: Not a valid commit name {name}").or_error()?;
+                writeln!(err, "fatal: Not a valid commit name {name}").ok();
                 Err(exit(128))
             }
         }

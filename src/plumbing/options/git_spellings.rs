@@ -103,6 +103,16 @@ impl clap::Args for RevParse {
 
 impl clap::FromArgMatches for RevParse {
     fn from_arg_matches(matches: &ArgMatches) -> Result<Self, clap::Error> {
+        // `REV` takes `--help` verbatim; it still asks for help, as everywhere in Brit, unless it follows `--`.
+        if matches
+            .get_many::<String>(REV)
+            .into_iter()
+            .flatten()
+            .take_while(|arg| *arg != "--")
+            .any(|arg| arg == "--help")
+        {
+            return Err(clap::Error::new(clap::error::ErrorKind::DisplayHelp));
+        }
         let mut ordered: Vec<(usize, String)> = Vec::new();
         let mut take = |id: &str, token: &dyn Fn(&str) -> String| {
             if matches.value_source(id) != Some(clap::parser::ValueSource::CommandLine) {

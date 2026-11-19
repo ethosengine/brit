@@ -229,6 +229,25 @@ fn change_dirs_before_command(args: &[std::ffi::OsString], command: &clap::Comma
         .unwrap_or_default()
 }
 
+/// Print the long help of the subcommand `matches` selected, for a spelling whose own parser met
+/// `--help` among arguments it takes verbatim (like `rev-parse HEAD --help`), and exit with clap's status.
+fn subcommand_help(command: &clap::Command, matches: &clap::ArgMatches) -> error::CliError {
+    let mut argv = vec!["brit".to_owned()];
+    let mut current = matches;
+    while let Some((name, sub)) = current.subcommand() {
+        argv.push(name.to_owned());
+        current = sub;
+    }
+    argv.push("--help".to_owned());
+    match command.clone().try_get_matches_from(argv) {
+        Err(help) => {
+            let _ = help.print();
+            error::CliError::ContextExit(help.exit_code())
+        }
+        Ok(_) => error::CliError::ContextExit(0),
+    }
+}
+
 fn normalize_log_counts(args: &mut [std::ffi::OsString], index: usize) {
     // Familiar bounded history spelling, scoped to log and before `--`. Never reinterpret
     // a path after the option terminator or a numeric argument to another command. Let
@@ -428,7 +447,12 @@ fn run(capture: &mut feedback::Capture, read_only: &mut bool) -> Result<()> {
             BuildNamespace::Snapshot(command) => tree::run(command).map_err(error::CliError::Git),
         }
     } else {
-        let args = plumbing::Args::from_arg_matches(&matches).map_err(|e| error::CliError::Args(e.to_string()))?;
+        let args = plumbing::Args::from_arg_matches(&matches).map_err(|e| {
+            if e.kind() == clap::error::ErrorKind::DisplayHelp {
+                return subcommand_help(&command, &matches);
+            }
+            error::CliError::Args(e.to_string())
+        })?;
         plumbing::run_with_command(args, command).map_err(|err| error::CliError::Git(err.into()))
     }
 }

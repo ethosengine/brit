@@ -185,15 +185,19 @@ fn explicit_write_paths(cmd: &Subcommands) -> Vec<&std::path::Path> {
 ///
 /// A directory that cannot be entered ends like Git: `fatal: cannot change to '<dir>': <reason>` and 128.
 pub fn change_dirs(dirs: &[std::ffi::OsString]) -> Result<()> {
+    use std::io::Write as _;
     for dir in dirs.iter().filter(|dir| !dir.is_empty()) {
         if let Err(err) = std::env::set_current_dir(dir) {
             let reason = err.to_string();
             // Git prints `strerror()`, without Rust's `(os error N)` suffix.
             let reason = reason.split(" (os error ").next().unwrap_or(&reason);
-            eprintln!(
+            // Written without `eprintln!`, which would panic on a closed stderr.
+            writeln!(
+                std::io::stderr(),
                 "fatal: cannot change to '{}': {reason}",
                 std::path::Path::new(dir).display()
-            );
+            )
+            .ok();
             return Err(core::repository::git_spellings::exit(128));
         }
     }

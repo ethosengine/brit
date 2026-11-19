@@ -4,6 +4,10 @@
 //! of the excluded ones, where a revision is `A`, `^A`, `A..B` or `A...B` (both sides, without their
 //! merge bases). `--left-right --count` prints `<left>\t<right>`: commits reachable from the left side
 //! of an `A...B`, and the rest. Listing commits without `--count` is refused and points to Brit's verb.
+//!
+//! ### Known differences from Git
+//!
+//! - A revision that names no commit, like `HEAD^{tree}`, fails with 128; Git counts it as 0.
 
 use std::io::Write;
 
@@ -29,7 +33,7 @@ pub fn rev_list(
     options: Options,
 ) -> Result<()> {
     if revs.is_empty() {
-        writeln!(err, "usage: brit rev-list --count [--left-right] <revision>...").or_error()?;
+        writeln!(err, "usage: brit rev-list --count [--left-right] <revision>...").ok();
         return Err(exit(129));
     }
     if !options.count {
@@ -37,7 +41,7 @@ pub fn rev_list(
             err,
             "brit rev-list only counts commits (`--count`); list them with `brit revision list <rev>` or `brit log`"
         )
-        .or_error()?;
+        .ok();
         return Err(exit(128));
     }
 
@@ -85,7 +89,7 @@ pub fn rev_list(
                     err,
                     "brit rev-list does not implement `{rev}`; resolve it with `brit revision resolve`"
                 )
-                .or_error()?;
+                .ok();
                 return Err(exit(128));
             }
         }

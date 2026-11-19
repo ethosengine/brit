@@ -1,7 +1,9 @@
 //! A reader that closes early (`brit … | head`) ends a command that only prints quietly with status 141,
 //! the status a shell reports for Git killed by SIGPIPE, instead of `Error: Broken pipe (os error 32)`.
-//! It is decided by the failed write's error kind on stdout or stderr, and only for commands classified
-//! read-only; a command that changes the repository reports its own outcome (unit-tested in brit-cli).
+//! It is decided by the failed write's error kind on stdout or stderr, only for commands classified
+//! read-only, and only when the command did not fail for its own reason. This never gives a mutating
+//! command 141; how a mutating command orders its own writes (like `push --porcelain`'s report before
+//! its rejection) is outside this change.
 #![cfg(target_os = "linux")]
 
 use std::{
@@ -127,6 +129,13 @@ fn a_closed_reader_never_replaces_a_genuine_failure() -> Result<()> {
     for (which, args, code) in [
         (2, &["rev-parse", "--verify", "missing"][..], 128),
         (1, &["-v", "rev-parse", "HEAD", "missing"][..], 128),
+        // Usage errors write to a closed stderr without panicking.
+        (2, &["check-ref-format"][..], 129),
+        (2, &["merge-base", "--is-ancestor", "HEAD"][..], 129),
+        (2, &["merge-base", "--is-ancestor", "nope", "HEAD"][..], 128),
+        (2, &["rev-list", "--count"][..], 129),
+        (2, &["rev-list", "--count", "nope"][..], 128),
+        (2, &["-C", "does-not-exist", "rev-parse", "HEAD"][..], 128),
     ] {
         let out = brit_with_closed(repo.path(), which, args)?;
         assert_eq!(

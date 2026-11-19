@@ -167,7 +167,7 @@ pub fn for_each_ref(repo: gix::Repository, mut out: impl Write, options: Options
             continue;
         }
         let Ok(id) = reference.follow_to_object() else {
-            eprintln!("warning: ignoring broken ref {name}");
+            writeln!(std::io::stderr(), "warning: ignoring broken ref {name}").ok();
             continue;
         };
         let object = id.object()?;

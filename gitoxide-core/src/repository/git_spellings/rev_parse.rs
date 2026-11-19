@@ -14,7 +14,12 @@
 //! - `--abbrev-ref` always shortens strictly, as if `core.warnAmbiguousRefs` were true.
 //! - Parent shorthands (`A^@`, `A^!`, `A^-`) and flags other than the ones listed in the help are
 //!   refused by name instead of being interpreted.
-//! - A `--` given before every revision and followed by nothing is not echoed.
+//! - A `--` given before every revision and followed by nothing, like a lone `--`, is not echoed.
+//! - Flags Git echoes or expands, like `-1` or `--all`, are refused by name with status 128.
+//! - An ambiguous object prefix loses the resolver's diagnostic: it is reported as an unknown
+//!   revision or path.
+//! - `--path-format relative` as two arguments is accepted, as Brit's clap parser always did; Git
+//!   needs `--path-format=relative`. `--help` after a revision shows Brit's help unless it follows `--`.
 //! - Inside a `.git` directory itself, Brit's discovery fails, so only `--show-toplevel` answers like Git
 //!   (`must be run in a work tree`, 128); `--git-dir` or a revision there fails at discovery with
 //!   status 1. Below it, like in `.git/refs`, the queries work.
@@ -88,7 +93,8 @@ pub fn rev_parse(repo: gix::Repository, args: Vec<String>, mut out: impl Write, 
         }
     };
 
-    for arg in &args {
+    let mut args = args.iter();
+    while let Some(arg) = args.next() {
         if as_is > 0 {
             if state.show_files {
                 writeln!(out, "{arg}").or_error()?;
@@ -151,6 +157,21 @@ pub fn rev_parse(repo: gix::Repository, args: Vec<String>, mut out: impl Write, 
                 }
                 "--path-format=absolute" => state.format = Some(PathFormat::Absolute),
                 "--path-format=relative" => state.format = Some(PathFormat::Relative),
+                // Brit's clap spelling `--path-format relative`, kept after the first revision too.
+                "--path-format" => match args.next().map(String::as_str) {
+                    Some("absolute") => state.format = Some(PathFormat::Absolute),
+                    Some("relative") => state.format = Some(PathFormat::Relative),
+                    value => {
+                        return Err(fail(
+                            &mut err,
+                            &format!(
+                                "fatal: unknown argument to --path-format: {}",
+                                value.unwrap_or_default()
+                            ),
+                            128,
+                        ));
+                    }
+                },
                 other => match other.strip_prefix("--short") {
                     Some("") => {
                         state.verify = true;
@@ -349,7 +370,7 @@ fn show(
                     match repo.objects.disambiguate_prefix(candidate)? {
                         Some(prefix) => prefix,
                         None => {
-                            writeln!(err, "fatal: {id}: object not found").or_error()?;
+                            writeln!(err, "fatal: {id}: object not found").ok();
                             id.into()
                         }
                     }
