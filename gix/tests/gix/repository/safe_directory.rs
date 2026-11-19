@@ -12,7 +12,7 @@ fn fixture() -> TestResult<std::path::PathBuf> {
 }
 
 fn open_reduced(path: &std::path::Path, options: gix::open::Options) -> gix::Result<gix::Repository> {
-    Ok(gix::open_opts(path, options.with(Trust::Reduced))?)
+    gix::open_opts(path, options.with(Trust::Reduced))
 }
 
 fn safe_directory(value: impl std::fmt::Display) -> String {

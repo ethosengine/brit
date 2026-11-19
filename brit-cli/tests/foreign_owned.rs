@@ -69,6 +69,11 @@ struct Foreign {
 
 impl Foreign {
     fn stage(pack_indexes: usize) -> Self {
+        Self::stage_with(pack_indexes, |_, _| {})
+    }
+
+    /// [`Self::stage`], running `prepare(home, root)` just before the checkout is chowned.
+    fn stage_with(pack_indexes: usize, prepare: impl FnOnce(&Path, &Path)) -> Self {
         let dir = gix_testtools::tempfile::TempDir::new().expect("tempdir");
         let home = gix_testtools::tempfile::TempDir::new().expect("home");
         let root = dir.path().join("checkout");
@@ -114,6 +119,7 @@ impl Foreign {
         std::fs::write(&hook, format!("#!/bin/sh\necho ran > '{}'\n", marker.display())).expect("hook");
         std::fs::set_permissions(&hook, std::os::unix::fs::PermissionsExt::from_mode(0o755)).expect("chmod");
 
+        prepare(h, &root);
         let chown = Command::new("chown")
             .args(["-R", &format!("{FOREIGN_UID}:{FOREIGN_UID}")])
             .arg(&root)
@@ -240,4 +246,103 @@ fn trust_for_any_other_path_or_none_stays_reduced() {
         );
         assert!(!repo.marker.exists(), "{grant:?}: the hook never ran");
     }
+}
+
+const MANIFEST: &str = r#"{
+    "manifestVersion":"1.0",
+    "pipeline":"trust-regression",
+    "description":"reduced-trust fingerprint fixture",
+    "steps":{
+        "fingerprint":{
+            "description":"read every committed file",
+            "inputs":{"sources":["**"],"buildProcess":[]},
+            "outputs":{"artifacts":[],"verify":null},
+            "depends":[],
+            "executor":{"stage":"test","function":null}
+        }
+    },
+    "gate":{},
+    "deployment":{}
+}"#;
+
+fn write_manifest(_: &Path, root: &Path) {
+    std::fs::write(root.join("build-manifest.json"), MANIFEST).expect("manifest");
+}
+
+fn fingerprint(repo: &Foreign) -> Output {
+    repo.brit(
+        &Grant::None,
+        &[
+            "build",
+            "fingerprint",
+            repo.root.join("build-manifest.json").to_str().expect("utf8"),
+            "--commit",
+            "HEAD",
+        ],
+    )
+}
+
+fn last_line(output: &Output) -> String {
+    stderr(output)
+        .lines()
+        .rev()
+        .find(|line| !line.trim().is_empty())
+        .unwrap_or_default()
+        .to_string()
+}
+
+#[test]
+#[ignore = "needs root to chown a scratch repo"]
+fn reduced_trust_reads_and_fingerprints_beyond_32_pack_indexes() {
+    for indexes in [33, 100] {
+        let repo = Foreign::stage_with(indexes, write_manifest);
+        let log = repo.brit(&Grant::None, &["--trace", "log", "-n", "1"]);
+        assert!(log.status.success(), "{indexes} indexes: log opens: {}", stderr(&log));
+        assert!(
+            stderr(&log).contains(REDUCED_TRUST_TRACE),
+            "{indexes} indexes: still reduced trust: {}",
+            stderr(&log)
+        );
+        let fingerprint = fingerprint(&repo);
+        assert!(
+            fingerprint.status.success(),
+            "{indexes} indexes: fingerprint resolves HEAD: {}",
+            stderr(&fingerprint)
+        );
+    }
+}
+
+#[test]
+#[ignore = "needs root to chown a scratch repo"]
+fn reduced_trust_ceiling_is_one_named_error_with_both_cures() {
+    let repo = Foreign::stage_with(1, |_, root| {
+        write_manifest(root, root);
+        let pack_dir = root.join(".git/objects/pack");
+        std::fs::create_dir_all(&pack_dir).expect("pack dir");
+        for index in 0..=gix::open::REDUCED_TRUST_MAX_PACK_INDEXES {
+            std::fs::write(pack_dir.join(format!("pack-padding-{index}.idx")), []).expect("idx");
+            std::fs::write(pack_dir.join(format!("pack-padding-{index}.pack")), []).expect("pack");
+        }
+    });
+    for output in [repo.brit(&Grant::None, &["log", "-n", "1"]), fingerprint(&repo)] {
+        let text = stderr(&output);
+        assert!(!output.status.success(), "refused: {text}");
+        let last = last_line(&output);
+        assert!(
+            last.contains("object database index slots exhausted")
+                && last.contains("git repack -a -d")
+                && last.contains("safe.directory"),
+            "the last line is the named error with both cures: {text}"
+        );
+        assert!(
+            !text.contains("rev-spec is malformed") && !text.contains("too few index slots"),
+            "no wrapper and no raw slot diagnostic: {text}"
+        );
+    }
+    let trusted = repo.brit(&Grant::Environment(repo.display()), &["log", "-n", "1"]);
+    assert!(
+        !stderr(&trusted).contains("index slots exhausted"),
+        "trust for the checkout lifts the ceiling: {}",
+        stderr(&trusted)
+    );
 }

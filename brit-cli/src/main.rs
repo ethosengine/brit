@@ -317,6 +317,10 @@ fn diagnostic(error: &error::CliError) -> String {
         error::CliError::Git(cause) => {
             use std::fmt::Write;
 
+            if let Some(report) = error::slot_exhaustion_report(cause.as_ref()) {
+                return format!("Error: {report}");
+            }
+
             let mut output = format!("Error: {cause}");
             let chain = cause.chain().skip(1);
             let multiple = chain.len() > 1;

@@ -10,6 +10,19 @@ use gix_testtools::TestResult;
 #[path = "../src/repository.rs"]
 mod build_repository;
 
+/// The build commands' error formatting.
+#[path = "../src/error.rs"]
+#[allow(dead_code, reason = "only the slot-exhaustion formatting is exercised here")]
+mod build_error;
+
+/// Stands in for a build command's outer message around a gix error.
+#[derive(Debug, thiserror::Error)]
+#[error("repository discovery failed")]
+struct Wrapped {
+    #[source]
+    source: gix::Error,
+}
+
 fn git_with_input(repo: &Path, args: &[&str], input: &[u8]) -> TestResult<String> {
     let mut child = gix_testtools::git_command(repo)
         .args(args)
@@ -35,8 +48,13 @@ fn git_with_input(repo: &Path, args: &[&str], input: &[u8]) -> TestResult<String
 }
 
 fn create_many_pack_indexes(repo: &Path, head: &str) -> TestResult {
+    create_pack_indexes(repo, head, 33)
+}
+
+/// Put `head` in one pack and `total - 1` filler blobs in a pack each: `total` pack indexes.
+fn create_pack_indexes(repo: &Path, head: &str, total: usize) -> TestResult {
     let mut paths = String::new();
-    for index in 0..64 {
+    for index in 1..total {
         let name = format!("filler-{index}");
         std::fs::write(repo.join(&name), format!("filler object {index}\n"))?;
         paths.push_str(&name);
@@ -44,11 +62,14 @@ fn create_many_pack_indexes(repo: &Path, head: &str) -> TestResult {
     }
     let ids = git_with_input(repo, &["hash-object", "-w", "--stdin-paths"], paths.as_bytes())?;
     let ids: Vec<_> = ids.lines().collect();
-    assert_eq!(ids.len(), 64, "every filler file produces one loose object");
+    assert_eq!(ids.len(), total - 1, "every filler file produces one loose object");
 
-    for [first, second] in ids.as_chunks::<2>().0 {
-        let input = format!("{first}\n{second}\n");
-        git_with_input(repo, &["pack-objects", ".git/objects/pack/pack"], input.as_bytes())?;
+    for id in ids {
+        git_with_input(
+            repo,
+            &["pack-objects", ".git/objects/pack/pack"],
+            format!("{id}\n").as_bytes(),
+        )?;
     }
     git_with_input(
         repo,
@@ -61,7 +82,10 @@ fn create_many_pack_indexes(repo: &Path, head: &str) -> TestResult {
         .filter_map(Result::ok)
         .filter(|entry| entry.path().extension().is_some_and(|ext| ext == "idx"))
         .count();
-    assert_eq!(index_count, 33, "fixture has more indexes than the reduced-trust cap");
+    assert_eq!(
+        index_count, total,
+        "fixture has more indexes than the former 32-slot cap"
+    );
     assert!(
         !repo.join(".git/objects/pack/multi-pack-index").exists(),
         "fixture must exercise individual index slots"
@@ -180,7 +204,7 @@ fn discovery_resolves_head_beyond_what_a_32_slot_store_can_load() -> TestResult 
 
 #[test]
 #[cfg(unix)]
-fn full_to_reduced_discovery_keeps_the_32_slot_cap() -> TestResult {
+fn full_to_reduced_discovery_sizes_slots_from_the_indexes_present() -> TestResult {
     if gix_testtools::run_in_isolated_process()? {
         return Ok(());
     }
@@ -221,15 +245,53 @@ fn full_to_reduced_discovery_keeps_the_32_slot_cap() -> TestResult {
         gix::sec::Trust::Reduced,
         "a current-owned git directory with a foreign-owned worktree is downgraded to Reduced"
     );
-    let err = repo
-        .find_object(head_id)
-        .expect_err("final Reduced trust keeps the 32-slot cap");
-    assert_slot_exhaustion(&err);
+    assert_eq!(
+        repo.objects.store_ref().metrics().unused_slots,
+        49,
+        "final Reduced trust sizes slots from the 33 indexes present plus headroom"
+    );
+    repo.find_object(head_id)?;
     Ok(())
 }
 
 #[test]
-fn reduced_trust_repository_keeps_its_capped_store() -> TestResult {
+fn reduced_trust_repository_reads_beyond_32_pack_indexes() -> TestResult {
+    if gix_testtools::run_in_isolated_process()? {
+        return Ok(());
+    }
+    for (indexes, slots) in [(33, 49), (100, 150)] {
+        let fixture = gix_testtools::tempfile::tempdir()?;
+        let repo_path = fixture.path();
+        gix_testtools::git(repo_path, "init")?;
+        gix_testtools::git(repo_path, "commit --allow-empty -m fixture")?;
+        let head = gix_testtools::git(repo_path, "rev-parse HEAD")?;
+        create_pack_indexes(repo_path, head.trim(), indexes)?;
+        let head_id = gix::ObjectId::from_hex(head.trim().as_bytes())?;
+
+        // No explicit slots: the size must come from the final Reduced trust alone.
+        let reduced = gix::open_opts(repo_path, gix::open::Options::default().with(gix::sec::Trust::Reduced))?;
+        assert_eq!(
+            reduced.git_dir_trust(),
+            gix::sec::Trust::Reduced,
+            "the repository is opened with genuinely reduced trust"
+        );
+        assert_eq!(
+            reduced.objects.store_ref().metrics().unused_slots,
+            slots,
+            "{indexes} indexes get their own slots plus headroom"
+        );
+        assert_eq!(
+            reduced.rev_parse_single("HEAD")?.detach(),
+            head_id,
+            "reduced trust reads the commit in the last of {indexes} pack indexes"
+        );
+    }
+    Ok(())
+}
+
+#[test]
+fn reduced_trust_ceiling_is_one_named_error_with_both_cures() -> TestResult {
+    // A global `safe.directory` (as on these devices) would promote the repository to full trust.
     if gix_testtools::run_in_isolated_process()? {
         return Ok(());
     }
@@ -237,21 +299,27 @@ fn reduced_trust_repository_keeps_its_capped_store() -> TestResult {
     let repo_path = fixture.path();
     gix_testtools::git(repo_path, "init")?;
     gix_testtools::git(repo_path, "commit --allow-empty -m fixture")?;
-    let head = gix_testtools::git(repo_path, "rev-parse HEAD")?;
-    create_many_pack_indexes(repo_path, head.trim())?;
-    let head_id = gix::ObjectId::from_hex(head.trim().as_bytes())?;
-
-    // No explicit slots: the cap must come from the final Reduced trust alone.
-    let reduced = gix::open_opts(repo_path, gix::open::Options::default().with(gix::sec::Trust::Reduced))?;
+    let pack_dir = repo_path.join(".git/objects/pack");
+    // Pairs present at open are counted; a refused repository's indexes are never read.
+    for index in 0..=gix::open::REDUCED_TRUST_MAX_PACK_INDEXES {
+        std::fs::write(pack_dir.join(format!("pack-padding-{index}.idx")), [])?;
+        std::fs::write(pack_dir.join(format!("pack-padding-{index}.pack")), [])?;
+    }
+    let err = gix::open_opts(repo_path, gix::open::Options::default().with(gix::sec::Trust::Reduced))
+        .expect_err("more indexes than the ceiling are refused at reduced trust");
+    let wrapped = Wrapped { source: err };
+    let rendered = build_error::format_error(&wrapped);
     assert_eq!(
-        reduced.git_dir_trust(),
-        gix::sec::Trust::Reduced,
-        "the repository is opened with genuinely reduced trust"
+        rendered,
+        format!(
+            "object database index slots exhausted: the repository needs at least {} index slots and this \
+             process may use {}; consolidate its packs (`git repack -a -d`) or grant trust for this checkout with \
+             `safe.directory` (a global entry, `-c safe.directory=<path>` or GIT_CONFIG_COUNT)",
+            gix::open::REDUCED_TRUST_MAX_PACK_INDEXES + 1,
+            gix::open::REDUCED_TRUST_MAX_PACK_INDEXES
+        ),
+        "one first-class error, not its wrapper"
     );
-    let err = reduced
-        .find_object(head_id)
-        .expect_err("reduced trust retains the 32-slot resource cap");
-    assert_slot_exhaustion(&err);
     Ok(())
 }
 
