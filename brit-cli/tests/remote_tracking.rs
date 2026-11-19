@@ -317,7 +317,9 @@ fn several_configured_mappings_and_negations() -> TestResult {
 
 /// Run Brit with a `git-upload-pack` wrapper first on `PATH` that counts every handshake the
 /// file transport makes into `counter`, and on handshake number `vanish_on` deletes the tag and
-/// the branch `dup` from `remote` before serving.
+/// the branch `dup` from `remote` before serving. The wrapper is a `/bin/sh` script made
+/// executable and found through a `:`-separated `PATH`, so this exists on Unix only.
+#[cfg(unix)]
 fn brit_counting(
     root: &Path,
     args: &[&str],
@@ -398,6 +400,7 @@ fn positional_url_or_path_is_the_remote_like_git() -> TestResult {
 
 /// An unambiguous name costs one handshake. An ambiguous one reconnects once, and the second
 /// advertisement is checked again: a ref that vanished in between is still an error.
+#[cfg(unix)]
 #[test]
 fn handshakes_and_a_ref_vanishing_before_the_reconnect() -> TestResult {
     let (remote, local) = two_branch_fixture()?;
