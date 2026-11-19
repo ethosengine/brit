@@ -32,6 +32,45 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.0.0/); ver
   remote is named in the refusal.
 - Global `--wait[=SECONDS]` and `BRIT_MUTATION_WAIT=SECONDS|forever` wait for another Brit
   writer's guard instead of refusing at once; bare `--wait` waits without limit.
+- Git's spellings of read-only ref commands, which take no writer guard and point to Brit's own
+  verbs in their help:
+  - `brit rev-parse` (Brit's `revision resolve`) reads its arguments in one ordered pass, like
+    Git: `--verify`, `--short[=N]`, `--abbrev-ref` and `-q` apply to the revisions after them,
+    and `--show-toplevel`, `--git-dir`, `--absolute-git-dir`, `--git-common-dir` and
+    `--path-format` print where they appear. Failures print Git's diagnostic and exit 128 (1
+    for `--verify --quiet`).
+  - `brit for-each-ref [--format=…] [--sort=…] [<pattern>…]` with Git's default format, the
+    format atoms and sort keys agents use, and Git's pattern matching; other atoms and keys
+    are refused by name.
+  - `brit ls-remote [--heads|-h] [--tags] [--refs] [--exit-code] [<remote> [<pattern>…]]`
+    (Brit's `remote refs`) prints `<oid>\t<refname>` in server order with peeled tags; with
+    the remote omitted, `From <url>` goes to stderr once the remote answered, with a password
+    shown as `redacted`.
+  - `brit check-ref-format [--allow-onelevel] <refname>` answers by its exit code alone.
+  - `brit rev-list --count <rev>…` and `--left-right --count A...B` count what
+    `brit revision list` walks; listing without `--count` is refused and names Brit's verb.
+  - `brit merge-base --is-ancestor <A> <B>` answers through its exit code: 0 when `A` is an
+    ancestor of `B` or the same commit, 1 when it is not, 128 for a revision naming no commit.
+- Known differences from Git in these spellings: a relative `GIT_DIR` prints as an absolute
+  `--git-dir`; short ref names are always strict (as if `core.warnAmbiguousRefs` were true);
+  non-UTF-8 ref names are matched and printed lossily; `ls-remote` needs a local repository
+  even for an explicit path or URL, and a lone `-h` lists the default remote's branches where
+  Git prints usage; `rev-parse` refuses parent shorthands (`A^@`, `A^!`, `A^-`) and flags Git
+  echoes or expands (`-1`, `--all`) by name with 128, does not echo a lone leading `--`, loses
+  the resolver's diagnostic for an ambiguous prefix, accepts `--path-format relative` as two
+  arguments, shows Brit's help for `--help` after a revision, and inside a `.git` directory
+  answers only `--show-toplevel` like Git; `rev-list --count` fails with 128 for a revision
+  naming no commit (Git counts 0); `merge-base --is-ancestor` with no revision exits 2 where
+  Git exits 129. Brit's `-r <dir>` starts discovery at `<dir>` and may find an ancestor, where
+  Git's `--git-dir` needs the directory itself; `GIT_DIR` overrides `-r`. `ls-remote` may wait
+  on a configured credential helper; non-interactive callers pass `-c credential.helper=` and
+  `GIT_TERMINAL_PROMPT=0`.
+- Global `-C <dir>`, repeatable, with Git's meaning: each is entered relative to the previous
+  one before the command runs (and before a known subcommand's `--help` or usage error), so
+  repository discovery, relative paths, `-r`, and the writer guards all start there; an empty
+  value is ignored, and a directory that cannot be entered ends with
+  `fatal: cannot change to '<dir>': <reason>` and 128. The `build`, `snapshot`, `context` and
+  `integrate` namespaces refuse it, as they refuse other global Git options.
 - Test and diagnostic only: `BRIT_HTTP_REQUEST_DEADLINE_SECONDS` replaces the 60 s HTTP
   request deadline of max-pure builds (not supported configuration). The `cli-journey`
   harness runs the `push_transport` journeys against a max-pure `brit` named by
@@ -40,6 +79,15 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.0.0/); ver
 
 ### Changed
 
+- **Behaviour change:** a read-only command whose reader closes its output early (`brit log |
+  head`, `brit rev-parse … | head`) ends quietly with status 141, like Git killed by `SIGPIPE`,
+  instead of reporting the broken pipe. This applies only to the commands listed by exact
+  subcommand path in `brit-cli`'s `READ_ONLY_COMMANDS` (the Git spellings above, `log`, `cat`,
+  `blame`, `diff`, `diff tree`, `diff file`, `branch list`, `revision resolve`,
+  `revision explain`, `worktree list`, `config-tree`, `env`, `--cli-surface-json`), and only
+  when the command otherwise succeeded: a command's own failure always keeps its status. So
+  `brit rev-parse --verify missing` with a closed stderr exits 128, where Git is killed by
+  `SIGPIPE` (141). Every other command, writers included, reports its own outcome.
 - Writer guards are scoped ([docs/mutation-guards.md](../docs/mutation-guards.md)). `add` holds
   its worktree's guard and the repository guard shared, so writers in other worktrees keep
   working beside it; shared writes (refs, configuration, worktree registrations, `fetch`'s
