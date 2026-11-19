@@ -305,10 +305,6 @@ const READ_ONLY_COMMANDS: &[&[&str]] = &[
     &["show"],
     &["tag", "list"],
     &["remote", "url"],
-    // Network reads, like `ls-remote`; a credential helper may store or erase a credential.
-    &["remote", "refs"],
-    &["remote", "ref-map"],
-    &["commit", "describe"],
     &["revision", "previous-branches"],
     &["verify"],
     &["fsck"],
@@ -320,10 +316,8 @@ const READ_ONLY_COMMANDS: &[&[&str]] = &[
     &["mailmap", "check"],
     &["attributes", "query"],
     &["exclude", "query"],
+    // Bare `submodule` passes no `--dirty-suffix`, so it never runs the status engine.
     &["submodule"],
-    &["submodule", "list"],
-    &["is-clean"],
-    &["is-changed"],
     &["config"],
     &["config", "show"],
     &["config", "list"],
@@ -336,11 +330,25 @@ const READ_ONLY_COMMANDS: &[&[&str]] = &[
     &["build", "plan"],
     &["build", "fingerprint"],
     &["build", "baseline", "read"],
-    // Left out: bare `tag` creates a tag when given a name; `revision list --svg` writes and opens a
-    // file; `commit verify` runs the configured verifier and prints its output through an unwatched
-    // stderr; `attributes validate-baseline` runs `git check-attr`/`check-ignore` children whose output
-    // bypasses the watched writer; `build run`, `build baseline write|migrate`, `config fmt`, `index
-    // from-tree`, `tag delete`, `commit sign` write.
+    // Left out:
+    // - `is-clean`, `is-changed`: predicates whose answer is their exit status, so 141 would replace the
+    //   answer a script reads; their status engine can also run a configured clean filter, an external
+    //   program with inherited stderr.
+    // - `commit describe`, `submodule list`: `--dirty-suffix` on the same path runs that status engine.
+    // - `remote refs`, `remote ref-map`: authentication can make a credential helper store or erase a
+    //   credential, and helper or askpass output bypasses the watched writer. `ls-remote`, admitted
+    //   earlier, has the same property; the three should be decided alike.
+    // - bare `tag`: `tag <name>` creates a tag on the same path.
+    // - `revision list`: `--svg` writes and opens a file on the same path.
+    // - `commit verify`: runs the configured verifier and writes its output to an unwatched stderr.
+    // - `attributes validate-baseline`: its children's output is piped, but it reports a failed helper
+    //   or a mismatch with a fallible write before returning its own failure, so a closed reader would
+    //   replace that failure.
+    // - `build run`, `build baseline write|migrate`, `config fmt`, `index from-tree`, `tag delete`,
+    //   `commit sign`: they write.
+    // Known limits, not fixed here: `--trace` and the verbose progress renderer write to raw stderr
+    // outside the watched writer (shared plumbing); and a streaming query ends at its first failed write
+    // even if a later input would have failed, as Git killed by SIGPIPE does.
 ];
 
 fn read_only_path(path: &[&str]) -> bool {
@@ -552,6 +560,11 @@ fn main() -> ExitCode {
     let mut capture = feedback::Capture::new();
     let mut read_only = false;
     let outcome = run(&mut capture, &mut read_only);
+    if read_only {
+        // Bytes still in stdout's line buffer (a short blob or `[]` without a newline) would otherwise
+        // meet a closed reader only at process exit, after the status was chosen.
+        let _ = gitoxide::shared::closed_reader::Watch(std::io::stdout()).flush();
+    }
     // The status is decided first and never by the report: the report is attempted once with its
     // result ignored (a reader of stderr may have closed, and `eprintln!` would then panic and exit
     // 101), and the run is recorded after it whatever the write did.
@@ -838,7 +851,6 @@ mod tests {
         for args in [
             &["brit", "show", "HEAD"][..],
             &["brit", "tag", "list"],
-            &["brit", "remote", "refs"],
             &["brit", "config"],
             &["brit", "submodule"],
             &["brit", "build", "graph", "discover"],
@@ -852,6 +864,12 @@ mod tests {
             &["brit", "tag"],
             &["brit", "commit", "verify"],
             &["brit", "attributes", "validate-baseline"],
+            &["brit", "is-clean"],
+            &["brit", "is-changed"],
+            &["brit", "commit", "describe"],
+            &["brit", "submodule", "list"],
+            &["brit", "remote", "refs"],
+            &["brit", "remote", "ref-map"],
             &["brit", "config", "fmt"],
             &["brit", "build", "baseline", "write", "p", "HEAD"],
             &["brit", "build", "baseline", "migrate", "x.json"],

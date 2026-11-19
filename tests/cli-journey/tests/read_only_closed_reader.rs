@@ -1,6 +1,6 @@
 //! Every command admitted to brit-cli's `READ_ONLY_COMMANDS` after `8e5072ff` ends quietly with 141
-//! when its reader closed early, keeps its own status when it genuinely fails, and prints the same
-//! thing to a live reader. Linux only: the closed reader is a pipe whose reading end is closed with
+//! when its reader (stdout, or stderr for a command that writes a note there) closed early, keeps its
+//! own status when it genuinely fails, and prints to a live reader. Linux only: the closed reader is a pipe whose reading end is closed with
 //! `libc` before Brit starts, like `broken_pipe.rs`.
 #![cfg(target_os = "linux")]
 
@@ -28,13 +28,26 @@ fn brit(cwd: &Path) -> Command {
 
 /// Run `brit <args>` with stdout connected to a pipe whose reading end is already closed.
 fn closed_stdout(cwd: &Path, args: &[&str]) -> Result<Output> {
+    closed(cwd, 1, args)
+}
+
+/// Run `brit <args>` with stdout (`fd == 1`) or stderr (`fd == 2`) connected to a pipe whose reading
+/// end is already closed; the other stream is captured.
+fn closed(cwd: &Path, fd: u8, args: &[&str]) -> Result<Output> {
     let mut fds = [0; 2];
     // SAFETY: `fds` has room for the two descriptors `pipe` writes.
     ensure!(unsafe { libc::pipe(fds.as_mut_ptr()) } == 0, "pipe(2) failed");
     // SAFETY: both descriptors were just created by `pipe` and are owned here exactly once.
     let (reader, writer) = unsafe { (std::fs::File::from_raw_fd(fds[0]), std::fs::File::from_raw_fd(fds[1])) };
     drop(reader);
-    Ok(brit(cwd).args(args).stdout(writer).stderr(Stdio::piped()).output()?)
+    let mut command = brit(cwd);
+    command.args(args);
+    if fd == 1 {
+        command.stdout(writer).stderr(Stdio::piped());
+    } else {
+        command.stdout(Stdio::piped()).stderr(writer);
+    }
+    Ok(command.output()?)
 }
 
 /// A repository with a tag, a mailmap, attributes, an ignore file, a submodule, a commit-graph, a
@@ -53,6 +66,7 @@ fn fixture(root: &Path) -> Result<PathBuf> {
         r#"{"manifestVersion":"1.0","pipeline":"probe","description":"probe","steps":{"lint":{"description":"lint","inputs":{"sources":["*.txt"],"buildProcess":[]},"outputs":{"artifacts":[],"verify":null},"depends":[],"executor":{"stage":"lint","function":null}}}}"#,
     )?;
     std::fs::write(repo.join("a.txt"), "a\n")?;
+    std::fs::write(repo.join("nonl"), "x")?;
     git(&repo, &["add", "-A"])?;
     git(&repo, &["commit", "-q", "-m", "one"])?;
     std::fs::write(repo.join("a.txt"), "a\nb\n")?;
@@ -85,11 +99,10 @@ fn fixture(root: &Path) -> Result<PathBuf> {
 /// The admitted commands, each in a form that prints to stdout and nothing to stderr.
 const PRINTING: &[&[&str]] = &[
     &["--no-verbose", "show", "HEAD"],
+    // A short blob without a trailing newline stays in stdout's line buffer until the final flush.
+    &["--no-verbose", "show", "HEAD:nonl"],
     &["--no-verbose", "tag", "list"],
     &["--no-verbose", "remote", "-n", "origin", "url"],
-    &["--no-verbose", "remote", "-n", "origin", "refs"],
-    &["--no-verbose", "remote", "-n", "origin", "ref-map"],
-    &["--no-verbose", "commit", "describe"],
     &["--no-verbose", "revision", "previous-branches"],
     &["--no-verbose", "verify", "--statistics"],
     &["--no-verbose", "tree", "entries"],
@@ -101,8 +114,6 @@ const PRINTING: &[&[&str]] = &[
     &["--no-verbose", "attributes", "query", "a.txt"],
     &["--no-verbose", "exclude", "query", "ignored.log"],
     &["--no-verbose", "submodule"],
-    &["--no-verbose", "submodule", "list"],
-    &["--no-verbose", "is-clean"],
     &["--no-verbose", "config"],
     &["--no-verbose", "config", "show"],
     &["--no-verbose", "config", "list"],
@@ -121,9 +132,6 @@ const PRINTING: &[&[&str]] = &[
 const FAILING: &[&[&str]] = &[
     &["--no-verbose", "show", "nope"],
     &["--no-verbose", "tree", "entries", "nope"],
-    &["--no-verbose", "commit", "describe", "nope"],
-    &["--no-verbose", "remote", "-n", "nope", "refs"],
-    &["--no-verbose", "is-changed"],
     &["build", "fingerprint", "missing.json"],
 ];
 
@@ -157,22 +165,35 @@ fn admitted_read_only_commands_end_quietly_when_their_reader_closes() -> Result<
         assert!(!closed.stderr.is_empty(), "the failure is still reported: {closed:?}");
     }
 
-    // `is-changed` prints only once there is a change; `is-clean` then fails and keeps its status.
-    std::fs::write(repo.join("a.txt"), "changed\n")?;
-    let args = ["--no-verbose", "is-changed"];
-    let live = brit(&repo).args(args).output()?;
-    assert_eq!(live.status.code(), Some(0), "brit {args:?}: {live:?}");
-    let closed = closed_stdout(&repo, &args)?;
-    assert_eq!(
-        (
+    // Two admitted commands write a format note to stderr on success; with stderr closed that write
+    // meets the closed reader and the command, otherwise successful, ends with 141.
+    for args in [
+        &["--no-verbose", "tree", "info"][..],
+        &["--no-verbose", "mailmap", "entries"],
+    ] {
+        let live = brit(&repo).args(args).output()?;
+        assert_eq!(live.status.code(), Some(0), "brit {args:?}: {live:?}");
+        assert!(
+            !live.stderr.is_empty(),
+            "brit {args:?} writes its note to stderr: {live:?}"
+        );
+        let closed = closed(&repo, 2, args)?;
+        assert_eq!(
             closed.status.code(),
-            String::from_utf8_lossy(&closed.stderr).into_owned()
-        ),
-        (Some(141), String::new()),
-        "brit {args:?} with its reader closed"
+            Some(141),
+            "brit {args:?} with stderr closed: {closed:?}"
+        );
+    }
+    // A failing revision is reported before the format note, so a closed stderr keeps its own status.
+    let args = ["--no-verbose", "tree", "info", "no-such-revision"];
+    let live = brit(&repo).args(args).output()?;
+    assert_ne!(live.status.code(), Some(0), "brit {args:?} fails: {live:?}");
+    let closed = closed(&repo, 2, &args)?;
+    assert_eq!(
+        closed.status.code(),
+        live.status.code(),
+        "brit {args:?} keeps its own status with stderr closed: {closed:?}"
     );
-    let closed = closed_stdout(&repo, &["--no-verbose", "is-clean"])?;
-    assert_eq!(closed.status.code(), Some(1), "is-clean fails on a change: {closed:?}");
     Ok(())
 }
 
@@ -196,9 +217,36 @@ fn fsck_reporting_a_missing_object_ends_quietly_when_its_reader_closes() -> Resu
 
     let args = ["--no-verbose", "fsck", "HEAD"];
     let live = brit(repo).args(args).output()?;
+    assert_eq!(live.status.code(), Some(0), "fsck reports and succeeds: {live:?}");
     assert!(
         String::from_utf8_lossy(&live.stdout).contains(blob),
         "fsck names the missing blob: {live:?}"
+    );
+    let closed = closed_stdout(repo, &args)?;
+    assert_eq!(
+        (
+            closed.status.code(),
+            String::from_utf8_lossy(&closed.stderr).into_owned()
+        ),
+        (Some(141), String::new()),
+        "brit {args:?} with its reader closed"
+    );
+    Ok(())
+}
+
+/// A whole output of `[]` without a newline reaches the closed reader only at the final flush.
+#[test]
+fn empty_json_ends_quietly_when_its_reader_closes() -> Result<()> {
+    let root = tempfile::tempdir()?;
+    let repo = root.path();
+    git(repo, &["init", "-q", "--initial-branch=main"])?;
+    git(repo, &["commit", "-q", "--allow-empty", "-m", "one"])?;
+    let args = ["--no-verbose", "-f", "json", "revision", "previous-branches"];
+    let live = brit(repo).args(args).output()?;
+    assert_eq!(
+        (live.status.code(), live.stdout.as_slice()),
+        (Some(0), &b"[]"[..]),
+        "brit {args:?}: {live:?}"
     );
     let closed = closed_stdout(repo, &args)?;
     assert_eq!(
