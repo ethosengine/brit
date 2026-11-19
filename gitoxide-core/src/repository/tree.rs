@@ -171,11 +171,11 @@ pub fn info(
     out: impl io::Write,
     mut err: impl io::Write,
 ) -> Result<()> {
+    // Resolve the revision before the note, so a bad revision keeps its own failure on a closed stderr.
+    let tree_id = treeish_to_tree(treeish, &repo)?;
     if format == OutputFormat::Human {
         writeln!(err, "Only JSON is implemented - using that instead").or_error()?;
     }
-
-    let tree_id = treeish_to_tree(treeish, &repo)?;
     let source = Source::new(
         &repo,
         gix::utils::stream::Budget::new(&std::env::temp_dir()).or_error()?,
