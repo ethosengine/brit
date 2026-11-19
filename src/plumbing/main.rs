@@ -288,7 +288,10 @@ pub fn run_with_command(args: Args, command: clap::Command) -> Result<()> {
     let auto_verbose = !args.no_verbose;
 
     let should_interrupt = Arc::new(AtomicBool::new(false));
-    #[expect(unsafe_code)]
+    #[expect(
+        unsafe_code,
+        reason = "installing the process signal handler is unsafe; the handler only stores an atomic flag"
+    )]
     unsafe {
         // SAFETY: The closure doesn't use mutexes or memory allocation, so it should be safe to call from a signal handler.
         gix::interrupt::init_handler(1, {
@@ -475,11 +478,20 @@ pub fn run_with_command(args: Args, command: clap::Command) -> Result<()> {
                 core::repository::diff::file(repository(Mode::Lenient)?, out, old_revspec, new_revspec)
             }),
         },
-        Subcommands::Log(crate::plumbing::options::log::Platform { pathspec, max_count }) => {
-            prepare_and_run("log", verbose, None, move |_progress, out, _err| {
-                core::repository::log::log_limited(repository(Mode::Lenient)?, out, pathspec, max_count)
-            })
-        }
+        Subcommands::Log(crate::plumbing::options::log::Platform {
+            max_count,
+            oneline,
+            rev,
+            paths,
+        }) => prepare_and_run("log", verbose, None, move |_progress, out, _err| {
+            let options = core::repository::log::Options {
+                rev,
+                paths,
+                max_count,
+                oneline,
+            };
+            core::repository::log::log_with(repository(Mode::Lenient)?, out, options)
+        }),
         Subcommands::Worktree(worktree::Platform { cmd }) => match cmd {
             worktree::SubCommands::List => {
                 prepare_and_run("worktree-list", verbose, None, move |_progress, out, _err| {

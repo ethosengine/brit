@@ -739,15 +739,29 @@ pub mod diff {
 pub mod log {
     use gix::bstr::BString;
 
-    /// List all commits in a repository, optionally limited to those that change a given path.
+    /// List commits reachable from a revision, optionally only those that change given paths.
+    ///
+    /// With a revision or paths, commits stream newest first by commit time, like `git log`,
+    /// and a shallow boundary ends the walk. Paths follow Git's default history
+    /// simplification: a commit counts when it differs from its parent at a path, a merge
+    /// equal to one parent there is skipped and only that parent is followed, and a root or
+    /// shallow-boundary commit counts when the path exists.
     #[derive(Debug, clap::Parser)]
     pub struct Platform {
         /// Stop after this many commits (Brit also accepts -N; zero prints none).
         #[clap(short = 'n', long)]
         pub max_count: Option<usize>,
-        /// The git path specification to show a log for.
-        #[clap(value_parser = crate::shared::AsBString)]
-        pub pathspec: Option<BString>,
+        /// Print the abbreviated hash (honouring core.abbrev, like `git log --oneline`) and title.
+        #[clap(long)]
+        pub oneline: bool,
+        /// The revision to start from (default HEAD). A name that is no revision but an
+        /// existing worktree path is read as a path; use `--` to force paths.
+        #[clap(value_parser = crate::shared::AsBString, value_name = "REV")]
+        pub rev: Option<BString>,
+        /// Only list commits that change one of these literal paths (files or directories,
+        /// relative to the current directory); a trailing slash matches only directories.
+        #[clap(last = true, value_parser = crate::shared::AsBString, value_name = "PATH")]
+        pub paths: Vec<BString>,
     }
 }
 
