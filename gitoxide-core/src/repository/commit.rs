@@ -767,15 +767,31 @@ pub fn create(
         let mut committer_buf = gix::date::parse::TimeBuf::default();
         let author_ref = author_sig.to_ref(&mut author_buf);
         let committer_ref = committer_sig.to_ref(&mut committer_buf);
-        repo.commit_as(
+        match repo.commit_as(
             committer_ref,
             author_ref,
             "HEAD",
             composed.as_str(),
             tree_id,
             parent_ids.iter().copied(),
-        )
-        .context("writing the commit object failed")?
+        ) {
+            Ok(id) => id,
+            Err(err) => {
+                // A lost compare-and-swap: another writer moved the branch after our checks.
+                let moved = repo.head().ok().is_some_and(|now| {
+                    now.id() != original_head.id() || now.referent_name() != original_head.referent_name()
+                });
+                if moved {
+                    let name = original_head
+                        .referent_name()
+                        .map_or_else(|| "HEAD".to_owned(), |name| name.as_bstr().to_string());
+                    bail!(
+                        "{name} moved concurrently while committing; no reference was changed (the new commit object is unreferenced); inspect it and retry: {err}"
+                    );
+                }
+                return Err(err).context("writing the commit object failed");
+            }
+        }
     };
 
     if let Some(merge) = &merge {
