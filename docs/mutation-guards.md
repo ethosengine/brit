@@ -82,11 +82,19 @@ would be a write the model reserves for `other_worktree_guard`.
   journal's own records and payloads and the pinned HEAD, index and branch, and restores
   nothing. An interrupted cancellation is finished by the next `--abort`. A `prepared`
   journal that already holds the pre-rebase private index and a prepared, never launched
-  hook invocation is cancelled the same way; once the hook's start is durable it is not.
-- A rebase no other action can finish or undo is retired with `brit rebase --retire`, under
-  the same guards as `--abort`: the journal is kept as `brit-rebase-kept-<nonce>`, which no
-  writer treats as pending.
-- Opening a recovery journal never applies the scratch quota, so `--status` always answers.
+  hook invocation is cancelled the same way, unless a live supervisor still holds that
+  invocation's lease; once the hook's start is durable it is not.
+- The scratch quota never refuses recovery: opening a journal never applies it, so
+  `--status` always answers, and `brit rebase --abort` and the cleanup of a completed or
+  aborted rebase are unmetered in every phase. Only forward steps are reserved for.
+- A completed or aborted rebase whose cleanup copy is all that remains (or an abort retaining
+  before it changed anything live) can be set aside with `brit rebase --retire`, under the same
+  guards as `--abort`: the journal is kept as `brit-rebase-kept-<nonce>`, which no writer
+  treats as pending. `--retire` removes no lock and refuses every other phase.
+- A rebase journal that does not open as this repository's own (moved or copied repository,
+  changed permissions, corrupt checksum) is touched by no command: every writer refuses,
+  `brit rebase --status` says what failed and what to do by hand, and warns that a copied
+  repository's journal may describe another repository's live rebase.
 - A `.brit-checkout-*` directory in a Git directory is a scratch leftover: a Brit process
   killed while it held one (a journal save, a payload copy, a switch or pull start) leaves it.
   It is not a journal and blocks nothing; `rebase --status` and `switch --status` report it

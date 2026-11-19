@@ -114,27 +114,45 @@ already published commit: explicit continuation acknowledges that uncertainty
 without rerunning the hook. Known-not-started post-authoring notifications remain
 queued durably and run once. Status distinguishes these cases from a clean stop.
 
-Every journal and retained copy lives under a 1 GiB scratch limit. A rebase is
-admitted only when its journal and the retained copy an abort or cleanup writes fit
-with a 5/4 safety factor: a cheap estimate refuses far-too-large repositories before
-any object is read, the exact records are checked once preparation finishes (a
-refusal there cancels the preparation, so nothing is left behind), and every later
-step or staged resolution is reserved for before it writes anything, so `--abort`
-always remains possible. Refusals name what was measured and point to `git rebase`.
+Every journal and retained copy lives under a 1 GiB scratch limit, and the limit
+decides only whether work starts or continues. A rebase is admitted only when its
+journal and the retained copy an abort or cleanup writes fit with a 5/4 safety
+factor: a cheap estimate refuses far-too-large repositories before any object is
+read, and the exact records are checked once preparation finishes (a refusal
+there cancels the preparation, so nothing is left behind). Admission allows for
+one stop and a resolution as large as the largest replayed step. Every later
+forward step (`--continue`, `--stage`, `--skip`, an edit) is reserved for before
+it writes anything; a refused step names `--abort`.
 
-`brit rebase --retire` returns to service a repository whose rebase no other action
-can finish or undo, deleting nothing and changing nothing live. It accepts a
-completed or aborted rebase whose cleanup is pending, a skip or abort stopped while
-retaining, any phase the scratch limit leaves no room to abort, and a journal
-recorded for another location of the repository (it was moved or copied). It
-refuses preparation, which `--abort` always cancels, and any phase `--continue` or
-`--abort` can still finish. It renames the journal to `brit-rebase-kept-<nonce>`
-beside it, leaves the `refs/brit-rebase-retain/<nonce>/*` references and any
-retained copy in place, and prints each kept piece, its size and the command that
-removes it. For a rebase that had begun changing the checkout it says so and names
-the command that returns to the unchanged branch. A second run reports nothing to
-retire. Older Brit releases do not treat `brit-rebase-kept-*` as a journal or a
-cleanup receipt.
+`--abort` and cleanup are never refused by the limit, in any phase: the abort's
+own decisions, its records and the retained copy it writes, and the cleanup of a
+completed or aborted rebase are unmetered. Only real disk space bounds them. A
+write that fails on a full disk removes its own partial file, and the command
+says so; free space and run the same command again.
+
+Brit's rebase is not available on repositories of roughly 180,000 objects or
+more, or whose history decompresses to about 0.9 GB, yet: every state image lists
+the whole object closure and the retained copy holds it, so such a rebase is
+refused in about a second, before anything is written. Use `git rebase` there.
+
+`brit rebase --retire` sets aside a rebase whose only remaining work is its
+retained copy, which can take long on a large repository or wait for disk space:
+a completed or aborted rebase whose cleanup is pending, or an abort that is
+retaining before it changed anything live. It deletes nothing and changes nothing
+live: it renames the journal to `brit-rebase-kept-<nonce>` beside it, leaves the
+`refs/brit-rebase-retain/<nonce>/*` references and any retained copy in place,
+and prints each kept piece, its size and the command that removes it. It refuses
+everything else, naming the command that applies: preparation and every phase
+with live state to restore (`--abort`), a decision in flight, and an open
+conflict-authoring session. A second run reports nothing to retire. Older Brit
+releases do not treat `brit-rebase-kept-*` as a journal or a cleanup receipt.
+
+A journal that does not open as this repository's own (the repository was moved
+or copied mid-rebase, the journal's permissions changed, or its checksum is
+corrupt) is touched by no Brit command. `--status` says what failed, warns that a
+copied repository's journal may describe another repository's live rebase, and
+names the directory, retention refs and lock files to deal with by hand; every
+other Brit mutation refuses until that is done.
 
 Publication and cleanup are separate. A message saying **committed/published with
 warning** or **cleanup pending** must not be interpreted as an unpublished

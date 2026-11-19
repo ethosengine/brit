@@ -178,17 +178,31 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.0.0/); ver
   `--abort`.
 - `brit rebase` refuses a gitlink whose submodule directory is absent by name, before any
   state, instead of failing after creating its journal. Gitlinks remain unsupported.
-- `brit rebase` no longer starts a rebase its 1 GiB scratch limit could leave unfinishable.
-  An estimate from object headers refuses far-too-large repositories before any object is
-  read; once preparation knows its exact records, a rebase whose journal or retained copy
-  could exceed the limit with a 5/4 safety factor is refused and its preparation cancelled;
-  and every later step or staged resolution is reserved for before it writes anything, so
-  `--abort` always remains possible. (An earlier change in this release admitted rebases
-  from about 0.3 of the limit that then stranded; that bound undercounted.) Opening a
-  journal never applies the limit, so `--status` always answers.
-- `brit rebase --retire` returns to service a repository whose rebase no other action can
-  finish or undo, deleting nothing: it keeps the journal as `brit-rebase-kept-<nonce>`, its
-  retention refs and retained copies, and prints how to remove each.
+- `brit rebase` no longer starts or continues work its 1 GiB scratch limit could not hold,
+  and the limit never refuses undoing. An estimate from object headers refuses far-too-large
+  repositories in about a second, saying brit rebase is not yet available at that size
+  (roughly 180,000 objects, or a closure near 0.9 GB) and that `git rebase` is the fallback;
+  once preparation knows its exact records, a rebase whose journal or retained copy could
+  exceed the limit with a 5/4 safety factor, allowing for one stop and its resolution, is
+  refused and its preparation cancelled; every later forward step (`--continue`, `--stage`,
+  `--skip`, an edit) is reserved for before it writes anything, and a refusal names
+  `--abort`. `--abort` and the cleanup of a completed or aborted rebase are never refused by
+  the limit, in any phase, so an admitted rebase can always be undone or finished; only the
+  disk bounds them, and a write that fails on a full disk removes its partial file so the
+  same command resumes. Opening a journal never applies the limit, so `--status` always
+  answers. (Earlier changes in this release admitted rebases that then stranded, and later
+  refused `--abort` itself at a large conflict resolution.)
+- `brit rebase --retire` sets aside a completed or aborted rebase whose retained copy is all
+  that remains (or an abort retaining before it changed anything live), deleting nothing and
+  changing nothing live: it keeps the journal as `brit-rebase-kept-<nonce>`, its retention
+  refs and retained copies, and prints how to remove each. It refuses every other phase,
+  naming `--abort` or `--continue`, and removes no lock.
+- A rebase journal that does not open as this repository's own (moved or copied repository,
+  changed permissions, corrupt checksum) is touched by no Brit command; `brit rebase
+  --status` says what failed, warns that a copied repository's journal may describe another
+  repository's live rebase, and names what to remove by hand.
+- `brit rebase --abort` declines to cancel a prepared hook invocation whose lease a live
+  supervisor still holds.
 - A `brit switch` or `brit pull` stopped before its first journal record no longer blocks the
   repository: `--status` says it recorded and changed nothing, and `--abort` removes it.
 - `brit fetch` refuses a refspec naming one ref the remote does not advertise, checks again
