@@ -1345,6 +1345,14 @@ fn git_spellings_take_no_guard_and_dash_c_guards_the_repository_it_enters() -> R
         &["rev-list", "--count", "HEAD"][..],
         &["merge-base", "--is-ancestor", "HEAD~1", "HEAD"][..],
         &["ls-remote", &path][..],
+        // `show` and every `diff` form read only, the working-file forms included (nothing is refreshed).
+        &["show", "HEAD"][..],
+        &["show", "--stat", "HEAD~1"][..],
+        &["diff"][..],
+        &["diff", "--cached"][..],
+        &["diff", "HEAD~1"][..],
+        &["diff", "--name-status", "HEAD~1", "HEAD"][..],
+        &["diff", "--merge-base", "HEAD~1", "HEAD"][..],
     ] {
         let out = brit(repo.path(), args)?;
         ensure!(out.status.success(), "{args:?} needs no guard: {}", out.stderr);

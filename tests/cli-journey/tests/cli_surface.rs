@@ -83,6 +83,35 @@ fn compiled_surface_includes_composed_namespaces_and_version_provenance_without_
             .any(|arg| arg["short"] == "C" && arg["valueNames"][0] == "DIR"),
         "global -C <DIR>"
     );
+    // `show` is Brit's own verb now, and `diff` takes revisions and every output form.
+    let longs = |name: &str| -> Vec<String> {
+        commands
+            .iter()
+            .find(|command| command["name"] == name)
+            .unwrap_or_else(|| panic!("missing {name}"))["options"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .filter_map(|arg| arg["long"].as_str().map(str::to_owned))
+            .collect()
+    };
+    let show = longs("show");
+    for long in ["stat", "name-only", "name-status", "numstat", "no-patch", "oneline"] {
+        assert!(show.iter().any(|l| l == long), "show --{long}");
+    }
+    let diff = longs("diff");
+    for long in [
+        "cached",
+        "merge-base",
+        "stat",
+        "name-only",
+        "name-status",
+        "numstat",
+        "exit-code",
+        "quiet",
+    ] {
+        assert!(diff.iter().any(|l| l == long), "diff --{long}");
+    }
     let force_delete = subcommand("branch", "force-delete");
     assert_eq!(force_delete["shortFlag"], "D");
     assert_eq!(force_delete["hidden"], true);

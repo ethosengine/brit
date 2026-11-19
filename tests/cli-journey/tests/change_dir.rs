@@ -168,3 +168,42 @@ fn change_dir_matches_git_in_a_repository_a_linked_worktree_and_a_submodule() ->
     }
     Ok(())
 }
+
+/// `diff` and `show` read a `--` from the raw arguments (clap drops a trailing one), and that still
+/// works after `-C`: `NAME --` reads NAME as a revision even when it is also a file in the worktree
+/// `-C` enters, where without the `--` the name is ambiguous.
+#[test]
+fn change_dir_keeps_the_path_separator_of_diff_and_show() -> Result<()> {
+    let top_dir = tempfile::tempdir()?;
+    let top = top_dir.path().canonicalize()?;
+    let away = tempfile::tempdir()?;
+    let away = away.path();
+    git_ok(&top, &["init", "-q", "--initial-branch=main", "repo"])?;
+    let repo = top.join("repo");
+    std::fs::write(repo.join("topic"), "a\n")?;
+    git_ok(&repo, &["add", "topic"])?;
+    git_ok(&repo, &["commit", "-q", "-m", "one"])?;
+    git_ok(&repo, &["branch", "topic"])?;
+    std::fs::write(repo.join("topic"), "b\n")?;
+    git_ok(&repo, &["commit", "-q", "-a", "-m", "two"])?;
+    std::fs::write(repo.join("topic"), "c\n")?;
+    for args in [
+        &["-C", s(&repo), "diff", "topic", "--"][..],
+        &["-C", s(&repo), "diff", "--", "topic"][..],
+        &["-C", s(&repo), "show", "topic", "--"][..],
+        &["-C", s(&repo), "show", "HEAD", "--", "topic"][..],
+    ] {
+        assert_same(away, args)?;
+    }
+    for args in [
+        &["-C", s(&repo), "diff", "topic"][..],
+        &["-C", s(&repo), "show", "topic"],
+    ] {
+        let ambiguous = brit(away, args)?;
+        assert!(
+            ambiguous.code != Some(0) && ambiguous.stderr.contains("both revision and filename"),
+            "without `--` the name is ambiguous, as in Git: {ambiguous:?}"
+        );
+    }
+    Ok(())
+}
