@@ -11,7 +11,7 @@ use std::sync::Arc;
 use brit_epr::BritCid;
 use gix::bstr::{BStr, BString, ByteSlice, ByteVec};
 use gix::{error::ResultExt, objs::FindStream, utils::stream::Budget};
-use globset::{Glob, GlobSet, GlobSetBuilder};
+use globset::{Glob, GlobBuilder, GlobSet, GlobSetBuilder};
 use regex_automata::{
     nfa::thompson::{self, State, WhichCaptures, NFA},
     util::{primitives::StateID, syntax},
@@ -47,7 +47,7 @@ impl ContentFingerprint {
         let mut builder = GlobSetBuilder::new();
         let mut globs = Vec::with_capacity(patterns.len());
         for pattern in patterns {
-            let glob = Glob::new(pattern).map_err(|e| FingerprintError::InvalidGlob {
+            let glob = compile_step_glob(pattern).map_err(|e| FingerprintError::InvalidGlob {
                 pattern: pattern.clone(),
                 message: e.to_string(),
             })?;
@@ -105,6 +105,29 @@ impl ContentFingerprint {
         // and symlink sections only when one was reached or matched.
         Ok(Self::from_inputs(inputs, gitlinks, symlinks))
     }
+}
+
+/// Compile one step glob, identically on every platform.
+///
+/// The one place step-glob syntax is fixed; blob matching and gitlink/symlink
+/// reach both use the glob (and so the regex) this returns. The settings are
+/// globset's Unix defaults, stated explicitly because globset turns
+/// `backslash_escape` off on Windows (where `\` is a path separator), which
+/// would compile the same manifest glob into a different matcher there:
+///
+/// - `backslash_escape(true)`: `\` escapes the next character (`\*` is a
+///   literal `*`); repository paths are always `/`-separated.
+/// - `literal_separator(false)`: `*` and `?` also match `/`.
+/// - `case_insensitive(false)`, `empty_alternates(false)`,
+///   `allow_unclosed_class(false)`.
+pub(crate) fn compile_step_glob(pattern: &str) -> Result<Glob, globset::Error> {
+    GlobBuilder::new(pattern)
+        .backslash_escape(true)
+        .literal_separator(false)
+        .case_insensitive(false)
+        .empty_alternates(false)
+        .allow_unclosed_class(false)
+        .build()
 }
 
 /// Upper bound on the heap a pattern's Thompson NFA may use. A pattern over
@@ -271,7 +294,10 @@ fn can_match_after(nfa: &NFA, prefix: &[u8]) -> bool {
 /// Whether the step's patterns reach the gitlink at `gitlink_path`.
 #[cfg(test)]
 fn patterns_reach_gitlink(patterns: &[&str], gitlink_path: &str) -> bool {
-    let globs: Vec<Glob> = patterns.iter().map(|p| Glob::new(p).expect("valid glob")).collect();
+    let globs: Vec<Glob> = patterns
+        .iter()
+        .map(|p| compile_step_glob(p).expect("valid glob"))
+        .collect();
     let mut builder = GlobSetBuilder::new();
     for glob in &globs {
         builder.add(glob.clone());
@@ -431,15 +457,38 @@ impl<'a> gix::traverse::tree::Visit for TreeCollector<'a> {
 
 #[cfg(test)]
 mod tests {
-    use globset::{Glob, GlobSetBuilder};
+    use globset::GlobSetBuilder;
 
-    use super::{patterns_reach_gitlink, GitlinkReach};
+    use super::{compile_step_glob, patterns_reach_gitlink, GitlinkReach};
+
+    /// Pins the step-glob settings so they mean the same on every platform:
+    /// a backslash escapes (globset's Windows default would not), and `*`
+    /// crosses `/`. Written to pass on Linux, macOS and Windows alike.
+    #[test]
+    fn step_globs_compile_identically_on_every_platform() {
+        let escaped = compile_step_glob("a\\*b/**").expect("valid glob");
+        assert_eq!(escaped.regex(), "(?-u)^a\\*b/.*$");
+        let escaped = escaped.compile_matcher();
+        assert!(escaped.is_match("a*b/x"));
+        assert!(!escaped.is_match("axb/x"));
+
+        let star = compile_step_glob("a*b").expect("valid glob").compile_matcher();
+        assert!(star.is_match("a/x/b"), "`*` crosses `/`");
+        assert!(!compile_step_glob("A*")
+            .expect("valid glob")
+            .compile_matcher()
+            .is_match("a"));
+
+        // The reach decision compiles the same way.
+        assert!(patterns_reach_gitlink(&["\\[\\]\\]/**"], "[]]"));
+        assert!(patterns_reach_gitlink(&["\\[-\\]/**"], "[-]"));
+    }
 
     /// A pattern whose NFA exceeds the size limit reaches every gitlink: the
     /// decision may over-key a step, never under-key it.
     #[test]
     fn size_limit_hit_answers_reaches() {
-        let globs = vec![Glob::new("elohim/other/**").expect("valid glob")];
+        let globs = vec![compile_step_glob("elohim/other/**").expect("valid glob")];
         let mut builder = GlobSetBuilder::new();
         builder.add(globs[0].clone());
         let globset = builder.build().expect("valid set");
