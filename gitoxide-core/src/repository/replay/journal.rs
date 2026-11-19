@@ -1,3 +1,30 @@
+//! The durable replay journal under `<git-dir>/brit-rebase`.
+//!
+//! # Preparation is cancellable without its own success
+//!
+//! A preparation that fails, for any reason including the very verification it
+//! was running, must never leave a journal that only its own success can clear.
+//!
+//! 1. Nothing live is changed before the phase leaves preparation. `prepare_mode`
+//!    and `complete_preparation` read HEAD, the index, branches and worktree files
+//!    and write only the private journal directory, its records and payload copies,
+//!    and the two retention references; the object directory is only synchronized.
+//!    The first live write is the initial checkout decision, which `advance` makes
+//!    only from phase `prepared`.
+//! 2. Every artifact preparation creates is named in the journal before it exists:
+//!    `state.json` is published before any payload or reference is created, payload
+//!    files are the `payloads` keys, and the references are named by `nonce` and the
+//!    `retained` labels. A directory without `state.json` therefore holds nothing else.
+//! 3. Cancellation ([`Session::cancel_preparation`]) reads only those named artifacts
+//!    and the pinned HEAD, index and branch fingerprints. It never reads or verifies
+//!    an object, never re-captures preservation, never builds a retained copy, and is
+//!    exempt from the journal-open scratch quota.
+//! 4. If live state differs from the pinned fingerprints, cancellation still removes
+//!    Brit's own artifacts and reports each difference; it restores nothing.
+//!
+//! Not covered: the scratch spool directory (`.brit-checkout-*` in the Git
+//! directory) of a process killed while copying a payload is named by no journal,
+//! so cancellation leaves it; it blocks no command.
 use super::*;
 #[path = "interactive.rs"]
 mod interactive;
@@ -370,7 +397,7 @@ impl Session {
             }
         };
         let mut session = session;
-        session.save_bytes(&bytes)?;
+        session.save_bytes(&bytes, true)?;
         drop(bytes);
         switch::sync_dir(repo.git_dir())?;
         switch::checkpoint("replay-prepared")?;
@@ -2114,6 +2141,20 @@ impl Session {
     }
 
     fn open_directory(repo: &gix::Repository, directory: std::path::PathBuf, name: &str) -> Result<Self> {
+        Self::open_directory_checked(repo, directory, name, true)
+    }
+
+    /// `full` is every ordinary open: it refuses an exhausted journal and validates
+    /// payload contents and retention references. Cancelling a preparation opens
+    /// with `full = false`: it still proves ownership, identity and the checksum,
+    /// but it neither applies the journal quota nor reads anything it is about to
+    /// remove, so a journal that grew past the quota or lost a ref can be released.
+    fn open_directory_checked(
+        repo: &gix::Repository,
+        directory: std::path::PathBuf,
+        name: &str,
+        full: bool,
+    ) -> Result<Self> {
         let metadata = fs::symlink_metadata(&directory)?;
         ensure!(
             metadata.is_dir()
@@ -2128,13 +2169,10 @@ impl Session {
             "unsafe replay state"
         );
         // Refuse an exhausted journal before allocating its encoded metadata.
-        switch::payload::check_growth(&directory, 0)?;
-        let envelope: Envelope = serde_json::from_slice(&fs::read(path)?)?;
-        ensure!(
-            switch::digest(&envelope.payload)? == envelope.checksum,
-            "replay journal checksum mismatch"
-        );
-        let state: ParentState = serde_json::from_slice(&envelope.payload)?;
+        if full {
+            switch::payload::check_growth(&directory, 0)?;
+        }
+        let state = decode_state(&read_record(&path)?)?;
         ensure!(
             matches!(state.version, 1 | 2)
                 && state.nonce.len() == 40
@@ -2154,9 +2192,11 @@ impl Session {
             .collect::<std::io::Result<_>>()?;
         ensure!(identities == state.identities, "replay inode identity mismatch");
         let session = Self { directory, state };
-        session.validate_payloads()?;
-        if session.state.phase == "prepared" {
-            session.validate_retention(repo)?;
+        if full {
+            session.validate_payloads()?;
+            if session.state.phase == "prepared" {
+                session.validate_retention(repo)?;
+            }
         }
         Ok(session)
     }
@@ -2250,87 +2290,184 @@ impl Session {
 
     /// Cancel an unpublished preparation. This performs no restoration because
     /// preparation has not modified live files, the index, HEAD, or branches.
-    pub fn abort_prepared(&self, repo: &gix::Repository) -> Result<()> {
+    /// Returns the live-state differences found, which are left as they are.
+    pub fn abort_prepared(&self, repo: &gix::Repository) -> Result<Vec<String>> {
         let _guard = switch::shared_guard(repo)?;
-        let mut current = Self::open(repo)?;
+        let current = Self::open_directory_checked(repo, self.directory.clone(), "state.json", false)?;
         ensure!(
             serde_json::to_vec(&current.state)? == serde_json::to_vec(&self.state)?,
             "stale replay session"
         );
+        Self::cancel_locked(repo, &self.directory)?.context("only an unpublished preparation can be cancelled here")
+    }
+
+    /// Cancel the active journal if its phase shows preparation never left
+    /// preparation: `preparing`, `cancelling-prepared`, or `prepared` before
+    /// anything beyond preparation's own members was added. Returns `None`,
+    /// changing nothing, for any other journal; the caller then uses [`Self::abort`].
+    ///
+    /// The rule this implements is the module's preparation contract: preparation
+    /// changes nothing live, names every artifact in `state.json` before creating
+    /// it, and is therefore cancellable without its own success. Cancellation
+    /// reads only those named artifacts and the pinned HEAD, index and branch
+    /// fingerprints: it never reads or verifies an object, never re-captures
+    /// preservation, never builds a retained copy, and does not apply the journal
+    /// quota. Live state that differs from the pinned fingerprints is someone
+    /// else's change; it is left as found and returned for the caller to report.
+    pub fn cancel_preparation(repo: &gix::Repository) -> Result<Option<Vec<String>>> {
+        let _guard = switch::shared_guard(repo)?;
+        Self::cancel_locked(repo, &repo.git_dir().join("brit-rebase"))
+    }
+
+    fn cancel_locked(repo: &gix::Repository, directory: &Path) -> Result<Option<Vec<String>>> {
+        const PREPARATION: [&str; 3] = ["preparing", "prepared", "cancelling-prepared"];
+        let owner = fs::metadata(repo.git_dir())?.uid();
+        let metadata = fs::symlink_metadata(directory)?;
         ensure!(
-            matches!(
-                self.state.phase.as_str(),
-                "preparing" | "prepared" | "cancelling-prepared"
-            ),
-            "only an unpublished preparation can be cancelled here"
+            metadata.is_dir() && metadata.permissions().mode().trailing_zeros() >= 6 && metadata.uid() == owner,
+            "unsafe replay directory"
         );
-        ensure!(
-            switch::snapshot(&repo.git_dir().join("HEAD"))? == self.state.head,
-            "foreign HEAD movement"
-        );
-        ensure!(
-            super::head_commit_id(repo)? == gix::ObjectId::from_hex(self.state.original.as_bytes())?,
-            "original branch moved"
-        );
-        ensure!(
-            switch::payload::fingerprint(&repo.index_path())? == self.state.index,
-            "foreign index mutation"
-        );
-        let pending = self.directory.join("state.pending");
-        if fs::symlink_metadata(&pending).is_ok() {
-            let candidate = Self::open_record(repo, "state.pending")?;
-            let mut comparable = candidate.state.clone();
-            ensure!(
-                matches!(
-                    comparable.phase.as_str(),
-                    "preparing" | "prepared" | "cancelling-prepared"
-                ),
-                "invalid pending cancellation"
-            );
-            comparable.phase.clone_from(&current.state.phase);
-            ensure!(
-                serde_json::to_vec(&comparable)? == serde_json::to_vec(&current.state)?,
-                "foreign pending cancellation"
-            );
-            fs::rename(&pending, self.directory.join("state.json"))?;
-            switch::sync_dir(&self.directory)?;
-            current = candidate;
+        if !present(&directory.join("state.json"))? {
+            return Self::release_unpublished(repo, directory, owner).map(Some);
         }
-        current.validate_payloads()?;
-        for entry in fs::read_dir(&self.directory)? {
+        let mut current = Self::open_directory_checked(repo, directory.to_owned(), "state.json", false)?;
+        if !PREPARATION.contains(&current.state.phase.as_str()) {
+            return Ok(None);
+        }
+        let pending = directory.join("state.pending");
+        if present(&pending)? {
+            ensure!(
+                owned_private_file(&pending, owner)?,
+                "unsafe pending replay state; inspect it before cancelling"
+            );
+            match decode_state(&read_record(&pending)?) {
+                Ok(candidate) if !PREPARATION.contains(&candidate.phase.as_str()) => {
+                    // A successor that already left preparation, e.g. an
+                    // operation hook's durable start: the full abort owns it.
+                    ensure!(
+                        current.state.phase == "prepared",
+                        "pending replay state has progressed beyond preparation; inspect with --status"
+                    );
+                    return Ok(None);
+                }
+                Ok(candidate) => {
+                    let mut comparable = candidate.clone();
+                    comparable.phase.clone_from(&current.state.phase);
+                    ensure!(
+                        serde_json::to_vec(&comparable)? == serde_json::to_vec(&current.state)?,
+                        "foreign pending preparation state; inspect it before cancelling"
+                    );
+                    fs::rename(&pending, directory.join("state.json"))?;
+                    switch::sync_dir(directory)?;
+                    current.state = candidate;
+                }
+                // A record torn by process death never became state; it is
+                // brit's own private member and holds nothing else.
+                Err(_) => {
+                    fs::remove_file(&pending)?;
+                    switch::sync_dir(directory)?;
+                }
+            }
+        }
+        for entry in fs::read_dir(directory)? {
             let name = entry?.file_name();
-            ensure!(
-                name == "state.json"
-                    || current
-                        .state
-                        .payloads
-                        .keys()
-                        .any(|hash| name == format!("payload-{hash}").as_str()),
-                "unknown replay journal member; inspect before cleanup"
-            );
+            let named = name == "state.json"
+                || current
+                    .state
+                    .payloads
+                    .keys()
+                    .any(|hash| name == format!("payload-{hash}").as_str());
+            if !named {
+                // `prepared` may already carry the first step's private index or
+                // a prepared hook invocation; those belong to the full abort.
+                if current.state.phase == "prepared" {
+                    return Ok(None);
+                }
+                anyhow::bail!("unknown replay journal member {name:?}; inspect it before cancelling");
+            }
         }
+        let differences = current.live_differences(repo)?;
         if current.state.phase != "cancelling-prepared" {
             current.state.phase = "cancelling-prepared".into();
-            current.save()?;
+            // Unmetered: a journal the quota refuses must still be cancellable.
+            current.save_bytes(&current.state_bytes()?, false)?;
         }
-        for (label, id) in [("original", &self.state.original), ("upstream", &self.state.upstream)] {
-            let name = format!("refs/brit-rebase-retain/{}/{label}", self.state.nonce);
+        for (label, id) in [
+            ("original", &current.state.original),
+            ("upstream", &current.state.upstream),
+        ] {
+            let name = format!("refs/brit-rebase-retain/{}/{label}", current.state.nonce);
             if let Some(reference) = repo.try_find_reference(name.as_str())? {
                 ensure!(
                     matches!(reference.target(), gix::refs::TargetRef::Object(_))
                         && reference.id() == gix::ObjectId::from_hex(id.as_bytes())?,
-                    "foreign replay retention reference"
+                    "foreign replay retention reference {name}; inspect it before cancelling"
                 );
                 reference.delete()?;
             }
         }
         sync_reference_storage(repo)?;
-        let tombstone = repo.git_dir().join(format!("brit-rebase-done-{}", self.state.nonce));
+        let tombstone = repo.git_dir().join(format!("brit-rebase-done-{}", current.state.nonce));
         ensure!(!tombstone.exists(), "replay tombstone collision");
-        fs::rename(&self.directory, &tombstone)?;
+        fs::rename(directory, &tombstone)?;
         switch::sync_dir(repo.git_dir())?;
         switch::checkpoint("replay-preparation-tombstoned")?;
-        Self::cleanup_prepared_inner(repo, &tombstone)
+        Self::cleanup_prepared_inner(repo, &tombstone)?;
+        Ok(Some(differences))
+    }
+
+    /// Release a journal directory that never published `state.json`. Preparation
+    /// publishes its first record before it creates any payload or retention
+    /// reference, so such an allocation holds at most an unpublished
+    /// `state.pending` and nothing else of the operation exists.
+    fn release_unpublished(repo: &gix::Repository, directory: &Path, owner: u32) -> Result<Vec<String>> {
+        let entries = fs::read_dir(directory)?.collect::<std::io::Result<Vec<_>>>()?;
+        for entry in &entries {
+            ensure!(
+                entry.file_name() == "state.pending" && owned_private_file(&entry.path(), owner)?,
+                "unknown member {:?} in an unpublished replay journal; inspect it before cancelling",
+                entry.file_name()
+            );
+        }
+        for entry in entries {
+            fs::remove_file(entry.path())?;
+        }
+        switch::sync_dir(directory)?;
+        fs::remove_dir(directory)?;
+        switch::sync_dir(repo.git_dir())?;
+        Ok(Vec::new())
+    }
+
+    /// Live state that no longer matches what preparation pinned.
+    fn live_differences(&self, repo: &gix::Repository) -> Result<Vec<String>> {
+        let mut differences = Vec::new();
+        if switch::snapshot(&repo.git_dir().join("HEAD"))? != self.state.head {
+            differences.push("HEAD changed since preparation".to_owned());
+        }
+        match super::head_commit_id(repo) {
+            Ok(id) if id.to_string() == self.state.original => {}
+            Ok(id) => differences.push(format!(
+                "HEAD now names {id}; preparation pinned {}",
+                self.state.original
+            )),
+            Err(error) => differences.push(format!("HEAD no longer names a readable commit: {error}")),
+        }
+        if switch::payload::fingerprint(&repo.index_path())? != self.state.index {
+            differences.push("the index changed since preparation".to_owned());
+        }
+        if let Some(name) = &self.state.attachment {
+            match repo.try_find_reference(name.as_bstr())? {
+                Some(reference)
+                    if matches!(reference.target(), gix::refs::TargetRef::Object(_))
+                        && reference.id().to_string() == self.state.original => {}
+                _ => differences.push(format!(
+                    "branch {} no longer names {}",
+                    name.as_bstr(),
+                    self.state.original
+                )),
+            }
+        }
+        Ok(differences)
     }
 
     /// Finish cleanup after an already cancelled preparation was tombstoned.
@@ -2363,7 +2500,7 @@ impl Session {
                 serde_json::from_slice::<ParentState>(&envelope.payload)?
             }
             Err(error) if error.kind() == std::io::ErrorKind::NotFound => {
-                let session = Self::open_directory(repo, tombstone.to_owned(), "state.json")?;
+                let session = Self::open_directory_checked(repo, tombstone.to_owned(), "state.json", false)?;
                 ensure!(
                     session.state.phase == "cancelling-prepared",
                     "tombstone is not cancelled"
@@ -2496,7 +2633,9 @@ impl Session {
         Ok(bytes)
     }
 
-    fn save_bytes(&self, bytes: &[u8]) -> Result<()> {
+    /// `metered` applies the journal quota to a new record; only cancellation
+    /// writes unmetered, so an exhausted journal can still be released.
+    fn save_bytes(&self, bytes: &[u8], metered: bool) -> Result<()> {
         let temporary = self.directory.join("state.pending");
         match fs::symlink_metadata(&temporary) {
             Ok(metadata) => {
@@ -2510,7 +2649,9 @@ impl Session {
                 switch::sync_path(&temporary)?;
             }
             Err(error) if error.kind() == std::io::ErrorKind::NotFound => {
-                switch::payload::check_growth(&self.directory, bytes.len() as u64)?;
+                if metered {
+                    switch::payload::check_growth(&self.directory, bytes.len() as u64)?;
+                }
                 switch::private_write(&temporary, bytes)?;
             }
             Err(error) => return Err(error.into()),
@@ -3157,6 +3298,42 @@ fn sync_tree(path: &Path) -> Result<()> {
     }
 }
 
+/// Read one journal record, refusing before allocation a file larger than any
+/// record the journal quota lets brit write.
+fn read_record(path: &Path) -> Result<Vec<u8>> {
+    let size = fs::symlink_metadata(path)?.len();
+    ensure!(
+        size <= gix::utils::stream::SCRATCH_LIMIT,
+        "replay journal record {} is {size} bytes, larger than brit ever writes; inspect it",
+        path.display()
+    );
+    Ok(fs::read(path)?)
+}
+
+/// Decode one journal record and verify its checksum.
+fn decode_state(bytes: &[u8]) -> Result<ParentState> {
+    let envelope: Envelope = serde_json::from_slice(bytes)?;
+    ensure!(
+        switch::digest(&envelope.payload)? == envelope.checksum,
+        "replay journal checksum mismatch"
+    );
+    Ok(serde_json::from_slice(&envelope.payload)?)
+}
+
+fn present(path: &Path) -> Result<bool> {
+    match fs::symlink_metadata(path) {
+        Ok(_) => Ok(true),
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => Ok(false),
+        Err(error) => Err(error.into()),
+    }
+}
+
+/// A private regular file this user owns, as every journal member is written.
+fn owned_private_file(path: &Path, owner: u32) -> Result<bool> {
+    let metadata = fs::symlink_metadata(path)?;
+    Ok(metadata.is_file() && metadata.uid() == owner && metadata.permissions().mode().trailing_zeros() >= 6)
+}
+
 fn raw(path: &Path) -> Result<Vec<u8>> {
     Ok(gix::path::into_bstr(fs::canonicalize(path)?)?.to_vec())
 }
@@ -3438,6 +3615,12 @@ impl Session {
             writeln!(
                 out,
                 "Empty stop: --continue keeps an empty commit; --skip drops this input."
+            )?;
+        }
+        if matches!(self.phase(), "preparing" | "cancelling-prepared") {
+            writeln!(
+                out,
+                "Preparation did not finish and changed nothing live: --abort cancels it without reading objects; --continue retries it."
             )?;
         }
         if matches!(self.phase(), "pre-unknown" | "invoking-pre")

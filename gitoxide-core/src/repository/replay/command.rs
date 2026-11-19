@@ -51,6 +51,7 @@ pub fn run(mut repo: gix::Repository, action: Action, out: &mut dyn Write, err: 
     }
     if !active {
         let receipts = cleanup_receipts(&repo)?;
+        let cancelled = cancelled_preparations(&repo)?;
         match action {
             Action::Status => {
                 writeln!(out, "No active rebase.")?;
@@ -60,6 +61,19 @@ pub fn run(mut repo: gix::Repository, action: Action, out: &mut dyn Write, err: 
                         out,
                         "Cleanup pending (reservation retired: {retired}): {path:?}; retained copy: {copy:?}"
                     )?;
+                }
+                for path in cancelled {
+                    writeln!(
+                        out,
+                        "Cancelled preparation not yet removed: {path:?}; brit rebase --abort finishes it"
+                    )?;
+                }
+                return Ok(());
+            }
+            Action::Abort if !cancelled.is_empty() => {
+                for path in cancelled {
+                    Session::cleanup_prepared(&repo, &path)?;
+                    writeln!(out, "Finished removing cancelled preparation {path:?}")?;
                 }
                 return Ok(());
             }
@@ -76,6 +90,18 @@ pub fn run(mut repo: gix::Repository, action: Action, out: &mut dyn Write, err: 
             _ => anyhow::bail!("no rebase in progress"),
         }
     }
+    if matches!(action, Action::Abort)
+        && let Some(differences) = Session::cancel_preparation(&repo)?
+    {
+        writeln!(
+            out,
+            "Rebase preparation cancelled; it had changed nothing live, so nothing was restored."
+        )?;
+        for difference in differences {
+            writeln!(err, "warning: {difference}; left as found")?;
+        }
+        return Ok(());
+    }
     let mut session = Session::open(&repo)?;
     let result = match action {
         Action::Status => {
@@ -85,9 +111,6 @@ pub fn run(mut repo: gix::Repository, action: Action, out: &mut dyn Write, err: 
         Action::ShowCurrentPatch => session.show_current_patch(&repo, out),
         Action::Continue => continue_operation(&repo, &mut session, out, err),
         Action::Abort => {
-            if session.phase() == "preparing" {
-                session = Session::recover_preparation(&repo)?;
-            }
             if session.phase() == "aborted" {
                 return cleanup(&repo, &mut session, out);
             }
@@ -271,6 +294,25 @@ fn cleanup(repo: &gix::Repository, session: &mut super::Session, out: &mut dyn W
         }
         Err(error) => anyhow::bail!("rebase {terminal}; cleanup pending, retained data remains: {error:#}"),
     }
+}
+
+/// Tombstones of cancelled preparations whose removal was interrupted, named by
+/// their directory, or by their receipt once the directory itself is gone.
+#[cfg(target_os = "linux")]
+fn cancelled_preparations(repo: &gix::Repository) -> Result<Vec<PathBuf>> {
+    use gix::bstr::ByteSlice;
+    let mut paths = std::collections::BTreeSet::new();
+    for entry in std::fs::read_dir(repo.git_dir())? {
+        let name = entry?.file_name();
+        let Some(rest) = name.as_encoded_bytes().strip_prefix(b"brit-rebase-done-") else {
+            continue;
+        };
+        let nonce = rest.strip_suffix(b".receipt").unwrap_or(rest);
+        if nonce.len() == 40 && nonce.iter().all(u8::is_ascii_hexdigit) {
+            paths.insert(repo.git_dir().join(format!("brit-rebase-done-{}", nonce.as_bstr())));
+        }
+    }
+    Ok(paths.into_iter().collect())
 }
 
 #[cfg(target_os = "linux")]

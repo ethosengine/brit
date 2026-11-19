@@ -337,6 +337,49 @@ fn shallow_repository_rebase_refuses_before_any_state() -> Result<()> {
     preserved(root)
 }
 
+/// A divergent repository whose index and history carry a gitlink at `sub`
+/// whose submodule directory was never checked out.
+fn uninitialised_gitlink_fixture() -> Result<TestRepo> {
+    let repo = TestRepo::new("gitlink-rebase")?;
+    let root = repo.path();
+    repo.commit_file("base", "base\n")?;
+    git(
+        root,
+        &[
+            "update-index",
+            "--add",
+            "--cacheinfo",
+            "160000,1111111111111111111111111111111111111111,sub",
+        ],
+    )?;
+    git(root, &["commit", "-q", "-m", "gitlink"])?;
+    git(root, &["switch", "-q", "-c", "upstream"])?;
+    repo.commit_file("upstream", "upstream\n")?;
+    git(root, &["switch", "-q", "main"])?;
+    repo.commit_file("topic", "topic\n")?;
+    ensure!(!root.join("sub").exists(), "submodule directory is absent");
+    Ok(repo)
+}
+
+/// The gitlink's commit is not a local object. Preparation that failed on it
+/// after creating its journal must still cancel with `--abort`, after which
+/// every brit mutation works again.
+#[test]
+fn uninitialised_gitlink_preparation_failure_cancels_with_abort() -> Result<()> {
+    let repo = uninitialised_gitlink_fixture()?;
+    let root = repo.path();
+    let head = rev(root, "HEAD")?;
+    let index = fs::read(root.join(".git/index"))?;
+    refused(root, &["rebase", "upstream"])?;
+    success(root, &["rebase", "--abort"])?;
+    assert!(!root.join(".git/brit-rebase").exists());
+    assert!(git(root, &["for-each-ref", "refs/brit-rebase-retain"])?.is_empty());
+    assert_eq!(rev(root, "HEAD")?, head);
+    assert_eq!(fs::read(root.join(".git/index"))?, index);
+    success(root, &["branch", "create", "after-abort"])?;
+    Ok(())
+}
+
 #[test]
 fn public_linear_replay_finishes_and_helper_exports_after_cleanup_without_runtime_git() -> Result<()> {
     let repo = fixture(false)?;
@@ -879,9 +922,11 @@ mod recovery {
                 expected_refs
             );
             preserved(root)?;
-            // Recovery must honor a fresh cancellation before it adds any ref.
+            // `--abort` cancels without rolling preparation forward, so it adds no
+            // ref; interrupted before its cancellation record is published, it
+            // has changed nothing, and the next `--abort` finishes.
             let markers = tempfile::tempdir()?;
-            let point = "replay-retention-reference";
+            let point = "replay-state-file-synced";
             let mut child = launch(
                 root,
                 &["rebase", "--abort"],
@@ -906,6 +951,210 @@ mod recovery {
             assert!(!root.join(".git/brit-rebase").exists());
             assert!(git(root, &["for-each-ref", "refs/brit-rebase-retain"])?.is_empty());
             preserved(root)?;
+        }
+        Ok(())
+    }
+
+    /// Brit's own leftovers in the Git directory: journal, tombstones, cleanup
+    /// receipts, retained copies, scratch directories and retention refs.
+    fn assert_no_rebase_leftovers(root: &Path, scratch: &Path) -> Result<()> {
+        let mut leftovers = Vec::new();
+        for entry in fs::read_dir(root.join(".git"))? {
+            let name = entry?.file_name().to_string_lossy().into_owned();
+            if name.starts_with("brit-rebase") || name.starts_with(".brit-checkout-") {
+                leftovers.push(name);
+            }
+        }
+        ensure!(leftovers.is_empty(), "rebase leftovers in .git: {leftovers:?}");
+        ensure!(
+            git(root, &["for-each-ref", "refs/brit-rebase-retain"])?.is_empty(),
+            "retention refs remain"
+        );
+        let spools = fs::read_dir(scratch)?
+            .map(|entry| Ok(entry?.file_name()))
+            .collect::<Result<Vec<_>>>()?;
+        ensure!(spools.is_empty(), "scratch leftovers in TMPDIR: {spools:?}");
+        Ok(())
+    }
+
+    fn remove_killed_payload_spool(root: &Path) -> Result<()> {
+        let mut spools = Vec::new();
+        for entry in fs::read_dir(root.join(".git"))? {
+            let entry = entry?;
+            if entry.file_name().to_string_lossy().starts_with(".brit-checkout-") {
+                spools.push(entry.path());
+            }
+        }
+        ensure!(spools.len() == 1, "exactly the killed spool directory: {spools:?}");
+        for member in fs::read_dir(&spools[0])? {
+            let member = member?;
+            ensure!(
+                member.file_name().to_string_lossy().starts_with("blob-") && member.path().is_file(),
+                "only spool files in {:?}",
+                spools[0]
+            );
+            fs::remove_file(member.path())?;
+        }
+        fs::remove_dir(&spools[0])?;
+        Ok(())
+    }
+
+    fn abort_with_scratch(root: &Path, scratch: &Path) -> Result<Capture> {
+        BritInvocation::new(brit_bin().expect("fault-enabled artifact"))
+            .current_dir(root)
+            .args(["rebase", "--abort"])
+            .env("TMPDIR", scratch)
+            .run()
+    }
+
+    /// A preparation that failed at any checkpoint, by interruption or by
+    /// process death, is cancelled by `--abort` without being rolled forward:
+    /// the abort exits 0, leaves nothing of the operation behind, and the next
+    /// rebase works. Before the fix, `--abort` re-ran the failed verification.
+    #[test]
+    fn public_failed_preparation_always_aborts_to_a_usable_repository() -> Result<()> {
+        for point in [
+            "replay-before-journal",
+            "replay-journal-ready",
+            "replay-state-file-synced",
+            "replay-state-directory-synced",
+            "replay-prepared",
+            "replay-payload-intent",
+            "replay-payload-persisted",
+            "replay-retention-verify",
+            "replay-retention-reference",
+            "replay-retention-reference-published",
+            "replay-retained",
+        ] {
+            for signal in ["-INT", "-KILL"] {
+                let repo = fixture(false)?;
+                let root = repo.path();
+                let head = git(root, &["rev-parse", "HEAD"])?;
+                let index = fs::read(root.join(".git/index"))?;
+                let markers = tempfile::tempdir()?;
+                let scratch = tempfile::tempdir()?;
+                let mut child = launch(
+                    root,
+                    &["rebase", "upstream"],
+                    &[
+                        ("BRIT_SWITCH_CHECKPOINT", point.as_ref()),
+                        ("BRIT_SWITCH_CHECKPOINT_DIR", markers.path().as_os_str()),
+                        ("TMPDIR", scratch.path().as_os_str()),
+                    ],
+                )?;
+                wait_file(&mut child, &markers.path().join(format!("{point}.reached")))?;
+                interrupt(&mut child, signal)?;
+                assert_eq!(git(root, &["rev-parse", "HEAD"])?, head);
+                assert_eq!(fs::read(root.join(".git/index"))?, index);
+                // Before the journal exists there is nothing to abort.
+                let journal = root.join(".git/brit-rebase").exists();
+                let aborted = abort_with_scratch(root, scratch.path())?;
+                ensure!(
+                    aborted.status.success() || !journal,
+                    "{point} {signal}: --abort must cancel a failed preparation: {}",
+                    aborted.stderr
+                );
+                ensure!(
+                    !root.join(".git/brit-rebase").exists(),
+                    "{point} {signal}: journal remains"
+                );
+                if signal == "-KILL" && point.starts_with("replay-payload-") {
+                    // Known residual: the spool directory of a process killed while
+                    // persisting a payload is named by no journal, so cancellation
+                    // cannot claim it. Only that spool may remain; it blocks nothing.
+                    remove_killed_payload_spool(root)?;
+                }
+                assert_no_rebase_leftovers(root, scratch.path())
+                    .map_err(|error| error.context(format!("{point} {signal}")))?;
+                assert_eq!(git(root, &["rev-parse", "HEAD"])?, head);
+                assert_eq!(fs::read(root.join(".git/index"))?, index);
+                preserved(root)?;
+                success(root, &["rebase", "upstream"])?;
+                preserved(root)?;
+            }
+        }
+        Ok(())
+    }
+
+    /// Cancellation never reads objects: a prepared journal whose pinned
+    /// history lost an object still aborts, while `--continue` refuses.
+    #[test]
+    fn public_preparation_abort_never_reads_the_object_database() -> Result<()> {
+        let repo = fixture(false)?;
+        let root = repo.path();
+        let head = git(root, &["rev-parse", "HEAD"])?;
+        let markers = tempfile::tempdir()?;
+        let point = "replay-retention-verify";
+        let mut child = launch(
+            root,
+            &["rebase", "upstream"],
+            &[
+                ("BRIT_SWITCH_CHECKPOINT", point.as_ref()),
+                ("BRIT_SWITCH_CHECKPOINT_DIR", markers.path().as_os_str()),
+            ],
+        )?;
+        wait_file(&mut child, &markers.path().join(format!("{point}.reached")))?;
+        interrupt(&mut child, "-KILL")?;
+        // The upstream-only commit is pinned by the journal and reachable from
+        // nothing the user changed; its loose object is the one to lose.
+        let lost = String::from_utf8(git(root, &["rev-parse", "upstream"])?)?;
+        let lost = lost.trim();
+        let object = root.join(".git/objects").join(&lost[..2]).join(&lost[2..]);
+        ensure!(object.is_file(), "fixture keeps loose objects");
+        fs::remove_file(&object)?;
+        refused(root, &["rebase", "--continue"])?;
+        let aborted = invoke(root, &["rebase", "--abort"])?;
+        ensure!(aborted.status.success(), "abort read objects: {}", aborted.stderr);
+        assert!(!root.join(".git/brit-rebase").exists());
+        assert!(git(root, &["for-each-ref", "refs/brit-rebase-retain"])?.is_empty());
+        assert_eq!(git(root, &["rev-parse", "HEAD"])?, head);
+        preserved(root)
+    }
+
+    /// An interrupted cancellation finishes on the next `--abort`.
+    #[test]
+    fn public_interrupted_preparation_cancel_finishes_on_the_next_abort() -> Result<()> {
+        for point in [
+            "replay-preparation-tombstoned",
+            "replay-preparation-last-member-removed",
+        ] {
+            let repo = fixture(false)?;
+            let root = repo.path();
+            let markers = tempfile::tempdir()?;
+            let scratch = tempfile::tempdir()?;
+            let prepare = "replay-retained";
+            let mut child = launch(
+                root,
+                &["rebase", "upstream"],
+                &[
+                    ("BRIT_SWITCH_CHECKPOINT", prepare.as_ref()),
+                    ("BRIT_SWITCH_CHECKPOINT_DIR", markers.path().as_os_str()),
+                ],
+            )?;
+            wait_file(&mut child, &markers.path().join(format!("{prepare}.reached")))?;
+            interrupt(&mut child, "-KILL")?;
+            let mut child = launch(
+                root,
+                &["rebase", "--abort"],
+                &[
+                    ("BRIT_SWITCH_CHECKPOINT", point.as_ref()),
+                    ("BRIT_SWITCH_CHECKPOINT_DIR", markers.path().as_os_str()),
+                    ("TMPDIR", scratch.path().as_os_str()),
+                ],
+            )?;
+            wait_file(&mut child, &markers.path().join(format!("{point}.reached")))?;
+            interrupt(&mut child, "-KILL")?;
+            let status = success(root, &["rebase", "--status"])?;
+            ensure!(
+                status.stdout.contains("--abort"),
+                "{point}: status names the cure: {}",
+                status.stdout
+            );
+            let aborted = abort_with_scratch(root, scratch.path())?;
+            ensure!(aborted.status.success(), "{point}: {}", aborted.stderr);
+            assert_no_rebase_leftovers(root, scratch.path())?;
+            preserved(root)?;
+            success(root, &["rebase", "upstream"])?;
         }
         Ok(())
     }
