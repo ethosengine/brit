@@ -396,7 +396,7 @@ pub(crate) mod function {
         }
 
         let ref_specs = remote.refspecs(gix::remote::Direction::Fetch);
-        let rejected = rejected_updates(&res);
+        let rejected = rejected_updates(&res)?;
         match res.status {
             Status::NoPackReceived {
                 update_refs,
@@ -455,12 +455,22 @@ pub(crate) mod function {
     }
 
     /// Every local ref whose update was refused, as `<ref> (<reason>)`. Git exits 1 for these.
-    fn rejected_updates(res: &gix::remote::fetch::Outcome) -> Vec<String> {
+    ///
+    /// Updates pair with ref-map mappings by position; a count mismatch would name the wrong
+    /// refs, so it is an error rather than a silent truncation.
+    fn rejected_updates(res: &gix::remote::fetch::Outcome) -> Result<Vec<String>> {
         use gix::remote::fetch::refs::update::Mode;
         let update_refs = match &res.status {
             Status::NoPackReceived { update_refs, .. } | Status::Change { update_refs, .. } => update_refs,
         };
-        update_refs
+        if update_refs.updates.len() != res.ref_map.mappings.len() {
+            bail!(gix::error::message!(
+                "cannot attribute ref updates: {} update outcome(s) for {} ref mapping(s)",
+                update_refs.updates.len(),
+                res.ref_map.mappings.len()
+            ));
+        }
+        Ok(update_refs
             .updates
             .iter()
             .zip(&res.ref_map.mappings)
@@ -481,7 +491,7 @@ pub(crate) mod function {
                     .map_or_else(|| "(no local ref)".to_owned(), ToString::to_string);
                 format!("{name} ({})", update.mode)
             })
-            .collect()
+            .collect())
     }
 
     fn render_graph(
