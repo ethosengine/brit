@@ -569,12 +569,23 @@ impl BritRefManager {
     /// overwritten.
     ///
     /// The session is one ref component ([`Self::session_segment`]): distinct sessions never
-    /// share a ref directory, and none nests under another. A clause already recorded under the
-    /// spelling brit used before `/` and `%` were escaped is answered there (same bytes: a no-op;
-    /// other bytes: [`RefError::Exists`]) rather than copied to the escaped name.
+    /// share a ref directory, and none nests under another. An empty session is refused.
+    ///
+    /// One spelling per session: a session whose old, unescaped directory
+    /// ([`Self::legacy_session_segment`]) already holds a record that verifies for exactly this
+    /// session keeps writing there, so a reader that knows only the old spelling (an older brit
+    /// sharing these refs) sees every clause, a revocation included; otherwise the clause goes to
+    /// the escaped spelling. Only such a verified same-session record makes the old directory the
+    /// home: an unverifiable or other-session ref planted there does not steer the write.
     pub fn put_covenant_clause(&self, clause: impl Into<CovenantClause>) -> Result<String, RefError> {
         let clause: CovenantClause = clause.into();
         let session = clause.body().session;
+        if session.is_empty() {
+            return Err(RefError::WouldNotVerify {
+                ref_name: COVENANT_PREFIX.to_string(),
+                reason: "a covenant session label must not be empty".into(),
+            });
+        }
         let cid = clause
             .compute_cid()
             .map_err(|e| RefError::WouldNotVerify {
@@ -593,15 +604,17 @@ impl BritRefManager {
         // Both spellings bind the same clause, so one admissibility check covers either.
         let read_at = |segment: &str, b: &[u8]| read_covenant(b, segment, &cid_segment).verified_or_reason();
         admissible(&ref_name, &record, read_at(&current, &bytes))?;
-        if legacy != current {
-            let legacy_ref = format!("{COVENANT_PREFIX}{legacy}/{cid_segment}");
-            if let Some(observed) = self.ref_oid(&legacy_ref)? {
-                let read = |b: &[u8]| read_at(&legacy, b);
-                self.write_ref_blob(&legacy_ref, &bytes, Some(observed), Prior::Absent, read, &record)?;
-                return Ok(cid);
-            }
-        }
-        let read = |b: &[u8]| read_at(&current, b);
+        // Writing under the old, possibly nested spelling stays safe because every read binds the
+        // signed session (a clause there is admitted only for the session it was signed for), and
+        // a listing takes only direct children of a session's directory, so `victim/x/<cid>` never
+        // reaches `victim`'s listing.
+        let segment = if legacy != current && self.holds_session(&legacy, &session)? {
+            &legacy
+        } else {
+            &current
+        };
+        let ref_name = format!("{COVENANT_PREFIX}{segment}/{cid_segment}");
+        let read = |b: &[u8]| read_at(segment, b);
         let observed = self.ref_oid(&ref_name)?;
         self.write_ref_blob(&ref_name, &bytes, observed, Prior::Absent, read, &record)?;
         Ok(cid)
@@ -615,8 +628,13 @@ impl BritRefManager {
     /// Clauses are read from the session's own ref directory and, for a label containing `/` or
     /// `%`, also from the spelling brit wrote before those were escaped. That old spelling can be
     /// another label's current directory (`a%3Ab` then, `a:b` now): a record there that is
-    /// correctly filed under its own session is that session's, and is not reported here.
+    /// correctly filed under its own session is that session's, and is not reported here. A
+    /// clause held under both spellings (fetched later, or put again by an older brit) lists once,
+    /// from the first of its refs in name order.
     pub fn list_covenant_clauses(&self, session: &str) -> Result<Scan<CovenantRecord>, RefError> {
+        if session.is_empty() {
+            return Ok(Scan::default());
+        }
         let current = Self::session_segment(session);
         let legacy = Self::legacy_session_segment(session);
         let mut refs = self.covenant_session_refs(&current)?;
@@ -625,8 +643,19 @@ impl BritRefManager {
         }
         let mut scan = self.covenant_scan(refs, Some(session))?;
         scan.verified
-            .sort_by_cached_key(|(_, r)| (r.clause.body().valid_from, r.cid.clone()));
+            .sort_by_cached_key(|(name, r)| (r.clause.body().valid_from, r.cid.clone(), name.clone()));
+        // A verified CID is computed from the whole clause, so equal CIDs are equal records.
+        scan.verified.dedup_by(|later, earlier| later.1.cid == earlier.1.cid);
         Ok(scan)
+    }
+
+    /// Whether the session directory `segment` holds a record that verifies for exactly `session`.
+    fn holds_session(&self, segment: &str, session: &str) -> Result<bool, RefError> {
+        let refs = self.covenant_session_refs(segment)?;
+        if refs.is_empty() {
+            return Ok(false);
+        }
+        Ok(!self.covenant_scan(refs, Some(session))?.verified.is_empty())
     }
 
     /// The record for clause `cid` in any session. Several refs can end in the same CID (a record
@@ -670,18 +699,31 @@ impl BritRefManager {
             .collect())
     }
 
-    /// A covenant session as exactly one ref component, injectively: `%` and `/` are
-    /// percent-escaped first, then [`Self::encode_segment`] applies. Every `%` in the result opens
-    /// an escape, so distinct sessions never share a segment, and none contains `/`, so no
-    /// session's refs nest under another's. A session containing neither `%` nor `/` keeps the
-    /// spelling brit has always written ([`Self::legacy_session_segment`]).
+    /// A covenant session as exactly one valid ref component, injectively: `%` and `/` are
+    /// percent-escaped first, then [`Self::encode_segment`] applies, then a leading `.` and the
+    /// `.` of a trailing `.lock` (which git refuses in a component) become `%2E`. Each step only
+    /// replaces a character by its own percent escape, and every `%` in the result opens one, so
+    /// percent-decoding inverts it: distinct sessions never share a segment. None contains `/`,
+    /// so no session's refs nest under another's. A session with no `%`, no `/`, no leading `.`
+    /// and no trailing `.lock` keeps the spelling brit has always written
+    /// ([`Self::legacy_session_segment`]); one that had either of the last two could not be
+    /// written before, so nothing on disk is renamed.
     fn session_segment(session: &str) -> String {
-        Self::encode_segment(&session.replace('%', "%25").replace('/', "%2F"))
+        let mut segment = Self::encode_segment(&session.replace('%', "%25").replace('/', "%2F"));
+        if segment.starts_with('.') {
+            segment.replace_range(..1, "%2E");
+        }
+        if segment.ends_with(".lock") {
+            let dot = segment.len() - ".lock".len();
+            segment.replace_range(dot..=dot, "%2E");
+        }
+        segment
     }
 
     /// The spelling brit wrote a covenant session under before `%` and `/` were escaped: not
     /// injective (`a:b` and `a%3Ab` share it) and nesting (`victim/x` lies under `victim/`).
-    /// Read, and answered by a re-put, so clauses recorded then stay reachable; never written anew.
+    /// Always read, so clauses recorded then stay reachable; written only for a session that
+    /// already has a verified clause there (see [`Self::put_covenant_clause`]).
     fn legacy_session_segment(session: &str) -> String {
         Self::encode_segment(session)
     }
@@ -1296,4 +1338,58 @@ pub enum RefError {
         /// What the read-back found.
         reason: String,
     },
+}
+
+#[cfg(test)]
+mod tests {
+    use std::collections::HashMap;
+
+    use super::BritRefManager;
+
+    /// Every `%XX` back to its byte; anything else as is.
+    fn percent_decode(s: &str) -> String {
+        let bytes = s.as_bytes();
+        let mut out = Vec::with_capacity(bytes.len());
+        let mut i = 0;
+        while i < bytes.len() {
+            if bytes[i] == b'%' {
+                let hex = s.get(i + 1..i + 3).expect("an escape has two hex digits");
+                out.push(u8::from_str_radix(hex, 16).expect("hex escape"));
+                i += 3;
+            } else {
+                out.push(bytes[i]);
+                i += 1;
+            }
+        }
+        String::from_utf8(out).expect("decodes to UTF-8")
+    }
+
+    /// Every label over a small alphabet chosen to provoke the escapes (`%`, `/`, `.`, `lock`,
+    /// `:` and the hex digits of `%2E`/`%2F`/`%25`), up to length 5: each session segment is one
+    /// valid ref component, decodes back to its label, and no two labels share one.
+    #[test]
+    fn session_segments_are_injective_single_valid_components() {
+        let alphabet = ['.', '%', '/', 'l', 'o', 'c', 'k', ':', '2', 'E', 'F', '5'];
+        let mut seen: HashMap<String, String> = HashMap::new();
+        let mut labels = vec![String::new()];
+        for _ in 0..5 {
+            labels = labels
+                .iter()
+                .flat_map(|prefix| alphabet.iter().map(move |c| format!("{prefix}{c}")))
+                .collect();
+            for label in &labels {
+                let segment = BritRefManager::session_segment(label);
+                assert!(!segment.contains('/'), "{label:?} -> {segment:?} nests");
+                assert!(!segment.starts_with('.'), "{label:?} -> {segment:?} starts with a dot");
+                assert!(!segment.ends_with(".lock"), "{label:?} -> {segment:?} ends with .lock");
+                assert!(!segment.contains(".."), "{label:?} -> {segment:?} contains ..");
+                assert!(!segment.contains(':'), "{label:?} -> {segment:?} contains :");
+                assert_eq!(percent_decode(&segment), *label, "{segment:?} does not decode back");
+                if let Some(earlier) = seen.insert(segment.clone(), label.clone()) {
+                    panic!("{earlier:?} and {label:?} share the segment {segment:?}");
+                }
+            }
+        }
+        assert!(seen.len() > 270_000, "the sweep covered {} labels", seen.len());
+    }
 }
