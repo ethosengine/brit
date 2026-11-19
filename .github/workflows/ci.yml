@@ -1053,6 +1053,21 @@ jobs:
         env:
           NEEDS: ${{ toJSON(needs) }}
         run: printf '%s\n' "$NEEDS"
+      - name: Fail unless EVERY dependency succeeded
+        if: always()
+        env:
+          RESULTS: ${{ join(needs.*.result, ' ') }}
+        run: |
+          if [ -z "$RESULTS" ]; then
+            echo "no dependency results to judge"
+            exit 1
+          fi
+          for result in $RESULTS; do
+            if [ "$result" != success ]; then
+              echo "a dependency ended as '$result', not 'success'"
+              exit 1
+            fi
+          done
       - name: Fail if ANY dependency failed, was cancelled, or was skipped
         if: contains(needs.*.result, 'failure') || contains(needs.*.result, 'cancelled') || contains(needs.*.result, 'skipped')
         run: exit 1
