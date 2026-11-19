@@ -97,3 +97,43 @@ fn readers_closing_after_partial_output_end_read_only_listings_quietly() -> Resu
     }
     Ok(())
 }
+
+/// Run `brit <args>` in `cwd` with stdout (`which == 1`) or stderr (`which == 2`) connected to a pipe
+/// whose reading end is already closed; the other stream is captured.
+fn brit_with_closed(cwd: &std::path::Path, which: u8, args: &[&str]) -> Result<std::process::Output> {
+    let mut fds = [0; 2];
+    // SAFETY: `fds` has room for the two descriptors `pipe` writes.
+    ensure!(unsafe { libc::pipe(fds.as_mut_ptr()) } == 0, "pipe(2) failed");
+    // SAFETY: both descriptors were just created by `pipe` and are owned here exactly once.
+    let (reader, writer) = unsafe { (std::fs::File::from_raw_fd(fds[0]), std::fs::File::from_raw_fd(fds[1])) };
+    drop(reader);
+    let mut command = Command::new(brit_bin().expect("built Brit"));
+    gix_testtools::configure_git_environment(&mut command, cwd);
+    command.current_dir(cwd).args(args);
+    if which == 1 {
+        command.stdout(writer);
+    } else {
+        command.stderr(writer);
+    }
+    Ok(command.output()?)
+}
+
+/// A command that fails keeps its own status even when its reader is gone, where Git, killed by SIGPIPE
+/// at its write, would report 141. (A failure at the write itself, like `rev-parse HEAD missing` with stdout
+/// closed before the object name is written, is the closed reader and ends with 141.)
+#[test]
+fn a_closed_reader_never_replaces_a_genuine_failure() -> Result<()> {
+    let repo = TestRepo::new("broken-pipe-failure")?;
+    for (which, args, code) in [
+        (2, &["rev-parse", "--verify", "missing"][..], 128),
+        (1, &["-v", "rev-parse", "HEAD", "missing"][..], 128),
+    ] {
+        let out = brit_with_closed(repo.path(), which, args)?;
+        assert_eq!(
+            out.status.code(),
+            Some(code),
+            "brit {args:?} with fd {which} closed: {out:?}"
+        );
+    }
+    Ok(())
+}

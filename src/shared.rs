@@ -53,6 +53,9 @@ pub mod closed_reader {
     static SEEN: AtomicBool = AtomicBool::new(false);
 
     /// Whether a write through a [`Watch`] failed with [`io::ErrorKind::BrokenPipe`] in this process.
+    ///
+    /// The flag is never reset: it answers for the one command a CLI process runs. A caller that runs
+    /// several commands in one process, like a test harness, must not read it per command.
     pub fn seen() -> bool {
         SEEN.load(Ordering::Relaxed)
     }
