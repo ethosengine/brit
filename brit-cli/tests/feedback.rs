@@ -91,9 +91,28 @@ fn capture_is_structured_correlated_and_subordinate_to_the_command() {
     let bin = fixture.path().join("bin");
     std::fs::create_dir(&bin).expect("bin");
     let recorder = bin.join("epr");
+    // The refusal is followed by 10,000 detail lines, more than a pipe holds. They are
+    // written in 100 blocks: a recorder has two seconds, and 10,000 separate writes took
+    // longer than that on a loaded four-core macOS runner while the command was correct.
     std::fs::write(
         &recorder,
-        "#!/bin/sh\nprintf '%s\\n' \"$@\" > \"$FEEDBACK_TEST_ARGS\"\nprintf '%s\\n' 'epr: feedback policy refused' >&2\ni=0\nwhile [ \"$i\" -lt 10000 ]; do\n  printf '%s\\n' 'secondary recorder detail' >&2\n  i=$((i+1))\ndone\nexit 47\n",
+        r#"#!/bin/sh
+printf '%s\n' "$@" > "$FEEDBACK_TEST_ARGS"
+printf '%s\n' 'epr: feedback policy refused' >&2
+block='secondary recorder detail'
+i=1
+while [ "$i" -lt 100 ]; do
+  block="$block
+secondary recorder detail"
+  i=$((i+1))
+done
+i=0
+while [ "$i" -lt 100 ]; do
+  printf '%s\n' "$block" >&2
+  i=$((i+1))
+done
+exit 47
+"#,
     )
     .expect("recorder");
     std::fs::set_permissions(&recorder, std::fs::Permissions::from_mode(0o700)).expect("executable");

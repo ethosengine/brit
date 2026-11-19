@@ -84,3 +84,17 @@ jobs leave the workflow. Locally: 81 scheduler self-tests, 61 CI-helper tests, t
 scheduler's own workflow check, and a dry run of governed jobs from the real
 exhaustive plan pass. No planned job has run on a hosted runner at this revision;
 the required set is a first classification to be confirmed by exact-run evidence.
+
+DELTA 2026-11-19 (first hosted evidence; RED preserved): Run 44517707944 at
+d2efffe86 executed all 32 planned jobs. The 11 required Linux legs passed, as did
+FreeBSD, WebAssembly, the API check and both 32-bit containers. Every Windows job
+whose task builds the workspace (7 of 9) failed to
+compile `gix-worktree-state`: gitoxide made `ExecutableBitChange::Set` Unix-only and
+Brit's bounded checkout still named it on every platform. `tests@macos-x86_64` passed
+its archived-fixture stage (6539 of 6539) and failed three first-party tests in the
+regenerated-fixture stage, each a wall-clock assumption that the four-core Intel runner
+broke: a recorder making 10,000 writes inside its two-second budget (the same failure
+that left main red at fd6c86b36), a status fault test that needed a tracked file
+written in the same second as the index, and a first fsmonitor fence inside one
+second. The compile error and the three tests are corrected at their cause; no leg
+changes class. `advisories` and `size` failed as deferred jobs.

@@ -1292,6 +1292,16 @@ fn attribute_pathspec(size: usize, reduced: bool, faults: bool, status: bool) ->
         }
         fs::remove_file(&object)?;
         fs::write(object, b"corrupt object")?;
+        if status {
+            // Plain status reads attributes only to compare a tracked file's bytes. `other`
+            // qualified by being written in the same second as the index; a slower host left
+            // nothing to compare, and status rightly succeeded. A changed timestamp over
+            // unchanged bytes requires the comparison on every host.
+            fs::File::options()
+                .write(true)
+                .open(root.join("other"))?
+                .set_modified(std::time::UNIX_EPOCH + std::time::Duration::from_secs(1_000_000_000))?;
+        }
         for args in commands {
             let mut command = Command::new(brit_bin().expect("built Brit"));
             gix_testtools::configure_git_environment(&mut command, root);

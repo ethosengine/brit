@@ -170,11 +170,22 @@ fn publish(mut spool: Spool, path: &Path, entry: &mut gix_index::Entry, executab
     let size = spool.len();
     spool.rewind().or_error()?;
     let file = spool.publish(path).or_error()?;
-    let change = if executable && entry.mode == gix_index::entry::Mode::FILE_EXECUTABLE {
+    let change = executable_bit_change(executable && entry.mode == gix_index::entry::Mode::FILE_EXECUTABLE);
+    entry::finalize_entry(entry, file, size, change)?;
+    Ok(size)
+}
+
+#[cfg(unix)]
+fn executable_bit_change(executable: bool) -> entry::ExecutableBitChange {
+    if executable {
         entry::ExecutableBitChange::Set
     } else {
         entry::ExecutableBitChange::NoChange
-    };
-    entry::finalize_entry(entry, file, size, change)?;
-    Ok(size)
+    }
+}
+
+/// Only Unix has an executable bit to set on a published file.
+#[cfg(not(unix))]
+fn executable_bit_change(_executable: bool) -> entry::ExecutableBitChange {
+    entry::ExecutableBitChange::NoChange
 }

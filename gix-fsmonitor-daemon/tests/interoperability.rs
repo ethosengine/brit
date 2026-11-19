@@ -467,7 +467,15 @@ fn native_fence_gives_useful_empty_queries_and_immediate_write_coverage() -> Tes
     std::fs::write(dir.path().join(".git/index"), "not a Git index\n")?;
     let _daemon = Daemon::start(dir.path())?;
     let initial = client_query(dir.path(), OsStr::new(""))?;
-    let warmed = client_query(dir.path(), token(&initial)?)?;
+    let mut warmed = client_query(dir.path(), token(&initial)?)?;
+    // A fence waits one second for its cookie, which a loaded host can miss while the watcher
+    // is still starting. Synchronization is useful when a fence is delivered at all.
+    for _ in 0..4 {
+        if !warmed.ends_with(b"\0/\0") {
+            break;
+        }
+        warmed = client_query(dir.path(), token(&warmed)?)?;
+    }
     assert!(
         !warmed.ends_with(b"\0/\0"),
         "native synchronization must produce useful incremental replies"
