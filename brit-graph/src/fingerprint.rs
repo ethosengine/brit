@@ -42,6 +42,17 @@ pub enum FingerprintError {
         /// The underlying error message.
         message: String,
     },
+    /// A tree path holds a backslash on a host whose glob matcher rewrites
+    /// it to `/`, so it would be matched with a different meaning than on
+    /// other hosts.
+    #[error(
+        "tree path '{path}' contains a backslash; on this platform it cannot be matched with \
+         the meaning it has elsewhere; fingerprint on a Unix host or rename the path"
+    )]
+    UnportableTreePath {
+        /// The repo-relative path containing the backslash.
+        path: String,
+    },
     /// Path was not valid UTF-8.
     #[error("non-UTF-8 path in tree: {0:?}")]
     NonUtf8Path(Vec<u8>),

@@ -11,7 +11,7 @@ use std::sync::Arc;
 use brit_epr::BritCid;
 use gix::bstr::{BStr, BString, ByteSlice, ByteVec};
 use gix::{error::ResultExt, objs::FindStream, utils::stream::Budget};
-use globset::{Glob, GlobSet, GlobSetBuilder};
+use globset::{Glob, GlobBuilder, GlobSet, GlobSetBuilder};
 use regex_automata::{
     nfa::thompson::{self, State, WhichCaptures, NFA},
     util::{primitives::StateID, syntax},
@@ -43,14 +43,22 @@ impl ContentFingerprint {
         commit_id: gix::ObjectId,
         patterns: &[String],
     ) -> Result<Self, FingerprintError> {
+        Self::from_repo_globs_on(repo, commit_id, patterns, CANDIDATES_NORMALISED)
+    }
+
+    /// [`Self::from_repo_globs`] with the host's candidate normalisation made
+    /// explicit, so both values are exercised on any host.
+    fn from_repo_globs_on(
+        repo: &gix::Repository,
+        commit_id: gix::ObjectId,
+        patterns: &[String],
+        candidates_normalised: bool,
+    ) -> Result<Self, FingerprintError> {
         // Step A: build the GlobSet
         let mut builder = GlobSetBuilder::new();
         let mut globs = Vec::with_capacity(patterns.len());
         for pattern in patterns {
-            let glob = Glob::new(pattern).map_err(|e| FingerprintError::InvalidGlob {
-                pattern: pattern.clone(),
-                message: e.to_string(),
-            })?;
+            let glob = compile_step_glob(pattern)?;
             builder.add(glob.clone());
             globs.push(glob);
         }
@@ -88,14 +96,18 @@ impl ContentFingerprint {
             gitlinks: &mut gitlinks,
             symlinks: &mut symlinks,
             errors: &mut walk_errors,
+            candidates_normalised,
+            refusal: None,
             path: BString::default(),
             path_deque: VecDeque::new(),
             budget: None,
         };
 
-        tree.traverse()
-            .breadthfirst(&mut visitor)
-            .map_err(|e| FingerprintError::TreeWalk(e.to_string()))?;
+        let walked = tree.traverse().breadthfirst(&mut visitor);
+        if let Some(refusal) = visitor.refusal.take() {
+            return Err(refusal);
+        }
+        walked.map_err(|e| FingerprintError::TreeWalk(e.to_string()))?;
 
         if !walk_errors.is_empty() {
             return Err(FingerprintError::TreeWalk(walk_errors.join("; ")));
@@ -107,6 +119,114 @@ impl ContentFingerprint {
     }
 }
 
+/// Compile one step glob.
+///
+/// The one place step-glob syntax is fixed; blob matching and gitlink/symlink
+/// reach both use the glob (and so the regex) this returns. The five options
+/// are globset's Unix defaults, stated explicitly because globset turns
+/// `backslash_escape` off on Windows (where `\` is a path separator):
+///
+/// - `backslash_escape(true)`: `\` escapes the next character (`\*` is a
+///   literal `*`); repository paths are always `/`-separated.
+/// - `literal_separator(false)`: `*` and `?` also match `/`.
+/// - `case_insensitive(false)`, `empty_alternates(false)`,
+///   `allow_unclosed_class(false)`.
+///
+/// Guarantee: with these options fixed and the refusal below, the compiled
+/// regex is the same on every platform. Matching then differs only for a
+/// candidate path containing a backslash on a non-Unix host (globset rewrites
+/// it to `/` there), which the tree walk refuses
+/// ([`FingerprintError::UnportableTreePath`]).
+///
+/// Refused on every platform: a backslash directly beside `**`. globset's
+/// `**` parser is the one place it still consults the host's separator rule
+/// with these options, so `src/**\[x\]` would mean `src/[x]` on Unix and
+/// `src/x` on Windows. See [`backslash_beside_double_star`] for the rule.
+pub(crate) fn compile_step_glob(pattern: &str) -> Result<Glob, FingerprintError> {
+    let glob = GlobBuilder::new(pattern)
+        .backslash_escape(true)
+        .literal_separator(false)
+        .case_insensitive(false)
+        .empty_alternates(false)
+        .allow_unclosed_class(false)
+        .build()
+        .map_err(|e| FingerprintError::InvalidGlob {
+            pattern: pattern.to_string(),
+            message: e.to_string(),
+        })?;
+    if let Some(position) = backslash_beside_double_star(pattern) {
+        return Err(FingerprintError::InvalidGlob {
+            pattern: pattern.to_string(),
+            message: format!(
+                "the backslash at character {position} is directly beside `**`, which cannot be \
+                 given one meaning on every platform; escape the name in a separate path \
+                 component or use a character class"
+            ),
+        });
+    }
+    Ok(glob)
+}
+
+/// The position (in characters) of a backslash that globset's `**` parser
+/// would read with the host's path-separator rule, if any.
+///
+/// Mirrors globset 0.4.19's tokeniser for a pattern that already compiled
+/// with [`compile_step_glob`]'s options: outside a class, `\` escapes the
+/// next character; `[` opens a class (after an optional `!`/`^`, a first
+/// `]` is literal) that ends at the next `]`, with no escapes inside; an
+/// unescaped `*` followed by `*` is one `**`. For each `**`, `parse_star`
+/// looks at the raw character before the first `*` and the raw character
+/// after the second. With `backslash_escape(true)` a raw `\` can stand
+/// before an unescaped `*` only as the second half of an escaped backslash,
+/// so the rule is: refuse when the character before a `**` is `\` (an
+/// escaped backslash) or the character after it is `\` (an escape).
+fn backslash_beside_double_star(pattern: &str) -> Option<usize> {
+    let chars: Vec<char> = pattern.chars().collect();
+    let mut i = 0;
+    while i < chars.len() {
+        match chars[i] {
+            '\\' => i += 2,
+            '[' => {
+                let mut j = i + 1;
+                if matches!(chars.get(j), Some('!' | '^')) {
+                    j += 1;
+                }
+                if chars.get(j) == Some(&']') {
+                    j += 1;
+                }
+                while j < chars.len() && chars[j] != ']' {
+                    j += 1;
+                }
+                i = j + 1;
+            }
+            '*' if chars.get(i + 1) == Some(&'*') => {
+                if i > 0 && chars[i - 1] == '\\' {
+                    return Some(i - 1);
+                }
+                if chars.get(i + 2) == Some(&'\\') {
+                    return Some(i + 2);
+                }
+                i += 2;
+            }
+            _ => i += 1,
+        }
+    }
+    None
+}
+
+/// Whether this host's glob matcher rewrites `\` in candidate paths to `/`
+/// (globset's `normalize_path` on non-Unix hosts).
+const CANDIDATES_NORMALISED: bool = cfg!(not(unix));
+
+/// Refuse a tree path that this host would match with a different meaning:
+/// one containing a backslash where candidates are normalised.
+fn refuse_unportable_tree_path(path: &str, candidates_normalised: bool) -> Result<(), FingerprintError> {
+    if candidates_normalised && path.contains('\\') {
+        return Err(FingerprintError::UnportableTreePath { path: path.to_string() });
+    }
+    Ok(())
+}
+
 /// Upper bound on the heap a pattern's Thompson NFA may use. A pattern over
 /// it is answered "reaches" (over-keying), never "does not reach".
 const NFA_SIZE_LIMIT: usize = 1 << 20;
@@ -116,8 +236,8 @@ const NFA_SIZE_LIMIT: usize = 1 << 20;
 ///
 /// "Beneath" is decided on the Thompson NFA of the same regex globset compiles
 /// for each pattern, with globset's syntax options (so `*` crosses `/` exactly
-/// as it does for blob matching, since patterns are built with globset's
-/// defaults). The NFA is simulated over `<gitlink>/`; the pattern reaches the
+/// as it does for blob matching: both use the glob [`compile_step_glob`]
+/// returns). The NFA is simulated over `<gitlink>/`; the pattern reaches the
 /// gitlink iff, from the live states, some byte transition leads on to a match
 /// state. That is a graph search, linear in the NFA's size: nothing is
 /// determinized, so no pattern can make it exponential.
@@ -271,7 +391,10 @@ fn can_match_after(nfa: &NFA, prefix: &[u8]) -> bool {
 /// Whether the step's patterns reach the gitlink at `gitlink_path`.
 #[cfg(test)]
 fn patterns_reach_gitlink(patterns: &[&str], gitlink_path: &str) -> bool {
-    let globs: Vec<Glob> = patterns.iter().map(|p| Glob::new(p).expect("valid glob")).collect();
+    let globs: Vec<Glob> = patterns
+        .iter()
+        .map(|p| compile_step_glob(p).expect("valid glob"))
+        .collect();
     let mut builder = GlobSetBuilder::new();
     for glob in &globs {
         builder.add(glob.clone());
@@ -296,6 +419,11 @@ struct TreeCollector<'a> {
     /// Matched symlinks: path -> the link's own object id (hex).
     symlinks: &'a mut BTreeMap<String, String>,
     errors: &'a mut Vec<String>,
+    /// Whether candidates are normalised on this host (see
+    /// [`refuse_unportable_tree_path`]).
+    candidates_normalised: bool,
+    /// Set when the walk must stop with a named error.
+    refusal: Option<FingerprintError>,
     /// The current path prefix (built up as we traverse).
     path: BString,
     /// Snapshot queue: one entry per pending subtree (breadth-first).
@@ -372,6 +500,11 @@ impl<'a> gix::traverse::tree::Visit for TreeCollector<'a> {
             }
         };
 
+        if let Err(refusal) = refuse_unportable_tree_path(&path_str, self.candidates_normalised) {
+            self.refusal = Some(refusal);
+            return std::ops::ControlFlow::Break(());
+        }
+
         if kind == gix::objs::tree::EntryKind::Commit {
             // The submodule's objects are not read (they are often absent):
             // the gitlink's identity is the commit it pins.
@@ -431,15 +564,156 @@ impl<'a> gix::traverse::tree::Visit for TreeCollector<'a> {
 
 #[cfg(test)]
 mod tests {
-    use globset::{Glob, GlobSetBuilder};
+    use globset::GlobSetBuilder;
 
-    use super::{patterns_reach_gitlink, GitlinkReach};
+    use super::{compile_step_glob, patterns_reach_gitlink, refuse_unportable_tree_path, GitlinkReach};
+
+    /// A backslash directly beside `**` is read by globset's `**` parser with
+    /// the host's path-separator rule, so it is refused on every platform;
+    /// near-misses that tokenise without that adjacency still compile.
+    #[test]
+    fn backslash_beside_double_star_is_refused_everywhere() {
+        let refused = [
+            "src/**\\[x\\]",
+            "**\\*.rs",
+            "a\\\\**",
+            "\\\\**",
+            "**\\x",
+            "{a,**\\b}",
+            "src/**\\",
+        ];
+        for pattern in refused {
+            assert!(compile_step_glob(pattern).is_err(), "{pattern} must be refused");
+        }
+        let compiled = [
+            "**/\\[x\\]",
+            "a\\*b/**",
+            "\\*\\*",
+            "a/**/b",
+            "a\\\\\\**",
+            "\\**",
+            "***\\x",
+            "[\\]**",
+            "[]\\]/**",
+            "src/**",
+            "a\\\\/**",
+        ];
+        for pattern in compiled {
+            assert!(compile_step_glob(pattern).is_ok(), "{pattern} must still compile");
+        }
+    }
+
+    #[test]
+    fn refusal_names_the_pattern_and_the_position() {
+        let err = compile_step_glob("src/**\\[x\\]").expect_err("refused");
+        let message = err.to_string();
+        assert!(message.contains("src/**\\[x\\]"), "{message}");
+        assert!(message.contains("character 6"), "{message}");
+        assert!(
+            message.contains("cannot be given one meaning on every platform"),
+            "{message}"
+        );
+    }
+
+    #[test]
+    fn backslash_tree_path_is_refused_only_where_candidates_are_normalised() {
+        use crate::fingerprint::FingerprintError;
+        assert!(matches!(
+            refuse_unportable_tree_path("dir\\file", true),
+            Err(FingerprintError::UnportableTreePath { path }) if path == "dir\\file"
+        ));
+        assert!(refuse_unportable_tree_path("dir\\file", false).is_ok());
+        assert!(refuse_unportable_tree_path("dir/file", true).is_ok());
+        assert!(refuse_unportable_tree_path("dir/file", false).is_ok());
+    }
+
+    /// The walk calls the check for every entry it visits, with either flag.
+    #[test]
+    fn fingerprint_walk_refuses_a_backslash_path_only_where_candidates_are_normalised() {
+        use std::io::Write as _;
+        use std::process::{Command, Stdio};
+
+        use crate::fingerprint::{ContentFingerprint, FingerprintError};
+
+        let dir = tempfile::TempDir::new().expect("temp");
+        let path = dir.path();
+        let git = |args: &[&str]| {
+            let output = Command::new("git").args(args).current_dir(path).output().expect("git");
+            assert!(
+                output.status.success(),
+                "git {args:?}: {}",
+                String::from_utf8_lossy(&output.stderr)
+            );
+            String::from_utf8(output.stdout).expect("utf8").trim().to_string()
+        };
+        git(&["init", "-q"]);
+        git(&["config", "user.email", "t@t.t"]);
+        git(&["config", "user.name", "t"]);
+        for (rel, bytes) in [("src/a.txt", "a\n"), ("other/dir\\file", "b\n")] {
+            let mut child = Command::new("git")
+                .args(["hash-object", "-w", "--stdin"])
+                .current_dir(path)
+                .stdin(Stdio::piped())
+                .stdout(Stdio::piped())
+                .spawn()
+                .expect("hash-object");
+            child
+                .stdin
+                .take()
+                .expect("stdin")
+                .write_all(bytes.as_bytes())
+                .expect("write");
+            let oid = String::from_utf8(child.wait_with_output().expect("wait").stdout).expect("utf8");
+            git(&[
+                "update-index",
+                "--add",
+                "--cacheinfo",
+                &format!("100644,{},{rel}", oid.trim()),
+            ]);
+        }
+        git(&["commit", "-q", "-m", "c"]);
+        let repo = gix::open(path).expect("open");
+        let head = repo.head_id().expect("head").detach();
+        let patterns = vec!["src/**".to_string()];
+
+        let unix = ContentFingerprint::from_repo_globs_on(&repo, head, &patterns, false).expect("no check");
+        assert_eq!(unix.inputs.keys().collect::<Vec<_>>(), ["src/a.txt"]);
+        let elsewhere = ContentFingerprint::from_repo_globs_on(&repo, head, &patterns, true);
+        assert!(
+            matches!(&elsewhere, Err(FingerprintError::UnportableTreePath { path }) if path == "other/dir\\file"),
+            "{elsewhere:?}"
+        );
+    }
+
+    /// Pins what `compile_step_glob`'s five options do: a backslash escapes
+    /// (globset's Windows default would not), `*` crosses `/`, matching is
+    /// case-sensitive, and the regex of an escaped pattern is exactly this.
+    /// Written to pass on Linux, macOS and Windows alike.
+    #[test]
+    fn step_glob_settings_pin_an_escaped_pattern() {
+        let escaped = compile_step_glob("a\\*b/**").expect("valid glob");
+        assert_eq!(escaped.regex(), "(?-u)^a\\*b/.*$");
+        let escaped = escaped.compile_matcher();
+        assert!(escaped.is_match("a*b/x"));
+        assert!(!escaped.is_match("axb/x"));
+
+        let star = compile_step_glob("a*b").expect("valid glob").compile_matcher();
+        assert!(star.is_match("a/x/b"), "`*` crosses `/`");
+        assert!(!compile_step_glob("A*")
+            .expect("valid glob")
+            .compile_matcher()
+            .is_match("a"));
+
+        // The reach decision compiles the same way.
+        assert!(patterns_reach_gitlink(&["\\[\\]\\]/**"], "[]]"));
+        assert!(patterns_reach_gitlink(&["\\[-\\]/**"], "[-]"));
+    }
 
     /// A pattern whose NFA exceeds the size limit reaches every gitlink: the
     /// decision may over-key a step, never under-key it.
     #[test]
     fn size_limit_hit_answers_reaches() {
-        let globs = vec![Glob::new("elohim/other/**").expect("valid glob")];
+        let globs = vec![compile_step_glob("elohim/other/**").expect("valid glob")];
         let mut builder = GlobSetBuilder::new();
         builder.add(globs[0].clone());
         let globset = builder.build().expect("valid set");
@@ -447,7 +721,7 @@ mod tests {
         assert!(GitlinkReach::with_size_limit(&globset, &globs, 1).reaches("elohim/rakia"));
     }
 
-    /// Patterns are built with globset's defaults, as blob matching builds
+    /// Patterns are built by `compile_step_glob`, as blob matching builds
     /// them: `*` and `?` cross `/` (no literal separator), `**` spans any
     /// number of components, and every pattern is anchored at the repo root.
     #[test]
