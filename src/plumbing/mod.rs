@@ -1,5 +1,8 @@
+mod guard_label;
 mod main;
 mod mutation;
+pub use gitoxide_core::repository::switch::MutationWait;
+pub use main::configure_mutation_guards;
 pub use main::main;
 pub use main::run;
 pub use main::run_with_command;

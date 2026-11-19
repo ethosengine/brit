@@ -232,6 +232,7 @@ fn run(capture: &mut feedback::Capture) -> Result<()> {
     if invoked_as_rakia {
         eprintln!("warning: rakia is deprecated; use `brit build` with the same arguments");
         capture.operation("build");
+        plumbing::configure_mutation_guards(None, &public_command()).map_err(|err| error::CliError::Git(err.into()))?;
         let cli = Cli::try_parse_from(args).map_err(|error| {
             let code = error.exit_code();
             capture.outcome = Some(if code == 0 { "passed" } else { "refused" });
@@ -286,8 +287,14 @@ fn run(capture: &mut feedback::Capture) -> Result<()> {
         Some("build" | "snapshot" | "context" | "integrate")
     ) {
         let namespace = matches.subcommand_name().unwrap_or("native");
+        // `--wait` is the one global option these namespaces honour: their writes take the same
+        // guards. Only a `--wait` before the first passed-through argument is Brit's; later
+        // tokens belong to the namespace (for `context` and `integrate`, to epr).
+        let wait = matches.get_one::<plumbing::MutationWait>("wait").copied();
+        plumbing::configure_mutation_guards(wait, &command).map_err(|err| error::CliError::Git(err.into()))?;
         if let Some(option) = matches
             .ids()
+            .filter(|id| id.as_str() != "wait" && command.get_arguments().any(|arg| arg.get_id() == *id))
             .find(|id| matches.value_source(id.as_str()) == Some(ValueSource::CommandLine))
         {
             let root_option = if matches!(namespace, "context" | "integrate") {

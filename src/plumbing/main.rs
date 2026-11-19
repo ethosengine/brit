@@ -32,8 +32,43 @@ pub fn main() -> Result<()> {
     run(args)
 }
 
+/// The writer guard a command takes when it opens its repository.
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum GuardScope {
+    /// Read-only, or the command scopes its own guards (switch, pull, rebase, push).
+    None,
+    /// Writes only its own worktree's index, HEAD and checkout, new objects, and
+    /// compare-and-swap reference updates; excludes shared writers and same-worktree writers.
+    Worktree,
+    /// Writes shared repository state; excludes every other Brit writer.
+    Repository,
+    /// Writes shared repository state and rewrites its own worktree's index, HEAD or files:
+    /// that worktree's guard, then the repository guard exclusively.
+    RepositoryAndWorktree,
+}
+
 // Keep inspection usable during recovery. New commands default to the writer
 // boundary until their read-only semantics are explicitly established here.
+fn mutation_guard_scope(cmd: &Subcommands) -> GuardScope {
+    match cmd {
+        Subcommands::Add { .. } | Subcommands::Commit(commit::Platform { cmd: None, .. }) => GuardScope::Worktree,
+        // Rewrite the invoking worktree. Switch, pull and rebase take the same pair themselves.
+        Subcommands::Restore { .. }
+        | Subcommands::Merge(merge::Platform {
+            cmd: merge::SubCommands::Tree { update_head: true, .. },
+        }) => GuardScope::RepositoryAndWorktree,
+        #[cfg(feature = "gitoxide-core-tools-clean")]
+        Subcommands::Clean(crate::plumbing::options::clean::Command { execute: true, .. }) => {
+            GuardScope::RepositoryAndWorktree
+        }
+        // Push guards its reference resolution and send-pack itself, never its pre-push hook.
+        #[cfg(feature = "gitoxide-core-blocking-client")]
+        Subcommands::Push(_) => GuardScope::None,
+        cmd if requires_mutation_guard(cmd) => GuardScope::Repository,
+        _ => GuardScope::None,
+    }
+}
+
 fn requires_mutation_guard(cmd: &Subcommands) -> bool {
     match cmd {
         Subcommands::Branch(branch::Platform {
@@ -183,6 +218,38 @@ fn explicit_write_paths(cmd: &Subcommands) -> Vec<&std::path::Path> {
     paths
 }
 
+/// Set the writer wait policy (`--wait`, else `BRIT_MUTATION_WAIT`) and teach guard
+/// refusals to name another Brit process by its subcommand path only.
+/// Every entry point that may take a writer guard calls this once, before any guard.
+pub fn configure_mutation_guards(
+    wait: Option<core::repository::switch::MutationWait>,
+    command: &clap::Command,
+) -> Result<()> {
+    core::repository::switch::set_mutation_wait(match wait {
+        Some(wait) => wait,
+        None => mutation_wait_from_environment()?,
+    });
+    let command = command.clone();
+    core::repository::switch::set_command_resolver(move |args| super::guard_label::subcommand_path(&command, args));
+    Ok(())
+}
+
+/// The default writer wait from `BRIT_MUTATION_WAIT` (`SECONDS` or `forever`).
+fn mutation_wait_from_environment() -> Result<core::repository::switch::MutationWait> {
+    match std::env::var_os("BRIT_MUTATION_WAIT") {
+        None => Ok(core::repository::switch::MutationWait::Refuse),
+        Some(value) => {
+            let Some(value) = value.to_str() else {
+                bail!("BRIT_MUTATION_WAIT is not valid UTF-8")
+            };
+            match core::repository::switch::MutationWait::parse(value) {
+                Ok(wait) => Ok(wait),
+                Err(err) => bail!("invalid BRIT_MUTATION_WAIT: {err}"),
+            }
+        }
+    }
+}
+
 /// Execute an already parsed plumbing command, allowing another CLI to compose its command tree.
 pub fn run(args: Args) -> Result<()> {
     run_with_command(args, Args::command())
@@ -199,7 +266,8 @@ pub fn run_with_command(args: Args, command: clap::Command) -> Result<()> {
     let trace = 0;
     let cmd = args.cmd;
     let guards = std::cell::RefCell::new(super::MutationGuards::default());
-    let requires_mutation_guard = requires_mutation_guard(&cmd);
+    configure_mutation_guards(args.wait, &command)?;
+    let guard_scope = mutation_guard_scope(&cmd);
     for path in explicit_write_paths(&cmd) {
         guards.borrow_mut().path(path)?;
     }
@@ -286,8 +354,11 @@ pub fn run_with_command(args: Args, command: clap::Command) -> Result<()> {
                     config_mut.set_raw_value(gix::config::tree::Gitoxide::PARSE_PRECIOUS, "true")?;
                 }
             }
-            if requires_mutation_guard {
-                guards.borrow_mut().repository(&repo)?;
+            match guard_scope {
+                GuardScope::None => {}
+                GuardScope::Worktree => guards.borrow_mut().worktree(&repo)?,
+                GuardScope::Repository => guards.borrow_mut().repository(&repo)?,
+                GuardScope::RepositoryAndWorktree => guards.borrow_mut().repository_and_worktree(&repo)?,
             }
             Ok(repo)
         }
@@ -587,10 +658,15 @@ pub fn run_with_command(args: Args, command: clap::Command) -> Result<()> {
         }) => prepare_and_run("status", auto_verbose, None, move |progress, out, err| {
             use crate::plumbing::options::status::Submodules;
             let repo = repository(Mode::Lenient)?;
-            // An index refresh is a mutation. On contention or pending recovery,
-            // retain read-only inspection and leave the index bytes alone.
+            // An index refresh is a worktree-local mutation. On contention or pending
+            // recovery, retain read-only inspection and leave the index bytes alone.
             let refresh_guard = (!no_write)
-                .then(|| core::repository::switch::mutation_guard(&repo))
+                .then(|| {
+                    core::repository::switch::worktree_mutation_guard_waiting(
+                        &repo,
+                        core::repository::switch::MutationWait::Refuse,
+                    )
+                })
                 .and_then(std::result::Result::ok);
             core::repository::status::show(
                 repo,

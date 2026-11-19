@@ -181,6 +181,7 @@ pub(crate) mod function {
     use std::io::Write as _;
 
     use super::Options;
+    use anyhow::Context as _;
 
     /// Mirror git's `die_for_incompatible_opt4` in `vendor/git/parse-options.c`:
     /// given up to four `(predicate, name)` pairs, if two or more predicates are
@@ -210,6 +211,9 @@ pub(crate) mod function {
         drop(stderr);
         std::process::exit(128);
     }
+
+    /// The minimum wait for the writer guard after a pre-push hook passed.
+    const POST_HOOK_GUARD_WAIT: std::time::Duration = std::time::Duration::from_secs(600);
 
     pub fn push<P>(
         repo: gix::Repository,
@@ -694,6 +698,12 @@ pub(crate) mod function {
                 Some(super::Signed::IfAsked) => gix::remote::push::SignMode::IfAsked,
                 Some(super::Signed::No) | None => gix::remote::push::SignMode::Never,
             };
+            // Guard reference resolution and send-pack against other Brit writers, but
+            // release the repository guard across the pre-push hook: the hook judges fixed
+            // object IDs, and those IDs are what is sent, so other lanes stay writable while a
+            // long gate runs. The pushing worktree's guard stays held throughout, so the
+            // checkout a gate builds and tests cannot change under it.
+            let held = std::cell::RefCell::new(super::super::switch::push_guard(&repo)?);
             let result = prepare
                 .with_refspecs(specs_to_send.iter())
                 .with_dry_run(opts.dry_run)
@@ -750,10 +760,22 @@ pub(crate) mod function {
                                 .into_owned()
                                 .into_os_string(),
                         ];
-                        super::super::authoring::run_hook_with_input(&repo, "pre-push", &args, Some(&input))
-                            .map_err(Into::into)
+                        if super::super::authoring::hook_path(&repo, "pre-push")?.is_none() {
+                            return Ok(());
+                        }
+                        held.borrow_mut().release_repository();
+                        super::super::authoring::run_hook_with_input(&repo, "pre-push", &args, Some(&input))?;
+                        // Shared writers are brief, and the hook's work is not lost to a
+                        // refusal: wait for the guard at least this long before sending.
+                        let wait = super::super::switch::mutation_wait()
+                            .at_least(super::super::switch::MutationWait::For(POST_HOOK_GUARD_WAIT));
+                        super::super::switch::reacquire_for_send(&mut held.borrow_mut(), &repo, wait).context(
+                            "the pre-push hook passed, but the Brit mutation guard could not be re-acquired; nothing was sent",
+                        )?;
+                        Ok(())
                     },
                 );
+            drop(held);
             // Mirror git's `send-pack.c::check_push_options` / signed-push
             // capability checks: when the receiver hasn't advertised the
             // required capability, both binaries print the `fatal:` line and

@@ -73,6 +73,21 @@ pub struct Args {
     #[clap(long, default_value_t = gix::hash::Kind::default(), value_parser = crate::shared::AsHashKind)]
     pub object_hash: gix::hash::Kind,
 
+    /// Wait for another Brit writer's guard instead of refusing at once.
+    ///
+    /// Without SECONDS, wait until the guard is free. `0` refuses at once.
+    /// `BRIT_MUTATION_WAIT=SECONDS` (or `forever`) sets the default.
+    #[clap(
+        long,
+        global = true,
+        value_name = "SECONDS",
+        num_args = 0..=1,
+        require_equals = true,
+        default_missing_value = "forever",
+        value_parser = core::repository::switch::MutationWait::parse
+    )]
+    pub wait: Option<core::repository::switch::MutationWait>,
+
     #[clap(subcommand)]
     pub cmd: Subcommands,
 }
