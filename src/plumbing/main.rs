@@ -61,7 +61,8 @@ fn requires_mutation_guard(cmd: &Subcommands) -> bool {
         | Subcommands::Diff(_)
         | Subcommands::Log(_)
         | Subcommands::Blame { .. }
-        | Subcommands::RevParse(_) => false,
+        | Subcommands::RevParse(_)
+        | Subcommands::ForEachRef(_) => false,
         Subcommands::Commit(commit::Platform {
             cmd: Some(commit::Subcommands::Verify { .. } | commit::Subcommands::Describe { .. }),
             ..
@@ -1428,6 +1429,21 @@ pub fn run_with_command(args: Args, command: clap::Command) -> Result<()> {
                 )
             })
         }
+        Subcommands::ForEachRef(crate::plumbing::options::git_spellings::ForEachRef {
+            format: ref_format,
+            sort,
+            patterns,
+        }) => prepare_and_run("for-each-ref", verbose, None, move |_progress, out, _err| {
+            core::repository::git_spellings::for_each_ref::for_each_ref(
+                repository(Mode::Lenient)?,
+                out,
+                core::repository::git_spellings::for_each_ref::Options {
+                    format: ref_format,
+                    sort,
+                    patterns,
+                },
+            )
+        }),
         Subcommands::Cat { revspec } => prepare_and_run("cat", verbose, None, move |_progress, out, _err| {
             core::repository::cat(repository(Mode::Lenient)?, &revspec, out)
         }),

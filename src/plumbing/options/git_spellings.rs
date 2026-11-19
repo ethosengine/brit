@@ -154,3 +154,21 @@ impl clap::FromArgMatches for RevParse {
         Ok(())
     }
 }
+
+/// `for-each-ref` with Git's default format, `--format` atoms and `--sort` keys in real use.
+#[derive(Debug, clap::Parser)]
+pub struct ForEachRef {
+    /// Interpolate `%(atom)` for each ref; implemented atoms: refname, refname:short, objectname,
+    /// objectname:short, objecttype, subject, committerdate, committerdate:short, committerdate:iso.
+    ///
+    /// The default is Git's `%(objectname) %(objecttype)\t%(refname)`. An unimplemented atom is refused by name.
+    #[clap(long)]
+    pub format: Option<String>,
+    /// Sort by `refname` (the default) or `committerdate`; prefix `-` for descending. Repeat to add keys, the last
+    /// one primary, like Git.
+    #[clap(long, value_name = "KEY", action = clap::ArgAction::Append)]
+    pub sort: Vec<String>,
+    /// Only refs matching these prefixes (at a `/` boundary) or `fnmatch` globs, like `refs/heads/` or
+    /// `refs/heads/feat-*`.
+    pub patterns: Vec<String>,
+}

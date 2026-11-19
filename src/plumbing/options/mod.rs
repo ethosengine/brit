@@ -260,6 +260,8 @@ pub enum Subcommands {
     },
     /// Git's spelling of `brit revision resolve`, plus repository path queries, with Git's output.
     RevParse(git_spellings::RevParse),
+    /// List local refs like Git. Brit's own branch listing is `brit branch list`.
+    ForEachRef(git_spellings::ForEachRef),
     /// Generate shell completions to stdout or a directory.
     #[clap(visible_alias = "generate-completions", visible_alias = "shell-completions")]
     Completions {

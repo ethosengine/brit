@@ -4,6 +4,7 @@
 //! `branch list`) stay the native interface; these exist so that a guessed Git spelling works and
 //! points back to them.
 
+pub mod for_each_ref;
 pub mod rev_parse;
 
 /// Git's `shorten_unambiguous_ref()` in its default strict mode (`core.warnAmbiguousRefs`): the
