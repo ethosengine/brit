@@ -1178,15 +1178,27 @@ mod recovery {
         }
     }
 
-    /// A rebase whose retained copy cannot fit the scratch quota is refused before
-    /// any journal or spool exists, instead of publishing and then being unable to
-    /// finish its cleanup or be aborted. The quota is lowered for the test only.
+    /// A rebase whose retained copy certainly cannot fit the scratch quota (its
+    /// history's objects alone exceed it, while its journal would fit) is refused
+    /// by the preflight before any journal or spool exists, the repository byte
+    /// for byte as it was. The quota is lowered for the test only.
     #[test]
     fn public_rebase_whose_retained_copy_cannot_fit_refuses_before_any_state() -> Result<()> {
         let repo = big_blob_fixture(2_000_000)?;
         let root = repo.path();
         let head = git(root, &["rev-parse", "HEAD"])?;
         let index = fs::read(root.join(".git/index"))?;
+        let unguarded = |root: &Path| -> Result<std::collections::BTreeMap<PathBuf, Vec<u8>>> {
+            Ok(repository_bytes(root)?
+                .into_iter()
+                .filter(|(path, _)| {
+                    !path
+                        .file_name()
+                        .is_some_and(|name| name.to_string_lossy().starts_with("brit-mutation."))
+                })
+                .collect())
+        };
+        let bytes = unguarded(root)?;
         let markers = tempfile::tempdir()?;
         let scratch = tempfile::tempdir()?;
         let mut command = Command::new(brit_bin().expect("fault-enabled artifact"));
@@ -1201,7 +1213,8 @@ mod recovery {
         let message = String::from_utf8_lossy(&output.stderr);
         ensure!(!output.status.success(), "oversized rebase must refuse");
         ensure!(
-            message.contains("can need up to")
+            message.contains("the retained copy an abort or a cleanup writes holds at least")
+                && !message.contains("its journal can need up to")
                 && message.contains("the scratch limit configured for testing is too small for this rebase")
                 && !message.contains("not available on repositories of this size yet")
                 && message.contains("over the 1000000-byte scratch limit")
@@ -1221,6 +1234,7 @@ mod recovery {
         assert_no_rebase_leftovers(root, scratch.path())?;
         assert_eq!(git(root, &["rev-parse", "HEAD"])?, head);
         assert_eq!(fs::read(root.join(".git/index"))?, index);
+        ensure!(unguarded(root)? == bytes, "the repository is byte for byte as it was");
         success(root, &["branch", "create", "after-refusal"])?;
         // Under the ordinary quota the same rebase proceeds and finishes.
         success(root, &["rebase", "upstream"])?;
@@ -2936,6 +2950,278 @@ mod recovery {
             );
             preserved(root)?;
         }
+        Ok(())
+    }
+
+    /// What one rebase did under one lowered limit.
+    #[derive(Debug, PartialEq, Eq)]
+    enum Boundary {
+        /// Refused with nothing changed; the message.
+        Refused(String),
+        /// Finished, the user's own edit kept.
+        Completed,
+        /// Admitted, then a later command refused; which, and its message.
+        RefusedAfterAdmission(&'static str, String),
+    }
+
+    /// The boundary fixture, rebuilt at the same path for every limit tried: the
+    /// records that spell the repository's paths then have the same size each
+    /// time, and Git's fixed dates make every object the same. `diff3` makes a
+    /// conflict written in the `diff3` style, which also holds the base version.
+    fn boundary_repo(parent: &Path, diff3: bool) -> Result<PathBuf> {
+        let root = parent.join("repository");
+        if root.exists() {
+            fs::remove_dir_all(&root)?;
+        }
+        fs::create_dir(&root)?;
+        git(&root, &["init", "-q", "--initial-branch=main"])?;
+        let lines = |label: &str, count: usize| -> Vec<u8> {
+            (0..count)
+                .flat_map(|line| format!("{label} line {line:07} with some padding text\n").into_bytes())
+                .collect()
+        };
+        fs::write(root.join("notes"), b"notes\n")?;
+        if diff3 {
+            git(&root, &["config", "merge.conflictStyle", "diff3"])?;
+            fs::write(root.join("c"), lines("base", 40_000))?;
+        } else {
+            fs::write(root.join("big"), noise(400_000, 11))?;
+        }
+        git(&root, &["add", "-A"])?;
+        git(&root, &["commit", "-q", "-m", "base"])?;
+        git(&root, &["switch", "-q", "-c", "upstream"])?;
+        if diff3 {
+            fs::write(root.join("c"), lines("UPSTREAM", 40_000))?;
+        } else {
+            fs::write(root.join("u"), b"upstream\n")?;
+        }
+        git(&root, &["add", "-A"])?;
+        git(&root, &["commit", "-q", "-m", "upstream"])?;
+        git(&root, &["switch", "-q", "main"])?;
+        if diff3 {
+            fs::write(root.join("c"), lines("topic", 40_000))?;
+        } else {
+            fs::write(root.join("big"), noise(400_000, 12))?;
+        }
+        git(&root, &["add", "-A"])?;
+        git(&root, &["commit", "-q", "-m", "topic"])?;
+        fs::write(root.join("notes"), b"notes\nthe user's own unstaged edit\n")?;
+        Ok(root)
+    }
+
+    /// Every name directly under `.git` but the guard's own files.
+    fn git_listing(root: &Path) -> Result<Vec<String>> {
+        let mut names = fs::read_dir(root.join(".git"))?
+            .map(|entry| Ok(entry?.file_name().to_string_lossy().into_owned()))
+            .collect::<Result<Vec<_>>>()?;
+        names.retain(|name| !name.starts_with("brit-mutation."));
+        names.sort();
+        Ok(names)
+    }
+
+    /// Rebase a fresh boundary fixture under `limit`; a conflict stop is resolved
+    /// with the topic's own version, staged and continued under the same limit.
+    /// A command refused after admission is followed by `--abort`, which must
+    /// restore everything exactly.
+    fn boundary_attempt(parent: &Path, diff3: bool, limit: u64) -> Result<Boundary> {
+        let root = boundary_repo(parent, diff3)?;
+        let before = live(&root)?;
+        let listing = git_listing(&root)?;
+        let text = limit.to_string();
+        let output = quota(&root, &["rebase", "upstream"], &text)?;
+        let message = String::from_utf8_lossy(&output.stderr).into_owned();
+        let journal = root.join(".git/brit-rebase").exists();
+        if !journal && !output.status.success() {
+            ensure!(
+                live(&root)? == before && git_listing(&root)? == listing,
+                "at {limit}: a refusal changed nothing: {message}"
+            );
+            return Ok(Boundary::Refused(message));
+        }
+        let mut refused = None;
+        if journal && !(diff3 && message.contains("stopped on conflicts")) {
+            // Only the diff3 fixture stops, at its conflict; anything else that
+            // leaves a journal was admitted and then refused.
+            refused = Some(("rebase", message));
+        } else if journal {
+            fs::write(root.join("c"), git(&root, &["show", "main:c"])?)?;
+            for (step, args) in [
+                ("--stage", &["rebase", "--stage", "--", "c"][..]),
+                ("--continue", &["rebase", "--continue"]),
+            ] {
+                let output = quota(&root, args, &text)?;
+                if !output.status.success() {
+                    refused = Some((step, String::from_utf8_lossy(&output.stderr).into_owned()));
+                    break;
+                }
+            }
+        }
+        if let Some((step, message)) = refused {
+            abort_restores(&root, &text, &before, &format!("at {limit} after {step}"))?;
+            return Ok(Boundary::RefusedAfterAdmission(step, message));
+        }
+        ensure!(
+            !root.join(".git/brit-rebase").exists()
+                && fs::read(root.join("notes"))? == b"notes\nthe user's own unstaged edit\n",
+            "at {limit}: a finished rebase kept the user's edit"
+        );
+        Ok(Boundary::Completed)
+    }
+
+    /// The refusal of a forward step because the retained copy an abort would
+    /// write already exceeds the limit. That copy is not metered; the policy
+    /// refuses a step only once its exceeding is certain, so such a refusal can
+    /// follow admission, and it is told apart from a journal refusal.
+    fn copy_refusal(outcome: &Boundary) -> bool {
+        matches!(outcome, Boundary::RefusedAfterAdmission(_, message)
+            if message.contains("the retained copy an abort would write already holds"))
+    }
+
+    /// The smallest admitting limit, found by bisection, and then every limit from
+    /// below it to twice it: admission is decided before anything changes, and no
+    /// admitted rebase is refused later for its journal. With `copy_refusals`, a
+    /// later refusal because the abort's retained copy already exceeds the limit is
+    /// allowed and returned, as the limits and refused commands it occurred at;
+    /// without it the rebase must complete at every admitting limit.
+    fn boundary_search(diff3: bool, copy_refusals: bool) -> Result<Vec<String>> {
+        let parent = tempfile::tempdir()?;
+        let (mut low, mut high) = (1_000u64, 1u64 << 31);
+        ensure!(
+            boundary_attempt(parent.path(), diff3, high)? == Boundary::Completed,
+            "the fixture completes under a generous limit"
+        );
+        ensure!(matches!(
+            boundary_attempt(parent.path(), diff3, low)?,
+            Boundary::Refused(_)
+        ));
+        while high - low > 1 {
+            let middle = low + (high - low) / 2;
+            match boundary_attempt(parent.path(), diff3, middle)? {
+                Boundary::Refused(_) => low = middle,
+                _ => high = middle,
+            }
+        }
+        let admitting = high;
+        eprintln!("diff3={diff3}: smallest admitting limit {admitting}");
+        let mut copies = Vec::new();
+        let mut findings = Vec::new();
+        let mut judge = |limit: u64, outcome: Boundary| match &outcome {
+            Boundary::Refused(_) if limit < admitting => {}
+            Boundary::Completed if limit >= admitting => {}
+            _ if limit >= admitting && copy_refusals && copy_refusal(&outcome) => {
+                if let Boundary::RefusedAfterAdmission(step, _) = &outcome {
+                    copies.push(format!("{limit}: {step}"));
+                }
+            }
+            _ => findings.push(format!("{limit}: {outcome:?}")),
+        };
+        judge(admitting, boundary_attempt(parent.path(), diff3, admitting)?);
+        let below = boundary_attempt(parent.path(), diff3, admitting - 1)?;
+        let Boundary::Refused(message) = &below else {
+            anyhow::bail!("one byte below, at {}, the rebase is refused: {below:?}", admitting - 1);
+        };
+        ensure!(
+            message.contains("refused before") && message.contains("nothing was changed"),
+            "{message}"
+        );
+        let start = admitting - admitting / 8;
+        for step in 0..=24u64 {
+            let limit = start + (2 * admitting - start) * step / 24;
+            judge(limit, boundary_attempt(parent.path(), diff3, limit)?);
+        }
+        ensure!(
+            findings.is_empty(),
+            "diff3={diff3}: limits from {start} to {} around the smallest admitting {admitting} that neither \
+             refuse below it nor complete above it: {findings:#?}",
+            2 * admitting
+        );
+        eprintln!("diff3={diff3}: refused after admission for the abort's retained copy at: {copies:?}");
+        Ok(copies)
+    }
+
+    /// The boundary of a clean replay: the smallest admitting limit completes
+    /// with no step refused, one byte less is refused before anything changes,
+    /// and no limit up to twice it admits a rebase that is then refused.
+    #[test]
+    fn public_clean_replay_boundary_admits_only_what_completes() -> Result<()> {
+        boundary_search(false, false).map(drop)
+    }
+
+    /// The same for a conflict written in the `diff3` style, resolved and
+    /// continued: such a conflict also holds the base version, so it is larger
+    /// than the sum of the two versions the journal bound models a step with,
+    /// and only the bound's safety factor covers it. Should the factor stop
+    /// covering it, a limit admits a rebase whose stop or resolution is refused
+    /// for its journal, and this journey fails. Just above the smallest admitting
+    /// limit the conflict's retained copy already exceeds the limit, so there the
+    /// conflict stop itself is refused before it writes anything, and `--abort`
+    /// restores everything; the journey records those limits.
+    #[test]
+    fn public_diff3_conflict_boundary_admits_only_what_completes() -> Result<()> {
+        boundary_search(true, true).map(drop)
+    }
+
+    /// An abort's retained copy is not metered and may exceed the limit: under a
+    /// limit that admits the rebase's journal but is smaller than the copy the
+    /// abort writes at the conflict stop, `--abort` still restores everything,
+    /// the user's own edit included, and `--status` is truthful before and after.
+    #[test]
+    fn public_abort_whose_retained_copy_exceeds_the_limit_restores_exactly() -> Result<()> {
+        let parent = tempfile::tempdir()?;
+        let (mut low, mut high) = (1_000u64, 1u64 << 31);
+        let stops = |limit: u64| -> Result<bool> {
+            let root = boundary_repo(parent.path(), true)?;
+            let output = quota(&root, &["rebase", "upstream"], &limit.to_string())?;
+            Ok(root.join(".git/brit-rebase").exists()
+                && String::from_utf8_lossy(&output.stderr).contains("stopped on conflicts"))
+        };
+        ensure!(stops(high)?, "the fixture stops at its conflict");
+        while high - low > 1 {
+            let middle = low + (high - low) / 2;
+            if stops(middle)? {
+                high = middle;
+            } else {
+                low = middle;
+            }
+        }
+        let limit = high.to_string();
+        let root = boundary_repo(parent.path(), true)?;
+        let before = live(&root)?;
+        let stopped = quota(&root, &["rebase", "upstream"], &limit)?;
+        ensure!(
+            String::from_utf8_lossy(&stopped.stderr).contains("stopped on conflicts"),
+            "{}",
+            String::from_utf8_lossy(&stopped.stderr)
+        );
+        let status = quota(&root, &["rebase", "--status"], &limit)?;
+        let status = String::from_utf8_lossy(&status.stdout).into_owned();
+        ensure!(
+            status.contains("Rebase phase: authoring") && status.contains("--abort"),
+            "{status}"
+        );
+        abort_restores(&root, &limit, &before, "an abort over the limit")?;
+        ensure!(
+            fs::read(root.join("notes"))? == b"notes\nthe user's own unstaged edit\n",
+            "the user's own edit is kept"
+        );
+        let status = quota(&root, &["rebase", "--status"], &limit)?;
+        let status = String::from_utf8_lossy(&status.stdout).into_owned();
+        ensure!(status.contains("No active rebase"), "{status}");
+        let copies = root.join(".git/brit-rebase-retained");
+        let mut largest = 0u64;
+        for operation in fs::read_dir(&copies)? {
+            for copy in fs::read_dir(operation?.path())? {
+                let size = repository_bytes(&copy?.path())?
+                    .values()
+                    .map(|bytes| bytes.len() as u64)
+                    .sum::<u64>();
+                largest = largest.max(size);
+            }
+        }
+        ensure!(
+            largest > high,
+            "the abort's retained copy ({largest} bytes) exceeds the {high}-byte limit that admitted the rebase"
+        );
         Ok(())
     }
 }

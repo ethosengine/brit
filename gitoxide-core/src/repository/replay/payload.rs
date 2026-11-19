@@ -358,7 +358,17 @@ impl Session {
         // A resolution is the user's bytes: reserve for them before keeping any.
         // An abort accepting and discarding its child is never metered.
         if switch::payload::metered() {
-            self.reserve(repo, self.step_need(repo, None, true, &[])?)?;
+            // The record this step saves holds each footprint file as the
+            // fingerprint `capture_payload` assigns below, never the image
+            // adopted from an authoring child, which can carry a file's bytes
+            // inline; its records are measured on that record.
+            let mut saved = self.state.clone();
+            for change in &mut saved.work {
+                change.after =
+                    switch::payload::fingerprint(&root.join(gix::path::from_bstr(change.path.as_bstr())?.as_ref()))?;
+            }
+            let image = record_bytes(&saved)?.len() as u64;
+            self.reserve(repo, self.step_need_for(repo, image, None, true, &[])?)?;
         }
         for ordinal in 0..self.state.work.len() {
             let path = root.join(gix::path::from_bstr(self.state.work[ordinal].path.as_bstr())?.as_ref());

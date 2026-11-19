@@ -64,16 +64,18 @@
 //!
 //! # The scratch quota never walls in recovery
 //!
-//! Every journal and retained copy lives under the scratch quota, and the quota
-//! is a policy about starting and continuing work only:
+//! The scratch quota meters the journal, and a skip's retained copy; it is a
+//! policy about starting and continuing work only:
 //!
 //! - Opening a journal never applies it (one record is bounded before it is read),
 //!   so `--status`, `--abort` and `--continue` can always read the journal.
-//! - Admission at the end of preparation projects the whole planned replay, with
-//!   one stop and its resolution, and cancels the preparation unless it fits (see
-//!   the `copy_bound` module). Every later forward step (`--continue`, a staged
-//!   resolution, `--skip`, an edit) is reserved for before anything of it is
-//!   written, and a refusal names `--abort`.
+//! - Admission at the end of preparation projects the whole planned replay's
+//!   journal, with one stop and its resolution, and cancels the preparation unless
+//!   it fits (see the `copy_bound` module). Every later forward step
+//!   (`--continue`, a staged resolution, `--skip`, an edit) is reserved for before
+//!   anything of it is written, and a refusal names `--abort`. The retained copy
+//!   an abort or a cleanup writes is not metered and is not projected: only a copy
+//!   that already exceeds the quota is refused, and such a copy can exceed it.
 //! - Undoing and finishing are never metered: [`Session::abort`] with every
 //!   decision it makes (accepting and discarding an authoring child, rolling a
 //!   durable decision forward, the abort's own transition), the retained copy it
@@ -1665,7 +1667,7 @@ impl Session {
         self.validate_current(repo)?;
         if self.state.phase == "break" {
             // The retained copy, before anything of the skip is written.
-            self.reserve(repo, self.step_need(repo, None, false, &[])?)?;
+            self.reserve_with_copy(repo, self.step_need(repo, None, false, &[])?)?;
             self.state.copies += 1;
             self.save()?;
             let receipt = self.capture_current(repo)?;
@@ -1694,7 +1696,7 @@ impl Session {
                 .transpose()?
                 .unwrap_or(self.tip()?);
             let desired = repo.index_from_tree(&repo.tree_id_of_commit(target)?)?;
-            self.reserve(repo, self.step_need(repo, Some(&desired), true, &[])?)?;
+            self.reserve_with_copy(repo, self.step_need(repo, Some(&desired), true, &[])?)?;
         }
         if self.state.phase != "retaining-skip" {
             self.adopt_abandoned_plan(repo)?;
@@ -2283,7 +2285,12 @@ impl Session {
     /// `copy_bound::DECISION_IMAGES`), slack for its proposal, retention and lock
     /// records, and the public index and HEAD reflog every decision stores again.
     fn decision_bytes(&self, repo: &gix::Repository) -> Result<u64> {
-        Ok((self.state_bytes()?.len() as u64)
+        self.decision_bytes_for(repo, self.state_bytes()?.len() as u64)
+    }
+
+    /// [`Self::decision_bytes`] for a state record of `image` bytes.
+    fn decision_bytes_for(&self, repo: &gix::Repository, image: u64) -> Result<u64> {
+        Ok(image
             .saturating_mul(super::copy_bound::DECISION_IMAGES)
             .saturating_add(RECORD_SLACK)
             .saturating_add(super::copy_bound::file_size(&repo.index_path())?)
@@ -2302,7 +2309,20 @@ impl Session {
         worktree: bool,
         extra: &[BString],
     ) -> Result<u64> {
-        let mut need = self.decision_bytes(repo)?;
+        self.step_need_for(repo, self.state_bytes()?.len() as u64, desired, worktree, extra)
+    }
+
+    /// [`Self::step_need`] when the record the step saves is `image` bytes, which
+    /// the caller knows better than the state in memory does.
+    fn step_need_for(
+        &self,
+        repo: &gix::Repository,
+        image: u64,
+        desired: Option<&gix::index::State>,
+        worktree: bool,
+        extra: &[BString],
+    ) -> Result<u64> {
+        let mut need = self.decision_bytes_for(repo, image)?;
         // An open authoring child's journal moves into this one when it is accepted.
         let child = repo.git_dir().join("brit-authoring");
         if present(&child)? {
@@ -2333,10 +2353,24 @@ impl Session {
     }
 
     /// Refuse, before anything of a forward step is written, a step after which
-    /// the journal, or the retained copy an abort then writes, could exceed the
-    /// quota with the safety factor. `requested` is what the step adds. Recovery
-    /// (an abort, a cleanup, a decision nothing can undo) is never refused here.
+    /// the journal could exceed the quota with the safety factor (`requested` is
+    /// what the step adds), or while the retained copy an abort would write
+    /// already exceeds it. That copy is not metered (see the `copy_bound`
+    /// module), so it is neither projected nor reserved for: only a copy already
+    /// over the quota is certain. Recovery (an abort, a cleanup, a decision
+    /// nothing can undo) is never refused here.
     fn reserve(&self, repo: &gix::Repository, requested: u64) -> Result<()> {
+        self.reserve_for(repo, requested, false)
+    }
+
+    /// [`Self::reserve`] for a step that itself writes a retained copy under the
+    /// quota (a skip): that copy, with `requested`, is reserved with the safety
+    /// factor as the journal is.
+    fn reserve_with_copy(&self, repo: &gix::Repository, requested: u64) -> Result<()> {
+        self.reserve_for(repo, requested, true)
+    }
+
+    fn reserve_for(&self, repo: &gix::Repository, requested: u64, metered_copy: bool) -> Result<()> {
         if !switch::payload::metered() {
             return Ok(());
         }
@@ -2344,26 +2378,44 @@ impl Session {
         let (copy, journal) = self.quota_usage(repo)?;
         let need = |bytes: u64| super::copy_bound::with_safety(bytes.saturating_add(requested));
         ensure!(
-            need(journal) <= limit && need(copy) <= limit,
-            "rebase refused this step before writing anything of it: its journal ({journal} bytes) or the retained \
-             copy an abort writes ({copy} bytes), with {requested} bytes for the step and the {}/{} safety factor, \
-             could exceed the {limit}-byte scratch limit; brit rebase --abort restores the original state",
+            need(journal) <= limit,
+            "rebase refused this step before writing anything of it: its journal ({journal} bytes), with {requested} \
+             bytes for the step and the {}/{} safety factor, could exceed the {limit}-byte scratch limit the journal \
+             lives under; brit rebase --abort restores the original state",
             super::copy_bound::SAFETY.0,
             super::copy_bound::SAFETY.1
         );
+        if metered_copy {
+            ensure!(
+                need(copy) <= limit,
+                "rebase refused this step before writing anything of it: the retained copy it writes ({copy} bytes), \
+                 with {requested} bytes for the step and the {}/{} safety factor, could exceed the {limit}-byte \
+                 scratch limit that copy lives under; brit rebase --abort restores the original state",
+                super::copy_bound::SAFETY.0,
+                super::copy_bound::SAFETY.1
+            );
+        } else {
+            ensure!(
+                copy <= limit,
+                "rebase refused this step before writing anything of it: the retained copy an abort would write \
+                 already holds {copy} bytes, over the {limit}-byte scratch limit; brit rebase --abort restores the \
+                 original state"
+            );
+        }
         Ok(())
     }
 
     /// Admit, once preparation knows its exact records, only a linear replay whose
-    /// peak journal and retained copy fit the quota with the safety factor to
-    /// spare. To the present journal and copy the peak adds every planned
-    /// decision's records, one stop's and the final publication's, what the replay
-    /// writes ([`super::copy_bound::Plan`], with a stop and a resolution as large
-    /// as the largest step), the largest publication staged at once, and in the copy
-    /// the objects the replay creates and their manifest entries. Steps beyond the
-    /// plan (further stops, edits) are reserved for when they happen.
+    /// peak journal fits the quota with the safety factor to spare, and whose
+    /// retained copy does not already exceed it. To the present journal the peak
+    /// adds every planned decision's records, one stop's and the final
+    /// publication's, what the replay writes ([`super::copy_bound::Plan`], with a
+    /// stop and a resolution as large as the largest step) and the largest
+    /// publication staged at once. The retained copy an abort or a cleanup writes
+    /// is not metered, so only its present size is tested, unscaled. Steps beyond
+    /// the plan (further stops, edits) are reserved for when they happen.
     fn admit(&self, repo: &gix::Repository) -> Result<()> {
-        use super::copy_bound::{DECISION_IMAGES, MANIFEST_BYTES_PER_OBJECT, STATE_BYTES_PER_OBJECT, with_safety};
+        use super::copy_bound::{DECISION_IMAGES, STATE_BYTES_PER_OBJECT, with_safety};
         let limit = switch::payload::scratch_limit();
         let (copy, journal) = self.quota_usage(repo)?;
         let replayed = self
@@ -2390,25 +2442,26 @@ impl Session {
         // The initial checkout, each replayed commit, one stop and the final
         // publication, and the stop's authoring child, archived into this journal.
         let decisions = replayed.len() as u64 + 3;
-        let journal_growth = per_decision
-            .saturating_mul(decisions)
-            .saturating_add(image.saturating_mul(CHILD_IMAGES))
-            .saturating_add(plan.payloads())
-            .saturating_add(plan.largest_version);
-        let journal_peak = journal.saturating_add(journal_growth);
-        let copy_peak = copy
-            .saturating_add(journal_growth)
-            .saturating_add(plan.payloads())
-            .saturating_add(plan.new_object_bytes)
-            .saturating_add(plan.new_objects.saturating_mul(MANIFEST_BYTES_PER_OBJECT));
+        let journal_peak = journal.saturating_add(
+            per_decision
+                .saturating_mul(decisions)
+                .saturating_add(image.saturating_mul(CHILD_IMAGES))
+                .saturating_add(plan.payloads())
+                .saturating_add(plan.largest_version),
+        );
         ensure!(
-            with_safety(journal_peak) <= limit && with_safety(copy_peak) <= limit,
+            with_safety(journal_peak) <= limit,
             "rebase refused before it changed anything: with its exact records known, its journal can reach \
-             {journal_peak} bytes and its retained copy {copy_peak} bytes, and with the {}/{} safety factor that \
-             exceeds the {limit}-byte scratch limit every journal and retained copy lives under; the preparation \
-             was cancelled and nothing was changed; git rebase is the fallback",
+             {journal_peak} bytes, and with the {}/{} safety factor that exceeds the {limit}-byte scratch limit the \
+             journal lives under; the preparation was cancelled and nothing was changed; git rebase is the fallback",
             super::copy_bound::SAFETY.0,
             super::copy_bound::SAFETY.1
+        );
+        ensure!(
+            copy <= limit,
+            "rebase refused before it changed anything: the retained copy an abort would write already holds {copy} \
+             bytes, over the {limit}-byte scratch limit; the preparation was cancelled and nothing was changed; git \
+             rebase is the fallback"
         );
         Ok(())
     }
@@ -3121,12 +3174,7 @@ impl Session {
     }
 
     fn state_bytes(&self) -> Result<Vec<u8>> {
-        let payload = serde_json::to_vec(&self.state)?;
-        let bytes = serde_json::to_vec(&Envelope {
-            checksum: switch::digest(&payload)?,
-            payload,
-        })?;
-        Ok(bytes)
+        record_bytes(&self.state)
     }
 
     /// `metered` applies the journal quota to a new record (outside a
@@ -3872,6 +3920,16 @@ pub struct Retired {
     pub refs: Vec<(String, String)>,
     /// The operation's retained copies, if any, and their bytes.
     pub copies: Option<(std::path::PathBuf, u64)>,
+}
+
+/// The record `save` writes for `state`: its checksummed envelope.
+fn record_bytes(state: &ParentState) -> Result<Vec<u8>> {
+    let payload = serde_json::to_vec(state)?;
+    let bytes = serde_json::to_vec(&Envelope {
+        checksum: switch::digest(&payload)?,
+        payload,
+    })?;
+    Ok(bytes)
 }
 
 /// Bytes of regular files under `root`, without following links.

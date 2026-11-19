@@ -1,37 +1,59 @@
-//! Refuse, before it starts, a rebase the scratch quota could not let finish.
+//! Refuse, before it starts, a rebase whose journal the scratch quota could not
+//! let finish.
 //!
-//! Every journal, and every retained copy an abort, a skip or a cleanup writes,
-//! lives under the scratch quota. The quota is a policy about starting and
-//! continuing work, never about undoing it: an abort, its retained copy and the
-//! cleanup of a terminal journal are not metered at all (see
-//! `switch::payload::Recovery`), so a wrong estimate here can no longer strand a
-//! repository. Two gates decide whether work starts or continues:
+//! The scratch quota meters the rebase journal: every record and payload a
+//! forward step writes is checked against it, and a rebase is admitted only when
+//! its journal fits. The quota is a policy about starting and continuing work,
+//! never about undoing it: an abort, its retained copy and the cleanup of a
+//! terminal journal, with its retained copy, are not metered at all (see
+//! `switch::payload::Recovery`), so no estimate here can strand a repository.
+//!
+//! Because those retained copies are never refused part-way, they are not
+//! projected or reserved for either: reserving a projected copy under a limit the
+//! copy is not held to refuses work that fits and protects nothing. An abort's or
+//! a cleanup's retained copy can therefore exceed the quota. It holds every object
+//! of the closure, the whole journal (which the quota bounds), the original and
+//! observed index files, and for each path of the replay footprint its
+//! before-image, its worktree file and up to three staged versions, plus a
+//! manifest; it can exceed the quota by at most that much, which is what never
+//! refusing an abort costs. Only what is certain is refused: a closure whose
+//! objects alone exceed the quota, at the preflight, and a copy that already
+//! exceeds it, at admission and before each forward step. A skip writes its
+//! retained copy under the quota, so a skip reserves for that copy as for its
+//! journal (`Session::reserve_with_copy`).
+//!
+//! Two gates decide whether work starts or continues:
 //!
 //! 1. This preflight, before any journal exists and before any object is verified
-//!    or spooled, refuses a rebase whose estimated journal and copy cannot fit. It
-//!    is the cheap, early gate: a repository whose closure alone is near the quota
-//!    is refused in about a second, saying plainly that Brit's rebase is not yet
-//!    available at that size and that `git rebase` is the fallback.
+//!    or spooled, makes two tests and says which one refused: the journal's
+//!    estimated peak, scaled by [`SAFETY`], must fit, and the closure's object
+//!    bytes alone must fit. It is the cheap, early gate: a repository that cannot
+//!    fit is refused in about a second, saying plainly that Brit's rebase is not
+//!    yet available at that size and that `git rebase` is the fallback.
 //! 2. Admission, once preparation knows its exact records (`Session::admit`),
-//!    projects the same peak from the real journal and copy, refuses unless it
-//!    fits with the safety factor to spare, and cancels the preparation, so nothing
-//!    is left behind. It includes one stop and a resolution as large as the
-//!    largest step, so the first forward step after a stop is not refused.
+//!    projects the journal's peak from the real journal, refuses unless it fits
+//!    with the safety factor to spare, refuses a retained copy that already
+//!    exceeds the quota, and cancels the preparation, so nothing is left behind.
+//!    It includes one stop and a resolution as large as the largest step, so the
+//!    first forward step after a stop is not refused for its journal.
 //!
 //! Every forward step afterwards (`--continue`, a staged resolution, `--skip`, an
 //! edit) is reserved for before anything of it is written (`Session::reserve`);
 //! a refused step names `--abort`, which always restores the original state.
 //!
-//! The bound adds, from the measured closure: every closure object's bytes and the
-//! index's own objects; for every object, an upper bound of its manifest entry and
-//! of its id in each journal state image; a fixed upper bound per state image; the
-//! index file once per decision and twice more (the original and observed copies)
-//! and `logs/HEAD` once per decision, both of which every decision stores again; what
-//! the replay writes ([`Plan`]), once as journal payloads and once as the objects
-//! it creates, with one stop's bytes and a resolution as large as the largest step;
-//! and every index entry whose worktree file is not clean by its stat, twice. It
-//! then scales that sum by [`SAFETY`] for the members it does not model
-//! (proposals, retention recipes, invocation records). The per-unit constants are
+//! The journal bound adds, from the measured closure: for every object, an upper
+//! bound of its id in each journal state image; a fixed upper bound per state
+//! image; the index file once per decision and twice more, and `logs/HEAD` once
+//! per decision, both of which every decision stores again; the bytes preparation
+//! keeps before anything changes: the original version of every path the replay
+//! touches, every staged blob, and every index entry whose worktree file is not
+//! clean by its stat; and what the replay writes ([`Plan`]) as journal payloads,
+//! with one stop's bytes, a resolution as large as the largest step and the
+//! largest version staged at once for publication. It then scales that sum by
+//! [`SAFETY`] for the members it does not model (proposals, retention recipes,
+//! invocation records) and for what the model under-estimates: a conflicted file
+//! written in the `diff3` style also holds the base version, so it can exceed the
+//! sum of the two versions a step is modelled with. The per-unit constants are
 //! measured maxima rounded up. Admission, with the exact state image, also counts
 //! the stop's records.
 //!
@@ -42,25 +64,24 @@
 //! stores, for each path its commit changes, the replayed version, which is that
 //! commit's version with the upstream's changes since the merge base applied, so
 //! every line of it is a line of one or the other: at most the sum of the two, and
-//! exactly the commit's version where the upstream left the path alone; and each
-//! step creates a commit, the trees along its changed paths and those blobs. The
-//! cost is linear in the replayed commits and the sizes of what they change; an
-//! earlier bound charged every version of every touched path once per decision,
-//! which grew with the square of the replay.
+//! exactly the commit's version where the upstream left the path alone. Each step
+//! also creates a commit and the trees along its changed paths, whose ids every
+//! later state image lists. The cost is linear in the replayed commits and the
+//! sizes of what they change; an earlier bound charged every version of every
+//! touched path once per decision, which grew with the square of the replay.
 //!
 //! The measurement reads object headers for blobs and never their contents. It
 //! loads each distinct commit and tree once, in memory, because their entries name
 //! the rest of the closure, loads the trees of the replayed commits again to find
-//! the paths they touch, and stops as soon as the bound passes the quota. On a
-//! closure of N objects it costs N object lookups and the decompression of every
-//! commit and tree, but no blob, no spool and no write; for the 218k-object
-//! closure the cost report measured (2.10 GB of blobs, 91 MB of commits and trees)
-//! that is the 91 MB of commits and trees plus about 200k header lookups, against
-//! roughly 12.5 GB spooled by each full verification pass. Because every state
-//! image lists the whole closure, a repository of about 180,000 objects, or with a
-//! closure near 0.9 GB decompressed, is refused for every rebase under the 1 GiB
-//! quota; that is the honest answer until the retained copy stops scaling with
-//! history.
+//! the paths they touch, and stops as soon as either test fails. On a closure of
+//! N objects it costs N object lookups and the decompression of every commit and
+//! tree, but no blob, no spool and no write; for the 218k-object closure the cost
+//! report measured (2.10 GB of blobs, 91 MB of commits and trees) that is the
+//! 91 MB of commits and trees plus about 200k header lookups, against roughly
+//! 12.5 GB spooled by each full verification pass, and that closure is refused by
+//! its object bytes alone. Because every state image lists the whole closure, a
+//! closure of about 390,000 objects is refused for a one-commit replay under the
+//! 1 GiB quota, and fewer for longer replays, which add state images.
 use std::collections::{BTreeMap, BTreeSet, HashMap, HashSet};
 
 use anyhow::{Context, Result};
@@ -72,14 +93,13 @@ pub(super) const STATE_BYTES_PER_OBJECT: u64 = 220;
 /// Bytes each journal state image holds whatever the closure: repository paths,
 /// preservation and metadata fingerprints. Measured at 18 KiB to 34 KiB.
 const STATE_FIXED_BYTES: u64 = 64 * 1024;
-/// Bytes each object entry adds to a retained-copy manifest. Measured at 920.
-pub(super) const MANIFEST_BYTES_PER_OBJECT: u64 = 1200;
 /// State images one decision adds to the journal: the decision record and its
 /// transition plan, plus the rewritten state (or a proposal) beside them while
 /// it is replaced.
 pub(super) const DECISION_IMAGES: u64 = 3;
-/// The factor, as a ratio, applied to the modelled sum for the journal members the
-/// bound does not model. Measured unmodelled members stayed under 10% of a copy.
+/// The factor, as a ratio, applied to the modelled journal for the members the
+/// bound does not model and for a `diff3` conflict's base version. Measured
+/// unmodelled members stayed under 10% of a copy.
 pub(super) const SAFETY: (u64, u64) = (5, 4);
 
 /// `bytes` scaled by [`SAFETY`].
@@ -87,10 +107,12 @@ pub(super) fn with_safety(bytes: u64) -> u64 {
     bytes.saturating_mul(SAFETY.0) / SAFETY.1
 }
 
-/// The retained copy a rebase would need, as far as the preflight measured it.
+/// The journal a rebase would need, and the closure its retained copies hold,
+/// as far as the preflight measured them.
 #[derive(Debug, Default)]
 struct Bound {
     objects: u64,
+    /// Bytes of every closure object: what any retained copy holds at least.
     object_bytes: u64,
     replayed: u64,
     index_bytes: u64,
@@ -98,6 +120,8 @@ struct Bound {
     plan: Plan,
     /// Worktree files whose index stat does not prove them clean.
     dirty_bytes: u64,
+    /// Blobs staged in the index, which preparation keeps as payloads.
+    staged_bytes: u64,
 }
 
 impl Bound {
@@ -113,26 +137,35 @@ impl Bound {
         1 + DECISION_IMAGES * self.decisions()
     }
 
-    fn needed(&self) -> u64 {
+    /// The journal's peak, scaled by [`SAFETY`].
+    fn journal(&self) -> u64 {
         let objects = self.objects.saturating_add(self.plan.new_objects);
-        let per_object = MANIFEST_BYTES_PER_OBJECT.saturating_add(STATE_BYTES_PER_OBJECT.saturating_mul(self.images()));
         with_safety(
-            self.object_bytes
-                .saturating_add(objects.saturating_mul(per_object))
+            objects
+                .saturating_mul(STATE_BYTES_PER_OBJECT.saturating_mul(self.images()))
                 .saturating_add(STATE_FIXED_BYTES.saturating_mul(self.images()))
                 .saturating_add(self.index_bytes.saturating_mul(self.decisions() + 2))
                 .saturating_add(self.log_bytes.saturating_mul(self.decisions()))
-                .saturating_add(self.plan.payloads().saturating_mul(2))
-                .saturating_add(self.plan.new_object_bytes)
-                .saturating_add(self.plan.largest_version)
-                .saturating_add(self.dirty_bytes.saturating_mul(2)),
+                .saturating_add(self.plan.kept)
+                .saturating_add(self.staged_bytes)
+                .saturating_add(self.dirty_bytes)
+                .saturating_add(self.plan.payloads())
+                .saturating_add(self.plan.largest_version),
         )
+    }
+
+    /// Whether either test already refuses under `limit`.
+    fn exceeds(&self, limit: u64) -> bool {
+        self.object_bytes > limit || self.journal() > limit
     }
 }
 
 /// What a linear replay writes, step by step, for the paths it touches.
 #[derive(Debug, Default, Clone, Copy)]
 pub(super) struct Plan {
+    /// The original version of every touched path, which preparation keeps as
+    /// its before-image.
+    pub kept: u64,
     /// Payload bytes its decisions store: the upstream image of every touched path
     /// at the initial checkout, then each path a replayed commit changes, as
     /// replayed.
@@ -141,10 +174,9 @@ pub(super) struct Plan {
     pub largest_step: u64,
     /// The largest single version: the publication staged at once.
     pub largest_version: u64,
-    /// Commits and trees the replay creates (its blobs are `written`).
+    /// Commits and trees the replay creates (its blobs are `written`), whose ids
+    /// later state images list.
     pub new_objects: u64,
-    /// Bytes of those commits and trees.
-    pub new_object_bytes: u64,
 }
 
 impl Plan {
@@ -177,37 +209,46 @@ pub(super) fn preflight(
             error
         } else {
             error.context(
-                "rebase refused before it started: Brit could not measure the retained copy this rebase needs, \
-                 so it cannot show the rebase would finish; nothing was changed; git rebase is the fallback",
+                "rebase refused before it started: Brit could not measure the journal and history this rebase \
+                 needs, so it cannot show the rebase would finish; nothing was changed; git rebase is the fallback",
             )
         }
     })?;
-    let needed = bound.needed();
-    if needed > limit {
-        let cause = if limit == gix::utils::stream::SCRATCH_LIMIT {
-            "brit rebase is not available on repositories of this size yet"
-        } else {
-            "the scratch limit configured for testing is too small for this rebase"
-        };
+    let cause = if limit == gix::utils::stream::SCRATCH_LIMIT {
+        "brit rebase is not available on repositories of this size yet"
+    } else {
+        "the scratch limit configured for testing is too small for this rebase"
+    };
+    let measured = if complete {
+        format!("replaying {} commits", bound.replayed)
+    } else {
+        "measured before the bound passed the limit".to_owned()
+    };
+    if bound.object_bytes > limit {
         anyhow::bail!(
-            "rebase refused before it started: {cause}; its \
-             journal and retained copy can need up to {needed} bytes ({} objects of {} bytes{}, plus journal, \
-             manifest and index), over the {limit}-byte scratch limit every journal and retained copy lives under; \
-             nothing was changed; git rebase is the fallback",
+            "rebase refused before it started: {cause}; the retained copy an abort or a cleanup writes holds at \
+             least its {} objects of {} bytes ({measured}), over the {limit}-byte scratch limit; nothing was \
+             changed; git rebase is the fallback",
             bound.objects,
             bound.object_bytes,
-            if complete {
-                format!(", replaying {} commits", bound.replayed)
-            } else {
-                " measured before the bound passed the limit".to_owned()
-            },
+        );
+    }
+    let journal = bound.journal();
+    if journal > limit {
+        anyhow::bail!(
+            "rebase refused before it started: {cause}; its journal can need up to {journal} bytes with the {}/{} \
+             safety factor ({} objects, {measured}), over the {limit}-byte scratch limit the journal lives under; \
+             nothing was changed; git rebase is the fallback",
+            SAFETY.0,
+            SAFETY.1,
+            bound.objects,
         );
     }
     Ok(())
 }
 
 /// Accumulate the closure of both tips into `bound`. Returns `false` when it
-/// stopped early because the bound already exceeded `limit`.
+/// stopped early because a test already failed under `limit`.
 fn measure(
     repo: &gix::Repository,
     original: gix::ObjectId,
@@ -257,13 +298,13 @@ fn measure(
                             .with_context(|| format!("read the header of blob {}", entry.oid))?
                             .size();
                         // One giant tree is not walked to its end once past the limit.
-                        if bound.needed() > limit {
+                        if bound.exceeds(limit) {
                             return Ok(false);
                         }
                     }
                 }
             }
-            if bound.needed() > limit {
+            if bound.exceeds(limit) {
                 return Ok(false);
             }
         }
@@ -271,7 +312,7 @@ fn measure(
     let replayed: Vec<_> = ours.difference(&theirs).copied().collect();
     bound.replayed = replayed.len() as u64;
     bound.plan = plan(repo, original, upstream, &replayed, &mut buffer)?;
-    if bound.needed() > limit {
+    if bound.exceeds(limit) {
         return Ok(false);
     }
     let index = repo.open_index()?;
@@ -283,16 +324,24 @@ fn measure(
         if entry.mode == gix::index::entry::Mode::COMMIT {
             continue;
         }
-        if seen.insert(entry.id) {
-            bound.objects += 1;
-            bound.object_bytes += repo.find_header(entry.id)?.size();
-        }
         // Staged, or not provably clean by size and modification second: its
-        // worktree bytes become a preservation payload and a retained image.
+        // worktree bytes become a preservation payload, and a staged blob is kept
+        // as one too.
         let path = entry.path(&index);
         let staged = head
             .entry_by_path(path)
             .is_none_or(|committed| committed.id != entry.id);
+        let unseen = seen.insert(entry.id);
+        if unseen || staged {
+            let size = repo.find_header(entry.id)?.size();
+            if unseen {
+                bound.objects += 1;
+                bound.object_bytes += size;
+            }
+            if staged {
+                bound.staged_bytes += size;
+            }
+        }
         if let Ok(metadata) = std::fs::symlink_metadata(root.join(gix::path::from_bstr(path)?)) {
             let seconds = metadata
                 .modified()
@@ -375,19 +424,21 @@ pub(super) fn plan(
             paths.extend(changed(&entries(parent)?, &tree));
         }
         touched.extend(paths.iter().cloned());
-        steps.push((commit, tree, paths));
+        steps.push((tree, paths));
     }
     let mut plan = Plan::default();
-    // The initial checkout stores the upstream image of every touched path the
-    // original's own (already kept as its before-image) does not equal.
     for path in &touched {
+        // Preparation keeps the original's image of every touched path.
+        plan.kept = plan.kept.saturating_add(size(original_entries.get(path))?);
+        // The initial checkout stores the upstream image of every touched path the
+        // original's own (already kept as its before-image) does not equal.
         if upstream_entries.get(path) != original_entries.get(path) {
             let version = size(upstream_entries.get(path))?;
             plan.written = plan.written.saturating_add(version);
             plan.largest_version = plan.largest_version.max(version);
         }
     }
-    for (commit, tree, paths) in steps {
+    for (tree, paths) in steps {
         let mut step = 0u64;
         let mut directories = BTreeSet::from([Vec::new()]);
         for path in &paths {
@@ -408,22 +459,8 @@ pub(super) fn plan(
         }
         plan.written = plan.written.saturating_add(step);
         plan.largest_step = plan.largest_step.max(step);
-        // The replayed commit, and the trees along its changed paths, each about
-        // the size of the original's.
+        // The replayed commit, and the trees along its changed paths.
         plan.new_objects += 1 + directories.len() as u64;
-        plan.new_object_bytes = plan.new_object_bytes.saturating_add(repo.find_header(commit)?.size());
-        let root = repo.find_tree(super::commit_tree(repo, commit)?)?;
-        for directory in directories {
-            let id = if directory.is_empty() {
-                Some(root.id)
-            } else {
-                root.lookup_entry(directory.split(|byte| *byte == b'/'))?
-                    .map(|entry| entry.object_id())
-            };
-            if let Some(id) = id {
-                plan.new_object_bytes = plan.new_object_bytes.saturating_add(repo.find_header(id)?.size());
-            }
-        }
     }
     Ok(plan)
 }
