@@ -36,6 +36,15 @@ so delivery builds pin both Rust and C flags, and CI also declares
 controls turn `cc`'s defaults off or name a target-cpu without C flags, so a
 compiler that defaults above the floor is still refused there.
 
+Limits of the probe: it assumes every C dependency compiles through `cc`, or
+through cmake-rs with `cc`'s defaults. A future dependency with its own build
+system, or one that calls `no_default_flags`, would compile at the host
+compiler's default and pass the probe unseen on a host whose compiler defaults
+to x86-64-v3; only the exact-byte CPU qualification above would catch it. The
+probe runs in `brit-cli`'s build script only (`brit` and `brit-rebase-retained`);
+`brit-build-ref` and `brit-verify` ship without it and rely on the workflows'
+Rust and C flags.
+
 Linux binaries are built and CPU-qualified on the explicit Ubuntu 24.04 shipping
 environment. The ordinary source matrix continues to cover newer Ubuntu runners.
 Before an expensive CPU build, a v2 C positive control must also run under the

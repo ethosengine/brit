@@ -13,7 +13,7 @@ name = "brit-cpu-baseline-probe"
 version = "0.0.0"
 edition = "2021"
 [build-dependencies]
-cc = "1.11.1"
+cc = "=1.11.1"
 [workspace]
 EOF
 cat > "$fixture/build.rs" <<'EOF'
@@ -41,6 +41,9 @@ unset CARGO_ENCODED_RUSTFLAGS CFLAGS_x86_64_unknown_linux_gnu TARGET_CFLAGS
 export RUSTFLAGS= CFLAGS= CXXFLAGS=
 # No CFLAGS: cc (>= 1.11) pins -march=x86-64 for x86_64 Linux, so this passes
 # even where the host compiler defaults above the floor (Ubuntu 26: x86-64-v3).
+# On a runner whose compiler already defaults to plain x86-64 this case proves
+# nothing; the cc-v3 wrapper cases below are the real proof on every runner.
+# The fixture has no lock file, so cc is pinned exactly in its manifest.
 cargo clippy --quiet -- -D warnings
 # Positive controls below also declare the published v2 target explicitly.
 if [[ $(rustc --print cfg) == *'target_arch="x86_64"'* && $(rustc --print cfg) == *'target_os="linux"'* ]]; then
