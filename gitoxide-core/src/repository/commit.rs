@@ -202,6 +202,9 @@ fn read_commit<'a>(
     gix::objs::CommitRef::from_bytes(data.data, id.kind()).or_raise(|| message!("Decode authoring commit {id}"))
 }
 
+/// The minimum wait for the repository guard when publishing after the commit hooks.
+const PUBLISH_GUARD_WAIT: std::time::Duration = std::time::Duration::from_secs(600);
+
 /// Create a Git commit from the index, honoring repository commit hooks.
 pub fn create(
     repo: gix::Repository,
@@ -297,6 +300,12 @@ pub fn create(
     if !pathspec.is_empty() || include || only {
         bail!("path-scoped commit is not yet supported; stage explicit paths and inspect the index, or use git commit");
     }
+    // The worktree guard is held for the whole command. The repository guard (shared) is held
+    // only to read the starting state and to publish: hooks run without it, so a commit sitting
+    // in a hook never holds up a shared writer, and nothing it writes before publication can be
+    // left unreferenced across a released guard (the tree and commit are written under the
+    // publication hold).
+    let mut guard = super::switch::worktree_mutation_guard(&repo)?;
     let original_head = repo.head()?;
     let merge = super::authoring::merge::ResolvedMerge::capture(&repo)?;
     if merge.is_some() {
@@ -515,6 +524,7 @@ pub fn create(
         return Ok(());
     }
 
+    guard.release_repository();
     if !no_verify {
         super::authoring::run_hook(&repo, "pre-commit", &[])?;
     }
@@ -546,6 +556,11 @@ pub fn create(
     if empty_message && !allow_empty_message {
         bail!("Aborting commit due to empty commit message.");
     }
+    // A commit must not throw away its hooks' work because another writer held the guard briefly.
+    let wait = super::switch::mutation_wait().at_least(super::switch::MutationWait::For(PUBLISH_GUARD_WAIT));
+    super::switch::reacquire_shared(&mut guard, &repo, wait).context(
+        "the commit hooks passed, but the repository guard could not be re-acquired to publish; nothing was committed",
+    )?;
     // Read after hooks, which may stage changes. Never substitute worktree bytes.
     let merge_locks = merge.as_ref().map(|merge| merge.lock(&repo)).transpose()?;
     let tree_id = super::authoring::index_tree(&repo)?;
@@ -801,6 +816,10 @@ pub fn create(
         ))?;
     }
     drop(merge_locks);
+    // Nothing below writes the worktree or its Git directory (merge metadata is already
+    // cleaned up), so post-commit and post-rewrite run holding no guard and may run Brit
+    // writers in this worktree.
+    drop(guard);
 
     // Post-commit cannot undo an already-created commit; report its failure as a warning.
     if let Err(err) = super::authoring::run_hook(&repo, "post-commit", &[]) {

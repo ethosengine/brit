@@ -35,7 +35,7 @@ pub fn main() -> Result<()> {
 /// The writer guard a command takes when it opens its repository.
 #[derive(Clone, Copy, PartialEq, Eq)]
 enum GuardScope {
-    /// Read-only, or the command scopes its own guards (switch, pull, rebase, push).
+    /// Read-only, or the command scopes its own guards (switch, pull, rebase, push, commit).
     None,
     /// Writes only its own worktree's index, HEAD and checkout, new objects, and
     /// compare-and-swap reference updates; excludes shared writers and same-worktree writers.
@@ -51,7 +51,9 @@ enum GuardScope {
 // boundary until their read-only semantics are explicitly established here.
 fn mutation_guard_scope(cmd: &Subcommands) -> GuardScope {
     match cmd {
-        Subcommands::Add { .. } | Subcommands::Commit(commit::Platform { cmd: None, .. }) => GuardScope::Worktree,
+        Subcommands::Add { .. } => GuardScope::Worktree,
+        // Commit holds its worktree guard throughout and the repository guard only to publish.
+        Subcommands::Commit(commit::Platform { cmd: None, .. }) => GuardScope::None,
         // Rewrite the invoking worktree. Switch, pull and rebase take the same pair themselves.
         Subcommands::Restore { .. }
         | Subcommands::Merge(merge::Platform {
@@ -225,25 +227,27 @@ pub fn configure_mutation_guards(
     wait: Option<core::repository::switch::MutationWait>,
     command: &clap::Command,
 ) -> Result<()> {
-    core::repository::switch::set_mutation_wait(match wait {
-        Some(wait) => wait,
+    if let Some(wait) = match wait {
+        Some(wait) => Some(wait),
         None => mutation_wait_from_environment()?,
-    });
+    } {
+        core::repository::switch::set_mutation_wait(wait);
+    }
     let command = command.clone();
     core::repository::switch::set_command_resolver(move |args| super::guard_label::subcommand_path(&command, args));
     Ok(())
 }
 
 /// The default writer wait from `BRIT_MUTATION_WAIT` (`SECONDS` or `forever`).
-fn mutation_wait_from_environment() -> Result<core::repository::switch::MutationWait> {
+fn mutation_wait_from_environment() -> Result<Option<core::repository::switch::MutationWait>> {
     match std::env::var_os("BRIT_MUTATION_WAIT") {
-        None => Ok(core::repository::switch::MutationWait::Refuse),
+        None => Ok(None),
         Some(value) => {
             let Some(value) = value.to_str() else {
                 bail!("BRIT_MUTATION_WAIT is not valid UTF-8")
             };
             match core::repository::switch::MutationWait::parse(value) {
-                Ok(wait) => Ok(wait),
+                Ok(wait) => Ok(Some(wait)),
                 Err(err) => bail!("invalid BRIT_MUTATION_WAIT: {err}"),
             }
         }

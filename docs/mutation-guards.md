@@ -1,0 +1,64 @@
+# Mutation guards
+
+Brit serializes its own writers with advisory `flock` locks. Git and other tools do not take
+these locks; they protect Brit writers from each other across the linked worktrees of one
+repository. This page is for anyone running Brit concurrently in several worktrees, and for
+hook authors.
+
+## The locks
+
+| Lock | File | Taken by |
+|---|---|---|
+| Repository guard | `<common-dir>/brit-mutation.guard` | Exclusive by writers of shared state (refs, config, worktree registrations, recovery journals). Shared by worktree-local writers and push. |
+| Worktree guard | the worktree's own Git directory, locked as a directory | Exclusive by every writer of that worktree's index, HEAD or files. |
+| Turnstile | `<common-dir>/brit-mutation.turnstile`, created the first time an exclusive writer has to wait | Held by a waiting exclusive writer until it has the repository guard. New shared acquirers pass through it, so a stream of shared holds cannot starve the waiter. |
+
+Order: a worktree guard is always taken before the repository guard, and nobody waits for a
+worktree guard while holding the repository guard.
+
+## Who holds what
+
+| Command | Locks, in order | Held across |
+|---|---|---|
+| `add`, `status` index refresh | worktree, then repository shared | the whole command (`status` never waits and skips its refresh when contended) |
+| `commit` | worktree for the whole command; repository shared only at start and to publish | Released before `pre-commit`, `prepare-commit-msg` and `commit-msg`. Re-taken (patience at least 600 s) to write the tree, the commit and the ref. Every guard is released before `post-commit` and `post-rewrite`. |
+| `push` | worktree for the whole command; repository shared for resolution and send-pack | Released across `pre-push`, re-taken (patience at least 600 s) for send-pack. Push never queues at the turnstile. |
+| `switch`, `pull`, `rebase` (replay), `restore`, `merge tree --update-head`, `clean --execute` | worktree, then repository exclusive | the whole guarded section, **including their own hooks** (`post-checkout`, `post-merge`) |
+| `fetch`, `branch`, `tag`, `config`, `worktree add`, notes and every other writer | repository exclusive | the whole command, **including fetch's whole transfer** |
+| `worktree remove` | repository exclusive, then the target worktree's guard without waiting | refuses at once if that worktree is in use |
+
+The long holds that remain are deliberate: switch, pull and replay journal their work and keep
+the repository exclusive until it is durable, and fetch holds it for its transfer.
+
+## Waiting
+
+- By default a writer that finds a lock held refuses at once and names the holder: pid, Brit
+  subcommand (never its arguments), role, directory, start time and session.
+- `add` and a commit start wait up to 2 seconds by default, so a momentary fetch or branch
+  command does not fail them.
+- `--wait[=SECONDS]` (before the subcommand, or anywhere for plumbing commands) waits instead:
+  bare `--wait` without limit, `--wait=0` refuses at once. `BRIT_MUTATION_WAIT=SECONDS` or
+  `forever` sets the default. For `brit context` and `brit integrate`, only a `--wait` before
+  the passed-through arguments is Brit's.
+- A shared writer that did not ask to wait still waits about 1 second at an engaged turnstile
+  before refusing; the refusal names both the queued writer and the holder it waits for.
+  A turnstile holder that is stopped (SIGSTOP) is passed.
+
+## Hooks
+
+Every hook and editor Brit runs carries `BRIT_GUARD_HELD_BY`, naming the Brit process, its start
+time and the locks it holds. A Brit writer inside the hook trusts it only when that process is
+really its ancestor.
+
+- **Same-worktree writers refuse at once.** A `pre-commit` hook cannot run `brit add` in its own
+  worktree, nor a `pre-push` hook `brit commit`: the command the hook runs under holds that
+  worktree. Stage files from a hook through the index directly, for example with `git add`.
+- **Exclusive writers inside a `post-checkout`/`post-merge` hook refuse at once**: switch and pull
+  hold the repository exclusively while their hooks run.
+- **Other writers work.** A `pre-push` or `pre-commit` hook may create branches, write notes or
+  commit in another worktree; writers in another repository are unaffected. `post-commit` and
+  `post-rewrite` hold no guard, so they may run any Brit writer, in their own worktree too.
+- **Waits under a hook are capped** at `BRIT_HOOK_GUARD_WAIT` seconds (default 30), because the
+  holder may itself be waiting for the hook's command. A pre-push gate that commits or writes
+  notes while another lane runs a long exclusive operation (a switch, a pull, a fetch) therefore
+  fails after the cap rather than waiting it out.

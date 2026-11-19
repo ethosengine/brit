@@ -18,13 +18,15 @@ pub enum MutationWait {
 
 impl MutationWait {
     const FOREVER: u64 = u64::MAX;
+    /// Nothing configured: callers choose their own default.
+    const UNSET: u64 = u64::MAX - 1;
 
     fn encode(self) -> u64 {
         match self {
             Self::Refuse => 0,
             Self::For(duration) => u64::try_from(duration.as_millis())
-                .unwrap_or(Self::FOREVER - 1)
-                .clamp(1, Self::FOREVER - 1),
+                .unwrap_or(Self::UNSET - 1)
+                .clamp(1, Self::UNSET - 1),
             Self::Forever => Self::FOREVER,
         }
     }
@@ -63,16 +65,29 @@ impl MutationWait {
     }
 }
 
-static WAIT: AtomicU64 = AtomicU64::new(0);
+static WAIT: AtomicU64 = AtomicU64::new(MutationWait::UNSET);
 
 /// Set the process-wide policy for writers that find a guard held.
 pub fn set_mutation_wait(wait: MutationWait) {
     WAIT.store(wait.encode(), Ordering::Relaxed);
 }
 
-/// The process-wide policy for writers that find a guard held.
+/// How long `add` and a commit start wait by default for their first guard, so a momentary
+/// exclusive writer (a fetch, a branch command) does not fail them; `--wait=0` refuses at once.
+pub const WORKTREE_START_PATIENCE: Duration = Duration::from_secs(2);
+
+/// The process-wide policy for writers that find a guard held (refuse when none was configured).
 pub fn mutation_wait() -> MutationWait {
-    MutationWait::decode(WAIT.load(Ordering::Relaxed))
+    mutation_wait_or(MutationWait::Refuse)
+}
+
+/// The configured policy, or `default` when neither `--wait` nor `BRIT_MUTATION_WAIT` was given.
+/// An explicit `--wait=0` is configured: it refuses at once.
+pub fn mutation_wait_or(default: MutationWait) -> MutationWait {
+    match WAIT.load(Ordering::Relaxed) {
+        MutationWait::UNSET => default,
+        encoded => MutationWait::decode(encoded),
+    }
 }
 
 type ResolveFn = dyn Fn(&[String]) -> Vec<String> + Send + Sync;
@@ -92,10 +107,18 @@ pub fn redacted_command(argv: &[String]) -> String {
 }
 
 fn redact_with(argv: &[String], resolver: Option<&ResolveFn>) -> String {
+    // argv[0] is chosen by the process (`exec -a`): print it only when it is plainly a name.
     let program = argv
         .first()
         .and_then(|arg0| std::path::Path::new(arg0).file_name())
-        .map_or_else(|| "?".to_owned(), |name| name.to_string_lossy().into_owned());
+        .map(|name| name.to_string_lossy().into_owned())
+        .filter(|name| {
+            name.len() <= 32
+                && name
+                    .bytes()
+                    .all(|byte| byte.is_ascii_alphanumeric() || matches!(byte, b'.' | b'_' | b'-'))
+        })
+        .unwrap_or_else(|| "process".to_owned());
     let mut out = program.clone();
     let stem = program.strip_suffix(std::env::consts::EXE_SUFFIX).unwrap_or(&program);
     if matches!(stem, "brit" | "rakia" | "gix" | "ein")
@@ -142,9 +165,9 @@ pub(crate) use linux::{
 #[cfg(target_os = "linux")]
 pub use linux::{
     ensure_no_pending, execute,
-    guard::{HOOK_MARKER, Held, WorktreeGuard},
-    mutation_guard, mutation_guard_waiting, other_worktree_guard, push_guard, reacquire_for_send, recover, status,
-    worktree_mutation_guard, worktree_mutation_guard_waiting, worktree_writer_guard,
+    guard::{HOOK_MARKER, HOOK_WAIT, Held, WorktreeGuard, hook_marker},
+    mutation_guard, mutation_guard_waiting, other_worktree_guard, push_guard, reacquire_for_send, reacquire_shared,
+    recover, status, worktree_mutation_guard, worktree_mutation_guard_waiting, worktree_writer_guard,
 };
 #[cfg(all(target_os = "linux", feature = "blocking-client"))]
 pub use linux::{pull_execute, pull_recover};
@@ -190,6 +213,12 @@ mod unavailable {
     }
     /// Environment variable naming the Brit process whose hook or editor this process runs under.
     pub const HOOK_MARKER: &str = "BRIT_GUARD_HELD_BY";
+    /// Environment variable capping guard waits under a hook; no guards to wait for here.
+    pub const HOOK_WAIT: &str = "BRIT_HOOK_GUARD_WAIT";
+    /// Other platforms hold no cooperative guards, so the marker names only this process.
+    pub fn hook_marker() -> String {
+        format!("v1 {} 0", std::process::id())
+    }
     /// Keep ordinary non-switch operations available on other platforms.
     pub fn mutation_guard(repo: &gix::Repository) -> Result<Held> {
         ensure_no_pending(repo).map(|()| Held)
@@ -218,6 +247,10 @@ mod unavailable {
     pub fn reacquire_for_send(_: &mut Held, repo: &gix::Repository, _: super::MutationWait) -> Result<()> {
         ensure_no_pending(repo)
     }
+    /// Other platforms have no cooperative guard; refuse only on pending recovery.
+    pub fn reacquire_shared(_: &mut Held, repo: &gix::Repository, _: super::MutationWait) -> Result<()> {
+        ensure_no_pending(repo)
+    }
     /// Other platforms have no cooperative guard.
     pub fn other_worktree_guard(_: &gix::Repository) -> Result<Held> {
         Ok(Held)
@@ -242,9 +275,9 @@ mod unavailable {
 }
 #[cfg(not(target_os = "linux"))]
 pub use unavailable::{
-    HOOK_MARKER, Held, WorktreeGuard, ensure_no_pending, execute, mutation_guard, mutation_guard_waiting,
-    other_worktree_guard, push_guard, reacquire_for_send, recover, status, worktree_mutation_guard,
-    worktree_mutation_guard_waiting, worktree_writer_guard,
+    HOOK_MARKER, HOOK_WAIT, Held, WorktreeGuard, ensure_no_pending, execute, hook_marker, mutation_guard,
+    mutation_guard_waiting, other_worktree_guard, push_guard, reacquire_for_send, recover, status,
+    worktree_mutation_guard, worktree_mutation_guard_waiting, worktree_writer_guard,
 };
 
 #[cfg(test)]
@@ -311,5 +344,12 @@ mod redaction {
             "flock",
             "never resolves foreign programs"
         );
+        for injected in ["brit` (held by root; run rm -rf", "a\nb", &"x".repeat(33)] {
+            assert_eq!(
+                super::redact_with(&argv(&[injected]), Some(&named)),
+                "process",
+                "{injected:?}"
+            );
+        }
     }
 }
