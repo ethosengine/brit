@@ -460,7 +460,7 @@ fn push_waits_for_the_repository_guard_after_its_hook_before_sending() -> Result
 }
 
 #[test]
-fn paused_commit_hook_keeps_lanes_writable_names_its_holder_and_can_be_awaited() -> Result<()> {
+fn a_commit_in_its_hooks_holds_only_its_worktree() -> Result<()> {
     let Lanes {
         repo, other, scratch, ..
     } = lanes("lock-commit-hook")?;
@@ -487,6 +487,13 @@ fn paused_commit_hook_keeps_lanes_writable_names_its_holder_and_can_be_awaited()
         "commit beside a paused commit: {}",
         commit.stderr
     );
+    // So do exclusive writers: the commit holds no repository guard while its hooks run.
+    let branch = brit(&other, &["branch", "create", "beside"])?;
+    ensure!(
+        branch.status.success(),
+        "exclusive write beside a paused commit: {}",
+        branch.stderr
+    );
 
     // The paused lane's own worktree stays exclusive, and the refusal names its holder.
     fs::write(repo.path().join("second"), "second\n")?;
@@ -496,35 +503,96 @@ fn paused_commit_hook_keeps_lanes_writable_names_its_holder_and_can_be_awaited()
         &["another Brit mutation is active", &holder, "commit"],
     )?;
 
+    fs::write(pause.join("release"), "")?;
+    let held = held.finish()?;
+    ensure!(held.status.success(), "released commit: {}", held.stderr);
+    assert_eq!(git(repo.path(), &["log", "-1", "--format=%s"])?, "held commit");
+    Ok(())
+}
+
+#[test]
+fn a_refused_exclusive_write_names_its_holder_and_can_be_awaited() -> Result<()> {
+    let Lanes {
+        repo,
+        remote,
+        other,
+        scratch,
+    } = lanes("lock-refusal-names")?;
+    let holder = SharedHolder::start(repo.path(), remote.path(), &scratch, "names")?;
+    let pid = holder.pid().to_string();
+
     // A shared write refuses at once by default, naming the holder.
     let refs_before = git(repo.path(), &["show-ref"])?;
     ensure_refusal_names(
         &brit(&other, &["branch", "create", "blocked"])?,
-        "shared write",
-        &["another Brit mutation is active", &holder, "commit", "--wait"],
+        "exclusive write",
+        &["another Brit mutation is active", &pid, "push", "--wait"],
     )?;
     assert_eq!(git(repo.path(), &["show-ref"])?, refs_before);
 
     // A bounded wait gives up after one budget across all its locks, still naming the holder.
     let started = Instant::now();
     let timed_out = brit(&other, &["--wait=1", "branch", "create", "blocked"])?;
-    ensure_refusal_names(&timed_out, "bounded wait", &[&holder, "after waiting"])?;
+    ensure_refusal_names(&timed_out, "bounded wait", &[&pid, "after waiting"])?;
     ensure!(
         started.elapsed() >= Duration::from_secs(1),
         "the one-second budget was honoured"
     );
-    ensure!(held.running()?, "it gave up while the holder still held the guard");
 
     // An open-ended wait completes once the holder finishes.
     let mut waiting = Background::spawn(&other, &["--wait", "branch", "create", "awaited"], &[])?;
     waiting.await_stderr("waiting for the Brit mutation guard")?;
-    fs::write(pause.join("release"), "")?;
-    let held = held.finish()?;
-    ensure!(held.status.success(), "released commit: {}", held.stderr);
+    holder.release()?;
     let waiting = waiting.finish()?;
-    ensure!(waiting.status.success(), "awaited shared write: {}", waiting.stderr);
-    assert_eq!(git(repo.path(), &["log", "-1", "--format=%s"])?, "held commit");
+    ensure!(waiting.status.success(), "awaited write: {}", waiting.stderr);
     git(repo.path(), &["rev-parse", "--verify", "refs/heads/awaited"])?;
+    Ok(())
+}
+
+#[test]
+fn a_commit_publishes_under_the_repository_guard_after_its_hooks() -> Result<()> {
+    let Lanes { repo, scratch, .. } = lanes("lock-commit-publish")?;
+    let pause = pause_dir(&scratch, "pause")?;
+    pausing_hook(repo.path(), &scratch.path().join("hooks"), "pre-commit")?;
+    let head = repo.head_id()?;
+
+    // An exclusive holder present when the hooks finish makes the commit wait, then publish.
+    let mut commit = Background::spawn(
+        repo.path(),
+        &["commit", "--allow-empty", "-m", "published"],
+        &[("BRIT_TEST_PAUSE", &pause)],
+    )?;
+    await_file(&pause.join("started"), &mut commit)?;
+    let mut external = ExternalHolder::hold(repo.path())?;
+    fs::write(pause.join("release"), "")?;
+    commit.await_stderr("waiting for the Brit mutation guard")?;
+    ensure!(external.running()?, "the exclusive holder is still there");
+    assert_eq!(repo.head_id()?, head, "nothing is published while the guard is held");
+    external.release()?;
+    let commit = commit.finish()?;
+    ensure!(
+        commit.status.success(),
+        "commit after the guard came back: {}",
+        commit.stderr
+    );
+    assert_eq!(git(repo.path(), &["log", "-1", "--format=%s"])?, "published");
+
+    // A pending recovery that appears during the hooks refuses publication; nothing changes.
+    let head = repo.head_id()?;
+    install_hook(
+        repo.path(),
+        &scratch.path().join("hooks"),
+        "pre-commit",
+        "mkdir \"$GIT_DIR/brit-switch\"",
+    )?;
+    let refused = brit(repo.path(), &["commit", "--allow-empty", "-m", "refused"])?;
+    ensure_refusal_names(
+        &refused,
+        "publication after a recovery appeared",
+        &["nothing was committed", "pending switch or pull"],
+    )?;
+    assert_eq!(repo.head_id()?, head, "HEAD is unchanged");
+    fs::remove_dir(git_dir(repo.path())?.join("brit-switch"))?;
     Ok(())
 }
 
@@ -613,48 +681,30 @@ fn a_hook_never_waits_for_the_command_it_runs_under() -> Result<()> {
 }
 
 #[test]
-fn a_waiting_shared_writer_is_not_starved_by_overlapping_worktree_writers() -> Result<()> {
+fn a_waiting_exclusive_writer_is_not_starved_by_overlapping_shared_holds() -> Result<()> {
     let Lanes {
-        repo, other, scratch, ..
+        repo,
+        remote,
+        other,
+        scratch,
     } = lanes("lock-fairness")?;
-    pausing_hook(repo.path(), &scratch.path().join("hooks"), "pre-commit")?;
-    let first = pause_dir(&scratch, "first")?;
-    let second = pause_dir(&scratch, "second")?;
-
-    let mut a = Background::spawn(
-        repo.path(),
-        &["commit", "--allow-empty", "-m", "a"],
-        &[("BRIT_TEST_PAUSE", &first)],
-    )?;
-    await_file(&first.join("started"), &mut a)?;
+    let holder = SharedHolder::start(repo.path(), remote.path(), &scratch, "first")?;
     // The exclusive writer queues behind the first shared holder.
     let mut fair = Background::spawn(&other, &["--wait=60", "branch", "create", "fair"], &[])?;
     fair.await_stderr("waiting for the Brit mutation guard")?;
-    // A later shared writer arrives while the exclusive writer is queued.
-    let mut b = Background::spawn(
-        &other,
-        &["--wait=60", "commit", "--allow-empty", "-m", "b"],
-        &[("BRIT_TEST_PAUSE", &second)],
-    )?;
-    b.await_stderr("waiting for the Brit mutation guard")?;
-    ensure!(
-        !second.join("started").exists(),
-        "the later writer queues behind the waiter"
-    );
+    // A later shared writer arrives while the exclusive writer is queued. Its request is
+    // compatible with the shared hold, so only the turnstile can make it wait.
+    fs::write(other.join("later"), "later\n")?;
+    let mut later = Background::spawn(&other, &["--wait=60", "add", "later"], &[])?;
+    later.await_stderr("queued for the repository guard")?;
+    ensure!(later.running()?, "the later writer queues behind the waiter");
 
-    fs::write(first.join("release"), "")?;
-    let a = a.finish()?;
-    ensure!(a.status.success(), "first writer: {}", a.stderr);
+    holder.release()?;
     let fair = fair.finish()?;
     ensure!(fair.status.success(), "queued exclusive writer: {}", fair.stderr);
-    await_file(&second.join("started"), &mut b)?;
-    ensure!(
-        !fs::read_to_string(second.join("fair-seen"))?.trim().is_empty(),
-        "the later shared writer ran only after the queued exclusive writer"
-    );
-    fs::write(second.join("release"), "")?;
-    let b = b.finish()?;
-    ensure!(b.status.success(), "later writer: {}", b.stderr);
+    let later = later.finish()?;
+    ensure!(later.status.success(), "later writer: {}", later.stderr);
+    git(repo.path(), &["rev-parse", "--verify", "refs/heads/fair"])?;
     Ok(())
 }
 
@@ -762,8 +812,9 @@ fn removing_a_worktree_that_another_writer_holds_refuses() -> Result<()> {
         &[("BRIT_TEST_PAUSE", &pause)],
     )?;
     await_file(&pause.join("started"), &mut held)?;
-    // The repository guard is shared by the paused commit; wait for it, then refuse on the worktree.
-    let mut remove = Background::spawn(
+    let holder = held.pid().to_string();
+    // The commit in that worktree holds its guard; removal refuses at once, naming it.
+    let refused = brit(
         repo.path(),
         &[
             "--wait=60",
@@ -772,48 +823,26 @@ fn removing_a_worktree_that_another_writer_holds_refuses() -> Result<()> {
             "--force",
             other.to_str().expect("utf8"),
         ],
-        &[],
-    )?;
-    remove.await_stderr("waiting for the Brit mutation guard")?;
-    fs::write(pause.join("release"), "")?;
-    let held = held.finish()?;
-    ensure!(held.status.success(), "{}", held.stderr);
-    let remove = remove.finish()?;
-    ensure!(
-        remove.status.success(),
-        "removal after the writer finished: {}",
-        remove.stderr
-    );
-    ensure!(!other.exists(), "the worktree was removed");
-
-    // A worktree whose own writer holds it while the repository guard is free refuses at once.
-    let again = scratch.path().join("again");
-    git(
-        repo.path(),
-        &["worktree", "add", "-q", "-b", "again", again.to_str().expect("utf8")],
-    )?;
-    let dir_guard = PathBuf::from(git(&again, &["rev-parse", "--absolute-git-dir"])?);
-    let mut command = Command::new("flock");
-    let mut holder = command
-        .arg(&dir_guard)
-        .args(["sh", "-c", "printf ready; cat"])
-        .stdin(Stdio::piped())
-        .stdout(Stdio::piped())
-        .spawn()?;
-    let mut ready = [0; 5];
-    holder.stdout.take().expect("piped").read_exact(&mut ready)?;
-    let refused = brit(
-        repo.path(),
-        &["worktree", "remove", "--force", again.to_str().expect("utf8")],
     )?;
     ensure_refusal_names(
         &refused,
-        "removing a held worktree",
-        &["in use by another Brit writer", "flock"],
+        "removing a worktree in use",
+        &["in use by another Brit writer", &holder, "commit"],
     )?;
-    ensure!(again.exists(), "the held worktree was kept");
-    drop(holder.stdin.take());
-    holder.wait()?;
+    ensure!(other.exists(), "the worktree in use was kept");
+    fs::write(pause.join("release"), "")?;
+    let held = held.finish()?;
+    ensure!(held.status.success(), "{}", held.stderr);
+    let removed = brit(
+        repo.path(),
+        &["worktree", "remove", "--force", other.to_str().expect("utf8")],
+    )?;
+    ensure!(
+        removed.status.success(),
+        "removal after the writer finished: {}",
+        removed.stderr
+    );
+    ensure!(!other.exists(), "the worktree was removed");
     Ok(())
 }
 
@@ -867,7 +896,7 @@ fn a_hook_refuses_at_once_when_its_command_holds_the_guard_it_needs() -> Result<
 }
 
 #[test]
-fn a_hook_wait_is_capped_so_a_cycle_through_another_process_ends() -> Result<()> {
+fn a_hook_wait_is_capped_and_no_cycle_forms_through_another_worktree() -> Result<()> {
     let Lanes {
         repo, other, scratch, ..
     } = lanes("lock-hook-cycle")?;
@@ -875,9 +904,10 @@ fn a_hook_wait_is_capped_so_a_cycle_through_another_process_ends() -> Result<()>
     fs::write(other.join("f"), "f\n")?;
     let pause = pause_dir(&scratch, "pause")?;
     let out = pause_dir(&scratch, "out")?;
+    let hooks = scratch.path().join("hooks");
     install_hook(
         repo.path(),
-        &scratch.path().join("hooks"),
+        &hooks,
         "pre-commit",
         &format!(
             "test -n \"$BRIT_TEST_PAUSE\" || exit 0\n\
@@ -887,35 +917,62 @@ fn a_hook_wait_is_capped_so_a_cycle_through_another_process_ends() -> Result<()>
             other.display()
         ),
     )?;
-    fs::write(repo.path().join("staged"), "staged\n")?;
-    git(repo.path(), &["add", "staged"])?;
-    let head = repo.head_id()?;
-    let mut commit = Background::spawn(
-        repo.path(),
-        &["commit", "-m", "cycle"],
-        &[
-            ("BRIT_TEST_PAUSE", &pause),
-            ("BRIT_TEST_OUT", &out),
-            ("BRIT_MUTATION_WAIT", Path::new("forever")),
-            ("BRIT_HOOK_GUARD_WAIT", Path::new("2")),
-        ],
-    )?;
+    let envs = [
+        ("BRIT_TEST_PAUSE", pause.as_path()),
+        ("BRIT_TEST_OUT", out.as_path()),
+        ("BRIT_MUTATION_WAIT", Path::new("forever")),
+        ("BRIT_HOOK_GUARD_WAIT", Path::new("2")),
+    ];
+
+    // The second review's cycle: a commit in its hook, a switch in the other worktree that
+    // needs the repository guard, and the hook writing into that other worktree. The commit
+    // holds no repository guard during its hooks, so the switch completes meanwhile.
+    let mut commit = Background::spawn(repo.path(), &["commit", "--allow-empty", "-m", "cycle"], &envs)?;
     await_file(&pause.join("started"), &mut commit)?;
-    // The switch takes lane-b's worktree guard, then waits for the commit's shared hold.
-    let mut switch = Background::spawn(&other, &["--wait", "switch", "lane-x"], &[])?;
-    switch.await_stderr("waiting for the Brit mutation guard")?;
+    let switch = Background::spawn(&other, &["--wait", "switch", "lane-x"], &[])?.finish()?;
+    ensure!(
+        switch.status.success(),
+        "the switch completes while the commit is in its hook: {}",
+        switch.stderr
+    );
+    ensure!(commit.running()?, "the commit is still in its hook");
     fs::write(pause.join("release"), "")?;
     let commit = commit.finish_within(Duration::from_secs(30))?;
+    ensure!(
+        commit.status.success(),
+        "the hook's write and the commit succeed: {}",
+        commit.stderr
+    );
+    git(&other, &["diff", "--cached", "--quiet", "HEAD", "--", "f"]).expect_err("f was staged by the hook");
+
+    // Any other wait a hook child makes is capped: a worktree guard held by an unrelated process.
+    let head = repo.head_id()?;
+    let pause = pause_dir(&scratch, "pause-2")?;
+    let blocker_dir = git_dir(&other)?;
+    let mut blocker = Command::new("flock")
+        .arg(&blocker_dir)
+        .args(["sh", "-c", "printf ready; cat"])
+        .stdin(Stdio::piped())
+        .stdout(Stdio::piped())
+        .spawn()?;
+    let mut ready = [0; 5];
+    blocker.stdout.take().expect("piped").read_exact(&mut ready)?;
+    let envs = [
+        ("BRIT_TEST_PAUSE", pause.as_path()),
+        ("BRIT_TEST_OUT", out.as_path()),
+        ("BRIT_MUTATION_WAIT", Path::new("forever")),
+        ("BRIT_HOOK_GUARD_WAIT", Path::new("2")),
+    ];
+    let mut commit = Background::spawn(repo.path(), &["commit", "--allow-empty", "-m", "capped"], &envs)?;
+    await_file(&pause.join("started"), &mut commit)?;
+    fs::write(pause.join("release"), "")?;
+    let commit = commit.finish_within(Duration::from_secs(30))?;
+    drop(blocker.stdin.take());
+    blocker.wait()?;
     ensure!(!commit.status.success(), "the capped hook fails the commit");
     let refusal = fs::read_to_string(out.join("add.err"))?;
     ensure!(refusal.contains("capped at 2s"), "the cap is named: {refusal}");
     assert_eq!(repo.head_id()?, head, "nothing was committed");
-    let switch = switch.finish()?;
-    ensure!(
-        switch.status.success(),
-        "the switch completes afterwards: {}",
-        switch.stderr
-    );
     Ok(())
 }
 

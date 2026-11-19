@@ -334,6 +334,12 @@ pub fn push_guard(repo: &gix::Repository) -> Result<guard::Held> {
 
 /// Re-take the repository guard (shared) for send-pack after a passed pre-push hook.
 pub fn reacquire_for_send(held: &mut guard::Held, repo: &gix::Repository, wait: super::MutationWait) -> Result<()> {
+    reacquire_shared(held, repo, wait)
+}
+
+/// Re-take the repository guard (shared) while the worktree guard stays held, and re-check
+/// pending recovery under it: commit publication after its hooks, push's send-pack.
+pub fn reacquire_shared(held: &mut guard::Held, repo: &gix::Repository, wait: super::MutationWait) -> Result<()> {
     held.reacquire_repository(repo, guard::Mode::Shared, wait)?;
     ensure_no_pending(repo)
 }

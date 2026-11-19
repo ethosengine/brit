@@ -35,7 +35,7 @@ pub fn main() -> Result<()> {
 /// The writer guard a command takes when it opens its repository.
 #[derive(Clone, Copy, PartialEq, Eq)]
 enum GuardScope {
-    /// Read-only, or the command scopes its own guards (switch, pull, rebase, push).
+    /// Read-only, or the command scopes its own guards (switch, pull, rebase, push, commit).
     None,
     /// Writes only its own worktree's index, HEAD and checkout, new objects, and
     /// compare-and-swap reference updates; excludes shared writers and same-worktree writers.
@@ -51,7 +51,9 @@ enum GuardScope {
 // boundary until their read-only semantics are explicitly established here.
 fn mutation_guard_scope(cmd: &Subcommands) -> GuardScope {
     match cmd {
-        Subcommands::Add { .. } | Subcommands::Commit(commit::Platform { cmd: None, .. }) => GuardScope::Worktree,
+        Subcommands::Add { .. } => GuardScope::Worktree,
+        // Commit holds its worktree guard throughout and the repository guard only to publish.
+        Subcommands::Commit(commit::Platform { cmd: None, .. }) => GuardScope::None,
         // Rewrite the invoking worktree. Switch, pull and rebase take the same pair themselves.
         Subcommands::Restore { .. }
         | Subcommands::Merge(merge::Platform {

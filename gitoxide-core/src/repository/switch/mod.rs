@@ -151,8 +151,8 @@ pub(crate) use linux::{
 pub use linux::{
     ensure_no_pending, execute,
     guard::{HOOK_MARKER, HOOK_WAIT, Held, WorktreeGuard, hook_marker},
-    mutation_guard, mutation_guard_waiting, other_worktree_guard, push_guard, reacquire_for_send, recover, status,
-    worktree_mutation_guard, worktree_mutation_guard_waiting, worktree_writer_guard,
+    mutation_guard, mutation_guard_waiting, other_worktree_guard, push_guard, reacquire_for_send, reacquire_shared,
+    recover, status, worktree_mutation_guard, worktree_mutation_guard_waiting, worktree_writer_guard,
 };
 #[cfg(all(target_os = "linux", feature = "blocking-client"))]
 pub use linux::{pull_execute, pull_recover};
@@ -230,6 +230,10 @@ mod unavailable {
     }
     /// Other platforms have no cooperative guard; refuse only on pending recovery.
     pub fn reacquire_for_send(_: &mut Held, repo: &gix::Repository, _: super::MutationWait) -> Result<()> {
+        ensure_no_pending(repo)
+    }
+    /// Other platforms have no cooperative guard; refuse only on pending recovery.
+    pub fn reacquire_shared(_: &mut Held, repo: &gix::Repository, _: super::MutationWait) -> Result<()> {
         ensure_no_pending(repo)
     }
     /// Other platforms have no cooperative guard.
