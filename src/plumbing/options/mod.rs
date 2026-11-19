@@ -339,6 +339,38 @@ pub mod branch {
             #[clap(long, short = 'a')]
             all: bool,
         },
+        /// Delete local branches, also as `--delete` or `-d`; `-D` is `--delete --force`.
+        ///
+        /// A branch checked out (or being rebased or bisected) in any worktree is never deleted.
+        /// Without `--force`, each branch must be merged into its upstream, or into `HEAD` when it
+        /// has none. Its reflog and `branch.<name>` configuration go with it. Several names are
+        /// deleted together or not at all.
+        #[clap(long_flag = "delete", short_flag = 'd')]
+        Delete {
+            /// Delete even if the branch is not merged.
+            #[clap(long, short = 'f')]
+            force: bool,
+            /// Names of the local branches to delete.
+            #[clap(required = true)]
+            names: Vec<String>,
+        },
+        /// Delete local branches even if they are not merged (`-D`).
+        #[clap(short_flag = 'D', hide = true)]
+        ForceDelete {
+            /// Names of the local branches to delete.
+            #[clap(required = true)]
+            names: Vec<String>,
+        },
+        /// Rename a local branch, also as `--move` or `-m`, carrying its reflog and configuration.
+        ///
+        /// Refuses when `<new>` already exists. Worktrees with `<old>` checked out follow the rename.
+        #[clap(long_flag = "move", short_flag = 'm')]
+        Move {
+            /// Current name of the local branch.
+            old: String,
+            /// New name of the local branch.
+            new: String,
+        },
     }
 }
 
@@ -1233,16 +1265,43 @@ pub mod commit {
 }
 
 pub mod tag {
+    /// Without a name, list tags. With one, create a tag at `<commit-ish>` (default `HEAD`):
+    /// lightweight, or an annotated tag object when `-a` or `-m` is given.
+    ///
+    /// The subcommand names `list` and `delete` take precedence over tag names; use
+    /// `brit tag -- <name>` to create a tag spelled like one.
     #[derive(Debug, clap::Parser)]
+    #[clap(args_conflicts_with_subcommands = true)]
     pub struct Platform {
         #[clap(subcommand)]
         pub cmds: Option<Subcommands>,
+        /// Create an annotated tag object; requires `-m`, as no editor is launched.
+        #[clap(long, requires = "name", short = 'a')]
+        pub annotate: bool,
+        /// The annotated tag's message, cleaned up as Git does; implies `-a`.
+        #[clap(long, requires = "name", short = 'm', value_name = "msg")]
+        pub message: Option<String>,
+        /// Replace an existing tag of the same name.
+        #[clap(long, requires = "name", short = 'f')]
+        pub force: bool,
+        /// Name of the tag to create.
+        pub name: Option<String>,
+        /// Object to tag.
+        #[clap(requires = "name")]
+        pub commit_ish: Option<String>,
     }
 
     #[derive(Debug, clap::Subcommand)]
     pub enum Subcommands {
         /// List all tags.
         List,
+        /// Delete tags, also as `--delete` or `-d`; several names are deleted together or not at all.
+        #[clap(long_flag = "delete", short_flag = 'd')]
+        Delete {
+            /// Names of the tags to delete.
+            #[clap(required = true)]
+            names: Vec<String>,
+        },
     }
 }
 
