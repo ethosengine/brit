@@ -142,7 +142,7 @@ pub(crate) use linux::{
 #[cfg(target_os = "linux")]
 pub use linux::{
     ensure_no_pending, execute,
-    guard::{HOOK_MARKER, Held, WorktreeGuard},
+    guard::{HOOK_MARKER, HOOK_WAIT, Held, WorktreeGuard, hook_marker},
     mutation_guard, mutation_guard_waiting, other_worktree_guard, push_guard, reacquire_for_send, recover, status,
     worktree_mutation_guard, worktree_mutation_guard_waiting, worktree_writer_guard,
 };
@@ -190,6 +190,12 @@ mod unavailable {
     }
     /// Environment variable naming the Brit process whose hook or editor this process runs under.
     pub const HOOK_MARKER: &str = "BRIT_GUARD_HELD_BY";
+    /// Environment variable capping guard waits under a hook; no guards to wait for here.
+    pub const HOOK_WAIT: &str = "BRIT_HOOK_GUARD_WAIT";
+    /// Other platforms hold no cooperative guards, so the marker names only this process.
+    pub fn hook_marker() -> String {
+        format!("v1 {} 0", std::process::id())
+    }
     /// Keep ordinary non-switch operations available on other platforms.
     pub fn mutation_guard(repo: &gix::Repository) -> Result<Held> {
         ensure_no_pending(repo).map(|()| Held)
@@ -242,9 +248,9 @@ mod unavailable {
 }
 #[cfg(not(target_os = "linux"))]
 pub use unavailable::{
-    HOOK_MARKER, Held, WorktreeGuard, ensure_no_pending, execute, mutation_guard, mutation_guard_waiting,
-    other_worktree_guard, push_guard, reacquire_for_send, recover, status, worktree_mutation_guard,
-    worktree_mutation_guard_waiting, worktree_writer_guard,
+    HOOK_MARKER, HOOK_WAIT, Held, WorktreeGuard, ensure_no_pending, execute, hook_marker, mutation_guard,
+    mutation_guard_waiting, other_worktree_guard, push_guard, reacquire_for_send, recover, status,
+    worktree_mutation_guard, worktree_mutation_guard_waiting, worktree_writer_guard,
 };
 
 #[cfg(test)]

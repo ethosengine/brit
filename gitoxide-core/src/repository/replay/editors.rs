@@ -141,7 +141,10 @@ pub fn run(
         .arg(editor.get_program())
         .args(editor.get_args())
         .env("GIT_INDEX_FILE", repo.current_dir().join(index).into_os_string())
-        .env(crate::repository::switch::HOOK_MARKER, std::process::id().to_string())
+        .env(
+            crate::repository::switch::HOOK_MARKER,
+            crate::repository::switch::hook_marker(),
+        )
         .stdin(Stdio::piped())
         .stdout(Stdio::inherit())
         .stderr(Stdio::inherit())

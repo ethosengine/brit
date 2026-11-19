@@ -228,6 +228,64 @@ fn ensure_refusal_names(output: &Capture, what: &str, expected: &[&str]) -> Resu
     Ok(())
 }
 
+fn hex(path: &Path) -> String {
+    use std::{fmt::Write as _, os::unix::ffi::OsStrExt};
+    let path = path.canonicalize().expect("canonical path");
+    path.as_os_str().as_bytes().iter().fold(String::new(), |mut out, byte| {
+        let _ = write!(out, "{byte:02x}");
+        out
+    })
+}
+
+fn common_dir(worktree: &Path) -> Result<PathBuf> {
+    Ok(PathBuf::from(git(
+        worktree,
+        &["rev-parse", "--path-format=absolute", "--git-common-dir"],
+    )?))
+}
+
+fn git_dir(worktree: &Path) -> Result<PathBuf> {
+    Ok(PathBuf::from(git(worktree, &["rev-parse", "--absolute-git-dir"])?))
+}
+
+fn start_ticks(pid: u32) -> Result<String> {
+    let stat = fs::read_to_string(format!("/proc/{pid}/stat"))?;
+    let after = &stat[stat.rfind(')').expect("stat has a command name") + 2..];
+    Ok(after.split_whitespace().nth(19).expect("start time field").to_owned())
+}
+
+/// A writer that holds the repository guard shared and `worktree`'s guard until released:
+/// a commit paused in its pre-commit hook.
+struct SharedHolder {
+    process: Background,
+    pause: PathBuf,
+}
+
+impl SharedHolder {
+    fn start(worktree: &Path, hooks: &Path, scratch: &tempfile::TempDir, name: &str) -> Result<Self> {
+        pausing_hook(worktree, hooks, "pre-commit")?;
+        let pause = pause_dir(scratch, name)?;
+        let mut process = Background::spawn(
+            worktree,
+            &["commit", "--allow-empty", "-m", "shared holder"],
+            &[("BRIT_TEST_PAUSE", &pause)],
+        )?;
+        await_file(&pause.join("started"), &mut process)?;
+        Ok(Self { process, pause })
+    }
+
+    fn pid(&self) -> u32 {
+        self.process.pid()
+    }
+
+    fn release(self) -> Result<()> {
+        fs::write(self.pause.join("release"), "")?;
+        let done = self.process.finish()?;
+        ensure!(done.status.success(), "shared holder: {}", done.stderr);
+        Ok(())
+    }
+}
+
 struct Lanes {
     repo: TestRepo,
     remote: tempfile::TempDir,
@@ -486,6 +544,30 @@ fn a_hook_never_waits_for_the_command_it_runs_under() -> Result<()> {
         "the hook's writer names its own command: {refusal}"
     );
 
+    // A hook child whose environment was cleared (no marker) still refuses on direct re-entry.
+    install_hook(
+        repo.path(),
+        &hooks,
+        "pre-commit",
+        "env -i PATH=\"$PATH\" HOME=\"$HOME\" \"$BRIT_TEST_BIN\" --wait add hookfile 2>\"$BRIT_TEST_OUT/cleared.err\"",
+    )?;
+    let commit = Background::spawn(
+        repo.path(),
+        &["commit", "--allow-empty", "-m", "cleared"],
+        &[("BRIT_TEST_OUT", &out)],
+    )?
+    .finish_within(Duration::from_secs(30))?;
+    ensure!(
+        !commit.status.success(),
+        "the cleared hook child's refusal fails the commit"
+    );
+    let refusal = fs::read_to_string(out.join("cleared.err"))?;
+    ensure!(
+        refusal.contains("the command this hook runs under"),
+        "found through the parent chain without a marker: {refusal}"
+    );
+    fs::remove_file(hooks.join("pre-commit"))?;
+
     // pre-push: shared writes work during the hook, the pushing worktree does not.
     install_hook(
         repo.path(),
@@ -713,5 +795,189 @@ fn removing_a_worktree_that_another_writer_holds_refuses() -> Result<()> {
     ensure!(again.exists(), "the held worktree was kept");
     drop(holder.stdin.take());
     holder.wait()?;
+    Ok(())
+}
+
+#[test]
+fn a_hook_refuses_at_once_when_its_command_holds_the_guard_it_needs() -> Result<()> {
+    let Lanes {
+        repo, other, scratch, ..
+    } = lanes("lock-hook-exclusive")?;
+    git(repo.path(), &["branch", "spare"])?;
+    let pause = pause_dir(&scratch, "pause")?;
+    let out = pause_dir(&scratch, "out")?;
+    // post-checkout runs while switch holds the repository guard exclusively.
+    install_hook(
+        repo.path(),
+        &scratch.path().join("hooks"),
+        "post-checkout",
+        "test -n \"$BRIT_TEST_PAUSE\" || exit 0\n\
+         : >\"$BRIT_TEST_PAUSE/started\"\n\
+         while ! test -e \"$BRIT_TEST_PAUSE/release\"; do sleep 0.05; done\n\
+         \"$BRIT_TEST_BIN\" branch create from-hook 2>\"$BRIT_TEST_OUT/hook.err\"\n\
+         echo $? >\"$BRIT_TEST_OUT/hook.status\"",
+    )?;
+    let mut switch = Background::spawn(
+        repo.path(),
+        &["switch", "spare"],
+        &[
+            ("BRIT_TEST_PAUSE", &pause),
+            ("BRIT_TEST_OUT", &out),
+            ("BRIT_MUTATION_WAIT", Path::new("forever")),
+        ],
+    )?;
+    await_file(&pause.join("started"), &mut switch)?;
+    // Another writer queues at the turnstile, waiting for the switch.
+    let mut queued = Background::spawn(&other, &["--wait", "branch", "create", "queued-b"], &[])?;
+    queued.await_stderr("waiting for the Brit mutation guard")?;
+    fs::write(pause.join("release"), "")?;
+    let switch = switch.finish_within(Duration::from_secs(30))?;
+    ensure!(switch.status.success(), "switch: {}", switch.stderr);
+    ensure!(
+        fs::read_to_string(out.join("hook.status"))?.trim() != "0",
+        "the hook's exclusive request refused"
+    );
+    let refusal = fs::read_to_string(out.join("hook.err"))?;
+    ensure!(
+        refusal.contains("the command this hook runs under") && refusal.contains("switch"),
+        "names the switch: {refusal}"
+    );
+    let queued = queued.finish()?;
+    ensure!(queued.status.success(), "the queued writer proceeds: {}", queued.stderr);
+    Ok(())
+}
+
+#[test]
+fn a_hook_wait_is_capped_so_a_cycle_through_another_process_ends() -> Result<()> {
+    let Lanes {
+        repo, other, scratch, ..
+    } = lanes("lock-hook-cycle")?;
+    git(&other, &["branch", "lane-x"])?;
+    fs::write(other.join("f"), "f\n")?;
+    let pause = pause_dir(&scratch, "pause")?;
+    let out = pause_dir(&scratch, "out")?;
+    install_hook(
+        repo.path(),
+        &scratch.path().join("hooks"),
+        "pre-commit",
+        &format!(
+            "test -n \"$BRIT_TEST_PAUSE\" || exit 0\n\
+             : >\"$BRIT_TEST_PAUSE/started\"\n\
+             while ! test -e \"$BRIT_TEST_PAUSE/release\"; do sleep 0.05; done\n\
+             cd \"{}\" && env -u GIT_DIR -u GIT_WORK_TREE -u GIT_INDEX_FILE \"$BRIT_TEST_BIN\" add f 2>\"$BRIT_TEST_OUT/add.err\"",
+            other.display()
+        ),
+    )?;
+    fs::write(repo.path().join("staged"), "staged\n")?;
+    git(repo.path(), &["add", "staged"])?;
+    let head = repo.head_id()?;
+    let mut commit = Background::spawn(
+        repo.path(),
+        &["commit", "-m", "cycle"],
+        &[
+            ("BRIT_TEST_PAUSE", &pause),
+            ("BRIT_TEST_OUT", &out),
+            ("BRIT_MUTATION_WAIT", Path::new("forever")),
+            ("BRIT_HOOK_GUARD_WAIT", Path::new("2")),
+        ],
+    )?;
+    await_file(&pause.join("started"), &mut commit)?;
+    // The switch takes lane-b's worktree guard, then waits for the commit's shared hold.
+    let mut switch = Background::spawn(&other, &["--wait", "switch", "lane-x"], &[])?;
+    switch.await_stderr("waiting for the Brit mutation guard")?;
+    fs::write(pause.join("release"), "")?;
+    let commit = commit.finish_within(Duration::from_secs(30))?;
+    ensure!(!commit.status.success(), "the capped hook fails the commit");
+    let refusal = fs::read_to_string(out.join("add.err"))?;
+    ensure!(refusal.contains("capped at 2s"), "the cap is named: {refusal}");
+    assert_eq!(repo.head_id()?, head, "nothing was committed");
+    let switch = switch.finish()?;
+    ensure!(
+        switch.status.success(),
+        "the switch completes afterwards: {}",
+        switch.stderr
+    );
+    Ok(())
+}
+
+#[test]
+fn forged_hook_markers_are_ignored() -> Result<()> {
+    let Lanes {
+        repo, other, scratch, ..
+    } = lanes("lock-forged-marker")?;
+    let hooks = scratch.path().join("hooks");
+    let holder = SharedHolder::start(repo.path(), &hooks, &scratch, "holder")?;
+    let common = hex(&common_dir(repo.path())?);
+    let worktree = hex(&git_dir(repo.path())?);
+
+    // A marker naming the real holder, but with a wrong start time, does not make a waiter refuse.
+    let wrong_start = format!("v1 {} 1 s:{common}:{worktree}", holder.pid());
+    // A marker with the holder's real start time, but not this process's ancestor, neither.
+    let not_ancestor = format!(
+        "v1 {} {} s:{common}:{worktree}",
+        holder.pid(),
+        start_ticks(holder.pid())?
+    );
+    let mut waiters = Vec::new();
+    for (name, marker) in [("wrong-start", &wrong_start), ("not-ancestor", &not_ancestor)] {
+        fs::write(repo.path().join(name), name)?;
+        let mut waiter = Background::spawn(
+            repo.path(),
+            &["--wait=60", "add", name],
+            &[("BRIT_GUARD_HELD_BY", Path::new(marker))],
+        )?;
+        waiter.await_stderr("waiting for the Brit mutation guard")?;
+        waiters.push(waiter);
+    }
+
+    // A forged marker claiming a shared ancestor does not skip an engaged turnstile.
+    let mut queued = Background::spawn(&other, &["--wait", "branch", "create", "queued"], &[])?;
+    queued.await_stderr("waiting for the Brit mutation guard")?;
+    fs::write(other.join("forged"), "forged\n")?;
+    let forged = format!("v1 1 0 s:{common}:-");
+    let skipped = brit_with(&other, &["add", "forged"], &[("BRIT_GUARD_HELD_BY", &forged)])?;
+    ensure_refusal_names(&skipped, "a forged marker at the turnstile", &["branch create"])?;
+
+    holder.release()?;
+    for waiter in waiters {
+        let done = waiter.finish()?;
+        ensure!(
+            done.status.success(),
+            "the waiter proceeds after the holder: {}",
+            done.stderr
+        );
+    }
+    let queued = queued.finish()?;
+    ensure!(queued.status.success(), "{}", queued.stderr);
+    Ok(())
+}
+
+#[test]
+fn hook_markers_round_trip_through_a_real_hook() -> Result<()> {
+    let Lanes { repo, scratch, .. } = lanes("lock-marker-shape")?;
+    let out = pause_dir(&scratch, "out")?;
+    install_hook(
+        repo.path(),
+        &scratch.path().join("hooks"),
+        "pre-commit",
+        "printf '%s' \"$BRIT_GUARD_HELD_BY\" >\"$BRIT_TEST_OUT/marker\"",
+    )?;
+    let commit = Background::spawn(
+        repo.path(),
+        &["commit", "--allow-empty", "-m", "m"],
+        &[("BRIT_TEST_OUT", &out)],
+    )?;
+    let pid = commit.pid();
+    let done = commit.finish()?;
+    ensure!(done.status.success(), "{}", done.stderr);
+    let marker = fs::read_to_string(out.join("marker"))?;
+    let fields: Vec<_> = marker.split(' ').collect();
+    assert_eq!(fields[0], "v1");
+    assert_eq!(fields[1], pid.to_string(), "names the spawning brit");
+    let worktree = format!(":{}", hex(&git_dir(repo.path())?));
+    ensure!(
+        fields[3..].iter().any(|holding| holding.ends_with(&worktree)),
+        "names the worktree guard it holds: {marker}"
+    );
     Ok(())
 }

@@ -149,7 +149,7 @@ fn hook_command(
         .env("GIT_INDEX_FILE", absolute(repo, index).into_os_string())
         .env("GIT_EDITOR", ":")
         // A Brit writer in the hook must refuse, not wait, on a guard this process holds.
-        .env(super::switch::HOOK_MARKER, std::process::id().to_string())
+        .env(super::switch::HOOK_MARKER, super::switch::hook_marker())
         .stdin(if piped { Stdio::piped() } else { Stdio::null() })
         .stdout(Stdio::inherit())
         .stderr(Stdio::inherit())

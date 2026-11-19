@@ -21,8 +21,18 @@
 //!
 //! A process never waits for a guard held by itself or by one of its ancestors: a hook that
 //! runs a Brit writer would otherwise wait forever on the command it runs under. Every hook
-//! and editor Brit spawns carries [`HOOK_MARKER`], which stands in when `/proc` cannot name a
-//! holder, and which lets hooks bypass the turnstile their parent's waiters may hold.
+//! and editor Brit spawns carries [`HOOK_MARKER`]: the spawning process's pid and start time
+//! and exactly which guards it holds. A marker is honoured only when that pid with that start
+//! time is in this process's parent chain; a forged or inherited-by-a-daemon marker is ignored.
+//! Under an honoured marker:
+//! - a request the ancestor's holdings make impossible (its worktree guard; the repository guard
+//!   in a mode incompatible with the ancestor's) refuses at once, before any queueing;
+//! - a shared request passes the turnstile when the ancestor holds the repository guard shared
+//!   (a queued writer may be waiting for that very ancestor);
+//! - no single acquisition waits longer than the hook cap ([`HOOK_WAIT`], default 30 s), which
+//!   breaks any longer cycle through other processes.
+//!
+//! The `/proc/locks` ancestor check still covers hook children whose environment was cleared.
 //!
 //! A refusal names the holders the kernel records in `/proc/locks`, which never goes stale and
 //! needs no extra files in the repository. Holder command lines are reduced to the program
@@ -30,50 +40,106 @@
 use super::super::MutationWait;
 use anyhow::{Context, Result, bail};
 use std::{
+    collections::BTreeMap,
     fs,
-    path::Path,
+    path::{Path, PathBuf},
+    sync::{
+        Mutex, OnceLock,
+        atomic::{AtomicU64, Ordering},
+    },
     time::{Duration, Instant},
 };
 
-/// Environment variable naming the Brit process whose hook or editor this process runs under.
+/// Environment variable naming the Brit process whose hook or editor this process runs under,
+/// with its start time and the guards it held when it spawned the hook.
 pub const HOOK_MARKER: &str = "BRIT_GUARD_HELD_BY";
+
+/// Environment variable capping, in seconds, any single guard wait under an honoured
+/// [`HOOK_MARKER`] (default 30).
+pub const HOOK_WAIT: &str = "BRIT_HOOK_GUARD_WAIT";
+
+const DEFAULT_HOOK_WAIT: Duration = Duration::from_secs(30);
 
 const REPOSITORY_GUARD: &str = "brit-mutation.guard";
 const TURNSTILE: &str = "brit-mutation.turnstile";
 
+/// What one [`Held`] holds, as published in the hook marker.
+#[derive(Clone, Debug, PartialEq, Eq)]
+struct Holding {
+    common: PathBuf,
+    repository: Option<Mode>,
+    worktree: Option<PathBuf>,
+}
+
+static HOLDINGS: Mutex<BTreeMap<u64, Holding>> = Mutex::new(BTreeMap::new());
+static NEXT_HOLDING: AtomicU64 = AtomicU64::new(0);
+
+fn record(holding: Holding) -> u64 {
+    let id = NEXT_HOLDING.fetch_add(1, Ordering::Relaxed);
+    HOLDINGS
+        .lock()
+        .unwrap_or_else(std::sync::PoisonError::into_inner)
+        .insert(id, holding);
+    id
+}
+
+fn update(id: u64, repository: Option<Mode>) {
+    if let Some(holding) = HOLDINGS
+        .lock()
+        .unwrap_or_else(std::sync::PoisonError::into_inner)
+        .get_mut(&id)
+    {
+        holding.repository = repository;
+    }
+}
+
+fn canonical(path: &Path) -> PathBuf {
+    path.canonicalize().unwrap_or_else(|_| path.to_owned())
+}
+
 /// Guards released together when dropped.
 #[derive(Debug)]
 pub struct Held {
+    id: u64,
     // Dropped in order: repository guard first, then the worktree guard.
     repository: Option<fs::File>,
     _worktree: Option<fs::File>,
 }
 
-/// A worktree-local writer's guards: the repository guard shared, its worktree's exclusive.
-pub type WorktreeGuard = Held;
-
-impl From<fs::File> for Held {
-    /// Hold a worktree guard taken with [`other_worktree`].
-    fn from(worktree: fs::File) -> Self {
-        Self {
-            repository: None,
-            _worktree: Some(worktree),
-        }
+impl Drop for Held {
+    fn drop(&mut self) {
+        HOLDINGS
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
+            .remove(&self.id);
     }
 }
+
+/// A worktree-local writer's guards: the repository guard shared, its worktree's exclusive.
+pub type WorktreeGuard = Held;
 
 impl Held {
     /// Release the repository guard, keeping the worktree guard.
     pub fn release_repository(&mut self) {
         self.repository = None;
+        update(self.id, None);
     }
 
-    /// Re-take the repository guard exclusively while the worktree guard stays held.
-    pub(crate) fn reacquire_repository(&mut self, repo: &gix::Repository, wait: MutationWait) -> Result<()> {
+    /// Re-take the repository guard in `mode` while the worktree guard stays held.
+    pub(crate) fn reacquire_repository(
+        &mut self,
+        repo: &gix::Repository,
+        mode: Mode,
+        wait: MutationWait,
+    ) -> Result<()> {
+        if let Some(refusal) = self_deadlock(repo, Some(mode), false) {
+            return Err(would_block()).context(refusal);
+        }
         let deadline = Deadline::new(wait);
         let file = open(&repo.common_dir().join(REPOSITORY_GUARD))?;
-        lock_repository_exclusive(repo, &file, &deadline)?;
+        lock_repository(repo, &file, mode, &deadline)?;
         self.repository = Some(file);
+        update(self.id, Some(mode));
         Ok(())
     }
 }
@@ -101,7 +167,7 @@ fn open_directory(path: &Path) -> Result<fs::File> {
 }
 
 /// The repository guard mode.
-#[derive(Clone, Copy, PartialEq, Eq)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub(crate) enum Mode {
     Exclusive,
     Shared,
@@ -120,22 +186,37 @@ enum Deadline {
     Refuse,
     At(Instant, Instant),
     Forever(Instant),
+    /// Shortened to the hook cap: the holder may be waiting for this hook's command.
+    Capped(Instant, Instant, Duration),
 }
 
 impl Deadline {
     fn new(wait: MutationWait) -> Self {
         let now = Instant::now();
-        match wait {
-            MutationWait::Refuse => Self::Refuse,
-            MutationWait::For(budget) => Self::At(now, now + budget),
-            MutationWait::Forever => Self::Forever(now),
+        let cap = hook_cap();
+        match (wait, cap) {
+            (MutationWait::Refuse, _) => Self::Refuse,
+            (MutationWait::For(budget), Some(cap)) if budget > cap => Self::Capped(now, now + cap, cap),
+            (MutationWait::Forever, Some(cap)) => Self::Capped(now, now + cap, cap),
+            (MutationWait::For(budget), _) => Self::At(now, now + budget),
+            (MutationWait::Forever, None) => Self::Forever(now),
+        }
+    }
+
+    fn capped(&self) -> String {
+        match self {
+            Self::Capped(_, _, cap) => format!(
+                "; the wait was capped at {}s because the holder may itself be waiting for the command this hook runs under ({HOOK_WAIT} sets the cap)",
+                cap.as_secs()
+            ),
+            _ => String::new(),
         }
     }
 
     fn expired(&self) -> bool {
         match self {
             Self::Refuse => true,
-            Self::At(_, end) => Instant::now() >= *end,
+            Self::At(_, end) | Self::Capped(_, end, _) => Instant::now() >= *end,
             Self::Forever(_) => false,
         }
     }
@@ -147,13 +228,15 @@ impl Deadline {
     fn waited(&self) -> String {
         match self {
             Self::Refuse => String::new(),
-            Self::At(start, _) | Self::Forever(start) => format!(" after waiting {}s", start.elapsed().as_secs()),
+            Self::At(start, _) | Self::Forever(start) | Self::Capped(start, _, _) => {
+                format!(" after waiting {}s", start.elapsed().as_secs())
+            }
         }
     }
 
     fn pause(&self, pause: Duration) -> Duration {
         match self {
-            Self::At(_, end) => pause.min(end.saturating_duration_since(Instant::now())),
+            Self::At(_, end) | Self::Capped(_, end, _) => pause.min(end.saturating_duration_since(Instant::now())),
             Self::Refuse | Self::Forever(_) => pause,
         }
     }
@@ -176,8 +259,163 @@ fn would_block() -> std::io::Error {
     std::io::Error::from(rustix::io::Errno::WOULDBLOCK)
 }
 
-fn inside_hook() -> Option<u32> {
-    std::env::var(HOOK_MARKER).ok()?.parse().ok()
+/// The start time of `pid` in clock ticks since boot (`/proc/<pid>/stat` field 22).
+fn start_ticks(pid: u32) -> Option<u64> {
+    let stat = fs::read_to_string(format!("/proc/{pid}/stat")).ok()?;
+    stat.get(stat.rfind(')')? + 2..)?
+        .split_whitespace()
+        .nth(19)?
+        .parse()
+        .ok()
+}
+
+fn hex(path: &Path) -> String {
+    use std::os::unix::ffi::OsStrExt;
+    path.as_os_str().as_bytes().iter().fold(String::new(), |mut out, byte| {
+        use std::fmt::Write as _;
+        let _ = write!(out, "{byte:02x}");
+        out
+    })
+}
+
+fn unhex(text: &str) -> Option<PathBuf> {
+    use std::os::unix::ffi::OsStringExt;
+    let bytes = (0..text.len())
+        .step_by(2)
+        .map(|at| u8::from_str_radix(text.get(at..at + 2)?, 16).ok())
+        .collect::<Option<Vec<u8>>>()?;
+    Some(std::ffi::OsString::from_vec(bytes).into())
+}
+
+/// The marker for a hook or editor this process spawns: `v1 <pid> <start> <holding>...`,
+/// each holding `<n|s|x>:<hex common dir>:<hex worktree git dir or ->`.
+pub fn hook_marker() -> String {
+    use std::fmt::Write as _;
+    let pid = std::process::id();
+    let mut out = format!("v1 {pid} {}", start_ticks(pid).unwrap_or(0));
+    for holding in HOLDINGS
+        .lock()
+        .unwrap_or_else(std::sync::PoisonError::into_inner)
+        .values()
+    {
+        let mode = match holding.repository {
+            None => 'n',
+            Some(Mode::Shared) => 's',
+            Some(Mode::Exclusive) => 'x',
+        };
+        let worktree = holding.worktree.as_deref().map_or_else(|| "-".to_owned(), hex);
+        let _ = write!(out, " {mode}:{}:{worktree}", hex(&holding.common));
+    }
+    out
+}
+
+/// The marker this process inherited, as far as it can be trusted.
+enum Marker {
+    /// None, malformed, or naming a process that is not this process's ancestor.
+    Ignored,
+    /// `/proc` cannot prove or disprove ancestry: only the wait cap applies.
+    Unprovable,
+    /// The named process (with that start time) is an ancestor holding these guards.
+    Proven(u32, Vec<Holding>),
+}
+
+fn parse_marker(text: &str) -> Option<(u32, u64, Vec<Holding>)> {
+    let mut fields = text.split(' ');
+    (fields.next()? == "v1").then_some(())?;
+    let pid = fields.next()?.parse().ok()?;
+    let start = fields.next()?.parse().ok()?;
+    let holdings = fields
+        .map(|field| {
+            let mut parts = field.split(':');
+            let repository = match parts.next()? {
+                "n" => None,
+                "s" => Some(Mode::Shared),
+                "x" => Some(Mode::Exclusive),
+                _ => return None,
+            };
+            let common = unhex(parts.next()?)?;
+            let worktree = match parts.next()? {
+                "-" => None,
+                hexed => Some(unhex(hexed)?),
+            };
+            Some(Holding {
+                common,
+                repository,
+                worktree,
+            })
+        })
+        .collect::<Option<Vec<_>>>()?;
+    Some((pid, start, holdings))
+}
+
+fn marker() -> &'static Marker {
+    static MARKER: OnceLock<Marker> = OnceLock::new();
+    MARKER.get_or_init(|| {
+        let Ok(text) = std::env::var(HOOK_MARKER) else {
+            return Marker::Ignored;
+        };
+        let Some((pid, start, holdings)) = parse_marker(&text) else {
+            return Marker::Ignored;
+        };
+        if start_ticks(std::process::id()).is_none() {
+            return Marker::Unprovable;
+        }
+        if ancestors().contains(&pid) && start_ticks(pid) == Some(start) {
+            Marker::Proven(pid, holdings)
+        } else {
+            Marker::Ignored
+        }
+    })
+}
+
+/// The longest any single acquisition may wait while running under a Brit hook.
+fn hook_cap() -> Option<Duration> {
+    match marker() {
+        Marker::Ignored => None,
+        Marker::Unprovable | Marker::Proven(..) => Some(
+            std::env::var(HOOK_WAIT)
+                .ok()
+                .and_then(|value| value.trim().parse().ok())
+                .map_or(DEFAULT_HOOK_WAIT, Duration::from_secs),
+        ),
+    }
+}
+
+/// Whether the proven ancestor holds `repo`'s repository guard shared.
+fn ancestor_holds_shared(repo: &gix::Repository) -> bool {
+    let Marker::Proven(_, holdings) = marker() else {
+        return false;
+    };
+    let common = canonical(repo.common_dir());
+    holdings
+        .iter()
+        .any(|holding| holding.common == common && holding.repository == Some(Mode::Shared))
+}
+
+/// A request the proven ancestor's holdings make impossible to grant while it waits for us.
+fn self_deadlock(repo: &gix::Repository, repository: Option<Mode>, worktree: bool) -> Option<String> {
+    let Marker::Proven(pid, holdings) = marker() else {
+        return None;
+    };
+    let common = canonical(repo.common_dir());
+    let git_dir = canonical(repo.git_dir());
+    let held = holdings.iter().find_map(|holding| {
+        if holding.common != common {
+            return None;
+        }
+        if worktree && repo.workdir().is_some() && holding.worktree.as_deref() == Some(git_dir.as_path()) {
+            return Some("this worktree's guard");
+        }
+        match (repository, holding.repository) {
+            (Some(Mode::Exclusive), Some(Mode::Exclusive | Mode::Shared))
+            | (Some(Mode::Shared), Some(Mode::Exclusive)) => Some("the repository guard"),
+            _ => None,
+        }
+    })?;
+    Some(format!(
+        "another Brit mutation is active; {held} is held by {}, the command this hook runs under; a hook cannot wait for its own command's guard",
+        describe(*pid, "hook's command")
+    ))
 }
 
 /// This process's ancestors, nearest first, from the `/proc` parent chain.
@@ -215,11 +453,10 @@ fn reentrant(holders: &[(u32, bool)], level: Level) -> Option<String> {
             describe(holder.0, role(level, holder.1))
         ));
     }
-    let marker = inside_hook();
     let lineage = ancestors();
     holders
         .iter()
-        .find(|(pid, _)| Some(*pid) == marker || lineage.contains(pid))
+        .find(|(pid, _)| lineage.contains(pid))
         .map(|holder| {
             format!(
                 "the Brit mutation guard is held by {}, the command this hook runs under; a hook cannot wait for its own command's guard",
@@ -246,20 +483,13 @@ fn lock(file: &fs::File, level: Level, mode: Mode, deadline: &Deadline) -> Resul
             std::thread::sleep(Duration::from_millis(5));
             continue;
         }
-        let unidentified_under_hook = holders.is_empty() && inside_hook().is_some();
-        if deadline.expired() || unidentified_under_hook {
-            let because = if unidentified_under_hook && !deadline.expired() {
-                format!(
-                    "; not waiting, because this command runs under a Brit hook ({HOOK_MARKER} is set) and the holder may be that command"
-                )
-            } else {
-                String::new()
-            };
+        if deadline.expired() {
             return Err(would_block()).with_context(|| {
                 format!(
-                    "another Brit mutation is active{}; held by {}{because}; retry with --wait[=SECONDS] or BRIT_MUTATION_WAIT=SECONDS",
+                    "another Brit mutation is active{}; held by {}{}; retry with --wait[=SECONDS] or BRIT_MUTATION_WAIT=SECONDS",
                     deadline.waited(),
-                    render(&holders, level)
+                    render(&holders, level),
+                    deadline.capped()
                 )
             });
         }
@@ -278,6 +508,16 @@ fn lock(file: &fs::File, level: Level, mode: Mode, deadline: &Deadline) -> Resul
     }
 }
 
+fn lock_repository(repo: &gix::Repository, file: &fs::File, mode: Mode, deadline: &Deadline) -> Result<()> {
+    match mode {
+        Mode::Exclusive => lock_repository_exclusive(repo, file, deadline),
+        Mode::Shared => {
+            pass_turnstile(repo, deadline)?;
+            lock(file, Level::Repository, Mode::Shared, deadline)
+        }
+    }
+}
+
 /// Take the repository guard exclusively, queueing at the turnstile once it has to wait.
 fn lock_repository_exclusive(repo: &gix::Repository, file: &fs::File, deadline: &Deadline) -> Result<()> {
     if try_lock(file, Mode::Exclusive)? {
@@ -293,8 +533,8 @@ fn lock_repository_exclusive(repo: &gix::Repository, file: &fs::File, deadline: 
 
 /// Let a shared acquirer through only when no exclusive writer is queued.
 fn pass_turnstile(repo: &gix::Repository, deadline: &Deadline) -> Result<()> {
-    // A hook's parent may hold the repository guard that a queued writer waits for.
-    if inside_hook().is_some() {
+    // A queued writer may be waiting for the shared hold of the command this hook runs under.
+    if ancestor_holds_shared(repo) {
         return Ok(());
     }
     use std::os::unix::fs::OpenOptionsExt;
@@ -314,6 +554,9 @@ fn pass_turnstile(repo: &gix::Repository, deadline: &Deadline) -> Result<()> {
 /// Take `repo`'s worktree guard (when it has a worktree and `worktree` is set), then the
 /// repository guard in `mode`, under one deadline.
 pub(crate) fn acquire(repo: &gix::Repository, mode: Mode, worktree: bool, wait: MutationWait) -> Result<Held> {
+    if let Some(refusal) = self_deadlock(repo, Some(mode), worktree) {
+        return Err(would_block()).context(refusal);
+    }
     let deadline = Deadline::new(wait);
     let worktree = if worktree && repo.workdir().is_some() {
         let directory = open_directory(repo.git_dir())?;
@@ -323,24 +566,37 @@ pub(crate) fn acquire(repo: &gix::Repository, mode: Mode, worktree: bool, wait: 
         None
     };
     let file = open(&repo.common_dir().join(REPOSITORY_GUARD))?;
-    match mode {
-        Mode::Exclusive => lock_repository_exclusive(repo, &file, &deadline)?,
-        Mode::Shared => {
-            pass_turnstile(repo, &deadline)?;
-            lock(&file, Level::Repository, Mode::Shared, &deadline)?;
-        }
-    }
+    lock_repository(repo, &file, mode, &deadline)?;
+    let id = record(Holding {
+        common: canonical(repo.common_dir()),
+        repository: Some(mode),
+        worktree: worktree.as_ref().map(|_| canonical(repo.git_dir())),
+    });
     Ok(Held {
+        id,
         repository: Some(file),
         _worktree: worktree,
     })
 }
 
-/// Take another worktree's guard without waiting, while the repository guard is held.
-pub(crate) fn other_worktree(git_dir: &Path) -> Result<fs::File> {
-    let directory = open_directory(git_dir)?;
+/// Take another worktree's guard (`target` opened on it) without waiting, while the
+/// repository guard is held.
+pub(crate) fn other_worktree(target: &gix::Repository) -> Result<Held> {
+    if let Some(refusal) = self_deadlock(target, None, true) {
+        return Err(would_block()).context(refusal);
+    }
+    let directory = open_directory(target.git_dir())?;
     lock(&directory, Level::Worktree, Mode::Exclusive, &Deadline::Refuse)?;
-    Ok(directory)
+    let id = record(Holding {
+        common: canonical(target.common_dir()),
+        repository: None,
+        worktree: Some(canonical(target.git_dir())),
+    });
+    Ok(Held {
+        id,
+        repository: None,
+        _worktree: Some(directory),
+    })
 }
 
 fn role(level: Level, shared: bool) -> &'static str {
@@ -455,6 +711,32 @@ fn session(proc: &Path) -> Option<String> {
 
 #[cfg(test)]
 mod tests {
+    #[test]
+    fn hook_markers_parse_back_including_odd_paths() {
+        let holdings = vec![
+            super::Holding {
+                common: "/repo/with space:colon/.git".into(),
+                repository: Some(super::Mode::Shared),
+                worktree: Some("/repo/.git/worktrees/x".into()),
+            },
+            super::Holding {
+                common: "/other/.git".into(),
+                repository: None,
+                worktree: None,
+            },
+        ];
+        let encoded = format!(
+            "v1 42 7 s:{}:{} n:{}:-",
+            super::hex(&holdings[0].common),
+            super::hex(holdings[0].worktree.as_deref().expect("set")),
+            super::hex(&holdings[1].common)
+        );
+        assert_eq!(super::parse_marker(&encoded), Some((42, 7, holdings)));
+        for malformed in ["", "v2 1 2", "v1 x 2", "v1 1 2 q:00:-", "v1 1 2 s:0:-", "42"] {
+            assert_eq!(super::parse_marker(malformed), None, "{malformed:?}");
+        }
+    }
+
     #[test]
     fn parent_is_read_after_a_command_name_with_spaces_and_parentheses() {
         assert_eq!(super::parent_of("123 (brit (x) y) S 77 123 123 0 -1"), Some(77));

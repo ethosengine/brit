@@ -64,7 +64,6 @@ impl MutationGuards {
                 // Never wait for a worktree while holding the repository guard.
                 self.guards.push(
                     gitoxide_core::repository::switch::other_worktree_guard(repo)
-                        .map(Held::from)
                         .map_err(super::main::anyhow_to_gix)?,
                 );
             }

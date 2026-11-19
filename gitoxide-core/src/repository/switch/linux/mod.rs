@@ -329,7 +329,7 @@ pub fn push_guard(repo: &gix::Repository) -> Result<guard::Held> {
 
 /// Re-take the repository guard for send-pack after a passed pre-push hook.
 pub fn reacquire_for_send(held: &mut guard::Held, repo: &gix::Repository, wait: super::MutationWait) -> Result<()> {
-    held.reacquire_repository(repo, wait)?;
+    held.reacquire_repository(repo, guard::Mode::Exclusive, wait)?;
     ensure_no_pending(repo)
 }
 
@@ -337,8 +337,8 @@ pub fn reacquire_for_send(held: &mut guard::Held, repo: &gix::Repository, wait: 
 /// caller already holds the repository guard exclusively. For commands that rewrite a
 /// different worktree's files or HEAD: `worktree remove`, and a branch rename that repoints
 /// another worktree's HEAD.
-pub fn other_worktree_guard(target: &gix::Repository) -> Result<fs::File> {
-    guard::other_worktree(target.git_dir())
+pub fn other_worktree_guard(target: &gix::Repository) -> Result<guard::Held> {
+    guard::other_worktree(target)
 }
 
 /// Replay, switch, pull and conflict authoring rewrite `repo`'s worktree under this guard.
