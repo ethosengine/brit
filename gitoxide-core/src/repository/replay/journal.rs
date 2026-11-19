@@ -2456,11 +2456,12 @@ impl Session {
     /// Live state that no longer matches what preparation pinned.
     fn live_differences(&self, repo: &gix::Repository) -> Result<Vec<String>> {
         let mut differences = Vec::new();
+        let original = gix::ObjectId::from_hex(self.state.original.as_bytes())?;
         if switch::snapshot(&repo.git_dir().join("HEAD"))? != self.state.head {
             differences.push("HEAD changed since preparation".to_owned());
         }
         match super::head_commit_id(repo) {
-            Ok(id) if id.to_string() == self.state.original => {}
+            Ok(id) if id == original => {}
             Ok(id) => differences.push(format!(
                 "HEAD now names {id}; preparation pinned {}",
                 self.state.original
@@ -2473,8 +2474,7 @@ impl Session {
         if let Some(name) = &self.state.attachment {
             match repo.try_find_reference(name.as_bstr())? {
                 Some(reference)
-                    if matches!(reference.target(), gix::refs::TargetRef::Object(_))
-                        && reference.id().to_string() == self.state.original => {}
+                    if matches!(reference.target(), gix::refs::TargetRef::Object(_)) && reference.id() == original => {}
                 _ => differences.push(format!(
                     "branch {} no longer names {}",
                     name.as_bstr(),
