@@ -224,6 +224,53 @@ mod blocking {
         );
     }
 
+    fn mid_pack_failure(max_buffered_body: usize) -> Error {
+        let request = update_request();
+        let mut command_list = Vec::new();
+        gix_protocol::send_pack::command_list::encode_into(&request, gix_hash::Kind::Sha1, &mut command_list)
+            .expect("in-memory encoding");
+        let mut entry = gix_pack::data::output::Entry::invalid();
+        entry.id = gix_hash::ObjectId::from_hex(b"3333333333333333333333333333333333333333").expect("hex");
+        entry.decompressed_size = 64 * 1024;
+        entry.compressed_data = vec![9; 64 * 1024];
+        let mut transport = BrokenUploadTransport::new(
+            command_list.len() + 12 + 1000,
+            Vec::new(),
+            Some(std::io::Error::other("request or response body error")),
+        );
+        send_pack(
+            &mut transport,
+            request,
+            [entry],
+            Options {
+                max_buffered_body: Some(max_buffered_body),
+                ..Default::default()
+            },
+            gix_hash::Kind::Sha1,
+        )
+        .expect_err("the upload broke mid-pack")
+    }
+
+    /// Just under the buffering limit the body goes whole and the transport's cause is reported.
+    #[test]
+    fn body_under_the_buffering_limit_reports_the_transport_cause() {
+        let err = mid_pack_failure(64 * 1024 + 200);
+        assert!(matches!(err, Error::SendInterrupted(_)), "{:?}", chain(&err));
+    }
+
+    /// Just over it the body is streamed, and the error says the cause could not be read.
+    #[test]
+    fn body_over_the_buffering_limit_says_the_cause_could_not_be_read() {
+        let err = mid_pack_failure(64 * 1024);
+        let chain = chain(&err);
+        assert!(matches!(err, Error::StreamInterrupted(Some(_))), "{chain:?}");
+        assert_eq!(
+            chain[0],
+            "the transport closed while the pack was being streamed; the cause could not be read"
+        );
+        assert!(!chain.iter().any(|line| line.contains("closed channel")), "{chain:?}");
+    }
+
     /// With nothing to say, the remote still gets named as the party that closed.
     #[test]
     fn broken_upload_without_a_reason_says_the_connection_closed() {

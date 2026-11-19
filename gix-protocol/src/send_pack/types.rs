@@ -43,6 +43,9 @@ pub struct Options {
     pub quiet: bool,
     /// Send `atomic` capability — server applies all updates or none.
     pub atomic: bool,
+    /// The largest body a stateless (HTTP) transport sends whole, with a `Content-Length`;
+    /// larger ones are streamed. `None` uses the default, 64 MiB. Git's `http.postBuffer`.
+    pub max_buffered_body: Option<usize>,
     /// Extra `push-option` strings to send after the command list.
     /// (Empty vec = no push-options; the capability is negotiated separately.)
     pub push_options: Vec<BString>,
@@ -80,6 +83,10 @@ pub enum Error {
     /// a refused or reset connection. The source is that cause, not the broken write.
     #[error("the remote stopped receiving the push before it was fully sent")]
     SendInterrupted(#[source] std::io::Error),
+    /// A streamed HTTP body broke. The HTTP client keeps the cause to itself, so the source
+    /// is at most what it reported about its body, not why the connection closed.
+    #[error("the transport closed while the pack was being streamed; the cause could not be read")]
+    StreamInterrupted(#[source] Option<std::io::Error>),
     /// The upload broke and the transport ended without giving any reason.
     /// The source is the failed write.
     #[error("the connection closed while the push was being sent, and the remote gave no reason")]

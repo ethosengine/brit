@@ -12,10 +12,26 @@
 //!      because the read side is where the transport reports why it stopped.
 
 #[cfg(feature = "blocking-client")]
-pub use blocking::send_pack;
+pub use blocking::{DEFAULT_MAX_BUFFERED_BODY, send_pack};
 
 #[cfg(feature = "blocking-client")]
 mod blocking {
+    /// How large a push body a stateless transport sends whole, unless
+    /// [`Options::max_buffered_body`](crate::send_pack::Options::max_buffered_body) says otherwise.
+    ///
+    /// 64 MiB: brit's packs are undeltified, so ordinary landings run to a few MiB and always
+    /// get the informative error path, while the extra copy stays below about 90 MB even at the
+    /// limit, well under any workspace memory guard.
+    pub const DEFAULT_MAX_BUFFERED_BODY: usize = 64 * 1024 * 1024;
+
+    /// An upper bound of the pack's size on the wire: header, trailer, and each entry's
+    /// compressed bytes plus its largest possible header.
+    fn body_size_bound(entries: &[gix_pack::data::output::Entry]) -> usize {
+        entries
+            .iter()
+            .fold(12 + 64, |size, entry| size + entry.compressed_data.len() + 48)
+    }
+
     /// Pass writes through to `inner`, keeping the first error it raised in `first`.
     struct FirstError<'a, W: std::io::Write + ?Sized> {
         inner: &'a mut W,
@@ -79,7 +95,7 @@ mod blocking {
         transport: &mut T,
         request: Request,
         pack_entries: I,
-        _options: Options,
+        options: Options,
         hash_kind: gix_hash::Kind,
     ) -> Result<Outcome, Error>
     where
@@ -99,15 +115,20 @@ mod blocking {
         //   - reader: reads from the server's stdout (a `WithSidebands` wrapping
         //     a `StreamingPeekableIter` backed by the child process's stdout).
         //
-        // A stateless (HTTP) transport gets the body whole rather than streamed. The pack is in
-        // memory already, and a streamed body hides why an upload failed: reqwest's blocking
-        // client then reports only that its body forwarder lost its receiver, without reading
-        // the response or the connection error that says why (status, reset, timeout).
-        let write_mode = if transport.connection_persists_across_multiple_requests() {
+        // A stateless (HTTP) transport gets a body up to `options.max_buffered_body` whole rather
+        // than streamed. A streamed body hides why an upload failed: reqwest's blocking client
+        // then reports only that its body forwarder lost its receiver, without reading the
+        // response or the connection error that says why (status, reset, timeout). Buffering
+        // costs another copy of the pack, so larger bodies are streamed, chunked, as before.
+        let pack_entries: Vec<_> = pack_entries.into_iter().collect();
+        let streamed = transport.connection_persists_across_multiple_requests()
+            || body_size_bound(&pack_entries) > options.max_buffered_body.unwrap_or(DEFAULT_MAX_BUFFERED_BODY);
+        let write_mode = if streamed {
             WriteMode::Binary
         } else {
             WriteMode::OneLfTerminatedLinePerWriteCall
         };
+        let stateless_stream = streamed && !transport.connection_persists_across_multiple_requests();
         let (mut raw_writer, mut reader) = transport.request(write_mode, MessageKind::Flush, false)?.into_parts();
 
         // Step 1 — command list.
@@ -187,6 +208,10 @@ mod blocking {
         match (written, parse_report(&mut reader)) {
             (_, Ok(report)) => Ok(Outcome { report }),
             (Ok(()), Err(err)) => Err(err),
+            // A streamed HTTP body loses its cause inside the client; say so rather than
+            // passing the dropped channel off as the reason.
+            (Err(_), Err(Error::ReadReport(cause))) if stateless_stream => Err(Error::StreamInterrupted(Some(cause))),
+            (Err(_), Err(Error::UnexpectedEof)) if stateless_stream => Err(Error::StreamInterrupted(None)),
             (Err(write), Err(Error::UnexpectedEof)) => Err(Error::ConnectionClosed(write)),
             (Err(_), Err(Error::ReadReport(cause))) => Err(Error::SendInterrupted(cause)),
             (Err(_), Err(err)) => Err(err),

@@ -32,4 +32,4 @@ mod types;
 pub use types::{Command, Error, Options, Outcome, RefStatus, Report, Request};
 
 #[cfg(feature = "blocking-client")]
-pub use function::send_pack;
+pub use function::{DEFAULT_MAX_BUFFERED_BODY, send_pack};
