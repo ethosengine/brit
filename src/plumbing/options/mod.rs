@@ -742,9 +742,10 @@ pub mod log {
     /// List commits reachable from a revision, optionally only those that change given paths.
     ///
     /// With a revision or paths, commits stream newest first by commit time, like `git log`,
-    /// and a shallow boundary ends the walk. A path filter compares each commit with its
-    /// parent; a root or shallow-boundary commit counts when the path exists, and a merge
-    /// counts only when it differs from every parent, as in Git's default simplification.
+    /// and a shallow boundary ends the walk. Paths follow Git's default history
+    /// simplification: a commit counts when it differs from its parent at a path, a merge
+    /// equal to one parent there is skipped and only that parent is followed, and a root or
+    /// shallow-boundary commit counts when the path exists.
     #[derive(Debug, clap::Parser)]
     pub struct Platform {
         /// Stop after this many commits (Brit also accepts -N; zero prints none).
@@ -758,7 +759,7 @@ pub mod log {
         #[clap(value_parser = crate::shared::AsBString, value_name = "REV")]
         pub rev: Option<BString>,
         /// Only list commits that change one of these literal paths (files or directories,
-        /// relative to the current directory).
+        /// relative to the current directory); a trailing slash matches only directories.
         #[clap(last = true, value_parser = crate::shared::AsBString, value_name = "PATH")]
         pub paths: Vec<BString>,
     }

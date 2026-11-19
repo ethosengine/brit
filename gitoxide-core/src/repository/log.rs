@@ -50,9 +50,10 @@ pub fn log_limited(
 /// Without a revision or paths, the historical topological listing is kept. Otherwise commits stream
 /// newest first by commit time, like `git log`, and the walk ends at a shallow boundary.
 ///
-/// A commit changes a path when its entry there (kind and object) differs from its parent's.
-/// Root and shallow-boundary commits change every path they contain; a merge is listed only when
-/// it differs from every parent.
+/// With paths, Git's default history simplification applies: a commit changes a path when its
+/// entry there (kind and object) differs from its parent's, a merge equal to a parent at the paths
+/// is not listed and only that parent is followed, and root and shallow-boundary commits change
+/// every path they contain. A trailing slash matches only directories (and submodules).
 pub fn log_with(repo: gix::Repository, out: &mut dyn std::io::Write, options: Options) -> Result<()> {
     let format = if options.oneline {
         Format::Oneline
@@ -104,7 +105,7 @@ fn log_all(
 }
 
 fn log_history(repo: gix::Repository, out: &mut dyn std::io::Write, options: Options, format: Format) -> Result<()> {
-    let mut remaining = options.max_count.unwrap_or(usize::MAX);
+    let remaining = options.max_count.unwrap_or(usize::MAX);
     if remaining == 0 {
         return Ok(());
     }
@@ -115,7 +116,7 @@ fn log_history(repo: gix::Repository, out: &mut dyn std::io::Write, options: Opt
     let mut paths = options
         .paths
         .iter()
-        .map(|path| repo_relative(&repo, path.as_bstr()))
+        .map(|path| Literal::new(&repo, path.as_bstr()))
         .collect::<Result<Vec<_>>>()?;
     let tip = match options.rev.as_ref() {
         None => head_commit(&repo, &source)?,
@@ -132,53 +133,154 @@ fn log_history(repo: gix::Repository, out: &mut dyn std::io::Write, options: Opt
         },
     };
 
-    // Shallow boundary commits have no parents here, so they count as roots, like in Git.
-    let shallow = repo.shallow_commits()?;
+    if !paths.is_empty() {
+        return simplified_walk(&repo, &source, out, tip, &paths, remaining, format);
+    }
     let walk = repo
         .rev_walk([tip])
         .sorting(Sorting::ByCommitTime(CommitTimeOrder::NewestFirst))
         .all()?;
     let mut buffer = Buffer::default();
-    // In linear history the parent's entries are the next commit's own; compute them once.
-    let mut parent_entries: Option<(ObjectId, Vec<Option<Located>>)> = None;
-    for info in walk {
-        let info = info?;
-        if !paths.is_empty() {
-            let entries = match parent_entries.take() {
-                Some((id, entries)) if id == info.id => entries,
-                _ => entries_at(&source, &mut buffer, info.id, &paths)?,
+    for info in walk.take(remaining) {
+        write_info(&repo, &source, &mut buffer, &mut *out, info?.id, format)?;
+    }
+    Ok(())
+}
+
+/// A queued commit, read once: when it was committed, what it follows and what it holds at the paths.
+struct Node {
+    time: gix::date::SecondsSinceUnixEpoch,
+    parents: Vec<ObjectId>,
+    entries: Vec<Option<Located>>,
+}
+
+/// Walk from `tip` newest first by commit time with Git's default history simplification.
+///
+/// A commit that equals a parent at `paths` is not listed, and only the first such parent is
+/// followed. A commit that equals none of its parents is listed and all of them are followed.
+/// Root and shallow-boundary commits are listed when they hold a path. Only queued commits and
+/// the ids already seen are kept, and the walk ends once `remaining` commits are listed.
+fn simplified_walk(
+    repo: &gix::Repository,
+    source: &Source<'_>,
+    out: &mut dyn std::io::Write,
+    tip: ObjectId,
+    paths: &[Literal],
+    mut remaining: usize,
+    format: Format,
+) -> Result<()> {
+    use std::{
+        cmp::Reverse,
+        collections::{BinaryHeap, HashMap, HashSet},
+    };
+
+    // Shallow boundary commits have no parents here, so they count as roots, like in Git.
+    let shallow = repo.shallow_commits()?;
+    let mut read_buffer = Buffer::default();
+    let mut read = |id: ObjectId| {
+        let boundary = shallow
+            .as_ref()
+            .is_some_and(|commits| commits.binary_search(&id).is_ok());
+        read_node(source, &mut read_buffer, id, paths, boundary)
+    };
+    let mut seen = HashSet::from([tip]);
+    let mut pending = HashMap::new();
+    // Ties in commit time keep insertion order, like Git's date-ordered queue.
+    let mut queue = BinaryHeap::new();
+    let mut order = 0_u64;
+    let node = read(tip)?;
+    queue.push((node.time, Reverse(order), tip));
+    pending.insert(tip, node);
+    let mut buffer = Buffer::default();
+    while let Some((_, _, id)) = queue.pop() {
+        let Some(node) = pending.remove(&id) else {
+            continue;
+        };
+        let mut follow = Vec::with_capacity(node.parents.len());
+        let mut treesame = false;
+        for &parent in &node.parents {
+            // A parent that is already queued was read when it was queued.
+            let read_parent = match pending.get(&parent) {
+                Some(queued) => {
+                    treesame = queued.entries == node.entries;
+                    None
+                }
+                None => {
+                    let parent_node = read(parent)?;
+                    treesame = parent_node.entries == node.entries;
+                    Some(parent_node)
+                }
             };
-            let boundary = shallow
-                .as_ref()
-                .is_some_and(|commits| commits.binary_search(&info.id).is_ok());
-            let parents: &[ObjectId] = if boundary { &[] } else { &info.parent_ids };
-            // Like Git's default history simplification, a merge that matches any parent at the
-            // paths is not listed (without Git's additional pruning of the other parents).
-            let mut changed = true;
-            if parents.is_empty() {
-                changed = entries.iter().any(Option::is_some);
-            }
-            for (index, parent) in parents.iter().enumerate() {
-                let parent_side = entries_at(&source, &mut buffer, *parent, &paths)?;
-                changed = parent_side != entries;
-                if index == 0 {
-                    parent_entries = Some((*parent, parent_side));
-                }
-                if !changed {
-                    break;
-                }
-            }
-            if !changed {
-                continue;
+            follow.push((parent, read_parent));
+            if treesame {
+                let last = follow.len() - 1;
+                follow.drain(..last);
+                break;
             }
         }
-        write_info(&repo, &source, &mut buffer, &mut *out, info.id, format)?;
-        remaining -= 1;
-        if remaining == 0 {
-            break;
+        for (parent, read_parent) in follow {
+            if let Some(parent_node) = read_parent
+                && seen.insert(parent)
+            {
+                order += 1;
+                queue.push((parent_node.time, Reverse(order), parent));
+                pending.insert(parent, parent_node);
+            }
+        }
+        let listed = if node.parents.is_empty() {
+            node.entries.iter().any(Option::is_some)
+        } else {
+            !treesame
+        };
+        if listed {
+            write_info(repo, source, &mut buffer, &mut *out, id, format)?;
+            remaining -= 1;
+            if remaining == 0 {
+                break;
+            }
         }
     }
     Ok(())
+}
+
+fn read_node(
+    source: &Source<'_>,
+    buffer: &mut Buffer,
+    id: ObjectId,
+    paths: &[Literal],
+    boundary: bool,
+) -> Result<Node> {
+    use gix::objs::commit::ref_iter::Token;
+
+    let mut tree = None;
+    let mut parents = Vec::new();
+    let mut time = 0;
+    let commit = source
+        .load(&id, buffer)?
+        .try_into_commit_iter()
+        .ok_or_raise(|| message!("Expected commit {id}").validation())?;
+    for token in commit {
+        match token.or_raise(|| message!("Could not decode commit {id}").corrupted())? {
+            Token::Tree { id: tree_id } => tree = Some(tree_id),
+            Token::Parent { id: parent } => parents.push(parent),
+            Token::Author { .. } => {}
+            Token::Committer { signature } => {
+                time = signature.seconds();
+                break;
+            }
+            _ => break,
+        }
+    }
+    buffer.clear();
+    let tree = tree.ok_or_raise(|| message!("Commit {id} names no tree").corrupted())?;
+    if boundary {
+        parents.clear();
+    }
+    let entries = paths
+        .iter()
+        .map(|path| lookup(source, buffer, tree, path))
+        .collect::<Result<_>>()?;
+    Ok(Node { time, parents, entries })
 }
 
 /// Return `true` if a shallow boundary commit names a parent this repository lacks.
@@ -206,28 +308,26 @@ fn shallow_parents_missing(repo: &gix::Repository) -> Result<bool> {
 /// The kind and object of a path's entry, which together say whether the path changed.
 type Located = (EntryKind, ObjectId);
 
-/// Look up every path in `commit`'s tree, reading only the trees on each path.
-fn entries_at(
-    source: &Source<'_>,
-    buffer: &mut Buffer,
-    commit: ObjectId,
-    paths: &[Vec<BString>],
-) -> Result<Vec<Option<Located>>> {
-    let tree = source
-        .load(&commit, buffer)?
-        .try_into_commit_iter()
-        .ok_or_raise(|| message!("Expected commit {commit}").validation())?
-        .tree_id()?;
-    buffer.clear();
-    paths
-        .iter()
-        .map(|components| lookup(source, buffer, tree, components))
-        .collect()
+/// A literal path filter in repository-relative components.
+struct Literal {
+    components: Vec<BString>,
+    /// Like Git, a trailing slash matches only a tree or a submodule at the path.
+    directory: bool,
 }
 
-fn lookup(source: &Source<'_>, buffer: &mut Buffer, root: ObjectId, components: &[BString]) -> Result<Option<Located>> {
+impl Literal {
+    fn new(repo: &gix::Repository, path: &BStr) -> Result<Self> {
+        Ok(Literal {
+            components: repo_relative(repo, path)?,
+            directory: path.ends_with(b"/") || (cfg!(windows) && path.ends_with(b"\\")),
+        })
+    }
+}
+
+/// Find `path` below the tree `root`, reading only the trees along it.
+fn lookup(source: &Source<'_>, buffer: &mut Buffer, root: ObjectId, path: &Literal) -> Result<Option<Located>> {
     let mut current = (EntryKind::Tree, root);
-    for component in components {
+    for component in &path.components {
         if current.0 != EntryKind::Tree {
             // A blob, link or submodule has nothing below it in this repository.
             return Ok(None);
@@ -250,7 +350,7 @@ fn lookup(source: &Source<'_>, buffer: &mut Buffer, root: ObjectId, components: 
             None => return Ok(None),
         }
     }
-    Ok(Some(current))
+    Ok(Some(current).filter(|(kind, _)| !path.directory || matches!(kind, EntryKind::Tree | EntryKind::Commit)))
 }
 
 /// Turn a path relative to the current directory into repository-relative components.
@@ -295,14 +395,14 @@ fn push_components(components: &mut Vec<BString>, path: &Path, original: &Path) 
     Ok(())
 }
 
-/// Return `name` as repository-relative components if it names something in the worktree.
-fn worktree_path(repo: &gix::Repository, name: &BStr) -> Option<Vec<BString>> {
-    let components = repo_relative(repo, name).ok()?;
+/// Return `name` as a path filter if it names something in the worktree.
+fn worktree_path(repo: &gix::Repository, name: &BStr) -> Option<Literal> {
+    let literal = Literal::new(repo, name).ok()?;
     let mut path = repo.workdir()?.to_owned();
-    for component in &components {
+    for component in &literal.components {
         path.push(gix::path::from_bstr(component.as_bstr()).ok()?);
     }
-    path.symlink_metadata().ok().map(|_| components)
+    path.symlink_metadata().ok().map(|_| literal)
 }
 
 /// Resolve `HEAD`, following symbolic references without loading the terminal commit.
