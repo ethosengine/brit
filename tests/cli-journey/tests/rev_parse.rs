@@ -154,15 +154,22 @@ fn rev_parse_reads_arguments_in_order_like_git() -> Result<()> {
         assert_same_streams(root, form)?;
     }
 
-    // Inside the Git directory there is no worktree.
+    // Inside the Git directory there is no worktree. Only `--show-toplevel` answers there: the other
+    // queries fail at Brit's discovery, a recorded difference.
     let git_dir = root.join(".git");
     for form in [
         &["rev-parse", "--show-toplevel"][..],
-        &["rev-parse", "--git-dir", "HEAD"][..],
-        &["rev-parse", "--git-common-dir"][..],
         &["rev-parse", "--show-toplevel", "HEAD"][..],
+        &["rev-parse", "--verify", "--show-toplevel"][..],
     ] {
         assert_same_streams(&git_dir, form)?;
+    }
+    // Below it the worktree is still out of reach, and the Git directory is found.
+    for form in [
+        &["rev-parse", "--show-toplevel"][..],
+        &["rev-parse", "--git-dir", "HEAD"][..],
+    ] {
+        assert_same_streams(&git_dir.join("refs"), form)?;
     }
 
     // Global -v buffers output: a failure still forwards what was printed before it.
@@ -177,5 +184,34 @@ fn rev_parse_reads_arguments_in_order_like_git() -> Result<()> {
         verbose.stderr.contains("ambiguous argument 'missing'"),
         "brit -v forwards the diagnostic: {verbose:?}"
     );
+    Ok(())
+}
+
+/// From `/outer/sub/.git`, where that directory is itself the top of a worktree with its own `.git`,
+/// Brit selects the same repository as Git: the inner one, never the enclosing `/outer`. A selector
+/// that skipped the child `.git` would make a mutating command write to the outer repository.
+#[test]
+fn a_worktree_named_dot_git_inside_another_repository_is_selected_like_git() -> Result<()> {
+    let outer = TestRepo::new("rev-parse-outer")?;
+    outer.commit_file("o", "o\n")?;
+    let inner_top = outer.path().join("sub/.git");
+    std::fs::create_dir_all(&inner_top)?;
+    git_ok(&inner_top, &["init", "-q", "--initial-branch=inner"])?;
+    std::fs::write(inner_top.join("i"), "i\n")?;
+    git_ok(&inner_top, &["add", "i"])?;
+    git_ok(&inner_top, &["commit", "-q", "-m", "inner"])?;
+    assert_ne!(
+        git_ok(&inner_top, &["rev-parse", "HEAD"])?,
+        git_ok(outer.path(), &["rev-parse", "HEAD"])?,
+        "the two repositories must be told apart by HEAD"
+    );
+    for form in [
+        &["rev-parse", "HEAD"][..],
+        &["rev-parse", "--show-toplevel", "--git-dir", "--absolute-git-dir"],
+        &["rev-parse", "--abbrev-ref", "HEAD"],
+        &["for-each-ref", "--format=%(refname)"],
+    ] {
+        assert_same_streams(&inner_top, form)?;
+    }
     Ok(())
 }

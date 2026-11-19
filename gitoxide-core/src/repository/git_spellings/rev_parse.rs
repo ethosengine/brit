@@ -15,6 +15,9 @@
 //! - Parent shorthands (`A^@`, `A^!`, `A^-`) and flags other than the ones listed in the help are
 //!   refused by name instead of being interpreted.
 //! - A `--` given before every revision and followed by nothing is not echoed.
+//! - Inside a `.git` directory itself, Brit's discovery fails, so only `--show-toplevel` answers like Git
+//!   (`must be run in a work tree`, 128); `--git-dir` or a revision there fails at discovery with
+//!   status 1. Below it, like in `.git/refs`, the queries work.
 //! - The `<rev>:<path>` diagnostic omits Git's hint for a path given relative to a subdirectory.
 
 use std::{
@@ -215,6 +218,31 @@ pub fn rev_parse(repo: gix::Repository, args: Vec<String>, mut out: impl Write, 
     Ok(())
 }
 
+/// Git's answer from inside a Git directory where Brit's discovery failed: Git then works like in a bare
+/// repository, so a `--show-toplevel` reached before any query that needs the repository is
+/// `fatal: this operation must be run in a work tree` and 128. `None` leaves the discovery error standing.
+///
+/// This runs only after discovery failed, so it never changes which repository a command selects.
+pub fn outside_work_tree(args: &[String], cwd: &Path, mut err: impl Write) -> Option<gix::Error> {
+    gix::discover::is_git(cwd).ok()?;
+    let mut args = args.iter();
+    while let Some(arg) = args.next() {
+        match arg.as_str() {
+            "--show-toplevel" => {
+                writeln!(err, "fatal: this operation must be run in a work tree").ok();
+                return Some(exit(128));
+            }
+            "--path-format" => {
+                args.next();
+            }
+            "--verify" | "-q" | "--quiet" | "--abbrev-ref" | "--abbrev-ref=strict" => {}
+            other if other.starts_with("--path-format=") || other.starts_with("--short") => {}
+            _ => return None,
+        }
+    }
+    None
+}
+
 /// Git's `--short=<n>`: `strtoul()` of the value, clamped to at least 4 digits, so an empty, negative or
 /// non-numeric value means 4.
 fn git_abbrev_len(value: &str) -> usize {
@@ -232,7 +260,7 @@ fn git_abbrev_len(value: &str) -> usize {
 }
 
 /// The worktree Git would see from `cwd`: none when `cwd` is inside the Git directory, as Git then works
-/// like in a bare repository.
+/// like in a bare repository (reached from a directory below a `.git` directory, like `.git/refs`).
 fn workdir(repo: &gix::Repository, cwd: &Path) -> Option<PathBuf> {
     let workdir = absolute(repo.workdir()?, cwd);
     let inside_git_dir = realpath(cwd).starts_with(realpath(&absolute(repo.git_dir(), cwd)));

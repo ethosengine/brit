@@ -200,18 +200,6 @@ pub fn change_dirs(dirs: &[std::ffi::OsString]) -> Result<()> {
     Ok(())
 }
 
-/// Where discovery starts: the default `.` is made absolute when the current directory is a `.git`
-/// directory, where discovery from the relative `.` looks for `./.git/objects` and fails.
-fn discovery_start(repository: PathBuf) -> PathBuf {
-    if repository.as_os_str() == "."
-        && let Ok(cwd) = std::env::current_dir()
-        && cwd.file_name().is_some_and(|name| name == ".git")
-    {
-        return cwd;
-    }
-    repository
-}
-
 /// Execute an already parsed plumbing command, allowing another CLI to compose its command tree.
 pub fn run(args: Args) -> Result<()> {
     run_with_command(args, Args::command())
@@ -256,7 +244,7 @@ pub fn run_with_command(args: Args, command: clap::Command) -> Result<()> {
         .unwrap_or_default();
     let object_hash = args.object_hash;
     let config = args.config;
-    let repository = discovery_start(args.repository);
+    let repository = args.repository;
     let repository_path = repository.clone();
     enum Mode {
         Strict,
@@ -1461,7 +1449,17 @@ pub fn run_with_command(args: Args, command: clap::Command) -> Result<()> {
         },
         Subcommands::RevParse(crate::plumbing::options::git_spellings::RevParse { args }) => {
             prepare_and_run("rev-parse", verbose, None, move |_progress, out, err| {
-                core::repository::git_spellings::rev_parse::rev_parse(repository(Mode::Lenient)?, args, out, err)
+                let repo = match repository(Mode::Lenient) {
+                    Ok(repo) => repo,
+                    Err(discovery) => {
+                        let cwd = std::env::current_dir().unwrap_or_default();
+                        return Err(core::repository::git_spellings::rev_parse::outside_work_tree(
+                            &args, &cwd, &mut *err,
+                        )
+                        .unwrap_or(discovery));
+                    }
+                };
+                core::repository::git_spellings::rev_parse::rev_parse(repo, args, out, err)
             })
         }
         Subcommands::ForEachRef(crate::plumbing::options::git_spellings::ForEachRef {
