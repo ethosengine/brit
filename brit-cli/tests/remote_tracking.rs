@@ -74,7 +74,7 @@ fn two_branch_fixture() -> gix_testtools::Result<(tempfile::TempDir, tempfile::T
 fn advance(remote: &Path, branch: &str, message: &str) -> gix_testtools::Result<String> {
     git(remote, &format!("switch -q {branch}"))?;
     git(remote, &format!("commit --allow-empty -m {message}"))?;
-    Ok(git(remote, "rev-parse HEAD")?)
+    git(remote, "rev-parse HEAD")
 }
 
 fn rev(repo: &Path, name: &str) -> Option<String> {
