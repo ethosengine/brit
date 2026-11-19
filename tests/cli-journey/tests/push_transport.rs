@@ -242,7 +242,7 @@ fn early_rejection_names_the_http_status() -> Result<()> {
             );
             never_masked(&out.stderr)?;
             ensure!(
-                out.stderr.contains("the push was not delivered"),
+                out.stderr.contains("was not visible on the remote when checked"),
                 "{}: delivery was checked:\n{}",
                 build.http,
                 out.stderr
@@ -285,7 +285,8 @@ fn listener_gone_after_the_advertisement_is_named() -> Result<()> {
     Ok(())
 }
 
-/// A report lost after the remote applied the push is said to be lost, not the push.
+/// A report lost after the remote applied the push: verified on a fresh handshake, the push
+/// succeeds and says its report was lost.
 #[test]
 fn lost_report_after_delivery_says_the_push_arrived() -> Result<()> {
     for build in builds() {
@@ -294,10 +295,18 @@ fn lost_report_after_delivery_says_the_push_arrived() -> Result<()> {
         published.origin(&server.url("r.git"))?;
         let new = published.repo.commit_file("payload", "second")?;
         let out = push(&build, published.repo.path())?;
-        ensure!(!out.status.success(), "{}: the report never arrived", build.http);
         ensure!(
-            out.stderr.contains("the push was delivered, but its report was lost"),
-            "{}: delivery was verified:\n{}\nserver: {:?}",
+            out.status.success(),
+            "{}: a verified delivery succeeds:\n{}",
+            build.http,
+            out.stderr
+        );
+        ensure!(
+            out.stderr.contains("the server's report was lost")
+                && out
+                    .stderr
+                    .contains("a fresh handshake shows every update on the remote"),
+            "{}: the lost report is noted:\n{}\nserver: {:?}",
             build.http,
             out.stderr,
             server.log()
@@ -349,7 +358,8 @@ fn remote_moved_by_the_hook_is_refused() -> Result<()> {
         let what = format!("{} via {url}", build.http);
         ensure!(!out.status.success(), "{what}: the push must be refused");
         ensure!(
-            out.stderr.contains("remote moved while pre-push ran; nothing was sent"),
+            out.stderr
+                .contains("remote moved while the before-send callback ran; nothing was sent"),
             "{what}:\n{}",
             out.stderr
         );
@@ -389,11 +399,14 @@ fn hook_input_old_id_is_the_remote_prior_id() -> Result<()> {
     Ok(())
 }
 
-/// No total request timeout: a remote answering after 35 s still completes the push.
+/// The push upload has no deadline: a remote answering after 35 s still completes the push.
+/// This is the regression test for the production failure, so it runs by default on the
+/// reqwest build (the build that had a 30 s cap).
 #[test]
-#[ignore = "takes 35 s"]
 fn response_held_past_thirty_seconds_completes() -> Result<()> {
-    let build = reqwest_build().context("BRIT_REQWEST_BIN is required for this journey")?;
+    let Some(build) = reqwest_build() else {
+        return Ok(());
+    };
     let published = Published::new("push-transport-held")?;
     let server = HttpRemote::start(published.root.path(), Mode::HoldResponse(Duration::from_secs(35)))?;
     published.origin(&server.url("r.git"))?;
@@ -401,5 +414,145 @@ fn response_held_past_thirty_seconds_completes() -> Result<()> {
     let out = push(&build, published.repo.path())?;
     ensure!(out.status.success(), "{}\nserver: {:?}", out.stderr, server.log());
     assert_eq!(published.remote_main()?, new);
+    Ok(())
+}
+
+/// An upload cut in the middle of the pack, by an early answer or a reset, names that cause
+/// and never the dropped channel the transport saw it as.
+#[test]
+fn upload_cut_mid_pack_names_the_cause() -> Result<()> {
+    for build in builds() {
+        // Large bodies are what the cut needs; the curl backend can hang forever on an early
+        // answer to a large body (upstream), so it gets small ones.
+        let (size, cut) = if build.http == "reqwest" {
+            (1024 * 1024, 100_000)
+        } else {
+            (0, 64)
+        };
+        for mode in [Mode::EarlyStatusReset(413), Mode::ResetAfter(cut)] {
+            let what = format!("{} {mode:?}", build.http);
+            let published = Published::new(&format!("push-transport-cut-{}", build.http))?;
+            let server = HttpRemote::start(published.root.path(), mode)?;
+            published.origin(&server.url("r.git"))?;
+            let new = if size > 0 {
+                published.commit_bytes(size)?
+            } else {
+                published.repo.commit_file("payload", "second")?
+            };
+            let out = push(&build, published.repo.path())?;
+            ensure!(!out.status.success(), "{what}: the push cannot succeed");
+            let stderr = out.stderr.to_lowercase();
+            // curl retries a send on a reset connection and, lacking a seek callback in the
+            // upstream backend, reports its failed rewind ("[65] Send failed …") instead.
+            let curl_retry = build.http == "curl" && stderr.contains("send failed");
+            ensure!(
+                stderr.contains("413") || stderr.contains("reset") || curl_retry,
+                "{what}: the status or the reset is named:\n{}\nserver: {:?}",
+                out.stderr,
+                server.log()
+            );
+            never_masked(&out.stderr)?;
+            ensure!(
+                out.stderr.contains("was not visible on the remote when checked"),
+                "{what}: delivery was checked:\n{}",
+                out.stderr
+            );
+            assert_eq!(published.remote_main()?, published.first, "{what}");
+            ensure!(!published.remote_has(&new), "{what}: nothing arrived");
+        }
+    }
+    Ok(())
+}
+
+/// After the second handshake only receive-pack's compare-and-swap guards the ref; a writer
+/// that moves it when the upload arrives gets the push rejected by the server, and brit says so.
+#[test]
+fn server_compare_and_swap_after_the_second_handshake_is_reported() -> Result<()> {
+    for build in builds() {
+        let published = Published::new(&format!("push-transport-cas-{}", build.http))?;
+        let server = HttpRemote::start(published.root.path(), Mode::MoveOnPost)?;
+        published.origin(&server.url("r.git"))?;
+        published.hook("cat >hook-input")?;
+        let new = published.repo.commit_file("payload", "second")?;
+        let out = push(&build, published.repo.path())?;
+        ensure!(!out.status.success(), "{}: the server rejected the update", build.http);
+        ensure!(
+            [
+                "incorrect old value provided",
+                "failed to update ref",
+                "cannot lock ref"
+            ]
+            .iter()
+            .any(|reason| out.stderr.contains(reason)),
+            "{}: the server's rejection is reported:\n{}\nserver: {:?}",
+            build.http,
+            out.stderr,
+            server.log()
+        );
+        ensure!(published.remote_main()? != new, "{}: nothing was delivered", build.http);
+        ensure!(
+            published.remote_main()? != published.first,
+            "{}: the competing writer's id stands",
+            build.http
+        );
+    }
+    Ok(())
+}
+
+/// A handshake GET held past the 60 s deadline fails naming a timeout instead of hanging.
+#[test]
+#[ignore = "takes 60 s"]
+fn handshake_held_past_the_deadline_names_a_timeout() -> Result<()> {
+    let build = reqwest_build().context("BRIT_REQWEST_BIN is required for this journey")?;
+    let published = Published::new("push-transport-holdget")?;
+    let server = HttpRemote::start(published.root.path(), Mode::HoldGet(Duration::from_secs(65)))?;
+    published.origin(&server.url("r.git"))?;
+    published.repo.commit_file("payload", "second")?;
+    let started = std::time::Instant::now();
+    let out = push(&build, published.repo.path())?;
+    let took = started.elapsed();
+    ensure!(!out.status.success(), "the held handshake cannot succeed");
+    ensure!(
+        out.stderr.to_lowercase().contains("timed out"),
+        "a timeout is named:\n{}",
+        out.stderr
+    );
+    ensure!(
+        (Duration::from_secs(55)..Duration::from_secs(65)).contains(&took),
+        "cut at the 60 s deadline, took {took:?}"
+    );
+    assert_eq!(published.remote_main()?, published.first);
+    Ok(())
+}
+
+/// A fetch download that stalls is cut by the per-read stall guard instead of hanging.
+#[test]
+#[ignore = "takes 60 s"]
+fn stalled_clone_download_is_cut_by_the_stall_guard() -> Result<()> {
+    let build = reqwest_build().context("BRIT_REQWEST_BIN is required for this journey")?;
+    let published = Published::new("push-transport-stallfetch")?;
+    let big = published.commit_bytes(2 * 1024 * 1024)?;
+    git(
+        published.repo.path(),
+        &["push", "-q", published.bare().to_str().expect("utf8 path"), "main:main"],
+    )?;
+    assert_eq!(published.remote_main()?, big);
+    let server = HttpRemote::start(published.root.path(), Mode::StallFetch(64 * 1024))?;
+    let target = tempfile::tempdir()?;
+    let started = std::time::Instant::now();
+    let out = BritInvocation::new(&build.bin)
+        .args(["clone".to_owned(), server.url("r.git"), "cloned".to_owned()])
+        .current_dir(target.path())
+        .deadline(DEADLINE)
+        .run()?;
+    let took = started.elapsed();
+    ensure!(!out.status.success(), "the stalled clone cannot succeed");
+    ensure!(
+        out.stderr.to_lowercase().contains("timed out"),
+        "a timeout is named:\n{}\nserver: {:?}",
+        out.stderr,
+        server.log()
+    );
+    ensure!(took < Duration::from_secs(80), "cut by the stall guard, took {took:?}");
     Ok(())
 }

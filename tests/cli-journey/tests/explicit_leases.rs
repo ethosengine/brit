@@ -280,7 +280,7 @@ fn competing_writer_during_hook_is_rejected_by_transport() -> Result<()> {
             );
         } else {
             ensure!(
-                stderr.contains("remote moved while pre-push ran; nothing was sent")
+                stderr.contains("remote moved while the before-send callback ran; nothing was sent")
                     && stderr.contains(&old)
                     && stderr.contains(&base),
                 "race must be refused before sending, naming both ids: {stderr}"

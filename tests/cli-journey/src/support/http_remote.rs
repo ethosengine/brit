@@ -9,11 +9,19 @@
 //! - [`Mode::DropIdle`]: forget a connection idle longer than a limit, and answer the next
 //!   bytes on it with a TCP reset (what load balancers do to stale keep-alive connections).
 //! - [`Mode::EarlyStatus`]: answer a receive-pack POST with an error status before reading
-//!   its body (401 for expired credentials, 413 for a body too large).
+//!   its body (401 for expired credentials, 413 for a body too large), then drain the body.
+//! - [`Mode::EarlyStatusReset`]: the same answer, then close without reading the body.
+//! - [`Mode::ResetAfter`]: read part of the receive-pack upload, then reset the connection.
 //! - [`Mode::GoneAfterGet`]: close the listener and the connection after the first GET.
 //! - [`Mode::HoldResponse`]: read the whole upload, then wait before answering.
+//! - [`Mode::HoldGet`]: wait before answering each GET.
+//! - [`Mode::StallFetch`]: send part of an upload-pack response, then stall.
 //! - [`Mode::LoseReport`]: apply a push, then close without answering, as a connection cut
 //!   after the server finished does.
+//! - [`Mode::MoveOnPost`]: move `refs/heads/main` when the receive-pack POST arrives, so the
+//!   server's own compare-and-swap rejects the push.
+//!
+//! Dropping the fixture shuts every connection down, wakes every pause and joins every thread.
 
 use std::{
     io::{self, BufRead, BufReader, Read, Write},
@@ -22,11 +30,14 @@ use std::{
     process::{Command, Stdio},
     sync::{
         atomic::{AtomicBool, Ordering},
-        Arc, Mutex,
+        Arc, Mutex, Weak,
     },
     thread::JoinHandle,
-    time::Duration,
+    time::{Duration, Instant},
 };
+
+/// How long one `git http-backend` run may take before the fixture kills it.
+const BACKEND_LIMIT: Duration = Duration::from_secs(60);
 
 /// How the fixture misbehaves.
 #[derive(Debug, Clone, Copy)]
@@ -39,32 +50,59 @@ pub enum Mode {
     /// Answer receive-pack POSTs with this status before reading the body, then drain the
     /// body and close.
     EarlyStatus(u16),
+    /// Answer receive-pack POSTs with this status before reading the body, then close with
+    /// the body unread, which resets the connection.
+    EarlyStatusReset(u16),
+    /// Read this many bytes of a receive-pack POST, then reset the connection.
+    ResetAfter(usize),
     /// After answering the first GET, close the listener and that connection.
     GoneAfterGet,
     /// Read a receive-pack POST completely, then wait this long before answering it.
     HoldResponse(Duration),
+    /// Wait this long before answering each GET.
+    HoldGet(Duration),
+    /// Answer an upload-pack POST with only this many bytes of its body, then stall.
+    StallFetch(usize),
     /// Apply each receive-pack POST, then close the connection without answering.
     LoseReport,
+    /// Move `refs/heads/main` to a new commit when a receive-pack POST arrives, then apply it.
+    MoveOnPost,
 }
 
 /// A running fixture; dropping it stops the server.
 pub struct HttpRemote {
     addr: SocketAddr,
-    stop: Arc<AtomicBool>,
+    shared: Arc<Shared>,
     accept: Option<JoinHandle<()>>,
-    log: Arc<Mutex<Vec<String>>>,
 }
 
 struct Shared {
     root: PathBuf,
     mode: Mode,
+    stop: AtomicBool,
     listener: Mutex<Option<TcpListener>>,
-    log: Arc<Mutex<Vec<String>>>,
+    /// Each connection's socket, to shut it down on drop, and its thread, to join. The socket is
+    /// held weakly so that a connection closes as soon as its thread lets go of it, which is
+    /// what makes closing with unread data a reset.
+    connections: Mutex<Vec<(Weak<TcpStream>, JoinHandle<()>)>>,
+    log: Mutex<Vec<String>>,
 }
 
 impl Shared {
     fn note(&self, line: String) {
         self.log.lock().expect("log lock").push(line);
+    }
+
+    /// Sleep for `duration` unless the fixture stops first; `false` if it stopped.
+    fn pause(&self, duration: Duration) -> bool {
+        let until = Instant::now() + duration;
+        while Instant::now() < until {
+            if self.stop.load(Ordering::SeqCst) {
+                return false;
+            }
+            std::thread::sleep(Duration::from_millis(20));
+        }
+        !self.stop.load(Ordering::SeqCst)
     }
 }
 
@@ -74,23 +112,22 @@ impl HttpRemote {
         let listener = TcpListener::bind("127.0.0.1:0")?;
         listener.set_nonblocking(true)?;
         let addr = listener.local_addr()?;
-        let stop = Arc::new(AtomicBool::new(false));
-        let log = Arc::new(Mutex::new(Vec::new()));
         let shared = Arc::new(Shared {
             root: project_root.to_owned(),
             mode,
+            stop: AtomicBool::new(false),
             listener: Mutex::new(Some(listener)),
-            log: log.clone(),
+            connections: Mutex::new(Vec::new()),
+            log: Mutex::new(Vec::new()),
         });
         let accept = std::thread::spawn({
-            let stop = stop.clone();
-            move || accept_loop(&shared, &stop)
+            let shared = shared.clone();
+            move || accept_loop(&shared)
         });
         Ok(HttpRemote {
             addr,
-            stop,
+            shared,
             accept: Some(accept),
-            log,
         })
     }
 
@@ -101,21 +138,29 @@ impl HttpRemote {
 
     /// What the fixture saw and did, one line per event.
     pub fn log(&self) -> Vec<String> {
-        self.log.lock().expect("log lock").clone()
+        self.shared.log.lock().expect("log lock").clone()
     }
 }
 
 impl Drop for HttpRemote {
     fn drop(&mut self) {
-        self.stop.store(true, Ordering::SeqCst);
+        self.shared.stop.store(true, Ordering::SeqCst);
         if let Some(accept) = self.accept.take() {
             accept.join().ok();
+        }
+        let connections = std::mem::take(&mut *self.shared.connections.lock().expect("connections lock"));
+        for (stream, thread) in connections {
+            // Wakes reads, peeks and writes blocked on this socket.
+            if let Some(stream) = stream.upgrade() {
+                stream.shutdown(Shutdown::Both).ok();
+            }
+            thread.join().ok();
         }
     }
 }
 
-fn accept_loop(shared: &Arc<Shared>, stop: &AtomicBool) {
-    while !stop.load(Ordering::SeqCst) {
+fn accept_loop(shared: &Arc<Shared>) {
+    while !shared.stop.load(Ordering::SeqCst) {
         let accepted = {
             let listener = shared.listener.lock().expect("listener lock");
             match listener.as_ref() {
@@ -125,12 +170,21 @@ fn accept_loop(shared: &Arc<Shared>, stop: &AtomicBool) {
         };
         match accepted {
             Ok((stream, _)) => {
-                let shared = shared.clone();
-                std::thread::spawn(move || {
-                    if let Err(err) = serve_connection(&shared, stream) {
-                        shared.note(format!("connection error: {err}"));
+                let stream = Arc::new(stream);
+                let handle = Arc::downgrade(&stream);
+                let thread = std::thread::spawn({
+                    let shared = shared.clone();
+                    move || {
+                        if let Err(err) = serve_connection(&shared, &stream) {
+                            shared.note(format!("connection error: {err}"));
+                        }
                     }
                 });
+                shared
+                    .connections
+                    .lock()
+                    .expect("connections lock")
+                    .push((handle, thread));
             }
             Err(err) if err.kind() == io::ErrorKind::WouldBlock => std::thread::sleep(Duration::from_millis(5)),
             Err(err) => {
@@ -158,9 +212,59 @@ impl Request {
     fn is_receive_pack_post(&self) -> bool {
         self.method == "POST" && self.target.ends_with("/git-receive-pack")
     }
+
+    fn is_upload_pack_post(&self) -> bool {
+        self.method == "POST" && self.target.ends_with("/git-upload-pack")
+    }
+
+    /// The repository directory below `root` that this request addresses.
+    fn repository(&self, root: &Path) -> PathBuf {
+        let path = self.target.split('?').next().unwrap_or("");
+        let repo = path.rsplit_once('/').map_or(path, |(repo, _service)| repo);
+        root.join(repo.trim_start_matches('/'))
+    }
 }
 
-fn serve_connection(shared: &Shared, stream: TcpStream) -> io::Result<()> {
+fn early_answer(writer: &mut impl Write, code: u16) -> io::Result<()> {
+    let body = b"refused before reading the request\n";
+    let extra = if code == 401 {
+        "WWW-Authenticate: Basic realm=\"fixture\"\r\n"
+    } else {
+        ""
+    };
+    write!(
+        writer,
+        "HTTP/1.1 {code} {}\r\n{extra}Content-Type: text/plain\r\nContent-Length: {}\r\nConnection: close\r\n\r\n",
+        reason(code),
+        body.len()
+    )?;
+    writer.write_all(body)?;
+    writer.flush()
+}
+
+/// Move `refs/heads/main` of the bare repository `repo` to a new commit on top of it.
+fn move_main(repo: &Path) -> io::Result<String> {
+    let run = |args: &[&str]| -> io::Result<String> {
+        let out = Command::new("git")
+            .arg("--git-dir")
+            .arg(repo)
+            .args(["-c", "user.name=fixture", "-c", "user.email=fixture@example.invalid"])
+            .args(args)
+            .env("GIT_CONFIG_NOSYSTEM", "1")
+            .env("GIT_CONFIG_GLOBAL", "/dev/null")
+            .output()?;
+        if !out.status.success() {
+            return Err(io::Error::other(String::from_utf8_lossy(&out.stderr).into_owned()));
+        }
+        Ok(String::from_utf8_lossy(&out.stdout).trim().to_owned())
+    };
+    let tree = run(&["rev-parse", "refs/heads/main^{tree}"])?;
+    let moved = run(&["commit-tree", &tree, "-p", "refs/heads/main", "-m", "competing writer"])?;
+    run(&["update-ref", "refs/heads/main", &moved])?;
+    Ok(moved)
+}
+
+fn serve_connection(shared: &Shared, stream: &TcpStream) -> io::Result<()> {
     stream.set_nonblocking(false)?;
     let mut writer = stream.try_clone()?;
     let mut reader = BufReader::new(stream.try_clone()?);
@@ -193,26 +297,31 @@ fn serve_connection(shared: &Shared, stream: TcpStream) -> io::Result<()> {
         served += 1;
         shared.note(format!("{} {}", request.method, request.target));
 
-        if let (Mode::EarlyStatus(code), true) = (shared.mode, request.is_receive_pack_post()) {
-            let body = b"refused before reading the request\n";
-            let extra = if code == 401 {
-                "WWW-Authenticate: Basic realm=\"fixture\"\r\n"
-            } else {
-                ""
-            };
-            write!(
-                writer,
-                "HTTP/1.1 {code} {}\r\n{extra}Content-Type: text/plain\r\nContent-Length: {}\r\nConnection: close\r\n\r\n",
-                reason(code),
-                body.len()
-            )?;
-            writer.write_all(body)?;
-            writer.flush()?;
-            shared.note(format!("answered {code} before reading the body"));
-            // Drain what the client still sends so closing does not reset the answer away.
-            read_body(&mut reader, &request, &mut io::sink()).ok();
-            stream.shutdown(Shutdown::Both).ok();
-            return Ok(());
+        if request.is_receive_pack_post() {
+            match shared.mode {
+                Mode::EarlyStatus(code) => {
+                    early_answer(&mut writer, code)?;
+                    shared.note(format!("answered {code} before reading the body"));
+                    // Drain what the client still sends so closing does not reset the answer away.
+                    read_body(&mut reader, &request, &mut io::sink()).ok();
+                    stream.shutdown(Shutdown::Both).ok();
+                    return Ok(());
+                }
+                Mode::EarlyStatusReset(code) => {
+                    early_answer(&mut writer, code)?;
+                    shared.note(format!("answered {code}, closing with the body unread"));
+                    // Give the answer a moment on the wire, then close with unread data: a reset.
+                    shared.pause(Duration::from_millis(200));
+                    return Ok(());
+                }
+                Mode::ResetAfter(limit) => {
+                    let mut seen = vec![0u8; limit];
+                    reader.read_exact(&mut seen)?;
+                    shared.note(format!("read {limit} bytes of the upload, resetting"));
+                    return Ok(());
+                }
+                _ => {}
+            }
         }
 
         if request
@@ -223,9 +332,24 @@ fn serve_connection(shared: &Shared, stream: TcpStream) -> io::Result<()> {
         }
         let mut body = Vec::new();
         read_body(&mut reader, &request, &mut body)?;
-        if let (Mode::HoldResponse(hold), true) = (shared.mode, request.is_receive_pack_post()) {
-            shared.note(format!("holding the response for {}s", hold.as_secs()));
-            std::thread::sleep(hold);
+        match (shared.mode, request.method.as_str()) {
+            (Mode::HoldResponse(hold), _) if request.is_receive_pack_post() => {
+                shared.note(format!("holding the response for {}s", hold.as_secs()));
+                if !shared.pause(hold) {
+                    return Ok(());
+                }
+            }
+            (Mode::HoldGet(hold), "GET") => {
+                shared.note(format!("holding the GET for {}s", hold.as_secs()));
+                if !shared.pause(hold) {
+                    return Ok(());
+                }
+            }
+            (Mode::MoveOnPost, _) if request.is_receive_pack_post() => {
+                let moved = move_main(&request.repository(&shared.root))?;
+                shared.note(format!("moved refs/heads/main to {moved} before applying"));
+            }
+            _ => {}
         }
         let (status, headers, payload) = http_backend(&shared.root, &request, &body)?;
         if matches!(shared.mode, Mode::LoseReport) && request.is_receive_pack_post() {
@@ -233,13 +357,25 @@ fn serve_connection(shared: &Shared, stream: TcpStream) -> io::Result<()> {
             shared.note(format!("applied the push ({status}) and closed without answering"));
             return Ok(());
         }
+        let sent = match shared.mode {
+            Mode::StallFetch(limit) if request.is_upload_pack_post() => limit.min(payload.len()),
+            _ => payload.len(),
+        };
         write!(writer, "HTTP/1.1 {status}\r\n")?;
         for header in &headers {
             write!(writer, "{header}\r\n")?;
         }
         write!(writer, "Content-Length: {}\r\n\r\n", payload.len())?;
-        writer.write_all(&payload)?;
+        writer.write_all(&payload[..sent])?;
         writer.flush()?;
+        if sent < payload.len() {
+            shared.note(format!(
+                "sent {sent} of {} bytes of the fetch response, stalling",
+                payload.len()
+            ));
+            shared.pause(Duration::from_secs(3600));
+            return Ok(());
+        }
         shared.note(format!("{} {} -> {status}", request.method, request.target));
 
         if matches!(shared.mode, Mode::GoneAfterGet) && request.method == "GET" {
@@ -323,7 +459,8 @@ fn read_body(reader: &mut impl BufRead, request: &Request, out: &mut impl Write)
     Ok(())
 }
 
-/// Run one CGI request through `git http-backend`; returns the status line, headers and body.
+/// Run one CGI request through `git http-backend`, killing it after [`BACKEND_LIMIT`];
+/// returns the status line, headers and body.
 fn http_backend(root: &Path, request: &Request, body: &[u8]) -> io::Result<(String, Vec<String>, Vec<u8>)> {
     let (path, query) = request.target.split_once('?').unwrap_or((&request.target, ""));
     let mut command = Command::new("git");
@@ -355,28 +492,51 @@ fn http_backend(root: &Path, request: &Request, body: &[u8]) -> io::Result<(Stri
     let mut stdin = child.stdin.take().expect("piped stdin");
     let input = body.to_owned();
     let feeder = std::thread::spawn(move || stdin.write_all(&input));
-    let output = child.wait_with_output()?;
+    let drain = |mut pipe: Box<dyn Read + Send>| {
+        std::thread::spawn(move || {
+            let mut buf = Vec::new();
+            pipe.read_to_end(&mut buf).map(|_| buf)
+        })
+    };
+    let stdout = drain(Box::new(child.stdout.take().expect("piped stdout")));
+    let stderr = drain(Box::new(child.stderr.take().expect("piped stderr")));
+    let started = Instant::now();
+    let status = loop {
+        if let Some(status) = child.try_wait()? {
+            break status;
+        }
+        if started.elapsed() > BACKEND_LIMIT {
+            child.kill().ok();
+            child.wait().ok();
+            return Err(io::Error::new(
+                io::ErrorKind::TimedOut,
+                "git http-backend ran past its limit and was killed",
+            ));
+        }
+        std::thread::sleep(Duration::from_millis(10));
+    };
     feeder.join().expect("stdin feeder").ok();
+    let stdout = stdout.join().expect("stdout reader")?;
+    let stderr = stderr.join().expect("stderr reader")?;
+    if !status.success() && stdout.is_empty() {
+        return Err(io::Error::other(format!(
+            "git http-backend failed ({status}): {}",
+            String::from_utf8_lossy(&stderr)
+        )));
+    }
 
-    let split = output
-        .stdout
+    let split = stdout
         .windows(4)
         .position(|window| window == b"\r\n\r\n")
         .map(|at| (at, 4))
-        .or_else(|| {
-            output
-                .stdout
-                .windows(2)
-                .position(|window| window == b"\n\n")
-                .map(|at| (at, 2))
-        })
+        .or_else(|| stdout.windows(2).position(|window| window == b"\n\n").map(|at| (at, 2)))
         .ok_or_else(|| {
             io::Error::other(format!(
                 "git http-backend gave no CGI header: {}",
-                String::from_utf8_lossy(&output.stderr)
+                String::from_utf8_lossy(&stderr)
             ))
         })?;
-    let (head, payload) = (&output.stdout[..split.0], &output.stdout[split.0 + split.1..]);
+    let (head, payload) = (&stdout[..split.0], &stdout[split.0 + split.1..]);
     let mut status = "200 OK".to_owned();
     let mut headers = Vec::new();
     for line in String::from_utf8_lossy(head).lines() {
