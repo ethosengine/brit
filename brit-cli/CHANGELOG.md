@@ -125,6 +125,32 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.0.0/); ver
   when the command otherwise succeeded: a command's own failure always keeps its status. So
   `brit rev-parse --verify missing` with a closed stderr exits 128, where Git is killed by
   `SIGPIPE` (141). Every other command, writers included, reports its own outcome.
+- **Behaviour change:** 28 more exact paths end quietly with 141 on a closed reader, each admitted
+  after reading its code for writes and unwatched output: `show`, `tag list`, `remote url`,
+  `remote refs`, `remote ref-map`, `revision previous-branches`, `verify`, `fsck`,
+  `tree entries`, `tree info`, `commit-graph list`, `commit-graph verify`, `mailmap entries`,
+  `mailmap check`, `attributes query`, `exclude query`, bare `submodule`, bare `config`,
+  `config show`, `config list`, `index entries`, `dirwalk`, and `build graph discover`,
+  `build graph show`, `build affected`, `build plan`, `build fingerprint`,
+  `build baseline read`. The whole list, with the reason beside each command left out, is
+  `READ_ONLY_COMMANDS` in `brit-cli/src/main.rs`. Left out: bare `tag` (`tag <name>` creates a
+  tag on the same path), `revision list` (`--svg` writes and opens a file), `commit verify` (its
+  verifier writes to an unwatched stderr), `commit describe` and `submodule list`
+  (`--dirty-suffix` runs the status engine, which can run a configured clean filter),
+  `is-clean` and `is-changed` (predicates whose answer is their exit status),
+  `attributes validate-baseline` (it reports a failure with a write that a closed reader would
+  replace), and the writers (`build run`, `build baseline write` and `migrate`, `config fmt`,
+  `index from-tree`, `tag delete`, `commit sign`). Measured with stdout closed: `brit show HEAD`
+  exited 1 with `Error: Broken pipe`, now 141; `brit index entries` exited 0, now 141; a short
+  blob without a newline (`brit show HEAD:file`) exited 0, now 141, because a read-only
+  command's stdout is flushed before its status is chosen. A command's own failure still keeps
+  its status: `brit tree info no-such-revision` with stderr closed exits 1, because it now
+  resolves the revision before writing its format note. Caveats: `ls-remote`, `remote refs` and
+  `remote ref-map` may run a credential helper, which stores or erases a credential after
+  authenticating, and output a helper or prompt writes does not pass the watched writer, so on
+  that path a closed reader may go unseen. `--trace` and the verbose progress renderer write to
+  stderr outside the watched writer. A streaming query (`exclude query`, `attributes query`) stops at its first failed write, even when a later input would have failed,
+  as Git killed by `SIGPIPE` does.
 - Writer guards are scoped ([docs/mutation-guards.md](../docs/mutation-guards.md)). `add` holds
   its worktree's guard and the repository guard shared, so writers in other worktrees keep
   working beside it; shared writes (refs, configuration, worktree registrations, `fetch`'s
@@ -257,6 +283,11 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.0.0/); ver
   1 for `brit log no-such-rev`, 128 for `brit rev-parse --verify missing`) and is still recorded
   by the optional feedback capture, instead of exiting 101 from a panicking report. The same
   holds for `brit-rebase-retained`, `brit-build-ref` and `brit-verify`.
+- The `build` commands' JSON and DOT output goes through the watched writer: with a closed
+  stdout, `brit build fingerprint`, `graph discover`, `graph show`, `affected`, `plan` and
+  `baseline read` exit 141 where they panicked with 101, and `brit build baseline write` (and
+  `migrate`, through the same printer), which are not read-only, exit 1 with
+  `error: io error: Broken pipe` after their ref update where they panicked with 101. Output to a live reader is byte-identical.
 - A reduced-trust repository with 33 or more pack indexes (one more per unconsolidated fetch)
   opens for reading again; before, every read failed with `too few index slots` or `The rev-spec
   is malformed and misses a ref name`.
