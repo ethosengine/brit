@@ -309,6 +309,34 @@ fn linked_worktree_conflict_continue_abort_and_detached_head_preserve_neighbors(
     Ok(())
 }
 
+fn rev(root: &Path, revision: &str) -> Result<String> {
+    Ok(String::from_utf8(git(root, &["rev-parse", revision])?)?
+        .trim()
+        .to_owned())
+}
+
+/// Rebase still refuses a shallow repository, even when the selection itself lies above the
+/// boundary: its retained copy is proven complete by walking released commits to the roots
+/// from the copy alone. The refusal happens before any state, hook or ref change.
+#[test]
+fn shallow_repository_rebase_refuses_before_any_state() -> Result<()> {
+    let repo = fixture(false)?;
+    let root = repo.path();
+    let base = String::from_utf8(git(root, &["merge-base", "main", "upstream"])?)?;
+    fs::write(root.join(".git/shallow"), &base)?;
+    let head = rev(root, "HEAD")?;
+    let result = refused(root, &["rebase", "upstream"])?;
+    ensure!(
+        result.stderr.contains("shallow"),
+        "diagnostic names the shallow refusal: {}",
+        result.stderr
+    );
+    assert_eq!(rev(root, "HEAD")?, head);
+    assert_eq!(fs::read_to_string(root.join(".git/shallow"))?, base);
+    assert!(!root.join(".git/brit-rebase").exists());
+    preserved(root)
+}
+
 #[test]
 fn public_linear_replay_finishes_and_helper_exports_after_cleanup_without_runtime_git() -> Result<()> {
     let repo = fixture(false)?;

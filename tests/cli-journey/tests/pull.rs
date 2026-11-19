@@ -383,7 +383,7 @@ fn foreign_index_and_head_locks_are_never_removed() -> Result<()> {
 }
 #[test]
 fn alternate_indexes_and_external_filters_refuse_without_integration() -> Result<()> {
-    for kind in ["alternate", "filter", "sparse", "split", "shallow"] {
+    for kind in ["alternate", "filter", "sparse", "split"] {
         let f = fixture()?;
         match kind {
             "filter" => {
@@ -398,9 +398,6 @@ fn alternate_indexes_and_external_filters_refuse_without_integration() -> Result
             }
             "split" => {
                 git(f.local.path(), &["update-index", "--split-index"])?;
-            }
-            "shallow" => {
-                fs::write(f.local.path().join(".git/shallow"), format!("{}\n", f.original))?;
             }
             _ => {}
         }
@@ -925,6 +922,69 @@ fn another_worktree_sharing_current_branch_blocks_integration() -> Result<()> {
     assert_eq!(index(f.local.path())?, before);
     assert_eq!(f.local.head_id()?, f.original);
     assert_eq!(fs::read(linked.path().join("selected"))?, b"original\n");
+    Ok(())
+}
+
+/// A shallow repository fast-forwards when the walk from the fetched tip reaches HEAD above
+/// the shallow boundary: every commit the decision needs is local. The boundary is unchanged.
+#[test]
+fn shallow_history_fast_forwards_when_the_range_is_local() -> Result<()> {
+    // Boundary at HEAD itself: the decision never needs HEAD's parents.
+    let f = fixture()?;
+    let boundary = format!("{}\n", f.original);
+    fs::write(f.local.path().join(".git/shallow"), &boundary)?;
+    assert_success(pull(f.local.path(), true)?)?;
+    assert_eq!(f.local.head_id()?, f.target);
+    assert_eq!(fs::read(f.local.path().join("selected"))?, b"destination\n");
+    assert_eq!(fs::read_to_string(f.local.path().join(".git/shallow"))?, boundary);
+    fetched(&f)?;
+
+    // A real depth-1 clone, whose boundary commit's parents are absent.
+    let clone = tempfile::tempdir()?;
+    let url = format!("file://{}", f.remote.path().display());
+    git(
+        clone.path(),
+        &["clone", "-q", "--depth", "1", "--branch", "main", &url, "local"],
+    )?;
+    let local = clone.path().join("local");
+    let boundary = fs::read_to_string(local.join(".git/shallow"))?;
+    assert_eq!(boundary.trim(), f.target, "depth-1 boundary is the cloned tip");
+    let next = f.remote.commit_file("selected", "next\n")?;
+    assert_success(pull(&local, true)?)?;
+    assert_eq!(String::from_utf8(git(&local, &["rev-parse", "HEAD"])?)?.trim(), next);
+    assert_eq!(fs::read(local.join("selected"))?, b"next\n");
+    assert_eq!(fs::read_to_string(local.join(".git/shallow"))?, boundary);
+    Ok(())
+}
+
+/// When proving the fast-forward would need history below the shallow boundary, the pull
+/// refuses before integration, names the boundary commit and the cure, and keeps HEAD, index
+/// and worktree; the fetched results are retained like any other integration refusal.
+#[test]
+fn shallow_boundary_inside_the_range_refuses_naming_it() -> Result<()> {
+    let f = fixture()?;
+    let middle = String::from_utf8(git(f.remote.path(), &["rev-parse", "HEAD~1"])?)?
+        .trim()
+        .to_owned();
+    git(f.remote.path(), &["branch", "middle", &middle])?;
+    git(f.local.path(), &["fetch", "-q", "origin", "middle"])?;
+    fs::write(f.local.path().join(".git/shallow"), format!("{middle}\n"))?;
+    let before = index(f.local.path())?;
+    let out = pull(f.local.path(), true)?;
+    let stderr = String::from_utf8_lossy(&out.stderr);
+    ensure!(!out.status.success(), "a range crossing the boundary must refuse");
+    ensure!(
+        stderr.contains(&middle) && stderr.contains("shallow") && stderr.contains("--deepen"),
+        "diagnostic names the boundary and the cure: {stderr}"
+    );
+    assert_eq!(index(f.local.path())?, before);
+    assert_eq!(f.local.head_id()?, f.original);
+    assert_eq!(fs::read(f.local.path().join("selected"))?, b"original\n");
+    fetched(&f)?;
+    ensure!(
+        !f.local.path().join(".git/brit-switch").exists(),
+        "no integration left pending"
+    );
     Ok(())
 }
 
