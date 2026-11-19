@@ -203,6 +203,17 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.0.0/); ver
   repository's live rebase, and names what to remove by hand.
 - `brit rebase --abort` declines to cancel a prepared hook invocation whose lease a live
   supervisor still holds.
+- A rebase command killed after writing its next journal record and before putting it in
+  effect no longer strands the repository: the next `--abort`, `--continue` or `--skip`
+  discards that record, which never took effect, instead of refusing "foreign pending replay
+  state". A decision record, staged proposal or retained-copy manifest cut short by a kill or a
+  power loss is likewise written again, an `--abort` killed while holding its Git locks
+  releases them on the next `--abort`, and retained-copy manifests, completion markers and
+  cleanup receipts are now published whole. `brit rebase --status` names a cure in every phase,
+  says what is true of the decision actually pending, and, for a repository moved mid-rebase,
+  names its old location: moving it back and running `--abort` there restores it.
+- `brit switch --status` is never refused by the scratch limit, and `switch --abort`,
+  `pull --abort` and rolling a durable switch decision forward are not metered.
 - A `brit switch` or `brit pull` stopped before its first journal record no longer blocks the
   repository: `--status` says it recorded and changed nothing, and `--abort` removes it.
 - `brit fetch` refuses a refspec naming one ref the remote does not advertise, checks again

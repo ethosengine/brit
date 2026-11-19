@@ -86,7 +86,20 @@ would be a write the model reserves for `other_worktree_guard`.
   invocation's lease; once the hook's start is durable it is not.
 - The scratch quota never refuses recovery: opening a journal never applies it, so
   `--status` always answers, and `brit rebase --abort` and the cleanup of a completed or
-  aborted rebase are unmetered in every phase. Only forward steps are reserved for.
+  aborted rebase are unmetered in every phase. Only forward steps are reserved for. The same
+  holds for `switch` and `pull`: `brit switch --status` is never metered, and `switch --abort`,
+  `pull --abort`, rolling a durable switch decision forward with `--continue`, and the
+  standalone conflict-authoring abort run unmetered too.
+- A command killed part-way through publishing a journal record never strands the journal.
+  Rebase records are written whole as `state.pending` and then renamed onto `state.json`, with
+  nothing live written between the two; a `state.pending` found beside `state.json` never took
+  effect, and the next rebase command other than `--status` discards it (a preparation's own
+  successor is rolled forward instead). A decision record, a staged proposal or its owner record
+  cut short by a kill or a power loss is likewise treated as never written, and an abort that
+  was killed holding its transition's Git locks before its decision releases them on the next
+  `--abort`. Retained-copy manifests, completion markers and cleanup receipts are published
+  whole (written to a scratch spool and renamed into place); in a copy not yet complete, a
+  manifest that is cut short or differs is written again, while a complete copy stays immutable.
 - A completed or aborted rebase whose cleanup copy is all that remains (or an abort retaining
   before it changed anything live) can be set aside with `brit rebase --retire`, under the same
   guards as `--abort`: the journal is kept as `brit-rebase-kept-<nonce>`, which no writer
@@ -94,7 +107,10 @@ would be a write the model reserves for `other_worktree_guard`.
 - A rebase journal that does not open as this repository's own (moved or copied repository,
   changed permissions, corrupt checksum) is touched by no command: every writer refuses,
   `brit rebase --status` says what failed and what to do by hand, and warns that a copied
-  repository's journal may describe another repository's live rebase.
+  repository's journal may describe another repository's live rebase. When the repository was
+  moved, `--status` names the location the journal records: moving the repository back and
+  running `--abort` there restores it exactly; setting the journal aside by hand instead leaves
+  the checkout part-way.
 - A `.brit-checkout-*` directory in a Git directory is a scratch leftover: a Brit process
   killed while it held one (a journal save, a payload copy, a switch or pull start) leaves it.
   It is not a journal and blocks nothing; `rebase --status` and `switch --status` report it

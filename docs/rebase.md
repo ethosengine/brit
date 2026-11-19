@@ -130,6 +130,15 @@ completed or aborted rebase are unmetered. Only real disk space bounds them. A
 write that fails on a full disk removes its own partial file, and the command
 says so; free space and run the same command again.
 
+A Brit command killed at any point, at the real limit or a lowered one, leaves a
+rebase that `--status` describes with a cure, that `--abort` restores exactly
+(unless its final decision was already durable, when `--continue` publishes it),
+and that `--continue` carries on. A record the killed command had written but not
+yet put in effect (an unrenamed `state.pending`, or a decision, proposal or
+retained-copy manifest cut short) is discarded or written again by the next
+command; `--status` says so. A preparation killed before it recorded anything has
+nothing to continue: `--abort` removes it.
+
 Brit's rebase is not available on repositories of roughly 180,000 objects or
 more, or whose history decompresses to about 0.9 GB, yet: every state image lists
 the whole object closure and the retained copy holds it, so such a rebase is
@@ -152,7 +161,11 @@ or copied mid-rebase, the journal's permissions changed, or its checksum is
 corrupt) is touched by no Brit command. `--status` says what failed, warns that a
 copied repository's journal may describe another repository's live rebase, and
 names the directory, retention refs and lock files to deal with by hand; every
-other Brit mutation refuses until that is done.
+other Brit mutation refuses until that is done. When the repository was moved and
+its old location is gone, `--status` names that location: move the repository
+back and run `brit rebase --abort` there, which restores it exactly. The manual
+steps remain the alternative, but they restore nothing and leave a checkout the
+rebase had begun changing part-way through it.
 
 Publication and cleanup are separate. A message saying **committed/published with
 warning** or **cleanup pending** must not be interpreted as an unpublished
