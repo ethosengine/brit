@@ -316,6 +316,71 @@ fn traverse_with_index_and_forward_ref_deltas() {
 }
 
 #[test]
+fn tree_from_offsets_respects_alloc_limit() -> gix_testtools::TestResult {
+    for (index_path, pack_path) in crate::PACKS_AND_INDICES {
+        let index = index::File::at(fixture_path(index_path), gix_hash::Kind::Sha1)?;
+        let offsets = index.sorted_offsets();
+        let item_bytes = std::mem::size_of::<gix_pack::cache::delta::tree::Item<u64>>();
+        let allocation_bytes = offsets.len() * item_bytes;
+        for limit in [Some(0), Some(allocation_bytes.div_ceil(64)), None] {
+            let result = gix_pack::cache::delta::Tree::from_offsets_in_pack(
+                &fixture_path(pack_path),
+                offsets.iter().copied(),
+                &|offset| *offset,
+                &|object_id| {
+                    Ok(index
+                        .lookup(object_id)
+                        .map(|entry_index| index.pack_offset_at_index(entry_index)))
+                },
+                &mut progress::Discard,
+                &AtomicBool::new(false),
+                gix_hash::Kind::Sha1,
+                limit,
+            );
+            if limit == Some(0) {
+                let err = result.err().expect("tree storage exceeds the configured limit");
+                assert!(
+                    err.classify().any(|classification| {
+                        classification.class()
+                            == gix_error::Class::ResourceExhaustion(gix_error::ResourceExhaustionKind::AllocationLimit)
+                    }),
+                    "both index versions enforce finite and zero allocation limits"
+                );
+            } else {
+                result?;
+            }
+        }
+    }
+    Ok(())
+}
+
+#[test]
+fn tree_from_filtered_offsets_caps_speculative_allocation() -> gix_testtools::TestResult {
+    let first_offset = pack::data::header::SIZE as u64;
+    let limit = std::mem::size_of::<gix_pack::cache::delta::tree::Item<u64>>();
+    for count in [0, 1] {
+        let offsets = (0..100).filter(|index| *index < count).map(|_| first_offset);
+        let mut visited = 0;
+        let offsets = offsets.inspect(|_| visited += 1);
+        gix_pack::cache::delta::Tree::from_offsets_in_pack(
+            &fixture_path(SMALL_PACK),
+            offsets,
+            &|offset| *offset,
+            &|_| Ok(None),
+            &mut progress::Discard,
+            &AtomicBool::new(false),
+            gix_hash::Kind::Sha1,
+            Some(if count == 0 { 0 } else { limit }),
+        )?;
+        assert_eq!(
+            visited, count,
+            "the upper size hint must not reject entries before iteration"
+        );
+    }
+    Ok(())
+}
+
+#[test]
 fn traverse_with_index_respects_alloc_limit_bytes() -> gix_testtools::TestResult {
     let index = index::File::at(fixture_path(SMALL_PACK_INDEX), gix_hash::Kind::Sha1)?;
     let data = pack::data::File::at(fixture_path(SMALL_PACK), gix_hash::Kind::Sha1)?;
@@ -332,19 +397,18 @@ fn traverse_with_index_respects_alloc_limit_bytes() -> gix_testtools::TestResult
             ..Default::default()
         },
     ) {
-        Ok(_) => panic!("a zero allocation limit rejects the first non-empty decoded object"),
+        Ok(_) => panic!("a zero allocation limit rejects index metadata before decoding objects"),
         Err(err) => err,
     };
 
-    // Serial traversal pops the final root; the parallel root injector takes the first,
-    // even with one worker. Both scheduling contracts predate bounded storage.
-    let expected = if cfg!(feature = "parallel") {
-        "Pack delta traversal at offset 12 requested 223 bytes: configured allocation limit is 0 bytes"
-    } else {
-        "Pack delta traversal at offset 3617 requested 34 bytes: configured allocation limit is 0 bytes"
-    };
-    assert!(err.is_resource_exhausted());
-    assert_eq!(err.to_string(), expected);
+    insta::assert_debug_snapshot!(err, "traverse_with_index bounds index metadata before decoding objects", @"Pack traversal metadata is too large to fit in memory");
+    assert!(
+        err.classify().any(|classification| {
+            classification.class()
+                == gix_error::Class::ResourceExhaustion(gix_error::ResourceExhaustionKind::AllocationLimit)
+        }),
+        "the configured limit is reported as resource exhaustion"
+    );
     Ok(())
 }
 
@@ -592,45 +656,24 @@ fn verify_integrity_respects_pack_alloc_limit_bytes() -> gix_testtools::TestResu
             &mut progress::Discard,
             &AtomicBool::new(false),
         ) {
-            Ok(_) => panic!("{traversal:?}: a zero allocation limit rejects the first non-empty decoded object"),
+            Ok(_) => panic!("{traversal:?}: a zero allocation limit rejects index metadata before decoding objects"),
             Err(err) => err,
         };
 
         errors.push((traversal, err));
     }
-    if cfg!(feature = "parallel") {
-        insta::assert_debug_snapshot!(gix_testtools::redact_debug_snapshot(&(errors), &[]), "both traversal algorithms respect the pack's decoded-object allocation limit", @"
+    insta::assert_debug_snapshot!(gix_testtools::redact_debug_snapshot(&(errors), &[]), "both traversal algorithms bound index metadata before decoding objects", @"
     [
         (
             Lookup,
-            Object Oid(1) at offset 12 could not be decoded
-            
-            Caused by:
-                0: Pack object decode requested 223 bytes: configured allocation limit is 0 bytes,
+            Pack traversal metadata is too large to fit in memory,
         ),
         (
             DeltaTreeLookup,
-            Pack delta traversal at offset 12 requested 223 bytes: configured allocation limit is 0 bytes,
+            Pack traversal metadata is too large to fit in memory,
         ),
     ]
     ");
-    } else {
-        insta::assert_debug_snapshot!(gix_testtools::redact_debug_snapshot(&(errors), &[]), "both traversal algorithms respect the pack's decoded-object allocation limit", @"
-    [
-        (
-            Lookup,
-            Object Oid(1) at offset 12 could not be decoded
-            
-            Caused by:
-                0: Pack object decode requested 223 bytes: configured allocation limit is 0 bytes,
-        ),
-        (
-            DeltaTreeLookup,
-            Pack delta traversal at offset 3617 requested 34 bytes: configured allocation limit is 0 bytes,
-        ),
-    ]
-    ");
-    }
     Ok(())
 }
 
@@ -638,6 +681,9 @@ fn verify_integrity_respects_pack_alloc_limit_bytes() -> gix_testtools::TestResu
 fn bounded_verification_preserves_algorithms_modes_and_statistics() -> gix_testtools::TestResult {
     for (index_path, pack_path) in [(SMALL_PACK_INDEX, SMALL_PACK), (INDEX_V1, PACK_FOR_INDEX_V1)] {
         let index = index::File::at(fixture_path(index_path), gix_hash::Kind::Sha1)?;
+        // Traversal metadata may use up to 64 times the allocation limit, which rejects tiny limits before decoding.
+        // Leave room for it while keeping the limit below the size of most decoded objects.
+        let small_limit = index.num_objects() as usize * 4;
         for traversal in [
             index::traverse::Algorithm::Lookup,
             index::traverse::Algorithm::DeltaTreeLookup,
@@ -648,7 +694,7 @@ fn bounded_verification_preserves_algorithms_modes_and_statistics() -> gix_testt
                 index::verify::Mode::HashCrc32DecodeEncode,
             ] {
                 let mut expected = None;
-                for limit in [None, Some(0), Some(16)] {
+                for limit in [None, Some(small_limit), Some(small_limit * 2)] {
                     let data = pack::data::File::at(fixture_path(pack_path), gix_hash::Kind::Sha1)?
                         .with_alloc_limit_bytes(limit);
                     let scratch = gix_testtools::tempfile::tempdir()?;

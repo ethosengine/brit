@@ -1,6 +1,43 @@
 use super::*;
 
 #[test]
+fn implicit_values_match_git() -> gix_testtools::TestResult {
+    let fixture = crate::scripted_fixture_read_only("make_parse_baseline.sh")?;
+    let baseline = std::fs::read(fixture.join("baseline.git"))?;
+    let baseline = baseline.strip_suffix(b"\0").expect("Git baseline records end in NUL");
+    let fields = baseline.split(|byte| *byte == 0).collect::<Vec<_>>();
+    let (cases, remainder) = fields.as_chunks::<4>();
+    assert!(remainder.is_empty(), "each Git baseline record has four fields");
+    for [description, input, status, url] in cases {
+        let description = std::str::from_utf8(description)?;
+        let accepted = *status == b"0";
+        let events = Events::from_bytes(input, None);
+        assert_eq!(events.is_ok(), accepted, "{description}: parsing agrees with Git");
+        assert_eq!(
+            Events::from_bytes(input, Some(|_| false)).is_ok(),
+            accepted,
+            "{description}: filtering events cannot bypass validation"
+        );
+        let file =
+            gix_config::File::from_bytes_no_includes(input, gix_config::file::Metadata::default(), Default::default());
+        assert_eq!(file.is_ok(), accepted, "{description}: files agree with Git");
+        if accepted {
+            assert_eq!(
+                file?.raw_value("submodule.module.url")?,
+                *url,
+                "{description}: the winning URL agrees with Git"
+            );
+            let mut roundtrip = Vec::new();
+            for event in events?.iter() {
+                event.write_to(&mut roundtrip)?;
+            }
+            assert_eq!(roundtrip, *input, "{description}: valid syntax is preserved");
+        }
+    }
+    Ok(())
+}
+
+#[test]
 fn fuzz() {
     assert!(
         Events::from_str("[]A=\\\\\r\\\n\n").is_err(),
@@ -27,6 +64,40 @@ fn filters_receive_event_refs_for_content_access() -> gix_testtools::TestResult 
             .iter()
             .any(|event| matches!(event, EventRef::Value(value) if value == b"drop".as_slice())),
         "the filter can reject events by inspecting their value bytes"
+    );
+    Ok(())
+}
+
+#[test]
+fn legacy_header_spelling_is_preserved() -> gix_testtools::TestResult {
+    let input = r#"[Remote.Origin]
+	url = location
+"#;
+    let events = Events::from_str(input)?;
+    let expected_header = EventRef::SectionHeader {
+        name: "Remote".into(),
+        separator: Some(".".into()),
+        subsection_name: Some("Origin".into()),
+    };
+    assert_eq!(
+        events.iter().next(),
+        Some(expected_header),
+        "syntactic event views retain the original legacy spelling"
+    );
+    assert_eq!(
+        events.sections().next().expect("one section").header(),
+        expected_header,
+        "section header views and the full event stream expose the same spelling"
+    );
+    let mut out = Vec::new();
+    for event in events.iter() {
+        event.write_to(&mut out)?;
+    }
+    assert_eq!(out, input.as_bytes(), "writing event views preserves legacy headers");
+    assert_eq!(
+        gix_config::format::normalize(input.as_bytes(), Default::default())?,
+        input,
+        "whitespace formatting leaves legacy header spelling untouched"
     );
     Ok(())
 }

@@ -258,7 +258,7 @@ pub fn run_with_command(args: Args, command: clap::Command) -> Result<()> {
             mapping.full.modify(to_match_settings);
             mapping.reduced.modify(to_match_settings);
             let mut repo = gix::ThreadSafeRepository::discover_with_environment_overrides_opts(
-                repository,
+                &repository,
                 Default::default(),
                 mapping,
             )
@@ -298,6 +298,42 @@ pub fn run_with_command(args: Args, command: clap::Command) -> Result<()> {
     }
 
     match cmd {
+        Subcommands::Notify(command) => core::notify::function(
+            &command.paths,
+            !command.non_recursive,
+            gix::notify::plumbing::Options {
+                max_events: command.max_events.get(),
+                max_bytes: command.max_bytes.get(),
+                root_check_interval: (command.root_check_ms != 0)
+                    .then(|| std::time::Duration::from_millis(command.root_check_ms)),
+            },
+            gix::notify::plumbing::Budget {
+                max_events: command.batch_events.get(),
+                max_bytes: command.batch_bytes.get(),
+            },
+            std::io::stdout().lock(),
+            std::io::stderr().lock(),
+            &should_interrupt,
+        ),
+        Subcommands::Watch(command) => {
+            let (options, poll_interval) = command.into_options()?;
+            let monitor = repository(Mode::Lenient)?.monitor(options)?;
+            core::repository::watch::function(
+                monitor,
+                poll_interval,
+                || repository(Mode::Lenient),
+                std::io::stdout().lock(),
+                std::io::stderr().lock(),
+                &should_interrupt,
+            )
+        }
+        Subcommands::Fsmonitor(command) => core::repository::fsmonitor::execute(
+            repository(Mode::Strict)?,
+            command.into_command(),
+            config,
+            std::io::stdout().lock(),
+            &should_interrupt,
+        ),
         #[cfg(feature = "tix")]
         Subcommands::Tix(command) => command.run_as(
             repository(Mode::Lenient)?.into_sync(),
@@ -475,11 +511,29 @@ pub fn run_with_command(args: Args, command: clap::Command) -> Result<()> {
                 core::repository::diff::file(repository(Mode::Lenient)?, out, old_revspec, new_revspec)
             }),
         },
-        Subcommands::Log(crate::plumbing::options::log::Platform { pathspec, max_count }) => {
-            prepare_and_run("log", verbose, None, move |_progress, out, _err| {
-                core::repository::log::log_limited(repository(Mode::Lenient)?, out, pathspec, max_count)
-            })
-        }
+        Subcommands::Log(crate::plumbing::options::log::Platform {
+            max_count,
+            sort,
+            first_parent,
+            revisions,
+            pathspecs,
+        }) => prepare_and_run("log", verbose, None, move |_progress, out, _err| {
+            core::repository::log::log(
+                repository(Mode::Lenient)?,
+                out,
+                pathspecs,
+                core::repository::log::Options {
+                    revisions,
+                    sorting: sort.into(),
+                    parents: if first_parent {
+                        gix::traverse::commit::Parents::First
+                    } else {
+                        gix::traverse::commit::Parents::All
+                    },
+                    max_count,
+                },
+            )
+        }),
         Subcommands::Worktree(worktree::Platform { cmd }) => match cmd {
             worktree::SubCommands::List => {
                 prepare_and_run("worktree-list", verbose, None, move |_progress, out, _err| {
@@ -558,6 +612,7 @@ pub fn run_with_command(args: Args, command: clap::Command) -> Result<()> {
         Subcommands::Status(crate::plumbing::options::status::Platform {
             ignored,
             untracked,
+            ahead_behind,
             format: status_format,
             statistics,
             submodules,
@@ -602,7 +657,8 @@ pub fn run_with_command(args: Args, command: clap::Command) -> Result<()> {
                     }),
                     output_format: format,
                     statistics,
-                    thread_limit: thread_limit.or(cfg!(target_os = "macos").then_some(3)), // TODO: make this a configurable when in `gix`, this seems to be optimal on MacOS, linux scales though! MacOS also scales if reading a lot of files for refresh index
+                    ahead_behind,
+                    thread_limit,
                     allow_write: refresh_guard.is_some(),
                     index_worktree_renames: index_worktree_renames.map(|percentage| percentage.unwrap_or(0.5)),
                     submodules: submodules.map(|submodules| match submodules {
@@ -1004,6 +1060,7 @@ pub fn run_with_command(args: Args, command: clap::Command) -> Result<()> {
                         let output_statistics = if statistics { Some(format) } else { None };
                         core::commitgraph::verify(
                             path,
+                            object_hash,
                             core::commitgraph::verify::Context {
                                 err,
                                 out,
@@ -1734,7 +1791,122 @@ pub(super) fn anyhow_to_gix(error: anyhow::Error) -> gix::error::Error {
 
 #[cfg(test)]
 mod tests {
+    #[test]
+    fn notification_and_monitor_arguments_are_available() -> gix::error::TestResult {
+        use clap::Parser;
+
+        for arguments in [
+            vec!["gix", "notify"],
+            vec![
+                "gix",
+                "notify",
+                "directory",
+                "another",
+                "--non-recursive",
+                "--max-events",
+                "1",
+                "--batch-events",
+                "1",
+                "--root-check-ms",
+                "0",
+            ],
+            vec![
+                "gix",
+                "-r",
+                "repository",
+                "watch",
+                "--worktree-coverage",
+                "all",
+                "--poll-ms",
+                "10",
+            ],
+            vec!["gix", "fsmonitor", "start", "--idle-timeout", "3"],
+            vec!["gix", "fsmonitor", "hook", "2", "token", "--idle-timeout", "3"],
+            vec!["gix", "fsmonitor", "query", "-opaque-token"],
+        ] {
+            Args::try_parse_from(arguments)?;
+        }
+        for arguments in [
+            vec!["gix", "notify", "--max-events", "0"],
+            vec!["gix", "notify", "--max-bytes", "0"],
+            vec!["gix", "notify", "--batch-events", "0"],
+            vec!["gix", "notify", "--batch-bytes", "0"],
+            vec!["gix", "watch", "--all-worktrees", "--no-metadata"],
+            vec!["gix", "watch", "--retry-ms", "0"],
+            vec!["gix", "watch", "--poll-ms", "0"],
+            vec!["gix", "fsmonitor", "hook", "1", "token"],
+            vec!["gix", "fsmonitor", "status", "--idle-timeout", "3"],
+        ] {
+            assert!(
+                Args::try_parse_from(&arguments).is_err(),
+                "invalid coverage, scheduling, or protocol arguments are rejected: {arguments:?}"
+            );
+        }
+        Ok(())
+    }
     use super::*;
+
+    #[test]
+    fn watch_arguments_configure_application_paths_and_worktree_selection() -> gix::error::TestResult {
+        use clap::Parser;
+        use gix::notify::{Changes, Scope};
+
+        let args = Args::try_parse_from([
+            "gix",
+            "watch",
+            "--all-worktrees",
+            "--worktree-filter",
+            "repo/.git/worktrees/one",
+            "--worktree-filter",
+            "repo/.git/worktrees/two",
+            "--additional-path",
+            "application/state",
+            "--additional-path",
+            "application/events",
+        ])?;
+        let Subcommands::Watch(platform) = args.cmd else {
+            panic!("watch arguments select the repository monitor")
+        };
+        let (options, _) = platform.into_options()?;
+        assert_eq!(
+            options.worktree_filter,
+            Some(vec!["repo/.git/worktrees/one".into(), "repo/.git/worktrees/two".into()]),
+            "private Git directories filter native coverage"
+        );
+        assert_eq!(
+            options
+                .additional_paths
+                .iter()
+                .map(|path| path.path.as_path())
+                .collect::<Vec<_>>(),
+            [
+                std::path::Path::new("application/state"),
+                std::path::Path::new("application/events")
+            ],
+            "every application path reaches the monitor"
+        );
+        for path in options.additional_paths {
+            assert_eq!(
+                path.changes,
+                Changes {
+                    references: true,
+                    index: true,
+                    configuration: true,
+                    ignores: true,
+                    attributes: true,
+                    operations: true,
+                    layout: true,
+                    worktree: Some(Scope::All)
+                },
+                "application changes conservatively invalidate every cache"
+            );
+        }
+        assert!(
+            Args::try_parse_from(["gix", "watch", "--worktree-filter", "repo/.git/worktrees/one"]).is_err(),
+            "worktree filtering requires linked-worktree coverage"
+        );
+        Ok(())
+    }
 
     #[test]
     fn amend_message_options() {

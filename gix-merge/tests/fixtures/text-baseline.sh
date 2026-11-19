@@ -4,6 +4,12 @@ set -eu -o pipefail
 git init
 rm -Rf .git/hooks
 
+# merge-file ignores diff.algorithm; explicit selection requires Git 2.44 or newer.
+supports_histogram=false
+if git merge-file --diff-algorithm=histogram --stdout /dev/null /dev/null /dev/null >/dev/null 2>&1; then
+  supports_histogram=true
+fi
+
 function baseline() {
   local ours=$DIR/${1:?1: our file}.blob;
   local base=$DIR/${2:?2: base file}.blob;
@@ -12,11 +18,17 @@ function baseline() {
 
   shift 4
   # Exit codes 1..127 count conflicts; fatal errors must not become empty baselines.
-  git merge-file --stdout "$@" "$ours" "$base" "$theirs" > "$output" || test "$?" -le 127
+  local status=0
+  git merge-file --stdout "$@" "$ours" "$base" "$theirs" > "$output" || status=$?
+  test "$status" -le 127
+  echo "$status" >"$output.status"
   echo "$ours" "$base" "$theirs" "$output" "$@" >> baseline.cases
 
   local output="${output}-reversed"
-  git merge-file --stdout "$@" "$theirs" "$base" "$ours" > "${output}" || test "$?" -le 127
+  status=0
+  git merge-file --stdout "$@" "$theirs" "$base" "$ours" > "${output}" || status=$?
+  test "$status" -le 127
+  echo "$status" >"$output.status"
   echo "$theirs" "$base" "$ours" "${output}" "$@" >> baseline-reversed.cases
 }
 
@@ -652,8 +664,47 @@ mkdir line-ending-change
   echo -e "a\n" > theirs.blob
 )
 
+# Both sides append at EOF. Indentation-based hunk placement can move ours before
+# the last unchanged `b`, hiding the overlap and incorrectly avoiding a conflict.
+mkdir eof-append-conflict
+(cd eof-append-conflict
+  printf 'a\n\n\nb\n' > base.blob
+  printf 'a\n\n\nb\n\nb\n' > ours.blob
+  printf 'a\n\n\nb\nc\n' > theirs.blob
+)
 
-for dir in  simple-conflict-3 \
+
+# Conflict refinement rejoins gaps of at most three lines. A longer gap stays
+# inside one conflict only when it contains no ASCII letters or digits.
+for gap in short long punctuation; do
+  dir="refinement-$gap-gap"
+  mkdir "$dir"
+  for side in base ours theirs; do
+    {
+      echo "first-$side"
+      if test "$gap" = punctuation; then
+        printf '%s\n' '{' '}' '' ';'
+      else
+        printf '%s\n' one two three
+        if test "$gap" = long; then echo four; fi
+      fi
+      echo "last-$side"
+    } >"$dir/$side.blob"
+  done
+done
+
+# Literal marker text remains ordinary content in a clean merge. Conflict status
+# must come from Git's exit code, rather than searching the resulting bytes.
+mkdir literal-marker-content
+printf '%s\n' first '<<<<<<< literal text' last >literal-marker-content/base.blob
+printf '%s\n' 'changed first' '<<<<<<< literal text' last >literal-marker-content/ours.blob
+printf '%s\n' first '<<<<<<< literal text' 'changed last' >literal-marker-content/theirs.blob
+
+for dir in  literal-marker-content \
+            refinement-short-gap \
+            refinement-long-gap \
+            refinement-punctuation-gap \
+            simple-conflict-3 \
             simple-conflict-2 \
             simple-conflict \
             simple \
@@ -670,6 +721,7 @@ for dir in  simple-conflict-3 \
             no-change-add \
             no-change-remove \
             line-ending-change \
+            eof-append-conflict \
             complex/no-change \
             complex/no-conflict \
             complex/no-conflict-too \
@@ -692,9 +744,46 @@ for dir in  simple-conflict-3 \
   baseline ours base theirs merge-ours --ours
   baseline ours base theirs merge-theirs --theirs
   baseline ours base theirs merge-union --union
-  (
-    export GIT_CONFIG_COUNT=1 GIT_CONFIG_KEY_0=diff.algorithm GIT_CONFIG_VALUE_0=histogram
-    baseline ours base theirs diff3-histogram --diff3
-    baseline ours base theirs zdiff3-histogram --zdiff3
-  )
+  if $supports_histogram; then
+    baseline ours base theirs diff3-histogram --diff3 --diff-algorithm=histogram
+    baseline ours base theirs zdiff3-histogram --zdiff3 --diff-algorithm=histogram
+  fi
 done
+
+# Minimized cases from https://github.com/GitoxideLabs/gitoxide/issues/3076.
+# Repeated lines make Myers alignments ambiguous; preserve each missing final LF.
+# Compare default merge behavior in both directions using the baseline helper.
+DIR=equal-lines-1
+mkdir "$DIR"
+printf '%b' 'a\na\na\na\nb\nd\nd\nb\nb\nd\nb\nb\n' > "$DIR/base.blob"
+printf '%b' 'a\na\na\na\nd\nb\nd\nd\nb\nb' > "$DIR/ours.blob"
+printf '%b' 'b\na\na\nb\nd\nd\nb\nb\nd\na\nb\nb' > "$DIR/theirs.blob"
+baseline ours base theirs merge
+
+DIR=equal-lines-2
+mkdir "$DIR"
+printf '%b' 'a\na\na\na\nd\na\na\na\na\na\nd\na\na\na\na\nb' > "$DIR/base.blob"
+printf '%b' 'a\na\na\na\nd\na\na\na\na\na\nd\na\na\na\na\nb\n' > "$DIR/ours.blob"
+printf '%b' 'a\na\na\na\nd\na\na\nb\na\na\na\na\na\na\na\na\nb\n' > "$DIR/theirs.blob"
+baseline ours base theirs merge
+
+DIR=equal-lines-3
+mkdir "$DIR"
+printf '%b' 'c\na\na\na\na\na\na\na\na\na\nc\nb\na\na\nb\n' > "$DIR/base.blob"
+printf '%b' 'c\na\na\na\na\na\na\na\na\na\nc\nb\na\na\nb' > "$DIR/ours.blob"
+printf '%b' 'c\na\na\na\na\na\na\na\na\na\na\nb' > "$DIR/theirs.blob"
+baseline ours base theirs merge
+
+DIR=equal-lines-4
+mkdir "$DIR"
+printf '%b' 'a\na\na\na\na\na\na\na\na\na\na\na\nd\nb\nb\nb' > "$DIR/base.blob"
+printf '%b' 'a\na\na\na\na\na\na\na\na\nb\nd\nc\nb\nd\nb\nb\nb\n' > "$DIR/ours.blob"
+printf '%b' 'a\na\na\na\na\na\na\na\na\na\na\na\nd\nc\nb\nb' > "$DIR/theirs.blob"
+baseline ours base theirs merge
+
+DIR=equal-lines-5
+mkdir "$DIR"
+printf '%b' 'a\na\na\na\na\na\na\nc\na\na\nb\nb\nb\nc\nc\na\na\na\nc\na\na\nb\nb\na' > "$DIR/base.blob"
+printf '%b' 'a\na\na\na\na\na\na\nc\na\na\nc\nb\nb\nc\nc\na\nc\na\na\na\nc\na\na\na' > "$DIR/ours.blob"
+printf '%b' 'a\na\na\na\na\na\na\nc\na\na\nb\nb\nc\nc\na\na\na\nc\na\na\nb\nb\na' > "$DIR/theirs.blob"
+baseline ours base theirs merge

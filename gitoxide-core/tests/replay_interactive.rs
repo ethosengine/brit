@@ -646,7 +646,7 @@ fn reduced_trust_refuses_editor_resolution_before_invocation() -> Result<()> {
     let output = root.join(".git/editor-buffer");
     fs::write(&output, b"seed\n")?;
     let _editor = gix_testtools::Env::new().set("GIT_EDITOR", "touch UNTRUSTED_EXECUTED");
-    let repo = gix::open_opts(root, gix::open::Options::default().with(gix::sec::Trust::Reduced))?;
+    let repo = gix::open_opts(root, gix::open::Options::default().with_trust(gix::sec::Trust::Reduced))?;
     assert!(editors::resolve(&repo, Kind::Message, &output).is_err());
     assert!(!root.join("UNTRUSTED_EXECUTED").exists());
     Ok(())

@@ -2,14 +2,14 @@ lints.workspace = true
 
 [package]
 name = "gix-revision"
-version = "0.51.2"
+version = "0.52.0"
 repository = "https://github.com/GitoxideLabs/gitoxide"
 license = "MIT OR Apache-2.0"
 description = "A crate of the gitoxide project dealing with finding names for revisions and parsing specifications"
 authors = ["Sebastian Thiel <sebastian.thiel@icloud.com>"]
 edition = "2024"
 include = ["/src/**/*", "/LICENSE-*", "/README.md"]
-rust-version = "1.88"
+rust-version = "1.95"
 
 [lib]
 doctest = false
@@ -24,7 +24,7 @@ sha256 = ["gix-hash/sha256"]
 ## `git describe` functionality
 describe = ["dep:gix-trace", "dep:gix-hashtable"]
 
-## `git merge-base` functionality
+## `git merge-base` functionality and ahead/behind commit counts
 merge_base = ["dep:gix-trace", "dep:bitflags"]
 
 ## Data structures implement `serde::Serialize` and `serde::Deserialize`.
@@ -34,10 +34,10 @@ serde = ["dep:serde", "gix-hash/serde", "gix-object/serde"]
 gix-error = { version = "^0.5.2", path = "../gix-error", registry = "elohim", features = ["bstr"] }
 gix-hash = { version = "^0.28.2", path = "../gix-hash", registry = "elohim" }
 gix-object = { version = "^0.66.2", path = "../gix-object", registry = "elohim" }
-gix-date = { version = "^0.18.1", path = "../gix-date", registry = "elohim" }
+gix-date = { version = "^0.19.0", path = "../gix-date", registry = "elohim" }
 gix-hashtable = { version = "^0.18.2", path = "../gix-hashtable", registry = "elohim", optional = true }
-gix-revwalk = { version = "^0.37.2", path = "../gix-revwalk", registry = "elohim" }
-gix-commitgraph = { version = "^0.41.2", path = "../gix-commitgraph", registry = "elohim" }
+gix-revwalk = { version = "^0.38.0", path = "../gix-revwalk", registry = "elohim" }
+gix-commitgraph = { version = "^0.42.0", path = "../gix-commitgraph", registry = "elohim" }
 gix-trace = { version = "^0.3.1", path = "../gix-trace", registry = "elohim", optional = true }
 
 bstr = { version = "1.12.0", default-features = false, features = ["std"] }
@@ -55,3 +55,19 @@ permutohedron = "0.2.4"
 [package.metadata.docs.rs]
 all-features = true
 features = ["sha1", "document-features"]
+
+[package.metadata.qa]
+checks = [
+    { args = ["--features", "sha1,serde"] },
+    { args = ["--no-default-features", "--features", "sha1,describe"] },
+]
+tests = [
+    { args = ["--features", "sha256"], env = { GIX_TEST_FIXTURE_HASH = "sha1" } },
+    { args = ["--features", "sha256"], env = { GIX_TEST_FIXTURE_HASH = "sha256" } },
+]
+
+[package.metadata.qa.wasm]
+targets = ["wasm32-unknown-unknown", "wasm32-wasip1", "wasm32-wasip2"]
+checks = [
+    { args = ["--features", "sha1"] },
+]

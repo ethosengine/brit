@@ -17,8 +17,10 @@ pub struct Options {
     pub thread_limit: Option<usize>,
     /// The kinds of safety checks to perform.
     pub check: crate::index::traverse::SafetyCheck,
-    /// If `Some`, rejects individual allocations above the given number of bytes while resolving decoded object and
-    /// delta result buffers. `Some(0)` rejects all non-empty allocations.
+    /// Limit decoded-object and delta buffers to this many bytes. Sorted index entries and each delta-tree item buffer
+    /// may use up to 64 times this limit to accommodate many small objects; speculative tree preallocation stays within it.
+    /// This is a defensive per-buffer heuristic, not a total memory budget; callers should tune it for their input.
+    /// `None` disables the limit; `Some(0)` rejects all non-empty allocations covered by it.
     pub alloc_limit_bytes: Option<usize>,
     /// Optional scratch for decoded object buffers exceeding the configured allocation policy.
     pub decode_budget: Option<std::sync::Arc<gix_utils::stream::Budget>>,
@@ -109,7 +111,8 @@ where
                         "collecting sorted index".into(),
                         ProgressId::CollectSortedIndexEntries.into(),
                     ),
-                ); /* Pack Traverse Collect sorted Entries */
+                    alloc_limit_bytes,
+                )?; /* Pack Traverse Collect sorted Entries */
                 let tree = crate::cache::delta::Tree::from_offsets_in_pack(
                     pack.path(),
                     sorted_entries.into_iter().map(Entry::from),
@@ -118,6 +121,7 @@ where
                     &mut progress.add_child_with_id("indexing".into(), ProgressId::TreeFromOffsetsObjects.into()),
                     should_interrupt,
                     self.object_hash,
+                    alloc_limit_bytes,
                 )?;
                 let mut outcome = digest_statistics(tree.traverse(
                     |slice, pack| pack.entry_slice(slice),

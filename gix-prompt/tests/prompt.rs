@@ -2,6 +2,7 @@ mod options;
 
 #[cfg(any(target_os = "linux", target_os = "freebsd", target_os = "macos"))]
 mod ask {
+    use expectrl::Expect;
     use gix_testtools::bstr::ByteSlice;
 
     #[test]
@@ -28,6 +29,7 @@ mod ask {
     /// configuration options can change its location (e.g. CARGO_TARGET_DIR).
     fn evaluate_target_dir() -> String {
         let mut manifest_proc = std::process::Command::new(env!("CARGO"))
+            .current_dir(env!("CARGO_MANIFEST_DIR"))
             .args(["metadata", "--format-version", "1"])
             .stdout(std::process::Stdio::piped())
             .spawn()
@@ -58,7 +60,9 @@ mod ask {
             .to_owned()
     }
 
-    fn spawn_example(name: &str) -> gix_testtools::Result<(gix_testtools::tempfile::TempDir, expectrl::Session)> {
+    fn spawn_example(
+        name: &str,
+    ) -> gix_testtools::Result<(gix_testtools::tempfile::TempDir, expectrl::session::OsSession)> {
         let temp = gix_testtools::tempfile::tempdir()?;
         let example = std::path::PathBuf::from(evaluate_target_dir())
             .join("debug/examples")
@@ -73,6 +77,7 @@ mod ask {
     #[test]
     fn askpass_only() -> gix_testtools::TestResult {
         let mut cmd = std::process::Command::new(env!("CARGO"));
+        cmd.current_dir(env!("CARGO_MANIFEST_DIR"));
         cmd.args([
             "build",
             "-p",
@@ -102,6 +107,7 @@ mod ask {
     #[test]
     fn username_password() -> gix_testtools::TestResult {
         let mut cmd = std::process::Command::new(env!("CARGO"));
+        cmd.current_dir(env!("CARGO_MANIFEST_DIR"));
         cmd.args([
             "build",
             "-p",

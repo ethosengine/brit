@@ -16,16 +16,13 @@ pub(super) mod function {
     use gix_error::{ResultExt, bail, message};
     use gix_object::FindExt;
 
-    use crate::{
-        blob::builtin_driver,
-        tree::{TreatAsUnresolved, treat_as_unresolved},
-    };
+    use crate::blob::builtin_driver;
 
     /// Create a single virtual merge-base by merging `first_commit`, `second_commit` and `others` into one.
     /// Note that `first_commit` and `second_commit` are expected to have been popped off `others`, so `first_commit`
     /// was the last provided merge-base of function that provides multiple merge-bases for a pair of commits.
     ///
-    /// The parameters `graph`, `diff_resource_cache`, `blob_merge`, `objects`, `abbreviate_hash` and `options` are passed
+    /// The parameters `graph`, `diff_resource_cache`, `blob_merge`, `objects`, `abbreviate_hash`, `context` and `options` are passed
     /// directly to [`tree()`](crate::tree()) for merging the trees of two merge-bases at a time.
     /// Note that most of `options` are overwritten to match the requirements of a merge-base merge.
     #[expect(clippy::too_many_arguments)]
@@ -38,6 +35,7 @@ pub(super) mod function {
         blob_merge: &mut crate::blob::Platform,
         objects: &'objects (impl gix_object::FindObjectOrHeader + gix_object::Write),
         abbreviate_hash: &mut dyn FnMut(&gix_hash::oid) -> String,
+        context: crate::tree::Context<'_>,
         options: crate::tree::Options,
     ) -> Result<super::Outcome> {
         virtual_merge_base_with_storage(
@@ -49,6 +47,7 @@ pub(super) mod function {
             blob_merge,
             objects,
             abbreviate_hash,
+            context,
             options,
             &crate::storage::Buffered,
         )
@@ -68,6 +67,7 @@ pub(super) mod function {
         blob_merge: &mut crate::blob::Platform,
         objects: &'objects (impl gix_object::FindObjectOrHeader + gix_object::Write + gix_object::FindStream),
         abbreviate_hash: &mut dyn FnMut(&gix_hash::oid) -> String,
+        context: crate::tree::Context<'_>,
         options: crate::tree::Options,
         storage: &crate::Bounded<'_>,
     ) -> Result<super::Outcome> {
@@ -80,6 +80,7 @@ pub(super) mod function {
             blob_merge,
             objects,
             abbreviate_hash,
+            context,
             options,
             storage,
         )
@@ -98,15 +99,25 @@ pub(super) mod function {
         blob_merge: &mut crate::blob::Platform,
         objects: &'objects O,
         abbreviate_hash: &mut dyn FnMut(&gix_hash::oid) -> String,
+        mut context: crate::tree::Context<'_>,
         mut options: crate::tree::Options,
         storage: &impl crate::storage::Storage<O>,
     ) -> Result<super::Outcome> {
         let mut merged_commit_id = first_commit;
         others.push(second_commit);
 
+        // Like merge-ort at nonzero call depth, do not infer new path locations in a virtual base.
+        options.directory_renames = crate::tree::DirectoryRenames::Disabled;
         options.tree_conflicts = Some(crate::tree::ResolveWith::Ancestor);
+        options.fail_on_conflict = None;
         options.blob_merge.is_virtual_ancestor = true;
-        options.blob_merge.text.conflict = builtin_driver::text::Conflict::ResolveWithOurs;
+        // Conflict markers carry both histories into the final merge, independently of file favor.
+        if !matches!(
+            options.blob_merge.text.conflict,
+            builtin_driver::text::Conflict::Keep { .. }
+        ) {
+            options.blob_merge.text.conflict = Default::default();
+        }
         let favor_ancestor = Some(builtin_driver::binary::ResolveWith::Ancestor);
         options.blob_merge.resolve_binary_with = favor_ancestor;
         options.symlink_conflicts = favor_ancestor;
@@ -117,9 +128,9 @@ pub(super) mod function {
         };
         let mut virtual_merge_bases = Vec::new();
         let mut tree_id = None;
+        options.marker_size_multiplier += 1;
         while let Some(next_commit_id) = others.pop() {
             storage.check()?;
-            options.marker_size_multiplier += 1;
             let mut out = crate::commit::function::commit_with_storage(
                 merged_commit_id,
                 next_commit_id,
@@ -129,6 +140,7 @@ pub(super) mod function {
                 blob_merge,
                 objects,
                 abbreviate_hash,
+                context.reborrow(),
                 crate::commit::Options {
                     allow_missing_merge_base: false,
                     tree_merge: options.clone(),
@@ -136,11 +148,13 @@ pub(super) mod function {
                 },
                 storage,
             )?;
-            // This shouldn't happen, but if for some buggy reason it does, we rather bail.
-            if out.tree_merge.has_unresolved_conflicts(TreatAsUnresolved {
-                content_merge: treat_as_unresolved::ContentMerge::Markers,
-                tree_merge: treat_as_unresolved::TreeMerge::Undecidable,
-            }) {
+            // Tree conflicts must be resolved, but text conflict markers belong in the virtual base.
+            if out
+                .tree_merge
+                .conflicts
+                .iter()
+                .any(|conflict| conflict.resolution.is_err())
+            {
                 bail!(
                     "Conflicts occurred when trying to resolve multiple merge-bases by merging them. This is most certainly a bug.",
                 );

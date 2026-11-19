@@ -29,6 +29,7 @@ pub(crate) mod function {
 
     pub fn verify<W1, W2>(
         path: impl AsRef<Path>,
+        object_hash: gix::hash::Kind,
         super::Context {
             err: _err,
             mut out,
@@ -40,7 +41,7 @@ pub(crate) mod function {
         W2: io::Write,
     {
         gix::utils::stream::check(&gix::interrupt::IS_INTERRUPTED).or_error()?;
-        let g = Graph::at(path.as_ref())?;
+        let g = Graph::at(path.as_ref(), object_hash, None)?;
         let stats = g.verify_integrity(|_| gix::utils::stream::check(&gix::interrupt::IS_INTERRUPTED))?;
 
         #[cfg_attr(not(feature = "serde"), allow(clippy::single_match))]

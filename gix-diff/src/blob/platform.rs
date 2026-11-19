@@ -10,13 +10,21 @@ use crate::blob::{Pipeline, Platform, ResourceKind, pipeline};
 /// A key to uniquely identify either a location in the worktree, or in the object database.
 #[derive(Clone)]
 pub(crate) struct CacheKey {
-    id: gix_hash::ObjectId,
+    id: Option<gix_hash::ObjectId>,
     location: BString,
-    /// If `true`, this is an `id` based key, otherwise it's location based.
-    use_id: bool,
-    /// Only relevant when `id` is not null, to further differentiate content and allow us to
-    /// keep track of both links and blobs with the same content (rare, but possible).
-    is_link: bool,
+    kind: CacheKeyKind,
+    /// Retained per resource even when its converted content is shared.
+    mode: gix_object::tree::EntryKind,
+}
+
+/// Distinguish locations without an identity from object IDs without enlarging each cache key.
+#[derive(Clone, Copy, PartialEq, Eq, Hash)]
+#[repr(u8)]
+enum CacheKeyKind {
+    Object,
+    Missing,
+    OldWorktree,
+    NewWorktree,
 }
 
 /// A stored value representing a diffable resource.
@@ -24,8 +32,6 @@ pub(crate) struct CacheKey {
 pub(crate) struct CacheValue {
     /// The outcome of converting a resource into a diffable format using [Pipeline::convert_to_diffable()].
     conversion: pipeline::Outcome,
-    /// The kind of the resource we are looking at. Only possible values are `Blob`, `BlobExecutable` and `Link`.
-    mode: gix_object::tree::EntryKind,
     /// A possibly empty buffer, depending on `conversion.data` which may indicate the data is considered binary.
     buffer: Content,
 }
@@ -68,9 +74,10 @@ struct Stream<'a> {
 
 impl std::hash::Hash for CacheKey {
     fn hash<H: std::hash::Hasher>(&self, state: &mut H) {
-        if self.use_id {
+        self.kind.hash(state);
+        if self.kind == CacheKeyKind::Object {
             self.id.hash(state);
-            self.is_link.hash(state);
+            (self.mode == gix_object::tree::EntryKind::Link).hash(state);
         } else {
             self.location.hash(state);
         }
@@ -79,11 +86,14 @@ impl std::hash::Hash for CacheKey {
 
 impl PartialEq for CacheKey {
     fn eq(&self, other: &Self) -> bool {
-        match (self.use_id, other.use_id) {
-            (false, false) => self.location.eq(&other.location),
-            (true, true) => self.id.eq(&other.id) && self.is_link.eq(&other.is_link),
-            _ => false,
-        }
+        self.kind == other.kind
+            && if self.kind == CacheKeyKind::Object {
+                self.id == other.id
+                    && (self.mode == gix_object::tree::EntryKind::Link)
+                        == (other.mode == gix_object::tree::EntryKind::Link)
+            } else {
+                self.location == other.location
+            }
     }
 }
 
@@ -92,9 +102,9 @@ impl Eq for CacheKey {}
 impl Default for CacheKey {
     fn default() -> Self {
         CacheKey {
-            id: gix_hash::Kind::shortest().null(),
-            use_id: false,
-            is_link: false,
+            id: None,
+            kind: CacheKeyKind::Missing,
+            mode: gix_object::tree::EntryKind::Blob,
             location: BString::default(),
         }
     }
@@ -121,10 +131,11 @@ pub struct Resource<'a> {
     pub mode: gix_object::tree::EntryKind,
     /// The location of the resource, relative to the working tree.
     pub rela_path: &'a BStr,
-    /// The id of the content as it would be stored in `git`, or `null` if the content doesn't exist anymore at
-    /// `rela_path` or if it was never computed. This can happen with content read from the worktree, which has to
-    /// go through a filter to be converted back to what `git` would store.
-    pub id: &'a gix_hash::oid,
+    /// The supplied Git object ID, or `None` if unavailable. Two unavailable IDs do not establish identity.
+    /// Use [`data`](Self::data) to distinguish missing content from existing content without a hash.
+    /// A supplied ID does not guarantee that the worktree resource still exists.
+    /// Converted diff data can differ from the identified Git object.
+    pub id: Option<&'a gix_hash::oid>,
 }
 
 ///
@@ -151,6 +162,7 @@ pub mod resource {
     impl<'a> Iterator for ByteLinesWithoutTerminator<'a> {
         type Item = &'a [u8];
 
+        #[inline(always)]
         fn next(&mut self) -> Option<Self::Item> {
             let mut l = match self.0.find_byte(b'\n') {
                 None if self.0.is_empty() => None,
@@ -219,37 +231,17 @@ pub mod resource {
                     },
                     pipeline::Data::Binary { size } => Data::Binary { size },
                 }),
-                mode: value.mode,
+                mode: key.mode,
                 rela_path: key.location.as_ref(),
-                id: &key.id,
+                id: key.id.as_deref(),
             }
-        }
-
-        /// Produce an iterator over lines, separated by LF or CRLF and thus keeping newlines.
-        ///
-        /// Note that this will cause unusual diffs if a file didn't end in newline but lines were added
-        /// on the other side.
-        ///
-        /// Suitable to create tokens using [`crate::blob::InternedInput`].
-        pub fn intern_source(&self) -> imara_diff::sources::ByteLines<'a> {
-            crate::blob::sources::byte_lines(self.data.as_slice().unwrap_or_default())
-        }
-
-        /// Produce an iterator over lines, but remove LF or CRLF.
-        ///
-        /// This produces the expected diffs when lines were added at the end of a file that didn't end
-        /// with a newline before the change.
-        ///
-        /// Suitable to create tokens using [`crate::blob::InternedInput`].
-        pub fn intern_source_strip_newline_separators(&self) -> ByteLinesWithoutTerminator<'a> {
-            ByteLinesWithoutTerminator::new(self.data.as_slice().unwrap_or_default())
         }
     }
 
     /// The data of a diffable resource, as it could be determined and computed previously.
     #[derive(Debug, Copy, Clone, Ord, PartialOrd, Eq, PartialEq, Hash)]
     pub enum Data<'a> {
-        /// The object is missing, either because it didn't exist in the working tree or because its `id` was null.
+        /// The object is missing, either because it didn't exist in the working tree or because its `id` was `None` and no worktree root was configured.
         Missing,
         /// The textual data as processed to be in a diffable state.
         Buffer {
@@ -353,7 +345,93 @@ pub mod set_resource {
 pub mod prepare_diff {
     use bstr::BStr;
 
-    use crate::blob::platform::Resource;
+    use crate::blob::platform::{Resource, resource::ByteLinesWithoutTerminator};
+
+    /// A present resource with available diffable text, which may be empty or derived by a text conversion.
+    /// Obtain this from [`TextChange`]; missing and binary resources cannot be represented by this type.
+    #[derive(Debug, Copy, Clone, Eq, PartialEq)]
+    pub struct TextResource<'a> {
+        buf: &'a [u8],
+        is_derived: bool,
+    }
+
+    impl<'a> TextResource<'a> {
+        pub(super) fn new(buf: &'a [u8], is_derived: bool) -> Self {
+            Self { buf, is_derived }
+        }
+
+        /// Return the available text bytes. An empty slice still represents a present resource.
+        pub fn as_slice(&self) -> &'a [u8] {
+            self.buf
+        }
+
+        /// Return whether these bytes were produced by a binary-to-text conversion.
+        pub fn is_derived(&self) -> bool {
+            self.is_derived
+        }
+    }
+
+    /// Two present resources with available text.
+    /// Obtain this from [`TextChange::Modification`]; absent or binary sides cannot form a pair.
+    #[derive(Debug, Copy, Clone, Eq, PartialEq)]
+    pub struct TextPair<'a> {
+        old: TextResource<'a>,
+        new: TextResource<'a>,
+    }
+
+    impl<'a> TextPair<'a> {
+        pub(super) fn from_text(old: TextResource<'a>, new: TextResource<'a>) -> Self {
+            Self { old, new }
+        }
+
+        /// Return the present source text.
+        pub fn before(&self) -> TextResource<'a> {
+            self.old
+        }
+
+        /// Return the present destination text.
+        pub fn after(&self) -> TextResource<'a> {
+            self.new
+        }
+    }
+
+    /// A text change retaining the distinction between absent and present, possibly empty, resources.
+    #[derive(Debug, Copy, Clone, Eq, PartialEq)]
+    pub enum TextChange<'a> {
+        /// Only the destination exists.
+        Addition {
+            /// The present destination text.
+            new: TextResource<'a>,
+        },
+        /// Only the source exists.
+        Deletion {
+            /// The present source text.
+            old: TextResource<'a>,
+        },
+        /// Both resources exist, even when one or both have empty content.
+        Modification(TextPair<'a>),
+    }
+
+    impl<'a> TextChange<'a> {
+        /// Return source and destination bytes for patch generation, explicitly representing an absent side as empty.
+        pub fn patch_data(&self) -> (&'a [u8], &'a [u8]) {
+            match self {
+                Self::Addition { new } => (&[], new.buf),
+                Self::Deletion { old } => (old.buf, &[]),
+                Self::Modification(pair) => (pair.old.buf, pair.new.buf),
+            }
+        }
+
+        /// Tokenize validated text for patch generation, interpreting an absent side as empty.
+        /// _Line terminators are removed_ to improve diffs when lines follow a previously unterminated final line.
+        pub fn patch_input(&self) -> crate::blob::InternedInput<&'a [u8]> {
+            let (old, new) = self.patch_data();
+            crate::blob::InternedInput::new(
+                ByteLinesWithoutTerminator::new(old),
+                ByteLinesWithoutTerminator::new(new),
+            )
+        }
+    }
 
     /// A failure to prepare a diff from the configured resources.
     #[derive(Debug)]
@@ -361,8 +439,6 @@ pub mod prepare_diff {
     pub enum Error {
         /// At least one side has not been set successfully.
         SourceOrDestinationUnset,
-        /// Both sides were set, but neither resource exists.
-        SourceAndDestinationRemoved,
     }
 
     impl std::fmt::Display for Error {
@@ -371,7 +447,6 @@ pub mod prepare_diff {
                 Self::SourceOrDestinationUnset => {
                     "Either the source or the destination of the diff operation were not set"
                 }
-                Self::SourceAndDestinationRemoved => "Tried to diff resources that are both considered removed",
             })
         }
     }
@@ -390,8 +465,8 @@ pub mod prepare_diff {
         /// *or* [Options::skip_internal_diff_if_external_is_configured](super::Options::skip_internal_diff_if_external_is_configured)
         /// is `false`.
         ///
-        /// Use [`Outcome::interned_input()`] to easily obtain an interner for use with [`crate::blob::Diff::compute()`], or maintain one yourself
-        /// for greater reuse.
+        /// Use [`TextChange::patch_input()`] for patch generation, or match [`TextChange::Modification`]
+        /// to obtain a pair suitable for similarity checking.
         InternalDiff {
             /// The algorithm we determined should be used, which is one of (in order, first set one wins):
             ///
@@ -399,6 +474,8 @@ pub mod prepare_diff {
             /// * the platforms own configuration (typically from git-config)
             /// * the default algorithm
             algorithm: imara_diff::Algorithm,
+            /// The validated text and its presence on each side.
+            change: TextChange<'a>,
         },
         /// Run the external diff program according as configured in the `source`-resources driver.
         /// This only happens if [Options::skip_internal_diff_if_external_is_configured](super::Options::skip_internal_diff_if_external_is_configured)
@@ -407,7 +484,11 @@ pub mod prepare_diff {
             /// The command as extracted from [Driver::command](super::super::Driver::command).
             /// Use it in [`Platform::prepare_diff_command`](super::Platform::prepare_diff_command()) to easily prepare a compatible invocation.
             command: &'a BStr,
+            /// Validated text available for optional internal patch statistics.
+            change: TextChange<'a>,
         },
+        /// Both resources were set successfully, but neither exists. No comparison can be performed.
+        NeitherExists,
         /// One of the involved resources, [`old`](Outcome::old) or [`new`](Outcome::new), was binary and thus no diff
         /// can be performed.
         SourceOrDestinationIsBinary,
@@ -427,20 +508,6 @@ pub mod prepare_diff {
         pub old: Resource<'a>,
         /// The new or destination of the diff operation.
         pub new: Resource<'a>,
-    }
-
-    impl<'a> Outcome<'a> {
-        /// Produce an instance of an interner which `git` would use to perform diffs.
-        ///
-        /// Note that newline separators will be removed to improve diff quality
-        /// at the end of files that didn't have a newline, but had lines added
-        /// past the end.
-        pub fn interned_input(&self) -> crate::blob::InternedInput<&'a [u8]> {
-            crate::blob::InternedInput::new(
-                self.old.intern_source_strip_newline_separators(),
-                self.new.intern_source_strip_newline_separators(),
-            )
-        }
     }
 }
 
@@ -502,6 +569,7 @@ impl Platform {
         Platform {
             old: None,
             new: None,
+            missing_driver_index: [None; 2],
             diff_cache: Default::default(),
             free_list: Vec::with_capacity(2),
             options,
@@ -516,19 +584,23 @@ impl Platform {
 impl Platform {
     /// Store enough information about a resource to eventually diff it, where…
     ///
-    /// * `id` is the hash of the resource. If it [is null](gix_hash::ObjectId::is_null()), it should either
+    /// * `id` is the hash of the resource. If it is `None`, it should either
     ///   be a resource in the worktree, or it's considered a non-existing, deleted object.
     ///   If an `id` is known, as the hash of the object as (would) be stored in `git`, then it should be provided
     ///   for completeness.
+    ///   Null IDs in `Some` are treated as `None`.
     /// * `mode` is the kind of object (only blobs and links are allowed)
     /// * `rela_path` is the relative path as seen from the (work)tree root.
     /// * `kind` identifies the side of the diff this resource will be used for.
     ///   A diff needs both `OldOrSource` *and* `NewOrDestination`.
     /// * `objects` provides access to the object database in case the resource can't be read from a worktree.
     ///
-    /// Note that it's assumed that either `id + mode (` or `rela_path` can serve as unique identifier for the resource,
-    /// depending on whether or not a [worktree root](pipeline::WorktreeRoots) is set for the resource of `kind`,
-    /// with resources with worktree roots using the `rela_path` as unique identifier.
+    /// Object-backed resources are cached by non-null ID and whether they are links. Worktree resources
+    /// are cached by root and relative path. Missing object-backed resources get their own attribute lookup
+    /// but are not cached, keeping memory bounded when many paths are absent.
+    /// Null IDs never identify shared content. Clear the cache when changing roots, filters, or worktree content.
+    /// Reusing an object ID across paths currently assumes equivalent path-dependent conversions and drivers;
+    /// clear the cache between comparisons with different conversion contexts.
     ///
     /// ### Important
     ///
@@ -536,7 +608,7 @@ impl Platform {
     /// unless another attempt succeeds.
     pub fn set_resource(
         &mut self,
-        id: gix_hash::ObjectId,
+        id: Option<gix_hash::ObjectId>,
         mode: gix_object::tree::EntryKind,
         rela_path: &BStr,
         kind: ResourceKind,
@@ -555,6 +627,7 @@ impl Platform {
     /// Prepare a resource through charged spools, buffering up to `buffer_limit` and
     /// mapping larger converted payloads. Driver, algorithm and binary decisions
     /// remain the same as `set_resource`; the limit only selects byte storage.
+    /// As with `set_resource`, a null `id` denotes an unavailable identity.
     #[expect(
         clippy::too_many_arguments,
         reason = "Preserves resource inputs with an explicit shared quota and interrupt flag"
@@ -571,7 +644,7 @@ impl Platform {
         interrupt: &std::sync::atomic::AtomicBool,
     ) -> ExnResult<(), set_resource::Error> {
         let result = self.set_resource_inner(
-            id,
+            Some(id),
             mode,
             rela_path,
             kind,
@@ -616,6 +689,7 @@ impl Platform {
         fn add_resource(
             cmd: &mut std::process::Command,
             res: Resource<'_>,
+            object_hash: gix_hash::Kind,
         ) -> Result<Option<gix_tempfile::Handle<gix_tempfile::handle::Closed>>> {
             let tmpfile = match res.data {
                 resource::Data::Missing => {
@@ -649,7 +723,8 @@ impl Platform {
                             res.rela_path
                         )
                     })?;
-                    cmd.arg(res.id.to_string()).arg(res.mode.as_octal_str().to_string());
+                    cmd.arg(res.id.unwrap_or(object_hash.null_ref()).to_string())
+                        .arg(res.mode.as_octal_str().to_string());
                     let tmp = tmp.close().or_raise(|| {
                         message!(
                             "Could not close tempfile for \"{}\" while preparing external diff command",
@@ -687,8 +762,8 @@ impl Platform {
             new: None,
         };
 
-        out.old = add_resource(&mut out.cmd, old)?;
-        out.new = add_resource(&mut out.cmd, new)?;
+        out.old = add_resource(&mut out.cmd, old, self.filter.worktree_filter.object_hash())?;
+        out.new = add_resource(&mut out.cmd, new, self.filter.worktree_filter.object_hash())?;
 
         if old.rela_path != new.rela_path {
             out.cmd.arg(gix_path::from_bstr(new.rela_path)?.into_owned());
@@ -703,7 +778,17 @@ impl Platform {
             ResourceKind::OldOrSource => self.old.as_ref(),
             ResourceKind::NewOrDestination => self.new.as_ref(),
         }?;
-        Resource::new(key, self.diff_cache.get(key)?).into()
+        Some(if key.kind == CacheKeyKind::Missing {
+            Resource {
+                driver_index: self.missing_driver_index[kind as usize],
+                data: resource::Data::Missing,
+                mode: key.mode,
+                rela_path: key.location.as_ref(),
+                id: key.id.as_deref(),
+            }
+        } else {
+            Resource::new(key, self.diff_cache.get(key)?)
+        })
     }
 
     /// Obtain the two resources that were previously set as `(OldOrSource, NewOrDestination)`, if both are set and available.
@@ -711,70 +796,71 @@ impl Platform {
     /// This is useful if one wishes to manually prepare the diff, maybe for invoking external programs, instead of relying on
     /// [`Self::prepare_diff()`].
     pub fn resources(&self) -> Option<(Resource<'_>, Resource<'_>)> {
-        let key = &self.old.as_ref()?;
-        let value = self.diff_cache.get(key)?;
-        let old = Resource::new(key, value);
-
-        let key = &self.new.as_ref()?;
-        let value = self.diff_cache.get(key)?;
-        let new = Resource::new(key, value);
-        Some((old, new))
+        Some((
+            self.resource(ResourceKind::OldOrSource)?,
+            self.resource(ResourceKind::NewOrDestination)?,
+        ))
     }
 
     /// Prepare a diff operation on the [previously set](Self::set_resource()) [old](ResourceKind::OldOrSource) and
     /// [new](ResourceKind::NewOrDestination) resources.
     ///
-    /// The returned outcome allows to easily perform diff operations, based on the [`prepare_diff::Outcome::operation`] field,
-    /// which hints at what should be done.
+    /// Match [`prepare_diff::Outcome::operation`] to obtain validated text for patch generation or similarity checking.
+    /// Missing sides are represented as additions or deletions, not as empty resources. If both sides are missing,
+    /// [`prepare_diff::Operation::NeitherExists`] is returned. A side that was never set successfully remains an error.
     pub fn prepare_diff(&mut self) -> ExnResult<prepare_diff::Outcome<'_>, prepare_diff::Error> {
-        let old_key = &self.old.as_ref().ok_or(prepare_diff::Error::SourceOrDestinationUnset)?;
-        let old = self
-            .diff_cache
-            .get(old_key)
-            .ok_or(prepare_diff::Error::SourceOrDestinationUnset)?;
-        let new_key = &self.new.as_ref().ok_or(prepare_diff::Error::SourceOrDestinationUnset)?;
-        let new = self
-            .diff_cache
-            .get(new_key)
-            .ok_or(prepare_diff::Error::SourceOrDestinationUnset)?;
-        let mut out = {
-            let old = Resource::new(old_key, old);
-            let new = Resource::new(new_key, new);
-            prepare_diff::Outcome {
-                operation: prepare_diff::Operation::SourceOrDestinationIsBinary,
-                old_or_new_is_derived: old.data.is_derived() || new.data.is_derived(),
-                old,
-                new,
-            }
+        use prepare_diff::{Operation, TextChange, TextPair, TextResource};
+        use resource::Data;
+
+        let (old, new) = self.resources().ok_or(prepare_diff::Error::SourceOrDestinationUnset)?;
+        let mut out = prepare_diff::Outcome {
+            operation: Operation::SourceOrDestinationIsBinary,
+            old_or_new_is_derived: old.data.is_derived() || new.data.is_derived(),
+            old,
+            new,
         };
-
-        match (old.conversion.data, new.conversion.data) {
-            (None, None) => {
-                bail!(prepare_diff::Error::SourceAndDestinationRemoved);
+        let change = match (old.data, new.data) {
+            (Data::Missing, Data::Missing) => {
+                out.operation = Operation::NeitherExists;
+                return Ok(out);
             }
-            (Some(pipeline::Data::Binary { .. }), _) | (_, Some(pipeline::Data::Binary { .. })) => return Ok(out),
-            _either_missing_or_non_binary => {
-                if let Some(command) = old
-                    .conversion
-                    .driver_index
-                    .and_then(|idx| self.filter.drivers[idx].command.as_deref())
-                    .filter(|_| self.options.skip_internal_diff_if_external_is_configured)
-                {
-                    out.operation = prepare_diff::Operation::ExternalCommand {
-                        command: command.as_bstr(),
-                    };
-                    return Ok(out);
-                }
-            }
-        }
-
-        out.operation = prepare_diff::Operation::InternalDiff {
-            algorithm: old
-                .conversion
-                .driver_index
-                .and_then(|idx| self.filter.drivers[idx].algorithm)
-                .or(self.options.algorithm)
-                .unwrap_or_default(),
+            (Data::Binary { .. }, _) | (_, Data::Binary { .. }) => return Ok(out),
+            (Data::Missing, Data::Buffer { buf, is_derived }) => TextChange::Addition {
+                new: TextResource::new(buf, is_derived),
+            },
+            (Data::Buffer { buf, is_derived }, Data::Missing) => TextChange::Deletion {
+                old: TextResource::new(buf, is_derived),
+            },
+            (
+                Data::Buffer {
+                    buf: old,
+                    is_derived: old_is_derived,
+                },
+                Data::Buffer {
+                    buf: new,
+                    is_derived: new_is_derived,
+                },
+            ) => TextChange::Modification(TextPair::from_text(
+                TextResource::new(old, old_is_derived),
+                TextResource::new(new, new_is_derived),
+            )),
+        };
+        let driver = old.driver_index.and_then(|idx| self.filter.drivers.get(idx));
+        out.operation = match driver
+            .and_then(|driver| driver.command.as_deref())
+            .filter(|_| self.options.skip_internal_diff_if_external_is_configured)
+        {
+            Some(command) => Operation::ExternalCommand {
+                command: command.as_bstr(),
+                change,
+            },
+            None => Operation::InternalDiff {
+                algorithm: driver
+                    .and_then(|driver| driver.algorithm)
+                    .or(self.options.algorithm)
+                    .unwrap_or_default(),
+                change,
+            },
         };
         Ok(out)
     }
@@ -832,9 +918,162 @@ impl Platform {
 }
 
 impl Platform {
+    pub(crate) fn similarity_size(
+        &self,
+        id: Option<&gix_hash::oid>,
+        kind: ResourceKind,
+        objects: &impl gix_object::FindObjectOrHeader,
+    ) -> Result<Option<u64>> {
+        if self.filter.roots.by_kind(kind).is_some() {
+            return Ok(None);
+        }
+        let Some(id) = id.filter(|id| !id.is_null()) else {
+            return Ok(None);
+        };
+        let header = objects
+            .try_header(id)
+            .or_raise(|| message!("Failed to read header of {kind} blob {id} for rename scoring"))?
+            .ok_or_else(|| message!("An object with id {id} could not be found").not_found())
+            .or_error()?;
+        Ok(Some(header.size))
+    }
+
+    pub(crate) fn similarity_signature(
+        &mut self,
+        id: Option<&gix_hash::oid>,
+        mode: gix_object::tree::EntryKind,
+        rela_path: &BStr,
+        kind: ResourceKind,
+        objects: &impl gix_object::FindObjectOrHeader,
+    ) -> Result<Option<crate::rewrites::similarity::Signature>> {
+        let mut buf = self.free_list.pop().unwrap_or_default();
+        let outcome = self.rename_resource(id, mode, rela_path, kind, objects, &mut buf)?;
+        let signature = outcome.data.map(|data| {
+            crate::rewrites::similarity::Signature::new(&buf, matches!(data, pipeline::Data::Binary { .. }))
+        });
+        buf.clear();
+        self.free_list.push(buf);
+        Ok(signature)
+    }
+
+    /// Like [`Self::similarity_signature()`], but obtain the bytes through `load_resource` to honor the
+    /// caller's storage policy where that yields the same input.
+    ///
+    /// `load_resource` performs the display conversion of [`Self::set_resource()`], which only equals the
+    /// Git-form bytes used for rename scoring if the platform converts to Git, the resource is present,
+    /// underived text, and no text-conversion driver applies. Binary and large files, text-conversion
+    /// drivers and other conversion modes read through `objects` like [`Self::similarity_signature()`].
+    /// The loaded resource doesn't remain cached, and the resources set for diffing are left as they were.
+    pub(crate) fn similarity_signature_with_loader(
+        &mut self,
+        id: Option<&gix_hash::oid>,
+        mode: gix_object::tree::EntryKind,
+        rela_path: &BStr,
+        kind: ResourceKind,
+        objects: &impl gix_object::FindObjectOrHeader,
+        load_resource: &mut crate::blob::ResourceLoader<'_>,
+    ) -> Result<Option<crate::rewrites::similarity::Signature>> {
+        if self.filter_mode != pipeline::Mode::ToGit {
+            return self.similarity_signature(id, mode, rela_path, kind, objects);
+        }
+        let id_or_null = id.map_or_else(|| self.filter.worktree_filter.object_hash().null(), ToOwned::to_owned);
+        // Scoring must not disturb what the caller has set for diffing.
+        let previous_key = match kind {
+            ResourceKind::OldOrSource => self.old.take(),
+            ResourceKind::NewOrDestination => self.new.take(),
+        };
+        let previous_driver_index = self.missing_driver_index[kind as usize];
+        let loaded = load_resource(self, id_or_null, mode, rela_path, kind);
+        let key = std::mem::replace(
+            match kind {
+                ResourceKind::OldOrSource => &mut self.old,
+                ResourceKind::NewOrDestination => &mut self.new,
+            },
+            previous_key,
+        );
+        self.missing_driver_index[kind as usize] = previous_driver_index;
+        loaded?;
+        let signature = match key {
+            Some(key) if key.kind == CacheKeyKind::Missing => Some(None),
+            Some(key) => {
+                let is_set_for_diffing = [self.old.as_ref(), self.new.as_ref()]
+                    .into_iter()
+                    .flatten()
+                    .any(|set| *set == key);
+                if is_set_for_diffing {
+                    self.diff_cache
+                        .get(&key)
+                        .and_then(|value| self.signature_of_loaded(value))
+                } else if let Some(value) = self.diff_cache.remove(&key) {
+                    let signature = self.signature_of_loaded(&value);
+                    if let Content::Memory(mut buf) = value.buffer
+                        && self.free_list.len() < 2
+                    {
+                        buf.clear();
+                        self.free_list.push(buf);
+                    }
+                    signature
+                } else {
+                    None
+                }
+            }
+            None => None,
+        };
+        match signature {
+            Some(signature) => Ok(signature),
+            None => self.similarity_signature(id, mode, rela_path, kind, objects),
+        }
+    }
+
+    /// Return the signature of a loaded `value` if its display conversion equals the bytes used for rename
+    /// scoring, with the inner `None` for a missing resource. `None` means it has to be read for scoring.
+    fn signature_of_loaded(&self, value: &CacheValue) -> Option<Option<crate::rewrites::similarity::Signature>> {
+        match value.conversion.data {
+            None => Some(None),
+            Some(pipeline::Data::Buffer { is_derived: false })
+                if value
+                    .conversion
+                    .driver_index
+                    .and_then(|idx| self.filter.drivers.get(idx))
+                    .is_none_or(|driver| driver.binary_to_text_command.is_none()) =>
+            {
+                Some(Some(crate::rewrites::similarity::Signature::new(&value.buffer, false)))
+            }
+            Some(pipeline::Data::Buffer { .. } | pipeline::Data::Binary { .. }) => None,
+        }
+    }
+
+    fn rename_resource(
+        &mut self,
+        id: Option<&gix_hash::oid>,
+        mode: gix_object::tree::EntryKind,
+        rela_path: &BStr,
+        kind: ResourceKind,
+        objects: &impl gix_object::FindObjectOrHeader,
+        buf: &mut Vec<u8>,
+    ) -> Result<pipeline::Outcome> {
+        let entry = self
+            .attr_stack
+            .at_entry(rela_path, None, objects)
+            .or_raise(|| message!("Failed to obtain attributes for {kind} resource at {rela_path:?}"))?;
+        self.filter
+            .convert_for_renames(
+                id,
+                mode,
+                rela_path,
+                kind,
+                &mut |_, out| {
+                    let _ = entry.matching_attributes(out);
+                },
+                objects,
+                buf,
+            )
+            .or_raise(|| message!("Failed to prepare {kind} resource at {rela_path:?} for rename scoring"))
+    }
+
     fn set_resource_inner(
         &mut self,
-        id: gix_hash::ObjectId,
+        id: Option<gix_hash::ObjectId>,
         mode: gix_object::tree::EntryKind,
         rela_path: &BStr,
         kind: ResourceKind,
@@ -853,10 +1092,21 @@ impl Platform {
         }
         .get_or_insert_with(Default::default);
 
+        let id = id.filter(|id| !id.is_null());
         storage.id = id;
         storage.set_location(rela_path);
-        storage.is_link = matches!(mode, gix_object::tree::EntryKind::Link);
-        storage.use_id = self.filter.roots.by_kind(kind).is_none();
+        storage.mode = mode;
+        storage.kind = match self.filter.roots.by_kind(kind) {
+            None if id.is_none() => CacheKeyKind::Missing,
+            None => CacheKeyKind::Object,
+            Some(_) => match kind {
+                ResourceKind::OldOrSource => CacheKeyKind::OldWorktree,
+                ResourceKind::NewOrDestination if self.filter.roots.old_root == self.filter.roots.new_root => {
+                    CacheKeyKind::OldWorktree
+                }
+                ResourceKind::NewOrDestination => CacheKeyKind::NewWorktree,
+            },
+        };
 
         if self.diff_cache.contains_key(storage) {
             return Ok(());
@@ -878,11 +1128,15 @@ impl Platform {
             kind,
             rela_path: rela_path.into(),
         })?;
+        // Only the buffered conversion takes its buffer from the free-list.
+        let reuses_buffer = streamed.is_none();
         let (out, buffer) = if let Some(streamed) = streamed {
+            // The streamed conversion identifies an unavailable object by its null ID.
+            let null = self.filter.worktree_filter.object_hash().null();
             let (out, bytes) = self
                 .filter
                 .convert_to_diffable_stream(
-                    &id,
+                    id.as_deref().unwrap_or(&*null),
                     mode,
                     rela_path,
                     kind,
@@ -910,11 +1164,11 @@ impl Platform {
             };
             (out, buffer)
         } else {
-            let mut bytes = self.free_list.pop().unwrap_or_default();
+            let mut buf = self.free_list.pop().unwrap_or_default();
             let out = self
                 .filter
                 .convert_to_diffable(
-                    &id,
+                    id.as_deref(),
                     mode,
                     rela_path,
                     kind,
@@ -923,14 +1177,23 @@ impl Platform {
                     },
                     objects,
                     self.filter_mode,
-                    &mut bytes,
+                    &mut buf,
                 )
                 .or_raise_typed(|| set_resource::Error::ConvertToDiffable {
                     kind,
                     rela_path: rela_path.into(),
                 })?;
-            (out, Content::Memory(bytes))
+            (out, Content::Memory(buf))
         };
+        if storage.kind == CacheKeyKind::Missing {
+            self.missing_driver_index[kind as usize] = out.driver_index;
+            if let Content::Memory(buf) = buffer
+                && reuses_buffer
+            {
+                self.free_list.push(buf);
+            }
+            return Ok(());
+        }
         let key = storage.clone();
         assert!(
             self.diff_cache
@@ -938,7 +1201,6 @@ impl Platform {
                     key,
                     CacheValue {
                         conversion: out,
-                        mode,
                         buffer,
                     },
                 )

@@ -239,7 +239,14 @@ impl Delegate<'_> {
         for (r, obj) in self.refs.iter().zip(self.objs.iter_mut()) {
             if let (Some(ref_), obj_opt @ None) = (r, obj)
                 && let Some(id) = ref_.target.try_id().map(ToOwned::to_owned).or_else(|| {
-                    match ref_.clone().attach(repo).peel_to_id() {
+                    // Preserve object lookup errors without peeling tag targets.
+                    // Only the header is read, so resolving a reference never buffers its object.
+                    match ref_
+                        .clone()
+                        .attach(repo)
+                        .follow_to_object()
+                        .and_then(|id| id.header().map(|_| id.detach()))
+                    {
                         Err(err) => {
                             self.delayed_errors.push(
                                 error::with_missing_reference(err.raise_erased())
@@ -251,7 +258,7 @@ impl Delegate<'_> {
                             );
                             None
                         }
-                        Ok(id) => Some(id.detach()),
+                        Ok(id) => Some(id),
                     }
                 })
             {

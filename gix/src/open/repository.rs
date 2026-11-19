@@ -17,7 +17,7 @@ use crate::{
     bstr::BString,
     config,
     config::{
-        cache::interpolate_context,
+        cache::{interpolate_context, util::ApplyLeniencyDefaultValue},
         tree::{Core, Key, Safe, gitoxide},
     },
     open::Permissions,
@@ -63,7 +63,7 @@ impl ThreadSafeRepository {
     /// `options` for fine-grained control.
     /// Empty `core.worktree` values include their bytes as `input` [metadata](gix_error::Error::metadata()).
     ///
-    /// Unless trust is set explicitly with [`Options::with()`], its initial level comes from ownership of the
+    /// Unless trust is set explicitly with [`Options::with_trust()`], its initial level comes from ownership of the
     /// candidate path (`path` or `path/.git`) before resolving a possible gitfile. Ownership checks of the resolved
     /// git directory, common directory, and existing worktree can then only lower this level.
     /// Use [`crate::discover()`] if options such as permissions should also be selected according to ownership.
@@ -188,6 +188,8 @@ impl ThreadSafeRepository {
     /// optional, inferred checkout directory; configuration and environment overrides may replace or suppress it.
     /// `options` controls configuration and store initialization. Callers must already have set `options.git_dir_trust`
     /// and captured the opening CWD in `options.current_dir`; `options.open_path_as_is` is reset here.
+    /// Submodule callers may retain the inferred checkout despite `core.bare=true` using the internal,
+    /// one-shot `options.retain_inferred_worktree_when_bare` policy. Its ownership is checked normally.
     ///
     /// `known_common_dir` is the already resolved directory containing shared configuration, objects, and references,
     /// not the raw contents of a `commondir` file or a path relative to `git_dir`. Worktree proxies supply their parent
@@ -205,6 +207,7 @@ impl ThreadSafeRepository {
     ) -> Result<Self> {
         let _span = gix_trace::detail!("open_from_paths()");
         options.open_path_as_is = false;
+        let retain_inferred_worktree_when_bare = std::mem::take(&mut options.retain_inferred_worktree_when_bare);
         let Options {
             ref mut git_dir_trust,
             object_store_slots,
@@ -213,6 +216,7 @@ impl ThreadSafeRepository {
             lenient_config,
             bail_if_untrusted,
             open_path_as_is: _,
+            retain_inferred_worktree_when_bare: _,
             permissions:
                 Permissions {
                     ref env,
@@ -245,12 +249,14 @@ impl ThreadSafeRepository {
                 })
                 .transpose()?;
         }
+        let mut filter_config_section = filter_config_section.unwrap_or(config::section::is_trusted);
         let repo_config = config::cache::StageOne::new(
             common_dir.as_deref().unwrap_or(&git_dir),
             git_dir.as_ref(),
             *git_dir_trust,
             lossy_config,
             lenient_config,
+            filter_config_section,
         )
         .or_raise(|| message("Repository configuration could not be loaded"))?;
 
@@ -301,7 +307,6 @@ impl ThreadSafeRepository {
         let git_install_dir = crate::path::install_dir().ok();
         let home = gix_path::env::home_dir().and_then(|home| env.home.check_opt(home));
 
-        let mut filter_config_section = filter_config_section.unwrap_or(config::section::is_trusted);
         let mut config = config::Cache::from_stage_one(
             repo_config,
             common_dir_ref,
@@ -349,11 +354,25 @@ impl ThreadSafeRepository {
                 | gix_config::Source::EnvOverride => worktree,
                 _ => worktree_dir_from_repository_config(&git_dir, worktree, current_dir),
             };
+            let keep_worktree_relative = worktree_dir.as_deref().is_some_and(Path::is_relative)
+                && git_dir.is_relative()
+                && worktree.is_relative()
+                && !matches!(
+                    source,
+                    gix_config::Source::Env
+                        | gix_config::Source::Cli
+                        | gix_config::Source::Api
+                        | gix_config::Source::EnvOverride
+                );
             worktree_dir = if worktree_from_environment {
                 Some(gix_path::normalize_saturating(worktree.into(), current_dir)?.into_owned())
             } else {
                 gix_path::normalize(worktree.into(), current_dir).map(Cow::into_owned)
             };
+            // Normalization can consume leading `..` through CWD; preserve a relative inferred checkout's namespace.
+            if keep_worktree_relative && let Some(worktree) = worktree_dir.as_mut() {
+                *worktree = gix_path::relativize_with_prefix(worktree, current_dir).into_owned();
+            }
             #[allow(unused_variables, reason = "Used when tracing is enabled at compile time.")]
             if let Some(worktree_path) = worktree_dir.as_deref().filter(|wtd| !wtd.is_dir()) {
                 gix_trace::warn!(
@@ -386,9 +405,16 @@ impl ThreadSafeRepository {
         }
         let is_linked_worktree = refs.git_dir().parent().and_then(Path::file_name) == Some("worktrees".as_ref());
         if config.is_bare == Some(true) && !is_linked_worktree {
-            // Linked worktrees may inherit core.bare=true from their common repository; all other
-            // worktrees are suppressed by an explicit bare configuration.
-            worktree_dir = None;
+            // Linked worktrees may inherit core.bare=true from their common repository.
+            // Other checkouts are suppressed unless the caller is opening a submodule checkout.
+            if retain_inferred_worktree_when_bare {
+                // Preserve the submodule checkout before checking its ownership, not after initialization.
+                if let Some(worktree) = worktree_dir.as_ref() {
+                    _ = std::fs::read_dir(worktree).or_error()?;
+                }
+            } else {
+                worktree_dir = None;
+            }
         }
 
         // TODO: Testing - it's hard to get non-ownership reliably and without root.
@@ -466,6 +492,17 @@ impl ThreadSafeRepository {
             }
             config.resolved = resolved.into();
         }
+
+        // Trust promotion and trusted overrides are only available after configuration is resolved.
+        let use_on_windows = cfg!(windows);
+        refs.prohibit_windows_device_names = gitoxide::Core::PROTECT_WINDOWS
+            .enrich_error(
+                config
+                    .resolved
+                    .boolean_filter(gitoxide::Core::PROTECT_WINDOWS, &mut filter_config_section),
+            )
+            .with_lenient_default_value(lenient_config, Some(use_on_windows))?
+            .unwrap_or(use_on_windows);
 
         let index_path = match config
             .resolved
@@ -598,11 +635,14 @@ fn is_eligible_worktree_config_section(
     if section.source == gix_config::Source::EnvOverride {
         return true;
     }
-    // Ignore worktree settings from another repository, as can happen while opening submodules.
+    // Compare normalized paths without changing symlink-sensitive filesystem path spelling.
+    let Some(git_dir) = gix_path::normalize(current_dir.join(git_dir).into(), current_dir) else {
+        return false;
+    };
     section
         .path
         .as_deref()
-        .and_then(|path| gix_path::normalize(path.into(), current_dir))
+        .and_then(|path| gix_path::normalize(current_dir.join(path).into(), current_dir))
         .is_some_and(|config_path| config_path.starts_with(git_dir))
 }
 

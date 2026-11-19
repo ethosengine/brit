@@ -3,10 +3,10 @@ use crate::{
     File, Position,
     file::{self, EXTENDED_EDGES_MASK, LAST_EXTENDED_EDGE_MASK, NO_PARENT},
 };
-use gix_error::{Result, message};
+use gix_error::{OptionExt, Result, bail, corruption, message};
 use std::{
     fmt::{Debug, Formatter},
-    slice::Chunks,
+    slice::Iter,
 };
 
 /// A commit as stored in a [`File`].
@@ -36,9 +36,6 @@ impl<'a> Commit<'a> {
             root_tree_id: gix_hash::oid::from_bytes_unchecked(&bytes[..file.hash_len]),
             parent1: ParentEdge::from_raw(read_u32(&bytes[file.hash_len..][..4])),
             parent2: ParentEdge::from_raw(read_u32(&bytes[file.hash_len + 4..][..4])),
-            // TODO: Add support for corrected commit date offset overflow.
-            //      See https://github.com/git/git/commit/e8b63005c48696a26f976f5f9b0ccaf1983e439d and
-            //          https://github.com/git/git/commit/f90fca638e99a031dce8e3aca72427b2f9b4bb38 for more details and hints at a test.
             generation: read_u32(&bytes[file.hash_len + 8..][..4]) >> 2,
             commit_timestamp: u64::from_be_bytes(bytes[file.hash_len + 8..][..8].try_into().unwrap())
                 & 0x0003_ffff_ffff,
@@ -60,7 +57,48 @@ impl<'a> Commit<'a> {
         self.generation
     }
 
+    /// Return the corrected commit date, if this file contains generation numbers version 2.
+    ///
+    /// This is the maximum of one, the commit timestamp, and each parent's corrected date plus one.
+    /// It preserves topological order even when timestamps go backwards. Check
+    /// [`Graph::corrected_commit_dates_available()`][crate::Graph::corrected_commit_dates_available]
+    /// before comparing dates from different files in a split graph.
+    /// Malformed overflow offsets, zero dates, and dates that overflow `u64` are reported as corruption.
+    pub fn corrected_commit_date(&self) -> Result<Option<u64>> {
+        let Some(start) = self.file.generation_data_offset else {
+            return Ok(None);
+        };
+        let offset = read_u32(&self.file.data[start + self.pos.0 as usize * 4..][..4]);
+        let offset = if offset & 0x8000_0000 == 0 {
+            u64::from(offset)
+        } else {
+            let data = self
+                .file
+                .generation_overflow_range
+                .as_ref()
+                .map(|range| &self.file.data[range.clone()])
+                .ok_or_raise(|| corruption("Commit-graph requires missing generation overflow data"))?;
+            let position = (offset & 0x7fff_ffff) as usize;
+            if position >= data.len() / 8 {
+                bail!(corruption("Commit-graph generation overflow position is out of bounds"));
+            }
+            u64::from_be_bytes(data[position * 8..][..8].try_into().expect("eight bytes"))
+        };
+        let date = self
+            .commit_timestamp
+            .checked_add(offset)
+            .ok_or_raise(|| corruption("Commit-graph corrected commit date overflows u64"))?;
+        if date == 0 {
+            bail!(corruption("Commit-graph corrected commit date must be positive"));
+        }
+        Ok(Some(date))
+    }
+
     /// Returns an iterator over the parent positions for lookup in the owning [Graph][crate::Graph].
+    ///
+    /// Out-of-range parents are reported as corruption, and iteration stops after the first error.
+    /// For standalone split files, only the format's maximum position can be checked until they are
+    /// assembled into a [`Graph`][crate::Graph].
     pub fn iter_parents(self) -> Parents<'a> {
         // I didn't find a combinator approach that a) was as strict as ParentIterator, b) supported
         // fuse-after-first-error behavior, and b) was significantly shorter or more understandable
@@ -126,7 +164,7 @@ impl Iterator for Parents<'_> {
 
     fn next(&mut self) -> Option<Self::Item> {
         let state = std::mem::replace(&mut self.state, ParentIteratorState::Exhausted);
-        match state {
+        let parent = match state {
             ParentIteratorState::First => match self.commit_data.parent1 {
                 ParentEdge::None => match self.commit_data.parent2 {
                     ParentEdge::None => None,
@@ -151,14 +189,12 @@ impl Iterator for Parents<'_> {
                 ParentEdge::GraphPosition(pos) => Some(Ok(pos)),
                 ParentEdge::ExtraEdgeIndex(extra_edge_index) => {
                     if let Some(extra_edges_list) = self.commit_data.file.extra_edges_data() {
-                        let start_offset: usize = extra_edge_index
-                            .try_into()
-                            .expect("an architecture able to hold 32 bits of integer");
-                        let start_offset = start_offset
-                            .checked_mul(4)
-                            .expect("an extended edge index small enough to fit in usize");
-                        if let Some(tail) = extra_edges_list.get(start_offset..) {
-                            self.state = ParentIteratorState::Extra(tail.chunks(4));
+                        let tail = usize::try_from(extra_edge_index)
+                            .ok()
+                            .and_then(|index| index.checked_mul(4))
+                            .and_then(|start_offset| extra_edges_list.get(start_offset..));
+                        if let Some(tail) = tail {
+                            self.state = ParentIteratorState::Extra(tail.as_chunks::<4>().0.iter());
                             // This recursive call is what blocks me from replacing ParentIterator
                             // with a std::iter::from_fn closure.
                             self.next()
@@ -197,7 +233,19 @@ impl Iterator for Parents<'_> {
                 }
             }
             ParentIteratorState::Exhausted => None,
+        };
+        if let Some(Ok(pos)) = &parent
+            && pos.0 >= self.commit_data.file.parent_position_limit
+        {
+            self.state = ParentIteratorState::Exhausted;
+            return Some(Err(message!(
+                "Commit {} has parent position {pos} that is out of range (should be less than {})",
+                self.commit_data.id(),
+                self.commit_data.file.parent_position_limit
+            )
+            .corrupted_error()));
         }
+        parent
     }
 
     fn size_hint(&self) -> (usize, Option<usize>) {
@@ -205,12 +253,12 @@ impl Iterator for Parents<'_> {
             (ParentIteratorState::First, ParentEdge::None, ParentEdge::None) => (0, Some(0)),
             (ParentIteratorState::First, ParentEdge::None, _) => (1, Some(1)),
             (ParentIteratorState::First, ParentEdge::GraphPosition(_), ParentEdge::None) => (1, Some(1)),
-            (ParentIteratorState::First, ParentEdge::GraphPosition(_), ParentEdge::GraphPosition(_)) => (2, Some(2)),
-            (ParentIteratorState::First, ParentEdge::GraphPosition(_), ParentEdge::ExtraEdgeIndex(_)) => (3, None),
+            (ParentIteratorState::First, ParentEdge::GraphPosition(_), ParentEdge::GraphPosition(_)) => (1, Some(2)),
+            (ParentIteratorState::First, ParentEdge::GraphPosition(_), ParentEdge::ExtraEdgeIndex(_)) => (1, None),
             (ParentIteratorState::First, ParentEdge::ExtraEdgeIndex(_), _) => (1, Some(1)),
             (ParentIteratorState::Second, _, ParentEdge::None) => (0, Some(0)),
             (ParentIteratorState::Second, _, ParentEdge::GraphPosition(_)) => (1, Some(1)),
-            (ParentIteratorState::Second, _, ParentEdge::ExtraEdgeIndex(_)) => (2, None),
+            (ParentIteratorState::Second, _, ParentEdge::ExtraEdgeIndex(_)) => (1, None),
             (ParentIteratorState::Extra(_), _, _) => (1, None),
             (ParentIteratorState::Exhausted, _, _) => (0, Some(0)),
         }
@@ -219,9 +267,14 @@ impl Iterator for Parents<'_> {
 
 #[derive(Debug)]
 enum ParentIteratorState<'a> {
+    /// Read the first inline parent edge, or finish if both inline edges indicate no parents.
     First,
+    /// Read the second inline parent edge, which may point to a parent or into the EDGE chunk.
     Second,
-    Extra(Chunks<'a, u8>),
+    /// Read remaining big-endian parent entries from the EDGE chunk until the last-edge marker.
+    /// Reaching the end of the slice without that marker is corruption.
+    Extra(Iter<'a, [u8; 4]>),
+    /// Yield no further items after the last parent, the absence of a parent, or an error.
     Exhausted,
 }
 

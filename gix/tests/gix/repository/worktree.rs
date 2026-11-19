@@ -1,6 +1,166 @@
 use gix_ref::bstr;
 use gix_testtools::{Result, TestResult};
 
+#[cfg(all(feature = "notify", target_os = "macos"))]
+#[test]
+fn linked_worktree_removal_notifies_through_shared_metadata() -> TestResult {
+    use std::time::{Duration, Instant};
+
+    let (repo, _fixture) = crate::basic_rw_repo()?;
+    let destinations = gix_testtools::tempfile::tempdir()?;
+    let linked = destinations.path().join("linked");
+    let main = repo.workdir().expect("the fixture has a main worktree");
+    let output = gix_testtools::git_command(main)
+        .args(["worktree", "add", "--detach"])
+        .arg(&linked)
+        .output()?;
+    assert!(
+        output.status.success(),
+        "the disposable linked worktree is created: {}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    let mut monitor = repo.monitor(gix::notify::Options {
+        worktree_coverage: None,
+        ..Default::default()
+    })?;
+    let opener = || gix::open_opts(main, crate::restricted());
+    for _ in 0..2 {
+        let outcome = monitor.service(Instant::now(), opener);
+        assert!(outcome.errors.is_empty(), "startup succeeds: {:?}", outcome.errors);
+    }
+    // The removed worktree lies outside the watched roots; its shared metadata must report it.
+    let output = gix_testtools::git_command(main)
+        .args(["worktree", "remove"])
+        .arg(&linked)
+        .output()?;
+    assert!(
+        output.status.success(),
+        "Git removes the linked worktree: {}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    let deadline = Instant::now() + Duration::from_secs(5);
+    let (mut references, mut layout, mut removed) = (false, false, 0);
+    loop {
+        let outcome = monitor.service(Instant::now(), opener);
+        assert!(
+            outcome.errors.is_empty(),
+            "event-driven reconciliation succeeds: {:?}",
+            outcome.errors
+        );
+        references |= outcome.changes.references;
+        layout |= outcome.changes.layout;
+        removed += outcome.statistics.removed;
+        if references && layout && removed != 0 {
+            break;
+        }
+        assert!(
+            Instant::now() < deadline,
+            "shared administrative events must invalidate references/layout and remove obsolete subscriptions"
+        );
+        std::thread::sleep(Duration::from_millis(20));
+    }
+    assert!(!linked.exists(), "Git also removed the working directory");
+    Ok(())
+}
+
+#[cfg(feature = "worktree-mutation")]
+mod lock {
+    use gix::bstr::ByteSlice;
+
+    #[test]
+    fn set_lock_through_worktree_and_proxy_interoperates_with_git() -> gix_testtools::TestResult {
+        let (repo, _fixture) = crate::basic_rw_repo()?;
+        let destinations = gix_testtools::tempfile::TempDir::new()?;
+        let linked = repo
+            .prepare_add_worktree(
+                destinations.path().join("linked"),
+                gix::worktree::add::Head::Detached(repo.head_id()?.detach()),
+                &std::sync::atomic::AtomicBool::default(),
+            )?
+            .persist()?;
+        let worktree = linked.worktree().expect("linked worktree");
+        let proxy = repo.worktree_proxy_by_id("linked")?.expect("persisted registration");
+        let main = repo.workdir().expect("main checkout");
+
+        worktree.set_lock(Some("external storage".into()))?;
+        assert!(proxy.is_locked(), "the proxy sees the worktree's lock");
+        assert_eq!(
+            proxy.lock_reason(),
+            Some("external storage".into()),
+            "proxy reads the reason"
+        );
+        assert!(
+            gix_testtools::git(main, "worktree list --porcelain")?.contains("locked external storage"),
+            "Git reads the reason written through the worktree API"
+        );
+        gix_testtools::git(main, "worktree unlock linked")?;
+        assert!(!worktree.is_locked(), "the worktree observes Git unlocking it");
+
+        gix_testtools::git(main, "worktree lock --reason git-reason linked")?;
+        let git_contents = std::fs::read(proxy.git_dir().join("locked"))?;
+        assert_eq!(
+            worktree.lock_reason(),
+            Some("git-reason".into()),
+            "worktree reads Git's reason"
+        );
+        proxy.set_lock(Some("git-reason".into()))?;
+        assert_eq!(
+            std::fs::read(proxy.git_dir().join("locked"))?,
+            git_contents,
+            "the setter uses Git's on-disk encoding"
+        );
+        proxy.set_lock(Some(b"".as_bstr()))?;
+        assert!(worktree.is_locked(), "an empty reason still locks the worktree");
+        assert_eq!(worktree.lock_reason(), Some("".into()), "the empty reason is retained");
+        proxy.set_lock(None)?;
+        worktree.set_lock(None)?;
+        assert!(!proxy.is_locked(), "unlocking is idempotent across handles");
+
+        std::fs::remove_dir_all(proxy.base()?)?;
+        proxy.set_lock(Some("offline".into()))?;
+        assert!(
+            !proxy.is_prunable(),
+            "an offline worktree can be protected from pruning"
+        );
+        proxy.set_lock(None)?;
+        assert!(proxy.is_prunable(), "unlocking an offline worktree permits pruning");
+        Ok(())
+    }
+
+    #[test]
+    fn set_lock_rejects_the_main_worktree_without_changing_files() -> gix_testtools::TestResult {
+        let (repo, _fixture) = crate::basic_rw_repo()?;
+        let worktree = repo.worktree().expect("main worktree");
+        let lock_path = repo.git_dir().join("locked");
+        for reason in [Some("keep".into()), None] {
+            let err = worktree
+                .set_lock(reason)
+                .expect_err("the main worktree cannot be locked");
+            assert!(err.is_validation(), "main-worktree locking is invalid input");
+            assert!(!lock_path.exists(), "rejected operations create no lock file");
+        }
+        std::fs::write(&lock_path, b"unrelated contents")?;
+        assert!(
+            !worktree.is_locked(),
+            "an unrelated locked file does not lock the main worktree"
+        );
+        assert_eq!(
+            worktree.lock_reason(),
+            None,
+            "the main worktree has no lock reason, regardless of unrelated files"
+        );
+        worktree
+            .set_lock(None)
+            .expect_err("the main worktree cannot be unlocked");
+        assert_eq!(
+            std::fs::read(lock_path)?,
+            b"unrelated contents",
+            "rejection preserves files"
+        );
+        Ok(())
+    }
+}
+
 #[cfg(feature = "worktree-mutation")]
 mod add {
     #[test]
@@ -175,41 +335,8 @@ mod add {
 
     #[test]
     fn interruption_during_checkout_never_writes_an_index() -> gix_testtools::TestResult {
-        use std::sync::{Arc, atomic::Ordering};
-
-        struct InterruptCheckout(Arc<AtomicBool>);
-        impl gix::progress::Count for InterruptCheckout {
-            fn set(&self, _: usize) {}
-            fn step(&self) -> usize {
-                0
-            }
-            fn inc_by(&self, _: usize) {}
-            fn counter(&self) -> gix::progress::StepShared {
-                // The checkout engine requests counters after the entry-point interruption checks.
-                self.0.store(true, Ordering::Relaxed);
-                gix::progress::Discard.counter()
-            }
-        }
-        impl gix::progress::Progress for InterruptCheckout {
-            fn init(&mut self, _: Option<usize>, _: Option<gix::progress::Unit>) {}
-            fn set_name(&mut self, _: String) {}
-            fn name(&self) -> Option<String> {
-                None
-            }
-            fn id(&self) -> gix::progress::Id {
-                gix::progress::UNKNOWN
-            }
-            fn message(&self, _: gix::progress::MessageLevel, _: String) {}
-        }
-        impl gix::progress::NestedProgress for InterruptCheckout {
-            type SubProgress = Self;
-            fn add_child(&mut self, _: impl Into<String>) -> Self {
-                Self(self.0.clone())
-            }
-            fn add_child_with_id(&mut self, name: impl Into<String>, _: gix::progress::Id) -> Self {
-                self.add_child(name)
-            }
-        }
+        use crate::util::InterruptCheckout;
+        use std::sync::Arc;
 
         for persisted in [false, true] {
             let (repo, _fixture) = crate::basic_rw_repo()?;
@@ -605,6 +732,220 @@ mod add {
             gix::progress::Discard,
             &AtomicBool::default(),
         )?;
+        Ok(())
+    }
+
+    #[test]
+    fn sparse_checkout_directory_patterns_include_gitlinks_on_every_host() -> gix_testtools::TestResult {
+        let fixture = gix_testtools::scripted_fixture_writable_with_args(
+            "make_worktree_add_repos.sh",
+            ["sparse-gitlink"],
+            gix_testtools::Creation::Execute,
+        )?;
+        let source = gix::open_opts(fixture.path().join("main"), crate::restricted())?;
+        let (created, _) = source.add_worktree(
+            fixture.path().join("gix-created"),
+            gix::worktree::add::Head::Detached(source.head_id()?.detach()),
+            gix::progress::Discard,
+            &AtomicBool::default(),
+        )?;
+        sparse_checkout_matches_git(&created, &fixture.path().join("git-created"))
+    }
+
+    #[test]
+    fn sparse_checkout_inherits_main_and_linked_patterns_like_git() -> gix_testtools::TestResult {
+        for mode in ["cone", "non-cone"] {
+            let fixture = gix_testtools::scripted_fixture_writable_with_args(
+                "make_worktree_add_repos.sh",
+                ["sparse", mode, "inherit"],
+                gix_testtools::Creation::Execute,
+            )?;
+            for name in ["main", "linked"] {
+                let source = gix::open_opts(fixture.path().join(name), crate::restricted())?;
+                assert_eq!(
+                    source.index()?.is_sparse(),
+                    mode == "cone",
+                    "cone mode exercises a sparse source index"
+                );
+                let patterns = std::fs::read(source.git_dir().join("info/sparse-checkout"))?;
+                if name == "linked" {
+                    assert_ne!(
+                        patterns,
+                        std::fs::read(source.common_dir().join("info/sparse-checkout"))?,
+                        "the linked source selects different paths from the main worktree"
+                    );
+                }
+                let expected = fixture.path().join(format!("git-{name}"));
+                let (created, _) = source.add_worktree(
+                    fixture.path().join(format!("gix-{name}")),
+                    gix::worktree::add::Head::Detached(source.find_reference("target")?.peel_to_commit()?.id),
+                    gix::progress::Discard,
+                    &AtomicBool::default(),
+                )?;
+                assert_eq!(
+                    std::fs::read(created.git_dir().join("info/sparse-checkout"))?,
+                    patterns,
+                    "the new worktree inherits the {name} source's patterns"
+                );
+                sparse_checkout_matches_git(&created, &expected)?;
+            }
+        }
+        Ok(())
+    }
+
+    #[test]
+    fn sparse_checkout_preparation_copies_patterns_and_deferred_checkout_reads_destination() -> gix_testtools::TestResult
+    {
+        let fixture = gix_testtools::scripted_fixture_writable_with_args(
+            "make_worktree_add_repos.sh",
+            ["sparse", "cone", "deferred"],
+            gix_testtools::Creation::Execute,
+        )?;
+        let source = gix::open_opts(fixture.path().join("main"), crate::restricted())?;
+        let source_patterns = std::fs::read(source.git_dir().join("info/sparse-checkout"))?;
+        let prepared = source.prepare_add_worktree(
+            fixture.path().join("deferred"),
+            gix::worktree::add::Head::Detached(source.find_reference("target")?.peel_to_commit()?.id),
+            &AtomicBool::default(),
+        )?;
+        assert_eq!(
+            std::fs::read(prepared.repo().git_dir().join("info/sparse-checkout"))?,
+            source_patterns,
+            "preparation copies patterns even without checkout"
+        );
+        let created = prepared.persist()?;
+        assert!(!created.index_path().exists(), "persistence does not create the index");
+        let expected = fixture.path().join("git-deferred");
+        let expected_repo = gix::open_opts(&expected, crate::restricted())?;
+        // Intentionally alter the sparse-checkout patterns to ensure these aren't stale.
+        std::fs::copy(
+            expected_repo.git_dir().join("info/sparse-checkout"),
+            created.git_dir().join("info/sparse-checkout"),
+        )?;
+        created
+            .worktree()
+            .expect("persisted registration has a worktree")
+            .checkout(gix::progress::Discard, &AtomicBool::default())?;
+        sparse_checkout_matches_git(&created, &expected)?;
+        assert_eq!(
+            std::fs::read(source.git_dir().join("info/sparse-checkout"))?,
+            source_patterns,
+            "changing destination patterns leaves the source unchanged"
+        );
+        Ok(())
+    }
+
+    #[test]
+    fn sparse_checkout_empty_missing_disabled_and_custom_cone_patterns_match_git() -> gix_testtools::TestResult {
+        for (cone, state) in [
+            (false, "missing"),
+            (true, "missing"),
+            (false, "empty"),
+            (true, "empty"),
+            (false, "disabled"),
+            (true, "directory"),
+            (true, "invalid-cone"),
+        ] {
+            let fixture = gix_testtools::scripted_fixture_writable_with_args(
+                "make_worktree_add_repos.sh",
+                ["sparse", if cone { "cone" } else { "non-cone" }, state],
+                gix_testtools::Creation::Execute,
+            )?;
+            let source = gix::open_opts(fixture.path().join("main"), crate::restricted())?;
+            let expected = fixture.path().join("git-created");
+            let (created, _) = source.add_worktree(
+                fixture.path().join("gix-created"),
+                gix::worktree::add::Head::Detached(source.find_reference("target")?.peel_to_commit()?.id),
+                gix::progress::Discard,
+                &AtomicBool::default(),
+            )?;
+            assert_eq!(
+                created.git_dir().join("info/sparse-checkout").exists(),
+                state != "missing" && state != "disabled",
+                "only an active, present patterns file is copied (cone={cone}, state={state})"
+            );
+            sparse_checkout_matches_git(&created, &expected)?;
+        }
+        Ok(())
+    }
+
+    #[test]
+    fn sparse_checkout_pattern_copy_errors_roll_back() -> gix_testtools::TestResult {
+        let fixture = gix_testtools::scripted_fixture_writable_with_args(
+            "make_worktree_add_repos.sh",
+            ["sparse", "non-cone", "unreadable"],
+            gix_testtools::Creation::Execute,
+        )?;
+        let source = gix::open_opts(fixture.path().join("main"), crate::restricted())?;
+        let patterns = source.git_dir().join("info/sparse-checkout");
+        let destination = fixture.path().join("rejected");
+        source
+            .prepare_add_worktree(
+                &destination,
+                gix::worktree::add::Head::Detached(source.head_id()?.detach()),
+                &AtomicBool::default(),
+            )
+            .expect_err("an unreadable active patterns file must fail preparation");
+        assert!(!destination.exists(), "copy failure removes the checkout directory");
+        assert!(source.worktrees()?.is_empty(), "copy failure removes the registration");
+        assert!(patterns.is_dir(), "copy failure leaves the source untouched");
+        Ok(())
+    }
+
+    fn sparse_checkout_matches_git(created: &gix::Repository, expected: &std::path::Path) -> gix_testtools::TestResult {
+        use std::fmt::Write;
+
+        let index = created.index()?;
+        assert!(
+            !index.is_sparse(),
+            "sparse checkout can retain a full index while we can't do better"
+        );
+        let work_dir = created.workdir().expect("new checkout");
+        let mut listing = String::new();
+        for entry in index.entries() {
+            let skip = entry.flags.contains(gix::index::entry::Flags::SKIP_WORKTREE);
+            let path = entry.path(&index);
+            writeln!(listing, "{} {}", if skip { 'S' } else { 'H' }, path)?;
+            let relative_path = gix_path::from_bstr(path)?;
+            assert_eq!(
+                work_dir.join(&relative_path).exists(),
+                !skip,
+                "persisted flags agree with materialized files at {path}"
+            );
+            assert_eq!(
+                work_dir.join(&relative_path).exists(),
+                expected.join(&relative_path).exists(),
+                "Git and gix materialize the same paths at {path}"
+            );
+            if !skip && entry.mode.is_submodule() {
+                assert!(
+                    work_dir.join(&relative_path).is_dir(),
+                    "included gitlinks materialize as directories at {path}"
+                );
+            } else if !skip {
+                assert_eq!(
+                    std::fs::read(work_dir.join(&relative_path))?,
+                    std::fs::read(expected.join(&relative_path))?,
+                    "Git and gix write identical contents at {path}"
+                );
+            }
+        }
+        assert_eq!(
+            listing,
+            std::fs::read_to_string(expected.with_extension("ls-files.baseline"))?,
+            "persisted skip-worktree flags match Git"
+        );
+        let items = created
+            .status(gix::progress::Discard)?
+            .into_iter(None)?
+            .collect::<std::result::Result<Vec<_>, _>>()?;
+        assert!(items.is_empty(), "gix recognizes a clean sparse checkout: {items:?}");
+        // Git status may rewrite the full index as sparse when index.sparse is enabled.
+        assert_eq!(
+            gix_testtools::git(work_dir, "status --porcelain")?,
+            "",
+            "Git recognizes a clean sparse checkout"
+        );
         Ok(())
     }
 
@@ -1924,7 +2265,13 @@ mod remove {
                 if path == &locked_path && reason == "on external storage"),
             "the lock and its reason are reported"
         );
+        std::fs::write(locked_path.join("untracked"), b"changes")?;
         repo.remove_worktree(&locked_path, Force::OverrideLock, gix::progress::Discard)?;
+        assert!(
+            !locked_path.exists(),
+            "overriding a lock still permits discarding changes"
+        );
+        assert!(!private_git_dir.exists(), "forced removal unregisters the worktree");
         Ok(())
     }
 
@@ -1984,6 +2331,29 @@ mod remove {
     }
 
     #[test]
+    #[cfg(unix)]
+    fn submodule_safety_check_does_not_follow_symlinks() -> gix_testtools::TestResult {
+        let fixture = gix_testtools::scripted_fixture_writable_with_args(
+            "make_worktree_with_symlinked_gitlink.sh",
+            None::<String>,
+            gix_testtools::Creation::Execute,
+        )?;
+        let repo = gix::open_opts(fixture.path().join("main"), crate::restricted())?;
+        let destination = fixture.path().join("linked");
+        let private_git_dir = gix::open_opts(&destination, crate::restricted())?.git_dir().to_owned();
+        let target = repo.workdir().expect("main worktree");
+
+        let err = repo
+            .remove_worktree(&destination, Force::Never, gix::progress::Discard)
+            .expect_err("the safety check must not inspect the symlink target");
+        assert!(err.is_validation(), "the symlink is rejected: {err:?}");
+        assert!(destination.is_dir(), "rejected removal retains the checkout");
+        assert!(private_git_dir.is_dir(), "rejected removal retains its registration");
+        assert!(target.is_dir(), "the unrelated repository remains intact");
+        Ok(())
+    }
+
+    #[test]
     fn initialized_submodules_require_force() -> gix_testtools::TestResult {
         let (repo, _fixture) = crate::basic_rw_repo()?;
         let destinations = gix_testtools::tempfile::TempDir::new()?;
@@ -1994,7 +2364,8 @@ mod remove {
             gix::progress::Discard,
             &AtomicBool::default(),
         )?;
-        std::fs::create_dir(linked.git_dir().join("modules"))?;
+        let private_git_dir = linked.git_dir().to_owned();
+        std::fs::create_dir(private_git_dir.join("modules"))?;
         drop(linked);
 
         let err = repo
@@ -2005,6 +2376,7 @@ mod remove {
             err.downcast_any_ref::<gix::worktree::remove::Error>(),
             Some(gix::worktree::remove::Error::ContainsSubmodule { .. })
         ));
+
         repo.remove_worktree(&destination, Force::DiscardChanges, gix::progress::Discard)?;
         Ok(())
     }
@@ -2470,11 +2842,21 @@ fn from_nonbare_parent_repo() -> TestResult {
 
 #[test]
 fn linked_worktree_proxy_base_with_relative_linking_files() -> TestResult {
-    let fixture = gix_testtools::scripted_fixture_read_only_needs_archive("make_worktree_relative_linking.sh")?;
-    let main = fixture.join("main");
+    if gix_testtools::run_in_isolated_process()? {
+        return Ok(());
+    }
+    let Some(fixture) =
+        gix_testtools::scripted_fixture_read_only_with_git_version("make_worktree_relative_linking.sh", |version| {
+            version >= (2, 48, 0)
+        })?
+    else {
+        return Ok(());
+    };
+    let _cwd = gix_testtools::set_current_dir(&fixture)?;
     let linked = fixture.join("linked");
-    let private_git_dir = main.join(".git/worktrees/linked");
-    let repo = gix::open_opts(&main, crate::restricted())?;
+    let repo = gix::open_opts("main", crate::restricted())?;
+    assert!(repo.git_dir().is_relative(), "exercise a relative parent Git directory");
+    let private_git_dir = repo.git_dir().join("worktrees/linked");
     let worktrees = repo.worktrees()?;
     assert_eq!(worktrees.len(), 1, "the relative-path fixture has one linked worktree");
     let proxy = worktrees.into_iter().next().expect("one worktree");
@@ -2501,7 +2883,13 @@ fn linked_worktree_proxy_base_with_relative_linking_files() -> TestResult {
 #[test]
 #[cfg(unix)]
 fn linked_worktree_proxy_base_with_symlinked_main_repo() -> TestResult {
-    let fixture = gix_testtools::scripted_fixture_read_only_needs_archive("make_worktree_relative_linking.sh")?;
+    let Some(fixture) =
+        gix_testtools::scripted_fixture_read_only_with_git_version("make_worktree_relative_linking.sh", |version| {
+            version >= (2, 48, 0)
+        })?
+    else {
+        return Ok(());
+    };
     let linked = fixture.join("actual/linked");
     let main_symlink = fixture.join("main-symlink");
 

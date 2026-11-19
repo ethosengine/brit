@@ -124,7 +124,10 @@ pub(crate) mod function {
                 return Ok(false);
             }
 
-            if index_has_crlf()? {
+            // A CRLF in the index can only prevent a conversion, so don't read the object
+            // if there is nothing to convert. Git reads it anyway, but it rarely gets here
+            // for unchanged files as its status refreshes the index.
+            if convert_crlf_to_lf && index_has_crlf()? {
                 convert_crlf_to_lf = false;
             }
         }

@@ -149,6 +149,7 @@ mod tests {
         if free {
             crate::commitgraph::verify(
                 repo.git_dir().join("objects/info"),
+                repo.object_hash(),
                 crate::commitgraph::verify::Context {
                     err: std::io::sink(),
                     out,

@@ -23,6 +23,9 @@ use crate::{blob::builtin_driver, commit::Options};
 /// the ancestor-label isn't explicitly set so that the merge base label becomes the shortened `id`.
 /// Note that it's a dyn closure only to make it possible to recursively call this function in case of multiple merge-bases.
 ///
+/// `context` supplies optional submodule history queries, sharing its callback with recursive virtual-base merges.
+/// Use [`crate::tree::Context::default()`] to leave nontrivial gitlink merges unresolved.
+///
 /// `write_object` is used only if it's allowed to merge multiple merge-bases into one, and if there
 /// are multiple merge bases, and to write merged buffers as blobs.
 ///
@@ -50,6 +53,7 @@ pub fn commit<'objects>(
     blob_merge: &mut crate::blob::Platform,
     objects: &'objects (impl gix_object::FindObjectOrHeader + gix_object::Write),
     abbreviate_hash: &mut dyn FnMut(&gix_hash::oid) -> String,
+    context: crate::tree::Context<'_>,
     options: Options,
 ) -> Result<super::Outcome<'objects>> {
     commit_with_storage(
@@ -61,6 +65,7 @@ pub fn commit<'objects>(
         blob_merge,
         objects,
         abbreviate_hash,
+        context,
         options,
         &crate::storage::Buffered,
     )
@@ -80,6 +85,7 @@ pub fn commit_bounded<'objects>(
     blob_merge: &mut crate::blob::Platform,
     objects: &'objects (impl gix_object::FindObjectOrHeader + gix_object::Write + gix_object::FindStream),
     abbreviate_hash: &mut dyn FnMut(&gix_hash::oid) -> String,
+    context: crate::tree::Context<'_>,
     options: Options,
     storage: &crate::Bounded<'_>,
 ) -> Result<super::Outcome<'objects>> {
@@ -92,6 +98,7 @@ pub fn commit_bounded<'objects>(
         blob_merge,
         objects,
         abbreviate_hash,
+        context,
         options,
         storage,
     )
@@ -110,6 +117,7 @@ pub(crate) fn commit_with_storage<'objects, O: gix_object::FindObjectOrHeader + 
     blob_merge: &mut crate::blob::Platform,
     objects: &'objects O,
     abbreviate_hash: &mut dyn FnMut(&gix_hash::oid) -> String,
+    mut context: crate::tree::Context<'_>,
     options: Options,
     storage: &impl crate::storage::Storage<O>,
 ) -> Result<super::Outcome<'objects>> {
@@ -141,6 +149,7 @@ pub(crate) fn commit_with_storage<'objects, O: gix_object::FindObjectOrHeader + 
                     blob_merge,
                     objects,
                     abbreviate_hash,
+                    context.reborrow(),
                     options.tree_merge.clone(),
                     storage,
                 )?;
@@ -176,6 +185,7 @@ pub(crate) fn commit_with_storage<'objects, O: gix_object::FindObjectOrHeader + 
         &mut state,
         diff_resource_cache,
         blob_merge,
+        context,
         options.tree_merge,
         storage,
     )?;

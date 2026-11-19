@@ -25,7 +25,10 @@ pub struct Args {
 
     /// The amount of threads to use for some operations.
     ///
-    /// If unset, or the value is 0, there is no limit and all logical cores can be used.
+    /// If unset, the operation's default is used: usually one per logical core,
+    /// but fewer for some operations on macOS. For worktree status, this cap can increase elapsed time
+    /// when many worktree files need to be read and hashed; a higher limit may help.
+    /// A value of 0 allows all logical cores to be used.
     #[clap(long)]
     pub threads: Option<usize>,
 
@@ -98,6 +101,12 @@ pub enum Subcommands {
     Odb(odb::Subcommands),
     /// Check for missing objects.
     Fsck(fsck::Platform),
+    /// Print raw filesystem notifications for paths until interrupted.
+    Notify(notify::Platform),
+    /// Print repository and worktree invalidations until interrupted.
+    Watch(watch::Platform),
+    /// Serve and control a self-spawning filesystem monitor daemon for Git.
+    Fsmonitor(fsmonitor::Platform),
     /// Interact with tree objects.
     #[clap(subcommand)]
     Tree(tree::Subcommands),
@@ -316,6 +325,228 @@ pub mod archive {
     }
 }
 
+pub mod notify {
+    use std::{num::NonZeroUsize, path::PathBuf};
+
+    #[derive(Debug, clap::Parser)]
+    #[clap(
+        after_help = "This debug tool watches filesystem paths without opening a Git repository. Events are reconciliation hints. Loss reports require a fresh baseline and may require restarting registration; this command only logs them. Ctrl-C releases native watches."
+    )]
+    pub struct Platform {
+        /// Files or directories to watch; defaults to the current directory.
+        #[clap(value_name = "PATH", default_value = ".")]
+        pub paths: Vec<PathBuf>,
+        /// Watch only the specified files or directories and their immediate entries.
+        #[clap(long)]
+        pub non_recursive: bool,
+        /// Maximum queued events; crossing either queue limit reports loss.
+        #[clap(long, default_value = "4096")]
+        pub max_events: NonZeroUsize,
+        /// Maximum estimated bytes retained in the notification queue.
+        #[clap(long, default_value = "4194304")]
+        pub max_bytes: NonZeroUsize,
+        /// Maximum events returned by each drain before checking for interruption.
+        #[clap(long, default_value = "256")]
+        pub batch_events: NonZeroUsize,
+        /// Estimated byte budget per drain; one larger event may still be returned.
+        #[clap(long, default_value = "262144")]
+        pub batch_bytes: NonZeroUsize,
+        /// Native root identity check interval on macOS/Windows; zero disables idle checks.
+        #[clap(long, default_value_t = 1000)]
+        pub root_check_ms: u64,
+    }
+}
+
+pub mod watch {
+    use std::{
+        path::PathBuf,
+        time::{Duration, Instant},
+    };
+
+    #[derive(Debug, Clone, Copy, Default, clap::ValueEnum)]
+    pub enum Coverage {
+        /// Watch tracked and unignored directories, stopping at nested repositories.
+        #[default]
+        IgnoreAware,
+        /// Include ignored paths and nested repositories.
+        All,
+        /// Disable automatic worktree coverage.
+        None,
+    }
+
+    #[derive(Debug, clap::Parser)]
+    #[clap(
+        after_help = "File invalidations are hints, not an operation history. Directory scopes, full invalidations, and coverage loss require reconciliation. Other worktrees share metadata subscriptions and report lifecycle changes separately. This command logs updates without maintaining a cached baseline."
+    )]
+    pub struct Platform {
+        /// Report worktree invalidations without repository metadata.
+        #[clap(long, conflicts_with = "all_worktrees")]
+        pub no_metadata: bool,
+        /// Monitor other worktrees too, sharing repository metadata subscriptions.
+        #[clap(long)]
+        pub all_worktrees: bool,
+        /// Limit --all-worktrees to these private Git directories; repeatable.
+        #[clap(long, value_name = "GIT_DIR", requires = "all_worktrees")]
+        pub worktree_filter: Option<Vec<PathBuf>>,
+        /// Request full invalidations when an application file or directory changes; repeatable.
+        #[clap(long = "additional-path", value_name = "PATH")]
+        pub additional_paths: Vec<PathBuf>,
+        /// Select directory coverage. File invalidations remain unfiltered.
+        #[clap(long, value_enum, default_value_t = Coverage::default())]
+        pub worktree_coverage: Coverage,
+        /// Metadata quiet period in milliseconds; zero publishes immediately.
+        #[clap(long, default_value_t = 100)]
+        pub debounce_ms: u64,
+        /// Maximum metadata burst delay in milliseconds; zero publishes immediately.
+        #[clap(long, default_value_t = 250)]
+        pub max_latency_ms: u64,
+        /// Failed discovery or watch-registration retry interval in milliseconds.
+        #[clap(long, default_value_t = 5000, value_parser = clap::value_parser!(u64).range(1..))]
+        pub retry_ms: u64,
+        /// Maximum idle wait in milliseconds, also bounded by the monitor's deadlines.
+        #[clap(long, default_value_t = 250, value_parser = clap::value_parser!(u64).range(1..))]
+        pub poll_ms: u64,
+    }
+
+    impl Platform {
+        pub fn into_options(self) -> gix::Result<(gix::notify::Options, Duration)> {
+            use gix::error::{bail, message};
+
+            let now = Instant::now();
+            for (milliseconds, flag) in [
+                (self.debounce_ms, "--debounce-ms"),
+                (self.max_latency_ms, "--max-latency-ms"),
+                (self.retry_ms, "--retry-ms"),
+                (self.poll_ms, "--poll-ms"),
+            ] {
+                if now.checked_add(Duration::from_millis(milliseconds)).is_none() {
+                    bail!(message!("{flag} exceeds the platform's clock range"));
+                }
+            }
+            Ok((
+                gix::notify::Options {
+                    metadata: !self.no_metadata,
+                    all_worktrees: self.all_worktrees,
+                    worktree_filter: self.worktree_filter,
+                    additional_paths: self
+                        .additional_paths
+                        .into_iter()
+                        .map(|path| gix::notify::InvalidationPath {
+                            path,
+                            changes: gix::notify::Changes {
+                                references: true,
+                                index: true,
+                                configuration: true,
+                                ignores: true,
+                                attributes: true,
+                                operations: true,
+                                layout: true,
+                                worktree: Some(gix::notify::Scope::All),
+                            },
+                        })
+                        .collect(),
+                    worktree_coverage: match self.worktree_coverage {
+                        Coverage::IgnoreAware => Some(gix::notify::WorktreeCoverage::IgnoreAware),
+                        Coverage::All => Some(gix::notify::WorktreeCoverage::All),
+                        Coverage::None => None,
+                    },
+                    metadata_debounce: Duration::from_millis(self.debounce_ms),
+                    max_latency: Duration::from_millis(self.max_latency_ms),
+                    retry_interval: Duration::from_millis(self.retry_ms),
+                },
+                Duration::from_millis(self.poll_ms),
+            ))
+        }
+    }
+}
+
+pub mod fsmonitor {
+    use gix::bstr::BString;
+    use std::path::PathBuf;
+
+    #[derive(Debug, clap::Parser)]
+    #[clap(
+        after_help = "Use `git config core.fsmonitor 'gix fsmonitor hook'` and `git config core.fsmonitorHookVersion 2` for hook autostart. Explicit startup also supports native Git IPC clients. Each worktree owns its endpoint. Children run this same gix executable using the blocking library APIs."
+    )]
+    pub struct Platform {
+        #[clap(subcommand)]
+        pub cmd: Subcommands,
+    }
+
+    #[derive(Debug, clap::Args)]
+    pub struct Startup {
+        /// Exit after this many seconds without a client connection; zero disables idle shutdown.
+        #[clap(long, default_value_t = 0)]
+        pub idle_timeout: u64,
+    }
+
+    #[derive(Debug, clap::Subcommand)]
+    pub enum Subcommands {
+        /// Serve in the foreground until stopped, interrupted, or idle expiry.
+        Run {
+            #[clap(flatten)]
+            startup: Startup,
+            #[clap(long, hide = true)]
+            ready_file: Option<PathBuf>,
+        },
+        /// Start a detached daemon from this gix executable and wait for readiness.
+        Start(Startup),
+        /// Stop the daemon currently owning the endpoint and wait for it to exit.
+        Stop,
+        /// Succeed if the daemon is running, otherwise fail.
+        Status,
+        /// Invalidate token history and print the binary full-baseline response.
+        Flush,
+        /// Query the daemon with an opaque checkpoint and print its binary response.
+        Query {
+            #[clap(value_parser = crate::shared::AsBString, allow_hyphen_values = true)]
+            token: Option<BString>,
+        },
+        /// Git hook-v2 entrypoint; start this daemon when its endpoint is unavailable.
+        Hook {
+            #[clap(value_parser = clap::value_parser!(u8).range(2..=2))]
+            version: u8,
+            #[clap(value_parser = crate::shared::AsBString, allow_hyphen_values = true)]
+            token: BString,
+            #[clap(flatten)]
+            startup: Startup,
+        },
+        /// Print the native IPC endpoint for this worktree.
+        Path,
+    }
+
+    impl Platform {
+        pub(crate) fn into_command(self) -> gitoxide_core::repository::fsmonitor::Command {
+            use gitoxide_core::repository::fsmonitor::Command;
+            match self.cmd {
+                Subcommands::Run { startup, ready_file } => Command::Run {
+                    idle_timeout: startup.idle_timeout,
+                    ready_file,
+                },
+                Subcommands::Start(startup) => Command::Start {
+                    idle_timeout: startup.idle_timeout,
+                },
+                Subcommands::Stop => Command::Stop,
+                Subcommands::Status => Command::Status,
+                Subcommands::Flush => Command::Flush,
+                Subcommands::Query { token } => Command::Query {
+                    token: token.unwrap_or_default(),
+                },
+                Subcommands::Hook {
+                    version,
+                    token,
+                    startup,
+                } => Command::Hook {
+                    version,
+                    token,
+                    idle_timeout: startup.idle_timeout,
+                },
+                Subcommands::Path => Command::Path,
+            }
+        }
+    }
+}
+
 pub mod branch {
     #[derive(Debug, clap::Parser)]
     pub struct Platform {
@@ -406,6 +637,12 @@ pub mod status {
         /// Define how to show untracked files. If set without a value, show all individual untracked files.
         #[clap(long, short = 'u', require_equals = true)]
         pub untracked: Option<Option<Untracked>>,
+        /// Show exact ahead/behind commit counts relative to the current branch's fetch upstream.
+        ///
+        /// This uses locally available history without fetching, and can be expensive for large histories.
+        /// No counts are shown for detached or unborn HEADs, or branches without an upstream.
+        #[clap(long)]
+        pub ahead_behind: bool,
         /// Define how to display the submodule status. Defaults to git configuration if unset.
         #[clap(long)]
         pub submodules: Option<Submodules>,
@@ -556,7 +793,7 @@ pub mod merge {
     use gix::bstr::BString;
 
     #[derive(Debug, Copy, Clone, PartialEq, Eq, PartialOrd, Ord, clap::ValueEnum)]
-    pub enum ResolveWith {
+    pub(crate) enum ResolveWith {
         /// Use ours then theirs in case of conflict.
         Union,
         /// Use only ours in case of conflict.
@@ -576,7 +813,7 @@ pub mod merge {
     }
 
     #[derive(Debug, Copy, Clone, PartialEq, Eq, PartialOrd, Ord, clap::ValueEnum)]
-    pub enum FileFavor {
+    pub(crate) enum FileFavor {
         /// Use only ours in case of conflict.
         Ours,
         /// Use only theirs in case of conflict.
@@ -584,7 +821,7 @@ pub mod merge {
     }
 
     #[derive(Debug, Copy, Clone, PartialEq, Eq, PartialOrd, Ord, clap::ValueEnum)]
-    pub enum TreeFavor {
+    pub(crate) enum TreeFavor {
         /// Use only the previous tree entry in case of conflict.
         Ancestor,
         /// Use only ours tree entry in case of conflict.
@@ -739,15 +976,52 @@ pub mod diff {
 pub mod log {
     use gix::bstr::BString;
 
-    /// List all commits in a repository, optionally limited to those that change a given path.
+    #[derive(Debug, Copy, Clone, clap::ValueEnum)]
+    pub(crate) enum Sorting {
+        /// Visit commits breadth-first, without guaranteeing children precede parents.
+        BreadthFirst,
+        /// Prioritize the newest queued commits, without guaranteeing children precede parents.
+        NewestFirst,
+        /// Prioritize the oldest queued commits, starting with the tips rather than the oldest ancestors.
+        OldestFirst,
+        /// Show children before parents without intermixing branches.
+        TopoOrder,
+        /// Show children before parents, otherwise prioritizing newer commit dates.
+        DateOrder,
+    }
+
+    impl From<Sorting> for gix::revision::walk::Sorting {
+        fn from(value: Sorting) -> Self {
+            use gix::revision::walk::CommitTimeOrder;
+
+            match value {
+                Sorting::BreadthFirst => Self::BreadthFirst,
+                Sorting::NewestFirst => Self::ByCommitTime(CommitTimeOrder::NewestFirst),
+                Sorting::OldestFirst => Self::ByCommitTime(CommitTimeOrder::OldestFirst),
+                Sorting::TopoOrder => Self::TopoOrder,
+                Sorting::DateOrder => Self::DateOrder,
+            }
+        }
+    }
+
+    /// List reachable commits in the chosen order, optionally excluding hidden ancestry.
     #[derive(Debug, clap::Parser)]
     pub struct Platform {
         /// Stop after this many commits (Brit also accepts -N; zero prints none).
         #[clap(short = 'n', long)]
         pub max_count: Option<usize>,
-        /// The git path specification to show a log for.
-        #[clap(value_parser = crate::shared::AsBString)]
-        pub pathspec: Option<BString>,
+        /// The order in which to return commits.
+        #[clap(long, value_enum, default_value = "date-order")]
+        pub sort: Sorting,
+        /// Follow only the first parent of visible commits; hidden ancestry follows all parents.
+        #[clap(long)]
+        pub first_parent: bool,
+        /// Revision expressions such as HEAD, main..topic, main...topic, or ^main. Defaults to HEAD if omitted.
+        #[clap(value_name = "REVISION", value_parser = crate::shared::AsBString)]
+        pub revisions: Vec<BString>,
+        /// Git pathspecs limiting the history, separated from revisions by -- (currently unsupported).
+        #[clap(last = true, value_name = "PATHSPEC", value_parser = crate::shared::AsBString)]
+        pub pathspecs: Vec<BString>,
     }
 }
 
@@ -834,7 +1108,7 @@ pub mod fetch {
     }
 
     #[derive(Debug, clap::Parser)]
-    pub struct ShallowOptions {
+    pub(crate) struct ShallowOptions {
         /// Fetch with the history truncated to the given number of commits as seen from the remote.
         #[clap(long, help_heading = Some("SHALLOW"), conflicts_with_all = ["shallow_since", "shallow_exclude", "deepen", "unshallow"])]
         pub depth: Option<NonZeroU32>,
@@ -890,7 +1164,7 @@ pub mod clone {
         #[clap(long, short = 'H')]
         pub handshake_info: bool,
 
-        /// The clone will be bare and a working tree checkout won't be available.
+        /// Clone branches into refs/heads without remote-tracking refs, upstream configuration, or a working tree.
         #[clap(long)]
         pub bare: bool,
 
@@ -922,7 +1196,7 @@ pub mod clone {
     }
 
     #[derive(Debug, clap::Parser)]
-    pub struct ShallowOptions {
+    pub(crate) struct ShallowOptions {
         /// Create a shallow clone with the history truncated to the given number of commits.
         #[clap(long, help_heading = Some("SHALLOW"), conflicts_with_all = ["shallow_since", "shallow_exclude"])]
         pub depth: Option<NonZeroU32>,
@@ -1021,7 +1295,7 @@ pub mod clean {
     use crate::shared::CheckPathSpec;
 
     #[derive(Default, Debug, Copy, Clone, PartialEq, Eq, PartialOrd, Ord, clap::ValueEnum)]
-    pub enum FindRepository {
+    pub(crate) enum FindRepository {
         All,
         #[default]
         NonBare,

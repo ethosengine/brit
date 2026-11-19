@@ -26,12 +26,14 @@ pub struct Pipeline<'repo> {
 /// Lifecycle
 impl<'repo> Pipeline<'repo> {
     /// Extract options from `repo` that are needed to properly drive a standard git filter pipeline.
+    /// Round-trip safety checks and external drivers only use configuration accepted by the repository's section filter.
     pub fn options(repo: &'repo Repository) -> Result<gix_filter::pipeline::Options> {
         let config = &repo.config.resolved;
-        let encodings =
-            Core::CHECK_ROUND_TRIP_ENCODING.try_into_encodings(config.string("core.checkRoundtripEncoding"))?;
+        let encodings = Core::CHECK_ROUND_TRIP_ENCODING.try_into_encodings(
+            config.string_filter("core.checkRoundtripEncoding", &mut repo.filter_config_section()),
+        )?;
         let safe_crlf = config
-            .string("core.safecrlf")
+            .string_filter("core.safecrlf", &mut repo.filter_config_section())
             .map(|value| Core::SAFE_CRLF.try_into_safecrlf(value))
             .transpose()
             .map(Option::unwrap_or_default)
@@ -182,6 +184,7 @@ impl Pipeline<'_> {
     /// and it should match the state used when [instantiating this instance](Self::new()).
     ///
     /// Return `Ok(None)` the file didn't exist in the worktree, or if it was of an untrackable type.
+    /// Reject paths outside the worktree or through symlinked ancestors, while allowing leaf symlinks.
     pub fn worktree_file_to_object(
         &mut self,
         rela_path: &BStr,
@@ -192,6 +195,13 @@ impl Pipeline<'_> {
         let worktree_dir = repo
             .workdir()
             .ok_or_else(|| Error::from_error(message("Cannot add worktree files in bare repositories")))?;
+        let Some(file_name) = rela_path_as_path.file_name() else {
+            bail!(gix_error::validation("A worktree file path must have a file name").with_input(rela_path));
+        };
+        let parent_dir = gix_fs::symlink::validate_relative_path(
+            worktree_dir,
+            rela_path_as_path.parent().expect("a file path has a parent"),
+        )?;
         let path = worktree_dir.join(&rela_path_as_path);
         let md = match std::fs::symlink_metadata(&path) {
             Ok(md) => md,
@@ -230,7 +240,9 @@ impl Pipeline<'_> {
             };
             (id, kind)
         } else if md.is_dir() {
-            let Some(submodule_repo) = crate::open_opts(&path, repo.open_options().clone()).ok() else {
+            gix_fs::symlink::validate_relative_path(&parent_dir, std::path::Path::new(file_name))?;
+            let options = repo.open_options().clone_without_trust();
+            let Some(submodule_repo) = crate::open_opts(&path, options).ok() else {
                 return Ok(None);
             };
             let Some(id) = submodule_repo.head_id().ok() else {

@@ -9,7 +9,7 @@ description = "A crate of the gitoxide project dealing .gitignore files"
 authors = ["Sebastian Thiel <sebastian.thiel@icloud.com>"]
 edition = "2024"
 include = ["/src/**/*", "/LICENSE-*"]
-rust-version = "1.88"
+rust-version = "1.95"
 
 [lib]
 doctest = true
@@ -31,7 +31,7 @@ document-features = { version = "0.2.1", optional = true }
 
 [dev-dependencies]
 gix-testtools = { path = "../tests/tools" }
-gix-fs = { path = "../gix-fs" }
+gix-fs = { path = "../gix-fs", features = ["unstable"] }
 
 [package.metadata.docs.rs]
 all-features = true

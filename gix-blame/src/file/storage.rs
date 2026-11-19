@@ -59,7 +59,7 @@ impl<O: gix_object::Find + gix_object::FindHeader> Storage<O> for Buffered {
         path: &BStr,
         kind: gix_diff::blob::ResourceKind,
     ) -> Result {
-        platform.set_resource(id, mode, path, kind, odb)?;
+        platform.set_resource(Some(id), mode, path, kind, odb)?;
         Ok(())
     }
 }

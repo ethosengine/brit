@@ -11,14 +11,18 @@ mod modules_file {
         for source in ["worktree", "index", "tree"] {
             let repo_dir = dir.join(source);
             for (options, use_overrides) in [
-                (crate::restricted().with(Trust::Reduced), false),
-                (crate::restricted().with(Trust::Full), true),
+                (crate::restricted().with_trust(Trust::Reduced), false),
+                (crate::restricted().with_trust(Trust::Full), true),
                 (
-                    crate::restricted().with(Trust::Full).filter_config_section(|_| false),
+                    crate::restricted()
+                        .with_trust(Trust::Full)
+                        .filter_config_section(|_| false),
                     false,
                 ),
                 (
-                    crate::restricted().with(Trust::Reduced).filter_config_section(|_| true),
+                    crate::restricted()
+                        .with_trust(Trust::Reduced)
+                        .filter_config_section(|_| true),
                     true,
                 ),
             ] {
@@ -49,7 +53,7 @@ mod modules_file {
             let repo = gix::open_opts(
                 &repo_dir,
                 crate::restricted()
-                    .with(Trust::Reduced)
+                    .with_trust(Trust::Reduced)
                     .config_overrides(["submodule.s.update=!trusted"]),
             )?;
             assert_eq!(
@@ -122,6 +126,35 @@ mod submodules {
     use gix_testtools::TestResult;
 
     use crate::{submodule::repo, util::hex_to_id};
+
+    #[test]
+    fn try_path_distinguishes_missing_and_invalid_fields() -> TestResult {
+        for case in ["missing", "implicit", "empty", "absolute", "escaping"] {
+            let repo = repo(&format!("path-{case}"))?;
+            let mut submodules = repo.submodules()?.expect("the fixture has submodule sections");
+            let unrelated = submodules.next().expect("the unrelated section comes first");
+            if case == "missing" {
+                assert_eq!(unrelated.try_path()?, None, "an absent path is optional");
+            } else {
+                assert!(
+                    unrelated
+                        .try_path()
+                        .expect_err("invalid fields are not absent")
+                        .is_validation(),
+                    "{case}: the porcelain accessor retains path validation"
+                );
+            }
+            assert!(unrelated.path().is_err(), "strict access still requires a valid path");
+            let module = submodules.next().expect("the valid section comes second");
+            assert_eq!(
+                module.try_path()?,
+                Some("module".into()),
+                "valid paths retain their bytes"
+            );
+            assert_eq!(module.path()?, "module", "strict access remains unchanged");
+        }
+        Ok(())
+    }
 
     #[test]
     fn all_modules_are_active_by_default() -> TestResult {

@@ -22,6 +22,11 @@
 #![cfg_attr(all(doc, feature = "document-features"), feature(doc_cfg))]
 #![allow(missing_docs)]
 #![deny(unsafe_code)]
+#![allow(
+    unnameable_types,
+    private_interfaces,
+    reason = "brit composes this CLI through `plumbing::Args`; its option types are reachable but not promised as nameable API"
+)]
 
 pub mod plumbing;
 pub mod porcelain;

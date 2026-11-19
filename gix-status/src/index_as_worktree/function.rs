@@ -17,7 +17,7 @@ use std::{
 };
 
 #[cfg(windows)]
-use crate::fscache::{FsCache, Metadata as FsCacheMetadata};
+use crate::fscache::FsCache;
 use crate::index_as_worktree::types::ConflictIndexEntry;
 use crate::{
     AtomicU64, SymlinkCheck,
@@ -423,26 +423,23 @@ impl<'index> State<'_, 'index> {
             }
         };
 
-        // Acquire metadata. On Windows we consult the precomputed stats first and
+        // Acquire metadata. On Windows we consult the cached metadata first and
         // only fall back to a syscall on miss; on other platforms per-file
         // `lstat` is already fast, so we just do the syscall directly.
         #[cfg(windows)]
-        let metadata = if let Some(cached) = self.fscache.as_mut().and_then(|c| c.get(rela_path)) {
-            FsCacheMetadata::Cached(cached)
+        let cached = self.fscache.as_mut().and_then(|c| c.get(rela_path));
+        #[cfg(not(windows))]
+        let cached: Option<&gix_index::fs::Metadata> = None;
+        let live;
+        let metadata = if let Some(cached) = cached {
+            cached
         } else {
             self.symlink_metadata_calls.fetch_add(1, Ordering::Relaxed);
-            match live_metadata(worktree_path)? {
-                Some(md) => FsCacheMetadata::Live(md),
-                None => return Ok(Some(Change::Removed.into())),
-            }
-        };
-        #[cfg(not(windows))]
-        let metadata = {
-            self.symlink_metadata_calls.fetch_add(1, Ordering::Relaxed);
-            match live_metadata(worktree_path)? {
+            live = match live_metadata(worktree_path)? {
                 Some(md) => md,
                 None => return Ok(Some(Change::Removed.into())),
-            }
+            };
+            &live
         };
 
         // Handle directory: index entries are normally only for files/symlinks.
@@ -463,21 +460,13 @@ impl<'index> State<'_, 'index> {
             return Ok(Some(EntryStatus::IntentToAdd));
         }
 
-        #[cfg(windows)]
-        let new_stat = metadata
-            .to_stat()
-            .or_raise(|| message("The clock was off when reading file metadata"))?;
-        #[cfg(not(windows))]
-        let new_stat = gix_index::entry::Stat::from_fs(&metadata)
+        let new_stat = gix_index::entry::Stat::from_fs(metadata)
             .or_raise(|| message("The clock was off when reading file metadata"))?;
 
-        #[cfg(windows)]
-        let mode_change = metadata.mode_change(entry.mode, self.options.fs.symlink, self.options.fs.executable_bit);
-        #[cfg(not(windows))]
         let mode_change =
             entry
                 .mode
-                .change_to_match_fs(&metadata, self.options.fs.symlink, self.options.fs.executable_bit);
+                .change_to_match_fs(metadata, self.options.fs.symlink, self.options.fs.executable_bit);
         let executable_bit_changed = match mode_change {
             Some(gix_index::entry::mode::Change::Type { new_mode }) => {
                 return Ok(Some(
@@ -669,12 +658,9 @@ where
                 .at_entry_with_source(self.rela_path, Some(self.entry.mode), &source)
                 .map_err(gix_hash::io::from_std_io)?;
             let mut file = std::fs::File::open(self.path).map_err(gix_hash::io::from_std_io)?;
-            if !self
-                .filter
-                .may_convert_to_git(gix_path::into_bstr(self.path)?.as_ref(), &mut |_, attrs| {
-                    platform.matching_attributes(attrs);
-                })?
-            {
+            if !self.filter.may_convert_to_git(self.rela_path, &mut |_, attrs| {
+                platform.matching_attributes(attrs);
+            })? {
                 self.worktree_reads.fetch_add(1, Ordering::Relaxed);
                 return Ok(Stream {
                     inner: Data::File(file),
@@ -690,7 +676,7 @@ where
                 .filter
                 .convert_to_git_stream(
                     source,
-                    gix_path::into_bstr(self.path)?.as_ref(),
+                    self.rela_path,
                     &mut |_path, attrs| {
                         platform.matching_attributes(attrs);
                     },
@@ -735,6 +721,19 @@ impl<'a, T> Iterator for OffsetIter<'a, T> {
 }
 
 impl Conflict {
+    /// Return the two-letter unmerged status code used by `git status --short` and `--porcelain=v1`.
+    pub const fn as_str(&self) -> &'static str {
+        match self {
+            Conflict::BothDeleted => "DD",
+            Conflict::AddedByUs => "AU",
+            Conflict::DeletedByThem => "UD",
+            Conflict::AddedByThem => "UA",
+            Conflict::DeletedByUs => "DU",
+            Conflict::BothAdded => "AA",
+            Conflict::BothModified => "UU",
+        }
+    }
+
     /// Given `entries` and `path_backing` obtained from an [index](gix_index::State), inspect up to three consecutive
     /// conflict-stage entries starting at `start_index` whose path equals `entry_path`.
     ///

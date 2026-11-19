@@ -114,7 +114,7 @@ fn protocol_and_host_without_url_is_valid() {
     insta::assert_debug_snapshot!(err, "protocol and host without url is valid", @r#"Credentials for "https://github.com" could not be obtained"#);
     assert!(
         err.is_unauthenticated(),
-        "missing credentials require obtaining an identity"
+        "missing credentials require obtaining credentials"
     );
     assert!(
         called,
@@ -180,7 +180,7 @@ fn url_alone_is_valid() {
     insta::assert_debug_snapshot!(err, "url alone is valid", @r#"Credentials for "https://github.com" could not be obtained"#);
     assert!(
         err.is_unauthenticated(),
-        "missing credentials require obtaining an identity"
+        "missing credentials require obtaining credentials"
     );
     assert!(called);
 }

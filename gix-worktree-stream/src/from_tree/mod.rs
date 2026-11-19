@@ -171,11 +171,12 @@ where
         .or_raise(|| message("Could not shut down filter processes"))?;
     drop(dlg);
 
+    // Null IDs are confined to the byte-stream format; public entries expose typed absence.
     for entry in additional_entries {
         gix_utils::stream::check(should_interrupt).or_error()?;
         protocol::write_entry_header_and_path(
             entry.relative_path.as_ref(),
-            &entry.id,
+            entry.id.as_deref().unwrap_or(tree.kind().null_ref()),
             entry.mode,
             entry.source.len(),
             out,

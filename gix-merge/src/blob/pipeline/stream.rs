@@ -11,7 +11,7 @@ impl Pipeline {
     )]
     pub fn convert_to_mergeable_stream(
         &mut self,
-        id: &gix_hash::oid,
+        id: Option<&gix_hash::oid>,
         mode: EntryKind,
         rela_path: &BStr,
         kind: ResourceKind,
@@ -26,6 +26,7 @@ impl Pipeline {
                 "Entry at '{rela_path}' must be regular file or symlink, but was {mode:?}"
             )));
         }
+        let id = id.filter(|id| !id.is_null());
         let bytes = match self.roots.by_kind(kind) {
             Some(root) => {
                 let path = root.join(gix_path::from_bstr(rela_path)?);
@@ -50,12 +51,14 @@ impl Pipeline {
                     rela_path,
                     attributes,
                     &mut || {
-                        if convert == Mode::Renormalize || id.is_null() {
+                        if convert == Mode::Renormalize {
                             Ok(None)
                         } else {
-                            objects
-                                .find_stream(id, &storage.budget, storage.interrupt)
-                                .map(|(_, bytes)| Some(bytes))
+                            id.map_or(Ok(None), |id| {
+                                objects
+                                    .find_stream(id, &storage.budget, storage.interrupt)
+                                    .map(|(_, bytes)| Some(bytes))
+                            })
                         }
                     },
                     &storage.budget,
@@ -63,9 +66,9 @@ impl Pipeline {
                 )?
             }
             None => {
-                if id.is_null() {
+                let Some(id) = id else {
                     return Ok((None, None));
-                }
+                };
                 let header = objects
                     .try_header(id)?
                     .ok_or_raise(|| message!("An object with id {id} could not be found").not_found())?;

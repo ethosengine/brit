@@ -2,14 +2,14 @@ lints.workspace = true
 
 [package]
 name = "gix-index"
-version = "0.57.4"
+version = "0.58.0"
 repository = "https://github.com/GitoxideLabs/gitoxide"
 license = "MIT OR Apache-2.0"
 description = "A work-in-progress crate of the gitoxide project dedicated implementing the git index file"
 authors = ["Sebastian Thiel <sebastian.thiel@icloud.com>"]
 edition = "2024"
 include = ["/src/**/*", "/LICENSE-*", "/README.md"]
-rust-version = "1.88"
+rust-version = "1.95"
 
 
 [lib]
@@ -37,10 +37,12 @@ gix-error = { version = "^0.5.2", path = "../gix-error", registry = "elohim" }
 gix-bitmap = { version = "^0.6.1", path = "../gix-bitmap", registry = "elohim" }
 gix-object = { version = "^0.66.2", path = "../gix-object", registry = "elohim" }
 gix-validate = { version = "^0.13.1", path = "../gix-validate", registry = "elohim" }
-gix-traverse = { version = "^0.63.2", path = "../gix-traverse", registry = "elohim" }
-gix-lock = { version = "^26.0.2", path = "../gix-lock", registry = "elohim" }
-gix-fs = { version = "^0.24.2", path = "../gix-fs", registry = "elohim" }
-gix-utils = { version = "^0.5.3", path = "../gix-utils", registry = "elohim", features = ["progress"] }
+gix-traverse = { version = "^0.64.0", path = "../gix-traverse", registry = "elohim" }
+gix-lock = { version = "^27.0.0", path = "../gix-lock", registry = "elohim" }
+gix-fs = { version = "^1.0.0", path = "../gix-fs", registry = "elohim", features = ["unstable"] }
+gix-utils = { version = "^0.5.3", path = "../gix-utils", registry = "elohim", features = [
+    "progress",
+] }
 
 hashbrown = "0.17.1"
 fnv = "1.0.7"
@@ -76,3 +78,18 @@ insta = { version = "1.46.3", features = ["filters"] }
 
 [package.metadata.docs.rs]
 features = ["sha1", "document-features", "serde"]
+
+[package.metadata.qa]
+checks = [
+    { args = ["--features", "sha1,serde"] },
+]
+tests = [
+    { args = ["--features", "gix-parallel/parallel"], env = { GIX_TEST_FIXTURE_HASH = "sha1" } },
+    { args = ["--features", "gix-parallel/parallel"], env = { GIX_TEST_FIXTURE_HASH = "sha256" } },
+]
+
+[package.metadata.qa.wasm]
+targets = ["wasm32-unknown-unknown", "wasm32-wasip1", "wasm32-wasip2"]
+checks = [
+    { args = ["--features", "sha1"] },
+]

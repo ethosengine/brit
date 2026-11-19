@@ -3,10 +3,10 @@ use gix_hash::ObjectId;
 
 use crate::{extension::Signature, util::split_at_byte_exclusive};
 
-/// Paths with recorded conflict stages.
+/// Paths with merge stages recorded by the resolve-undo extension.
 pub type Paths = Vec<ResolvePath>;
 
-/// A resolved path and its original conflict stages.
+/// A path with merge stages recorded by the resolve-undo extension.
 #[derive(Clone)]
 pub struct ResolvePath {
     /// relative to the root of the repository, or what would be stored in the index
@@ -16,7 +16,7 @@ pub struct ResolvePath {
     pub stages: [Option<Stage>; 3],
 }
 
-/// One original conflict stage.
+/// The file mode and object ID of a recorded merge stage.
 #[derive(Clone, Copy)]
 pub struct Stage {
     /// Git file mode.
@@ -25,10 +25,10 @@ pub struct Stage {
     pub id: ObjectId,
 }
 
-/// Git resolve-undo extension signature.
+/// The signature of the resolve-undo extension.
 pub const SIGNATURE: Signature = *b"REUC";
 
-/// Decode resolve-undo bytes for the repository object hash format.
+/// Decode resolve-undo extension `data` using `object_hash`, returning `None` if it is malformed.
 pub fn decode(mut data: &[u8], object_hash: gix_hash::Kind) -> Option<Paths> {
     let hash_len = object_hash.len_in_bytes();
     let mut out = Vec::new();

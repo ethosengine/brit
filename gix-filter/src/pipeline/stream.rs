@@ -5,6 +5,7 @@ use crate::{
     pipeline::{convert::to_worktree, util::Configuration},
 };
 use bstr::BStr;
+use gix_encoding::Encoding;
 use gix_error::{Result, ResultExt, bail, validation};
 use gix_utils::stream::{self, Budget, Spool};
 use std::{
@@ -40,6 +41,7 @@ impl Pipeline {
             attributes,
             self.options.eol_config,
             false,
+            &self.options.encodings_with_roundtrip_check,
         )?;
         Ok(driver.is_some() || digest != eol::AttributesDigest::Binary || encoding.is_some() || apply_ident_filter)
     }
@@ -59,6 +61,7 @@ impl Pipeline {
             driver,
             digest,
             encoding,
+            check_roundtrip_encoding,
             apply_ident_filter,
             ..
         } = Configuration::at_path(
@@ -68,6 +71,7 @@ impl Pipeline {
             attributes,
             self.options.eol_config,
             false,
+            &self.options.encodings_with_roundtrip_check,
         )?;
         if let Some(driver) = driver {
             if driver.process.is_none() {
@@ -93,12 +97,18 @@ impl Pipeline {
             let mut out = budget.spool().or_error()?;
             decode(&mut src, &mut out, encoding, interrupt)?;
             out.rewind().or_error()?;
-            if self.options.encodings_with_roundtrip_check.contains(&encoding) {
+            // Empty input stays empty and needs no proof, as in `worktree::encode_to_git`.
+            if check_roundtrip_encoding && !src.is_empty() {
                 let mut roundtrip = budget.spool().or_error()?;
-                let encoded = encode(&mut out, &mut roundtrip, encoding, interrupt)?;
+                if !transcode(&mut out, &mut roundtrip, Encoding::Utf8, encoding, interrupt)? {
+                    bail!(validation(format!(
+                        "Could not re-encode input as '{}'",
+                        encoding.name()
+                    )));
+                }
                 src.rewind().or_error()?;
                 roundtrip.rewind().or_error()?;
-                if !encoded || !equal(&mut src, &mut roundtrip, interrupt)? {
+                if !equal(&mut src, &mut roundtrip, interrupt)? {
                     bail!(validation(format!(
                         "Encoding from '{}' to 'UTF-8' and back is not the same",
                         encoding.name()
@@ -197,6 +207,7 @@ impl Pipeline {
             attributes,
             self.options.eol_config,
             options.unknown_encoding == to_worktree::UnknownEncoding::Ignore,
+            &[],
         )?;
         if apply_ident_filter {
             let mut hash = gix_hash::hasher(self.object_hash);
@@ -225,7 +236,8 @@ impl Pipeline {
             }
             src.rewind().or_error()?;
             if has_ident {
-                let replacement = format!("$Id: {}$", hash.try_finalize()?);
+                // Git's expanded spelling, as `ident::apply` writes it.
+                let replacement = format!("$Id: {} $", hash.try_finalize()?);
                 let mut out = budget.spool().or_error()?;
                 let mut reader = BufReader::new(&mut src);
                 let mut matched = 0;
@@ -298,11 +310,19 @@ impl Pipeline {
             }
         }
         if let Some(encoding) = encoding {
-            let mut out = budget.spool().or_error()?;
-            if encode(&mut src, &mut out, encoding, interrupt)? {
-                src = out;
-            } else if options.unknown_encoding == to_worktree::UnknownEncoding::Fail {
-                bail!(validation("Invalid UTF-8 or unmappable worktree encoding"));
+            // Empty input stays empty, including for encodings which normally produce a BOM.
+            if !src.is_empty() {
+                let mut out = budget.spool().or_error()?;
+                if transcode(&mut src, &mut out, Encoding::Utf8, encoding, interrupt)? {
+                    src = out;
+                } else if options.unknown_encoding == to_worktree::UnknownEncoding::Fail {
+                    bail!(validation(format!(
+                        "Could not encode UTF-8 input as '{}'",
+                        encoding.name()
+                    )));
+                } else {
+                    gix_trace::warn!(encoding = %encoding.name(), "Ignoring failed worktree encoding");
+                }
             }
             src.rewind().or_error()?;
         }
@@ -357,39 +377,50 @@ fn equal(left: &mut Spool, right: &mut Spool, interrupt: &AtomicBool) -> Result<
         }
     }
 }
-fn decode(
-    src: &mut Spool,
-    out: &mut Spool,
-    encoding: &'static encoding_rs::Encoding,
-    interrupt: &AtomicBool,
-) -> Result<()> {
-    let mut decoder = encoding.new_decoder_with_bom_removal();
-    let mut input = [0; stream::CHUNK];
-    let mut output = [0; stream::CHUNK];
-    loop {
-        stream::check(interrupt).or_error()?;
-        let n = src.read(&mut input).or_error()?;
-        let eof = n == 0;
-        let mut remaining = &input[..n];
-        loop {
-            stream::check(interrupt).or_error()?;
-            let (result, read, written) = decoder.decode_to_utf8_without_replacement(remaining, &mut output, eof);
-            out.write_all(&output[..written]).or_error()?;
-            remaining = &remaining[read..];
-            match result {
-                encoding_rs::DecoderResult::InputEmpty => break,
-                encoding_rs::DecoderResult::OutputFull => {}
-                encoding_rs::DecoderResult::Malformed(_, _) => {
-                    bail!(validation(format!(
-                        "The input was malformed and could not be decoded as '{}'",
-                        encoding.name()
-                    )));
-                }
-            }
+/// Decode worktree content in `encoding` to UTF-8 for storage in Git, without buffering it.
+///
+/// This applies the rules of `worktree::encode_to_git`: empty input stays empty, UTF-16/32 require
+/// a byte-order mark and their explicit-endian variants prohibit one.
+fn decode(src: &mut Spool, out: &mut Spool, encoding: Encoding, interrupt: &AtomicBool) -> Result<()> {
+    if src.is_empty() {
+        return Ok(());
+    }
+    let mut start = [0; 4];
+    let mut len = 0;
+    while len < start.len() {
+        let n = src.read(&mut start[len..]).or_error()?;
+        if n == 0 {
+            break;
         }
-        if eof {
-            return Ok(());
-        }
+        len += n;
+    }
+    src.rewind().or_error()?;
+    let start = &start[..len];
+    let utf16_bom = start.starts_with(b"\xff\xfe") || start.starts_with(b"\xfe\xff");
+    let utf32_bom = start.starts_with(b"\xff\xfe\0\0") || start.starts_with(b"\0\0\xfe\xff");
+    if matches!(encoding, Encoding::Utf16Le | Encoding::Utf16Be) && utf16_bom
+        || matches!(encoding, Encoding::Utf32Le | Encoding::Utf32Be) && utf32_bom
+    {
+        bail!(validation(format!("BOM is prohibited for '{}'", encoding.name())));
+    }
+    if encoding == Encoding::Utf16 && !utf16_bom || encoding == Encoding::Utf32 && !utf32_bom {
+        bail!(validation(format!("BOM is required for '{}'", encoding.name())));
+    }
+    if !transcode(src, out, encoding, Encoding::Utf8, interrupt)? {
+        bail!(validation(format!("Could not decode input as '{}'", encoding.name())));
+    }
+    Ok(())
+}
+/// Convert `src` from `from` to `to` in bounded chunks, appending to `out`.
+///
+/// Returns `false` if the content cannot be represented; `out` then holds a partial conversion
+/// that the caller must discard. Read, write and interruption failures are errors.
+fn transcode(src: &mut Spool, out: &mut Spool, from: Encoding, to: Encoding, interrupt: &AtomicBool) -> Result<bool> {
+    let mut read = gix_encoding::read::Transcoder::new(&mut *src, from, to);
+    match stream::copy(&mut read, out, interrupt) {
+        Ok(_) => Ok(true),
+        Err(err) if err.kind() == std::io::ErrorKind::InvalidData => Ok(false),
+        Err(err) => Err(err).or_error(),
     }
 }
 fn statistics(src: &mut Spool, interrupt: &AtomicBool) -> Result<eol::Stats> {
@@ -433,45 +464,6 @@ fn statistics(src: &mut Spool, interrupt: &AtomicBool) -> Result<eol::Stats> {
     }
     Ok(stats)
 }
-fn encode(
-    src: &mut Spool,
-    out: &mut Spool,
-    encoding: &'static encoding_rs::Encoding,
-    interrupt: &AtomicBool,
-) -> Result<bool> {
-    let mut encoder = encoding.new_encoder();
-    let mut input = [0; stream::CHUNK];
-    let mut output = [0; stream::CHUNK];
-    let mut carry = 0;
-    loop {
-        stream::check(interrupt).or_error()?;
-        let n = src.read(&mut input[carry..]).or_error()?;
-        let end = carry + n;
-        let eof = n == 0;
-        let valid = match std::str::from_utf8(&input[..end]) {
-            Ok(_) => end,
-            Err(err) if err.error_len().is_none() && !eof => err.valid_up_to(),
-            Err(_) => return Ok(false),
-        };
-        let mut text = std::str::from_utf8(&input[..valid]).expect("validated UTF-8");
-        loop {
-            stream::check(interrupt).or_error()?;
-            let (result, read, written) = encoder.encode_from_utf8_without_replacement(text, &mut output, eof);
-            out.write_all(&output[..written]).or_error()?;
-            text = &text[read..];
-            match result {
-                encoding_rs::EncoderResult::Unmappable(_) => return Ok(false),
-                encoding_rs::EncoderResult::InputEmpty => break,
-                encoding_rs::EncoderResult::OutputFull => {}
-            }
-        }
-        if eof {
-            return Ok(true);
-        }
-        input.copy_within(valid..end, 0);
-        carry = end - valid;
-    }
-}
 
 #[cfg(test)]
 mod tests {
@@ -480,12 +472,8 @@ mod tests {
     fn incremental_decode_matches_buffered_encoding_including_malformed_tails() -> gix_testtools::TestResult {
         let directory = gix_testtools::tempfile::tempdir()?;
         let budget = Budget::new(directory.path())?;
-        for encoding in [
-            encoding_rs::UTF_8,
-            encoding_rs::UTF_16LE,
-            encoding_rs::WINDOWS_1252,
-            encoding_rs::ISO_2022_JP,
-        ] {
+        for label in ["UTF-8", "UTF-16LE", "UTF-16", "windows-1252", "ISO-2022-JP"] {
+            let encoding = crate::worktree::encoding::for_label(label)?;
             for tail in [&b"\xc3\xa9"[..], b"\xe9", b"\x1b$B$\"\x1b(B", b"\0A", b"\xff"] {
                 let mut input = vec![b'x'; stream::CHUNK - 1];
                 input.extend_from_slice(tail);
@@ -533,11 +521,8 @@ mod tests {
     fn encoding_is_incremental_and_failure_preserves_source() -> gix_testtools::TestResult {
         let temp = gix_testtools::tempfile::tempdir()?;
         let budget = Budget::new(temp.path())?;
-        for encoding in [
-            encoding_rs::UTF_16LE,
-            encoding_rs::WINDOWS_1252,
-            encoding_rs::ISO_2022_JP,
-        ] {
+        for label in ["UTF-16LE", "windows-1252", "ISO-2022-JP"] {
+            let encoding = crate::worktree::encoding::for_label(label)?;
             for tail in ["€", "日本語", "x"] {
                 let mut input = vec![b'x'; stream::CHUNK - 1];
                 input.extend_from_slice(tail.as_bytes());
@@ -548,7 +533,7 @@ mod tests {
                 source.rewind()?;
                 let mut out = budget.spool()?;
                 assert_eq!(
-                    encode(&mut source, &mut out, encoding, &AtomicBool::new(false))?,
+                    transcode(&mut source, &mut out, Encoding::Utf8, encoding, &AtomicBool::new(false))?,
                     success
                 );
                 if success {

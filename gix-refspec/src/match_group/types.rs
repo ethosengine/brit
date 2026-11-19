@@ -72,8 +72,9 @@ pub mod match_push {
 pub struct Item<'a> {
     /// The full name of the reference, like `refs/heads/main`.
     pub full_ref_name: &'a BStr,
-    /// The id that `full_ref_name` points to, which typically is a commit, but can also be a tag object (or anything else).
-    pub target: &'a oid,
+    /// The ID that `full_ref_name` points to, typically a commit, but possibly a tag or another object.
+    /// `None` for an unborn reference or a name-only query. Null IDs are treated as unavailable.
+    pub target: Option<&'a oid>,
     /// The object an annotated tag is pointing to, if `target` is an annotated tag.
     pub object: Option<&'a oid>,
 }
@@ -83,7 +84,8 @@ pub struct Item<'a> {
 pub enum SourceRef<'a> {
     /// A full reference name, which is expected to be valid.
     ///
-    /// Validity, however, is not enforced here.
+    /// Validity, however, is not enforced here. Reverse mappings preserve the parsed source spelling,
+    /// which may instead be an abbreviated name, `HEAD`, or a hexadecimal object ID.
     FullName(Cow<'a, BStr>),
     /// The name of an object that is expected to exist on the remote side.
     /// Note that it might not be advertised by the remote but part of the object graph,

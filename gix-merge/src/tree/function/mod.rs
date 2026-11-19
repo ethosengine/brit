@@ -1,5 +1,9 @@
 mod change;
-mod resolve;
+mod directories;
+mod entry;
+mod normalize;
+mod path;
+mod pipeline;
 
-pub(crate) use resolve::tree_with_storage;
-pub use resolve::{tree, tree_bounded};
+pub(crate) use pipeline::tree_with_storage;
+pub use pipeline::{tree, tree_bounded};

@@ -163,7 +163,7 @@ pub mod describe {
                     let mut peeled_commits_and_tag_date = Vec::new();
                     for reference in platform.tags()? {
                         let reference = reference?;
-                        // Preserve the existing direct-reference and direct-commit selection.
+                        // Preserve the existing direct-reference selection.
                         let Some(tag_id) = reference.try_id() else { continue };
                         if tag_id.header()?.kind() != gix_object::Kind::Tag {
                             continue;
@@ -175,9 +175,28 @@ pub mod describe {
                             .flatten()
                             .map(|s| s.seconds())
                             .unwrap_or(0);
-                        let commit_id = gix_object::TagRefIter::from_bytes(tag.data, tag_id.kind()).target_id()?;
+                        let mut commit_id = gix_object::TagRefIter::from_bytes(tag.data, tag_id.kind()).target_id()?;
                         buffer.clear();
-                        if repo.find_header(commit_id)?.kind() != gix_object::Kind::Commit {
+                        // Peel nested tags to their commit while retaining the outer tag's date, like `git describe`.
+                        let is_commit = loop {
+                            match repo.find_header(commit_id)?.kind() {
+                                gix_object::Kind::Commit => break true,
+                                gix_object::Kind::Tag => {
+                                    let nested = objects.load(&commit_id, &mut buffer)?;
+                                    // A malformed inner tag has no known target, which only disqualifies this name.
+                                    let Ok(target_id) =
+                                        gix_object::TagRefIter::from_bytes(nested.data, commit_id.kind()).target_id()
+                                    else {
+                                        buffer.clear();
+                                        break false;
+                                    };
+                                    commit_id = target_id;
+                                    buffer.clear();
+                                }
+                                _ => break false,
+                            }
+                        };
+                        if !is_commit {
                             continue;
                         }
                         peeled_commits_and_tag_date.push((

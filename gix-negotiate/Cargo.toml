@@ -2,13 +2,13 @@ lints.workspace = true
 
 [package]
 name = "gix-negotiate"
-version = "0.37.2"
+version = "0.38.0"
 repository = "https://github.com/GitoxideLabs/gitoxide"
 license = "MIT OR Apache-2.0"
 description = "A crate of the gitoxide project implementing negotiation algorithms"
 authors = ["Sebastian Thiel <sebastian.thiel@icloud.com>"]
 edition = "2024"
-rust-version = "1.88"
+rust-version = "1.95"
 include = ["/src/**/*", "/LICENSE-*"]
 
 [lib]
@@ -25,9 +25,9 @@ sha256 = ["gix-hash/sha256"]
 gix-error = { version = "^0.5.2", path = "../gix-error", registry = "elohim" }
 gix-hash = { version = "^0.28.2", path = "../gix-hash", registry = "elohim" }
 gix-object = { version = "^0.66.2", path = "../gix-object", registry = "elohim" }
-gix-date = { version = "^0.18.1", path = "../gix-date", registry = "elohim" }
-gix-commitgraph = { version = "^0.41.2", path = "../gix-commitgraph", registry = "elohim" }
-gix-revwalk = { version = "^0.37.2", path = "../gix-revwalk", registry = "elohim" }
+gix-date = { version = "^0.19.0", path = "../gix-date", registry = "elohim" }
+gix-commitgraph = { version = "^0.42.0", path = "../gix-commitgraph", registry = "elohim" }
+gix-revwalk = { version = "^0.38.0", path = "../gix-revwalk", registry = "elohim" }
 bitflags = "2"
 
 [dev-dependencies]
@@ -38,3 +38,9 @@ gix-hash = { path = "../gix-hash", features = ["sha1", "sha256"] }
 
 [package.metadata.docs.rs]
 features = ["sha1"]
+
+[package.metadata.qa]
+tests = [
+    { args = [], env = { GIX_TEST_FIXTURE_HASH = "sha1" } },
+    { args = ["--features", "sha256"], env = { GIX_TEST_FIXTURE_HASH = "sha256" } },
+]

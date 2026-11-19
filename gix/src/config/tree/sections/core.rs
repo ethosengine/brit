@@ -73,6 +73,11 @@ impl Core {
     /// The `core.sharedRepository` key.
     pub const SHARED_REPOSITORY: SharedRepository =
         SharedRepository::new_with_validate("sharedRepository", &config::Tree::CORE, validate::SharedRepository);
+    /// The `core.sparseCheckout` key.
+    pub const SPARSE_CHECKOUT: keys::Boolean = keys::Boolean::new_boolean("sparseCheckout", &config::Tree::CORE);
+    /// The `core.sparseCheckoutCone` key.
+    pub const SPARSE_CHECKOUT_CONE: keys::Boolean =
+        keys::Boolean::new_boolean("sparseCheckoutCone", &config::Tree::CORE);
     /// The `core.symlinks` key.
     pub const SYMLINKS: keys::Boolean = keys::Boolean::new_boolean("symlinks", &config::Tree::CORE);
     /// The `core.trustCTime` key.
@@ -145,6 +150,8 @@ impl Section for Core {
             &Self::PRECOMPOSE_UNICODE,
             &Self::REPOSITORY_FORMAT_VERSION,
             &Self::SHARED_REPOSITORY,
+            &Self::SPARSE_CHECKOUT,
+            &Self::SPARSE_CHECKOUT_CONE,
             &Self::SYMLINKS,
             &Self::TRUST_C_TIME,
             &Self::WORKTREE,
@@ -207,42 +214,22 @@ mod filter {
     pub type CheckRoundTripEncoding = keys::Any<validate::CheckRoundTripEncoding>;
 
     mod check_round_trip_encoding {
-        use crate::{
-            Result,
-            bstr::ByteSlice,
-            config::tree::{Key, core::CheckRoundTripEncoding},
-        };
+        use crate::{Result, bstr::BString, config::tree::core::CheckRoundTripEncoding};
 
         impl CheckRoundTripEncoding {
-            /// Convert `value` into a list of encodings, which are either space or coma separated. Fail if an encoding is unknown.
-            /// If `None`, the default is returned.
-            pub fn try_into_encodings(
-                &'static self,
-                value: Option<impl gix_utils::AsBStr>,
-            ) -> Result<Vec<&'static gix_filter::encoding::Encoding>> {
+            /// Split `value` on commas or Git whitespace, preserving the original encoding names.
+            ///
+            /// If `None`, return Git's `SHIFT-JIS` default. Unknown names are accepted like in Git:
+            /// they do not enable conversion, but merely select matching attributes for round-trip checks.
+            pub fn try_into_encodings(&'static self, value: Option<impl gix_utils::AsBStr>) -> Result<Vec<BString>> {
                 Ok(match value {
-                    None => vec![gix_filter::encoding::SHIFT_JIS],
-                    Some(value) => {
-                        let value = value.as_bstr();
-                        let mut out = Vec::new();
-                        for encoding in value
-                            .as_bstr()
-                            .split(|b| *b == b',' || *b == b' ')
-                            .filter(|e| !e.trim().is_empty())
-                        {
-                            out.push(
-                                gix_filter::encoding::Encoding::for_label(encoding.trim()).ok_or_else(|| {
-                                    gix_error::message!(
-                                        "The encoding named '{}' seen in key '{}={value}' is unsupported",
-                                        encoding.as_bstr(),
-                                        self.logical_name()
-                                    )
-                                    .validation_error()
-                                })?,
-                            );
-                        }
-                        out
-                    }
+                    None => vec!["SHIFT-JIS".into()],
+                    Some(value) => value
+                        .as_bstr()
+                        .split(|b| *b == b',' || gix_utils::git_is_space(*b))
+                        .filter(|label| !label.is_empty())
+                        .map(BString::from)
+                        .collect(),
                 })
             }
         }
@@ -536,9 +523,11 @@ mod abbrev {
     }
 }
 
-mod validate {
+/// Validation for `core` configuration keys.
+pub mod validate {
     use crate::{Result, bstr::BStr, config::tree::keys};
 
+    /// Validate values for [`super::RepositoryFormatVersion`].
     #[derive(Clone, Copy)]
     pub struct RepositoryFormatVersion;
     impl keys::Validate for RepositoryFormatVersion {
@@ -549,6 +538,7 @@ mod validate {
         }
     }
 
+    /// Validate values for [`super::Disambiguate`].
     #[derive(Clone, Copy)]
     pub struct Disambiguate;
     impl keys::Validate for Disambiguate {
@@ -559,6 +549,7 @@ mod validate {
         }
     }
 
+    /// Validate values for [`super::LogAllRefUpdates`].
     #[derive(Clone, Copy)]
     pub struct LogAllRefUpdates;
     impl keys::Validate for LogAllRefUpdates {
@@ -569,6 +560,7 @@ mod validate {
         }
     }
 
+    /// Validate values for [`super::CheckStat`].
     #[derive(Clone, Copy)]
     pub struct CheckStat;
     impl keys::Validate for CheckStat {
@@ -578,6 +570,7 @@ mod validate {
         }
     }
 
+    /// Validate values for [`super::Abbrev`].
     #[derive(Clone, Copy)]
     pub struct Abbrev;
     impl keys::Validate for Abbrev {
@@ -591,6 +584,7 @@ mod validate {
         }
     }
 
+    /// Validate values for [`super::SharedRepository`].
     #[derive(Clone, Copy)]
     pub struct SharedRepository;
     impl keys::Validate for SharedRepository {
@@ -600,6 +594,7 @@ mod validate {
         }
     }
 
+    /// Validate values for [`super::SafeCrlf`].
     #[cfg(feature = "attributes")]
     #[derive(Clone, Copy)]
     pub struct SafeCrlf;
@@ -611,6 +606,7 @@ mod validate {
         }
     }
 
+    /// Validate values for [`super::AutoCrlf`].
     #[cfg(feature = "attributes")]
     #[derive(Clone, Copy)]
     pub struct AutoCrlf;
@@ -622,6 +618,7 @@ mod validate {
         }
     }
 
+    /// Validate values for [`super::Eol`].
     #[cfg(feature = "attributes")]
     #[derive(Clone, Copy)]
     pub struct Eol;
@@ -633,6 +630,7 @@ mod validate {
         }
     }
 
+    /// Validate values for [`super::CheckRoundTripEncoding`].
     #[cfg(feature = "attributes")]
     #[derive(Clone, Copy)]
     pub struct CheckRoundTripEncoding;

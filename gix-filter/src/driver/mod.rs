@@ -69,7 +69,7 @@ pub struct State {
     /// These processes are expected to shut down once their stdin/stdout are dropped.
     running: ProcessMap,
 
-    /// The context to pass to spawned filter programs.
+    /// The context to pass to spawned filter programs, with `worktree_dir` as their working directory if set.
     pub context: gix_command::Context,
 }
 
@@ -111,12 +111,17 @@ fn substitute_f_parameter(cmd: &BStr, path: &BStr) -> BString {
     buf
 }
 
+struct RunningProcess {
+    client: process::Client,
+    command: std::process::Command,
+}
+
 /// Reaps all tracked filter processes on drop as a best-effort fallback to [`State::shutdown()`].
 #[derive(Default)]
-struct ProcessMap(HashMap<BString, process::Client>);
+struct ProcessMap(HashMap<BString, RunningProcess>);
 
 impl std::ops::Deref for ProcessMap {
-    type Target = HashMap<BString, process::Client>;
+    type Target = HashMap<BString, RunningProcess>;
 
     fn deref(&self) -> &Self::Target {
         &self.0
@@ -131,8 +136,8 @@ impl std::ops::DerefMut for ProcessMap {
 
 impl Drop for ProcessMap {
     fn drop(&mut self) {
-        for (_, client) in self.0.drain() {
-            let _ = client.into_child().wait();
+        for (_, process) in self.0.drain() {
+            let _ = process.client.into_child().wait();
         }
     }
 }

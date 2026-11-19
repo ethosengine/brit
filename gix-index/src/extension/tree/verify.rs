@@ -8,23 +8,21 @@ use gix_object::FindExt;
 use crate::extension::Tree;
 
 impl Tree {
-    /// Validate the correctness of this instance. If `use_objects` is true, then `objects` will be used to access all objects.
+    /// Validate the structure of this instance. If `use_objects` is true, also check objects for valid cache nodes.
+    /// Invalid nodes have no usable tree ID, but their descendants are still verified.
     pub fn verify(&self, use_objects: bool, objects: impl gix_object::Find) -> Result {
         fn verify_recursive(
-            parent_id: gix_hash::ObjectId,
-            parent_num_entries: Option<u32>,
-            children: &[Tree],
+            parent: &Tree,
             mut object_buf: Option<&mut Vec<u8>>,
             objects: &impl gix_object::Find,
         ) -> Result<Option<u32>> {
-            if children.is_empty() {
-                return Ok(None);
-            }
+            let parent_id = parent.id;
+            let children = &parent.children;
             let mut entries = 0u32;
             let mut prev = None::<&Tree>;
             for child in children {
                 // Git invalidates every ancestor of an invalidated node, so a valid tree can't contain one.
-                if parent_num_entries.is_some() && child.num_entries.is_none() {
+                if parent.num_entries.is_some() && child.num_entries.is_none() {
                     bail!(corruption(format!(
                         "Valid tree {parent_id} contains the invalidated subtree \"{}\"",
                         child.name.as_bstr()
@@ -44,8 +42,8 @@ impl Tree {
                 }
                 prev = Some(child);
             }
-            if parent_num_entries.is_some()
-                && let Some(buf) = object_buf.as_mut()
+            if let Some(buf) = object_buf.as_mut()
+                && parent.num_entries.is_some()
             {
                 let tree_entries = objects
                     .find_tree_iter(&parent_id, buf)
@@ -78,13 +76,7 @@ impl Tree {
             }
             for child in children {
                 // This is actually needed here as it's a mut ref, which isn't copy. We do a re-borrow here.
-                let actual_num_entries = verify_recursive(
-                    child.id,
-                    child.num_entries,
-                    &child.children,
-                    object_buf.as_deref_mut(),
-                    objects,
-                )?;
+                let actual_num_entries = verify_recursive(child, object_buf.as_deref_mut(), objects)?;
                 if let Some((actual, num_entries)) = actual_num_entries.zip(child.num_entries)
                     && actual > num_entries
                 {
@@ -106,13 +98,7 @@ impl Tree {
         }
 
         let mut buf = Vec::new();
-        let declared_entries = verify_recursive(
-            self.id,
-            self.num_entries,
-            &self.children,
-            use_objects.then_some(&mut buf),
-            &objects,
-        )?;
+        let declared_entries = verify_recursive(self, use_objects.then_some(&mut buf), &objects)?;
         if let Some((actual, num_entries)) = declared_entries.zip(self.num_entries)
             && actual > num_entries
         {
@@ -154,9 +140,11 @@ mod tests {
     use gix_error::Result;
     use std::cell::Cell;
 
+    /// One tree with a single subtree, which itself is a childless tree.
     struct OneTree {
         id: gix_hash::ObjectId,
         data: Vec<u8>,
+        child_id: gix_hash::ObjectId,
         lookups: Cell<usize>,
     }
 
@@ -169,6 +157,7 @@ mod tests {
             OneTree {
                 id,
                 data,
+                child_id,
                 lookups: Cell::new(0),
             }
         }
@@ -177,6 +166,11 @@ mod tests {
     impl gix_object::Find for OneTree {
         fn try_find<'a>(&self, id: &gix_hash::oid, buffer: &'a mut Vec<u8>) -> Result<Option<gix_object::Data<'a>>> {
             self.lookups.set(self.lookups.get() + 1);
+            if id == self.child_id {
+                // Leaf nodes are looked up as well, and this one has no subtrees.
+                buffer.clear();
+                return Ok(Some(gix_object::Data::new(buffer, gix_object::Kind::Tree, id.kind())));
+            }
             if id != self.id {
                 return Ok(None);
             }
@@ -217,8 +211,12 @@ mod tests {
 
         let objects = OneTree::with_child(child_id, b"grandchild", grandchild_id);
         root.verify(true, &objects)
-            .expect("the invalidated root is skipped while its valid child is verified");
-        assert_eq!(objects.lookups.get(), 1, "only the valid child should be looked up");
+            .expect("the invalidated root is skipped while its valid descendants are verified");
+        assert_eq!(
+            objects.lookups.get(),
+            2,
+            "only the valid child and its leaf should be looked up"
+        );
     }
 
     #[test]

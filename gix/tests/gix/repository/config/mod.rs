@@ -3,7 +3,92 @@ pub(crate) mod config_snapshot;
 #[cfg(feature = "command")]
 mod editor;
 mod identity;
+#[cfg(feature = "worktree-mutation")]
+mod path_protection;
 mod remote;
+
+#[test]
+fn reference_namespace_uses_only_trusted_configuration() -> TestResult {
+    let fixture = gix_testtools::scripted_fixture_read_only("make_basic_repo.sh")?;
+    let repo = gix::open_opts(
+        &fixture,
+        gix::open::Options::isolated()
+            .config_overrides(["gitoxide.core.refsNamespace=ignored"])
+            .filter_config_section(|_| false),
+    )?;
+    assert_eq!(repo.namespace(), None, "opening respects the configured section filter");
+
+    let mut repo = gix::open_opts(
+        fixture,
+        gix::open::Options::isolated().config_overrides(["gitoxide.core.refsNamespace=trusted"]),
+    )?;
+    let expected = repo.namespace().cloned().expect("the trusted namespace is configured");
+    for value in ["untrusted", "invalid..namespace"] {
+        let mut untrusted = gix_config::File::new(
+            gix_config::file::Metadata::from(gix_config::Source::Local).with(gix_sec::Trust::Reduced),
+        );
+        untrusted.set_raw_value("gitoxide.core.refsNamespace", value)?;
+        let mut config = repo.config_snapshot_mut();
+        config.append(untrusted)?;
+        config.commit()?;
+        assert_eq!(
+            repo.namespace(),
+            Some(&expected),
+            "refreshing configuration cannot redirect references through an untrusted namespace"
+        );
+        #[cfg(feature = "command")]
+        assert_eq!(
+            repo.command_context()?.ref_namespace,
+            Some(expected.as_bstr().to_owned()),
+            "subprocesses inherit the same trusted namespace"
+        );
+    }
+    Ok(())
+}
+
+#[cfg(feature = "attributes")]
+#[test]
+fn pathspec_defaults_use_only_trusted_configuration() -> TestResult {
+    let fixture = gix_testtools::scripted_fixture_read_only("make_basic_repo.sh")?;
+    for name in ["literal", "glob", "noglob", "icase"] {
+        let key = format!("gitoxide.pathspec.{name}");
+        let mut repo = gix::open_opts(
+            &fixture,
+            gix::open::Options::isolated().config_overrides([format!("{key}=true")]),
+        )?;
+        let expected = repo.pathspec_defaults()?;
+        #[cfg(feature = "command")]
+        let expected_context = repo.command_context()?;
+        for value in ["false", "invalid"] {
+            let mut untrusted = gix_config::File::new(
+                gix_config::file::Metadata::from(gix_config::Source::Local).with(gix_sec::Trust::Reduced),
+            );
+            untrusted.set_raw_value(key.as_str(), value)?;
+            let mut config = repo.config_snapshot_mut();
+            config.append(untrusted)?;
+            config.commit()?;
+            assert_eq!(
+                repo.pathspec_defaults()?,
+                expected,
+                "untrusted {key} cannot change how caller-provided patterns match"
+            );
+            #[cfg(feature = "command")]
+            {
+                let actual = repo.command_context()?;
+                assert_eq!(
+                    (actual.literal_pathspecs, actual.glob_pathspecs, actual.icase_pathspecs),
+                    (
+                        expected_context.literal_pathspecs,
+                        expected_context.glob_pathspecs,
+                        expected_context.icase_pathspecs
+                    ),
+                    "subprocesses inherit the same trusted pathspec settings"
+                );
+            }
+        }
+    }
+    Ok(())
+}
 
 #[test]
 fn config_path_for_repository_sources_matches_git() -> TestResult {
@@ -30,6 +115,36 @@ fn config_path_for_repository_sources_matches_git() -> TestResult {
                 );
             }
         }
+    }
+    Ok(())
+}
+
+#[cfg(feature = "command")]
+#[test]
+fn command_context_paths_use_the_captured_current_directory() -> TestResult {
+    if gix_testtools::run_in_isolated_process()? {
+        return Ok(());
+    }
+    let fixture = gix_testtools::scripted_fixture_read_only("make_basic_repo.sh")?;
+    let elsewhere = gix_testtools::tempfile::TempDir::new()?;
+    let _cwd = gix_testtools::set_current_dir(&fixture)?;
+    let repo = gix::open_opts(".", gix::open::Options::isolated())?;
+    let bare = gix::open_opts("bare.git", gix::open::Options::isolated())?;
+    assert!(repo.git_dir().is_relative(), "exercise a relative repository path");
+    let _moved_cwd = gix_testtools::set_current_dir(elsewhere.path())?;
+
+    for repo in [&repo, &bare] {
+        let context = repo.command_context()?;
+        assert_eq!(
+            context.git_dir,
+            Some(repo.current_dir().join(repo.git_dir())),
+            "GIT_DIR stays anchored to the repository's captured CWD"
+        );
+        assert_eq!(
+            context.worktree_dir,
+            repo.workdir().map(|path| repo.current_dir().join(path)),
+            "GIT_WORK_TREE stays anchored to the captured CWD and remains unset for bare repositories"
+        );
     }
     Ok(())
 }

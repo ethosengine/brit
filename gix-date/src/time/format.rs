@@ -37,13 +37,15 @@ impl Time {
     /// Use [`Format::Unix`], [`Format::Raw`] or one of the custom formats
     /// defined in the [`format`](mod@crate::time::format) submodule.
     ///
-    /// Note that this can fail if the timezone isn't valid and the format requires a conversion to [`jiff::Zoned`].
+    /// Note that this can fail if the timezone isn't valid and the format requires a conversion to [`jiff::ZonedDateTime`].
+    #[gix_macros::unstable(since = "2022-08-13")]
     pub fn format(&self, format: impl Into<Format>) -> Result<String, jiff::Error> {
         self.format_inner(format.into())
     }
 
     /// Like [`Self::format()`], but on time conversion error, produce the [UNIX] format instead
     /// to make it infallible.
+    #[gix_macros::unstable(since = "2025-11-03")]
     pub fn format_or_unix(&self, format: impl Into<Format>) -> String {
         self.format_inner(format.into())
             .unwrap_or_else(|_| self.seconds.to_string())
@@ -51,7 +53,7 @@ impl Time {
 
     fn format_inner(&self, format: Format) -> Result<String, jiff::Error> {
         Ok(match format {
-            Format::Custom(CustomFormat(format)) => self.to_zoned()?.strftime(format).to_string(),
+            Format::Custom(CustomFormat(format)) => self.to_zoned_datetime()?.strftime(format).to_string(),
             Format::Unix => self.seconds.to_string(),
             Format::Raw => self.to_string(),
         })
@@ -59,9 +61,10 @@ impl Time {
 }
 
 impl Time {
-    /// Produce a `Zoned` time for complex time computations and limitless formatting.
-    pub fn to_zoned(self) -> Result<jiff::Zoned, jiff::Error> {
+    /// Produce a [`jiff::ZonedDateTime`] for complex time computations and limitless formatting.
+    #[gix_macros::unstable(since = "2025-11-03")]
+    pub fn to_zoned_datetime(self) -> Result<jiff::ZonedDateTime, jiff::Error> {
         let offset = jiff::tz::Offset::from_seconds(self.offset)?;
-        Ok(jiff::Timestamp::from_second(self.seconds)?.to_zoned(offset.to_time_zone()))
+        Ok(jiff::Timestamp::from_second(self.seconds)?.to_zoned_datetime(offset.to_time_zone()))
     }
 }

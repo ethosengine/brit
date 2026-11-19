@@ -257,11 +257,12 @@ fn remove_root_with_after_scan(
                         leaves.push((path, entry.file_type.is_symlink()));
                     }
                 }
-                Err(source) if gix_fs::io_err::is_not_found(source.kind(), source.raw_os_error()) => {}
+                Err(source)
+                    if gix_fs::io_err::is_not_found(source.io_error().kind(), source.io_error().raw_os_error()) => {}
                 Err(source) => {
                     scan_error.get_or_insert_with(|| DirectoryError {
                         path: root.to_owned(),
-                        source,
+                        source: source.into(),
                     });
                 }
             }
@@ -355,9 +356,7 @@ fn remove_leaf(path: &Path, is_symlink: bool) -> io::Result<()> {
             .as_ref()
             .is_err_and(|err| err.kind() == io::ErrorKind::PermissionDenied)
     {
-        let mut permissions = fs::metadata(path)?.permissions();
-        permissions.set_readonly(false);
-        fs::set_permissions(path, permissions)?;
+        gix_fs::clear_readonly_attribute(path)?;
         return fs::remove_file(path);
     }
     result

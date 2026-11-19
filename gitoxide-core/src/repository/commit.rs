@@ -322,11 +322,15 @@ pub fn create(
     if amend && repo.git_dir().join("sequencer").exists() {
         bail!("commit amendment during an active sequencer operation is not supported; finish or abort it first");
     }
-    if (amend || merge.is_some())
-        && let Some(name) = original_head.referent_name()
-        && repo.find_reference(name)?.target().try_id().is_none()
-    {
-        bail!("commit does not support symbolic branch chains");
+    if amend || merge.is_some() {
+        // `Head::referent_name()` names the end of a symbolic chain, so inspect `HEAD`'s own
+        // target: the branch it names must hold an object id directly.
+        let head_reference = repo.find_reference("HEAD")?;
+        if let Some(name) = head_reference.target().try_name()
+            && repo.find_reference(name)?.target().try_id().is_none()
+        {
+            bail!("commit does not support symbolic branch chains");
+        }
     }
     if amend {
         let config = repo.config_snapshot();
@@ -612,7 +616,7 @@ pub fn create(
         author_sig.email = id.email.to_owned();
     }
     if let Some(d) = date.as_ref() {
-        author_sig.time = gix::date::parse(d, Some(gix::date::Zoned::now()))
+        author_sig.time = gix::date::parse(d, Some(gix::date::ZonedDateTime::now()))
             .map_err(|e| anyhow::anyhow!("invalid --date {d:?}: {e}"))?;
     }
     let committer_sig: gix::actor::Signature = repo

@@ -13,6 +13,8 @@ use crate::{
 #[expect(dead_code, reason = "to be used for when we handle checkouts/resets better")]
 mod sparse;
 
+mod metadata;
+
 /// General information and entries
 impl State {
     /// Return the version used to store this state's information on disk.
@@ -381,6 +383,7 @@ impl State {
     /// Return the slice of entries which all share the same `prefix`, or `None` if there isn't a single such entry.
     ///
     /// The `prefix` must use the repository-relative, slash-separated [`State`] path format.
+    /// See [`prefixed_entries_range()`][Self::prefixed_entries_range()] for matching rules and directory prefixes.
     ///
     /// If `prefix` is empty, all entries are returned.
     pub fn prefixed_entries(&self, prefix: &BStr) -> Option<&[Entry]> {
@@ -389,7 +392,10 @@ impl State {
 
     /// Return the range of entries which all share the same `prefix`, or `None` if there isn't a single such entry.
     ///
-    /// The `prefix` must use the repository-relative, slash-separated [`State`] path format.
+    /// The `prefix` must use the repository-relative, slash-separated [`State`] path format, without a leading `/` or `./`.
+    /// Matching is case-sensitive and compares literal bytes without path normalization or glob interpretation.
+    /// The prefix may end within a path component: `dir` also matches `dirname/file` and `dir.txt`.
+    /// To match only entries inside a directory, include the trailing slash, for example `dir/`.
     ///
     /// If `prefix` is empty, the range will include all entries.
     pub fn prefixed_entries_range(&self, prefix: &BStr) -> Option<Range<usize>> {

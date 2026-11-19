@@ -247,11 +247,44 @@ The top-level crate that acts as hub to all functionality provided by the `gix-*
     - probably based on [`internment`](https://docs.rs/internment/latest/internment/struct.Arena.html#),
       but needs `bumpalo` support to avoid item allocations/boxing, and avoid internal `Mutex`. (key type is pointer based).
 
+### gix-notify
+* [x] Git-independent filesystem notifications with upstream `notify` compatibility backends
+* [x] Bounded event intake, explicit coverage loss, replaceable watches, and event-loop wakeups
+* [x] Owned macOS FSEvents backend with administrative-marker delivery fences
+* [x] Owned Linux inotify backend with recursive watches and administrative-marker delivery fences
+* [x] Owned Windows `ReadDirectoryChangesW` backend with cancellable, bounded native reads
+* [ ] Windows delivery synchronization
+
+### gix-fsmonitor
+
+Clients for Git's filesystem monitor hooks and native daemon protocol.
+
+* [x] hook protocol 1 and 2, including automatic fallback
+* [x] native Simple IPC over Unix sockets and Windows named pipes
+* [x] Git daemon startup on macOS and Windows
+* [x] long Unix socket paths without changing the process working directory
+* [x] optional embeddable server with startup readiness and owned shutdown
+* [x] separate `daemon` feature for shared blocking control, native endpoint selection, and detached self-spawn
+* [x] independent watch lifetimes and IPC endpoints for linked worktrees
+
+### gix-fsmonitor-daemon
+
+* [x] Standalone daemon serving Git hook v2 and native Simple IPC clients
+* [x] Bounded multi-client token history, recovery, and complete worktree coverage
+* [x] Incremental macOS and Linux replies using administrative-marker synchronization on supported local filesystems
+* [x] Unix socket and Windows named-pipe transports
+* [x] Incremental Windows replies through ordered native-cookie observation
+* [x] Windows runtime validation (cross-compilation only)
+
 ### gix-fs
-* [x] probe capabilities
-* [x] symlink creation and removal
-* [x] file snapshots
-* [x] stack abstraction
+* Stable API limited to race-proof creation, public retry configuration, boundary cleanup, and permission application for tempfiles and locks.
+* Other filesystem APIs, including `serde` and `walkdir` support, require `unstable`.
+* [x] race-proof directory creation with public retry configuration and shared-repository permissions
+* [x] empty-directory cleanup with a boundary
+* [x] probe capabilities (experimental, requires `unstable`)
+* [x] symlink creation and removal (experimental, requires `unstable`)
+* [x] file snapshots (experimental, requires `unstable`)
+* [x] stack abstraction (experimental, requires `unstable`)
 
 ### gix-object
 * *decode (zero-copy)* borrowed objects
@@ -671,6 +704,16 @@ Provide discovery and execution of Git hooks for client and receive-side workflo
 * [ ] receive-side hooks and [`reference-transaction`](https://git-scm.com/docs/githooks#_reference_transaction)
 * [ ] [quarantine](https://git-scm.com/docs/git-receive-pack#_quarantine_environment)-aware hook execution
 
+### gix-encoding
+
+Strict character conversion using Git's encoding names and `iconv` mappings, implemented in Rust.
+
+* [x] a supported-encoding enum with parsing, canonical names, and distinct ASCII, Latin-1 and Windows mappings
+* [x] UTF-8, UTF-16, UTF-32, single-byte legacy encodings, and common East Asian encodings
+* [x] incremental conversion and bounded-buffer `Read` and `Write` adapters
+* [x] errors for malformed input and unrepresentable characters, without replacement characters
+* [x] Git baselines and in-process `iconv` benchmarks
+
 ### gix-filter
 
 Provide base-implementations for dealing with smudge and clean filters as well as filter processes, facilitating their development.
@@ -810,6 +853,7 @@ Make it the best-performing implementation and the most convenient one.
 * [x] `describe()` (similar to `git name-rev`)
 * [x] merge-base
 * [x] merge-base octopus
+* [x] ahead/behind commit counts
 * parse specifications
     * [x] parsing and navigation
     * [x] revision ranges

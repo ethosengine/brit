@@ -78,7 +78,7 @@ where
         'outer: loop {
             {
                 let marker = snapshot.marker;
-                for (idx, index) in snapshot.indices.iter_mut().enumerate() {
+                for (mut idx, index) in snapshot.indices.iter_mut().enumerate() {
                     if let Some(handle::index_lookup::Outcome {
                         object_index: handle::IndexForObjectInPack { pack_id, pack_offset },
                         index_file,
@@ -180,33 +180,23 @@ where
                                     })?
                                     .0
                                     .kind;
-                                let handle::index_lookup::Outcome {
-                                    object_index:
-                                        handle::IndexForObjectInPack {
-                                            pack_id: _,
-                                            pack_offset,
-                                        },
-                                    index_file,
-                                    pack: possibly_pack,
-                                } = match snapshot.indices[idx].lookup(id)? {
-                                    Some(res) => res,
-                                    None => {
-                                        let mut out = None;
-                                        for index in &mut snapshot.indices {
-                                            out = index.lookup(id)?;
-                                            if out.is_some() {
-                                                break;
-                                            }
-                                        }
-
-                                        out.unwrap_or_else(|| {
-                                           panic!("could not find object {id} in any index after looking up one of its base objects {base_id}" )
-                                       })
-                                    }
+                                // A refreshed snapshot may reuse pack ids; retry through normal pack loading.
+                                if snapshot.store_state_changed_since(marker) {
+                                    continue 'outer;
+                                }
+                                // Base lookup can reorder indices; keep the original pack and delta representation.
+                                idx = match snapshot.indices.iter().position(|index| index.id == pack_id.index) {
+                                    Some(idx) => idx,
+                                    None => continue 'outer,
                                 };
-                                let pack = possibly_pack
-                                    .as_ref()
-                                    .expect("pack to still be available like just now");
+                                let Some(handle::index_lookup::Outcome {
+                                    index_file,
+                                    pack: Some(pack),
+                                    ..
+                                }) = snapshot.indices[idx].lookup(id)?
+                                else {
+                                    continue 'outer;
+                                };
                                 let entry = pack.entry(pack_offset)?;
                                 let header_size = entry.header_size();
                                 pack.decode_entry(
@@ -246,9 +236,7 @@ where
                             }
                         }?;
 
-                        if idx != 0 {
-                            snapshot.indices.swap(0, idx);
-                        }
+                        snapshot.move_to_front(idx);
                         return Ok(Some(res));
                     }
                 }
@@ -274,21 +262,23 @@ where
     pub(crate) fn clear_cache(&self) {
         self.packed_object_count.borrow_mut().take();
     }
-}
 
-impl<S> gix_pack::Find for super::Handle<S>
-where
-    S: Deref<Target = super::Store> + Clone,
-{
-    // TODO: make this method fallible to propagate index loading failures.
-    fn contains(&self, id: &gix_hash::oid) -> bool {
+    /// Like [`exists()`](gix_object::Exists::exists), but never look for packs that were added since the last refresh,
+    /// whatever this handle's [refresh mode](super::RefreshMode) is. The indices that the store already knows are still loaded.
+    ///
+    /// Use it to avoid writing objects that already exist. A new object always misses, and in the default refresh
+    /// mode each miss lists the pack directory again, which is slow with many packs. Here a miss costs at most a
+    /// redundant write.
+    pub fn exists_without_refresh(&self, id: &gix_hash::oid) -> bool {
+        self.contains_with_refresh_mode(id, super::RefreshMode::Never)
+    }
+
+    fn contains_with_refresh_mode(&self, id: &gix_hash::oid, refresh_mode: super::RefreshMode) -> bool {
         let mut snapshot = self.snapshot.borrow_mut();
         loop {
             for (idx, index) in snapshot.indices.iter().enumerate() {
                 if index.contains(id) {
-                    if idx != 0 {
-                        snapshot.indices.swap(0, idx);
-                    }
+                    snapshot.move_to_front(idx);
                     return true;
                 }
             }
@@ -299,7 +289,10 @@ where
                 }
             }
 
-            match self.store.load_one_index(self.index_ctx(snapshot.marker)) {
+            match self.store.load_one_index(super::IndexCtx {
+                refresh_mode,
+                ..self.index_ctx(snapshot.marker)
+            }) {
                 Ok(Some(new_snapshot)) => {
                     *snapshot = new_snapshot;
                     self.clear_cache();
@@ -308,6 +301,16 @@ where
                 Err(_) => return false, // something went wrong, nothing we can communicate here with this trait. TODO: Maybe that should change?
             }
         }
+    }
+}
+
+impl<S> gix_pack::Find for super::Handle<S>
+where
+    S: Deref<Target = super::Store> + Clone,
+{
+    // TODO: make this method fallible to propagate index loading failures.
+    fn contains(&self, id: &gix_hash::oid) -> bool {
+        self.contains_with_refresh_mode(id, self.refresh)
     }
 
     fn try_find_cached<'a>(
@@ -398,9 +401,7 @@ where
                             entry_size: entry.header_size() + entry_size_past_header,
                         };
 
-                        if idx != 0 {
-                            snapshot.indices.swap(0, idx);
-                        }
+                        snapshot.move_to_front(idx);
                         return Ok(Some(location));
                     }
                 }

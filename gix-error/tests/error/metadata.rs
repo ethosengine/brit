@@ -36,6 +36,66 @@ fn input_builder_preserves_representation_and_only_replaces_input() {
 }
 
 #[test]
+fn command_builder_only_replaces_command_and_program() {
+    let mut command = std::process::Command::new("driver");
+    command
+        .args(["--contact", "person@example.invalid"])
+        .env("DRIVER_CONTACT", "person@example.invalid")
+        .current_dir("worktree");
+    for class in [None, Some(Class::Validation), Some(Class::Corruption)] {
+        let mut context = Message::new("driver failed").with_input("file").with("exit_code", 23);
+        context.class = class;
+        let expected = context.values.clone();
+        let mut message = context
+            .with_program("old-driver")
+            .with("command", "old-command")
+            .with_command(&command);
+        assert_eq!(message.message, "driver failed", "the diagnostic text is unchanged");
+        assert_eq!(message.class, class, "command details do not change the classification");
+        assert_eq!(
+            message.values.remove("command"),
+            Some(MetadataValue::from(format!("{command:?}"))),
+            "the full debug representation replaces any previous command text"
+        );
+        assert_eq!(
+            message.values.remove("program"),
+            Some(MetadataValue::from(Path::new("driver"))),
+            "the native program name replaces the previous program without resolution"
+        );
+        assert_eq!(message.values, expected, "status and other metadata are unchanged");
+    }
+}
+
+#[test]
+fn command_metadata_is_accessible_and_printed_without_redaction() {
+    let mut command = std::process::Command::new("driver");
+    command.args(["--contact", "person@example.invalid"]);
+    let error = Message::new("driver failed").with_command(&command).raise();
+    let values = error.metadata().next().expect("the command has metadata");
+    assert_eq!(
+        values["command"],
+        MetadataValue::from(format!("{command:?}")),
+        "the prepared command's debug representation is accessible as metadata"
+    );
+    assert_eq!(
+        values["program"],
+        MetadataValue::from(Path::new("driver")),
+        "program identity is recorded alongside command details"
+    );
+    assert_eq!(
+        values.len(),
+        2,
+        "only program and command are recorded, not exit status"
+    );
+    for diagnostic in [error.to_string(), format!("{error:?}")] {
+        assert!(
+            diagnostic.contains("person@example.invalid"),
+            "printing errors exposes command metadata without redaction"
+        );
+    }
+}
+
+#[test]
 #[cfg(any(unix, windows))]
 fn command_status_records_program_and_exit_code() {
     #[cfg(unix)]
@@ -55,17 +115,24 @@ fn command_status_records_program_and_exit_code() {
         .with("program", Path::new("old-editor"))
         .with("exit_status", "old-status")
         .with("exit_code", 1)
-        .with_command_status(&command, status)
-        .with("stdout", "old-output")
-        .with_command_output(
-            &command,
-            std::process::Output {
-                status,
-                stdout: b"output\xff".to_vec(),
-                stderr: Vec::new(),
-            },
-        );
+        .with_command_status(&command, status);
+    assert!(
+        !message.values.contains_key("command"),
+        "recording exit status does not opt into potentially sensitive command details"
+    );
+    let message = message.with("stdout", "old-output").with_command_output(
+        &command,
+        std::process::Output {
+            status,
+            stdout: b"output\xff".to_vec(),
+            stderr: Vec::new(),
+        },
+    );
 
+    assert!(
+        !message.values.contains_key("command"),
+        "recording captured output does not opt into potentially sensitive command details"
+    );
     assert_eq!(message.message, "editor failed", "the diagnostic text is unchanged");
     assert_eq!(
         message.class,
@@ -425,10 +492,10 @@ fn metadata_contexts_preserve_causes_and_remain_separate_through_conversion() {
     custom
 
     Caused by:
-        0: lookup, path="first"
-        1: missing
-        2: read, path="second"
-        └─0: timed out
+        ├─0: lookup, path="first"
+        │ └─ missing
+        └─1: read, path="second"
+          └─ timed out
     "#);
 
     let err = err.into_error();
@@ -447,10 +514,10 @@ fn metadata_contexts_preserve_causes_and_remain_separate_through_conversion() {
         custom
 
         Caused by:
-            0: lookup, path="first"
-            1: missing
-            2: read, path="second"
-            └─0: timed out
+            ├─0: lookup, path="first"
+            │ └─ missing
+            └─1: read, path="second"
+              └─ timed out
         "#);
     }
     assert!(
@@ -575,8 +642,8 @@ fn message_classifications_survive_markers_native_sources_and_nested_branches() 
         0: native
         1: I/O error (Other)
         2: lookup
-        3: first, path="a"
-        4: second, path="b"
+        ├─0: first, path="a"
+        └─1: second, path="b"
     "#);
     assert!(
         error.is_not_found() && error.is_retryable(),
@@ -613,8 +680,8 @@ fn message_classifications_survive_markers_native_sources_and_nested_branches() 
             0: native
             1: I/O error (Other)
             2: lookup
-            3: first, path="a"
-            4: second, path="b"
+            ├─0: first, path="a"
+            └─1: second, path="b"
         "#);
     }
     assert!(

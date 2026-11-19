@@ -34,7 +34,7 @@ pub(crate) mod convert_to_diffable {
             let a_content = "a-content";
             std::fs::write(tmp.path().join(a_name), a_content.as_bytes())?;
             let out = filter.convert_and_compare(
-                &does_not_matter,
+                Some(&does_not_matter),
                 EntryKind::Blob,
                 a_name.into(),
                 ResourceKind::OldOrSource,
@@ -50,7 +50,7 @@ pub(crate) mod convert_to_diffable {
             let link_name = "link";
             gix_fs::symlink::create(a_name.as_ref(), &tmp.path().join(link_name))?;
             let out = filter.convert_and_compare(
-                &does_not_matter,
+                Some(&does_not_matter),
                 EntryKind::Link,
                 link_name.into(),
                 ResourceKind::OldOrSource,
@@ -71,7 +71,7 @@ pub(crate) mod convert_to_diffable {
             filter.options.fs.symlink = false;
             let err = filter
                 .convert_and_compare(
-                    &does_not_matter,
+                    Some(&does_not_matter),
                     EntryKind::Link,
                     link_name.into(),
                     ResourceKind::OldOrSource,
@@ -98,7 +98,7 @@ pub(crate) mod convert_to_diffable {
             let id = insert(&db, b_content)?;
 
             let out = filter.convert_and_compare(
-                &id,
+                Some(&id),
                 EntryKind::Blob,
                 a_name.into(),
                 ResourceKind::NewOrDestination,
@@ -139,7 +139,7 @@ pub(crate) mod convert_to_diffable {
         );
         let mut bytes = Vec::new();
         let outcome = filter.convert_and_compare(
-            gix_hash::Kind::Sha1.null().as_ref(),
+            None,
             EntryKind::Blob,
             "a".into(),
             ResourceKind::OldOrSource,
@@ -166,7 +166,7 @@ pub(crate) mod convert_to_diffable {
         for mode in [EntryKind::Tree, EntryKind::Commit] {
             let err = filter
                 .convert_and_compare(
-                    gix_hash::Kind::Sha1.null().as_ref(),
+                    Some(gix_hash::Kind::Sha1.null().as_ref()),
                     mode,
                     "a".into(),
                     ResourceKind::OldOrSource,
@@ -208,7 +208,7 @@ pub(crate) mod convert_to_diffable {
         let large_content = "a\0b";
         std::fs::write(tmp.path().join(a_name), large_content.as_bytes())?;
         let out = filter.convert_and_compare(
-            &does_not_matter,
+            Some(&does_not_matter),
             EntryKind::BlobExecutable,
             a_name.into(),
             ResourceKind::NewOrDestination,
@@ -224,7 +224,7 @@ pub(crate) mod convert_to_diffable {
         let db = object_db();
         let id = insert(&db, large_content)?;
         let out = filter.convert_and_compare(
-            &id,
+            Some(&id),
             EntryKind::Blob,
             a_name.into(),
             ResourceKind::OldOrSource,
@@ -263,7 +263,7 @@ pub(crate) mod convert_to_diffable {
         let large_content = "hello";
         std::fs::write(tmp.path().join(a_name), large_content.as_bytes())?;
         let out = filter.convert_and_compare(
-            &does_not_matter,
+            Some(&does_not_matter),
             EntryKind::BlobExecutable,
             a_name.into(),
             ResourceKind::NewOrDestination,
@@ -283,7 +283,7 @@ pub(crate) mod convert_to_diffable {
             let link_name = "link";
             gix_fs::symlink::create(large_content.as_ref(), &tmp.path().join(link_name))?;
             let out = filter.convert_and_compare(
-                &does_not_matter,
+                Some(&does_not_matter),
                 EntryKind::Link,
                 link_name.into(),
                 ResourceKind::NewOrDestination,
@@ -307,7 +307,7 @@ pub(crate) mod convert_to_diffable {
         let id = insert(&db, large_content)?;
 
         let out = filter.convert_and_compare(
-            &id,
+            Some(&id),
             EntryKind::Blob,
             a_name.into(),
             ResourceKind::OldOrSource,
@@ -345,7 +345,7 @@ pub(crate) mod convert_to_diffable {
             "precondition: worktree file doesn't exist"
         );
         let out = filter.convert_and_compare(
-            &null,
+            Some(&null),
             EntryKind::Blob,
             a_name.into(),
             ResourceKind::OldOrSource,
@@ -360,7 +360,7 @@ pub(crate) mod convert_to_diffable {
 
         buf.push(1);
         let out = filter.convert_and_compare(
-            &null,
+            Some(&null),
             EntryKind::Link,
             "link".into(),
             ResourceKind::OldOrSource,
@@ -377,7 +377,7 @@ pub(crate) mod convert_to_diffable {
 
         buf.push(1);
         let out = filter.convert_and_compare(
-            &null,
+            Some(&null),
             EntryKind::Blob,
             a_name.into(),
             ResourceKind::NewOrDestination,
@@ -424,7 +424,7 @@ pub(crate) mod convert_to_diffable {
         let a_content = "a-content\n";
         std::fs::write(tmp.path().join(a_name), a_content.as_bytes())?;
         let out = filter.convert_and_compare(
-            &does_not_matter,
+            Some(&does_not_matter),
             EntryKind::Blob,
             a_name.into(),
             ResourceKind::OldOrSource,
@@ -445,7 +445,7 @@ pub(crate) mod convert_to_diffable {
         let b_content = "a\r\nb";
         std::fs::write(tmp.path().join(b_name), b_content.as_bytes())?;
         let out = filter.convert_and_compare(
-            &does_not_matter,
+            Some(&does_not_matter),
             EntryKind::Blob,
             b_name.into(),
             ResourceKind::OldOrSource,
@@ -469,7 +469,7 @@ pub(crate) mod convert_to_diffable {
             let link_content = "hello\n";
             gix_fs::symlink::create(link_content.as_ref(), &tmp.path().join(link_name))?;
             let out = filter.convert_and_compare(
-                &does_not_matter,
+                Some(&does_not_matter),
                 EntryKind::Link,
                 link_name.into(),
                 ResourceKind::OldOrSource,
@@ -494,7 +494,7 @@ pub(crate) mod convert_to_diffable {
         let id = insert(&db, b_content)?;
 
         let out = filter.convert_and_compare(
-            &id,
+            Some(&id),
             EntryKind::Blob,
             a_name.into(),
             ResourceKind::NewOrDestination,
@@ -512,7 +512,7 @@ pub(crate) mod convert_to_diffable {
         let b_content = "b\n";
         let id = insert(&db, b_content)?;
         let out = filter.convert_and_compare(
-            &id,
+            Some(&id),
             EntryKind::Blob,
             a_name.into(),
             ResourceKind::NewOrDestination,
@@ -566,7 +566,7 @@ pub(crate) mod convert_to_diffable {
                     &objects
                 };
                 let out = filter.convert_and_compare(
-                    &id,
+                    Some(&id),
                     EntryKind::Blob,
                     "a".into(),
                     ResourceKind::NewOrDestination,
@@ -615,7 +615,7 @@ pub(crate) mod convert_to_diffable {
         let a_content = "a\0b";
         std::fs::write(tmp.path().join(a_name), a_content.as_bytes())?;
         let out = filter.convert_and_compare(
-            &does_not_matter,
+            Some(&does_not_matter),
             EntryKind::Blob,
             a_name.into(),
             ResourceKind::OldOrSource,
@@ -637,7 +637,7 @@ pub(crate) mod convert_to_diffable {
         let id = insert(&db, b_content)?;
 
         let out = filter.convert_and_compare(
-            &id,
+            Some(&id),
             EntryKind::Blob,
             a_name.into(),
             ResourceKind::NewOrDestination,
@@ -655,7 +655,7 @@ pub(crate) mod convert_to_diffable {
 
         let id = insert(&db, "b")?;
         let out = filter.convert_and_compare(
-            &id,
+            Some(&id),
             EntryKind::Blob,
             "c".into(),
             ResourceKind::NewOrDestination,
@@ -698,7 +698,7 @@ pub(crate) mod convert_to_diffable {
         let entry = attributes.at_entry("a", None, &gix_object::find::Never)?;
         let err = filter
             .convert_and_compare(
-                gix_hash::Kind::Sha1.null().as_ref(),
+                Some(gix_hash::Kind::Sha1.null().as_ref()),
                 EntryKind::Blob,
                 "a".into(),
                 ResourceKind::OldOrSource,
@@ -786,7 +786,7 @@ pub(crate) mod convert_to_diffable {
         ];
         for mode in worktree_modes {
             let out = filter.convert_and_compare(
-                &null,
+                Some(&null),
                 EntryKind::Blob,
                 "a".into(),
                 ResourceKind::OldOrSource,
@@ -808,7 +808,7 @@ pub(crate) mod convert_to_diffable {
         }
 
         let out = filter.convert_and_compare(
-            &null,
+            Some(&null),
             EntryKind::Blob,
             "a".into(),
             ResourceKind::OldOrSource,
@@ -826,7 +826,7 @@ pub(crate) mod convert_to_diffable {
         let id = insert(&db, "a\n")?;
         for mode in worktree_modes {
             let out = filter.convert_and_compare(
-                &id,
+                Some(&id),
                 EntryKind::Blob,
                 "a".into(),
                 ResourceKind::NewOrDestination,
@@ -843,7 +843,7 @@ pub(crate) mod convert_to_diffable {
         }
 
         let out = filter.convert_and_compare(
-            &id,
+            Some(&id),
             EntryKind::Blob,
             "a".into(),
             ResourceKind::NewOrDestination,
@@ -866,7 +866,7 @@ pub(crate) mod convert_to_diffable {
         for mode in all_modes {
             buf.push(1);
             let out = filter.convert_and_compare(
-                &null,
+                Some(&null),
                 EntryKind::Link,
                 "missing".into(), /* does not actually exist */
                 ResourceKind::OldOrSource,
@@ -883,7 +883,7 @@ pub(crate) mod convert_to_diffable {
 
             buf.push(1);
             let out = filter.convert_and_compare(
-                &null,
+                Some(&null),
                 EntryKind::Link,
                 "missing".into(), /* does not actually exist */
                 ResourceKind::NewOrDestination,
@@ -901,7 +901,7 @@ pub(crate) mod convert_to_diffable {
             buf.push(1);
             let id = insert(&db, "link-target")?;
             let out = filter.convert_and_compare(
-                &id,
+                Some(&id),
                 EntryKind::Link,
                 "missing".into(),
                 ResourceKind::NewOrDestination,
@@ -925,7 +925,7 @@ pub(crate) mod convert_to_diffable {
         for mode in all_modes {
             buf.push(1);
             let out = filter.convert_and_compare(
-                &null,
+                Some(&null),
                 EntryKind::Blob,
                 "b".into(),
                 ResourceKind::OldOrSource,
@@ -950,7 +950,7 @@ pub(crate) mod convert_to_diffable {
         for mode in all_modes {
             buf.push(1);
             let out = filter.convert_and_compare(
-                &id,
+                Some(&id),
                 EntryKind::Blob,
                 "b".into(),
                 ResourceKind::NewOrDestination,
@@ -974,7 +974,7 @@ pub(crate) mod convert_to_diffable {
         let platform = attributes.at_entry("c", None, &gix_object::find::Never)?;
         for mode in worktree_modes {
             let out = filter.convert_and_compare(
-                &null,
+                Some(&null),
                 EntryKind::Blob,
                 "c".into(),
                 ResourceKind::OldOrSource,
@@ -1002,7 +1002,7 @@ pub(crate) mod convert_to_diffable {
         let id = insert(&db, "c\n")?;
         for mode in worktree_modes {
             let out = filter.convert_and_compare(
-                &id,
+                Some(&id),
                 EntryKind::Blob,
                 "c".into(),
                 ResourceKind::NewOrDestination,
@@ -1025,7 +1025,7 @@ pub(crate) mod convert_to_diffable {
         let platform = attributes.at_entry("unset", None, &gix_object::find::Never)?;
         for mode in all_modes {
             let out = filter.convert_and_compare(
-                &null,
+                Some(&null),
                 EntryKind::Blob,
                 "unset".into(),
                 ResourceKind::OldOrSource,
@@ -1051,7 +1051,7 @@ pub(crate) mod convert_to_diffable {
         let id = insert(&db, "unset\n")?;
         for mode in all_modes {
             let out = filter.convert_and_compare(
-                &id,
+                Some(&id),
                 EntryKind::Blob,
                 "unset".into(),
                 ResourceKind::NewOrDestination,
@@ -1078,7 +1078,7 @@ pub(crate) mod convert_to_diffable {
         let id = insert(&db, "d-in-db")?;
         for mode in worktree_modes {
             let out = filter.convert_and_compare(
-                &null,
+                Some(&null),
                 EntryKind::Blob,
                 "d".into(),
                 ResourceKind::OldOrSource,
@@ -1103,7 +1103,7 @@ pub(crate) mod convert_to_diffable {
             );
 
             let out = filter.convert_and_compare(
-                &id,
+                Some(&id),
                 EntryKind::Blob,
                 "d".into(),
                 ResourceKind::NewOrDestination,
@@ -1125,7 +1125,7 @@ pub(crate) mod convert_to_diffable {
 
         let platform = attributes.at_entry("e-no-attr", None, &gix_object::find::Never)?;
         let out = filter.convert_and_compare(
-            &null,
+            Some(&null),
             EntryKind::Blob,
             "e-no-attr".into(),
             ResourceKind::OldOrSource,
@@ -1146,7 +1146,7 @@ pub(crate) mod convert_to_diffable {
 
         let id = insert(&db, "e-in-db")?;
         let out = filter.convert_and_compare(
-            &id,
+            Some(&id),
             EntryKind::Blob,
             "e-no-attr".into(),
             ResourceKind::NewOrDestination,
@@ -1175,7 +1175,7 @@ pub(crate) mod convert_to_diffable {
         )]
         fn convert_and_compare(
             &mut self,
-            id: &gix_hash::oid,
+            id: Option<&gix_hash::oid>,
             mode: EntryKind,
             path: &gix_object::bstr::BStr,
             kind: ResourceKind,
@@ -1188,7 +1188,7 @@ pub(crate) mod convert_to_diffable {
     impl CompareStreaming for gix_diff::blob::Pipeline {
         fn convert_and_compare(
             &mut self,
-            id: &gix_hash::oid,
+            id: Option<&gix_hash::oid>,
             mode: EntryKind,
             path: &gix_object::bstr::BStr,
             kind: ResourceKind,
@@ -1224,8 +1224,10 @@ pub(crate) mod convert_to_diffable {
             let mut streamed = self.clone();
             let expected = self.convert_to_diffable(id, mode, path, kind, attributes, objects, convert, out);
             let budget = gix_utils::stream::Budget::new(&std::env::temp_dir()).or_error()?;
+            // The streamed conversion identifies an unavailable object by its null ID.
+            let null = gix_hash::Kind::Sha1.null();
             let actual = streamed.convert_to_diffable_stream(
-                id,
+                id.unwrap_or(&*null),
                 mode,
                 path,
                 kind,

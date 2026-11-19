@@ -48,6 +48,7 @@ pub mod log;
 pub mod mailmap;
 mod merge_base;
 pub use merge_base::merge_base;
+pub mod fsmonitor;
 pub mod merge;
 pub mod odb;
 #[cfg(feature = "blocking-client")]
@@ -61,6 +62,7 @@ pub mod switch;
 pub mod tag;
 pub mod tree;
 pub mod verify;
+pub mod watch;
 pub mod worktree;
 
 pub fn init(directory: Option<PathBuf>) -> Result<gix::discover::repository::Path> {

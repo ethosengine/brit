@@ -36,7 +36,7 @@ eprfs-local = { version = "=0.3.4", registry = "elohim" }
 eprfs-storage = { version = "=0.3.4", registry = "elohim" }
 tokio = { version = "1", features = ["rt"] }
 brit-graph = { version = "0.2.1", registry = "elohim", path = "../brit-graph", features = ["repo"] }
-gitoxide = { version = "^0.60.11", registry = "elohim", path = "..", default-features = false }
+gitoxide = { version = "^0.61.0", registry = "elohim", path = "..", default-features = false }
 # rakia lives in a separate repo (ethosengine/rakia) and is published to the
 # internal Nexus registry by rakia's own pipeline. Consumed here as a registry
 # dependency so brit's standalone CI can resolve it. For monorepo development
@@ -46,7 +46,7 @@ rakia-core = { version = "0.1", registry = "elohim" }
 rakia-brit = { version = "0.1", registry = "elohim" }
 
 clap = { version = "4", features = ["derive"] }
-gix = { version = "^0.89.4", path = "../gix", registry = "elohim", default-features = false, features = ["basic", "revision", "blob-diff", "sha1", "sha256"] }
+gix = { version = "^0.90.0", path = "../gix", registry = "elohim", default-features = false, features = ["basic", "revision", "blob-diff", "sha1", "sha256"] }
 petgraph = "0.7"
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"

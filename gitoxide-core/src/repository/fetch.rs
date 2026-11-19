@@ -41,12 +41,11 @@ pub(crate) fn pull_tracking(
     if remote.name().is_none() {
         return Ok(None);
     }
-    let null = gix::ObjectId::null(repo.object_hash());
     let specs = remote.refspecs(gix::remote::Direction::Fetch);
     let matches = gix::refspec::MatchGroup::from_fetch_specs(specs.iter().map(|s| s.to_ref())).match_lhs(
         std::iter::once(gix::refspec::match_group::Item {
             full_ref_name: branch,
-            target: &null,
+            target: None,
             object: None,
         }),
     );

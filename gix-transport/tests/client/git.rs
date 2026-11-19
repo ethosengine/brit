@@ -132,6 +132,42 @@ mod connect {
 #[crate::bisync::bisync]
 #[cfg_attr(feature = "blocking-client", test)]
 #[cfg_attr(all(feature = "async-client", not(feature = "blocking-client")), async_std::test)]
+async fn ipv6_address_in_brackets_is_connected_to() -> TestResult {
+    #[cfg(all(feature = "async-client", not(feature = "blocking-client")))]
+    use client::async_io::connect::connect;
+    #[cfg(feature = "blocking-client")]
+    use client::blocking_io::connect::connect;
+
+    #[cfg(feature = "blocking-client")]
+    if gix_testtools::run_in_isolated_process()? {
+        return Ok(());
+    }
+    let Ok(listener) = std::net::TcpListener::bind(("::1", 0)) else {
+        // This host has no IPv6 loopback address to test with.
+        return Ok(());
+    };
+    let port = listener.local_addr()?.port();
+    let url = format!("git://[::1]:{port}/repo.git");
+    connect(url.as_str(), Default::default()).await?;
+    assert!(
+        listener.accept().is_ok(),
+        "the IPv6 address is resolved without its brackets, like Git does"
+    );
+
+    #[cfg(feature = "blocking-client")]
+    git::blocking_io::connect("::1", "/repo.git".into(), Protocol::V1, Some(port), false)?;
+    #[cfg(all(feature = "async-client", not(feature = "blocking-client")))]
+    Connection::new_tcp("::1", Some(port), "/repo.git".into(), Protocol::V1, false).await?;
+    assert!(
+        listener.accept().is_ok(),
+        "raw connectors continue to accept a bare IPv6 address with a separate port"
+    );
+    Ok(())
+}
+#[cfg(any(feature = "blocking-client", feature = "async-std"))]
+#[crate::bisync::bisync]
+#[cfg_attr(feature = "blocking-client", test)]
+#[cfg_attr(all(feature = "async-client", not(feature = "blocking-client")), async_std::test)]
 async fn refused_connections_remain_retryable() -> TestResult {
     #[cfg(all(feature = "async-client", not(feature = "blocking-client")))]
     use client::async_io::connect::connect;
@@ -182,8 +218,15 @@ async fn refused_connections_remain_retryable() -> TestResult {
 #[cfg_attr(feature = "blocking-client", test)]
 #[cfg_attr(all(feature = "async-client", not(feature = "blocking-client")), async_std::test)]
 async fn handshake_v1_and_request() -> TestResult {
+    let baseline = super::transport_baseline::v1()?;
+    let hash_name = baseline.hash.to_string();
+    assert_eq!(
+        baseline.commit_id_hex.len(),
+        baseline.hash.len_in_hex(),
+        "Git generated an ID in the selected object format"
+    );
     let mut out = Vec::new();
-    let server_response = fixture_bytes("v1/clone.response");
+    let server_response = &baseline.response;
     let c = Connection::new(
         server_response.as_slice(),
         &mut out,
@@ -203,34 +246,38 @@ async fn handshake_v1_and_request() -> TestResult {
     assert_eq!(c.to_url().as_ref(), "file:///foo.git");
     let mut res = c.handshake(Service::UploadPack, &[]).await?;
     assert_eq!(res.actual_protocol, Protocol::V1);
-    assert_eq!(
+    for capability in [
+        "multi_ack",
+        "thin-pack",
+        "side-band",
+        "side-band-64k",
+        "ofs-delta",
+        "shallow",
+        "deepen-since",
+        "deepen-not",
+        "deepen-relative",
+        "no-progress",
+        "include-tag",
+        "multi_ack_detailed",
+        "agent",
+    ] {
+        assert!(res.capabilities.contains(capability), "Git advertises {capability}");
+    }
+    assert!(
         res.capabilities
-            .iter()
-            .map(|c| (c.name().to_owned(), c.value().map(ToOwned::to_owned)))
-            .collect::<Vec<_>>(),
-        [
-            ("multi_ack", None),
-            ("thin-pack", None),
-            ("side-band", None),
-            ("side-band-64k", None),
-            ("ofs-delta", None),
-            ("shallow", None),
-            ("deepen-since", None),
-            ("deepen-not", None),
-            ("deepen-relative", None),
-            ("no-progress", None),
-            ("include-tag", None),
-            ("multi_ack_detailed", None),
-            ("symref", Some("HEAD:refs/heads/master")),
-            ("object-format", Some("sha1")),
-            ("agent", Some("git/2.28.0"))
-        ]
-        .iter()
-        .map(|(n, v)| (
-            n.as_bytes().as_bstr().to_owned(),
-            v.map(|v| v.as_bytes().as_bstr().to_owned())
-        ))
-        .collect::<Vec<_>>()
+            .capability("object-format")
+            .expect("Git advertises its object format")
+            .supports(&hash_name)
+            .expect("object-format has a value"),
+        "the handshake surfaces the selected object format"
+    );
+    assert!(
+        res.capabilities
+            .capability("symref")
+            .expect("Git advertises the HEAD symref")
+            .supports("HEAD:refs/heads/main")
+            .expect("symref has a value"),
+        "HEAD refers to the fixture's main branch"
     );
     let mut refs = Vec::new();
     {
@@ -243,32 +290,37 @@ async fn handshake_v1_and_request() -> TestResult {
     assert_eq!(
         refs,
         vec![
-            "808e50d724f604f69ab93c6da2919c014667bedb HEAD",
-            "808e50d724f604f69ab93c6da2919c014667bedb refs/heads/master"
-        ]
+            format!("{} HEAD", baseline.commit_id_hex),
+            format!("{} refs/heads/main", baseline.commit_id_hex)
+        ],
+        "the advertised refs match the independently recorded Git commit"
     );
     drop(res);
 
-    let writer = c.request(client::WriteMode::Binary, client::MessageKind::Flush, false)?;
-    let nak_line = writer
-        .into_read()
-        .await?
-        .lines()
-        .next()
-        .await
-        .expect("exactly one line")?;
-    assert_eq!(nak_line, "NAK");
+    let want = format!(
+        "want {} side-band-64k ofs-delta object-format={hash_name}",
+        baseline.commit_id_hex
+    );
+    let mut want_packet = Vec::new();
+    super::transport_baseline::packet(&mut want_packet, &want);
+    let mut writer = c.request(client::WriteMode::Binary, client::MessageKind::Flush, false)?;
+    writer.write_all(format!("{want}\n").as_bytes()).await?;
+    // Calling `into_read()` causes the connection to send the configured flush packet. In this
+    // exchange, the `want` request does not produce a response we can consume.
+    drop(writer.into_read().await?);
 
-    let mut writer = c.request(
+    let writer = c.request(
         client::WriteMode::OneLfTerminatedLinePerWriteCall,
         client::MessageKind::Text(b"done"),
         false,
     )?;
 
-    writer.write_all(b"hello").await?;
-    writer.write_all(b"world").await?;
-
+    // Calling `into_read()` causes the connection to send the configured LF-terminated done
+    // packet. Git responds with `NAK`, followed by the sideband pack.
     let mut reader = writer.into_read().await?;
+    let mut nak_line = String::new();
+    reader.read_line(&mut nak_line).await?;
+    assert_eq!(nak_line, "NAK\n", "Git has no common objects to acknowledge");
     let messages = Arc::new(Mutex::new(Vec::<String>::new()));
     reader.set_progress_handler(Some(Box::new({
         let sb = messages.clone();
@@ -281,7 +333,6 @@ async fn handshake_v1_and_request() -> TestResult {
         }
     })));
 
-    let expected_entries = 3;
     #[cfg(all(feature = "async-client", not(feature = "blocking-client")))]
     let reader = futures_lite::io::BlockOn::new(reader);
     use gix_pack::data::input;
@@ -289,22 +340,30 @@ async fn handshake_v1_and_request() -> TestResult {
         reader,
         input::Mode::Verify,
         input::EntryDataMode::Crc32,
-        gix_hash::Kind::Sha1,
+        baseline.hash,
     )?;
-    assert_eq!(entries.count(), expected_entries);
+    let mut object_count = 0;
+    for entry in entries {
+        entry?;
+        object_count += 1;
+    }
+    assert_eq!(
+        object_count, baseline.object_count,
+        "all fetched objects and the pack checksum verify"
+    );
 
     let sidebands = Arc::try_unwrap(messages).expect("no other handle").into_inner();
-    assert_eq!(sidebands.len(), 6, "…along with some status messages");
+    assert!(
+        !sidebands.is_empty(),
+        "Git sends progress alongside the pack (but it's not determinisic enough)"
+    );
 
+    let mut expected = b"002egit-upload-pack /foo.git\x00host=example.org\x00".to_vec();
+    expected.extend(&want_packet);
+    expected.extend(b"00000009done\n");
     assert_eq!(
         out.as_slice().as_bstr(),
-        b"002egit-upload-pack /foo.git\x00\
-          host=example.org\x00\
-          0000\
-          000ahello\n\
-          000aworld\n\
-          0009done\n"
-            .as_bstr(),
+        expected.as_bstr(),
         "it sends the correct request"
     );
     Ok(())

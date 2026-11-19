@@ -1,6 +1,7 @@
 use gix_error::Result;
-use gix_error::{ErrorExt, OptionExt, ResultExt, bail, message};
+use gix_error::{ErrorExt, ResultExt, bail, message};
 use gix_hash::ObjectId;
+use gix_ref::file::ReferenceExt as _;
 use gix_revision::spec::parse::{
     delegate,
     delegate::{ReflogLookup, SiblingBranch},
@@ -25,7 +26,9 @@ impl delegate::Revision for Delegate<'_> {
         let r = self
             .repo
             .refs
-            .find(name)
+            .find_resolved(name)
+            // Keep deferred peel diagnostics when no candidate can be resolved.
+            .or_else(|_| self.repo.refs.find(name))
             .map_err(|err| error::with_missing_reference(err.into_exn()))?;
         assert!(self.refs[self.idx].is_none(), "BUG: cannot set the same ref twice");
         self.refs[self.idx] = Some(r);
@@ -38,25 +41,7 @@ impl delegate::Revision for Delegate<'_> {
         _must_be_commit: Option<delegate::PrefixHint<'_>>,
     ) -> Result<()> {
         self.last_call_was_disambiguate_prefix[self.idx] = true;
-        // The syntax parser infers a hash kind from the text length. Short IDs are
-        // repository-relative, including 40-digit abbreviations in SHA-256 repositories.
-        let prefix = if prefix.as_oid().kind() != self.repo.object_hash() {
-            let mut id = ObjectId::null(self.repo.object_hash());
-            let len = prefix.hex_len().div_ceil(2);
-            if len > id.as_slice().len() {
-                bail!(
-                    message!(
-                        "Object prefix {prefix} exceeds the repository's {} hash length",
-                        self.repo.object_hash()
-                    )
-                    .validation()
-                );
-            }
-            id.as_mut_slice()[..len].copy_from_slice(&prefix.as_oid().as_bytes()[..len]);
-            gix_hash::Prefix::new(&id, prefix.hex_len())?
-        } else {
-            prefix
-        };
+        let prefix = prefix_with_hash_kind(prefix, self.repo.object_hash())?;
         let mut candidates = Some(HashSet::default());
         self.prefix[self.idx] = Some(prefix);
 
@@ -89,7 +74,7 @@ impl delegate::Revision for Delegate<'_> {
                         Ok(())
                     }
                     RefsHint::PreferRef | RefsHint::PreferObjectOnFullLengthHexShaUseRefOtherwise | RefsHint::Fail => {
-                        match self.repo.refs.find(&prefix.to_string()) {
+                        match self.repo.refs.find_resolved(&prefix.to_string()) {
                             Ok(ref_) => {
                                 assert!(self.refs[self.idx].is_none(), "BUG: cannot set the same ref twice");
                                 if self.opts.refs_hint == RefsHint::Fail {
@@ -134,69 +119,76 @@ impl delegate::Revision for Delegate<'_> {
             },
         };
 
+        let mut resolved = r.clone();
+        let current_id = resolved
+            .follow_to_object()
+            .map_err(|err| error::with_missing_reference(err.into_exn()))?
+            .detach();
         if !r.log_exists()? {
-            r.follow_to_object()
-                .map_err(|err| error::with_missing_reference(err.into_exn()))?;
+            r = resolved;
         }
         let mut platform = r.log_iter();
         let Some(it) = platform
             .rev()
             .or_raise(|| message!("Could not open reflog for {}", r.name()))?
         else {
-            return Err(message!(
+            bail!(
                 "Reference {reference:?} does not have a reference log, cannot {action}",
                 action = match query {
                     ReflogLookup::Entry(_) => "lookup reflog entry by index",
                     ReflogLookup::Date(_) => "lookup reflog entry by date",
                 },
                 reference = r.name().as_bstr()
-            )
-            .raise());
+            );
         };
-        let id = match query {
-            ReflogLookup::Date(date) => {
-                let mut last = None;
-                let mut found = None;
-                for line in it {
-                    gix_utils::stream::check(&crate::interrupt::IS_INTERRUPTED).or_error()?;
-                    let line = line.or_raise(|| message!("Could not read reflog for {}", r.name()))?;
-                    last = Some(if line.previous_oid.is_null() {
-                        line.new_oid
-                    } else {
-                        line.previous_oid
-                    });
-                    if line.signature.time.seconds <= date.seconds {
-                        found = Some(line.new_oid);
-                        break;
-                    }
-                }
-                found
-                    .or(last)
-                    .ok_or_raise(|| message("Reflog does not contain any entries"))?
+        let mut available = 0;
+        let mut previous_id = ObjectId::null(self.repo.object_hash());
+        let mut oldest_id = None;
+        let mut selected_id = None;
+        for line in it {
+            gix_utils::stream::check(&crate::interrupt::IS_INTERRUPTED).or_error()?;
+            let line = line.or_raise(|| message!("Could not read reflog for {}", r.name()))?;
+            let matches = match query {
+                ReflogLookup::Entry(no) => available == no,
+                ReflogLookup::Date(date) => line.signature.time.seconds <= date.seconds,
+            };
+            if matches {
+                // A discontinuity after a deletion or a stale newest log keeps the current ref value.
+                let exact_date =
+                    matches!(query, ReflogLookup::Date(date) if line.signature.time.seconds == date.seconds);
+                selected_id = Some(if !previous_id.is_null() || exact_date {
+                    line.new_oid
+                } else {
+                    current_id
+                });
+                break;
             }
-            ReflogLookup::Entry(no) => {
-                let mut available = 0;
-                let mut found = None;
-                for line in it {
-                    gix_utils::stream::check(&crate::interrupt::IS_INTERRUPTED).or_error()?;
-                    let line = line.or_raise(|| message!("Could not read reflog for {}", r.name()))?;
-                    if available == no {
-                        found = Some(line.new_oid);
-                        break;
-                    }
-                    available += 1;
-                }
-                found.ok_or_raise(|| {
-                    message!(
-                        "Reference '{name}' has {available} ref-log entries and entry number {no} is out of range",
-                        name = r.name(),
-                    )
-                })?
+            available += 1;
+            previous_id = line.previous_oid;
+            oldest_id = Some(if line.previous_oid.is_null() {
+                line.new_oid
+            } else {
+                line.previous_oid
+            });
+        }
+        let id_to_insert = match (selected_id, query) {
+            (Some(id), _) => id,
+            (None, ReflogLookup::Entry(no)) if no == available && !previous_id.is_null() => previous_id,
+            (None, ReflogLookup::Entry(0)) => current_id,
+            (None, ReflogLookup::Entry(no)) => {
+                bail!(
+                    "Reference '{name}' has {available} ref-log entries and entry number {no} is out of range",
+                    name = r.name()
+                );
             }
+            (None, ReflogLookup::Date(_)) => match oldest_id {
+                Some(id) => id,
+                None => bail!("Reflog does not contain any entries"),
+            },
         };
         let objs = self.objs[self.idx].get_or_insert_with(Vec::new);
-        if !objs.contains(&id) {
-            objs.push(id);
+        if !objs.contains(&id_to_insert) {
+            objs.push(id_to_insert);
         }
         Ok(())
     }
@@ -252,22 +244,23 @@ impl delegate::Revision for Delegate<'_> {
         };
         match ok {
             Some(ref_name) => {
-                let id = match self.repo.find_reference(ref_name.as_bstr()) {
+                let id = match self.repo.refs.find_resolved(ref_name.as_bstr()) {
                     Ok(mut r) => {
-                        let id = r.follow_to_object()?.detach();
-                        self.refs[self.idx] = Some(r.detach());
+                        let packed = self.repo.refs.cached_packed_buffer()?;
+                        let id = r.follow_to_object_packed(&self.repo.refs, packed.as_ref().map(|b| &***b))?;
+                        self.refs[self.idx] = Some(r);
                         id
                     }
-                    Err(err) if err.is_not_found() => match ObjectId::from_hex(ref_name.as_ref()) {
+                    Err(err) => match ObjectId::from_hex(ref_name.as_ref()) {
                         Ok(id) if id.kind() == self.repo.object_hash() => id,
-                        _ => {
+                        _ if err.is_not_found() => {
                             bail!(
                                 "Previous checkout '{name}' does not resolve to an existing revision",
                                 name = ref_name.as_bstr()
                             );
                         }
+                        _ => return Err(err),
                     },
-                    Err(err) => return Err(err),
                 };
                 let objs = self.objs[self.idx].get_or_insert_with(Vec::new);
                 if !objs.contains(&id) {
@@ -339,6 +332,20 @@ impl delegate::Revision for Delegate<'_> {
         }
         Err(message!("Couldn't find sibling of {kind:?}").raise())
     }
+}
+
+fn prefix_with_hash_kind(prefix: gix_hash::Prefix, hash_kind: gix_hash::Kind) -> Result<gix_hash::Prefix> {
+    // Short prefixes cannot encode their hash kind; use the repository's object format.
+    if prefix.as_oid().kind() == hash_kind {
+        return Ok(prefix);
+    }
+    let mut object_id = hash_kind.null();
+    let len = prefix.hex_len().div_ceil(2);
+    if len > object_id.as_bytes().len() {
+        bail!("Object prefix {prefix} is too long for the repository's hash kind");
+    }
+    object_id.as_mut_slice()[..len].copy_from_slice(&prefix.as_oid().as_bytes()[..len]);
+    gix_hash::Prefix::new(&object_id, prefix.hex_len())
 }
 
 fn to_sorted_vec(objs: HashSet<ObjectId>) -> Vec<ObjectId> {

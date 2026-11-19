@@ -43,10 +43,18 @@ fn bounded_history_supports_long_short_and_numeric_spellings() {
 fn history_preserves_path_refusals_and_option_terminators() {
     let repo = gix_testtools::tempfile::tempdir().expect("fixture");
     gix_testtools::git(repo.path(), "init").expect("init");
-    for args in [
-        &["log", "-2", "file"][..],
-        &["log", "--", "-2"][..],
-        &["log", "-n", "2", "--", "-5"][..],
+    // A bare word names a revision; paths follow `--`, where even `-2` and `-5` stay paths
+    // instead of becoming counts, and path-limited history is refused rather than ignored.
+    for (args, refusal) in [
+        (&["log", "-2", "file"][..], "Could not resolve revision file"),
+        (
+            &["log", "--", "-2"][..],
+            "Pathspec-limited history is not implemented yet",
+        ),
+        (
+            &["log", "-n", "2", "--", "-5"][..],
+            "Pathspec-limited history is not implemented yet",
+        ),
     ] {
         let mut command = Command::new(env!("CARGO_BIN_EXE_brit"));
         gix_testtools::configure_git_environment(&mut command, repo.path());
@@ -58,7 +66,8 @@ fn history_preserves_path_refusals_and_option_terminators() {
             .expect("brit");
         assert!(!out.status.success());
         assert!(out.stdout.is_empty());
-        assert!(String::from_utf8_lossy(&out.stderr).contains("File-based lookup isn't yet implemented"));
+        let stderr = String::from_utf8_lossy(&out.stderr);
+        assert!(stderr.contains(refusal), "{args:?} is refused as {refusal:?}: {stderr}");
     }
     for args in [&["log", "--max-count", "-1"][..], &["log", "-n", "many"][..]] {
         let mut command = Command::new(env!("CARGO_BIN_EXE_brit"));

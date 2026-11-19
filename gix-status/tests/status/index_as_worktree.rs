@@ -14,7 +14,7 @@ use gix_status::{
     index_as_worktree::{
         Change as WorktreeChange, Conflict, Context, EntryStatus as WorktreeEntryStatus, Options, Outcome, Record,
         Recorder,
-        traits::{CompareBlobs, FastEq, ReadData, SubmoduleStatus},
+        traits::{CompareBlobs, FastEq, HashEq, ReadData, SubmoduleStatus},
     },
 };
 
@@ -37,6 +37,25 @@ pub(super) const TEST_OPTIONS: index::entry::stat::Options = index::entry::stat:
 type Change = WorktreeChange<(), ()>;
 type EntryStatus = WorktreeEntryStatus<(), ()>;
 type Expectation<'a> = (&'a BStr, usize, EntryStatus);
+
+#[test]
+fn default_thread_limit() {
+    assert_eq!(
+        Options::default().thread_limit,
+        cfg!(target_os = "macos").then_some(3),
+        "the default caps threads at three on macOS and leaves them unlimited elsewhere"
+    );
+}
+
+fn attributes_stack(worktree: &std::path::Path, index: &gix_index::State) -> gix_worktree::Stack {
+    gix_worktree::Stack::from_state_and_ignore_case(
+        worktree,
+        false,
+        gix_worktree::stack::State::AttributesStack(Default::default()),
+        index,
+        index.path_backing(),
+    )
+}
 
 fn fixture(name: &str, expected_status: &[Expectation<'_>]) -> Outcome {
     fixture_filtered(name, &[], expected_status)
@@ -168,16 +187,9 @@ fn fixture_filtered_detailed(
     let mut recorder = Recorder::default();
     let search = gix_pathspec::Search::from_specs(to_pathspecs(pathspecs), None, std::path::Path::new(""))
         .expect("valid specs can be normalized");
-    let stack = gix_worktree::Stack::from_state_and_ignore_case(
-        worktree.clone(),
-        false,
-        gix_worktree::stack::State::AttributesStack(Default::default()),
-        &index,
-        index.path_backing(),
-    );
     let ctx = Context {
         pathspec: search,
-        stack,
+        stack: attributes_stack(&worktree, &index),
         filter: gix_filter::Pipeline::new(
             Default::default(),
             gix_testtools::object_hash(),
@@ -360,6 +372,31 @@ fn tracked_changed_to_non_file() {
 }
 
 #[test]
+#[cfg(unix)]
+fn executable_changed_to_non_file_matches_git() -> gix_testtools::TestResult {
+    let root = fixture_path("status_nonfile").join("executable-swapped");
+    assert_eq!(
+        std::fs::read_to_string(root.join(".git/status.baseline"))?,
+        " M file\n",
+        "Git reports an executable replaced by a FIFO as modified"
+    );
+    nonfile_fixture(
+        "executable-swapped",
+        &[(
+            BStr::new(b"file"),
+            0,
+            Change::Modification {
+                executable_bit_changed: true,
+                content_change: Some(()),
+                set_entry_stat_size_zero: false,
+            }
+            .into(),
+        )],
+    );
+    Ok(())
+}
+
+#[test]
 fn removed() {
     let out = fixture(
         "status_removed",
@@ -438,7 +475,7 @@ fn replace_dir_with_file() {
         Outcome {
             entries_to_process: 5,
             entries_processed: 5,
-            symlink_metadata_calls: if cfg!(windows) { 5 } else { 4 },
+            symlink_metadata_calls: 4,
             ..Default::default()
         }
     );
@@ -1040,11 +1077,99 @@ fn unchanged_despite_filter() {
 }
 
 #[test]
+fn clean_filter_receives_worktree_relative_path_from_worktree_root() -> gix_testtools::TestResult {
+    // Use an absolute worktree path, as `gix` does.
+    let worktree = gix_path::realpath(fixture_path("status_filter_path"))?;
+    assert_ne!(
+        std::env::current_dir()?,
+        worktree,
+        "the caller runs outside the worktree"
+    );
+    let git_dir = worktree.join(".git");
+    let object_hash = gix_testtools::object_hash();
+    let mut index = gix_index::File::at(git_dir.join("index"), object_hash, false, Default::default())?;
+    let entry = index
+        .entry_mut_by_path_and_stage("a.txt".into(), gix_index::entry::Stage::Unconflicted)
+        .expect("the fixture tracks `a.txt`");
+    // A stale `mtime` makes the stat check fail, so the worktree file is cleaned and hashed.
+    entry.stat.mtime = Default::default();
+
+    /// Record the output of the clean filter for each compared entry.
+    #[derive(Clone, Default)]
+    struct RecordCleaned(Arc<std::sync::Mutex<Vec<bstr::BString>>>);
+    impl CompareBlobs for RecordCleaned {
+        type Output = ();
+
+        fn compare_blobs<'a, 'b>(
+            &mut self,
+            _entry: &Entry,
+            _worktree_file_size: u64,
+            data: impl ReadData<'a>,
+            buf: &mut Vec<u8>,
+        ) -> Result<Option<Self::Output>> {
+            use std::io::Read;
+            buf.clear();
+            data.stream_worktree_file()?
+                .read_to_end(buf)
+                .map_err(gix_hash::io::from_std_io)?;
+            self.0.lock().expect("not poisoned").push(buf.as_slice().into());
+            Ok(None)
+        }
+    }
+
+    let mut ctx = Context {
+        pathspec: gix_pathspec::Search::from_specs(to_pathspecs(&["a.txt"]), None, std::path::Path::new(""))?,
+        stack: attributes_stack(&worktree, &index),
+        filter: gix_filter::Pipeline::new(
+            Default::default(),
+            object_hash,
+            gix_filter::pipeline::Options {
+                drivers: vec![gix_filter::Driver {
+                    name: "path".into(),
+                    // Both the relative path and its sibling configuration must resolve as they do in Git.
+                    clean: Some(r#"cat >/dev/null && printf %s %f && cat "$(dirname %f)/.clean-map""#.into()),
+                    smudge: None,
+                    process: None,
+                    // Fail instead of falling back to the unfiltered content, which also matches the index.
+                    required: true,
+                }],
+                ..Default::default()
+            },
+        ),
+        should_interrupt: &AtomicBool::default(),
+    };
+    ctx.filter.driver_state_mut().context.worktree_dir = Some(worktree.clone());
+    let cleaned = RecordCleaned::default();
+    index_as_worktree(
+        &index,
+        &worktree,
+        &mut Recorder::default(),
+        cleaned.clone(),
+        SubmoduleStatusMock { dirty: false },
+        odb_at(&git_dir, object_hash),
+        &mut gix_utils::progress::Discard,
+        ctx,
+        Options {
+            fs: gix_fs::Capabilities::probe(&git_dir),
+            stat: TEST_OPTIONS,
+            ..Options::default()
+        },
+    )?;
+
+    assert_eq!(
+        *cleaned.0.lock().expect("not poisoned"),
+        [bstr::BString::from("a.txt mapped")],
+        "like Git, the clean filter receives a worktree-relative `%f` and resolves sibling files from the worktree root"
+    );
+    Ok(())
+}
+
+#[test]
 fn refresh() {
     let expected_outcome = Outcome {
-        entries_to_process: 5,
-        entries_processed: 5,
-        symlink_metadata_calls: 5,
+        entries_to_process: 6,
+        entries_processed: 6,
+        symlink_metadata_calls: 6,
         ..Default::default()
     };
     assert_eq!(
@@ -1091,6 +1216,14 @@ fn refresh() {
                     }
                     .into(),
                 ),
+                (
+                    BStr::new(b"z-executable"),
+                    5,
+                    Change::Type {
+                        worktree_mode: entry::Mode::SYMLINK,
+                    }
+                    .into(),
+                ),
             ],
             #[cfg(windows)]
             &[
@@ -1121,7 +1254,15 @@ fn refresh() {
                         set_entry_stat_size_zero: false
                     }
                     .into(),
-                )
+                ),
+                (
+                    BStr::new("z-executable"),
+                    5,
+                    Change::Type {
+                        worktree_mode: entry::Mode::SYMLINK,
+                    }
+                    .into(),
+                ),
             ],
         ),
         expected_outcome,
@@ -1129,11 +1270,16 @@ fn refresh() {
 }
 
 #[test]
-fn modified() {
+fn modified() -> gix_testtools::TestResult {
+    assert_eq!(
+        std::fs::read_to_string(fixture_path("status_changed").join(".git/type-changes.baseline"))?,
+        " T empty\n T z-executable\n",
+        "Git reports both regular-file modes replaced by symlinks as type changes"
+    );
     let expected_outcome = Outcome {
-        entries_to_process: 5,
-        entries_processed: 5,
-        symlink_metadata_calls: 5,
+        entries_to_process: 6,
+        entries_processed: 6,
+        symlink_metadata_calls: 6,
         ..Default::default()
     };
     let actual_outcome = fixture(
@@ -1178,6 +1324,14 @@ fn modified() {
                 }
                 .into(),
             ),
+            (
+                BStr::new(b"z-executable"),
+                5,
+                Change::Type {
+                    worktree_mode: entry::Mode::SYMLINK,
+                }
+                .into(),
+            ),
         ],
         #[cfg(windows)]
         &[
@@ -1209,9 +1363,64 @@ fn modified() {
                 }
                 .into(),
             ),
+            (
+                BStr::new("z-executable"),
+                5,
+                Change::Type {
+                    worktree_mode: entry::Mode::SYMLINK,
+                }
+                .into(),
+            ),
         ],
     );
     assert_eq!(actual_outcome, expected_outcome);
+    Ok(())
+}
+
+#[test]
+fn modified_with_symlinks_disabled() -> gix_testtools::TestResult {
+    for executable_bit in [false, true] {
+        assert_eq!(
+            std::fs::read_to_string(
+                fixture_path("status_changed").join(format!(".git/type-change-modes-{executable_bit}.baseline"))
+            )?,
+            ":100644 120000\n:100755 120000\n",
+            "Git preserves actual symlink modes even with core.symlinks=false"
+        );
+        fixture_filtered_detailed(
+            "status_changed",
+            "",
+            &["empty", "z-executable"],
+            &[
+                (
+                    BStr::new(b"empty"),
+                    3,
+                    Change::Type {
+                        worktree_mode: Mode::SYMLINK,
+                    }
+                    .into(),
+                ),
+                (
+                    BStr::new(b"z-executable"),
+                    5,
+                    Change::Type {
+                        worktree_mode: Mode::SYMLINK,
+                    }
+                    .into(),
+                ),
+            ],
+            |_| {},
+            false,
+            Default::default(),
+            false,
+            Some(&|dir| gix_fs::Capabilities {
+                symlink: false,
+                executable_bit,
+                ..gix_fs::Capabilities::probe(dir)
+            }),
+        );
+    }
+    Ok(())
 }
 
 #[test]
@@ -1259,16 +1468,9 @@ fn racy_git() -> gix_testtools::TestResult {
 
     let count = Arc::new(AtomicUsize::new(0));
     let counter = CountCalls(count.clone(), FastEq);
-    let stack = gix_worktree::Stack::from_state_and_ignore_case(
-        worktree,
-        false,
-        gix_worktree::stack::State::AttributesStack(Default::default()),
-        &index,
-        index.path_backing(),
-    );
     let ctx = Context {
         pathspec: default_pathspec(),
-        stack,
+        stack: attributes_stack(worktree, &index),
         filter: gix_filter::Pipeline::new(Default::default(), gix_testtools::object_hash(), Default::default()),
         should_interrupt: &AtomicBool::default(),
     };
@@ -1357,6 +1559,376 @@ fn racy_git() -> gix_testtools::TestResult {
     Ok(())
 }
 
+/// A comparison that rewrites the worktree file after `status` obtained its metadata but before the file is read,
+/// like an editor or agent that truncates and rewrites a file in place while `status` runs.
+#[derive(Clone)]
+struct RewriteBeforeRead<C> {
+    path: std::path::PathBuf,
+    content: &'static [u8],
+    compare: C,
+}
+
+impl<C: CompareBlobs> CompareBlobs for RewriteBeforeRead<C> {
+    type Output = C::Output;
+
+    fn compare_blobs<'a, 'b>(
+        &mut self,
+        entry: &Entry,
+        worktree_file_size: u64,
+        data: impl ReadData<'a>,
+        buf: &mut Vec<u8>,
+    ) -> Result<Option<Self::Output>> {
+        std::fs::write(&self.path, self.content).expect("the fixture is writable");
+        self.compare.compare_blobs(entry, worktree_file_size, data, buf)
+    }
+}
+
+/// Run `status` on the `racy_git` fixture, whose single file has indexed content `foo`, while `compare`
+/// rewrites `initial_content` with `content` between reading its metadata and reading its data.
+fn status_with_file_rewritten_before_read<C>(
+    compare: C,
+    initial_content: &[u8],
+    content: &'static [u8],
+) -> gix_error::TestResult<Vec<WorktreeEntryStatus<C::Output, ()>>>
+where
+    C: CompareBlobs + Send + Clone,
+    C::Output: Send,
+{
+    let dir = crate::scripted_fixture_writable("racy_git.sh")?;
+    let worktree = dir.path();
+    std::fs::write(worktree.join("content"), initial_content)?;
+    let git_dir = worktree.join(".git");
+    let mut index = gix_index::File::at(
+        git_dir.join("index"),
+        gix_testtools::object_hash(),
+        false,
+        Default::default(),
+    )?;
+    // An old `mtime` makes the stat comparison fail even if the sizes match, so the file content must be read.
+    index.entries_mut()[0].stat.mtime.secs = 940040400;
+    let mut recorder = Recorder { records: Vec::new() };
+    let outcome = index_as_worktree(
+        &index,
+        worktree,
+        &mut recorder,
+        RewriteBeforeRead {
+            path: worktree.join("content"),
+            content,
+            compare,
+        },
+        SubmoduleStatusMock { dirty: false },
+        gix_object::find::Never,
+        &mut gix_utils::progress::Discard,
+        Context {
+            pathspec: default_pathspec(),
+            stack: attributes_stack(worktree, &index),
+            filter: gix_filter::Pipeline::new(Default::default(), gix_testtools::object_hash(), Default::default()),
+            should_interrupt: &AtomicBool::default(),
+        },
+        Options {
+            fs: gix_fs::Capabilities::probe(&git_dir),
+            stat: TEST_OPTIONS,
+            ..Options::default()
+        },
+    )?;
+    assert_eq!(
+        outcome.worktree_bytes,
+        content.len() as u64,
+        "a short read reports a modification without reading the file again"
+    );
+    Ok(recorder.records.into_iter().map(|record| record.status).collect())
+}
+
+#[test]
+fn file_shrinking_while_read_is_modified() -> gix_testtools::TestResult {
+    fn modified<T>(content_change: T) -> WorktreeEntryStatus<T, ()> {
+        WorktreeChange::Modification {
+            executable_bit_changed: false,
+            content_change: Some(content_change),
+            set_entry_stat_size_zero: false,
+        }
+        .into()
+    }
+
+    assert_eq!(
+        status_with_file_rewritten_before_read(FastEq, b"bar", b"f")?,
+        [modified(())],
+        "like Git, a file that yields fewer bytes than its metadata announced changed while it was read"
+    );
+    assert_eq!(
+        status_with_file_rewritten_before_read(HashEq, b"bar", b"f")?,
+        [modified(None)],
+        "a shrinking file is modified, but its hash is unavailable without retrying"
+    );
+    assert_eq!(
+        status_with_file_rewritten_before_read(HashEq, b"foox", b"foo")?,
+        [modified(None)],
+        "a short read remains a modification even if the content now matches the index, preventing a stale stat update"
+    );
+    assert_eq!(
+        status_with_file_rewritten_before_read(HashEq, b"bar", b"")?,
+        [modified(None)],
+        "truncating to empty also reports a modification without retrying to compute the empty-blob hash"
+    );
+    assert_eq!(
+        status_with_file_rewritten_before_read(HashEq, b"f", b"f")?,
+        [modified(Some(gix_object::compute_hash(
+            gix_testtools::object_hash(),
+            gix_object::Kind::Blob,
+            b"f"
+        )?))],
+        "without a short read, the modified content's hash is available even when its size differs from the index"
+    );
+    assert!(
+        matches!(
+            status_with_file_rewritten_before_read(HashEq, b"bar", b"foo")?.as_slice(),
+            [WorktreeEntryStatus::NeedsUpdate(_)]
+        ),
+        "a matching hash without a short read still allows a stat update"
+    );
+    assert!(
+        matches!(
+            status_with_file_rewritten_before_read(FastEq, b"bar", b"foo")?.as_slice(),
+            [WorktreeEntryStatus::NeedsUpdate(_)]
+        ),
+        "rewriting the indexed content of the same size before the read leaves the file unmodified"
+    );
+    Ok(())
+}
+
 fn default_pathspec() -> gix_pathspec::Search {
     gix_pathspec::Search::from_specs(to_pathspecs(&[]), None, std::path::Path::new("")).expect("empty is always valid")
+}
+
+#[cfg(windows)]
+mod windows {
+    use super::*;
+    use pretty_assertions::assert_eq;
+
+    #[test]
+    fn fscache_preserves_live_status_on_misses() -> gix_error::TestResult {
+        let worktree = gix_testtools::scripted_fixture_read_only("fscache.sh")?;
+        let mut index = gix_index::State::new(gix_testtools::object_hash());
+        for name in [
+            "File",
+            "directory",
+            "directory/file",
+            "file",
+            "missing",
+            "missing-parent/file",
+        ] {
+            index.dangerously_push_entry(
+                Default::default(),
+                gix_testtools::object_hash().null(),
+                Flags::INTENT_TO_ADD,
+                Mode::FILE,
+                BStr::new(name),
+            );
+        }
+        let mut results = Vec::new();
+        for fscache in [false, true] {
+            results.push(fscache_status(
+                &index,
+                &worktree,
+                Options {
+                    fscache,
+                    ..Default::default()
+                },
+            )?);
+        }
+        assert_eq!(
+            results[0].0, results[1].0,
+            "cached and live status agree for hits, different casing and missing entries"
+        );
+        assert_eq!(
+            results[0].1.symlink_metadata_calls, 5,
+            "missing parents are rejected before querying leaf metadata"
+        );
+        assert_eq!(
+            results[1].1.symlink_metadata_calls, 2,
+            "different casing and an absent leaf use live metadata; missing parents are rejected earlier"
+        );
+        Ok(())
+    }
+
+    fn fscache_status<'a>(
+        index: &'a gix_index::State,
+        worktree: &std::path::Path,
+        options: Options,
+    ) -> Result<(Vec<Expectation<'a>>, Outcome)> {
+        let ctx = Context {
+            pathspec: default_pathspec(),
+            stack: attributes_stack(worktree, index),
+            filter: gix_filter::Pipeline::new(Default::default(), gix_testtools::object_hash(), Default::default()),
+            should_interrupt: &AtomicBool::default(),
+        };
+        let mut recorder = Recorder::default();
+        let outcome = index_as_worktree(
+            index,
+            worktree,
+            &mut recorder,
+            FastEq,
+            SubmoduleStatusMock { dirty: false },
+            gix_object::find::Never,
+            &mut gix_utils::progress::Discard,
+            ctx,
+            Options {
+                thread_limit: Some(1),
+                ..options
+            },
+        )?;
+        recorder.records.sort_unstable_by_key(|record| record.relative_path);
+        Ok((
+            recorder
+                .records
+                .into_iter()
+                .map(|record| (record.relative_path, record.entry_index, record.status))
+                .collect(),
+            outcome,
+        ))
+    }
+
+    #[test]
+    fn fscache_preserves_stat_and_mode_status() -> gix_error::TestResult {
+        let worktree = gix_testtools::scripted_fixture_read_only("fscache.sh")?;
+        let object_hash = gix_testtools::object_hash();
+        let mut index = gix_index::State::new(object_hash);
+        for (name, mode) in [("directory", Mode::FILE), ("directory/file", Mode::FILE_EXECUTABLE)] {
+            // Empty index blobs differ in size, so FastEq can detect modifications without an ODB.
+            index.dangerously_push_entry(
+                Default::default(),
+                object_hash.empty_blob(),
+                Flags::empty(),
+                mode,
+                BStr::new(name),
+            );
+        }
+        let metadata = gix_index::fs::Metadata::from_path_no_follow(&worktree.join("file"))?;
+        index.dangerously_push_entry(
+            gix_index::entry::Stat::from_fs(&metadata)?,
+            gix_object::compute_hash(object_hash, gix_object::Kind::Blob, b"hello")?,
+            Flags::empty(),
+            Mode::FILE,
+            BStr::new("file"),
+        );
+        index.set_timestamp(FileTime::from_system_time(
+            std::time::SystemTime::now() + std::time::Duration::from_mins(1),
+        ));
+        for executable_bit in [false, true] {
+            let options = Options {
+                fs: gix_fs::Capabilities {
+                    executable_bit,
+                    ..Default::default()
+                },
+                stat: gix_index::entry::stat::Options {
+                    use_nsec: true,
+                    ..Default::default()
+                },
+                ..Default::default()
+            };
+            let (live, live_outcome) = fscache_status(
+                &index,
+                &worktree,
+                Options {
+                    fscache: false,
+                    ..options.clone()
+                },
+            )?;
+            let (cached, cached_outcome) = fscache_status(
+                &index,
+                &worktree,
+                Options {
+                    fscache: true,
+                    ..options
+                },
+            )?;
+            assert_eq!(
+                cached, live,
+                "cached and live status use the same stat and mode policies"
+            );
+            assert_eq!(
+                cached,
+                vec![
+                    (BStr::new("directory"), 0, Change::Removed.into()),
+                    (
+                        BStr::new("directory/file"),
+                        1,
+                        Change::Modification {
+                            executable_bit_changed: executable_bit,
+                            content_change: Some(()),
+                            set_entry_stat_size_zero: false,
+                        }
+                        .into()
+                    ),
+                ],
+                "unchanged files, replaced directories and executable mode changes are distinguished"
+            );
+            assert_eq!(
+                live_outcome.symlink_metadata_calls, 3,
+                "live status reads metadata for each entry"
+            );
+            assert_eq!(
+                cached_outcome.symlink_metadata_calls, 0,
+                "cache hits avoid per-entry metadata calls"
+            );
+        }
+        Ok(())
+    }
+
+    #[test]
+    fn fscache_preserves_timestamp_errors_and_early_returns() -> gix_error::TestResult {
+        let (worktree, ()) = gix_testtools::scripted_fixture_read_only_with_post("fscache.sh", 3, |fixture| {
+            if let gix_testtools::FixtureState::Uninitialized(path) = fixture {
+                set_file_mtime(path.join("file"), FileTime::from_unix_time(-1, 0))?;
+            }
+            Ok(())
+        })?;
+        for flags in [Flags::empty(), Flags::INTENT_TO_ADD] {
+            let mut index = gix_index::State::new(gix_testtools::object_hash());
+            index.dangerously_push_entry(
+                Default::default(),
+                gix_testtools::object_hash().empty_blob(),
+                flags,
+                Mode::FILE,
+                BStr::new("file"),
+            );
+            for fscache in [false, true] {
+                let result = fscache_status(
+                    &index,
+                    &worktree,
+                    Options {
+                        fscache,
+                        ..Default::default()
+                    },
+                );
+                if flags.is_empty() {
+                    let err = result.expect_err("pre-epoch metadata must fail status");
+                    assert!(
+                        err.to_string().contains("The clock was off when reading file metadata"),
+                        "status preserves timestamp error context"
+                    );
+                    let cause = err
+                        .downcast_any_ref::<std::time::SystemTimeError>()
+                        .expect("the timestamp error remains downcastable");
+                    assert_eq!(
+                        cause.duration(),
+                        std::time::Duration::from_secs(1),
+                        "the timestamp error is not normalized away"
+                    );
+                } else {
+                    let (records, outcome) = result?;
+                    assert_eq!(
+                        records,
+                        vec![(BStr::new("file"), 0, EntryStatus::IntentToAdd)],
+                        "intent-to-add returns before stat conversion"
+                    );
+                    assert_eq!(
+                        outcome.symlink_metadata_calls, 1,
+                        "unusable cache entries still fall back to live metadata"
+                    );
+                }
+            }
+        }
+        Ok(())
+    }
 }

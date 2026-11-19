@@ -19,4 +19,4 @@ path = "src/main.rs"
 
 [dependencies]
 brit-epr = { version = "0.2.1", path = "../brit-epr" }
-gix = { version = "^0.89.4", path = "../gix", registry = "elohim", default-features = false, features = ["revision", "sha1"] }
+gix = { version = "^0.90.0", path = "../gix", registry = "elohim", default-features = false, features = ["revision", "sha1"] }

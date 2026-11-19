@@ -34,7 +34,7 @@ impl Reopen {
             path: repository.git_dir().to_owned(),
             worktree: repository.workdir().map(ToOwned::to_owned),
             trust: repository.git_dir_trust(),
-            options: repository.open_options().clone(),
+            options: repository.open_options().clone_without_trust(),
         }
     }
 
@@ -43,7 +43,13 @@ impl Reopen {
         let trust =
             gix::discover::repository::trust(&self.path, self.worktree.as_deref(), &current_dir, (&self.path, None))?
                 .min(self.trust);
-        gix::open_opts(&self.path, self.options.clone().with(trust).open_path_as_is(true))
+        gix::open_opts(
+            &self.path,
+            self.options
+                .clone_without_trust()
+                .with_trust(trust)
+                .open_path_as_is(true),
+        )
     }
 }
 
@@ -1112,7 +1118,7 @@ mod tests {
             let repository = gix::open_opts(
                 fixture.path(),
                 crate::test_repository::options()
-                    .with(trust)
+                    .with_trust(trust)
                     .cli_overrides(["gitoxide.objects.allocLimit=1024"]),
             )?;
             let reopen = Reopen::new(&repository);

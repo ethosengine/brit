@@ -28,6 +28,9 @@
 # embed that absolute path.
 /make_fetch_repos.tar
 /make_fetch_repos_sha256.tar
+# The linked worktrees contain absolute paths to their shared repository.
+/make_fetch_worktrees.tar
+/make_fetch_worktrees_sha256.tar
 # Sets `core.worktree` to `$PWD/worktree` (an absolute path) on multiple
 # clones to test relative-vs-absolute worktree resolution.
 /make_core_worktree_repo.tar
@@ -63,6 +66,9 @@
 # Generate this small uninitialized-submodule fixture instead of storing its archives.
 /make_uninitialized_submodule.tar
 /make_uninitialized_submodule_sha256.tar
+# URL baselines embed host-absolute local paths and depend on platform/Git version.
+/make_submodule_urls.tar
+/make_submodule_urls_sha256.tar
 # Generate this small submodule-config fixture instead of storing its archives.
 /make_submodule_config_overrides.tar
 /make_submodule_config_overrides_sha256.tar
@@ -81,10 +87,22 @@
 /make_rev_spec_parse_repos_sha256.tar
 # This shouldn't have a side-effect as it's already sha256, so at least avoid storing it accidentally. 
 /make_sha256_remote_sha256.tar
-# These are generated, no need to check them in as regeneration works.
+# Just avoid putting too much data data into the repo.
 /make_worktree_add_repos_*
 # Symlink preflight depends on the host filesystem and privileges; regenerate
 # locally rather than archiving either links or an unsupported-host marker.
 /make_symlinked_mailmap_repo*.tar*
 # Better not have more binary objects in the repo unless these are needed for performance.
 /make_replacement_refs*.tar*
+# Generate these small, configuration-only remote reverse-mapping fixtures.
+/make_remote_reverse_mapping_repos.tar
+/make_remote_reverse_mapping_repos_sha256.tar
+# Git clone baselines should reflect the installed Git's behavior.
+/make_clone_refs.tar
+/make_clone_refs_sha256.tar
+# Generate this small commit-graph fixture and apply Rust post-processing locally.
+/make_corrupt_commit_graph.tar
+/make_corrupt_commit_graph_sha256.tar
+# Generate these small status fixtures with host-local symlink preflight and index timestamps.
+/make_status_attribute_and_ignore_repos.tar
+/make_status_attribute_and_ignore_repos_sha256.tar

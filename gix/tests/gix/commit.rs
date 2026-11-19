@@ -5,6 +5,36 @@ mod describe {
 
     use crate::named_repo;
 
+    #[test]
+    fn nested_annotated_tags_match_git() -> TestResult {
+        let fixture = gix_testtools::scripted_fixture_read_only("make_commit_describe_multiple_tags.sh")?;
+        for case in ["nested-both", "nested-only"] {
+            let root = fixture.join(case);
+            let repo = gix::open_opts(&root, crate::restricted())?;
+            let baseline = std::fs::read_to_string(root.join("describe.git"))?;
+            for (select, expected) in [AnnotatedTags, AllTags].into_iter().zip(baseline.lines()) {
+                assert_eq!(
+                    repo.head_commit()?.describe().names(select).format()?.to_string(),
+                    expected,
+                    "{case}: {select:?} prefers the newest outer tag, as Git does"
+                );
+            }
+        }
+        Ok(())
+    }
+
+    #[test]
+    fn malformed_nested_tags_are_skipped() -> TestResult {
+        let fixture = gix_testtools::scripted_fixture_read_only("make_commit_describe_multiple_tags.sh")?;
+        let repo = gix::open_opts(fixture.join("nested-malformed"), crate::restricted())?;
+        assert_eq!(
+            repo.head_commit()?.describe().format()?.to_string(),
+            "v2",
+            "an invalid inner tag must not prevent describing with valid tags"
+        );
+        Ok(())
+    }
+
     #[cfg(feature = "status")]
     mod with_dirty_suffix {
         use gix::commit::describe::SelectRef;
@@ -162,7 +192,7 @@ mod signature {
             gpg::Ssh::ALLOWED_SIGNERS_FILE
                 .validated_assignment_fmt(&signature::fixture("ssh-allowed-signers").display())?,
         ]);
-        let repo = crate::util::repo_opts("make_basic_repo.sh", options)?
+        let mut repo = crate::util::repo_opts("make_basic_repo.sh", options)?
             .to_thread_local()
             .with_object_memory();
         let mut signing_options = repo.commit_signing_options()?;
@@ -193,6 +223,101 @@ mod signature {
         let outcome = signed.verify_signature()?.expect("the written commit has a signature");
         assert!(outcome.is_valid(), "the configured SSH verifier accepts the signature");
         assert_eq!(outcome.format, gix::commit::verify::Format::Ssh);
+        let commit_id = signed.id;
+        drop(signed);
+
+        repo.config_snapshot_mut()
+            .append_config(["gpg.minTrustLevel=ultimate"], gix_config::Source::Api)?;
+        for untrusted in [None, Some("undefined"), Some("invalid")] {
+            if let Some(value) = untrusted {
+                let mut config = repo.config_snapshot_mut();
+                config.append(gix_config::File::from_bytes_no_includes(
+                    format!(
+                        "[gpg]
+                            minTrustLevel = {value}
+                        "
+                    )
+                    .as_bytes(),
+                    gix_config::file::Metadata::from(gix_config::Source::Local).with(gix::sec::Trust::Reduced),
+                    Default::default(),
+                )?)?;
+                config.commit()?;
+            }
+            let outcome = repo
+                .find_commit(commit_id)?
+                .verify_signature()?
+                .expect("the written commit has a signature");
+            assert_eq!(outcome.trust_level, gix::commit::verify::TrustLevel::Fully);
+            assert!(
+                !outcome.is_valid(),
+                "untrusted {untrusted:?} must not lower the trusted minimum or cause a parse error"
+            );
+        }
+        Ok(())
+    }
+
+    #[test]
+    fn signing_policy_respects_the_section_filter() -> TestResult {
+        let options = gix::open::Options::isolated()
+            .filter_config_section(|meta| meta.source != gix_config::Source::Local)
+            .config_overrides([
+                "commit.gpgSign=true",
+                "gpg.format=openpgp",
+                "user.signingKey=trusted-key",
+            ]);
+        let mut repo = crate::util::repo_opts("make_basic_repo.sh", options)?.to_thread_local();
+        for untrusted in ["ssh", "invalid"] {
+            repo.config_snapshot_mut().append_config(
+                [
+                    format!("gpg.format={untrusted}"),
+                    "user.signingKey=untrusted-key".into(),
+                ],
+                gix_config::Source::Local,
+            )?;
+            let options = repo.commit_signing_options()?;
+            assert_eq!(
+                options.format,
+                gix::commit::sign::Format::OpenPgp,
+                "the trusted format wins"
+            );
+            assert_eq!(options.signing_key, "trusted-key", "the trusted key wins");
+        }
+        for untrusted in ["false", "invalid"] {
+            repo.config_snapshot_mut()
+                .append_config([format!("commit.gpgSign={untrusted}")], gix_config::Source::Local)?;
+            assert!(
+                repo.commit_signing_options_if_enabled()?.is_some(),
+                "untrusted values cannot disable trusted automatic signing"
+            );
+        }
+        Ok(())
+    }
+
+    #[test]
+    fn default_signing_key_uses_trusted_identity() -> TestResult {
+        for (name, email) in [
+            ("user.name", "user.email"),
+            ("committer.name", "committer.email"),
+            ("user.name", "gitoxide.user.emailFallback"),
+            ("gitoxide.committer.nameFallback", "gitoxide.committer.emailFallback"),
+        ] {
+            let options = gix::open::Options::isolated()
+                .filter_config_section(|meta| meta.source != gix_config::Source::Local)
+                .config_overrides([format!("{name}=Trusted Signer"), format!("{email}=trusted@example.com")]);
+            let mut repo = crate::util::repo_opts("make_basic_repo.sh", options)?.to_thread_local();
+            repo.config_snapshot_mut().append_config(
+                [
+                    format!("{name}=Untrusted Signer"),
+                    format!("{email}=untrusted@example.com"),
+                ],
+                gix_config::Source::Local,
+            )?;
+            assert_eq!(
+                repo.commit_signing_options()?.signing_key,
+                "Trusted Signer <trusted@example.com>",
+                "untrusted {name} and {email} cannot select the default signing key"
+            );
+        }
         Ok(())
     }
 

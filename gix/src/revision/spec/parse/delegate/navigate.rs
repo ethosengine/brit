@@ -97,6 +97,7 @@ impl delegate::Navigate for Delegate<'_> {
                 }
             }
             PeelTo::Path(path) => {
+                let requires_tree = path.ends_with(b"/");
                 let path = to_repo_relative_path(repo, path)?;
                 let path = path.as_ref();
                 let lookup_path = |obj: &ObjectId| {
@@ -104,10 +105,20 @@ impl delegate::Navigate for Delegate<'_> {
                     if path.is_empty() {
                         return Ok::<_, Exn>((tree_id, gix_object::tree::EntryKind::Tree.into()));
                     }
+                    // Tree paths are literal: components are neither normalized nor converted to native paths.
                     let source = crate::object::bounded::Source::deferred(repo);
-                    let entry = source
-                        .lookup_entry(tree_id, &gix_path::from_bstr(path).or_erased()?)
-                        .or_erased()?
+                    let mut buffer = Buffer::default();
+                    let mut components = path.strip_suffix(b"/").unwrap_or(path).split(|b| *b == b'/').peekable();
+                    let mut current_tree_id = tree_id;
+                    let entry: Option<gix_object::tree::Entry> = loop {
+                        let tree = source.load(&current_tree_id, &mut buffer).or_erased()?;
+                        match gix_object::tree::next_entry(&mut components, tree) {
+                            std::ops::ControlFlow::Continue(id) => current_tree_id = id,
+                            std::ops::ControlFlow::Break(entry) => break entry.map(Into::into),
+                        }
+                    };
+                    let entry = entry
+                        .filter(|entry| !requires_tree || entry.mode.is_tree())
                         .ok_or_raise_erased(|| {
                             message!(
                                 "Could not find path {path:?} in tree {tree} of parent object {object}",
@@ -238,17 +249,26 @@ impl delegate::Navigate for Delegate<'_> {
                 }
                 handle_errors_and_replacements(repo, &mut self.delayed_errors, objs, errors, &mut replacements)
             }
+            None if self.refs[self.idx].is_some() => {
+                bail!("Could not resolve the reference to start a commit search");
+            }
             None => {
                 let references = self.repo.references()?;
                 let references = references.all()?;
+                // The iterator holds the packed buffer, so peeling has to use the same one.
+                let packed = self.repo.refs.cached_packed_buffer()?;
+                let packed = packed.as_ref().map(|b| &***b);
                 let mut tips = Vec::new();
-                for reference in references
-                    .peeled()
-                    .or_raise(|| message("Couldn't configure iterator for peeling"))?
-                {
-                    let reference = reference?;
-                    if reference.id().header()?.kind().is_commit() {
-                        tips.extend(reference.detach().peeled);
+                for reference in references {
+                    use gix_ref::file::ReferenceExt as _;
+                    let mut reference = reference?.detach();
+                    // Dangling or cyclic symbolic references name no commit to search from, and Git ignores them as well.
+                    if reference.follow_to_object_packed(&self.repo.refs, packed).is_err() {
+                        continue;
+                    }
+                    let id = crate::reference::peel_reference(&mut reference, self.repo, packed)?;
+                    if self.repo.find_header(id)?.kind().is_commit() {
+                        tips.push(id);
                     }
                 }
                 let iter = self

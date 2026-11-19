@@ -30,7 +30,7 @@ impl LocalRef {
     fn item(&self) -> Item<'_> {
         Item {
             full_ref_name: self.name.as_ref(),
-            target: &self.target,
+            target: Some(&self.target),
             object: None,
         }
     }

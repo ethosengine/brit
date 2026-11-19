@@ -19,6 +19,18 @@ impl Diff {
     /// * `after` - The token sequence from the second file, after changes
     /// * `heuristic` - The slider heuristic to use for positioning hunks
     pub fn postprocess_with(&mut self, before: &[Token], after: &[Token], mut heuristic: impl SliderHeuristic) {
+        // Compact removals first so ambiguous additions align with them, as in Git.
+        Postprocessor {
+            added: &mut self.removed,
+            removed: &mut self.added,
+            tokens: before,
+            hunk: Hunk {
+                before: 0..0,
+                after: 0..0,
+            },
+            heuristic: &mut heuristic,
+        }
+        .run();
         Postprocessor {
             added: &mut self.added,
             removed: &mut self.removed,
@@ -30,17 +42,6 @@ impl Diff {
             heuristic: &mut heuristic,
         }
         .run();
-        Postprocessor {
-            added: &mut self.removed,
-            removed: &mut self.added,
-            tokens: before,
-            hunk: Hunk {
-                before: 0..0,
-                after: 0..0,
-            },
-            heuristic: &mut heuristic,
-        }
-        .run()
     }
 
     /// Postprocesses the diff using an `InternedInput` and a custom heuristic.

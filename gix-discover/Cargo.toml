@@ -9,7 +9,7 @@ description = "Discover git repositories and check if a directory is a git repos
 authors = ["Sebastian Thiel <sebastian.thiel@icloud.com>"]
 edition = "2024"
 include = ["/src/**/*", "/LICENSE-*"]
-rust-version = "1.88"
+rust-version = "1.95"
 
 [lib]
 doctest = true
@@ -24,7 +24,7 @@ sha256 = ["gix-ref/sha256"]
 gix-sec = { version = "^0.16.1", path = "../gix-sec", registry = "elohim" }
 gix-path = { version = "^0.14.1", path = "../gix-path", registry = "elohim" }
 gix-ref = { version = "^0.69.2", path = "../gix-ref", registry = "elohim" }
-gix-fs = { version = "^0.24.2", path = "../gix-fs", registry = "elohim" }
+gix-fs = { version = "^1.0.0", path = "../gix-fs", registry = "elohim", features = ["unstable"] }
 gix-error = { version = "^0.5.2", path = "../gix-error", registry = "elohim" }
 
 bstr = { version = "1.12.0", default-features = false, features = ["std", "unicode"] }
@@ -35,7 +35,7 @@ dunce = "1.0.3"
 [dev-dependencies]
 insta = "1.46.3"
 gix-testtools = { path = "../tests/tools", features = ["sha1"] }
-serial_test = { version = "3.4.0", default-features = false }
+serial_test = { version = "4.0.1", default-features = false }
 is_ci = "1.1.1"
 
 [target.'cfg(target_os = "macos")'.dev-dependencies]
@@ -46,3 +46,9 @@ tempfile = "3.26.0"
 
 [package.metadata.docs.rs]
 features = ["sha1"]
+
+[package.metadata.qa]
+tests = [
+    { args = ["--features", "sha1"], env = { GIX_TEST_FIXTURE_HASH = "sha1" } },
+    { args = ["--features", "sha256"], env = { GIX_TEST_FIXTURE_HASH = "sha256" } },
+]

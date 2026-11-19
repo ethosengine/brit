@@ -9,7 +9,7 @@ description = "A crate of the gitoxide project implementing the pkt-line seriali
 authors = ["Sebastian Thiel <sebastian.thiel@icloud.com>"]
 edition = "2024"
 include = ["/src/**/*", "/LICENSE-*"]
-rust-version = "1.88"
+rust-version = "1.95"
 
 [lib]
 doctest = true
@@ -43,7 +43,7 @@ gix-trace = { version = "^0.3.1", path = "../gix-trace", registry = "elohim" }
 gix-error = { version = "^0.5.2", path = "../gix-error", registry = "elohim" }
 
 serde = { version = "1.0.114", optional = true, default-features = false, features = ["std", "derive"] }
-faster-hex = { version = "0.10.1", default-features = false, features = ["std"] }
+faster-hex = { version = "1.0.0", default-features = false, features = ["std"] }
 bstr = { version = "1.12.0", default-features = false, features = ["std"] }
 # async support
 futures-io = { version = "0.3.32", optional = true }
@@ -63,3 +63,21 @@ gix-macros = { path = "../gix-macros" }
 
 [package.metadata.docs.rs]
 features = ["document-features", "blocking-io", "serde"]
+
+[package.metadata.qa]
+checks = [
+    { args = ["--all-features"] },
+    { args = ["--features", "blocking-io"] },
+    { args = ["--features", "async-io"] },
+]
+tests = [
+    { args = ["--features", "blocking-io", "--test", "blocking-packetline"] },
+    { args = ["--features", "async-io", "--test", "async-packetline"] },
+]
+doctests = [
+    # `cargo nextest` doesn't run doctests, so cover feature-gated examples explicitly here.
+    { args = ["--features", "blocking-io"] },
+]
+
+[package.metadata.qa.wasm]
+targets = ["wasm32-unknown-unknown", "wasm32-wasip1", "wasm32-wasip2"]

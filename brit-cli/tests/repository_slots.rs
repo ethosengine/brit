@@ -156,7 +156,7 @@ fn discovery_resolves_head_beyond_what_a_32_slot_store_can_load() -> TestResult 
     let capped = gix::open_opts(
         repo_path,
         gix::open::Options::default()
-            .with(gix::sec::Trust::Full)
+            .with_trust(gix::sec::Trust::Full)
             .object_store_slots(gix::odb::store::init::Slots::Given(32)),
     )?;
     let err = capped
@@ -242,7 +242,10 @@ fn reduced_trust_repository_keeps_its_capped_store() -> TestResult {
     let head_id = gix::ObjectId::from_hex(head.trim().as_bytes())?;
 
     // No explicit slots: the cap must come from the final Reduced trust alone.
-    let reduced = gix::open_opts(repo_path, gix::open::Options::default().with(gix::sec::Trust::Reduced))?;
+    let reduced = gix::open_opts(
+        repo_path,
+        gix::open::Options::default().with_trust(gix::sec::Trust::Reduced),
+    )?;
     assert_eq!(
         reduced.git_dir_trust(),
         gix::sec::Trust::Reduced,

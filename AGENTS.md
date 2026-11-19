@@ -1,6 +1,6 @@
-# Copilot Instructions for Gitoxide
+# Repository Development Rules for Gitoxide
 
-This repository contains `gitoxide` - a pure Rust implementation of Git. This document provides guidance for GitHub Copilot when working with this codebase.
+This repository contains `gitoxide` - a pure Rust implementation of Git. These development rules apply to all contributors, both humans and agents, regardless of the tools they use.
 
 ## Project Overview
 
@@ -14,14 +14,31 @@ This repository contains `gitoxide` - a pure Rust implementation of Git. This do
 ### AI Agent Communication
 
 - AI agents communicating through a person's account must identify themselves, for example in issue or PR descriptions and comments.
+- Agents creating a PR must state the underlying motivation in its description, such as the project that will benefit
+  or where the bug was first discovered. Any motivation is valid; explain why the work was pursued rather than
+  restating what the PR does. "Want to fix a bug" is insufficient because that is already evident from the PR itself.
 - AI assistance that does not replace the person as the speaker, such as proofreading or wording polish, does not require identification.
 - Attributing AI assistance in commit metadata, for example with an `Assisted-by:` or `Co-authored-by:` trailer, is welcome but not required.
+
+### Worktrees
+
+Use a `tmp/` branch prefix for temporary worktrees. From the starting worktree,
+run `tix wt switch --new-branch tmp/<task>`. Tix starts the new worktree at the
+current Tix branch tip and makes its commits visible from the starting worktree.
+If you pass `--path`, prefix the directory name with `tmp-`.
+
+After verifying that the receiving branch contains all the work, return to the
+starting worktree and run `tix wt remove <worktree-path>` to remove the clean
+temporary worktree. Tix only deletes the temporary branch automatically if its
+tip is merged into the inferred default branch. To remove both together after
+reintegrating into a topic branch, use
+`tix wt remove --force-delete <worktree-path>`.
 
 ### Test-First Development
 
 - Protect against regression and make implementing features easy
 - Keep it practical - the Rust compiler handles mundane things
-- Use git itself as reference implementation; run same tests against git where feasible
+- Use git itself as reference implementation; run same tests against git where feasible. Consider Git's test cases and fixtures where appropriate.
 - Never use `.unwrap()` in production code, avoid it in tests in favor of `.expect()` or `?`. Use `gix_error::TestResult` for test functions and helpers.
 - Use `.expect("why")` with context explaining why expectations should hold, but only if it's relevant to the test.
 
@@ -92,14 +109,14 @@ Follow "purposeful conventional commits" style:
   - Use Markdown generously whenever markup helps readers understand or navigate the prose.
   - Use the body to share everything known about what motivated the change, not merely what changed.
 - Use conventional commit prefixes ONLY if message should appear in changelog
-- Breaking changes MUST use `!` before the colon: `change!:`, `remove!:`, `rename!:`, or _scoped_ forms like `feat(gix-odb)!:`
-- Features/fixes visible to users: `feat:`, `fix:`
-- For a changelog-worthy commit touching multiple crates, _scope_ it to the crate that should receive the changelog entry, like `feat!(gix-ref)`.
-- Refactors/chores: no prefix (don't affect users)
+- Every Conventional Commit title MUST include a _scope_ naming the crate that should receive the changelog entry, even when the commit touches only that crate. If it touches paths outside that crate or multiple crates, still scope it to the crate whose changelog should receive the entry.
+- Breaking changes MUST appear in the changelog and use `!` after the scope and before the colon: `change(gix)!:`, `remove(gix)!:`, `rename(gix)!:`, or `feat(gix-odb)!:`
+- Features/fixes visible to users: `feat(gix):`, `fix(gix):`
+- Refactors/chores: no prefix (don't affect users). If a refactor changes the API, use `feat`, `change`, `rename`, or `remove` with the appropriate scope and breaking-change marker instead.
 - Examples:
-  - `feat: add Repository::foo() to do great things. (#234)`
-  - `fix: don't panic when calling foo() in a bare repository. (#456)`
-  - `change!: rename Foo to Bar. (#123)`
+  - `feat(gix): add Repository::foo() to do great things. (#234)`
+  - `fix(gix): don't panic when calling foo() in a bare repository. (#456)`
+  - `change(gix)!: rename Foo to Bar. (#123)`
   - `feat(gix-odb)!: add a new object lookup API`
   - `fix(gix-ref)!: reject invalid reference names`
 
@@ -112,7 +129,7 @@ Follow "purposeful conventional commits" style:
 - No `.unwrap()` - use `.expect("context")` if you are sure this can't fail.
 - Prefer references in plumbing crates to avoid expensive clones
 - Avoid calling `.detach()` unless an owned value is explicitly required. Many `gix` APIs accept attached ids and references directly, so prefer keeping repository-backed handles like `gix::Id` when possible.
-- Name variables holding untyped Git object IDs `<type>_id` or `*_<type>_id` (for example, `commit_id`, `root_tree_id`, or `note_blob_id`) so the object kind is always explicit.
+- When the object kind is known, name variables holding untyped Git object IDs `<type>_id` or `*_<type>_id` (for example, `commit_id`, `root_tree_id`, or `note_blob_id`) so the object kind is explicit. Use `id` when the object kind is unknown or unclear.
 - Use `gix_parallel::*` for interior mutability primitives
 
 ### Path Handling
@@ -137,10 +154,34 @@ Follow "purposeful conventional commits" style:
 
 ### Test Best Practices
 
+- Use multi-line string literals for test input containing multiple lines of content
+  instead of embedding `\n` escapes. Keep single-line input with a trailing newline,
+  such as `"foo\n"`, as-is. Indent multi-line literals naturally with the surrounding
+  code when the input processor tolerates leading whitespace, as `gix-config` does;
+  preserve exact whitespace when it matters to the behavior being tested.
+- Test public APIs in the crate's integration tests under `tests/`, using only
+  public interfaces. Reserve in-source unit tests (`#[cfg(test)]` modules) for
+  private or `pub(crate)` functionality that integration tests cannot access.
+  Extend an existing integration test with additional assertions when it already
+  exercises the relevant behavior.
 - Tests must be isolated from the developer's checkout, other worktrees, shared
-  Git metadata, and user configuration. Use disposable repositories provided by
-  `gix-testtools`, such as `scripted_fixture_writable()`; never mutate a shared
-  read-only fixture or use the source checkout as a test repository.
+  Git metadata, and user configuration. Use fixtures provided by `gix-testtools`;
+  never use the source checkout as a test repository.
+- **Tests of read-only functionality must use read-only fixtures**, such as
+  `gix_testtools::scripted_fixture_read_only()` or the crate's read-only repository
+  helper. Use `scripted_fixture_writable()` only when exercising functionality
+  that writes. Prepare required repository states during fixture creation, not
+  by mutating a shared read-only fixture in the test.
+- For setup that is easier in Rust (such as binary corruption), use
+  `gix_testtools::scripted_fixture_read_only_with_post(script, version, |fixture| { ... })`.
+  The script creates the repository; the Rust closure prepares it before caching
+  and returns `(fixture_path, value)` through the helper. Only mutate inside
+  `if let gix_testtools::FixtureState::Uninitialized(path) = fixture { ... }`.
+  The closure also runs for `FixtureState::Fresh` (cached or archived fixtures),
+  where it must only read or compute return values. Increment `version` whenever
+  the post-processing behavior changes to invalidate the cache. See the API docs
+  in `tests/tools/src/lib.rs` and the commit-graph regression test in
+  `gix/tests/gix/repository/revision.rs` for an example.
 - Git invocations in test code must go through `gix_testtools::git()`,
   `git_command()`, or fixture scripts executed by `gix-testtools`. Do not spawn
   Git directly with `Command::new("git")` or ad hoc subprocess wrappers. If a test needs unsupported
@@ -177,6 +218,21 @@ Follow "purposeful conventional commits" style:
 
 ## Architecture Decisions
 
+### Temporary stability exemptions
+
+Until `gix` reaches 1.0, stable crates may provisionally support selected types from
+`0.x` plumbing crates. Declare their fully qualified Rust paths in the consuming
+crate's `package.metadata.api-check.allowed-unstable-types` array. A whole-crate
+exception belongs in `allowed-unstable-crates`, using the Rust crate name. Keep these
+exceptions in manifests rather than maintaining a second list in documentation.
+
+Do not gate an API solely because it exposes a declared exception. A type exception
+does not admit other types from the same crate or types exposed by its supported
+fields, methods, bounds, or trait implementations. Gate experimental members with
+`gix_macros::unstable(since = "YYYY-MM-DD")`, using the item's introduction date from Git
+history, even when dependency feature unification makes it public. Keep `reason` optional and
+use it only to explain something beyond the signature or the fact that the API is experimental.
+
 ### Plumbing vs Porcelain
 
 - **Plumbing crates**: Low-level, take references, expose mutable parts as arguments
@@ -186,8 +242,8 @@ Follow "purposeful conventional commits" style:
 
 ### Options vs Context
 
-- Use `Options` for branching behavior configuration (can be defaulted)
-- Use `Context` for data required for operation (cannot be defaulted)
+- Use `Options` for branching behavior configuration (can be defaulted). Fields that cannot be defaulted should be method parameters instead.
+- Use `Context` for data required for operation (cannot be defaulted); its fields could also be parameters. See `gix_config::path::Context` for an example.
 
 ## Crate Organization
 
@@ -205,15 +261,16 @@ Follow "purposeful conventional commits" style:
 - Crate status: crate-status.md
 - Stability guide: STABILITY.md
 - Always update docs if directly related to code changes
+- Updating any `CHANGELOG.md` file, at the repository root or in a crate, is forbidden.
+  These files are generated from conventional commits; express changelog-worthy changes through commit messages instead.
 
 ## CI and Releases
 
-- Ubuntu-latest git version is the compatibility target
-- `cargo smart-release` for releases (driven by commit messages)
+- Ubuntu-latest git version is the compatibility target, while maintaining backwards compatibility
 - Every commit must be self-contained and pass CI independently
    - Feel free to run `etc/scripts/ci-check-local.sh --thorough` until it passes as proxy, as running every commit against CI isn't feasible.
-- Keep breaking changes and all adaptations required to build and test the workspace in the same commit
-- When such a commit touches multiple crates, _scope_ its conventional commit message to the crate whose changelog should receive the entry
+- Keep breaking changes and all adaptations required to build and test the workspace in the same commit. Do not split them merely to route changelog entries.
+- Every Conventional Commit title must have a _scope_ naming the crate whose changelog should receive the entry, including when the commit touches multiple crates
 
 ## When Suggesting Changes
 

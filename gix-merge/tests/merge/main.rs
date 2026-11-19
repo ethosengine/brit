@@ -24,6 +24,7 @@ fn commit_with_storage_conformance<'a>(
     blobs: &mut gix_merge::blob::Platform,
     objects: &'a (impl gix_object::FindObjectOrHeader + gix_object::FindStream + gix_object::Write),
     abbreviate: &mut dyn FnMut(&gix_hash::oid) -> String,
+    mut context: gix_merge::tree::Context<'_>,
     options: gix_merge::commit::Options,
 ) -> gix_error::Result<gix_merge::commit::Outcome<'a>> {
     use gix_error::ResultExt;
@@ -47,10 +48,18 @@ fn commit_with_storage_conformance<'a>(
         &mut bounded_blobs,
         objects,
         abbreviate,
+        gix_merge::tree::Context {
+            submodule: context
+                .submodule
+                .as_mut()
+                .map(|query| &mut **query as &mut gix_merge::submodule::QueryFn<'_>),
+        },
         options.clone(),
         &storage,
     );
-    let buffered = gix_merge::commit(ours, theirs, labels, graph, diff, blobs, objects, abbreviate, options);
+    let buffered = gix_merge::commit(
+        ours, theirs, labels, graph, diff, blobs, objects, abbreviate, context, options,
+    );
     match (&buffered, bounded) {
         (Ok(expected), Ok(mut actual)) => {
             let actual_tree = actual.tree_merge.tree.write(|tree| objects.write(tree))?;

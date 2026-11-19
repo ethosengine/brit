@@ -422,7 +422,7 @@ impl Step {
             .detach()
             .write(|tree| repo.write_object(tree).map(gix::Id::detach))?;
         selection_interrupt()?;
-        let mut index = repo.index_from_tree(&tree)?;
+        let tree_index = repo.index_from_tree(&tree)?;
         selection_interrupt()?;
         let mut footprint = conflicts.clone();
         {
@@ -436,16 +436,15 @@ impl Step {
             selection_interrupt()?;
             let ours_index = repo.index_from_tree(&ours)?;
             selection_interrupt()?;
-            changed_index_paths(&ours_index, &index, &mut footprint)?;
+            changed_index_paths(&ours_index, &tree_index, &mut footprint)?;
         }
         // The merged tree's attributes govern the files this step will write.
         let footprint = collect_footprint(footprint)?;
         refuse_external_filters(repo, [tree], &footprint)?;
-        result.index_changed_after_applying_conflicts(
-            &mut index,
-            how,
-            gix::merge::tree::apply_index_entries::RemovalMode::Prune,
-        );
+        drop(tree_index);
+        // The merge records its own index, with the unmerged stages `how` selects in place of
+        // the entries they replace.
+        let index = result.index_file(how, None)?;
         selection_interrupt()?;
         index.verify_entries()?;
         selection_interrupt()?;

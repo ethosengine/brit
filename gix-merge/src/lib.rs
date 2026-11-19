@@ -18,6 +18,8 @@ pub mod blob;
 ///
 pub mod commit;
 pub use commit::function::{commit, commit_bounded};
+/// Facts about submodule history supplied by the caller of a tree or commit merge.
+pub mod submodule;
 ///
 pub mod tree;
 pub use tree::function::{tree, tree_bounded};

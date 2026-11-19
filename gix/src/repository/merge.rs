@@ -57,7 +57,8 @@ impl Repository {
             self.object_hash(),
             crate::filter::Pipeline::options(self)?,
         );
-        let filter = gix_merge::blob::Pipeline::new(worktree_roots, filter, self.config.merge_pipeline_options()?);
+        // Git's diff size threshold does not change how text is merged.
+        let filter = gix_merge::blob::Pipeline::new(worktree_roots, filter, Default::default());
         let options = gix_merge::blob::platform::Options {
             default_driver: self.config.resolved.string(tree::Merge::DEFAULT),
         };
@@ -93,21 +94,24 @@ impl Repository {
 
     /// Read all relevant configuration options to instantiate options for use in [`merge_trees()`](Self::merge_trees).
     pub fn tree_merge_options(&self) -> Result<crate::merge::tree::Options> {
-        let (mut rewrites, mut is_configured) = crate::diff::utils::new_rewrites_inner(
+        let (mut rewrites, is_configured) = crate::diff::utils::new_rewrites_inner(
             &self.config.resolved,
             self.config.lenient_config,
             &tree::Merge::RENAMES,
             &tree::Merge::RENAME_LIMIT,
         )?;
         if !is_configured {
-            (rewrites, is_configured) =
-                crate::diff::utils::new_rewrites(&self.config.resolved, self.config.lenient_config)?;
-        }
-        if !is_configured {
             rewrites = Some(Default::default());
         }
         Ok(gix_merge::tree::Options {
             rewrites,
+            directory_renames: if rewrites.is_some() {
+                tree::Merge::DIRECTORY_RENAMES
+                    .try_into_directory_renames(self.config.resolved.boolean(tree::Merge::DIRECTORY_RENAMES))
+                    .with_lenient_default(self.config.lenient_config)?
+            } else {
+                gix_merge::tree::DirectoryRenames::Disabled
+            },
             blob_merge: self.blob_merge_options()?,
             blob_merge_command_ctx: self.command_context()?,
             fail_on_conflict: None,
@@ -125,6 +129,9 @@ impl Repository {
     /// If these changes should not be observable outside of this instance, consider [enabling object memory](Self::with_object_memory).
     ///
     /// Note that `ancestor_tree` can be the [empty tree hash](gix_hash::ObjectId::empty_tree) to indicate no common ancestry.
+    ///
+    /// Available local submodule repositories provide history for resolving gitlink updates. Missing repositories
+    /// or commits leave a submodule conflict; errors reading available history are returned.
     ///
     /// `labels` are typically chosen to identify the refs or names for `our_tree` and `their_tree` and `ancestor_tree` respectively.
     ///
@@ -145,8 +152,13 @@ impl Repository {
         let mut diff_cache = self.diff_resource_cache_for_tree_diff()?;
         let mut blob_merge = self.merge_resource_cache(Default::default())?;
         let storage = self.merge_storage()?;
+        let mut submodule = submodule::query(self);
+        let context = gix_merge::tree::Context {
+            submodule: Some(&mut submodule),
+        };
         let gix_merge::tree::Outcome {
             tree,
+            index,
             conflicts,
             failed_on_first_unresolved_conflict,
         } = gix_merge::tree_bounded(
@@ -159,6 +171,7 @@ impl Repository {
             &mut Default::default(),
             &mut diff_cache,
             &mut blob_merge,
+            context,
             options.into(),
             &storage,
         )?;
@@ -170,6 +183,7 @@ impl Repository {
                 validate,
                 repo: self,
             },
+            index,
             conflicts,
             failed_on_first_unresolved_conflict,
         })
@@ -184,6 +198,8 @@ impl Repository {
     ///
     /// `labels` are typically chosen to identify the refs or names for `our_commit` and `their_commit`, with the ancestor being set
     /// automatically as part of the merge-base handling.
+    ///
+    /// Submodule histories are resolved as in [`Self::merge_trees()`], including while constructing virtual merge-bases.
     ///
     /// `options` should be initialized with [`Repository::tree_merge_options().into()`](Self::tree_merge_options()).
     ///
@@ -203,10 +219,15 @@ impl Repository {
         let storage = self.merge_storage()?;
         let commit_graph = self.commit_graph_if_enabled()?;
         let mut graph = self.revision_graph(commit_graph.as_ref());
+        let mut submodule = submodule::query(self);
+        let context = gix_merge::tree::Context {
+            submodule: Some(&mut submodule),
+        };
         let gix_merge::commit::Outcome {
             tree_merge:
                 gix_merge::tree::Outcome {
                     tree,
+                    index,
                     conflicts,
                     failed_on_first_unresolved_conflict,
                 },
@@ -222,6 +243,7 @@ impl Repository {
             &mut blob_merge,
             self,
             &mut |id| id.to_owned().attach(self).shorten_or_id().to_string(),
+            context,
             options.into(),
             &storage,
         )?;
@@ -233,6 +255,7 @@ impl Repository {
                 validate,
                 repo: self,
             },
+            index,
             conflicts,
             failed_on_first_unresolved_conflict,
         };
@@ -288,6 +311,10 @@ impl Repository {
         let mut diff_cache = self.diff_resource_cache_for_tree_diff()?;
         let mut blob_merge = self.merge_resource_cache(Default::default())?;
         let storage = self.merge_storage()?;
+        let mut submodule = submodule::query(self);
+        let context = gix_merge::tree::Context {
+            submodule: Some(&mut submodule),
+        };
 
         let gix_merge::commit::virtual_merge_base::Outcome {
             virtual_merge_bases,
@@ -302,6 +329,7 @@ impl Repository {
             &mut blob_merge,
             self,
             &mut |id| id.to_owned().attach(self).shorten_or_id().to_string(),
+            context,
             options.into(),
             &storage,
         )?;
@@ -311,5 +339,74 @@ impl Repository {
             commit_id: commit_id.attach(self),
             tree_id: tree_id.attach(self),
         })
+    }
+}
+
+mod submodule {
+    use std::collections::HashMap;
+
+    use crate::{
+        Repository, Result,
+        bstr::{BStr, BString, ByteSlice},
+    };
+
+    pub(super) fn query(
+        repo: &Repository,
+    ) -> impl FnMut(&BStr, gix_merge::submodule::Query<'_>) -> Result<Option<bool>> + '_ {
+        let mut repositories = HashMap::<BString, Option<Repository>>::new();
+        move |path, query| {
+            if !repositories.contains_key(path) {
+                repositories.insert(path.to_owned(), open(repo, path)?);
+            }
+            let Some(repo) = repositories.get(path).and_then(Option::as_ref) else {
+                return Ok(None);
+            };
+            Ok(Some(match query {
+                gix_merge::submodule::Query::CommitsAvailable(commit_ids) => {
+                    for commit_id in commit_ids {
+                        let Some(object) = repo
+                            .try_find_object(commit_id.to_owned())?
+                            .filter(|object| object.kind.is_commit())
+                        else {
+                            return Ok(Some(false));
+                        };
+                        object.try_into_commit()?.decode()?;
+                    }
+                    true
+                }
+                gix_merge::submodule::Query::IsAncestor { ancestor, descendant } => {
+                    let cache = repo.commit_graph_if_enabled()?;
+                    let mut graph = gix_revwalk::Graph::new(
+                        crate::revision::walk::Objects {
+                            repo,
+                            shallow: repo.shallow_commits()?,
+                        },
+                        cache.as_ref(),
+                    );
+                    gix_revision::merge_base::is_ancestor(ancestor.to_owned(), descendant.to_owned(), &mut graph)?
+                }
+            }))
+        }
+    }
+
+    fn open(repo: &Repository, path: &BStr) -> Result<Option<Repository>> {
+        // Git tries the checkout first, including unregistered or renamed submodules.
+        if let Some(worktree_gitdir) = crate::submodule::worktree_gitdir(repo, path)?
+            && let Some(git_dir) = crate::submodule::git_dir_from_worktree_gitdir(&worktree_gitdir, true)?
+            && let Some(subrepo) = crate::submodule::open(repo, &git_dir, path)?
+        {
+            return Ok(Some(subrepo));
+        }
+        if let Some(submodules) = repo.submodules()? {
+            for submodule in submodules {
+                if submodule
+                    .try_path()?
+                    .is_some_and(|configured_path| configured_path.as_bstr() == path)
+                {
+                    return submodule.open();
+                }
+            }
+        }
+        Ok(None)
     }
 }

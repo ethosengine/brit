@@ -114,7 +114,7 @@ where
             .iter()
             .map(|(id, r)| Item {
                 full_ref_name: r.name().as_bstr(),
-                target: id.as_ref(),
+                target: Some(id.as_ref()),
                 object: None,
             })
             .collect();
@@ -129,7 +129,7 @@ where
         if let Some(id) = &head_id {
             items.push(Item {
                 full_ref_name: "HEAD".into(),
-                target: id.as_ref(),
+                target: Some(id.as_ref()),
                 object: None,
             });
         }

@@ -23,7 +23,7 @@
 //! ### The Trust Model
 //!
 //! It is very simple - based on the ownership of the repository compared to the user of the current process [Trust](sec::Trust)
-//! is assigned. This can be [overridden](open::Options::with()) as well. Further, git configuration files track their trust level
+//! is assigned. This can be [overridden](open::Options::with_trust()) as well. Further, git configuration files track their trust level
 //! per section based on and sensitive values like paths to executables or certain values will be skipped if they are from a source
 //! that isn't [fully](sec::Trust::Full) trusted.
 //!
@@ -140,6 +140,8 @@ pub use gix_date as date;
 pub use gix_dir as dir;
 pub use gix_error as error;
 pub use gix_fs as fs;
+#[cfg(feature = "fsmonitor")]
+pub use gix_fsmonitor as fsmonitor;
 pub use gix_glob as glob;
 pub use gix_hash as hash;
 pub use gix_hashtable as hashtable;
@@ -284,7 +286,7 @@ pub fn discover_opts(
         directory,
         options,
         sec::trust::Mapping {
-            full: open_options.clone(),
+            full: open_options.clone_with_trust(),
             reduced: open_options,
         },
     )
@@ -331,6 +333,13 @@ pub fn init_bare(directory: impl AsRef<std::path::Path>) -> Result<Repository> {
 
 /// Create a platform for configuring a bare clone from `url` to the local `path`, using default options for opening it (but
 /// amended with using configuration from the git installation to ensure all authentication options are honored).
+///
+/// Like `git clone --bare`, branches are stored in `refs/heads/`, with no default fetch refspec,
+/// remote-tracking `HEAD`, or branch upstream configuration. For a non-bare clone without checkout
+/// (like `git clone --no-checkout`), use [`prepare_clone()`] followed by
+/// [`fetch_only()`][clone::PrepareFetch::fetch_only()]
+/// with the `blocking-network-client` or `async-network-client-async-std` feature enabled.
+/// This creates `path/.git` and fetches the repository without populating the working tree.
 ///
 /// See [`clone::PrepareFetch::new()`] for a function to take full control over all options.
 pub fn prepare_clone_bare<Url, E>(url: Url, path: impl AsRef<std::path::Path>) -> Result<clone::PrepareFetch>
@@ -421,6 +430,7 @@ pub fn config(git_dir: Option<&std::path::Path>, options: &open::Options) -> Res
         &options.api_config_overrides,
         &options.cli_config_overrides,
         options.use_repository_local_environment,
+        &mut |_| {},
     )
 }
 
@@ -538,6 +548,10 @@ pub mod state;
 ///
 #[cfg(feature = "status")]
 pub mod status;
+
+/// Filesystem notifications interpreted using repository layout and ignore rules.
+#[cfg(feature = "notify")]
+pub mod notify;
 
 ///
 pub mod shallow;

@@ -11,6 +11,34 @@ fn remote_name(name: &str) -> BString {
 }
 
 #[test]
+fn legacy_names_can_be_used_for_lookup() -> gix_testtools::TestResult {
+    let path = gix_testtools::scripted_fixture_read_only("make_legacy_subsection_repo.sh")?;
+    let repo = gix::open_opts(&path, gix::open::Options::isolated())?;
+    assert_eq!(
+        repo.remote_names().into_iter().collect::<Vec<_>>(),
+        remote_names(std::fs::read_to_string(path.join("remote-names"))?.lines()),
+        "remote enumeration uses the same canonical names as Git"
+    );
+    let remote = repo
+        .find_default_remote(gix::remote::Direction::Fetch)
+        .expect("one configured remote")?;
+    assert_eq!(
+        remote
+            .url(gix::remote::Direction::Fetch)
+            .expect("configured URL")
+            .to_bstring(),
+        std::fs::read_to_string(path.join("remote-url"))?.trim(),
+        "the enumerated default remote retains its URL"
+    );
+    assert_eq!(repo.branch_names().into_iter().collect::<Vec<_>>(), ["main"]);
+    assert!(
+        repo.try_find_remote("Origin").transpose()?.is_none(),
+        "the raw legacy spelling is not a separate configured remote"
+    );
+    Ok(())
+}
+
+#[test]
 fn remote_and_branch_names() {
     let repo = remote::repo("base");
     assert_eq!(repo.remote_names().len(), 0, "there are no remotes");
@@ -56,6 +84,96 @@ mod branch_remote {
     use gix_testtools::TestResult;
 
     use crate::util::named_subrepo_opts;
+
+    #[test]
+    fn remote_urls_respect_config_trust() -> TestResult {
+        use gix_sec::Trust;
+
+        for (key, direction) in [
+            ("branch.main.remote", remote::Direction::Fetch),
+            ("branch.main.remote", remote::Direction::Push),
+            ("branch.main.pushRemote", remote::Direction::Push),
+            ("remote.pushDefault", remote::Direction::Push),
+        ] {
+            for (trust, reject_worktree, expected) in [
+                (Trust::Reduced, false, "https://trusted.example/repo"),
+                (Trust::Full, false, "https://override.example/repo"),
+                (Trust::Full, true, "https://trusted.example/repo"),
+            ] {
+                let mut options = gix::open::Options::isolated();
+                if reject_worktree {
+                    options = options.filter_config_section(|meta| meta.source != gix_config::Source::Worktree);
+                }
+                let mut repo = named_subrepo_opts("make_remote_config_repos.sh", "fetch", options)?;
+                let mut config = repo.config_snapshot_mut();
+                config.append_config([format!("{key}=https://trusted.example/repo")], gix_config::Source::Api)?;
+                let mut untrusted = gix_config::File::new(gix_config::file::Metadata {
+                    trust,
+                    ..gix_config::file::Metadata::from(gix_config::Source::Worktree)
+                });
+                untrusted.set_raw_value(key, "https://override.example/repo")?;
+                config.append(untrusted)?;
+                config.commit()?;
+
+                assert_eq!(
+                    repo.branch_remote_name("main", direction)
+                        .expect("the trusted URL is configured")
+                        .as_bstr(),
+                    expected,
+                    "{key}: only eligible configuration can select the destination"
+                );
+                assert_eq!(
+                    repo.branch_remote("main", direction)
+                        .expect("a URL can be used without a remote section")?
+                        .url(direction)
+                        .expect("the remote has a URL")
+                        .to_bstring(),
+                    expected,
+                    "{key}: resolving a branch must not turn rejected configuration into a remote"
+                );
+            }
+        }
+        Ok(())
+    }
+
+    #[test]
+    fn upstream_and_push_policy_respect_config_trust() -> TestResult {
+        for trust in [gix_sec::Trust::Reduced, gix_sec::Trust::Full] {
+            let mut repo = repo("push-default-current")?;
+            let mut config = repo.config_snapshot_mut();
+            config.append_config(["push.default=nothing"], gix_config::Source::Api)?;
+            let mut untrusted = gix_config::File::new(gix_config::file::Metadata {
+                trust,
+                ..gix_config::file::Metadata::from(gix_config::Source::Local)
+            });
+            untrusted.set_raw_value("branch.main.merge", "refs/heads/override")?;
+            untrusted.set_raw_value("push.default", "upstream")?;
+            config.append(untrusted)?;
+            config.commit()?;
+
+            let branch = "refs/heads/main".try_into()?;
+            let trusted = trust == gix_sec::Trust::Full;
+            assert_eq!(
+                repo.branch_remote_ref_name(branch, remote::Direction::Fetch)
+                    .expect("the upstream is configured")?
+                    .as_bstr(),
+                if trusted {
+                    "refs/heads/override"
+                } else {
+                    "refs/heads/other"
+                },
+                "untrusted configuration cannot change the upstream branch"
+            );
+            assert_eq!(
+                repo.branch_remote_ref_name(branch, remote::Direction::Push)
+                    .transpose()?
+                    .is_some(),
+                trusted,
+                "untrusted configuration cannot override push.default=nothing"
+            );
+        }
+        Ok(())
+    }
 
     mod name {
         use gix::remote;
@@ -214,6 +332,53 @@ mod branch_remote {
             .upstream_branch_and_remote_for_tracking_branch("refs/remotes/prefix/main".try_into()?)
             .expect_err("multiple remotes are ambiguous");
         insta::assert_debug_snapshot!(err, "all remotes mapping the same tracking branch are reported", @"Found ambiguous remotes without 1:1 mapping or more than one match: also-fallback, fallback");
+        Ok(())
+    }
+
+    #[test]
+    fn upstream_reverse_mapping_preserves_sources_and_matches_destinations_literally() -> TestResult {
+        let repo = |name| {
+            named_subrepo_opts(
+                "make_remote_reverse_mapping_repos.sh",
+                name,
+                gix::open::Options::isolated(),
+            )
+        };
+        let tracking_branch = "refs/remotes/origin/main".try_into()?;
+        for (name, expected) in [
+            ("full-source", Some("refs/heads/main")),
+            ("partial-source", Some("heads/main")),
+            ("head-source", Some("HEAD")),
+            ("short-source", None),
+            ("object-id-source", None),
+        ] {
+            let repo = repo(name)?;
+            let result = repo.upstream_branch_and_remote_for_tracking_branch(tracking_branch);
+            if let Some(expected) = expected {
+                let (upstream, remote) = result?.expect("the full destination matches");
+                assert_eq!(
+                    upstream.as_bstr(),
+                    expected,
+                    "the parsed source isn't expanded into a branch"
+                );
+                assert_eq!(
+                    remote.name().expect("named remote"),
+                    "origin",
+                    "the source belongs to origin"
+                );
+            } else {
+                assert!(
+                    result.is_err(),
+                    "the source in `{name}` cannot be turned into a full reference name offline"
+                );
+            }
+        }
+        let repo = repo("abbreviated-destination")?;
+        assert!(
+            repo.upstream_branch_and_remote_for_tracking_branch(tracking_branch)?
+                .is_none(),
+            "an abbreviated destination doesn't match a full tracking-reference name"
+        );
         Ok(())
     }
 

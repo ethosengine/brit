@@ -88,6 +88,13 @@ impl PrepareFetch {
     /// Create a new repository at `path` with `create_opts` which is ready to clone from `url`, possibly after making additional adjustments to
     /// configuration and settings.
     ///
+    /// [`Kind::Bare`][crate::create::Kind::Bare] uses Git's bare-clone branch layout and omits the default fetch and upstream
+    /// configuration. [`Kind::WithWorktree`][crate::create::Kind::WithWorktree] with [`fetch_only()`][Self::fetch_only()]
+    /// clones without a checkout.
+    /// Explicit refspecs supplied through [`Self::configure_remote()`] are still honored and persisted.
+    /// For bare clones that callback receives no default refspecs; leaving it empty uses the bare
+    /// branch mapping for the initial fetch only.
+    ///
     /// Note that this is merely a handle to perform the actual connection to the remote, and if any of it fails the freshly initialized repository
     /// will be removed automatically as soon as this instance drops.
     ///
@@ -149,7 +156,9 @@ impl PrepareFetch {
             Err(_) => false,
         };
 
-        let mut repo = crate::ThreadSafeRepository::init_opts(path, kind, create_opts, open_opts)?.to_thread_local();
+        // Clones adopt the remote's object format, so `init.defaultObjectFormat` doesn't apply.
+        let mut repo =
+            crate::ThreadSafeRepository::create_and_open(path, kind, create_opts, open_opts)?.to_thread_local();
         url.canonicalize(repo.options.current_dir_or_empty()).or_raise(|| {
             gix_error::message!(
                 "Failed to turn the relative file url {:?} into an absolute one",
@@ -175,16 +184,17 @@ impl PrepareFetch {
     }
 }
 
-/// A utility to collect configuration on how to perform a checkout into a working tree,
-/// and when dropped without checking out successfully the fetched repository will be deleted from disk.
+/// A utility to collect configuration on how to perform a checkout into a working tree.
+/// Dropping it before [`Self::main_worktree()`] returns `Ok` deletes an initially empty clone destination.
+/// Interruption alone returns `Ok` with the fetched repository and a partial checkout outcome; callers must check
+/// the interrupt flag to determine whether checkout completed. The repository and partial worktree are retained
+/// so checkout can be completed without fetching again. Destinations with pre-existing files are always retained.
 #[must_use]
 #[cfg(feature = "worktree-mutation")]
 #[derive(Debug)]
 pub struct PrepareCheckout {
-    /// A freshly initialized repository which is owned by us, or `None` if it was successfully checked out.
+    /// A freshly initialized repository owned by us, or `None` once returned to the caller, including after interruption.
     pub(self) repo: Option<crate::Repository>,
-    /// The name of the reference to check out. If `None`, the reference pointed to by `HEAD` will be checked out.
-    pub(self) ref_name: Option<gix_ref::PartialName>,
     /// If `true`, drop removes the entire worktree. Otherwise leave it alone.
     pub(self) remove_worktree_on_drop: bool,
 }

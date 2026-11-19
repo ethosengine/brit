@@ -238,7 +238,8 @@ mod section_headers {
         );
         assert_eq!(
             section_header.parse_peek(br#"[Hello.World]"#).unwrap(),
-            fully_consumed(parsed_section_header("Hello", (".", "World")))
+            fully_consumed(parsed_section_header("Hello", (".", "World"))),
+            "syntactic views preserve the original legacy subsection spelling"
         );
     }
 
@@ -702,19 +703,11 @@ mod section {
     }
 
     #[test]
-    fn section_handles_extraneous_whitespace_before_comment() {
+    fn implicit_value_cannot_be_followed_by_a_comment() {
         let mut node = ParseNode::SectionHeader;
-        assert_eq!(
-            section(b"[s]hello             #world", &mut node).unwrap(),
-            fully_consumed(SectionData {
-                header: parsed_section_header("s", None),
-                events: vec![
-                    name_event("hello"),
-                    whitespace_event("             "),
-                    value_event(""),
-                    comment_event('#', "world"),
-                ]
-            })
+        assert!(
+            section(b"[s]hello             #world", &mut node).is_err(),
+            "Git requires an equals sign before a commented value"
         );
     }
 }

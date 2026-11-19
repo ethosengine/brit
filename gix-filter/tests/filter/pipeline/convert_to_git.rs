@@ -170,7 +170,7 @@ fn bounded_clean_matches_buffered_conversion_and_index_decisions() -> gix_testto
                     let (mut cache, mut pipe) = pipeline(fixture, || {
                         (
                             vec![driver_with_process()],
-                            vec![encoding_rs::WINDOWS_1252],
+                            vec!["windows-1252".into()],
                             check,
                             eol::Configuration {
                                 auto_crlf: eol::AutoCrlf::Enabled,

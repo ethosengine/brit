@@ -137,12 +137,7 @@ impl Prefix {
             hex[hex_len] = b'0';
             faster_hex::hex_decode(&hex[..=hex_len], dst)
         };
-        decode_result.map_err(|e| match e {
-            faster_hex::Error::InvalidChar | faster_hex::Error::Overflow => {
-                message("Invalid hex character").validation_error()
-            }
-            faster_hex::Error::InvalidLength(_) => panic!("This is already checked"),
-        })?;
+        decode_result.map_err(|_| message("Invalid hex character").validation_error())?;
 
         Ok(Prefix { bytes, hex_len })
     }
@@ -182,6 +177,7 @@ impl Prefix {
     }
 
     /// Return a type which displays this prefix in JJ-compatible reverse-hex notation.
+    #[gix_macros::unstable(since = "2026-08-12")]
     pub fn to_reverse_hex(&self) -> ReverseHexDisplay<'_> {
         ReverseHexDisplay::new(&self.bytes, self.hex_len)
     }

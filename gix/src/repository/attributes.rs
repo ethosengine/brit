@@ -3,6 +3,27 @@
 use crate::{AttributeStack, Repository, Result};
 
 impl Repository {
+    /// Return selected global attribute file paths in increasing precedence order: Git installation, system,
+    /// then `core.attributesFile` or the default user attribute file.
+    ///
+    /// Selection respects repository permissions and configuration path interpolation. Selected paths are included
+    /// even if the files do not exist. Per-directory `.gitattributes` and `$GIT_COMMON_DIR/info/attributes` are excluded;
+    /// obtain the latter by joining `info/attributes` to [`common_dir()`][Self::common_dir].
+    #[cfg(feature = "attributes")]
+    pub fn attribute_global_paths(&self) -> Result<Vec<std::path::PathBuf>> {
+        Ok(self
+            .config
+            .attribute_global_paths(
+                self.options.permissions.attributes,
+                Some(self.current_dir()),
+                &mut |_| {},
+            )?
+            .into_iter()
+            .flatten()
+            .map(|path| self.current_dir().join(path))
+            .collect())
+    }
+
     /// Configure a file-system cache for accessing git attributes *and* excludes on a per-path basis.
     ///
     /// Use `attribute_source` to specify where to read attributes from. Also note that exclude information will
@@ -35,9 +56,13 @@ impl Repository {
             attributes_source,
             self.options.permissions.attributes,
         )?;
-        let ignore =
-            self.config
-                .assemble_exclude_globals(self.common_dir(), exclude_overrides, ignore_source, &mut buf)?;
+        let ignore = self.config.assemble_exclude_globals(
+            self.common_dir(),
+            self.current_dir(),
+            exclude_overrides,
+            ignore_source,
+            &mut buf,
+        )?;
         let state = gix_worktree::stack::State::AttributesAndIgnoreStack { attributes, ignore };
         let attribute_list = state.id_mappings_from_index(index, index.path_backing(), case);
         Ok(AttributeStack::new(
@@ -113,9 +138,9 @@ impl Repository {
             gix_glob::pattern::Case::Sensitive
         };
         let mut buf = Vec::with_capacity(512);
-        let ignore = self
-            .config
-            .assemble_exclude_globals(self.common_dir(), overrides, source, &mut buf)?;
+        let ignore =
+            self.config
+                .assemble_exclude_globals(self.common_dir(), self.current_dir(), overrides, source, &mut buf)?;
         let state = gix_worktree::stack::State::IgnoreStack(ignore);
         let attribute_list = state.id_mappings_from_index(index, index.path_backing(), case);
         Ok(AttributeStack::new(

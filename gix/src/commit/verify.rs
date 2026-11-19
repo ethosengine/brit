@@ -21,7 +21,8 @@ pub(crate) fn verify_data(repo: &crate::Repository, data: &[u8], hash: gix_hash:
     };
     let config = repo.config_snapshot();
     let minimum_trust = config
-        .string(Gpg::MIN_TRUST_LEVEL)
+        .plumbing()
+        .string_filter(Gpg::MIN_TRUST_LEVEL, &mut repo.filter_config_section())
         .map(|value| Gpg::MIN_TRUST_LEVEL.try_into_trust_level(value))
         .transpose()?
         .unwrap_or_default();

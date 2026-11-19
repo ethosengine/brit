@@ -13,6 +13,19 @@ pub struct Matcher<'a> {
 }
 
 impl<'a> Matcher<'a> {
+    pub(crate) fn for_reverse_mapping(spec: RefSpecRef<'a>) -> Self {
+        fn literal_or_glob(name: &BStr) -> Needle<'_> {
+            match name.find_byte(b'*') {
+                Some(asterisk_pos) => Needle::Glob { name, asterisk_pos },
+                None => Needle::FullName(name),
+            }
+        }
+        Matcher {
+            lhs: spec.src.map(literal_or_glob),
+            rhs: spec.dst.map(literal_or_glob),
+        }
+    }
+
     /// Match the lefthand-side `item` against this spec and return `(true, Some<rhs>)` to gain the other,
     /// transformed righthand-side of the match as configured by the refspec.
     /// Or return `(true, None)` if there was no `rhs` but the `item` matched.
@@ -97,18 +110,18 @@ impl<'a> Needle<'a> {
                     _ => {}
                 }
                 let tail = &name[*asterisk_pos + 1..];
-                if !item.full_ref_name.ends_with(tail) {
+                if item.full_ref_name.len() < *asterisk_pos + tail.len() || !item.full_ref_name.ends_with(tail) {
                     return Match::None;
                 }
                 let end = item.full_ref_name.len() - tail.len();
                 Match::GlobRange(*asterisk_pos..end)
             }
             Needle::Object(id) => {
-                if *id == item.target {
+                if item.target.is_some_and(|target| !target.is_null() && *id == target) {
                     return Match::Normal;
                 }
                 match item.object {
-                    Some(object) if object == *id => Match::Normal,
+                    Some(object) if !object.is_null() && object == *id => Match::Normal,
                     _ => Match::None,
                 }
             }

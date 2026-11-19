@@ -2,18 +2,17 @@ lints.workspace = true
 
 [package]
 name = "gix-dir"
-version = "0.31.4"
+version = "0.32.0"
 repository = "https://github.com/GitoxideLabs/gitoxide"
 license = "MIT OR Apache-2.0"
 description = "A crate of the gitoxide project dealing with directory walks"
 authors = ["Sebastian Thiel <sebastian.thiel@icloud.com>"]
 edition = "2024"
-rust-version = "1.88"
+rust-version = "1.95"
 include = ["/src/**/*", "/LICENSE-*"]
 
 [lib]
 doctest = false
-test = false
 
 [features]
 ## Enable support for the SHA-1 hash by forwarding the feature to dependencies.
@@ -24,12 +23,12 @@ sha256 = ["gix-index/sha256", "gix-worktree/sha256"]
 [dependencies]
 gix-error = { version = "^0.5.2", path = "../gix-error", registry = "elohim" }
 gix-trace = { version = "^0.3.1", path = "../gix-trace", registry = "elohim" }
-gix-index = { version = "^0.57.4", path = "../gix-index", registry = "elohim" }
+gix-index = { version = "^0.58.0", path = "../gix-index", registry = "elohim" }
 gix-discover = { version = "^0.57.2", path = "../gix-discover", registry = "elohim" }
-gix-fs = { version = "^0.24.2", path = "../gix-fs", registry = "elohim" }
+gix-fs = { version = "^1.0.0", path = "../gix-fs", registry = "elohim", features = ["unstable"] }
 gix-path = { version = "^0.14.1", path = "../gix-path", registry = "elohim" }
 gix-pathspec = { version = "^0.22.4", path = "../gix-pathspec", registry = "elohim" }
-gix-worktree = { version = "^0.58.4", path = "../gix-worktree", registry = "elohim", default-features = false }
+gix-worktree = { version = "^0.59.0", path = "../gix-worktree", registry = "elohim", default-features = false }
 gix-object = { version = "^0.66.2", path = "../gix-object", registry = "elohim" }
 gix-ignore = { version = "^0.24.2", path = "../gix-ignore", registry = "elohim" }
 gix-utils = { version = "^0.5.3", path = "../gix-utils", registry = "elohim", features = ["bstr"] }
@@ -40,8 +39,14 @@ bstr = { version = "1.12.0", default-features = false }
 insta = "1.46.3"
 gix-dir = { path = ".", features = ["sha1", "sha256"] }
 gix-testtools = { path = "../tests/tools" }
-gix-fs = { path = "../gix-fs" }
+gix-fs = { path = "../gix-fs", features = ["unstable"] }
 pretty_assertions = "1.4.0"
 
 [package.metadata.docs.rs]
 features = ["sha1"]
+
+[package.metadata.qa]
+tests = [
+    { args = [], env = { GIX_TEST_FIXTURE_HASH = "sha1" } },
+    { args = ["--features", "sha256"], env = { GIX_TEST_FIXTURE_HASH = "sha256" } },
+]

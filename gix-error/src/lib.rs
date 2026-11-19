@@ -68,6 +68,7 @@
 //! `/home/user/.cargo/registry/src/index.crates.io-hash/gix-url-0.39.0/src/parse.rs:349`
 //! is displayed as `gix-url/src/parse.rs:349`. Package-relative source paths are retained;
 //! paths whose package root cannot be inferred from these directory conventions fall back to the filename.
+//! Displayed paths use forward slashes on every platform.
 //!
 //! This only changes formatting: inspected locations retain the compiler-provided file, line, and column.
 //! A location contains no Cargo package metadata, so a directory that differs from the package name cannot
@@ -153,6 +154,8 @@
 //! Merging independent causes discards their origin; later-visited values win. [`Metadata`] documents common schemas
 //! for input validation and external program runtime failures.
 //! These conventions do not require collecting additional information or imply a classification.
+//! Metadata is printed without redaction and may expose personally identifiable information (PII) or secrets;
+//! see [metadata privacy](Metadata#privacy), especially before opting into [`Message::with_command()`].
 //! To identify a specific failure without inspecting its values, see
 //! [matching a specific failure](#matching-a-specific-failure).
 //!
@@ -621,6 +624,9 @@ pub use exn::{
 /// With `auto-chain-error`, [`Debug`](std::fmt::Debug) reports the complete diagnostic chain,
 /// so returning [`Result`] from `main()` retains the underlying causes. Caller locations are printed only with the
 /// `error-print-location` feature, including for errors returned from `main()`. Alternate Debug (`{error:#?}`) omits them.
+/// Reports use `Caused by:` for both flattened siblings and genuine causal chains, so enabling auto-chaining makes
+/// them visually indistinguishable.
+/// See [`Exn`]'s visualization examples for the tree, flattened, and genuine-chain layouts.
 /// Normal [`Display`](std::fmt::Display) shows the root diagnostic; alternate Display (`{error:#}`) joins the
 /// complete chain with `: ` and omits locations, suitable for single-line error messages.
 ///

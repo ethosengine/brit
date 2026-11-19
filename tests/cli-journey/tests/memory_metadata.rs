@@ -1018,9 +1018,14 @@ fn annotated_tag(reduced: bool) -> Result<()> {
             let actual = root.join(".git/actual-tags");
             brit(root, &["tag", "list"], &actual, limit)?;
             assert_eq!(fs::read(&actual)?, b"blob\nrelease [tag name: payload-name, signed]\n");
+            // Like `git rev-parse`, a reference to an annotated tag names the tag itself;
+            // peeling it to the commit is explicit, as in the expressions below.
             brit(root, &["revision", "resolve", "tag-alias"], &actual, limit)?;
-            ensure!(fs::read(&actual)? == commit, "large tag peeling changed the target");
-            for expression in ["release^{}", "release^{commit}", "release~0"] {
+            ensure!(
+                fs::read(&actual)? == git(root, &["rev-parse", "tag-alias"])?,
+                "a symbolic reference to the large tag resolves like Git"
+            );
+            for expression in ["release^{}", "release^{commit}", "release~0", "tag-alias^{commit}"] {
                 brit(root, &["revision", "resolve", expression], &actual, limit)?;
                 ensure!(fs::read(&actual)? == commit, "large tag expression {expression}");
             }

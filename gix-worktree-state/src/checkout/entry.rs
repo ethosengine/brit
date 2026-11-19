@@ -43,6 +43,8 @@ pub enum Outcome<'a> {
     },
     /// The will be ready later.
     Delayed(DelayedFilteredStream<'a>),
+    /// A Windows symlink whose target type is not known yet.
+    DelayedSymlink { entry: &'a mut Entry, entry_path: &'a BStr },
 }
 
 impl Outcome<'_> {
@@ -50,7 +52,7 @@ impl Outcome<'_> {
     pub fn as_bytes(&self) -> Option<usize> {
         match self {
             Outcome::Written { bytes } => Some(*bytes),
-            Outcome::Delayed { .. } => None,
+            Outcome::Delayed { .. } | Outcome::DelayedSymlink { .. } => None,
         }
     }
 }
@@ -76,6 +78,7 @@ pub fn checkout<'entry, Find>(
         destination_is_initially_empty,
         overwrite_existing,
         filter_process_delay,
+        delay_symlinks,
         ..
     }: crate::checkout::chunk::Options,
 ) -> Result<Outcome<'entry>>
@@ -160,10 +163,25 @@ where
                 let symlink_destination = gix_path::to_native_path_on_windows(BStr::new(obj.data))
                     .or_raise(|| validation("Could not convert path to UTF8").with_input(obj.data))?;
 
-                try_op_or_unlink(dest, overwrite_existing, |p| {
-                    gix_fs::symlink::create(symlink_destination.as_ref(), p)
+                // Creating a symlink never follows the destination. Try first so a deferred
+                // replacement leaves any existing entry intact until creation is ready.
+                let create = |p: &Path| gix_fs::symlink::create(symlink_destination.as_ref(), p);
+                let created = if delay_symlinks {
+                    gix_fs::symlink::create_or_delay(symlink_destination.as_ref(), dest)
+                } else {
+                    create(dest).map(|()| true)
+                }
+                .or_else(|err| {
+                    if overwrite_existing && gix_fs::symlink::is_collision_error(&err) {
+                        try_op_or_unlink(dest, true, create).map(|()| true)
+                    } else {
+                        Err(err)
+                    }
                 })
                 .or_error()?;
+                if !created {
+                    return Ok(Outcome::DelayedSymlink { entry, entry_path });
+                }
             } else {
                 let (mut file, _) = open_file(
                     dest,
@@ -259,6 +277,7 @@ fn open_options(destination_is_initially_empty: bool, overwrite_existing: bool) 
     options
 }
 
+#[cfg_attr(not(unix), allow(unused_variables))]
 pub(crate) fn open_file(
     path: &Path,
     destination_is_initially_empty: bool,
@@ -266,8 +285,9 @@ pub(crate) fn open_file(
     fs_supports_executable_bit: bool,
     entry_mode: gix_index::entry::Mode,
 ) -> std::io::Result<(std::fs::File, ExecutableBitChange)> {
-    #[cfg_attr(windows, allow(unused_mut))]
+    #[cfg_attr(not(unix), allow(unused_mut))]
     let mut options = open_options(destination_is_initially_empty, overwrite_existing);
+    #[cfg(unix)]
     let needs_executable_bit = fs_supports_executable_bit && entry_mode == gix_index::entry::Mode::FILE_EXECUTABLE;
     #[cfg(unix)]
     let executable_bit_change = if needs_executable_bit && destination_is_initially_empty {
@@ -283,8 +303,7 @@ pub(crate) fn open_file(
     } else {
         ExecutableBitChange::Remove
     };
-    //  not supported on windows
-    #[cfg(windows)]
+    #[cfg(not(unix))]
     let executable_bit_change = ExecutableBitChange::NoChange;
     try_op_or_unlink(path, overwrite_existing, |p| {
         let file = options.open(p)?;
@@ -309,7 +328,7 @@ pub(crate) fn finalize_entry(
     entry: &mut gix_index::Entry,
     file: std::fs::File,
     desired_bytes: u64,
-    #[cfg_attr(windows, allow(unused_variables))] executable_bit_change: ExecutableBitChange,
+    #[cfg_attr(not(unix), allow(unused_variables))] executable_bit_change: ExecutableBitChange,
 ) -> Result {
     // For possibly existing, overwritten files, we must change the file mode explicitly to match the index.
     #[cfg(unix)]
@@ -370,7 +389,9 @@ fn adjust_mode_executable_bits(mut mode: u32, executable: bool) -> u32 {
 #[derive(Clone, Copy)]
 pub(crate) enum ExecutableBitChange {
     NoChange,
+    #[cfg(unix)]
     Set,
+    #[cfg(unix)]
     Remove,
 }
 

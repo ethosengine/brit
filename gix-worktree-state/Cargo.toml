@@ -2,14 +2,14 @@ lints.workspace = true
 
 [package]
 name = "gix-worktree-state"
-version = "0.36.5"
+version = "0.37.0"
 repository = "https://github.com/GitoxideLabs/gitoxide"
 license = "MIT OR Apache-2.0"
 description = "A crate of the gitoxide project implementing setting the worktree to a particular state"
 authors = ["Sebastian Thiel <sebastian.thiel@icloud.com>"]
 edition = "2024"
 include = ["/src/**/*", "/LICENSE-*"]
-rust-version = "1.88"
+rust-version = "1.95"
 
 [lib]
 doctest = false
@@ -24,9 +24,9 @@ sha256 = ["gix-index/sha256"]
 gix-trace = { version = "^0.3.1", path = "../gix-trace", registry = "elohim" }
 gix-utils = { version = "^0.5.3", path = "../gix-utils", registry = "elohim", features = ["stream", "interrupt", "progress"] }
 gix-parallel = { version = "^0.50.1", path = "../gix-parallel", registry = "elohim" }
-gix-worktree = { version = "^0.58.4", path = "../gix-worktree", registry = "elohim", default-features = false, features = ["attributes"] }
-gix-index = { version = "^0.57.4", path = "../gix-index", registry = "elohim" }
-gix-fs = { version = "^0.24.2", path = "../gix-fs", registry = "elohim" }
+gix-worktree = { version = "^0.59.0", path = "../gix-worktree", registry = "elohim", default-features = false, features = ["attributes"] }
+gix-index = { version = "^0.58.0", path = "../gix-index", registry = "elohim" }
+gix-fs = { version = "^1.0.0", path = "../gix-fs", registry = "elohim", features = ["unstable"] }
 gix-object = { version = "^0.66.2", path = "../gix-object", registry = "elohim", features = ["stream"] }
 gix-error = { version = "^0.5.2", path = "../gix-error", registry = "elohim", features = ["bstr"] }
 gix-path = { version = "^0.14.1", path = "../gix-path", registry = "elohim" }
@@ -42,10 +42,16 @@ gix-object = { path = "../gix-object" }
 gix-filter = { path = "../gix-filter" }
 gix-index = { path = "../gix-index", features = ["sha1", "sha256"] }
 gix-hash = { path = "../gix-hash", features = ["sha1", "sha256"] }
-gix-fs = { path = "../gix-fs" }
+gix-fs = { path = "../gix-fs", features = ["unstable"] }
 gix-testtools = { path = "../tests/tools", default-features = false, features = ["sha1", "sha256"] }
 gix-odb = { path = "../gix-odb", features = ["sha1", "sha256"] }
 walkdir = "2.3.2"
 
 [package.metadata.docs.rs]
 features = ["sha1"]
+
+[package.metadata.qa]
+tests = [
+    { args = ["--features", "gix-parallel/parallel"], env = { GIX_TEST_FIXTURE_HASH = "sha1" } },
+    { args = ["--features", "sha256,gix-parallel/parallel"], env = { GIX_TEST_FIXTURE_HASH = "sha256" } },
+]

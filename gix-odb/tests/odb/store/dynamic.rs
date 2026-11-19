@@ -278,6 +278,49 @@ fn multi_index_keep_open() -> gix_testtools::TestResult {
 }
 
 #[test]
+fn a_reader_open_before_fetch_can_resolve_the_updated_remote_ref() -> gix_testtools::TestResult {
+    use gix_pack::Find;
+
+    let dir = crate::scripted_fixture_writable("make_remote_pack_update.sh")?;
+    let client = dir.path().join("client");
+    let mut handle = gix_odb::at_opts(
+        client.join(".git/objects"),
+        gix_testtools::object_hash(),
+        [],
+        store::init::Options {
+            slots: store::init::Slots::AsNeededByDiskState {
+                multiplier: 1.0,
+                minimum: 1,
+            },
+            ..Default::default()
+        },
+    )?;
+    let git = |args| gix_testtools::git(&client, args);
+    let old_id = hex_to_id(git("rev-parse refs/remotes/origin/to-delete")?.trim());
+    let mut buf = Vec::new();
+    handle.prevent_pack_unload();
+    let old_location = handle
+        .location_by_oid(&old_id, &mut buf)?
+        .expect("the first fetch made a pack");
+
+    git("fetch --prune origin")?;
+    let new_id = hex_to_id(git("rev-parse refs/remotes/origin/main")?.trim());
+    assert_ne!(old_id, new_id, "the fetch advanced the surviving branch");
+    assert_eq!(
+        git("for-each-ref refs/remotes/origin/to-delete")?,
+        "",
+        "fetch pruned the branch deleted on the remote"
+    );
+    let commit = handle.find_commit(&new_id, &mut buf)?;
+    assert_eq!(commit.message, "second\n", "the open reader can import the new tip");
+    assert!(
+        handle.entry_by_location(&old_location).is_some(),
+        "adding a pack preserves the location returned before the fetch"
+    );
+    Ok(())
+}
+
+#[test]
 fn an_object_in_a_pack_moved_by_an_external_process_can_be_found_from_a_stale_handle() -> gix_testtools::TestResult {
     let tmp = gix_testtools::tempfile::tempdir()?;
     let pack_dir = tmp.path().join("objects/pack");
@@ -371,6 +414,23 @@ fn alternate_dbs_query() -> gix_testtools::TestResult {
 }
 
 #[test]
+fn conversion_preserves_pack_location_access() -> gix_testtools::TestResult {
+    use gix_pack::Find;
+
+    let dir = crate::scripted_fixture_read_only("make_repo_multi_index.sh")?;
+    let mut handle = crate::odb_at(dir.join(".git/objects"))?;
+    let id = handle.iter()?.next().expect("the fixture contains packed objects")?;
+    handle.prevent_pack_unload();
+    let converted = handle.into_arc()?;
+    let location = converted.location_by_oid(&id, &mut Vec::new())?;
+    assert!(
+        location.is_some(),
+        "the converted handle permits pack location access without reconfiguration"
+    );
+    Ok(())
+}
+
+#[test]
 fn object_replacement() -> gix_testtools::TestResult {
     let dir = crate::scripted_fixture_read_only("make_replaced_history.sh")?;
     let handle = crate::odb_at(dir.join(".git/objects"))?;
@@ -433,6 +493,15 @@ fn object_replacement() -> gix_testtools::TestResult {
     let hdr = handle.try_header(&short_history_link)?.expect("present");
     assert_eq!(hdr.kind(), gix_object::Kind::Commit);
     drop(replaced);
+    let converted = handle.clone().into_arc()?;
+    assert_eq!(
+        converted
+            .find_commit(&short_history_link, &mut buf)?
+            .parents()
+            .collect::<Vec<_>>(),
+        vec![long_history_second_id],
+        "the converted handle still reads the replacement"
+    );
     assert_eq!(
         handle.find(&short_history_link, &mut buf)?.data.len() as u64,
         hdr.size()
@@ -451,6 +520,14 @@ fn object_replacement() -> gix_testtools::TestResult {
     assert_eq!(
         handle.find(&short_history_link, &mut buf)?.data.len() as u64,
         hdr.size()
+    );
+
+    let converted = handle.clone().into_arc()?;
+    let commit = converted.find_commit(&short_history_link, &mut buf)?;
+    assert_eq!(
+        commit.parents().collect::<Vec<_>>(),
+        vec![orphan_of_new_history],
+        "the converted handle still reads the original object"
     );
 
     assert_eq!(
@@ -647,6 +724,34 @@ fn lookup() {
     );
 }
 
+#[test]
+fn exists_without_refresh() {
+    let handle = db();
+    assert!(
+        handle.exists_without_refresh(&hex_to_id("dd25c539efbb0ab018caa4cda2d133285634e9b5")),
+        "the store still reads the object directory once and loads the indices it finds"
+    );
+    assert!(
+        handle.exists_without_refresh(&hex_to_id("37d4e6c5c48ba0d245164c4e10d5f41140cab980")),
+        "loose objects are found too"
+    );
+
+    let num_refreshes = handle.store_ref().metrics().num_refreshes;
+    assert!(!handle.exists_without_refresh(&missing_id(&handle)));
+    assert_eq!(
+        handle.store_ref().metrics().num_refreshes,
+        num_refreshes,
+        "a miss doesn't look for new packs…"
+    );
+
+    assert!(!handle.exists(&missing_id(&handle)));
+    assert_eq!(
+        handle.store_ref().metrics().num_refreshes,
+        num_refreshes + 1,
+        "…while `exists()` does, as the handle's refresh mode allows it"
+    );
+}
+
 fn assert_all_indices_loaded(handle: &gix_odb::Handle, num_refreshes: usize, open_reachable_indices: usize) {
     assert_eq!(
         handle.store_ref().metrics(),
@@ -672,6 +777,316 @@ fn packed_object_count_causes_all_indices_to_be_loaded() {
 
     assert_eq!(handle.packed_object_count().unwrap(), 139);
     assert_all_indices_loaded(&handle, 1, 2);
+}
+
+/// A dynamic-store handle without the caches of [`gix_odb::Handle`] in front of it.
+type StoreHandle = gix_odb::store::Handle<std::sync::Arc<gix_odb::Store>>;
+
+/// The id of the pack whose index answers a lookup of `id` on `handle` first.
+fn answering_pack_id(handle: &StoreHandle, id: &ObjectId) -> Result<gix_pack::data::Id> {
+    Ok(gix_pack::Find::location_by_oid(handle, id, &mut Vec::new())?
+        .expect("the fixture packs every object")
+        .pack_id)
+}
+
+#[test]
+fn a_hit_moves_its_index_to_the_front_and_keeps_the_others_in_order() -> Result {
+    let dir = crate::scripted_fixture_read_only("make_overlapping_packs.sh")?;
+    let blobs = std::fs::read_to_string(dir.join("blobs"))?;
+    let blob_ids: std::collections::BTreeMap<_, _> = blobs
+        .lines()
+        .map(|line| line.split_once(' ').expect("each line holds a blob name and its id"))
+        .collect();
+    let blob_id = |name: &str| -> Result<ObjectId> { Ok(ObjectId::from_hex(blob_ids[name].as_bytes())?) };
+    let shared_blob_id = blob_id("shared")?;
+
+    let mut handle = crate::odb_at(dir.join(".git/objects"))?.into_arc()?.into_inner();
+    // `location_by_oid()` (also used by `answering_pack_id()`) requires this mode to keep returned
+    // pack locations valid; it asserts the mode even for this read-only fixture.
+    handle.prevent_pack_unload();
+    assert!(
+        !gix_pack::Find::contains(&handle, gix_testtools::object_hash().null_ref()),
+        "a miss loads every index, so each clone below starts with all of them, biggest first"
+    );
+    assert_eq!(
+        handle.store_ref().metrics().open_reachable_indices,
+        10,
+        "only the ten overlapping packs remain, not the temporary source pack"
+    );
+    // Every hit reorders the handle it ran on, so each pack is named through a clone of its own.
+    let biggest_pack_id = answering_pack_id(&handle.clone(), &shared_blob_id)?;
+
+    type Lookup = fn(&StoreHandle, &ObjectId) -> Result<bool>;
+    let lookups: [(&str, Lookup); 4] = [
+        ("contains", |handle, id| Ok(gix_pack::Find::contains(handle, id))),
+        ("try_header", |handle, id| {
+            Ok(gix_odb::Header::try_header(handle, id)?.is_some())
+        }),
+        ("try_find", |handle, id| {
+            Ok(gix_pack::Find::try_find(handle, id, &mut Vec::new())?.is_some())
+        }),
+        ("location_by_oid", |handle, id| {
+            Ok(gix_pack::Find::location_by_oid(handle, id, &mut Vec::new())?.is_some())
+        }),
+    ];
+    // Both slots, as indices near the front are moved differently than those further back.
+    for slot in [2, 9] {
+        let only_in_slot_blob_id = blob_id(&format!("in-{slot}"))?;
+        let also_in_front_blob_id = blob_id(&format!("in-{slot}-and-front"))?;
+        let slot_pack_id = answering_pack_id(&handle.clone(), &only_in_slot_blob_id)?;
+        assert_eq!(
+            answering_pack_id(&handle.clone(), &also_in_front_blob_id)?,
+            biggest_pack_id,
+            "a new handle asks the biggest index before the one in slot {slot}"
+        );
+        for (name, lookup) in lookups {
+            let handle = handle.clone();
+            assert!(
+                lookup(&handle, &only_in_slot_blob_id)?,
+                "{name}: the index in slot {slot} holds the blob"
+            );
+            assert_eq!(
+                answering_pack_id(&handle, &also_in_front_blob_id)?,
+                slot_pack_id,
+                "{name}: the index that answered from slot {slot} moved to the front"
+            );
+            assert_eq!(
+                answering_pack_id(&handle, &shared_blob_id)?,
+                biggest_pack_id,
+                "{name}: the previous front index moved back by one slot, not to slot {slot}"
+            );
+        }
+    }
+    Ok(())
+}
+
+#[test]
+fn a_ref_delta_lookup_keeps_its_pack_after_loading_the_base() -> gix_error::TestResult {
+    delta_base_lookup_keeps_its_pack(false)
+}
+
+#[test]
+fn a_ref_delta_header_keeps_its_pack_after_loading_the_base() -> gix_error::TestResult {
+    delta_base_lookup_keeps_its_pack(true)
+}
+
+fn delta_base_lookup_keeps_its_pack(read_header: bool) -> gix_error::TestResult {
+    /// Write a pack with `blobs` and `fillers` more blobs of its own to `objects_dir`, along with a v1 index.
+    /// A blob with a base is written as a `REF_DELTA` against the base's id, which the pack doesn't hold, like in a thin
+    /// pack that was stored as it was received.
+    fn write_pack(
+        objects_dir: &std::path::Path,
+        name: &str,
+        blobs: &[(&[u8], Option<&[u8]>)],
+        fillers: usize,
+    ) -> Result<std::path::PathBuf> {
+        use std::io::Write;
+
+        use gix_pack::data;
+
+        let object_hash = gix_testtools::object_hash();
+        let blob_id = |blob: &[u8]| gix_object::compute_hash(object_hash, gix_object::Kind::Blob, blob);
+        let fillers: Vec<_> = (0..fillers)
+            .map(|i| format!("{name} filler {i}").into_bytes())
+            .collect();
+        let blobs = blobs
+            .iter()
+            .copied()
+            .chain(fillers.iter().map(|blob| (blob.as_slice(), None)));
+
+        let mut pack = data::header::encode(data::Version::V2, blobs.clone().count() as u32).to_vec();
+        let mut index_entries = Vec::new();
+        for (blob, base) in blobs {
+            index_entries.push((blob_id(blob)?, pack.len() as u32));
+            let entry_data = match base {
+                None => {
+                    data::entry::Header::Blob.write_to(blob.len() as u64, &mut pack)?;
+                    blob.to_vec()
+                }
+                Some(base) => {
+                    assert!(
+                        base.len() < 0x80 && (1..0x80).contains(&blob.len()),
+                        "both sizes and the one insert instruction fit into a byte each"
+                    );
+                    let delta = [[base.len() as u8, blob.len() as u8, blob.len() as u8].as_slice(), blob].concat();
+                    data::entry::Header::RefDelta {
+                        base_id: blob_id(base)?,
+                    }
+                    .write_to(delta.len() as u64, &mut pack)?;
+                    delta
+                }
+            };
+            let mut compressed = gix_zlib::stream::deflate::Write::new(Vec::new(), gix_zlib::Compression::DEFAULT);
+            compressed.write_all(&entry_data)?;
+            compressed.flush()?;
+            pack.extend(compressed.into_inner());
+        }
+        let mut hasher = gix_hash::hasher(object_hash);
+        hasher.update(&pack);
+        let pack_id = hasher.try_finalize()?;
+        pack.extend_from_slice(pack_id.as_slice());
+
+        index_entries.sort();
+        let mut index = Vec::new();
+        for first_byte in 0..=255 {
+            let count = index_entries
+                .iter()
+                .filter(|(id, _)| id.first_byte() <= first_byte)
+                .count();
+            index.extend_from_slice(&(count as u32).to_be_bytes());
+        }
+        for (id, pack_offset) in &index_entries {
+            index.extend_from_slice(&pack_offset.to_be_bytes());
+            index.extend_from_slice(id.as_slice());
+        }
+        index.extend_from_slice(pack_id.as_slice());
+        let mut hasher = gix_hash::hasher(object_hash);
+        hasher.update(&index);
+        index.extend_from_slice(hasher.try_finalize()?.as_slice());
+
+        let pack_dir = objects_dir.join("pack");
+        std::fs::create_dir_all(&pack_dir)?;
+        std::fs::write(pack_dir.join(format!("pack-{pack_id}.pack")), pack)?;
+        let index_path = pack_dir.join(format!("pack-{pack_id}.idx"));
+        std::fs::write(&index_path, index)?;
+        Ok(index_path)
+    }
+
+    let object_hash = gix_testtools::object_hash();
+    let blob_id = |blob: &[u8]| gix_object::compute_hash(object_hash, gix_object::Kind::Blob, blob);
+    let (object, base) = (b"a delta".as_slice(), b"its base".as_slice());
+    let other_base = b"a different base".as_slice();
+    // `in_every_pack` is answered by the front index, and `next_to_the_base` tells the base's index from the other one.
+    let (in_every_pack, next_to_the_base) = (b"in every pack".as_slice(), b"next to the base".as_slice());
+    let variant = |delta_slot, duplicate_in_midx, duplicate_is_delta| {
+        format!("delta-{delta_slot}-midx-{duplicate_in_midx}-duplicate-delta-{duplicate_is_delta}")
+    };
+    let (fixture, ()) = gix_testtools::rust_fixture_read_only("out-of-pack-delta", 2, |state| {
+        if let gix_testtools::FixtureState::Uninitialized(path) = state {
+            for delta_slot in [0, 1] {
+                for (duplicate_in_midx, duplicate_is_delta) in [(false, false), (true, false), (true, true)] {
+                    let dir = path.join(variant(delta_slot, duplicate_in_midx, duplicate_is_delta));
+                    let mut other = vec![(in_every_pack, None), (next_to_the_base, None)];
+                    if delta_slot == 0 {
+                        other.push((object, None));
+                    }
+                    // Both standalone indices exceed the MIDX's size, so the base's index starts last.
+                    let (delta_fillers, other_fillers) = if delta_slot == 0 { (80, 40) } else { (40, 80) };
+                    write_pack(
+                        &dir,
+                        "delta",
+                        &[(object, Some(base)), (in_every_pack, None)],
+                        delta_fillers,
+                    )?;
+                    write_pack(&dir, "other", &other, other_fillers)?;
+                    let base_index = write_pack(
+                        &dir,
+                        "base",
+                        &[
+                            (base, None),
+                            (other_base, None),
+                            (in_every_pack, None),
+                            (next_to_the_base, None),
+                        ],
+                        0,
+                    )?;
+                    if duplicate_in_midx {
+                        // Resolving the base opens only its pack, leaving the MIDX's duplicate object pack unloaded.
+                        // A duplicate delta needs its own base; reusing the original delta's resolved base cannot decode it.
+                        let duplicate_index = write_pack(
+                            &dir,
+                            "duplicate",
+                            &[(object, duplicate_is_delta.then_some(other_base))],
+                            0,
+                        )?;
+                        gix_pack::multi_index::write_from_index_paths(
+                            vec![base_index, duplicate_index],
+                            &mut std::fs::File::create(dir.join("pack/multi-pack-index"))?,
+                            &mut gix_utils::progress::Discard,
+                            &std::sync::atomic::AtomicBool::default(),
+                            gix_pack::multi_index::write::Options { object_hash },
+                        )?;
+                    }
+                }
+            }
+        }
+        Ok(())
+    })?;
+
+    for delta_slot in [1, 0] {
+        for (duplicate_in_midx, duplicate_is_delta) in [(true, false), (true, true), (false, false)] {
+            for load_all_indices in [true, false] {
+                let dir = fixture.join(variant(delta_slot, duplicate_in_midx, duplicate_is_delta));
+                let mut handle = std::sync::Arc::new(gix_odb::Store::at_opts(
+                    dir,
+                    object_hash,
+                    &mut std::iter::empty(),
+                    Default::default(),
+                )?)
+                .to_handle_arc();
+                handle.prevent_pack_unload();
+                if load_all_indices {
+                    assert!(
+                        !gix_pack::Find::contains(&handle, &ObjectId::null(object_hash)),
+                        "a miss loads every index"
+                    );
+                    assert_eq!(
+                        handle.store_ref().metrics().open_reachable_indices,
+                        3,
+                        "the two standalone indices and the base's index are loaded"
+                    );
+                }
+                assert_eq!(
+                    handle.store_ref().metrics().open_reachable_packs,
+                    0,
+                    "each lookup starts with cold packs"
+                );
+                let actual_pack_id = if read_header {
+                    let header =
+                        gix_odb::Header::try_header(&handle, &blob_id(object)?)?.expect("the delta has a header");
+                    assert_eq!(header.kind(), gix_object::Kind::Blob, "the delta reconstructs a blob");
+                    assert_eq!(
+                        header.size(),
+                        object.len() as u64,
+                        "the header describes the reconstructed object"
+                    );
+                    None
+                } else {
+                    let mut buffer = Vec::new();
+                    let (data, location) = gix_pack::Find::try_find(&handle, &blob_id(object)?, &mut buffer)?
+                        .expect("the delta resolves against its out-of-pack base");
+                    assert_eq!(data.data, object, "the decoded bytes match the requested object");
+                    Some(location.expect("the object is packed").pack_id)
+                };
+                if load_all_indices {
+                    assert_eq!(
+                        handle.store_ref().metrics().open_reachable_packs,
+                        2,
+                        "only the original delta and base packs were opened"
+                    );
+                    let delta_pack_id = answering_pack_id(&handle.clone(), &blob_id(b"delta filler 0")?)?;
+                    let base_pack_id = answering_pack_id(&handle.clone(), &blob_id(base)?)?;
+                    if let Some(actual_pack_id) = actual_pack_id {
+                        assert_eq!(
+                            actual_pack_id, delta_pack_id,
+                            "decoding retains the original pack's location"
+                        );
+                    }
+                    assert_eq!(
+                        answering_pack_id(&handle, &blob_id(in_every_pack)?)?,
+                        delta_pack_id,
+                        "the original delta's index moves to the front after resolving its base"
+                    );
+                    assert_eq!(
+                        answering_pack_id(&handle, &blob_id(next_to_the_base)?)?,
+                        base_pack_id,
+                        "the base's index comes second"
+                    );
+                }
+            }
+        }
+    }
+    Ok(())
 }
 
 mod disambiguate_prefix {
@@ -812,6 +1227,30 @@ mod lookup_prefix {
         store::dynamic::all_orderings,
         store::dynamic::{assert_all_indices_loaded, db_with_all_object_sources},
     };
+
+    #[test]
+    fn mixed_packed_and_loose_ambiguity_matches_git() -> gix_testtools::TestResult {
+        let fixture = gix_testtools::scripted_fixture_read_only("make_prefix_lookup_repos.sh")?;
+        for object_hash in [gix_hash::Kind::Sha1, gix_hash::Kind::Sha256] {
+            let root = fixture.join(object_hash.to_string());
+            let handle = gix_odb::at(root.join(".git/objects"), object_hash)?;
+            let expected: HashSet<_> = std::fs::read_to_string(root.join("mixed.git"))?
+                .lines()
+                .map(|line| gix_hash::ObjectId::from_hex(line.as_bytes()))
+                .collect::<Result<_, _>>()?;
+            for mut candidates in [None, Some(HashSet::default())] {
+                assert_eq!(
+                    handle.lookup_prefix(gix_hash::Prefix::from_hex("dead")?, candidates.as_mut())?,
+                    Some(Err(())),
+                    "{object_hash}: a packed candidate must not hide a loose candidate"
+                );
+                if let Some(candidates) = candidates {
+                    assert_eq!(candidates, expected, "all packed and loose candidates match Git");
+                }
+            }
+        }
+        Ok(())
+    }
 
     #[test]
     fn returns_none_for_prefixes_without_any_match() {

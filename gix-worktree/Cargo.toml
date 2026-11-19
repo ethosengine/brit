@@ -2,17 +2,21 @@ lints.workspace = true
 
 [package]
 name = "gix-worktree"
-version = "0.58.4"
+version = "0.59.0"
 repository = "https://github.com/GitoxideLabs/gitoxide"
 license = "MIT OR Apache-2.0"
 description = "A crate of the gitoxide project for shared worktree related types and utilities."
 authors = ["Sebastian Thiel <sebastian.thiel@icloud.com>"]
 edition = "2024"
 include = ["/src/**/*", "/LICENSE-*"]
-rust-version = "1.88"
+rust-version = "1.95"
 
 [lib]
 doctest = false
+
+[[bench]]
+name = "sparse"
+harness = false
 
 [features]
 default = ["attributes"]
@@ -33,8 +37,8 @@ remove = ["dep:dua-core", "dep:gix-trace", "gix-utils/progress"]
 gix-trace = { version = "^0.3.1", path = "../gix-trace", registry = "elohim", optional = true }
 gix-utils = { version = "^0.5.3", path = "../gix-utils", registry = "elohim", optional = true }
 gix-error = { version = "^0.5.2", path = "../gix-error", registry = "elohim" }
-gix-index = { version = "^0.57.4", path = "../gix-index", registry = "elohim" }
-gix-fs = { version = "^0.24.2", path = "../gix-fs", registry = "elohim" }
+gix-index = { version = "^0.58.0", path = "../gix-index", registry = "elohim" }
+gix-fs = { version = "^1.0.0", path = "../gix-fs", registry = "elohim", features = ["unstable"] }
 gix-hash = { version = "^0.28.2", path = "../gix-hash", registry = "elohim" }
 gix-object = { version = "^0.66.2", path = "../gix-object", registry = "elohim" }
 gix-glob = { version = "^0.29.2", path = "../gix-glob", registry = "elohim" }
@@ -42,7 +46,7 @@ gix-path = { version = "^0.14.1", path = "../gix-path", registry = "elohim" }
 gix-attributes = { version = "^0.37.3", path = "../gix-attributes", registry = "elohim", optional = true }
 gix-validate = { version = "^0.13.1", path = "../gix-validate", registry = "elohim", optional = true }
 gix-ignore = { version = "^0.24.2", path = "../gix-ignore", registry = "elohim" }
-dua-core = { version = "4.1.0", optional = true }
+dua-core = { version = "6.1.0", optional = true }
 
 
 serde = { version = "1.0.114", optional = true, default-features = false, features = ["derive"] }
@@ -51,6 +55,8 @@ bstr = { version = "1.12.0", default-features = false }
 document-features = { version = "0.2.0", optional = true }
 
 [dev-dependencies]
+gix-fs = { path = "../gix-fs", features = ["unstable"] }
+criterion = "0.8.2"
 insta = "1.46.3"
 gix-worktree = { path = ".", features = ["add", "remove"] }
 gix-hash = { path = "../gix-hash", features = ["sha1", "sha256"] }
@@ -60,3 +66,13 @@ gix-discover = { path = "../gix-discover" }
 
 [package.metadata.docs.rs]
 features = ["sha1", "document-features", "serde"]
+
+[package.metadata.qa]
+checks = [
+    { args = ["--features", "sha1,serde"] },
+    { args = ["--no-default-features", "--features", "sha1"] },
+]
+tests = [
+    { args = ["--features", "gix-parallel/parallel"], packages = ["gix-worktree", "gix-parallel"], env = { GIX_TEST_FIXTURE_HASH = "sha1" } },
+    { args = ["--features", "gix-worktree/sha256,gix-parallel/parallel"], packages = ["gix-worktree", "gix-parallel"], env = { GIX_TEST_FIXTURE_HASH = "sha256" } },
+]

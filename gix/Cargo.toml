@@ -5,13 +5,11 @@ name = "gix"
 repository = "https://github.com/GitoxideLabs/gitoxide"
 description = "Interact with git repositories just like git would"
 license = "MIT OR Apache-2.0"
-version = "0.89.5"
+version = "0.90.0"
 authors = ["Sebastian Thiel <sebastian.thiel@icloud.com>"]
 edition = "2024"
 include = ["/src/**/*", "/LICENSE-*"]
-# Rust 1.88 is required so hash-related dependencies can use Rust 2024 crates,
-# notably `sha2` 0.11 and `hashbrown` 0.17.
-rust-version = "1.88"
+rust-version = "1.95"
 
 [lib]
 doctest = true
@@ -29,7 +27,18 @@ required-features = ["notes"]
 
 [features]
 
-default = ["max-performance", "comfort", "basic", "extras", "auto-chain-error", "sha1"]
+default = [
+    "max-performance",
+    "comfort",
+    "basic",
+    "extras",
+    "auto-chain-error",
+    "sha1",
+    # These three add 1.4MB in compressed transcoding tables, but match Git.
+    "encoding-western",
+    "encoding-legacy",
+    "encoding-asian",
+]
 
 #! There are various categories of features which help to optimize performance and build times. `gix` comes with 'batteries included' and everything is
 #! enabled as long as it doesn't sacrifice compatibility. Most users will be fine with that but will pay with higher compile times than necessary as they
@@ -109,6 +118,24 @@ sha256 = [
     "gix-worktree-stream?/sha256",
 ]
 
+#! #### Encodings
+#!
+#! These additive features select the encodings available to `working-tree-encoding` filters.
+#! They do not enable filtering themselves; enable `attributes` or a component that includes it.
+#! UTF-8/16/32 (including Git's BOM variants), ASCII and ISO-8859-1 are always available when filtering is enabled.
+#! With `default-features = false`, no optional encoding groups are selected. Other dependencies can
+#! still enable groups through Cargo feature unification. Disabled encoding labels are rejected.
+
+## Add Windows-1252 and ISO-8859-15 (Latin-9). Enabled by default.
+encoding-western = ["gix-filter?/encoding-western"]
+## Add the remaining single-byte ISO-8859 and Windows code pages, Thai, KOI8, Macintosh, IBM and CP1125 encodings.
+## Also enables `encoding-western`.
+encoding-legacy = ["encoding-western", "gix-filter?/encoding-legacy"]
+## Add Japanese (Shift-JIS, CP932, EUC-JP, ISO-2022-JP), Korean (EUC-KR, CP949)
+## and Chinese (GB2312, GBK, GB18030, Big5, Big5-HKSCS) encodings.
+## Combine with `encoding-legacy` for the complete supported repertoire.
+encoding-asian = ["gix-filter?/encoding-asian"]
+
 #! #### Components
 #!
 #! A component is a distinct feature which may be comprised of one or more methods around a particular topic.
@@ -129,12 +156,41 @@ index = ["dep:gix-index"]
 ## Support directory walks with Git-style annoations.
 dirwalk = ["dep:gix-dir", "attributes", "excludes"]
 
+## Observe repository and worktree changes without retaining a repository handle.
+notify = ["dep:gix-notify", "dirwalk"]
+
+## Tokio orchestration for repository notifications and runtime-independent raw watcher futures.
+## Blocking notification APIs remain available. Not included in binary feature bundles.
+async-notify = ["notify", "gix-notify/async", "parallel", "dep:tokio"]
+
+## Expose filesystem monitor hook and native daemon clients as `gix::fsmonitor::client`.
+## Repository configuration, index checkpoints, and status policy remain the caller's responsibility.
+fsmonitor = ["dep:gix-fsmonitor"]
+
+## Tokio filesystem monitor clients, alongside blocking clients.
+async-fsmonitor = ["fsmonitor", "gix-fsmonitor/async-tokio", "dep:tokio"]
+
+## Expose native endpoint selection and an embeddable filesystem monitor server as `gix::fsmonitor::server`.
+## Enables `parallel` to keep shared types and locally gated parallel code paths consistent with the server's background thread.
+fsmonitor-server = ["fsmonitor", "gix-fsmonitor/server", "parallel"]
+
+## Blocking daemon control and self-spawned startup as `gix::fsmonitor::daemon`.
+fsmonitor-daemon = ["fsmonitor-server", "gix-fsmonitor/daemon"]
+
+## Tokio filesystem monitor server, alongside the blocking server.
+async-fsmonitor-server = ["fsmonitor-server", "async-fsmonitor"]
+
 ## Access to credential helpers, which provide credentials for URLs.
 # Note that `gix-negotiate` just piggibacks here, as 'credentials' is equivalent to 'fetch & push' right now.
 credentials = ["dep:gix-credentials", "dep:gix-prompt", "dep:gix-negotiate"]
 
 ## Add, inspect, update, and remove worktrees.
-worktree-mutation = ["status", "dep:gix-worktree-state", "gix-worktree/add", "gix-worktree/remove"]
+worktree-mutation = [
+    "status",
+    "dep:gix-worktree-state",
+    "gix-worktree/add",
+    "gix-worktree/remove",
+]
 
 ## Retrieve a worktree stack for querying exclude information
 excludes = ["dep:gix-ignore", "dep:gix-worktree", "index"]
@@ -283,6 +339,10 @@ pack-cache-lru-dynamic = ["gix-pack/pack-cache-lru-dynamic"]
 ## Enable all features required for performance.
 max-performance = ["max-control"]
 
+## Decompress and compress objects with [`sirocco`](https://docs.rs/sirocco), which is faster than the
+## default `zlib-rs` at both.
+zlib-sirocco = ["gix-zlib/sirocco"]
+
 #! #### Other
 #!
 #! The catch-all of feature toggles.
@@ -335,41 +395,55 @@ cache-efficiency-debug = ["gix-utils/cache-efficiency-debug"]
 
 [dependencies]
 thiserror = "2.0.18"
-gix-parallel = { version = "^0.50.1", path = "../gix-parallel", registry = "elohim", features = ["once_cell"] }
+gix-parallel = { version = "^0.50.1", path = "../gix-parallel", registry = "elohim", features = [
+    "once_cell",
+] }
 gix-error = { version = "^0.5.2", path = "../gix-error", registry = "elohim", features = ["bstr"] }
-gix-utils = { version = "^0.5.3", path = "../gix-utils", registry = "elohim", features = ["bstr", "interrupt", "progress"] }
-gix-fs = { version = "^0.24.2", path = "../gix-fs", registry = "elohim" }
+gix-utils = { version = "^0.5.3", path = "../gix-utils", registry = "elohim", features = [
+    "bstr",
+    "interrupt",
+    "progress",
+] }
+gix-fs = { version = "^1.0.0", path = "../gix-fs", registry = "elohim", features = ["unstable"] }
 gix-ref = { version = "^0.69.2", path = "../gix-ref", registry = "elohim" }
 gix-discover = { version = "^0.57.2", path = "../gix-discover", registry = "elohim" }
-gix-tempfile = { version = "^26.0.2", path = "../gix-tempfile", registry = "elohim", default-features = false }
-gix-lock = { version = "^26.0.2", path = "../gix-lock", registry = "elohim" }
+gix-tempfile = { version = "^27.0.0", path = "../gix-tempfile", registry = "elohim", default-features = false }
+gix-lock = { version = "^27.0.0", path = "../gix-lock", registry = "elohim" }
 gix-validate = { version = "^0.13.1", path = "../gix-validate", registry = "elohim" }
 gix-sec = { version = "^0.16.1", path = "../gix-sec", registry = "elohim" }
-gix-date = { version = "^0.18.1", path = "../gix-date", registry = "elohim" }
+gix-date = { version = "^0.19.0", path = "../gix-date", registry = "elohim" }
 gix-refspec = { version = "^0.47.2", path = "../gix-refspec", registry = "elohim" }
 gix-filter = { version = "^0.36.3", path = "../gix-filter", registry = "elohim", optional = true }
-gix-dir = { version = "^0.31.4", path = "../gix-dir", registry = "elohim", optional = true }
+gix-dir = { version = "^0.32.0", path = "../gix-dir", registry = "elohim", optional = true }
+gix-notify = { version = "^0.1.0", path = "../gix-notify", registry = "elohim", optional = true }
+gix-fsmonitor = { version = "^0.1.0", path = "../gix-fsmonitor", registry = "elohim", optional = true }
+tokio = { version = "1.54.1", features = [
+    "rt",
+    "sync",
+    "time",
+    "macros",
+], optional = true }
 
 gix-config = { version = "^0.62.2", path = "../gix-config", registry = "elohim" }
-gix-odb = { version = "^0.86.4", path = "../gix-odb", registry = "elohim" }
-gix-zlib = { version = "^0.3.2", path = "../gix-zlib", registry = "elohim" }
+gix-odb = { version = "^0.87.0", path = "../gix-odb", registry = "elohim" }
+gix-zlib = { version = "^0.4.0", path = "../gix-zlib", registry = "elohim" }
 gix-hash = { version = "^0.28.2", path = "../gix-hash", registry = "elohim" }
 gix-shallow = { version = "^0.15.2", path = "../gix-shallow", registry = "elohim" }
 gix-object = { version = "^0.66.2", path = "../gix-object", registry = "elohim" }
-gix-actor = { version = "^0.44.1", path = "../gix-actor", registry = "elohim" }
-gix-pack = { version = "^0.76.4", path = "../gix-pack", registry = "elohim", default-features = false, features = [
+gix-actor = { version = "^0.45.0", path = "../gix-actor", registry = "elohim" }
+gix-pack = { version = "^0.77.0", path = "../gix-pack", registry = "elohim", default-features = false, features = [
     "object-cache-dynamic",
 ] }
-gix-revision = { version = "^0.51.2", path = "../gix-revision", registry = "elohim", default-features = false }
-gix-revwalk = { version = "^0.37.2", path = "../gix-revwalk", registry = "elohim" }
-gix-negotiate = { version = "^0.37.2", path = "../gix-negotiate", registry = "elohim", optional = true }
+gix-revision = { version = "^0.52.0", path = "../gix-revision", registry = "elohim", default-features = false }
+gix-revwalk = { version = "^0.38.0", path = "../gix-revwalk", registry = "elohim" }
+gix-negotiate = { version = "^0.38.0", path = "../gix-negotiate", registry = "elohim", optional = true }
 
 gix-path = { version = "^0.14.1", path = "../gix-path", registry = "elohim" }
 gix-quote = { version = "^0.10.2", path = "../gix-quote", registry = "elohim" }
 gix-url = { version = "^0.40.2", path = "../gix-url", registry = "elohim" }
-gix-traverse = { version = "^0.63.2", path = "../gix-traverse", registry = "elohim" }
-gix-diff = { version = "^0.69.4", path = "../gix-diff", registry = "elohim", default-features = false }
-gix-merge = { version = "^0.22.4", path = "../gix-merge", registry = "elohim", default-features = false, optional = true }
+gix-traverse = { version = "^0.64.0", path = "../gix-traverse", registry = "elohim" }
+gix-diff = { version = "^0.70.0", path = "../gix-diff", registry = "elohim", default-features = false }
+gix-merge = { version = "^0.23.0", path = "../gix-merge", registry = "elohim", default-features = false, optional = true }
 gix-mailmap = { version = "^0.36.1", path = "../gix-mailmap", registry = "elohim", optional = true }
 gix-note = { version = "^0.3.2", path = "../gix-note", registry = "elohim", optional = true }
 gix-trace = { version = "^0.3.1", path = "../gix-trace", registry = "elohim" }
@@ -377,27 +451,27 @@ gix-trace = { version = "^0.3.1", path = "../gix-trace", registry = "elohim" }
 gix-glob = { version = "^0.29.2", path = "../gix-glob", registry = "elohim" }
 gix-credentials = { version = "^0.42.2", path = "../gix-credentials", registry = "elohim", optional = true }
 gix-prompt = { version = "^0.19.2", path = "../gix-prompt", registry = "elohim", optional = true }
-gix-index = { version = "^0.57.4", path = "../gix-index", registry = "elohim", optional = true }
+gix-index = { version = "^0.58.0", path = "../gix-index", registry = "elohim", optional = true }
 gix-attributes = { version = "^0.37.3", path = "../gix-attributes", registry = "elohim", optional = true }
 gix-ignore = { version = "^0.24.2", path = "../gix-ignore", registry = "elohim", optional = true }
-gix-worktree = { version = "^0.58.4", path = "../gix-worktree", registry = "elohim", optional = true, default-features = false }
-gix-worktree-state = { version = "^0.36.4", path = "../gix-worktree-state", registry = "elohim", optional = true }
+gix-worktree = { version = "^0.59.0", path = "../gix-worktree", registry = "elohim", optional = true, default-features = false }
+gix-worktree-state = { version = "^0.37.0", path = "../gix-worktree-state", registry = "elohim", optional = true }
 gix-hashtable = { version = "^0.18.2", path = "../gix-hashtable", registry = "elohim" }
-gix-commitgraph = { version = "^0.41.2", path = "../gix-commitgraph", registry = "elohim" }
+gix-commitgraph = { version = "^0.42.0", path = "../gix-commitgraph", registry = "elohim" }
 gix-pathspec = { version = "^0.22.4", path = "../gix-pathspec", registry = "elohim", optional = true }
 gix-submodule = { version = "^0.36.4", path = "../gix-submodule", registry = "elohim", optional = true }
-gix-status = { version = "^0.36.4", path = "../gix-status", registry = "elohim", optional = true, features = [
+gix-status = { version = "^0.37.0", path = "../gix-status", registry = "elohim", optional = true, features = [
     "worktree-rewrites",
 ] }
 gix-command = { version = "^0.12.2", path = "../gix-command", registry = "elohim", optional = true }
 
-gix-worktree-stream = { version = "^0.38.3", path = "../gix-worktree-stream", registry = "elohim", optional = true }
-gix-archive = { version = "^0.38.3", path = "../gix-archive", registry = "elohim", default-features = false, optional = true }
-gix-blame = { version = "^0.19.4", path = "../gix-blame", registry = "elohim", optional = true }
+gix-worktree-stream = { version = "^0.39.0", path = "../gix-worktree-stream", registry = "elohim", optional = true }
+gix-archive = { version = "^0.39.0", path = "../gix-archive", registry = "elohim", default-features = false, optional = true }
+gix-blame = { version = "^0.20.0", path = "../gix-blame", registry = "elohim", optional = true }
 
 # For communication with remotes
-gix-protocol = { version = "^0.67.4", path = "../gix-protocol", registry = "elohim" }
-gix-transport = { version = "^0.61.3", path = "../gix-transport", registry = "elohim", optional = true }
+gix-protocol = { version = "^0.68.0", path = "../gix-protocol", registry = "elohim" }
+gix-transport = { version = "^0.62.0", path = "../gix-transport", registry = "elohim", optional = true }
 
 # Just to get the progress-tree feature
 prodash = { version = "31.0.1", optional = true, features = ["progress-tree"] }
@@ -418,23 +492,29 @@ regex = { version = "1.12.3", optional = true, default-features = false, feature
 ] }
 
 # for `interrupt` feature
-parking_lot = { version = "0.12.4", optional = true }
+parking_lot = { version = "0.13.0", optional = true }
 
 document-features = { version = "0.2.0", optional = true }
 
 [dev-dependencies]
+gix-fs = { path = "../gix-fs", features = ["unstable"] }
+gix-lock = { path = "../gix-lock", features = ["unstable"] }
+gix-tempfile = { path = "../gix-tempfile", default-features = false, features = [
+    "unstable",
+] }
 gix = { path = ".", default-features = false, features = [
-    "merge", "tree-error", "sha1", "sha256"
+    "merge",
+    "tree-error",
 ] }
 gix-hash = { version = "^0.28.2", path = "../gix-hash", registry = "elohim" }
-gix-pack = { version = "^0.76.4", path = "../gix-pack", registry = "elohim", default-features = false, features = [
+gix-pack = { version = "^0.77.0", path = "../gix-pack", registry = "elohim", default-features = false, features = [
     "generate",
     "streaming-input",
 ] }
 pretty_assertions = "1.4.0"
 gix-testtools = { path = "../tests/tools", features = ["sha1", "sha256"] }
 is_ci = "1.1.1"
-serial_test = { version = "3.4.0", default-features = false }
+serial_test = { version = "4.0.1", default-features = false }
 async-std = { version = "1.12.0", features = ["attributes"] }
 termtree = "1.0.0"
 insta = { version = "1.46.3", features = ["filters"] }
@@ -446,11 +526,274 @@ features = [
     "max-performance",
     "blocking-network-client",
     "blocking-http-transport-curl",
+    "fsmonitor-daemon",
     "serde",
 ]
+
+# A sample for future api-checks. The API types show which crates eventually
+# need at least partial stabilisation once `gix` is headed for 1.0.
+# [package.metadata.api-check]
+# profiles = [
+#     { default-features = false, features = ["sha1"] },
+#     { default-features = true, features = ["blocking-network-client", "sha256", "serde"] },
+# ]
+# recursive = true
+# # Temporary support for foundational plumbing until the porcelain API reaches 1.0.
+# allowed-unstable-crates = ["gix_error"]
+# allowed-unstable-types = [
+#     "gix_hash::ObjectId",
+#     "gix_hash::oid",
+#     "gix_hash::Kind",
+#     "gix_hash::Prefix",
+#     "gix_hash::ChangeId",
+#     "gix_object::Kind",
+#     "gix_actor::Signature",
+#     "gix_actor::SignatureRef",
+#     "gix_actor::Identity",
+#     "gix_actor::IdentityRef",
+#     "gix_date::Time",
+#     "gix_date::SecondsSinceUnixEpoch",
+#     "gix_date::OffsetInSeconds",
+# ]
 
 [package.metadata.cargo-machete]
 ignored = [
     # Feature forwarding uses `prodash/*` in Cargo feature wiring without direct crate references.
     "prodash",
+]
+
+[package.metadata.smart-release]
+# produce a GitHub release so it's easier to discover the changelog in the web-ui
+github-release = true
+
+[package.metadata.qa]
+# Major external consumers with advisory compatibility checks.
+# CI checks each repository's default branch; see DEVELOPMENT.md for the selection.
+downstream = [
+    { name = "built", repository = "lukaslueg/built", package = "built", features = [
+        "gix",
+    ], default-features = false },
+    { name = "rustsec", repository = "rustsec/rustsec", package = "rustsec", features = [
+        "gix-reqwest",
+        "osv-export",
+    ], default-features = false },
+    { name = "crates-index", repository = "frewsxcv/rust-crates-index", package = "crates-index", features = [
+        "git",
+    ], default-features = false },
+    { name = "cargo", repository = "rust-lang/cargo", package = "cargo" },
+    { name = "cargo-generate", repository = "cargo-generate/cargo-generate", package = "cargo-generate", features = [
+        "git",
+    ], default-features = false },
+    { name = "jj", repository = "jj-vcs/jj", package = "jj-cli" },
+    { name = "jj-testutils", repository = "jj-vcs/jj", package = "testutils" },
+    { name = "gitbutler", repository = "gitbutlerapp/gitbutler", package = "but" },
+    { name = "gitbutler-gpui", repository = "gitbutlerapp/gitbutler", package = "but-gpui" },
+    { name = "starship", repository = "starship/starship", package = "starship" },
+    { name = "vergen-gix", repository = "rustyhorde/vergen", package = "vergen-gix" },
+    { name = "onefetch", repository = "o2sh/onefetch", package = "onefetch" },
+]
+msrv = { checks = [
+    { args = [
+    ] },
+    { args = [
+        "--no-default-features",
+        "--features",
+        "async-network-client,max-performance,sha1",
+    ] },
+] }
+checks = [
+    { args = [
+        "--no-default-features",
+        "--features",
+        "sha1,fsmonitor-daemon",
+    ] },
+    { args = [
+        "--no-default-features",
+        "--features",
+        "sha1,async-notify,async-fsmonitor-server",
+    ] },
+    { args = [
+        "--no-default-features",
+        "--features",
+        "sha1,async-network-client",
+    ] },
+    { args = [
+        "--no-default-features",
+        "--features",
+        "sha1,async-network-client-async-std",
+    ] },
+    { args = [
+        "--no-default-features",
+        "--features",
+        "sha1,blocking-network-client",
+    ] },
+    { args = [
+        "--no-default-features",
+        "--features",
+        "sha1,blocking-http-transport-curl",
+    ] },
+    { args = [
+        "--no-default-features",
+        "--features",
+        "sha1,blocking-http-transport-reqwest",
+    ] },
+    { args = [
+        "--no-default-features",
+        "--features",
+        "max-performance,sha1,sha256",
+        "--tests",
+    ] },
+    { args = [
+        "--no-default-features",
+        "--features",
+        "sha1",
+    ] },
+    { args = [
+        "--no-default-features",
+        "--features",
+        "sha1,sha256",
+    ] },
+    { args = [
+        "--no-default-features",
+        "--features",
+        "sha256",
+    ] },
+]
+tests = [
+    { args = [
+        "--no-default-features",
+        "--features",
+        "sha1,sha256,fsmonitor-daemon",
+        "-E",
+        "test(repository::fsmonitor)",
+    ] },
+    { args = [
+        "--no-default-features",
+        "--features",
+        "sha1,sha256,async-notify,async-fsmonitor-server",
+        "-E",
+        "test(notify::) | test(repository::fsmonitor)",
+    ] },
+    # Run notify once, independently of workspace feature unification. Keep the filter
+    # aligned with its baseline exclusion in tests/it/src/qa/native_tests.rs.
+    { args = [
+        "--no-default-features",
+        "--features",
+        "notify,sha1,sha256",
+        "-E",
+        "test(notify::) | test(=repository::worktree::linked_worktree_removal_notifies_through_shared_metadata)",
+    ] },
+    { args = [
+        "--no-default-features",
+        "--features",
+        "sha1,attributes",
+        "--test",
+        "gix",
+        "-E",
+        "test(=repository::filter::encoding_feature_groups)",
+    ] },
+    { args = [
+        "--no-default-features",
+        "--features",
+        "sha1,attributes,encoding-legacy,encoding-asian",
+        "--test",
+        "gix",
+        "-E",
+        "test(=repository::filter::encoding_feature_groups)",
+    ] },
+    { args = [
+        "--no-default-features",
+        "--features",
+        "basic,comfort,max-performance,sha1,sha256",
+    ] },
+    { args = [
+        "--no-default-features",
+        "--features",
+        "basic,extras,comfort,sha1,sha256",
+    ] },
+    { args = [
+        "--features",
+        "async-network-client,sha256",
+    ] },
+    { args = [
+        "--features",
+        "async-network-client,sha256",
+    ], env = { GIX_TEST_FIXTURE_HASH = "sha256" } },
+    { args = [
+        "--features",
+        "blocking-network-client,sha256",
+    ] },
+    { args = [
+        "--features",
+        "blocking-network-client,sha256",
+    ], env = { GIX_TEST_FIXTURE_HASH = "sha256" } },
+    { args = [
+        "--features",
+        "sha256",
+    ], env = { GIX_TEST_FIXTURE_HASH = "sha256" } },
+    { args = [
+        "--no-default-features",
+        "--features",
+        "sha256",
+        "--lib",
+    ] },
+]
+doctests = [
+    { args = [
+        "--no-default-features",
+        "--features",
+        "sha1,sha256",
+    ] },
+    { args = [
+        "--no-default-features",
+        "--features",
+        "revision,sha1,sha256",
+    ] },
+    { args = [
+        "--features",
+        "sha256",
+    ], env = { GIX_TEST_FIXTURE_HASH = "sha256" } },
+]
+
+[package.metadata.qa.each-feature]
+# Check new components independently; aggregate and backend contracts have explicit cases.
+args = ["--no-default-features", "--tests"]
+base = ["sha1", "sha256"]
+exclude = [
+    # The dedicated test variant already builds this independent configuration.
+    "notify",
+    # Bundles and backend choices retain their explicit build/test configurations.
+    "default",
+    "basic",
+    "extras",
+    "comfort",
+    "max-control",
+    "max-performance",
+    "async-network-client",
+    "async-network-client-async-std",
+    "blocking-network-client",
+    "blocking-http-transport-curl",
+    "blocking-http-transport-curl-rustls",
+    "blocking-http-transport-curl-openssl",
+    "blocking-http-transport-reqwest",
+    "blocking-http-transport-reqwest-rust-tls",
+    "blocking-http-transport-reqwest-rust-tls-trust-dns",
+    "blocking-http-transport-reqwest-native-tls",
+    "document-features",
+    "zlib-sirocco",
+    # Direct dependency switches are exercised through their component features.
+    "async-std",
+    "gix-archive",
+    "gix-status",
+    "gix-worktree-stream",
+    "prodash",
+    "regex",
+    # The dev self-dependency already enables these in every --tests build.
+    "attributes",
+    "blob-diff",
+    "command",
+    "excludes",
+    "index",
+    "merge",
+    "tree-error",
 ]

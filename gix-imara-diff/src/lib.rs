@@ -155,7 +155,7 @@ use crate::{
 pub use crate::slider_heuristic::{IndentHeuristic, IndentLevel, NoSliderHeuristic, SliderHeuristic};
 pub use intern::{InternedInput, Interner, Token, TokenSource};
 #[cfg(feature = "unified_diff")]
-pub use unified_diff::{BasicLineDiffPrinter, UnifiedDiff, UnifiedDiffConfig, UnifiedDiffPrinter};
+pub use unified_diff::{BasicLineDiffPrinter, EndsWithNewline, UnifiedDiff, UnifiedDiffConfig, UnifiedDiffPrinter};
 
 mod histogram;
 mod intern;
@@ -271,16 +271,19 @@ impl Diff {
         self.added.clear();
         self.removed.resize(before.len(), false);
         self.added.resize(after.len(), false);
-        let common_prefix = strip_common_prefix(&mut before, &mut after) as usize;
-        let common_postfix = strip_common_postfix(&mut before, &mut after);
-        let range = common_prefix..self.removed.len() - common_postfix as usize;
-        let removed = &mut self.removed[range];
-        let range = common_prefix..self.added.len() - common_postfix as usize;
-        let added = &mut self.added[range];
         match algorithm {
-            Algorithm::Histogram => histogram::diff(before, after, removed, added, num_tokens),
-            Algorithm::Myers => myers::diff(before, after, removed, added, false),
-            Algorithm::MyersMinimal => myers::diff(before, after, removed, added, true),
+            Algorithm::Histogram => {
+                let common_prefix = strip_common_prefix(&mut before, &mut after) as usize;
+                let common_postfix = strip_common_postfix(&mut before, &mut after);
+                let range = common_prefix..self.removed.len() - common_postfix as usize;
+                let removed = &mut self.removed[range];
+                let range = common_prefix..self.added.len() - common_postfix as usize;
+                let added = &mut self.added[range];
+                histogram::diff(before, after, removed, added, num_tokens);
+            }
+            // Myers trims the common ends itself, as it needs to count the tokens of the whole input first.
+            Algorithm::Myers => myers::diff(before, after, &mut self.removed, &mut self.added, false),
+            Algorithm::MyersMinimal => myers::diff(before, after, &mut self.removed, &mut self.added, true),
         }
     }
 
@@ -323,7 +326,7 @@ impl Diff {
     ///   ADDED/REMOVED hunks.
     /// * Move sliders as far down as possible.
     pub fn postprocess_no_heuristic<T>(&mut self, input: &InternedInput<T>) {
-        self.postprocess_with_heuristic(input, NoSliderHeuristic)
+        self.postprocess_with_heuristic(input, NoSliderHeuristic);
     }
 
     /// Postprocesses the diff to make it more human-readable. Certain hunks
@@ -344,7 +347,7 @@ impl Diff {
             IndentHeuristic::new(|token| {
                 IndentLevel::for_ascii_line(input.interner[token].as_ref().iter().copied(), 8)
             }),
-        )
+        );
     }
 
     /// Return an iterator that yields the changed hunks in this diff.

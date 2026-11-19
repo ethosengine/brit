@@ -39,7 +39,7 @@ impl<'spec> MatchGroup<'spec> {
     /// Push-specs are matched via [`MatchGroup::match_push`].
     pub fn match_lhs<'item>(
         self,
-        mut items: impl Iterator<Item = Item<'item>> + Clone,
+        items: impl Iterator<Item = Item<'item>> + Clone,
     ) -> match_lhs::Outcome<'spec, 'item> {
         let mut out = Vec::new();
         let mut seen = BTreeSet::default();
@@ -88,8 +88,7 @@ impl<'spec> MatchGroup<'spec> {
             }
         }
 
-        if let Some(hash_kind) = has_negation.then(|| items.next().map(|i| i.target.kind())).flatten() {
-            let null_id = hash_kind.null();
+        if has_negation {
             for matcher in matchers
                 .into_iter()
                 .zip(self.specs.iter())
@@ -101,7 +100,7 @@ impl<'spec> MatchGroup<'spec> {
                         !matcher
                             .matches_lhs(Item {
                                 full_ref_name: name.as_ref(),
-                                target: &null_id,
+                                target: None,
                                 object: None,
                             })
                             .0
@@ -120,6 +119,10 @@ impl<'spec> MatchGroup<'spec> {
     /// `items` are expected to be tracking references in the local clone, which will be matched and reverse-mapped to obtain their remote counterparts,
     /// i.e. *right side of refspecs is mapped to their left side*.
     ///
+    /// Matching and substitution are literal, apart from glob captures: destinations aren't expanded as partial
+    /// names or matched against object IDs, and sources retain their parsed spelling. Thus a mapping's `lhs`
+    /// can be an abbreviated name, `HEAD`, or a hexadecimal object ID, not necessarily a full reference name.
+    ///
     /// Even though this method starts by matching `items` against the right-hand side of positive refspecs,
     /// negative fetch refspecs still exclude refs by their left-hand/source side. For that reason, once a
     /// mapping has been reverse-mapped to its source ref, negative refspecs are applied to the mapping's `lhs`.
@@ -129,7 +132,7 @@ impl<'spec> MatchGroup<'spec> {
     // Reverse-mapping is implemented here: https://github.com/git/git/blob/76cf4f61c87855ebf0784b88aaf737d6b09f504b/branch.c#L252
     pub fn match_rhs<'item>(
         self,
-        mut items: impl Iterator<Item = Item<'item>> + Clone,
+        items: impl Iterator<Item = Item<'item>> + Clone,
     ) -> match_rhs::Outcome<'spec, 'item> {
         let mut out = Vec::<Mapping<'spec, 'item>>::new();
         let mut seen = BTreeSet::default();
@@ -138,7 +141,7 @@ impl<'spec> MatchGroup<'spec> {
                 out.push(mapping);
             }
         };
-        let mut matchers: Vec<Matcher<'_>> = self.specs.iter().copied().map(Matcher::from).collect();
+        let mut matchers: Vec<Matcher<'_>> = self.specs.iter().copied().map(Matcher::for_reverse_mapping).collect();
 
         let mut has_negation = false;
         for (spec_index, (spec, matcher)) in self.specs.iter().zip(matchers.iter_mut()).enumerate() {
@@ -159,8 +162,7 @@ impl<'spec> MatchGroup<'spec> {
             }
         }
 
-        if let Some(hash_kind) = has_negation.then(|| items.next().map(|i| i.target.kind())).flatten() {
-            let null_id = hash_kind.null();
+        if has_negation {
             for matcher in matchers
                 .into_iter()
                 .zip(self.specs.iter())
@@ -172,7 +174,7 @@ impl<'spec> MatchGroup<'spec> {
                         !matcher
                             .matches_lhs(Item {
                                 full_ref_name: name.as_ref(),
-                                target: &null_id,
+                                target: None,
                                 object: None,
                             })
                             .0
@@ -204,7 +206,7 @@ impl<'spec> MatchGroup<'spec> {
     /// suppress matching mappings.
     pub fn match_push<'item>(
         self,
-        mut items: impl Iterator<Item = Item<'item>> + Clone,
+        items: impl Iterator<Item = Item<'item>> + Clone,
     ) -> match_push::Outcome<'spec, 'item> {
         let mut out = Vec::<Mapping<'item, 'spec>>::new();
         let mut seen = BTreeSet::default();
@@ -268,8 +270,7 @@ impl<'spec> MatchGroup<'spec> {
         }
 
         // Apply negations: remove any mapping whose lhs matches a negative spec.
-        if let Some(hash_kind) = has_negation.then(|| items.next().map(|i| i.target.kind())).flatten() {
-            let null_id = hash_kind.null();
+        if has_negation {
             for matcher in matchers
                 .into_iter()
                 .zip(self.specs.iter())
@@ -285,7 +286,7 @@ impl<'spec> MatchGroup<'spec> {
                         !matcher
                             .matches_lhs(Item {
                                 full_ref_name: name.as_ref(),
-                                target: &null_id,
+                                target: None,
                                 object: None,
                             })
                             .0

@@ -82,6 +82,19 @@ impl Proxy<'_> {
             .map(|contents| contents.trim().into())
     }
 
+    /// Set or clear this linked worktree's lock, even when its checkout is inaccessible.
+    ///
+    /// `Some(reason)` creates or replaces the reason, including an empty reason. `None` unlocks,
+    /// succeeding even if already unlocked. Reasons use Git's newline-terminated encoding and are
+    /// trimmed when read through [`Self::lock_reason()`]. The private Git directory must already exist
+    /// when locking. Callers must serialize concurrent changes to the lock and its reason.
+    /// See [`gix_worktree::set_lock()`] for filesystem details.
+    #[cfg(feature = "worktree-mutation")]
+    pub fn set_lock(&self, reason: Option<&BStr>) -> Result<()> {
+        gix_worktree::set_lock(&self.git_dir, reason)
+            .or_raise(|| crate::error::message!("Could not update the worktree lock in \"{}\"", self.git_dir.display()))
+    }
+
     /// Transform this proxy into a [`Repository`] while ignoring issues reading `base()` and ignoring that it might not exist.
     ///
     /// Most importantly, the `Repository` might be initialized with a non-existing work tree directory as the checkout
@@ -91,7 +104,11 @@ impl Proxy<'_> {
     /// The returned repository has absolute paths.
     pub fn into_repo_with_possibly_inaccessible_worktree(self) -> Result<Repository> {
         let base = self.base().ok();
-        let options = self.parent.options.clone().without_repository_environment_overrides();
+        let options = self
+            .parent
+            .options
+            .clone_with_trust()
+            .without_repository_environment_overrides();
         let common_dir = self.parent.current_dir().join(self.parent.common_dir());
         ThreadSafeRepository::open_from_paths(self.git_dir, base, options, Some(common_dir)).map(Into::into)
     }
@@ -105,7 +122,11 @@ impl Proxy<'_> {
         if !base.is_dir() {
             bail!("Worktree at \"{}\" is inaccessible", base.display());
         }
-        let options = self.parent.options.clone().without_repository_environment_overrides();
+        let options = self
+            .parent
+            .options
+            .clone_with_trust()
+            .without_repository_environment_overrides();
         let common_dir = self.parent.current_dir().join(self.parent.common_dir());
         ThreadSafeRepository::open_from_paths(self.git_dir, base.into(), options, Some(common_dir)).map(Into::into)
     }

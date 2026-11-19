@@ -9,14 +9,17 @@ repository = "https://github.com/GitoxideLabs/gitoxide"
 license = "MIT OR Apache-2.0"
 edition = "2024"
 include = ["/src/**/*", "/LICENSE-*"]
-rust-version = "1.88"
+rust-version = "1.95"
 
 [lib]
 doctest = true
 test = false
 
 [features]
-default = []
+# Keep the full API enabled by default while the crate is pre-1.0.
+default = ["unstable"]
+## Expose experimental members of provisionally supported hash types.
+unstable = []
 ## Support for SHA1 hashes and digests.
 sha1 = ["dep:sha1dc"]
 ## Support for SHA256 hashes and digests.
@@ -27,11 +30,12 @@ serde = ["dep:serde", "faster-hex/serde"]
 bstr = ["dep:bstr"]
 
 [dependencies]
+gix-macros = { version = "^0.2.1", path = "../gix-macros", registry = "elohim" }
 gix-utils = { version = "^0.5.3", path = "../gix-utils", registry = "elohim", features = ["progress"] }
 gix-error = { version = "^0.5.2", path = "../gix-error", registry = "elohim" }
 
 bstr = { version = "1.12.0", optional = true, default-features = false, features = ["alloc"] }
-faster-hex = { version = "0.10.1", default-features = false, features = ["std"] }
+faster-hex = { version = "1.0.0", default-features = false, features = ["std"] }
 serde = { version = "1.0.114", optional = true, default-features = false, features = ["derive"] }
 sha1dc = { version = "0.1.3", optional = true, default-features = false, features = ["std"] }
 sha2 = { version = "0.11.0", optional = true, default-features = false }
@@ -40,9 +44,25 @@ document-features = { version = "0.2.0", optional = true }
 
 [dev-dependencies]
 insta = "1.46.3"
-gix-hash = { path = ".", features = ["sha1", "sha256", "bstr"] }
+gix-hash = { path = ".", features = ["unstable", "sha1", "sha256", "bstr"] }
 gix-testtools = { path = "../tests/tools", default-features = false }
 
 [package.metadata.docs.rs]
 all-features = true
 features = ["sha1", "document-features"]
+
+[package.metadata.qa]
+checks = [
+    { args = ["--no-default-features", "--features", "sha1,bstr"] },
+    { args = ["--all-features"] },
+]
+tests = [
+    # The dev self-dependency already enables both hashes for every test build.
+    { args = ["--features", "sha1,sha256"] },
+]
+
+[package.metadata.qa.wasm]
+targets = ["wasm32-unknown-unknown", "wasm32-wasip1", "wasm32-wasip2"]
+checks = [
+    { args = ["--features", "sha1"] },
+]

@@ -3,7 +3,25 @@ use std::ops::DerefMut;
 
 use gix_error::{ResultExt, bail};
 use gix_hash::ObjectId;
-use gix_object::Exists;
+
+impl Clone for crate::ThreadSafeRepository {
+    fn clone(&self) -> Self {
+        Self {
+            refs: self.refs.clone(),
+            objects: self.objects.clone(),
+            work_tree: self.work_tree.clone(),
+            index_path: self.index_path.clone(),
+            common_dir: self.common_dir.clone(),
+            config: self.config.clone(),
+            linked_worktree_options: self.linked_worktree_options.clone_with_trust(),
+            #[cfg(feature = "index")]
+            index: self.index.clone(),
+            #[cfg(feature = "attributes")]
+            modules: self.modules.clone(),
+            shallow_commits: self.shallow_commits.clone(),
+        }
+    }
+}
 
 impl Clone for crate::Repository {
     fn clone(&self) -> Self {
@@ -14,7 +32,7 @@ impl Clone for crate::Repository {
             self.index_path.clone(),
             self.common_dir.clone(),
             self.config.clone(),
-            self.options.clone(),
+            self.options.clone_with_trust(),
             #[cfg(feature = "index")]
             self.index.clone(),
             self.shallow_commits.clone(),
@@ -60,7 +78,7 @@ impl From<&crate::ThreadSafeRepository> for crate::Repository {
             repo.index_path.clone(),
             repo.common_dir.clone(),
             repo.config.clone(),
-            repo.linked_worktree_options.clone(),
+            repo.linked_worktree_options.clone_with_trust(),
             #[cfg(feature = "index")]
             repo.index.clone(),
             repo.shallow_commits.clone(),
@@ -117,7 +135,7 @@ impl gix_object::Write for crate::Repository {
 
     fn write_buf(&self, object: gix_object::Kind, from: &[u8]) -> Result<gix_hash::ObjectId> {
         let oid = gix_object::compute_hash(self.object_hash(), object, from)?;
-        if self.objects.exists(&oid) {
+        if self.objects.exists_without_refresh(&oid) {
             return Ok(oid);
         }
         self.objects.write_buf_with_known_id(object, from, oid)
@@ -143,7 +161,7 @@ impl gix_object::Write for crate::Repository {
         from: &[u8],
         id: gix_hash::ObjectId,
     ) -> Result<gix_hash::ObjectId> {
-        if self.objects.exists(&id) {
+        if self.objects.exists_without_refresh(&id) {
             return Ok(id);
         }
         self.objects.write_buf_with_known_id(object, from, id)

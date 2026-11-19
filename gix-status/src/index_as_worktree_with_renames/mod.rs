@@ -65,6 +65,25 @@ pub(super) mod function {
         let mut tracked_file_modifications = options.tracked_file_modifications;
         tracked_file_modifications.fscache = options.fscache;
         let budget = gix_utils::stream::Budget::new(&std::env::temp_dir()).or_error()?;
+        let mut excludes = options
+            .dirwalk
+            .and_then(|_| match ctx.resource_cache.attr_stack.state() {
+                State::CreateDirectoryAndAttributesStack { .. } | State::AttributesStack(_) => None,
+                State::AttributesAndIgnoreStack { .. } | State::IgnoreStack(_) => {
+                    Some(ctx.resource_cache.attr_stack.clone())
+                }
+            });
+        if let Some(stack) = excludes.as_mut() {
+            let state = stack.state_mut();
+            if let State::AttributesAndIgnoreStack { ignore, .. } = state {
+                *state = State::IgnoreStack(std::mem::take(ignore));
+            }
+        }
+        // Only the directory walk needs ignores; content filters and pathspecs need attributes.
+        let state = ctx.resource_cache.attr_stack.state_mut();
+        if let State::AttributesAndIgnoreStack { attributes, .. } = state {
+            *state = State::AttributesStack(std::mem::take(attributes));
+        }
         gix_parallel::threads(|scope| -> Result<Outcome> {
             let (tx, rx) = std::sync::mpsc::channel();
             let walk_outcome = options
@@ -83,12 +102,7 @@ pub(super) mod function {
                                 let dirwalk_ctx = ctx.dirwalk;
                                 let objects = objects.clone();
                                 let budget = budget.clone();
-                                let mut excludes = match ctx.resource_cache.attr_stack.state() {
-                                    State::CreateDirectoryAndAttributesStack { .. } | State::AttributesStack(_) => None,
-                                    State::AttributesAndIgnoreStack { .. } | State::IgnoreStack(_) => {
-                                        Some(ctx.resource_cache.attr_stack.clone())
-                                    }
-                                };
+                                let mut excludes = excludes;
                                 let mut pathspec_attr_stack = ctx
                                     .pathspec
                                     .patterns()
@@ -300,7 +314,7 @@ pub(super) mod function {
                                             dirwalk_entry: entry,
                                             dirwalk_entry_collapsed_directory_status: collapsed_directory_status,
                                             dirwalk_entry_id: id,
-                                            diff: src.diff,
+                                            similarity: src.similarity,
                                             copy: src.kind == gix_diff::rewrites::tracker::visit::SourceKind::Copy,
                                         };
                                         if let Some(v) = entries_for_sorting.as_mut() {
@@ -313,6 +327,7 @@ pub(super) mod function {
                                 std::ops::ControlFlow::Continue(())
                             },
                             &mut ctx.resource_cache,
+                            &objects,
                             &mut |cache, id, mode, path, kind| {
                                 match options.buffer_limit {
                                     Some(limit) => cache.set_resource_bounded(
@@ -325,7 +340,7 @@ pub(super) mod function {
                                         limit,
                                         ctx.should_interrupt,
                                     )?,
-                                    None => cache.set_resource(id, mode, path, kind, &objects)?,
+                                    None => cache.set_resource(Some(id), mode, path, kind, &objects)?,
                                 }
                                 Ok(())
                             },
@@ -336,6 +351,7 @@ pub(super) mod function {
                                 gix_trace::debug!("full-tree copy tracking isn't currently supported");
                                 Ok::<_, std::io::Error>(())
                             },
+                            Default::default(),
                         )
                         .or_raise(|| message("Could not track worktree rewrites"))?;
 
@@ -472,7 +488,7 @@ pub(super) mod function {
             index_as_worktree_with_renames::Entry,
         };
         use bstr::BStr;
-        use gix_diff::{rewrites::tracker::ChangeKind, tree::visit::Relation};
+        use gix_diff::rewrites::tracker::ChangeKind;
         use gix_dir::entry::Kind;
         use gix_filter::pipeline::convert::ToGitOutcome;
         use gix_hash::oid;
@@ -488,7 +504,7 @@ pub(super) mod function {
         {
             Modification(crate::index_as_worktree::Record<'index, T, U>),
             DirwalkEntry {
-                id: gix_hash::ObjectId,
+                id: Option<gix_hash::ObjectId>,
                 entry: gix_dir::Entry,
                 collapsed_directory_status: Option<gix_dir::entry::Status>,
             },
@@ -499,17 +515,13 @@ pub(super) mod function {
             T: Clone,
             U: Clone,
         {
-            fn id(&self) -> &oid {
+            fn id(&self) -> Option<&oid> {
                 match self {
-                    ModificationOrDirwalkEntry::Modification(m) => &m.entry.id,
-                    ModificationOrDirwalkEntry::DirwalkEntry { id, .. } => id,
+                    ModificationOrDirwalkEntry::Modification(m) => {
+                        (!m.entry.id.is_null()).then_some(m.entry.id.as_ref())
+                    }
+                    ModificationOrDirwalkEntry::DirwalkEntry { id, .. } => id.as_deref(),
                 }
-            }
-
-            fn relation(&self) -> Option<Relation> {
-                // TODO: figure out if index or worktree can provide containerization - worktree should be possible.
-                //       index would take some processing.
-                None
             }
 
             fn kind(&self) -> ChangeKind {
@@ -547,14 +559,10 @@ pub(super) mod function {
                 }
                 .unwrap_or(gix_object::tree::EntryKind::Blob.into())
             }
-
-            fn id_and_entry_mode(&self) -> (&oid, EntryMode) {
-                (self.id(), self.entry_mode())
-            }
         }
 
-        /// Note that for non-files, we always return a null-sha and assume that the rename-tracking
-        /// does nothing for these anyway.
+        /// `None` means hashing was unavailable or inapplicable. It cannot establish identity;
+        /// blob similarity still requires available content from the worktree.
         #[expect(clippy::too_many_arguments)]
         pub(super) fn calculate_worktree_id(
             object_hash: gix_hash::Kind,
@@ -566,15 +574,15 @@ pub(super) mod function {
             objects: &dyn gix_object::find::Source,
             buf: &mut Vec<u8>,
             should_interrupt: &std::sync::atomic::AtomicBool,
-        ) -> Result<gix_hash::ObjectId> {
+        ) -> Result<Option<gix_hash::ObjectId>> {
             let Some(kind) = disk_kind else {
-                return Ok(object_hash.null());
+                return Ok(None);
             };
 
-            Ok(match kind {
+            Ok(Some(match kind {
                 Kind::Untrackable => {
                     // Go along with unreadable files, they are passed along without rename tracking.
-                    return Ok(object_hash.null());
+                    return Ok(None);
                 }
                 Kind::File => {
                     let platform = attrs.at_entry_with_source(rela_path, None, objects).or_raise(|| {
@@ -595,7 +603,7 @@ pub(super) mod function {
                                 ?err,
                                 "ignoring worktree file as it can't be read for hashing"
                             );
-                            return Ok(object_hash.null());
+                            return Ok(None);
                         }
                         Err(err) => {
                             return Err(err.and_raise(message!(
@@ -615,20 +623,24 @@ pub(super) mod function {
                         )
                         .or_raise(|| message!("Could not convert worktree file {rela_path:?} to Git format"))?;
                     match out {
-                        ToGitOutcome::Unchanged(mut file) => gix_object::compute_stream_hash(
-                            object_hash,
-                            gix_object::Kind::Blob,
-                            &mut file,
-                            file_path
+                        ToGitOutcome::Unchanged(mut file) => {
+                            // The path may have been removed or replaced since opening the file.
+                            let file_size = file
                                 .metadata()
                                 .or_raise(|| {
                                     message!("Could not read metadata for worktree file \"{}\"", file_path.display())
                                 })?
-                                .len(),
-                            &mut gix_utils::progress::Discard,
-                            should_interrupt,
-                        )
-                        .or_raise(|| message!("Could not hash worktree file \"{}\"", file_path.display()))?,
+                                .len();
+                            gix_object::compute_stream_hash(
+                                object_hash,
+                                gix_object::Kind::Blob,
+                                &mut file,
+                                file_size,
+                                &mut gix_utils::progress::Discard,
+                                should_interrupt,
+                            )
+                            .or_raise(|| message!("Could not hash worktree file \"{}\"", file_path.display()))?
+                        }
                         ToGitOutcome::Buffer(buf) => gix_object::compute_hash(object_hash, gix_object::Kind::Blob, buf)
                             .or_raise(|| message!("Could not hash worktree file \"{}\"", file_path.display()))?,
                         ToGitOutcome::Process(mut stream) => {
@@ -650,8 +662,8 @@ pub(super) mod function {
                     gix_object::compute_hash(object_hash, gix_object::Kind::Blob, &target)
                         .or_raise(|| message!("Could not hash worktree link \"{}\"", path.display()))?
                 }
-                Kind::Directory | Kind::Repository => object_hash.null(),
-            })
+                Kind::Directory | Kind::Repository => return Ok(None),
+            }))
         }
 
         #[inline]

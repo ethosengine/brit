@@ -74,7 +74,7 @@ impl FormatVersion {
                     let mut error =
                         gix_error::unsupported("Cannot upgrade repository format with unsupported extension")
                             .with("extension", name);
-                    if let Some(subsection) = section.header().subsection_name() {
+                    if let Some(subsection) = section.header().subsection_name_original() {
                         error = error.validation().with("subsection", subsection);
                     }
                     bail!(error);
@@ -108,6 +108,8 @@ mod dirwalk;
 pub mod filter;
 ///
 pub mod freelist;
+#[cfg(feature = "fsmonitor-server")]
+mod fsmonitor;
 mod graph;
 pub(crate) mod identity;
 mod impls;
@@ -120,6 +122,7 @@ mod mailmap;
 ///
 #[cfg(feature = "merge")]
 mod merge;
+
 #[cfg(feature = "notes")]
 mod note;
 mod object;

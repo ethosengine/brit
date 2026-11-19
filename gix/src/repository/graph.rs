@@ -28,14 +28,24 @@ impl crate::Repository {
     ///
     /// Note that [`revision_graph()`][crate::Repository::revision_graph()] should be preferred for general purpose walks that don't
     /// rely on the actual commit cache to be present, while leveraging the commit-graph if possible.
+    /// Parent-buffer allocations respect `gitoxide.objects.allocLimit`.
     pub fn commit_graph(&self) -> Result<gix_commitgraph::Graph> {
-        gix_commitgraph::at(self.objects.store_ref().path().join("info"))
+        gix_commitgraph::Graph::at(
+            &self.objects.store_ref().path().join("info"),
+            self.object_hash(),
+            self.config.alloc_limit_bytes,
+        )
     }
 
-    /// Return a newly opened commit-graph if it is available, enabled in Git configuration, and no object replacements are active.
+    /// Return a newly opened commit-graph if it is available, enabled in the Git configuration, and compatible
+    /// with the repository's history. Shallow boundaries and active replacements make it incompatible.
     pub fn commit_graph_if_enabled(&self) -> Result<Option<gix_commitgraph::Graph>> {
-        (!self.has_object_replacements() && self.config.may_use_commit_graph()?)
-            .then(|| gix_commitgraph::at(self.objects.store_ref().path().join("info")))
+        if self.is_shallow()? || self.has_object_replacements() {
+            return Ok(None);
+        }
+        self.config
+            .may_use_commit_graph()?
+            .then(|| self.commit_graph())
             .transpose()
             .or_else(|err| if err.is_not_found() { Ok(None) } else { Err(err) })
     }

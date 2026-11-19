@@ -17,6 +17,25 @@ pub fn repo(name: &str) -> Result<gix::Repository> {
     )?)
 }
 
+#[test]
+fn default_thread_limit() -> gix_error::TestResult {
+    let expected = cfg!(target_os = "macos").then_some(3);
+    assert_eq!(
+        gix::status::index_worktree::Options::default().thread_limit,
+        expected,
+        "the default caps threads at three on macOS and leaves them unlimited elsewhere"
+    );
+    repo("untracked-only")?
+        .status(gix::progress::Discard)?
+        .index_worktree_options_mut(|opts| {
+            assert_eq!(
+                opts.thread_limit, expected,
+                "the status platform preserves the default thread limit"
+            );
+        });
+    Ok(())
+}
+
 mod into_iter {
     use gix::status::{Item, Submodule, tree_index::TrackRenames};
     use gix_diff::Rewrites;
@@ -26,9 +45,99 @@ mod into_iter {
     use crate::status::{repo, submodule_repo};
 
     #[test]
+    fn index_writes_respect_checksum_configuration_trust() -> TestResult {
+        for trust in [gix_sec::Trust::Reduced, gix_sec::Trust::Full] {
+            let (mut repo, _fixture) = crate::basic_rw_repo()?;
+            repo.config_snapshot_mut()
+                .append_config(["index.skipHash=false"], gix_config::Source::User)?;
+            repo.config_snapshot_mut()
+                .append(gix_config::File::from_bytes_no_includes(
+                    b"[index]
+                        skipHash = true
+                    ",
+                    gix_config::file::Metadata::from(gix_config::Source::Local).with(trust),
+                    Default::default(),
+                )?)?;
+            let mut index = repo.open_index()?;
+            index.entries_mut()[0].stat = Default::default();
+            let mut status = repo
+                .status(gix::progress::Discard)?
+                .index(gix::worktree::IndexPersistedOrInMemory::InMemory(index))
+                .into_iter(None)?;
+            for item in status.by_ref() {
+                item?;
+            }
+            let mut outcome = status.into_outcome().expect("status completed");
+            assert!(outcome.has_changes(), "status refreshes the cleared index stat");
+            outcome.write_changes().expect("the refreshed index can be written")?;
+            assert_eq!(
+                repo.open_index()?.checksum().is_none(),
+                trust == gix_sec::Trust::Full,
+                "only trusted configuration can omit checksums from refreshed indexes"
+            );
+        }
+        Ok(())
+    }
+
+    #[test]
+    fn conflict_paths_are_reported_once_like_git() -> TestResult {
+        use gix::status::{
+            UntrackedFiles, index_worktree::Item as WorktreeItem, plumbing::index_as_worktree::EntryStatus,
+        };
+
+        let root = gix_testtools::scripted_fixture_read_only("conflicts.sh")?;
+        let baseline = std::fs::read_to_string(root.join(".git/baseline-status"))?;
+        assert_eq!(
+            baseline.lines().count(),
+            29,
+            "Git reports twenty-seven conflicts and two untracked files"
+        );
+        for ignore_case in [false, true] {
+            let repo = gix::open_opts(
+                &root,
+                gix::open::Options::isolated().config_overrides([format!("core.ignoreCase={ignore_case}")]),
+            )?;
+            for untracked in [UntrackedFiles::Files, UntrackedFiles::Collapsed] {
+                let items = repo
+                    .status(gix::progress::Discard)?
+                    .untracked_files(untracked)
+                    .into_iter(None)?
+                    .collect::<std::result::Result<Vec<_>, _>>()?;
+                let mut actual = Vec::new();
+                for item in items {
+                    let code = match &item {
+                        Item::IndexWorktree(WorktreeItem::Modification {
+                            status: EntryStatus::Conflict { summary, .. },
+                            ..
+                        }) => summary.as_str(),
+                        Item::IndexWorktree(WorktreeItem::DirectoryContents { entry, .. }) => {
+                            assert_eq!(
+                                entry.status,
+                                gix::dir::entry::Status::Untracked,
+                                "only untracked controls remain"
+                            );
+                            "??"
+                        }
+                        other => panic!("unexpected status item: {other:?}"),
+                    };
+                    actual.push(format!("{code} {}", item.location()));
+                }
+                actual.sort();
+                let mut expected: Vec<_> = baseline.lines().map(str::to_owned).collect();
+                expected.sort();
+                assert_eq!(
+                    actual, expected,
+                    "each conflict appears once, with Git's status (ignore_case={ignore_case})"
+                );
+            }
+        }
+        Ok(())
+    }
+
+    #[test]
     fn item_size() {
         let actual = std::mem::size_of::<Item>();
-        let sha1 = 280;
+        let sha1 = 240;
         let sha256_extra = 56;
         let expected = sha1 + sha256_extra;
         assert!(
@@ -342,6 +451,247 @@ mod into_iter {
     }
 
     #[test]
+    #[cfg(any(unix, windows))]
+    fn unconfigured_submodule_status_rejects_symlinks() -> TestResult {
+        use gix::status::plumbing::index_as_worktree::traits::SubmoduleStatus;
+
+        let root = gix_testtools::scripted_fixture_read_only("make_unlisted_gitlink_symlinks.sh")?;
+        if !gix_testtools::fixture_has_symlinks(&root)? {
+            return Ok(());
+        }
+        let repo = gix::open_opts(root, gix::open::Options::isolated())?;
+        let index = repo.index()?;
+        let entry = &index.entries()[0];
+        let mut status = gix::status::index_worktree::BuiltinSubmoduleStatus::new(
+            repo.into_sync(),
+            Submodule::Given {
+                ignore: gix::submodule::config::Ignore::None,
+                check_dirty: false,
+            },
+        )?;
+        assert!(
+            status.status(entry, "d".into())?.is_some(),
+            "the unconfigured gitlink's changed commit is reported"
+        );
+        for path in ["module-link", "alias/d", "alias/../d"] {
+            let err = status
+                .status(entry, path.into())
+                .expect_err("the provider must validate paths independently of worktree traversal");
+            assert!(err.is_validation(), "the symlink in {path} is rejected: {err:?}");
+        }
+        Ok(())
+    }
+
+    #[test]
+    fn submodule_status_preserves_worktree_overrides() -> TestResult {
+        use gix::status::plumbing::index_as_worktree::traits::SubmoduleStatus;
+
+        let root = gix_testtools::scripted_fixture_read_only("make_unlisted_gitlinks.sh")?;
+        for modules in ["absent", "listed"] {
+            let mut repo = gix::open_opts(root.join(format!("{modules}-commit")), gix::open::Options::isolated())?;
+            let index = repo.index()?;
+            let entry = index.entry_by_path("d".into()).expect("the fixture has a gitlink");
+            for (work_dir, expected_dirty) in [
+                (Some(root.join(format!("{modules}-commit"))), true),
+                (Some(root.join(format!("{modules}-clean"))), false),
+                (None, false),
+            ] {
+                repo.set_workdir(work_dir.clone())?;
+                let mut status = gix::status::index_worktree::BuiltinSubmoduleStatus::new(
+                    repo.clone().into_sync(),
+                    Submodule::Given {
+                        ignore: gix::submodule::config::Ignore::None,
+                        check_dirty: false,
+                    },
+                )?;
+                assert_eq!(
+                    status.status(entry, "d".into())?.is_some(),
+                    expected_dirty,
+                    "the provider uses the effective parent worktree, including None: {modules}, {work_dir:?}"
+                );
+            }
+        }
+        Ok(())
+    }
+
+    #[test]
+    fn submodule_discovery_skips_missing_paths_but_propagates_invalid_ones() -> TestResult {
+        for case in ["missing", "implicit", "empty", "absolute", "escaping"] {
+            let repo = submodule_repo(&format!("path-{case}"))?;
+            let status = gix::status::index_worktree::BuiltinSubmoduleStatus::new(
+                repo.into_sync(),
+                Submodule::AsConfigured { check_dirty: false },
+            );
+            if case == "missing" {
+                status?;
+            } else {
+                let err = status.err().expect("invalid paths must fail discovery");
+                assert!(err.is_validation(), "{case}: status preserves path-validation errors");
+            }
+        }
+        Ok(())
+    }
+
+    #[test]
+    fn submodule_status_preserves_missing_configured_worktree() -> TestResult {
+        use gix::status::plumbing::index_as_worktree::traits::SubmoduleStatus;
+
+        let root = gix_testtools::scripted_fixture_read_only("make_unlisted_gitlinks.sh")?;
+        let repo = gix::open_opts(root.join("missing-worktree"), gix::open::Options::isolated())?;
+        assert!(
+            !repo.workdir().expect("core.worktree is configured").exists(),
+            "opening a repository permits a missing configured checkout"
+        );
+        let index = repo.index()?;
+        let entry = index.entry_by_path("d".into()).expect("the fixture has a gitlink");
+        let mut status = gix::status::index_worktree::BuiltinSubmoduleStatus::new(
+            repo.into_sync(),
+            Submodule::AsConfigured { check_dirty: false },
+        )?;
+        assert!(
+            status.status(entry, "d".into())?.is_none(),
+            "configured ignore=all does not require the missing worktree to become accessible"
+        );
+        Ok(())
+    }
+
+    #[test]
+    fn gitfile_dot_dot_target_configured_worktree_matches_git() -> TestResult {
+        gitlinks_match_git(&["gitfile-worktree-config"])
+    }
+
+    #[test]
+    fn gitfile_dot_dot_target_empty_worktree_config_is_reported() -> TestResult {
+        use gix::status::plumbing::index_as_worktree::traits::SubmoduleStatus;
+
+        let root = gix_testtools::scripted_fixture_read_only("make_unlisted_gitlinks.sh")?;
+        for modules in ["absent", "unrelated", "listed"] {
+            let worktree = root.join(format!("{modules}-gitfile-empty-worktree-config"));
+            assert!(
+                worktree.join("d/.git").is_file(),
+                "{modules}: the checkout gitfile is present"
+            );
+            let repo = gix::open_opts(worktree, gix::open::Options::isolated())?;
+            let index = repo.index()?;
+            let entry = index.entry_by_path("d".into()).expect("the fixture has a gitlink");
+            let mut status = gix::status::index_worktree::BuiltinSubmoduleStatus::new(
+                repo.into_sync(),
+                Submodule::Given {
+                    ignore: gix::submodule::config::Ignore::None,
+                    check_dirty: false,
+                },
+            )?;
+            let err = status
+                .status(entry, "d".into())
+                .expect_err("empty core.worktree must propagate for configured and unconfigured gitlinks");
+            assert!(
+                err.is_validation(),
+                "{modules}: empty core.worktree is invalid configuration: {err:?}"
+            );
+        }
+        Ok(())
+    }
+
+    fn gitlinks_match_git(states: &[&str]) -> TestResult {
+        use gix::status::plumbing::index_as_worktree::{Change, EntryStatus};
+        use gix::submodule::config::Ignore;
+        use std::fmt::Write;
+
+        let root = gix_testtools::scripted_fixture_read_only("make_unlisted_gitlinks.sh")?;
+        for modules in ["absent", "unrelated", "listed"] {
+            for state in states {
+                let repo = gix::open_opts(root.join(format!("{modules}-{state}")), gix::open::Options::isolated())?;
+                for (name, ignore) in [
+                    ("none", Ignore::None),
+                    ("untracked", Ignore::Untracked),
+                    ("dirty", Ignore::Dirty),
+                    ("all", Ignore::All),
+                ] {
+                    let items = repo
+                        .status(gix::progress::Discard)?
+                        .index_worktree_submodules(Submodule::Given {
+                            ignore,
+                            check_dirty: false,
+                        })
+                        .into_iter(None)?
+                        .collect::<gix::Result<Vec<_>>>()?;
+                    let mut actual = String::new();
+                    for item in items {
+                        match item {
+                            Item::IndexWorktree(gix::status::index_worktree::Item::Modification {
+                                entry,
+                                rela_path,
+                                status: EntryStatus::Change(Change::SubmoduleModification(status)),
+                                ..
+                            }) => {
+                                assert_eq!(status.index_id, Some(entry.id), "compare the indexed gitlink commit");
+                                assert_eq!(status.is_dirty(), Some(true), "only dirty gitlinks are emitted");
+                                writeln!(actual, " M {rela_path}")?;
+                            }
+                            other => panic!("unexpected status for {modules}-{state}: {other:?}"),
+                        }
+                    }
+                    let expected = std::fs::read_to_string(repo.git_dir().join(format!("status-{name}.git")))?;
+                    assert_eq!(actual, expected, "{modules}-{state} with ignore={name} agrees with Git");
+                }
+                let expected = std::fs::read_to_string(repo.git_dir().join("status-none.git"))?;
+                assert_eq!(
+                    repo.is_dirty()?,
+                    !expected.is_empty(),
+                    "is_dirty includes unlisted gitlinks"
+                );
+            }
+        }
+        Ok(())
+    }
+
+    #[test]
+    fn gitlinks_without_matching_modules_configuration_match_git() -> TestResult {
+        gitlinks_match_git(&[
+            "clean",
+            "commit",
+            "modified",
+            "staged",
+            "untracked",
+            "gitfile",
+            "gitfile-worktree-inference",
+            "uninitialized",
+        ])?;
+        let root = gix_testtools::scripted_fixture_read_only("make_unlisted_gitlinks.sh")?;
+        let repo = gix::open_opts(root.join("global-ignore"), gix::open::Options::isolated())?;
+        assert!(
+            std::fs::read(repo.git_dir().join("status-configured.git"))?.is_empty(),
+            "Git honors the global ignore setting for unlisted gitlinks"
+        );
+        assert!(
+            !repo.is_dirty()?,
+            "the global ignore setting applies to unlisted gitlinks"
+        );
+        for modules in ["absent", "listed"] {
+            let repo = gix::open_opts(
+                root.join(format!("{modules}-commit")),
+                gix::open::Options::isolated().config_overrides(["diff.ignoreSubmodules=all"]),
+            )?;
+            assert!(
+                std::fs::read(repo.git_dir().join("status-all.git"))?.is_empty(),
+                "Git ignores submodule changes with the same setting"
+            );
+            assert!(
+                !repo.is_dirty()?,
+                "API open options must survive serial submodule status checks"
+            );
+            assert!(
+                repo.status(gix::progress::Discard)?
+                    .into_iter(None)?
+                    .collect::<gix::Result<Vec<_>>>()?
+                    .is_empty(),
+                "the full status iterator must honor the caller's ignore override"
+            );
+        }
+        Ok(())
+    }
+
+    #[test]
     #[cfg_attr(not(target_os = "macos"), ignore = "Needs Git's macOS Unicode precomposition")]
     fn emoji_with_decomposed_unicode_matches_git() -> TestResult {
         let root = gix_testtools::scripted_fixture_read_only_needs_archive("make_emoji_with_decomposed_unicode.sh")?;
@@ -412,9 +762,65 @@ mod index_worktree {
         use crate::status::{repo, submodule_repo};
 
         #[test]
+        #[cfg(unix)]
+        fn status_reads_only_required_attribute_and_ignore_files() -> TestResult {
+            fn assert_symlink(path: &std::path::Path) -> TestResult {
+                assert!(
+                    path.symlink_metadata()?.file_type().is_symlink(),
+                    "{} must be an unreadable symlink loop",
+                    path.display()
+                );
+                Ok(())
+            }
+
+            let fixture = gix_testtools::scripted_fixture_read_only("make_status_attribute_and_ignore_repos.sh")?;
+            if !gix_testtools::fixture_has_symlinks(&fixture)? {
+                return Ok(());
+            }
+            let tracked_root = fixture.join("tracked");
+            assert_symlink(&tracked_root.join(".gitignore"))?;
+            let tracked = gix::open_opts(tracked_root, gix::open::Options::isolated())?;
+            for (pattern, expected_count) in [("file", 1), (":(attr:visible)*", 1), (":(attr:missing)*", 0)] {
+                let items = tracked
+                    .status(gix::progress::Discard)?
+                    .untracked_files(gix::status::UntrackedFiles::None)
+                    .into_index_worktree_iter([pattern.into()])?
+                    .collect::<std::result::Result<Vec<_>, _>>()?;
+                assert_eq!(
+                    items.len(),
+                    expected_count,
+                    "tracked status needs attributes for pathspecs and filters, but never ignores: {pattern}"
+                );
+                if let Some(item) = items.first() {
+                    assert_eq!(item.rela_path(), "file", "the changed tracked file is selected");
+                    assert_eq!(
+                        item.summary(),
+                        Some(gix::status::index_worktree::iter::Summary::Modified),
+                        "the equal-sized content change is detected"
+                    );
+                }
+            }
+
+            let untracked_root = fixture.join("untracked");
+            assert_symlink(&untracked_root.join(".gitattributes"))?;
+            let untracked = gix::open_opts(untracked_root, gix::open::Options::isolated())?;
+            let items = untracked
+                .status(gix::progress::Discard)?
+                .into_index_worktree_iter(None)?
+                .collect::<std::result::Result<Vec<_>, _>>()?;
+            assert_eq!(
+                items.len(),
+                1,
+                "untracked status applies ignores without reading attributes"
+            );
+            assert_eq!(items[0].rela_path(), "untracked", "only the unignored file is reported");
+            Ok(())
+        }
+
+        #[test]
         fn item_size() {
             let actual = std::mem::size_of::<Item>();
-            let sha1 = 280;
+            let sha1 = 240;
             let sha256_extra = 56;
             let expected = sha1 + sha256_extra;
             assert!(
