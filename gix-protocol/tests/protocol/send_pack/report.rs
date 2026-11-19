@@ -103,3 +103,47 @@ fn skip_past_first_flush(buf: &[u8]) -> Option<&[u8]> {
     }
     None
 }
+
+/// Bytes that end before any report line arrived are a true end of stream.
+#[test]
+fn empty_stream_is_unexpected_eof() {
+    let err = parse(&mut &b""[..]).expect_err("no report");
+    assert!(matches!(err, gix_protocol::send_pack::Error::UnexpectedEof), "{err:?}");
+}
+
+/// A failing reader is not an end of stream: its cause stays attached.
+#[test]
+fn read_error_keeps_its_source() {
+    struct Failing;
+    impl std::io::Read for Failing {
+        fn read(&mut self, _buf: &mut [u8]) -> std::io::Result<usize> {
+            Err(std::io::Error::new(
+                std::io::ErrorKind::ConnectionReset,
+                "connection reset by peer",
+            ))
+        }
+    }
+    let err = parse(&mut Failing).expect_err("unreadable");
+    assert!(matches!(err, gix_protocol::send_pack::Error::ReadReport(_)), "{err:?}");
+    let source = std::error::Error::source(&err).expect("cause retained");
+    assert!(source.to_string().contains("connection reset"), "{source}");
+}
+
+/// A read failure after the unpack line also keeps its cause.
+#[test]
+fn read_error_after_unpack_line_keeps_its_source() {
+    let mut input = std::io::Read::chain(
+        &b"000eunpack ok\n"[..],
+        FailAfter(std::io::ErrorKind::ConnectionAborted),
+    );
+    let err = parse(&mut input).expect_err("cut off");
+    assert!(matches!(err, gix_protocol::send_pack::Error::ReadReport(_)), "{err:?}");
+}
+
+struct FailAfter(std::io::ErrorKind);
+
+impl std::io::Read for FailAfter {
+    fn read(&mut self, _buf: &mut [u8]) -> std::io::Result<usize> {
+        Err(std::io::Error::new(self.0, "cut off"))
+    }
+}

@@ -7,9 +7,9 @@
 #[cfg(feature = "blocking-client")]
 mod blocking {
     use bstr::BString;
-    use gix_protocol::send_pack::{Command, Options, Request, send_pack};
+    use gix_protocol::send_pack::{Command, Error, Options, Request, send_pack};
 
-    use crate::send_pack::_impl::{MockTransport, advertised_oid, sent_new_oid};
+    use crate::send_pack::_impl::{BrokenUploadTransport, MockTransport, advertised_oid, chain, sent_new_oid};
 
     /// Helper: read the post-handshake portion of the s2c fixture.
     ///
@@ -148,6 +148,101 @@ mod blocking {
             result.is_ok(),
             "expected Ok after sideband demux; got error: {:?}",
             result.err()
+        );
+    }
+
+    fn update_request() -> Request {
+        Request {
+            commands: vec![Command {
+                refname: BString::from("refs/heads/main"),
+                old_oid: gix_hash::Kind::Sha1.null(),
+                new_oid: gix_hash::ObjectId::from_hex(b"1111111111111111111111111111111111111111").expect("hex"),
+            }],
+            capabilities: vec![BString::from("report-status")],
+        }
+    }
+
+    /// An HTTP worker that gives up on the upload parks its real error for the reader.
+    /// send-pack must collect it rather than report the dropped channel.
+    #[test]
+    fn broken_upload_reports_the_cause_the_transport_parked() {
+        let mut transport =
+            BrokenUploadTransport::new(8, Vec::new(), Some(std::io::Error::other("Received HTTP status 413")));
+        let err = send_pack(
+            &mut transport,
+            update_request(),
+            std::iter::empty(),
+            Options::default(),
+            gix_hash::Kind::Sha1,
+        )
+        .expect_err("the upload broke");
+        let chain = chain(&err);
+        assert!(matches!(err, Error::SendInterrupted(_)), "{chain:?}");
+        assert!(chain.iter().any(|line| line.contains("413")), "{chain:?}");
+        assert!(
+            !chain.iter().any(|line| line.contains("closed channel")),
+            "the dropped channel is not the cause: {chain:?}"
+        );
+    }
+
+    /// With nothing to say, the remote still gets named as the party that closed.
+    #[test]
+    fn broken_upload_without_a_reason_says_the_connection_closed() {
+        let mut transport = BrokenUploadTransport::new(8, Vec::new(), None);
+        let err = send_pack(
+            &mut transport,
+            update_request(),
+            std::iter::empty(),
+            Options::default(),
+            gix_hash::Kind::Sha1,
+        )
+        .expect_err("the upload broke");
+        assert!(matches!(err, Error::ConnectionClosed(_)), "{:?}", chain(&err));
+    }
+
+    /// A server that stops reading still has the last word when it sends its report.
+    #[test]
+    fn broken_upload_returns_a_report_the_remote_still_sent() {
+        // Band 1 carries the report, as receive-pack sends it under side-band-64k.
+        let report = b"0025\x01001cunpack index-pack abort\n00000000".to_vec();
+        let mut transport = BrokenUploadTransport::new(8, report, None);
+        let outcome = send_pack(
+            &mut transport,
+            update_request(),
+            std::iter::empty(),
+            Options::default(),
+            gix_hash::Kind::Sha1,
+        )
+        .expect("the remote's own report stands");
+        assert_eq!(
+            outcome.report.unpack,
+            Err(BString::from("index-pack abort")),
+            "the server's verdict is surfaced"
+        );
+    }
+
+    /// A response the transport could not read keeps its cause (the held-response symptom).
+    #[test]
+    fn unreadable_report_keeps_the_transport_cause() {
+        let mut transport = BrokenUploadTransport::new(
+            usize::MAX,
+            Vec::new(),
+            Some(std::io::Error::new(std::io::ErrorKind::TimedOut, "operation timed out")),
+        );
+        let err = send_pack(
+            &mut transport,
+            update_request(),
+            std::iter::empty(),
+            Options::default(),
+            gix_hash::Kind::Sha1,
+        )
+        .expect_err("the report could not be read");
+        let chain = chain(&err);
+        assert!(matches!(err, Error::ReadReport(_)), "{chain:?}");
+        assert!(chain.iter().any(|line| line.contains("timed out")), "{chain:?}");
+        assert!(
+            !chain.iter().any(|line| line.contains("unexpected end of stream")),
+            "{chain:?}"
         );
     }
 }

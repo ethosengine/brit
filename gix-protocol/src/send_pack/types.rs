@@ -76,6 +76,18 @@ pub struct Outcome {
 pub enum Error {
     #[error("I/O error while writing to the transport")]
     Io(#[from] std::io::Error),
+    /// The upload broke, and the transport's read side said why: an HTTP status, a timeout,
+    /// a refused or reset connection. The source is that cause, not the broken write.
+    #[error("the remote stopped receiving the push before it was fully sent")]
+    SendInterrupted(#[source] std::io::Error),
+    /// The upload broke and the transport ended without giving any reason.
+    /// The source is the failed write.
+    #[error("the connection closed while the push was being sent, and the remote gave no reason")]
+    ConnectionClosed(#[source] std::io::Error),
+    /// The push report could not be read; the source is the transport's cause.
+    #[error("could not read the push report")]
+    ReadReport(#[source] std::io::Error),
+    /// The stream ended before the push report did.
     #[error("unexpected end of stream while reading the push report")]
     UnexpectedEof,
     #[error("could not parse server report line: {line:?}")]

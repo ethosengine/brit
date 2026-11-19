@@ -8,7 +8,8 @@
 //!   3. If any command is a non-delete, write the pack as raw bytes to raw_writer.
 //!   4. Drop raw_writer so the transport's read path is unblocked.
 //!   5. Reset the reader; enable sideband demux.
-//!   6. Read and parse the report-status response.
+//!   6. Read and parse the report-status response — also after a failed write,
+//!      because the read side is where the transport reports why it stopped.
 
 #[cfg(feature = "blocking-client")]
 pub use blocking::send_pack;
@@ -82,16 +83,12 @@ mod blocking {
         // `encode_into` calls `data_to_write` and `flush_to_write` directly on
         // `raw_writer`, adding exactly one layer of pkt-line framing for each
         // command and writing the mandatory `0000` flush separator.
-        encode_into(&request, hash_kind, &mut raw_writer)?;
-
+        //
         // Step 2 — pack (only when there is at least one non-delete command).
         //
         // `write_pack` writes raw PACK bytes.  No pkt-line framing must be added
         // here — git-receive-pack reads the pack stream verbatim after the `0000`.
-        if has_updates {
-            write_pack(pack_entries, hash_kind, &mut raw_writer)?;
-        }
-
+        //
         // Step 3 — flush and drop the write handle.
         //
         // Flush to ensure all bytes (command list + pack) reach git-receive-pack
@@ -99,8 +96,31 @@ mod blocking {
         // deadlocking on process-spawned transports where the write and read
         // channels share a single pipe pair.
         use std::io::Write as _;
-        raw_writer.flush().ok();
+        let written = encode_into(&request, hash_kind, &mut raw_writer)
+            .and_then(|()| {
+                if has_updates {
+                    write_pack(pack_entries, hash_kind, &mut raw_writer).map(drop)
+                } else {
+                    Ok(())
+                }
+            })
+            .and_then(|()| raw_writer.flush());
         drop(raw_writer);
+        // Only a write the other side refused leaves an answer to read. Any other failure
+        // may have left the remote waiting for the rest of the pack, so reading would hang.
+        let written = match written {
+            Err(err)
+                if !matches!(
+                    err.kind(),
+                    std::io::ErrorKind::BrokenPipe
+                        | std::io::ErrorKind::ConnectionReset
+                        | std::io::ErrorKind::ConnectionAborted
+                ) =>
+            {
+                return Err(Error::Io(err));
+            }
+            written => written,
+        };
 
         // Step 4 — reset the reader past the handshake stop-state.
         //
@@ -119,7 +139,17 @@ mod blocking {
         enable_sideband_demux(&mut *reader);
 
         // Step 6 — parse the report-status stream.
-        let report = parse_report(&mut reader)?;
-        Ok(Outcome { report })
+        //
+        // A broken upload is only a symptom: with the writer gone, the read side yields
+        // what the transport knows. An HTTP worker parks its request error (status,
+        // timeout, refused or reset connection) for the reader; a process transport
+        // leaves the remote's last words on stdout. Prefer the remote's own report.
+        match (written, parse_report(&mut reader)) {
+            (_, Ok(report)) => Ok(Outcome { report }),
+            (Ok(()), Err(err)) => Err(err),
+            (Err(write), Err(Error::UnexpectedEof)) => Err(Error::ConnectionClosed(write)),
+            (Err(_), Err(Error::ReadReport(cause))) => Err(Error::SendInterrupted(cause)),
+            (Err(_), Err(err)) => Err(err),
+        }
     }
 }

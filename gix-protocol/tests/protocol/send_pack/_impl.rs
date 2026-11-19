@@ -6,7 +6,11 @@
 //! Modelled on `gix-protocol/tests/protocol/fetch/_impl.rs` — adapted for the
 //! receive-pack direction where there is no multi-round negotiation.
 
-use std::{any::Any, borrow::Cow, io::Cursor};
+use std::{
+    any::Any,
+    borrow::Cow,
+    io::{Cursor, Read as _},
+};
 
 use bstr::{BStr, ByteSlice as _};
 use gix_packetline::{PacketLineRef, blocking_io::StreamingPeekableIter};
@@ -185,4 +189,128 @@ pub fn sent_new_oid(c2s_bytes: &[u8], refname: &[u8]) -> Option<gix_hash::Object
         pos += len;
     }
     None
+}
+
+// ---------------------------------------------------------------------------
+// A transport whose upload breaks the way an HTTP worker's does
+// ---------------------------------------------------------------------------
+
+/// Bytes the server side yields, followed by `then` (an error) once they run out.
+pub struct ScriptedRead {
+    data: Cursor<Vec<u8>>,
+    then: Option<std::io::Error>,
+}
+
+impl std::io::Read for ScriptedRead {
+    fn read(&mut self, buf: &mut [u8]) -> std::io::Result<usize> {
+        let n = self.data.read(buf)?;
+        if n == 0 {
+            if let Some(err) = self.then.take() {
+                return Err(err);
+            }
+        }
+        Ok(n)
+    }
+}
+
+/// A transport which accepts `accept` upload bytes, then fails every write with the
+/// `BrokenPipe` error `gix-utils` raises once an HTTP worker dropped its request body.
+/// The read side replays `reply` and then yields `then`, like the worker's parked error.
+pub struct BrokenUploadTransport {
+    line_provider: StreamingPeekableIter<ScriptedRead>,
+    accept: usize,
+    pub written: Vec<u8>,
+}
+
+impl BrokenUploadTransport {
+    pub fn new(accept: usize, reply: Vec<u8>, then: Option<std::io::Error>) -> Self {
+        BrokenUploadTransport {
+            line_provider: StreamingPeekableIter::new(
+                ScriptedRead {
+                    data: Cursor::new(reply),
+                    then,
+                },
+                &[PacketLineRef::Flush],
+                false,
+            ),
+            accept,
+            written: Vec::new(),
+        }
+    }
+}
+
+impl TransportWithoutIO for BrokenUploadTransport {
+    fn to_url(&self) -> Cow<'_, BStr> {
+        Cow::Borrowed(b"mock://broken-upload".as_bstr())
+    }
+
+    fn connection_persists_across_multiple_requests(&self) -> bool {
+        false
+    }
+
+    fn configure(&mut self, _config: &dyn Any) -> gix_error::Result<()> {
+        Ok(())
+    }
+}
+
+impl gix_transport::client::blocking_io::Transport for BrokenUploadTransport {
+    fn handshake<'a>(
+        &mut self,
+        _service: gix_transport::Service,
+        _extra_parameters: &'a [(&'a str, Option<&'a str>)],
+    ) -> Result<SetServiceResponse<'_>, Error> {
+        Err(Error::Io(std::io::Error::other("post-handshake mock")))
+    }
+
+    fn request(
+        &mut self,
+        write_mode: WriteMode,
+        on_into_read: MessageKind,
+        trace: bool,
+    ) -> Result<RequestWriter<'_>, Error> {
+        let reader: Box<dyn ExtendedBufRead<'_> + Unpin + '_> =
+            Box::new(self.line_provider.as_read_without_sidebands());
+        Ok(RequestWriter::new_from_bufread(
+            LimitedWriter {
+                out: &mut self.written,
+                accept: self.accept,
+            },
+            reader,
+            write_mode,
+            on_into_read,
+            trace,
+        ))
+    }
+}
+
+struct LimitedWriter<'a> {
+    out: &'a mut Vec<u8>,
+    accept: usize,
+}
+
+impl std::io::Write for LimitedWriter<'_> {
+    fn write(&mut self, buf: &[u8]) -> std::io::Result<usize> {
+        if self.out.len() + buf.len() > self.accept {
+            return Err(std::io::Error::new(
+                std::io::ErrorKind::BrokenPipe,
+                "sending on a closed channel",
+            ));
+        }
+        self.out.extend_from_slice(buf);
+        Ok(buf.len())
+    }
+    fn flush(&mut self) -> std::io::Result<()> {
+        Ok(())
+    }
+}
+
+/// Every `Display` in `err`'s source chain, outermost first.
+pub fn chain(err: &(dyn std::error::Error + 'static)) -> Vec<String> {
+    let mut out = Vec::new();
+    let mut next = Some(err);
+    while let Some(err) = next {
+        out.push(err.to_string());
+        next = err.source();
+    }
+    out
 }
