@@ -153,6 +153,16 @@ after staging. Existing `diff tree` and `diff file` commands remain available.
 See the [native authoring scope and verification](docs/plans/2026-09-28-daily-driver.md#native-authoring-sprint--2026-10-12)
 for the full compatibility limits.
 
+## Compare branches
+
+```bash
+brit diff tree --name-only origin/dev...HEAD  # paths changed since the merge base
+brit diff tree --name-only A B              # two trees; also A..B and --merge-base A B
+```
+
+`--name-only` lists paths like `git diff --name-only --no-renames`: a rename is
+its deleted and added path.
+
 For linear replay, edit-stop authoring and interrupted-operation recovery, see
 [Native rebase and retained-copy recovery](docs/rebase.md), including the bounded
 Linux interface and separate retained-copy helper installation.

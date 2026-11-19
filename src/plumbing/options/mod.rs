@@ -712,17 +712,26 @@ pub mod diff {
 
     #[derive(Debug, clap::Subcommand)]
     pub enum SubCommands {
-        /// Diff two trees.
+        /// Diff two trees: `OLD NEW`, `--merge-base OLD NEW`, or a lone `A..B` or `A...B`.
         Tree {
             /// Show an 80-column summary instead of object changes.
             #[clap(long)]
             stat: bool,
-            /// A rev-spec representing the 'before' or old tree.
+            /// Print only the changed paths, one per line, like `git diff --name-only --no-renames`.
+            ///
+            /// A rename is listed as its deleted and its added path.
+            #[clap(long, conflicts_with = "stat")]
+            name_only: bool,
+            /// Compare the merge base of both commits with NEW_TREEISH, like `git diff --merge-base`.
+            #[clap(long, requires = "new_treeish")]
+            merge_base: bool,
+            /// A rev-spec representing the 'before' or old tree, or alone a range: `A..B` compares
+            /// `A` with `B`, and `A...B` compares the merge base of `A` and `B` with `B`.
             #[clap(value_parser = crate::shared::AsBString)]
             old_treeish: BString,
             /// A rev-spec representing the 'after' or new tree.
             #[clap(value_parser = crate::shared::AsBString)]
-            new_treeish: BString,
+            new_treeish: Option<BString>,
         },
         /// Diff two versions of a file.
         File {
