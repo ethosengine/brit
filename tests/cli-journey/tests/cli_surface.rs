@@ -37,6 +37,28 @@ fn compiled_surface_includes_composed_namespaces_and_version_provenance_without_
             "missing assembled {name}"
         );
     }
+    // Subcommand flag spellings are part of the surface: `branch -d`, `branch -m`, `tag -d`.
+    let subcommand = |parent: &str, name: &str| {
+        commands.iter().find(|command| command["name"] == parent).unwrap()["subcommands"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .find(|command| command["name"] == name)
+            .unwrap_or_else(|| panic!("missing {parent} {name}"))
+            .clone()
+    };
+    for (parent, name, short, long) in [
+        ("branch", "delete", "d", "delete"),
+        ("branch", "move", "m", "move"),
+        ("tag", "delete", "d", "delete"),
+    ] {
+        let command = subcommand(parent, name);
+        assert_eq!(command["shortFlag"], short, "{parent} {name}");
+        assert_eq!(command["longFlag"], long, "{parent} {name}");
+    }
+    let force_delete = subcommand("branch", "force-delete");
+    assert_eq!(force_delete["shortFlag"], "D");
+    assert_eq!(force_delete["hidden"], true);
     let snapshot = commands.iter().find(|command| command["name"] == "snapshot").unwrap();
     assert!(!snapshot["subcommands"].as_array().unwrap().is_empty());
     assert!(value["command"]["options"]
