@@ -36,7 +36,7 @@ fn local_history(repo: &gix::Repository, shallow_bounded: bool) -> Result<()> {
     // The bounded walks read the boundary Git itself maintains; a relocated list is not it.
     ensure!(
         !shallow_bounded || repo.shallow_file()? == repo.common_dir().join("shallow"),
-        "a relocated shallow file (gitoxide.core.shallowFile) requires Git"
+        "a relocated shallow file (gitoxide.core.shallowFile or GIT_SHALLOW_FILE) requires Git"
     );
     ensure!(
         repo.config_snapshot().string("extensions.partialClone").is_none(),

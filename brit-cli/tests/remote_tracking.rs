@@ -314,3 +314,118 @@ fn several_configured_mappings_and_negations() -> TestResult {
     );
     Ok(())
 }
+
+/// Run Brit with a `git-upload-pack` wrapper first on `PATH` that counts every handshake the
+/// file transport makes into `counter`, and on handshake number `vanish_on` deletes the tag and
+/// the branch `dup` from `remote` before serving.
+fn brit_counting(
+    root: &Path,
+    args: &[&str],
+    remote: &Path,
+    vanish_on: u32,
+) -> gix_testtools::Result<(std::process::Output, u32)> {
+    use std::os::unix::fs::PermissionsExt;
+    let wrapper = tempfile::tempdir()?;
+    let counter = wrapper.path().join("count");
+    let script = wrapper.path().join("git-upload-pack");
+    std::fs::write(
+        &script,
+        "#!/bin/sh\nn=$(( $(cat \"$BRIT_TEST_COUNTER\" 2>/dev/null || echo 0) + 1 ))\necho $n > \"$BRIT_TEST_COUNTER\"\nif [ \"$n\" = \"$BRIT_TEST_VANISH_ON\" ]; then\n  git -C \"$BRIT_TEST_REMOTE\" tag -d dup >/dev/null 2>&1\n  git -C \"$BRIT_TEST_REMOTE\" branch -D dup >/dev/null 2>&1\nfi\nexec git upload-pack \"$@\"\n",
+    )?;
+    std::fs::set_permissions(&script, std::fs::Permissions::from_mode(0o755))?;
+    let mut command = Command::new(env!("CARGO_BIN_EXE_brit"));
+    gix_testtools::configure_git_environment(&mut command, root);
+    let inherited = command
+        .get_envs()
+        .find(|(key, _)| *key == "PATH")
+        .and_then(|(_, value)| value.map(ToOwned::to_owned))
+        .or_else(|| std::env::var_os("PATH"))
+        .unwrap_or_default();
+    let mut path = wrapper.path().as_os_str().to_owned();
+    path.push(":");
+    path.push(inherited);
+    let output = command
+        .current_dir(root)
+        .args(args)
+        .env("PATH", path)
+        .env("BRIT_TEST_COUNTER", &counter)
+        .env("BRIT_TEST_REMOTE", remote)
+        .env("BRIT_TEST_VANISH_ON", vanish_on.to_string())
+        .output()?;
+    let count = std::fs::read_to_string(&counter).map_or(0, |text| text.trim().parse().unwrap_or(0));
+    Ok((output, count))
+}
+
+/// Without `-r`, a first positional that is a URL or a path to a repository is the remote, as
+/// in Git: it fetches into FETCH_HEAD only and moves no tracking ref. One that is neither a
+/// configured remote, a URL or path, nor an advertised ref is an error saying so.
+#[test]
+fn positional_url_or_path_is_the_remote_like_git() -> TestResult {
+    let (remote, brit_local) = two_branch_fixture()?;
+    let git_local = tempfile::tempdir()?;
+    git(git_local.path(), "init")?;
+    add_remote(git_local.path(), "origin", remote.path())?;
+    git(git_local.path(), "fetch -q origin")?;
+    advance(remote.path(), "dev", "dev-moves")?;
+    git(remote.path(), "switch -q main")?;
+    let path = remote.path().to_str().expect("UTF-8 temporary path").to_owned();
+    let url = format!("file://{path}");
+    for location in [&path, &url] {
+        let before = rev(brit_local.path(), "refs/remotes/origin/dev");
+        let output = brit(brit_local.path(), &["fetch", location, "dev"]);
+        assert!(output.status.success(), "brit fetch {location} dev: {output:?}");
+        let oracle = git_command(git_local.path())
+            .args(["fetch", "-q", location, "dev"])
+            .output()?;
+        assert!(oracle.status.success(), "git fetch {location} dev: {oracle:?}");
+        assert_eq!(rev(brit_local.path(), "refs/remotes/origin/dev"), before, "{location}");
+        assert_eq!(
+            rev(git_local.path(), "refs/remotes/origin/dev"),
+            before,
+            "Git moves no tracking ref for {location} either"
+        );
+    }
+
+    let output = brit(brit_local.path(), &["fetch", "nosuch"]);
+    assert!(!output.status.success(), "{output:?}");
+    assert!(
+        stderr(&output).contains("'nosuch' is neither a configured remote, a URL or path to a repository, nor a ref"),
+        "{}",
+        stderr(&output)
+    );
+    Ok(())
+}
+
+/// An unambiguous name costs one handshake. An ambiguous one reconnects once, and the second
+/// advertisement is checked again: a ref that vanished in between is still an error.
+#[test]
+fn handshakes_and_a_ref_vanishing_before_the_reconnect() -> TestResult {
+    let (remote, local) = two_branch_fixture()?;
+    let expected = advance(remote.path(), "dev", "dev-moves")?;
+    git(remote.path(), "switch -q main")?;
+    let (output, handshakes) = brit_counting(local.path(), &["fetch", "origin", "dev"], remote.path(), 0)?;
+    assert!(output.status.success(), "{output:?}");
+    assert_eq!(handshakes, 1, "an unambiguous name connects once");
+    assert_eq!(rev(local.path(), "refs/remotes/origin/dev"), Some(expected));
+
+    git(remote.path(), "tag dup")?;
+    git(remote.path(), "branch dup")?;
+    let output = brit(local.path(), &["fetch", "-r", "origin"]);
+    assert!(output.status.success(), "{output:?}");
+    advance(remote.path(), "dup", "branch-moves")?;
+    git(remote.path(), "switch -q main")?;
+    let (output, handshakes) = brit_counting(local.path(), &["fetch", "origin", "dup"], remote.path(), 0)?;
+    assert!(output.status.success(), "{output:?}");
+    assert_eq!(handshakes, 2, "an ambiguous name reconnects once");
+
+    // `dev` keeps the second advertisement non-empty, so only Brit's own re-check catches it.
+    let (output, handshakes) = brit_counting(local.path(), &["fetch", "origin", "dup", "dev"], remote.path(), 2)?;
+    assert_eq!(handshakes, 2);
+    assert!(!output.status.success(), "a ref gone before the reconnect: {output:?}");
+    assert!(
+        stderr(&output).contains("couldn't find remote ref dup"),
+        "{}",
+        stderr(&output)
+    );
+    Ok(())
+}

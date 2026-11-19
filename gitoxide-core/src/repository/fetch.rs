@@ -173,6 +173,32 @@ pub(crate) fn opportunistic_tracking_specs(
     specs
 }
 
+/// Whether a first `fetch` positional names a repository rather than a ref: a URL
+/// (`scheme://...` or scp-like `user@host:path`), an explicit path (`/`, `./`, `../`, `~/`,
+/// `.` or `..`), or a relative path to an existing repository directory. Refspecs never take
+/// these forms, except a bare relative name that happens to be a repository directory here.
+pub(crate) fn names_a_repository(candidate: &gix::bstr::BStr) -> bool {
+    let Ok(text) = std::str::from_utf8(candidate) else {
+        return false;
+    };
+    if text.contains("://") {
+        return true;
+    }
+    if let Some((user_host, _path)) = text.split_once(':')
+        && let Some((user, host)) = user_host.split_once('@')
+        && !user.is_empty()
+        && !host.is_empty()
+        && !user_host.contains('/')
+    {
+        return true;
+    }
+    if matches!(text, "." | "..") || ["/", "./", "../", "~/"].iter().any(|prefix| text.starts_with(prefix)) {
+        return true;
+    }
+    let path = std::path::Path::new(text);
+    path.is_dir() && (path.join(".git").exists() || (path.join("HEAD").is_file() && path.join("objects").is_dir()))
+}
+
 /// The command-line refspecs that name one ref (not a pattern, negation or object id) yet
 /// matched nothing the remote advertised. Git refuses these: "couldn't find remote ref".
 pub(crate) fn unmatched_refspecs(
@@ -318,21 +344,35 @@ pub(crate) mod function {
         }
 
         use gix::bstr::ByteSlice;
-        // Git's spelling `fetch <remote> <refspec>...`: without `--remote`, a first positional
-        // naming a configured remote selects it. With `--remote`, every positional is a refspec.
+        // Git's spelling `fetch <repository> <refspec>...`: without `--remote`, a first
+        // positional naming a configured remote, or a URL or path to a repository, selects it.
+        // With `--remote`, every positional is a refspec.
+        let explicit_remote = remote.is_some();
         let (remote, ref_specs) = match remote {
             Some(remote) => (Some(remote), ref_specs),
             None => match ref_specs.split_first() {
-                Some((first, rest)) if repo.remote_names().iter().any(|name| name.as_bstr() == first.as_bstr()) => {
+                Some((first, rest))
+                    if repo.remote_names().iter().any(|name| name.as_bstr() == first.as_bstr())
+                        || super::names_a_repository(first.as_bstr()) =>
+                {
                     (Some(first.to_str_lossy().into_owned()), rest.to_vec())
                 }
                 _ => (None, ref_specs),
             },
         };
+        let first_positional_is_refspec = !explicit_remote && remote.is_none() && !ref_specs.is_empty();
         let mut remote = crate::repository::remote::by_name_or_url(&repo, remote.as_deref())?;
         // Read the configured mapping before the command line replaces it.
         let configured = remote.refspecs(gix::remote::Direction::Fetch).to_vec();
         let named = remote.name().is_some();
+        let remote_display = remote.name().map_or_else(
+            || {
+                remote
+                    .url(gix::remote::Direction::Fetch)
+                    .map_or_else(|| "the remote".to_owned(), |url| url.to_bstring().to_string())
+            },
+            |name| name.as_bstr().to_string(),
+        );
         let tracking = |advertised: Option<&std::collections::BTreeSet<gix::bstr::BString>>| {
             super::opportunistic_tracking_specs(&configured, named, &ref_specs, repo.object_hash(), advertised)
         };
@@ -347,22 +387,36 @@ pub(crate) mod function {
             extra_refspecs,
             ..Default::default()
         };
+        // Every advertisement a fetch proceeds on must hold each ref the command line names.
+        let ensure_matched = |map: &gix::remote::fetch::RefMap| -> Result<()> {
+            let specs = remote.refspecs(gix::remote::Direction::Fetch);
+            let unmatched = super::unmatched_refspecs(specs, map);
+            if unmatched.is_empty() {
+                return Ok(());
+            }
+            let first_source = specs
+                .first()
+                .and_then(|spec| spec.to_ref().source().map(ToOwned::to_owned));
+            if first_positional_is_refspec && unmatched.first() == first_source.as_ref() {
+                bail!(gix::error::validation(format!(
+                    "'{}' is neither a configured remote, a URL or path to a repository, nor a ref on {remote_display}",
+                    unmatched[0].to_str_lossy()
+                )));
+            }
+            bail!(gix::error::validation(format!(
+                "couldn't find remote ref {}",
+                unmatched
+                    .iter()
+                    .map(|name| name.to_str_lossy().into_owned())
+                    .collect::<Vec<_>>()
+                    .join(", ")
+            )));
+        };
         let mut prepared = remote
             .connect(gix::remote::Direction::Fetch)?
             .prepare_fetch(&mut progress, options(provisional.clone()))?;
         if !ref_specs.is_empty() {
-            let unmatched =
-                super::unmatched_refspecs(remote.refspecs(gix::remote::Direction::Fetch), prepared.ref_map());
-            if !unmatched.is_empty() {
-                bail!(gix::error::validation(format!(
-                    "couldn't find remote ref {}",
-                    unmatched
-                        .iter()
-                        .map(|name| name.to_str_lossy().into_owned())
-                        .collect::<Vec<_>>()
-                        .join(", ")
-                )));
-            }
+            ensure_matched(prepared.ref_map())?;
             // A short name that more than one advertised ref expands to resolves to the best
             // one only; reconnect without the other candidates' tracking updates.
             let advertised: std::collections::BTreeSet<gix::bstr::BString> = prepared
@@ -383,6 +437,8 @@ pub(crate) mod function {
                 prepared = remote
                     .connect(gix::remote::Direction::Fetch)?
                     .prepare_fetch(&mut progress, options(needed))?;
+                // The remote may have changed between the two advertisements.
+                ensure_matched(prepared.ref_map())?;
             }
         }
         let res: gix::remote::fetch::Outcome = prepared
