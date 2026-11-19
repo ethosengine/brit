@@ -59,6 +59,7 @@ fn requires_mutation_guard(cmd: &Subcommands) -> bool {
         | Subcommands::MergeBase(_)
         | Subcommands::Env
         | Subcommands::Diff(_)
+        | Subcommands::Show(_)
         | Subcommands::Log(_)
         | Subcommands::Blame { .. } => false,
         Subcommands::Commit(commit::Platform {
@@ -509,6 +510,33 @@ pub fn run_with_command(args: Args, command: clap::Command) -> Result<()> {
                 core::repository::diff::file(repository(Mode::Lenient)?, out, old_revspec, new_revspec)
             }),
         },
+        Subcommands::Show(crate::plumbing::options::show::Platform {
+            stat,
+            name_only,
+            name_status,
+            numstat,
+            no_patch,
+            oneline,
+            revisions,
+            paths,
+        }) => prepare_and_run("show", verbose, None, move |_progress, out, _err| {
+            use core::repository::diff::Format;
+            let format = match (stat, name_only, name_status, numstat, no_patch) {
+                (true, ..) => Some(Format::Stat),
+                (_, true, ..) => Some(Format::NameOnly),
+                (_, _, true, ..) => Some(Format::NameStatus),
+                (_, _, _, true, _) => Some(Format::NumStat),
+                (.., true) => None,
+                _ => Some(Format::Patch),
+            };
+            let options = core::repository::show::Options {
+                revisions,
+                paths,
+                format,
+                oneline,
+            };
+            core::repository::show::show(repository(Mode::Strict)?, out, options)
+        }),
         Subcommands::Log(crate::plumbing::options::log::Platform {
             max_count,
             oneline,

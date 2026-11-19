@@ -38,6 +38,7 @@ impl Capture {
             "add" => "add",
             "commit" => "commit",
             "diff" => "diff",
+            "show" => "show",
             "branch" => "branch",
             "switch" => "switch",
             "merge" => "merge",

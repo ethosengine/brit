@@ -14,7 +14,6 @@ pub const BRIDGED: &[&str] = &[
     "reset",
     "rm",
     "mv",
-    "show",
     "stash",
     "cherry-pick",
     "revert",
@@ -86,8 +85,8 @@ mod tests {
     #[test]
     fn arguments_needing_quotes_are_quoted_for_a_shell() {
         assert_eq!(
-            line(&args(&["brit", "show", "a b", "it's", ""])).as_deref(),
-            Some(r"brit: show is a Git bridge operation; run: git show 'a b' 'it'\''s' ''")
+            line(&args(&["brit", "stash", "a b", "it's", ""])).as_deref(),
+            Some(r"brit: stash is a Git bridge operation; run: git stash 'a b' 'it'\''s' ''")
         );
     }
 

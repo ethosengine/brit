@@ -234,6 +234,7 @@ pub enum Subcommands {
         abort: bool,
     },
     Diff(diff::Platform),
+    Show(show::Platform),
     Log(log::Platform),
     /// Interactively browse commits and their graph.
     #[cfg(feature = "tix")]
@@ -772,6 +773,46 @@ pub mod diff {
             #[clap(value_parser = crate::shared::AsBString)]
             new_revspec: BString,
         },
+    }
+}
+
+pub mod show {
+    use gix::bstr::BString;
+
+    /// Show commits with their changes, annotated tags, and blobs or trees, like `git show --no-renames`.
+    ///
+    /// A commit prints Git's medium header and its patch against its first parent (a root or
+    /// shallow-boundary commit against the empty tree). A merge prints its header only, and with
+    /// --stat or --numstat its first-parent summary, as Git does; a merge whose result differs
+    /// from every parent at some path, where Git prints a combined diff, is refused. An annotated
+    /// tag prints its header and message, then what it points to. A blob (`REV:PATH`) prints its
+    /// content and a tree is listed, both exactly like `brit cat`.
+    #[derive(Debug, clap::Parser)]
+    pub struct Platform {
+        /// Show an 80-column summary instead of patches, like `git show --stat=80`.
+        #[clap(long, group = "output")]
+        pub stat: bool,
+        /// Show only the names of changed paths, like `git show --name-only`.
+        #[clap(long, group = "output")]
+        pub name_only: bool,
+        /// Show the names and status letters of changed paths, like `git show --name-status`.
+        #[clap(long, group = "output")]
+        pub name_status: bool,
+        /// Show added and removed line counts per path, like `git show --numstat`.
+        #[clap(long, group = "output")]
+        pub numstat: bool,
+        /// Show only the header of each commit, like `git show --no-patch`.
+        #[clap(long, short = 's', group = "output")]
+        pub no_patch: bool,
+        /// Print each commit as its abbreviated id and title, like `git show --oneline`.
+        #[clap(long)]
+        pub oneline: bool,
+        /// Revisions to show instead of HEAD: commits, tags, or `REV:PATH` for a blob or tree.
+        #[clap(value_parser = crate::shared::AsBString, value_name = "REVISION")]
+        pub revisions: Vec<BString>,
+        /// Only show changes to these literal paths; a commit that changes none of them is not shown.
+        #[clap(last = true, value_parser = crate::shared::AsBString, value_name = "PATH")]
+        pub paths: Vec<BString>,
     }
 }
 

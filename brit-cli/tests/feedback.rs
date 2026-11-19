@@ -100,7 +100,7 @@ fn capture_is_structured_correlated_and_subordinate_to_the_command() {
     let captured = fixture.path().join("args");
     for (args, operation, outcome, code) in [
         (&["--version"][..], "other", "passed", 0),
-        (&["show", "SECRET_ARGUMENT"][..], "bridge", "bridge-declared", 2),
+        (&["stash", "SECRET_ARGUMENT"][..], "bridge", "bridge-declared", 2),
         (&["log", "--unknown-secret-option"][..], "log", "refused", 2),
         (&["-r", ".", "log", "--unknown-secret-option"][..], "log", "refused", 2),
         (

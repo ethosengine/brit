@@ -55,6 +55,7 @@ pub mod pull;
 pub mod remote;
 pub mod replay;
 pub mod revision;
+pub mod show;
 pub mod status;
 pub mod submodule;
 pub mod switch;
