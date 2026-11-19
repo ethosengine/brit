@@ -76,7 +76,10 @@ pub struct Args {
     /// Wait for another Brit writer's guard instead of refusing at once.
     ///
     /// Without SECONDS, wait until the guard is free. `0` refuses at once.
-    /// `BRIT_MUTATION_WAIT=SECONDS` (or `forever`) sets the default.
+    /// `BRIT_MUTATION_WAIT=SECONDS` (or `forever`) sets the default. With neither, writers
+    /// refuse at once, except `add` and a commit start, which wait up to 2 seconds.
+    /// Under a Brit hook every wait is capped by `BRIT_HOOK_GUARD_WAIT` (default 30 seconds).
+    /// The guard model, and what hooks may run: docs/mutation-guards.md in the Brit sources.
     #[clap(
         long,
         global = true,
