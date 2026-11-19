@@ -121,6 +121,7 @@ class PolicyTests(unittest.TestCase):
         self.assertEqual(matrix['include'], plan['jobs'], 'a job must find itself in the plan it executes')
         self.assertEqual(plan['selection'], {'mode': 'exhaustive', 'packages': ['gix']})
         self.assertNotIn('\n', outputs['matrix'] + outputs['plan'])
+        self.assertIn('-', json.dumps(matrix), 'the decoded jobs keep their real names')
         self.assertEqual(outputs['downstream'], '', 'disabled consumer checks start no job')
         del self.marker['disabled'][policy.CONSUMER_JOB]
         self.assertTrue(policy.transform(self.contract, self.outputs())[0]['downstream'])
@@ -128,6 +129,25 @@ class PolicyTests(unittest.TestCase):
         mismatched['matrix'] = json.dumps({'include': self.rows[:1]})
         with self.assertRaisesRegex(policy.PolicyError, 'name different jobs'):
             policy.transform(self.contract, mismatched)
+
+    def test_outputs_survive_a_secret_that_masks_the_hyphen(self):
+        outputs, _ = policy.transform(self.contract, self.outputs())
+        for key in ('matrix', 'plan'):
+            self.assertNotIn('-', outputs[key], 'GitHub withholds an output containing a masked value')
+        self.assertEqual(policy.encode({'path': 'a\\-b', 'flag': '--locked'}), '{"path":"a\\\\\\u002db","flag":"\\u002d\\u002dlocked"}')
+        self.assertEqual(json.loads(policy.encode({'path': 'a\\-b'})), {'path': 'a\\-b'})
+        del self.marker['disabled'][policy.CONSUMER_JOB]
+        consumers = policy.transform(self.contract, self.outputs(downstream='{"include":[{"name":"a-b"}]}'))[0]['downstream']
+        self.assertNotIn('-', consumers)
+        self.assertEqual(json.loads(consumers), {'include': [{'name': 'a-b'}]})
+        with self.assertRaisesRegex(policy.PolicyError, 'negative number'):
+            policy.encode({'jobs': [{'offset': -1}]})
+        self.assertEqual(policy.encode({'ok': True, 'count': 0}), '{"ok":true,"count":0}')
+
+    def test_a_plan_too_large_for_one_environment_variable_is_refused(self):
+        self.rows[0]['tools'] = ['x' * policy.MAX_PLAN_CHARACTERS]
+        with self.assertRaisesRegex(policy.PolicyError, 'one environment variable'):
+            policy.transform(self.contract, self.outputs())
 
     def test_command_reads_planner_lines_and_refuses_without_writing(self):
         with tempfile.TemporaryDirectory() as directory:

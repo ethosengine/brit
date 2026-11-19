@@ -21,6 +21,8 @@ DEFAULT_CONTRACT = Path(__file__).resolve().parents[2] / '.epr-meta/readiness.js
 MILESTONE = 'inherited-ci'
 PLANNED_JOB = 'run'
 CONSUMER_JOB = 'downstream'
+# Windows limits one environment variable to 32,767 characters; the plan travels in one.
+MAX_PLAN_CHARACTERS = 32_000
 
 
 class PolicyError(ValueError):
@@ -94,6 +96,28 @@ def apply(marker, rows, mode):
     return kept, report
 
 
+def negative_numbers(value):
+    if isinstance(value, dict):
+        return any(negative_numbers(item) for item in value.values())
+    if isinstance(value, list):
+        return any(negative_numbers(item) for item in value)
+    return isinstance(value, (int, float)) and not isinstance(value, bool) and value < 0
+
+
+def encode(value):
+    """Serialize JSON on one line without a literal hyphen.
+
+    GitHub withholds a job output that contains the value of any secret. This repository
+    has a secret whose mask is a lone hyphen (its job logs show no hyphen at all), so an
+    output with one never reaches the next job: CI run 44517078199 planned 32 jobs and
+    started none. Inside a JSON string the escape \\u002d is the same character to every
+    parser, so `fromJSON` and the scheduler read the original names.
+    """
+    if negative_numbers(value):
+        raise PolicyError('a negative number cannot be written without a hyphen')
+    return json.dumps(value, separators=(',', ':')).replace('-', '\\u002d')
+
+
 def parse_outputs(text):
     """Read `key=value` lines as the planner writes them for GitHub Actions."""
     outputs = {}
@@ -119,9 +143,13 @@ def transform(contract, outputs):
     consumers = outputs['downstream']
     if CONSUMER_JOB in marker.get('disabled', {}):
         consumers = ''
-    compact = {'separators': (',', ':')}
-    return {'matrix': json.dumps({'include': rows}, **compact), 'plan': json.dumps(plan, **compact),
-            'downstream': consumers}, report
+    elif consumers:
+        consumers = encode(json.loads(consumers))
+    governed = {'matrix': encode({'include': rows}), 'plan': encode(plan), 'downstream': consumers}
+    if len(governed['plan']) > MAX_PLAN_CHARACTERS:
+        raise PolicyError(f"the execution plan needs {len(governed['plan'])} characters; "
+                          f'jobs receive it in one environment variable of at most {MAX_PLAN_CHARACTERS}')
+    return governed, report
 
 
 def summary(report, marker):
