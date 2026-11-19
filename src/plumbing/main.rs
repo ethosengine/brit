@@ -43,7 +43,15 @@ fn requires_mutation_guard(cmd: &Subcommands) -> bool {
         | Subcommands::Odb(_)
         | Subcommands::Fsck(_)
         | Subcommands::Tree(_)
-        | Subcommands::Tag(_)
+        | Subcommands::Tag(
+            tag::Platform {
+                cmds: Some(tag::Subcommands::List),
+                ..
+            }
+            | tag::Platform {
+                cmds: None, name: None, ..
+            },
+        )
         | Subcommands::Verify { .. }
         | Subcommands::Revision(_)
         | Subcommands::Mailmap(_)
@@ -288,7 +296,10 @@ pub fn run_with_command(args: Args, command: clap::Command) -> Result<()> {
     let auto_verbose = !args.no_verbose;
 
     let should_interrupt = Arc::new(AtomicBool::new(false));
-    #[expect(unsafe_code)]
+    #[expect(
+        unsafe_code,
+        reason = "installing a signal handler is unsafe; the handler only stores an atomic flag"
+    )]
     unsafe {
         // SAFETY: The closure doesn't use mutexes or memory allocation, so it should be safe to call from a signal handler.
         gix::interrupt::init_handler(1, {
@@ -712,6 +723,21 @@ pub fn run_with_command(args: Args, command: clap::Command) -> Result<()> {
 
                 prepare_and_run("branch-list", auto_verbose, None, move |_progress, out, _err| {
                     core::repository::branch::list(repository(Mode::Lenient)?, out, format, options)
+                })
+            }
+            branch::Subcommands::Delete { force, names } => {
+                prepare_and_run("branch-delete", auto_verbose, None, move |_progress, out, err| {
+                    core::repository::branch::delete(repository(Mode::Strict)?, &names, force, out, err)
+                })
+            }
+            branch::Subcommands::ForceDelete { names } => {
+                prepare_and_run("branch-delete", auto_verbose, None, move |_progress, out, err| {
+                    core::repository::branch::delete(repository(Mode::Strict)?, &names, true, out, err)
+                })
+            }
+            branch::Subcommands::Move { old, new } => {
+                prepare_and_run("branch-move", auto_verbose, None, move |_progress, _out, _err| {
+                    core::repository::branch::rename(repository(Mode::Strict)?, &old, &new)
                 })
             }
         },
@@ -1477,12 +1503,39 @@ pub fn run_with_command(args: Args, command: clap::Command) -> Result<()> {
                 )
             }),
         },
-        Subcommands::Tag(platform) => match platform.cmds {
-            Some(tag::Subcommands::List) | None => {
-                prepare_and_run("tag-list", auto_verbose, None, move |_progress, out, _err| {
-                    core::repository::tag::list(repository(Mode::Lenient)?, out, format)
-                })
-            }
+        Subcommands::Tag(platform) => match platform {
+            tag::Platform {
+                cmds: Some(tag::Subcommands::Delete { names }),
+                ..
+            } => prepare_and_run("tag-delete", auto_verbose, None, move |_progress, out, _err| {
+                core::repository::tag::delete(repository(Mode::Strict)?, &names, out)
+            }),
+            tag::Platform {
+                cmds: None,
+                name: Some(name),
+                commit_ish,
+                annotate,
+                message,
+                force,
+            } => prepare_and_run("tag-create", auto_verbose, None, move |_progress, out, _err| {
+                core::repository::tag::create(
+                    repository(Mode::Strict)?,
+                    core::repository::tag::create::Options {
+                        name,
+                        target: commit_ish.unwrap_or_else(|| "HEAD".into()),
+                        annotate,
+                        message,
+                        force,
+                    },
+                    out,
+                )
+            }),
+            tag::Platform {
+                cmds: Some(tag::Subcommands::List) | None,
+                ..
+            } => prepare_and_run("tag-list", auto_verbose, None, move |_progress, out, _err| {
+                core::repository::tag::list(repository(Mode::Lenient)?, out, format)
+            }),
         },
         Subcommands::Tree(cmd) => match cmd {
             tree::Subcommands::Entries {
