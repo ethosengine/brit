@@ -398,9 +398,14 @@ fn reduced_trust_ceiling_leaves_no_headroom_and_a_new_pack_is_the_named_error() 
 
 #[test]
 #[cfg(unix)]
-fn an_unreadable_alternate_pack_directory_does_not_fail_the_open() -> TestResult {
+fn an_unreadable_alternate_pack_directory_fails_the_first_lookup_not_a_reduced_trust_open() -> TestResult {
     use std::os::unix::fs::PermissionsExt;
 
+    // A host `safe.directory = *` (as on hosted CI runners) would promote this repository to full trust,
+    // which is a different path: see the full-trust assertion below.
+    if gix_testtools::run_in_isolated_process()? {
+        return Ok(());
+    }
     let fixture = gix_testtools::tempfile::tempdir()?;
     let probe = fixture.path().join("probe");
     std::fs::write(&probe, "")?;
@@ -413,6 +418,7 @@ fn an_unreadable_alternate_pack_directory_does_not_fail_the_open() -> TestResult
     std::fs::create_dir(&repo_path)?;
     gix_testtools::git(&repo_path, "init")?;
     gix_testtools::git(&repo_path, "commit --allow-empty -m fixture")?;
+    let head = gix::ObjectId::from_hex(gix_testtools::git(&repo_path, "rev-parse HEAD")?.trim().as_bytes())?;
     let alternate = fixture.path().join("alternate-objects");
     std::fs::create_dir_all(alternate.join("pack"))?;
     std::fs::write(
@@ -420,13 +426,28 @@ fn an_unreadable_alternate_pack_directory_does_not_fail_the_open() -> TestResult
         format!("{}\n", alternate.display()),
     )?;
     std::fs::set_permissions(alternate.join("pack"), std::fs::Permissions::from_mode(0o000))?;
-    let opened = open_reduced(&repo_path);
+    let reduced = open_reduced(&repo_path);
+    let lookup = reduced.as_ref().ok().map(|repo| repo.find_object(head).map(|_| ()));
+    let full = gix::open_opts(&repo_path, gix::open::Options::default().with(gix::sec::Trust::Full));
     std::fs::set_permissions(alternate.join("pack"), std::fs::Permissions::from_mode(0o755))?;
-    let repo = opened?;
-    assert_eq!(
-        repo.git_dir_trust(),
-        gix::sec::Trust::Reduced,
-        "an unreadable pack directory counts as none at open, as it did before slots were sized"
+
+    // Reduced trust, as in 0.2.6 (measured as a non-root user): the open succeeds, because reduced trust sizes its
+    // slots without failing on an unreadable directory, and the first lookup fails naming the directory.
+    let reduced = reduced?;
+    assert_eq!(reduced.git_dir_trust(), gix::sec::Trust::Reduced);
+    let err = lookup
+        .expect("the open succeeded")
+        .expect_err("not a silent partial view: the lookup reports the directory");
+    assert!(
+        format!("{err:?}").contains("Could not read pack directory"),
+        "the first lookup names the unreadable directory: {err:?}"
+    );
+
+    // Full trust, also as in 0.2.6: the store sizes its slots by listing every pack directory and fails at open.
+    let err = full.expect_err("full trust lists the pack directories at open");
+    assert!(
+        format!("{err:?}").contains("Could not read pack directory"),
+        "the open names the unreadable directory: {err:?}"
     );
     Ok(())
 }
