@@ -725,6 +725,81 @@ mod linux {
             Ok(())
         }
 
+        /// The review's `exp3_switch_quota.sh` (S1): a switch killed part-way whose
+        /// journal is far over a lowered scratch limit. Reporting and undoing are
+        /// never metered: `--status` reports it, `--abort` restores the original
+        /// state exactly, and a durable decision rolls forward on `--continue`.
+        #[test]
+        fn recovery_of_a_switch_whose_journal_exceeds_the_quota_is_never_metered() -> Result<()> {
+            fn noise(size: usize, seed: u64) -> Vec<u8> {
+                let mut state = seed.wrapping_mul(0x9e37_79b9_7f4a_7c15) | 1;
+                (0..size)
+                    .map(|_| {
+                        state ^= state << 13;
+                        state ^= state >> 7;
+                        state ^= state << 17;
+                        (state >> 32) as u8
+                    })
+                    .collect()
+            }
+            fn limited(repo: &Path, args: &[&str]) -> Result<Output> {
+                Ok(command(repo, true)
+                    .args(args)
+                    .env("BRIT_TEST_SCRATCH_LIMIT", "1000")
+                    .output()?)
+            }
+            for point in ["journal-prepared", "file-published", "index-published"] {
+                let repo = TestRepo::new("switch-over-quota")?;
+                let root = repo.path();
+                fs::write(root.join("big"), noise(200_000, 1))?;
+                repo.commit_file("selected", "original\n")?;
+                git(root, &["add", "big"])?;
+                git(root, &["commit", "-q", "-m", "big"])?;
+                git(root, &["switch", "-c", "destination"])?;
+                fs::write(root.join("big"), noise(200_000, 2))?;
+                repo.commit_file("selected", "destination\n")?;
+                git(root, &["commit", "-q", "-am", "big destination"])?;
+                git(root, &["switch", "main"])?;
+                fs::write(root.join("untracked-note"), b"the user's note\n")?;
+                let before = index(root)?;
+                let head = git(root, &["rev-parse", "HEAD"])?;
+                let mut paused = pause(root, &["switch", "destination"], point)?;
+                interrupt(&mut paused, "-KILL")?;
+                let status = limited(root, &["switch", "--status"])?;
+                ensure!(
+                    status.status.success()
+                        && String::from_utf8_lossy(&status.stdout).contains("Switch recovery pending"),
+                    "{point}: --status reports: {}",
+                    String::from_utf8_lossy(&status.stderr)
+                );
+                if point == "index-published" {
+                    let out = limited(root, &["switch", "--continue"])?;
+                    ensure!(
+                        out.status.success(),
+                        "{point}: --continue rolls the durable decision forward: {}",
+                        String::from_utf8_lossy(&out.stderr)
+                    );
+                    assert_eq!(fs::read(root.join("big"))?, noise(200_000, 2));
+                    assert_eq!(fs::read(root.join("selected"))?, b"destination\n");
+                } else {
+                    let out = limited(root, &["switch", "--abort"])?;
+                    ensure!(
+                        out.status.success(),
+                        "{point}: --abort restores: {}",
+                        String::from_utf8_lossy(&out.stderr)
+                    );
+                    unchanged(root, &before, &head)?;
+                    assert_eq!(git(root, &["symbolic-ref", "HEAD"])?, b"refs/heads/main\n");
+                    assert_eq!(fs::read(root.join("big"))?, noise(200_000, 1));
+                    assert_eq!(fs::read(root.join("selected"))?, b"original\n");
+                }
+                assert_eq!(fs::read(root.join("untracked-note"))?, b"the user's note\n");
+                ensure!(!journal(root).exists(), "{point}: no switch journal remains");
+                success(root, &["branch", "create", "after-recovery"])?;
+            }
+            Ok(())
+        }
+
         #[test]
         fn commit_decision_refuses_abort_and_preserves_recovery_evidence() -> Result<()> {
             let repo = fixture("switch-decision")?;

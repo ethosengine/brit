@@ -1202,7 +1202,8 @@ mod recovery {
         ensure!(!output.status.success(), "oversized rebase must refuse");
         ensure!(
             message.contains("can need up to")
-                && message.contains("not available on repositories of this size yet")
+                && message.contains("the scratch limit configured for testing is too small for this rebase")
+                && !message.contains("not available on repositories of this size yet")
                 && message.contains("over the 1000000-byte scratch limit")
                 && message.contains("nothing was changed")
                 && message.contains("git rebase is the fallback"),
@@ -1624,6 +1625,42 @@ mod recovery {
         success(&moved, &["branch", "create", "unblocked"])?;
         success(&moved, &["rebase", "upstream"])?;
         Ok(())
+    }
+
+    /// S2: a repository moved while its rebase was part-way through a checkout.
+    /// `--status` names the location the journal records and says that moving it
+    /// back and running `--abort` there restores it, which it does, exactly; the
+    /// manual steps are offered as the alternative that leaves the checkout
+    /// part-way.
+    #[test]
+    fn public_a_moved_part_way_rebase_names_its_location_and_aborts_once_moved_back() -> Result<()> {
+        let repo = fixture(false)?;
+        let root = repo.path().to_owned();
+        let before = live(&root)?;
+        kill_rebase_at(&root, "replay-decision-applied")?;
+        let parent = tempfile::tempdir()?;
+        let moved = parent.path().join("moved");
+        fs::rename(&root, &moved)?;
+        let status = success(&moved, &["rebase", "--status"])?;
+        for expected in [
+            "does not open as this repository's own",
+            root.to_str().expect("utf-8 test path"),
+            "Moving it back",
+            "brit rebase --abort there restores",
+            "To set it aside by hand instead",
+            "stay part-way",
+        ] {
+            ensure!(
+                status.stdout.contains(expected),
+                "status names {expected}: {}",
+                status.stdout
+            );
+        }
+        refused(&moved, &["rebase", "--abort"])?;
+        fs::rename(&moved, &root)?;
+        abort_restores(&root, REAL_LIMIT, &before, "moved back")?;
+        usable(&root)?;
+        preserved(&root)
     }
 
     /// The review's `exp2_retire_foreign.sh` (M2): a repository copied while its
@@ -2211,6 +2248,411 @@ mod recovery {
         ensure!(root.join(".git/brit-rebase").exists(), "the journal remains to resume");
         abort_restores(root, "1000", &before, "after the disk filled")?;
         mutations_work(root)
+    }
+
+    /// The built-in scratch limit: the quota a real run has.
+    const REAL_LIMIT: &str = "1073741824";
+
+    /// Run `args` and SIGKILL it the `ordinal`th time it reaches `point`. Returns
+    /// `false` when it finished without reaching it that often.
+    fn kill_at_ordinal(root: &Path, args: &[&str], point: &str, ordinal: usize) -> Result<bool> {
+        let markers = tempfile::tempdir()?;
+        let wanted = if ordinal == 1 {
+            point.to_owned()
+        } else {
+            format!("{point}#{ordinal}")
+        };
+        let mut child = launch(
+            root,
+            args,
+            &[
+                ("BRIT_SWITCH_CHECKPOINT", wanted.as_ref()),
+                ("BRIT_SWITCH_CHECKPOINT_DIR", markers.path().as_os_str()),
+            ],
+        )?;
+        let marker = markers.path().join(format!("{point}.reached"));
+        let deadline = Instant::now() + Duration::from_secs(60);
+        while !marker.exists() {
+            if child.0.try_wait()?.is_some() {
+                return Ok(false);
+            }
+            ensure!(Instant::now() < deadline, "{args:?}: {wanted} timed out");
+            std::thread::sleep(Duration::from_millis(10));
+        }
+        interrupt(&mut child, "-KILL")?;
+        Ok(true)
+    }
+
+    /// No rebase remains and Brit mutations work (the fixtures' own uncommitted
+    /// work may overlap a switch, so this commits on a new branch instead).
+    fn usable(root: &Path) -> Result<()> {
+        let status = success(root, &["rebase", "--status"])?;
+        ensure!(status.stdout.contains("No active rebase"), "{}", status.stdout);
+        success(root, &["branch", "create", "after-recovery"])?;
+        Ok(())
+    }
+
+    /// A rebase about to run one forward command, and the live state from
+    /// before the rebase began (its uncommitted work included).
+    struct Forward {
+        repo: TestRepo,
+        before: std::collections::BTreeMap<PathBuf, Vec<u8>>,
+        command: &'static [&'static str],
+    }
+
+    fn forward(scenario: &str) -> Result<Forward> {
+        let edit = scenario.starts_with("edit");
+        let repo = if edit { fixture(false)? } else { conflict_fixture()? };
+        let root = repo.path();
+        let before = live(root)?;
+        let command: &'static [&'static str] = match scenario {
+            "first run" => &["rebase", "upstream"],
+            "conflict --continue" => {
+                refused(root, &["rebase", "upstream"])?;
+                fs::write(root.join("c"), b"a\nRESOLVED\nc\n")?;
+                success(root, &["rebase", "--stage", "--", "c"])?;
+                &["rebase", "--continue"]
+            }
+            "conflict --skip" => {
+                refused(root, &["rebase", "upstream"])?;
+                &["rebase", "--skip"]
+            }
+            "edit --continue" | "edit --amend" => {
+                let candidates = ids(root)?;
+                let started = interactive(root, &format!("edit {}\npick {}\n", candidates[0], candidates[1]))?;
+                ensure!(started.status.success(), "{}", started.stderr);
+                if scenario == "edit --amend" {
+                    &["rebase", "--amend", "-m", "amended at the edit stop"]
+                } else {
+                    &["rebase", "--continue"]
+                }
+            }
+            other => anyhow::bail!("unknown scenario {other}"),
+        };
+        Ok(Forward { repo, before, command })
+    }
+
+    /// Carry a rebase on to its end with `--continue`, resolving a conflict stop
+    /// the way the user would. The user's uncommitted work survives.
+    fn finish(root: &Path, what: &str) -> Result<()> {
+        for _ in 0..6 {
+            if !root.join(".git/brit-rebase").exists() {
+                ensure!(!root.join(".git/brit-authoring").exists(), "{what}: no authoring left");
+                return usable(root);
+            }
+            let journal = root.join(".git/brit-rebase");
+            if !journal.join("state.json").exists() && !journal.join("state.pending").exists() {
+                // Killed before preparation recorded anything: there is nothing to
+                // continue; --abort removes it and the rebase starts again.
+                let continued = refused(root, &["rebase", "--continue"])?;
+                ensure!(
+                    continued.stderr.contains("--abort"),
+                    "{what}: names --abort: {}",
+                    continued.stderr
+                );
+                success(root, &["rebase", "--abort"])?;
+                invoke(root, &["rebase", "upstream"])?;
+                continue;
+            }
+            let status = success(root, &["rebase", "--status"])?;
+            if status.stdout.contains("Conflict stop") {
+                fs::write(root.join("c"), b"a\nRESOLVED\nc\n")?;
+                success(root, &["rebase", "--stage", "--", "c"])?;
+            }
+            let continued = invoke(root, &["rebase", "--continue"])?;
+            ensure!(
+                continued.status.success()
+                    || (root.join(".git/brit-authoring").exists()
+                        && success(root, &["rebase", "--status"])?.stdout.contains(" stop")),
+                "{what}: --continue went on: {}\n{}",
+                continued.stdout,
+                continued.stderr
+            );
+        }
+        anyhow::bail!("{what}: --continue never finished the rebase")
+    }
+
+    /// The review's `exp3_pending.sh` (M1), swept: every forward command the
+    /// fault build drives is killed at every journal save it makes, before its
+    /// successor record is written, after it is written and synchronized but
+    /// before its rename, and after the rename. After each crash `--status` names
+    /// a cure, `--abort` restores HEAD, the index, the worktree and the user's
+    /// uncommitted work exactly, and, from the same crash run again, `--continue`
+    /// finishes the rebase.
+    fn sweep_forward(scenario: &str) -> Result<()> {
+        for point in [
+            "replay-state-file-writing",
+            "replay-state-file-synced",
+            "replay-state-directory-synced",
+        ] {
+            let mut ordinal = 1;
+            loop {
+                ensure!(ordinal < 60, "{scenario}: {point} reached more than 60 times");
+                let what = format!("{scenario}, killed at {point} #{ordinal}");
+                let abort = forward(scenario)?;
+                let root = abort.repo.path();
+                if !kill_at_ordinal(root, abort.command, point, ordinal)? {
+                    break;
+                }
+                let mut published = false;
+                if root.join(".git/brit-rebase").exists() {
+                    let status = success(root, &["rebase", "--status"])?;
+                    ensure!(
+                        status.stdout.contains("--abort") || status.stdout.contains("--continue"),
+                        "{what}: --status names a cure: {}",
+                        status.stdout
+                    );
+                    published = status.stdout.contains("cannot be aborted");
+                }
+                if published {
+                    // Its final decision is durable: by design only --continue.
+                    refused(root, &["rebase", "--abort"])?;
+                    finish(root, &what)?;
+                } else {
+                    abort_restores(root, REAL_LIMIT, &abort.before, &what)?;
+                    usable(root)?;
+                }
+                let carry = forward(scenario)?;
+                let root = carry.repo.path();
+                ensure!(
+                    kill_at_ordinal(root, carry.command, point, ordinal)?,
+                    "{what}: replayed"
+                );
+                finish(root, &what)?;
+                if !scenario.starts_with("edit") {
+                    ensure!(
+                        fs::read(root.join("base"))? == b"base\nthe user's unstaged edit\n"
+                            && git(root, &["show", ":staged"])? == b"the user's staged file\n",
+                        "{what}: the user's work survived"
+                    );
+                }
+                ordinal += 1;
+            }
+        }
+        Ok(())
+    }
+
+    #[test]
+    fn public_a_kill_in_the_first_run_never_strands_the_rebase() -> Result<()> {
+        sweep_forward("first run")
+    }
+
+    #[test]
+    fn public_a_kill_in_a_conflict_continue_never_strands_the_rebase() -> Result<()> {
+        sweep_forward("conflict --continue")
+    }
+
+    #[test]
+    fn public_a_kill_in_a_conflict_skip_never_strands_the_rebase() -> Result<()> {
+        sweep_forward("conflict --skip")
+    }
+
+    #[test]
+    fn public_a_kill_in_edit_stop_commands_never_strands_the_rebase() -> Result<()> {
+        sweep_forward("edit --continue")?;
+        sweep_forward("edit --amend")
+    }
+
+    /// The review's reproduction exactly (M1): `--continue` after a staged
+    /// resolution, SIGKILLed once its successor record is synchronized and before
+    /// its rename. Every recovery command used to refuse "foreign pending replay
+    /// state" and every mutation refused.
+    #[test]
+    fn public_a_continue_killed_before_its_rename_aborts_or_continues() -> Result<()> {
+        for then in ["--abort", "--continue"] {
+            let stop = forward("conflict --continue")?;
+            let root = stop.repo.path();
+            ensure!(kill_at_ordinal(root, stop.command, "replay-state-file-synced", 1)?);
+            ensure!(root.join(".git/brit-rebase/state.pending").exists());
+            let status = success(root, &["rebase", "--status"])?;
+            ensure!(
+                status.stdout.contains("never took effect") && status.stdout.contains("discards it"),
+                "{}",
+                status.stdout
+            );
+            if then == "--abort" {
+                abort_restores(root, REAL_LIMIT, &stop.before, "abort after the kill")?;
+                mutations_work(root)?;
+            } else {
+                success(root, &["rebase", "--continue"])?;
+                ensure!(!root.join(".git/brit-rebase").exists());
+                assert_eq!(git(root, &["show", "HEAD:c"])?, b"a\nRESOLVED\nc\n");
+                mutations_work(root)?;
+            }
+        }
+        Ok(())
+    }
+
+    /// The newest copy under `.git/brit-rebase-retained` not yet complete.
+    fn incomplete_leaf(root: &Path) -> Result<PathBuf> {
+        let mut leaves = Vec::new();
+        for operation in fs::read_dir(root.join(".git/brit-rebase-retained"))? {
+            for copy in fs::read_dir(operation?.path())? {
+                let path = copy?.path();
+                if !path.join("COPY_COMPLETE").exists() {
+                    leaves.push(path);
+                }
+            }
+        }
+        ensure!(leaves.len() == 1, "one incomplete copy: {leaves:?}");
+        Ok(leaves.remove(0))
+    }
+
+    fn truncate(path: &Path, length: u64) -> Result<()> {
+        fs::OpenOptions::new().write(true).open(path)?.set_len(length)?;
+        Ok(())
+    }
+
+    /// The review's `exp3_abort_kill.sh` (M2): `--abort` at a conflict stop,
+    /// SIGKILLed once its retained copy's manifest is written, the manifest then
+    /// cut short (as a kill inside a non-atomic write, or a loss of power before
+    /// it was synchronized, would leave it), and the marker of a completed copy
+    /// likewise. The next `--abort` writes them again and restores exactly.
+    #[test]
+    fn public_a_torn_retained_manifest_or_marker_never_strands_an_abort() -> Result<()> {
+        for (record, point) in [
+            ("manifest.json", "replay-retained-manifest"),
+            ("COPY_COMPLETE", "replay-copy-complete"),
+        ] {
+            for cut in ["0", "1", "half", "one short"] {
+                let what = format!("{record} cut to {cut}");
+                let stop = forward("conflict --skip")?;
+                let root = stop.repo.path();
+                ensure!(kill_at_ordinal(root, &["rebase", "--abort"], point, 1)?, "{what}");
+                let leaf = if record == "COPY_COMPLETE" {
+                    retained_leaf(root)?
+                } else {
+                    incomplete_leaf(root)?
+                };
+                let length = fs::metadata(leaf.join(record))?.len();
+                truncate(
+                    &leaf.join(record),
+                    match cut {
+                        "0" => 0,
+                        "1" => 1,
+                        "half" => length / 2,
+                        _ => length - 1,
+                    },
+                )?;
+                abort_restores(root, REAL_LIMIT, &stop.before, &what)?;
+                mutations_work(root)?;
+            }
+        }
+        Ok(())
+    }
+
+    /// The same shape for the abort's own records in the journal: its decision
+    /// record (the abort's commit point) and its staged proposal, cut short after
+    /// they were written, and an abort killed holding its transition's Git locks
+    /// before its decision. None was ever in effect; the next `--abort` restores
+    /// exactly, and `--status` never calls a torn decision durable.
+    #[test]
+    fn public_a_torn_abort_decision_or_proposal_never_strands_an_abort() -> Result<()> {
+        for (record, point) in [
+            ("decision", "replay-decision-durable"),
+            ("plan.json", "replay-directories-prepared"),
+            ("owner", "replay-directories-prepared"),
+            ("nothing", "lock-intent"),
+            ("nothing", "lock-acquired"),
+        ] {
+            for cut in ["0", "half", "one short"] {
+                if record == "nothing" && cut != "0" {
+                    continue;
+                }
+                let what = format!("abort {record} cut to {cut}");
+                let stop = forward("conflict --skip")?;
+                let root = stop.repo.path();
+                ensure!(kill_at_ordinal(root, &["rebase", "--abort"], point, 1)?, "{what}");
+                let journal = root.join(".git/brit-rebase");
+                let mut candidates = Vec::new();
+                for entry in fs::read_dir(&journal)? {
+                    let entry = entry?;
+                    let name = entry.file_name().to_string_lossy().into_owned();
+                    let modified = entry.metadata()?.modified()?;
+                    if record == "decision" && name.starts_with("decision-") {
+                        candidates.push((modified, entry.path()));
+                    } else if record != "decision" && name.starts_with("transition-") {
+                        candidates.push((modified, entry.path().join(record)));
+                    }
+                }
+                candidates.sort();
+                if record != "nothing" {
+                    let path = candidates.pop().map(|(_, path)| path).expect("the abort's record");
+                    if record == "owner" {
+                        // An owner record cut short means its plan was never begun.
+                        fs::remove_file(path.with_file_name("plan.json"))?;
+                    }
+                    let length = fs::metadata(&path)?.len();
+                    truncate(
+                        &path,
+                        match cut {
+                            "0" => 0,
+                            "half" => length / 2,
+                            _ => length - 1,
+                        },
+                    )?;
+                }
+                let status = success(root, &["rebase", "--status"])?;
+                ensure!(
+                    !status.stdout.contains("Durable"),
+                    "{what}: a torn record is not durable: {}",
+                    status.stdout
+                );
+                abort_restores(root, REAL_LIMIT, &stop.before, &what)?;
+                mutations_work(root)?;
+            }
+        }
+        Ok(())
+    }
+
+    /// S3: the pending-decision line says what is true of the decision actually
+    /// pending. A durable checkout decision is aborted (it is applied, then
+    /// undone); the durable final decision is not, and `--continue` publishes it.
+    #[test]
+    fn public_status_names_the_cure_for_the_decision_actually_pending() -> Result<()> {
+        let repo = fixture(false)?;
+        let root = repo.path();
+        let before = live(root)?;
+        ensure!(kill_at_ordinal(
+            root,
+            &["rebase", "upstream"],
+            "replay-decision-durable",
+            1
+        )?);
+        let status = success(root, &["rebase", "--status"])?;
+        ensure!(
+            status.stdout.contains("--abort applies it") && !status.stdout.contains("cannot be aborted"),
+            "{}",
+            status.stdout
+        );
+        abort_restores(root, REAL_LIMIT, &before, "non-final decision")?;
+        let mut last = 0;
+        for ordinal in 1..40 {
+            let repo = fixture(false)?;
+            if !kill_at_ordinal(repo.path(), &["rebase", "upstream"], "replay-decision-durable", ordinal)? {
+                last = ordinal - 1;
+                break;
+            }
+        }
+        ensure!(last > 1, "several decisions");
+        let repo = fixture(false)?;
+        let root = repo.path();
+        ensure!(kill_at_ordinal(
+            root,
+            &["rebase", "upstream"],
+            "replay-decision-durable",
+            last
+        )?);
+        let status = success(root, &["rebase", "--status"])?;
+        ensure!(
+            status.stdout.contains("final decision pending") && status.stdout.contains("cannot be aborted"),
+            "{}",
+            status.stdout
+        );
+        refused(root, &["rebase", "--abort"])?;
+        success(root, &["rebase", "--continue"])?;
+        ensure!(!root.join(".git/brit-rebase").exists());
+        preserved(root)
     }
 
     fn preserved_neighbors_unchanged(root: &Path) -> Result<()> {
