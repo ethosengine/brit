@@ -173,7 +173,7 @@ fn restore_large_selection_streams_and_validates_before_publication() -> Result<
 
 #[test]
 fn million_line_diff_keeps_existing_tie_breaking() -> Result<()> {
-    // Numeric-leading lines avoid the documented omission of function-context headers.
+    // Numeric-leading lines keep hunk headers free of Git's function context.
     for unique in [false, true] {
         let repo = TestRepo::new("memory-lines")?;
         let root = repo.path();
