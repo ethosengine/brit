@@ -38,7 +38,8 @@ compiler that defaults above the floor is still refused there.
 
 Limits of the probe: it assumes every C dependency compiles through `cc`, or
 through cmake-rs with `cc`'s defaults. A future dependency with its own build
-system, or one that calls `no_default_flags`, would compile at the host
+system, or one that calls `no_default_flags` (aws-lc-sys already does for FIPS
+dynamic builds, a configuration brit does not enable), would compile at the host
 compiler's default and pass the probe unseen on a host whose compiler defaults
 to x86-64-v3; only the exact-byte CPU qualification above would catch it. The
 probe runs in `brit-cli`'s build script only (`brit` and `brit-rebase-retained`);
