@@ -2096,7 +2096,14 @@ impl Session {
                 .iter()
                 .map(ToString::to_string),
         );
-        retained_objects.extend(observed.entries().iter().map(|entry| entry.id.to_string()));
+        // A gitlink's id names a submodule commit, never a local object.
+        retained_objects.extend(
+            observed
+                .entries()
+                .iter()
+                .filter(|entry| entry.mode != gix::index::entry::Mode::COMMIT)
+                .map(|entry| entry.id.to_string()),
+        );
         for value in &retained_objects {
             let id = gix::ObjectId::from_hex(value.as_bytes())?;
             let object = repo.find_header(id)?;
@@ -2240,6 +2247,14 @@ impl Session {
             session = candidate;
         }
         if session.state.phase == "preparing" {
+            // Older Brit captured gitlinks it could not prepare; finishing their
+            // preparation now would let a refused rebase proceed.
+            if let Some(path) = session.state.preservation.gitlink_paths().next() {
+                anyhow::bail!(
+                    "gitlink {} is unsupported by brit rebase; this preparation cannot continue; brit rebase --abort cancels it",
+                    path.as_bstr()
+                );
+            }
             session.complete_preparation(repo)?;
         }
         session.validate_retention(repo)?;

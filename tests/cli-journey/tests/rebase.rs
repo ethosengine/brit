@@ -361,22 +361,47 @@ fn uninitialised_gitlink_fixture() -> Result<TestRepo> {
     Ok(repo)
 }
 
-/// The gitlink's commit is not a local object. Preparation that failed on it
-/// after creating its journal must still cancel with `--abort`, after which
-/// every brit mutation works again.
+/// The gitlink's commit is not a local object, so preparation must never look
+/// it up. Brit rebase still does not support gitlinks: one without a checked-out
+/// submodule directory is refused by name before any operation state exists,
+/// where it used to fail after creating its journal ("object could not be found").
 #[test]
-fn uninitialised_gitlink_preparation_failure_cancels_with_abort() -> Result<()> {
+fn uninitialised_gitlink_refuses_by_name_before_any_state() -> Result<()> {
     let repo = uninitialised_gitlink_fixture()?;
     let root = repo.path();
     let head = rev(root, "HEAD")?;
     let index = fs::read(root.join(".git/index"))?;
-    refused(root, &["rebase", "upstream"])?;
-    success(root, &["rebase", "--abort"])?;
+    let result = refused(root, &["rebase", "upstream"])?;
+    ensure!(
+        result
+            .stderr
+            .contains("gitlink sub has no checked-out submodule directory")
+            && !result.stderr.contains("could not be found"),
+        "named early refusal: {}",
+        result.stderr
+    );
     assert!(!root.join(".git/brit-rebase").exists());
     assert!(git(root, &["for-each-ref", "refs/brit-rebase-retain"])?.is_empty());
     assert_eq!(rev(root, "HEAD")?, head);
     assert_eq!(fs::read(root.join(".git/index"))?, index);
-    success(root, &["branch", "create", "after-abort"])?;
+    success(root, &["branch", "create", "after-refusal"])?;
+    Ok(())
+}
+
+/// Case D, unchanged by this lane: a gitlink whose submodule directory is
+/// checked out is refused before any state, with the message it had before.
+#[test]
+fn checked_out_gitlink_keeps_its_refusal_before_any_state() -> Result<()> {
+    let repo = uninitialised_gitlink_fixture()?;
+    let root = repo.path();
+    fs::create_dir(root.join("sub"))?;
+    let result = refused(root, &["rebase", "upstream"])?;
+    ensure!(
+        result.stderr.contains("Directory staging is not supported"),
+        "{}",
+        result.stderr
+    );
+    assert!(!root.join(".git/brit-rebase").exists());
     Ok(())
 }
 
