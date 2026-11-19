@@ -37,6 +37,7 @@ fn init_repo_with_files(files: &[(&str, &str)]) -> (TempDir, std::path::PathBuf,
         std::fs::write(&abs, contents).expect("write");
         Command::new("git")
             .args(["add", rel])
+            .env("GIT_LITERAL_PATHSPECS", "1")
             .current_dir(&path)
             .status()
             .expect("add");
@@ -177,13 +178,21 @@ fn fingerprint_without_gitlink_is_byte_identical_to_pre_gitlink_contract() {
 /// pinned to `pin`. The pinned commit object does not exist anywhere: the
 /// submodule is neither cloned nor checked out.
 fn init_repo_with_gitlink(files: &[(&str, &str)], pin: &str) -> (TempDir, std::path::PathBuf, gix::ObjectId) {
+    init_repo_with_gitlink_at(files, pin, "elohim/rakia")
+}
+
+fn init_repo_with_gitlink_at(
+    files: &[(&str, &str)],
+    pin: &str,
+    gitlink: &str,
+) -> (TempDir, std::path::PathBuf, gix::ObjectId) {
     let (keep, path, _) = init_repo_with_files(files);
     let status = Command::new("git")
         .args([
             "update-index",
             "--add",
             "--cacheinfo",
-            &format!("160000,{pin},elohim/rakia"),
+            &format!("160000,{pin},{gitlink}"),
         ])
         .current_dir(&path)
         .status()
@@ -463,4 +472,123 @@ fn gitlink_reach_never_under_keys_against_a_twin_directory() {
         "only {beneath} globs hash a file beneath the twin directory"
     );
     assert!(under_keyed.is_empty(), "under-keyed globs: {under_keyed:#?}");
+}
+
+#[test]
+fn glob_through_a_directory_symlink_keys_the_link() {
+    let files = [
+        ("elohim/sdk/schemas/v1/view.schema.json", "{\"v\":1}\n"),
+        ("elohim/sdk/schemas/v2/view.schema.json", "{\"v\":2}\n"),
+        ("README.md", "# readme\n"),
+    ];
+    let through = |target: &str| {
+        let (_keep, path, head) = init_repo_with_symlinks(&files, &[("elohim/sdk/schemas/current", target)]);
+        let repo = gix::open(&path).expect("open");
+        let patterns = vec!["elohim/sdk/schemas/current/**".to_string()];
+        ContentFingerprint::from_repo_globs(&repo, head, &patterns).expect("compute")
+    };
+    let v1 = through("v1");
+    let v2 = through("v2");
+    assert!(v1.inputs.is_empty(), "no blob lives beneath the link in the tree");
+    assert_eq!(v1.symlinks.keys().collect::<Vec<_>>(), ["elohim/sdk/schemas/current"]);
+    assert_ne!(
+        v1.cid, v2.cid,
+        "retargeting the link must re-key a glob written through it"
+    );
+}
+
+/// Gitlink paths with non-ASCII bytes and regex metacharacters, each with
+/// probe files beneath it and globs built from its own components.
+#[test]
+fn gitlink_reach_never_under_keys_for_non_ascii_and_metacharacter_paths() {
+    let cases: &[(&str, &[&str])] = &[
+        (
+            "é/sub",
+            &[
+                "é", "sub", "é*", "[é]*", "?", "??", "?ub", "*", "**", "e", "\\é", "[!é]*", "{é,x}",
+            ],
+        ),
+        (
+            "x.y/a+b",
+            &[
+                "x.y", "a+b", "x?y", "xzy", "a?b", "aab", "x.*", "*", "**", "{x.y,z}", "[x].y", "a+b*",
+            ],
+        ),
+        (
+            "[]]",
+            &["[]]", "\\[\\]\\]", "[[]]]", "[]]*", "?", "*", "**", "[!]]", "x"],
+        ),
+        (
+            "[-]",
+            &["[-]", "\\[-\\]", "[[]-[]]", "[-]*", "?-?", "*", "**", "[!-]", "-"],
+        ),
+    ];
+    let suffixes = ["a", "é.txt", "x/y.json", "]", "-", ".hidden", "a b"];
+    let (mut checked, mut beneath_total, mut under_keyed) = (0usize, 0usize, Vec::new());
+    for (gitlink, components) in cases {
+        let probes: Vec<String> = suffixes.iter().map(|suffix| format!("{gitlink}/{suffix}")).collect();
+        let mut twin_files: Vec<(&str, &str)> = probes.iter().map(|p| (p.as_str(), "beneath\n")).collect();
+        twin_files.push(("other/x.json", "sibling\n"));
+        let (_keep_twin, twin_path, twin_head) = init_repo_with_files(&twin_files);
+        let (_keep_link, link_path, link_head) =
+            init_repo_with_gitlink_at(&[("other/x.json", "sibling\n")], PIN_A, gitlink);
+        let twin = gix::open(&twin_path).expect("twin");
+        let linked = gix::open(&link_path).expect("linked");
+        assert_eq!(
+            init_tree_count(&twin, twin_head, gitlink),
+            probes.len(),
+            "{gitlink}: every probe is committed"
+        );
+
+        let mut globs: Vec<String> = Vec::new();
+        for a in *components {
+            globs.push((*a).to_string());
+            for b in *components {
+                globs.push(format!("{a}/{b}"));
+                for c in *components {
+                    globs.push(format!("{a}/{b}/{c}"));
+                }
+            }
+        }
+        for glob in globs {
+            let patterns = vec![glob.clone()];
+            let Ok(twin_fp) = ContentFingerprint::from_repo_globs(&twin, twin_head, &patterns) else {
+                continue; // not a valid glob
+            };
+            let hashes_beneath = twin_fp
+                .inputs
+                .keys()
+                .any(|path| path.starts_with(&format!("{gitlink}/")));
+            let reached = !ContentFingerprint::from_repo_globs(&linked, link_head, &patterns)
+                .expect("same glob compiles")
+                .gitlinks
+                .is_empty();
+            checked += 1;
+            beneath_total += usize::from(hashes_beneath);
+            if hashes_beneath && !reached {
+                under_keyed.push(format!("{gitlink}: {glob}"));
+            }
+        }
+    }
+    eprintln!("checked {checked} non-ASCII/metacharacter globs; hashed beneath {beneath_total}");
+    assert!(beneath_total > 100, "only {beneath_total} globs hash a probe");
+    assert!(under_keyed.is_empty(), "under-keyed globs: {under_keyed:#?}");
+}
+
+/// Number of blobs committed beneath `dir` (guards the fixture itself).
+fn init_tree_count(repo: &gix::Repository, head: gix::ObjectId, dir: &str) -> usize {
+    let escaped: String = dir
+        .chars()
+        .map(|c| {
+            if "*?[]{}\\".contains(c) {
+                format!("\\{c}")
+            } else {
+                c.to_string()
+            }
+        })
+        .collect();
+    ContentFingerprint::from_repo_globs(repo, head, &[format!("{escaped}/**")])
+        .expect("escaped glob")
+        .inputs
+        .len()
 }

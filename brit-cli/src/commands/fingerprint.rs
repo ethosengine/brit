@@ -4,8 +4,8 @@
 //! the given commit (default HEAD), reads matching blob contents, and computes
 //! a deterministic ContentFingerprint per step. A gitlink a glob can reach is
 //! an input keyed by its pinned commit, listed under `gitlinks`; a symlink a
-//! glob matches is keyed by its own object id (its target path, not the file
-//! it points to), listed under `symlinks`.
+//! glob matches or reaches through is keyed by its own object id (its target
+//! path, not the file it points to), listed under `symlinks`.
 
 use std::path::Path;
 
@@ -31,8 +31,9 @@ struct StepFingerprint {
     /// when there are none, so gitlink-free output is unchanged.
     #[serde(skip_serializing_if = "Vec::is_empty")]
     gitlinks: Vec<GitlinkInput>,
-    /// Symlinks the step's globs match, keyed by their own object id (the
-    /// target path); the link is not followed. Omitted when there are none.
+    /// Symlinks the step's globs match or reach through, keyed by their own
+    /// object id (the target path); the link is not followed. Omitted when
+    /// there are none.
     #[serde(skip_serializing_if = "Vec::is_empty")]
     symlinks: Vec<SymlinkInput>,
 }

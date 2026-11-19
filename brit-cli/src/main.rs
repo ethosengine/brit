@@ -54,8 +54,9 @@ enum Command {
     ///
     /// Keyed: each committed blob a step glob matches, by content; each
     /// gitlink a glob matches or can match beneath, by the commit it pins
-    /// (the submodule's files are not read); each symlink a glob matches, by
-    /// its own object id, i.e. its target path. Not keyed: the file a symlink
+    /// (the submodule's files are not read); each symlink a glob matches or
+    /// can match beneath (a glob written through a directory link), by its
+    /// own object id, i.e. its target path. Not keyed: the file a symlink
     /// points to unless a glob matches that file, and anything uncommitted.
     Fingerprint(FingerprintArgs),
     /// Manage rakia baseline refs

@@ -32,9 +32,11 @@ impl ContentFingerprint {
     /// match its path or a path beneath it: it is keyed by its path and the
     /// commit it pins, once per gitlink however many patterns reach it, and
     /// without reading the submodule's objects (they are often absent).
-    /// A symlink whose path a pattern matches is keyed by its own object id,
-    /// which changes when it is retargeted; it is not followed, so the file
-    /// it points to counts only if a pattern matches that file. Empty pattern
+    /// A symlink is an input by the same rule as a gitlink (a pattern matches
+    /// its path or could match beneath it, as a glob written through a
+    /// directory link does) and is keyed by its own object id, which changes
+    /// when it is retargeted; it is not followed, so the file it points to
+    /// counts only if a pattern matches that file. Empty pattern
     /// set or no matching entries produces a stable empty-input fingerprint.
     pub fn from_repo_globs(
         repo: &gix::Repository,
@@ -109,8 +111,8 @@ impl ContentFingerprint {
 /// it is answered "reaches" (over-keying), never "does not reach".
 const NFA_SIZE_LIMIT: usize = 1 << 20;
 
-/// Decides whether a step's patterns reach a gitlink: whether some pattern
-/// matches the gitlink path itself, or could match at least one path beneath it.
+/// Decides whether a step's patterns reach a gitlink or a symlink: whether some
+/// pattern matches its path itself, or could match at least one path beneath it.
 ///
 /// "Beneath" is decided on the Thompson NFA of the same regex globset compiles
 /// for each pattern, with globset's syntax options (so `*` crosses `/` exactly
@@ -185,7 +187,12 @@ fn step(nfa: &NFA, state: StateID, byte: u8) -> Option<StateID> {
         State::ByteRange { trans } => trans.matches_byte(byte).then_some(trans.next),
         State::Sparse(sparse) => sparse.matches_byte(byte),
         State::Dense(dense) => dense.matches_byte(byte),
-        _ => None,
+        State::Look { .. }
+        | State::Union { .. }
+        | State::BinaryUnion { .. }
+        | State::Capture { .. }
+        | State::Fail
+        | State::Match { .. } => None,
     }
 }
 
@@ -196,7 +203,7 @@ fn epsilon_successors(nfa: &NFA, state: StateID) -> Vec<StateID> {
         State::Look { next, .. } | State::Capture { next, .. } => vec![*next],
         State::Union { alternates } => alternates.to_vec(),
         State::BinaryUnion { alt1, alt2 } => vec![*alt1, *alt2],
-        _ => Vec::new(),
+        State::ByteRange { .. } | State::Sparse(_) | State::Dense(_) | State::Fail | State::Match { .. } => Vec::new(),
     }
 }
 
@@ -211,7 +218,12 @@ fn byte_successors(nfa: &NFA, state: StateID) -> Vec<StateID> {
             .copied()
             .filter(|next| *next != StateID::ZERO)
             .collect(),
-        _ => Vec::new(),
+        State::Look { .. }
+        | State::Union { .. }
+        | State::BinaryUnion { .. }
+        | State::Capture { .. }
+        | State::Fail
+        | State::Match { .. } => Vec::new(),
     }
 }
 
@@ -369,14 +381,18 @@ impl<'a> gix::traverse::tree::Visit for TreeCollector<'a> {
             return std::ops::ControlFlow::Continue(true);
         }
 
-        // Glob match against the full path
-        if !self.globset.is_match(&path_str) {
+        if kind == gix::objs::tree::EntryKind::Link {
+            // Not followed: the link's identity is its own blob, the target
+            // path. Reached like a gitlink, so a glob written through a
+            // directory link (`current/**`) keys the link too.
+            if self.reach.reaches(&path_str) {
+                self.symlinks.insert(path_str, entry.oid.to_hex().to_string());
+            }
             return std::ops::ControlFlow::Continue(true);
         }
 
-        if kind == gix::objs::tree::EntryKind::Link {
-            // Not followed: the link's identity is its own blob, the target path.
-            self.symlinks.insert(path_str, entry.oid.to_hex().to_string());
+        // Glob match against the full path
+        if !self.globset.is_match(&path_str) {
             return std::ops::ControlFlow::Continue(true);
         }
 
@@ -477,6 +493,74 @@ mod tests {
         for (pattern, expected, why) in table {
             if patterns_reach_gitlink(&[pattern], gitlink) != *expected {
                 wrong.push(format!("{pattern} (expected {expected}: {why})"));
+            }
+        }
+        assert!(wrong.is_empty(), "misdecided patterns: {wrong:#?}");
+    }
+
+    /// The same rule decides gitlinks and symlinks, at any path: the path's
+    /// own bytes are literal, whatever regex metacharacters they contain.
+    #[test]
+    fn reach_decision_table_for_other_paths() {
+        let table: &[(&str, &str, bool, &str)] = &[
+            (
+                "elohim/sdk/schemas/current/**",
+                "elohim/sdk/schemas/current",
+                true,
+                "glob written through a directory link",
+            ),
+            (
+                "elohim/sdk/schemas/current/*.json",
+                "elohim/sdk/schemas/current",
+                true,
+                "file pattern through the link",
+            ),
+            (
+                "elohim/sdk/schemas/*/view.json",
+                "elohim/sdk/schemas/current",
+                true,
+                "star in the link's slot",
+            ),
+            (
+                "elohim/sdk/schemas/v1/**",
+                "elohim/sdk/schemas/current",
+                false,
+                "sibling target directory",
+            ),
+            (
+                "elohim/sdk/schemas/current.md",
+                "elohim/sdk/schemas/current",
+                false,
+                "sibling file",
+            ),
+            ("x.y/a+b/**", "x.y/a+b", true, "metacharacters in the path are literal"),
+            ("x?y/a?b/*", "x.y/a+b", true, "question marks over metacharacters"),
+            ("xzy/a+b/**", "x.y/a+b", false, "'.' in the path is not a wildcard"),
+            ("x.y/aab/**", "x.y/a+b", false, "'+' in the path is not a repetition"),
+            ("é/**", "é/sub", true, "non-ASCII ancestor"),
+            ("??/sub/*", "é/sub", true, "two '?' cover the two bytes of 'é'"),
+            (
+                "?/sub/*",
+                "é/sub",
+                false,
+                "one '?' is one byte, as blob matching treats it",
+            ),
+            ("e/sub/**", "é/sub", false, "ASCII look-alike"),
+            ("\\[\\]\\]/**", "[]]", true, "escaped brackets"),
+            ("[[]]]/**", "[]]", true, "classes spelling the brackets"),
+            ("[!]]*/**", "[]]", true, "'[' is not ']'"),
+            (
+                "[-]/**",
+                "[-]",
+                false,
+                "a class matching '-' is not the three-byte name",
+            ),
+            ("\\[-\\]/**", "[-]", true, "escaped name"),
+        ];
+        let mut wrong = Vec::new();
+        for (pattern, path, expected, why) in table {
+            if patterns_reach_gitlink(&[pattern], path) != *expected {
+                wrong.push(format!("{pattern} at {path} (expected {expected}: {why})"));
             }
         }
         assert!(wrong.is_empty(), "misdecided patterns: {wrong:#?}");

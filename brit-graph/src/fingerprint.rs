@@ -62,9 +62,11 @@ pub struct ContentFingerprint {
     pub gitlinks: BTreeMap<String, String>,
     /// Symlink inputs: path -> the link's own object id (hex).
     ///
-    /// A symlink's blob holds its target path, so its id changes exactly when
-    /// the link is retargeted. The link is not followed: the file it points
-    /// to is an input only if a pattern matches that file itself.
+    /// A symlink is an input when a pattern matches its path or could match
+    /// beneath it (a glob written through a directory link). Its blob holds
+    /// its target path, so its id changes exactly when the link is
+    /// retargeted. The link is not followed: the file it points to is an
+    /// input only if a pattern matches that file itself.
     pub symlinks: BTreeMap<String, String>,
 }
 
