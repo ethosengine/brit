@@ -130,8 +130,11 @@ completed or aborted rebase are unmetered. Only real disk space bounds them. A
 write that fails on a full disk removes its own partial file, and the command
 says so; free space and run the same command again.
 
-A Brit command killed at any point, at the real limit or a lowered one, leaves a
-rebase that `--status` describes with a cure, that `--abort` restores exactly
+A Brit command killed at any point (a `SIGKILL`, which cannot tear a record
+Brit writes; a crash or power loss before a record's fsync can, see
+[States this version can still strand](#states-this-version-can-still-strand)),
+at the real limit or a lowered one, leaves a rebase that `--status` describes
+with a cure, that `--abort` restores exactly
 (unless its final decision was already durable, when `--continue` publishes it),
 and that `--continue` carries on. A record the killed command had written but not
 yet put in effect (an unrenamed `state.pending`, or a decision, proposal or
@@ -173,6 +176,32 @@ failure. Retained copies survive cleanup. Unknown private temporary files can
 remain for inspection and prevent cleanup even when abort has restored the
 original state. Do not delete an active journal or its retention refs to bypass
 a refusal, and do not use `git rebase --continue/--abort` to control Brit's state.
+
+## States this version can still strand
+
+These were produced by the lane's reviewer by killing a command at the nearest
+checkpoint and cutting the named record to half its length. A `SIGKILL` cannot
+realistically tear these records; a crash or power loss before the record's fsync
+can.
+
+- A torn `metadata-lock-N.json` in an abort transition or in the forward first
+  checkout, and a torn `retention-N.json`, leave `--abort`, `--continue`, `--skip`
+  and `--retire` all refusing, and `--status` then names a cure that does not work.
+- A torn cleanup receipt, left by an older Brit or by a power loss, leaves a
+  published rebase whose `--continue` refuses and which blocks every mutation.
+- After an `--abort` is killed mid-copy, a stock `git add` of an unrelated dirty
+  file, even when undone with `git reset -- <file>`, makes `--abort` refuse
+  "foreign replay metadata before abort" and `--retire` refuse, and `--status`
+  names no cure. At an ordinary conflict stop the same undo lets `--abort` work.
+
+A torn `index.pre-rebase` and a torn `proposal-N.json` are cleared by `--abort`.
+
+Not produced by anyone: a torn `directory-*.json` or `payload-license-*.json`, or a
+leftover `*.new` of the authoring child.
+
+Not established: that every caller of the journal's `save` writes nothing between
+"pending synced" and "renamed". The write-order table in
+`gitoxide-core/src/repository/replay/journal.rs` asserts it.
 
 ## Inspect and extract a retained copy
 

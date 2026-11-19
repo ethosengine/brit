@@ -304,9 +304,25 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.0.0/); ver
   state". A decision record, staged proposal or retained-copy manifest cut short by a kill or a
   power loss is likewise written again, an `--abort` killed while holding its Git locks
   releases them on the next `--abort`, and retained-copy manifests, completion markers and
-  cleanup receipts are now published whole. `brit rebase --status` names a cure in every phase,
-  says what is true of the decision actually pending, and, for a repository moved mid-rebase,
-  names its old location: moving it back and running `--abort` there restores it.
+  cleanup receipts are now published whole. `brit rebase --status` names a cure in every phase
+  (apart from the states in the next entry), says what is true of the decision actually
+  pending, and, for a repository moved mid-rebase, names its old location: moving it back and
+  running `--abort` there restores it.
+- States this version can still strand, produced by the reviewer by killing a command at the
+  nearest checkpoint and cutting the record to half (a `SIGKILL` cannot realistically tear these
+  records; a crash or power loss before the fsync can): a torn `metadata-lock-N.json` in an
+  abort transition or in the forward first checkout, and a torn `retention-N.json`, leave
+  `--abort`, `--continue`, `--skip` and `--retire` all refusing, and `--status` then names a
+  cure that does not work; a torn cleanup receipt left by an older Brit or a power loss leaves
+  a published rebase whose `--continue` refuses and blocks every mutation; after an `--abort`
+  is killed mid-copy, a stock `git add` of an unrelated dirty file, even undone with
+  `git reset -- <file>`, makes `--abort` refuse "foreign replay metadata before abort" and
+  `--retire` refuse, with no cure named by `--status` (at an ordinary conflict stop the same
+  undo lets `--abort` work). A torn `index.pre-rebase` and a torn `proposal-N.json` are
+  cleared by `--abort`. Not produced by anyone: torn `directory-*.json` or
+  `payload-license-*.json`, a leftover `*.new` of the authoring child. Not established: that
+  every caller of the journal's `save` writes nothing between "pending synced" and "renamed".
+  See [docs/rebase.md](../docs/rebase.md#states-this-version-can-still-strand).
 - `brit switch --status` is never refused by the scratch limit, and `switch --abort`,
   `pull --abort` and rolling a durable switch decision forward are not metered.
 - A `brit switch` or `brit pull` stopped before its first journal record no longer blocks the
