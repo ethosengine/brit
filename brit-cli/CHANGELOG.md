@@ -110,8 +110,38 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.0.0/); ver
   harness runs the `push_transport` journeys against a max-pure `brit` named by
   `BRIT_REQWEST_BIN`, and with `BRIT_REQWEST_REQUIRED` set fails them instead of skipping that
   leg when it is missing; neither variable affects `brit` itself.
+- `brit rebase --retire`: sets aside a completed or aborted rebase whose retained copy is all
+  that remains, or an abort retaining before it changed anything live, keeping the journal as
+  `brit-rebase-kept-<nonce>` with its retention refs and retained copies and printing
+  `Retired the rebase; nothing was deleted and nothing live was changed.` and how to remove
+  each piece (details under Fixed). `brit rebase --status` then lists it as
+  `Kept by --retire (blocks nothing)`.
+- Test builds only (`switch-test-faults`, never in a shipped build): `BRIT_SWITCH_CHECKPOINT`
+  accepts `<name>#<N>` to pause the Nth time a process reaches a checkpoint, every journal save
+  passes `replay-state-file-writing` before it writes `state.pending`, and
+  `BRIT_TEST_SCRATCH_LIMIT` lowers the scratch limit.
 
 ### Changed
+
+- **Behaviour change:** `brit rebase` and `brit switch`/`brit pull` recovery follows five
+  rules ([docs/rebase.md](../docs/rebase.md)): admission refuses before anything changes
+  (`rebase refused before it started: …`, with `git rebase` named as the fallback); a forward
+  step (`--continue`, `--stage`, `--skip`, an edit) may be refused before it writes, and the
+  refusal names `--abort`; `--abort` and cleanup are never refused by the scratch limit, and
+  neither are `switch --abort`, `pull --abort`, `switch --status` or rolling a durable switch
+  decision forward; `--retire` applies only to this repository's own journal in `completed`,
+  `aborted` or `retaining-abort` with no decision taken; and a journal that does not open as
+  this repository's own is reported by `--status` and never touched. Before, a failed or
+  killed preparation, a quota refusal at a large conflict resolution, or a killed command's
+  unrenamed record could leave a journal that `--abort` and `--continue` both refused, and
+  every Brit mutation then refused "pending replay". New `--status` lines: `Cancelled
+  preparation not yet removed: …; brit rebase --abort finishes it`, `Scratch left by a killed
+  Brit process (blocks nothing): …`, `Kept by --retire (blocks nothing): …`, `A rebase journal
+  of this repository exists but could not be read in full: …`, `A rebase preparation stopped
+  before it recorded anything and changed nothing live; brit rebase --abort removes its
+  directory …`, and, for a switch or pull, `Switch or pull start stopped before its first
+  record: it recorded nothing and changed nothing; …`. These rules come from gitoxide-core's
+  replay and switch modules; its upstream-generated CHANGELOG.md is left byte-identical.
 
 - **Behaviour change:** `brit diff -- <path>` (and `brit show … -- <path>`) whose paths select
   nothing exits 0 with no output, as Git does; `diff` exited 1 before. `brit show` is no longer
