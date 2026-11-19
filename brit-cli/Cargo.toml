@@ -56,4 +56,5 @@ thiserror = "2"
 gix-testtools = { path = "../tests/tools", features = ["sha1"] }
 
 [build-dependencies]
-cc = "1.2"
+# 1.11 passes -march=x86-64 for x86_64 Linux, which the CPU-baseline probe relies on.
+cc = "1.11.1"

@@ -38,18 +38,20 @@ pub fn check() -> Result<(), Box<dyn std::error::Error>> {
     }
     if std::env::var("CARGO_CFG_TARGET_OS")? == "linux" {
         // Rust's target does not constrain C dependencies (including TLS).
-        // Probe the actual cc configuration, including compiler defaults and
-        // target-specific CFLAGS, during check/Clippy as well as full builds.
+        // Probe the command line cc gives them: compiler, cc's default flags
+        // and CFLAGS/target CFLAGS, during check/Clippy as well as full builds.
+        // Since cc 1.11 the defaults pin `-march=x86-64` for an x86_64 Linux
+        // target unless rustc's target-cpu names another CPU, so a newer
+        // compiler default no longer leaks in. Every C dependency of this
+        // binary compiles through cc or cmake-rs, which takes cc's defaults.
         cc::Build::new()
-            // Some dependencies use CMake or the compiler directly, without
-            // cc's own -march baseline. Check those defaults too.
-            .no_default_flags(true)
             .file("build/cpu_baseline.c")
             .try_expand()
             .map_err(|error| {
                 format!(
                     "Brit CPU baseline C compiler check failed: {error}. \
-                 Use CFLAGS=-march=x86-64-v2 for distributable Linux builds."
+                 CFLAGS, CC or a -C target-cpu without a matching -march raised the C baseline; \
+                 use CFLAGS=-march=x86-64-v2 with -C target-cpu=x86-64-v2."
                 )
             })?;
     }

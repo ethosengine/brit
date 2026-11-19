@@ -13,7 +13,7 @@ name = "brit-cpu-baseline-probe"
 version = "0.0.0"
 edition = "2021"
 [build-dependencies]
-cc = "1.2"
+cc = "=1.11.1"
 [workspace]
 EOF
 cat > "$fixture/build.rs" <<'EOF'
@@ -39,8 +39,13 @@ cd "$fixture"
 export CARGO_TARGET_DIR="$CARGO_TARGET_DIR/cpu-baseline-probe"
 unset CARGO_ENCODED_RUSTFLAGS CFLAGS_x86_64_unknown_linux_gnu TARGET_CFLAGS
 export RUSTFLAGS= CFLAGS= CXXFLAGS=
-# Positive controls declare the target. A host compiler's default may itself
-# exceed the floor (Ubuntu 26); the wrapper below independently proves refusal.
+# No CFLAGS: cc (>= 1.11) pins -march=x86-64 for x86_64 Linux, so this passes
+# even where the host compiler defaults above the floor (Ubuntu 26: x86-64-v3).
+# On a runner whose compiler already defaults to plain x86-64 this case proves
+# nothing; the cc-v3 wrapper cases below are the real proof on every runner.
+# The fixture has no lock file, so cc is pinned exactly in its manifest.
+cargo clippy --quiet -- -D warnings
+# Positive controls below also declare the published v2 target explicitly.
 if [[ $(rustc --print cfg) == *'target_arch="x86_64"'* && $(rustc --print cfg) == *'target_os="linux"'* ]]; then
   export CFLAGS=-march=x86-64-v2
 fi
@@ -63,11 +68,16 @@ reject env RUSTFLAGS='-C target-cpu=x86-64-v3' cargo build --quiet
 if [[ $(rustc --print cfg) == *'target_os="linux"'* ]]; then
   reject env CFLAGS=-mavx2 cargo clippy --quiet
   reject env CFLAGS=-mbmi2 cargo check --quiet
-  # A newer compiler default must not silently raise the native-library floor.
+  # A compiler whose default exceeds the floor: cc's own -march=x86-64 follows
+  # the compiler's and wins, so the floor holds without CFLAGS ...
   compiler=$(command -v cc)
   printf '#!/usr/bin/env bash\nexec "%s" -march=x86-64-v3 "$@"\n' "$compiler" > "$fixture/cc-v3"
   chmod +x "$fixture/cc-v3"
-  reject env CC="$fixture/cc-v3" CFLAGS= cargo check --quiet
+  CC="$fixture/cc-v3" CFLAGS= cargo check --quiet
   CC="$fixture/cc-v3" CFLAGS=-march=x86-64-v2 cargo clippy --quiet -- -D warnings
+  # ... but not when cc's defaults are switched off, nor when rustc names a
+  # target-cpu (cc then passes no -march, so CFLAGS must carry it).
+  reject env CC="$fixture/cc-v3" CFLAGS= CRATE_CC_NO_DEFAULTS=1 cargo check --quiet
+  reject env CC="$fixture/cc-v3" CFLAGS= RUSTFLAGS='-C target-cpu=x86-64-v2' cargo check --quiet
 fi
 echo 'cpu-baseline=passed (Clippy/check/build refusal; guarded acceleration permitted)'
