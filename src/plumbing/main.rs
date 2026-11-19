@@ -489,11 +489,11 @@ pub fn run_with_command(args: Args, command: clap::Command) -> Result<()> {
         Subcommands::Log(crate::plumbing::options::log::Platform {
             max_count,
             oneline,
-            rev,
+            revisions,
             paths,
         }) => prepare_and_run("log", verbose, None, move |_progress, out, _err| {
             let options = core::repository::log::Options {
-                rev,
+                revisions,
                 paths,
                 max_count,
                 oneline,

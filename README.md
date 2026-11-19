@@ -156,12 +156,17 @@ for the full compatibility limits.
 ## Compare branches
 
 ```bash
+brit log origin/dev -n 5                    # revisions instead of HEAD
+brit log origin/dev..HEAD                   # also ^A, A...B, A^@ and A^!
+brit log --oneline origin/dev..HEAD -- src  # only commits changing src
 brit diff tree --name-only origin/dev...HEAD  # paths changed since the merge base
 brit diff tree --name-only A B              # two trees; also A..B and --merge-base A B
 ```
 
-`--name-only` lists paths like `git diff --name-only --no-renames`: a rename is
-its deleted and added path.
+Without paths, `brit log` selects and orders commits like `git rev-list --date-order`;
+with literal paths after `--` it lists them like `git log <revisions> -- <paths>`,
+including Git's default history simplification. `--name-only` lists paths like
+`git diff --name-only --no-renames`: a rename is its deleted and added path.
 
 For linear replay, edit-stop authoring and interrupted-operation recovery, see
 [Native rebase and retained-copy recovery](docs/rebase.md), including the bounded

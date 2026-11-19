@@ -1,4 +1,8 @@
-use std::path::{Component, Path};
+use std::{
+    cmp::Reverse,
+    collections::{BinaryHeap, HashMap},
+    path::{Component, Path},
+};
 
 use gix::{
     Result,
@@ -6,16 +10,14 @@ use gix::{
     error::{OptionExt, ResultExt, bail, message},
     hash::ObjectId,
     object::bounded::Source,
-    objs::{Kind, find::Buffer, tree::EntryKind},
-    revision::walk::Sorting,
-    traverse::commit::simple::CommitTimeOrder,
+    objs::{CommitRefIter, Kind, find::Buffer, tree::EntryKind},
 };
 
 /// What [`log_with()`] lists, and how each commit is printed.
 #[derive(Debug, Default, Clone)]
 pub struct Options {
-    /// The revision to start from, `HEAD` if unset.
-    pub rev: Option<BString>,
+    /// Revision specs to list instead of `HEAD`: `A`, `^A`, `A..B`, `A...B`, `A^@` or `A^!`.
+    pub revisions: Vec<BString>,
     /// Only list commits that change one of these literal paths, relative to the current directory.
     pub paths: Vec<BString>,
     /// Stop after this many commits.
@@ -45,66 +47,22 @@ pub fn log_limited(
     )
 }
 
-/// List commits reachable from `options.rev` (or `HEAD`), optionally only those changing `options.paths`.
+/// List the commits selected by `options.revisions` (or reachable from `HEAD`), optionally only
+/// those changing `options.paths`.
 ///
-/// Without a revision or paths, the historical topological listing is kept. Otherwise commits stream
-/// newest first by commit time, like `git log`, and the walk ends at a shallow boundary.
-///
-/// With paths, Git's default history simplification applies: a commit changes a path when its
-/// entry there (kind and object) differs from its parent's, a merge equal to a parent at the paths
-/// is not listed and only that parent is followed, and root and shallow-boundary commits change
-/// every path they contain. A trailing slash matches only directories (and submodules).
+/// Without paths, commits are selected and ordered like `git rev-list --date-order`, and the plain
+/// listing keeps its historical bytes. With paths, commits stream like `git log <specs> -- <paths>`
+/// with Git's default history simplification: a commit changes a path when its entry there (kind
+/// and object) differs from its parent's, a commit equal to a parent at the paths is not listed and
+/// only that parent is followed, and root and shallow-boundary commits change every path they
+/// contain. Commits reachable from an excluded revision are never listed. A trailing slash matches
+/// only directories (and submodules).
 pub fn log_with(repo: gix::Repository, out: &mut dyn std::io::Write, options: Options) -> Result<()> {
     let format = if options.oneline {
         Format::Oneline
     } else {
         Format::Default
     };
-    // The topological walk cannot cross a shallow boundary whose parents are absent; the
-    // streaming walk stops there instead.
-    if options.rev.is_none() && options.paths.is_empty() && !shallow_parents_missing(&repo)? {
-        log_all(repo, out, options.max_count, format)
-    } else {
-        log_history(repo, out, options, format)
-    }
-}
-
-#[derive(Clone, Copy)]
-enum Format {
-    /// Eight hex digits and the title.
-    Default,
-    /// Git's abbreviation (honouring `core.abbrev`) and the title.
-    Oneline,
-}
-
-fn log_all(
-    repo: gix::Repository,
-    out: &mut dyn std::io::Write,
-    max_count: Option<usize>,
-    format: Format,
-) -> Result<()> {
-    if max_count == Some(0) {
-        return Ok(());
-    }
-    let source = Source::new(
-        &repo,
-        gix::utils::stream::Budget::new(&std::env::temp_dir()).or_error()?,
-    )?;
-    let head = head_commit(&repo, &source)?;
-    let mut buffer = Buffer::default();
-    let topo =
-        gix::traverse::commit::topo::Builder::from_iters(source.clone(), [head], None::<Vec<gix::ObjectId>>).build()?;
-
-    for info in topo.take(max_count.unwrap_or(usize::MAX)) {
-        let info = info?;
-
-        write_info(&repo, &source, &mut buffer, &mut *out, info.id, format)?;
-    }
-
-    Ok(())
-}
-
-fn log_history(repo: gix::Repository, out: &mut dyn std::io::Write, options: Options, format: Format) -> Result<()> {
     let remaining = options.max_count.unwrap_or(usize::MAX);
     if remaining == 0 {
         return Ok(());
@@ -118,129 +76,431 @@ fn log_history(repo: gix::Repository, out: &mut dyn std::io::Write, options: Opt
         .iter()
         .map(|path| Literal::new(&repo, path.as_bstr()))
         .collect::<Result<Vec<_>>>()?;
-    let tip = match options.rev.as_ref() {
-        None => head_commit(&repo, &source)?,
-        Some(rev) => match repo.rev_parse_single(rev.as_bstr()) {
-            Ok(id) => peel_to_commit(&repo, &source, id.detach(), rev.as_bstr())?,
-            // Like Git, an argument that names no revision but an existing worktree path is a path.
-            Err(error) => match paths.is_empty().then(|| worktree_path(&repo, rev.as_bstr())).flatten() {
-                Some(path) => {
-                    paths.push(path);
-                    head_commit(&repo, &source)?
-                }
-                None => return Err(error),
-            },
-        },
+    let starts = match options.revisions.as_slice() {
+        [] => vec![Start::include(head_commit(&repo, &source)?)],
+        // Like Git, a lone argument that names no revision but an existing worktree path is a path.
+        [single] if paths.is_empty() && !single.contains_str("..") && !single.starts_with(b"^") => {
+            match starts(&repo, &source, &options.revisions) {
+                Ok(starts) => starts,
+                Err(error) => match worktree_path(&repo, single.as_bstr()) {
+                    Some(path) if repo.rev_parse(single.as_bstr()).is_err() => {
+                        paths.push(path);
+                        vec![Start::include(head_commit(&repo, &source)?)]
+                    }
+                    _ => return Err(error),
+                },
+            }
+        }
+        revisions => starts(&repo, &source, revisions)?,
     };
 
     if !paths.is_empty() {
-        return simplified_walk(&repo, &source, out, tip, &paths, remaining, format);
+        let walk = SimplifiedWalk::new(&repo, &source, &paths)?;
+        return walk.run(&repo, out, &starts, remaining, format);
     }
-    let walk = repo
-        .rev_walk([tip])
-        .sorting(Sorting::ByCommitTime(CommitTimeOrder::NewestFirst))
-        .all()?;
+    // The plain listing keeps 0.2.6's bytes: it follows a shallow commit's parents while they are
+    // present. Every other form honours the shallow boundary, as Git does.
+    let honour_shallow = !options.revisions.is_empty() || shallow_parents_missing(&repo)?;
+    let shallow = if honour_shallow { repo.shallow_commits()? } else { None };
+    let (mut tips, mut ends) = (Vec::new(), Vec::new());
+    for start in starts {
+        if start.excluded {
+            ends.push(start.id);
+        } else {
+            tips.push(start.id);
+        }
+    }
+    // The topological walk queues every tip before it applies the ends, so a tip that is itself
+    // excluded (`HEAD..HEAD`) would still be printed.
+    tips.retain(|tip| !ends.contains(tip));
+    if tips.is_empty() {
+        return Ok(());
+    }
+    let commits = Grafted {
+        source: &source,
+        shallow,
+    };
+    let ends = (!ends.is_empty()).then_some(ends);
+    let topo = gix::traverse::commit::topo::Builder::from_iters(commits, tips, ends).build()?;
     let mut buffer = Buffer::default();
-    for info in walk.take(remaining) {
+    for info in topo.take(remaining) {
         write_info(&repo, &source, &mut buffer, &mut *out, info?.id, format)?;
     }
     Ok(())
 }
 
-/// A queued commit, read once: when it was committed, what it follows and what it holds at the paths.
+#[derive(Clone, Copy)]
+enum Format {
+    /// Eight hex digits and the title.
+    Default,
+    /// Git's abbreviation (honouring `core.abbrev`) and the title.
+    Oneline,
+}
+
+/// A commit a walk starts from, or (when `excluded`) whose ancestry it hides.
+#[derive(Clone, Copy)]
+struct Start {
+    id: ObjectId,
+    excluded: bool,
+}
+
+impl Start {
+    fn include(id: ObjectId) -> Self {
+        Start { id, excluded: false }
+    }
+    fn exclude(id: ObjectId) -> Self {
+        Start { id, excluded: true }
+    }
+}
+
+/// Resolve `revisions` into starting and excluded commits, in the order Git queues them.
+fn starts(repo: &gix::Repository, source: &Source<'_>, revisions: &[BString]) -> Result<Vec<Start>> {
+    use gix::revision::plumbing::Spec;
+    let parents = |commit_id: ObjectId| -> Result<Vec<ObjectId>> {
+        let mut buffer = Buffer::default();
+        let commit = source
+            .load(&commit_id, &mut buffer)?
+            .try_into_commit_iter()
+            .ok_or_raise(|| message!("Expected commit {commit_id}").validation())?;
+        Ok(commit.parent_ids().collect())
+    };
+    let mut starts = Vec::new();
+    for revision in revisions {
+        let name = revision.as_bstr();
+        let commit = |id| peel_to_commit(repo, source, id, name);
+        match repo.rev_parse(name)?.detach() {
+            Spec::Include(id) => starts.push(Start::include(commit(id)?)),
+            Spec::Exclude(id) => starts.push(Start::exclude(commit(id)?)),
+            Spec::Range { from, to } => {
+                starts.push(Start::exclude(commit(from)?));
+                starts.push(Start::include(commit(to)?));
+            }
+            Spec::Merge { theirs, ours } => {
+                let (theirs, ours) = (commit(theirs)?, commit(ours)?);
+                let bases = merge_bases(repo, source, theirs, ours)?;
+                starts.extend(bases.into_iter().map(Start::exclude));
+                starts.extend([Start::include(theirs), Start::include(ours)]);
+            }
+            Spec::IncludeOnlyParents(id) => starts.extend(parents(commit(id)?)?.into_iter().map(Start::include)),
+            Spec::ExcludeParents(id) => {
+                let id = commit(id)?;
+                starts.extend(parents(id)?.into_iter().map(Start::exclude));
+                starts.push(Start::include(id));
+            }
+        }
+    }
+    Ok(starts)
+}
+
+/// Commits for the topological walk, with shallow boundary commits read as roots.
+struct Grafted<'a, 'repo> {
+    source: &'a Source<'repo>,
+    shallow: Option<gix::shallow::Commits>,
+}
+
+impl Grafted<'_, '_> {
+    fn is_boundary(&self, id: &gix::hash::oid) -> bool {
+        self.shallow
+            .as_ref()
+            .is_some_and(|commits| commits.binary_search(&id.to_owned()).is_ok())
+    }
+}
+
+impl gix::traverse::commit::topo::source::Source for Grafted<'_, '_> {
+    fn find_commit<'a>(&self, id: &gix::hash::oid, buffer: &'a mut Buffer) -> Result<CommitRefIter<'a>> {
+        if !self.is_boundary(id) {
+            return gix::traverse::commit::topo::source::Source::find_commit(self.source, id, buffer);
+        }
+        let commit = without_parents(self.source.load(id, buffer)?.data);
+        let owned = buffer.owned();
+        *owned = commit;
+        let commit: &'a Vec<u8> = owned;
+        Ok(CommitRefIter::from_bytes(commit, id.kind()))
+    }
+}
+
+/// Merge bases read through the same grafts, so they never reach past a shallow boundary.
+impl gix::objs::find::Source for Grafted<'_, '_> {
+    fn try_find<'a>(&self, id: &gix::hash::oid, buffer: &'a mut Buffer) -> Result<Option<gix::objs::Data<'a>>> {
+        if !self.is_boundary(id) {
+            return gix::objs::find::Source::try_find(self.source, id, buffer);
+        }
+        let Some(data) = gix::objs::find::Source::try_find(self.source, id, buffer)? else {
+            return Ok(None);
+        };
+        let (kind, commit) = (data.kind, without_parents(data.data));
+        let owned = buffer.owned();
+        *owned = commit;
+        let commit: &'a Vec<u8> = owned;
+        Ok(Some(gix::objs::Data::new(commit, kind, id.kind())))
+    }
+}
+
+/// The merge bases of `one` and `other`, as Git computes them in a shallow repository.
+fn merge_bases(repo: &gix::Repository, source: &Source<'_>, one: ObjectId, other: ObjectId) -> Result<Vec<ObjectId>> {
+    let commits = Grafted {
+        source,
+        shallow: repo.shallow_commits()?,
+    };
+    // The commit-graph records the parents a shallow boundary hides, so it is not consulted.
+    let mut graph = gix::revwalk::Graph::with_source(commits, None);
+    Ok(gix::revision::plumbing::merge_base(one, &[other], &mut graph)?
+        .map(|bases| bases.into_iter().collect())
+        .unwrap_or_default())
+}
+
+/// Return the commit bytes `data` without their `parent` header lines.
+fn without_parents(data: &[u8]) -> Vec<u8> {
+    let header_end = data.find(b"\n\n").map_or(data.len(), |pos| pos + 1);
+    let mut commit = Vec::with_capacity(data.len());
+    for line in data[..header_end].split_inclusive(|byte| *byte == b'\n') {
+        if !line.starts_with(b"parent ") {
+            commit.extend_from_slice(line);
+        }
+    }
+    commit.extend_from_slice(&data[header_end..]);
+    commit
+}
+
+/// A commit read once: when it was committed, what it follows and what it holds at the paths.
 struct Node {
     time: gix::date::SecondsSinceUnixEpoch,
     parents: Vec<ObjectId>,
     entries: Vec<Option<Located>>,
 }
 
-/// Walk from `tip` newest first by commit time with Git's default history simplification.
-///
-/// A commit that equals a parent at `paths` is not listed, and only the first such parent is
-/// followed. A commit that equals none of its parents is listed and all of them are followed.
-/// Root and shallow-boundary commits are listed when they hold a path. Only queued commits and
-/// the ids already seen are kept, and the walk ends once `remaining` commits are listed.
-fn simplified_walk(
-    repo: &gix::Repository,
-    source: &Source<'_>,
-    out: &mut dyn std::io::Write,
-    tip: ObjectId,
-    paths: &[Literal],
-    mut remaining: usize,
-    format: Format,
-) -> Result<()> {
-    use std::{
-        cmp::Reverse,
-        collections::{BinaryHeap, HashMap, HashSet},
-    };
+const SEEN: u8 = 1;
+const UNINTERESTING: u8 = 2;
+/// An excluded commit named by the caller, still relevant when simplifying its children.
+const BOTTOM: u8 = 4;
+const TREESAME: u8 = 8;
+/// How many uninteresting commits Git reads past the last listed one to tolerate clock skew.
+const SLOP: u8 = 5;
 
-    // Shallow boundary commits have no parents here, so they count as roots, like in Git.
-    let shallow = repo.shallow_commits()?;
-    let mut read_buffer = Buffer::default();
-    let mut read = |id: ObjectId| {
-        let boundary = shallow
-            .as_ref()
-            .is_some_and(|commits| commits.binary_search(&id).is_ok());
-        read_node(source, &mut read_buffer, id, paths, boundary)
-    };
-    let mut seen = HashSet::from([tip]);
-    let mut pending = HashMap::new();
-    // Ties in commit time keep insertion order, like Git's date-ordered queue.
-    let mut queue = BinaryHeap::new();
-    let mut order = 0_u64;
-    let node = read(tip)?;
-    queue.push((node.time, Reverse(order), tip));
-    pending.insert(tip, node);
-    let mut buffer = Buffer::default();
-    while let Some((_, _, id)) = queue.pop() {
-        let Some(node) = pending.remove(&id) else {
-            continue;
-        };
-        let mut follow = Vec::with_capacity(node.parents.len());
-        let mut treesame = false;
-        for &parent in &node.parents {
-            // A parent that is already queued was read when it was queued.
-            let read_parent = match pending.get(&parent) {
-                Some(queued) => {
-                    treesame = queued.entries == node.entries;
-                    None
-                }
-                None => {
-                    let parent_node = read(parent)?;
-                    treesame = parent_node.entries == node.entries;
-                    Some(parent_node)
-                }
-            };
-            follow.push((parent, read_parent));
-            if treesame {
-                let last = follow.len() - 1;
-                follow.drain(..last);
-                break;
+/// Git's revision walk with default history simplification for `paths`.
+///
+/// Commits are processed newest first by commit time, ties in queue order. A commit equal to a
+/// relevant parent at the paths is not listed and only that parent is followed; a commit equal to
+/// none is listed and all of its parents are followed. With excluded revisions the walk is limited
+/// like Git's: excluded ancestry is painted uninteresting, and the walk ends a few commits after
+/// only uninteresting commits remain queued. Without exclusions commits stream and the walk stops
+/// once enough are listed.
+struct SimplifiedWalk<'a, 'repo> {
+    source: &'a Source<'repo>,
+    paths: &'a [Literal],
+    shallow: Option<gix::shallow::Commits>,
+    buffer: Buffer,
+    flags: HashMap<ObjectId, u8>,
+    nodes: HashMap<ObjectId, Node>,
+    queue: BinaryHeap<(gix::date::SecondsSinceUnixEpoch, Reverse<u64>, ObjectId)>,
+    order: u64,
+}
+
+impl<'a, 'repo> SimplifiedWalk<'a, 'repo> {
+    fn new(repo: &gix::Repository, source: &'a Source<'repo>, paths: &'a [Literal]) -> Result<Self> {
+        Ok(SimplifiedWalk {
+            source,
+            paths,
+            // Shallow boundary commits have no parents here, so they count as roots, like in Git.
+            shallow: repo.shallow_commits()?,
+            buffer: Buffer::default(),
+            flags: HashMap::new(),
+            nodes: HashMap::new(),
+            queue: BinaryHeap::new(),
+            order: 0,
+        })
+    }
+
+    fn run(
+        mut self,
+        repo: &gix::Repository,
+        out: &mut dyn std::io::Write,
+        starts: &[Start],
+        mut remaining: usize,
+        format: Format,
+    ) -> Result<()> {
+        for start in starts {
+            self.parse(start.id, false)?;
+            if start.excluded {
+                self.set(start.id, UNINTERESTING | BOTTOM);
+                self.mark_parents_uninteresting(start.id);
             }
         }
-        for (parent, read_parent) in follow {
-            if let Some(parent_node) = read_parent
-                && seen.insert(parent)
-            {
-                order += 1;
-                queue.push((parent_node.time, Reverse(order), parent));
-                pending.insert(parent, parent_node);
+        for start in starts {
+            if self.flags(start.id) & SEEN == 0 {
+                self.set(start.id, SEEN);
+                self.push(start.id);
             }
         }
-        let listed = if node.parents.is_empty() {
-            node.entries.iter().any(Option::is_some)
-        } else {
-            !treesame
-        };
-        if listed {
+        let source = self.source;
+        let mut buffer = Buffer::default();
+        let mut print = |id: ObjectId| -> Result<bool> {
             write_info(repo, source, &mut buffer, &mut *out, id, format)?;
             remaining -= 1;
-            if remaining == 0 {
+            Ok(remaining == 0)
+        };
+        if !starts.iter().any(|start| start.excluded) {
+            while let Some((_, _, id)) = self.queue.pop() {
+                self.process_parents(id)?;
+                if self.flags(id) & (UNINTERESTING | TREESAME) == 0 && print(id)? {
+                    break;
+                }
+            }
+            return Ok(());
+        }
+        let mut listed = Vec::new();
+        let mut date = gix::date::SecondsSinceUnixEpoch::MAX;
+        let mut slop = SLOP;
+        while let Some((_, _, id)) = self.queue.pop() {
+            self.process_parents(id)?;
+            if self.flags(id) & UNINTERESTING != 0 {
+                self.mark_parents_uninteresting(id);
+                slop = self.still_interesting(date, slop);
+                if slop == 0 {
+                    break;
+                }
+                continue;
+            }
+            date = self.nodes[&id].time;
+            listed.push(id);
+        }
+        for id in listed {
+            if self.flags(id) & (UNINTERESTING | TREESAME) == 0 && print(id)? {
                 break;
             }
         }
+        Ok(())
     }
-    Ok(())
+
+    fn flags(&self, id: ObjectId) -> u8 {
+        self.flags.get(&id).copied().unwrap_or(0)
+    }
+
+    fn set(&mut self, id: ObjectId, flags: u8) {
+        *self.flags.entry(id).or_default() |= flags;
+    }
+
+    fn parents(&self, id: ObjectId) -> Vec<ObjectId> {
+        self.nodes.get(&id).map(|node| node.parents.clone()).unwrap_or_default()
+    }
+
+    /// Read `id` once. Return `false` if it is absent and `gently` allows that.
+    fn parse(&mut self, id: ObjectId, gently: bool) -> Result<bool> {
+        if self.nodes.contains_key(&id) {
+            return Ok(true);
+        }
+        if gently && !gix::objs::Exists::exists(self.source, &id) {
+            return Ok(false);
+        }
+        let boundary = self
+            .shallow
+            .as_ref()
+            .is_some_and(|commits| commits.binary_search(&id).is_ok());
+        let node = read_node(self.source, &mut self.buffer, id, self.paths, boundary)?;
+        self.nodes.insert(id, node);
+        Ok(true)
+    }
+
+    fn push(&mut self, id: ObjectId) {
+        self.order += 1;
+        self.queue.push((self.nodes[&id].time, Reverse(self.order), id));
+    }
+
+    /// Git's `process_parents()`: paint an uninteresting commit's parents, or simplify an
+    /// interesting one, then queue the parents not seen yet.
+    fn process_parents(&mut self, id: ObjectId) -> Result<()> {
+        if self.flags(id) & UNINTERESTING != 0 {
+            for parent in self.parents(id) {
+                self.set(parent, UNINTERESTING);
+                if !self.parse(parent, true)? {
+                    continue;
+                }
+                self.mark_parents_uninteresting(parent);
+                if self.flags(parent) & SEEN == 0 {
+                    self.set(parent, SEEN);
+                    self.push(parent);
+                }
+            }
+            return Ok(());
+        }
+        self.simplify(id)?;
+        for parent in self.parents(id) {
+            self.parse(parent, false)?;
+            if self.flags(parent) & SEEN == 0 {
+                self.set(parent, SEEN);
+                self.push(parent);
+            }
+        }
+        Ok(())
+    }
+
+    /// Git's `try_to_simplify_commit()` for the paths.
+    fn simplify(&mut self, id: ObjectId) -> Result<()> {
+        let parents = self.parents(id);
+        if parents.is_empty() {
+            if self.nodes[&id].entries.iter().all(Option::is_none) {
+                self.set(id, TREESAME);
+            }
+            return Ok(());
+        }
+        let (mut relevant_parents, mut relevant_change, mut irrelevant_change) = (0, false, false);
+        for parent in parents {
+            let relevant = self.flags(parent) & (UNINTERESTING | BOTTOM) != UNINTERESTING;
+            if relevant {
+                relevant_parents += 1;
+            }
+            self.parse(parent, false)?;
+            if self.nodes[&parent].entries == self.nodes[&id].entries {
+                // An uninteresting side that brought the whole change keeps the other parents.
+                if !relevant {
+                    continue;
+                }
+                if let Some(node) = self.nodes.get_mut(&id) {
+                    node.parents = vec![parent];
+                }
+                self.set(id, TREESAME);
+                return Ok(());
+            }
+            if relevant {
+                relevant_change = true;
+            } else {
+                irrelevant_change = true;
+            }
+        }
+        let treesame = if relevant_parents > 0 {
+            !relevant_change
+        } else {
+            !irrelevant_change
+        };
+        if treesame {
+            self.set(id, TREESAME);
+        }
+        Ok(())
+    }
+
+    /// Paint the known ancestry of `id` uninteresting, following parents already read.
+    fn mark_parents_uninteresting(&mut self, id: ObjectId) {
+        let mut pending = self.parents(id);
+        while let Some(parent) = pending.pop() {
+            if self.flags(parent) & UNINTERESTING != 0 {
+                continue;
+            }
+            self.set(parent, UNINTERESTING);
+            pending.extend(self.parents(parent));
+        }
+    }
+
+    /// Git's `still_interesting()`: keep walking while interesting commits are queued or the queue
+    /// still holds commits newer than the last listed one, then for `SLOP` more commits.
+    fn still_interesting(&self, date: gix::date::SecondsSinceUnixEpoch, slop: u8) -> u8 {
+        let Some(&(newest, _, _)) = self.queue.peek() else {
+            return 0;
+        };
+        if date <= newest || self.queue.iter().any(|(_, _, id)| self.flags(*id) & UNINTERESTING == 0) {
+            return SLOP;
+        }
+        slop - 1
+    }
 }
 
 fn read_node(

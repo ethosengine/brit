@@ -511,3 +511,157 @@ fn clock_skew_keeps_every_commit_on_the_path() {
     assert_git_parity(&dir, &["f"]);
     assert_git_parity(&dir, &["f", "g"]);
 }
+
+/// `brit log <specs> [-- <paths>]` matches `git log --date-order <specs>` without paths and
+/// `git log <specs> -- <paths>` with them, for every `-n` and with `--oneline`.
+fn assert_specs_parity(dir: &Path, specs: &[&str], paths: &[&str]) {
+    let mut selection: Vec<&str> = specs.to_vec();
+    if paths.is_empty() {
+        selection.insert(0, "--date-order");
+    } else {
+        selection.push("--");
+        selection.extend_from_slice(paths);
+    }
+    let expected = git_titles(dir, &selection);
+    fn log_args<'a>(prefix: &[&'a str], specs: &[&'a str], paths: &[&'a str]) -> Vec<&'a str> {
+        let mut args = vec!["log"];
+        args.extend_from_slice(prefix);
+        args.extend_from_slice(specs);
+        if !paths.is_empty() {
+            args.push("--");
+            args.extend_from_slice(paths);
+        }
+        args
+    }
+    let native = |prefix: &[&'static str]| log_args(prefix, specs, paths);
+    assert_eq!(titles(&brit(dir, &native(&[]))), expected, "{:?}", native(&[]));
+    for n in 1..=expected.len() {
+        let count = n.to_string();
+        let args = log_args(&["-n", &count], specs, paths);
+        assert_eq!(titles(&brit(dir, &args)), expected[..n], "{args:?}");
+    }
+    let mut oneline = vec!["log", "--oneline"];
+    oneline.extend(&selection);
+    assert_eq!(
+        brit(dir, &native(&["--oneline"])),
+        git(dir, &oneline),
+        "{:?}",
+        native(&["--oneline"])
+    );
+}
+
+/// Two branches off a root, a merge, a second topic off an older commit and a commit dated
+/// before its parent, so that ranges, exclusions and three-dot specs select different sets.
+fn branchy() -> (gix_testtools::tempfile::TempDir, PathBuf) {
+    let tmp = gix_testtools::tempfile::tempdir().expect("fixture");
+    let dir = init(&tmp);
+    for name in ["f", "g", "h"] {
+        write(&dir, name, "0\n");
+    }
+    commit_all(&dir, 1, "c1 root");
+    write(&dir, "f", "1\n");
+    commit_all(&dir, 2, "c2 main f");
+    git(&dir, &["branch", "old"]);
+    git(&dir, &["switch", "-q", "-c", "topic", "HEAD~1"]);
+    write(&dir, "g", "1\n");
+    commit_all(&dir, 3, "t1 topic g");
+    write(&dir, "h", "1\n");
+    commit_all(&dir, 4, "t2 topic h");
+    git(&dir, &["switch", "-q", "main"]);
+    write(&dir, "f", "2\n");
+    commit_all(&dir, 5, "c3 main f");
+    merge(&dir, 6, "topic", "m1 merge topic");
+    write(&dir, "g", "2\n");
+    commit_all(&dir, 7, "c4 main g");
+    git(&dir, &["switch", "-q", "-c", "topic2", "old"]);
+    write(&dir, "k", "1\n");
+    commit_all(&dir, 8, "u1 topic2 k");
+    write(&dir, "h", "5\n");
+    commit_all(&dir, 9, "u2 topic2 h");
+    git(&dir, &["switch", "-q", "main"]);
+    write(&dir, "h", "2\n");
+    commit_all(&dir, 10, "c5 main h");
+    write(&dir, "f", "3\n");
+    commit_all(&dir, 4, "c6 main f, dated before its parent");
+    (tmp, dir)
+}
+
+const SPEC_CASES: &[(&[&str], &[&str])] = &[
+    (&["old..main"], &[]),
+    (&["topic...main"], &[]),
+    (&["main", "^topic", "topic2"], &[]),
+    (&["old..main"], &["f"]),
+    (&["old..main"], &["g", "h"]),
+    (&["main", "^old"], &["g"]),
+    (&["main", "^topic"], &["f", "g", "h"]),
+    (&["topic...main"], &["f"]),
+    (&["topic...main"], &["g"]),
+    (&["main...topic2"], &["k", "f", "h"]),
+    (&["topic2...main"], &["h"]),
+    (&["topic..main"], &["h"]),
+    (&["main~1^!"], &["g"]),
+    (&["main^@"], &["f"]),
+    (&["old..main", "topic2"], &["h"]),
+    (&["^main", "topic2"], &["f", "h", "k"]),
+    (&["main..main"], &["f"]),
+    (&["main", "topic2"], &["h"]),
+];
+
+#[test]
+fn ranges_exclusions_and_three_dot_specs_combine_with_paths() {
+    let (_tmp, dir) = branchy();
+    for (specs, paths) in SPEC_CASES {
+        assert_specs_parity(&dir, specs, paths);
+    }
+    assert_eq!(
+        titles(&brit(&dir, &["log", "old..main", "--", "f"])),
+        ["c6 main f, dated before its parent", "c3 main f"]
+    );
+}
+
+#[test]
+fn ranges_work_in_shallow_clones_and_linked_worktrees() {
+    let (tmp, dir) = branchy();
+    let clone = tmp.path().join("shallow");
+    let url = format!("file://{}", dir.display());
+    git(
+        tmp.path(),
+        &[
+            "clone",
+            "-q",
+            "--depth",
+            "4",
+            "--no-single-branch",
+            &url,
+            clone.to_str().expect("utf8 path"),
+        ],
+    );
+    assert!(clone.join(".git/shallow").is_file());
+    for (specs, paths) in [
+        (&["HEAD~2..HEAD"][..], &[][..]),
+        (&["HEAD~2..HEAD"], &["f"]),
+        (&["HEAD~1..HEAD"], &["h"]),
+        (&[], &["g"]),
+        (&["origin/topic2..HEAD"], &[]),
+        (&["origin/topic2..HEAD"], &["h"]),
+        (&["HEAD...origin/topic2"], &["h", "k"]),
+        (&["HEAD"], &[]),
+    ] {
+        assert_specs_parity(&clone, specs, paths);
+    }
+
+    let linked = tmp.path().join("linked");
+    git(
+        &dir,
+        &["worktree", "add", "-q", linked.to_str().expect("utf8 path"), "topic2"],
+    );
+    for (specs, paths) in [
+        (&["old..main"][..], &["f"][..]),
+        (&["HEAD..main"], &[]),
+        (&[], &["k"]),
+        (&["main...HEAD"], &["h"]),
+        (&["main", "^HEAD"], &["f", "g"]),
+    ] {
+        assert_specs_parity(&linked, specs, paths);
+    }
+}

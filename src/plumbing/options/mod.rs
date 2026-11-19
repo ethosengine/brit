@@ -748,13 +748,15 @@ pub mod diff {
 pub mod log {
     use gix::bstr::BString;
 
-    /// List commits reachable from a revision, optionally only those that change given paths.
+    /// List commits reachable from revisions, optionally only those that change given paths.
     ///
-    /// With a revision or paths, commits stream newest first by commit time, like `git log`,
-    /// and a shallow boundary ends the walk. Paths follow Git's default history
-    /// simplification: a commit counts when it differs from its parent at a path, a merge
-    /// equal to one parent there is skipped and only that parent is followed, and a root or
-    /// shallow-boundary commit counts when the path exists.
+    /// Without paths, commits are selected and ordered like `git rev-list --date-order`.
+    /// With paths, they stream like `git log <revisions> -- <paths>` with Git's default
+    /// history simplification: a commit counts when it differs from its parent at a path, a
+    /// merge equal to one parent there is skipped and only that parent is followed, and a root
+    /// or shallow-boundary commit counts when the path exists. Commits reachable from an
+    /// excluded revision are never listed. A shallow boundary ends every walk, except that
+    /// the plain `brit log` follows a boundary's parents while they are present.
     #[derive(Debug, clap::Parser)]
     pub struct Platform {
         /// Stop after this many commits (Brit also accepts -N; zero prints none).
@@ -763,10 +765,11 @@ pub mod log {
         /// Print the abbreviated hash (honouring core.abbrev, like `git log --oneline`) and title.
         #[clap(long)]
         pub oneline: bool,
-        /// The revision to start from (default HEAD). A name that is no revision but an
-        /// existing worktree path is read as a path; use `--` to force paths.
-        #[clap(value_parser = crate::shared::AsBString, value_name = "REV")]
-        pub rev: Option<BString>,
+        /// Revisions to list instead of HEAD: `origin/dev`, `^A`, `A..B`, `A...B`, `A^@` or
+        /// `A^!`, combinable. A lone name that is no revision but an existing worktree path is
+        /// read as a path; use `--` to force paths.
+        #[clap(value_parser = crate::shared::AsBString, value_name = "REVISION")]
+        pub revisions: Vec<BString>,
         /// Only list commits that change one of these literal paths (files or directories,
         /// relative to the current directory); a trailing slash matches only directories.
         #[clap(last = true, value_parser = crate::shared::AsBString, value_name = "PATH")]
