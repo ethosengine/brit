@@ -484,11 +484,18 @@ pub fn capture<D: Content>(
             "retained-copy source changed"
         ),
         Ok(_) => {
-            if read_member(&leaf.join("manifest.json"), owner)? != bytes {
-                // A copy not yet complete licenses nothing, so its manifest is
-                // only this capture's intent: a manifest that differs (one cut
-                // short while written, or pinning sources since changed) is
-                // replaced, and the members it pinned are copied again.
+            let existing = read_member(&leaf.join("manifest.json"), owner)?;
+            if existing != bytes {
+                // A whole manifest pins its sources: one that differs means a
+                // source changed while the capture was interrupted, and that
+                // still refuses. A manifest that is not a whole checksummed record
+                // (cut short while written, or lost with the page cache) pins
+                // nothing; in a copy not yet complete it is replaced, and any
+                // member beside it is copied again.
+                let pins = serde_json::from_slice::<Envelope>(&existing)
+                    .ok()
+                    .is_some_and(|envelope| switch::digest(&envelope.payload).is_ok_and(|d| d == envelope.checksum));
+                ensure!(!pins, "retained-copy source changed");
                 for entry in fs::read_dir(&leaf)? {
                     let entry = entry?;
                     let name = entry.file_name();

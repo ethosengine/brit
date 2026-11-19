@@ -996,7 +996,13 @@ fn invalid_authored_object_receipts_refuse_without_changing_integration() -> Res
         let state = fs::read(session.directory().join("state.json"))?;
         let error = session.abort(&repo).expect_err(damage);
         if damage == "scratch" {
-            assert!(format!("{error:#}").contains("scratch budget"), "{error:#}");
+            // Undoing is never refused by the scratch quota (R3): the oversized
+            // receipt is refused for what it is, not for its size against the quota.
+            let message = format!("{error:#}");
+            assert!(
+                message.contains("receipt length mismatch") && !message.contains("scratch budget"),
+                "{message}"
+            );
         }
         assert_eq!(fs::read(repo.git_dir().join("HEAD"))?, head, "{damage}");
         assert_eq!(fs::read(repo.index_path())?, index, "{damage}");

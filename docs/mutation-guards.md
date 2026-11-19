@@ -99,7 +99,8 @@ would be a write the model reserves for `other_worktree_guard`.
   was killed holding its transition's Git locks before its decision releases them on the next
   `--abort`. Retained-copy manifests, completion markers and cleanup receipts are published
   whole (written to a scratch spool and renamed into place); in a copy not yet complete, a
-  manifest that is cut short or differs is written again, while a complete copy stays immutable.
+  manifest cut short is written again, while one pinning sources that changed since still
+  refuses, and a complete copy stays immutable.
 - A completed or aborted rebase whose cleanup copy is all that remains (or an abort retaining
   before it changed anything live) can be set aside with `brit rebase --retire`, under the same
   guards as `--abort`: the journal is kept as `brit-rebase-kept-<nonce>`, which no writer
