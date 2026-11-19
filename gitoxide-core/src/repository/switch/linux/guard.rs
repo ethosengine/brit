@@ -188,6 +188,7 @@ fn lock_holders(stat: &rustix::fs::Stat) -> Vec<(u32, bool)> {
 }
 
 fn describe(pid: u32, role: &str) -> String {
+    use std::fmt::Write as _;
     let proc = Path::new("/proc").join(pid.to_string());
     let Ok(cmdline) = fs::read(proc.join("cmdline")) else {
         return format!("pid {pid} ({role}; no longer visible)");
@@ -203,13 +204,13 @@ fn describe(pid: u32, role: &str) -> String {
     }
     let mut out = format!("pid {pid} `{command}` ({role}");
     if let Ok(cwd) = fs::read_link(proc.join("cwd")) {
-        out.push_str(&format!(" in {}", cwd.display()));
+        let _ = write!(out, " in {}", cwd.display());
     }
     if let Some(started) = started_at(&proc) {
-        out.push_str(&format!(", since {started}"));
+        let _ = write!(out, ", since {started}");
     }
     if let Some(session) = session(&proc) {
-        out.push_str(&format!(", session {session}"));
+        let _ = write!(out, ", session {session}");
     }
     out.push(')');
     out
