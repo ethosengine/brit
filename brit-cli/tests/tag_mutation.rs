@@ -149,6 +149,44 @@ fn creation_refuses_overwrites_invalid_names_and_editor_annotation() -> TestResu
 }
 
 #[test]
+fn forced_overwrite_replaces_a_packed_only_tag() -> TestResult {
+    let dir = tempfile::tempdir()?;
+    let root = dir.path();
+    fixture(root)?;
+    git(root, "tag light HEAD~1")?;
+    git(root, "tag -a heavy -m old HEAD~1")?;
+    git(root, "pack-refs --all")?;
+    assert!(!root.join(".git/refs/tags/light").exists(), "packed only");
+    let output = brit(root, &["tag", "light"]);
+    assert!(
+        !output.status.success(),
+        "packed tags still refuse overwrite: {output:?}"
+    );
+    assert!(stderr(&output).contains("tag 'light' already exists"), "{output:?}");
+    assert_eq!(rev(root, "refs/tags/light")?, rev(root, "HEAD~1")?);
+    for args in [
+        vec!["tag", "-f", "light"],
+        vec!["tag", "-f", "-a", "heavy", "-m", "new"],
+    ] {
+        let output = brit(root, &args);
+        assert!(output.status.success(), "{args:?}: {output:?}");
+        assert!(
+            String::from_utf8_lossy(&output.stdout).contains("Updated tag '"),
+            "{output:?}"
+        );
+    }
+    assert_eq!(rev(root, "refs/tags/light")?, rev(root, "HEAD")?);
+    assert_eq!(rev(root, "refs/tags/heavy^{}")?, rev(root, "HEAD")?);
+    assert_eq!(
+        git(root, "for-each-ref --format=%(refname) refs/tags")?,
+        "refs/tags/heavy\nrefs/tags/light\n",
+        "one entry per tag across loose and packed storage"
+    );
+    git(root, "fsck --no-progress")?;
+    Ok(())
+}
+
+#[test]
 fn delete_removes_loose_and_packed_tags_all_or_nothing() -> TestResult {
     let dir = tempfile::tempdir()?;
     let root = dir.path();

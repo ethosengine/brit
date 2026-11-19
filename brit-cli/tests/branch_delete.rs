@@ -342,3 +342,217 @@ fn move_updates_every_worktree_with_the_branch_checked_out() -> TestResult {
     git(root, "fsck --no-progress")?;
     Ok(())
 }
+
+#[test]
+fn move_refuses_directory_file_conflicts_naming_the_conflicting_ref() -> TestResult {
+    let dir = tempfile::tempdir()?;
+    let root = dir.path();
+    fixture(root)?;
+    for name in ["p/q", "r", "c/one", "c/two", "a", "d/only"] {
+        git(root, &format!("branch {name}"))?;
+    }
+    let check = |old: &str, new: &str, expected: &str, git_refuses_too: bool| -> TestResult {
+        let refs = git(root, "for-each-ref")?;
+        if git_refuses_too {
+            git_refuses(root, &["branch", "-m", old, new])?;
+        }
+        let output = brit(root, &["branch", "-m", old, new]);
+        assert!(!output.status.success(), "must refuse {old} -> {new}: {output:?}");
+        assert!(stderr(&output).contains(expected), "{old} -> {new}: {output:?}");
+        assert!(
+            !stderr(&output).contains("os error"),
+            "no raw ref-store error: {output:?}"
+        );
+        assert_eq!(git(root, "for-each-ref")?, refs, "{old} -> {new} leaves refs untouched");
+        assert!(
+            root.join(format!(".git/logs/refs/heads/{old}")).is_file(),
+            "reflog kept"
+        );
+        Ok(())
+    };
+    // Another ref blocks the new name, as a directory or as a file: Git refuses the same way.
+    for packed in [false, true] {
+        if packed {
+            git(root, "pack-refs --all")?;
+        }
+        check("r", "p", "'refs/heads/p/q' exists; cannot create 'refs/heads/p'", true)?;
+        check(
+            "r",
+            "p/q/s",
+            "'refs/heads/p/q' exists; cannot create 'refs/heads/p/q/s'",
+            true,
+        )?;
+        check(
+            "c/one",
+            "c",
+            "'refs/heads/c/two' exists; cannot create 'refs/heads/c'",
+            true,
+        )?;
+    }
+    // Only the renamed ref itself blocks the new path. Git deletes before it creates; one gix
+    // transaction cannot, so Brit refuses (and says how to proceed) where Git would succeed.
+    check("a", "a/b", "temporary name", false)?;
+    check("d/only", "d", "temporary name", false)?;
+    Ok(())
+}
+
+#[test]
+fn move_to_itself_is_a_noop_recorded_like_git() -> TestResult {
+    let dir = tempfile::tempdir()?;
+    let (ours, theirs, main) = twin_fixtures(dir.path())?;
+    for name in ["topic", main.as_str()] {
+        let refs = git(&ours, "for-each-ref")?;
+        let output = brit(&ours, &["branch", "-m", name, name]);
+        assert!(output.status.success(), "rename {name} to itself: {output:?}");
+        let oracle = git_command(&theirs).args(["branch", "-m", name, name]).output()?;
+        assert!(oracle.status.success(), "{oracle:?}");
+        assert_eq!(git(&ours, "for-each-ref")?, refs, "no ref moves");
+        assert_eq!(
+            renamed_state(&ours, name)?,
+            renamed_state(&theirs, name)?,
+            "{name}: same refs, reflog, config and HEAD as git"
+        );
+    }
+    Ok(())
+}
+
+#[test]
+fn duplicate_names_are_deleted_once() -> TestResult {
+    let dir = tempfile::tempdir()?;
+    let root = dir.path();
+    fixture(root)?;
+    git(root, "branch merged")?;
+    git(root, "tag twice")?;
+    let output = brit(root, &["branch", "-d", "merged", "merged"]);
+    assert!(output.status.success(), "{output:?}");
+    assert_eq!(
+        String::from_utf8_lossy(&output.stdout)
+            .matches("Deleted branch merged")
+            .count(),
+        1
+    );
+    assert!(!has_ref(root, "refs/heads/merged")?);
+    let output = brit(root, &["tag", "-d", "twice", "twice"]);
+    assert!(output.status.success(), "{output:?}");
+    assert!(!has_ref(root, "refs/tags/twice")?);
+    Ok(())
+}
+
+#[test]
+fn branches_being_rebased_or_bisected_are_never_deleted_or_moved() -> TestResult {
+    let dir = tempfile::tempdir()?;
+    let root = dir.path();
+    fixture(root)?;
+    for name in ["rebasing", "bisecting"] {
+        git(root, &format!("branch {name}"))?;
+    }
+    // A real rebase or bisection runs on a detached HEAD; Git only recognizes the markers then.
+    git(root, "checkout -q --detach")?;
+    std::fs::create_dir(root.join(".git/rebase-merge"))?;
+    std::fs::write(root.join(".git/rebase-merge/head-name"), "refs/heads/rebasing\n")?;
+    std::fs::write(root.join(".git/BISECT_START"), "bisecting\n")?;
+    for name in ["rebasing", "bisecting"] {
+        for args in [vec!["branch", "-D", name], vec!["branch", "-m", name, "elsewhere"]] {
+            // Git ignores BISECT_START's short branch name on a detached HEAD; Brit refuses anyway.
+            if name == "rebasing" {
+                git_refuses(root, &args)?;
+            }
+            let output = brit(root, &args);
+            assert!(!output.status.success(), "must refuse {args:?}: {output:?}");
+            assert!(has_ref(root, &format!("refs/heads/{name}"))?);
+        }
+    }
+    let output = brit(root, &["branch", "-m", "rebasing", "elsewhere"]);
+    assert!(stderr(&output).contains("is being rebased or bisected"), "{output:?}");
+    let output = brit(root, &["branch", "-D", "bisecting"]);
+    assert!(stderr(&output).contains("used by worktree at"), "{output:?}");
+    assert!(!has_ref(root, "refs/heads/elsewhere")?);
+
+    // A marker that cannot be read fails closed rather than reading as "not in progress".
+    std::fs::remove_file(root.join(".git/BISECT_START"))?;
+    std::fs::remove_file(root.join(".git/rebase-merge/head-name"))?;
+    std::fs::create_dir(root.join(".git/rebase-merge/head-name"))?;
+    for args in [
+        vec!["branch", "-D", "topic"],
+        vec!["branch", "-m", "topic", "elsewhere"],
+    ] {
+        let output = brit(root, &args);
+        assert!(
+            !output.status.success(),
+            "unreadable marker must refuse {args:?}: {output:?}"
+        );
+        assert!(stderr(&output).contains("unreadable"), "{output:?}");
+        assert!(has_ref(root, "refs/heads/topic")?);
+    }
+    Ok(())
+}
+
+#[test]
+fn merged_check_refuses_when_ancestry_cannot_be_proven() -> TestResult {
+    let dir = tempfile::tempdir()?;
+    let origin = dir.path().join("origin");
+    std::fs::create_dir(&origin)?;
+    let main = fixture(&origin)?;
+    git(&origin, "branch old")?;
+    git(&origin, "commit --allow-empty -m m1")?;
+    git(&origin, "commit --allow-empty -m m2")?;
+    let url = format!("file://{}", origin.display());
+    let shallow = dir.path().join("shallow");
+    let clone = git_command(dir.path())
+        .args(["clone", "-q", "--depth", "1", "--branch", &main, &url])
+        .arg(&shallow)
+        .output()?;
+    assert!(clone.status.success(), "{clone:?}");
+    for name in ["topic", "old"] {
+        let fetched = git_command(&shallow)
+            .args(["fetch", "-q", "--depth", "1", "origin", &format!("{name}:{name}")])
+            .output()?;
+        assert!(fetched.status.success(), "{fetched:?}");
+    }
+    assert!(shallow.join(".git/shallow").is_file(), "the clone is shallow");
+    // `topic` is truly unmerged and `old` truly merged; neither can be proven past the boundary.
+    for name in ["topic", "old"] {
+        let tip = git(&shallow, &format!("rev-parse {name}"))?;
+        git_refuses(&shallow, &["branch", "-d", name])?;
+        let output = brit(&shallow, &["branch", "-d", name]);
+        assert!(
+            !output.status.success(),
+            "{name} must not be deleted unproven: {output:?}"
+        );
+        assert_eq!(git(&shallow, &format!("rev-parse {name}"))?, tip);
+    }
+    Ok(())
+}
+
+#[test]
+fn merged_check_refuses_unrelated_history_and_falls_back_to_head_without_upstream() -> TestResult {
+    let dir = tempfile::tempdir()?;
+    let root = dir.path();
+    let main = fixture(root)?;
+    git(root, "checkout -q --orphan orphan")?;
+    git(root, "commit --allow-empty -m unrelated")?;
+    git(root, &format!("checkout -q {main}"))?;
+    git_refuses(root, &["branch", "-d", "orphan"])?;
+    let output = brit(root, &["branch", "-d", "orphan"]);
+    assert!(!output.status.success(), "unrelated history: {output:?}");
+    assert!(stderr(&output).contains("not fully merged"), "{output:?}");
+    assert!(has_ref(root, "refs/heads/orphan")?);
+
+    // An upstream whose remote-tracking ref is gone measures against HEAD instead.
+    git(root, "config remote.origin.url /nonexistent")?;
+    git(root, "config remote.origin.fetch +refs/heads/*:refs/remotes/origin/*")?;
+    git(root, "branch gone")?;
+    for name in ["gone", "topic"] {
+        git(root, &format!("config branch.{name}.remote origin"))?;
+        git(root, &format!("config branch.{name}.merge refs/heads/{name}"))?;
+    }
+    git_refuses(root, &["branch", "-d", "topic"])?;
+    let output = brit(root, &["branch", "-d", "topic"]);
+    assert!(!output.status.success(), "unmerged into HEAD: {output:?}");
+    assert!(has_ref(root, "refs/heads/topic")?);
+    let output = brit(root, &["branch", "-d", "gone"]);
+    assert!(output.status.success(), "merged into HEAD: {output:?}");
+    assert!(!stderr(&output).contains("warning"), "{output:?}");
+    assert!(!has_ref(root, "refs/heads/gone")?);
+    Ok(())
+}
