@@ -282,13 +282,22 @@ pub fn ensure_no_pending(repo: &gix::Repository) -> Result<()> {
 
 /// Serialize cooperating Brit writers across the shared repository.
 /// Keep this guard alive for the entire mutation, including its pending-journal check.
-pub fn mutation_guard(repo: &gix::Repository) -> Result<fs::File> {
+/// It does not cover any worktree's files; use [`worktree_writer_guard`] for that.
+pub fn mutation_guard(repo: &gix::Repository) -> Result<guard::Held> {
     mutation_guard_waiting(repo, super::mutation_wait())
 }
 
 /// [`mutation_guard`] with an explicit wait policy instead of the process-wide one.
-pub fn mutation_guard_waiting(repo: &gix::Repository, wait: super::MutationWait) -> Result<fs::File> {
-    let lock = guard::exclusive(repo, wait)?;
+pub fn mutation_guard_waiting(repo: &gix::Repository, wait: super::MutationWait) -> Result<guard::Held> {
+    let lock = guard::acquire(repo, guard::Mode::Exclusive, false, wait)?;
+    ensure_no_pending(repo)?;
+    Ok(lock)
+}
+
+/// Guard a shared write that also rewrites `repo`'s own worktree (index, HEAD or files):
+/// `repo`'s worktree guard, then the repository guard exclusively.
+pub fn worktree_writer_guard(repo: &gix::Repository) -> Result<guard::Held> {
+    let lock = guard::acquire(repo, guard::Mode::Exclusive, true, super::mutation_wait())?;
     ensure_no_pending(repo)?;
     Ok(lock)
 }
@@ -306,13 +315,35 @@ pub fn worktree_mutation_guard_waiting(
     repo: &gix::Repository,
     wait: super::MutationWait,
 ) -> Result<guard::WorktreeGuard> {
-    let lock = guard::worktree(repo, wait)?;
+    let lock = guard::acquire(repo, guard::Mode::Shared, true, wait)?;
     ensure_no_pending(repo)?;
     Ok(lock)
 }
 
-pub(crate) fn shared_guard(repo: &gix::Repository) -> Result<fs::File> {
-    guard::exclusive(repo, super::mutation_wait())
+/// Guard a push: the pushing worktree's guard (so its checkout cannot change under the
+/// pre-push gate) and the repository guard exclusively. Release only the repository guard
+/// across the hook with [`guard::Held::release_repository`], then [`reacquire_for_send`].
+pub fn push_guard(repo: &gix::Repository) -> Result<guard::Held> {
+    worktree_writer_guard(repo)
+}
+
+/// Re-take the repository guard for send-pack after a passed pre-push hook.
+pub fn reacquire_for_send(held: &mut guard::Held, repo: &gix::Repository, wait: super::MutationWait) -> Result<()> {
+    held.reacquire_repository(repo, wait)?;
+    ensure_no_pending(repo)
+}
+
+/// Lock another worktree (`target`, opened on that worktree) without waiting, while the
+/// caller already holds the repository guard exclusively. For commands that rewrite a
+/// different worktree's files or HEAD: `worktree remove`, and a branch rename that repoints
+/// another worktree's HEAD.
+pub fn other_worktree_guard(target: &gix::Repository) -> Result<fs::File> {
+    guard::other_worktree(target.git_dir())
+}
+
+/// Replay, switch, pull and conflict authoring rewrite `repo`'s worktree under this guard.
+pub(crate) fn shared_guard(repo: &gix::Repository) -> Result<guard::Held> {
+    guard::acquire(repo, guard::Mode::Exclusive, true, super::mutation_wait())
 }
 
 /// Inspect without mutating or automatically resuming an interrupted operation.
@@ -850,7 +881,7 @@ pub fn execute(repo: gix::Repository, branch: &BStr) -> Result<()> {
     let shared = shared_guard(&repo)?;
     execute_locked(repo, branch, shared, None)
 }
-fn execute_locked(repo: gix::Repository, branch: &BStr, _shared: fs::File, pinned: Option<Manifest>) -> Result<()> {
+fn execute_locked(repo: gix::Repository, branch: &BStr, _shared: guard::Held, pinned: Option<Manifest>) -> Result<()> {
     ensure!(
         cfg!(target_os = "linux"),
         "durable switch currently requires Linux file and directory synchronization"

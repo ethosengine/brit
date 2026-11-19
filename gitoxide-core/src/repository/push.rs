@@ -181,6 +181,7 @@ pub(crate) mod function {
     use std::io::Write as _;
 
     use super::Options;
+    use anyhow::Context as _;
 
     /// Mirror git's `die_for_incompatible_opt4` in `vendor/git/parse-options.c`:
     /// given up to four `(predicate, name)` pairs, if two or more predicates are
@@ -698,9 +699,11 @@ pub(crate) mod function {
                 Some(super::Signed::No) | None => gix::remote::push::SignMode::Never,
             };
             // Guard reference resolution and send-pack against other Brit writers, but
-            // not the pre-push hook: the hook judges fixed object IDs, and those IDs are
-            // what is sent, so other lanes stay writable while a long gate runs.
-            let held = std::cell::RefCell::new(Some(super::super::switch::mutation_guard(&repo)?));
+            // release the repository guard across the pre-push hook: the hook judges fixed
+            // object IDs, and those IDs are what is sent, so other lanes stay writable while a
+            // long gate runs. The pushing worktree's guard stays held throughout, so the
+            // checkout a gate builds and tests cannot change under it.
+            let held = std::cell::RefCell::new(super::super::switch::push_guard(&repo)?);
             let result = prepare
                 .with_refspecs(specs_to_send.iter())
                 .with_dry_run(opts.dry_run)
@@ -760,13 +763,15 @@ pub(crate) mod function {
                         if super::super::authoring::hook_path(&repo, "pre-push")?.is_none() {
                             return Ok(());
                         }
-                        drop(held.borrow_mut().take());
+                        held.borrow_mut().release_repository();
                         super::super::authoring::run_hook_with_input(&repo, "pre-push", &args, Some(&input))?;
                         // Shared writers are brief, and the hook's work is not lost to a
                         // refusal: wait for the guard at least this long before sending.
                         let wait = super::super::switch::mutation_wait()
                             .at_least(super::super::switch::MutationWait::For(POST_HOOK_GUARD_WAIT));
-                        *held.borrow_mut() = Some(super::super::switch::mutation_guard_waiting(&repo, wait)?);
+                        super::super::switch::reacquire_for_send(&mut held.borrow_mut(), &repo, wait).context(
+                            "the pre-push hook passed, but the Brit mutation guard could not be re-acquired; nothing was sent",
+                        )?;
                         Ok(())
                     },
                 );

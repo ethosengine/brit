@@ -316,7 +316,12 @@ fn prepare_directories(repo: &gix::Repository, state: &mut Manifest) -> Result<(
     save(repo, state)
 }
 
-pub(super) fn resume_fetch(repo: gix::Repository, mut state: Manifest, shared: fs::File, abort: bool) -> Result<()> {
+pub(super) fn resume_fetch(
+    repo: gix::Repository,
+    mut state: Manifest,
+    shared: super::guard::Held,
+    abort: bool,
+) -> Result<()> {
     preflight(&repo)?;
     resume_fetch_inner(&repo, &mut state, abort)?;
     integrate(repo, state, shared, abort)
@@ -492,7 +497,12 @@ fn resume_fetch_inner(repo: &gix::Repository, state: &mut Manifest, abort: bool)
     checkpoint("fetch-completed")
 }
 
-pub(super) fn integrate(repo: gix::Repository, mut state: Manifest, shared: fs::File, abort: bool) -> Result<()> {
+pub(super) fn integrate(
+    repo: gix::Repository,
+    mut state: Manifest,
+    shared: super::guard::Held,
+    abort: bool,
+) -> Result<()> {
     if abort || state.aborting {
         state.aborting = true;
         save(&repo, &state)?;

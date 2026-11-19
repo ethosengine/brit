@@ -75,6 +75,40 @@ pub fn mutation_wait() -> MutationWait {
     MutationWait::decode(WAIT.load(Ordering::Relaxed))
 }
 
+type ResolveFn = dyn Fn(&[String]) -> Vec<String> + Send + Sync;
+type CommandResolver = Box<ResolveFn>;
+static COMMAND_RESOLVER: std::sync::OnceLock<CommandResolver> = std::sync::OnceLock::new();
+
+/// Register how to name the Brit subcommand path in another Brit process's arguments.
+/// The resolver must return subcommand names only, never option values or positionals.
+pub fn set_command_resolver(resolver: impl Fn(&[String]) -> Vec<String> + Send + Sync + 'static) {
+    let _ = COMMAND_RESOLVER.set(Box::new(resolver));
+}
+
+/// Name a process for a guard refusal: the program's file name and, for a Brit program, its
+/// subcommand path. Option values and positionals (which may hold credentials) never appear.
+pub fn redacted_command(argv: &[String]) -> String {
+    redact_with(argv, COMMAND_RESOLVER.get().map(|resolver| resolver.as_ref()))
+}
+
+fn redact_with(argv: &[String], resolver: Option<&ResolveFn>) -> String {
+    let program = argv
+        .first()
+        .and_then(|arg0| std::path::Path::new(arg0).file_name())
+        .map_or_else(|| "?".to_owned(), |name| name.to_string_lossy().into_owned());
+    let mut out = program.clone();
+    let stem = program.strip_suffix(std::env::consts::EXE_SUFFIX).unwrap_or(&program);
+    if matches!(stem, "brit" | "rakia" | "gix" | "ein")
+        && let Some(resolver) = resolver
+    {
+        for name in resolver(argv.get(1..).unwrap_or_default()) {
+            out.push(' ');
+            out.push_str(&name);
+        }
+    }
+    out
+}
+
 fn ensure_no_replay_cleanup(git_dir: &std::path::Path) -> anyhow::Result<()> {
     #[cfg(target_os = "linux")]
     {
@@ -107,8 +141,10 @@ pub(crate) use linux::{
 };
 #[cfg(target_os = "linux")]
 pub use linux::{
-    ensure_no_pending, execute, guard::WorktreeGuard, mutation_guard, mutation_guard_waiting, recover, status,
-    worktree_mutation_guard, worktree_mutation_guard_waiting,
+    ensure_no_pending, execute,
+    guard::{HOOK_MARKER, Held, WorktreeGuard},
+    mutation_guard, mutation_guard_waiting, other_worktree_guard, push_guard, reacquire_for_send, recover, status,
+    worktree_mutation_guard, worktree_mutation_guard_waiting, worktree_writer_guard,
 };
 #[cfg(all(target_os = "linux", feature = "blocking-client"))]
 pub use linux::{pull_execute, pull_recover};
@@ -143,21 +179,48 @@ mod unavailable {
         }
         Ok(())
     }
+    /// Other platforms have no cooperative guard; this stands in for the held guards.
+    #[derive(Debug)]
+    pub struct Held;
+    /// A worktree-local writer's guards; none on other platforms.
+    pub type WorktreeGuard = Held;
+    impl Held {
+        /// Nothing to release on other platforms.
+        pub fn release_repository(&mut self) {}
+    }
+    /// Environment variable naming the Brit process whose hook or editor this process runs under.
+    pub const HOOK_MARKER: &str = "BRIT_GUARD_HELD_BY";
     /// Keep ordinary non-switch operations available on other platforms.
-    pub fn mutation_guard(repo: &gix::Repository) -> Result<()> {
-        ensure_no_pending(repo)
+    pub fn mutation_guard(repo: &gix::Repository) -> Result<Held> {
+        ensure_no_pending(repo).map(|()| Held)
     }
     /// Other platforms have no cooperative guard to wait for.
-    pub fn mutation_guard_waiting(repo: &gix::Repository, _: super::MutationWait) -> Result<()> {
-        ensure_no_pending(repo)
+    pub fn mutation_guard_waiting(repo: &gix::Repository, _: super::MutationWait) -> Result<Held> {
+        ensure_no_pending(repo).map(|()| Held)
     }
     /// Other platforms have no cooperative guard; refuse only on pending recovery.
-    pub fn worktree_mutation_guard(repo: &gix::Repository) -> Result<()> {
-        ensure_no_pending(repo)
+    pub fn worktree_mutation_guard(repo: &gix::Repository) -> Result<Held> {
+        ensure_no_pending(repo).map(|()| Held)
     }
     /// Other platforms have no cooperative guard to wait for.
-    pub fn worktree_mutation_guard_waiting(repo: &gix::Repository, _: super::MutationWait) -> Result<()> {
+    pub fn worktree_mutation_guard_waiting(repo: &gix::Repository, _: super::MutationWait) -> Result<Held> {
+        ensure_no_pending(repo).map(|()| Held)
+    }
+    /// Other platforms have no cooperative guard; refuse only on pending recovery.
+    pub fn worktree_writer_guard(repo: &gix::Repository) -> Result<Held> {
+        ensure_no_pending(repo).map(|()| Held)
+    }
+    /// Other platforms have no cooperative guard; refuse only on pending recovery.
+    pub fn push_guard(repo: &gix::Repository) -> Result<Held> {
+        ensure_no_pending(repo).map(|()| Held)
+    }
+    /// Other platforms have no cooperative guard; refuse only on pending recovery.
+    pub fn reacquire_for_send(_: &mut Held, repo: &gix::Repository, _: super::MutationWait) -> Result<()> {
         ensure_no_pending(repo)
+    }
+    /// Other platforms have no cooperative guard.
+    pub fn other_worktree_guard(_: &gix::Repository) -> Result<Held> {
+        Ok(Held)
     }
     /// Refuse before mutation where the durability contract cannot be fulfilled.
     pub fn execute(_: gix::Repository, _: &gix::bstr::BStr) -> Result<()> {
@@ -179,8 +242,9 @@ mod unavailable {
 }
 #[cfg(not(target_os = "linux"))]
 pub use unavailable::{
-    ensure_no_pending, execute, mutation_guard, mutation_guard_waiting, recover, status, worktree_mutation_guard,
-    worktree_mutation_guard_waiting,
+    HOOK_MARKER, Held, WorktreeGuard, ensure_no_pending, execute, mutation_guard, mutation_guard_waiting,
+    other_worktree_guard, push_guard, reacquire_for_send, recover, status, worktree_mutation_guard,
+    worktree_mutation_guard_waiting, worktree_writer_guard,
 };
 
 #[cfg(test)]
@@ -208,6 +272,44 @@ mod tests {
         assert_eq!(
             MutationWait::For(Duration::from_secs(9)).at_least(MutationWait::Forever),
             MutationWait::Forever
+        );
+    }
+}
+
+#[cfg(test)]
+mod redaction {
+    fn argv(args: &[&str]) -> Vec<String> {
+        args.iter().map(|arg| (*arg).to_owned()).collect()
+    }
+
+    #[test]
+    fn only_the_program_name_and_resolved_subcommands_appear() {
+        let named = |_: &[String]| vec!["fetch".to_owned()];
+        let secret = argv(&[
+            "/usr/local/bin/brit",
+            "-c",
+            "http.extraHeader=Authorization: Bearer s3cr3t",
+            "fetch",
+            "https://user:TOKEN@host/repo.git",
+        ]);
+        let label = super::redact_with(&secret, Some(&named));
+        assert_eq!(label, "brit fetch");
+        assert!(!label.contains("s3cr3t") && !label.contains("TOKEN"));
+        assert_eq!(
+            super::redact_with(&secret, None),
+            "brit",
+            "without a resolver only the name"
+        );
+        let other = argv(&[
+            "/usr/bin/flock",
+            ".git/brit-mutation.guard",
+            "curl",
+            "https://user:TOKEN@host",
+        ]);
+        assert_eq!(
+            super::redact_with(&other, Some(&named)),
+            "flock",
+            "never resolves foreign programs"
         );
     }
 }

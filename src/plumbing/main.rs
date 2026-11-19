@@ -42,6 +42,9 @@ enum GuardScope {
     Worktree,
     /// Writes shared repository state; excludes every other Brit writer.
     Repository,
+    /// Writes shared repository state and rewrites its own worktree's index, HEAD or files:
+    /// that worktree's guard, then the repository guard exclusively.
+    RepositoryAndWorktree,
 }
 
 // Keep inspection usable during recovery. New commands default to the writer
@@ -49,6 +52,15 @@ enum GuardScope {
 fn mutation_guard_scope(cmd: &Subcommands) -> GuardScope {
     match cmd {
         Subcommands::Add { .. } | Subcommands::Commit(commit::Platform { cmd: None, .. }) => GuardScope::Worktree,
+        // Rewrite the invoking worktree. Switch, pull and rebase take the same pair themselves.
+        Subcommands::Restore { .. }
+        | Subcommands::Merge(merge::Platform {
+            cmd: merge::SubCommands::Tree { update_head: true, .. },
+        }) => GuardScope::RepositoryAndWorktree,
+        #[cfg(feature = "gitoxide-core-tools-clean")]
+        Subcommands::Clean(crate::plumbing::options::clean::Command { execute: true, .. }) => {
+            GuardScope::RepositoryAndWorktree
+        }
         // Push guards its reference resolution and send-pack itself, never its pre-push hook.
         #[cfg(feature = "gitoxide-core-blocking-client")]
         Subcommands::Push(_) => GuardScope::None,
@@ -198,6 +210,22 @@ fn explicit_write_paths(cmd: &Subcommands) -> Vec<&std::path::Path> {
     paths
 }
 
+/// Set the writer wait policy (`--wait`, else `BRIT_MUTATION_WAIT`) and teach guard
+/// refusals to name another Brit process by its subcommand path only.
+/// Every entry point that may take a writer guard calls this once, before any guard.
+pub fn configure_mutation_guards(
+    wait: Option<core::repository::switch::MutationWait>,
+    command: &clap::Command,
+) -> Result<()> {
+    core::repository::switch::set_mutation_wait(match wait {
+        Some(wait) => wait,
+        None => mutation_wait_from_environment()?,
+    });
+    let command = command.clone();
+    core::repository::switch::set_command_resolver(move |args| super::guard_label::subcommand_path(&command, args));
+    Ok(())
+}
+
 /// The default writer wait from `BRIT_MUTATION_WAIT` (`SECONDS` or `forever`).
 fn mutation_wait_from_environment() -> Result<core::repository::switch::MutationWait> {
     match std::env::var_os("BRIT_MUTATION_WAIT") {
@@ -230,10 +258,7 @@ pub fn run_with_command(args: Args, command: clap::Command) -> Result<()> {
     let trace = 0;
     let cmd = args.cmd;
     let guards = std::cell::RefCell::new(super::MutationGuards::default());
-    core::repository::switch::set_mutation_wait(match args.wait {
-        Some(wait) => wait,
-        None => mutation_wait_from_environment()?,
-    });
+    configure_mutation_guards(args.wait, &command)?;
     let guard_scope = mutation_guard_scope(&cmd);
     for path in explicit_write_paths(&cmd) {
         guards.borrow_mut().path(path)?;
@@ -325,6 +350,7 @@ pub fn run_with_command(args: Args, command: clap::Command) -> Result<()> {
                 GuardScope::None => {}
                 GuardScope::Worktree => guards.borrow_mut().worktree(&repo)?,
                 GuardScope::Repository => guards.borrow_mut().repository(&repo)?,
+                GuardScope::RepositoryAndWorktree => guards.borrow_mut().repository_and_worktree(&repo)?,
             }
             Ok(repo)
         }

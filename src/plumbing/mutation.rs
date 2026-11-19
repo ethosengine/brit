@@ -1,18 +1,10 @@
 //! The public adapter's shared writer boundary, including commands with explicit destinations.
-#[cfg(not(target_os = "linux"))]
-type File = ();
-#[cfg(not(target_os = "linux"))]
-type WorktreeGuard = ();
-#[cfg(target_os = "linux")]
-use std::fs::File;
-
-#[cfg(target_os = "linux")]
-use gitoxide_core::repository::switch::WorktreeGuard;
 use std::{
     collections::BTreeSet,
     path::{Path, PathBuf},
 };
 
+use gitoxide_core::repository::switch::Held;
 use gix::{Result, error::ResultExt};
 
 /// Holds writer guards until the invoking command finishes.
@@ -22,9 +14,8 @@ use gix::{Result, error::ResultExt};
 #[derive(Default)]
 pub struct MutationGuards {
     repositories: BTreeSet<PathBuf>,
-    guards: Vec<File>,
     worktrees: BTreeSet<PathBuf>,
-    worktree_guards: Vec<WorktreeGuard>,
+    guards: Vec<Held>,
 }
 
 impl MutationGuards {
@@ -43,7 +34,7 @@ impl MutationGuards {
         {
             return Err(gix::error::validation("one command cannot guard two worktrees of a repository").into());
         }
-        self.worktree_guards.push(
+        self.guards.push(
             gitoxide_core::repository::switch::worktree_mutation_guard(repo).map_err(super::main::anyhow_to_gix)?,
         );
         self.worktrees.insert(git_dir);
@@ -51,6 +42,15 @@ impl MutationGuards {
     }
 
     pub(crate) fn repository(&mut self, repo: &gix::Repository) -> Result<()> {
+        self.exclusive(repo, false)
+    }
+
+    /// Guard a shared write that also rewrites `repo`'s own worktree.
+    pub(crate) fn repository_and_worktree(&mut self, repo: &gix::Repository) -> Result<()> {
+        self.exclusive(repo, true)
+    }
+
+    fn exclusive(&mut self, repo: &gix::Repository, rewrites_worktree: bool) -> Result<()> {
         let common = repo.common_dir().canonicalize().or_error()?;
         if !self.worktrees.is_empty() && !self.repositories.contains(&common) {
             // A held shared repository guard cannot be upgraded without a deadlock-prone window.
@@ -58,10 +58,29 @@ impl MutationGuards {
                 gix::error::validation("a worktree-local command cannot also take the repository guard").into(),
             );
         }
-        if !self.repositories.contains(&common) {
-            self.guards
-                .push(gitoxide_core::repository::switch::mutation_guard(repo).map_err(super::main::anyhow_to_gix)?);
-            self.repositories.insert(common);
+        let git_dir = repo.git_dir().canonicalize().or_error()?;
+        if self.repositories.contains(&common) {
+            if rewrites_worktree && repo.workdir().is_some() && self.worktrees.insert(git_dir) {
+                // Never wait for a worktree while holding the repository guard.
+                self.guards.push(
+                    gitoxide_core::repository::switch::other_worktree_guard(repo)
+                        .map(Held::from)
+                        .map_err(super::main::anyhow_to_gix)?,
+                );
+            }
+            return Ok(());
+        }
+        self.guards.push(
+            if rewrites_worktree {
+                gitoxide_core::repository::switch::worktree_writer_guard(repo)
+            } else {
+                gitoxide_core::repository::switch::mutation_guard(repo)
+            }
+            .map_err(super::main::anyhow_to_gix)?,
+        );
+        self.repositories.insert(common);
+        if rewrites_worktree {
+            self.worktrees.insert(git_dir);
         }
         Ok(())
     }
@@ -110,5 +129,41 @@ impl MutationGuards {
             }
             Err(err) => Err(err),
         }
+    }
+}
+
+#[cfg(all(test, target_os = "linux"))]
+mod tests {
+    use super::MutationGuards;
+
+    #[test]
+    fn a_worktree_local_command_cannot_upgrade_to_the_repository_guard() {
+        let dir = std::env::temp_dir().join(format!("brit-guard-upgrade-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&dir);
+        std::fs::create_dir_all(&dir).expect("temporary directory");
+        let status = std::process::Command::new("git")
+            .args(["init", "-q"])
+            .current_dir(&dir)
+            .status()
+            .expect("git runs");
+        assert!(status.success());
+        let repo = gix::open(&dir).expect("fresh repository opens");
+        let mut guards = MutationGuards::default();
+        guards.worktree(&repo).expect("worktree guard");
+        guards.worktree(&repo).expect("the same worktree is already covered");
+        let refused = guards.repository(&repo).expect_err("no upgrade to exclusive");
+        assert!(
+            refused.to_string().contains("cannot also take the repository guard"),
+            "{refused}"
+        );
+        let refused = guards
+            .repository_and_worktree(&repo)
+            .expect_err("no upgrade to exclusive with the worktree");
+        assert!(
+            refused.to_string().contains("cannot also take the repository guard"),
+            "{refused}"
+        );
+        drop(guards);
+        let _ = std::fs::remove_dir_all(&dir);
     }
 }
