@@ -146,6 +146,9 @@ fn run_action(mut repo: gix::Repository, action: Action, out: &mut dyn Write, er
              remove it; nothing was changed; brit rebase --status says what failed and what to do by hand",
         ));
     }
+    if !matches!(action, Action::Status) {
+        Session::settle_pending(&repo)?;
+    }
     if matches!(action, Action::Abort)
         && let Some(differences) = Session::cancel_preparation(&repo)?
     {
@@ -157,6 +160,18 @@ fn run_action(mut repo: gix::Repository, action: Action, out: &mut dyn Write, er
             writeln!(err, "warning: {difference}; left as found")?;
         }
         return Ok(());
+    }
+    let journal = repo.git_dir().join("brit-rebase");
+    if !matches!(action, Action::Status)
+        && !["state.json", "state.pending"]
+            .iter()
+            .any(|name| journal.join(name).symlink_metadata().is_ok())
+    {
+        anyhow::bail!(
+            "a rebase preparation stopped before it recorded anything and changed nothing live, so there is \
+             nothing to continue; brit rebase --abort removes its directory {journal:?}, then the rebase can be \
+             started again"
+        );
     }
     let mut session = match Session::open(&repo) {
         Ok(session) => session,
@@ -182,6 +197,17 @@ fn run_action(mut repo: gix::Repository, action: Action, out: &mut dyn Write, er
         }
         Err(error) => return Err(error),
     };
+    // A stop recorded before its authoring session was created (a kill between
+    // the two): each authoring command first creates it, as --continue does.
+    if matches!(
+        action,
+        Action::Stage { .. } | Action::Amend(_) | Action::Commit(_) | Action::BeginSplit
+    ) && session.phase() == "authoring"
+        && !session.has_pending_decision()
+        && !repo.git_dir().join("brit-authoring").try_exists()?
+    {
+        session.recover_stop(&repo)?;
+    }
     let result = match action {
         Action::Status => {
             session.status(out)?;
@@ -445,10 +471,23 @@ fn report_unopenable(repo: &gix::Repository, error: &anyhow::Error, out: &mut dy
          0700 and its files mode 0600, owned by the repository's owner), restoring them lets --status, --abort and \
          --continue use it again."
     )?;
+    if let Some(recorded) = super::Session::recorded_location(repo) {
+        writeln!(
+            out,
+            "The journal records that its rebase ran in {} (no longer present), so this repository was most likely \
+             moved from there part-way through it. Moving it back to {} and running brit rebase --abort there \
+             restores HEAD, the index, the worktree and the uncommitted work exactly; brit rebase --continue there \
+             carries the rebase on.",
+            shell_quote(&recorded),
+            shell_quote(&recorded)
+        )?;
+    }
     writeln!(
         out,
-        "To set it aside by hand, once no Brit or Git command runs in this repository: move {} out of the way, for \
-         example to {}.",
+        "To set it aside by hand instead, once no Brit or Git command runs in this repository: move {} out of the \
+         way, for example to {}. This restores nothing: if the rebase had begun changing the checkout, HEAD, the \
+         index and the worktree stay part-way through it, and only the journal's payload-* files and the retained \
+         copies hold what it changed.",
         shell_quote(&directory),
         shell_quote(&repo.git_dir().join("brit-rebase-kept-manual"))
     )?;

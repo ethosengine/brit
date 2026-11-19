@@ -29,6 +29,37 @@
 //! also removes exactly these two when the directory holds no launch or exit
 //! receipt. Any other member, or a later phase, leaves the journal to the full abort.
 //!
+//! # A successor record is never in effect before its rename
+//!
+//! Every journal record is published the same way: `save` (or `save_bytes`)
+//! writes the whole successor as `state.pending` and synchronizes it (checkpoint
+//! `replay-state-file-synced`), then `publish_state` renames it onto `state.json`
+//! and synchronizes the directory (`replay-state-directory-synced`). Nothing else
+//! happens between those two points, in any phase. The write order per transition:
+//!
+//! | Transition (writer) | Live writes before the record is written | Between "pending synced" and "renamed" | A `state.pending` found beside a valid `state.json` |
+//! |---|---|---|---|
+//! | first record, `preparing` (`prepare_mode`, `save_bytes`) | none | nothing | (no `state.json`: the pending record is the only one; cancellation releases it) |
+//! | `preparing` → `prepared` (`complete_preparation`) | none (refs and payloads are named first) | nothing | rolled forward when it equals `state.json` but for the phase (`recover_preparation`, cancellation); otherwise discarded |
+//! | `prepared` → `invoking-pre` and the hook's outcome phases | private only (`index.pre-rebase`, the invocation directory) | nothing | discarded |
+//! | every decision: checkout, stop, step, skip, final, abort (`apply_decision`) | the durable decision record, then the transition's live writes | nothing | discarded: the decision record remains and is rolled forward again, as after a kill just before the save |
+//! | phase-only records (`step-proposed`, `message`, `replaying`, `ready-final`, `break`, `edit-accepted`, `message-ready`, `retaining-skip`, `retaining-abort`, `completed`, `invoking-post` and its outcomes, the cleanup copy count) | whatever the step did before, guarded by the record already in effect | nothing | discarded |
+//! | the legacy payload upgrade (`migrate_inline_work`) | none (private payload files only) | nothing | its own two successors are rolled forward; any other is discarded |
+//! | cancellation (`cancelling-prepared`) | none | nothing | discarded; cancellation runs again |
+//!
+//! No transition writes anything live between the two points, so discarding a
+//! complete pending record leaves the journal exactly as a kill at the instant
+//! before it was written would have, a state every command already recovers
+//! from. `save` therefore discards an unrenamed `state.pending` before writing
+//! its own (a retry builds a different successor than the killed command did, so
+//! comparing them, as Brit once did, stranded the rebase), and a torn one too.
+//! Without `state.json` a pending record is the journal's only record and is kept.
+//!
+//! The same holds for the other records written in one sequential pass: a
+//! decision record cut short (its JSON ends early) never became durable and is
+//! discarded, since the transition writes nothing live before it; a staged
+//! proposal (`plan.json`) or staging owner record cut short is written again.
+//!
 //! # The scratch quota never walls in recovery
 //!
 //! Every journal and retained copy lives under the scratch quota, and the quota
@@ -1338,7 +1369,7 @@ impl Session {
         Ok(())
     }
 
-    fn adopt_abandoned_plan(&mut self) -> Result<()> {
+    fn adopt_abandoned_plan(&mut self, repo: &gix::Repository) -> Result<()> {
         let before = switch::digest(&serde_json::to_vec(&self.state)?)?;
         let ordinal = self.state.decisions + 1;
         let name = format!("transition-{ordinal}-{before}");
@@ -1351,25 +1382,53 @@ impl Session {
                         && metadata.permissions().mode().trailing_zeros() >= 6,
                     "foreign proposed transition directory"
                 );
-                // A private preparation directory can become visible before its
-                // ownership recipe. No live write precedes the decision, so abort
-                // can restore the pinned parent without adopting this orphan.
-                // The retained copy preserves its bytes; cleanup's exact inventory
-                // deliberately continues to refuse the unproved directory.
-                for member in ["owner", "plan.json"] {
-                    match fs::symlink_metadata(directory.join(member)) {
-                        Err(error) if error.kind() == std::io::ErrorKind::NotFound => return Ok(()),
-                        Err(error) => return Err(error.into()),
-                        Ok(_) => {}
+                // A private preparation directory becomes visible before its
+                // ownership record, which precedes its plan; each is written in one
+                // pass, so a kill can leave either absent or cut short. No live
+                // write precedes the decision, so abort restores the pinned parent
+                // without adopting such an orphan.
+                let uid = fs::metadata(&self.directory)?.uid();
+                let read = |member: &str| -> Result<Option<Vec<u8>>> {
+                    let path = directory.join(member);
+                    if !present(&path)? {
+                        return Ok(None);
                     }
-                }
+                    ensure!(owned_private_file(&path, uid)?, "foreign proposed transition member");
+                    Ok(Some(fs::read(path)?))
+                };
+                let expected = serde_json::to_vec(&(self.state.nonce.as_str(), ordinal, before.as_str()))?;
+                let owner = read("owner")?;
                 ensure!(
-                    fs::read(directory.join("owner"))?
-                        == serde_json::to_vec(&(self.state.nonce.as_str(), ordinal, before.as_str()))?,
+                    owner.as_ref().is_none_or(|owner| expected.starts_with(owner)),
                     "foreign proposed transition owner"
                 );
-                let bytes = fs::read(directory.join("plan.json"))?;
-                let envelope: Envelope = serde_json::from_slice(&bytes)?;
+                let plan = read("plan.json")?;
+                let complete = match &plan {
+                    Some(bytes) => torn_record(bytes)?,
+                    None => None,
+                };
+                let (Some(envelope), Some(bytes), true) = (complete, plan.clone(), owner == Some(expected)) else {
+                    // Without a whole plan nothing followed it (no lock, directory
+                    // or decision): when the directory holds only these two
+                    // never-effective records, it is removed so cleanup's exact
+                    // inventory finds nothing unproved. Anything else is kept.
+                    if plan
+                        .as_deref()
+                        .is_none_or(|bytes| torn_record(bytes).is_ok_and(|plan| plan.is_none()))
+                    {
+                        let members = fs::read_dir(&directory)?
+                            .map(|entry| Ok(entry?.file_name()))
+                            .collect::<Result<Vec<_>>>()?;
+                        if members.iter().all(|name| name == "owner" || name == "plan.json") {
+                            for name in members {
+                                fs::remove_file(directory.join(name))?;
+                            }
+                            fs::remove_dir(&directory)?;
+                            switch::sync_dir(&self.directory)?;
+                        }
+                    }
+                    return Ok(());
+                };
                 ensure!(
                     switch::digest(&envelope.payload)? == envelope.checksum,
                     "corrupt abandoned plan"
@@ -1379,6 +1438,10 @@ impl Session {
                     plan.before == before && plan.ordinal == ordinal && plan.nonce == self.state.nonce,
                     "abandoned plan belongs to another parent state"
                 );
+                // A command killed after this plan took its locks and before its
+                // decision record (or with that record cut short) left them held;
+                // the plan is never decided now, so its own locks are released.
+                plan.transition.release_undecided_locks(repo, &directory)?;
                 self.state.abandoned_plans.push((name, switch::digest(&bytes)?));
             }
             Err(error) if error.kind() == std::io::ErrorKind::NotFound => {}
@@ -1646,7 +1709,7 @@ impl Session {
             self.reserve(repo, self.step_need(repo, Some(&desired), true, &[])?)?;
         }
         if self.state.phase != "retaining-skip" {
-            self.adopt_abandoned_plan()?;
+            self.adopt_abandoned_plan(repo)?;
         }
         if self.state.phase == "authoring" {
             self.accept_discard_child(repo, false)?;
@@ -1773,7 +1836,7 @@ impl Session {
                 ))
                 .try_exists()?;
         if self.state.phase != "retaining-abort" || retry_preparation {
-            self.adopt_abandoned_plan()?;
+            self.adopt_abandoned_plan(repo)?;
         }
         if self.state.phase == "authoring" && repo.git_dir().join("brit-authoring").exists() {
             self.accept_discard_child(repo, true)?;
@@ -2376,6 +2439,47 @@ impl Session {
         Ok(())
     }
 
+    /// Before a command reads this repository's journal, discard a successor
+    /// record a killed command left unrenamed beside `state.json` (see the
+    /// module's write-order table: it never took effect, and nothing live was
+    /// written after it), so no step, copy or inventory ever sees it. A
+    /// preparation's own successor is left to preparation recovery, which rolls
+    /// it forward. Holds the mutation guard, so it never races a live writer.
+    pub fn settle_pending(repo: &gix::Repository) -> Result<()> {
+        const PREPARATION: [&str; 3] = ["preparing", "prepared", "cancelling-prepared"];
+        let _guard = switch::shared_guard(repo)?;
+        let directory = repo.git_dir().join("brit-rebase");
+        if !present(&directory.join("state.pending"))? || !present(&directory.join("state.json"))? {
+            return Ok(());
+        }
+        let session = Self::open_directory_checked(repo, directory.clone(), "state.json", false)?;
+        if PREPARATION.contains(&session.state.phase.as_str())
+            && read_record(&directory.join("state.pending"))
+                .and_then(|bytes| decode_state(&bytes))
+                .is_ok_and(|pending| PREPARATION.contains(&pending.phase.as_str()))
+        {
+            return Ok(());
+        }
+        session.discard_unrenamed_pending().map(drop)
+    }
+
+    /// For a journal that does not open because the repository was moved: the
+    /// worktree location its checksummed record names, when that location no
+    /// longer exists and is not this repository's. Reads only that one field of a
+    /// record whose checksum holds; trusts nothing else in it and changes nothing.
+    pub fn recorded_location(repo: &gix::Repository) -> Option<std::path::PathBuf> {
+        let directory = repo.git_dir().join("brit-rebase");
+        let name = ["state.json", "state.pending"]
+            .into_iter()
+            .find(|name| present(&directory.join(name)).unwrap_or(false))?;
+        let state = decode_state(&read_record(&directory.join(name)).ok()?).ok()?;
+        use std::os::unix::ffi::OsStringExt;
+        let current = raw(repo.workdir()?).ok()?;
+        let differs = state.worktree != current;
+        let recorded = std::path::PathBuf::from(std::ffi::OsString::from_vec(state.worktree));
+        (differs && recorded.is_absolute() && !present(&recorded).unwrap_or(true)).then_some(recorded)
+    }
+
     /// Open without changing any repository resource or replaying any action.
     pub fn open(repo: &gix::Repository) -> Result<Self> {
         match fs::symlink_metadata(repo.git_dir().join("brit-rebase/state.json")) {
@@ -2966,8 +3070,31 @@ impl Session {
         switch::sync_dir(repo.git_dir())
     }
 
+    /// An existing `state.pending` beside a published `state.json` is the
+    /// successor record of a command killed before its rename. It was never in
+    /// effect, and no live write lies between writing it and renaming it (see the
+    /// module's write-order table), so the journal is exactly as if that command
+    /// had stopped before writing it: remove it. Returns whether one was removed.
+    /// Without `state.json` a pending record is the only record and stays.
+    fn discard_unrenamed_pending(&self) -> Result<bool> {
+        let pending = self.directory.join("state.pending");
+        if !present(&pending)? || !present(&self.directory.join("state.json"))? {
+            return Ok(false);
+        }
+        ensure!(
+            owned_private_file(&pending, fs::metadata(&self.directory)?.uid())?,
+            "unsafe pending replay state"
+        );
+        fs::remove_file(&pending)?;
+        switch::sync_dir(&self.directory)?;
+        Ok(true)
+    }
+
     fn save(&self) -> Result<()> {
         use std::io::{BufWriter, Seek, Write};
+        #[cfg(feature = "switch-test-faults")]
+        switch::checkpoint("replay-state-file-writing")?;
+        self.discard_unrenamed_pending()?;
         let payload = serde_json::to_vec(&self.state)?;
         let envelope = Envelope {
             checksum: switch::digest(&payload)?,
@@ -3018,6 +3145,9 @@ impl Session {
     /// `switch::payload::Recovery` scope); cancellation writes unmetered, so an
     /// exhausted journal can still be released.
     fn save_bytes(&self, bytes: &[u8], metered: bool) -> Result<()> {
+        #[cfg(feature = "switch-test-faults")]
+        switch::checkpoint("replay-state-file-writing")?;
+        self.discard_unrenamed_pending()?;
         let temporary = self.directory.join("state.pending");
         match fs::symlink_metadata(&temporary) {
             Ok(metadata) => {
@@ -3354,14 +3484,36 @@ impl Session {
         .then(switch::payload::Recovery::enter);
         let owner = serde_json::to_vec(&(decision.nonce.as_str(), decision.ordinal, decision.before.as_str()))?;
         match fs::symlink_metadata(&staging) {
-            Ok(metadata) => ensure!(
-                metadata.is_dir()
-                    && metadata.permissions().mode().trailing_zeros() >= 6
-                    && metadata.uid() == fs::metadata(&self.directory)?.uid()
-                    && fs::symlink_metadata(staging.join("owner"))?.is_file()
-                    && fs::read(staging.join("owner"))? == owner,
-                "foreign replay transition staging directory"
-            ),
+            Ok(metadata) => {
+                let uid = fs::metadata(&self.directory)?.uid();
+                ensure!(
+                    metadata.is_dir() && metadata.permissions().mode().trailing_zeros() >= 6 && metadata.uid() == uid,
+                    "foreign replay transition staging directory"
+                );
+                let path = staging.join("owner");
+                let existing = if present(&path)? {
+                    ensure!(
+                        owned_private_file(&path, uid)?,
+                        "foreign replay transition staging directory"
+                    );
+                    Some(fs::read(&path)?)
+                } else {
+                    None
+                };
+                if existing.as_deref() != Some(owner.as_slice()) {
+                    // This directory's owner record, never written or cut short
+                    // while written (a strict prefix of it): this staging's own.
+                    ensure!(
+                        existing.as_ref().is_none_or(|bytes| owner.starts_with(bytes)),
+                        "foreign replay transition staging directory"
+                    );
+                    if existing.is_some() {
+                        fs::remove_file(&path)?;
+                    }
+                    switch::private_write(&path, &owner)?;
+                    switch::sync_dir(&staging)?;
+                }
+            }
             Err(error) if error.kind() == std::io::ErrorKind::NotFound => {
                 use std::os::unix::fs::DirBuilderExt;
                 fs::DirBuilder::new().mode(0o700).create(&staging)?;
@@ -3374,8 +3526,19 @@ impl Session {
         }
         if new {
             let plan = staging.join("plan.json");
-            if plan.exists() {
-                let envelope: Envelope = serde_json::from_slice(&fs::read(&plan)?)?;
+            // A proposal cut short while written proposed nothing: no decision
+            // record exists yet (`new`), so it is written again below.
+            let proposal = if plan.exists() {
+                let proposal = torn_record(&fs::read(&plan)?)?;
+                if proposal.is_none() {
+                    fs::remove_file(&plan)?;
+                    switch::sync_dir(&staging)?;
+                }
+                proposal
+            } else {
+                None
+            };
+            if let Some(envelope) = proposal {
                 ensure!(
                     switch::digest(&envelope.payload)? == envelope.checksum,
                     "corrupt proposed replay transition"
@@ -3570,7 +3733,17 @@ impl Session {
                 && metadata.uid() == fs::metadata(&session.directory)?.uid(),
             "unsafe replay decision"
         );
-        let envelope: Envelope = serde_json::from_slice(&fs::read(&path)?)?;
+        let envelope: Envelope = match torn_record(&fs::read(&path)?)? {
+            Some(envelope) => envelope,
+            None => {
+                // Cut short while it was written: the decision never became
+                // durable, and nothing live is written before it is (see
+                // `transition::apply`). The journal is as if it never began.
+                fs::remove_file(&path)?;
+                switch::sync_dir(&session.directory)?;
+                return Ok(session);
+            }
+        };
         ensure!(
             switch::digest(&envelope.payload)? == envelope.checksum,
             "corrupt replay decision"
@@ -3771,6 +3944,18 @@ fn read_record(path: &Path) -> Result<Vec<u8>> {
         path.display()
     );
     Ok(fs::read(path)?)
+}
+
+/// The envelope of a record written in one sequential pass, or `None` when the
+/// bytes end before the JSON does: a prefix of the record, written by a process
+/// killed part-way or lost with the page cache before its file was synchronized.
+/// Any other defect is an error, never mistaken for an interrupted write.
+fn torn_record(bytes: &[u8]) -> Result<Option<Envelope>> {
+    match serde_json::from_slice(bytes) {
+        Ok(envelope) => Ok(Some(envelope)),
+        Err(error) if error.is_eof() => Ok(None),
+        Err(error) => Err(error.into()),
+    }
 }
 
 /// Decode one journal record and verify its checksum.
@@ -4080,9 +4265,45 @@ impl Session {
             self.state.original, self.state.upstream
         )?;
         if self.has_pending_decision() {
+            let path = self
+                .directory
+                .join(format!("decision-{}.json", self.state.decisions + 1));
+            let kind = fs::read(&path).ok().and_then(|bytes| match torn_record(&bytes) {
+                Ok(Some(envelope)) => Some(
+                    serde_json::from_slice::<Decision>(&envelope.payload)
+                        .map(|decision| decision.transition.kind)
+                        .ok(),
+                ),
+                Ok(None) => None,
+                Err(_) => Some(None),
+            });
+            let line = match kind {
+                None => "An interrupted command left its decision record incomplete; it never became durable, and \
+                         the next --continue or --abort discards it and goes on from the state above."
+                    .to_owned(),
+                Some(Some(super::transition::Kind::Final)) => {
+                    "Durable final decision pending: --continue publishes the rebase; a final decision cannot be \
+                     aborted."
+                        .to_owned()
+                }
+                Some(Some(super::transition::Kind::Abort)) => {
+                    "Durable abort decision pending: --abort (or --continue) finishes restoring the original state."
+                        .to_owned()
+                }
+                Some(Some(_)) => "Durable decision pending: --continue applies it and carries the rebase on; --abort \
+                                  applies it, then restores the original state."
+                    .to_owned(),
+                Some(None) => {
+                    format!("Decision record {path:?} does not decode; --continue and --abort refuse it; inspect it.")
+                }
+            };
+            writeln!(out, "{line}")?;
+        }
+        if self.directory.join("state.json").exists() && self.directory.join("state.pending").exists() {
             writeln!(
                 out,
-                "Durable decision pending: use --continue; final decisions cannot be aborted."
+                "An interrupted command left an unrenamed successor record (state.pending); it never took effect. \
+                 The state above is the journal's, and the next --continue, --skip or --abort discards it."
             )?;
         }
         if self.phase() == "authoring" {
@@ -4130,6 +4351,29 @@ impl Session {
                 out,
                 "Rebase published; --continue acknowledges the post-hook outcome without rerun."
             )?;
+        }
+        // Phases the lines above give no cure for: a command stopped between steps.
+        let cure = match self.phase() {
+            "prepared" | "pre-approved" | "pre-rejected" | "step-proposed" | "replaying" | "ready-final" | "break"
+            | "message" | "message-ready" | "edit-accepted" => {
+                Some("Stopped between steps: --continue carries the rebase on; --abort restores the original state.")
+            }
+            "retaining-skip" => Some(
+                "A skip stopped while retaining its copy: --continue (or --skip) finishes the skip; --abort restores \
+                 the original state.",
+            ),
+            "retaining-abort" => Some("An abort stopped part-way: --abort finishes restoring the original state."),
+            "aborted" => Some("The original state is restored: --abort finishes removing the journal."),
+            "completed" | "final-published" => {
+                Some("The rebase is published and cannot be aborted: --continue finishes it and removes the journal.")
+            }
+            _ => None,
+        };
+        if let Some(cure) = cure
+            && !(self.phase() == "prepared" && self.directory.join("pre-rebase").try_exists()?)
+            && !(self.phase() == "final-published" && self.directory.join("post-rewrite").try_exists()?)
+        {
+            writeln!(out, "{cure}")?;
         }
         if let Some(outcome) = self.state.post_outcome {
             writeln!(out, "Post-rewrite outcome: {outcome:?}")?;

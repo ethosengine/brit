@@ -184,8 +184,13 @@ pub(super) fn preflight(
     })?;
     let needed = bound.needed();
     if needed > limit {
+        let cause = if limit == gix::utils::stream::SCRATCH_LIMIT {
+            "brit rebase is not available on repositories of this size yet"
+        } else {
+            "the scratch limit configured for testing is too small for this rebase"
+        };
         anyhow::bail!(
-            "rebase refused before it started: brit rebase is not available on repositories of this size yet; its \
+            "rebase refused before it started: {cause}; its \
              journal and retained copy can need up to {needed} bytes ({} objects of {} bytes{}, plus journal, \
              manifest and index), over the {limit}-byte scratch limit every journal and retained copy lives under; \
              nothing was changed; git rebase is the fallback",
