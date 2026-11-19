@@ -759,17 +759,26 @@ pub mod diff {
 
     #[derive(Debug, clap::Subcommand)]
     pub enum SubCommands {
-        /// Diff two trees.
+        /// Diff two trees: `OLD NEW`, `--merge-base OLD NEW`, or a lone `A..B` or `A...B`.
         Tree {
             /// Show an 80-column summary instead of object changes.
             #[clap(long)]
             stat: bool,
-            /// A rev-spec representing the 'before' or old tree.
+            /// Print only the changed paths, one per line, like `git diff --name-only --no-renames`.
+            ///
+            /// A rename is listed as its deleted and its added path.
+            #[clap(long, conflicts_with = "stat")]
+            name_only: bool,
+            /// Compare the merge base of both commits with NEW_TREEISH, like `git diff --merge-base`.
+            #[clap(long, requires = "new_treeish")]
+            merge_base: bool,
+            /// A rev-spec representing the 'before' or old tree, or alone a range: `A..B` compares
+            /// `A` with `B`, and `A...B` compares the merge base of `A` and `B` with `B`.
             #[clap(value_parser = crate::shared::AsBString)]
             old_treeish: BString,
             /// A rev-spec representing the 'after' or new tree.
             #[clap(value_parser = crate::shared::AsBString)]
-            new_treeish: BString,
+            new_treeish: Option<BString>,
         },
         /// Diff two versions of a file.
         File {
@@ -786,13 +795,19 @@ pub mod diff {
 pub mod log {
     use gix::bstr::BString;
 
-    /// List commits reachable from a revision, optionally only those that change given paths.
+    /// List commits reachable from revisions, optionally only those that change given paths.
     ///
-    /// With a revision or paths, commits stream newest first by commit time, like `git log`,
-    /// and a shallow boundary ends the walk. Paths follow Git's default history
-    /// simplification: a commit counts when it differs from its parent at a path, a merge
-    /// equal to one parent there is skipped and only that parent is followed, and a root or
-    /// shallow-boundary commit counts when the path exists.
+    /// Without paths, the set is exactly the commits reachable from the included revisions
+    /// and not from the excluded ones, ordered like `git rev-list --date-order`. That is
+    /// Git's set except where clock skew makes Git's limiter stop early; commits with
+    /// identical commit times may be ordered differently from Git.
+    ///
+    /// With paths, commits are listed like `git log <revisions> -- <paths>`, following Git's
+    /// limiter and its default history simplification: a commit counts when it differs from
+    /// its parent at a path, a merge equal to one parent there is skipped and only that parent
+    /// is followed, and a root or shallow-boundary commit counts when the path exists.
+    ///
+    /// Every form stops at a shallow boundary, as Git does.
     #[derive(Debug, clap::Parser)]
     pub struct Platform {
         /// Stop after this many commits (Brit also accepts -N; zero prints none).
@@ -801,10 +816,11 @@ pub mod log {
         /// Print the abbreviated hash (honouring core.abbrev, like `git log --oneline`) and title.
         #[clap(long)]
         pub oneline: bool,
-        /// The revision to start from (default HEAD). A name that is no revision but an
-        /// existing worktree path is read as a path; use `--` to force paths.
-        #[clap(value_parser = crate::shared::AsBString, value_name = "REV")]
-        pub rev: Option<BString>,
+        /// Revisions to list instead of HEAD: `origin/dev`, `^A`, `A..B`, `A...B`, `A^@` or
+        /// `A^!`, combinable. A lone name that is no revision but an existing worktree path is
+        /// read as a path; use `--` to force paths.
+        #[clap(value_parser = crate::shared::AsBString, value_name = "REVISION")]
+        pub revisions: Vec<BString>,
         /// Only list commits that change one of these literal paths (files or directories,
         /// relative to the current directory); a trailing slash matches only directories.
         #[clap(last = true, value_parser = crate::shared::AsBString, value_name = "PATH")]

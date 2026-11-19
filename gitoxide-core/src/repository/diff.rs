@@ -815,6 +815,85 @@ pub fn tree_stat(
     write_diff_output(out, &mut rendered)
 }
 
+/// Resolve what `diff tree` compares: `OLD NEW` unchanged, `--merge-base OLD NEW` as the merge base
+/// of both commits and `NEW`, or a lone `A..B` (`A` and `B`) or `A...B` (merge base of both and `B`).
+pub fn tree_endpoints(
+    repo: &gix::Repository,
+    old_treeish: BString,
+    new_treeish: Option<BString>,
+    merge_base: bool,
+) -> Result<(BString, BString)> {
+    use gix::revision::plumbing::Spec;
+    let (ours, theirs) = match new_treeish {
+        Some(new_treeish) if !merge_base => return Ok((old_treeish, new_treeish)),
+        Some(new_treeish) => (
+            repo.rev_parse_single(old_treeish.as_bstr())?.detach(),
+            repo.rev_parse_single(new_treeish.as_bstr())?.detach(),
+        ),
+        None => match repo.rev_parse(old_treeish.as_bstr())?.detach() {
+            Spec::Range { from, to } => return Ok((from.to_string().into(), to.to_string().into())),
+            Spec::Merge { theirs, ours } => (theirs, ours),
+            _ => bail!(
+                message!("`{old_treeish}` needs a second tree, or must be a range like `A..B` or `A...B`").validation()
+            ),
+        },
+    };
+    let source = gix::object::bounded::Source::deferred(repo);
+    let commit = |id| {
+        source
+            .peel(id, gix::objs::Kind::Commit)
+            .or_raise(|| message!("merge-base comparison needs commits, but {id} is not one").validation())
+    };
+    let new_commit_id = commit(theirs)?;
+    let base_commit_id = repo
+        .merge_base(commit(ours)?, new_commit_id)?
+        .ok_or_raise(|| message!("{ours} and {theirs} have no merge base").validation())?;
+    Ok((base_commit_id.to_string().into(), new_commit_id.to_string().into()))
+}
+
+/// Print each path whose mode or object differs between two trees, in index order and
+/// without rename detection, quoted like Git's `diff --name-only --no-renames`.
+pub fn tree_name_only(
+    repo: gix::Repository,
+    out: &mut dyn std::io::Write,
+    old_treeish: BString,
+    new_treeish: BString,
+) -> Result<()> {
+    use std::cmp::Ordering;
+    let old_tree = repo.rev_parse_single(old_treeish.as_bstr())?.object()?.peel_to_tree()?;
+    let new_tree = repo.rev_parse_single(new_treeish.as_bstr())?.object()?.peel_to_tree()?;
+    let before = repo.index_from_tree(&old_tree.id)?;
+    let after = repo.index_from_tree(&new_tree.id)?;
+    let quote_high = repo.config_snapshot().try_boolean("core.quotePath")?.unwrap_or(true);
+    let budget = Budget::new(&std::env::temp_dir()).or_error()?;
+    let mut rendered = std::io::BufWriter::new(budget.spool().or_error()?);
+    // Both flattened indexes are sorted by path, so one merge walk finds every difference.
+    let (mut old_entries, mut new_entries) = (before.entries().iter().peekable(), after.entries().iter().peekable());
+    loop {
+        check_interrupted()?;
+        let path = match (old_entries.peek().copied(), new_entries.peek().copied()) {
+            (None, None) => break,
+            (Some(old), None) => old_entries.next().map(|_| old.path(&before)),
+            (None, Some(new)) => new_entries.next().map(|_| new.path(&after)),
+            (Some(old), Some(new)) => match old.path(&before).cmp(new.path(&after)) {
+                Ordering::Less => old_entries.next().map(|_| old.path(&before)),
+                Ordering::Greater => new_entries.next().map(|_| new.path(&after)),
+                Ordering::Equal => {
+                    let changed = (old.mode, old.id) != (new.mode, new.id);
+                    old_entries.next();
+                    new_entries.next();
+                    changed.then(|| new.path(&after))
+                }
+            },
+        };
+        if let Some(path) = path {
+            rendered.write_all(&quote_patch_path(path, quote_high)).or_error()?;
+            rendered.write_all(b"\n").or_error()?;
+        }
+    }
+    write_diff_output(out, &mut rendered)
+}
+
 struct FileStat {
     name: BString,
     added: usize,

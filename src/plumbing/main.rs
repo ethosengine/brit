@@ -541,13 +541,21 @@ pub fn run_with_command(args: Args, command: clap::Command) -> Result<()> {
             }),
             Some(crate::plumbing::options::diff::SubCommands::Tree {
                 stat,
+                name_only,
+                merge_base,
                 old_treeish,
                 new_treeish,
             }) => prepare_and_run("diff-tree", verbose, None, move |_progress, out, _err| {
+                let mode = if stat || name_only { Mode::Strict } else { Mode::Lenient };
+                let repo = repository(mode)?;
+                let (old_treeish, new_treeish) =
+                    core::repository::diff::tree_endpoints(&repo, old_treeish, new_treeish, merge_base)?;
                 if stat {
-                    core::repository::diff::tree_stat(repository(Mode::Strict)?, out, old_treeish, new_treeish)
+                    core::repository::diff::tree_stat(repo, out, old_treeish, new_treeish)
+                } else if name_only {
+                    core::repository::diff::tree_name_only(repo, out, old_treeish, new_treeish)
                 } else {
-                    core::repository::diff::tree(repository(Mode::Lenient)?, out, old_treeish, new_treeish)
+                    core::repository::diff::tree(repo, out, old_treeish, new_treeish)
                 }
             }),
             Some(crate::plumbing::options::diff::SubCommands::File {
@@ -560,11 +568,11 @@ pub fn run_with_command(args: Args, command: clap::Command) -> Result<()> {
         Subcommands::Log(crate::plumbing::options::log::Platform {
             max_count,
             oneline,
-            rev,
+            revisions,
             paths,
         }) => prepare_and_run("log", verbose, None, move |_progress, out, _err| {
             let options = core::repository::log::Options {
-                rev,
+                revisions,
                 paths,
                 max_count,
                 oneline,
