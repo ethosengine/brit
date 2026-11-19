@@ -988,6 +988,201 @@ fn shallow_boundary_inside_the_range_refuses_naming_it() -> Result<()> {
     Ok(())
 }
 
+fn head(path: &Path) -> Result<String> {
+    Ok(String::from_utf8(git(path, &["rev-parse", "HEAD"])?)?.trim().to_owned())
+}
+/// A real depth-N clone of the fixture's remote, whose boundary commits' parents are absent.
+fn depth_clone(f: &Fixture, depth: &str) -> Result<(tempfile::TempDir, std::path::PathBuf)> {
+    let clone = tempfile::tempdir()?;
+    let url = format!("file://{}", f.remote.path().display());
+    git(
+        clone.path(),
+        &["clone", "-q", "--depth", depth, "--branch", "main", &url, "local"],
+    )?;
+    let local = clone.path().join("local");
+    Ok((clone, local))
+}
+fn stderr(out: &Output) -> String {
+    String::from_utf8_lossy(&out.stderr).into_owned()
+}
+
+/// A fetch-stage shallow refusal (a tracking update the configured refspec does not force)
+/// leaves nothing pending, so the deepening fetch it names runs, and the pull then succeeds.
+#[test]
+fn shallow_tracking_refusal_leaves_nothing_pending_so_the_cure_runs() -> Result<()> {
+    let f = fixture()?;
+    git(
+        f.local.path(),
+        &["config", "remote.origin.fetch", "refs/heads/*:refs/remotes/origin/*"],
+    )?;
+    let middle = String::from_utf8(git(f.remote.path(), &["rev-parse", "HEAD~1"])?)?
+        .trim()
+        .to_owned();
+    git(f.remote.path(), &["branch", "middle", &middle])?;
+    git(f.local.path(), &["fetch", "-q", "origin", "middle"])?;
+    fs::write(f.local.path().join(".git/shallow"), format!("{middle}\n"))?;
+    let tracking = git(f.local.path(), &["rev-parse", "refs/remotes/origin/main"])?;
+    let out = pull(f.local.path(), true)?;
+    ensure!(!out.status.success(), "unprovable tracking update must refuse");
+    let message = stderr(&out);
+    ensure!(
+        message.contains(&middle) && message.contains("--deepen") && !message.contains("--continue"),
+        "names the boundary and a runnable cure: {message}"
+    );
+    ensure!(!f.local.path().join(".git/brit-switch").exists(), "nothing pending");
+    assert_eq!(
+        git(f.local.path(), &["rev-parse", "refs/remotes/origin/main"])?,
+        tracking
+    );
+    assert_eq!(f.local.head_id()?, f.original);
+    success(f.local.path(), &["fetch", "-r", "origin", "--deepen", "1"])?;
+    assert_success(pull(f.local.path(), true)?)?;
+    assert_eq!(f.local.head_id()?, f.target);
+    Ok(())
+}
+
+/// A real divergence that shares the boundary is a plain non-fast-forward, which deepening
+/// could never resolve: HEAD's own history proves it reaches every boundary the walk met.
+#[test]
+fn shallow_divergence_on_the_boundary_is_a_plain_refusal() -> Result<()> {
+    let f = fixture()?;
+    let (_clone, local) = depth_clone(&f, "1")?;
+    git(&local, &["commit", "-q", "--allow-empty", "-m", "local"])?;
+    let local_head = head(&local)?;
+    f.remote.commit_file("selected", "upstream\n")?;
+    let out = pull(&local, true)?;
+    ensure!(!out.status.success(), "divergence must refuse");
+    let message = stderr(&out);
+    ensure!(
+        message.contains("Not possible to fast-forward") && !message.contains("shallow boundary"),
+        "plain non-fast-forward: {message}"
+    );
+    assert_eq!(head(&local)?, local_head);
+    ensure!(!local.join(".git/brit-switch").exists());
+    Ok(())
+}
+
+/// Local work ahead of an unchanged remote is already up to date in a shallow clone.
+#[test]
+fn shallow_clone_ahead_of_its_remote_is_already_up_to_date() -> Result<()> {
+    let f = fixture()?;
+    let (_clone, local) = depth_clone(&f, "1")?;
+    git(&local, &["commit", "-q", "--allow-empty", "-m", "local"])?;
+    let local_head = head(&local)?;
+    let out = success(&local, &["pull", "--ff-only", "origin", "main"])?;
+    ensure!(
+        String::from_utf8_lossy(&out.stdout).contains("Already up to date"),
+        "{}",
+        String::from_utf8_lossy(&out.stdout)
+    );
+    assert_eq!(head(&local)?, local_head);
+    Ok(())
+}
+
+/// A linked worktree of a shallow clone reads the common boundary and fast-forwards.
+#[test]
+fn shallow_clone_linked_worktree_fast_forwards() -> Result<()> {
+    let f = fixture()?;
+    let (clone, local) = depth_clone(&f, "1")?;
+    let linked = clone.path().join("linked");
+    git(
+        &local,
+        &[
+            "worktree",
+            "add",
+            "-q",
+            "-b",
+            "linked",
+            linked.to_str().expect("UTF-8"),
+            "origin/main",
+        ],
+    )?;
+    let boundary = fs::read_to_string(local.join(".git/shallow"))?;
+    let next = f.remote.commit_file("selected", "next\n")?;
+    assert_success(pull(&linked, true)?)?;
+    assert_eq!(head(&linked)?, next);
+    assert_eq!(fs::read(linked.join("selected"))?, b"next\n");
+    assert_eq!(fs::read_to_string(local.join(".git/shallow"))?, boundary);
+    Ok(())
+}
+
+/// The fetched tip may merge a side branch forked below the boundary; the fast-forward
+/// still proves itself above the boundary.
+#[test]
+fn shallow_clone_fast_forwards_over_a_merge_of_older_history() -> Result<()> {
+    let f = fixture()?;
+    let (_clone, local) = depth_clone(&f, "1")?;
+    git(f.remote.path(), &["switch", "-q", "-c", "side", &f.original])?;
+    f.remote.commit_file("side", "side\n")?;
+    git(f.remote.path(), &["switch", "-q", "main"])?;
+    git(f.remote.path(), &["merge", "-q", "--no-ff", "-m", "merge side", "side"])?;
+    let merge = f.remote.head_id()?;
+    assert_success(pull(&local, true)?)?;
+    assert_eq!(head(&local)?, merge);
+    assert_eq!(fs::read(local.join("side"))?, b"side\n");
+    Ok(())
+}
+
+/// An object missing above the boundary, including the boundary commit's own tree or blob,
+/// still refuses before integration: the walk stops at the boundary, not before it.
+#[test]
+fn shallow_history_missing_objects_above_the_boundary_refuse() -> Result<()> {
+    for (boundary_at_own, missing) in [(true, "blob"), (true, "tree"), (false, "blob")] {
+        let f = fixture()?;
+        let own = f.local.commit_file("own", "loose\n")?;
+        let url = f.local.path().to_str().expect("fixture UTF-8");
+        git(f.remote.path(), &["fetch", "-q", url, "main:refs/heads/incoming"])?;
+        git(f.remote.path(), &["reset", "-q", "--hard", "incoming"])?;
+        f.remote.commit_file("selected", "after own\n")?;
+        let boundary = if boundary_at_own {
+            own.clone()
+        } else {
+            f.original.clone()
+        };
+        fs::write(f.local.path().join(".git/shallow"), format!("{boundary}\n"))?;
+        let spec = if missing == "tree" {
+            format!("{own}^{{tree}}")
+        } else {
+            format!("{own}:own")
+        };
+        let object = String::from_utf8(git(f.local.path(), &["rev-parse", &spec])?)?
+            .trim()
+            .to_owned();
+        let loose = f
+            .local
+            .path()
+            .join(".git/objects")
+            .join(&object[..2])
+            .join(&object[2..]);
+        ensure!(loose.is_file(), "{missing} {object} is loose");
+        fs::remove_file(&loose)?;
+        let out = pull(f.local.path(), true)?;
+        ensure!(
+            !out.status.success() && stderr(&out).contains(&object),
+            "missing {missing} above the boundary must refuse naming it: {}",
+            stderr(&out)
+        );
+        assert_eq!(f.local.head_id()?, own, "{missing}: HEAD unchanged");
+    }
+    Ok(())
+}
+
+/// The bounded walks read the boundary Git maintains; a relocated shallow file refuses.
+#[test]
+fn relocated_shallow_file_refuses() -> Result<()> {
+    let f = fixture()?;
+    let (_clone, local) = depth_clone(&f, "1")?;
+    fs::copy(local.join(".git/shallow"), local.join(".git/shallow-elsewhere"))?;
+    git(&local, &["config", "gitoxide.core.shallowFile", "shallow-elsewhere"])?;
+    let before = head(&local)?;
+    f.remote.commit_file("selected", "next\n")?;
+    let out = pull(&local, true)?;
+    ensure!(!out.status.success(), "relocated shallow file must refuse");
+    ensure!(stderr(&out).contains("relocated shallow file"), "{}", stderr(&out));
+    assert_eq!(head(&local)?, before);
+    Ok(())
+}
+
 #[test]
 fn shallow_remote_refuses_without_installing_local_shallow_state() -> Result<()> {
     let f = fixture()?;

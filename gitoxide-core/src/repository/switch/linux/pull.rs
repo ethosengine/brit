@@ -127,6 +127,9 @@ pub fn execute(repo: gix::Repository, remote: &str, branch: &BStr) -> Result<()>
         Err(error) => {
             if !gix::interrupt::is_triggered() && !state.pull.as_ref().context("pull state")?.pinned {
                 cleanup(&repo, &state)?;
+            } else if !present(&journal(&repo))? {
+                // The refusal already cleaned up; there is nothing to continue or abort.
+                return Err(error);
             }
             Err(error.context("pull interrupted or refused; use brit pull --status, --continue or --abort"))
         }
@@ -438,7 +441,16 @@ fn resume_fetch_inner(repo: &gix::Repository, state: &mut Manifest, abort: bool)
                     Reach::Found => {}
                     Reach::Absent => bail!("non-fast-forward remote tracking update refused"),
                     Reach::Hidden(boundary) => {
-                        bail!("remote tracking update {}", shallow_refusal(boundary, &pull.remote))
+                        // Leave nothing pending, so the deepening fetch it names can run.
+                        let message = format!(
+                            "remote tracking update {}; received objects retained, no reference, branch or worktree changed",
+                            shallow_refusal(boundary, &pull.remote)
+                        );
+                        release_locks(repo, &mut locks)?;
+                        state.locks.clear();
+                        save(repo, state)?;
+                        cleanup(repo, state)?;
+                        bail!(message);
                     }
                 }
             }
@@ -585,7 +597,43 @@ fn shallow_refusal(boundary: gix::ObjectId, remote: &str) -> String {
     )
 }
 
+/// The commits reachable from `tip` without reading a parent of a `boundary` commit, and the
+/// boundary commits among them. Stops early once `stop` is reached.
+fn visible_history(
+    repo: &gix::Repository,
+    tip: gix::ObjectId,
+    boundary: &BTreeSet<gix::ObjectId>,
+    stop: Option<gix::ObjectId>,
+) -> Result<(bool, BTreeSet<gix::ObjectId>)> {
+    let mut pending = vec![tip];
+    let mut seen = BTreeSet::new();
+    let mut hidden = BTreeSet::new();
+    while let Some(commit_id) = pending.pop() {
+        if Some(commit_id) == stop {
+            return Ok((true, hidden));
+        }
+        if !seen.insert(commit_id) {
+            continue;
+        }
+        if boundary.contains(&commit_id) {
+            hidden.insert(commit_id);
+            continue;
+        }
+        let commit = repo.find_object(commit_id)?.try_into_commit()?;
+        let decoded = commit.decode()?;
+        pending.extend(decoded.parents());
+    }
+    Ok((false, hidden))
+}
+
 /// Whether `ancestor` is reachable from `descendant`, never reading past `boundary`.
+///
+/// The walk from `descendant` sees every commit reachable above the boundary, so any path to
+/// `ancestor` it misses runs through one of the boundary commits H it stopped at, with
+/// `ancestor` strictly below that h (h != `ancestor`, or the walk had found it). If every h in
+/// H is itself reachable from `ancestor` by a path the second walk proves above the boundary,
+/// `ancestor` would lie both above and below h, a cycle, so no such path exists: Absent. Any h
+/// the second walk cannot reach leaves the question open: Hidden(h), never a guess.
 fn reach(
     repo: &gix::Repository,
     ancestor: &str,
@@ -593,25 +641,21 @@ fn reach(
     boundary: &BTreeSet<gix::ObjectId>,
 ) -> Result<Reach> {
     let ancestor = gix::ObjectId::from_hex(ancestor.as_bytes())?;
-    let mut pending = vec![gix::ObjectId::from_hex(descendant.as_bytes())?];
-    let mut seen = BTreeSet::new();
-    let mut hidden = None;
-    while let Some(commit_id) = pending.pop() {
-        if commit_id == ancestor {
-            return Ok(Reach::Found);
-        }
-        if !seen.insert(commit_id) {
-            continue;
-        }
-        if boundary.contains(&commit_id) {
-            hidden.get_or_insert(commit_id);
-            continue;
-        }
-        let commit = repo.find_object(commit_id)?.try_into_commit()?;
-        let decoded = commit.decode()?;
-        pending.extend(decoded.parents());
+    let descendant = gix::ObjectId::from_hex(descendant.as_bytes())?;
+    let (found, hidden) = visible_history(repo, descendant, boundary, Some(ancestor))?;
+    if found {
+        return Ok(Reach::Found);
     }
-    Ok(hidden.map_or(Reach::Absent, Reach::Hidden))
+    if hidden.is_empty() {
+        return Ok(Reach::Absent);
+    }
+    for &h in &hidden {
+        let (below_ancestor, _) = visible_history(repo, ancestor, boundary, Some(h))?;
+        if !below_ancestor {
+            return Ok(Reach::Hidden(h));
+        }
+    }
+    Ok(Reach::Absent)
 }
 /// Verify every object reachable from `target`, down to the roots or the shallow boundary,
 /// whose commits are verified with their trees but whose absent parents are never read.
