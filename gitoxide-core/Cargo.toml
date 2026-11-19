@@ -70,7 +70,7 @@ gix-fsck = { version = "^0.27.2", path = "../gix-fsck", registry = "elohim" }
 serde = { version = "1.0.114", default-features = false, features = ["derive"] }
 bytesize = "2.3.1"
 tempfile = "3.26.0"
-rustix = { version = "1.1.2", features = ["fs", "termios", "process"] }
+rustix = { version = "1.1.2", features = ["fs", "termios", "process", "param"] }
 unicode-width = "0.2.2"
 
 # for async-client

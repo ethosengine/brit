@@ -211,6 +211,9 @@ pub(crate) mod function {
         std::process::exit(128);
     }
 
+    /// The minimum wait for the writer guard after a pre-push hook passed.
+    const POST_HOOK_GUARD_WAIT: std::time::Duration = std::time::Duration::from_secs(600);
+
     pub fn push<P>(
         repo: gix::Repository,
         _progress: P,
@@ -694,6 +697,10 @@ pub(crate) mod function {
                 Some(super::Signed::IfAsked) => gix::remote::push::SignMode::IfAsked,
                 Some(super::Signed::No) | None => gix::remote::push::SignMode::Never,
             };
+            // Guard reference resolution and send-pack against other Brit writers, but
+            // not the pre-push hook: the hook judges fixed object IDs, and those IDs are
+            // what is sent, so other lanes stay writable while a long gate runs.
+            let held = std::cell::RefCell::new(Some(super::super::switch::mutation_guard(&repo)?));
             let result = prepare
                 .with_refspecs(specs_to_send.iter())
                 .with_dry_run(opts.dry_run)
@@ -750,10 +757,20 @@ pub(crate) mod function {
                                 .into_owned()
                                 .into_os_string(),
                         ];
-                        super::super::authoring::run_hook_with_input(&repo, "pre-push", &args, Some(&input))
-                            .map_err(Into::into)
+                        if super::super::authoring::hook_path(&repo, "pre-push")?.is_none() {
+                            return Ok(());
+                        }
+                        drop(held.borrow_mut().take());
+                        super::super::authoring::run_hook_with_input(&repo, "pre-push", &args, Some(&input))?;
+                        // Shared writers are brief, and the hook's work is not lost to a
+                        // refusal: wait for the guard at least this long before sending.
+                        let wait = super::super::switch::mutation_wait()
+                            .at_least(super::super::switch::MutationWait::For(POST_HOOK_GUARD_WAIT));
+                        *held.borrow_mut() = Some(super::super::switch::mutation_guard_waiting(&repo, wait)?);
+                        Ok(())
                     },
                 );
+            drop(held);
             // Mirror git's `send-pack.c::check_push_options` / signed-push
             // capability checks: when the receiver hasn't advertised the
             // required capability, both binaries print the `fatal:` line and

@@ -21,6 +21,8 @@ const VERSION: u32 = 3;
 
 pub(crate) mod payload;
 
+pub mod guard;
+
 mod object_store;
 pub(crate) use object_store::{validate_local_history, validate_object_boundaries};
 
@@ -281,25 +283,36 @@ pub fn ensure_no_pending(repo: &gix::Repository) -> Result<()> {
 /// Serialize cooperating Brit writers across the shared repository.
 /// Keep this guard alive for the entire mutation, including its pending-journal check.
 pub fn mutation_guard(repo: &gix::Repository) -> Result<fs::File> {
-    let lock = shared_guard(repo)?;
+    mutation_guard_waiting(repo, super::mutation_wait())
+}
+
+/// [`mutation_guard`] with an explicit wait policy instead of the process-wide one.
+pub fn mutation_guard_waiting(repo: &gix::Repository, wait: super::MutationWait) -> Result<fs::File> {
+    let lock = guard::exclusive(repo, wait)?;
     ensure_no_pending(repo)?;
     Ok(lock)
 }
+
+/// Guard a write confined to `repo`'s own worktree: its index, HEAD and checkout,
+/// plus append-only object writes. Shared writers are excluded for the guard's lifetime;
+/// other worktrees' local writers are not. Shared reference updates made under this guard
+/// must be compare-and-swap transactions, since local writers in other worktrees run beside it.
+pub fn worktree_mutation_guard(repo: &gix::Repository) -> Result<guard::WorktreeGuard> {
+    worktree_mutation_guard_waiting(repo, super::mutation_wait())
+}
+
+/// [`worktree_mutation_guard`] with an explicit wait policy instead of the process-wide one.
+pub fn worktree_mutation_guard_waiting(
+    repo: &gix::Repository,
+    wait: super::MutationWait,
+) -> Result<guard::WorktreeGuard> {
+    let lock = guard::worktree(repo, wait)?;
+    ensure_no_pending(repo)?;
+    Ok(lock)
+}
+
 pub(crate) fn shared_guard(repo: &gix::Repository) -> Result<fs::File> {
-    use std::os::unix::fs::OpenOptionsExt;
-    let path = repo.common_dir().join("brit-mutation.guard");
-    let file = fs::OpenOptions::new()
-        .read(true)
-        .write(true)
-        .create(true)
-        .truncate(false)
-        .mode(0o600)
-        .custom_flags(rustix::fs::OFlags::NOFOLLOW.bits() as i32)
-        .open(&path)
-        .with_context(|| format!("could not open Brit mutation guard at {}", path.display()))?;
-    rustix::fs::flock(&file, rustix::fs::FlockOperation::NonBlockingLockExclusive)
-        .context("another Brit mutation is active")?;
-    Ok(file)
+    guard::exclusive(repo, super::mutation_wait())
 }
 
 /// Inspect without mutating or automatically resuming an interrupted operation.
