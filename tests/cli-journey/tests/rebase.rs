@@ -3068,22 +3068,10 @@ mod recovery {
         Ok(Boundary::Completed)
     }
 
-    /// The refusal of a forward step because the retained copy an abort would
-    /// write already exceeds the limit. That copy is not metered; the policy
-    /// refuses a step only once its exceeding is certain, so such a refusal can
-    /// follow admission, and it is told apart from a journal refusal.
-    fn copy_refusal(outcome: &Boundary) -> bool {
-        matches!(outcome, Boundary::RefusedAfterAdmission(_, message)
-            if message.contains("the retained copy an abort would write already holds"))
-    }
-
     /// The smallest admitting limit, found by bisection, and then every limit from
     /// below it to twice it: admission is decided before anything changes, and no
-    /// admitted rebase is refused later for its journal. With `copy_refusals`, a
-    /// later refusal because the abort's retained copy already exceeds the limit is
-    /// allowed and returned, as the limits and refused commands it occurred at;
-    /// without it the rebase must complete at every admitting limit.
-    fn boundary_search(diff3: bool, copy_refusals: bool) -> Result<Vec<String>> {
+    /// admitted rebase is refused later, for its journal or for anything else.
+    fn boundary_search(diff3: bool) -> Result<()> {
         let parent = tempfile::tempdir()?;
         let (mut low, mut high) = (1_000u64, 1u64 << 31);
         ensure!(
@@ -3103,16 +3091,10 @@ mod recovery {
         }
         let admitting = high;
         eprintln!("diff3={diff3}: smallest admitting limit {admitting}");
-        let mut copies = Vec::new();
         let mut findings = Vec::new();
         let mut judge = |limit: u64, outcome: Boundary| match &outcome {
             Boundary::Refused(_) if limit < admitting => {}
             Boundary::Completed if limit >= admitting => {}
-            _ if limit >= admitting && copy_refusals && copy_refusal(&outcome) => {
-                if let Boundary::RefusedAfterAdmission(step, _) = &outcome {
-                    copies.push(format!("{limit}: {step}"));
-                }
-            }
             _ => findings.push(format!("{limit}: {outcome:?}")),
         };
         judge(admitting, boundary_attempt(parent.path(), diff3, admitting)?);
@@ -3135,8 +3117,7 @@ mod recovery {
              refuse below it nor complete above it: {findings:#?}",
             2 * admitting
         );
-        eprintln!("diff3={diff3}: refused after admission for the abort's retained copy at: {copies:?}");
-        Ok(copies)
+        Ok(())
     }
 
     /// The boundary of a clean replay: the smallest admitting limit completes
@@ -3144,7 +3125,7 @@ mod recovery {
     /// and no limit up to twice it admits a rebase that is then refused.
     #[test]
     fn public_clean_replay_boundary_admits_only_what_completes() -> Result<()> {
-        boundary_search(false, false).map(drop)
+        boundary_search(false)
     }
 
     /// The same for a conflict written in the `diff3` style, resolved and
@@ -3152,13 +3133,10 @@ mod recovery {
     /// than the sum of the two versions the journal bound models a step with,
     /// and only the bound's safety factor covers it. Should the factor stop
     /// covering it, a limit admits a rebase whose stop or resolution is refused
-    /// for its journal, and this journey fails. Just above the smallest admitting
-    /// limit the conflict's retained copy already exceeds the limit, so there the
-    /// conflict stop itself is refused before it writes anything, and `--abort`
-    /// restores everything; the journey records those limits.
+    /// for its journal, and this journey fails.
     #[test]
     fn public_diff3_conflict_boundary_admits_only_what_completes() -> Result<()> {
-        boundary_search(true, true).map(drop)
+        boundary_search(true)
     }
 
     /// An abort's retained copy is not metered and may exceed the limit: under a

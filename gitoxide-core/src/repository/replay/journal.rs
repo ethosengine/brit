@@ -74,8 +74,9 @@
 //!   it fits (see the `copy_bound` module). Every later forward step
 //!   (`--continue`, a staged resolution, `--skip`, an edit) is reserved for before
 //!   anything of it is written, and a refusal names `--abort`. The retained copy
-//!   an abort or a cleanup writes is not metered and is not projected: only a copy
-//!   that already exceeds the quota is refused, and such a copy can exceed it.
+//!   an abort or a cleanup writes is not metered and is not projected: it is
+//!   tested only at the preflight and at admission, and after admission it can
+//!   grow past the quota with the rebase.
 //! - Undoing and finishing are never metered: [`Session::abort`] with every
 //!   decision it makes (accepting and discarding an authoring child, rolling a
 //!   durable decision forward, the abort's own transition), the retained copy it
@@ -2356,11 +2357,10 @@ impl Session {
 
     /// Refuse, before anything of a forward step is written, a step after which
     /// the journal could exceed the quota with the safety factor (`requested` is
-    /// what the step adds), or while the retained copy an abort would write
-    /// already exceeds it. That copy is not metered (see the `copy_bound`
-    /// module), so it is neither projected nor reserved for: only a copy whose
-    /// members alone are already over the quota is certain. Recovery (an abort, a cleanup, a decision
-    /// nothing can undo) is never refused here.
+    /// what the step adds). The retained copy an abort or a cleanup writes is not
+    /// metered (see the `copy_bound` module), so it never refuses a step that
+    /// admission promised. Recovery (an abort, a cleanup, a decision nothing can
+    /// undo) is never refused here.
     fn reserve(&self, repo: &gix::Repository, requested: u64) -> Result<()> {
         self.reserve_for(repo, requested, false)
     }
@@ -2377,7 +2377,7 @@ impl Session {
             return Ok(());
         }
         let limit = switch::payload::scratch_limit();
-        let (copy, held, journal) = self.quota_usage(repo)?;
+        let (copy, _, journal) = self.quota_usage(repo)?;
         let need = |bytes: u64| super::copy_bound::with_safety(bytes.saturating_add(requested));
         ensure!(
             need(journal) <= limit,
@@ -2387,23 +2387,14 @@ impl Session {
             super::copy_bound::SAFETY.0,
             super::copy_bound::SAFETY.1
         );
-        if metered_copy {
-            ensure!(
-                need(copy) <= limit,
-                "rebase refused this step before writing anything of it: the retained copy it writes ({copy} bytes), \
-                 with {requested} bytes for the step and the {}/{} safety factor, could exceed the {limit}-byte \
-                 scratch limit that copy lives under; brit rebase --abort restores the original state",
-                super::copy_bound::SAFETY.0,
-                super::copy_bound::SAFETY.1
-            );
-        } else {
-            ensure!(
-                held <= limit,
-                "rebase refused this step before writing anything of it: the retained copy an abort would write \
-                 already holds {held} bytes, over the {limit}-byte scratch limit; brit rebase --abort restores the \
-                 original state"
-            );
-        }
+        ensure!(
+            !metered_copy || need(copy) <= limit,
+            "rebase refused this step before writing anything of it: the retained copy it writes ({copy} bytes), \
+             with {requested} bytes for the step and the {}/{} safety factor, could exceed the {limit}-byte scratch \
+             limit that copy lives under; brit rebase --abort restores the original state",
+            super::copy_bound::SAFETY.0,
+            super::copy_bound::SAFETY.1
+        );
         Ok(())
     }
 

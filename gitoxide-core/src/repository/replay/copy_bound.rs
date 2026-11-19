@@ -18,8 +18,11 @@
 //! manifest; it can exceed the quota by at most that much, which is what never
 //! refusing an abort costs. Only what is certain is refused: a closure whose
 //! objects alone exceed the quota, at the preflight, and a copy whose members
-//! alone already exceed it (its manifest's size is not yet known), at admission
-//! and before each forward step. A skip writes its
+//! alone already exceed it (its manifest's size is not yet known), at admission.
+//! After admission the copy is never tested: admission promises the plan, one
+//! stop and its resolution, and a copy that is not metered must not refuse a step
+//! admission promised, so it can grow past the quota with the rebase. Only the
+//! metered journal, and a skip's metered copy, refuse after admission. A skip writes its
 //! retained copy under the quota, so a skip reserves for that copy as for its
 //! journal (`Session::reserve_with_copy`).
 //!

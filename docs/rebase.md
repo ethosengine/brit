@@ -142,8 +142,10 @@ with a conflict stop and a staged resolution, while the journal stayed under
 0.34 GB. This is the consequence of never refusing an abort. Brit still refuses,
 before anything changes, a rebase whose retained copy would certainly not fit:
 one whose history's objects alone exceed the limit (at the start), or whose copy's
-members already exceed it (once preparation finishes, and before each forward
-step).
+members already exceed it (once preparation finishes). After admission the copy
+is never tested, and an abort's or a cleanup's copy can grow past the limit with
+the rebase: Admission promises the plan, one stop and its resolution; a copy that is not metered must not refuse a step admission promised, and refusing a `--stage` after the user resolved a conflict is the worst place to say no. After admission only the metered journal, and the
+retained copy a `--skip` writes under the limit, can refuse a step.
 Those fixtures, which completed under the limit before the recovery rules were
 added, complete again.
 
