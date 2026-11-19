@@ -2545,7 +2545,9 @@ mod recovery {
     /// record (the abort's commit point) and its staged proposal, cut short after
     /// they were written, and an abort killed holding its transition's Git locks
     /// before its decision. None was ever in effect; the next `--abort` restores
-    /// exactly, and `--status` never calls a torn decision durable.
+    /// exactly (an unproved staging directory is kept as evidence, as an absent
+    /// owner record always was, and `--retire` then sets the journal aside), and
+    /// `--status` never calls a torn decision durable.
     #[test]
     fn public_a_torn_abort_decision_or_proposal_never_strands_an_abort() -> Result<()> {
         for (record, point) in [
@@ -2598,6 +2600,20 @@ mod recovery {
                     "{what}: a torn record is not durable: {}",
                     status.stdout
                 );
+                if matches!(record, "plan.json" | "owner") {
+                    // The abort's own staging is unproved without both records, so
+                    // it is kept as evidence, not adopted: the abort restores
+                    // exactly, cleanup reports the member, and --retire sets the
+                    // journal aside, deleting nothing.
+                    quota(root, &["rebase", "--abort"], REAL_LIMIT)?;
+                    ensure!(live(root)? == stop.before, "{what}: --abort restored exactly");
+                    let status = success(root, &["rebase", "--status"])?;
+                    ensure!(status.stdout.contains("--retire"), "{what}: {}", status.stdout);
+                    success(root, &["rebase", "--retire"])?;
+                    ensure!(!root.join(".git/brit-authoring").exists(), "{what}");
+                    usable(root)?;
+                    continue;
+                }
                 abort_restores(root, REAL_LIMIT, &stop.before, &what)?;
                 mutations_work(root)?;
             }

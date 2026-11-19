@@ -58,7 +58,9 @@
 //! The same holds for the other records written in one sequential pass: a
 //! decision record cut short (its JSON ends early) never became durable and is
 //! discarded, since the transition writes nothing live before it; a staged
-//! proposal (`plan.json`) or staging owner record cut short is written again.
+//! proposal (`plan.json`) cut short beside its whole owner record is written
+//! again, and an abort does not adopt a staging directory whose owner record or
+//! plan is absent or cut short (it is kept as evidence, as an absent one was).
 //!
 //! # The scratch quota never walls in recovery
 //!
@@ -1386,7 +1388,9 @@ impl Session {
                 // ownership record, which precedes its plan; each is written in one
                 // pass, so a kill can leave either absent or cut short. No live
                 // write precedes the decision, so abort restores the pinned parent
-                // without adopting such an orphan.
+                // without adopting such an orphan. The retained copy preserves its
+                // bytes; cleanup's exact inventory deliberately continues to refuse
+                // the unproved directory, which `--retire` then sets aside.
                 let uid = fs::metadata(&self.directory)?.uid();
                 let read = |member: &str| -> Result<Option<Vec<u8>>> {
                     let path = directory.join(member);
@@ -1407,26 +1411,10 @@ impl Session {
                     Some(bytes) => torn_record(bytes)?,
                     None => None,
                 };
-                let (Some(envelope), Some(bytes), true) = (complete, plan.clone(), owner == Some(expected)) else {
-                    // Without a whole plan nothing followed it (no lock, directory
-                    // or decision): when the directory holds only these two
-                    // never-effective records, it is removed so cleanup's exact
-                    // inventory finds nothing unproved. Anything else is kept.
-                    if plan
-                        .as_deref()
-                        .is_none_or(|bytes| torn_record(bytes).is_ok_and(|plan| plan.is_none()))
-                    {
-                        let members = fs::read_dir(&directory)?
-                            .map(|entry| Ok(entry?.file_name()))
-                            .collect::<Result<Vec<_>>>()?;
-                        if members.iter().all(|name| name == "owner" || name == "plan.json") {
-                            for name in members {
-                                fs::remove_file(directory.join(name))?;
-                            }
-                            fs::remove_dir(&directory)?;
-                            switch::sync_dir(&self.directory)?;
-                        }
-                    }
+                let (Some(envelope), Some(bytes), true) = (complete, plan, owner == Some(expected)) else {
+                    // Not proven (an owner record absent or cut short, a plan
+                    // absent or cut short): not adopted and kept as evidence, as
+                    // cleanup's exact inventory then reports; nothing followed it.
                     return Ok(());
                 };
                 ensure!(
@@ -3484,36 +3472,14 @@ impl Session {
         .then(switch::payload::Recovery::enter);
         let owner = serde_json::to_vec(&(decision.nonce.as_str(), decision.ordinal, decision.before.as_str()))?;
         match fs::symlink_metadata(&staging) {
-            Ok(metadata) => {
-                let uid = fs::metadata(&self.directory)?.uid();
-                ensure!(
-                    metadata.is_dir() && metadata.permissions().mode().trailing_zeros() >= 6 && metadata.uid() == uid,
-                    "foreign replay transition staging directory"
-                );
-                let path = staging.join("owner");
-                let existing = if present(&path)? {
-                    ensure!(
-                        owned_private_file(&path, uid)?,
-                        "foreign replay transition staging directory"
-                    );
-                    Some(fs::read(&path)?)
-                } else {
-                    None
-                };
-                if existing.as_deref() != Some(owner.as_slice()) {
-                    // This directory's owner record, never written or cut short
-                    // while written (a strict prefix of it): this staging's own.
-                    ensure!(
-                        existing.as_ref().is_none_or(|bytes| owner.starts_with(bytes)),
-                        "foreign replay transition staging directory"
-                    );
-                    if existing.is_some() {
-                        fs::remove_file(&path)?;
-                    }
-                    switch::private_write(&path, &owner)?;
-                    switch::sync_dir(&staging)?;
-                }
-            }
+            Ok(metadata) => ensure!(
+                metadata.is_dir()
+                    && metadata.permissions().mode().trailing_zeros() >= 6
+                    && metadata.uid() == fs::metadata(&self.directory)?.uid()
+                    && fs::symlink_metadata(staging.join("owner"))?.is_file()
+                    && fs::read(staging.join("owner"))? == owner,
+                "foreign replay transition staging directory"
+            ),
             Err(error) if error.kind() == std::io::ErrorKind::NotFound => {
                 use std::os::unix::fs::DirBuilderExt;
                 fs::DirBuilder::new().mode(0o700).create(&staging)?;
@@ -4363,7 +4329,10 @@ impl Session {
                  the original state.",
             ),
             "retaining-abort" => Some("An abort stopped part-way: --abort finishes restoring the original state."),
-            "aborted" => Some("The original state is restored: --abort finishes removing the journal."),
+            "aborted" => Some(
+                "The original state is restored: --abort finishes removing the journal; if it refuses a member it \
+                 cannot prove its own, --retire sets the journal aside, deleting nothing.",
+            ),
             "completed" | "final-published" => {
                 Some("The rebase is published and cannot be aborted: --continue finishes it and removes the journal.")
             }
