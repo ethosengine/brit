@@ -414,7 +414,7 @@ pub fn scratch_leftovers(git_dir: &Path) -> Result<Vec<PathBuf>> {
         let bytes = fs::read(git_dir.join(JOURNAL).join("manifest.json")).ok()?;
         let envelope: Envelope = serde_json::from_slice(&bytes).ok()?;
         let state: Manifest = serde_json::from_slice(&envelope.payload).ok()?;
-        path(&state.scratch?.path()).ok()
+        path(state.scratch?.path()).ok()
     })();
     let mut leftovers = Vec::new();
     for entry in fs::read_dir(git_dir)? {

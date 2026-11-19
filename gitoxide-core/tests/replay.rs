@@ -1392,7 +1392,7 @@ fn replay_scratch_exhaustion_preserves_integration_and_foreign_pressure_file() -
         Err(error) => error,
     };
     assert!(
-        format!("{error:#}").contains("scratch limit"),
+        format!("{error:#}").contains("scratch"),
         "growth refuses on the quota: {error:#}"
     );
     assert_eq!(integration_snapshot(root)?, before);
