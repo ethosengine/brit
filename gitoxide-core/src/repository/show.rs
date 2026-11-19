@@ -1,5 +1,13 @@
-//! `show`: commits with their changes, annotated tags with what they point to, and blobs or trees
-//! printed like `cat`, in Git's default medium format and with `--no-renames`.
+//! `show`: commits with their changes, annotated tags with what they point to, blobs and trees, in
+//! Git's default medium format and with `--no-renames`.
+//!
+//! Known limits, each a refusal rather than different output: a merge whose result differs from
+//! every parent at some path (Git's combined diff) in the patch, `--name-only` and `--name-status`
+//! forms; a commit declaring an encoding Brit cannot decode exactly as Git's iconv would; an output
+//! encoding (`i18n.logOutputEncoding`, else `i18n.commitEncoding`) other than UTF-8; and the diff
+//! limits of [`super::diff`].
+
+use std::borrow::Cow;
 
 use gix::{
     ObjectId, Result,
@@ -35,8 +43,21 @@ pub struct Options {
 /// changes against its first parent, as Git does; where Git would print a combined diff (a path
 /// that differs from every parent), it refuses rather than print a different patch. With paths, a
 /// commit that does not change them is not shown. An annotated tag prints its header and message,
-/// then the object it points to. A blob or tree prints like `cat`.
+/// then the object it points to. A blob prints its content, and a tree `tree <name>`, a blank line
+/// and its entry names, directories with a trailing slash, as in Git.
 pub fn show(repo: gix::Repository, out: &mut dyn std::io::Write, options: Options) -> Result<()> {
+    // Git re-encodes messages to the log output encoding, which falls back to the commit encoding.
+    let config = repo.config_snapshot();
+    for key in ["i18n.logOutputEncoding", "i18n.commitEncoding"] {
+        if let Some(encoding) = config.string(key) {
+            if !is_utf8_label(encoding.as_ref()) {
+                bail!(unsupported(format!(
+                    "{key} asks for '{encoding}' output, but brit show prints UTF-8 only; use git show"
+                )));
+            }
+            break;
+        }
+    }
     let budget = Budget::new(&std::env::temp_dir()).or_error()?;
     let mut rendered = std::io::BufWriter::new(budget.spool().or_error()?);
     let revisions = if options.revisions.is_empty() {
@@ -49,11 +70,12 @@ pub fn show(repo: gix::Repository, out: &mut dyn std::io::Write, options: Option
         shallow: repo.shallow_commits()?,
         mailmap: repo.open_mailmap(),
         shown_one: false,
+        shown_commits: std::collections::HashSet::new(),
         options: &options,
     };
     for revision in &revisions {
         let id = repo.rev_parse_single(revision.as_bstr())?.detach();
-        state.object(&repo, &mut rendered, id, &budget)?;
+        state.object(&repo, &mut rendered, revision.as_bstr(), id, &budget)?;
     }
     super::diff::write_diff_output(out, &mut rendered)
 }
@@ -62,16 +84,21 @@ struct State<'a> {
     filter: PathFilter,
     shallow: Option<gix::shallow::Commits>,
     mailmap: gix::mailmap::Snapshot,
-    /// Whether a commit, tag or tree was printed, after which a medium header is preceded by a blank line.
+    /// Whether a commit, tag or tree was printed, after which a medium header, tag or tree is preceded
+    /// by a blank line.
     shown_one: bool,
+    /// Commits already printed, which Git never prints twice in one call (tags and trees it does).
+    shown_commits: std::collections::HashSet<ObjectId>,
     options: &'a Options,
 }
 
 impl State<'_> {
+    /// Show the object `name` resolved to, following tags; a tree reached through a tag keeps `name`.
     fn object(
         &mut self,
         repo: &gix::Repository,
         out: &mut dyn std::io::Write,
+        name: &BStr,
         mut id: ObjectId,
         budget: &std::sync::Arc<Budget>,
     ) -> Result<()> {
@@ -96,10 +123,20 @@ impl State<'_> {
                     return Ok(());
                 }
                 Kind::Tree => {
-                    // Listed like `brit cat`, not with Git's `tree <name>` heading.
-                    for entry in id.attach(repo).object()?.into_tree().iter() {
-                        writeln!(out, "{}", entry?).or_error()?;
+                    // Git's heading, then each entry's name, a directory with a trailing slash.
+                    if self.shown_one {
+                        out.write_all(b"\n").or_error()?;
                     }
+                    out.write_all(b"tree ").or_error()?;
+                    out.write_all(name).or_error()?;
+                    out.write_all(b"\n\n").or_error()?;
+                    for entry in id.attach(repo).object()?.into_tree().iter() {
+                        let entry = entry?;
+                        out.write_all(entry.filename()).or_error()?;
+                        out.write_all(if entry.mode().is_tree() { b"/\n" } else { b"\n" })
+                            .or_error()?;
+                    }
+                    self.shown_one = true;
                     return Ok(());
                 }
             }
@@ -145,8 +182,16 @@ impl State<'_> {
     }
 
     fn commit(&mut self, repo: &gix::Repository, out: &mut dyn std::io::Write, id: ObjectId) -> Result<()> {
+        if self.shown_commits.contains(&id) {
+            return Ok(());
+        }
         let object = repo.find_object(id)?;
-        let commit = gix::objs::CommitRef::from_bytes(&object.data, repo.object_hash()).or_error()?;
+        let declared = gix::objs::CommitRef::from_bytes(&object.data, repo.object_hash())
+            .or_error()?
+            .encoding;
+        // Like Git, the whole commit (names and message) is re-encoded from its declared encoding.
+        let data = to_utf8(&object.data, declared, id)?;
+        let commit = gix::objs::CommitRef::from_bytes(&data, repo.object_hash()).or_error()?;
         let tree = commit.tree();
         // A shallow boundary commit has no parents, as in Git.
         let parents: Vec<ObjectId> = if self
@@ -209,6 +254,7 @@ impl State<'_> {
         header.push(b'\n');
         out.write_all(&header).or_error()?;
         self.shown_one = true;
+        self.shown_commits.insert(id);
         let Some(format) = self.options.format else {
             return Ok(());
         };
@@ -236,6 +282,64 @@ impl State<'_> {
         }
         render(repo, out, &first, (parent_trees.first().copied(), Some(tree)), format)
     }
+}
+
+/// Whether Git treats `label` as UTF-8 and so converts nothing.
+fn is_utf8_label(label: &BStr) -> bool {
+    label.eq_ignore_ascii_case(b"utf-8") || label.eq_ignore_ascii_case(b"utf8")
+}
+
+/// `data` (a commit object) re-encoded from the `encoding` it declares to UTF-8, as Git's
+/// `logmsg_reencode()` does with iconv.
+///
+/// No header or a UTF-8 label converts nothing. Latin-1 maps each byte to the code point of the
+/// same value, and ASCII converts nothing. Any other label must name an ASCII-compatible encoding
+/// that `encoding_rs` knows under the same name; bytes that do not decode print unchanged, as when
+/// iconv fails in Git. A label that `encoding_rs` does not know, or knows as a different encoding
+/// (WHATWG maps several iconv names to Windows code pages), is refused by name.
+fn to_utf8<'a>(data: &'a [u8], encoding: Option<&BStr>, id: ObjectId) -> Result<Cow<'a, [u8]>> {
+    use gix::filter::plumbing::encoding::Encoding;
+    let Some(label) = encoding.filter(|label| !is_utf8_label(label)) else {
+        return Ok(Cow::Borrowed(data));
+    };
+    let normalized: Vec<u8> = label
+        .iter()
+        .filter(|byte| byte.is_ascii_alphanumeric())
+        .map(u8::to_ascii_lowercase)
+        .collect();
+    match normalized.as_slice() {
+        b"iso88591" | b"iso885911987" | b"latin1" | b"l1" | b"cp819" | b"ibm819" | b"isoir100" | b"csisolatin1" => {
+            if data.is_ascii() {
+                return Ok(Cow::Borrowed(data));
+            }
+            return Ok(Cow::Owned(
+                data.iter()
+                    .map(|&byte| char::from(byte))
+                    .collect::<String>()
+                    .into_bytes(),
+            ));
+        }
+        b"usascii" | b"ascii" | b"ansix341968" | b"csascii" => return Ok(Cow::Borrowed(data)),
+        _ => {}
+    }
+    let known = Encoding::for_label_no_replacement(label).filter(|encoding| {
+        encoding.is_ascii_compatible()
+            && encoding
+                .name()
+                .bytes()
+                .filter(u8::is_ascii_alphanumeric)
+                .map(|byte| byte.to_ascii_lowercase())
+                .eq(normalized.iter().copied())
+    });
+    let Some(known) = known else {
+        bail!(unsupported(format!(
+            "commit {id} declares the encoding '{label}', which brit cannot decode as Git would; use git show"
+        )));
+    };
+    Ok(match known.decode_without_bom_handling_and_without_replacement(data) {
+        Some(Cow::Owned(text)) => Cow::Owned(text.into_bytes()),
+        Some(Cow::Borrowed(_)) | None => Cow::Borrowed(data),
+    })
 }
 
 /// The paths changed against the first parent (`first`) that also differ from every other parent.
@@ -314,6 +418,28 @@ mod tests {
         let mut out = Vec::new();
         super::indent_message(&mut out, b"\n\ntitle\n\n\tbody\tx\n".as_bstr());
         assert_eq!(out.as_bstr(), b"    title\n    \n            body    x\n".as_bstr());
+    }
+
+    #[test]
+    fn declared_encodings_convert_like_iconv_or_refuse() {
+        use std::borrow::Cow;
+        let id = gix::ObjectId::null(gix::hash::Kind::Sha1);
+        let utf8 = |data: &'static [u8], label: &'static str| {
+            super::to_utf8(data, Some(label.as_bytes().as_bstr()), id).map(Cow::into_owned)
+        };
+        assert_eq!(
+            utf8(b"caf\xe9 \x80", "ISO-8859-1").unwrap(),
+            "caf\u{e9} \u{80}".as_bytes()
+        );
+        assert_eq!(utf8(b"caf\xe9", "UTF8").unwrap(), b"caf\xe9");
+        assert_eq!(utf8(b"\x82\xa0", "Shift_JIS").unwrap(), "\u{3042}".as_bytes());
+        assert_eq!(
+            utf8(b"bad \x81", "Shift_JIS").unwrap(),
+            b"bad \x81",
+            "undecodable bytes stay"
+        );
+        assert!(utf8(b"x", "x-no-such-encoding").is_err());
+        assert!(utf8(b"x", "windows-31j").is_err(), "known to WHATWG under another name");
     }
 
     #[test]

@@ -27,19 +27,38 @@ impl Fixture {
         self.dir.path()
     }
 
-    fn run(&self, args: &[&str]) -> Result<Output> {
+    fn command(&self, args: &[&str]) -> std::process::Command {
         let tick = self.clock.get() + 1;
         self.clock.set(tick);
         let date = format!("{} -0130", 1_700_000_000 + tick * 3600);
-        Ok(gix_testtools::git_command(self.root())
+        let mut command = gix_testtools::git_command(self.root());
+        command
             .args(args)
             .env("GIT_AUTHOR_NAME", "Author Name")
             .env("GIT_AUTHOR_EMAIL", "author@example.com")
             .env("GIT_COMMITTER_NAME", "Committer Name")
             .env("GIT_COMMITTER_EMAIL", "committer@example.com")
             .env("GIT_AUTHOR_DATE", &date)
-            .env("GIT_COMMITTER_DATE", &date)
-            .output()?)
+            .env("GIT_COMMITTER_DATE", &date);
+        command
+    }
+
+    fn run(&self, args: &[&str]) -> Result<Output> {
+        Ok(self.command(args).output()?)
+    }
+
+    /// Write a raw object, for commits whose headers or bytes `git commit` would not produce.
+    fn object(&self, kind: &str, data: &[u8]) -> Result<String> {
+        use std::{io::Write, process::Stdio};
+        let mut child = self
+            .command(&["hash-object", "-t", kind, "-w", "--stdin"])
+            .stdin(Stdio::piped())
+            .stdout(Stdio::piped())
+            .spawn()?;
+        child.stdin.take().expect("piped").write_all(data)?;
+        let out = child.wait_with_output()?;
+        ensure!(out.status.success(), "hash-object");
+        Ok(String::from_utf8(out.stdout)?.trim().to_owned())
     }
 
     fn git(&self, args: &[&str]) -> Result<Vec<u8>> {
@@ -180,20 +199,157 @@ fn paths_restrict_commits_and_hide_those_that_do_not_touch_them() -> Result<()> 
 }
 
 #[test]
-fn blobs_print_their_content_between_commits() -> Result<()> {
+fn blobs_trees_and_tags_of_them_match_git() -> Result<()> {
     let f = history()?;
+    f.write("space name", "s\n")?;
+    f.commit("a name with a space")?;
+    let tree = String::from_utf8(f.git(&["rev-parse", "HEAD^{tree}"])?)?;
+    f.git(&["tag", "-a", "tree-tag", "-m", "a tagged tree", tree.trim()])?;
+    f.git(&["tag", "-a", "blob-tag", "-m", "a tagged blob", "HEAD:file"])?;
+    f.git(&["tag", "-a", "nested", "-m", "a tag of a tag", "v1"])?;
+    f.git(&["tag", "light-tree", tree.trim()])?;
     for args in [
         &["HEAD:file"][..],
         &["HEAD:file", "HEAD~1"],
         &["HEAD~1", "HEAD:dir/inner"],
+        &["HEAD:"],
+        &["HEAD^{tree}"],
+        &["HEAD:dir"],
+        &["HEAD:", "HEAD:"],
+        &["-s", "HEAD", "HEAD:"],
+        &["-s", "HEAD:dir", "HEAD"],
+        &["tree-tag"],
+        &["--oneline", "tree-tag"],
+        &["light-tree"],
+        &["blob-tag"],
+        &["nested"],
+        &["-s", "nested"],
+        &["--oneline", "nested"],
+        &["v1^{}"],
+        &["-s", "v1^{}", "v1"],
+        // A commit prints once per call, a tag or tree each time it is named.
+        &[
+            "-s", "v1", "v1^{}", "v1", "HEAD", "HEAD~1", "HEAD", "HEAD:dir", "HEAD:dir",
+        ],
     ] {
         parity(&f, args)?;
     }
-    // A tree is listed like `brit cat`, not with Git's `tree` heading.
-    let tree = brit(f.root(), &["show", "HEAD:dir"])?;
-    let cat = brit(f.root(), &["cat", "HEAD:dir"])?;
-    ensure!(tree.status.success());
-    assert_eq!(tree.stdout, cat.stdout);
+    Ok(())
+}
+
+/// Git re-encodes a commit's names and message from its declared encoding to UTF-8; bytes without
+/// a declaration, or that do not decode, print unchanged.
+#[test]
+fn declared_encodings_are_reencoded_like_git() -> Result<()> {
+    let f = history()?;
+    let tree = String::from_utf8(f.git(&["rev-parse", "HEAD^{tree}"])?)?;
+    let tree = tree.trim();
+    let commit = |encoding: Option<&str>, message: &[u8]| -> Result<String> {
+        let mut data = format!("tree {tree}\n").into_bytes();
+        data.extend_from_slice(b"author Andr\xe9 <a@example.com> 1700000000 +0100\n");
+        data.extend_from_slice(b"committer C <c@example.com> 1700000000 +0100\n");
+        if let Some(encoding) = encoding {
+            data.extend_from_slice(format!("encoding {encoding}\n").as_bytes());
+        }
+        data.push(b'\n');
+        data.extend_from_slice(message);
+        f.object("commit", &data)
+    };
+    let latin1 = commit(Some("ISO-8859-1"), b"caf\xe9 \x80\x9f\n\nbody \xe9\n")?;
+    let sjis_invalid = commit(Some("Shift_JIS"), b"bad \x81\n")?;
+    let undeclared = commit(None, b"raw \xe9\n")?;
+    for id in [&latin1, &sjis_invalid, &undeclared] {
+        for format in [&[][..], &["-s"], &["--oneline", "-s"]] {
+            let mut args: Vec<&str> = format.to_vec();
+            args.push(id);
+            parity(&f, &args)?;
+        }
+    }
+    // An encoding Brit cannot decode exactly as iconv is refused; Git prints the bytes unchanged.
+    let unknown = commit(Some("x-no-such-encoding"), b"unknown \xe9\n")?;
+    ensure!(f.run(&["show", "-s", &unknown])?.status.success());
+    let out = brit(f.root(), &["show", "-s", &unknown])?;
+    ensure!(!out.status.success() && out.stdout.is_empty());
+    ensure!(String::from_utf8_lossy(&out.stderr)
+        .contains("declares the encoding 'x-no-such-encoding', which brit cannot decode as Git would"));
+    // Git prints in i18n.logOutputEncoding, else i18n.commitEncoding; Brit prints UTF-8 only.
+    for (key, value) in [
+        ("i18n.logOutputEncoding", "ISO-8859-1"),
+        ("i18n.commitEncoding", "ISO-8859-1"),
+    ] {
+        f.git(&["config", key, value])?;
+        let out = brit(f.root(), &["show", "-s", &latin1])?;
+        ensure!(!out.status.success() && out.stdout.is_empty());
+        ensure!(String::from_utf8_lossy(&out.stderr).contains(&format!(
+            "{key} asks for '{value}' output, but brit show prints UTF-8 only; use git show"
+        )));
+        f.git(&["config", "--unset", key])?;
+    }
+    f.git(&["config", "i18n.commitEncoding", "ISO-8859-1"])?;
+    f.git(&["config", "i18n.logOutputEncoding", "UTF-8"])?;
+    parity(&f, &[&latin1])?;
+    Ok(())
+}
+
+/// A signature header is not part of the default output, and author and committer are separate.
+#[test]
+fn signatures_and_distinct_committers_match_git() -> Result<()> {
+    let f = history()?;
+    let tree = String::from_utf8(f.git(&["rev-parse", "HEAD^{tree}"])?)?;
+    let head = String::from_utf8(f.git(&["rev-parse", "HEAD"])?)?;
+    let signed = f.object(
+        "commit",
+        format!(
+            "tree {}\nparent {}\nauthor A <a@example.com> 1700000000 +0545\n\
+             committer C <c@example.com> 1700009999 -0800\n\
+             gpgsig -----BEGIN PGP SIGNATURE-----\n \n iQEzBAABCAAdFiEE\n -----END PGP SIGNATURE-----\n\n\
+             signed commit\n",
+            tree.trim(),
+            head.trim()
+        )
+        .as_bytes(),
+    )?;
+    for format in FORMATS {
+        let mut args: Vec<&str> = format.to_vec();
+        args.push(&signed);
+        parity(&f, &args)?;
+    }
+    f.write("file", "by someone else\n")?;
+    f.git(&["add", "-A"])?;
+    let out = f
+        .command(&["commit", "-q", "-m", "author and committer differ"])
+        .env("GIT_AUTHOR_NAME", "Other Author")
+        .env("GIT_AUTHOR_DATE", "1700000000 +1245")
+        .env("GIT_COMMITTER_DATE", "1700100000 -0930")
+        .output()?;
+    ensure!(out.status.success());
+    for format in [&[][..], &["-s"], &["--oneline"], &["--stat"]] {
+        parity(&f, format)?;
+    }
+    Ok(())
+}
+
+/// `-s ours` keeps the first parent's tree; an octopus merges several parents at once.
+#[test]
+fn ours_and_octopus_merges_match_git() -> Result<()> {
+    let f = Fixture::new()?;
+    f.write("base", "base\n")?;
+    f.commit("base")?;
+    for branch in ["a", "b", "c"] {
+        f.git(&["switch", "-q", "-c", branch, "main"])?;
+        f.write(&format!("{branch}-file"), &format!("{branch}\n"))?;
+        f.commit(&format!("work on {branch}"))?;
+    }
+    f.git(&["switch", "-q", "main"])?;
+    f.git(&["merge", "-q", "-s", "ours", "-m", "ours merge", "a"])?;
+    f.git(&["merge", "-q", "-m", "octopus merge", "b", "c"])?;
+    for revs in [&["HEAD"][..], &["HEAD~1"], &["HEAD", "HEAD~1"]] {
+        for format in FORMATS {
+            let mut args: Vec<&str> = format.to_vec();
+            args.extend_from_slice(revs);
+            parity(&f, &args)?;
+        }
+    }
     Ok(())
 }
 
@@ -214,15 +370,27 @@ fn merges_needing_a_combined_diff_refuse() -> Result<()> {
     ensure!(!conflicted.status.success(), "the fixture conflicts");
     f.write("file", "resolved\n")?;
     f.commit("resolved merge")?;
-    for format in [&[][..], &["--name-only"], &["--name-status"]] {
-        let mut args = vec!["show"];
-        args.extend_from_slice(format);
-        let out = brit(f.root(), &args)?;
-        ensure!(!out.status.success() && out.stdout.is_empty(), "{format:?} refuses");
-        ensure!(String::from_utf8_lossy(&out.stderr).contains("combined diff"));
+    // Several revisions in one call print nothing when one of them refuses.
+    for format in [&[][..], &["--oneline"], &["--name-only"], &["--name-status"]] {
+        for revs in [&["HEAD"][..], &["HEAD~1", "HEAD"]] {
+            let mut args = vec!["show"];
+            args.extend_from_slice(format);
+            args.extend_from_slice(revs);
+            let out = brit(f.root(), &args)?;
+            ensure!(out.status.code() == Some(1), "{args:?} refuses with status 1");
+            ensure!(out.stdout.is_empty(), "{args:?} prints nothing");
+            ensure!(String::from_utf8_lossy(&out.stderr).contains("which needs a combined diff; use git show"));
+        }
     }
     // A first-parent summary and the header alone remain available.
-    for format in [&["--stat"][..], &["--numstat"], &["-s"]] {
+    for format in [
+        &["--stat"][..],
+        &["--numstat"],
+        &["-s"],
+        &["--oneline", "--stat"],
+        &["--oneline", "-s"],
+        &["-s", "HEAD~1", "HEAD"],
+    ] {
         parity(&f, format)?;
     }
     Ok(())

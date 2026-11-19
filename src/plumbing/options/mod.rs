@@ -700,6 +700,13 @@ pub mod diff {
     /// index with HEAD). One revision is compared with the working files (or the index); two
     /// revisions, `A..B` or `A...B` (the merge base of A and B against B) compare trees. Renames
     /// are never detected: a rename is a deletion and an addition.
+    ///
+    /// Refused rather than printed differently: a path with a `diff=<driver>` attribute (even a
+    /// built-in driver with nothing configured) in the patch and count forms (--name-only and
+    /// --name-status still work); intent-to-add entries, skip-worktree or assume-unchanged entries,
+    /// sparse or split indexes and a conflicted index in the forms that read the index; and
+    /// submodules in comparisons with the working files. Line counts can differ from Git's on
+    /// very large, heavily changed files, because Brit's Myers diff uses different heuristics.
     #[derive(Debug, clap::Parser)]
     #[clap(args_conflicts_with_subcommands = true)]
     pub struct Platform {
@@ -782,11 +789,16 @@ pub mod show {
     /// Show commits with their changes, annotated tags, and blobs or trees, like `git show --no-renames`.
     ///
     /// A commit prints Git's medium header and its patch against its first parent (a root or
-    /// shallow-boundary commit against the empty tree). A merge prints its header only, and with
-    /// --stat or --numstat its first-parent summary, as Git does; a merge whose result differs
-    /// from every parent at some path, where Git prints a combined diff, is refused. An annotated
-    /// tag prints its header and message, then what it points to. A blob (`REV:PATH`) prints its
-    /// content and a tree is listed, both exactly like `brit cat`.
+    /// shallow-boundary commit against the empty tree), its message re-encoded to UTF-8 from a
+    /// declared encoding. A merge prints its header only, and with --stat or --numstat its
+    /// first-parent summary, as Git does. An annotated tag prints its header and message, then what
+    /// it points to. A blob (`REV:PATH`) prints its content, and a tree prints `tree <REVISION>`, a
+    /// blank line and its entry names (directories with a trailing slash), as Git does.
+    ///
+    /// Refused rather than printed differently: a merge whose result differs from every parent at
+    /// some path (Git's combined diff) in the patch, --oneline, --name-only and --name-status forms;
+    /// a declared encoding Brit cannot decode exactly as Git; non-UTF-8 output encodings
+    /// (i18n.logOutputEncoding); and the diff limits listed in `brit diff --help`.
     #[derive(Debug, clap::Parser)]
     pub struct Platform {
         /// Show an 80-column summary instead of patches, like `git show --stat=80`.
@@ -807,7 +819,7 @@ pub mod show {
         /// Print each commit as its abbreviated id and title, like `git show --oneline`.
         #[clap(long)]
         pub oneline: bool,
-        /// Revisions to show instead of HEAD: commits, tags, or `REV:PATH` for a blob or tree.
+        /// Revisions to show instead of HEAD: commits, tags, trees (`REV:`, `REV^{tree}`), or `REV:PATH`.
         #[clap(value_parser = crate::shared::AsBString, value_name = "REVISION")]
         pub revisions: Vec<BString>,
         /// Only show changes to these literal paths; a commit that changes none of them is not shown.
