@@ -15,8 +15,7 @@ mod transmit;
 pub use error::Error;
 pub use prepare::{Prepare, SignMode};
 
-/// What a `before_send` callback tells
-/// [`Prepare::transmit_with_before_send()`](Prepare::transmit_with_before_send()) about the
+/// What a `before_send` callback tells `Prepare::transmit_with_before_send()` about the
 /// connection it held while authorizing the push.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Authorized {
