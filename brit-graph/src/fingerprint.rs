@@ -14,6 +14,7 @@ use brit_epr::BritCid;
 /// when the `repo` feature is enabled and `ContentFingerprint::from_repo_globs`
 /// is called.
 #[derive(Debug, thiserror::Error)]
+#[non_exhaustive]
 pub enum FingerprintError {
     /// Glob pattern compilation failed.
     #[error("invalid glob pattern '{pattern}': {message}")]
