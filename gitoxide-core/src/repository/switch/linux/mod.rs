@@ -271,13 +271,58 @@ pub fn ensure_no_pending(repo: &gix::Repository) -> Result<()> {
             "pending conflict authoring in {}; recover its internal session",
             worktree.git_dir().display()
         );
-        ensure!(
-            !present(&journal(&worktree))?,
-            "pending switch or pull in {}; use brit switch --status or brit pull --status, then the named --continue or --abort command",
-            worktree.git_dir().display()
-        );
+        if present(&journal(&worktree))? {
+            ensure!(
+                !unrecorded(&worktree)?,
+                "pending switch or pull in {}: it stopped before its first record, recorded nothing and changed nothing; run brit switch --abort in that worktree to remove it",
+                worktree.git_dir().display()
+            );
+            bail!(
+                "pending switch or pull in {}; use brit switch --status or brit pull --status, then the named --continue or --abort command",
+                worktree.git_dir().display()
+            );
+        }
     }
     Ok(())
+}
+
+/// A journal directory without `manifest.json`: a switch or pull stopped after
+/// creating it and before publishing its first record. Both create the directory
+/// and publish that record before they take any lock or touch any live file, so
+/// such a directory holds at most an unpublished `manifest.next` and nothing live
+/// was changed.
+fn unrecorded(repo: &gix::Repository) -> Result<bool> {
+    let root = journal(repo);
+    Ok(present(&root)? && !present(&root.join("manifest.json"))?)
+}
+
+/// Remove an unrecorded journal. The caller holds the guard every switch and pull
+/// holds from before it creates its journal, so its creator is no longer running.
+fn release_unrecorded(repo: &gix::Repository) -> Result<()> {
+    use std::os::unix::fs::{MetadataExt, PermissionsExt};
+    let root = journal(repo);
+    let owner = fs::metadata(absolute(repo, repo.git_dir()))?.uid();
+    let metadata = fs::symlink_metadata(&root)?;
+    ensure!(
+        metadata.is_dir() && metadata.uid() == owner && metadata.permissions().mode().trailing_zeros() >= 6,
+        "unsafe unrecorded switch journal {}; evidence retained",
+        root.display()
+    );
+    let entries = fs::read_dir(&root)?.collect::<std::io::Result<Vec<_>>>()?;
+    for entry in &entries {
+        let member = fs::symlink_metadata(entry.path())?;
+        ensure!(
+            entry.file_name() == "manifest.next" && member.is_file() && member.uid() == owner,
+            "unknown member {:?} in an unrecorded switch journal; evidence retained",
+            entry.file_name()
+        );
+    }
+    for entry in entries {
+        fs::remove_file(entry.path())?;
+    }
+    sync_dir(&root)?;
+    fs::remove_dir(&root)?;
+    sync_dir(&absolute(repo, repo.git_dir()))
 }
 
 /// Serialize cooperating Brit writers across the shared repository.
@@ -366,6 +411,13 @@ pub(crate) fn shared_guard(repo: &gix::Repository) -> Result<guard::Held> {
 pub fn status(repo: &gix::Repository, out: &mut dyn Write) -> Result<()> {
     if !present(&journal(repo))? {
         writeln!(out, "No switch or pull recovery pending")?;
+        return Ok(());
+    }
+    if unrecorded(repo)? {
+        writeln!(
+            out,
+            "Switch or pull start stopped before its first record: it recorded nothing and changed nothing; unless one is still starting, brit switch --abort (or brit pull --abort) removes it"
+        )?;
         return Ok(());
     }
     let state = load(repo)?;
@@ -1029,6 +1081,7 @@ fn execute_locked(repo: gix::Repository, branch: &BStr, _shared: guard::Held, pi
     sync_dir(git_dir)?;
     if pinned.is_none() {
         fs::DirBuilder::new().mode(0o700).create(journal(&repo))?;
+        checkpoint("journal-created")?;
     }
     let mut preparation = Preparation {
         directory: journal(&repo),
@@ -1966,6 +2019,14 @@ fn recover_operation(repo: gix::Repository, abort: bool, pulling: bool) -> Resul
     let _shared = shared_guard(&repo)?;
     if !present(&journal(&repo))? {
         bail!("no switch recovery pending");
+    }
+    if unrecorded(&repo)? {
+        let operation = if pulling { "pull" } else { "switch" };
+        ensure!(
+            abort,
+            "the stopped {operation} recorded nothing to continue and changed nothing; use brit {operation} --abort to remove it"
+        );
+        return release_unrecorded(&repo);
     }
     let mut state = load(&repo)?;
     ensure!(

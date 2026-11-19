@@ -544,6 +544,76 @@ mod linux {
             repo.join(".git/brit-switch")
         }
 
+        /// Killed or interrupted just after creating its journal directory, before
+        /// its first record, a switch leaves `brit-switch` with no manifest. It had
+        /// changed nothing live: `--status` says so, every writer in every worktree
+        /// refuses naming the cure, `--continue` refuses, and `--abort` clears it.
+        /// Before the fix `--status` and `--abort` failed with ENOENT, so nothing
+        /// Brit offered could clear it.
+        #[test]
+        fn switch_stopped_before_its_first_record_is_harmless_and_aborts() -> Result<()> {
+            for linked in [false, true] {
+                for signal in ["-KILL", "-INT"] {
+                    let main = fixture("switch-unrecorded")?;
+                    let parent = tempfile::tempdir()?;
+                    let root = if linked {
+                        let root = parent.path().join("linked");
+                        git(
+                            main.path(),
+                            &[
+                                "worktree",
+                                "add",
+                                "-q",
+                                "-b",
+                                "linked",
+                                root.to_str().expect("utf-8 path"),
+                                "main",
+                            ],
+                        )?;
+                        root
+                    } else {
+                        main.path().to_owned()
+                    };
+                    let git_dir = git(&root, &["rev-parse", "--absolute-git-dir"])?;
+                    let git_dir = std::path::PathBuf::from(String::from_utf8(git_dir)?.trim());
+                    let before = fs::read(git_dir.join("index"))?;
+                    let head = git(&root, &["rev-parse", "HEAD"])?;
+                    let mut paused = pause(&root, &["switch", "destination"], "journal-created")?;
+                    interrupt(&mut paused, signal)?;
+                    let journal = git_dir.join("brit-switch");
+                    ensure!(
+                        journal.is_dir() && !journal.join("manifest.json").exists(),
+                        "{signal}: an unrecorded journal directory remains"
+                    );
+                    assert_eq!(fs::read(git_dir.join("index"))?, before);
+                    assert_eq!(git(&root, &["rev-parse", "HEAD"])?, head);
+                    let status = success(&root, &["switch", "--status"])?;
+                    let status = String::from_utf8(status.stdout)?;
+                    ensure!(
+                        status.contains("recorded nothing") && status.contains("brit switch --abort"),
+                        "{signal}: status is truthful: {status}"
+                    );
+                    let blocked = run(main.path(), true, &["branch", "create", "blocked"])?;
+                    let stderr = String::from_utf8_lossy(&blocked.stderr);
+                    ensure!(
+                        !blocked.status.success() && stderr.contains("brit switch --abort"),
+                        "{signal}: other writers refuse naming the cure: {stderr}"
+                    );
+                    ensure!(
+                        !run(&root, true, &["switch", "--continue"])?.status.success(),
+                        "nothing was recorded to continue"
+                    );
+                    success(&root, &["switch", "--abort"])?;
+                    ensure!(!journal.exists(), "{signal}: --abort removes the unrecorded journal");
+                    assert_eq!(fs::read(git_dir.join("index"))?, before);
+                    success(main.path(), &["branch", "create", "unblocked"])?;
+                    success(&root, &["switch", "destination"])?;
+                    assert_eq!(fs::read(root.join("selected"))?, b"destination\n");
+                }
+            }
+            Ok(())
+        }
+
         #[test]
         fn real_kill_and_interrupt_at_each_publication_boundary_continue_explicitly() -> Result<()> {
             for signal in ["-KILL", "-INT"] {

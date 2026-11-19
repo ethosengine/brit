@@ -62,3 +62,22 @@ really its ancestor.
   holder may itself be waiting for the hook's command. A pre-push gate that commits or writes
   notes while another lane runs a long exclusive operation (a switch, a pull, a fetch) therefore
   fails after the cap rather than waiting it out.
+
+## Recovery journals
+
+`switch`, `pull` and `rebase` journal their work under the worktree's Git directory, and
+while a journal is pending every writer in every worktree refuses and names the command that
+recovers it. Only that operation's own recovery command, run in the worktree that owns the
+journal, removes it: a writer elsewhere holds the repository guard (perhaps only shared) and
+its own worktree's guard, never the owning worktree's, so clearing another worktree's journal
+would be a write the model reserves for `other_worktree_guard`.
+
+- A `switch` or `pull` stopped after creating its journal directory and before publishing its
+  first record leaves `brit-switch` with no `manifest.json`. Both publish that record before
+  they take any lock or touch any live file, so nothing was changed. `brit switch --status`
+  says so, other writers refuse naming `brit switch --abort`, and `--abort` (`brit pull --abort`
+  too) removes it; `--continue` refuses, since nothing was recorded.
+- A rebase whose preparation failed, or was killed, is cancelled by `brit rebase --abort`
+  without being rolled forward: preparation changes nothing live, so the abort reads only the
+  journal's own records and payloads and the pinned HEAD, index and branch, and restores
+  nothing. An interrupted cancellation is finished by the next `--abort`.
