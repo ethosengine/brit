@@ -302,7 +302,7 @@ impl ThreadSafeRepository {
         let home = gix_path::env::home_dir().and_then(|home| env.home.check_opt(home));
 
         let mut filter_config_section = filter_config_section.unwrap_or(config::section::is_trusted);
-        let use_env_config = config.env;
+        let (use_env_config, follow_config_includes) = (config.env, config.includes);
         let mut config = config::Cache::from_stage_one(
             repo_config,
             common_dir_ref,
@@ -407,10 +407,15 @@ impl ThreadSafeRepository {
                 .strings_filter(Safe::DIRECTORY, &mut Safe::directory_filter)
                 .unwrap_or_default();
             if use_env_config {
-                let includes = gix_config::file::includes::Options::follow(
-                    interpolate_context(git_install_dir.as_deref(), home.as_deref()),
-                    Default::default(),
-                );
+                // Follow includes only as far as the configuration load above was permitted to.
+                let includes = if follow_config_includes {
+                    gix_config::file::includes::Options::follow(
+                        interpolate_context(git_install_dir.as_deref(), home.as_deref()),
+                        Default::default(),
+                    )
+                } else {
+                    gix_config::file::includes::Options::no_follow()
+                };
                 let env = gix_config::File::from_env(gix_config::file::init::Options {
                     includes,
                     ..Default::default()

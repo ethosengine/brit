@@ -160,3 +160,13 @@ requirements below, as they do for the other affected command families.
 - [ ] `brit diff` in a worktree of this repository refuses with "diff attributes and text conversion are not supported; use git diff" (observed with installed 0.1.13 on 2026-11-15, reviewing this document's own change).
 
 82 items
+
+## Trust decision: known differences from git (sprint 3 trust lane)
+
+Git decides `safe.directory` from protected configuration read without a repository. Brit now does so for the command scope, but these differences remain:
+
+- [ ] An `includeIf` (`gitdir:`, `onbranch:`, `hasconfig:`) in a global or system file is evaluated against the repository being opened, so it can pull in a `safe.directory` entry git would not see; `onbranch:` and `hasconfig:` are then decided by that repository's own HEAD and remotes. This predates the lane and is the same on 0.2.6. Do not keep `safe.directory` behind a conditional include. A fix in the same shape as the environment one (re-read the system and global files with an empty conditional context for the ownership decision, reusing `config::cache::init::source_path`) is about 40 lines in `gix/src/open/repository.rs` plus tests, with no gix-config change; it is a candidate for upstream.
+- [ ] gix does not follow `-c include.path=…`; git does.
+- [ ] `GIT_CONFIG_PARAMETERS` (how `git -c` reaches git's children, such as a hook that runs brit) is not read.
+- [ ] `safe.directory=<R>/*` also trusts `<R>` itself; git requires a path strictly below.
+- [ ] With `GIT_DIR` and its own `GIT_WORK_TREE` set, git skips the ownership check; gix still makes it.

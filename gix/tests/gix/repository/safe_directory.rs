@@ -196,3 +196,27 @@ fn environment_conditional_includes_never_grant_trust() -> TestResult {
     }
     Ok(())
 }
+
+#[test]
+#[serial_test::serial]
+fn environment_includes_grant_trust_only_when_includes_are_permitted() -> TestResult {
+    let fixture = fixture()?;
+    let dir = gix_testtools::tempfile::TempDir::new()?;
+    let include = dir.path().join("trust-everything.config");
+    std::fs::write(&include, "[safe]\n\tdirectory = *\n")?;
+    for (follow_includes, expected) in [(false, Trust::Reduced), (true, Trust::Full)] {
+        let _environment = gix_testtools::isolate_git_environment()?
+            .set("GIT_CONFIG_COUNT", "1")
+            .set("GIT_CONFIG_KEY_0", "include.path")
+            .set("GIT_CONFIG_VALUE_0", include.display().to_string());
+        let mut options = gix::open::Options::default();
+        options.permissions.config.includes = follow_includes;
+        let repo = open_reduced(&fixture, options)?;
+        assert_eq!(
+            repo.git_dir_trust(),
+            expected,
+            "the trust decision follows includes exactly when the configuration load may: {follow_includes}"
+        );
+    }
+    Ok(())
+}
