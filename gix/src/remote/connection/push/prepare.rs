@@ -105,3 +105,47 @@ where
         self
     }
 }
+
+/// The receive-pack capabilities a push relies on, as one advertisement announced them.
+#[derive(Debug, PartialEq, Eq)]
+pub(super) struct Contract {
+    report_status: bool,
+    side_band_64k: bool,
+    ofs_delta: bool,
+    atomic: bool,
+    push_options: bool,
+    push_cert: bool,
+    object_format: Option<BString>,
+}
+
+impl Contract {
+    pub(super) fn of(handshake: Option<&gix_protocol::Handshake>) -> Self {
+        let has = |name: &str| handshake.is_some_and(|h| h.capabilities.contains(name));
+        Contract {
+            report_status: has("report-status"),
+            side_band_64k: has("side-band-64k"),
+            ofs_delta: has("ofs-delta"),
+            atomic: has("atomic"),
+            push_options: has("push-options"),
+            push_cert: has("push-cert"),
+            object_format: handshake
+                .and_then(|h| h.capabilities.capability("object-format"))
+                .and_then(|cap| cap.value().map(BString::from)),
+        }
+    }
+
+    /// The name of the first capability `now` announces differently, if any.
+    pub(super) fn first_difference(&self, now: &Contract) -> Option<&'static str> {
+        [
+            ("report-status", self.report_status == now.report_status),
+            ("side-band-64k", self.side_band_64k == now.side_band_64k),
+            ("ofs-delta", self.ofs_delta == now.ofs_delta),
+            ("atomic", self.atomic == now.atomic),
+            ("push-options", self.push_options == now.push_options),
+            ("push-cert", self.push_cert == now.push_cert),
+            ("object-format", self.object_format == now.object_format),
+        ]
+        .into_iter()
+        .find_map(|(name, same)| (!same).then_some(name))
+    }
+}

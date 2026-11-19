@@ -16,6 +16,7 @@ pub struct BritInvocation {
     env: Vec<(OsString, OsString)>,
     cwd: Option<PathBuf>,
     normalize: bool,
+    deadline: Option<std::time::Duration>,
 }
 
 pub struct Capture {
@@ -84,6 +85,7 @@ impl BritInvocation {
             env: Vec::new(),
             cwd: None,
             normalize: false,
+            deadline: None,
         }
     }
 
@@ -121,6 +123,12 @@ impl BritInvocation {
         self
     }
 
+    /// Kill the process and fail if it runs longer than `limit`, instead of waiting forever.
+    pub fn deadline(mut self, limit: std::time::Duration) -> Self {
+        self.deadline = Some(limit);
+        self
+    }
+
     pub fn run(self) -> Result<Capture> {
         let mut cmd = Command::new(&self.program);
         let config_dir = tempfile::tempdir().context("create isolated Git configuration directory")?;
@@ -135,7 +143,10 @@ impl BritInvocation {
         if let Some(cwd) = &self.cwd {
             cmd.current_dir(cwd);
         }
-        let out = cmd.output().with_context(|| format!("invoke {:?}", self.program))?;
+        let out = match self.deadline {
+            None => cmd.output().with_context(|| format!("invoke {:?}", self.program))?,
+            Some(limit) => output_within(cmd, limit).with_context(|| format!("invoke {:?}", self.program))?,
+        };
         let mut stdout = String::from_utf8(out.stdout).map_err(|e| anyhow!("non-utf8 stdout: {e}"))?;
         let mut stderr = String::from_utf8(out.stderr).map_err(|e| anyhow!("non-utf8 stderr: {e}"))?;
         if self.normalize {
@@ -149,6 +160,40 @@ impl BritInvocation {
             status: out.status,
         })
     }
+}
+
+fn output_within(mut cmd: Command, limit: std::time::Duration) -> Result<std::process::Output> {
+    use std::{io::Read as _, process::Stdio};
+    let mut child = cmd
+        .stdin(Stdio::null())
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped())
+        .spawn()?;
+    let drain = |mut pipe: Box<dyn std::io::Read + Send>| {
+        std::thread::spawn(move || {
+            let mut buf = Vec::new();
+            pipe.read_to_end(&mut buf).map(|_| buf)
+        })
+    };
+    let stdout = drain(Box::new(child.stdout.take().expect("piped stdout")));
+    let stderr = drain(Box::new(child.stderr.take().expect("piped stderr")));
+    let started = std::time::Instant::now();
+    let status = loop {
+        if let Some(status) = child.try_wait()? {
+            break status;
+        }
+        if started.elapsed() > limit {
+            child.kill().ok();
+            child.wait().ok();
+            anyhow::bail!("did not finish within {}s", limit.as_secs());
+        }
+        std::thread::sleep(std::time::Duration::from_millis(20));
+    };
+    Ok(std::process::Output {
+        status,
+        stdout: stdout.join().expect("stdout reader")?,
+        stderr: stderr.join().expect("stderr reader")?,
+    })
 }
 
 #[cfg(test)]

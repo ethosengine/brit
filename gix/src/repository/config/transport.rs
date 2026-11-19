@@ -19,7 +19,10 @@ impl crate::Repository {
             feature = "blocking-http-transport-reqwest",
             feature = "blocking-http-transport-curl"
         )),
-        allow(unused_variables)
+        allow(
+            unused_variables,
+            reason = "without an HTTP backend the remote name feeds no HTTP option"
+        )
     )]
     pub fn transport_options<'a>(
         &self,
@@ -389,6 +392,15 @@ impl crate::Repository {
                             };
                             opts.backend =
                                 Some(Arc::new(Mutex::new(backend)) as Arc<Mutex<dyn Any + Send + Sync + 'static>>);
+                        }
+
+                        // brit: request deadlines for the reqwest backend (candidate for upstream).
+                        #[cfg(all(
+                            feature = "blocking-http-transport-reqwest",
+                            not(feature = "blocking-http-transport-curl")
+                        ))]
+                        {
+                            opts.backend = Some(crate::remote::push::reqwest_backend(&opts, false));
                         }
 
                         Ok(Some(Box::new(opts) as Box<dyn Any>))
