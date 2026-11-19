@@ -272,7 +272,8 @@ fn declared_encodings_are_reencoded_like_git() -> Result<()> {
     ensure!(!out.status.success() && out.stdout.is_empty());
     ensure!(String::from_utf8_lossy(&out.stderr)
         .contains("declares the encoding 'x-no-such-encoding', which brit cannot decode as Git would"));
-    // Git prints in i18n.logOutputEncoding, else i18n.commitEncoding; Brit prints UTF-8 only.
+    // Git prints in i18n.logOutputEncoding, else i18n.commitEncoding. Brit prints UTF-8, which is
+    // the same bytes while the text is ASCII, and refuses as soon as it is not.
     for (key, value) in [
         ("i18n.logOutputEncoding", "ISO-8859-1"),
         ("i18n.commitEncoding", "ISO-8859-1"),
@@ -281,13 +282,71 @@ fn declared_encodings_are_reencoded_like_git() -> Result<()> {
         let out = brit(f.root(), &["show", "-s", &latin1])?;
         ensure!(!out.status.success() && out.stdout.is_empty());
         ensure!(String::from_utf8_lossy(&out.stderr).contains(&format!(
-            "{key} asks for '{value}' output, but brit show prints UTF-8 only; use git show"
+            "{key} asks for '{value}' output, but brit show prints UTF-8 only and commit {latin1} is not ASCII; use git show"
         )));
+        for args in [&["HEAD"][..], &["--stat", "v1"], &["--oneline", "HEAD~1", "HEAD~2"]] {
+            parity(&f, args)?;
+        }
         f.git(&["config", "--unset", key])?;
     }
+    f.git(&["config", "i18n.logOutputEncoding", "UTF-16"])?;
+    let out = brit(f.root(), &["show", "-s", "HEAD"])?;
+    ensure!(!out.status.success() && out.stdout.is_empty());
+    ensure!(String::from_utf8_lossy(&out.stderr)
+        .contains("i18n.logOutputEncoding asks for 'UTF-16' output, but brit show prints UTF-8 only; use git show"));
+    f.git(&["config", "--unset", "i18n.logOutputEncoding"])?;
     f.git(&["config", "i18n.commitEncoding", "ISO-8859-1"])?;
     f.git(&["config", "i18n.logOutputEncoding", "UTF-8"])?;
     parity(&f, &[&latin1])?;
+    Ok(())
+}
+
+/// Names follow Git: a file alone means HEAD restricted to it, a name that is both a revision and
+/// a file is ambiguous until `--` says which, and unknown names refuse with Git's first line.
+#[test]
+fn names_paths_and_unknown_revisions_like_git() -> Result<()> {
+    let f = history()?;
+    f.git(&["branch", "added", "HEAD~1"])?;
+    for args in [
+        &["added", "--"][..],
+        &["--stat", "added", "--"],
+        &["file"],
+        &["dir"],
+        &["HEAD~1", "file"],
+        &[":/subject line", "file"],
+    ] {
+        parity(&f, args)?;
+    }
+    for (args, reason) in [
+        (&["added"][..], "ambiguous argument 'added': both revision and filename"),
+        (
+            &["nosuch"],
+            "ambiguous argument 'nosuch': unknown revision or path not in the working tree.",
+        ),
+        (&["nosuch", "--"], "bad revision 'nosuch'"),
+        (
+            &["HEAD", "nosuch"],
+            "ambiguous argument 'nosuch': unknown revision or path not in the working tree.",
+        ),
+        (&["nosuch:file"], "invalid object name 'nosuch'."),
+        (&["HEAD:nosuch"], "path 'nosuch' does not exist in 'HEAD'"),
+        (&["HEAD:nosuch", "--"], "bad revision 'HEAD:nosuch'"),
+    ] {
+        let git = f.run(&[&["show"][..], args].concat())?;
+        ensure!(
+            String::from_utf8_lossy(&git.stderr).contains(reason),
+            "Git says {reason}"
+        );
+        let mut native = vec!["show"];
+        native.extend_from_slice(args);
+        let out = brit(f.root(), &native)?;
+        ensure!(
+            out.status.code() == Some(1) && out.stdout.is_empty(),
+            "{args:?} refuses"
+        );
+        let stderr = String::from_utf8_lossy(&out.stderr);
+        ensure!(stderr.contains(reason), "{args:?}: {stderr}");
+    }
     Ok(())
 }
 

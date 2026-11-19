@@ -484,26 +484,46 @@ fn one_revision_compares_with_the_working_files_or_the_index() -> Result<()> {
     }
     refuses(f.root(), &["--cached", "main", "topic"], "--cached")?;
     refuses(f.root(), &["main", "topic", "HEAD"], "at most two revisions")?;
-    refuses(
-        f.root(),
-        &["no-such-revision"],
-        "ambiguous argument 'no-such-revision': unknown revision or path not in the working tree; \
-         use '--' to separate paths from revisions",
-    )?;
-    refuses(
-        f.root(),
-        &["no-such-revision", "--", "shared"],
-        "bad revision 'no-such-revision'",
-    )?;
-    // A name that is both a revision and a path is ambiguous without `--`, as in Git.
+    // Unknown names refuse like Git, with the first line of Git's message.
+    for (args, reason) in [
+        (
+            &["no-such-revision"][..],
+            "ambiguous argument 'no-such-revision': unknown revision or path not in the working tree.",
+        ),
+        (&["no-such-revision", "--"], "bad revision 'no-such-revision'"),
+        (&["no-such-revision", "--", "shared"], "bad revision 'no-such-revision'"),
+        (
+            &["no-such..main"],
+            "ambiguous argument 'no-such..main': unknown revision or path not in the working tree.",
+        ),
+        (&["no-such..main", "--"], "bad revision 'no-such..main'"),
+        (
+            &["main", "no-such"],
+            "ambiguous argument 'no-such': unknown revision or path not in the working tree.",
+        ),
+        (
+            &["--cached", "no-such"],
+            "ambiguous argument 'no-such': unknown revision or path not in the working tree.",
+        ),
+    ] {
+        let git = f.git_in(f.root(), &oracle_args(args))?;
+        ensure!(
+            String::from_utf8_lossy(&git.stderr).contains(reason),
+            "Git says {reason}"
+        );
+        refuses(f.root(), args, reason)?;
+    }
+    // A name that is both a revision and a path is ambiguous without `--`, as in Git; with `--`
+    // it is a revision.
     f.write("topic", b"a file named like the branch\n")?;
     for args in [&["topic"][..], &["--name-only", "topic"]] {
         ensure!(!f.git_in(f.root(), &oracle_args(args))?.status.success());
-        refuses(
-            f.root(),
-            args,
-            "ambiguous argument 'topic': both revision and filename; use '--' to separate paths from revisions",
-        )?;
+        refuses(f.root(), args, "ambiguous argument 'topic': both revision and filename")?;
+    }
+    for format in FORMATS {
+        let mut args: Vec<&str> = format.to_vec();
+        args.extend(["topic", "--"]);
+        parity(&f, &args)?;
     }
     parity(&f, &["--name-only", "topic", "--", "shared"])?;
     Ok(())
@@ -542,5 +562,17 @@ fn exit_code_and_quiet_report_differences_by_status() -> Result<()> {
     f.write("shared", b"changed\n")?;
     parity(&f, &["--quiet"])?;
     parity(&f, &["--exit-code", "--numstat"])?;
+    // A path that selects nothing is an empty result, not an error.
+    for selection in [
+        &["--", "nosuch"][..],
+        &["--cached", "--", "nosuch"],
+        &["HEAD", "--", "nosuch"],
+    ] {
+        for format in FORMATS.iter().chain([&["--exit-code"][..], &["--quiet"]].iter()) {
+            let mut args: Vec<&str> = format.to_vec();
+            args.extend_from_slice(selection);
+            parity(&f, &args)?;
+        }
+    }
     Ok(())
 }

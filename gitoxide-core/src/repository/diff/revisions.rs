@@ -65,6 +65,8 @@ pub struct Request {
     pub revisions: Vec<BString>,
     /// Literal paths given after `--`.
     pub paths: Vec<BString>,
+    /// Whether `--` was given, which makes every name before it a revision even without paths.
+    pub separator: bool,
     /// Compare with the index instead of the working files.
     pub cached: bool,
     /// Compare the merge base of the revisions (or of one revision and `HEAD`).
@@ -96,11 +98,12 @@ pub fn diff(
     let Request {
         revisions,
         mut paths,
+        separator,
         cached,
         merge_base,
         format,
     } = request;
-    let (revisions, positional_paths) = split_positionals(&repo, &revisions, !paths.is_empty())?;
+    let (revisions, positional_paths) = split_positionals(&repo, &revisions, separator || !paths.is_empty())?;
     paths.splice(0..0, positional_paths);
     match revisions.as_slice() {
         [] => {
@@ -161,8 +164,9 @@ fn rev_parse(repo: &gix::Repository, revision: &BStr) -> Result<ObjectId> {
 
 /// Split positionals into leading revisions and the paths that follow them, the way Git does
 /// without `--`: a name that is no revision but an existing worktree path, and everything after
-/// it, are paths. A name that is both is refused as ambiguous.
-fn split_positionals(
+/// it, are paths, and a name that is both is refused as ambiguous. After `--` every name is a
+/// revision. Names that resolve to nothing are refused with Git's first line of explanation.
+pub(crate) fn split_positionals(
     repo: &gix::Repository,
     positionals: &[BString],
     after_separator: bool,
@@ -177,31 +181,39 @@ fn split_positionals(
             paths.push(name.clone());
             continue;
         }
-        if is_range(name) {
-            revisions.push(name.clone());
-            continue;
-        }
         match repo.rev_parse(name.as_bstr()) {
-            Ok(_) if is_path => bail!(
-                message!(
-                    "ambiguous argument '{name}': both revision and filename; use '--' to separate paths from revisions"
-                )
-                .validation()
-            ),
+            Ok(_) if is_path && !is_range(name) => {
+                bail!(message!("ambiguous argument '{name}': both revision and filename\n{SEPARATE}").validation())
+            }
             Ok(_) => revisions.push(name.clone()),
             Err(_) if is_path => paths.push(name.clone()),
-            // Git's wording: without `--` a name may still be meant as a path.
-            Err(_) if !after_separator => bail!(message!("{}", unknown(name.as_bstr())).validation()),
-            Err(_) => bail!(message!("bad revision '{name}'").validation()),
+            Err(_) if after_separator => bail!(message!("bad revision '{name}'").validation()),
+            Err(_) => bail!(message!("{}", unresolved(repo, name.as_bstr())).validation()),
         }
     }
     Ok((revisions, paths))
 }
 
+const SEPARATE: &str = "Use '--' to separate paths from revisions.";
+
 fn unknown(name: &BStr) -> String {
-    format!(
-        "ambiguous argument '{name}': unknown revision or path not in the working tree; use '--' to separate paths from revisions"
-    )
+    format!("ambiguous argument '{name}': unknown revision or path not in the working tree.\n{SEPARATE}")
+}
+
+/// Git's explanation for a name without `--` that resolves to nothing: a missing path below an
+/// existing revision (`REV:PATH`), an unknown revision before the colon, or neither.
+fn unresolved(repo: &gix::Repository, name: &BStr) -> String {
+    if let Some((revision, path)) = name
+        .split_once_str(":")
+        .filter(|(revision, _)| !revision.is_empty() && !is_range(revision))
+    {
+        return if repo.rev_parse_single(revision.as_bstr()).is_ok() {
+            format!("path '{}' does not exist in '{}'", path.as_bstr(), revision.as_bstr())
+        } else {
+            format!("invalid object name '{}'.", revision.as_bstr())
+        };
+    }
+    unknown(name)
 }
 
 /// The objects to compare for `OLD NEW`, `--merge-base OLD NEW` or a lone `A..B` or `A...B`.

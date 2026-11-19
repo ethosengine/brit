@@ -460,6 +460,7 @@ pub fn run_with_command(args: Args, command: clap::Command) -> Result<()> {
             quiet,
             revisions,
             paths,
+            separator,
         }) => match cmd {
             None => prepare_and_run("diff", verbose, None, move |_progress, out, err| {
                 use core::repository::diff::Format;
@@ -474,6 +475,7 @@ pub fn run_with_command(args: Args, command: clap::Command) -> Result<()> {
                 let request = core::repository::diff::Request {
                     revisions,
                     paths,
+                    separator,
                     cached,
                     merge_base,
                     format,
@@ -519,6 +521,7 @@ pub fn run_with_command(args: Args, command: clap::Command) -> Result<()> {
             oneline,
             revisions,
             paths,
+            separator,
         }) => prepare_and_run("show", verbose, None, move |_progress, out, _err| {
             use core::repository::diff::Format;
             let format = match (stat, name_only, name_status, numstat, no_patch) {
@@ -534,6 +537,7 @@ pub fn run_with_command(args: Args, command: clap::Command) -> Result<()> {
                 paths,
                 format,
                 oneline,
+                separator,
             };
             core::repository::show::show(repository(Mode::Strict)?, out, options)
         }),

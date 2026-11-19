@@ -787,7 +787,6 @@ fn bare_tree_summaries_and_invalid_arguments() -> Result<()> {
         vec!["diff", "--cached", "tree", "--stat", "HEAD~", "HEAD"],
         vec!["diff", "tree", "--stat", "HEAD~", "HEAD", "--", "file"],
         vec!["diff", "file", "--stat", "HEAD~:file", "HEAD:file"],
-        vec!["diff", "--stat", "--", "untracked"],
         vec!["diff", "tree", "--stat", "HEAD", "missing-revision"],
     ] {
         refuse(repo.path(), &args, "")?;

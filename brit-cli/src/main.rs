@@ -251,11 +251,14 @@ fn run(capture: &mut feedback::Capture) -> Result<()> {
     }
 
     let command = public_command();
+    let mut separator = false;
     if let Some((index, name)) = command_prefix(&args, &command) {
         capture.operation(&name);
         if name == "log" {
             normalize_log_counts(&mut args, index);
         }
+        // `diff` and `show` take only flags, so the first `--` after them separates paths.
+        separator = matches!(name.as_str(), "diff" | "show") && args.iter().skip(index + 1).any(|arg| arg == "--");
     }
     // Introspection is deliberately standalone. Never dispatch a Git/native command
     // when the caller combines a census request with work-performing arguments.
@@ -307,7 +310,10 @@ fn run(capture: &mut feedback::Capture) -> Result<()> {
             BuildNamespace::Snapshot(command) => tree::run(command).map_err(error::CliError::Git),
         }
     } else {
-        let args = plumbing::Args::from_arg_matches(&matches).map_err(|e| error::CliError::Args(e.to_string()))?;
+        let mut args = plumbing::Args::from_arg_matches(&matches).map_err(|e| error::CliError::Args(e.to_string()))?;
+        if separator {
+            args.note_path_separator();
+        }
         plumbing::run_with_command(args, command).map_err(|err| {
             // `diff --exit-code` and `--quiet` report differences by status alone, like Git.
             if err.downcast_any_ref::<plumbing::Differences>().is_some() {

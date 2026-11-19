@@ -331,12 +331,8 @@ fn working_output(
     let is_selected = |path: &BString, selected: &BString| {
         path == selected || (path.starts_with(selected) && path.get(selected.len()) == Some(&b'/'))
     };
+    // Like Git, a path that selects nothing selects nothing; it is not an error.
     let all: BTreeSet<_> = before.keys().chain(after.keys()).cloned().collect();
-    for path in &selected {
-        if !all.iter().any(|tracked| is_selected(tracked, path)) {
-            bail!(message!("path '{path}' is not tracked in this comparison"));
-        }
-    }
     let paths: Vec<_> = all
         .into_iter()
         .filter(|path| selected.is_empty() || selected.iter().any(|selected| is_selected(path, selected)))

@@ -20,7 +20,7 @@ use gix::{
 
 use super::diff::{
     Format,
-    revisions::{Change, PathFilter, changes, render},
+    revisions::{Change, PathFilter, changes, render, split_positionals},
 };
 
 /// What `show` prints for each revision.
@@ -34,6 +34,8 @@ pub struct Options {
     pub format: Option<Format>,
     /// Print each commit as its abbreviated id and title, like `--oneline`.
     pub oneline: bool,
+    /// Whether `--` was given, which makes every name before it a revision even without paths.
+    pub separator: bool,
 }
 
 /// Show each revision in `options` in order, like `git show --no-renames`.
@@ -46,27 +48,47 @@ pub struct Options {
 /// then the object it points to. A blob prints its content, and a tree `tree <name>`, a blank line
 /// and its entry names, directories with a trailing slash, as in Git.
 pub fn show(repo: gix::Repository, out: &mut dyn std::io::Write, options: Options) -> Result<()> {
-    // Git re-encodes messages to the log output encoding, which falls back to the commit encoding.
+    // Git re-encodes commit headers and messages to the log output encoding, which falls back to
+    // the commit encoding. Text that is ASCII reads the same in any ASCII-compatible encoding.
+    let mut output = None;
     let config = repo.config_snapshot();
     for key in ["i18n.logOutputEncoding", "i18n.commitEncoding"] {
         if let Some(encoding) = config.string(key) {
             if !is_utf8_label(encoding.as_ref()) {
-                bail!(unsupported(format!(
-                    "{key} asks for '{encoding}' output, but brit show prints UTF-8 only; use git show"
-                )));
+                let refusal = format!("{key} asks for '{encoding}' output, but brit show prints UTF-8 only");
+                if !is_ascii_compatible(encoding.as_ref()) {
+                    bail!(unsupported(format!("{refusal}; use git show")));
+                }
+                output = Some(refusal);
             }
             break;
         }
     }
+    let (revisions, positional_paths) = split_positionals(
+        &repo,
+        &options.revisions,
+        options.separator || !options.paths.is_empty(),
+    )?;
+    let paths: Vec<BString> = positional_paths
+        .into_iter()
+        .chain(options.paths.iter().cloned())
+        .collect();
+    if let Some(range) = revisions.iter().find(|revision| revision.contains_str("..")) {
+        bail!(unsupported(format!(
+            "brit show takes single revisions, not the range '{range}'; use brit log or git show"
+        )));
+    }
     let budget = Budget::new(&std::env::temp_dir()).or_error()?;
     let mut rendered = std::io::BufWriter::new(budget.spool().or_error()?);
-    let revisions = if options.revisions.is_empty() {
+    let revisions = if revisions.is_empty() {
         vec![BString::from("HEAD")]
     } else {
-        options.revisions.clone()
+        revisions
     };
     let mut state = State {
-        filter: PathFilter::new(&repo, &options.paths)?,
+        filter: PathFilter::new(&repo, &paths)?,
+        has_paths: !paths.is_empty(),
+        output,
         shallow: repo.shallow_commits()?,
         mailmap: repo.open_mailmap(),
         shown_one: false,
@@ -82,6 +104,10 @@ pub fn show(repo: gix::Repository, out: &mut dyn std::io::Write, options: Option
 
 struct State<'a> {
     filter: PathFilter,
+    /// Whether paths restrict the changes, which hides commits that do not touch them.
+    has_paths: bool,
+    /// The refusal to raise when text Git would re-encode to a non-UTF-8 output is not ASCII.
+    output: Option<String>,
     shallow: Option<gix::shallow::Commits>,
     mailmap: gix::mailmap::Snapshot,
     /// Whether a commit, tag or tree was printed, after which a medium header, tag or tree is preceded
@@ -153,9 +179,12 @@ impl State<'_> {
         out.write_all(b"tag ").or_error()?;
         out.write_all(tag.name).or_error()?;
         out.write_all(b"\n").or_error()?;
-        // Like Git, the one-line format leaves out the tagger.
+        // Like Git, the one-line format leaves out the tagger, the only part Git re-encodes.
         if let Some(tagger) = tag.tagger()?.filter(|_| !self.options.oneline) {
-            self.person(out, b"Tagger: ", tagger)?;
+            let mut person = Vec::new();
+            self.person(&mut person, b"Tagger: ", tagger)?;
+            self.ascii_for_output(&person, "tag", id)?;
+            out.write_all(&person).or_error()?;
         }
         // Git prints the object from its blank header-ending line on: the message and any signature.
         if let Some(end) = object.data.find(b"\n\n") {
@@ -163,6 +192,18 @@ impl State<'_> {
         }
         self.shown_one = true;
         Ok(tag.target())
+    }
+
+    /// Refuse when a non-UTF-8 output encoding is configured and `text` is not ASCII.
+    fn ascii_for_output(&self, text: &[u8], kind: &str, id: ObjectId) -> Result<()> {
+        match &self.output {
+            Some(refusal) if !text.is_ascii() => {
+                bail!(unsupported(format!(
+                    "{refusal} and {kind} {id} is not ASCII; use git show"
+                )))
+            }
+            _ => Ok(()),
+        }
     }
 
     fn person(&self, out: &mut dyn std::io::Write, label: &[u8], person: gix::actor::SignatureRef<'_>) -> Result<()> {
@@ -211,7 +252,7 @@ impl State<'_> {
         let first = against(parent_trees.first().copied())?;
         let merge = parent_trees.len() > 1;
         // With paths, a commit equal to a parent there is not shown at all.
-        if !self.options.paths.is_empty() {
+        if self.has_paths {
             if !merge && first.is_empty() {
                 return Ok(());
             }
@@ -252,6 +293,7 @@ impl State<'_> {
             header.pop();
         }
         header.push(b'\n');
+        self.ascii_for_output(&header, "commit", id)?;
         out.write_all(&header).or_error()?;
         self.shown_one = true;
         self.shown_commits.insert(id);
@@ -284,6 +326,39 @@ impl State<'_> {
     }
 }
 
+/// Whether `label` names an encoding in which ASCII text is the same bytes as in UTF-8.
+fn is_ascii_compatible(label: &BStr) -> bool {
+    is_latin1_or_ascii(&normalize(label))
+        || gix::filter::plumbing::encoding::Encoding::for_label_no_replacement(label)
+            .is_some_and(gix::filter::plumbing::encoding::Encoding::is_ascii_compatible)
+}
+
+/// `label` lowercased without punctuation, so `ISO_8859-1` and `iso88591` compare equal.
+fn normalize(label: &[u8]) -> Vec<u8> {
+    label
+        .iter()
+        .filter(|byte| byte.is_ascii_alphanumeric())
+        .map(u8::to_ascii_lowercase)
+        .collect()
+}
+
+/// Whether a normalized label names Latin-1 or ASCII, which Git's iconv and WHATWG disagree on.
+fn is_latin1_or_ascii(normalized: &[u8]) -> bool {
+    LATIN1.contains(&normalized) || ASCII.contains(&normalized)
+}
+
+const LATIN1: &[&[u8]] = &[
+    b"iso88591",
+    b"iso885911987",
+    b"latin1",
+    b"l1",
+    b"cp819",
+    b"ibm819",
+    b"isoir100",
+    b"csisolatin1",
+];
+const ASCII: &[&[u8]] = &[b"usascii", b"ascii", b"ansix341968", b"csascii"];
+
 /// Whether Git treats `label` as UTF-8 and so converts nothing.
 fn is_utf8_label(label: &BStr) -> bool {
     label.eq_ignore_ascii_case(b"utf-8") || label.eq_ignore_ascii_case(b"utf8")
@@ -302,35 +377,20 @@ fn to_utf8<'a>(data: &'a [u8], encoding: Option<&BStr>, id: ObjectId) -> Result<
     let Some(label) = encoding.filter(|label| !is_utf8_label(label)) else {
         return Ok(Cow::Borrowed(data));
     };
-    let normalized: Vec<u8> = label
-        .iter()
-        .filter(|byte| byte.is_ascii_alphanumeric())
-        .map(u8::to_ascii_lowercase)
-        .collect();
-    match normalized.as_slice() {
-        b"iso88591" | b"iso885911987" | b"latin1" | b"l1" | b"cp819" | b"ibm819" | b"isoir100" | b"csisolatin1" => {
-            if data.is_ascii() {
-                return Ok(Cow::Borrowed(data));
-            }
-            return Ok(Cow::Owned(
-                data.iter()
-                    .map(|&byte| char::from(byte))
-                    .collect::<String>()
-                    .into_bytes(),
-            ));
-        }
-        b"usascii" | b"ascii" | b"ansix341968" | b"csascii" => return Ok(Cow::Borrowed(data)),
-        _ => {}
+    let normalized = normalize(label);
+    if LATIN1.contains(&normalized.as_slice()) && !data.is_ascii() {
+        return Ok(Cow::Owned(
+            data.iter()
+                .map(|&byte| char::from(byte))
+                .collect::<String>()
+                .into_bytes(),
+        ));
     }
-    let known = Encoding::for_label_no_replacement(label).filter(|encoding| {
-        encoding.is_ascii_compatible()
-            && encoding
-                .name()
-                .bytes()
-                .filter(u8::is_ascii_alphanumeric)
-                .map(|byte| byte.to_ascii_lowercase())
-                .eq(normalized.iter().copied())
-    });
+    if is_latin1_or_ascii(&normalized) {
+        return Ok(Cow::Borrowed(data));
+    }
+    let known = Encoding::for_label_no_replacement(label)
+        .filter(|encoding| encoding.is_ascii_compatible() && normalize(encoding.name().as_bytes()) == normalized);
     let Some(known) = known else {
         bail!(unsupported(format!(
             "commit {id} declares the encoding '{label}', which brit cannot decode as Git would; use git show"

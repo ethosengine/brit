@@ -77,6 +77,20 @@ pub struct Args {
     pub cmd: Subcommands,
 }
 
+impl Args {
+    /// Record that the command line held a `--`, which the parser does not report when no path
+    /// follows it: `diff` and `show` then read every name before it as a revision, like Git.
+    pub fn note_path_separator(&mut self) {
+        match &mut self.cmd {
+            Subcommands::Diff(diff::Platform {
+                cmd: None, separator, ..
+            })
+            | Subcommands::Show(show::Platform { separator, .. }) => *separator = true,
+            _ => {}
+        }
+    }
+}
+
 #[derive(Debug, clap::Subcommand)]
 pub enum Subcommands {
     /// Replay a linear history with durable local recovery.
@@ -704,8 +718,10 @@ pub mod diff {
     /// Refused rather than printed differently: a path with a `diff=<driver>` attribute (even a
     /// built-in driver with nothing configured) in the patch and count forms (--name-only and
     /// --name-status still work); intent-to-add entries, skip-worktree or assume-unchanged entries,
-    /// sparse or split indexes and a conflicted index in the forms that read the index; and
-    /// submodules in comparisons with the working files. Line counts can differ from Git's on
+    /// sparse or split indexes and a conflicted index in the forms that read the index;
+    /// submodules in comparisons with the working files; pathspec patterns (`*`, `?`, `[`, `:`);
+    /// and, in comparisons with the index or working files, a trailing slash, an absolute path,
+    /// `..`, the repository root `.` and `.git` paths. Line counts can differ from Git's on
     /// very large, heavily changed files, because Brit's Myers diff uses different heuristics.
     #[derive(Debug, clap::Parser)]
     #[clap(args_conflicts_with_subcommands = true)]
@@ -744,6 +760,9 @@ pub mod diff {
         /// Comparisons of two revisions also accept a trailing slash, which matches only a directory.
         #[clap(last = true, value_parser = crate::shared::AsBString)]
         pub paths: Vec<BString>,
+        /// Whether `--` was given; set by [`super::Args::note_path_separator()`].
+        #[clap(skip)]
+        pub separator: bool,
         #[clap(subcommand)]
         pub cmd: Option<SubCommands>,
     }
@@ -797,8 +816,9 @@ pub mod show {
     ///
     /// Refused rather than printed differently: a merge whose result differs from every parent at
     /// some path (Git's combined diff) in the patch, --oneline, --name-only and --name-status forms;
-    /// a declared encoding Brit cannot decode exactly as Git; non-UTF-8 output encodings
-    /// (i18n.logOutputEncoding); and the diff limits listed in `brit diff --help`.
+    /// a declared encoding Brit cannot decode exactly as Git; a commit header, message or tagger that
+    /// is not ASCII when i18n.logOutputEncoding (or, when that is unset, i18n.commitEncoding) names
+    /// an encoding other than UTF-8; a range `A..B`; and the diff limits listed in `brit diff --help`.
     #[derive(Debug, clap::Parser)]
     pub struct Platform {
         /// Show an 80-column summary instead of patches, like `git show --stat=80`.
@@ -825,6 +845,9 @@ pub mod show {
         /// Only show changes to these literal paths; a commit that changes none of them is not shown.
         #[clap(last = true, value_parser = crate::shared::AsBString, value_name = "PATH")]
         pub paths: Vec<BString>,
+        /// Whether `--` was given; set by [`super::Args::note_path_separator()`].
+        #[clap(skip)]
+        pub separator: bool,
     }
 }
 
