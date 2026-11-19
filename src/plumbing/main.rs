@@ -63,7 +63,8 @@ fn requires_mutation_guard(cmd: &Subcommands) -> bool {
         | Subcommands::Blame { .. }
         | Subcommands::RevParse(_)
         | Subcommands::ForEachRef(_)
-        | Subcommands::CheckRefFormat(_) => false,
+        | Subcommands::CheckRefFormat(_)
+        | Subcommands::RevList(_) => false,
         Subcommands::Commit(commit::Platform {
             cmd: Some(commit::Subcommands::Verify { .. } | commit::Subcommands::Describe { .. }),
             ..
@@ -1517,6 +1518,19 @@ pub fn run_with_command(args: Args, command: clap::Command) -> Result<()> {
             allow_onelevel,
             refname,
         }) => core::repository::git_spellings::check_ref_format::check(refname.as_ref(), allow_onelevel),
+        Subcommands::RevList(crate::plumbing::options::git_spellings::RevList {
+            count,
+            left_right,
+            revs,
+        }) => prepare_and_run("rev-list", verbose, None, move |_progress, out, err| {
+            core::repository::git_spellings::rev_list::rev_list(
+                repository(Mode::Lenient)?,
+                revs,
+                out,
+                err,
+                core::repository::git_spellings::rev_list::Options { count, left_right },
+            )
+        }),
         Subcommands::Cat { revspec } => prepare_and_run("cat", verbose, None, move |_progress, out, _err| {
             core::repository::cat(repository(Mode::Lenient)?, &revspec, out)
         }),

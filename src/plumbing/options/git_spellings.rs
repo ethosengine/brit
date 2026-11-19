@@ -212,3 +212,16 @@ pub struct CheckRefFormat {
     #[clap(value_parser = crate::shared::AsBString, allow_hyphen_values = true)]
     pub refname: Option<gix::bstr::BString>,
 }
+
+/// `rev-list --count` like Git; Brit's own commit walk is `brit revision list`.
+#[derive(Debug, clap::Parser)]
+pub struct RevList {
+    /// Print the number of commits instead of listing them; listing is `brit revision list` or `brit log`.
+    #[clap(long)]
+    pub count: bool,
+    /// With `--count`, print `<left>\t<right>`: commits reachable from the left side of `A...B`, and the rest.
+    #[clap(long)]
+    pub left_right: bool,
+    /// Revisions like `HEAD`, `^A`, `A..B` or `A...B`.
+    pub revs: Vec<String>,
+}

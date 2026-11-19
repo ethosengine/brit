@@ -19,6 +19,7 @@ pub mod check_ref_format;
 pub mod for_each_ref;
 #[cfg(any(feature = "blocking-client", feature = "async-client"))]
 pub mod ls_remote;
+pub mod rev_list;
 pub mod rev_parse;
 
 /// A Git-shaped ending: its diagnostic, if any, was already written, and the process should exit with

@@ -277,6 +277,8 @@ pub enum Subcommands {
     LsRemote(git_spellings::LsRemote),
     /// Validate a reference name like Git, answering only through the exit code.
     CheckRefFormat(git_spellings::CheckRefFormat),
+    /// Count commits like Git's `rev-list --count`. Brit's own walk is `brit revision list`.
+    RevList(git_spellings::RevList),
     /// Generate shell completions to stdout or a directory.
     #[clap(visible_alias = "generate-completions", visible_alias = "shell-completions")]
     Completions {
