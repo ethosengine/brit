@@ -53,7 +53,7 @@ pub struct Held {
 pub type WorktreeGuard = Held;
 
 impl From<fs::File> for Held {
-    /// Hold a worktree guard taken with [`other_worktree`].
+    /// Hold a worktree guard taken with [`crate::repository::switch::other_worktree_guard`].
     fn from(worktree: fs::File) -> Self {
         Self {
             repository: None,
