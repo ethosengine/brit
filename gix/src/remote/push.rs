@@ -89,7 +89,7 @@ pub(crate) fn reqwest_backend(
 
     /// The deadline every request gets unless it is the push upload.
     const DEADLINE: Duration = Duration::from_secs(60);
-    /// A test and diagnostic knob: seconds to use instead of [`DEADLINE`], so that journeys can
+    /// A test and diagnostic knob: seconds to use instead of `DEADLINE`, so that journeys can
     /// show the rule and its exception in seconds. Not a supported configuration.
     const DEADLINE_OVERRIDE: &str = "BRIT_HTTP_REQUEST_DEADLINE_SECONDS";
     /// reqwest has no per-request "never"; a century is one without overflowing an `Instant`.
