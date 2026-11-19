@@ -13,7 +13,10 @@ fn push_outcome_types_are_accessible() {
         old_oid: gix::hash::Kind::Sha1.null(),
         new_oid: gix::hash::Kind::Sha1.null(),
     };
-    let outcome = Outcome { status: vec![status] };
+    let outcome = Outcome {
+        status: vec![status],
+        notes: Vec::new(),
+    };
     assert_eq!(outcome.status.len(), 1);
     assert!(outcome.status[0].result.is_ok());
 }
@@ -209,7 +212,7 @@ fn remote_moved_during_before_send_refuses_and_sends_nothing() {
     assert_eq!(moved[0].found.to_string(), moved_to);
     let message = err.to_string();
     assert!(
-        message.contains("remote moved while pre-push ran; nothing was sent"),
+        message.contains("remote moved while the before-send callback ran; nothing was sent"),
         "{message}"
     );
     assert!(message.contains(&first) && message.contains(&moved_to), "{message}");
@@ -219,4 +222,220 @@ fn remote_moved_during_before_send_refuses_and_sends_nothing() {
         .status()
         .expect("spawn git");
     assert!(!missing.success(), "no object was sent");
+}
+
+/// Push `specs` from `src` to `dst` while `during` changes `dst` inside the before-send callback.
+#[cfg(feature = "blocking-network-client")]
+fn push_while(
+    src: &std::path::Path,
+    dst: &std::path::Path,
+    specs: &[&str],
+    prune: bool,
+    during: impl FnOnce(),
+) -> Result<gix::remote::push::Outcome, gix::remote::push::Error> {
+    let repo = gix::open_opts(src, gix::open::Options::isolated()).expect("open source repo");
+    let remote = repo
+        .remote_at(format!("file://{}", dst.display()).as_str())
+        .expect("url");
+    remote
+        .connect(gix::remote::Direction::Push)
+        .expect("connect")
+        .prepare_push(gix::progress::Discard)
+        .expect("handshake")
+        .with_refspecs(specs)
+        .with_prune(prune)
+        .transmit_with_before_send(gix::progress::Discard, &Default::default(), |_| {
+            during();
+            Ok(())
+        })
+}
+
+/// A remote published with `main` and two more branches, `other` and `gone`, all at the first
+/// commit, plus a commit in the remote that no local ref knows.
+#[cfg(feature = "blocking-network-client")]
+fn setup_branched_repos() -> (std::path::PathBuf, std::path::PathBuf, String, String, String) {
+    let (src, dst, first, second) = setup_published_repos();
+    let dst_path = dst.to_str().expect("utf8 path");
+    git_out(&src, &["push", "-q", dst_path, &format!("{first}:refs/heads/other")]);
+    git_out(&src, &["push", "-q", dst_path, &format!("{first}:refs/heads/gone")]);
+    let tree = git_out(&dst, &["rev-parse", "main^{tree}"]);
+    let elsewhere = git_out(&dst, &["commit-tree", &tree, "-p", "main", "-m", "elsewhere"]);
+    (src, dst, first, second, elsewhere)
+}
+
+#[cfg(feature = "blocking-network-client")]
+fn has_object(dst: &std::path::Path, id: &str) -> bool {
+    gix_testtools::git_command(dst)
+        .args(["cat-file", "-e", id])
+        .status()
+        .expect("spawn git")
+        .success()
+}
+
+#[cfg(feature = "blocking-network-client")]
+fn remote_ref(dst: &std::path::Path, name: &str) -> Option<String> {
+    gix_testtools::git_command(dst)
+        .args(["rev-parse", "--verify", "-q", name])
+        .output()
+        .ok()
+        .filter(|out| out.status.success())
+        .map(|out| String::from_utf8(out.stdout).expect("utf8").trim().to_owned())
+}
+
+/// Row: the remote already has the new id (someone pushed the same commit) → up to date.
+#[cfg(feature = "blocking-network-client")]
+#[test]
+fn revalidation_new_id_already_on_the_remote_is_up_to_date() {
+    let (src, dst, _first, second, _) = setup_branched_repos();
+    let dst_path = dst.to_str().expect("utf8 path").to_owned();
+    let outcome = push_while(&src, &dst, &["refs/heads/main:refs/heads/main"], false, || {
+        git_out(&src, &["push", "-q", &dst_path, "main:main"]);
+    })
+    .expect("the remote is already in the requested state");
+    assert_eq!(outcome.status.len(), 1, "{outcome:?}");
+    let status = &outcome.status[0];
+    assert!(status.result.is_ok(), "{outcome:?}");
+    assert_eq!(status.old_oid.to_string(), second, "reported as up to date");
+    assert_eq!(status.new_oid.to_string(), second);
+    assert_eq!(remote_ref(&dst, "refs/heads/main").as_deref(), Some(second.as_str()));
+}
+
+/// Row: a creation target that now exists at the id we push → up to date.
+#[cfg(feature = "blocking-network-client")]
+#[test]
+fn revalidation_creation_already_made_with_our_id_is_up_to_date() {
+    let (src, dst, _first, second, _) = setup_branched_repos();
+    let dst_path = dst.to_str().expect("utf8 path").to_owned();
+    let outcome = push_while(&src, &dst, &["refs/heads/main:refs/heads/newb"], false, || {
+        git_out(&src, &["push", "-q", &dst_path, "main:refs/heads/newb"]);
+    })
+    .expect("creation already made");
+    assert!(outcome.status[0].result.is_ok(), "{outcome:?}");
+    assert_eq!(remote_ref(&dst, "refs/heads/newb").as_deref(), Some(second.as_str()));
+}
+
+/// Row: a creation target that now exists at another id → refused.
+#[cfg(feature = "blocking-network-client")]
+#[test]
+fn revalidation_creation_made_elsewhere_is_refused() {
+    let (src, dst, _first, second, elsewhere) = setup_branched_repos();
+    let err = push_while(&src, &dst, &["refs/heads/main:refs/heads/newb"], false, || {
+        git_out(&dst, &["update-ref", "refs/heads/newb", &elsewhere]);
+    })
+    .expect_err("created elsewhere");
+    assert!(matches!(err, gix::remote::push::Error::RemoteMoved { .. }), "{err:?}");
+    assert_eq!(remote_ref(&dst, "refs/heads/newb").as_deref(), Some(elsewhere.as_str()));
+    assert!(!has_object(&dst, &second), "nothing was sent");
+}
+
+/// Row: a deletion target already deleted → satisfied.
+#[cfg(feature = "blocking-network-client")]
+#[test]
+fn revalidation_deletion_already_done_is_satisfied() {
+    let (src, dst, ..) = setup_branched_repos();
+    let outcome = push_while(&src, &dst, &[":refs/heads/gone"], false, || {
+        git_out(&dst, &["update-ref", "-d", "refs/heads/gone"]);
+    })
+    .expect("already deleted");
+    assert!(outcome.status[0].result.is_ok(), "{outcome:?}");
+    assert!(remote_ref(&dst, "refs/heads/gone").is_none());
+}
+
+/// Row: a deletion target that moved → refused.
+#[cfg(feature = "blocking-network-client")]
+#[test]
+fn revalidation_deletion_target_moved_is_refused() {
+    let (src, dst, _first, _second, elsewhere) = setup_branched_repos();
+    let err = push_while(&src, &dst, &[":refs/heads/gone"], false, || {
+        git_out(&dst, &["update-ref", "refs/heads/gone", &elsewhere]);
+    })
+    .expect_err("the deletion target moved");
+    assert!(matches!(err, gix::remote::push::Error::RemoteMoved { .. }), "{err:?}");
+    assert_eq!(remote_ref(&dst, "refs/heads/gone").as_deref(), Some(elsewhere.as_str()));
+}
+
+/// Row: a prune target already deleted remotely → satisfied, and the rest is delivered.
+#[cfg(feature = "blocking-network-client")]
+#[test]
+fn revalidation_prune_target_already_deleted_is_satisfied() {
+    let (src, dst, _first, second, _) = setup_branched_repos();
+    let outcome = push_while(&src, &dst, &["refs/heads/*:refs/heads/*"], true, || {
+        git_out(&dst, &["update-ref", "-d", "refs/heads/gone"]);
+    })
+    .expect("prune already done");
+    assert!(outcome.status.iter().all(|status| status.result.is_ok()), "{outcome:?}");
+    assert_eq!(remote_ref(&dst, "refs/heads/main").as_deref(), Some(second.as_str()));
+    assert!(remote_ref(&dst, "refs/heads/gone").is_none());
+    assert!(
+        remote_ref(&dst, "refs/heads/other").is_none(),
+        "other was pruned as judged"
+    );
+}
+
+/// Row: a ref the push does not name moved → irrelevant, the push proceeds.
+#[cfg(feature = "blocking-network-client")]
+#[test]
+fn revalidation_ignores_refs_the_push_does_not_name() {
+    let (src, dst, _first, second, elsewhere) = setup_branched_repos();
+    push_while(&src, &dst, &["refs/heads/main:refs/heads/main"], false, || {
+        git_out(&dst, &["update-ref", "refs/heads/other", &elsewhere]);
+    })
+    .expect("unrelated ref moved");
+    assert_eq!(remote_ref(&dst, "refs/heads/main").as_deref(), Some(second.as_str()));
+}
+
+/// Row: one of two refs moved → the whole push is refused and nothing is sent.
+#[cfg(feature = "blocking-network-client")]
+#[test]
+fn revalidation_one_moved_ref_refuses_the_whole_push() {
+    let (src, dst, first, second, elsewhere) = setup_branched_repos();
+    git_out(&src, &["branch", "-f", "other", "main"]);
+    let err = push_while(
+        &src,
+        &dst,
+        &["refs/heads/main:refs/heads/main", "refs/heads/other:refs/heads/other"],
+        false,
+        || {
+            git_out(&dst, &["update-ref", "refs/heads/other", &elsewhere]);
+        },
+    )
+    .expect_err("other moved");
+    let gix::remote::push::Error::RemoteMoved { moved } = &err else {
+        panic!("expected RemoteMoved, got {err:?}");
+    };
+    assert_eq!(moved.len(), 1);
+    assert_eq!(moved[0].refname, "refs/heads/other");
+    assert_eq!(remote_ref(&dst, "refs/heads/main").as_deref(), Some(first.as_str()));
+    assert!(!has_object(&dst, &second), "nothing was sent");
+}
+
+/// After a failed send, refs that were not visible are reported as such, not as undelivered,
+/// and the refs that did land are listed too.
+#[cfg(feature = "blocking-network-client")]
+#[test]
+fn delivery_check_names_refs_that_landed_and_refs_not_visible() {
+    use gix::remote::push::{Delivery, MovedRef};
+    let id = |hex: u8| gix::ObjectId::from_hex(&[hex; 40]).expect("hex");
+    let delivery = Delivery::NotVisible {
+        missing: vec![MovedRef {
+            refname: "refs/heads/main".into(),
+            expected: id(b'b'),
+            found: id(b'a'),
+        }],
+        landed: vec!["refs/heads/other".into()],
+    };
+    let message = delivery.to_string();
+    assert!(
+        message.contains("was not visible on the remote when checked and may still be applied"),
+        "{message}"
+    );
+    assert!(
+        message.contains(&format!("refs/heads/main is {}, not {}", id(b'a'), id(b'b'))),
+        "{message}"
+    );
+    assert!(
+        message.contains("already at their new id: refs/heads/other"),
+        "{message}"
+    );
+    assert!(!message.contains("not delivered"), "{message}");
 }

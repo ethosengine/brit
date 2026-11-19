@@ -47,16 +47,16 @@ pub enum Error {
     },
     #[error("could not connect to the remote")]
     Connect(#[source] gix_error::Error),
-    #[error("could not reconnect to the remote after pre-push ran; nothing was sent")]
+    #[error("could not reconnect to the remote after the before-send callback ran; nothing was sent")]
     Reconnect(#[source] Box<Error>),
-    #[error("the remote refused authentication when reconnecting after pre-push ran; nothing was sent")]
+    #[error("the remote refused authentication when reconnecting after the before-send callback ran; nothing was sent")]
     ReconnectAuthentication(#[source] Box<Error>),
     #[error(
-        "remote moved while pre-push ran; nothing was sent: {}",
+        "remote moved while the before-send callback ran; nothing was sent: {}",
         super::MovedRef::list(moved)
     )]
     RemoteMoved { moved: Vec<super::MovedRef> },
-    #[error("the remote's `{capability}` capability changed while pre-push ran; nothing was sent")]
+    #[error("the remote's `{capability}` capability changed while the before-send callback ran; nothing was sent")]
     CapabilitiesChanged { capability: &'static str },
     #[error("no refspecs given — nothing to push")]
     NoRefspecs,

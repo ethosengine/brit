@@ -394,25 +394,13 @@ impl crate::Repository {
                                 Some(Arc::new(Mutex::new(backend)) as Arc<Mutex<dyn Any + Send + Sync + 'static>>);
                         }
 
-                        // brit: reqwest's blocking client caps every request at 30 s in total,
-                        // upload and wait for the response included, which silently bounds any
-                        // push or fetch on a slow link. Git has no such cap: lift it, keep the
-                        // transport's 20 s connect timeout and TCP keepalive, and map Git's
-                        // low-speed abort onto the stall protection reqwest can apply.
+                        // brit: request deadlines for the reqwest backend (candidate for upstream).
                         #[cfg(all(
                             feature = "blocking-http-transport-reqwest",
                             not(feature = "blocking-http-transport-curl")
                         ))]
                         {
-                            let backend = gix_protocol::transport::client::blocking_io::http::reqwest::Options {
-                                configure_client: Some(reqwest_without_total_timeout(
-                                    opts.low_speed_limit_bytes_per_second,
-                                    opts.low_speed_time_seconds,
-                                )),
-                                configure_request: None,
-                            };
-                            opts.backend =
-                                Some(Arc::new(Mutex::new(backend)) as Arc<Mutex<dyn Any + Send + Sync + 'static>>);
+                            opts.backend = Some(crate::remote::push::reqwest_backend(&opts, false));
                         }
 
                         Ok(Some(Box::new(opts) as Box<dyn Any>))
@@ -423,39 +411,4 @@ impl crate::Repository {
             File | Git | Ssh | Ext | Helper(_) | HelperUrl(_) => Ok(None),
         }
     }
-}
-
-/// brit: configure reqwest's client for Git's smart-HTTP requests, push and fetch alike.
-///
-/// * No total request timeout. reqwest's blocking client otherwise aborts any request after 30 s,
-///   counting the whole upload and the wait for response headers, where Git sets no limit.
-/// * The transport's 20 s connect timeout stays, and TCP keepalive probes an idle connection
-///   after 15 s, so a peer that vanished without a FIN or RST is still noticed.
-/// * When `http.lowSpeedLimit` and `http.lowSpeedTime` are both set, sent data that stays
-///   unacknowledged for `lowSpeedTime` seconds aborts the connection (`TCP_USER_TIMEOUT`, on
-///   Linux, Android and Fuchsia). This is the closest reqwest offers: its per-read timeout starts
-///   with the request and only resets once response headers arrived, so it would cap the upload
-///   itself. The byte rate is not measured; any non-zero `lowSpeedLimit` enables the bound.
-#[cfg(all(
-    feature = "blocking-http-transport-reqwest",
-    not(feature = "blocking-http-transport-curl")
-))]
-fn reqwest_without_total_timeout(
-    low_speed_limit_bytes_per_second: u32,
-    low_speed_time_seconds: u64,
-) -> Box<gix_protocol::transport::client::blocking_io::http::reqwest::ConfigureClientFn> {
-    use std::time::Duration;
-    let stall = (low_speed_limit_bytes_per_second > 0 && low_speed_time_seconds > 0)
-        .then(|| Duration::from_secs(low_speed_time_seconds));
-    Box::new(move |builder| {
-        let builder = builder.timeout(None::<Duration>).tcp_keepalive(Duration::from_secs(15));
-        #[cfg(any(target_os = "android", target_os = "fuchsia", target_os = "linux"))]
-        let builder = match stall {
-            Some(stall) => builder.tcp_user_timeout(stall),
-            None => builder,
-        };
-        #[cfg(not(any(target_os = "android", target_os = "fuchsia", target_os = "linux")))]
-        let _ = stall;
-        Ok(builder)
-    })
 }

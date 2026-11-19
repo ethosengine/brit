@@ -26,11 +26,17 @@ pub enum Authorized {
     /// The callback may have taken a while or run other programs, as a `pre-push` hook does.
     /// Its connection may have gone stale and the remote may have moved since: drop it, connect
     /// again with [`Remote::connect()`](crate::Remote::connect()), and send only if every
-    /// remote ref still has the id the callback judged.
+    /// remote ref named by the push still has the id the callback judged.
     Revalidate,
 }
 
 /// The conservative default: anything that returns `()` may have waited.
+///
+/// Transitional. It lets the CLI's push, whose callback returns `()` whether or not a hook ran,
+/// re-validate without changes there; today every push therefore makes two handshakes and asks
+/// the credential helper twice. A follow-up will have the CLI return `Revalidate` only when a
+/// hook actually ran and `OnThisConnection` otherwise, and reuse the first handshake's
+/// credential outcome for the reconnect.
 impl From<()> for Authorized {
     fn from((): ()) -> Self {
         Authorized::Revalidate
@@ -57,7 +63,7 @@ impl MovedRef {
         refs.iter()
             .map(|moved| {
                 format!(
-                    "{} was {} when pre-push ran, now {}",
+                    "{} was {} when judged, now {}",
                     moved.refname,
                     Self::id(&moved.expected),
                     Self::id(&moved.found)
@@ -68,50 +74,52 @@ impl MovedRef {
     }
 }
 
-/// What a fresh connection showed after a send failed.
+/// What a fresh connection showed after a send failed, when it did not show every update.
 #[derive(Debug)]
 pub enum Delivery {
-    /// Every remote ref has its new id: the push arrived and only its report was lost.
-    Delivered,
-    /// These remote refs do not have their new id; `expected` is the new id. Nothing was resent.
-    NotDelivered(Vec<MovedRef>),
+    /// These remote refs did not show their new id when checked (`expected` is the new id).
+    /// They may still be applied by a server that answered before it finished. `landed` names
+    /// the refs that did show their new id. Nothing was resent.
+    NotVisible {
+        /// The refs without their new id, with the id they showed instead.
+        missing: Vec<MovedRef>,
+        /// The refs that did show their new id.
+        landed: Vec<crate::bstr::BString>,
+    },
     /// The check itself failed, so whether the push arrived is unknown.
     Unverified(Box<Error>),
 }
 
 impl Delivery {
+    /// `None` if every command's ref shows its new id in `now`.
     pub(crate) fn judge(
         commands: &[gix_protocol::send_pack::Command],
         now: &std::collections::HashMap<crate::bstr::BString, gix_hash::ObjectId>,
         null: gix_hash::ObjectId,
-    ) -> Self {
-        let missing: Vec<_> = commands
-            .iter()
-            .filter_map(|command| {
-                let found = now.get(&command.refname).copied().unwrap_or(null);
-                (found != command.new_oid).then(|| MovedRef {
+    ) -> Option<Self> {
+        let mut missing = Vec::new();
+        let mut landed = Vec::new();
+        for command in commands {
+            let found = now.get(&command.refname).copied().unwrap_or(null);
+            if found == command.new_oid {
+                landed.push(command.refname.clone());
+            } else {
+                missing.push(MovedRef {
                     refname: command.refname.clone(),
                     expected: command.new_oid,
                     found,
-                })
-            })
-            .collect();
-        if missing.is_empty() {
-            Delivery::Delivered
-        } else {
-            Delivery::NotDelivered(missing)
+                });
+            }
         }
+        (!missing.is_empty()).then_some(Delivery::NotVisible { missing, landed })
     }
 }
 
 impl std::fmt::Display for Delivery {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
-            Delivery::Delivered => f.write_str(
-                "the push was delivered, but its report was lost; the remote has every update, nothing was resent",
-            ),
-            Delivery::NotDelivered(missing) => {
-                f.write_str("the push was not delivered, and nothing was resent: ")?;
+            Delivery::NotVisible { missing, landed } => {
+                f.write_str("the push was not visible on the remote when checked and may still be applied; nothing was resent: ")?;
                 let listed = missing
                     .iter()
                     .map(|moved| {
@@ -124,22 +132,18 @@ impl std::fmt::Display for Delivery {
                     })
                     .collect::<Vec<_>>()
                     .join("; ");
-                f.write_str(&listed)
-            }
-            Delivery::Unverified(err) => {
-                f.write_str("whether the push was delivered could not be checked (")?;
-                let mut next: Option<&(dyn std::error::Error + 'static)> = Some(err.as_ref());
-                let mut first = true;
-                while let Some(err) = next {
-                    if !first {
-                        f.write_str(": ")?;
-                    }
-                    first = false;
-                    write!(f, "{err}")?;
-                    next = err.source();
+                f.write_str(&listed)?;
+                if !landed.is_empty() {
+                    let landed = landed.iter().map(ToString::to_string).collect::<Vec<_>>().join(", ");
+                    write!(f, "; already at their new id: {landed}")?;
                 }
-                f.write_str("); nothing was resent")
+                Ok(())
             }
+            Delivery::Unverified(err) => write!(
+                f,
+                "whether the push was delivered could not be checked ({}); nothing was resent",
+                transmit::error_chain(err.as_ref())
+            ),
         }
     }
 }

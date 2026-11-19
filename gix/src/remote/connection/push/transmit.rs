@@ -296,6 +296,7 @@ where
             name_pairs,
             dry_run,
             should_interrupt,
+            already: Vec::new(),
         };
         if dry_run || authorized == Authorized::OnThisConnection {
             return plan.deliver(connection);
@@ -322,23 +323,42 @@ where
         if let Some(capability) = judged.first_difference(&Contract::of(fresh.handshake.as_ref())) {
             return Err(Error::CapabilitiesChanged { capability });
         }
+        // Re-validation, per command, against the id the second advertisement shows ("found"):
+        //
+        // | judged old | requested new       | found         | outcome                                   |
+        // |------------|---------------------|---------------|-------------------------------------------|
+        // | A          | any                 | A             | send as judged                            |
+        // | A          | B                   | B             | already there: up to date, not sent       |
+        // | A          | B                   | C (not A, B)  | refuse the push: the ref moved            |
+        // | absent     | B (creation)        | B             | already there: up to date, not sent       |
+        // | absent     | B (creation)        | C             | refuse: the ref was created elsewhere     |
+        // | A          | absent (deletion)   | absent        | already deleted (also prune): satisfied   |
+        // | A          | absent (deletion)   | C (not A)     | refuse: the deletion target moved         |
+        //
+        // Remote refs no command names are not looked at. A refusal sends nothing for any ref;
+        // receive-pack's own compare-and-swap still guards the time after this handshake.
         let now = advertised_ids(fresh.handshake.as_ref());
-        let moved: Vec<MovedRef> = plan
-            .commands
-            .iter()
-            .filter_map(|command| {
-                let found = now.get(&command.refname).copied().unwrap_or(hash_kind.null());
-                (found != command.old_oid).then(|| MovedRef {
+        let mut moved = Vec::new();
+        let mut satisfied = Vec::new();
+        for (index, command) in plan.commands.iter().enumerate() {
+            let found = now.get(&command.refname).copied().unwrap_or(hash_kind.null());
+            if found == command.old_oid {
+                continue;
+            }
+            if found == command.new_oid {
+                satisfied.push(index);
+            } else {
+                moved.push(MovedRef {
                     refname: command.refname.clone(),
                     expected: command.old_oid,
                     found,
-                })
-            })
-            .collect();
+                });
+            }
+        }
         if !moved.is_empty() {
             return Err(Error::RemoteMoved { moved });
         }
-        plan.deliver(fresh)
+        plan.settle(&satisfied).deliver(fresh)
     }
 }
 
@@ -350,9 +370,28 @@ struct Plan<'repo, 'a> {
     name_pairs: Vec<(BString, BString)>,
     dry_run: bool,
     should_interrupt: &'a AtomicBool,
+    /// Updates the remote already shows, so they are reported up to date rather than sent.
+    already: Vec<crate::remote::push::RefStatus>,
 }
 
 impl Plan<'_, '_> {
+    /// Take the commands at `indices` out of the request and report them as up to date.
+    fn settle(mut self, indices: &[usize]) -> Self {
+        for &index in indices.iter().rev() {
+            let command = self.commands.remove(index);
+            let (local, remote) = self.name_pairs.remove(index);
+            self.already.push(crate::remote::push::RefStatus {
+                local,
+                remote,
+                result: Ok(()),
+                old_oid: command.new_oid,
+                new_oid: command.new_oid,
+            });
+        }
+        self.already.reverse();
+        self
+    }
+
     /// Pack against `connection`'s advertisement and send there; after a failed send,
     /// verify on a fresh connection whether the updates arrived.
     fn deliver<T: Transport>(self, mut connection: Connection<'_, '_, '_, T>) -> Result<Outcome, Error> {
@@ -360,6 +399,13 @@ impl Plan<'_, '_> {
         let hash_kind = repo.object_hash();
         let null_oid = hash_kind.null();
         let handshake = connection.handshake.as_ref();
+        if self.commands.is_empty() {
+            // Re-validation found every update already on the remote.
+            return Ok(Outcome {
+                status: self.already,
+                notes: Vec::new(),
+            });
+        }
 
         // ── Step 5: Build the Request ─────────────────────────────────────────
         let (agent_key, agent_val) = repo.config.user_agent_tuple();
@@ -428,7 +474,29 @@ impl Plan<'_, '_> {
                     }
                 })
                 .collect();
-            return Ok(Outcome { status });
+            return Ok(Outcome {
+                status,
+                notes: Vec::new(),
+            });
+        }
+
+        // Only the push upload goes without a deadline; see `crate::remote::push::reqwest_backend()`.
+        #[cfg(all(
+            feature = "blocking-http-transport-reqwest",
+            not(feature = "blocking-http-transport-curl")
+        ))]
+        if let Some(http) = connection
+            .transport_options
+            .as_ref()
+            .and_then(|options| options.downcast_ref::<gix_protocol::transport::client::blocking_io::http::Options>())
+        {
+            let mut upload = http.clone();
+            upload.backend = Some(crate::remote::push::reqwest_backend(http, true));
+            connection
+                .transport
+                .inner
+                .configure(&upload)
+                .map_err(Error::ConfigureTransport)?;
         }
 
         // ── Step 8: Call send_pack ────────────────────────────────────────────
@@ -453,14 +521,40 @@ impl Plan<'_, '_> {
                 drop(transport);
                 let delivery = match reconnect(remote, authenticate, transport_options) {
                     Ok(fresh) => Delivery::judge(&self.commands, &advertised_ids(fresh.handshake.as_ref()), null_oid),
-                    Err(err) => Delivery::Unverified(Box::new(err)),
+                    Err(err) => Some(Delivery::Unverified(Box::new(err))),
                 };
-                return Err(Error::SendFailed { delivery, source });
+                if let Some(delivery) = delivery {
+                    return Err(Error::SendFailed { delivery, source });
+                }
+                // Every ref shows its new id on a fresh handshake: the remote is in the
+                // requested state, only the report was lost.
+                let note = format!(
+                    "the server's report was lost ({}), but a fresh handshake shows every update on the remote",
+                    error_chain(&source)
+                );
+                write_note(&note);
+                let mut status: Vec<_> = self
+                    .commands
+                    .iter()
+                    .zip(self.name_pairs)
+                    .map(|(command, (local, remote))| crate::remote::push::RefStatus {
+                        local,
+                        remote,
+                        result: Ok(()),
+                        old_oid: command.old_oid,
+                        new_oid: command.new_oid,
+                    })
+                    .collect();
+                status.extend(self.already);
+                return Ok(Outcome {
+                    status,
+                    notes: vec![note],
+                });
             }
         };
 
         // ── Step 9: Map to porcelain Outcome ─────────────────────────────────
-        let status = protocol_outcome
+        let mut status: Vec<_> = protocol_outcome
             .report
             .refs
             .into_iter()
@@ -481,8 +575,31 @@ impl Plan<'_, '_> {
                 }
             })
             .collect();
-        Ok(Outcome { status })
+        status.extend(self.already);
+        Ok(Outcome {
+            status,
+            notes: Vec::new(),
+        })
     }
+}
+
+/// Every message in `err`'s source chain, joined with `: `.
+pub(super) fn error_chain(err: &(dyn std::error::Error + 'static)) -> String {
+    let mut out = err.to_string();
+    let mut next = err.source();
+    while let Some(err) = next {
+        out.push_str(": ");
+        out.push_str(&err.to_string());
+        next = err.source();
+    }
+    out
+}
+
+/// Transitional: the CLI does not render [`Outcome::notes`] yet, so a push whose report was lost
+/// but whose updates were verified would otherwise succeed silently. Remove once it does.
+fn write_note(note: &str) {
+    use std::io::Write as _;
+    writeln!(std::io::stderr(), "warning: {note}").ok();
 }
 
 /// Connect to `remote` again for pushing and perform the `receive-pack` handshake,
