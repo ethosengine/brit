@@ -472,6 +472,7 @@ version = "0.2.6"
 dependencies = [
  "anyhow",
  "brit-bridge",
+ "brit-epr",
  "brit-graph",
  "cc",
  "clap",
@@ -535,6 +536,7 @@ version = "0.0.0"
 dependencies = [
  "brit-epr",
  "gix 0.89.4",
+ "tempfile",
 ]
 
 [[package]]

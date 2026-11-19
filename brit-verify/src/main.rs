@@ -13,7 +13,7 @@
 
 use std::process::ExitCode;
 
-use brit_epr::{parse_pillar_trailers, validate_pillar_trailers};
+use brit_epr::{diagnostic::render_context, parse_pillar_trailers, validate_pillar_trailers};
 
 fn main() -> ExitCode {
     let args: Vec<String> = std::env::args().collect();
@@ -29,7 +29,10 @@ fn main() -> ExitCode {
     let repo = match gix::discover(&repo_path) {
         Ok(repo) => repo,
         Err(e) => {
-            eprintln!("failed to open repo at {repo_path}: {e}");
+            eprintln!(
+                "{}",
+                render_context(format_args!("failed to open repo at {repo_path}"), &e)
+            );
             return ExitCode::from(3);
         }
     };
@@ -44,12 +47,15 @@ fn main() -> ExitCode {
                 }
             },
             Err(e) => {
-                eprintln!("failed to load object for {rev}: {e}");
+                eprintln!(
+                    "{}",
+                    render_context(format_args!("failed to load object for {rev}"), &e)
+                );
                 return ExitCode::from(3);
             }
         },
         Err(e) => {
-            eprintln!("failed to resolve rev {rev}: {e}");
+            eprintln!("{}", render_context(format_args!("failed to resolve rev {rev}"), &e));
             return ExitCode::from(3);
         }
     };
@@ -57,7 +63,7 @@ fn main() -> ExitCode {
     let decoded = match commit.decode() {
         Ok(c) => c,
         Err(e) => {
-            eprintln!("failed to decode commit {rev}: {e}");
+            eprintln!("{}", render_context(format_args!("failed to decode commit {rev}"), &e));
             return ExitCode::from(3);
         }
     };

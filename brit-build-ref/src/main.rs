@@ -281,7 +281,21 @@ enum ValidateCmd {
 
 // ─── Entry point ──────────────────────────────────────────────────────────────
 
-fn main() -> anyhow::Result<()> {
+fn main() -> std::process::ExitCode {
+    match run() {
+        Ok(()) => std::process::ExitCode::SUCCESS,
+        Err(error) => {
+            // The shared printer: the cause chain, last, and a backtrace only on `BRIT_BACKTRACE`.
+            eprintln!(
+                "{}",
+                brit_epr::diagnostic::report(error.as_ref(), Some(error.backtrace()))
+            );
+            std::process::ExitCode::FAILURE
+        }
+    }
+}
+
+fn run() -> anyhow::Result<()> {
     let cli = Cli::parse();
     let repo = cli.repo.canonicalize().unwrap_or_else(|_| cli.repo.clone());
 
