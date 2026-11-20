@@ -4,7 +4,7 @@
 
 use std::{io::Write, path::Path, process::Stdio};
 
-use anyhow::{Result, ensure};
+use anyhow::{ensure, Result};
 use cli_journey::support::parity::{brit, git, git_ok};
 
 /// Write a raw commit object with `encoding` declared (when given) over `tree` and `parent`.
