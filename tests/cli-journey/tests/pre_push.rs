@@ -504,3 +504,250 @@ fn lease_flags_and_non_fast_forward_fail_closed_even_without_hooks() -> Result<(
     assert_eq!(git(remote.path(), &["rev-parse", "main"])?, repo.head_id()?);
     Ok(())
 }
+
+/// A push that delivered its refs exits 0 even when its reader closed the stream its report goes
+/// to: stderr for the human report, stdout for `--porcelain`. The refs moved; a lost report does
+/// not turn that into a failure. Runs with and without a hook, so both the first connection and
+/// the re-validated one are covered.
+#[cfg(target_os = "linux")]
+#[test]
+fn delivered_push_succeeds_when_its_reader_closed_the_report_stream() -> Result<()> {
+    use std::os::fd::FromRawFd;
+    let repo = TestRepo::new("pre-push-closed-reader")?;
+    let remote = remote(repo.path())?;
+    for (stream, porcelain, gated) in [(2, false, false), (2, false, true), (1, true, false), (1, true, true)] {
+        if gated {
+            hook(repo.path(), "cat >hook-input")?;
+        } else {
+            git(repo.path(), &["config", "--unset", "core.hooksPath"]).ok();
+        }
+        let new = repo.commit_file(
+            "payload",
+            &format!("closed {stream} porcelain {porcelain} hook {gated}"),
+        )?;
+        let mut fds = [0; 2];
+        // SAFETY: `fds` has room for the two descriptors `pipe` writes.
+        ensure!(unsafe { libc::pipe(fds.as_mut_ptr()) } == 0, "pipe(2) failed");
+        // SAFETY: both descriptors were just created by `pipe` and are owned here exactly once.
+        let (reader, writer) = unsafe { (fs::File::from_raw_fd(fds[0]), fs::File::from_raw_fd(fds[1])) };
+        drop(reader);
+        let mut command = std::process::Command::new(brit_bin().expect("required binary"));
+        gix_testtools::configure_git_environment(&mut command, repo.path());
+        command.current_dir(repo.path()).arg("push");
+        if porcelain {
+            command.arg("--porcelain");
+        }
+        command.args(["origin", "main:main"]);
+        if stream == 1 {
+            command.stdout(writer);
+        } else {
+            command.stderr(writer);
+        }
+        let output = command.output()?;
+        let what = format!("fd {stream} closed, porcelain {porcelain}, hook {gated}");
+        assert_eq!(output.status.code(), Some(0), "{what}: {output:?}");
+        assert_eq!(git(remote.path(), &["rev-parse", "main"])?, new, "{what}: delivered");
+    }
+    Ok(())
+}
+
+/// Git pushes ungated, without a word, when `core.hooksPath` names a missing directory or the
+/// `pre-push` hook cannot be executed. Brit refuses, naming the path and `--no-verify`, and sends
+/// nothing; `--no-verify` is the explicit way to push without the hook.
+#[cfg(unix)]
+#[test]
+fn configured_hooks_that_cannot_run_refuse_the_push() -> Result<()> {
+    use std::os::unix::fs::PermissionsExt;
+    let repo = TestRepo::new("pre-push-ungated")?;
+    let remote = remote(repo.path())?;
+    let hooks = repo.path().join("hooks with spaces");
+    let pre_push = hooks.join("pre-push");
+    // The path is named as the repository spells it (`<worktree>/./<core.hooksPath>`).
+    let refused = |cause: &str, path: &str| -> Result<()> {
+        let output = brit(repo.path(), &["push", "origin", "main:main"])?;
+        ensure!(!output.status.success(), "{cause}: the push must be refused");
+        for needle in [path, cause, "--no-verify"] {
+            ensure!(
+                output.stderr.contains(needle),
+                "{cause}: expected {needle:?} in\n{}",
+                output.stderr
+            );
+        }
+        assert_eq!(git(remote.path(), &["for-each-ref"])?, "", "{cause}: nothing was sent");
+        Ok(())
+    };
+
+    git(repo.path(), &["config", "core.hooksPath", "hooks with spaces"])?;
+    refused("not a directory", "hooks with spaces,")?;
+    hook(repo.path(), "exit 0")?;
+    fs::set_permissions(&pre_push, fs::Permissions::from_mode(0o644))?;
+    refused("not an executable file", "hooks with spaces/pre-push is")?;
+    fs::remove_file(&pre_push)?;
+    std::os::unix::fs::symlink(hooks.join("nowhere"), &pre_push)?;
+    refused("not an executable file", "hooks with spaces/pre-push is")?;
+
+    let output = brit(repo.path(), &["push", "--no-verify", "origin", "main:main"])?;
+    ensure!(
+        output.status.success(),
+        "--no-verify pushes without the hook: {}",
+        output.stderr
+    );
+    assert_eq!(git(remote.path(), &["rev-parse", "main"])?, repo.head_id()?);
+    // A configured, existing directory without a pre-push hook is not gated: nothing to refuse.
+    fs::remove_file(&pre_push)?;
+    let new = repo.commit_file("payload", "no hook installed")?;
+    let output = brit(repo.path(), &["push", "origin", "main:main"])?;
+    ensure!(output.status.success(), "{}", output.stderr);
+    assert_eq!(git(remote.path(), &["rev-parse", "main"])?, new);
+    Ok(())
+}
+
+/// A notes ref fast-forwards beside a branch in one push; a notes rewrite and an existing tag's
+/// move are refused before the hook, and `--force` moves the tag.
+#[test]
+fn notes_fast_forward_beside_a_branch_while_tags_stay_put() -> Result<()> {
+    let repo = TestRepo::new("pre-push-notes")?;
+    let remote = remote(repo.path())?;
+    let notes = "refs/notes/brit/devices/d/build/x";
+    let notes_spec = format!("{notes}:{notes}");
+    git(
+        repo.path(),
+        &[
+            "-c",
+            "user.name=t",
+            "-c",
+            "user.email=t@example.invalid",
+            "notes",
+            "--ref",
+            notes,
+            "add",
+            "-m",
+            "first",
+            "HEAD",
+        ],
+    )?;
+    git(repo.path(), &["tag", "v1"])?;
+    let output = brit(
+        repo.path(),
+        &["push", "origin", "main:main", &notes_spec, "refs/tags/v1:refs/tags/v1"],
+    )?;
+    ensure!(output.status.success(), "creation: {}", output.stderr);
+
+    repo.commit_file("payload", "second")?;
+    git(
+        repo.path(),
+        &[
+            "-c",
+            "user.name=t",
+            "-c",
+            "user.email=t@example.invalid",
+            "notes",
+            "--ref",
+            notes,
+            "add",
+            "-m",
+            "second",
+            "HEAD",
+        ],
+    )?;
+    let output = brit(repo.path(), &["push", "origin", "main:main", &notes_spec])?;
+    ensure!(
+        output.status.success(),
+        "branch and notes fast-forward: {}",
+        output.stderr
+    );
+    assert_eq!(git(remote.path(), &["rev-parse", "main"])?, repo.head_id()?);
+    assert_eq!(
+        git(remote.path(), &["rev-parse", notes])?,
+        git(repo.path(), &["rev-parse", notes])?
+    );
+
+    let pushed_notes = git(remote.path(), &["rev-parse", notes])?;
+    let tree = git(repo.path(), &["rev-parse", &format!("{notes}^{{tree}}")])?;
+    let unrelated = git(
+        repo.path(),
+        &[
+            "-c",
+            "user.name=t",
+            "-c",
+            "user.email=t@example.invalid",
+            "commit-tree",
+            &tree,
+            "-m",
+            "rewritten notes",
+        ],
+    )?;
+    git(repo.path(), &["update-ref", notes, &unrelated])?;
+    let output = brit(repo.path(), &["push", "origin", &notes_spec])?;
+    ensure!(!output.status.success(), "a notes rewrite is not a fast-forward");
+    ensure!(
+        output.stderr.contains("refusing unverified fast-forward update"),
+        "{}",
+        output.stderr
+    );
+    assert_eq!(git(remote.path(), &["rev-parse", notes])?, pushed_notes);
+
+    let tagged = git(remote.path(), &["rev-parse", "refs/tags/v1"])?;
+    git(repo.path(), &["tag", "-f", "v1", "HEAD"])?;
+    let output = brit(repo.path(), &["push", "origin", "refs/tags/v1:refs/tags/v1"])?;
+    ensure!(!output.status.success(), "an existing tag does not move without force");
+    ensure!(
+        output.stderr.contains("refusing to update existing tag refs/tags/v1"),
+        "{}",
+        output.stderr
+    );
+    assert_eq!(git(remote.path(), &["rev-parse", "refs/tags/v1"])?, tagged);
+    let output = brit(repo.path(), &["push", "--force", "origin", "refs/tags/v1:refs/tags/v1"])?;
+    ensure!(output.status.success(), "{}", output.stderr);
+    assert_eq!(git(remote.path(), &["rev-parse", "refs/tags/v1"])?, repo.head_id()?);
+    Ok(())
+}
+
+/// `--atomic` asks the remote for all or nothing: one ref its `update` hook rejects keeps every
+/// other ref where it was, where a plain push lands the rest. A remote that does not offer
+/// `atomic` refuses the push before anything is sent, as Git does.
+#[cfg(unix)]
+#[test]
+fn atomic_push_lands_every_ref_or_none() -> Result<()> {
+    use std::os::unix::fs::PermissionsExt;
+    let repo = TestRepo::new("pre-push-atomic")?;
+    let remote = remote(repo.path())?;
+    let base = repo.head_id()?;
+    git(repo.path(), &["push", "origin", "main:main", "main:refused"])?;
+    let update = remote.path().join("hooks/update");
+    fs::write(&update, "#!/bin/sh\ntest \"$1\" != refs/heads/refused\n")?;
+    fs::set_permissions(&update, fs::Permissions::from_mode(0o755))?;
+    let new = repo.commit_file("payload", "atomic")?;
+    let specs = ["origin", "main:main", "main:refused"];
+
+    let output = brit(repo.path(), &[&["push", "--atomic"][..], &specs].concat())?;
+    ensure!(!output.status.success(), "the rejected ref fails the atomic push");
+    assert_eq!(git(remote.path(), &["rev-parse", "main"])?, base, "atomic: main stays");
+    assert_eq!(git(remote.path(), &["rev-parse", "refused"])?, base);
+
+    let output = brit(repo.path(), &[&["push"][..], &specs].concat())?;
+    ensure!(!output.status.success(), "the rejected ref is reported");
+    assert_eq!(
+        git(remote.path(), &["rev-parse", "main"])?,
+        new,
+        "non-atomic: main lands"
+    );
+    assert_eq!(git(remote.path(), &["rev-parse", "refused"])?, base);
+
+    git(remote.path(), &["config", "receive.advertiseAtomic", "false"])?;
+    let next = repo.commit_file("payload", "no atomic offered")?;
+    let output = brit(repo.path(), &["push", "--atomic", "origin", "main:main"])?;
+    assert_eq!(output.status.code(), Some(128), "{}", output.stderr);
+    ensure!(
+        output
+            .stderr
+            .contains("the receiving end does not support --atomic push"),
+        "{}",
+        output.stderr
+    );
+    assert_eq!(git(remote.path(), &["rev-parse", "main"])?, new);
+    let output = brit(repo.path(), &["push", "origin", "main:main"])?;
+    ensure!(output.status.success(), "{}", output.stderr);
+    assert_eq!(git(remote.path(), &["rev-parse", "main"])?, next);
+    Ok(())
+}

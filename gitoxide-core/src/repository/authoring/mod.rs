@@ -18,18 +18,60 @@ fn absolute(repo: &gix::Repository, path: &std::path::Path) -> PathBuf {
     repo.current_dir().join(path)
 }
 
-/// Locate executable hooks using the worktree root and shared Git directory.
-pub(super) fn hook_path(repo: &gix::Repository, name: &str) -> Result<Option<PathBuf>> {
+/// The hooks directory, and whether `core.hooksPath` named it.
+fn hooks_directory(repo: &gix::Repository) -> Result<(PathBuf, bool)> {
     let config = repo.config_snapshot();
     let configured = config.trusted_path("core.hooksPath")?;
     ensure!(
         configured.is_some() || config.string("core.hooksPath").is_none(),
         "refusing to ignore an untrusted core.hooksPath"
     );
-    let directory = match configured {
-        Some(path) => absolute(repo, repo.workdir().unwrap_or(repo.git_dir())).join(path),
-        None => absolute(repo, repo.common_dir()).join("hooks"),
-    };
+    Ok(match configured {
+        Some(path) => (
+            absolute(repo, repo.workdir().unwrap_or(repo.git_dir())).join(path),
+            true,
+        ),
+        None => (absolute(repo, repo.common_dir()).join("hooks"), false),
+    })
+}
+
+/// Locate the hook that gates an operation, refusing where Git would skip it without a word: a
+/// configured `core.hooksPath` that is not a directory, or a `name` entry that is not an executable
+/// file (a dangling link included). `Ok(None)` means no hook is installed where hooks are looked for.
+/// `bypass` names the option that runs the operation without its hook.
+pub(super) fn gating_hook_path(repo: &gix::Repository, name: &str, bypass: &str) -> Result<Option<PathBuf>> {
+    let (directory, configured) = hooks_directory(repo)?;
+    if configured && !directory.is_dir() {
+        bail!(
+            "refusing to run without the {name} hook: core.hooksPath names {}, which is not a directory, so the hook cannot run; restore the hooks there, or pass {bypass} to proceed without the hook",
+            directory.display()
+        );
+    }
+    let path = directory.join(name);
+    if path.symlink_metadata().is_ok() {
+        let runnable = path.metadata().is_ok_and(|metadata| {
+            #[cfg(unix)]
+            let executable = {
+                use std::os::unix::fs::PermissionsExt;
+                metadata.permissions().mode() & 0o111 != 0
+            };
+            #[cfg(not(unix))]
+            let executable = true;
+            metadata.is_file() && executable
+        });
+        if !runnable {
+            bail!(
+                "refusing to run without the {name} hook: {} is not an executable file, so the hook cannot run; make it executable, or pass {bypass} to proceed without the hook",
+                path.display()
+            );
+        }
+    }
+    hook_path(repo, name)
+}
+
+/// Locate executable hooks using the worktree root and shared Git directory.
+pub(super) fn hook_path(repo: &gix::Repository, name: &str) -> Result<Option<PathBuf>> {
+    let (directory, _) = hooks_directory(repo)?;
     let path = directory.join(name);
     let metadata = match path.metadata() {
         Ok(metadata) => metadata,

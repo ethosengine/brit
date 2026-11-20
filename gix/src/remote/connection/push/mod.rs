@@ -31,11 +31,8 @@ pub enum Authorized {
 
 /// The conservative default: anything that returns `()` may have waited.
 ///
-/// Transitional. It lets the CLI's push, whose callback returns `()` whether or not a hook ran,
-/// re-validate without changes there; today every push therefore makes two handshakes and asks
-/// the credential helper twice. A follow-up will have the CLI return `Revalidate` only when a
-/// hook actually ran and `OnThisConnection` otherwise, and reuse the first handshake's
-/// credential outcome for the reconnect.
+/// A caller that knows nothing waited (the CLI's push when no `pre-push` hook ran) returns
+/// `OnThisConnection` instead and saves the second handshake.
 impl From<()> for Authorized {
     fn from((): ()) -> Self {
         Authorized::Revalidate

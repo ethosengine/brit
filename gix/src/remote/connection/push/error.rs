@@ -68,4 +68,6 @@ pub enum Error {
     PushOptionsNotSupported,
     #[error("the receiving end does not support --signed push")]
     SignedPushNotSupported,
+    #[error("the receiving end does not support --atomic push")]
+    AtomicNotSupported,
 }
