@@ -22,3 +22,12 @@ pub fn print_line(line: &str) -> Result<()> {
     stdout.flush()?;
     Ok(())
 }
+
+/// Print `value` as pretty JSON, reporting a change the command already made. The change stands
+/// whatever happens to this output, so a failed write (stdout closed by its reader) is dropped
+/// instead of failing the command: a delivered operation reports success.
+pub fn print_json_after_change<T: Serialize>(value: &T) -> Result<()> {
+    let s = serde_json::to_string_pretty(value)?;
+    let _ = print_line(&s);
+    Ok(())
+}
