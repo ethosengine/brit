@@ -179,6 +179,9 @@ fn commits_merges_and_tags_match_git_in_every_format() -> Result<()> {
 #[test]
 fn paths_restrict_commits_and_hide_those_that_do_not_touch_them() -> Result<()> {
     let f = history()?;
+    if !oracle_hides_untouched_commits(&f)? {
+        return Ok(());
+    }
     for (revs, paths) in [
         (&[":/subject line"][..], &["file"][..]),
         (&[":/subject line"], &["dir"]),
@@ -237,6 +240,36 @@ fn blobs_trees_and_tags_of_them_match_git() -> Result<()> {
     Ok(())
 }
 
+/// Whether the oracle Git hides a named commit that leaves every given path untouched, as Brit does.
+///
+/// Git 2.52 and 2.56 (this host and the Linux runners) hide it; the Homebrew Git 2.55 of the
+/// macOS Intel runner prints its header. Where the oracle differs, Brit's own behaviour is still
+/// checked, and the path-limited parity cases are reported as skipped instead of compared.
+fn oracle_hides_untouched_commits(f: &Fixture) -> Result<bool> {
+    let args = [":/root commit", "--", "topic-file"];
+    let out = brit(f.root(), &["show"].into_iter().chain(args).collect::<Vec<_>>())?;
+    ensure!(
+        out.status.success() && out.stdout.is_empty(),
+        "brit show hides a named commit outside the paths"
+    );
+    let oracle = f.git(&[
+        "-c",
+        "color.ui=false",
+        "show",
+        "--no-ext-diff",
+        args[0],
+        args[1],
+        args[2],
+    ])?;
+    if !oracle.is_empty() {
+        eprintln!(
+            "skipping path-limited parity: this Git ({}) shows named commits outside the pathspec",
+            String::from_utf8_lossy(&f.git(&["--version"])?).trim()
+        );
+    }
+    Ok(oracle.is_empty())
+}
+
 /// Git re-encodes a commit's names and message from its declared encoding to UTF-8; bytes without
 /// a declaration, or that do not decode, print unchanged.
 #[test]
@@ -258,7 +291,16 @@ fn declared_encodings_are_reencoded_like_git() -> Result<()> {
     let latin1 = commit(Some("ISO-8859-1"), b"caf\xe9 \x80\x9f\n\nbody \xe9\n")?;
     let sjis_invalid = commit(Some("Shift_JIS"), b"bad \x81\n")?;
     let undeclared = commit(None, b"raw \xe9\n")?;
+    // Some iconv builds (the macOS Intel runner's) drop bytes that do not decode instead of
+    // keeping them, as glibc's Git does; Brit keeps them, and that comparison is skipped there.
+    let keeps_undecodable = f.git(&["show", "-s", "--format=%an", sjis_invalid.as_str()])? == b"Andr\xe9\n";
+    if !keeps_undecodable {
+        eprintln!("skipping the undecodable Shift_JIS parity: this Git's iconv drops the bytes");
+    }
     for id in [&latin1, &sjis_invalid, &undeclared] {
+        if id == &sjis_invalid && !keeps_undecodable {
+            continue;
+        }
         for format in [&[][..], &["-s"], &["--oneline", "-s"]] {
             let mut args: Vec<&str> = format.to_vec();
             args.push(id);
@@ -307,6 +349,7 @@ fn declared_encodings_are_reencoded_like_git() -> Result<()> {
 fn names_paths_and_unknown_revisions_like_git() -> Result<()> {
     let f = history()?;
     f.git(&["branch", "added", "HEAD~1"])?;
+    let hides = oracle_hides_untouched_commits(&f)?;
     for args in [
         &["added", "--"][..],
         &["--stat", "added", "--"],
@@ -315,6 +358,10 @@ fn names_paths_and_unknown_revisions_like_git() -> Result<()> {
         &["HEAD~1", "file"],
         &[":/subject line", "file"],
     ] {
+        // Every case after the two explicit revisions limits by a path.
+        if !hides && !args.contains(&"--") {
+            continue;
+        }
         parity(&f, args)?;
     }
     for (args, reason) in [
