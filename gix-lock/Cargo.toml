@@ -2,7 +2,7 @@ lints.workspace = true
 
 [package]
 name = "gix-lock"
-version = "27.0.0"
+version = "27.0.1"
 repository = "https://github.com/GitoxideLabs/gitoxide"
 license = "MIT OR Apache-2.0"
 description = "A git-style lock-file implementation"
@@ -30,9 +30,9 @@ allowed-unstable-crates = ["gix_error"]
 [dependencies]
 gix-macros = { version = "^0.2.1", path = "../gix-macros", registry = "elohim" }
 gix-error = { version = "^0.5.3", path = "../gix-error", registry = "elohim" }
-gix-fs = { version = "^1.0.0", path = "../gix-fs", registry = "elohim" }
-gix-utils = { version = "^0.5.4", default-features = false, path = "../gix-utils", registry = "elohim" }
-gix-tempfile = { version = "^27.0.0", default-features = false, path = "../gix-tempfile", registry = "elohim" }
+gix-fs = { version = "^1.0.1", path = "../gix-fs", registry = "elohim" }
+gix-utils = { version = "^0.5.5", default-features = false, path = "../gix-utils", registry = "elohim" }
+gix-tempfile = { version = "^27.0.1", default-features = false, path = "../gix-tempfile", registry = "elohim" }
 
 [dev-dependencies]
 gix-lock = { path = ".", features = ["unstable"] }

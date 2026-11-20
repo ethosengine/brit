@@ -2,7 +2,7 @@ lints.workspace = true
 
 [package]
 name = "gix-ref"
-version = "0.69.3"
+version = "0.69.4"
 repository = "https://github.com/GitoxideLabs/gitoxide"
 license = "MIT OR Apache-2.0"
 description = "A crate to handle git references"
@@ -31,17 +31,17 @@ serde = ["dep:serde", "gix-hash/serde", "gix-actor/serde", "gix-object/serde"]
 [dependencies]
 gix-parallel = { version = "^0.50.2", path = "../gix-parallel", registry = "elohim" }
 gix-error = { version = "^0.5.3", path = "../gix-error", registry = "elohim", features = ["bstr"] }
-gix-fs = { version = "^1.0.0", path = "../gix-fs", registry = "elohim", features = [
+gix-fs = { version = "^1.0.1", path = "../gix-fs", registry = "elohim", features = [
     "walkdir",
     "unstable",
 ] }
 gix-path = { version = "^0.14.2", path = "../gix-path", registry = "elohim" }
-gix-hash = { version = "^0.28.3", path = "../gix-hash", registry = "elohim" }
-gix-object = { version = "^0.66.3", path = "../gix-object", registry = "elohim" }
-gix-utils = { version = "^0.5.4", path = "../gix-utils", registry = "elohim" }
+gix-hash = { version = "^0.28.4", path = "../gix-hash", registry = "elohim" }
+gix-object = { version = "^0.66.4", path = "../gix-object", registry = "elohim" }
+gix-utils = { version = "^0.5.5", path = "../gix-utils", registry = "elohim" }
 gix-validate = { version = "^0.13.2", path = "../gix-validate", registry = "elohim" }
 gix-actor = { version = "^0.45.0", path = "../gix-actor", registry = "elohim" }
-gix-lock = { version = "^27.0.0", path = "../gix-lock", registry = "elohim" }
+gix-lock = { version = "^27.0.1", path = "../gix-lock", registry = "elohim" }
 
 serde = { version = "1.0.114", optional = true, default-features = false, features = [
     "derive",

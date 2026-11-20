@@ -4,8 +4,12 @@ All notable changes to `brit-epr` (and the brit crates released with it) are rec
 The format follows [Keep a Changelog](https://keepachangelog.com/en/1.0.0/); versions follow
 [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
-## Unreleased
+## 0.2.3 — sprint 3 merged onto the gitoxide 3e89f3b56 integration
 
+- Version allocation: brit-epr 0.2.3, brit-graph 0.2.3, brit-cli 0.2.8, brit-build-ref 0.1.10,
+  brit-bridge 0.1.7 and 51 gitoxide crates (gix, gitoxide-core and the gix-* family) take the next patch version the registry has never held,
+  because their sources, manifests or packed lockfiles differ from the copies published from
+  main (cc moves to 1.11.1 for brit-cli's CPU baseline, so every packed lock that holds it changed).
 - Give each covenant session exactly one ref component: `%` and `/` are percent-escaped
   (and a leading `.` or trailing `.lock`), so `a:b` and `a%3Ab` no longer share a
   directory and `victim/x` no longer nests under `victim`; covenant listing never returns

@@ -2,7 +2,7 @@ lints.workspace = true
 
 [package]
 name = "gix-diff"
-version = "0.70.0"
+version = "0.70.1"
 repository = "https://github.com/GitoxideLabs/gitoxide"
 license = "MIT OR Apache-2.0"
 description = "Calculate differences between various git objects"
@@ -60,22 +60,22 @@ required-features = ["blob"]
 path = "./benches/rewrite_tracker.rs"
 
 [dependencies]
-gix-utils = { version = "^0.5.4", path = "../gix-utils", registry = "elohim", optional = true, features = ["stream"] }
-gix-index = { version = "^0.58.0", path = "../gix-index", registry = "elohim", optional = true }
-gix-pathspec = { version = "^0.22.5", path = "../gix-pathspec", registry = "elohim", optional = true }
-gix-attributes = { version = "^0.37.4", path = "../gix-attributes", registry = "elohim", optional = true }
-gix-hash = { version = "^0.28.3", path = "../gix-hash", registry = "elohim" }
+gix-utils = { version = "^0.5.5", path = "../gix-utils", registry = "elohim", optional = true, features = ["stream"] }
+gix-index = { version = "^0.58.1", path = "../gix-index", registry = "elohim", optional = true }
+gix-pathspec = { version = "^0.22.6", path = "../gix-pathspec", registry = "elohim", optional = true }
+gix-attributes = { version = "^0.37.5", path = "../gix-attributes", registry = "elohim", optional = true }
+gix-hash = { version = "^0.28.4", path = "../gix-hash", registry = "elohim" }
 gix-error = { version = "^0.5.3", path = "../gix-error", registry = "elohim" }
-gix-object = { version = "^0.66.3", path = "../gix-object", registry = "elohim" }
-gix-filter = { version = "^0.36.4", path = "../gix-filter", registry = "elohim", optional = true }
-gix-worktree = { version = "^0.59.0", path = "../gix-worktree", registry = "elohim", default-features = false, features = ["attributes"], optional = true }
-gix-command = { version = "^0.12.3", path = "../gix-command", registry = "elohim", optional = true }
+gix-object = { version = "^0.66.4", path = "../gix-object", registry = "elohim" }
+gix-filter = { version = "^0.36.5", path = "../gix-filter", registry = "elohim", optional = true }
+gix-worktree = { version = "^0.59.1", path = "../gix-worktree", registry = "elohim", default-features = false, features = ["attributes"], optional = true }
+gix-command = { version = "^0.12.4", path = "../gix-command", registry = "elohim", optional = true }
 gix-path = { version = "^0.14.2", path = "../gix-path", registry = "elohim", optional = true }
-gix-fs = { version = "^1.0.0", path = "../gix-fs", registry = "elohim", features = ["unstable"], optional = true }
-gix-tempfile = { version = "^27.0.0", path = "../gix-tempfile", registry = "elohim", optional = true }
+gix-fs = { version = "^1.0.1", path = "../gix-fs", registry = "elohim", features = ["unstable"], optional = true }
+gix-tempfile = { version = "^27.0.1", path = "../gix-tempfile", registry = "elohim", optional = true }
 gix-trace = { version = "^0.3.2", path = "../gix-trace", registry = "elohim", optional = true }
-gix-traverse = { version = "^0.64.0", path = "../gix-traverse", registry = "elohim", optional = true }
-gix-imara-diff = { version = "^0.3.4", optional = true, path = "../gix-imara-diff", registry = "elohim" }
+gix-traverse = { version = "^0.64.1", path = "../gix-traverse", registry = "elohim", optional = true }
+gix-imara-diff = { version = "^0.3.5", optional = true, path = "../gix-imara-diff", registry = "elohim" }
 
 serde = { version = "1.0.114", optional = true, default-features = false, features = ["derive"] }
 getrandom = { version = "0.4", optional = true, default-features = false, features = ["wasm_js"] }

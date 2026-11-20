@@ -4,7 +4,7 @@ lints.workspace = true
 
 [package]
 name = "gix-imara-diff"
-version = "0.3.4"
+version = "0.3.5"
 edition = "2024"
 authors = ["pascalkuthe <pascalkuthe@pm.me>", "Sebastian Thiel <sebastian.thiel@icloud.com>"]
 rust-version = "1.88"
@@ -27,8 +27,8 @@ unified_diff = []
 [dev-dependencies]
 arbitrary = { version = "1.4.2", features = ["derive"] }
 gix-imara-diff = { path = ".", features = ["unified_diff" ] }
-gix-hash = { version = "^0.28.3", path = "../gix-hash", registry = "elohim", features = ["sha1"] }
-gix-object = { version = "^0.66.3", path = "../gix-object", registry = "elohim", features = ["sha1"] }
+gix-hash = { version = "^0.28.4", path = "../gix-hash", registry = "elohim", features = ["sha1"] }
+gix-object = { version = "^0.66.4", path = "../gix-object", registry = "elohim", features = ["sha1"] }
 gix-testtools = { path = "../tests/tools", default-features = false }
 cov-mark = "2.1.0"
 expect-test = "1.4.0"

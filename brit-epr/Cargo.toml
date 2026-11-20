@@ -2,7 +2,7 @@ lints.workspace = true
 
 [package]
 name = "brit-epr"
-version = "0.2.2"
+version = "0.2.3"
 description = "Elohim Protocol primitives (pillar trailers, dispatch trait, validation) for brit — an expansion of gitoxide with covenant semantics"
 repository = "https://github.com/ethosengine/brit"
 authors = ["Matthew Dowell <matthew@ethosengine.com>"]
@@ -23,7 +23,7 @@ default = ["elohim-protocol"]
 elohim-protocol = ["dep:elohim-epr", "dep:serde_bytes"]
 
 [dependencies]
-gix-object = { version = "^0.66.3", path = "../gix-object", registry = "elohim", features = ["sha1"] }
+gix-object = { version = "^0.66.4", path = "../gix-object", registry = "elohim", features = ["sha1"] }
 # Recognises gix's class-only error markers when printing a cause chain (`diagnostic`).
 gix-error = { version = "^0.5.3", path = "../gix-error", registry = "elohim" }
 thiserror = "2.0"

@@ -2,7 +2,7 @@ lints.workspace = true
 
 [package]
 name = "gix-index"
-version = "0.58.0"
+version = "0.58.1"
 repository = "https://github.com/GitoxideLabs/gitoxide"
 license = "MIT OR Apache-2.0"
 description = "A work-in-progress crate of the gitoxide project dedicated implementing the git index file"
@@ -32,15 +32,15 @@ serde = ["dep:serde", "smallvec/serde", "gix-hash/serde"]
 [dependencies]
 gix-trace = { version = "^0.3.2", path = "../gix-trace", registry = "elohim" }
 gix-parallel = { version = "^0.50.2", path = "../gix-parallel", registry = "elohim" }
-gix-hash = { version = "^0.28.3", path = "../gix-hash", registry = "elohim" }
+gix-hash = { version = "^0.28.4", path = "../gix-hash", registry = "elohim" }
 gix-error = { version = "^0.5.3", path = "../gix-error", registry = "elohim" }
 gix-bitmap = { version = "^0.6.2", path = "../gix-bitmap", registry = "elohim" }
-gix-object = { version = "^0.66.3", path = "../gix-object", registry = "elohim" }
+gix-object = { version = "^0.66.4", path = "../gix-object", registry = "elohim" }
 gix-validate = { version = "^0.13.2", path = "../gix-validate", registry = "elohim" }
-gix-traverse = { version = "^0.64.0", path = "../gix-traverse", registry = "elohim" }
-gix-lock = { version = "^27.0.0", path = "../gix-lock", registry = "elohim" }
-gix-fs = { version = "^1.0.0", path = "../gix-fs", registry = "elohim", features = ["unstable"] }
-gix-utils = { version = "^0.5.4", path = "../gix-utils", registry = "elohim", features = [
+gix-traverse = { version = "^0.64.1", path = "../gix-traverse", registry = "elohim" }
+gix-lock = { version = "^27.0.1", path = "../gix-lock", registry = "elohim" }
+gix-fs = { version = "^1.0.1", path = "../gix-fs", registry = "elohim", features = ["unstable"] }
+gix-utils = { version = "^0.5.5", path = "../gix-utils", registry = "elohim", features = [
     "progress",
 ] }
 

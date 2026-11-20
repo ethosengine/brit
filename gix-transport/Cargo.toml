@@ -2,7 +2,7 @@ lints.workspace = true
 
 [package]
 name = "gix-transport"
-version = "0.62.0"
+version = "0.62.1"
 repository = "https://github.com/GitoxideLabs/gitoxide"
 license = "MIT OR Apache-2.0"
 description = "A crate of the gitoxide project dedicated to implementing the git transport layer"
@@ -95,15 +95,15 @@ required-features = ["async-client"]
 [dependencies]
 thiserror = "2.0.18"
 gix-trace = { version = "^0.3.2", path = "../gix-trace", registry = "elohim" }
-gix-utils = { version = "^0.5.4", path = "../gix-utils", registry = "elohim", features = ["bstr"] }
-gix-command = { version = "^0.12.3", path = "../gix-command", registry = "elohim" }
+gix-utils = { version = "^0.5.5", path = "../gix-utils", registry = "elohim", features = ["bstr"] }
+gix-command = { version = "^0.12.4", path = "../gix-command", registry = "elohim" }
 gix-error = { version = "^0.5.3", path = "../gix-error", registry = "elohim" }
 gix-path = { version = "^0.14.2", path = "../gix-path", registry = "elohim" }
-gix-url = { version = "^0.40.3", path = "../gix-url", registry = "elohim" }
+gix-url = { version = "^0.40.4", path = "../gix-url", registry = "elohim" }
 gix-sec = { version = "^0.16.2", path = "../gix-sec", registry = "elohim" }
 gix-packetline = { version = "^0.24.2", path = "../gix-packetline", registry = "elohim" }
-gix-credentials = { version = "^0.42.3", path = "../gix-credentials", registry = "elohim", optional = true }
-gix-quote = { version = "^0.10.3", path = "../gix-quote", registry = "elohim" }
+gix-credentials = { version = "^0.42.4", path = "../gix-credentials", registry = "elohim", optional = true }
+gix-quote = { version = "^0.10.4", path = "../gix-quote", registry = "elohim" }
 
 serde = { version = "1.0.114", optional = true, default-features = false, features = [
     "std",

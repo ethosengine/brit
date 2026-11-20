@@ -2,7 +2,7 @@ lints.workspace = true
 
 [package]
 name = "brit-graph"
-version = "0.2.2"
+version = "0.2.3"
 description = "EPR-native graph engine — DAG construction, affected tracking, topological planning"
 repository = "https://github.com/ethosengine/brit"
 authors = ["Matthew Dowell <matthew@ethosengine.com>"]
@@ -14,11 +14,11 @@ rust-version = "1.88"
 doctest = false
 
 [dependencies]
-brit-epr = { version = "0.2.2", registry = "elohim", path = "../brit-epr", default-features = false }
+brit-epr = { version = "0.2.3", registry = "elohim", path = "../brit-epr", default-features = false }
 # Step-glob meaning is globset's glob-to-regex translation; the pinned-regex
 # unit test (step_glob_settings_pin_an_escaped_pattern) notices a change on upgrade.
 globset = { version = "0.4.19", optional = true }
-gix = { version = "^0.90.0", path = "../gix", registry = "elohim", default-features = false, features = ["basic", "blob-diff", "sha1", "sha256"], optional = true }
+gix = { version = "^0.90.1", path = "../gix", registry = "elohim", default-features = false, features = ["basic", "blob-diff", "sha1", "sha256"], optional = true }
 petgraph = "0.7"
 # Decides whether a glob can match beneath a gitlink, on the regex globset compiles.
 regex-automata = { version = "0.4", optional = true, default-features = false, features = ["std", "syntax", "nfa-thompson"] }
@@ -33,4 +33,4 @@ repo = ["dep:gix", "dep:globset", "dep:regex-automata"]
 
 [dev-dependencies]
 tempfile = "3"
-gix = { version = "^0.90.0", path = "../gix", registry = "elohim", default-features = false, features = ["basic", "blob-diff", "sha1", "sha256"] }
+gix = { version = "^0.90.1", path = "../gix", registry = "elohim", default-features = false, features = ["basic", "blob-diff", "sha1", "sha256"] }

@@ -2,7 +2,7 @@ lints.workspace = true
 
 [package]
 name = "gix-negotiate"
-version = "0.38.0"
+version = "0.38.1"
 repository = "https://github.com/GitoxideLabs/gitoxide"
 license = "MIT OR Apache-2.0"
 description = "A crate of the gitoxide project implementing negotiation algorithms"
@@ -23,11 +23,11 @@ sha256 = ["gix-hash/sha256"]
 
 [dependencies]
 gix-error = { version = "^0.5.3", path = "../gix-error", registry = "elohim" }
-gix-hash = { version = "^0.28.3", path = "../gix-hash", registry = "elohim" }
-gix-object = { version = "^0.66.3", path = "../gix-object", registry = "elohim" }
+gix-hash = { version = "^0.28.4", path = "../gix-hash", registry = "elohim" }
+gix-object = { version = "^0.66.4", path = "../gix-object", registry = "elohim" }
 gix-date = { version = "^0.19.0", path = "../gix-date", registry = "elohim" }
-gix-commitgraph = { version = "^0.42.0", path = "../gix-commitgraph", registry = "elohim" }
-gix-revwalk = { version = "^0.38.0", path = "../gix-revwalk", registry = "elohim" }
+gix-commitgraph = { version = "^0.42.1", path = "../gix-commitgraph", registry = "elohim" }
+gix-revwalk = { version = "^0.38.1", path = "../gix-revwalk", registry = "elohim" }
 bitflags = "2"
 
 [dev-dependencies]
