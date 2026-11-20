@@ -74,6 +74,7 @@ where
             prune,
             push_options,
             sign,
+            atomic,
         } = self;
 
         if refspecs.is_empty() {
@@ -107,6 +108,16 @@ where
             if !supported {
                 return Err(Error::SignedPushNotSupported);
             }
+        }
+
+        // Capability guard for `--atomic`, as send-pack.c: the remote must offer all-or-nothing.
+        if atomic
+            && !connection
+                .handshake
+                .as_ref()
+                .is_some_and(|h| h.capabilities.contains("atomic"))
+        {
+            return Err(Error::AtomicNotSupported);
         }
 
         // ── Step 1: Parse refspecs ────────────────────────────────────────────
@@ -295,6 +306,7 @@ where
             commands,
             name_pairs,
             dry_run,
+            atomic,
             should_interrupt,
             already: Vec::new(),
         };
@@ -347,8 +359,9 @@ where
             if found == command.old_oid {
                 continue;
             }
-            if command.old_oid == command.new_oid {
-                // Nothing was to change here, so nothing was judged: do not fail the others.
+            if command.old_oid == command.new_oid && !plan.atomic {
+                // Nothing was to change here, so nothing was judged: do not fail the others
+                // (an atomic push cannot leave one ref behind, so it refuses below instead).
                 let reason = format!(
                     "not pushed: it needed no update when judged, but moved to {} while the before-send callback ran",
                     MovedRef::id(&found)
@@ -378,6 +391,8 @@ struct Plan<'repo, 'a> {
     /// Parallel to `commands`: (local_name, remote_name) for populating RefStatus.
     name_pairs: Vec<(BString, BString)>,
     dry_run: bool,
+    /// Ask the remote for all-or-nothing application (`atomic` capability).
+    atomic: bool,
     should_interrupt: &'a AtomicBool,
     /// Updates taken out of the request after re-validation, with their reported status.
     already: Vec<crate::remote::push::RefStatus>,
@@ -436,6 +451,9 @@ impl Plan<'_, '_> {
         // closes the connection before it can report a ref status.
         if handshake.is_some_and(|h| h.capabilities.contains("object-format")) {
             capabilities.push(format!("object-format={hash_kind}").into());
+        }
+        if self.atomic {
+            capabilities.push(b"atomic".as_slice().into());
         }
 
         let request = gix_protocol::send_pack::Request {
@@ -552,7 +570,6 @@ impl Plan<'_, '_> {
                     "the server's report was lost ({}). A fresh advertisement shows every ref this push named at its requested id; it cannot show whether this push applied them, whether server-side hooks ran, or what the server printed.",
                     error_chain(&source)
                 );
-                write_note(&note);
                 let mut status: Vec<_> = self
                     .commands
                     .iter()
@@ -613,13 +630,6 @@ pub(super) fn error_chain(err: &(dyn std::error::Error + 'static)) -> String {
         next = err.source();
     }
     out
-}
-
-/// Transitional: the CLI does not render [`Outcome::notes`] yet, so a push whose report was lost
-/// but whose updates were verified would otherwise succeed silently. Remove once it does.
-fn write_note(note: &str) {
-    use std::io::Write as _;
-    writeln!(std::io::stderr(), "warning: {note}").ok();
 }
 
 /// Connect to `remote` again for pushing and perform the `receive-pack` handshake,

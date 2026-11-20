@@ -212,6 +212,25 @@ pub(crate) mod function {
         std::process::exit(128);
     }
 
+    /// The report of a push that already reached the remote. The refs changed whatever happens to
+    /// this output, so a failed write (stdout or stderr closed by its reader) is dropped instead of
+    /// failing the push: a delivered operation reports success.
+    struct Delivered<W>(W);
+
+    impl<W: std::io::Write> std::io::Write for Delivered<W> {
+        fn write(&mut self, buf: &[u8]) -> std::io::Result<usize> {
+            match self.0.write(buf) {
+                Err(err) if err.kind() == std::io::ErrorKind::Interrupted => Err(err),
+                Err(_) => Ok(buf.len()),
+                written => written,
+            }
+        }
+
+        fn flush(&mut self) -> std::io::Result<()> {
+            self.0.flush().or(Ok(()))
+        }
+    }
+
     /// The minimum wait for the writer guard after a pre-push hook passed.
     const POST_HOOK_GUARD_WAIT: std::time::Duration = std::time::Duration::from_secs(600);
 
@@ -710,6 +729,7 @@ pub(crate) mod function {
                 .with_prune(opts.prune)
                 .with_push_options(push_opt_bytes)
                 .with_sign_mode(sign_mode)
+                .with_atomic(opts.atomic)
                 .transmit_with_before_send(
                     gix::progress::Discard,
                     &std::sync::atomic::AtomicBool::new(false),
@@ -725,8 +745,16 @@ pub(crate) mod function {
                                 if update.old_oid.is_null() || update.new_oid.is_null() {
                                     continue;
                                 }
-                                let fast_forward = update.remote.starts_with(b"refs/heads/")
-                                    && repo
+                                // Git's rule: an existing tag never moves without force; any other
+                                // ref (branches, notes) may fast-forward from commit to commit.
+                                if update.remote.starts_with(b"refs/tags/") {
+                                    return Err(std::io::Error::other(format!(
+                                        "refusing to update existing tag {}; tags move only with --force",
+                                        update.remote
+                                    ))
+                                    .into());
+                                }
+                                let fast_forward = repo
                                         .merge_base(update.old_oid, update.new_oid)
                                         .ok()
                                         .flatten()
@@ -740,8 +768,13 @@ pub(crate) mod function {
                                 }
                             }
                         }
+                        // No hook runs: nothing waited, so the push goes on this connection.
                         if opts.no_verify {
-                            return Ok(());
+                            return Ok(gix::remote::push::Authorized::OnThisConnection);
+                        }
+                        // A configured hook that cannot run refuses the push instead of skipping it.
+                        if super::super::authoring::gating_hook_path(&repo, "pre-push", "--no-verify")?.is_none() {
+                            return Ok(gix::remote::push::Authorized::OnThisConnection);
                         }
                         let mut input = Vec::new();
                         for update in updates.iter().filter(|update| update.old_oid != update.new_oid) {
@@ -760,9 +793,6 @@ pub(crate) mod function {
                                 .into_owned()
                                 .into_os_string(),
                         ];
-                        if super::super::authoring::hook_path(&repo, "pre-push")?.is_none() {
-                            return Ok(());
-                        }
                         held.borrow_mut().release_repository();
                         super::super::authoring::run_hook_with_input(&repo, "pre-push", &args, Some(&input))?;
                         // Shared writers are brief, and the hook's work is not lost to a
@@ -772,7 +802,8 @@ pub(crate) mod function {
                         super::super::switch::reacquire_for_send(&mut held.borrow_mut(), &repo, wait).context(
                             "the pre-push hook passed, but the Brit mutation guard could not be re-acquired; nothing was sent",
                         )?;
-                        Ok(())
+                        // The hook may have run long: judge the push again on a fresh connection.
+                        Ok(gix::remote::push::Authorized::Revalidate)
                     },
                 );
             drop(held);
@@ -795,6 +826,12 @@ pub(crate) mod function {
                     drop(stderr);
                     std::process::exit(128);
                 }
+                Err(gix::remote::push::Error::AtomicNotSupported) => {
+                    let mut stderr = std::io::stderr().lock();
+                    writeln!(stderr, "fatal: the receiving end does not support --atomic push")?;
+                    drop(stderr);
+                    std::process::exit(128);
+                }
                 other => other?,
             };
             (out, display_url)
@@ -812,7 +849,7 @@ pub(crate) mod function {
             // local name is empty, so the pair renders as `:<remote>`. We render
             // the remote URL (opts.repo/remote positional) when set, else the
             // resolved remote's name — matches what the user typed at the CLI.
-            let mut stdout = std::io::stdout().lock();
+            let mut stdout = Delivered(std::io::stdout().lock());
             writeln!(stdout, "To {push_display_url}")?;
             for status in &outcome.status {
                 let flag: &str = match &status.result {
@@ -839,11 +876,14 @@ pub(crate) mod function {
             // command (empty local, new_oid=null) renders as `- [deleted]` to
             // mirror git's own per-ref line; everything else is new/updated or
             // rejected.
-            let mut stderr = std::io::stderr().lock();
+            let mut stderr = Delivered(std::io::stderr().lock());
             for status in &outcome.status {
                 match &status.result {
                     Ok(()) if status.local.is_empty() => {
                         writeln!(stderr, " - [deleted]      {}", status.remote)?;
+                    }
+                    Ok(()) if status.old_oid == status.new_oid => {
+                        writeln!(stderr, " = [up to date]   {} -> {}", status.local, status.remote)?;
                     }
                     Ok(()) => {
                         writeln!(stderr, " * [new/updated]  {} -> {}", status.local, status.remote)?;
@@ -859,6 +899,12 @@ pub(crate) mod function {
             }
             drop(stderr);
         }
+        // What the push could not show in its per-ref status, like a report lost after delivery.
+        let mut stderr = Delivered(std::io::stderr().lock());
+        for note in &outcome.notes {
+            writeln!(stderr, "warning: {note}")?;
+        }
+        drop(stderr);
 
         // git exits 1 when any ref was rejected by the remote; 0 when all succeeded.
         let any_rejected = outcome.status.iter().any(|s| s.result.is_err());

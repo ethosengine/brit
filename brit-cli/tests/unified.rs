@@ -178,3 +178,45 @@ fn git_push_dispatch_updates_a_disposable_remote() {
     let pushed = gix_testtools::git(remote.path(), "rev-parse refs/heads/main").expect("remote head");
     assert_eq!(head, pushed, "pushed ref must resolve to local head");
 }
+
+/// A baseline write or migration whose ref changed exits 0 even when its JSON report meets a
+/// stdout whose reader already closed: a delivered operation reports success.
+#[cfg(unix)]
+#[test]
+fn baseline_changes_succeed_when_their_report_meets_a_closed_stdout() {
+    let repo = gix_testtools::tempfile::tempdir().expect("temporary repository");
+    gix_testtools::git(repo.path(), "init -q").expect("initialize fixture");
+    gix_testtools::git(
+        repo.path(),
+        "-c user.name=t -c user.email=t@example.invalid commit -q --allow-empty -m base",
+    )
+    .expect("commit fixture");
+    let head = gix_testtools::git(repo.path(), "rev-parse HEAD").expect("resolve HEAD");
+    let head = head.trim();
+    let migration = repo.path().join("pipeline-baselines.json");
+    std::fs::write(
+        &migration,
+        format!(r#"{{"pipelines":{{"migrated":{{"lastSuccessfulCommit":"{head}"}}}}}}"#),
+    )
+    .expect("write migration input");
+    let migration = migration.to_str().expect("utf8 path");
+    for (pipeline, args) in [
+        ("written", vec!["build", "baseline", "write", "written", head]),
+        ("migrated", vec!["build", "baseline", "migrate", migration]),
+    ] {
+        let (reader, writer) = std::io::pipe().expect("pipe");
+        drop(reader);
+        let mut command = Command::new(env!("CARGO_BIN_EXE_brit"));
+        gix_testtools::configure_git_environment(&mut command, repo.path());
+        let output = command
+            .args(&args)
+            .current_dir(repo.path())
+            .stdout(writer)
+            .output()
+            .expect("run brit with a closed stdout");
+        assert_eq!(output.status.code(), Some(0), "{args:?}: {output:?}");
+        let recorded = gix_testtools::git(repo.path(), &format!("rev-parse refs/notes/rakia/baselines/{pipeline}"))
+            .expect("the baseline ref was written");
+        assert_eq!(recorded.trim(), head, "{args:?}");
+    }
+}

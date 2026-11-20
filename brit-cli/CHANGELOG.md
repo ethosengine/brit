@@ -11,6 +11,10 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.0.0/); ver
 
 ### Added
 
+- `brit push --atomic` asks the remote to apply every update or none (the `atomic`
+  capability). A remote that does not offer it refuses the push before anything is sent with
+  Git's `fatal: the receiving end does not support --atomic push` and status 128. Before, the
+  flag was accepted and ignored.
 - `brit log [REVISION…] [--oneline] [-- PATH…]` lists the commits reachable from the given
   revisions instead of `HEAD`, including exclusions and ranges (`^A`, `A..B`, `A...B`, `A^@`,
   `A^!`), ordered like `git rev-list --date-order`, and limits them to commits that change
@@ -123,6 +127,17 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.0.0/); ver
 
 ### Changed
 
+- **Behaviour change:** `brit push` refuses to push ungated when the `pre-push` hook is
+  expected but cannot run: `core.hooksPath` names something that is not a directory, or the
+  hook is not an executable file (a dangling link included). The refusal names the path and
+  `--no-verify`, the explicit way to push without the hook; nothing is sent. Git pushes without
+  the hook and without a word in both cases.
+- `brit push` fast-forwards any ref but a tag after checking the remote's commit is an ancestor,
+  as Git does, so a branch and its notes (`refs/notes/…`) update together in one push; before,
+  only `refs/heads/*` could be updated without `--force`. An existing tag moves only with
+  `--force` ("refusing to update existing tag …").
+- `brit push` handshakes once when no `pre-push` hook ran (none installed, or `--no-verify`);
+  only after a hook ran does it connect again and re-validate the refs it judged.
 - Merged onto the gitoxide 3e89f3b56 integration. `brit log` keeps upstream's `--sort` and
   `--first-parent` next to `--oneline` and paths; a path filter takes only the default date
   order over all parents and refuses the others. Without paths, the default order still lists
@@ -305,6 +320,12 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.0.0/); ver
 
 ### Fixed
 
+- A push that delivered its refs exits 0 even when its report meets a closed stdout or stderr
+  (a reader that went away); before, the first failed status line turned the delivered push into
+  exit 1. `brit build baseline write` and `brit build baseline migrate` follow the same rule once
+  their ref changed. The note that a lost report was verified by a fresh advertisement is now
+  printed by the CLI after the per-ref lines, and a ref already at its requested id reads
+  `= [up to date]`.
 - `brit rebase --abort` cancels a rebase whose preparation failed or was killed, without
   re-running it: it reads only the journal's own records and the pinned HEAD, index and branch,
   never an object, and reports any live difference instead of refusing. Before, a preparation

@@ -617,3 +617,48 @@ fn stalled_clone_download_is_cut_by_the_stall_guard() -> Result<()> {
     ensure!(took < Duration::from_secs(80), "cut by the stall guard, took {took:?}");
     Ok(())
 }
+
+/// A push makes one receive-pack handshake when no `pre-push` hook ran (none installed, or
+/// `--no-verify`), and a second, re-validating one only after a hook ran.
+#[test]
+fn push_handshakes_again_only_after_a_hook_ran() -> Result<()> {
+    let handshakes = |server: &HttpRemote| {
+        server
+            .log()
+            .iter()
+            .filter(|line| {
+                line.starts_with("GET ") && line.contains("service=git-receive-pack") && !line.contains(" -> ")
+            })
+            .count()
+    };
+    for build in builds() {
+        for (label, hook, args, expected) in [
+            ("none", false, &["push", "origin", "main:main"][..], 1),
+            ("bypassed", true, &["push", "--no-verify", "origin", "main:main"][..], 1),
+            ("ran", true, &["push", "origin", "main:main"][..], 2),
+        ] {
+            let published = Published::new(&format!("push-transport-handshakes-{label}-{}", build.http))?;
+            let server = HttpRemote::start(published.root.path(), Mode::Serve)?;
+            published.origin(&server.url("r.git"))?;
+            if hook {
+                published.hook("cat >hook-input; echo ran >hook-ran")?;
+            }
+            let new = published.repo.commit_file("payload", "second")?;
+            let out = BritInvocation::new(&build.bin)
+                .args(args.iter().copied())
+                .current_dir(published.repo.path())
+                .deadline(DEADLINE)
+                .run()?;
+            let what = format!("{} with hook {label}", build.http);
+            ensure!(out.status.success(), "{what}: {}", out.stderr);
+            assert_eq!(published.remote_main()?, new, "{what}: delivered");
+            assert_eq!(
+                published.repo.path().join("hook-ran").exists(),
+                label == "ran",
+                "{what}: the hook ran exactly when expected"
+            );
+            assert_eq!(handshakes(&server), expected, "{what}: {:?}", server.log());
+        }
+    }
+    Ok(())
+}

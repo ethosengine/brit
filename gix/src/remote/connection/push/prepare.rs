@@ -26,6 +26,9 @@ where
     /// [`SignMode::IfAsked`] signs only when the server advertised the
     /// `push-cert` capability, [`SignMode::Always`] fails if it didn't.
     pub(super) sign: SignMode,
+    /// Ask the remote to apply every update or none (`--atomic`). Requires the remote to
+    /// advertise the `atomic` capability.
+    pub(super) atomic: bool,
 }
 
 /// `--signed` argument — mirrors git's `SEND_PACK_PUSH_CERT_*` states.
@@ -57,6 +60,7 @@ where
             prune: false,
             push_options: Vec::new(),
             sign: SignMode::Never,
+            atomic: false,
         }
     }
 
@@ -102,6 +106,14 @@ where
     /// silently falls back to unsigned; [`SignMode::Never`] is a no-op.
     pub fn with_sign_mode(mut self, mode: SignMode) -> Self {
         self.sign = mode;
+        self
+    }
+
+    /// When enabled (`--atomic`), the remote applies every update or none. Transmit fails
+    /// before sending when the remote did not advertise the `atomic` capability, and a ref that
+    /// re-validation would leave unpushed refuses the whole push instead.
+    pub fn with_atomic(mut self, atomic: bool) -> Self {
+        self.atomic = atomic;
         self
     }
 }
