@@ -13,6 +13,9 @@ use std::{
     sync::Arc,
 };
 
+pub(crate) mod revisions;
+pub use revisions::{Differences, Format, Request, diff};
+
 pub fn tree(
     mut repo: gix::Repository,
     out: &mut dyn std::io::Write,
@@ -264,7 +267,7 @@ impl gix::diff::blob::unified_diff::ConsumeHunk for FileHunks<'_> {
 /// Show HEAD-to-index or index-to-worktree patches without refreshing or writing the index.
 /// Literal file selection deliberately does not interpret Git pathspec magic.
 pub fn working(repo: gix::Repository, out: &mut dyn std::io::Write, cached: bool, paths: &[BString]) -> Result<()> {
-    working_output(repo, out, cached, paths, false)
+    working_output(&repo, out, None, cached, paths, Format::Patch).map(drop)
 }
 
 /// Show HEAD-to-index or index-to-worktree statistics without writing repository state.
@@ -274,25 +277,30 @@ pub fn working_stat(
     cached: bool,
     paths: &[BString],
 ) -> Result<()> {
-    working_output(repo, out, cached, paths, true)
+    working_output(&repo, out, None, cached, paths, Format::Stat).map(drop)
 }
 
+/// Compare `base` (a tree, or HEAD when `None` and `cached`, or the index otherwise) with the
+/// index (`cached`) or the working files, and return whether anything differs.
 fn working_output(
-    repo: gix::Repository,
+    repo: &gix::Repository,
     out: &mut dyn std::io::Write,
+    base: Option<ObjectId>,
     cached: bool,
     paths: &[BString],
-    stat: bool,
-) -> Result<()> {
+    format: Format,
+) -> Result<bool> {
     use super::index::authoring::{literal_paths, read_index, validate_index};
     use std::collections::{BTreeMap, BTreeSet};
 
-    check_external_diff(&repo)?;
-    let index = read_index(&repo)?;
+    if format.needs_content() {
+        check_external_diff(repo)?;
+    }
+    let index = read_index(repo)?;
     let selected = if paths.is_empty() {
         Vec::new()
     } else {
-        literal_paths(&repo, paths)?
+        literal_paths(repo, paths)?
     };
     let mut before = BTreeMap::new();
     let mut after = BTreeMap::new();
@@ -303,34 +311,40 @@ fn working_output(
         Ok(())
     };
     insert(&index, &mut after)?;
-    if cached {
-        if !repo.head()?.is_unborn() {
-            let head = repo.index_from_tree(&repo.head_tree_id()?)?;
-            validate_index(&head)?;
-            insert(&head, &mut before)?;
-        }
-    } else {
+    let base = match base {
+        Some(tree) => Some(tree),
+        None if cached && !repo.head()?.is_unborn() => Some(repo.head_tree_id()?.detach()),
+        None => None,
+    };
+    if let Some(tree) = base {
+        let base = repo.index_from_tree(&tree)?;
+        validate_index(&base)?;
+        insert(&base, &mut before)?;
+    } else if !cached {
         before.clone_from(&after);
     }
+    // A literal path selects itself or, as a directory, every tracked path below it.
+    let is_selected = |path: &BString, selected: &BString| {
+        path == selected || (path.starts_with(selected) && path.get(selected.len()) == Some(&b'/'))
+    };
+    // Like Git, a path that selects nothing selects nothing; it is not an error.
     let all: BTreeSet<_> = before.keys().chain(after.keys()).cloned().collect();
-    for path in &selected {
-        if !all.contains(path) {
-            bail!(message!("path '{path}' is not tracked in this comparison"));
-        }
-    }
     let paths: Vec<_> = all
         .into_iter()
-        .filter(|path| selected.is_empty() || selected.contains(path))
+        .filter(|path| selected.is_empty() || selected.iter().any(|selected| is_selected(path, selected)))
         .collect();
     let mut attrs = repo.attributes_only(
         &index,
         gix::worktree::stack::state::attributes::Source::WorktreeThenIdMapping,
     )?;
     let mut matches = attrs.attribute_matches();
+    let limit = repo.big_file_threshold()?;
+    let quote_high = quote_path(repo)?;
     // Buffer output so a refused path never leaves a misleading partial patch.
     let budget = Budget::new(&std::env::temp_dir()).or_error()?;
     let mut rendered = std::io::BufWriter::new(budget.spool().or_error()?);
     let mut stats = Vec::new();
+    let mut changed = false;
     for path in paths {
         check_interrupted()?;
         // HEAD and index identities prove no staged change, even for paths whose
@@ -338,12 +352,8 @@ fn working_output(
         if cached && before.get(&path) == after.get(&path) {
             continue;
         }
-        if before
-            .get(&path)
-            .into_iter()
-            .chain(after.get(&path))
-            .any(|(mode, _)| *mode == 0o160000)
-        {
+        // A submodule's working state is its own checkout, which is not read here.
+        if !cached && after.get(&path).is_some_and(|(mode, _)| *mode == GITLINK) {
             bail!(unsupported(
                 "submodule patches are not supported; select ordinary files or use git diff"
             ));
@@ -351,10 +361,13 @@ fn working_output(
         let new = if cached {
             after
                 .get(&path)
-                .map(|&(mode, blob_id)| load_patch_blob(&repo, mode, blob_id, &budget))
+                .map(|&side| load_side(repo, side, &budget, limit))
                 .transpose()?
+        } else if after.contains_key(&path) {
+            worktree_patch_blob(repo, &index, &path, &budget)?
         } else {
-            worktree_patch_blob(&repo, &index, &path, &budget)?
+            // Like Git, a path the index does not track is absent from the working side.
+            None
         };
         // Canonical identity and effective mode prove a worktree entry unchanged
         // without loading the index blob. The authoring read above still validates
@@ -367,22 +380,78 @@ fn working_output(
         {
             continue;
         }
-        let old = before
-            .get(&path)
-            .map(|&(mode, blob_id)| load_patch_blob(&repo, mode, blob_id, &budget))
-            .transpose()?;
+        let old_side = before.get(&path).copied();
+        if old_side.is_none() && new.is_none() {
+            continue;
+        }
+        changed = true;
+        let new_side = new.as_ref().map(|new| (new.mode, new.blob_id));
+        match format {
+            Format::Quiet => break,
+            Format::NameOnly | Format::NameStatus => {
+                write_name(&mut rendered, format, &path, old_side, new_side, quote_high)?;
+                continue;
+            }
+            Format::Patch | Format::Stat | Format::NumStat => {}
+        }
+        let old = old_side.map(|side| load_side(repo, side, &budget, limit)).transpose()?;
         attrs.at_entry(&path, None)?.matching_attributes(&mut matches);
         let binary = binary_attribute(&matches, &path)?;
-        if stat {
-            collect_stat(&repo, &mut stats, &path, old.as_ref(), new.as_ref(), binary)?;
+        if format == Format::Patch {
+            render_patch(repo, &mut rendered, &path, old.as_ref(), new.as_ref(), binary)?;
         } else {
-            render_patch(&repo, &mut rendered, &path, old.as_ref(), new.as_ref(), binary)?;
+            collect_stat(repo, &mut stats, &path, old.as_ref(), new.as_ref(), binary)?;
         }
     }
-    if stat {
-        render_stats(&stats, &mut rendered)?;
+    match format {
+        Format::Stat => render_stats(&stats, &mut rendered)?,
+        Format::NumStat => render_numstat(&stats, &mut rendered)?,
+        _ => {}
     }
-    write_diff_output(out, &mut rendered)
+    write_diff_output(out, &mut rendered)?;
+    Ok(changed)
+}
+
+/// Whether `core.quotePath` asks for bytes above 0x7f to be quoted (Git's default).
+fn quote_path(repo: &gix::Repository) -> Result<bool> {
+    Ok(repo.config_snapshot().try_boolean("core.quotePath")?.unwrap_or(true))
+}
+
+/// Write one `--name-only` or `--name-status` line, quoted like Git.
+fn write_name(
+    out: &mut dyn std::io::Write,
+    format: Format,
+    path: &[u8],
+    old: Option<(u32, ObjectId)>,
+    new: Option<(u32, ObjectId)>,
+    quote_high: bool,
+) -> Result<()> {
+    if format == Format::NameStatus {
+        let status = match (old, new) {
+            (None, _) => b'A',
+            (_, None) => b'D',
+            (Some((old, _)), Some((new, _))) if old & 0o170000 != new & 0o170000 => b'T',
+            _ => b'M',
+        };
+        out.write_all(&[status, b'\t']).or_error()?;
+    }
+    out.write_all(&quote_patch_path(path, quote_high)).or_error()?;
+    out.write_all(b"\n").or_error()?;
+    Ok(())
+}
+
+/// Git's `--numstat`: added and removed lines per path, or `-` twice for binary files.
+fn render_numstat(stats: &[FileStat], out: &mut dyn std::io::Write) -> Result<()> {
+    for stat in stats {
+        if stat.binary {
+            out.write_all(b"-\t-\t").or_error()?;
+        } else {
+            write!(out, "{}\t{}\t", stat.added, stat.removed).or_error()?;
+        }
+        out.write_all(&stat.name).or_error()?;
+        out.write_all(b"\n").or_error()?;
+    }
+    Ok(())
 }
 
 struct PatchBlob {
@@ -395,13 +464,25 @@ struct PatchBlob {
 enum PatchData {
     Buffered(Vec<u8>),
     Mapped(Mapped),
+    /// A blob above `core.bigFileThreshold`, which Git reports as binary without reading it.
+    TooLarge(u64),
 }
 impl PatchData {
     fn as_slice(&self) -> &[u8] {
         match self {
             Self::Buffered(bytes) => bytes,
             Self::Mapped(bytes) => bytes.as_slice(),
+            Self::TooLarge(_) => &[],
         }
+    }
+    fn len(&self) -> u64 {
+        match self {
+            Self::TooLarge(size) => *size,
+            data => data.as_slice().len() as u64,
+        }
+    }
+    fn is_too_large(&self) -> bool {
+        matches!(self, Self::TooLarge(_))
     }
     fn from_spool(repo: &gix::Repository, mut spool: Spool) -> Result<Self> {
         use std::io::Read;
@@ -438,15 +519,65 @@ fn load_patch_blob(repo: &gix::Repository, mode: u32, blob_id: ObjectId, budget:
     })
 }
 
+/// The mode of a submodule (gitlink) entry.
+const GITLINK: u32 = 0o160000;
+
+/// Load one side of a comparison whose object identity is known: a gitlink reads as Git's
+/// `Subproject commit` line, and a blob above `limit` (`core.bigFileThreshold`) is only sized.
+fn load_side(
+    repo: &gix::Repository,
+    (mode, id): (u32, ObjectId),
+    budget: &Arc<Budget>,
+    limit: u64,
+) -> Result<PatchBlob> {
+    if mode == GITLINK {
+        return Ok(PatchBlob {
+            mode,
+            blob_id: id,
+            data: PatchData::Buffered(format!("Subproject commit {id}\n").into_bytes()),
+            from_worktree: false,
+        });
+    }
+    let size = repo.find_header(id)?.size();
+    if size > limit {
+        return Ok(PatchBlob {
+            mode,
+            blob_id: id,
+            data: PatchData::TooLarge(size),
+            from_worktree: false,
+        });
+    }
+    load_patch_blob(repo, mode, id, budget)
+}
+
 fn worktree_patch_blob(
     repo: &gix::Repository,
     index: &gix::index::State,
     path: &BString,
     budget: &Arc<Budget>,
 ) -> Result<Option<PatchBlob>> {
-    let Some((mode, data)) = super::index::authoring::worktree_entry_spooled(repo, index, path, budget)? else {
+    let Some((mode, mut data)) = super::index::authoring::worktree_entry_spooled(repo, index, path, budget)? else {
         return Ok(None);
     };
+    if data.len() > repo.big_file_threshold()? {
+        // Hash the spooled file in place; like Git, its content is never compared.
+        let size = data.len();
+        data.rewind().or_error()?;
+        let blob_id = gix::objs::compute_stream_hash(
+            repo.object_hash(),
+            gix::objs::Kind::Blob,
+            &mut data,
+            size,
+            &mut gix::progress::Discard,
+            &gix::interrupt::IS_INTERRUPTED,
+        )?;
+        return Ok(Some(PatchBlob {
+            mode: mode.bits(),
+            blob_id,
+            data: PatchData::TooLarge(size),
+            from_worktree: true,
+        }));
+    }
     let data = PatchData::from_spool(repo, data)?;
     let blob_id = gix::objs::compute_stream_hash(
         repo.object_hash(),
@@ -562,7 +693,8 @@ fn render_patch(
     };
     let old_data = old.map_or(&[][..], |b| b.data.as_slice());
     let new_data = new.map_or(&[][..], |b| b.data.as_slice());
-    if binary || is_binary(old_data, new_data) {
+    let too_large = old.into_iter().chain(new).any(|b| b.data.is_too_large());
+    if binary || too_large || is_binary(old_data, new_data) {
         out.write_all(b"Binary files ").or_error()?;
         out.write_all(a_label).or_error()?;
         out.write_all(b" and ").or_error()?;
@@ -573,16 +705,10 @@ fn render_patch(
     if old_data == new_data {
         return Ok(());
     }
-    let a_tab = if a_label.contains(&b' ') && !a_label.starts_with(b"\"") {
-        "\t"
-    } else {
-        ""
-    };
-    let b_tab = if b_label.contains(&b' ') && !b_label.starts_with(b"\"") {
-        "\t"
-    } else {
-        ""
-    };
+    // Like Git, a label ends with a tab when the path has a space, quoted or not.
+    let tab = if path.contains(&b' ') { "\t" } else { "" };
+    let a_tab = if old.is_some() { tab } else { "" };
+    let b_tab = if new.is_some() { tab } else { "" };
     out.write_all(b"--- ").or_error()?;
     out.write_all(a_label).or_error()?;
     out.write_all(a_tab.as_bytes()).or_error()?;
@@ -598,7 +724,12 @@ fn render_patch(
     gix::diff::blob::UnifiedDiff::new(
         &diff,
         &input,
-        PatchHunks(out),
+        PatchHunks {
+            out,
+            old: old_data,
+            scanned: (0, 0),
+            function: None,
+        },
         gix::diff::blob::unified_diff::ContextSize::symmetrical(3),
     )
     .consume()
@@ -606,7 +737,46 @@ fn render_patch(
     Ok(())
 }
 
-struct PatchHunks<'a>(&'a mut dyn std::io::Write);
+/// Writes hunks like Git, each header followed by its function context: the last line before the
+/// hunk in the old file that starts with a letter, `_` or `$` (Git's default `funcname`), cut to 80
+/// bytes and without trailing whitespace.
+struct PatchHunks<'a> {
+    out: &'a mut dyn std::io::Write,
+    old: &'a [u8],
+    /// The number of old lines searched so far and the byte offset where the next one starts.
+    scanned: (u32, usize),
+    function: Option<&'a [u8]>,
+}
+
+impl<'a> PatchHunks<'a> {
+    /// Search the old lines before line `end` (zero-based) not searched for an earlier hunk.
+    fn function_before(&mut self, end: u32) -> Option<&'a [u8]> {
+        let old = self.old;
+        let (mut line, mut offset) = self.scanned;
+        while line < end && offset < old.len() {
+            let rest = &old[offset..];
+            let len = rest.find_byte(b'\n').map_or(rest.len(), |pos| pos + 1);
+            let record = &rest[..len];
+            if record
+                .first()
+                .is_some_and(|byte| byte.is_ascii_alphabetic() || *byte == b'_' || *byte == b'$')
+            {
+                let mut record = &record[..record.len().min(80)];
+                while let Some((last, head)) = record.split_last() {
+                    if !(last.is_ascii_whitespace() || *last == 0x0b) {
+                        break;
+                    }
+                    record = head;
+                }
+                self.function = Some(record);
+            }
+            line += 1;
+            offset += len;
+        }
+        self.scanned = (line, offset);
+        self.function
+    }
+}
 
 impl gix::diff::blob::unified_diff::ConsumeHunk for PatchHunks<'_> {
     type Out = ();
@@ -622,17 +792,25 @@ impl gix::diff::blob::unified_diff::ConsumeHunk for PatchHunks<'_> {
                 _ => format!("{start},{len}"),
             }
         }
-        writeln!(
-            self.0,
+        write!(
+            self.out,
             "@@ -{} +{} @@",
             range(header.before_hunk_start, header.before_hunk_len),
             range(header.after_hunk_start, header.after_hunk_len)
         )?;
+        // An empty old side has no line before the hunk.
+        if header.before_hunk_len > 0
+            && let Some(function) = self.function_before(header.before_hunk_start.saturating_sub(1))
+        {
+            self.out.write_all(b" ")?;
+            self.out.write_all(function)?;
+        }
+        self.out.write_all(b"\n")?;
         for &(kind, line) in lines {
-            self.0.write_all(&[kind.to_prefix() as u8])?;
-            self.0.write_all(line)?;
+            self.out.write_all(&[kind.to_prefix() as u8])?;
+            self.out.write_all(line)?;
             if !line.ends_with(b"\n") {
-                self.0.write_all(b"\n\\ No newline at end of file\n")?;
+                self.out.write_all(b"\n\\ No newline at end of file\n")?;
             }
         }
         Ok(())
@@ -756,59 +934,51 @@ pub fn tree_stat(
     old_treeish: BString,
     new_treeish: BString,
 ) -> Result<()> {
-    use std::collections::{BTreeMap, BTreeSet};
-    check_external_diff(&repo)?;
-    let old_tree = repo.rev_parse_single(old_treeish.as_bstr())?.object()?.peel_to_tree()?;
-    let new_tree = repo.rev_parse_single(new_treeish.as_bstr())?.object()?.peel_to_tree()?;
-    let before_index = repo.index_from_tree(&old_tree.id)?;
-    let after_index = repo.index_from_tree(&new_tree.id)?;
-    let entries = |index: &gix::index::State| -> BTreeMap<BString, (u32, ObjectId)> {
-        index
-            .entries()
-            .iter()
-            .map(|e| (e.path(index).into(), (e.mode.bits(), e.id)))
-            .collect()
-    };
-    let before = entries(&before_index);
-    let after = entries(&after_index);
-    let paths: BTreeSet<_> = before.keys().chain(after.keys()).collect();
-    let source = gix::worktree::stack::state::attributes::Source::IdMapping;
-    let mut old_attrs = repo.attributes_only(&before_index, source)?;
-    let mut new_attrs = repo.attributes_only(&after_index, source)?;
-    let budget = Budget::new(&std::env::temp_dir()).or_error()?;
-    let mut stats = Vec::new();
-    for path in paths {
-        check_interrupted()?;
-        if before.get(path) == after.get(path) {
-            continue;
-        }
-        if before
-            .get(path)
-            .into_iter()
-            .chain(after.get(path))
-            .any(|(mode, _)| *mode == 0o160000)
-        {
-            bail!(unsupported("submodule patches are not supported; use git diff"));
-        }
-        let mut binary = false;
-        for attrs in [&mut old_attrs, &mut new_attrs] {
-            let mut matches = attrs.attribute_matches();
-            attrs.at_entry(path, None)?.matching_attributes(&mut matches);
-            binary |= binary_attribute(&matches, path)?;
-        }
-        let old = before
-            .get(path)
-            .map(|&(mode, id)| load_patch_blob(&repo, mode, id, &budget))
-            .transpose()?;
-        let new = after
-            .get(path)
-            .map(|&(mode, id)| load_patch_blob(&repo, mode, id, &budget))
-            .transpose()?;
-        collect_stat(&repo, &mut stats, path, old.as_ref(), new.as_ref(), binary)?;
+    revisions::trees(&repo, out, old_treeish.as_bstr(), new_treeish.as_bstr(), Format::Stat).map(drop)
+}
+
+/// Resolve what `diff tree` compares: `OLD NEW` unchanged, `--merge-base OLD NEW` as the merge base
+/// of both commits and `NEW`, or a lone `A..B` (`A` and `B`) or `A...B` (merge base of both and `B`).
+///
+/// Merge bases are computed like Git's, with shallow boundary commits read as roots. With several
+/// merge bases, `--merge-base` refuses and names them, while `A...B` uses the first and says so on
+/// `err`, as Git does.
+pub fn tree_endpoints(
+    repo: &gix::Repository,
+    err: &mut dyn std::io::Write,
+    old_treeish: BString,
+    new_treeish: Option<BString>,
+    merge_base: bool,
+) -> Result<(BString, BString)> {
+    if let Some(new_treeish) = new_treeish.as_ref().filter(|_| !merge_base) {
+        return Ok((old_treeish, new_treeish.clone()));
     }
-    let mut rendered = std::io::BufWriter::new(budget.spool().or_error()?);
-    render_stats(&stats, &mut rendered)?;
-    write_diff_output(out, &mut rendered)
+    let (old, new) = revisions::endpoints(
+        repo,
+        err,
+        old_treeish.as_bstr(),
+        new_treeish.as_ref().map(AsRef::as_ref),
+        merge_base,
+    )?;
+    Ok((old.to_string().into(), new.to_string().into()))
+}
+
+/// Print each path whose mode or object differs between two trees, in index order and
+/// without rename detection, quoted like Git's `diff --name-only --no-renames`.
+pub fn tree_name_only(
+    repo: gix::Repository,
+    out: &mut dyn std::io::Write,
+    old_treeish: BString,
+    new_treeish: BString,
+) -> Result<()> {
+    revisions::trees(
+        &repo,
+        out,
+        old_treeish.as_bstr(),
+        new_treeish.as_bstr(),
+        Format::NameOnly,
+    )
+    .map(drop)
 }
 
 struct FileStat {
@@ -834,7 +1004,7 @@ fn collect_stat(
     }
     let a = old.map_or(&[][..], |b| b.data.as_slice());
     let b = new.map_or(&[][..], |b| b.data.as_slice());
-    let binary = binary || is_binary(a, b);
+    let binary = binary || old.into_iter().chain(new).any(|b| b.data.is_too_large()) || is_binary(a, b);
     let type_changed = old
         .zip(new)
         .is_some_and(|(a, b)| a.mode & 0o170000 != b.mode & 0o170000);
@@ -847,7 +1017,10 @@ fn collect_stat(
         {
             (0, 0)
         } else {
-            (b.len(), a.len())
+            (
+                new.map_or(0, |b| b.data.len()) as usize,
+                old.map_or(0, |b| b.data.len()) as usize,
+            )
         }
     } else if type_changed {
         (
@@ -1004,7 +1177,10 @@ fn render_stats(stats: &[FileStat], out: &mut dyn std::io::Write) -> Result<()> 
     Ok(())
 }
 
-fn write_diff_output(mut out: &mut dyn std::io::Write, rendered: &mut std::io::BufWriter<Spool>) -> Result<()> {
+pub(crate) fn write_diff_output(
+    mut out: &mut dyn std::io::Write,
+    rendered: &mut std::io::BufWriter<Spool>,
+) -> Result<()> {
     #[cfg(all(target_os = "linux", feature = "switch-test-faults"))]
     super::switch::checkpoint("diff-before-output").map_err(|err| message!("{err:#}"))?;
     check_interrupted()?;

@@ -11,6 +11,7 @@ pub fn function(repo: gix::Repository, paths: Vec<PathBuf>) -> Result<()> {
         .ok_or_raise(|| unsupported("No editor is configured and the terminal is not capable of running one"))?;
     let editor_display = editor.command.to_string_lossy().into_owned();
     let mut command: std::process::Command = editor.args(paths).try_into()?;
+    command.env(super::switch::HOOK_MARKER, super::switch::hook_marker());
     // Program metadata already names a directly launched editor. For shell commands, it only names
     // the shell, so retain the configured editor command in the message instead of losing that detail.
     let editor_display = if editor_display == command.get_program().to_string_lossy() {

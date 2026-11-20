@@ -1,6 +1,6 @@
 //! One executable for Git plumbing and build operations.
 
-use std::{path::PathBuf, process::ExitCode};
+use std::{io::Write, path::PathBuf, process::ExitCode};
 
 use clap::{parser::ValueSource, CommandFactory, FromArgMatches, Parser, Subcommand};
 use gitoxide::plumbing;
@@ -51,6 +51,13 @@ enum Command {
     /// Compute a topologically-grouped build plan
     Plan(PlanArgs),
     /// Compute the content fingerprint of a step's inputs
+    ///
+    /// Keyed: each committed blob a step glob matches, by content; each
+    /// gitlink a glob matches or can match beneath, by the commit it pins
+    /// (the submodule's files are not read); each symlink a glob matches or
+    /// can match beneath (a glob written through a directory link), by its
+    /// own object id, i.e. its target path. Not keyed: the file a symlink
+    /// points to unless a glob matches that file, and anything uncommitted.
     Fingerprint(FingerprintArgs),
     /// Manage rakia baseline refs
     #[command(subcommand)]
@@ -205,6 +212,49 @@ fn command_prefix(args: &[std::ffi::OsString], command: &clap::Command) -> Optio
     })
 }
 
+/// The global `-C` directories given before the subcommand, read from the arguments up to it so that
+/// they are known even when clap stops at `--help` or a usage error after it.
+fn change_dirs_before_command(args: &[std::ffi::OsString], command: &clap::Command) -> Vec<std::ffi::OsString> {
+    args.iter()
+        .enumerate()
+        .skip(1)
+        .find_map(|(index, arg)| {
+            command.find_subcommand(arg.to_str()?)?;
+            let partial = command
+                .clone()
+                .ignore_errors(true)
+                .try_get_matches_from(&args[..=index])
+                .ok()?;
+            partial.subcommand_name()?;
+            Some(
+                partial
+                    .get_many::<std::ffi::OsString>("change_dir")
+                    .map(|dirs| dirs.cloned().collect())
+                    .unwrap_or_default(),
+            )
+        })
+        .unwrap_or_default()
+}
+
+/// Print the long help of the subcommand `matches` selected, for a spelling whose own parser met
+/// `--help` among arguments it takes verbatim (like `rev-parse HEAD --help`), and exit with clap's status.
+fn subcommand_help(command: &clap::Command, matches: &clap::ArgMatches) -> error::CliError {
+    let mut argv = vec!["brit".to_owned()];
+    let mut current = matches;
+    while let Some((name, sub)) = current.subcommand() {
+        argv.push(name.to_owned());
+        current = sub;
+    }
+    argv.push("--help".to_owned());
+    match command.clone().try_get_matches_from(argv) {
+        Err(help) => {
+            let _ = help.print();
+            error::CliError::ContextExit(help.exit_code())
+        }
+        Ok(_) => error::CliError::ContextExit(0),
+    }
+}
+
 fn normalize_log_counts(args: &mut [std::ffi::OsString], index: usize) {
     // Familiar bounded history spelling, scoped to log and before `--`. Never reinterpret
     // a path after the option terminator or a numeric argument to another command. Let
@@ -223,15 +273,174 @@ fn normalize_log_counts(args: &mut [std::ffi::OsString], index: usize) {
     }
 }
 
-fn run(capture: &mut feedback::Capture) -> Result<()> {
+/// Commands whose only effect is what they print, each by its exact subcommand path. A reader that
+/// closes their output early may end them quietly; every other command's own outcome is reported.
+/// A path is admitted only when listed itself: a child of a listed command is not read-only until it
+/// is listed too.
+///
+/// This list is not a census of read-only commands. A path is admitted only after it was checked
+/// that the command changes nothing and that everything it prints goes through the watched writer.
+/// A read-only command that is not listed was not checked and keeps the previous behaviour on a
+/// closed reader.
+const READ_ONLY_COMMANDS: &[&[&str]] = &[
+    &["rev-parse"],
+    &["for-each-ref"],
+    &["ls-remote"],
+    &["check-ref-format"],
+    &["merge-base"],
+    &["rev-list"],
+    &["log"],
+    &["cat"],
+    &["blame"],
+    &["diff"],
+    &["diff", "tree"],
+    &["diff", "file"],
+    &["branch", "list"],
+    &["revision", "resolve"],
+    &["revision", "explain"],
+    &["worktree", "list"],
+    &["config-tree"],
+    &["env"],
+    // Admitted after reading each path: no write, and every line through the watched writer.
+    &["show"],
+    &["tag", "list"],
+    &["remote", "url"],
+    // `remote refs`, `remote ref-map` and `ls-remote` are one function under three spellings and are
+    // treated alike. This list exists so that a command with an effect its caller must learn about never
+    // has its outcome replaced by 141. Their only effect is the credential helper's: approve after a
+    // successful authentication, erase after a failed one. After an erase the command has failed, and
+    // its own failure wins. After an approve the command otherwise succeeded; the stored credential is
+    // not something a caller reads from the exit status, and Git dies of SIGPIPE in the same pipeline
+    // having done the same thing. Gap: when authentication makes a helper or a prompt write, that output
+    // does not go through the watched writer, so on that path a closed reader is not guaranteed to be
+    // seen, and the command behaves as an unlisted one.
+    &["remote", "refs"],
+    &["remote", "ref-map"],
+    &["revision", "previous-branches"],
+    &["verify"],
+    &["fsck"],
+    &["tree", "entries"],
+    &["tree", "info"],
+    &["commit-graph", "list"],
+    &["commit-graph", "verify"],
+    &["mailmap", "entries"],
+    &["mailmap", "check"],
+    &["attributes", "query"],
+    &["exclude", "query"],
+    // Bare `submodule` passes no `--dirty-suffix`, so it never runs the status engine.
+    &["submodule"],
+    &["config"],
+    &["config", "show"],
+    &["config", "list"],
+    &["index", "entries"],
+    &["dirwalk"],
+    // Their JSON and DOT output goes through `output::print_line`, the watched writer.
+    &["build", "graph", "discover"],
+    &["build", "graph", "show"],
+    &["build", "affected"],
+    &["build", "plan"],
+    &["build", "fingerprint"],
+    &["build", "baseline", "read"],
+    // Left out:
+    // - `is-clean`, `is-changed`: predicates whose answer is their exit status, so 141 would replace the
+    //   answer a script reads; their status engine can also run a configured clean filter, an external
+    //   program with inherited stderr.
+    // - `commit describe`, `submodule list`: `--dirty-suffix` on the same path runs that status engine.
+    // - bare `tag`: `tag <name>` creates a tag on the same path.
+    // - `revision list`: `--svg` writes and opens a file on the same path.
+    // - `commit verify`: runs the configured verifier and writes its output to an unwatched stderr.
+    // - `attributes validate-baseline`: its children's output is piped, but it reports a failed helper
+    //   or a mismatch with a fallible write before returning its own failure, so a closed reader would
+    //   replace that failure.
+    // - `build run`, `build baseline write|migrate`, `config fmt`, `index from-tree`, `tag delete`,
+    //   `commit sign`: they write.
+    // Known limits, not fixed here: `--trace` and the verbose progress renderer write to raw stderr
+    // outside the watched writer (shared plumbing); and a streaming query ends at its first failed write
+    // even if a later input would have failed, as Git killed by SIGPIPE does.
+];
+
+fn read_only_path(path: &[&str]) -> bool {
+    READ_ONLY_COMMANDS.contains(&path)
+}
+
+fn read_only_command(matches: &clap::ArgMatches) -> bool {
+    let mut path = Vec::new();
+    let mut current = matches;
+    while let Some((name, sub)) = current.subcommand() {
+        path.push(name);
+        current = sub;
+    }
+    read_only_path(&path)
+}
+
+/// Whether `error` is a write that met a closed reader, by the typed `ErrorKind::BrokenPipe` of an I/O
+/// error in its chain. Message text is never consulted.
+fn is_closed_reader_write(error: &error::CliError) -> bool {
+    let broken = |kind: Option<std::io::ErrorKind>| kind == Some(std::io::ErrorKind::BrokenPipe);
+    match error {
+        error::CliError::Io(io) => broken(Some(io.kind())),
+        error::CliError::Json(json) => broken(json.io_error_kind()),
+        error::CliError::Git(cause) => cause.chain().any(|cause| {
+            broken(cause.downcast_ref::<std::io::Error>().map(std::io::Error::kind))
+                || broken(
+                    cause
+                        .downcast_ref::<gix::Error>()
+                        .and_then(|error| error.downcast_any_ref::<std::io::Error>())
+                        .map(std::io::Error::kind),
+                )
+                || broken(
+                    cause
+                        .downcast_ref::<serde_json::Error>()
+                        .and_then(serde_json::Error::io_error_kind),
+                )
+                // JSON written by a plumbing command, like `tree info`, arrives wrapped in a `gix::Error`.
+                || broken(
+                    cause
+                        .downcast_ref::<gix::Error>()
+                        .and_then(|error| error.downcast_any_ref::<serde_json::Error>())
+                        .and_then(serde_json::Error::io_error_kind),
+                )
+        }),
+        _ => false,
+    }
+}
+
+/// How a finished run ends: its exit status, and whether its error still has to be reported.
+///
+/// This is the one place the status is decided. The command's own result is judged first: an error,
+/// or a Git-shaped non-zero exit, keeps its own status whatever happened to the reader. Only a command
+/// that otherwise succeeded (`Ok`, a zero exit, or an error that is nothing but its write meeting the
+/// closed reader) ends with 141, the status of Git killed by SIGPIPE, and only when it is read-only
+/// (see [`READ_ONLY_COMMANDS`]) and `reader_closed` says a watched write to stdout or stderr failed
+/// with `ErrorKind::BrokenPipe`.
+fn exit_status(outcome: &Result<()>, read_only: bool, reader_closed: bool) -> (i32, bool) {
+    let quiet_pipe = read_only && reader_closed;
+    match outcome {
+        Ok(()) | Err(error::CliError::ContextExit(0)) if quiet_pipe => (141, false),
+        Ok(()) => (0, false),
+        Err(error::CliError::ContextExit(code)) => (*code, false),
+        // A Git spelling that answers through its exit code already wrote its diagnostic.
+        Err(error::CliError::Git(cause)) if cause.chain().any(|cause| plumbing::exit_status(cause).is_some()) => {
+            match cause.chain().find_map(plumbing::exit_status).unwrap_or(1) {
+                0 if quiet_pipe => (141, false),
+                code => (code, false),
+            }
+        }
+        Err(e) if quiet_pipe && is_closed_reader_write(e) => (141, false),
+        Err(e) => (e.exit_code(), true),
+    }
+}
+
+fn run(capture: &mut feedback::Capture, read_only: &mut bool) -> Result<()> {
     let mut args: Vec<_> = plumbing::args_os().collect();
     let invoked_as_rakia = args
         .first()
         .and_then(|name| std::path::PathBuf::from(name).file_stem().map(|stem| stem == "rakia"))
         .unwrap_or(false);
     if invoked_as_rakia {
-        eprintln!("warning: rakia is deprecated; use `brit build` with the same arguments");
+        brit_epr::diagnostic::emit("warning: rakia is deprecated; use `brit build` with the same arguments");
         capture.operation("build");
+        plumbing::configure_mutation_guards(None, &public_command()).map_err(|err| error::CliError::Git(err.into()))?;
         let cli = Cli::try_parse_from(args).map_err(|error| {
             let code = error.exit_code();
             capture.outcome = Some(if code == 0 { "passed" } else { "refused" });
@@ -244,18 +453,21 @@ fn run(capture: &mut feedback::Capture) -> Result<()> {
     // Bridged names are answered before clap sees them: brit prints the stock Git command and
     // never runs it.
     if let Some(line) = bridge::line(&args) {
-        eprintln!("{line}");
+        brit_epr::diagnostic::emit(line);
         capture.operation = "bridge";
         capture.outcome = Some("bridge-declared");
         return Err(error::CliError::ContextExit(bridge::EXIT_CODE));
     }
 
     let command = public_command();
+    let mut separator = false;
     if let Some((index, name)) = command_prefix(&args, &command) {
         capture.operation(&name);
         if name == "log" {
             normalize_log_counts(&mut args, index);
         }
+        // `diff` and `show` take only flags, so the first `--` after them separates paths.
+        separator = matches!(name.as_str(), "diff" | "show") && args.iter().skip(index + 1).any(|arg| arg == "--");
     }
     // Introspection is deliberately standalone. Never dispatch a Git/native command
     // when the caller combines a census request with work-performing arguments.
@@ -264,12 +476,18 @@ fn run(capture: &mut feedback::Capture) -> Result<()> {
         if args.len() != 2 {
             return Err(error::CliError::Args("--cli-surface-json must be used alone".into()));
         }
-        let stdout = std::io::stdout();
-        serde_json::to_writer_pretty(stdout.lock(), &surface::introspect(command)).map_err(anyhow::Error::from)?;
-        println!();
+        *read_only = true;
+        let mut stdout = gitoxide::shared::closed_reader::Watch(std::io::stdout().lock());
+        serde_json::to_writer_pretty(&mut stdout, &surface::introspect(command)).map_err(anyhow::Error::from)?;
+        writeln!(stdout)?;
         return Ok(());
     }
-    let matches = command.clone().try_get_matches_from(args).map_err(|error| {
+    let matches = command.clone().try_get_matches_from(&args).map_err(|error| {
+        // Git enters every `-C` directory before it reads the command: a missing one wins over help and usage.
+        if plumbing::change_dirs(&change_dirs_before_command(&args, &command)).is_err() {
+            capture.outcome = Some("refused");
+            return error::CliError::ContextExit(128);
+        }
         let code = error.exit_code();
         capture.outcome = Some(if code == 0 { "passed" } else { "refused" });
         let _ = error.print();
@@ -278,6 +496,7 @@ fn run(capture: &mut feedback::Capture) -> Result<()> {
     if let Some(name) = matches.subcommand_name() {
         capture.operation(name);
     }
+    *read_only = read_only_command(&matches);
     if matches.get_flag("cli-surface-json") {
         return Err(error::CliError::Args("--cli-surface-json must be used alone".into()));
     }
@@ -286,8 +505,14 @@ fn run(capture: &mut feedback::Capture) -> Result<()> {
         Some("build" | "snapshot" | "context" | "integrate")
     ) {
         let namespace = matches.subcommand_name().unwrap_or("native");
+        // `--wait` is the one global option these namespaces honour: their writes take the same
+        // guards. Only a `--wait` before the first passed-through argument is Brit's; later
+        // tokens belong to the namespace (for `context` and `integrate`, to epr).
+        let wait = matches.get_one::<plumbing::MutationWait>("wait").copied();
+        plumbing::configure_mutation_guards(wait, &command).map_err(|err| error::CliError::Git(err.into()))?;
         if let Some(option) = matches
             .ids()
+            .filter(|id| id.as_str() != "wait" && command.get_arguments().any(|arg| arg.get_id() == *id))
             .find(|id| matches.value_source(id.as_str()) == Some(ValueSource::CommandLine))
         {
             let root_option = if matches!(namespace, "context" | "integrate") {
@@ -307,34 +532,33 @@ fn run(capture: &mut feedback::Capture) -> Result<()> {
             BuildNamespace::Snapshot(command) => tree::run(command).map_err(error::CliError::Git),
         }
     } else {
-        let args = plumbing::Args::from_arg_matches(&matches).map_err(|e| error::CliError::Args(e.to_string()))?;
-        plumbing::run_with_command(args, command).map_err(|err| error::CliError::Git(err.into()))
+        let mut args = plumbing::Args::from_arg_matches(&matches).map_err(|e| {
+            if e.kind() == clap::error::ErrorKind::DisplayHelp {
+                return subcommand_help(&command, &matches);
+            }
+            error::CliError::Args(e.to_string())
+        })?;
+        if separator {
+            args.note_path_separator();
+        }
+        plumbing::run_with_command(args, command).map_err(|err| {
+            // `diff --exit-code` and `--quiet` report differences by status alone, like Git.
+            if err.downcast_any_ref::<plumbing::Differences>().is_some() {
+                error::CliError::ContextExit(1)
+            } else {
+                error::CliError::Git(err.into())
+            }
+        })
     }
 }
 
 fn diagnostic(error: &error::CliError) -> String {
     match error {
-        error::CliError::Git(cause) => {
-            use std::fmt::Write;
-
-            let mut output = format!("Error: {cause}");
-            let chain = cause.chain().skip(1);
-            let multiple = chain.len() > 1;
-            for (index, cause) in chain.enumerate() {
-                if index == 0 {
-                    output.push_str("\n\nCaused by:");
-                }
-                let indent = if multiple { "       " } else { "    " };
-                output.push('\n');
-                if multiple {
-                    write!(output, "{index:>5}: ").expect("writing to a String cannot fail");
-                } else {
-                    output.push_str(indent);
-                }
-                output.push_str(&cause.to_string().replace('\n', &format!("\n{indent}")));
-            }
-            output
-        }
+        error::CliError::Git(cause) => match error::slot_exhaustion_report(cause.as_ref()) {
+            Some(report) => format!("Error: {report}"),
+            // The shared printer: the cause chain, last, and a backtrace only on `BRIT_BACKTRACE`.
+            None => brit_epr::diagnostic::report(cause.as_ref(), Some(cause.backtrace())),
+        },
         _ => format!("error: {error}"),
     }
 }
@@ -342,17 +566,23 @@ fn diagnostic(error: &error::CliError) -> String {
 fn main() -> ExitCode {
     gix::utils::stream::Budget::share_process_quota();
     let mut capture = feedback::Capture::new();
-    let code = match run(&mut capture) {
-        Ok(()) => 0,
-        Err(error::CliError::ContextExit(code)) => code,
-        Err(e) => {
-            eprintln!("{}", diagnostic(&e));
-            if matches!(e, error::CliError::Args(_)) {
-                capture.outcome = Some("refused");
-            }
-            e.exit_code()
+    let mut read_only = false;
+    let outcome = run(&mut capture, &mut read_only);
+    if read_only {
+        // Bytes still in stdout's line buffer (a short blob or `[]` without a newline) would otherwise
+        // meet a closed reader only at process exit, after the status was chosen.
+        let _ = gitoxide::shared::closed_reader::Watch(std::io::stdout()).flush();
+    }
+    // The status is decided first and never by the report: the report is attempted once with its
+    // result ignored (a reader of stderr may have closed, and `eprintln!` would then panic and exit
+    // 101), and the run is recorded after it whatever the write did.
+    let (code, report) = exit_status(&outcome, read_only, gitoxide::shared::closed_reader::seen());
+    if let (true, Err(e)) = (report, &outcome) {
+        if matches!(e, error::CliError::Args(_)) {
+            capture.outcome = Some("refused");
         }
-    };
+        let _ = writeln!(std::io::stderr(), "{}", diagnostic(e));
+    }
     capture.finish(code);
     ExitCode::from(code as u8)
 }
@@ -531,6 +761,146 @@ mod tests {
                 .expect("isolated diagnostic test");
             assert!(output.status.success(), "RUST_BACKTRACE={value}: {output:?}");
         }
+    }
+
+    #[test]
+    fn a_closed_reader_never_replaces_the_commands_own_failure() {
+        let git = |text: &str| -> Result<()> { Err(error::CliError::Git(anyhow::anyhow!("{text}"))) };
+        let typed = |code: i32| -> Result<()> {
+            Err(error::CliError::Git(anyhow::Error::from(gix::Error::from_error(
+                plumbing::GitExit(code),
+            ))))
+        };
+        let pipe = || std::io::Error::from(std::io::ErrorKind::BrokenPipe);
+        let pipe_write = || -> Result<()> {
+            Err(error::CliError::Git(anyhow::Error::from(
+                gix::Error::from_error(pipe()),
+            )))
+        };
+
+        // Failed, and the reader closed too: the failure's own status.
+        assert_eq!(
+            exit_status(&typed(128), true, true),
+            (128, false),
+            "rev-parse --verify missing"
+        );
+        assert_eq!(exit_status(&typed(1), true, true), (1, false));
+        assert_eq!(exit_status(&git("bad revision"), true, true), (1, true));
+        assert_eq!(
+            exit_status(&git("could not read x: Broken pipe (os error 32)"), true, true),
+            (1, true),
+            "an error that merely contains the text is reported"
+        );
+        // Succeeded, or failed only at the write that met the closed reader: 141.
+        assert_eq!(exit_status(&Ok(()), true, true), (141, false));
+        assert_eq!(exit_status(&typed(0), true, true), (141, false));
+        assert_eq!(exit_status(&pipe_write(), true, true), (141, false));
+        assert_eq!(exit_status(&Err(error::CliError::Io(pipe())), true, true), (141, false));
+        // Not read-only, or no watched write saw the closed reader: reported as it is.
+        assert_eq!(
+            exit_status(&pipe_write(), false, true),
+            (1, true),
+            "a mutation's own outcome"
+        );
+        assert_eq!(
+            exit_status(&pipe_write(), true, false),
+            (1, true),
+            "an unwatched broken pipe"
+        );
+        assert_eq!(exit_status(&Ok(()), false, true), (0, false));
+        assert_eq!(exit_status(&Ok(()), true, false), (0, false));
+    }
+
+    #[test]
+    fn read_only_commands_are_classified_by_their_exact_path() {
+        let read_only = |args: &[&str]| {
+            read_only_command(
+                &public_command()
+                    .try_get_matches_from(args)
+                    .unwrap_or_else(|e| panic!("{args:?}: {e}")),
+            )
+        };
+        for args in [
+            &["brit", "rev-parse", "HEAD"][..],
+            &["brit", "for-each-ref"],
+            &["brit", "branch", "list"],
+            &["brit", "branches", "list"],
+            &["brit", "log"],
+            &["brit", "diff"],
+        ] {
+            assert!(read_only(args), "{args:?}");
+        }
+        for args in [
+            &["brit", "push", "origin", "main"][..],
+            &["brit", "branch", "create", "x"],
+            &["brit", "commit", "-m", "x"],
+            &["brit", "add", "x"],
+            &["brit", "revision", "list", "HEAD"],
+        ] {
+            assert!(!read_only(args), "{args:?}");
+        }
+        assert!(read_only_path(&["diff", "tree"]));
+        assert!(
+            !read_only_path(&["rev-parse", "child"]),
+            "a path that only has a read-only prefix is not read-only"
+        );
+        assert!(!read_only_path(&["branch"]));
+    }
+
+    #[test]
+    fn the_extension_admits_read_only_paths_and_leaves_writers_out() {
+        let read_only = |args: &[&str]| {
+            read_only_command(
+                &public_command()
+                    .try_get_matches_from(args)
+                    .unwrap_or_else(|e| panic!("{args:?}: {e}")),
+            )
+        };
+        for args in [
+            &["brit", "show", "HEAD"][..],
+            &["brit", "tag", "list"],
+            &["brit", "remote", "refs"],
+            &["brit", "remote", "ref-map"],
+            &["brit", "config"],
+            &["brit", "submodule"],
+            &["brit", "build", "graph", "discover"],
+            &["brit", "build", "fingerprint", "build-manifest.json"],
+            &["brit", "build", "baseline", "read", "p"],
+        ] {
+            assert!(read_only(args), "{args:?}");
+        }
+        for args in [
+            &["brit", "tag", "v1"][..],
+            &["brit", "tag"],
+            &["brit", "commit", "verify"],
+            &["brit", "attributes", "validate-baseline"],
+            &["brit", "is-clean"],
+            &["brit", "is-changed"],
+            &["brit", "commit", "describe"],
+            &["brit", "submodule", "list"],
+            &["brit", "config", "fmt"],
+            &["brit", "build", "baseline", "write", "p", "HEAD"],
+            &["brit", "build", "baseline", "migrate", "x.json"],
+        ] {
+            assert!(!read_only(args), "{args:?}");
+        }
+    }
+
+    #[test]
+    fn json_from_a_plumbing_command_that_met_the_closed_reader_is_recognised() {
+        let pipe = std::io::Error::from(std::io::ErrorKind::BrokenPipe);
+        let json = serde_json::Error::io(pipe);
+        let wrapped = error::CliError::Git(anyhow::Error::from(gix::Error::from_error(json)));
+        assert!(
+            is_closed_reader_write(&wrapped),
+            "`tree info` writes JSON through `.or_error()`"
+        );
+        let other = serde_json::from_str::<u8>("x").expect_err("not JSON");
+        let wrapped = error::CliError::Git(anyhow::Error::from(gix::Error::from_error(other)));
+        assert!(
+            !is_closed_reader_write(&wrapped),
+            "a JSON syntax error is not the closed reader"
+        );
     }
 
     #[test]

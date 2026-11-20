@@ -14,6 +14,12 @@ pub(super) struct ScratchDirectory {
     identity: [u64; 2],
 }
 
+impl ScratchDirectory {
+    pub(super) fn path(&self) -> &[u8] {
+        &self.path
+    }
+}
+
 pub(super) fn attach_budget(repo: &gix::Repository, state: &mut Manifest) -> Result<()> {
     // Publication stays on the repository filesystem, even when TMPDIR is elsewhere.
     let budget = Budget::new(repo.git_dir())?;
@@ -158,20 +164,83 @@ fn usage(root: &Path) -> Result<u64> {
     Ok(size)
 }
 
+/// The quota every journal and retained copy lives under: [`SCRATCH_LIMIT`].
+/// Fault-injection builds alone read `BRIT_TEST_SCRATCH_LIMIT` (bytes), so a test
+/// can reach the quota with a small repository; delivery builds never read it.
+pub(crate) fn scratch_limit() -> u64 {
+    #[cfg(feature = "switch-test-faults")]
+    if let Some(limit) = std::env::var("BRIT_TEST_SCRATCH_LIMIT")
+        .ok()
+        .and_then(|value| value.parse().ok())
+    {
+        return limit;
+    }
+    SCRATCH_LIMIT
+}
+
+thread_local! {
+    /// How many [`Recovery`] scopes this thread is inside.
+    static RECOVERY: std::cell::Cell<usize> = const { std::cell::Cell::new(0) };
+}
+
+/// While held, this thread is undoing or finishing an operation Brit already
+/// started: an abort and its retained copy, the cleanup of a terminal journal,
+/// or the roll-forward of a decision that can no longer be abandoned. The scratch
+/// quota is a policy about starting and continuing work; refusing to undo or to
+/// finish is how a repository gets stuck, so inside a recovery scope
+/// [`check_growth`], [`charge`] and every caller that consults [`metered`] admit
+/// the write. Real disk space still bounds it, and an `ENOSPC` leaves the step
+/// resumable.
+#[must_use = "recovery lasts only while the scope is held"]
+pub(crate) struct Recovery(());
+
+impl Recovery {
+    pub(crate) fn enter() -> Self {
+        RECOVERY.with(|depth| depth.set(depth.get() + 1));
+        Self(())
+    }
+}
+
+impl Drop for Recovery {
+    fn drop(&mut self) {
+        RECOVERY.with(|depth| depth.set(depth.get().saturating_sub(1)));
+    }
+}
+
+/// `false` inside a [`Recovery`] scope: the scratch quota does not apply.
+pub(crate) fn metered() -> bool {
+    RECOVERY.with(|depth| depth.get() == 0)
+}
+
 pub(crate) fn check_growth(root: &Path, requested: u64) -> Result<()> {
+    if !metered() {
+        return Ok(());
+    }
     let live = usage(root)?;
-    if live.checked_add(requested).is_none_or(|size| size > SCRATCH_LIMIT) {
-        return Err(ScratchLimit {
+    let limit = scratch_limit();
+    if live.checked_add(requested).is_none_or(|size| size > limit) {
+        let error = anyhow::Error::from(ScratchLimit {
             requested,
             live,
             path: root.to_owned(),
-        }
-        .into());
+        });
+        // The typed error names the delivery limit; say when a test lowered it.
+        return Err(if limit == SCRATCH_LIMIT {
+            error
+        } else {
+            error.context(format!("test-lowered scratch limit of {limit} bytes exceeded"))
+        });
     }
     Ok(())
 }
 
+/// Charge `root`'s bytes against `budget`, so the spool beside it and the
+/// journal together stay under the quota. Inside a [`Recovery`] scope nothing
+/// is charged for the journal; each spool still counts its own bytes.
 pub(crate) fn charge(budget: &Arc<Budget>, root: &Path) -> Result<Charge> {
+    if !metered() {
+        return Ok(budget.charge(0)?);
+    }
     Ok(budget.charge(usage(root)?)?)
 }
 

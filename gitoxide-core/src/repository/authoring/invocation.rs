@@ -210,6 +210,17 @@ fn lease(dir: &Path, create: bool) -> Result<fs::File> {
     Ok(file)
 }
 
+/// Hold the invocation `dir`'s launch lease, if it has one, refusing while a live
+/// supervisor holds it. Recovery that removes a never-launched invocation keeps the
+/// returned lease until the directory is gone.
+pub(crate) fn hold_lease(dir: &Path) -> Result<Option<fs::File>> {
+    match fs::symlink_metadata(dir.join("lease")) {
+        Ok(_) => Ok(Some(lease(dir, false)?)),
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => Ok(None),
+        Err(error) => Err(error.into()),
+    }
+}
+
 fn checkpoint(dir: &Path, point: &str) -> Result<()> {
     #[cfg(feature = "switch-test-faults")]
     if std::env::var("BRIT_AUTHORING_INVOCATION_PAUSE").as_deref() == Ok(point) {

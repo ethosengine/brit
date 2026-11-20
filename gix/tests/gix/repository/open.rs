@@ -79,8 +79,14 @@ fn object_store_slots_follow_final_trust_unless_explicit() -> TestResult {
     assert_eq!(reduced.git_dir_trust(), Trust::Reduced);
     assert_eq!(
         unused_slots(&reduced),
-        32,
-        "the implicit policy limits a repository whose final trust remains reduced"
+        61,
+        "the implicit policy sizes a reduced-trust repository from its 41 indexes plus half again for new packs"
+    );
+    reduced.head_commit()?;
+    assert_eq!(
+        reduced.objects.store_ref().metrics().known_reachable_indices,
+        41,
+        "a reduced-trust repository can register every pack index below the ceiling"
     );
 
     for (slots, expected) in [
@@ -127,6 +133,86 @@ fn object_store_slots_follow_final_trust_unless_explicit() -> TestResult {
         unused_slots(&explicit),
         64,
         "safe.directory promotion does not replace an explicit slot policy"
+    );
+    Ok(())
+}
+
+#[test]
+fn reduced_trust_refuses_more_pack_indexes_than_its_ceiling() -> TestResult {
+    use gix_sec::Trust;
+
+    let fixture = gix_testtools::scripted_fixture_writable("make_many_packs.sh")?;
+    let pack_dir = fixture.path().join(".git/objects/pack");
+    let present = 41;
+    let ceiling = gix::open::REDUCED_TRUST_MAX_PACK_INDEXES;
+    // Only index/pack pairs present at open are counted; their contents are never read when refused.
+    for index in 0..=(ceiling - present) {
+        std::fs::write(pack_dir.join(format!("pack-padding-{index}.idx")), [])?;
+        std::fs::write(pack_dir.join(format!("pack-padding-{index}.pack")), [])?;
+    }
+    let err = gix::open_opts(
+        fixture.path(),
+        gix::open::Options::isolated().with_trust(Trust::Reduced),
+    )
+    .expect_err("one index above the ceiling is refused at reduced trust");
+    let message = err.to_string();
+    assert!(
+        message.contains(&format!(
+            "needs {} pack index slots, more than the {ceiling}",
+            ceiling + 1
+        )) && message.contains("git repack -a -d")
+            && message.contains("safe.directory"),
+        "the refusal says what happened and both cures: {message}"
+    );
+    let capacity = err
+        .metadata()
+        .find(|values| values.contains_key("current") && values.contains_key("needed"))
+        .expect("the refusal carries the slot-capacity metadata gix-odb uses");
+    assert_eq!(
+        (capacity.get("current"), capacity.get("needed")),
+        (
+            Some(&gix_error::MetadataValue::from(ceiling)),
+            Some(&gix_error::MetadataValue::from(1_usize))
+        )
+    );
+
+    std::fs::remove_file(pack_dir.join("pack-padding-0.idx"))?;
+    let at_ceiling = gix::open_opts(
+        fixture.path(),
+        gix::open::Options::isolated().with_trust(Trust::Reduced),
+    )?;
+    assert_eq!(
+        at_ceiling.objects.store_ref().metrics().unused_slots,
+        ceiling,
+        "exactly the ceiling opens, with the ceiling as its slot count"
+    );
+
+    let trusted = gix::open_opts(fixture.path(), gix::open::Options::isolated().with_trust(Trust::Full));
+    assert!(
+        trusted.is_ok(),
+        "full trust is not bounded by the reduced-trust ceiling"
+    );
+    Ok(())
+}
+
+#[test]
+fn reduced_trust_counts_index_slots_as_the_store_does() -> TestResult {
+    use gix_sec::Trust;
+
+    let fixture = gix_testtools::scripted_fixture_writable("make_many_packs.sh")?;
+    let pack_dir = fixture.path().join(".git/objects/pack");
+    // Neither is an index the store would load: a directory named like an index, and an index without its pack.
+    std::fs::create_dir(pack_dir.join("pack-directory.idx"))?;
+    std::fs::write(pack_dir.join("pack-directory.pack"), [])?;
+    std::fs::write(pack_dir.join("pack-orphan.idx"), [])?;
+    let repo = gix::open_opts(
+        fixture.path(),
+        gix::open::Options::isolated().with_trust(Trust::Reduced),
+    )?;
+    assert_eq!(
+        repo.objects.store_ref().metrics().unused_slots,
+        61,
+        "only the 41 real index/pack pairs count"
     );
     Ok(())
 }
@@ -720,7 +806,10 @@ fn none_bare_repo_without_index() -> TestResult {
         repo.workdir_path(BString::from("this")).map(|p| p.is_file()),
         Some(true)
     );
-    #[expect(clippy::needless_borrows_for_generic_args)]
+    #[expect(
+        clippy::needless_borrows_for_generic_args,
+        reason = "the borrowed form is the call shape under test"
+    )]
     let actual = repo.workdir_path(&BString::from("this")).map(|p| p.is_file());
     assert_eq!(actual, Some(true));
     assert!(

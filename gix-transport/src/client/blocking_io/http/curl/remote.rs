@@ -607,6 +607,10 @@ pub fn new() -> Worker {
             handle.get_mut().receive_body = Some(match upload_body_kind {
                 Some(PostBodyDataKind::Unbounded) | None => StreamOrBuffer::Stream(receive_body),
                 Some(PostBodyDataKind::BoundedAndFitsIntoMemory) => {
+                    // brit: libcurl retries a POST whose reused connection turns out dead; only the
+                    // missing seek (rewind) callback stops that retry, which then fails with
+                    // "Send failed since rewinding of the data stream failed". Adding a seek
+                    // callback would silently re-send the pack, and a push must never be resent.
                     let mut buf = Vec::<u8>::with_capacity(512);
                     receive_body
                         .read_to_end(&mut buf)

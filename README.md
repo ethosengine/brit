@@ -69,7 +69,7 @@ with status 2 and no change.
 
 | Owned by `brit` (daily verbs; `brit --help` lists all) | Bridged to stock Git (exit 2) |
 | --- | --- |
-| `status`, `diff`, `log`, `add`, `restore`, `switch`, `commit`, `tag`, `branch`, `merge`, `rebase`, `clone`, `fetch`, `pull`, `push`, `worktree` | `reset`, `rm`, `mv`, `show`, `stash`, `cherry-pick`, `revert`, `checkout`, `notes` |
+| `status`, `diff`, `show`, `log`, `add`, `restore`, `switch`, `commit`, `tag`, `branch`, `merge`, `rebase`, `clone`, `fetch`, `pull`, `push`, `worktree` | `reset`, `rm`, `mv`, `stash`, `cherry-pick`, `revert`, `checkout`, `notes` |
 | `submodule list` | `submodule update`, `submodule init`, `submodule sync` |
 | `build`, `snapshot`, `context`, `integrate`, `verify` | |
 
@@ -152,6 +152,24 @@ diff` inspects tracked working changes; new files become visible in cached diff
 after staging. Existing `diff tree` and `diff file` commands remain available.
 See the [native authoring scope and verification](docs/plans/2026-09-28-daily-driver.md#native-authoring-sprint--2026-10-12)
 for the full compatibility limits.
+
+## Compare branches
+
+```bash
+brit log origin/dev -n 5                    # revisions instead of HEAD
+brit log origin/dev..HEAD                   # also ^A, A...B, A^@ and A^!
+brit log --oneline origin/dev..HEAD -- src  # only commits changing src
+brit diff tree --name-only origin/dev...HEAD  # paths changed since the merge base
+brit diff tree --name-only A B              # two trees; also A..B and --merge-base A B
+```
+
+Without paths, `brit log` lists exactly the commits reachable from the included
+revisions and not from the excluded ones, ordered like `git rev-list --date-order`
+(Git's limiter can stop early under clock skew; the order of commits with identical
+commit times is unspecified). With literal paths after `--` it lists them like
+`git log <revisions> -- <paths>`, following Git's limiter and its default history
+simplification. Every form stops at a shallow boundary. `--name-only` lists paths like
+`git diff --name-only --no-renames`: a rename is its deleted and added path.
 
 For linear replay, edit-stop authoring and interrupted-operation recovery, see
 [Native rebase and retained-copy recovery](docs/rebase.md), including the bounded

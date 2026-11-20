@@ -10,47 +10,58 @@ use tempfile::TempDir;
 
 /// Initialize a temp git repo with a few files committed.
 /// Returns (TempDir keep-alive, repo path, head ObjectId).
+///
+/// Index-only: each blob is written from stdin and staged by path with
+/// `update-index --cacheinfo`, so no file is created in the worktree. Names
+/// with spaces, brackets or non-ASCII bytes, and the exact LF bytes, reach the
+/// tree the same way on every platform (no filesystem, pathspec or
+/// line-ending conversion is involved).
 fn init_repo_with_files(files: &[(&str, &str)]) -> (TempDir, std::path::PathBuf, gix::ObjectId) {
     let dir = TempDir::new().expect("temp");
     let path = dir.path().to_path_buf();
-    Command::new("git")
-        .args(["init", "-q"])
-        .current_dir(&path)
-        .status()
-        .expect("init");
-    Command::new("git")
-        .args(["config", "user.email", "t@t.t"])
-        .current_dir(&path)
-        .status()
-        .expect("");
-    Command::new("git")
-        .args(["config", "user.name", "t"])
-        .current_dir(&path)
-        .status()
-        .expect("");
-
+    git_in(&path, &["init", "-q"]);
+    git_in(&path, &["config", "user.email", "t@t.t"]);
+    git_in(&path, &["config", "user.name", "t"]);
     for (rel, contents) in files {
-        let abs = path.join(rel);
-        if let Some(parent) = abs.parent() {
-            std::fs::create_dir_all(parent).expect("mkdir");
-        }
-        std::fs::write(&abs, contents).expect("write");
-        Command::new("git")
-            .args(["add", rel])
-            .current_dir(&path)
-            .status()
-            .expect("add");
+        stage_blob(&path, "100644", rel, contents.as_bytes());
     }
-    Command::new("git")
-        .args(["commit", "-q", "-m", "init"])
-        .current_dir(&path)
-        .status()
-        .expect("commit");
+    git_in(&path, &["commit", "-q", "-m", "init"]);
 
     let repo = gix::open(&path).expect("open");
     let head_id = repo.head_id().expect("head_id").detach();
 
     (dir, path, head_id)
+}
+
+/// Write `bytes` as a blob (from stdin, no path involved) and stage it at
+/// the repository path `rel` with `mode`.
+fn stage_blob(path: &std::path::Path, mode: &str, rel: &str, bytes: &[u8]) {
+    use std::io::Write as _;
+    let mut child = Command::new("git")
+        .args(["hash-object", "-w", "--stdin"])
+        .current_dir(path)
+        .stdin(std::process::Stdio::piped())
+        .stdout(std::process::Stdio::piped())
+        .stderr(std::process::Stdio::piped())
+        .spawn()
+        .expect("hash-object");
+    child.stdin.take().expect("stdin").write_all(bytes).expect("write blob");
+    let output = child.wait_with_output().expect("hash-object");
+    assert!(
+        output.status.success(),
+        "hash-object: {}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    let oid = String::from_utf8(output.stdout).expect("utf8");
+    git_in(
+        path,
+        &[
+            "update-index",
+            "--add",
+            "--cacheinfo",
+            &format!("{mode},{},{rel}", oid.trim()),
+        ],
+    );
 }
 
 #[test]
@@ -150,4 +161,438 @@ fn invalid_glob_returns_error() {
         err,
         brit_graph::fingerprint::FingerprintError::InvalidGlob { .. }
     ));
+}
+
+/// Fingerprint material for a step whose globs reach no gitlink, pinned before
+/// gitlink inputs existed. Any change here re-keys every existing evidence row.
+const PINNED_NO_GITLINK_CID: &str = "bafyreigdvcc4q5lxgpfyltrexvuk7tabld5epekgubhxwl7crzzezbvsw4";
+
+fn pinned_fixture_files() -> [(&'static str, &'static str); 3] {
+    [
+        ("src/a.ts", "a\n"),
+        ("src/nested/b.rs", "fn b() {}\n"),
+        ("README.md", "# readme\n"),
+    ]
+}
+
+#[test]
+fn fingerprint_without_gitlink_is_byte_identical_to_pre_gitlink_contract() {
+    let (_keep, path, head) = init_repo_with_files(&pinned_fixture_files());
+    let repo = gix::open(&path).expect("open");
+    let patterns = vec!["src/**".to_string(), "README.md".to_string()];
+    let fp = ContentFingerprint::from_repo_globs(&repo, head, &patterns).expect("compute");
+    assert_eq!(fp.cid.to_string(), PINNED_NO_GITLINK_CID);
+}
+
+/// Commit a superproject holding `files` plus a gitlink at `elohim/rakia`
+/// pinned to `pin`. The pinned commit object does not exist anywhere: the
+/// submodule is neither cloned nor checked out.
+fn init_repo_with_gitlink(files: &[(&str, &str)], pin: &str) -> (TempDir, std::path::PathBuf, gix::ObjectId) {
+    init_repo_with_gitlink_at(files, pin, "elohim/rakia")
+}
+
+fn init_repo_with_gitlink_at(
+    files: &[(&str, &str)],
+    pin: &str,
+    gitlink: &str,
+) -> (TempDir, std::path::PathBuf, gix::ObjectId) {
+    let (keep, path, _) = init_repo_with_files(files);
+    let status = Command::new("git")
+        .args([
+            "update-index",
+            "--add",
+            "--cacheinfo",
+            &format!("160000,{pin},{gitlink}"),
+        ])
+        .current_dir(&path)
+        .status()
+        .expect("update-index");
+    assert!(status.success(), "record gitlink");
+    let status = Command::new("git")
+        .args(["commit", "-q", "-m", "pin rakia"])
+        .current_dir(&path)
+        .status()
+        .expect("commit");
+    assert!(status.success(), "commit gitlink");
+    let repo = gix::open(&path).expect("open");
+    let head = repo.head_id().expect("head_id").detach();
+    (keep, path, head)
+}
+
+const PIN_A: &str = "1111111111111111111111111111111111111111";
+const PIN_B: &str = "2222222222222222222222222222222222222222";
+
+fn gitlink_fp(pin: &str, patterns: &[&str]) -> ContentFingerprint {
+    let (_keep, path, head) = init_repo_with_gitlink(&pinned_fixture_files(), pin);
+    let repo = gix::open(&path).expect("open");
+    let patterns: Vec<String> = patterns.iter().map(|p| (*p).to_string()).collect();
+    ContentFingerprint::from_repo_globs(&repo, head, &patterns).expect("compute")
+}
+
+#[test]
+fn crossing_glob_keys_the_gitlink_pin_without_submodule_objects() {
+    let fp = gitlink_fp(PIN_A, &["elohim/rakia/schemas/**"]);
+    assert!(fp.inputs.is_empty(), "no blob lives under an unchecked-out gitlink");
+    assert_eq!(
+        fp.gitlinks,
+        BTreeMap::from([("elohim/rakia".to_string(), PIN_A.to_string())])
+    );
+    assert_eq!(fp.input_count(), 1);
+    assert_ne!(
+        fp.cid,
+        ContentFingerprint::compute(&BTreeMap::new()).cid,
+        "a reached gitlink is not the empty fingerprint"
+    );
+}
+
+#[test]
+fn moving_only_the_pin_changes_a_crossing_fingerprint() {
+    let a = gitlink_fp(PIN_A, &["elohim/rakia/schemas/**", "src/**"]);
+    let b = gitlink_fp(PIN_B, &["elohim/rakia/schemas/**", "src/**"]);
+    assert_eq!(a.inputs, b.inputs, "blob inputs are unchanged");
+    assert_ne!(a.cid, b.cid, "the pin move must re-key the step");
+}
+
+#[test]
+fn gitlink_counts_once_however_many_globs_cross_it() {
+    let fp = gitlink_fp(
+        PIN_A,
+        &["elohim/rakia/schemas/**", "elohim/rakia/**", "elohim/**", "**/*.json"],
+    );
+    assert_eq!(fp.gitlinks.len(), 1);
+    assert_eq!(fp.input_count(), 1);
+}
+
+#[test]
+fn non_crossing_step_in_a_superproject_keeps_its_pre_gitlink_fingerprint() {
+    for pin in [PIN_A, PIN_B] {
+        let fp = gitlink_fp(pin, &["src/**", "README.md", "elohim/other/**", "elohim/rakia.md"]);
+        assert!(fp.gitlinks.is_empty(), "pin {pin}: no glob reaches elohim/rakia");
+        assert_eq!(fp.cid.to_string(), PINNED_NO_GITLINK_CID, "pin {pin}");
+    }
+}
+
+#[test]
+fn gitlink_input_is_domain_separated_from_a_blob_at_the_same_path() {
+    let gitlink = gitlink_fp(PIN_A, &["elohim/rakia"]);
+    assert_eq!(gitlink.gitlinks.len(), 1);
+    // A blob at the gitlink's path whose bytes spell the pin, or the material
+    // a naive concatenation would produce, must not collide.
+    for bytes in [PIN_A.as_bytes().to_vec(), format!("gitlink\0{PIN_A}").into_bytes()] {
+        let blob = ContentFingerprint::compute(&BTreeMap::from([("elohim/rakia".to_string(), bytes)]));
+        assert_ne!(gitlink.cid, blob.cid);
+    }
+}
+
+fn git_in(path: &std::path::Path, args: &[&str]) -> String {
+    let output = Command::new("git").args(args).current_dir(path).output().expect("git");
+    assert!(
+        output.status.success(),
+        "git {args:?}: {}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    String::from_utf8(output.stdout).expect("utf8").trim().to_string()
+}
+
+/// Commit a superproject holding `files` plus symlinks recorded directly in
+/// the index (mode 120000, blob = target path), in the order given.
+fn init_repo_with_symlinks(
+    files: &[(&str, &str)],
+    links: &[(&str, &str)],
+) -> (TempDir, std::path::PathBuf, gix::ObjectId) {
+    let (keep, path, _) = init_repo_with_files(files);
+    for (link, target) in links {
+        stage_blob(&path, "120000", link, target.as_bytes());
+    }
+    git_in(&path, &["commit", "-q", "-m", "links"]);
+    let repo = gix::open(&path).expect("open");
+    let head = repo.head_id().expect("head_id").detach();
+    (keep, path, head)
+}
+
+fn symlink_fp(links: &[(&str, &str)], patterns: &[&str]) -> ContentFingerprint {
+    let mut files = pinned_fixture_files().to_vec();
+    files.extend([
+        ("src/prod.json", "{\"env\":\"prod\"}\n"),
+        ("src/dev.json", "{\"env\":\"dev\"}\n"),
+    ]);
+    let (_keep, path, head) = init_repo_with_symlinks(&files, links);
+    let repo = gix::open(&path).expect("open");
+    let patterns: Vec<String> = patterns.iter().map(|p| (*p).to_string()).collect();
+    ContentFingerprint::from_repo_globs(&repo, head, &patterns).expect("compute")
+}
+
+#[test]
+fn retargeting_a_matched_symlink_changes_the_fingerprint() {
+    let prod = symlink_fp(&[("src/config.json", "prod.json")], &["src/**"]);
+    let dev = symlink_fp(&[("src/config.json", "dev.json")], &["src/**"]);
+    assert_eq!(prod.inputs, dev.inputs, "blob inputs are unchanged");
+    assert_eq!(prod.symlinks.len(), 1);
+    assert!(prod.symlinks.contains_key("src/config.json"));
+    assert_eq!(prod.input_count(), prod.inputs.len() + 1);
+    assert_ne!(prod.cid, dev.cid, "a retarget must re-key the step");
+}
+
+#[test]
+fn symlink_outside_the_globs_keeps_the_pre_symlink_fingerprint() {
+    let (_keep, path, head) = init_repo_with_symlinks(
+        &pinned_fixture_files(),
+        &[("links/readme", "../README.md"), ("docs/a", "b")],
+    );
+    let repo = gix::open(&path).expect("open");
+    let patterns = vec!["src/**".to_string(), "README.md".to_string()];
+    let fp = ContentFingerprint::from_repo_globs(&repo, head, &patterns).expect("compute");
+    assert!(fp.symlinks.is_empty());
+    assert_eq!(fp.cid.to_string(), PINNED_NO_GITLINK_CID);
+}
+
+#[test]
+fn symlink_order_is_deterministic() {
+    let links = [
+        ("src/z-link", "prod.json"),
+        ("src/a-link", "dev.json"),
+        ("src/m/link", "../prod.json"),
+    ];
+    let forward = symlink_fp(&links, &["src/**"]);
+    let mut reversed_links = links;
+    reversed_links.reverse();
+    let reversed = symlink_fp(&reversed_links, &["src/**"]);
+    assert_eq!(forward.cid, reversed.cid);
+    assert_eq!(
+        forward.symlinks.keys().collect::<Vec<_>>(),
+        ["src/a-link", "src/m/link", "src/z-link"]
+    );
+}
+
+#[test]
+fn symlink_is_domain_separated_from_a_blob_with_the_same_bytes() {
+    // A regular file whose content is the link target has the same object id
+    // as the symlink; only the mode differs, and so must the fingerprint.
+    let link = symlink_fp(&[("src/config.json", "prod.json")], &["src/config.json"]);
+    let (_keep, path, head) = init_repo_with_files(&[("src/config.json", "prod.json")]);
+    let repo = gix::open(&path).expect("open");
+    let blob = ContentFingerprint::from_repo_globs(&repo, head, &["src/config.json".to_string()]).expect("compute");
+    assert_eq!(blob.inputs.len(), 1);
+    assert_eq!(link.symlinks.len(), 1);
+    assert_ne!(link.cid, blob.cid);
+}
+
+/// Probe paths a file beneath the gitlink could have.
+const BENEATH: &[&str] = &[
+    "elohim/rakia/a",
+    "elohim/rakia/Cargo.toml",
+    "elohim/rakia/.hidden",
+    "elohim/rakia/rakia",
+    "elohim/rakia/schemas/x.json",
+    "elohim/rakia/schemas/v1/release-manifest.schema.json",
+    "elohim/rakia/rakia-core/src/lib.rs",
+    "elohim/rakia/deps/x-0123456789abcdef.rlib",
+    "elohim/rakia/elohim/rakia/nested.json",
+];
+
+fn generated_globs() -> Vec<String> {
+    let components = [
+        "elohim",
+        "rakia",
+        "schemas",
+        "*",
+        "**",
+        "?lohim",
+        "rak?a",
+        "[r]akia",
+        "[!r]akia",
+        "{rakia,other}",
+        "{other,docs}",
+        "*.json",
+        "*akia",
+        "rakia*",
+        "deps",
+        "*-????????????????.rlib",
+        "\\*?\\[\\{",
+    ];
+    let mut globs: Vec<String> = Vec::new();
+    for a in components {
+        globs.push(a.to_string());
+        for b in components {
+            globs.push(format!("{a}/{b}"));
+            for c in components {
+                globs.push(format!("{a}/{b}/{c}"));
+            }
+        }
+    }
+    globs.extend(
+        [
+            "*a????????????????",
+            "**/deps/*-????????????????.rlib",
+            "elohim/rakia",
+            "elohim/rakia/",
+            "elohim/rakia.md",
+            "elohim/rakia*/**",
+            "{elohim/rakia,src}/**",
+            "elohim/rak\\ia/**",
+            "e*a/*",
+            "*/*/*/*.json",
+        ]
+        .map(String::from),
+    );
+    globs
+}
+
+/// For every generated glob: if the blob matcher hashes some file beneath
+/// `elohim/rakia` when it is a real directory, the same glob must reach the
+/// gitlink when `elohim/rakia` is a submodule. Over-keying is allowed.
+#[test]
+fn gitlink_reach_never_under_keys_against_a_twin_directory() {
+    let mut twin_files: Vec<(&str, &str)> = BENEATH.iter().map(|p| (*p, "beneath\n")).collect();
+    twin_files.push(("elohim/other/x.json", "sibling\n"));
+    let (_keep_twin, twin_path, twin_head) = init_repo_with_files(&twin_files);
+    let (_keep_link, link_path, link_head) = init_repo_with_gitlink(&[("elohim/other/x.json", "sibling\n")], PIN_A);
+    let twin = gix::open(&twin_path).expect("twin");
+    let linked = gix::open(&link_path).expect("linked");
+
+    let (mut checked, mut beneath, mut over_keyed, mut under_keyed) = (0usize, 0usize, 0usize, Vec::new());
+    for glob in generated_globs() {
+        let patterns = vec![glob.clone()];
+        let Ok(twin_fp) = ContentFingerprint::from_repo_globs(&twin, twin_head, &patterns) else {
+            continue; // not a valid glob
+        };
+        let hashes_beneath = twin_fp.inputs.keys().any(|path| path.starts_with("elohim/rakia/"));
+        let reached = !ContentFingerprint::from_repo_globs(&linked, link_head, &patterns)
+            .expect("same glob compiles")
+            .gitlinks
+            .is_empty();
+        checked += 1;
+        beneath += usize::from(hashes_beneath);
+        if hashes_beneath && !reached {
+            under_keyed.push(glob);
+        } else if reached && !hashes_beneath {
+            over_keyed += 1;
+        }
+    }
+    eprintln!("checked {checked} globs; hashed beneath {beneath}; over-keyed {over_keyed}");
+    assert!(checked > 4000, "generator produced {checked} valid globs");
+    assert!(
+        beneath > 400,
+        "only {beneath} globs hash a file beneath the twin directory"
+    );
+    assert!(under_keyed.is_empty(), "under-keyed globs: {under_keyed:#?}");
+}
+
+#[test]
+fn glob_through_a_directory_symlink_keys_the_link() {
+    let files = [
+        ("elohim/sdk/schemas/v1/view.schema.json", "{\"v\":1}\n"),
+        ("elohim/sdk/schemas/v2/view.schema.json", "{\"v\":2}\n"),
+        ("README.md", "# readme\n"),
+    ];
+    let through = |target: &str| {
+        let (_keep, path, head) = init_repo_with_symlinks(&files, &[("elohim/sdk/schemas/current", target)]);
+        let repo = gix::open(&path).expect("open");
+        let patterns = vec!["elohim/sdk/schemas/current/**".to_string()];
+        ContentFingerprint::from_repo_globs(&repo, head, &patterns).expect("compute")
+    };
+    let v1 = through("v1");
+    let v2 = through("v2");
+    assert!(v1.inputs.is_empty(), "no blob lives beneath the link in the tree");
+    assert_eq!(v1.symlinks.keys().collect::<Vec<_>>(), ["elohim/sdk/schemas/current"]);
+    assert_ne!(
+        v1.cid, v2.cid,
+        "retargeting the link must re-key a glob written through it"
+    );
+}
+
+/// Gitlink paths with non-ASCII bytes and regex metacharacters, each with
+/// probe files beneath it and globs built from its own components.
+#[test]
+fn gitlink_reach_never_under_keys_for_non_ascii_and_metacharacter_paths() {
+    let cases: &[(&str, &[&str])] = &[
+        (
+            "é/sub",
+            &[
+                "é", "sub", "é*", "[é]*", "?", "??", "?ub", "*", "**", "e", "\\é", "[!é]*", "{é,x}",
+            ],
+        ),
+        (
+            "x.y/a+b",
+            &[
+                "x.y", "a+b", "x?y", "xzy", "a?b", "aab", "x.*", "*", "**", "{x.y,z}", "[x].y", "a+b*",
+            ],
+        ),
+        (
+            "[]]",
+            &["[]]", "\\[\\]\\]", "[[]]]", "[]]*", "?", "*", "**", "[!]]", "x"],
+        ),
+        (
+            "[-]",
+            &["[-]", "\\[-\\]", "[[]-[]]", "[-]*", "?-?", "*", "**", "[!-]", "-"],
+        ),
+    ];
+    let suffixes = ["a", "é.txt", "x/y.json", "]", "-", ".hidden", "a b"];
+    let (mut checked, mut beneath_total, mut under_keyed) = (0usize, 0usize, Vec::new());
+    for (gitlink, components) in cases {
+        let probes: Vec<String> = suffixes.iter().map(|suffix| format!("{gitlink}/{suffix}")).collect();
+        let mut twin_files: Vec<(&str, &str)> = probes.iter().map(|p| (p.as_str(), "beneath\n")).collect();
+        twin_files.push(("other/x.json", "sibling\n"));
+        let (_keep_twin, twin_path, twin_head) = init_repo_with_files(&twin_files);
+        let (_keep_link, link_path, link_head) =
+            init_repo_with_gitlink_at(&[("other/x.json", "sibling\n")], PIN_A, gitlink);
+        let twin = gix::open(&twin_path).expect("twin");
+        let linked = gix::open(&link_path).expect("linked");
+        assert_eq!(
+            init_tree_count(&twin, twin_head, gitlink),
+            probes.len(),
+            "{gitlink}: every probe is committed"
+        );
+
+        let mut globs: Vec<String> = Vec::new();
+        for a in *components {
+            globs.push((*a).to_string());
+            for b in *components {
+                globs.push(format!("{a}/{b}"));
+                for c in *components {
+                    globs.push(format!("{a}/{b}/{c}"));
+                }
+            }
+        }
+        for glob in globs {
+            let patterns = vec![glob.clone()];
+            let Ok(twin_fp) = ContentFingerprint::from_repo_globs(&twin, twin_head, &patterns) else {
+                continue; // not a valid glob
+            };
+            let hashes_beneath = twin_fp
+                .inputs
+                .keys()
+                .any(|path| path.starts_with(&format!("{gitlink}/")));
+            let reached = !ContentFingerprint::from_repo_globs(&linked, link_head, &patterns)
+                .expect("same glob compiles")
+                .gitlinks
+                .is_empty();
+            checked += 1;
+            beneath_total += usize::from(hashes_beneath);
+            if hashes_beneath && !reached {
+                under_keyed.push(format!("{gitlink}: {glob}"));
+            }
+        }
+    }
+    eprintln!("checked {checked} non-ASCII/metacharacter globs; hashed beneath {beneath_total}");
+    assert!(beneath_total > 100, "only {beneath_total} globs hash a probe");
+    assert!(under_keyed.is_empty(), "under-keyed globs: {under_keyed:#?}");
+}
+
+/// Number of blobs committed beneath `dir` (guards the fixture itself).
+fn init_tree_count(repo: &gix::Repository, head: gix::ObjectId, dir: &str) -> usize {
+    let escaped: String = dir
+        .chars()
+        .map(|c| {
+            if "*?[]{}\\".contains(c) {
+                format!("\\{c}")
+            } else {
+                c.to_string()
+            }
+        })
+        .collect();
+    ContentFingerprint::from_repo_globs(repo, head, &[format!("{escaped}/**")])
+        .expect("escaped glob")
+        .inputs
+        .len()
 }

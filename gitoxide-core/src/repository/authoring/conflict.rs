@@ -88,6 +88,23 @@ impl Preservation {
             super::super::switch::checkpoint("replay-preservation-entry")?;
             ensure!(!gix::interrupt::is_triggered(), "preservation capture interrupted");
             let p: BString = e.path(&original).into();
+            if replay && e.mode == gix::index::entry::Mode::COMMIT {
+                // Replay refuses every gitlink: one whose submodule directory is
+                // checked out is refused just below as a directory; one without it
+                // is refused here, before any operation state exists.
+                let directory = repo
+                    .workdir()
+                    .context("worktree required")?
+                    .join(gix::path::from_bstr(p.as_bstr())?);
+                let absent = matches!(
+                    fs::symlink_metadata(directory),
+                    Err(error) if error.kind() == std::io::ErrorKind::NotFound
+                );
+                ensure!(
+                    !absent,
+                    "gitlink {p} has no checked-out submodule directory; brit rebase does not support gitlinks yet and changed nothing; use git rebase"
+                );
+            }
             let current = super::super::index::authoring::worktree_entry_spooled(repo, &original, &p, &budget)?;
             let equal = match current {
                 Some((mode, mut data)) => {
@@ -141,11 +158,23 @@ impl Preservation {
 
     /// Original staged blobs may be absent from every commit closure. Retained
     /// copies must include them as raw private payloads before releasing refs.
+    /// A gitlink's id names a commit in the submodule's repository, not a local
+    /// object, so gitlink entries are never part of this set.
     pub(crate) fn original_object_ids(&self) -> Result<BTreeSet<gix::ObjectId>> {
         self.original
             .iter()
+            .filter(|entry| entry.mode != gix::index::entry::Mode::COMMIT.bits())
             .map(|entry| gix::ObjectId::from_hex(entry.id.as_bytes()).map_err(Into::into))
             .collect()
+    }
+
+    /// Paths of the gitlinks the original index held. Capture for replay refuses
+    /// them, but a journal written by an older Brit may still record one.
+    pub(crate) fn gitlink_paths(&self) -> impl Iterator<Item = &[u8]> {
+        self.original
+            .iter()
+            .filter(|entry| entry.mode == gix::index::entry::Mode::COMMIT.bits())
+            .map(|entry| entry.path.as_slice())
     }
 
     pub(crate) fn raw_images(&self) -> impl Iterator<Item = (&[u8], super::super::switch::State)> {
@@ -1896,6 +1925,8 @@ impl Session {
             "replay-owned child restoration belongs to its parent"
         );
         let _guard = super::super::switch::shared_guard(repo)?;
+        // Undoing is never refused by the scratch quota (as for rebase --abort).
+        let _recovery = super::super::switch::payload::Recovery::enter();
         self.ownership(repo)?;
         ensure!(
             !self
@@ -2860,6 +2891,39 @@ fn validate_metadata_directories(repo: &gix::Repository) -> Result<()> {
 #[cfg(test)]
 mod fingerprint_tests {
     use super::*;
+
+    /// A gitlink's id is a commit in another repository; preparation and the
+    /// retained copy must never ask the local object database for it.
+    #[test]
+    fn original_object_ids_skip_gitlinks() -> Result<()> {
+        let gitlink = "1111111111111111111111111111111111111111";
+        let blob = "2222222222222222222222222222222222222222";
+        let preservation = Preservation {
+            original_index: Vec::new(),
+            original: vec![
+                Entry {
+                    path: b"file".to_vec(),
+                    id: blob.into(),
+                    mode: gix::index::entry::Mode::FILE.bits(),
+                    flags: 0,
+                },
+                Entry {
+                    path: b"sub".to_vec(),
+                    id: gitlink.into(),
+                    mode: gix::index::entry::Mode::COMMIT.bits(),
+                    flags: 0,
+                },
+            ],
+            preserved: Vec::new(),
+            clean_preserved: Vec::new(),
+            before: BTreeMap::new(),
+        };
+        assert_eq!(
+            preservation.original_object_ids()?,
+            BTreeSet::from([gix::ObjectId::from_hex(blob.as_bytes())?])
+        );
+        Ok(())
+    }
 
     #[test]
     fn collision_files_are_distinct_without_changing_legacy_digests() -> Result<()> {

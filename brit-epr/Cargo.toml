@@ -24,6 +24,8 @@ elohim-protocol = ["dep:elohim-epr", "dep:serde_bytes"]
 
 [dependencies]
 gix-object = { version = "^0.66.3", path = "../gix-object", registry = "elohim", features = ["sha1"] }
+# Recognises gix's class-only error markers when printing a cause chain (`diagnostic`).
+gix-error = { version = "^0.5.3", path = "../gix-error", registry = "elohim" }
 thiserror = "2.0"
 serde = { version = "1", features = ["derive"] }
 # `float_roundtrip`: a signed node is read back from its JSON note; a float in it must parse to

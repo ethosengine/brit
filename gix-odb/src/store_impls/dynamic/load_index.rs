@@ -107,7 +107,10 @@ impl super::Store {
     /// load a new index (if not yet loaded), and return true if one was indeed loaded (leading to a `state_id()` change) of the current index.
     /// Note that interacting with the slot-map is inherently racy and we have to deal with it, being conservative in what we even try to load
     /// as our index might already be out-of-date as we try to use it to learn what's next.
-    #[allow(deprecated)] // `try_update` is newer than our MSRV; keep using `fetch_update`.
+    #[allow(
+        deprecated,
+        reason = "`try_update` is newer than our MSRV; keep using `fetch_update`"
+    )]
     fn load_next_index(&self, mut index: arc_swap::Guard<Arc<SlotMapIndex>>) -> bool {
         'retry_with_changed_index: loop {
             let previous_state_id = index.state_id();
@@ -464,6 +467,25 @@ impl super::Store {
             }
             Some(self.collect_snapshot())
         })
+    }
+
+    /// The number of index slots the indexes now in `db_paths` (object directories, each with a `pack` subdirectory)
+    /// occupy once loaded: one per index with its pack, except that a multi-pack index takes one slot and hides the
+    /// indexes it covers when `multi_pack_index_object_hash` is set, as it is for a store that uses multi-pack indices.
+    ///
+    /// Fails like the store's own index loading, for example if a pack directory cannot be read.
+    pub fn count_index_slots(
+        db_paths: Vec<PathBuf>,
+        multi_pack_index_object_hash: Option<gix_hash::Kind>,
+        alloc_limit_bytes: Option<usize>,
+    ) -> Result<usize> {
+        Ok(Self::collect_indices_and_mtime_sorted_by_size(
+            db_paths,
+            None,
+            multi_pack_index_object_hash,
+            alloc_limit_bytes,
+        )?
+        .len())
     }
 
     /// Read failures include [metadata](gix_error::Error::metadata()) `path` (native directory or index path). Multi-pack

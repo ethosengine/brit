@@ -76,7 +76,11 @@ impl crate::Repository {
                     slots: crate::open::Options::resolve_object_store_slots(
                         self.options.object_store_slots,
                         self.git_dir_trust(),
-                    ),
+                        &anchor(store.path())?,
+                        current_dir,
+                        store.use_multi_pack_index().then_some(store.object_hash()),
+                        self.config.alloc_limit_bytes,
+                    )?,
                     use_multi_pack_index: store.use_multi_pack_index(),
                     alloc_limit_bytes: self.config.alloc_limit_bytes,
                     current_dir: Some(current_dir.to_owned()),

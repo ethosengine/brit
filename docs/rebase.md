@@ -14,6 +14,7 @@ brit rebase --status
 brit rebase --continue
 brit rebase --skip
 brit rebase --abort
+brit rebase --retire
 brit rebase --edit-todo
 brit rebase --show-current-patch
 ```
@@ -113,12 +114,155 @@ already published commit: explicit continuation acknowledges that uncertainty
 without rerunning the hook. Known-not-started post-authoring notifications remain
 queued durably and run once. Status distinguishes these cases from a clean stop.
 
+The rebase journal lives under a 1 GiB scratch limit, and the limit decides only
+whether work starts or continues. A rebase is admitted only when its journal fits
+with a 5/4 safety factor: a cheap estimate refuses far-too-large repositories
+before any object is read, and the exact records are checked once preparation
+finishes (a refusal there cancels the preparation, so nothing is left behind).
+Admission allows for one stop and a resolution as large as the largest replayed
+step. Every later forward step (`--continue`, `--stage`, `--skip`, an edit) is
+reserved for before it writes anything; a refused step names `--abort`. A
+`--skip` writes a retained copy under the limit too, and reserves for it the
+same way. Each refusal says whether the journal or a retained copy refused it.
+
+Admission does not see everything a rebase will write, so an admitted rebase can
+still be refused at a later step. Such a refusal comes before the step writes
+anything and names `--abort`, which restores the original state exactly; nothing
+strands. Three cases are known, each measured at a lowered limit:
+
+- An `edit` stop. Admission runs before the sequence editor, so it counts no edit
+  stop. Accepting an amend archives into the journal a receipt for every object of
+  the stop's whole tree, so one edit-and-amend costs about the size of the tree's
+  files, not of the edited file, and `--continue` after an amend of unchanged size
+  can be refused. Scaled to the real limit that is an edited file of roughly 138
+  to 166 MB in a tree holding little else; a repository whose tree approaches the
+  limit cannot edit-and-amend under Brit at all.
+- A conflict under `merge.conflictStyle` `diff3` or `zdiff3`. The conflicted file
+  also holds the base version, which the estimate does not count. Where the base
+  is much larger than both sides, the rebase is refused when the conflict is found
+  or at the step after it.
+- `--stage --expand-scope` of a large file reserves about half of what it then
+  writes. At a tight limit it can fail part-way and leave a payload in the
+  journal; `--status` does not mention it, and a retry is refused. `--abort`
+  restores `HEAD` and keeps the file.
+
+In the first two cases the work done at the stop (the amend, the resolution) is
+then kept only in the retained copy `--abort` writes under
+`.git/brit-rebase-retained/`. `git rebase` is the fallback for a rebase refused
+this way.
+
+`--abort` and cleanup are never refused by the limit, in any phase: the abort's
+own decisions, its records and the retained copy it writes, and the cleanup of a
+completed or aborted rebase are unmetered. Only real disk space bounds them. A
+write that fails on a full disk removes its own partial file, and the command
+says so; free space and run the same command again.
+
+Because an abort and a cleanup are never refused, the retained copy they write is
+not projected or reserved for, and it can exceed the scratch limit. It holds every
+object of the rebase's history, the whole journal (which the limit bounds), the
+original and observed index files, and, for each path the rebase touches, its
+before-image, its worktree file and up to three staged versions, plus a manifest:
+it can exceed the limit by at most that much. Measured on the 64 MiB fixtures of
+`tests/cli-journey/tests/memory_replay.rs`, it reached 0.67 to 0.81 GB, and 0.94 GB
+with a conflict stop and a staged resolution, while the journal stayed under
+0.34 GB. This is the consequence of never refusing an abort. Brit still refuses,
+before anything changes, a rebase whose retained copy would certainly not fit:
+one whose history's objects alone exceed the limit (at the start), or whose copy's
+members already exceed it (once preparation finishes). After admission the copy
+is never tested, and an abort's or a cleanup's copy can grow past the limit with
+the rebase: a copy that is not metered must not refuse a step. After admission
+only the metered journal, and the retained copy a `--skip` writes under the
+limit, can refuse a step (the cases listed above).
+Those fixtures, which completed under the limit before the recovery rules were
+added, complete again.
+
+A Brit command killed at any point (a `SIGKILL`, which cannot tear a record
+Brit writes; a crash or power loss before a record's fsync can, and stock Git
+staging after a killed `--abort` can strand the rebase too, see
+[States this version can still strand](#states-this-version-can-still-strand)),
+at the real limit or a lowered one, leaves a rebase that `--status` describes
+with a cure, that `--abort` restores exactly
+(unless its final decision was already durable, when `--continue` publishes it),
+and that `--continue` carries on. A record the killed command had written but not
+yet put in effect (an unrenamed `state.pending`, or a decision, proposal or
+retained-copy manifest cut short) is discarded or written again by the next
+command; `--status` says so. A preparation killed before it recorded anything has
+nothing to continue: `--abort` removes it.
+
+Brit's rebase is not available on repositories whose history decompresses to
+more than 1 GiB, or of roughly 390,000 objects or more (fewer when many commits
+are replayed), yet: the retained copy holds the whole history, and every journal
+state image lists the whole object closure, so such a rebase is refused in about
+a second, before anything is written. Use `git rebase` there.
+
+`brit rebase --retire` sets aside a rebase whose only remaining work is its
+retained copy, which can take long on a large repository or wait for disk space:
+a completed or aborted rebase whose cleanup is pending, or an abort that is
+retaining before it changed anything live. It also accepts a skip retaining its
+copy before the rebase took any decision (phase `retaining-skip` with no decision),
+where likewise nothing live has changed, since the first live write of a rebase is
+its first decision; no command sequence reaches that state today, because every
+stop a skip starts from (`empty`, `authoring`) is itself published as a decision.
+It deletes nothing and changes nothing
+live: it renames the journal to `brit-rebase-kept-<nonce>` beside it, leaves the
+`refs/brit-rebase-retain/<nonce>/*` references and any retained copy in place,
+and prints each kept piece, its size and the command that removes it. It refuses
+everything else, naming the command that applies: preparation and every phase
+with live state to restore (`--abort`), a decision in flight, and an open
+conflict-authoring session. A second run reports nothing to retire. Older Brit
+releases do not treat `brit-rebase-kept-*` as a journal or a cleanup receipt.
+
+A journal that does not open as this repository's own (the repository was moved
+or copied mid-rebase, the journal's permissions changed, or its checksum is
+corrupt) is touched by no Brit command. `--status` says what failed, warns that a
+copied repository's journal may describe another repository's live rebase, and
+names the directory, retention refs and lock files to deal with by hand; every
+other Brit mutation refuses until that is done. When the repository was moved and
+its old location is gone, `--status` names that location: move the repository
+back and run `brit rebase --abort` there, which restores it exactly. The manual
+steps remain the alternative, but they restore nothing and leave a checkout the
+rebase had begun changing part-way through it.
+
 Publication and cleanup are separate. A message saying **committed/published with
 warning** or **cleanup pending** must not be interpreted as an unpublished
 failure. Retained copies survive cleanup. Unknown private temporary files can
 remain for inspection and prevent cleanup even when abort has restored the
 original state. Do not delete an active journal or its retention refs to bypass
 a refusal, and do not use `git rebase --continue/--abort` to control Brit's state.
+
+## States this version can still strand
+
+The first two were produced by the lane's reviewer by killing a command at the
+nearest checkpoint and cutting the named record to half its length. A `SIGKILL`
+cannot realistically tear these records; a crash or power loss before the
+record's fsync can. The third tears no record: it follows an ordinary `SIGKILL`.
+
+- A torn `metadata-lock-N.json` in an abort transition or in the forward first
+  checkout, and a torn `retention-N.json`, leave `--abort`, `--continue`, `--skip`
+  and `--retire` all refusing, and `--status` then names a cure that does not work.
+- A torn cleanup receipt, left by an older Brit or by a power loss, leaves a
+  published rebase whose `--continue` refuses and which blocks every mutation.
+- After an `--abort` is killed mid-copy, a stock `git add` of an unrelated dirty
+  file, even when undone with `git reset -- <file>`, makes `--abort` refuse
+  "foreign replay metadata before abort" and `--retire` refuse, and `--status`
+  names no cure. At an ordinary conflict stop the same undo lets `--abort` work.
+
+A torn `index.pre-rebase` and a torn `proposal-N.json` are cleared by `--abort`.
+
+Not produced by anyone: a torn `directory-*.json` or `payload-license-*.json`, or a
+leftover `*.new` of the authoring child.
+
+Established by reading: nothing is written between "pending synced" and
+"renamed" (the write-order table in `gitoxide-core/src/repository/replay/journal.rs`).
+The window lies entirely inside the journal's `save` and `save_bytes`;
+`publish_state`, which performs the rename, has exactly those two callers. Between
+the sync and the rename the only code is the `replay-state-file-synced`
+checkpoint, which exists in every build: there it only checks for an interrupt
+and may return an error, and writes nothing (a fault-injection build also writes
+a marker file outside the repository). `state.pending` is renamed onto
+`state.json` in three other places, `recover_preparation`, `cancel_preparation`
+and the legacy-payload upgrade's roll-forward, each of which only reads or syncs
+between finding the record and renaming it.
 
 ## Inspect and extract a retained copy
 

@@ -62,7 +62,7 @@ gix-sequencer = { version = "^0.0.1", path = "../gix-sequencer", registry = "elo
 anyhow = "1.0.102"
 gix-config-value = { version = "^0.21.3", path = "../gix-config-value", registry = "elohim" }
 # deselect everything else (like "performance") as this should be controllable by the parent application.
-gix = { version = "^0.90.0", path = "../gix", registry = "elohim", default-features = false, features = ["anyhow", "merge", "blob-diff", "blame", "revision", "mailmap", "excludes", "attributes", "worktree-mutation", "credentials", "interrupt", "status", "dirwalk", "command", "notify", "fsmonitor-daemon"] }
+gix = { version = "^0.90.0", path = "../gix", registry = "elohim", default-features = false, features = ["anyhow", "encoding-legacy", "encoding-asian", "merge", "blob-diff", "blame", "revision", "mailmap", "excludes", "attributes", "worktree-mutation", "credentials", "interrupt", "status", "dirwalk", "command", "notify", "fsmonitor-daemon"] }
 gix-pack = { version = "^0.77.0", path = "../gix-pack", registry = "elohim", default-features = false, features = ["pack-cache-lru-dynamic", "pack-cache-lru-static", "generate", "streaming-input"] }
 gix-transport = { version = "^0.62.0", path = "../gix-transport", registry = "elohim", default-features = false }
 gix-archive = { version = "^0.39.0", path = "../gix-archive", registry = "elohim", optional = true, features = ["tar", "tar_gz"] }
@@ -71,7 +71,7 @@ gix-fsck = { version = "^0.27.3", path = "../gix-fsck", registry = "elohim" }
 serde = { version = "1.0.114", default-features = false, features = ["derive"] }
 bytesize = "2.3.1"
 tempfile = "3.26.0"
-rustix = { version = "1.1.2", features = ["fs", "termios", "process"] }
+rustix = { version = "1.1.2", features = ["fs", "termios", "process", "param"] }
 unicode-width = "0.2.2"
 
 # for async-client

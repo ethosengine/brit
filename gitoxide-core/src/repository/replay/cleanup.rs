@@ -233,7 +233,16 @@ pub(super) fn run(
         checksum: switch::digest(&payload)?,
         payload,
     })?;
-    switch::private_write(&receipt, &bytes)?;
+    // Published whole (a spool renamed onto its name): a kill leaves no receipt
+    // or the whole receipt, never a partial one that every mutation would refuse.
+    {
+        use std::io::Write;
+        let budget = gix::utils::stream::Budget::new(repo.git_dir())?;
+        let mut spool = budget.spool()?;
+        spool.write_all(&bytes)?;
+        spool.flush()?;
+        switch::private_publish(&receipt, spool)?;
+    }
     switch::sync_dir(repo.git_dir())?;
     switch::checkpoint("replay-cleanup-receipt-durable")?;
     resume(repo, &receipt)

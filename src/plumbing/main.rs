@@ -32,8 +32,45 @@ pub fn main() -> Result<()> {
     run(args)
 }
 
+/// The writer guard a command takes when it opens its repository.
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum GuardScope {
+    /// Read-only, or the command scopes its own guards (switch, pull, rebase, push, commit).
+    None,
+    /// Writes only its own worktree's index, HEAD and checkout, new objects, and
+    /// compare-and-swap reference updates; excludes shared writers and same-worktree writers.
+    Worktree,
+    /// Writes shared repository state; excludes every other Brit writer.
+    Repository,
+    /// Writes shared repository state and rewrites its own worktree's index, HEAD or files:
+    /// that worktree's guard, then the repository guard exclusively.
+    RepositoryAndWorktree,
+}
+
 // Keep inspection usable during recovery. New commands default to the writer
 // boundary until their read-only semantics are explicitly established here.
+fn mutation_guard_scope(cmd: &Subcommands) -> GuardScope {
+    match cmd {
+        Subcommands::Add { .. } => GuardScope::Worktree,
+        // Commit holds its worktree guard throughout and the repository guard only to publish.
+        Subcommands::Commit(commit::Platform { cmd: None, .. }) => GuardScope::None,
+        // Rewrite the invoking worktree. Switch, pull and rebase take the same pair themselves.
+        Subcommands::Restore { .. }
+        | Subcommands::Merge(merge::Platform {
+            cmd: merge::SubCommands::Tree { update_head: true, .. },
+        }) => GuardScope::RepositoryAndWorktree,
+        #[cfg(feature = "gitoxide-core-tools-clean")]
+        Subcommands::Clean(crate::plumbing::options::clean::Command { execute: true, .. }) => {
+            GuardScope::RepositoryAndWorktree
+        }
+        // Push guards its reference resolution and send-pack itself, never its pre-push hook.
+        #[cfg(feature = "gitoxide-core-blocking-client")]
+        Subcommands::Push(_) => GuardScope::None,
+        cmd if requires_mutation_guard(cmd) => GuardScope::Repository,
+        _ => GuardScope::None,
+    }
+}
+
 fn requires_mutation_guard(cmd: &Subcommands) -> bool {
     match cmd {
         Subcommands::Branch(branch::Platform {
@@ -43,7 +80,15 @@ fn requires_mutation_guard(cmd: &Subcommands) -> bool {
         | Subcommands::Odb(_)
         | Subcommands::Fsck(_)
         | Subcommands::Tree(_)
-        | Subcommands::Tag(_)
+        | Subcommands::Tag(
+            tag::Platform {
+                cmds: Some(tag::Subcommands::List),
+                ..
+            }
+            | tag::Platform {
+                cmds: None, name: None, ..
+            },
+        )
         | Subcommands::Verify { .. }
         | Subcommands::Revision(_)
         | Subcommands::Mailmap(_)
@@ -59,8 +104,13 @@ fn requires_mutation_guard(cmd: &Subcommands) -> bool {
         | Subcommands::MergeBase(_)
         | Subcommands::Env
         | Subcommands::Diff(_)
+        | Subcommands::Show(_)
         | Subcommands::Log(_)
-        | Subcommands::Blame { .. } => false,
+        | Subcommands::Blame { .. }
+        | Subcommands::RevParse(_)
+        | Subcommands::ForEachRef(_)
+        | Subcommands::CheckRefFormat(_)
+        | Subcommands::RevList(_) => false,
         Subcommands::Commit(commit::Platform {
             cmd: Some(commit::Subcommands::Verify { .. } | commit::Subcommands::Describe { .. }),
             ..
@@ -83,6 +133,8 @@ fn requires_mutation_guard(cmd: &Subcommands) -> bool {
         Subcommands::Pull { .. } => false,
         #[cfg(any(feature = "gitoxide-core-async-client", feature = "gitoxide-core-blocking-client"))]
         Subcommands::Remote(_) => false,
+        #[cfg(any(feature = "gitoxide-core-async-client", feature = "gitoxide-core-blocking-client"))]
+        Subcommands::LsRemote(_) => false,
         _ => true,
     }
 }
@@ -175,6 +227,63 @@ fn explicit_write_paths(cmd: &Subcommands) -> Vec<&std::path::Path> {
     paths
 }
 
+/// Set the writer wait policy (`--wait`, else `BRIT_MUTATION_WAIT`) and teach guard
+/// refusals to name another Brit process by its subcommand path only.
+/// Every entry point that may take a writer guard calls this once, before any guard.
+pub fn configure_mutation_guards(
+    wait: Option<core::repository::switch::MutationWait>,
+    command: &clap::Command,
+) -> Result<()> {
+    if let Some(wait) = match wait {
+        Some(wait) => Some(wait),
+        None => mutation_wait_from_environment()?,
+    } {
+        core::repository::switch::set_mutation_wait(wait);
+    }
+    let command = command.clone();
+    core::repository::switch::set_command_resolver(move |args| super::guard_label::subcommand_path(&command, args));
+    Ok(())
+}
+
+/// The default writer wait from `BRIT_MUTATION_WAIT` (`SECONDS` or `forever`).
+fn mutation_wait_from_environment() -> Result<Option<core::repository::switch::MutationWait>> {
+    match std::env::var_os("BRIT_MUTATION_WAIT") {
+        None => Ok(None),
+        Some(value) => {
+            let Some(value) = value.to_str() else {
+                bail!("BRIT_MUTATION_WAIT is not valid UTF-8")
+            };
+            match core::repository::switch::MutationWait::parse(value) {
+                Ok(wait) => Ok(Some(wait)),
+                Err(err) => bail!("invalid BRIT_MUTATION_WAIT: {err}"),
+            }
+        }
+    }
+}
+
+/// Apply each `-C <dir>` in order, each relative to the one before, as Git does; empty values are ignored.
+///
+/// A directory that cannot be entered ends like Git: `fatal: cannot change to '<dir>': <reason>` and 128.
+pub fn change_dirs(dirs: &[std::ffi::OsString]) -> Result<()> {
+    use std::io::Write as _;
+    for dir in dirs.iter().filter(|dir| !dir.is_empty()) {
+        if let Err(err) = std::env::set_current_dir(dir) {
+            let reason = err.to_string();
+            // Git prints `strerror()`, without Rust's `(os error N)` suffix.
+            let reason = reason.split(" (os error ").next().unwrap_or(&reason);
+            // Written without `eprintln!`, which would panic on a closed stderr.
+            writeln!(
+                std::io::stderr(),
+                "fatal: cannot change to '{}': {reason}",
+                std::path::Path::new(dir).display()
+            )
+            .ok();
+            return Err(core::repository::git_spellings::exit(128));
+        }
+    }
+    Ok(())
+}
+
 /// Execute an already parsed plumbing command, allowing another CLI to compose its command tree.
 pub fn run(args: Args) -> Result<()> {
     run_with_command(args, Args::command())
@@ -182,6 +291,7 @@ pub fn run(args: Args) -> Result<()> {
 
 /// Execute a plumbing command with the public command tree used for generated completions.
 pub fn run_with_command(args: Args, command: clap::Command) -> Result<()> {
+    change_dirs(&args.change_dir)?;
     let thread_limit = args.threads;
     let verbose = args.verbose;
     let format = args.format;
@@ -191,7 +301,8 @@ pub fn run_with_command(args: Args, command: clap::Command) -> Result<()> {
     let trace = 0;
     let cmd = args.cmd;
     let guards = std::cell::RefCell::new(super::MutationGuards::default());
-    let requires_mutation_guard = requires_mutation_guard(&cmd);
+    configure_mutation_guards(args.wait, &command)?;
+    let guard_scope = mutation_guard_scope(&cmd);
     for path in explicit_write_paths(&cmd) {
         guards.borrow_mut().path(path)?;
     }
@@ -278,8 +389,11 @@ pub fn run_with_command(args: Args, command: clap::Command) -> Result<()> {
                     config_mut.set_raw_value(gix::config::tree::Gitoxide::PARSE_PRECIOUS, "true")?;
                 }
             }
-            if requires_mutation_guard {
-                guards.borrow_mut().repository(&repo)?;
+            match guard_scope {
+                GuardScope::None => {}
+                GuardScope::Worktree => guards.borrow_mut().worktree(&repo)?,
+                GuardScope::Repository => guards.borrow_mut().repository(&repo)?,
+                GuardScope::RepositoryAndWorktree => guards.borrow_mut().repository_and_worktree(&repo)?,
             }
             Ok(repo)
         }
@@ -288,7 +402,10 @@ pub fn run_with_command(args: Args, command: clap::Command) -> Result<()> {
     let auto_verbose = !args.no_verbose;
 
     let should_interrupt = Arc::new(AtomicBool::new(false));
-    #[expect(unsafe_code)]
+    #[expect(
+        unsafe_code,
+        reason = "installing the process signal handler is unsafe; the handler only stores an atomic flag"
+    )]
     unsafe {
         // SAFETY: The closure doesn't use mutexes or memory allocation, so it should be safe to call from a signal handler.
         gix::interrupt::init_handler(1, {
@@ -419,11 +536,16 @@ pub fn run_with_command(args: Args, command: clap::Command) -> Result<()> {
                 )
             }),
         },
-        Subcommands::MergeBase(crate::plumbing::options::merge_base::Command { first, others }) => {
-            prepare_and_run("merge-base", verbose, None, move |_progress, out, _err| {
-                core::repository::merge_base(repository(Mode::Lenient)?, first, others, out, format)
-            })
-        }
+        Subcommands::MergeBase(crate::plumbing::options::merge_base::Command {
+            first,
+            others,
+            is_ancestor,
+        }) => prepare_and_run("merge-base", verbose, None, move |_progress, out, err| {
+            if is_ancestor {
+                return core::repository::merge_base_is_ancestor(repository(Mode::Lenient)?, &first, &others, err);
+            }
+            core::repository::merge_base(repository(Mode::Lenient)?, first, others, out, format)
+        }),
         Subcommands::Add { paths, update, all: _ } => {
             prepare_and_run("add", verbose, None, move |_progress, _out, _err| {
                 core::repository::index::stage_paths(repository(Mode::Strict)?, &paths, update)
@@ -483,25 +605,58 @@ pub fn run_with_command(args: Args, command: clap::Command) -> Result<()> {
         Subcommands::Diff(crate::plumbing::options::diff::Platform {
             cmd,
             cached,
+            merge_base,
             stat,
+            name_only,
+            name_status,
+            numstat,
+            exit_code,
+            quiet,
+            revisions,
             paths,
+            separator,
         }) => match cmd {
-            None => prepare_and_run("diff", verbose, None, move |_progress, out, _err| {
-                if stat {
-                    core::repository::diff::working_stat(repository(Mode::Strict)?, out, cached, &paths)
-                } else {
-                    core::repository::diff::working(repository(Mode::Strict)?, out, cached, &paths)
+            None => prepare_and_run("diff", verbose, None, move |_progress, out, err| {
+                use core::repository::diff::Format;
+                let format = match (stat, name_only, name_status, numstat, quiet) {
+                    (true, ..) => Format::Stat,
+                    (_, true, ..) => Format::NameOnly,
+                    (_, _, true, ..) => Format::NameStatus,
+                    (_, _, _, true, _) => Format::NumStat,
+                    (.., true) => Format::Quiet,
+                    _ => Format::Patch,
+                };
+                let request = core::repository::diff::Request {
+                    revisions,
+                    paths,
+                    separator,
+                    cached,
+                    merge_base,
+                    format,
+                };
+                let differs = core::repository::diff::diff(repository(Mode::Strict)?, out, err, request)?;
+                if differs && (exit_code || quiet) {
+                    return Err(gix::Error::from_error(core::repository::diff::Differences));
                 }
+                Ok(())
             }),
             Some(crate::plumbing::options::diff::SubCommands::Tree {
                 stat,
+                name_only,
+                merge_base,
                 old_treeish,
                 new_treeish,
-            }) => prepare_and_run("diff-tree", verbose, None, move |_progress, out, _err| {
+            }) => prepare_and_run("diff-tree", verbose, None, move |_progress, out, err| {
+                let mode = if stat || name_only { Mode::Strict } else { Mode::Lenient };
+                let repo = repository(mode)?;
+                let (old_treeish, new_treeish) =
+                    core::repository::diff::tree_endpoints(&repo, err, old_treeish, new_treeish, merge_base)?;
                 if stat {
-                    core::repository::diff::tree_stat(repository(Mode::Strict)?, out, old_treeish, new_treeish)
+                    core::repository::diff::tree_stat(repo, out, old_treeish, new_treeish)
+                } else if name_only {
+                    core::repository::diff::tree_name_only(repo, out, old_treeish, new_treeish)
                 } else {
-                    core::repository::diff::tree(repository(Mode::Lenient)?, out, old_treeish, new_treeish)
+                    core::repository::diff::tree(repo, out, old_treeish, new_treeish)
                 }
             }),
             Some(crate::plumbing::options::diff::SubCommands::File {
@@ -511,17 +666,47 @@ pub fn run_with_command(args: Args, command: clap::Command) -> Result<()> {
                 core::repository::diff::file(repository(Mode::Lenient)?, out, old_revspec, new_revspec)
             }),
         },
+        Subcommands::Show(crate::plumbing::options::show::Platform {
+            stat,
+            name_only,
+            name_status,
+            numstat,
+            no_patch,
+            oneline,
+            revisions,
+            paths,
+            separator,
+        }) => prepare_and_run("show", verbose, None, move |_progress, out, _err| {
+            use core::repository::diff::Format;
+            let format = match (stat, name_only, name_status, numstat, no_patch) {
+                (true, ..) => Some(Format::Stat),
+                (_, true, ..) => Some(Format::NameOnly),
+                (_, _, true, ..) => Some(Format::NameStatus),
+                (_, _, _, true, _) => Some(Format::NumStat),
+                (.., true) => None,
+                _ => Some(Format::Patch),
+            };
+            let options = core::repository::show::Options {
+                revisions,
+                paths,
+                format,
+                oneline,
+                separator,
+            };
+            core::repository::show::show(repository(Mode::Strict)?, out, options)
+        }),
         Subcommands::Log(crate::plumbing::options::log::Platform {
             max_count,
             sort,
             first_parent,
+            oneline,
             revisions,
-            pathspecs,
+            paths,
         }) => prepare_and_run("log", verbose, None, move |_progress, out, _err| {
             core::repository::log::log(
                 repository(Mode::Lenient)?,
                 out,
-                pathspecs,
+                paths,
                 core::repository::log::Options {
                     revisions,
                     sorting: sort.into(),
@@ -531,6 +716,7 @@ pub fn run_with_command(args: Args, command: clap::Command) -> Result<()> {
                         gix::traverse::commit::Parents::All
                     },
                     max_count,
+                    oneline,
                 },
             )
         }),
@@ -622,10 +808,15 @@ pub fn run_with_command(args: Args, command: clap::Command) -> Result<()> {
         }) => prepare_and_run("status", auto_verbose, None, move |progress, out, err| {
             use crate::plumbing::options::status::Submodules;
             let repo = repository(Mode::Lenient)?;
-            // An index refresh is a mutation. On contention or pending recovery,
-            // retain read-only inspection and leave the index bytes alone.
+            // An index refresh is a worktree-local mutation. On contention or pending
+            // recovery, retain read-only inspection and leave the index bytes alone.
             let refresh_guard = (!no_write)
-                .then(|| core::repository::switch::mutation_guard(&repo))
+                .then(|| {
+                    core::repository::switch::worktree_mutation_guard_waiting(
+                        &repo,
+                        core::repository::switch::MutationWait::Refuse,
+                    )
+                })
                 .and_then(std::result::Result::ok);
             core::repository::status::show(
                 repo,
@@ -768,6 +959,21 @@ pub fn run_with_command(args: Args, command: clap::Command) -> Result<()> {
 
                 prepare_and_run("branch-list", auto_verbose, None, move |_progress, out, _err| {
                     core::repository::branch::list(repository(Mode::Lenient)?, out, format, options)
+                })
+            }
+            branch::Subcommands::Delete { force, names } => {
+                prepare_and_run("branch-delete", auto_verbose, None, move |_progress, out, err| {
+                    core::repository::branch::delete(repository(Mode::Strict)?, &names, force, out, err)
+                })
+            }
+            branch::Subcommands::ForceDelete { names } => {
+                prepare_and_run("branch-delete", auto_verbose, None, move |_progress, out, err| {
+                    core::repository::branch::delete(repository(Mode::Strict)?, &names, true, out, err)
+                })
+            }
+            branch::Subcommands::Move { old, new } => {
+                prepare_and_run("branch-move", auto_verbose, None, move |_progress, _out, _err| {
+                    core::repository::branch::rename(repository(Mode::Strict)?, &old, &new)
                 })
             }
         },
@@ -1473,6 +1679,88 @@ pub fn run_with_command(args: Args, command: clap::Command) -> Result<()> {
                 )
             }),
         },
+        Subcommands::RevParse(crate::plumbing::options::git_spellings::RevParse { args }) => {
+            prepare_and_run("rev-parse", verbose, None, move |_progress, out, err| {
+                let repo = match repository(Mode::Lenient) {
+                    Ok(repo) => repo,
+                    Err(discovery) => {
+                        let cwd = std::env::current_dir().unwrap_or_default();
+                        return Err(core::repository::git_spellings::rev_parse::outside_work_tree(
+                            &args, &cwd, &mut *err,
+                        )
+                        .unwrap_or(discovery));
+                    }
+                };
+                core::repository::git_spellings::rev_parse::rev_parse(repo, args, out, err)
+            })
+        }
+        Subcommands::ForEachRef(crate::plumbing::options::git_spellings::ForEachRef {
+            format: ref_format,
+            sort,
+            patterns,
+        }) => prepare_and_run("for-each-ref", verbose, None, move |_progress, out, _err| {
+            core::repository::git_spellings::for_each_ref::for_each_ref(
+                repository(Mode::Lenient)?,
+                out,
+                core::repository::git_spellings::for_each_ref::Options {
+                    format: ref_format,
+                    sort,
+                    patterns,
+                },
+            )
+        }),
+        #[cfg(any(feature = "gitoxide-core-async-client", feature = "gitoxide-core-blocking-client"))]
+        Subcommands::LsRemote(crate::plumbing::options::git_spellings::LsRemote {
+            help: _,
+            heads,
+            tags,
+            refs,
+            exit_code,
+            quiet,
+            remote,
+            patterns,
+        }) => prepare_and_run(
+            "ls-remote",
+            verbose,
+            core::repository::remote::refs::PROGRESS_RANGE,
+            move |progress, out, err| {
+                let res = core::repository::git_spellings::ls_remote::ls_remote(
+                    repository(Mode::LenientWithGitInstallConfig)?,
+                    progress,
+                    out,
+                    err,
+                    core::repository::git_spellings::ls_remote::Options {
+                        remote,
+                        patterns,
+                        heads,
+                        tags,
+                        refs,
+                        exit_code,
+                        quiet,
+                    },
+                );
+                #[cfg(feature = "gitoxide-core-async-client")]
+                let res = futures_lite::future::block_on(res);
+                res
+            },
+        ),
+        Subcommands::CheckRefFormat(crate::plumbing::options::git_spellings::CheckRefFormat {
+            allow_onelevel,
+            refname,
+        }) => core::repository::git_spellings::check_ref_format::check(refname.as_ref(), allow_onelevel),
+        Subcommands::RevList(crate::plumbing::options::git_spellings::RevList {
+            count,
+            left_right,
+            revs,
+        }) => prepare_and_run("rev-list", verbose, None, move |_progress, out, err| {
+            core::repository::git_spellings::rev_list::rev_list(
+                repository(Mode::Lenient)?,
+                revs,
+                out,
+                err,
+                core::repository::git_spellings::rev_list::Options { count, left_right },
+            )
+        }),
         Subcommands::Cat { revspec } => prepare_and_run("cat", verbose, None, move |_progress, out, _err| {
             core::repository::cat(repository(Mode::Lenient)?, &revspec, out)
         }),
@@ -1534,12 +1822,39 @@ pub fn run_with_command(args: Args, command: clap::Command) -> Result<()> {
                 )
             }),
         },
-        Subcommands::Tag(platform) => match platform.cmds {
-            Some(tag::Subcommands::List) | None => {
-                prepare_and_run("tag-list", auto_verbose, None, move |_progress, out, _err| {
-                    core::repository::tag::list(repository(Mode::Lenient)?, out, format)
-                })
-            }
+        Subcommands::Tag(platform) => match platform {
+            tag::Platform {
+                cmds: Some(tag::Subcommands::Delete { names }),
+                ..
+            } => prepare_and_run("tag-delete", auto_verbose, None, move |_progress, out, _err| {
+                core::repository::tag::delete(repository(Mode::Strict)?, &names, out)
+            }),
+            tag::Platform {
+                cmds: None,
+                name: Some(name),
+                commit_ish,
+                annotate,
+                message,
+                force,
+            } => prepare_and_run("tag-create", auto_verbose, None, move |_progress, out, _err| {
+                core::repository::tag::create(
+                    repository(Mode::Strict)?,
+                    core::repository::tag::create::Options {
+                        name,
+                        target: commit_ish.unwrap_or_else(|| "HEAD".into()),
+                        annotate,
+                        message,
+                        force,
+                    },
+                    out,
+                )
+            }),
+            tag::Platform {
+                cmds: Some(tag::Subcommands::List) | None,
+                ..
+            } => prepare_and_run("tag-list", auto_verbose, None, move |_progress, out, _err| {
+                core::repository::tag::list(repository(Mode::Lenient)?, out, format)
+            }),
         },
         Subcommands::Tree(cmd) => match cmd {
             tree::Subcommands::Entries {

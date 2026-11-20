@@ -10,6 +10,19 @@ Push refuses an executable pre-push hook until the transport can supply exact
 resolved updates; use `git push` to run that gate. Full station-4 evidence and
 cutover remain open. See [the bounded sprint](../plans/2026-09-28-safe-staged-authoring.md).
 
+Brit executable, sprint 3 (2026-11-19): the `log`, `branch`, `tag` and `fetch`
+rows below describe the historical gix porcelain, not the public Brit surface.
+That surface is `log [REVISION…] [-n N] [--oneline] [-- PATH…]` (`^A`, `A..B`,
+`A...B`, `A^@`, `A^!`; literal paths, Git's limiter and default simplification;
+every form stops at a shallow boundary); `branch create|list [-a]|-d [-f]|-D|-m`
+(no other branch flags); `tag [-a] [-m MSG] [-f] NAME [COMMIT]`, `tag list` and
+`tag -d NAME…` (no `-l` patterns, `--format`, `-v`, `-F` or signing); and
+`fetch [<repository>] [<refspec>…]` (a configured remote, URL or path), which
+updates the configured tracking ref for a branch fetched without a destination
+and exits non-zero on a rejected update. Journeys:
+`brit-cli/tests/{log_rev_path,branch_delete,tag_mutation,remote_tracking}.rs` and
+`tests/cli-journey/tests/{revision_ranges,diff_name_only}.rs`.
+
 Legend:
 - `absent` — no gix implementation
 - `partial` — some flags / modes implemented, not all; has a `tests/journey/parity/<cmd>.sh` with TODO rows

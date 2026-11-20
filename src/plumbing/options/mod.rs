@@ -1,3 +1,4 @@
+pub mod git_spellings;
 pub mod rebase;
 use std::path::PathBuf;
 
@@ -12,6 +13,17 @@ use crate::shared::{AsRange, AsTime};
 #[clap(subcommand_required = true)]
 #[clap(arg_required_else_help = true)]
 pub struct Args {
+    /// Run as if Brit was started in this directory, like Git's `-C`; repeat to descend further.
+    ///
+    /// Each one is applied relative to the previous one before the command runs, and before a recognised
+    /// subcommand's `--help` or usage error (an unrecognised command gets clap's error first, and Brit's own
+    /// `--help` without a subcommand ignores it); an empty value is ignored, and one that cannot be entered
+    /// ends with Git's `fatal: cannot change to '<dir>'` and status 128.
+    /// Repository discovery and every relative path argument then start there, and `-r` is resolved
+    /// relative to the result. `-r` alone only selects the repository.
+    #[clap(short = 'C', value_name = "DIR", action = clap::ArgAction::Append, value_parser = clap::value_parser!(std::ffi::OsString))]
+    pub change_dir: Vec<std::ffi::OsString>,
+
     /// The repository to access.
     #[clap(short = 'r', long, default_value = ".")]
     pub repository: PathBuf,
@@ -76,8 +88,40 @@ pub struct Args {
     #[clap(long, default_value_t = gix::hash::Kind::default(), value_parser = crate::shared::AsHashKind)]
     pub object_hash: gix::hash::Kind,
 
+    /// Wait for another Brit writer's guard instead of refusing at once.
+    ///
+    /// Without SECONDS, wait until the guard is free. `0` refuses at once.
+    /// `BRIT_MUTATION_WAIT=SECONDS` (or `forever`) sets the default. With neither, writers
+    /// refuse at once, except `add` and a commit start, which wait up to 2 seconds.
+    /// Under a Brit hook every wait is capped by `BRIT_HOOK_GUARD_WAIT` (default 30 seconds).
+    /// The guard model, and what hooks may run: docs/mutation-guards.md in the Brit sources.
+    #[clap(
+        long,
+        global = true,
+        value_name = "SECONDS",
+        num_args = 0..=1,
+        require_equals = true,
+        default_missing_value = "forever",
+        value_parser = core::repository::switch::MutationWait::parse
+    )]
+    pub wait: Option<core::repository::switch::MutationWait>,
+
     #[clap(subcommand)]
     pub cmd: Subcommands,
+}
+
+impl Args {
+    /// Record that the command line held a `--`, which the parser does not report when no path
+    /// follows it: `diff` and `show` then read every name before it as a revision, like Git.
+    pub fn note_path_separator(&mut self) {
+        match &mut self.cmd {
+            Subcommands::Diff(diff::Platform {
+                cmd: None, separator, ..
+            })
+            | Subcommands::Show(show::Platform { separator, .. }) => *separator = true,
+            _ => {}
+        }
+    }
 }
 
 #[derive(Debug, clap::Subcommand)]
@@ -243,6 +287,7 @@ pub enum Subcommands {
         abort: bool,
     },
     Diff(diff::Platform),
+    Show(show::Platform),
     Log(log::Platform),
     /// Interactively browse commits and their graph.
     #[cfg(feature = "tix")]
@@ -266,6 +311,17 @@ pub enum Subcommands {
         #[clap(long,  value_parser=AsTime, value_name = "DATE")]
         since: Option<gix::date::Time>,
     },
+    /// Git's spelling of `brit revision resolve`, plus repository path queries, with Git's output.
+    RevParse(git_spellings::RevParse),
+    /// List local refs like Git. Brit's own branch listing is `brit branch list`.
+    ForEachRef(git_spellings::ForEachRef),
+    /// Git's spelling of `brit remote refs`, printing Git's `<oid>\t<refname>` lines.
+    #[cfg(any(feature = "gitoxide-core-async-client", feature = "gitoxide-core-blocking-client"))]
+    LsRemote(git_spellings::LsRemote),
+    /// Validate a reference name like Git, answering only through the exit code.
+    CheckRefFormat(git_spellings::CheckRefFormat),
+    /// Count commits like Git's `rev-list --count`. Brit's own walk is `brit revision list`.
+    RevList(git_spellings::RevList),
     /// Generate shell completions to stdout or a directory.
     #[clap(visible_alias = "generate-completions", visible_alias = "shell-completions")]
     Completions {
@@ -570,6 +626,38 @@ pub mod branch {
             #[clap(long, short = 'a')]
             all: bool,
         },
+        /// Delete local branches, also as `--delete` or `-d`; `-D` is `--delete --force`.
+        ///
+        /// A branch checked out (or being rebased or bisected) in any worktree is never deleted.
+        /// Without `--force`, each branch must be merged into its upstream, or into `HEAD` when it
+        /// has none. Its reflog and `branch.<name>` configuration go with it. Several names are
+        /// deleted together or not at all.
+        #[clap(long_flag = "delete", short_flag = 'd')]
+        Delete {
+            /// Delete even if the branch is not merged.
+            #[clap(long, short = 'f')]
+            force: bool,
+            /// Names of the local branches to delete.
+            #[clap(required = true)]
+            names: Vec<String>,
+        },
+        /// Delete local branches even if they are not merged (`-D`).
+        #[clap(short_flag = 'D', hide = true)]
+        ForceDelete {
+            /// Names of the local branches to delete.
+            #[clap(required = true)]
+            names: Vec<String>,
+        },
+        /// Rename a local branch, also as `--move` or `-m`, carrying its reflog and configuration.
+        ///
+        /// Refuses when `<new>` already exists. Worktrees with `<old>` checked out follow the rename.
+        #[clap(long_flag = "move", short_flag = 'm')]
+        Move {
+            /// Current name of the local branch.
+            old: String,
+            /// New name of the local branch.
+            new: String,
+        },
     }
 }
 
@@ -698,6 +786,11 @@ pub mod merge_base {
         pub first: String,
         /// Revspecs for the other commits to compute the merge-base with.
         pub others: Vec<String>,
+        /// Answer through the exit code alone, like Git: 0 when the first commit is an ancestor of the
+        /// one other commit (or the same), 1 when it is not, 128 for a revision that names no commit or
+        /// for more than two revisions. Brit's own answer without the flag lists every merge base.
+        #[clap(long)]
+        pub is_ancestor: bool,
     }
 }
 
@@ -930,36 +1023,87 @@ pub mod merge {
 pub mod diff {
     use gix::bstr::BString;
 
-    /// Show unstaged changes, staged changes, or compare two objects.
+    /// Show changes between the working files, the index and revisions, like `git diff --no-renames`.
+    ///
+    /// With no revision, working files are compared with the index (or, with `--cached`, the
+    /// index with HEAD). One revision is compared with the working files (or the index); two
+    /// revisions, `A..B` or `A...B` (the merge base of A and B against B) compare trees. Renames
+    /// are never detected: a rename is a deletion and an addition.
+    ///
+    /// Refused rather than printed differently: a path with a `diff=<driver>` attribute (even a
+    /// built-in driver with nothing configured) in the patch and count forms (--name-only and
+    /// --name-status still work); intent-to-add entries, skip-worktree or assume-unchanged entries,
+    /// sparse or split indexes and a conflicted index in the forms that read the index;
+    /// submodules in comparisons with the working files; pathspec patterns (`*`, `?`, `[`, `:`);
+    /// and, in comparisons with the index or working files, a trailing slash, an absolute path,
+    /// `..`, the repository root `.` and `.git` paths. Line counts can differ from Git's on
+    /// very large, heavily changed files, because Brit's Myers diff uses different heuristics.
     #[derive(Debug, clap::Parser)]
     #[clap(args_conflicts_with_subcommands = true)]
     pub struct Platform {
-        /// Compare the index with HEAD instead of working files with the index.
+        /// Compare the index with HEAD (or with REVISION) instead of the working files.
         #[clap(long, visible_alias = "staged")]
         pub cached: bool,
-        /// Show an 80-column summary instead of patches.
+        /// Compare the merge base of both revisions (or of REVISION and HEAD), like `git diff --merge-base`.
         #[clap(long)]
+        pub merge_base: bool,
+        /// Show an 80-column summary instead of patches, like `git diff --stat=80`.
+        #[clap(long, group = "output")]
         pub stat: bool,
-        /// Restrict changes to these literal file paths.
+        /// Show only the names of changed paths, like `git diff --name-only`.
+        #[clap(long, group = "output")]
+        pub name_only: bool,
+        /// Show the names and status letters (A, D, M, T) of changed paths, like `git diff --name-status`.
+        #[clap(long, group = "output")]
+        pub name_status: bool,
+        /// Show added and removed line counts per path, like `git diff --numstat`.
+        #[clap(long, group = "output")]
+        pub numstat: bool,
+        /// Exit with 1 if there are differences and 0 otherwise, like `git diff --exit-code`.
+        #[clap(long)]
+        pub exit_code: bool,
+        /// Print nothing and imply --exit-code, like `git diff --quiet`.
+        #[clap(long, group = "output")]
+        pub quiet: bool,
+        /// No revision, one revision, two revisions, or one range `A..B` or `A...B`.
+        ///
+        /// A name that is no revision but an existing worktree path starts the paths, as in Git.
+        #[clap(value_parser = crate::shared::AsBString, value_name = "REVISION")]
+        pub revisions: Vec<BString>,
+        /// Restrict changes to these literal paths: files, or directories with everything below them.
+        ///
+        /// Comparisons of two revisions also accept a trailing slash, which matches only a directory.
         #[clap(last = true, value_parser = crate::shared::AsBString)]
         pub paths: Vec<BString>,
+        /// Whether `--` was given; set by [`super::Args::note_path_separator()`].
+        #[clap(skip)]
+        pub separator: bool,
         #[clap(subcommand)]
         pub cmd: Option<SubCommands>,
     }
 
     #[derive(Debug, clap::Subcommand)]
     pub enum SubCommands {
-        /// Diff two trees.
+        /// Diff two trees: `OLD NEW`, `--merge-base OLD NEW`, or a lone `A..B` or `A...B`.
         Tree {
             /// Show an 80-column summary instead of object changes.
             #[clap(long)]
             stat: bool,
-            /// A rev-spec representing the 'before' or old tree.
+            /// Print only the changed paths, one per line, like `git diff --name-only --no-renames`.
+            ///
+            /// A rename is listed as its deleted and its added path.
+            #[clap(long, conflicts_with = "stat")]
+            name_only: bool,
+            /// Compare the merge base of both commits with NEW_TREEISH, like `git diff --merge-base`.
+            #[clap(long, requires = "new_treeish")]
+            merge_base: bool,
+            /// A rev-spec representing the 'before' or old tree, or alone a range: `A..B` compares
+            /// `A` with `B`, and `A...B` compares the merge base of `A` and `B` with `B`.
             #[clap(value_parser = crate::shared::AsBString)]
             old_treeish: BString,
             /// A rev-spec representing the 'after' or new tree.
             #[clap(value_parser = crate::shared::AsBString)]
-            new_treeish: BString,
+            new_treeish: Option<BString>,
         },
         /// Diff two versions of a file.
         File {
@@ -970,6 +1114,55 @@ pub mod diff {
             #[clap(value_parser = crate::shared::AsBString)]
             new_revspec: BString,
         },
+    }
+}
+
+pub mod show {
+    use gix::bstr::BString;
+
+    /// Show commits with their changes, annotated tags, and blobs or trees, like `git show --no-renames`.
+    ///
+    /// A commit prints Git's medium header and its patch against its first parent (a root or
+    /// shallow-boundary commit against the empty tree), its message re-encoded to UTF-8 from a
+    /// declared encoding. A merge prints its header only, and with --stat or --numstat its
+    /// first-parent summary, as Git does. An annotated tag prints its header and message, then what
+    /// it points to. A blob (`REV:PATH`) prints its content, and a tree prints `tree <REVISION>`, a
+    /// blank line and its entry names (directories with a trailing slash), as Git does.
+    ///
+    /// Refused rather than printed differently: a merge whose result differs from every parent at
+    /// some path (Git's combined diff) in the patch, --oneline, --name-only and --name-status forms;
+    /// a declared encoding Brit cannot decode exactly as Git; a commit header, message or tagger that
+    /// is not ASCII when i18n.logOutputEncoding (or, when that is unset, i18n.commitEncoding) names
+    /// an encoding other than UTF-8; a range `A..B`; and the diff limits listed in `brit diff --help`.
+    #[derive(Debug, clap::Parser)]
+    pub struct Platform {
+        /// Show an 80-column summary instead of patches, like `git show --stat=80`.
+        #[clap(long, group = "output")]
+        pub stat: bool,
+        /// Show only the names of changed paths, like `git show --name-only`.
+        #[clap(long, group = "output")]
+        pub name_only: bool,
+        /// Show the names and status letters of changed paths, like `git show --name-status`.
+        #[clap(long, group = "output")]
+        pub name_status: bool,
+        /// Show added and removed line counts per path, like `git show --numstat`.
+        #[clap(long, group = "output")]
+        pub numstat: bool,
+        /// Show only the header of each commit, like `git show --no-patch`.
+        #[clap(long, short = 's', group = "output")]
+        pub no_patch: bool,
+        /// Print each commit as its abbreviated id and title, like `git show --oneline`.
+        #[clap(long)]
+        pub oneline: bool,
+        /// Revisions to show instead of HEAD: commits, tags, trees (`REV:`, `REV^{tree}`), or `REV:PATH`.
+        #[clap(value_parser = crate::shared::AsBString, value_name = "REVISION")]
+        pub revisions: Vec<BString>,
+        /// Only show changes to these literal paths; a commit that changes none of them is not shown.
+        #[clap(last = true, value_parser = crate::shared::AsBString, value_name = "PATH")]
+        pub paths: Vec<BString>,
+        /// Whether `--` was given; set by [`super::Args::note_path_separator()`].
+        #[clap(skip)]
+        pub separator: bool,
     }
 }
 
@@ -1004,7 +1197,21 @@ pub mod log {
         }
     }
 
-    /// List reachable commits in the chosen order, optionally excluding hidden ancestry.
+    /// List commits reachable from revisions in the chosen order, optionally only those that
+    /// change given paths.
+    ///
+    /// Without paths, in the default date order over all parents, the set is exactly the commits
+    /// reachable from the included revisions and not from the excluded ones, ordered like
+    /// `git rev-list --date-order`. That is Git's set except where clock skew makes Git's limiter
+    /// stop early; commits with identical commit times may be ordered differently from Git.
+    ///
+    /// With paths, commits are listed like `git log <revisions> -- <paths>`, following Git's
+    /// limiter and its default history simplification: a commit counts when it differs from
+    /// its parent at a path, a merge equal to one parent there is skipped and only that parent
+    /// is followed, and a root or shallow-boundary commit counts when the path exists. Paths
+    /// support only the default order over all parents.
+    ///
+    /// Every form stops at a shallow boundary, as Git does.
     #[derive(Debug, clap::Parser)]
     pub struct Platform {
         /// Stop after this many commits (Brit also accepts -N; zero prints none).
@@ -1016,12 +1223,18 @@ pub mod log {
         /// Follow only the first parent of visible commits; hidden ancestry follows all parents.
         #[clap(long)]
         pub first_parent: bool,
-        /// Revision expressions such as HEAD, main..topic, main...topic, or ^main. Defaults to HEAD if omitted.
-        #[clap(value_name = "REVISION", value_parser = crate::shared::AsBString)]
+        /// Print the abbreviated hash (honouring core.abbrev, like `git log --oneline`) and title.
+        #[clap(long)]
+        pub oneline: bool,
+        /// Revisions to list instead of HEAD: `origin/dev`, `^A`, `A..B`, `A...B`, `A^@` or
+        /// `A^!`, combinable. A lone name that is no revision but an existing worktree path is
+        /// read as a path; use `--` to force paths.
+        #[clap(value_parser = crate::shared::AsBString, value_name = "REVISION")]
         pub revisions: Vec<BString>,
-        /// Git pathspecs limiting the history, separated from revisions by -- (currently unsupported).
-        #[clap(last = true, value_name = "PATHSPEC", value_parser = crate::shared::AsBString)]
-        pub pathspecs: Vec<BString>,
+        /// Only list commits that change one of these literal paths (files or directories,
+        /// relative to the current directory); a trailing slash matches only directories.
+        #[clap(last = true, value_parser = crate::shared::AsBString, value_name = "PATH")]
+        pub paths: Vec<BString>,
     }
 }
 
@@ -1098,11 +1311,17 @@ pub mod fetch {
 
         /// The name of the remote to connect to, or the url of the remote to connect to directly.
         ///
-        /// If unset, the current branch will determine the remote.
+        /// If unset, the first positional selects the remote when it names a configured remote
+        /// (`brit fetch origin dev`); otherwise the current branch determines the remote.
         #[clap(long, short = 'r')]
         pub remote: Option<String>,
 
-        /// Override the built-in and configured ref-specs with one or more of the given ones.
+        /// `[<remote>] [<refspec>...]`: override the built-in and configured ref-specs with one or more of the given ones.
+        ///
+        /// Without `--remote`, a first value naming a configured remote selects that remote and the
+        /// rest are refspecs; with `--remote`, every value is a refspec. A refspec naming one ref
+        /// that the remote does not advertise is an error. A branch fetched without a destination
+        /// also updates the remote-tracking ref the remote's configured refspecs map it to.
         #[clap(value_parser = crate::shared::AsBString)]
         pub ref_spec: Vec<gix::bstr::BString>,
     }
@@ -1493,16 +1712,43 @@ pub mod commit {
 }
 
 pub mod tag {
+    /// Without a name, list tags. With one, create a tag at `<commit-ish>` (default `HEAD`):
+    /// lightweight, or an annotated tag object when `-a` or `-m` is given.
+    ///
+    /// The subcommand names `list` and `delete` take precedence over tag names; use
+    /// `brit tag -- <name>` to create a tag spelled like one.
     #[derive(Debug, clap::Parser)]
+    #[clap(args_conflicts_with_subcommands = true)]
     pub struct Platform {
         #[clap(subcommand)]
         pub cmds: Option<Subcommands>,
+        /// Create an annotated tag object; requires `-m`, as no editor is launched.
+        #[clap(long, requires = "name", short = 'a')]
+        pub annotate: bool,
+        /// The annotated tag's message, cleaned up as Git does; implies `-a`.
+        #[clap(long, requires = "name", short = 'm', value_name = "msg")]
+        pub message: Option<String>,
+        /// Replace an existing tag of the same name.
+        #[clap(long, requires = "name", short = 'f')]
+        pub force: bool,
+        /// Name of the tag to create.
+        pub name: Option<String>,
+        /// Object to tag.
+        #[clap(requires = "name")]
+        pub commit_ish: Option<String>,
     }
 
     #[derive(Debug, clap::Subcommand)]
     pub enum Subcommands {
         /// List all tags.
         List,
+        /// Delete tags, also as `--delete` or `-d`; several names are deleted together or not at all.
+        #[clap(long_flag = "delete", short_flag = 'd')]
+        Delete {
+            /// Names of the tags to delete.
+            #[clap(required = true)]
+            names: Vec<String>,
+        },
     }
 }
 

@@ -40,6 +40,46 @@ fn progress_tree() -> LogCreator {
     LogCreator
 }
 
+/// Notice a reader that closed standard output or standard error, by the failing write's error kind.
+///
+/// A command that only prints may then end quietly, like Git killed by `SIGPIPE`; the caller decides that
+/// from [`closed_reader::seen()`], never from an error's message text.
+pub mod closed_reader {
+    use std::{
+        io,
+        sync::atomic::{AtomicBool, Ordering},
+    };
+
+    static SEEN: AtomicBool = AtomicBool::new(false);
+
+    /// Whether a write through a [`Watch`] failed with [`io::ErrorKind::BrokenPipe`] in this process.
+    ///
+    /// The flag is never reset: it answers for the one command a CLI process runs. A caller that runs
+    /// several commands in one process, like a test harness, must not read it per command.
+    pub fn seen() -> bool {
+        SEEN.load(Ordering::Relaxed)
+    }
+
+    /// Wraps standard output or standard error and records a write that failed because the reader closed.
+    pub struct Watch<W>(pub W);
+
+    fn note(error: &io::Error) {
+        if error.kind() == io::ErrorKind::BrokenPipe {
+            SEEN.store(true, Ordering::Relaxed);
+        }
+    }
+
+    impl<W: io::Write> io::Write for Watch<W> {
+        fn write(&mut self, buf: &[u8]) -> io::Result<usize> {
+            self.0.write(buf).inspect_err(note)
+        }
+
+        fn flush(&mut self) -> io::Result<()> {
+            self.0.flush().inspect_err(note)
+        }
+    }
+}
+
 #[cfg(feature = "pretty-cli")]
 pub mod pretty {
     use std::io::{self, stderr, stdout};
@@ -47,7 +87,7 @@ pub mod pretty {
     use gix::progress;
     use gix::{Result, error::ResultExt};
 
-    use crate::shared::ProgressRange;
+    use crate::shared::{ProgressRange, closed_reader::Watch};
 
     pub fn prepare_and_run<T>(
         name: &str,
@@ -63,9 +103,14 @@ pub mod pretty {
 
         if !verbose {
             let stdout = stdout();
-            let mut stdout_lock = stdout.lock();
-            return gix::trace::coarse!("run")
-                .into_scope(|| run(progress::DoOrDiscard::from(None), &mut stdout_lock, &mut stderr()));
+            let mut stdout_lock = Watch(stdout.lock());
+            return gix::trace::coarse!("run").into_scope(|| {
+                run(
+                    progress::DoOrDiscard::from(None),
+                    &mut stdout_lock,
+                    &mut Watch(stderr()),
+                )
+            });
         }
 
         let progress = crate::shared::progress_tree();
@@ -79,8 +124,11 @@ pub mod pretty {
         let res = gix::trace::coarse!("run")
             .into_scope(|| run(progress::DoOrDiscard::from(Some(sub_progress)), &mut out, &mut err));
         handle.shutdown_and_wait();
-        write_output(&out, &err, &mut stdout(), &mut stderr()).or_error()?;
-        res
+        let written = write_output(&out, &err, &mut Watch(stdout()), &mut Watch(stderr()));
+        // The operation's own outcome wins over a failure to forward its buffered output.
+        let value = res?;
+        written.or_error()?;
+        Ok(value)
     }
 
     fn write_output(out: &[u8], err: &[u8], stdout: &mut dyn io::Write, stderr: &mut dyn io::Write) -> io::Result<()> {

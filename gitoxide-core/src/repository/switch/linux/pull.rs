@@ -127,6 +127,9 @@ pub fn execute(repo: gix::Repository, remote: &str, branch: &BStr) -> Result<()>
         Err(error) => {
             if !gix::interrupt::is_triggered() && !state.pull.as_ref().context("pull state")?.pinned {
                 cleanup(&repo, &state)?;
+            } else if !present(&journal(&repo))? {
+                // The refusal already cleaned up; there is nothing to continue or abort.
+                return Err(error);
             }
             Err(error.context("pull interrupted or refused; use brit pull --status, --continue or --abort"))
         }
@@ -135,7 +138,9 @@ pub fn execute(repo: gix::Repository, remote: &str, branch: &BStr) -> Result<()>
 
 fn preflight(repo: &gix::Repository) -> Result<()> {
     let root = repo.workdir().context("pull requires a populated worktree")?;
-    validate_local_history(repo)?;
+    super::object_store::validate_local_history_above_shallow_boundary(repo)?;
+    // Read the boundary before any state exists, so a malformed list refuses cleanly.
+    shallow_boundary(repo)?;
     for marker in [
         "MERGE_HEAD",
         "CHERRY_PICK_HEAD",
@@ -316,7 +321,12 @@ fn prepare_directories(repo: &gix::Repository, state: &mut Manifest) -> Result<(
     save(repo, state)
 }
 
-pub(super) fn resume_fetch(repo: gix::Repository, mut state: Manifest, shared: fs::File, abort: bool) -> Result<()> {
+pub(super) fn resume_fetch(
+    repo: gix::Repository,
+    mut state: Manifest,
+    shared: super::guard::Held,
+    abort: bool,
+) -> Result<()> {
     preflight(&repo)?;
     resume_fetch_inner(&repo, &mut state, abort)?;
     integrate(repo, state, shared, abort)
@@ -434,10 +444,23 @@ fn resume_fetch_inner(repo: &gix::Repository, state: &mut Manifest, abort: bool)
             let old = tracking_oid(repo, name.as_bstr())?;
             ensure!(old == pull.tracking_oid, "tracking reference changed during receive");
             if !force && let Some(old) = old {
-                ensure!(
-                    is_ancestor(repo, &old, &state.target_oid)?,
-                    "non-fast-forward remote tracking update refused"
-                );
+                let refusal = match reach(repo, &old, &state.target_oid, &shallow_boundary(repo)?)? {
+                    Reach::Found => None,
+                    Reach::Absent => Some("non-fast-forward remote tracking update refused".to_owned()),
+                    Reach::Hidden(boundary) => Some(format!(
+                        "remote tracking update {}",
+                        shallow_refusal(boundary, &pull.remote)
+                    )),
+                };
+                if let Some(refusal) = refusal {
+                    // The refusal changes nothing, so it leaves nothing pending: a deepening
+                    // fetch or a retried pull can run at once. Received objects stay stored.
+                    release_locks(repo, &mut locks)?;
+                    state.locks.clear();
+                    save(repo, state)?;
+                    cleanup(repo, state)?;
+                    bail!("{refusal}; received objects retained, no reference, branch or worktree changed");
+                }
             }
         }
         pull.objects = synchronize_objects(repo)?;
@@ -492,7 +515,12 @@ fn resume_fetch_inner(repo: &gix::Repository, state: &mut Manifest, abort: bool)
     checkpoint("fetch-completed")
 }
 
-pub(super) fn integrate(repo: gix::Repository, mut state: Manifest, shared: fs::File, abort: bool) -> Result<()> {
+pub(super) fn integrate(
+    repo: gix::Repository,
+    mut state: Manifest,
+    shared: super::guard::Held,
+    abort: bool,
+) -> Result<()> {
     if abort || state.aborting {
         state.aborting = true;
         save(&repo, &state)?;
@@ -501,7 +529,11 @@ pub(super) fn integrate(repo: gix::Repository, mut state: Manifest, shared: fs::
     }
     refs_match(&repo, &state)?;
     validate_objects(&repo, state.pull.as_ref().context("pull state")?)?;
-    if is_ancestor(&repo, &state.target_oid, &state.source_oid)? {
+    // In a shallow repository each decision must be proven above the boundary; one that
+    // would need the history beneath it refuses like a divergence, keeping the fetch.
+    let boundary = shallow_boundary(&repo)?;
+    let up_to_date = reach(&repo, &state.target_oid, &state.source_oid, &boundary)?;
+    if up_to_date == Reach::Found {
         // No movement: only ORIG_HEAD is part of the integration decision.
         let source_oid = state.source_oid.clone();
         let pull = state.pull.as_mut().context("pull state")?;
@@ -518,15 +550,31 @@ pub(super) fn integrate(repo: gix::Repository, mut state: Manifest, shared: fs::
         println!("Already up to date.");
         return Ok(());
     }
-    if !is_ancestor(&repo, &state.source_oid, &state.target_oid)? {
-        cleanup(&repo, &state)?;
-        bail!("Not possible to fast-forward; fetched results retained, branch and worktree unchanged");
+    match (
+        up_to_date,
+        reach(&repo, &state.source_oid, &state.target_oid, &boundary)?,
+    ) {
+        (_, Reach::Found) => {}
+        (Reach::Hidden(boundary), _) | (_, Reach::Hidden(boundary)) => {
+            cleanup(&repo, &state)?;
+            let remote = &state.pull.as_ref().context("pull state")?.remote;
+            bail!(
+                "fast-forward {}; fetched results retained, branch and worktree unchanged",
+                shallow_refusal(boundary, remote)
+            );
+        }
+        (_, Reach::Absent) => {
+            cleanup(&repo, &state)?;
+            bail!("Not possible to fast-forward; fetched results retained, branch and worktree unchanged");
+        }
     }
     let branch = BString::from(state.target.clone());
     // A normal preservation refusal leaves fetch results and no active integration.
     let retained = repo.clone();
     let result = execute_locked(repo, branch.as_bstr(), shared, Some(state));
     if result.is_err() && !gix::interrupt::is_triggered() {
+        // Releasing a start that changed nothing is cleanup: never metered.
+        let _recovery = payload::Recovery::enter();
         let pending = load(&retained)?;
         if pending.preparing {
             cleanup(&retained, &pending)?;
@@ -539,23 +587,94 @@ pub fn recover(repo: gix::Repository, abort: bool) -> Result<()> {
     recover_operation(repo, abort, true)
 }
 
-fn is_ancestor(repo: &gix::Repository, ancestor: &str, descendant: &str) -> Result<bool> {
-    let ancestor = gix::ObjectId::from_hex(ancestor.as_bytes())?;
-    let mut pending = vec![gix::ObjectId::from_hex(descendant.as_bytes())?];
-    let mut seen = BTreeSet::new();
-    while let Some(commit_id) = pending.pop() {
-        if commit_id == ancestor {
-            return Ok(true);
-        }
-        if seen.insert(commit_id) {
-            let commit = repo.find_object(commit_id)?.try_into_commit()?;
-            let decoded = commit.decode()?;
-            pending.extend(decoded.parents());
-        }
-    }
-    Ok(false)
+/// What a walk of local history proved about one commit's ancestry.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum Reach {
+    /// A path of local commits reaches the ancestor.
+    Found,
+    /// The complete local history holds no such path.
+    Absent,
+    /// No path above the shallow boundary; one may run below this boundary commit.
+    Hidden(gix::ObjectId),
 }
+
+/// The commits `.git/shallow` declares parentless; empty for a complete repository.
+fn shallow_boundary(repo: &gix::Repository) -> Result<BTreeSet<gix::ObjectId>> {
+    Ok(repo
+        .shallow_commits()?
+        .map(|commits| commits.iter().copied().collect())
+        .unwrap_or_default())
+}
+
+fn shallow_refusal(boundary: gix::ObjectId, remote: &str) -> String {
+    format!(
+        "needs history below the shallow boundary at {boundary}; deepen it first with `brit fetch -r {remote} --deepen <N>` (or `--unshallow`)"
+    )
+}
+
+/// Walk the commits reachable from `tip` without reading a parent of a `boundary` commit.
+/// Return whether `stop` was reached, and the boundary commits the walk reached.
+fn visible_history(
+    repo: &gix::Repository,
+    tip: gix::ObjectId,
+    boundary: &BTreeSet<gix::ObjectId>,
+    stop: Option<gix::ObjectId>,
+) -> Result<(bool, BTreeSet<gix::ObjectId>)> {
+    let mut pending = vec![tip];
+    let mut seen = BTreeSet::new();
+    let mut reached = BTreeSet::new();
+    while let Some(commit_id) = pending.pop() {
+        if Some(commit_id) == stop {
+            return Ok((true, reached));
+        }
+        if !seen.insert(commit_id) {
+            continue;
+        }
+        if boundary.contains(&commit_id) {
+            reached.insert(commit_id);
+            continue;
+        }
+        let commit = repo.find_object(commit_id)?.try_into_commit()?;
+        let decoded = commit.decode()?;
+        pending.extend(decoded.parents());
+    }
+    Ok((false, reached))
+}
+
+/// Whether `ancestor` is reachable from `descendant`, never reading past `boundary`.
+///
+/// The walk from `descendant` sees every commit reachable above the boundary, so any path to
+/// `ancestor` it misses runs through one of the boundary commits H it stopped at, with
+/// `ancestor` strictly below that h (h != `ancestor`, or the walk had found it). If every h in
+/// H is itself reachable from `ancestor` by a path one walk from `ancestor` proves above the
+/// boundary, `ancestor` would lie both above and below h, a cycle, so no such path exists:
+/// Absent. Every h must be proven: a single h the walk cannot reach may be exactly the one a
+/// real path runs through, so it leaves the question open as Hidden(h), never a guess.
+fn reach(
+    repo: &gix::Repository,
+    ancestor: &str,
+    descendant: &str,
+    boundary: &BTreeSet<gix::ObjectId>,
+) -> Result<Reach> {
+    let ancestor = gix::ObjectId::from_hex(ancestor.as_bytes())?;
+    let descendant = gix::ObjectId::from_hex(descendant.as_bytes())?;
+    let (found, hidden) = visible_history(repo, descendant, boundary, Some(ancestor))?;
+    if found {
+        return Ok(Reach::Found);
+    }
+    if hidden.is_empty() {
+        return Ok(Reach::Absent);
+    }
+    let (_, below_ancestor) = visible_history(repo, ancestor, boundary, None)?;
+    Ok(match hidden.difference(&below_ancestor).next() {
+        Some(&h) => Reach::Hidden(h),
+        None => Reach::Absent,
+    })
+}
+/// Verify every object reachable from `target`, down to the roots or the shallow boundary,
+/// whose commits are verified with their trees but whose absent parents are never read.
 fn validate_connectivity(repo: &gix::Repository, target: &str) -> Result<()> {
+    let boundary = shallow_boundary(repo)?;
     let mut pending = vec![gix::ObjectId::from_hex(target.as_bytes())?];
     let mut seen = BTreeSet::new();
     while let Some(object_id) = pending.pop() {
@@ -571,7 +690,9 @@ fn validate_connectivity(repo: &gix::Repository, target: &str) -> Result<()> {
                 let commit = object.try_into_commit()?;
                 let decoded = commit.decode()?;
                 pending.push(decoded.tree());
-                pending.extend(decoded.parents());
+                if !boundary.contains(&object_id) {
+                    pending.extend(decoded.parents());
+                }
             }
             gix::objs::Kind::Tree => {
                 for entry in object.try_into_tree()?.decode()?.entries {

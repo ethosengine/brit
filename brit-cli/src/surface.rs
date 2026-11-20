@@ -18,6 +18,13 @@ pub(crate) struct Surface {
 struct CommandSurface {
     name: String,
     aliases: Vec<String>,
+    /// The subcommand's flag spellings (`branch -d`, `branch --delete`), which clap parses
+    /// as the subcommand itself.
+    short_flag: Option<char>,
+    short_flag_aliases: Vec<char>,
+    long_flag: Option<String>,
+    long_flag_aliases: Vec<String>,
+    hidden: bool,
     options: Vec<ArgumentSurface>,
     positionals: Vec<ArgumentSurface>,
     subcommands: Vec<CommandSurface>,
@@ -55,6 +62,11 @@ fn command_surface(command: &Command) -> CommandSurface {
     CommandSurface {
         name: command.get_name().to_owned(),
         aliases: command.get_all_aliases().map(str::to_owned).collect(),
+        short_flag: command.get_short_flag(),
+        short_flag_aliases: command.get_all_short_flag_aliases().collect(),
+        long_flag: command.get_long_flag().map(str::to_owned),
+        long_flag_aliases: command.get_all_long_flag_aliases().map(str::to_owned).collect(),
+        hidden: command.is_hide_set(),
         options: command
             .get_arguments()
             .filter(|arg| !arg.is_positional())
@@ -114,13 +126,23 @@ mod tests {
                 Command::new("operation")
                     .alias("hidden-op")
                     .visible_alias("op")
+                    .short_flag('o')
+                    .long_flag("operate")
                     .arg(Arg::new("target").required(true)),
-            );
+            )
+            .subcommand(Command::new("secret").short_flag('S').hide(true));
         let value = serde_json::to_value(introspect(command)).unwrap();
         assert_eq!(value["evidenceKind"], "parser-surface");
         let child = &value["command"]["subcommands"][0];
         assert_eq!(child["aliases"], serde_json::json!(["hidden-op", "op"]));
         assert_eq!(child["positionals"][0]["required"], true);
+        assert_eq!(child["shortFlag"], "o");
+        assert_eq!(child["longFlag"], "operate");
+        assert_eq!(child["hidden"], false);
+        let secret = &value["command"]["subcommands"][1];
+        assert_eq!(secret["shortFlag"], "S");
+        assert_eq!(secret["longFlag"], serde_json::Value::Null);
+        assert_eq!(secret["hidden"], true);
         let inherited = child["options"]
             .as_array()
             .unwrap()

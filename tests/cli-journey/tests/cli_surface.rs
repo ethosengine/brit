@@ -37,6 +37,93 @@ fn compiled_surface_includes_composed_namespaces_and_version_provenance_without_
             "missing assembled {name}"
         );
     }
+    // Subcommand flag spellings are part of the surface: `branch -d`, `branch -m`, `tag -d`.
+    let subcommand = |parent: &str, name: &str| {
+        commands.iter().find(|command| command["name"] == parent).unwrap()["subcommands"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .find(|command| command["name"] == name)
+            .unwrap_or_else(|| panic!("missing {parent} {name}"))
+            .clone()
+    };
+    for (parent, name, short, long) in [
+        ("branch", "delete", "d", "delete"),
+        ("branch", "move", "m", "move"),
+        ("tag", "delete", "d", "delete"),
+    ] {
+        let command = subcommand(parent, name);
+        assert_eq!(command["shortFlag"], short, "{parent} {name}");
+        assert_eq!(command["longFlag"], long, "{parent} {name}");
+    }
+    // Git's read-only spellings are real subcommands; `ls-remote` exists wherever `remote` does.
+    let named = |name: &str| commands.iter().any(|command| command["name"] == name);
+    for name in ["rev-parse", "for-each-ref", "check-ref-format", "rev-list"] {
+        assert!(named(name), "missing Git spelling {name}");
+    }
+    assert_eq!(
+        named("ls-remote"),
+        named("remote"),
+        "ls-remote follows the network features"
+    );
+    let merge_base = commands.iter().find(|command| command["name"] == "merge-base").unwrap();
+    assert!(
+        merge_base["options"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .any(|arg| arg["long"] == "is-ancestor"),
+        "merge-base --is-ancestor is a flag on the existing verb"
+    );
+    let rebase = commands.iter().find(|command| command["name"] == "rebase").unwrap();
+    assert!(
+        rebase["options"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .any(|arg| arg["long"] == "retire"),
+        "rebase --retire is a flag on the existing verb"
+    );
+    assert!(
+        value["command"]["options"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .any(|arg| arg["short"] == "C" && arg["valueNames"][0] == "DIR"),
+        "global -C <DIR>"
+    );
+    // `show` is Brit's own verb now, and `diff` takes revisions and every output form.
+    let longs = |name: &str| -> Vec<String> {
+        commands
+            .iter()
+            .find(|command| command["name"] == name)
+            .unwrap_or_else(|| panic!("missing {name}"))["options"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .filter_map(|arg| arg["long"].as_str().map(str::to_owned))
+            .collect()
+    };
+    let show = longs("show");
+    for long in ["stat", "name-only", "name-status", "numstat", "no-patch", "oneline"] {
+        assert!(show.iter().any(|l| l == long), "show --{long}");
+    }
+    let diff = longs("diff");
+    for long in [
+        "cached",
+        "merge-base",
+        "stat",
+        "name-only",
+        "name-status",
+        "numstat",
+        "exit-code",
+        "quiet",
+    ] {
+        assert!(diff.iter().any(|l| l == long), "diff --{long}");
+    }
+    let force_delete = subcommand("branch", "force-delete");
+    assert_eq!(force_delete["shortFlag"], "D");
+    assert_eq!(force_delete["hidden"], true);
     let snapshot = commands.iter().find(|command| command["name"] == "snapshot").unwrap();
     assert!(!snapshot["subcommands"].as_array().unwrap().is_empty());
     assert!(value["command"]["options"]

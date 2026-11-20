@@ -29,13 +29,14 @@ switch-test-faults = ["gitoxide/switch-test-faults"]
 
 [dependencies]
 anyhow = "1.0.98"
-brit-bridge = { version = "0.1.5", path = "../brit-bridge", registry = "elohim" }
+brit-bridge = { version = "0.1.6", path = "../brit-bridge", registry = "elohim" }
+brit-epr = { version = "0.2.2", path = "../brit-epr", registry = "elohim", default-features = false }
 eprfs-core = { version = "=0.3.3", registry = "elohim" }
 eprfs-host = { version = "=0.3.3", registry = "elohim" }
 eprfs-local = { version = "=0.3.4", registry = "elohim" }
 eprfs-storage = { version = "=0.3.4", registry = "elohim" }
 tokio = { version = "1", features = ["rt"] }
-brit-graph = { version = "0.2.1", registry = "elohim", path = "../brit-graph", features = ["repo"] }
+brit-graph = { version = "0.2.2", registry = "elohim", path = "../brit-graph", features = ["repo"] }
 gitoxide = { version = "^0.61.0", registry = "elohim", path = "..", default-features = false }
 # rakia lives in a separate repo (ethosengine/rakia) and is published to the
 # internal Nexus registry by rakia's own pipeline. Consumed here as a registry
@@ -56,4 +57,5 @@ thiserror = "2"
 gix-testtools = { path = "../tests/tools", features = ["sha1"] }
 
 [build-dependencies]
-cc = "1.2"
+# 1.11 passes -march=x86-64 for x86_64 Linux, which the CPU-baseline probe relies on.
+cc = "1.11.1"

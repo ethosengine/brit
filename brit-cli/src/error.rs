@@ -56,16 +56,27 @@ pub type Result<T> = std::result::Result<T, CliError>;
 ///
 /// Configuration parsing errors can contain input bytes, so only the outer
 /// message is retained. Slot exhaustion is the one targeted exception because
-/// its typed fields are safe and actionable.
+/// its typed fields are safe and actionable: it replaces the outer message
+/// (such as "The rev-spec is malformed") with [`slot_exhaustion_report`].
 pub(crate) fn format_error(error: &(dyn std::error::Error + 'static)) -> String {
-    let message = error.to_string();
-    if let Some((current, additional)) = slot_exhaustion(error) {
-        return format!(
-            "{message}: object database slots exhausted (current: {current}, needed: {})",
-            current + additional
-        );
-    }
-    message
+    slot_exhaustion_report(error).unwrap_or_else(|| error.to_string())
+}
+
+/// The one first-class error for a repository whose pack indexes exceed the
+/// object-store slots this process may use, found anywhere in `error`'s cause
+/// chain: what happened, with both cures.
+///
+/// It covers gix's refusal to open a reduced-trust repository holding more
+/// pack indexes than it allows, and gix-odb running out of slots afterwards.
+pub(crate) fn slot_exhaustion_report(error: &(dyn std::error::Error + 'static)) -> Option<String> {
+    let (current, additional) = slot_exhaustion(error)?;
+    Some(format!(
+        "object database index slots exhausted: the repository needs at least {} index slots and this process \
+         may use {current}; its owner can consolidate its packs (`git repack -a -d`), or, if this checkout is \
+         trusted, declare it with `safe.directory` (a global entry, `-c safe.directory=<path>` or \
+         GIT_CONFIG_COUNT)",
+        current + additional
+    ))
 }
 
 /// Find the object store's slot-capacity diagnostic anywhere in the cause chain.
@@ -139,8 +150,11 @@ mod tests {
         );
         assert_eq!(
             format_error(&Lookup { source: exhausted }),
-            "object lookup failed: object database slots exhausted (current: 32, needed: 33)",
-            "the targeted diagnostic reports capacity without rendering its source"
+            "object database index slots exhausted: the repository needs at least 33 index slots and this \
+             process may use 32; its owner can consolidate its packs (`git repack -a -d`), or, if this checkout is \
+             trusted, declare it with `safe.directory` (a global entry, `-c safe.directory=<path>` or \
+             GIT_CONFIG_COUNT)",
+            "the targeted diagnostic names the cures without rendering its source or the outer wrapper"
         );
     }
 }

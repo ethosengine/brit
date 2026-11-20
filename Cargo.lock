@@ -478,6 +478,7 @@ version = "0.2.7"
 dependencies = [
  "anyhow",
  "brit-bridge",
+ "brit-epr",
  "brit-graph",
  "cc",
  "clap",
@@ -506,6 +507,7 @@ dependencies = [
  "ed25519-dalek",
  "elohim-address",
  "elohim-epr",
+ "gix-error 0.5.3",
  "gix-object 0.66.3",
  "gix-testtools",
  "hex",
@@ -528,6 +530,7 @@ dependencies = [
  "gix 0.90.0",
  "globset",
  "petgraph",
+ "regex-automata",
  "rustc-hash",
  "serde",
  "serde_json",
@@ -541,6 +544,8 @@ version = "0.0.0"
 dependencies = [
  "brit-epr",
  "gix 0.90.0",
+ "gix-testtools",
+ "tempfile",
 ]
 
 [[package]]
@@ -681,9 +686,9 @@ dependencies = [
 
 [[package]]
 name = "cc"
-version = "1.10.0"
+version = "1.11.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "86e055fa6e3e40ad6187ba25b6855eeb635d5271f8e0f0e1e9a5826b8d75bea0"
+checksum = "4ff2a8126fff0f8c839080d619675a585e61720bb12d2baceae45769fd66f155"
 dependencies = [
  "find-msvc-tools",
  "jobserver",
@@ -3011,7 +3016,7 @@ dependencies = [
  "gix-imara-diff",
  "gix-object 0.66.3",
  "gix-testtools",
- "hashbrown 0.17.1",
+ "hashbrown 0.15.5",
 ]
 
 [[package]]

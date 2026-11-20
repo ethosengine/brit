@@ -121,8 +121,19 @@ where
     if format != OutputFormat::Human {
         bail!(gix::error::unsupported("JSON output isn't implemented yet"));
     }
-    repo.remove_worktree(
-        worktree,
+    let target = repo.prepare_remove_worktree(worktree)?;
+    // The repository guard is held; another writer of that worktree makes removal refuse.
+    // A registration whose repository cannot be opened has no writer to exclude.
+    let _target_guard = match target.repository() {
+        Ok(target_repo) => Some(super::switch::other_worktree_guard(&target_repo).map_err(|err| {
+            gix::error::Error::from_boxed(
+                err.context("the worktree to remove is in use by another Brit writer")
+                    .into_boxed_dyn_error(),
+            )
+        })?),
+        Err(_) => None,
+    };
+    target.remove(
         match force {
             0 => Force::Never,
             1 => Force::DiscardChanges,

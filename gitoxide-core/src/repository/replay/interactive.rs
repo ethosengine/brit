@@ -605,6 +605,8 @@ impl Session {
         message: &[u8],
     ) -> Result<crate::repository::authoring::conflict::Outcome> {
         self.ensure_edit()?;
+        // What the authored commit and the step it completes keep, before writing.
+        self.reserve(repo, self.step_need(repo, None, true, &[])?)?;
         let authorization = self.child_authorization()?;
         let mut child = crate::repository::authoring::conflict::Session::open_owned(repo, &authorization)?;
         child.amend_bytes(repo, message)
@@ -623,6 +625,8 @@ impl Session {
         message: &[u8],
     ) -> Result<crate::repository::authoring::conflict::Outcome> {
         self.ensure_edit()?;
+        // What the authored commit and the step it completes keep, before writing.
+        self.reserve(repo, self.step_need(repo, None, true, &[])?)?;
         let authorization = self.child_authorization()?;
         let mut child = crate::repository::authoring::conflict::Session::open_owned(repo, &authorization)?;
         child.commit_split_bytes(repo, message)
@@ -630,6 +634,8 @@ impl Session {
 
     pub fn continue_edit(&mut self, repo: &gix::Repository) -> Result<Advance> {
         self.ensure_edit()?;
+        // What the authored commit and the step it completes keep, before writing.
+        self.reserve(repo, self.step_need(repo, None, true, &[])?)?;
         let authorization = self.child_authorization()?;
         let mut child = crate::repository::authoring::conflict::Session::open_owned(repo, &authorization)?;
         if child.has_pending_post_hook() {

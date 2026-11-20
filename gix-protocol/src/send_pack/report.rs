@@ -29,12 +29,11 @@ pub fn parse(input: &mut impl std::io::Read) -> Result<Report, Error> {
         false, // trace
     );
 
+    // Only a stream that really ends is an end of stream; a failed read keeps its cause.
     let unpack = match reader.read_line() {
-        Some(Ok(Ok(line))) => {
-            let data = line.as_slice().ok_or(Error::UnexpectedEof)?;
-            parse_unpack(data)?
-        }
-        Some(Ok(Err(_)) | Err(_)) => return Err(Error::UnexpectedEof),
+        Some(Ok(Ok(line))) => parse_unpack(data_of(line)?)?,
+        Some(Ok(Err(err))) => return Err(malformed(err)),
+        Some(Err(err)) => return Err(read_failure(err)),
         None => return Err(Error::UnexpectedEof),
     };
 
@@ -43,13 +42,34 @@ pub fn parse(input: &mut impl std::io::Read) -> Result<Report, Error> {
         let line = match item {
             Ok(Ok(l)) => l,
             Ok(Err(_)) => break, // decode error — treat as done
-            Err(_) => return Err(Error::UnexpectedEof),
+            Err(err) => return Err(read_failure(err)),
         };
-        let data = line.as_slice().ok_or(Error::UnexpectedEof)?;
-        refs.push(parse_command_status(data)?);
+        refs.push(parse_command_status(data_of(line)?)?);
     }
 
     Ok(Report { unpack, refs })
+}
+
+fn data_of(line: gix_transport::packetline::PacketLineRef<'_>) -> Result<&[u8], Error> {
+    line.as_slice().ok_or_else(|| Error::MalformedReport {
+        line: BString::from(format!("{line:?}")),
+    })
+}
+
+/// A bare end of stream (the packet-line reader ran out of bytes) is an end of stream;
+/// anything else the transport raised keeps its cause.
+fn read_failure(err: std::io::Error) -> Error {
+    if err.kind() == std::io::ErrorKind::UnexpectedEof && err.get_ref().is_none() {
+        Error::UnexpectedEof
+    } else {
+        Error::ReadReport(err)
+    }
+}
+
+fn malformed(err: impl std::fmt::Display) -> Error {
+    Error::MalformedReport {
+        line: BString::from(err.to_string()),
+    }
 }
 
 fn trim_lf(line: &[u8]) -> &[u8] {

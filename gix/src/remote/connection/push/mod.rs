@@ -15,6 +15,138 @@ mod transmit;
 pub use error::Error;
 pub use prepare::{Prepare, SignMode};
 
+/// What a `before_send` callback tells `Prepare::transmit_with_before_send()` about the
+/// connection it held while authorizing the push.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Authorized {
+    /// The callback judged the updates from local state and returned at once: send on the
+    /// connection whose advertisement it judged.
+    OnThisConnection,
+    /// The callback may have taken a while or run other programs, as a `pre-push` hook does.
+    /// Its connection may have gone stale and the remote may have moved since: drop it, connect
+    /// again with [`Remote::connect()`](crate::Remote::connect()), and send only if every
+    /// remote ref named by the push still has the id the callback judged.
+    Revalidate,
+}
+
+/// The conservative default: anything that returns `()` may have waited.
+///
+/// Transitional. It lets the CLI's push, whose callback returns `()` whether or not a hook ran,
+/// re-validate without changes there; today every push therefore makes two handshakes and asks
+/// the credential helper twice. A follow-up will have the CLI return `Revalidate` only when a
+/// hook actually ran and `OnThisConnection` otherwise, and reuse the first handshake's
+/// credential outcome for the reconnect.
+impl From<()> for Authorized {
+    fn from((): ()) -> Self {
+        Authorized::Revalidate
+    }
+}
+
+/// A remote ref whose id differs from the one a push was based on or aimed at.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct MovedRef {
+    /// The remote ref name.
+    pub refname: crate::bstr::BString,
+    /// The id the push expected: the judged old id, or the new id after a failed send.
+    pub expected: gix_hash::ObjectId,
+    /// The id the remote advertised instead; null if the ref is absent.
+    pub found: gix_hash::ObjectId,
+}
+
+impl MovedRef {
+    pub(crate) fn id(id: &gix_hash::ObjectId) -> String {
+        if id.is_null() { "absent".into() } else { id.to_string() }
+    }
+
+    pub(crate) fn list(refs: &[MovedRef]) -> String {
+        refs.iter()
+            .map(|moved| {
+                format!(
+                    "{} was {} when judged, now {}",
+                    moved.refname,
+                    Self::id(&moved.expected),
+                    Self::id(&moved.found)
+                )
+            })
+            .collect::<Vec<_>>()
+            .join("; ")
+    }
+}
+
+/// What a fresh connection showed after a send failed, when it did not show every update.
+#[derive(Debug)]
+pub enum Delivery {
+    /// These remote refs did not show their new id when checked (`expected` is the new id).
+    /// They may still be applied by a server that answered before it finished. `landed` names
+    /// the refs that did show their new id. Nothing was resent.
+    NotVisible {
+        /// The refs without their new id, with the id they showed instead.
+        missing: Vec<MovedRef>,
+        /// The refs that did show their new id.
+        landed: Vec<crate::bstr::BString>,
+    },
+    /// The check itself failed, so whether the push arrived is unknown.
+    Unverified(Box<Error>),
+}
+
+impl Delivery {
+    /// `None` if every command's ref shows its new id in `now`.
+    pub(crate) fn judge(
+        commands: &[gix_protocol::send_pack::Command],
+        now: &std::collections::HashMap<crate::bstr::BString, gix_hash::ObjectId>,
+        null: gix_hash::ObjectId,
+    ) -> Option<Self> {
+        let mut missing = Vec::new();
+        let mut landed = Vec::new();
+        for command in commands {
+            let found = now.get(&command.refname).copied().unwrap_or(null);
+            if found == command.new_oid {
+                landed.push(command.refname.clone());
+            } else {
+                missing.push(MovedRef {
+                    refname: command.refname.clone(),
+                    expected: command.new_oid,
+                    found,
+                });
+            }
+        }
+        (!missing.is_empty()).then_some(Delivery::NotVisible { missing, landed })
+    }
+}
+
+impl std::fmt::Display for Delivery {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            Delivery::NotVisible { missing, landed } => {
+                f.write_str("the push was not visible on the remote when checked and may still be applied; nothing was resent: ")?;
+                let listed = missing
+                    .iter()
+                    .map(|moved| {
+                        format!(
+                            "{} is {}, not {}",
+                            moved.refname,
+                            MovedRef::id(&moved.found),
+                            MovedRef::id(&moved.expected)
+                        )
+                    })
+                    .collect::<Vec<_>>()
+                    .join("; ");
+                f.write_str(&listed)?;
+                if !landed.is_empty() {
+                    let landed = landed.iter().map(ToString::to_string).collect::<Vec<_>>().join(", ");
+                    write!(f, "; already at their new id: {landed}")?;
+                }
+                Ok(())
+            }
+            Delivery::Unverified(err) => write!(
+                f,
+                "whether the push was delivered could not be checked ({}); nothing was resent",
+                transmit::error_chain(err.as_ref())
+            ),
+        }
+    }
+}
+
 use gix_transport::client::blocking_io::Transport;
 
 use crate::remote::{Connection, Direction};

@@ -895,6 +895,46 @@ fn covenant_list_drops_a_clause_filed_under_another_session() {
     assert_eq!(unverifiable_lines(&stderr(&out)).len(), 1, "{}", stderr(&out));
 }
 
+#[test]
+fn covenant_list_never_returns_a_clause_put_under_another_label() {
+    let tmp = repo();
+    let own = put_clause(tmp.path(), "victim", "mine");
+    let others: Vec<(&str, Value)> = ["victim/x", "victim%2Fx", "victim/", "victim%"]
+        .into_iter()
+        .map(|label| (label, put_clause(tmp.path(), label, "not victim's")))
+        .collect();
+    let colon = put_clause(tmp.path(), "a:b", "colon");
+    let percent = put_clause(tmp.path(), "a%3Ab", "percent");
+
+    let list = |session: &str| {
+        let out = brit(tmp.path(), &["covenant", "list", "--session", session, "--output-json"]);
+        assert!(out.status.success(), "{}", stderr(&out));
+        assert!(unverifiable_lines(&stderr(&out)).is_empty(), "{}", stderr(&out));
+        let rows: Value = serde_json::from_str(&stdout(&out)).expect("list prints JSON");
+        rows.as_array().expect("list prints an array").clone()
+    };
+    assert_eq!(list("victim"), [own]);
+    for (label, row) in others {
+        assert_eq!(list(label), [row], "{label} lists only its own clause");
+    }
+    assert_eq!(list("a:b"), [colon]);
+    assert_eq!(list("a%3Ab"), [percent]);
+    assert_eq!(
+        git(
+            tmp.path(),
+            &[
+                "for-each-ref",
+                "--format=%(refname)",
+                "refs/notes/brit/covenant/victim/"
+            ]
+        )
+        .lines()
+        .count(),
+        1,
+        "no other label's clause lies under victim's ref directory"
+    );
+}
+
 // ─── reach is gone ───────────────────────────────────────────────────────────
 
 #[test]

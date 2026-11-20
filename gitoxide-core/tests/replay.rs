@@ -1385,11 +1385,16 @@ fn replay_scratch_exhaustion_preserves_integration_and_foreign_pressure_file() -
     let pressure = repo.git_dir().join("brit-rebase/foreign-pressure");
     fs::File::create(&pressure)?.set_len(1024 * 1024 * 1024)?;
     let before = integration_snapshot(root)?;
-    let error = match Session::open(&repo) {
-        Ok(_) => anyhow::bail!("exhausted scratch admitted"),
+    // Recovery must be able to read a journal over the quota; what grows it refuses.
+    let mut session = Session::open(&repo)?;
+    let error = match session.advance(&repo) {
+        Ok(_) => anyhow::bail!("exhausted scratch admitted a step"),
         Err(error) => error,
     };
-    assert!(format!("{error:#}").contains("hard 1 GiB aggregate scratch budget"));
+    assert!(
+        format!("{error:#}").contains("scratch"),
+        "growth refuses on the quota: {error:#}"
+    );
     assert_eq!(integration_snapshot(root)?, before);
     assert_eq!(fs::metadata(&pressure)?.len(), 1024 * 1024 * 1024);
     Ok(())
@@ -1408,7 +1413,7 @@ fn oversized_encoded_journal_refuses_before_decoding_or_allocating_its_payload()
         .set_len(1024 * 1024 * 1024 + 1)?;
     let before = integration_snapshot(root)?;
     let error = Session::open(&repo).err().expect("oversized journal refused");
-    assert!(format!("{error:#}").contains("hard 1 GiB aggregate scratch budget"));
+    assert!(format!("{error:#}").contains("larger than brit ever writes"));
     assert_eq!(integration_snapshot(root)?, before);
     assert_eq!(fs::metadata(path)?.len(), 1024 * 1024 * 1024 + 1);
     Ok(())

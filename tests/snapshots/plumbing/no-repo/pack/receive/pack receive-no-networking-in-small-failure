@@ -1,5 +1,5 @@
 error: unrecognized subcommand 'receive'
 
-Usage: brit free pack <COMMAND>
+Usage: brit free pack [OPTIONS] <COMMAND>
 
 For more information, try '--help'.
