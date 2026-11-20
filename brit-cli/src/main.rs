@@ -236,6 +236,40 @@ fn change_dirs_before_command(args: &[std::ffi::OsString], command: &clap::Comma
         .unwrap_or_default()
 }
 
+/// The spelling of the global option with clap id `id` as a user types it: the flag found in `args`,
+/// else its long name, else its short one, and a short flag that takes a value shows the value too
+/// (`-C <DIR>`), never the clap id.
+fn typed_spelling(command: &clap::Command, id: &str, args: &[std::ffi::OsString]) -> String {
+    let Some(arg) = command.get_arguments().find(|arg| arg.get_id() == id) else {
+        return id.to_owned();
+    };
+    let long = arg.get_long().map(|long| format!("--{long}"));
+    let short = arg.get_short().map(|short| format!("-{short}"));
+    let typed = |spelling: &String| {
+        args.iter().skip(1).any(|candidate| {
+            let candidate = candidate.to_string_lossy();
+            candidate == spelling.as_str() || candidate.starts_with(&format!("{spelling}="))
+        })
+    };
+    let flag = [&long, &short]
+        .into_iter()
+        .flatten()
+        .find(|spelling| typed(spelling))
+        .or(long.as_ref())
+        .or(short.as_ref());
+    match flag {
+        Some(flag) if !flag.starts_with("--") && arg.get_action().takes_values() => {
+            let value = arg
+                .get_value_names()
+                .and_then(|names| names.first())
+                .map_or_else(|| "VALUE".to_owned(), |name| name.to_string());
+            format!("{flag} <{value}>")
+        }
+        Some(flag) => flag.clone(),
+        None => id.to_owned(),
+    }
+}
+
 /// Print the long help of the subcommand `matches` selected, for a spelling whose own parser met
 /// `--help` among arguments it takes verbatim (like `rev-parse HEAD --help`), and exit with clap's status.
 fn subcommand_help(command: &clap::Command, matches: &clap::ArgMatches) -> error::CliError {
@@ -521,7 +555,8 @@ fn run(capture: &mut feedback::Capture, read_only: &mut bool) -> Result<()> {
                 "--repo"
             };
             return Err(error::CliError::Args(format!(
-                "global Git option `{option}` does not apply to `{namespace}`; use the {namespace} command's `{root_option}` option"
+                "global Git option `{}` does not apply to `{namespace}`; use the {namespace} command's `{root_option}` option",
+                typed_spelling(&command, option.as_str(), &args)
             )));
         }
         let build = BuildNamespace::from_arg_matches(&matches).map_err(|e| error::CliError::Args(e.to_string()))?;

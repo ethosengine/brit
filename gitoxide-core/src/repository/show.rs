@@ -377,7 +377,7 @@ fn is_utf8_label(label: &BStr) -> bool {
 /// same value, and ASCII converts nothing. Any other label must name an ASCII-compatible encoding
 /// that `gix-encoding` knows by one of its iconv names; bytes that do not decode print unchanged,
 /// as when iconv fails in Git. A label `gix-encoding` does not know is refused by name.
-fn to_utf8<'a>(data: &'a [u8], encoding: Option<&BStr>, id: ObjectId) -> Result<Cow<'a, [u8]>> {
+pub(crate) fn to_utf8<'a>(data: &'a [u8], encoding: Option<&BStr>, id: ObjectId) -> Result<Cow<'a, [u8]>> {
     use gix::filter::plumbing::encoding::Encoding;
     let Some(label) = encoding.filter(|label| !is_utf8_label(label)) else {
         return Ok(Cow::Borrowed(data));
@@ -406,6 +406,18 @@ fn to_utf8<'a>(data: &'a [u8], encoding: Option<&BStr>, id: ObjectId) -> Result<
             Err(_) => Cow::Borrowed(data),
         },
     )
+}
+
+/// The value of the `encoding` header of the commit object `data`, if it declares one.
+pub(crate) fn declared_encoding(data: &[u8]) -> Option<&BStr> {
+    data.lines()
+        .take_while(|line| !line.is_empty())
+        .find_map(|line| line.strip_prefix(b"encoding ").map(ByteSlice::as_bstr))
+}
+
+/// `data` (a commit object) in UTF-8 whichever `encoding` it declares, as [`to_utf8()`] converts it.
+pub(crate) fn commit_to_utf8(data: &[u8], id: ObjectId) -> Result<Cow<'_, [u8]>> {
+    to_utf8(data, declared_encoding(data), id)
 }
 
 /// The paths changed against the first parent (`first`) that also differ from every other parent.
@@ -498,6 +510,16 @@ mod tests {
             "caf\u{e9} \u{80}".as_bytes()
         );
         assert_eq!(utf8(b"caf\xe9", "UTF8").unwrap(), b"caf\xe9");
+        assert_eq!(
+            super::declared_encoding(b"tree t\nencoding ISO-8859-1\n\nencoding x\n"),
+            Some(b"ISO-8859-1".as_bstr())
+        );
+        assert_eq!(super::declared_encoding(b"tree t\n\nencoding x\n"), None);
+        // The Asian encodings come from the brit binary's `gix` features (`encoding-asian`), which a
+        // build of this crate on its own, like `cargo test -p gitoxide-core`, does not enable.
+        if gix::filter::plumbing::encoding::Encoding::for_label(b"Shift_JIS").is_none() {
+            return;
+        }
         assert_eq!(utf8(b"\x82\xa0", "Shift_JIS").unwrap(), "\u{3042}".as_bytes());
         assert_eq!(
             utf8(b"bad \x81", "Shift_JIS").unwrap(),

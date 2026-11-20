@@ -754,12 +754,10 @@ fn write_info(
     if commit.kind != Kind::Commit {
         bail!(message!("Expected commit {}", id).validation());
     }
+    // Like Git, the message is re-encoded from the encoding the commit declares to UTF-8.
+    let data = super::show::commit_to_utf8(commit.data, id)?;
     // Keep message_raw_sloppy's existing byte selection without copying the title.
-    let message = commit
-        .data
-        .find(b"\n\n")
-        .map(|pos| &commit.data[pos + 2..])
-        .unwrap_or_default();
+    let message = data.find(b"\n\n").map(|pos| &data[pos + 2..]).unwrap_or_default();
     let title = message.lines().next();
     match format {
         Format::Default => write!(out, "{} ", id.to_hex_with_len(8)).or_error()?,

@@ -82,6 +82,26 @@ fn git_repository_option_cannot_redirect_a_build_write() {
 }
 
 #[test]
+fn global_option_refusals_name_the_flag_the_user_typed() {
+    let change_dir = brit(&["-C", ".", "build", "baseline", "read", "pipeline"]);
+    assert_eq!(change_dir.status.code(), Some(2), "{:?}", change_dir);
+    let stderr = String::from_utf8_lossy(&change_dir.stderr);
+    assert!(
+        stderr.contains("global Git option `-C <DIR>` does not apply to `build`"),
+        "{stderr}"
+    );
+    assert!(!stderr.contains("change_dir"), "{stderr}");
+
+    let repository = brit(&["--repository", ".", "build", "baseline", "read", "pipeline"]);
+    assert_eq!(repository.status.code(), Some(2), "{:?}", repository);
+    let stderr = String::from_utf8_lossy(&repository.stderr);
+    assert!(
+        stderr.contains("global Git option `--repository` does not apply to `build`"),
+        "{stderr}"
+    );
+}
+
+#[test]
 fn version_identifies_checkout_and_feature_family() {
     let output = brit(&["--version"]);
     assert!(output.status.success(), "version: {:?}", output);

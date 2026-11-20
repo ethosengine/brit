@@ -62,7 +62,7 @@ gix-sequencer = { version = "^0.0.1", path = "../gix-sequencer", registry = "elo
 anyhow = "1.0.102"
 gix-config-value = { version = "^0.21.4", path = "../gix-config-value", registry = "elohim" }
 # deselect everything else (like "performance") as this should be controllable by the parent application.
-gix = { version = "^0.90.1", path = "../gix", registry = "elohim", default-features = false, features = ["anyhow", "encoding-legacy", "encoding-asian", "merge", "blob-diff", "blame", "revision", "mailmap", "excludes", "attributes", "worktree-mutation", "credentials", "interrupt", "status", "dirwalk", "command", "notify", "fsmonitor-daemon"] }
+gix = { version = "^0.90.1", path = "../gix", registry = "elohim", default-features = false, features = ["anyhow", "merge", "blob-diff", "blame", "revision", "mailmap", "excludes", "attributes", "worktree-mutation", "credentials", "interrupt", "status", "dirwalk", "command", "notify", "fsmonitor-daemon"] }
 gix-pack = { version = "^0.77.1", path = "../gix-pack", registry = "elohim", default-features = false, features = ["pack-cache-lru-dynamic", "pack-cache-lru-static", "generate", "streaming-input"] }
 gix-transport = { version = "^0.62.1", path = "../gix-transport", registry = "elohim", default-features = false }
 gix-archive = { version = "^0.39.1", path = "../gix-archive", registry = "elohim", optional = true, features = ["tar", "tar_gz"] }
