@@ -610,7 +610,7 @@ jobs:
           cargo build --locked -p brit-cli --bin brit --bin brit-rebase-retained
           cargo test --locked -p brit-bridge
           debug_dir="$(just dbg)"
-          BRIT_BIN="$debug_dir/brit" BRIT_REBASE_RETAINED_BIN="$debug_dir/brit-rebase-retained" cargo test --locked -p cli-journey --test rebase --test shared_tree --test authoring --test commit_attribution --test pre_push --test explicit_leases --test commit_cleanup --test commit_amend --test commit_merge --test worktree_restore --test worktree_bounded --test switch --test pull --test broader_staging --test revision_ranges --test diff_name_only --test mutation_lock --test daily_driver --test native_authoring --test diff_stat --test context --test cli_surface
+          BRIT_BIN="$debug_dir/brit" BRIT_REBASE_RETAINED_BIN="$debug_dir/brit-rebase-retained" cargo test --locked -p cli-journey --test rebase --test shared_tree --test authoring --test commit_attribution --test pre_push --test explicit_leases --test commit_cleanup --test commit_amend --test commit_merge --test worktree_restore --test worktree_bounded --test switch --test pull --test broader_staging --test revision_ranges --test diff_name_only --test mutation_lock --test daily_driver --test native_authoring --test diff_stat --test context --test cli_surface --test broken_pipe --test change_dir --test check_ref_format --test diff_revisions --test for_each_ref --test ls_remote --test merge_base_is_ancestor --test rev_list --test rev_parse --test show --test read_only_closed_reader --test commit_signing --test filter_scope --test inherited_git_environment --test native_source --test normalize --test mock_remote --test test_repo --test runner --test brit --test rakia
       - name: Prove push transport recovery on the shipped reqwest and the curl backends
         run: |
           set -euo pipefail
@@ -755,11 +755,15 @@ jobs:
         if: always()
         env:
           RESULTS: ${{ join(needs.*.result, ' ') }}
+          NEEDS: ${{ toJSON(needs) }}
         run: |
           if [ -z "$RESULTS" ]; then
             echo "no dependency results to judge"
             exit 1
           fi
+          # Name each dependency that did not succeed, so a leg cancelled for lack of a
+          # runner (re-run it) reads differently from a code failure. Still a failure.
+          printf '%s\n' "$NEEDS" | jq -r 'to_entries[] | select(.value.result != "success") | "not success: \(.key) = \(.value.result)" + (if .value.result == "cancelled" then " (cancelled, often no runner: re-run the failed jobs)" else "" end)' || true
           for result in $RESULTS; do
             if [ "$result" != success ]; then
               echo "a dependency ended as '$result', not 'success'"
