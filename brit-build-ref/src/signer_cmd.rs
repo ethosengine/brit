@@ -29,11 +29,11 @@ pub fn show(repo: &Path, json: bool) -> anyhow::Result<()> {
     };
 
     if json {
-        println!("{}", serde_json::json!({ "agentId": agent_id }));
+        brit_epr::outln!("{}", serde_json::json!({ "agentId": agent_id }))?;
     } else if let Some(agent_id) = agent_id {
-        println!("{agent_id}");
+        brit_epr::outln!("{agent_id}")?;
     } else {
-        println!("none");
+        brit_epr::outln!("none")?;
     }
     Ok(())
 }

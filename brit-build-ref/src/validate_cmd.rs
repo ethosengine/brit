@@ -58,7 +58,7 @@ pub fn put(
 
     refs.put_validate_ref(step, check, ValidationNote::Envelope(note))?;
 
-    println!("{cid}");
+    brit_epr::outln!("{cid}")?;
     Ok(())
 }
 
@@ -73,7 +73,7 @@ pub fn get(repo: &Path, step: &str, check: &str) -> anyhow::Result<()> {
 pub fn list(repo: &Path) -> anyhow::Result<()> {
     let refs = BritRefManager::new(repo)?;
     for name in refs.list_validate_refs(None)? {
-        println!("{name}");
+        brit_epr::outln!("{name}")?;
     }
     Ok(())
 }

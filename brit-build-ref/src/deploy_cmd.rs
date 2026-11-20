@@ -60,7 +60,7 @@ pub fn put(
 
     refs.put_deploy_ref(step, env, DeployNote::Envelope(note))?;
 
-    println!("{cid}");
+    brit_epr::outln!("{cid}")?;
     Ok(())
 }
 
@@ -75,7 +75,7 @@ pub fn get(repo: &Path, step: &str, env: &str) -> anyhow::Result<()> {
 pub fn list(repo: &Path) -> anyhow::Result<()> {
     let refs = BritRefManager::new(repo)?;
     for name in refs.list_deploy_refs(None)? {
-        println!("{name}");
+        brit_epr::outln!("{name}")?;
     }
     Ok(())
 }

@@ -6,7 +6,11 @@
 //! last stderr line must see the cause, not a stack frame. A backtrace is printed only when
 //! [`BACKTRACE_ENV`] asks for one, and then before the error, so the error stays last.
 
-use std::{backtrace::Backtrace, backtrace::BacktraceStatus, error::Error, fmt::Display, fmt::Write};
+use std::{
+    backtrace::{Backtrace, BacktraceStatus},
+    error::Error,
+    fmt::{Display, Write},
+};
 
 /// Set to anything but empty or `0` to print a captured backtrace with an error.
 ///
@@ -45,6 +49,76 @@ pub fn report(error: &(dyn Error + 'static), backtrace: Option<&Backtrace>) -> S
 pub fn emit(message: impl Display) {
     use std::io::Write as _;
     let _ = writeln!(std::io::stderr().lock(), "{message}");
+}
+
+/// Exit status of a read-only command whose reader closed stdout early: 141, Git's status when `SIGPIPE` kills it.
+pub const CLOSED_READER_EXIT: u8 = 141;
+
+/// `println!` that returns its I/O error instead of panicking when stdout's reader has closed.
+///
+/// Rust ignores `SIGPIPE`, so a write to a closed pipe returns `EPIPE`, which `println!` turns into a panic. Use as
+/// `outln!(..)?;` in a command that returns `anyhow::Result` or `io::Result`, and let the binary's `main` end quietly
+/// through [`exit_for`].
+#[macro_export]
+macro_rules! outln {
+    ($($arg:tt)*) => {
+        $crate::diagnostic::stdout_line(format_args!($($arg)*))
+    };
+}
+
+/// Write `line` and a newline to stdout and flush, so a closed reader is seen here and not at process exit.
+pub fn stdout_line(line: std::fmt::Arguments<'_>) -> std::io::Result<()> {
+    use std::io::Write as _;
+    let mut out = std::io::stdout().lock();
+    writeln!(out, "{line}")?;
+    out.flush()
+}
+
+/// Whether `error` or any cause is an [`std::io::ErrorKind::BrokenPipe`] I/O error (matched by type, never by text).
+pub fn is_broken_pipe(error: &(dyn Error + 'static)) -> bool {
+    let mut next = Some(error);
+    while let Some(cause) = next {
+        if cause
+            .downcast_ref::<std::io::Error>()
+            .is_some_and(|e| e.kind() == std::io::ErrorKind::BrokenPipe)
+        {
+            return true;
+        }
+        next = cause.source();
+    }
+    false
+}
+
+/// The status a binary ends with for a failed run, or `None` when the failure should be reported as usual.
+///
+/// A closed reader is not a failure of the command: it exits quietly, with [`CLOSED_READER_EXIT`] when it was
+/// read-only (as Git killed by `SIGPIPE`), and `0` when it had already done its work and only the report was lost.
+pub fn exit_for(error: &(dyn Error + 'static), read_only: bool) -> Option<std::process::ExitCode> {
+    is_broken_pipe(error).then(|| std::process::ExitCode::from(if read_only { CLOSED_READER_EXIT } else { 0 }))
+}
+
+/// Replace the default panic report with a short, honest one naming `binary`, `version` and the panic location.
+///
+/// The hook only changes what is printed (once, ignoring a closed stderr): the panic still unwinds and the process
+/// still ends with Rust's panic status, 101. Set `RUST_BACKTRACE` to see the frames.
+pub fn install_panic_hook(binary: &'static str, version: &'static str) {
+    std::panic::set_hook(Box::new(move |info| {
+        let location = info
+            .location()
+            .map_or_else(|| "an unknown location".to_string(), ToString::to_string);
+        let payload = info.payload();
+        let message = payload
+            .downcast_ref::<&str>()
+            .copied()
+            .or_else(|| payload.downcast_ref::<String>().map(String::as_str))
+            .unwrap_or("(no message)");
+        emit(format_args!(
+            "{binary} {version}: internal error: panicked at {location}: {message}\nThis is a brit bug; please report it with the command you ran. Set RUST_BACKTRACE=1 for frames."
+        ));
+        if std::env::var_os("RUST_BACKTRACE").is_some_and(|v| !v.is_empty() && v != "0") {
+            emit(std::backtrace::Backtrace::force_capture());
+        }
+    }));
 }
 
 /// Whether [`BACKTRACE_ENV`] asks for backtraces.

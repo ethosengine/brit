@@ -15,10 +15,11 @@ use std::process::ExitCode;
 
 use brit_epr::{
     diagnostic::{emit, render_context},
-    parse_pillar_trailers, validate_pillar_trailers,
+    parse_pillar_trailers, validate_pillar_trailers, PillarTrailers,
 };
 
 fn main() -> ExitCode {
+    brit_epr::diagnostic::install_panic_hook("brit-verify", env!("CARGO_PKG_VERSION"));
     let args: Vec<String> = std::env::args().collect();
 
     let (rev, repo_path) = match parse_args(&args) {
@@ -70,27 +71,39 @@ fn main() -> ExitCode {
     let trailers = parse_pillar_trailers(decoded.message.as_ref());
 
     match validate_pillar_trailers(&trailers) {
-        Ok(()) => {
-            println!("✓ pillar trailers valid for {rev}");
-            println!("  Lamad: {}", trailers.lamad.as_deref().unwrap_or("-"));
-            println!("  Shefa: {}", trailers.shefa.as_deref().unwrap_or("-"));
-            println!("  Qahal: {}", trailers.qahal.as_deref().unwrap_or("-"));
-            if let Some(ref c) = trailers.lamad_node {
-                println!("  Lamad-Node: {c}");
+        Ok(()) => match print_valid(&rev, &trailers) {
+            Ok(()) => ExitCode::SUCCESS,
+            // The reader closed stdout early: end quietly like Git killed by `SIGPIPE`, never with a panic.
+            Err(e) if e.kind() == std::io::ErrorKind::BrokenPipe => {
+                ExitCode::from(brit_epr::diagnostic::CLOSED_READER_EXIT)
             }
-            if let Some(ref c) = trailers.shefa_node {
-                println!("  Shefa-Node: {c}");
+            Err(e) => {
+                emit(render_context("failed to write the result to stdout", &e));
+                ExitCode::from(3)
             }
-            if let Some(ref c) = trailers.qahal_node {
-                println!("  Qahal-Node: {c}");
-            }
-            ExitCode::SUCCESS
-        }
+        },
         Err(e) => {
             emit(format_args!("✗ pillar validation failed for {rev}: {e}"));
             ExitCode::FAILURE
         }
     }
+}
+
+fn print_valid(rev: &str, trailers: &PillarTrailers) -> std::io::Result<()> {
+    brit_epr::outln!("✓ pillar trailers valid for {rev}")?;
+    brit_epr::outln!("  Lamad: {}", trailers.lamad.as_deref().unwrap_or("-"))?;
+    brit_epr::outln!("  Shefa: {}", trailers.shefa.as_deref().unwrap_or("-"))?;
+    brit_epr::outln!("  Qahal: {}", trailers.qahal.as_deref().unwrap_or("-"))?;
+    if let Some(ref c) = trailers.lamad_node {
+        brit_epr::outln!("  Lamad-Node: {c}")?;
+    }
+    if let Some(ref c) = trailers.shefa_node {
+        brit_epr::outln!("  Shefa-Node: {c}")?;
+    }
+    if let Some(ref c) = trailers.qahal_node {
+        brit_epr::outln!("  Qahal-Node: {c}")?;
+    }
+    Ok(())
 }
 
 fn parse_args(args: &[String]) -> Result<(String, String), String> {

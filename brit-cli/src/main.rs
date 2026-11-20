@@ -599,6 +599,7 @@ fn diagnostic(error: &error::CliError) -> String {
 }
 
 fn main() -> ExitCode {
+    brit_epr::diagnostic::install_panic_hook("brit", env!("CARGO_PKG_VERSION"));
     gix::utils::stream::Budget::share_process_quota();
     let mut capture = feedback::Capture::new();
     let mut read_only = false;
