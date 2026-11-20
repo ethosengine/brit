@@ -113,7 +113,7 @@ pub fn put(
 
     refs.put_build_ref(step, commit, BuildNote::Envelope(note))?;
 
-    println!("{cid}");
+    brit_epr::outln!("{cid}")?;
     Ok(())
 }
 
@@ -143,7 +143,7 @@ pub fn find(repo: &Path, step: &str, inputs_hash: &str) -> anyhow::Result<()> {
         .into_iter()
         .map(|(commit, note)| Ok(serde_json::json!({ "commit": commit, "attestation": note.view()? })))
         .collect::<anyhow::Result<Vec<serde_json::Value>>>()?;
-    println!("{}", serde_json::to_string(&rows)?);
+    brit_epr::outln!("{}", serde_json::to_string(&rows)?)?;
     for (commit, reason) in &scan.unverifiable {
         crate::lookup_out::unverifiable(commit, reason);
     }
@@ -156,7 +156,7 @@ pub fn find(repo: &Path, step: &str, inputs_hash: &str) -> anyhow::Result<()> {
 pub fn list(repo: &Path) -> anyhow::Result<()> {
     let refs = BritRefManager::new(repo)?;
     for name in refs.list_build_refs(None)? {
-        println!("{name}");
+        brit_epr::outln!("{name}")?;
     }
     Ok(())
 }

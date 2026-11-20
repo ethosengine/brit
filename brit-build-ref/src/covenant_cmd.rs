@@ -69,12 +69,12 @@ pub fn put(repo: &Path, args: &PutArgs<'_>) -> anyhow::Result<()> {
     let cid = refs.put_covenant_clause(clause)?;
 
     if args.output_json {
-        println!(
+        brit_epr::outln!(
             "{}",
             serde_json::to_string(&serde_json::json!({ "cid": cid, "clause": view }))?
-        );
+        )?;
     } else {
-        println!("{cid}");
+        brit_epr::outln!("{cid}")?;
     }
     Ok(())
 }
@@ -97,13 +97,13 @@ pub fn list(repo: &Path, session: &str, output_json: bool) -> anyhow::Result<()>
             .iter()
             .map(|(_, record)| record_row(record))
             .collect::<Result<Vec<_>, _>>()?;
-        println!("{}", serde_json::to_string(&rows)?);
+        brit_epr::outln!("{}", serde_json::to_string(&rows)?)?;
     } else if scan.verified.is_empty() {
-        println!("[]");
+        brit_epr::outln!("[]")?;
     } else {
         for (_, r) in &scan.verified {
             let body = r.clause.body();
-            println!("{} {} {} {}", r.cid, body.valid_from, body.kind.as_str(), body.party);
+            brit_epr::outln!("{} {} {} {}", r.cid, body.valid_from, body.kind.as_str(), body.party)?;
         }
     }
     for (at, reason) in &scan.unverifiable {
@@ -127,9 +127,9 @@ pub fn show(repo: &Path, cid: &str, output_json: bool) -> anyhow::Result<()> {
         Lookup::Held { at, reason } => anyhow::bail!("no covenant clause with cid {cid}: held: {at} {reason}"),
     };
     if output_json {
-        println!("{}", serde_json::to_string(&row)?);
+        brit_epr::outln!("{}", serde_json::to_string(&row)?)?;
     } else {
-        println!("{}", serde_json::to_string_pretty(&row)?);
+        brit_epr::outln!("{}", serde_json::to_string_pretty(&row)?)?;
     }
     Ok(())
 }

@@ -16,7 +16,7 @@ use brit_epr::{
 pub fn print<B: NoteBody>(lookup: Lookup<VersionedNote<B>>, miss: &str) -> anyhow::Result<()> {
     match lookup {
         // Emitted from the typed note, never from the stored bytes.
-        Lookup::Verified(note) => println!("{}", serde_json::to_string_pretty(&note.view()?)?),
+        Lookup::Verified(note) => brit_epr::outln!("{}", serde_json::to_string_pretty(&note.view()?)?)?,
         Lookup::Absent => emit(miss),
         Lookup::Unverifiable { at, reason } => {
             emit(miss);

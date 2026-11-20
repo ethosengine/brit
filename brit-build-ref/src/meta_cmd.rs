@@ -77,7 +77,7 @@ pub fn seal(repo: &Path, dir: &Path) -> anyhow::Result<()> {
         exports,
     };
     let cid = store.put(&meta)?;
-    println!("{cid}");
+    brit_epr::outln!("{cid}")?;
     Ok(())
 }
 
@@ -91,7 +91,7 @@ pub fn verify(repo: &Path, cid: &str) -> anyhow::Result<()> {
     if recomputed != parsed {
         anyhow::bail!("CID mismatch: stored {parsed} recomputes to {recomputed}");
     }
-    println!("ok {parsed}");
+    brit_epr::outln!("ok {parsed}")?;
     Ok(())
 }
 
@@ -107,7 +107,7 @@ pub fn status(_repo: &Path, dir: &Path) -> anyhow::Result<()> {
         let slug = brit_epr::engine::cite::extract_id(fm).unwrap_or_default();
         for edge in brit_epr::engine::cite::extract_cites(fm) {
             let v = format!("{:?}", verdict(&edge, &idx)).to_lowercase();
-            println!("{v} {slug}: {} -> {}", path.display(), edge.ref_);
+            brit_epr::outln!("{v} {slug}: {} -> {}", path.display(), edge.ref_)?;
         }
     }
     Ok(())

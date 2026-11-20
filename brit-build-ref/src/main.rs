@@ -281,10 +281,29 @@ enum ValidateCmd {
 
 // ─── Entry point ──────────────────────────────────────────────────────────────
 
+/// Whether the command only reads: a closed stdout then ends it as Git killed by `SIGPIPE`.
+fn is_read_only(command: &TopCommand) -> bool {
+    match command {
+        TopCommand::Build { cmd } => !matches!(cmd, BuildCmd::Put { .. }),
+        TopCommand::Deploy { cmd } => !matches!(cmd, DeployCmd::Put { .. }),
+        TopCommand::Validate { cmd } => !matches!(cmd, ValidateCmd::Put { .. }),
+        TopCommand::Covenant { cmd } => !matches!(cmd, CovenantCmd::Put { .. }),
+        TopCommand::Meta { cmd } => !matches!(cmd, MetaCmd::Seal { .. }),
+        TopCommand::Signer { .. } => true,
+    }
+}
+
 fn main() -> std::process::ExitCode {
-    match run() {
+    brit_epr::diagnostic::install_panic_hook("brit-build-ref", env!("CARGO_PKG_VERSION"));
+    let cli = Cli::parse();
+    let read_only = is_read_only(&cli.command);
+    match run(cli) {
         Ok(()) => std::process::ExitCode::SUCCESS,
+        // A reader that closed stdout early ends the command quietly, never with a panic or a report.
         Err(error) => {
+            if let Some(code) = brit_epr::diagnostic::exit_for(error.as_ref(), read_only) {
+                return code;
+            }
             // The shared printer: the cause chain, last, and a backtrace only on `BRIT_BACKTRACE`.
             brit_epr::diagnostic::emit(brit_epr::diagnostic::report(error.as_ref(), Some(error.backtrace())));
             std::process::ExitCode::FAILURE
@@ -292,8 +311,7 @@ fn main() -> std::process::ExitCode {
     }
 }
 
-fn run() -> anyhow::Result<()> {
-    let cli = Cli::parse();
+fn run(cli: Cli) -> anyhow::Result<()> {
     let repo = cli.repo.canonicalize().unwrap_or_else(|_| cli.repo.clone());
 
     match cli.command {
