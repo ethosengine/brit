@@ -93,7 +93,7 @@ pub(crate) fn reqwest_backend(
     /// show the rule and its exception in seconds. Not a supported configuration.
     const DEADLINE_OVERRIDE: &str = "BRIT_HTTP_REQUEST_DEADLINE_SECONDS";
     /// reqwest has no per-request "never"; a century is one without overflowing an `Instant`.
-    const UNBOUNDED: Duration = Duration::from_secs(100 * 365 * 24 * 60 * 60);
+    const UNBOUNDED: Duration = Duration::from_hours(100 * 365 * 24);
 
     let deadline = std::env::var(DEADLINE_OVERRIDE)
         .ok()
