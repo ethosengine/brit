@@ -39,6 +39,7 @@ fn hooks_directory(repo: &gix::Repository) -> Result<(PathBuf, bool)> {
 /// configured `core.hooksPath` that is not a directory, or a `name` entry that is not an executable
 /// file (a dangling link included). `Ok(None)` means no hook is installed where hooks are looked for.
 /// `bypass` names the option that runs the operation without its hook.
+#[cfg(feature = "blocking-client")]
 pub(super) fn gating_hook_path(repo: &gix::Repository, name: &str, bypass: &str) -> Result<Option<PathBuf>> {
     let (directory, configured) = hooks_directory(repo)?;
     if configured && !directory.is_dir() {
