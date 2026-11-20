@@ -9,6 +9,8 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.0.0/); ver
 
 ## Unreleased
 
+## 0.3.0 — 2026-11-20
+
 ### Added
 
 - `brit push --atomic` asks the remote to apply every update or none (the `atomic`
