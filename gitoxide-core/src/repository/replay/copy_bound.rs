@@ -55,11 +55,15 @@
 //! with one stop's bytes, a resolution as large as the largest step and the
 //! largest version staged at once for publication. It then scales that sum by
 //! [`SAFETY`] for the members it does not model (proposals, retention recipes,
-//! invocation records) and for what the model under-estimates: a conflicted file
-//! written in the `diff3` style also holds the base version, so it can exceed the
-//! sum of the two versions a step is modelled with. The per-unit constants are
-//! measured maxima rounded up. Admission, with the exact state image, also counts
-//! the stop's records.
+//! invocation records). The factor does NOT make the model an upper bound in two
+//! measured cases, so an admitted rebase can still be refused at a later step,
+//! before that step writes anything: a conflicted file written in the `diff3` or
+//! `zdiff3` style also holds the base version, which is unbounded relative to the
+//! two versions a step is modelled with; and admission runs before the sequence
+//! editor, so it counts no `edit` stop, whose accepted amend archives a receipt for
+//! every object of the stop's tree. `docs/rebase.md` lists both. The per-unit
+//! constants are measured maxima rounded up. Admission, with the exact state image,
+//! also counts the stop's records.
 //!
 //! What a decision writes is modelled from the write paths, where a payload of
 //! bytes the journal already keeps is not stored again: the initial checkout
@@ -102,8 +106,8 @@ const STATE_FIXED_BYTES: u64 = 64 * 1024;
 /// it is replaced.
 pub(super) const DECISION_IMAGES: u64 = 3;
 /// The factor, as a ratio, applied to the modelled journal for the members the
-/// bound does not model and for a `diff3` conflict's base version. Measured
-/// unmodelled members stayed under 10% of a copy.
+/// bound does not model. Measured unmodelled members stayed under 10% of a copy.
+/// It does not cover a `diff3` conflict's base version (see the module docs).
 pub(super) const SAFETY: (u64, u64) = (5, 4);
 
 /// `bytes` scaled by [`SAFETY`].

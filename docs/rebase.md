@@ -125,6 +125,32 @@ reserved for before it writes anything; a refused step names `--abort`. A
 `--skip` writes a retained copy under the limit too, and reserves for it the
 same way. Each refusal says whether the journal or a retained copy refused it.
 
+Admission does not see everything a rebase will write, so an admitted rebase can
+still be refused at a later step. Such a refusal comes before the step writes
+anything and names `--abort`, which restores the original state exactly; nothing
+strands. Three cases are known, each measured at a lowered limit:
+
+- An `edit` stop. Admission runs before the sequence editor, so it counts no edit
+  stop. Accepting an amend archives into the journal a receipt for every object of
+  the stop's whole tree, so one edit-and-amend costs about the size of the tree's
+  files, not of the edited file, and `--continue` after an amend of unchanged size
+  can be refused. Scaled to the real limit that is an edited file of roughly 138
+  to 166 MB in a tree holding little else; a repository whose tree approaches the
+  limit cannot edit-and-amend under Brit at all.
+- A conflict under `merge.conflictStyle` `diff3` or `zdiff3`. The conflicted file
+  also holds the base version, which the estimate does not count. Where the base
+  is much larger than both sides, the rebase is refused when the conflict is found
+  or at the step after it.
+- `--stage --expand-scope` of a large file reserves about half of what it then
+  writes. At a tight limit it can fail part-way and leave a payload in the
+  journal; `--status` does not mention it, and a retry is refused. `--abort`
+  restores `HEAD` and keeps the file.
+
+In the first two cases the work done at the stop (the amend, the resolution) is
+then kept only in the retained copy `--abort` writes under
+`.git/brit-rebase-retained/`. `git rebase` is the fallback for a rebase refused
+this way.
+
 `--abort` and cleanup are never refused by the limit, in any phase: the abort's
 own decisions, its records and the retained copy it writes, and the cleanup of a
 completed or aborted rebase are unmetered. Only real disk space bounds them. A
@@ -144,8 +170,9 @@ before anything changes, a rebase whose retained copy would certainly not fit:
 one whose history's objects alone exceed the limit (at the start), or whose copy's
 members already exceed it (once preparation finishes). After admission the copy
 is never tested, and an abort's or a cleanup's copy can grow past the limit with
-the rebase: Admission promises the plan, one stop and its resolution; a copy that is not metered must not refuse a step admission promised, and refusing a `--stage` after the user resolved a conflict is the worst place to say no. After admission only the metered journal, and the
-retained copy a `--skip` writes under the limit, can refuse a step.
+the rebase: a copy that is not metered must not refuse a step. After admission
+only the metered journal, and the retained copy a `--skip` writes under the
+limit, can refuse a step (the cases listed above).
 Those fixtures, which completed under the limit before the recovery rules were
 added, complete again.
 

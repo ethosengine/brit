@@ -333,9 +333,21 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.0.0/); ver
   stayed under 0.34 GB. Only a copy that certainly cannot fit is refused, before anything
   changes: a history whose objects alone exceed the limit, and a copy whose members already
   exceed it at admission. After admission the copy is never tested and can grow past the
-  limit with the rebase: admission promises the plan, one stop and its resolution, and a copy
-  that is not metered must not refuse a step admission promised. After admission only the
-  metered journal, and a `--skip`'s metered copy, can refuse a step.
+  limit with the rebase: a copy that is not metered must not refuse a step. After admission
+  only the metered journal, and a `--skip`'s metered copy, can refuse a step.
+- Known limits of the journal's admission, each measured at a lowered limit by this lane's
+  reviewer: an admitted rebase can still be refused at a later step, before that step writes
+  anything, with `--abort` restoring the original state exactly. (1) An `edit` stop:
+  admission runs before the sequence editor and counts no edit stop, and accepting an amend
+  archives a receipt for every object of the stop's whole tree, so `--continue` after an
+  amend of unchanged size can be refused (scaled to the real limit, an edited file of roughly
+  138 to 166 MB in a tree holding little else). (2) A conflict under `merge.conflictStyle`
+  `diff3` or `zdiff3` whose base is much larger than both sides: the conflicted file holds
+  the base too, and the rebase is refused when the conflict is found or at the step after it.
+  (3) `--stage --expand-scope` of a large file reserves about half of what it writes and can
+  fail part-way at a tight limit, leaving a payload in the journal that `--status` does not
+  mention; `--abort` restores `HEAD` and keeps the file. In (1) and (2) the work done at the
+  stop is then kept only in the retained copy under `.git/brit-rebase-retained/`.
 - `brit rebase --continue` at an edit stop no longer reserves for a state record many times
   larger than the one it writes: the edited file adopted from the authoring session was
   counted at its inline encoding (about twelve times its size, three times over) instead of as
