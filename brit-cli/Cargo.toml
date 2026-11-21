@@ -43,8 +43,8 @@ gitoxide = { version = "^0.61.1", registry = "elohim", path = "..", default-feat
 # dependency so brit's standalone CI can resolve it. For monorepo development
 # against a local rakia checkout, a `paths` override in .cargo/config.toml
 # redirects these to ../rakia (and is silently ignored where it's absent).
-rakia-core = { version = "0.1", registry = "elohim" }
-rakia-brit = { version = "0.1", registry = "elohim" }
+rakia-core = { version = "0.1.2", registry = "elohim" }
+rakia-brit = { version = "0.1.2", registry = "elohim" }
 
 clap = { version = "4", features = ["derive"] }
 gix = { version = "^0.90.1", path = "../gix", registry = "elohim", default-features = false, features = ["basic", "revision", "blob-diff", "sha1", "sha256"] }

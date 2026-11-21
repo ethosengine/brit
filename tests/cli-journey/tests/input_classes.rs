@@ -283,3 +283,38 @@ fn sources_mode_does_not_propagate_from_build_process_only_step() -> Result<()> 
     );
     Ok(())
 }
+
+#[test]
+fn function_suffixed_pipeline_file_moves_the_all_key_it_selects_under() -> Result<()> {
+    let repo = TestRepo::new("input-classes-function-suffix")?;
+    repo.commit_file("src/input.txt", "source\n")?;
+    repo.commit_file("ci/Jenkinsfile", "pipeline version 1\n")?;
+    repo.commit_file(
+        "build-manifest.json",
+        &manifest(
+            "fixture",
+            serde_json::json!({"compile": step(&["src/**"], &["ci/Jenkinsfile@buildApp"], &[])}),
+        ),
+    )?;
+    let before = repo.head_id()?;
+    let after = repo.commit_file("ci/Jenkinsfile", "pipeline version 2\n")?;
+
+    let all_affected = affected(repo.path(), "ci/Jenkinsfile", Some("all"))?;
+    assert_eq!(input_classes(&all_affected, "fixture:compile"), ["buildProcess"]);
+    assert_ne!(
+        fingerprint(repo.path(), &before, "compile", Some("all"))?,
+        fingerprint(repo.path(), &after, "compile", Some("all"))?,
+        "a change that selects the step under all moves its all key"
+    );
+    assert_eq!(
+        fingerprint(repo.path(), &before, "compile", Some("sources"))?,
+        fingerprint(repo.path(), &after, "compile", Some("sources"))?,
+        "the pipeline file stays out of the sources key"
+    );
+    assert_eq!(
+        fingerprint(repo.path(), &before, "compile", None)?,
+        fingerprint(repo.path(), &after, "compile", None)?,
+        "flag omitted keeps the legacy union, whose suffixed glob matches no file"
+    );
+    Ok(())
+}

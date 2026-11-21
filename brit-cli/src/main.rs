@@ -153,9 +153,10 @@ struct FingerprintArgs {
     /// Git ref or SHA to fingerprint against (default: HEAD)
     #[arg(long, default_value = "HEAD")]
     commit: String,
-    /// Select source inputs alone or sources plus build-process inputs
-    #[arg(long, value_enum, default_value = "all")]
-    inputs: InputsArg,
+    /// Select source inputs alone or sources plus build-process inputs; omitted, the
+    /// legacy union and today's CID
+    #[arg(long, value_enum)]
+    inputs: Option<InputsArg>,
 }
 
 #[derive(Subcommand)]
@@ -198,9 +199,12 @@ fn run_build(command: Command) -> Result<()> {
             args.since.as_deref(),
             args.pipeline.as_deref(),
         ),
-        Command::Fingerprint(args) => {
-            commands::fingerprint::run(&args.manifest, args.step.as_deref(), &args.commit, args.inputs.into())
-        }
+        Command::Fingerprint(args) => commands::fingerprint::run(
+            &args.manifest,
+            args.step.as_deref(),
+            &args.commit,
+            args.inputs.map(Into::into),
+        ),
         Command::Baseline(BaselineCmd::Read { pipeline, repo }) => commands::baseline::read(&repo, &pipeline),
         Command::Baseline(BaselineCmd::Write { pipeline, commit, repo }) => {
             commands::baseline::write(&repo, &pipeline, &commit)

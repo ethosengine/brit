@@ -54,7 +54,7 @@ pub fn run(
     manifest_path: &Path,
     step_filter: Option<&str>,
     commit_ref: &str,
-    selection: rakia_core::inputs::InputSelection,
+    selection: Option<rakia_core::inputs::InputSelection>,
 ) -> Result<()> {
     let text = std::fs::read_to_string(manifest_path)?;
     let m: rakia_core::manifest::BuildManifest = serde_json::from_str(&text)?;
@@ -90,16 +90,20 @@ pub fn run(
             }
         }
         let fp = match selection {
-            rakia_core::inputs::InputSelection::All => {
+            // The legacy union: buildProcess entries go to the glob verbatim, as before
+            // `--inputs` existed, so a flag-omitted CID is unchanged.
+            None => {
                 let mut all_patterns: Vec<String> = step.inputs.sources.clone();
                 all_patterns.extend(step.inputs.build_process.iter().cloned());
                 brit_graph::fingerprint::ContentFingerprint::from_repo_globs(&repo, commit_id, &all_patterns)
             }
-            rakia_core::inputs::InputSelection::Sources => {
+            // The classified selections share rakia's rule with the classified planner, so a
+            // change that selects a step under a selection also moves its key under it.
+            Some(selection) => {
                 let patterns = rakia_core::inputs::step_input_patterns(
                     &step.inputs.sources,
                     &step.inputs.build_process,
-                    rakia_core::inputs::InputSelection::Sources,
+                    selection,
                 );
                 brit_graph::fingerprint::ContentFingerprint::from_repo_globs_excluding(
                     &repo,
