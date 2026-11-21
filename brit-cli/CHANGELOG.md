@@ -9,6 +9,25 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.0.0/); ver
 
 ## Unreleased
 
+## 0.3.1 — 2026-11-21
+
+### Added
+
+- `brit build affected --inputs sources|all` keeps a step's two input classes apart. With the
+  flag omitted, the planner and the JSON are as before. With it, each `affected_by` entry
+  carries `inputClass` (`sources`, `buildProcess` or `upstream`), and a step lists every class
+  that matched, each with its own first matching path. `sources` selects from a step's sources
+  alone, minus its own `buildProcess`, so a step selected only by its pipeline file is not
+  selected, and neither are its dependents.
+- `brit build fingerprint --inputs sources|all`. Omitted: the same CID and JSON as before.
+  `sources` leaves the pipeline file's bytes out of the step's fingerprint, including where a
+  source glob covers it. `all` hashes the sources and the buildProcess files the planner
+  matches (a `File@fn` entry counts as `File`).
+
+### Changed
+
+- Requires rakia-core and rakia-brit 0.1.2 (`inputs`, `plan_from_changes_classified`).
+
 ## 0.3.0 — 2026-11-20
 
 ### Added
