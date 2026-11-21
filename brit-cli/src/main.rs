@@ -100,6 +100,21 @@ enum GraphCmd {
     },
 }
 
+#[derive(Clone, Copy, clap::ValueEnum)]
+enum InputsArg {
+    Sources,
+    All,
+}
+
+impl From<InputsArg> for rakia_core::inputs::InputSelection {
+    fn from(value: InputsArg) -> Self {
+        match value {
+            InputsArg::Sources => Self::Sources,
+            InputsArg::All => Self::All,
+        }
+    }
+}
+
 #[derive(clap::Args)]
 struct AffectedArgs {
     #[arg(long, default_value = ".")]
@@ -110,6 +125,9 @@ struct AffectedArgs {
     /// Compute affected from changes since the given git ref (e.g. baseline)
     #[arg(long)]
     since: Option<String>,
+    /// Select source inputs alone or sources plus build-process inputs
+    #[arg(long, value_enum)]
+    inputs: Option<InputsArg>,
 }
 
 #[derive(clap::Args)]
@@ -135,6 +153,9 @@ struct FingerprintArgs {
     /// Git ref or SHA to fingerprint against (default: HEAD)
     #[arg(long, default_value = "HEAD")]
     commit: String,
+    /// Select source inputs alone or sources plus build-process inputs
+    #[arg(long, value_enum, default_value = "all")]
+    inputs: InputsArg,
 }
 
 #[derive(Subcommand)]
@@ -165,14 +186,21 @@ fn run_build(command: Command) -> Result<()> {
         Command::Run(args) => native_task::run(args),
         Command::Graph(GraphCmd::Discover { repo }) => commands::graph_discover::run(&repo),
         Command::Graph(GraphCmd::Show { repo, format }) => commands::graph_show::run(&repo, &format),
-        Command::Affected(args) => commands::affected::run(&args.repo, args.files.as_deref(), args.since.as_deref()),
+        Command::Affected(args) => commands::affected::run(
+            &args.repo,
+            args.files.as_deref(),
+            args.since.as_deref(),
+            args.inputs.map(Into::into),
+        ),
         Command::Plan(args) => commands::plan::run(
             &args.repo,
             args.files.as_deref(),
             args.since.as_deref(),
             args.pipeline.as_deref(),
         ),
-        Command::Fingerprint(args) => commands::fingerprint::run(&args.manifest, args.step.as_deref(), &args.commit),
+        Command::Fingerprint(args) => {
+            commands::fingerprint::run(&args.manifest, args.step.as_deref(), &args.commit, args.inputs.into())
+        }
         Command::Baseline(BaselineCmd::Read { pipeline, repo }) => commands::baseline::read(&repo, &pipeline),
         Command::Baseline(BaselineCmd::Write { pipeline, commit, repo }) => {
             commands::baseline::write(&repo, &pipeline, &commit)

@@ -1,11 +1,11 @@
 //! brit fingerprint — content-addressed hash of step inputs.
 //!
-//! Resolves each step's source + buildProcess globs against the git tree at
-//! the given commit (default HEAD), reads matching blob contents, and computes
-//! a deterministic ContentFingerprint per step. A gitlink a glob can reach is
-//! an input keyed by its pinned commit, listed under `gitlinks`; a symlink a
-//! glob matches or reaches through is keyed by its own object id (its target
-//! path, not the file it points to), listed under `symlinks`.
+//! Resolves each step's selected input globs against the git tree at the given
+//! commit (default HEAD), reads matching blob contents, and computes a
+//! deterministic ContentFingerprint per step. A gitlink a glob can reach is an
+//! input keyed by its pinned commit, listed under `gitlinks`; a symlink a glob
+//! matches or reaches through is keyed by its own object id (its target path,
+//! not the file it points to), listed under `symlinks`.
 
 use std::path::Path;
 
@@ -50,7 +50,12 @@ struct GitlinkInput {
     commit: String,
 }
 
-pub fn run(manifest_path: &Path, step_filter: Option<&str>, commit_ref: &str) -> Result<()> {
+pub fn run(
+    manifest_path: &Path,
+    step_filter: Option<&str>,
+    commit_ref: &str,
+    selection: rakia_core::inputs::InputSelection,
+) -> Result<()> {
     let text = std::fs::read_to_string(manifest_path)?;
     let m: rakia_core::manifest::BuildManifest = serde_json::from_str(&text)?;
 
@@ -84,11 +89,27 @@ pub fn run(manifest_path: &Path, step_filter: Option<&str>, commit_ref: &str) ->
                 continue;
             }
         }
-        let mut all_patterns: Vec<String> = step.inputs.sources.clone();
-        all_patterns.extend(step.inputs.build_process.iter().cloned());
-
-        let fp = brit_graph::fingerprint::ContentFingerprint::from_repo_globs(&repo, commit_id, &all_patterns)
-            .map_err(|e| CliError::Args(format!("fingerprint compute failed for step '{name}': {e}")))?;
+        let fp = match selection {
+            rakia_core::inputs::InputSelection::All => {
+                let mut all_patterns: Vec<String> = step.inputs.sources.clone();
+                all_patterns.extend(step.inputs.build_process.iter().cloned());
+                brit_graph::fingerprint::ContentFingerprint::from_repo_globs(&repo, commit_id, &all_patterns)
+            }
+            rakia_core::inputs::InputSelection::Sources => {
+                let patterns = rakia_core::inputs::step_input_patterns(
+                    &step.inputs.sources,
+                    &step.inputs.build_process,
+                    rakia_core::inputs::InputSelection::Sources,
+                );
+                brit_graph::fingerprint::ContentFingerprint::from_repo_globs_excluding(
+                    &repo,
+                    commit_id,
+                    &patterns.include,
+                    &patterns.exclude,
+                )
+            }
+        }
+        .map_err(|e| CliError::Args(format!("fingerprint compute failed for step '{name}': {e}")))?;
 
         out.push(StepFingerprint {
             pipeline: m.pipeline.clone(),

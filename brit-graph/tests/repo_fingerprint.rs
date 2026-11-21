@@ -131,6 +131,58 @@ fn different_content_different_fingerprint() {
 }
 
 #[test]
+fn excluded_file_bytes_do_not_move_the_fingerprint() {
+    let (_keep_a, path_a, head_a) =
+        init_repo_with_files(&[("src/input.txt", "source\n"), ("ci/pipeline.yml", "version 1\n")]);
+    let (_keep_b, path_b, head_b) =
+        init_repo_with_files(&[("src/input.txt", "source\n"), ("ci/pipeline.yml", "version 2\n")]);
+    let repo_a = gix::open(&path_a).expect("open first repository");
+    let repo_b = gix::open(&path_b).expect("open second repository");
+    let include = vec!["**".to_string()];
+    let exclude = vec!["ci/pipeline.yml".to_string()];
+
+    let included_a = ContentFingerprint::from_repo_globs(&repo_a, head_a, &include).expect("include first pipeline");
+    let included_b = ContentFingerprint::from_repo_globs(&repo_b, head_b, &include).expect("include second pipeline");
+    assert_ne!(included_a.cid, included_b.cid, "included changed bytes move the CID");
+
+    let excluded_a = ContentFingerprint::from_repo_globs_excluding(&repo_a, head_a, &include, &exclude)
+        .expect("exclude first pipeline");
+    let excluded_b = ContentFingerprint::from_repo_globs_excluding(&repo_b, head_b, &include, &exclude)
+        .expect("exclude second pipeline");
+    assert_eq!(
+        excluded_a.cid, excluded_b.cid,
+        "excluded changed bytes do not move the CID"
+    );
+    assert!(!excluded_a.inputs.contains_key("ci/pipeline.yml"));
+    assert_eq!(excluded_a.inputs.keys().collect::<Vec<_>>(), ["src/input.txt"]);
+}
+
+#[test]
+fn empty_exclude_is_identical_to_from_repo_globs() {
+    let (_keep, path, head) = init_repo_with_files(&pinned_fixture_files());
+    let repo = gix::open(&path).expect("open");
+    let include = vec!["src/**".to_string(), "README.md".to_string()];
+
+    let original = ContentFingerprint::from_repo_globs(&repo, head, &include).expect("original fingerprint");
+    let excluding = ContentFingerprint::from_repo_globs_excluding(&repo, head, &include, &[])
+        .expect("fingerprint with empty exclusion");
+
+    assert_eq!(excluding.cid, original.cid, "empty exclusion preserves the CID");
+    assert_eq!(
+        excluding.inputs, original.inputs,
+        "empty exclusion preserves blob inputs"
+    );
+    assert_eq!(
+        excluding.gitlinks, original.gitlinks,
+        "empty exclusion preserves gitlinks"
+    );
+    assert_eq!(
+        excluding.symlinks, original.symlinks,
+        "empty exclusion preserves symlinks"
+    );
+}
+
+#[test]
 fn no_matching_files_is_empty_fingerprint() {
     let (_keep, path, head) = init_repo_with_files(&[("README.md", "x")]);
     let repo = gix::open(&path).expect("open");

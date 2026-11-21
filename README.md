@@ -35,6 +35,15 @@ by itself prove authorship, permission, elected-head authority or availability.
 | `brit-epr` / `brit-verify` | Covenant trailer parsing and structural pillar validation. These do not automatically authorize publication. |
 | `brit-build-ref` | Separate supporting executable for build evidence and metadata operations; not a synonym for `brit verify`. |
 
+`brit build affected --inputs <sources|all>` opts into classified reasons:
+`sources` selects a step from its source globs after subtracting that step's own
+`buildProcess`, while `all` keeps both classes and reports which one matched.
+Omitting the flag preserves the legacy affected-plan JSON.
+`brit build fingerprint <manifest> --inputs <sources|all>` uses the same distinction;
+it defaults to `all` for the existing fingerprint, while `sources` excludes the
+step's build-process paths from its CID. `brit build plan` retains its legacy
+all-input behavior.
+
 The public executable is **`brit`**, built by package **`brit-cli`**. The root
 package `gitoxide` supplies linked Git CLI functionality and the auxiliary `ein`
 binary. Rakia remains a separately owned build/release concern; Brit consumes its

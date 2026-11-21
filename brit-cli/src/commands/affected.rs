@@ -18,7 +18,13 @@ struct AffectedStep {
     affected_by: Vec<rakia_core::generated_types::AffectedReason>,
 }
 
-pub fn run(repo: &Path, files: Option<&str>, since: Option<&str>) -> Result<()> {
+/// `inputs: None` is the legacy planner and today's output; `Some` asks for classified reasons.
+pub fn run(
+    repo: &Path,
+    files: Option<&str>,
+    since: Option<&str>,
+    inputs: Option<rakia_core::inputs::InputSelection>,
+) -> Result<()> {
     let repo = repo.canonicalize().map_err(|source| CliError::RepoNotFound {
         path: repo.display().to_string(),
         source,
@@ -40,7 +46,12 @@ pub fn run(repo: &Path, files: Option<&str>, since: Option<&str>) -> Result<()> 
     let manifests =
         rakia_core::discover::discover_manifests(&repo).map_err(|e| CliError::ManifestDiscovery(format!("{e}")))?;
     let constellation = rakia_core::constellation::build_constellation(&manifests)?;
-    let plan = rakia_core::constellation::plan_from_changes(&constellation, &changed_paths)?;
+    let plan = match inputs {
+        None => rakia_core::constellation::plan_from_changes(&constellation, &changed_paths)?,
+        Some(selection) => {
+            rakia_core::constellation::plan_from_changes_classified(&constellation, &changed_paths, selection)?
+        }
+    };
 
     // Flatten plan levels into a single affected list — `affected` doesn't care about ordering
     let mut affected: Vec<AffectedStep> = Vec::new();

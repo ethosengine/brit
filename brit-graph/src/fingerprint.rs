@@ -11,8 +11,8 @@ use brit_epr::BritCid;
 ///
 /// Exported regardless of the `repo` feature so downstream code can match
 /// on it without conditional compilation. The variants only get instantiated
-/// when the `repo` feature is enabled and `ContentFingerprint::from_repo_globs`
-/// is called.
+/// when the `repo` feature is enabled and a repo-aware `ContentFingerprint`
+/// constructor is called.
 #[derive(Debug, thiserror::Error)]
 #[non_exhaustive]
 pub enum FingerprintError {

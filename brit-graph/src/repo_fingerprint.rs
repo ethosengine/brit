@@ -46,6 +46,21 @@ impl ContentFingerprint {
         Self::from_repo_globs_on(repo, commit_id, patterns, CANDIDATES_NORMALISED)
     }
 
+    /// Compute a fingerprint from paths matched by `include` and not matched
+    /// by `exclude` in the git tree at `commit_id`.
+    ///
+    /// Matching and input identity otherwise follow [`Self::from_repo_globs`],
+    /// including gitlink and symlink reach. An empty `exclude` is equivalent
+    /// to [`Self::from_repo_globs`] with `include`.
+    pub fn from_repo_globs_excluding(
+        repo: &gix::Repository,
+        commit_id: gix::ObjectId,
+        include: &[String],
+        exclude: &[String],
+    ) -> Result<Self, FingerprintError> {
+        Self::from_repo_globs_excluding_on(repo, commit_id, include, exclude, CANDIDATES_NORMALISED)
+    }
+
     /// [`Self::from_repo_globs`] with the host's candidate normalisation made
     /// explicit, so both values are exercised on any host.
     fn from_repo_globs_on(
@@ -54,16 +69,35 @@ impl ContentFingerprint {
         patterns: &[String],
         candidates_normalised: bool,
     ) -> Result<Self, FingerprintError> {
+        Self::from_repo_globs_excluding_on(repo, commit_id, patterns, &[], candidates_normalised)
+    }
+
+    fn from_repo_globs_excluding_on(
+        repo: &gix::Repository,
+        commit_id: gix::ObjectId,
+        include: &[String],
+        exclude: &[String],
+        candidates_normalised: bool,
+    ) -> Result<Self, FingerprintError> {
         // Step A: build the GlobSet
         let mut builder = GlobSetBuilder::new();
-        let mut globs = Vec::with_capacity(patterns.len());
-        for pattern in patterns {
+        let mut globs = Vec::with_capacity(include.len());
+        for pattern in include {
             let glob = compile_step_glob(pattern)?;
             builder.add(glob.clone());
             globs.push(glob);
         }
         let globset = builder.build().map_err(|e| FingerprintError::InvalidGlob {
-            pattern: patterns.join(", "),
+            pattern: include.join(", "),
+            message: e.to_string(),
+        })?;
+        let mut exclude_builder = GlobSetBuilder::new();
+        for pattern in exclude {
+            let glob = compile_step_glob(pattern)?;
+            exclude_builder.add(glob);
+        }
+        let exclude_globset = exclude_builder.build().map_err(|e| FingerprintError::InvalidGlob {
+            pattern: exclude.join(", "),
             message: e.to_string(),
         })?;
 
@@ -92,6 +126,7 @@ impl ContentFingerprint {
             repo,
             globset: &globset,
             reach: GitlinkReach::new(&globset, &globs),
+            exclude_globset: &exclude_globset,
             inputs: &mut inputs,
             gitlinks: &mut gitlinks,
             symlinks: &mut symlinks,
@@ -413,6 +448,7 @@ struct TreeCollector<'a> {
     repo: &'a gix::Repository,
     globset: &'a globset::GlobSet,
     reach: GitlinkReach<'a>,
+    exclude_globset: &'a globset::GlobSet,
     inputs: &'a mut BTreeMap<String, BritCid>,
     /// Reached gitlinks: path -> pinned commit id (hex).
     gitlinks: &'a mut BTreeMap<String, String>,
@@ -508,7 +544,7 @@ impl<'a> gix::traverse::tree::Visit for TreeCollector<'a> {
         if kind == gix::objs::tree::EntryKind::Commit {
             // The submodule's objects are not read (they are often absent):
             // the gitlink's identity is the commit it pins.
-            if self.reach.reaches(&path_str) {
+            if self.reach.reaches(&path_str) && !self.exclude_globset.is_match(&path_str) {
                 self.gitlinks.insert(path_str, entry.oid.to_hex().to_string());
             }
             return std::ops::ControlFlow::Continue(true);
@@ -518,14 +554,14 @@ impl<'a> gix::traverse::tree::Visit for TreeCollector<'a> {
             // Not followed: the link's identity is its own blob, the target
             // path. Reached like a gitlink, so a glob written through a
             // directory link (`current/**`) keys the link too.
-            if self.reach.reaches(&path_str) {
+            if self.reach.reaches(&path_str) && !self.exclude_globset.is_match(&path_str) {
                 self.symlinks.insert(path_str, entry.oid.to_hex().to_string());
             }
             return std::ops::ControlFlow::Continue(true);
         }
 
         // Glob match against the full path
-        if !self.globset.is_match(&path_str) {
+        if !self.globset.is_match(&path_str) || self.exclude_globset.is_match(&path_str) {
             return std::ops::ControlFlow::Continue(true);
         }
 
