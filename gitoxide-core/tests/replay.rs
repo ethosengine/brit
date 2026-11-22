@@ -385,7 +385,7 @@ fn cancelled_selection_preserves_every_byte_and_creates_no_journal() -> Result<(
 }
 
 #[test]
-fn shared_history_closure_matches_git_and_is_revalidated_on_each_selection() -> Result<()> {
+fn kept_objects_are_the_chain_over_its_base_and_are_revalidated_on_each_selection() -> Result<()> {
     if gix_testtools::run_in_isolated_process().map_err(anyhow::Error::from_boxed)? {
         return Ok(());
     }
@@ -393,20 +393,39 @@ fn shared_history_closure_matches_git_and_is_revalidated_on_each_selection() -> 
     let root = temp.path();
     let repo = gix::open(root)?;
     let selection = Selection::prepare(&repo, b"upstream".as_bstr())?;
-    let expected = git(root, &["rev-list", "--objects", "HEAD", "upstream"])?;
-    let expected = expected
-        .lines()
-        .map(|line| gix::ObjectId::from_hex(line.split(|b| *b == b' ').next().expect("object id")))
-        .collect::<Result<std::collections::BTreeSet<_>, _>>()?;
-    assert_eq!(
-        selection.closure, expected,
-        "deduplication must retain both complete histories"
+    let ids = |args: &[&str]| -> Result<std::collections::BTreeSet<gix::ObjectId>> {
+        git(root, args)?
+            .lines()
+            .map(|line| {
+                Ok(gix::ObjectId::from_hex(
+                    line.split(|b| *b == b' ').next().expect("object id"),
+                )?)
+            })
+            .collect()
+    };
+    let base = selection.base;
+    let introduced = ids(&["rev-list", "--objects", "HEAD", &format!("^{base}")])?;
+    assert!(
+        introduced.is_subset(&selection.closure),
+        "every object the chain introduces over its base is kept"
+    );
+    let base_objects = ids(&["rev-list", "--objects", "--no-walk", &base.to_string()])?;
+    assert!(
+        selection
+            .closure
+            .difference(&introduced)
+            .all(|id| base_objects.contains(id)),
+        "beyond that, only the base commit and the base trees the deltas compare against"
+    );
+    assert!(
+        !selection.closure.contains(&oid(root, "upstream")?),
+        "the upstream is a floor commit, protected by its own ref"
     );
     let blob = oid(root, "base:selected")?.to_string();
     fs::remove_file(root.join(".git/objects").join(&blob[..2]).join(&blob[2..]))?;
     assert!(
         Selection::prepare(&gix::open(root)?, b"upstream".as_bstr()).is_err(),
-        "an earlier successful selection must not cache trust across operations"
+        "the base's version of a replayed path is read, and an earlier selection must not cache trust"
     );
     Ok(())
 }
@@ -774,7 +793,9 @@ fn valid_loose_object_payload_under_wrong_hash_refuses_history_closure() -> Resu
     }
     let temp = fixture()?;
     let root = temp.path();
-    let original = oid(root, "base:selected")?.to_string();
+    // The replayed chain's own version of `selected`: an object a replay reads.
+    commit(root, "selected", b"replayed\n", "replayed")?;
+    let original = oid(root, "HEAD:selected")?.to_string();
     let repo = gix::open(root)?;
     let substituted = repo
         .write_blob(b"a valid blob stored under a foreign object ID\n")?

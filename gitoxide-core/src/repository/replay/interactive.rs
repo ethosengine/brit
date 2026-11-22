@@ -404,7 +404,7 @@ impl Session {
                 ordinal,
                 input: input.to_vec(),
                 index,
-                work: crate::repository::authoring::conflict::worktree_witness(repo, &[])?,
+                work: self.editor_witness(repo)?,
                 metadata,
                 accepted: false,
                 outcome: None,
@@ -479,7 +479,7 @@ impl Session {
 
     fn validate_editor_effects(&self, repo: &gix::Repository, editor: &Editor) -> Result<()> {
         ensure!(
-            crate::repository::authoring::conflict::worktree_witness(repo, &[])? == editor.work,
+            self.editor_witness(repo)? == editor.work,
             "editor changed work outside its named buffer"
         );
         for (path, expected) in &editor.metadata {
@@ -691,23 +691,9 @@ impl Session {
         self.adopt_child_retention(repo, &completion.binding, completion.decisions)?;
         self.adopt_child_work(repo, &completion.work, completion.head)?;
         self.state.accepted_child = Some((completion.binding, completion.receipt));
-        let mut closure = BTreeSet::new();
-        history(repo, completion.head, &mut closure)?;
-        let tip_closure = closure.clone();
-        for id in &completion.objects {
-            match super::super::validation::verify_object(repo, *id)? {
-                gix::objs::Kind::Commit => {
-                    history(repo, *id, &mut closure)?;
-                }
-                gix::objs::Kind::Tree => {
-                    validate_tree(repo, *id, &mut closure)?;
-                }
-                gix::objs::Kind::Blob => {
-                    closure.insert(*id);
-                }
-                _ => anyhow::bail!("unsupported authored object kind"),
-            }
-        }
+        let tip_closure = self.retained_closure(repo, completion.head)?;
+        let mut closure = tip_closure.clone();
+        closure.extend(self.retained_closures(repo, completion.objects.iter().copied())?);
         sync_tree(&repo.common_dir().join("objects"))?;
         let label = format!("edit-{}", self.state.step - 1);
         self.protect(repo, &label, completion.head, &tip_closure)?;
@@ -781,7 +767,7 @@ impl Session {
         self.state.head = switch::snapshot(&repo.git_dir().join("HEAD"))?;
         self.state.log = self.capture_payload(repo, &repo.git_dir().join("logs/HEAD"))?;
         self.state.tip = head.to_string();
-        self.state.witness = crate::repository::authoring::conflict::worktree_witness(
+        self.state.witness = self.witness(
             repo,
             &self
                 .state

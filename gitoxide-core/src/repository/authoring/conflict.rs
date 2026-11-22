@@ -168,6 +168,25 @@ impl Preservation {
             .collect()
     }
 
+    /// [`Self::original_object_ids`] without the entries `tree` (an index of the
+    /// original commit's tree) holds at the same path: the blobs staged beyond it.
+    pub(crate) fn staged_beyond(&self, tree: &gix::index::State) -> Result<BTreeSet<gix::ObjectId>> {
+        let mut ids = BTreeSet::new();
+        for entry in &self.original {
+            if entry.mode == gix::index::entry::Mode::COMMIT.bits() {
+                continue;
+            }
+            let id = gix::ObjectId::from_hex(entry.id.as_bytes())?;
+            if tree
+                .entry_by_path(entry.path.as_bstr())
+                .is_none_or(|committed| committed.id != id)
+            {
+                ids.insert(id);
+            }
+        }
+        Ok(ids)
+    }
+
     /// Paths of the gitlinks the original index held. Capture for replay refuses
     /// them, but a journal written by an older Brit may still record one.
     pub(crate) fn gitlink_paths(&self) -> impl Iterator<Item = &[u8]> {
@@ -402,6 +421,82 @@ pub(crate) fn worktree_witness(repo: &gix::Repository, excluded: &[Vec<u8>]) -> 
     ensure!(!gix::interrupt::is_triggered(), "worktree witness interrupted");
     Ok(witness)
 }
+/// [`worktree_witness`] restricted to `scope`'s surroundings: the files and links
+/// on each scope path's ancestors (a directory replaced by a link or a file is a
+/// change) and everything beneath a scope path that is a directory. The scope's
+/// own paths are excluded, as `worktree_witness` excludes its leaves. Files
+/// elsewhere, tracked or not, ignored or not, are never read: a replay writes only
+/// its scope, and what lies outside it is the user's, as under Git.
+pub(crate) fn scope_witness(repo: &gix::Repository, scope: &[Vec<u8>]) -> Result<String> {
+    scoped_witness(repo, scope, false)
+}
+
+/// [`scope_witness`] including the scope's own paths.
+pub(crate) fn scope_witness_including(repo: &gix::Repository, scope: &[Vec<u8>]) -> Result<String> {
+    scoped_witness(repo, scope, true)
+}
+
+fn scoped_witness(repo: &gix::Repository, scope: &[Vec<u8>], leaves: bool) -> Result<String> {
+    ensure!(!gix::interrupt::is_triggered(), "worktree witness interrupted");
+    let root = repo.workdir().context("worktree required")?;
+    let mut out = BTreeMap::new();
+    let record = |relative: &[u8], out: &mut BTreeMap<Vec<u8>, Image>| -> Result<()> {
+        let path = root.join(gix::path::from_bstr(relative.as_bstr())?);
+        let Ok(m) = fs::symlink_metadata(&path) else {
+            return Ok(());
+        };
+        if m.file_type().is_symlink() {
+            out.insert(relative.to_vec(), Image::Link(raw(&fs::read_link(&path)?)?));
+        } else if m.is_dir() {
+            let mut beneath = snapshot(&path)?
+                .into_iter()
+                .map(|(name, image)| ([relative, b"/", &name].concat(), image))
+                .collect::<BTreeMap<_, _>>();
+            out.append(&mut beneath);
+        } else if m.is_file() {
+            out.insert(relative.to_vec(), Image::File(file_witness(&path, &m)?, file_mode(&m)));
+        }
+        Ok(())
+    };
+    for path in scope {
+        #[cfg(all(target_os = "linux", feature = "switch-test-faults"))]
+        super::super::switch::checkpoint("replay-worktree-witness-entry")?;
+        ensure!(!gix::interrupt::is_triggered(), "worktree witness interrupted");
+        let mut end = 0;
+        while let Some(slash) = path[end..].iter().position(|byte| *byte == b'/') {
+            end += slash;
+            let ancestor = &path[..end];
+            let full = root.join(gix::path::from_bstr(ancestor.as_bstr())?);
+            if fs::symlink_metadata(&full).is_ok_and(|m| !m.is_dir()) {
+                record(ancestor, &mut out)?;
+            }
+            end += 1;
+        }
+        record(path, &mut out)?;
+    }
+    if !leaves {
+        out.retain(|path, _| !scope.contains(path));
+    }
+    let witness = digest(&serde_json::to_vec(&out.into_iter().collect::<Vec<_>>())?)?;
+    ensure!(!gix::interrupt::is_triggered(), "worktree witness interrupted");
+    Ok(witness)
+}
+
+fn file_witness(path: &Path, m: &fs::Metadata) -> Result<Vec<u8>> {
+    Ok(file_fingerprint_reader(&mut fs::File::open(path)?, m.len())?.into_bytes())
+}
+
+#[cfg(unix)]
+fn file_mode(m: &fs::Metadata) -> u32 {
+    use std::os::unix::fs::PermissionsExt;
+    m.permissions().mode() & 0o777
+}
+
+#[cfg(not(unix))]
+fn file_mode(_: &fs::Metadata) -> u32 {
+    0
+}
+
 fn entries(index: &gix::index::State) -> Vec<Entry> {
     index
         .entries()
@@ -462,6 +557,76 @@ fn overlay(base: &[Entry], source: &[Entry], paths: &[Vec<u8>]) -> Vec<Entry> {
     out.sort_by(|a, b| a.path.cmp(&b.path).then(a.flags.cmp(&b.flags)));
     out
 }
+/// The worktree a replay child watches: every path one of its indexes tracks, and
+/// whatever overlaps its active scope. Untracked and ignored files elsewhere
+/// (build output, editor files, dependency trees) are never read: the child and
+/// its parent write only their scope, and the rest is the user's, as under Git.
+struct Guard {
+    tracked: BTreeSet<Vec<u8>>,
+    directories: BTreeSet<Vec<u8>>,
+    active: Vec<Vec<u8>>,
+}
+
+impl Guard {
+    fn new(indexes: [&[Entry]; 3], active: &[Vec<u8>]) -> Self {
+        let tracked: BTreeSet<_> = indexes
+            .iter()
+            .flat_map(|entries| entries.iter().map(|e| e.path.clone()))
+            .collect();
+        let mut directories = BTreeSet::new();
+        for path in &tracked {
+            let mut end = 0;
+            while let Some(slash) = path[end..].iter().position(|byte| *byte == b'/') {
+                end += slash;
+                directories.insert(path[..end].to_vec());
+                end += 1;
+            }
+        }
+        Self {
+            tracked,
+            directories,
+            active: active.to_vec(),
+        }
+    }
+
+    fn covers(&self, path: &[u8]) -> bool {
+        self.tracked.contains(path) || self.active.iter().any(|active| overlaps(path, active))
+    }
+
+    fn snapshot(&self, root: &Path) -> Result<BTreeMap<Vec<u8>, Image>> {
+        fn walk(guard: &Guard, root: &Path, dir: &Path, out: &mut BTreeMap<Vec<u8>, Image>) -> Result<()> {
+            for e in fs::read_dir(dir)? {
+                #[cfg(all(target_os = "linux", feature = "switch-test-faults"))]
+                super::super::switch::checkpoint("replay-worktree-witness-entry")?;
+                ensure!(!gix::interrupt::is_triggered(), "worktree witness interrupted");
+                let e = e?;
+                if e.file_name() == ".git" {
+                    continue;
+                }
+                let p = e.path();
+                let rel = raw(p.strip_prefix(root)?)?;
+                let m = fs::symlink_metadata(&p)?;
+                if m.is_dir() && !m.file_type().is_symlink() {
+                    if guard.directories.contains(&rel) || guard.active.iter().any(|active| overlaps(&rel, active)) {
+                        walk(guard, root, &p, out)?;
+                    }
+                } else if guard.covers(&rel) {
+                    if m.file_type().is_symlink() {
+                        out.insert(rel, Image::Link(raw(&fs::read_link(p)?)?));
+                    } else {
+                        ensure!(m.is_file(), "unsupported worktree file");
+                        out.insert(rel, Image::File(file_witness(&p, &m)?, file_mode(&m)));
+                    }
+                }
+            }
+            Ok(())
+        }
+        let mut out = BTreeMap::new();
+        walk(self, root, root, &mut out)?;
+        Ok(out)
+    }
+}
+
 fn snapshot(root: &Path) -> Result<BTreeMap<Vec<u8>, Image>> {
     fn walk(root: &Path, dir: &Path, out: &mut BTreeMap<Vec<u8>, Image>) -> Result<()> {
         for e in fs::read_dir(dir)? {
@@ -666,6 +831,9 @@ impl Session {
                 "preserved work changed before child preparation"
             );
         }
+        // A replay child watches tracked paths and its scope's surroundings only.
+        let guard = Guard::new([&preservation.original, &entries(private), &entries(&public)], &active);
+        let work = guard.snapshot(root)?;
         let head = repo.head_commit()?;
         let parent = head.parent_ids().next().map(|id| id.to_string());
         ensure!(kind != StopKind::Edit || parent.is_some(), "edit group requires parent");
@@ -686,7 +854,6 @@ impl Session {
             };
             before.insert(path.clone(), image);
         }
-        let work = snapshot(root)?;
         ensure!(
             fs::symlink_metadata(repo.git_dir().join("brit-authoring")).is_err(),
             "child destination exists without its preparation recipe"
@@ -824,7 +991,7 @@ impl Session {
         session.validate(repo)?;
         ensure!(
             changed(&session.state.public, &entries(&*read_public(repo)?)).is_empty()
-                && snapshot(repo.workdir().context("worktree required")?)? == session.state.work,
+                && session.work_snapshot(repo)? == session.recorded_work(),
             "checkout changed during child preparation"
         );
         super::super::switch::sync_dir(&session.directory)?;
@@ -1213,6 +1380,41 @@ impl Session {
         );
         self.validate_observed(repo, active)
     }
+    /// What a replay child's work comparisons cover; `None` for standalone
+    /// authoring, which watches the whole worktree.
+    fn guard(&self) -> Option<Guard> {
+        self.state.replay_parent.as_ref().map(|_| {
+            Guard::new(
+                [&self.state.original, &self.state.private, &self.state.public],
+                &self.state.active,
+            )
+        })
+    }
+
+    /// The current worktree as this session watches it.
+    fn work_snapshot(&self, repo: &gix::Repository) -> Result<BTreeMap<Vec<u8>, Image>> {
+        let root = repo.workdir().context("worktree required")?;
+        match self.guard() {
+            Some(guard) => guard.snapshot(root),
+            None => snapshot(root),
+        }
+    }
+
+    /// The worktree recorded at the stop, as this session watches it. A child an
+    /// older Brit prepared recorded every file; only what the guard covers counts.
+    fn recorded_work(&self) -> BTreeMap<Vec<u8>, Image> {
+        match self.guard() {
+            Some(guard) => self
+                .state
+                .work
+                .iter()
+                .filter(|(path, _)| guard.covers(path))
+                .map(|(path, image)| (path.clone(), image.clone()))
+                .collect(),
+            None => self.state.work.clone(),
+        }
+    }
+
     fn validate_observed(&self, repo: &gix::Repository, active: &[Vec<u8>]) -> Result<()> {
         ensure!(policy(repo)? == self.state.policy, "hook or configuration changed");
         ensure!(
@@ -1230,11 +1432,12 @@ impl Session {
         self.validate_scope_work(repo, active)
     }
     fn validate_scope_work(&self, repo: &gix::Repository, active: &[Vec<u8>]) -> Result<()> {
-        let current_work = snapshot(repo.workdir().context("worktree required")?)?;
-        for p in self.state.work.keys().chain(current_work.keys()) {
+        let current_work = self.work_snapshot(repo)?;
+        let recorded = self.recorded_work();
+        for p in recorded.keys().chain(current_work.keys()) {
             if !active.contains(p) {
                 ensure!(
-                    self.state.work.get(p) == current_work.get(p),
+                    recorded.get(p) == current_work.get(p),
                     "worktree mutation outside resolution scope"
                 );
             }
@@ -1639,14 +1842,15 @@ impl Session {
             // Abort restores only parent-owned replay paths. Unrelated new work
             // remains in place, while frozen preservation and path collisions
             // must still be checked before the parent authorizes restoration.
-            let current = snapshot(repo.workdir().context("worktree required")?)?;
-            for path in self.state.work.keys().chain(current.keys()) {
+            let current = self.work_snapshot(repo)?;
+            let recorded = self.recorded_work();
+            for path in recorded.keys().chain(current.keys()) {
                 if self.state.preserved.contains(path)
                     || (!self.state.active.contains(path)
                         && self.state.active.iter().any(|active| overlaps(path, active)))
                 {
                     ensure!(
-                        self.state.work.get(path) == current.get(path),
+                        recorded.get(path) == current.get(path),
                         "retention work collides with preserved or active scope"
                     );
                 }

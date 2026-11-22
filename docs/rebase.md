@@ -121,9 +121,9 @@ before any object is read, and the exact records are checked once preparation
 finishes (a refusal there cancels the preparation, so nothing is left behind).
 Admission allows for one stop and a resolution as large as the largest replayed
 step. Every later forward step (`--continue`, `--stage`, `--skip`, an edit) is
-reserved for before it writes anything; a refused step names `--abort`. A
-`--skip` writes a retained copy under the limit too, and reserves for it the
-same way. Each refusal says whether the journal or a retained copy refused it.
+reserved for before it writes anything; a refused step names `--abort`. The limit
+meters the journal only: retained copies are durable data under the Git directory
+and are never metered, a `--skip`'s included.
 
 Admission does not see everything a rebase will write, so an admitted rebase can
 still be refused at a later step. Such a refusal comes before the step writes
@@ -157,24 +157,65 @@ completed or aborted rebase are unmetered. Only real disk space bounds them. A
 write that fails on a full disk removes its own partial file, and the command
 says so; free space and run the same command again.
 
+### What a rebase reads and keeps
+
+A rebase's cost scales with its change, not with the repository's history. Its
+*floor* is the merge base `p` and the upstream `U`: refs the user owns keep both
+reachable (the original branch reaches `p`; the user's upstream ref, and once
+published the new branch, reach `U`). Nothing below the floor is walked, verified
+or copied.
+
+- **Selection** finds `p` with the merge-base walk and the replayed commits by
+  following single parents from the tip down to `p`; its cost is proportional to
+  the range. Every refusal decided by the index and the trees (refStorage, branch
+  occupancy, scope, collisions, external filters, gitlink changes) runs before any
+  object is verified, and verification runs before the journal exists.
+- **Verification** covers only what the replay reads or writes: the replayed
+  commits, for each one the tree entries that differ from its parent's same-path
+  entry and the parent trees that comparison reads, and the upstream's and the
+  base's trees and blobs along the paths the rebase touches. One pass verifies each
+  object once and shares one spool budget.
+- **The journal** records the floor and, for each retained root, its *custody*:
+  the commits above the floor and their trees' deltas over their parents, as above.
+  A stop's tree is held whole. The journal lists no history.
+- **The retained copy** an abort, a skip or a cleanup writes holds: that custody
+  union; the original and observed index files and the blobs they stage beyond
+  their commit's tree; for each path the rebase touches, its before-image, its
+  worktree file and up to three staged versions; the journal; and a manifest. Its
+  manifest is version 2, which records the floor. The release proof that lets
+  cleanup drop the `refs/brit-rebase-retain/` refs reads only the copy: it stops at
+  floor commits, and takes a tree entry equal to its parent's same-path entry as
+  inherited. The copy, and the proof's cost, scale with what the rebase introduced.
+- **The worktree witness** that guards a rebase against foreign changes covers the
+  touched paths' surroundings only: the files and links on their ancestors and
+  beneath any touched directory. A conflict or edit stop watches every tracked path
+  and its own scope. Untracked and ignored files elsewhere (build output,
+  dependency trees, editor files) are never read and may change freely, as under
+  Git.
+
+An upstream named by a raw object id rather than a ref is protected by its
+retention ref only while the rebase runs; after cleanup it is as reachable as the
+user left it, as with `git rebase`.
+
 Because an abort and a cleanup are never refused, the retained copy they write is
-not projected or reserved for, and it can exceed the scratch limit. It holds every
-object of the rebase's history, the whole journal (which the limit bounds), the
-original and observed index files, and, for each path the rebase touches, its
-before-image, its worktree file and up to three staged versions, plus a manifest:
-it can exceed the limit by at most that much. Measured on the 64 MiB fixtures of
-`tests/cli-journey/tests/memory_replay.rs`, it reached 0.67 to 0.81 GB, and 0.94 GB
-with a conflict stop and a staged resolution, while the journal stayed under
-0.34 GB. This is the consequence of never refusing an abort. Brit still refuses,
-before anything changes, a rebase whose retained copy would certainly not fit:
-one whose history's objects alone exceed the limit (at the start), or whose copy's
-members already exceed it (once preparation finishes). After admission the copy
-is never tested, and an abort's or a cleanup's copy can grow past the limit with
-the rebase: a copy that is not metered must not refuse a step. After admission
-only the metered journal, and the retained copy a `--skip` writes under the
-limit, can refuse a step (the cases listed above).
+not projected or reserved for. It is bounded by the change: the objects above, the
+journal (which the limit bounds), two index files and the touched paths' versions.
+On the 64 MiB fixtures of `tests/cli-journey/tests/memory_replay.rs`, whose large
+files are the change itself, it is still of the order of those files. After
+admission only the metered journal can refuse a step (the cases listed above).
 Those fixtures, which completed under the limit before the recovery rules were
 added, complete again.
+
+### Formats and older Brit releases
+
+Every new retained copy is manifest version 2. This Brit reads version 1 copies
+(Brit 0.2.6 to 0.3.1), restores from them and proves their whole closure as
+before; an older Brit refuses a version 2 copy without touching it. A journal an
+older Brit wrote records no floor: this Brit aborts it, continues it and cleans it
+up under the rules that Brit wrote it with (whole-history closures and a
+whole-worktree witness), writing its copies as version 2 with an empty floor, which
+means the whole closure. An older Brit refuses a journal this Brit wrote, because
+it does not know the floor field, and changes nothing.
 
 A Brit command killed at any point (a `SIGKILL`, which cannot tear a record
 Brit writes; a crash or power loss before a record's fsync can, and stock Git
@@ -189,11 +230,13 @@ retained-copy manifest cut short) is discarded or written again by the next
 command; `--status` says so. A preparation killed before it recorded anything has
 nothing to continue: `--abort` removes it.
 
-Brit's rebase is not available on repositories whose history decompresses to
-more than 1 GiB, or of roughly 390,000 objects or more (fewer when many commits
-are replayed), yet: the retained copy holds the whole history, and every journal
-state image lists the whole object closure, so such a rebase is refused in about
-a second, before anything is written. Use `git rebase` there.
+A rebase is refused in about a second, before anything is written, only when its
+journal could not fit the limit: when the files it changes, kept several times in
+the journal, or a very long replay approach 1 GiB. The size of the history no
+longer matters. Use `git rebase` there.
+
+Still refused: shallow repositories, and any repository whose index holds a
+gitlink (a submodule), even one the rebase does not touch.
 
 `brit rebase --retire` sets aside a rebase whose only remaining work is its
 retained copy, which can take long on a large repository or wait for disk space:

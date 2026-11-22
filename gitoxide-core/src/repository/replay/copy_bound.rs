@@ -1,51 +1,43 @@
 //! Refuse, before it starts, a rebase whose journal the scratch quota could not
 //! let finish.
 //!
-//! The scratch quota meters the rebase journal: every record and payload a
-//! forward step writes is checked against it, and a rebase is admitted only when
-//! its journal fits. The quota is a policy about starting and continuing work,
-//! never about undoing it: an abort, its retained copy and the cleanup of a
-//! terminal journal, with its retained copy, are not metered at all (see
-//! `switch::payload::Recovery`), so no estimate here can strand a repository.
+//! The scratch quota meters the rebase journal and nothing else: every record and
+//! payload a forward step writes is checked against it, and a rebase is admitted
+//! only when its journal fits. The quota is a policy about starting and continuing
+//! work, never about undoing it: an abort and the cleanup of a terminal journal are
+//! not metered at all (see `switch::payload::Recovery`), so no estimate here can
+//! strand a repository.
 //!
-//! Because those retained copies are never refused part-way, they are not
-//! projected or reserved for either: reserving a projected copy under a limit the
-//! copy is not held to refuses work that fits and protects nothing. An abort's or
-//! a cleanup's retained copy can therefore exceed the quota. It holds every object
-//! of the closure, the whole journal (which the quota bounds), the original and
-//! observed index files, and for each path of the replay footprint its
-//! before-image, its worktree file and up to three staged versions, plus a
-//! manifest; it can exceed the quota by at most that much, which is what never
-//! refusing an abort costs. Only what is certain is refused: a closure whose
-//! objects alone exceed the quota, at the preflight, and a copy whose members
-//! alone already exceed it (its manifest's size is not yet known), at admission.
-//! After admission the copy is never tested: admission promises the plan, one
-//! stop and its resolution, and a copy that is not metered must not refuse a step
-//! admission promised, so it can grow past the quota with the rebase. Only the
-//! metered journal, and a skip's metered copy, refuse after admission. A skip writes its
-//! retained copy under the quota, so a skip reserves for that copy as for its
-//! journal (`Session::reserve_with_copy`).
+//! A retained copy is durable data under the Git directory, not scratch: it is
+//! never metered, projected or reserved for. Its size is bounded by what the
+//! rebase can lose, not by the history: the replayed commits and what they
+//! introduce over the replay's floor (the merge base and the upstream, see
+//! `validation`), the parent trees those deltas compare against, the journal
+//! (which the quota bounds), the original and observed index files, the blobs those
+//! indexes stage beyond their commits, and for each path of the replay footprint
+//! its before-image, its worktree file and up to three staged versions, plus a
+//! manifest. A stop retains its whole tree.
 //!
 //! Two gates decide whether work starts or continues:
 //!
 //! 1. This preflight, before any journal exists and before any object is verified
-//!    or spooled, makes two tests and says which one refused: the journal's
-//!    estimated peak, scaled by [`SAFETY`], must fit, and the closure's object
-//!    bytes alone must fit. It is the cheap, early gate: a repository that cannot
-//!    fit is refused in about a second, saying plainly that Brit's rebase is not
-//!    yet available at that size and that `git rebase` is the fallback.
+//!    or spooled: the journal's estimated peak, scaled by [`SAFETY`], must fit. It
+//!    measures only the range: the custody of the replayed chain above the floor
+//!    (object headers, never blob contents) and the trees of the commits it
+//!    replays. A repository that cannot fit is refused in about a second, saying
+//!    plainly that Brit's rebase is not yet available at that size and that `git
+//!    rebase` is the fallback.
 //! 2. Admission, once preparation knows its exact records (`Session::admit`),
 //!    projects the journal's peak from the real journal, refuses unless it fits
-//!    with the safety factor to spare, refuses a retained copy whose members
-//!    already exceed the quota, and cancels the preparation, so nothing is left behind.
-//!    It includes one stop and a resolution as large as the largest step, so the
-//!    first forward step after a stop is not refused for its journal.
+//!    with the safety factor to spare, and cancels the preparation, so nothing is
+//!    left behind. It includes one stop and a resolution as large as the largest
+//!    step, so the first forward step after a stop is not refused for its journal.
 //!
 //! Every forward step afterwards (`--continue`, a staged resolution, `--skip`, an
 //! edit) is reserved for before anything of it is written (`Session::reserve`);
 //! a refused step names `--abort`, which always restores the original state.
 //!
-//! The journal bound adds, from the measured closure: for every object, an upper
+//! The journal bound adds, from the measured custody: for every object, an upper
 //! bound of its id in each journal state image; a fixed upper bound per state
 //! image; the index file once per decision and twice more, and `logs/HEAD` once
 //! per decision, both of which every decision stores again; the bytes preparation
@@ -75,21 +67,7 @@
 //! exactly the commit's version where the upstream left the path alone. Each step
 //! also creates a commit and the trees along its changed paths, whose ids every
 //! later state image lists. The cost is linear in the replayed commits and the
-//! sizes of what they change; an earlier bound charged every version of every
-//! touched path once per decision, which grew with the square of the replay.
-//!
-//! The measurement reads object headers for blobs and never their contents. It
-//! loads each distinct commit and tree once, in memory, because their entries name
-//! the rest of the closure, loads the trees of the replayed commits again to find
-//! the paths they touch, and stops as soon as either test fails. On a closure of
-//! N objects it costs N object lookups and the decompression of every commit and
-//! tree, but no blob, no spool and no write; for the 218k-object closure the cost
-//! report measured (2.10 GB of blobs, 91 MB of commits and trees) that is the
-//! 91 MB of commits and trees plus about 200k header lookups, against roughly
-//! 12.5 GB spooled by each full verification pass, and that closure is refused by
-//! its object bytes alone. Because every state image lists the whole closure, a
-//! closure of about 390,000 objects is refused for a one-commit replay under the
-//! 1 GiB quota, and fewer for longer replays, which add state images.
+//! sizes of what they change.
 use std::collections::{BTreeMap, BTreeSet, HashMap, HashSet};
 
 use anyhow::{Context, Result};
@@ -115,13 +93,11 @@ pub(super) fn with_safety(bytes: u64) -> u64 {
     bytes.saturating_mul(SAFETY.0) / SAFETY.1
 }
 
-/// The journal a rebase would need, and the closure its retained copies hold,
-/// as far as the preflight measured them.
+/// The journal a rebase would need, as far as the preflight measured it.
 #[derive(Debug, Default)]
 struct Bound {
+    /// Objects of the replayed chain's custody, whose ids every state image lists.
     objects: u64,
-    /// Bytes of every closure object: what any retained copy holds at least.
-    object_bytes: u64,
     replayed: u64,
     index_bytes: u64,
     log_bytes: u64,
@@ -161,11 +137,6 @@ impl Bound {
                 .saturating_add(self.plan.largest_version),
         )
     }
-
-    /// Whether either test already refuses under `limit`.
-    fn exceeds(&self, limit: u64) -> bool {
-        self.object_bytes > limit || self.journal() > limit
-    }
 }
 
 /// What a linear replay writes, step by step, for the paths it touches.
@@ -200,25 +171,22 @@ pub(super) fn preflight(
     repo: &gix::Repository,
     original: gix::ObjectId,
     upstream: gix::ObjectId,
+    candidates: &[super::Candidate],
     interactive: bool,
     limit: u64,
 ) -> Result<()> {
-    // Whether anything would be replayed is decided by the merge base alone. Any
-    // failure here is reported, in order, by selection itself.
-    let Ok(bases) = repo.merge_bases_many(original, &[upstream]) else {
-        return Ok(());
-    };
-    if bases.len() != 1 || (bases[0].detach() == upstream && !(interactive && original != upstream)) {
+    let base = candidates.first().map_or(original, |first| first.parent);
+    if base == upstream && !(interactive && original != upstream) {
         return Ok(());
     }
     let mut bound = Bound::default();
-    let complete = measure(repo, original, upstream, limit, &mut bound).map_err(|error| {
+    measure(repo, original, upstream, base, candidates, &mut bound).map_err(|error| {
         if gix::interrupt::is_triggered() {
             error
         } else {
             error.context(
-                "rebase refused before it started: Brit could not measure the journal and history this rebase \
-                 needs, so it cannot show the rebase would finish; nothing was changed; git rebase is the fallback",
+                "rebase refused before it started: Brit could not measure the journal this rebase needs, so it \
+                 cannot show the rebase would finish; nothing was changed; git rebase is the fallback",
             )
         }
     })?;
@@ -227,102 +195,62 @@ pub(super) fn preflight(
     } else {
         "the scratch limit configured for testing is too small for this rebase"
     };
-    let measured = if complete {
-        format!("replaying {} commits", bound.replayed)
-    } else {
-        "measured before the bound passed the limit".to_owned()
-    };
-    if bound.object_bytes > limit {
-        anyhow::bail!(
-            "rebase refused before it started: {cause}; the retained copy an abort or a cleanup writes holds at \
-             least its {} objects of {} bytes ({measured}), over the {limit}-byte scratch limit; nothing was \
-             changed; git rebase is the fallback",
-            bound.objects,
-            bound.object_bytes,
-        );
-    }
     let journal = bound.journal();
     if journal > limit {
         anyhow::bail!(
             "rebase refused before it started: {cause}; its journal can need up to {journal} bytes with the {}/{} \
-             safety factor ({} objects, {measured}), over the {limit}-byte scratch limit the journal lives under; \
-             nothing was changed; git rebase is the fallback",
+             safety factor ({} objects above the merge base, replaying {} commits), over the {limit}-byte scratch \
+             limit the journal lives under; nothing was changed; git rebase is the fallback",
             SAFETY.0,
             SAFETY.1,
             bound.objects,
+            bound.replayed,
         );
     }
     Ok(())
 }
 
-/// Accumulate the closure of both tips into `bound`. Returns `false` when it
-/// stopped early because a test already failed under `limit`.
+/// Measure the replayed range into `bound`: the custody of the chain above the
+/// floor by object headers, the plan from the trees of the replayed commits, and
+/// the index's staged and stat-dirty bytes.
 fn measure(
     repo: &gix::Repository,
     original: gix::ObjectId,
     upstream: gix::ObjectId,
-    limit: u64,
+    base: gix::ObjectId,
+    candidates: &[super::Candidate],
     bound: &mut Bound,
-) -> Result<bool> {
-    let source = gix::object::bounded::Source::deferred(repo);
-    let mut buffer = gix::objs::find::Buffer::default();
-    let mut seen = HashSet::new();
-    let mut ours = BTreeSet::new();
-    let mut theirs = BTreeSet::new();
-    for (tip, commits) in [(original, &mut ours), (upstream, &mut theirs)] {
-        let mut pending = vec![tip];
-        while let Some(commit) = pending.pop() {
+) -> Result<()> {
+    struct Count {
+        seen: HashSet<gix::ObjectId>,
+        objects: u64,
+    }
+    impl super::validation::Visit for Count {
+        fn visit(&mut self, _: &gix::Repository, id: gix::ObjectId, _: gix::objs::Kind) -> Result<bool> {
             super::selection_interrupt()?;
-            if !commits.insert(commit) {
-                continue;
+            let new = self.seen.insert(id);
+            if new {
+                self.objects += 1;
             }
-            let data = super::read_commit(repo, commit, &mut buffer)?;
-            let parents: Vec<_> = data.parents().collect();
-            let tree = data.tree();
-            drop(data);
-            pending.extend(parents);
-            if seen.insert(commit) {
-                bound.objects += 1;
-                bound.object_bytes += repo.find_header(commit)?.size();
-            }
-            let mut trees = vec![tree];
-            while let Some(tree) = trees.pop() {
-                super::selection_interrupt()?;
-                if !seen.insert(tree) {
-                    continue;
-                }
-                let data = source.load(&tree, &mut buffer)?;
-                anyhow::ensure!(data.kind == gix::objs::Kind::Tree, "expected tree {tree}");
-                bound.objects += 1;
-                bound.object_bytes += data.data.len() as u64;
-                for entry in gix::objs::TreeRefIter::from_bytes(data.data, repo.object_hash()) {
-                    let entry = entry?;
-                    if entry.mode.is_tree() {
-                        trees.push(entry.oid.to_owned());
-                    } else if !entry.mode.is_commit() && seen.insert(entry.oid.to_owned()) {
-                        bound.objects += 1;
-                        bound.object_bytes += repo
-                            .find_header(entry.oid)
-                            .with_context(|| format!("read the header of blob {}", entry.oid))?
-                            .size();
-                        // One giant tree is not walked to its end once past the limit.
-                        if bound.exceeds(limit) {
-                            return Ok(false);
-                        }
-                    }
-                }
-            }
-            if bound.exceeds(limit) {
-                return Ok(false);
-            }
+            Ok(new)
         }
     }
-    let replayed: Vec<_> = ours.difference(&theirs).copied().collect();
-    bound.replayed = replayed.len() as u64;
-    bound.plan = plan(repo, original, upstream, &replayed, &mut buffer)?;
-    if bound.exceeds(limit) {
-        return Ok(false);
-    }
+    let floor = BTreeSet::from([base, upstream]);
+    let mut count = Count {
+        seen: HashSet::new(),
+        objects: 0,
+    };
+    super::validation::walk_custody(repo, original, &floor, &mut count)?;
+    bound.objects = count.objects;
+    bound.replayed = candidates.len() as u64;
+    let replayed: Vec<_> = candidates.iter().map(|candidate| candidate.commit).collect();
+    bound.plan = plan(
+        repo,
+        original,
+        upstream,
+        &replayed,
+        &mut gix::objs::find::Buffer::default(),
+    )?;
     let index = repo.open_index()?;
     bound.index_bytes = file_size(&repo.index_path())?;
     bound.log_bytes = file_size(&repo.git_dir().join("logs").join("HEAD"))?;
@@ -334,20 +262,15 @@ fn measure(
         }
         // Staged, or not provably clean by size and modification second: its
         // worktree bytes become a preservation payload, and a staged blob is kept
-        // as one too.
+        // as one too, and listed as an object.
         let path = entry.path(&index);
         let staged = head
             .entry_by_path(path)
             .is_none_or(|committed| committed.id != entry.id);
-        let unseen = seen.insert(entry.id);
-        if unseen || staged {
-            let size = repo.find_header(entry.id)?.size();
-            if unseen {
+        if staged {
+            bound.staged_bytes += repo.find_header(entry.id)?.size();
+            if count.seen.insert(entry.id) {
                 bound.objects += 1;
-                bound.object_bytes += size;
-            }
-            if staged {
-                bound.staged_bytes += size;
             }
         }
         if let Ok(metadata) = std::fs::symlink_metadata(root.join(gix::path::from_bstr(path)?)) {
@@ -363,7 +286,7 @@ fn measure(
             }
         }
     }
-    Ok(true)
+    Ok(())
 }
 
 /// The size of a file, or 0 when it does not exist.

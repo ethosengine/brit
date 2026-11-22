@@ -1,5 +1,15 @@
 //! Independent private copies. No active journal is needed to validate their bytes.
 //! Logical paths are metadata only; every payload has an opaque numeric filename.
+//!
+//! A copy is durable data under the Git directory, not scratch: no quota meters
+//! it. Its manifest has two versions. Version 1 (Brit 0.2.6 to 0.3.1) holds every
+//! object reachable from the operation's retained refs. Version 2, which every new
+//! copy is, adds `floor`: the commits whose history the copy is not responsible
+//! for, because refs the user owns keep them reachable. Its objects are what the
+//! retained refs hold above the floor, and the release proof
+//! (`cleanup::validate_release`) stops there. An empty floor means the whole
+//! closure, exactly as version 1. This Brit reads both; an older Brit refuses a
+//! version 2 copy without touching it.
 use std::{
     fs,
     io::Read,
@@ -104,17 +114,6 @@ impl Content for Source<'_> {
     }
 }
 
-/// An upper bound of the `manifest.json` a copy of members with these logical
-/// path lengths writes. An entry's JSON is at most 4 bytes per path byte (a
-/// decimal array) plus 340 for its other fields; the checksummed envelope spells
-/// each JSON byte as a decimal number of at most 4 bytes.
-pub(crate) fn manifest_bound(paths: impl Iterator<Item = usize>) -> u64 {
-    let entries = paths.fold(1024u64, |total, length| {
-        total.saturating_add((length as u64).saturating_mul(4).saturating_add(340))
-    });
-    entries.saturating_mul(4).saturating_add(256)
-}
-
 fn fingerprint(source: &impl Content) -> Result<String> {
     crate::repository::authoring::conflict::file_fingerprint_reader(&mut source.reader()?, source.size()?)
 }
@@ -168,7 +167,6 @@ fn persist_content(path: &Path, owner: u32, source: &impl Content, entry: &Entry
         Err(error) => return Err(error.into()),
     };
     if !present {
-        switch::payload::check_growth(path.parent().context("retained member parent")?, entry.size)?;
         let mut reader = source.reader()?;
         switch::private_copy(path, &mut reader.by_ref().take(entry.size))?;
         let mut extra = [0];
@@ -215,6 +213,10 @@ pub struct Manifest {
     pub replay: String,
     pub observed: String,
     pub entries: Vec<Entry>,
+    /// Version 2: the floor commits (see the module documentation). Absent in a
+    /// version 1 manifest, which is serialized byte for byte as Brit 0.3.1 wrote it.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub floor: Option<Vec<String>>,
 }
 
 #[derive(Serialize, Deserialize)]
@@ -353,13 +355,23 @@ thread_local! {
 }
 
 fn validate_manifest(manifest: &Manifest) -> Result<gix::hash::Kind> {
-    ensure!(manifest.version == 1, "unsupported retained-copy schema");
+    ensure!(
+        match manifest.version {
+            1 => manifest.floor.is_none(),
+            2 => manifest.floor.is_some(),
+            _ => false,
+        },
+        "unsupported retained-copy schema"
+    );
     ensure!(
         manifest.nonce.len() == 40 && manifest.nonce.as_bytes().iter().all(u8::is_ascii_hexdigit),
         "invalid retained-copy operation nonce"
     );
     let original = gix::ObjectId::from_hex(manifest.original.as_bytes())?;
-    for id in [&manifest.replay, &manifest.observed] {
+    for id in [&manifest.replay, &manifest.observed]
+        .into_iter()
+        .chain(manifest.floor.iter().flatten())
+    {
         ensure!(
             gix::ObjectId::from_hex(id.as_bytes())?.kind() == original.kind(),
             "mixed retained object hashes"
@@ -386,6 +398,9 @@ fn validate_manifest(manifest: &Manifest) -> Result<gix::hash::Kind> {
 /// Resume only a byte-identical capture at the same nonce/sequence. The caller
 /// must durably record skip/abort intent and validate live sources before calling.
 /// The returned receipt alone licenses a later restoration decision.
+///
+/// The copy is written as manifest version 2 with an empty floor: it holds, and its
+/// release proof requires, the whole closure of the retained refs.
 pub fn capture<D: Content>(
     repo: &gix::Repository,
     nonce: &str,
@@ -395,26 +410,73 @@ pub fn capture<D: Content>(
     observed: gix::ObjectId,
     members: &[Member<D>],
 ) -> Result<Receipt> {
+    let identity = Identity {
+        nonce,
+        sequence,
+        original,
+        replay,
+        observed,
+        floor: Some(&[]),
+    };
+    capture_copy(repo, &identity, members)
+}
+
+/// What names a copy: its operation and sequence, the three tips it records and,
+/// for manifest version 2, its floor (`None` writes version 1).
+#[derive(Clone, Copy)]
+pub(crate) struct Identity<'a> {
+    pub nonce: &'a str,
+    pub sequence: u64,
+    pub original: gix::ObjectId,
+    pub replay: gix::ObjectId,
+    pub observed: gix::ObjectId,
+    pub floor: Option<&'a [gix::ObjectId]>,
+}
+
+/// [`capture`] writing the version 1 manifest Brit 0.3.1 wrote, so tests can hold
+/// this Brit to reading, restoring from and releasing such a copy.
+#[cfg(test)]
+pub(crate) fn capture_v1<D: Content>(
+    repo: &gix::Repository,
+    nonce: &str,
+    sequence: u64,
+    id: gix::ObjectId,
+    members: &[Member<D>],
+) -> Result<Receipt> {
+    let identity = Identity {
+        nonce,
+        sequence,
+        original: id,
+        replay: id,
+        observed: id,
+        floor: None,
+    };
+    capture_copy(repo, &identity, members)
+}
+
+/// Capture `members` as the copy `identity` names (see [`capture`]).
+pub(crate) fn capture_copy<D: Content>(
+    repo: &gix::Repository,
+    identity: &Identity<'_>,
+    members: &[Member<D>],
+) -> Result<Receipt> {
+    let Identity {
+        nonce,
+        sequence,
+        original,
+        replay,
+        observed,
+        floor,
+    } = *identity;
     let owner = fs::metadata(repo.git_dir())?.uid();
-    // Outside recovery every member, and the manifest written before them, is
-    // copied under the scratch quota: a copy whose member bytes plus an upper
-    // bound of its manifest exceed it is refused before anything is written. The
-    // copy an abort or a cleanup needs is written whatever its size (see
-    // `switch::payload::Recovery`); only the disk bounds it.
-    if switch::payload::metered() {
-        let mut planned = manifest_bound(members.iter().map(|member| member.path.len()));
-        for member in members {
-            planned = planned.saturating_add(member.data.size()?);
-        }
-        let limit = switch::payload::scratch_limit();
-        ensure!(
-            planned <= limit,
-            "retained copy cannot be written: its {} members and manifest need up to {planned} bytes, over the {limit}-byte scratch limit every retained copy lives under",
-            members.len()
-        );
-    }
+    let floor = floor.map(|floor| {
+        let mut floor: Vec<_> = floor.iter().map(ToString::to_string).collect();
+        floor.sort();
+        floor.dedup();
+        floor
+    });
     let manifest = Manifest {
-        version: 1,
+        version: if floor.is_some() { 2 } else { 1 },
         nonce: nonce.into(),
         sequence,
         owner_uid: owner,
@@ -435,6 +497,7 @@ pub fn capture<D: Content>(
                 })
             })
             .collect::<Result<_>>()?,
+        floor,
     };
     let hash = validate_manifest(&manifest)?;
     for member in members {

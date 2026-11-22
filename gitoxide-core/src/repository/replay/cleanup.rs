@@ -105,8 +105,17 @@ fn sync_tree(path: &Path) -> Result<()> {
     }
 }
 
-/// Prove that every object reachable from a released ref is independently
-/// recoverable. This proof reads only the copy, so aggressive GC cannot weaken it.
+/// Prove that every object a released ref holds above the copy's floor is
+/// independently recoverable. This proof reads only the copy, so aggressive GC
+/// cannot weaken it.
+///
+/// A version 1 manifest, or a version 2 manifest with an empty floor, has no floor:
+/// every object reachable from a released ref must be in the copy, down to the
+/// roots. Otherwise the walk stops at floor commits, which refs the user owns keep
+/// reachable, and a commit's tree entry equal, by id and mode, to its parent's
+/// same-path entry is inherited from the parent rather than required again; the
+/// parent's trees the comparison reads, and a floor parent's commit, must be in the
+/// copy. The cost is that of the copy, not of the history beneath the floor.
 fn validate_release(ledger: &Ledger) -> Result<()> {
     let path = gix::path::from_bstr(ledger.retained_path.as_bstr())?;
     let copy = super::retained::inspect(&path)?;
@@ -121,39 +130,133 @@ fn validate_release(ledger: &Ledger) -> Result<()> {
             objects.insert(id, (gix::objs::Kind::from_bytes(kind.as_bytes())?, ordinal));
         }
     }
-    let mut pending = ledger
+    let floor = copy
+        .manifest
+        .floor
+        .iter()
+        .flatten()
+        .map(|id| gix::ObjectId::from_hex(id.as_bytes()))
+        .collect::<std::result::Result<BTreeSet<_>, _>>()?;
+    let payload = copy.payload_reader()?;
+    let verify_payload = copy.payload_verifier()?;
+    let find = |id: &gix::ObjectId| {
+        objects
+            .get(id)
+            .copied()
+            .context("retained copy lacks a released object closure")
+    };
+    let roots = ledger
         .refs
         .iter()
         .map(|(_, id)| gix::ObjectId::from_hex(id.as_bytes()))
         .collect::<std::result::Result<Vec<_>, _>>()?;
-    let mut seen = BTreeSet::new();
-    let payload = copy.payload_reader()?;
-    let verify_payload = copy.payload_verifier()?;
-    while let Some(id) = pending.pop() {
-        if !seen.insert(id) {
-            continue;
-        }
-        let (kind, ordinal) = objects
-            .get(&id)
-            .context("retained copy lacks a released object closure")?;
-        match kind {
-            gix::objs::Kind::Commit => {
-                let data = payload(*ordinal)?;
-                let commit = gix::objs::CommitRef::from_bytes(&data, id.kind())?;
-                pending.push(commit.tree());
-                pending.extend(commit.parents());
+    if floor.is_empty() {
+        let mut pending = roots;
+        let mut seen = BTreeSet::new();
+        while let Some(id) = pending.pop() {
+            if !seen.insert(id) {
+                continue;
             }
-            gix::objs::Kind::Tree => {
-                let data = payload(*ordinal)?;
-                for entry in gix::objs::TreeRefIter::from_bytes(&data, id.kind()) {
-                    let entry = entry?;
-                    if !entry.mode.is_commit() {
-                        pending.push(entry.oid.to_owned());
+            let (kind, ordinal) = find(&id)?;
+            match kind {
+                gix::objs::Kind::Commit => {
+                    let data = payload(ordinal)?;
+                    let commit = gix::objs::CommitRef::from_bytes(&data, id.kind())?;
+                    pending.push(commit.tree());
+                    pending.extend(commit.parents());
+                }
+                gix::objs::Kind::Tree => {
+                    let data = payload(ordinal)?;
+                    for entry in gix::objs::TreeRefIter::from_bytes(&data, id.kind()) {
+                        let entry = entry?;
+                        if !entry.mode.is_commit() {
+                            pending.push(entry.oid.to_owned());
+                        }
                     }
                 }
+                gix::objs::Kind::Blob => verify_payload(ordinal)?,
+                gix::objs::Kind::Tag => anyhow::bail!("unexpected retained tag release root"),
             }
-            gix::objs::Kind::Blob => verify_payload(*ordinal)?,
+        }
+        return Ok(());
+    }
+    // Trees are compared against a base, mirroring `validation::walk_tree_delta`.
+    let tree_entries = |id: gix::ObjectId| -> Result<Vec<(Vec<u8>, gix::objs::tree::EntryMode, gix::ObjectId)>> {
+        let (kind, ordinal) = find(&id)?;
+        ensure!(
+            kind == gix::objs::Kind::Tree,
+            "retained release tree has the wrong type"
+        );
+        let data = payload(ordinal)?;
+        gix::objs::TreeRefIter::from_bytes(&data, id.kind())
+            .map(|entry| {
+                let entry = entry?;
+                Ok((entry.filename.to_vec(), entry.mode, entry.oid.to_owned()))
+            })
+            .collect()
+    };
+    let commit_of = |id: gix::ObjectId| -> Result<(gix::ObjectId, Vec<gix::ObjectId>)> {
+        let (kind, ordinal) = find(&id)?;
+        ensure!(
+            kind == gix::objs::Kind::Commit,
+            "retained release commit has the wrong type"
+        );
+        let data = payload(ordinal)?;
+        let commit = gix::objs::CommitRef::from_bytes(&data, id.kind())?;
+        Ok((commit.tree(), commit.parents().collect()))
+    };
+    let mut trees: Vec<(gix::ObjectId, Option<gix::ObjectId>)> = Vec::new();
+    let mut commits = Vec::new();
+    for root in roots {
+        if floor.contains(&root) {
+            continue;
+        }
+        match find(&root)?.0 {
+            gix::objs::Kind::Commit => commits.push(root),
+            gix::objs::Kind::Tree => trees.push((root, None)),
+            gix::objs::Kind::Blob => verify_payload(find(&root)?.1)?,
             gix::objs::Kind::Tag => anyhow::bail!("unexpected retained tag release root"),
+        }
+    }
+    let mut walked = BTreeSet::new();
+    while let Some(id) = commits.pop() {
+        if floor.contains(&id) || !walked.insert(id) {
+            continue;
+        }
+        let (tree, parents) = commit_of(id)?;
+        let base = match parents.as_slice() {
+            [parent] => Some(commit_of(*parent)?.0),
+            _ => None,
+        };
+        trees.push((tree, base));
+        commits.extend(parents);
+    }
+    let mut done = BTreeSet::new();
+    while let Some((tree, base)) = trees.pop() {
+        if Some(tree) == base || !done.insert((tree, base)) {
+            continue;
+        }
+        let inherited = match base {
+            Some(base) => tree_entries(base)?,
+            None => Vec::new(),
+        };
+        for (name, mode, id) in tree_entries(tree)? {
+            let same = inherited.iter().find(|(other, _, _)| *other == name);
+            if same.is_some_and(|(_, other_mode, other_id)| (*other_mode, *other_id) == (mode, id)) || mode.is_commit()
+            {
+                continue;
+            }
+            if mode.is_tree() {
+                let sub = same.filter(|(_, mode, _)| mode.is_tree()).map(|(_, _, id)| *id);
+                trees.push((id, sub));
+            } else {
+                let (kind, ordinal) = find(&id)?;
+                ensure!(
+                    kind == gix::objs::Kind::Blob,
+                    "retained release blob has the wrong type"
+                );
+                verify_payload(ordinal)?;
+            }
         }
     }
     Ok(())
@@ -471,4 +574,184 @@ pub(super) fn inspect(repo: &gix::Repository, receipt: &Path) -> Result<(bool, P
         retired,
         gix::path::from_bstr(ledger.retained_path.as_bstr())?.into_owned(),
     ))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::repository::replay::retained::{self, Area, Kind, Member};
+
+    const NONCE: &str = "0123456789abcdef0123456789abcdef01234567";
+
+    fn git(root: &Path, args: &[&str]) -> Result<String> {
+        let output = gix_testtools::git_command(root).args(args).output()?;
+        ensure!(
+            output.status.success(),
+            "git {args:?}: {}",
+            String::from_utf8_lossy(&output.stderr)
+        );
+        Ok(String::from_utf8(output.stdout)?.trim().to_owned())
+    }
+
+    /// History `h` holding a large `old` file, a base `p` that removes it and adds
+    /// `a/x` and `b/y`, and a replayed commit `c` changing only `a/x`.
+    fn fixture() -> Result<(tempfile::TempDir, gix::Repository, [gix::ObjectId; 3])> {
+        let temp = tempfile::tempdir()?;
+        let root = temp.path();
+        git(root, &["init", "-q", "-b", "main"])?;
+        git(root, &["config", "user.name", "Floor"])?;
+        git(root, &["config", "user.email", "floor@example.invalid"])?;
+        fs::write(root.join("old"), vec![7u8; 64 * 1024])?;
+        git(root, &["add", "old"])?;
+        git(root, &["commit", "-q", "-m", "history"])?;
+        let h = git(root, &["rev-parse", "HEAD"])?;
+        git(root, &["rm", "-q", "old"])?;
+        fs::create_dir_all(root.join("a"))?;
+        fs::create_dir_all(root.join("b"))?;
+        fs::write(root.join("a/x"), b"x\n")?;
+        fs::write(root.join("b/y"), b"y\n")?;
+        git(root, &["add", "a", "b"])?;
+        git(root, &["commit", "-q", "-m", "base"])?;
+        let p = git(root, &["rev-parse", "HEAD"])?;
+        fs::write(root.join("a/x"), b"changed x\n")?;
+        git(root, &["commit", "-q", "-am", "change"])?;
+        let c = git(root, &["rev-parse", "HEAD"])?;
+        let repo = gix::open(root)?;
+        let id = |hex: &str| gix::ObjectId::from_hex(hex.as_bytes());
+        Ok((temp, repo, [id(&h)?, id(&p)?, id(&c)?]))
+    }
+
+    fn members<'a>(
+        repo: &'a gix::Repository,
+        ids: &BTreeSet<gix::ObjectId>,
+    ) -> Result<Vec<Member<retained::Source<'a>>>> {
+        ids.iter()
+            .map(|id| {
+                Ok(Member {
+                    area: Area::Objects,
+                    path: id.to_string().into_bytes(),
+                    stage: None,
+                    kind: Kind::Object {
+                        id: id.to_string(),
+                        kind: repo.find_header(*id)?.kind().to_string(),
+                    },
+                    mode: 0o600,
+                    data: retained::Source::Object(repo, *id),
+                })
+            })
+            .collect()
+    }
+
+    fn ledger(receipt: &retained::Receipt, root: gix::ObjectId) -> Result<Ledger> {
+        Ok(Ledger {
+            version: 1,
+            nonce: NONCE.into(),
+            owner: Vec::new(),
+            common: Vec::new(),
+            root: Vec::new(),
+            identities: Vec::new(),
+            directory: (0, 0),
+            terminal: Vec::new(),
+            refs: vec![("original".into(), root.to_string())],
+            retained_path: raw(&receipt.path)?,
+            retained_digest: receipt.digest.clone(),
+            members: Vec::new(),
+        })
+    }
+
+    fn capture(
+        repo: &gix::Repository,
+        sequence: u64,
+        tip: gix::ObjectId,
+        ids: &BTreeSet<gix::ObjectId>,
+        floor: &[gix::ObjectId],
+    ) -> Result<retained::Receipt> {
+        let identity = retained::Identity {
+            nonce: NONCE,
+            sequence,
+            original: tip,
+            replay: tip,
+            observed: tip,
+            floor: Some(floor),
+        };
+        retained::capture_copy(repo, &identity, &members(repo, ids)?)
+    }
+
+    /// A new copy is manifest v2 recording its floor; the release proof stops at
+    /// the floor and takes an entry equal to its parent's same-path entry as
+    /// inherited, so the copy holds the change alone, not the history beneath.
+    #[test]
+    fn a_v2_copy_records_its_floor_and_its_release_proof_stops_there() -> Result<()> {
+        let (_temp, repo, [h, p, c]) = fixture()?;
+        let floor = BTreeSet::from([p]);
+        let mut custody = BTreeSet::new();
+        super::super::validation::Validation::default().custody(&repo, c, &floor, &mut custody)?;
+        let unchanged = repo.rev_parse_single("HEAD:b/y")?.detach();
+        let old = repo.rev_parse_single(format!("{h}:old").as_str())?.detach();
+        for absent in [h, old, unchanged] {
+            assert!(
+                !custody.contains(&absent),
+                "{absent} lies below the floor or is inherited"
+            );
+        }
+        let changed = repo.rev_parse_single("HEAD:a/x")?.detach();
+        assert!(custody.contains(&c) && custody.contains(&p) && custody.contains(&changed));
+
+        let receipt = capture(&repo, 1, c, &custody, &[p])?;
+        let copy = retained::inspect(&receipt.path)?;
+        assert_eq!(copy.manifest.version, 2);
+        assert_eq!(copy.manifest.floor, Some(vec![p.to_string()]));
+        validate_release(&ledger(&receipt, c)?)?;
+
+        // Without its floor, the same objects do not prove the closure.
+        let receipt = capture(&repo, 2, c, &custody, &[])?;
+        assert!(
+            validate_release(&ledger(&receipt, c)?).is_err(),
+            "an empty floor is the whole closure"
+        );
+        // A changed blob missing from the copy is refused.
+        let mut lacking = custody.clone();
+        lacking.remove(&changed);
+        let receipt = capture(&repo, 3, c, &lacking, &[p])?;
+        let error = validate_release(&ledger(&receipt, c)?).expect_err("a changed blob is required");
+        assert!(
+            error.to_string().contains("lacks a released object closure"),
+            "{error:#}"
+        );
+        // A floor commit's own object must be in the copy, for its tree.
+        let mut lacking = custody.clone();
+        lacking.remove(&p);
+        let receipt = capture(&repo, 4, c, &lacking, &[p])?;
+        assert!(
+            validate_release(&ledger(&receipt, c)?).is_err(),
+            "the floor commit is required"
+        );
+        Ok(())
+    }
+
+    /// A copy an older Brit (0.2.6 to 0.3.1) wrote is manifest v1, without a
+    /// floor: this Brit still inspects it and proves its whole closure.
+    #[test]
+    fn a_v1_copy_is_still_inspected_and_its_whole_closure_proven() -> Result<()> {
+        let (_temp, repo, [_, _, c]) = fixture()?;
+        let mut closure = BTreeSet::new();
+        super::super::validation::history(&repo, c, &mut closure)?;
+        let receipt = retained::capture_v1(&repo, NONCE, 1, c, &members(&repo, &closure)?)?;
+        let envelope: serde_json::Value = serde_json::from_slice(&fs::read(receipt.path.join("manifest.json"))?)?;
+        let payload: Vec<u8> = serde_json::from_value(envelope["payload"].clone())?;
+        let manifest: serde_json::Value = serde_json::from_slice(&payload)?;
+        assert_eq!(manifest["version"], 1);
+        assert!(
+            manifest.get("floor").is_none(),
+            "a v1 manifest has no floor key: {manifest}"
+        );
+        let copy = retained::inspect(&receipt.path)?;
+        assert_eq!(copy.manifest.floor, None);
+        validate_release(&ledger(&receipt, c)?)?;
+        let mut lacking = closure.clone();
+        lacking.remove(&c);
+        let receipt = retained::capture_v1(&repo, NONCE, 2, c, &members(&repo, &lacking)?)?;
+        assert!(validate_release(&ledger(&receipt, c)?).is_err());
+        Ok(())
+    }
 }

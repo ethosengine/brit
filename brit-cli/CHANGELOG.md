@@ -17,9 +17,29 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.0.0/); ver
   (`ContentFingerprint::from_repo_globs_excluding`) at the 0.2.3 the registry already held, so
   main's publish refused it as an immutable version collision and `brit-cli` 0.3.1 never reached
   the registry. `brit-cli` requires `brit-graph` 0.2.4. No behaviour change from 0.3.1.
+- `brit rebase` works on large repositories. What a rebase reads, verifies and keeps now scales
+  with its change instead of the repository's history: selection walks only the replayed range
+  above the merge base; verification covers the replayed commits, their tree deltas over their
+  parents and the upstream's and base's trees along the touched paths; the journal and the
+  retained copy hold those commits and what they introduce over a *floor* (the merge base and
+  the upstream, which the user's own refs keep reachable), not the history beneath it. A rebase
+  whose history alone exceeded the 1 GiB scratch limit (the monorepo, a full clone of brit) was
+  refused before starting; it is now admitted when its journal fits.
+- The worktree witness of a rebase and of its conflict and edit stops no longer reads untracked
+  or ignored files outside the touched paths: build output or a new file elsewhere no longer
+  refuses `--continue` ("worktree mutation outside resolution scope" / "worktree changed outside
+  replay scope"), and a large `target/` or `node_modules/` is never hashed.
 
 ### Changed
 
+- Retained-copy manifests are version 2 for every new copy, recording the floor at which the
+  release proof stops (a tree entry equal to its parent's same-path entry counts as inherited).
+  This Brit still reads, restores from and cleans version 1 copies and the journals Brit 0.2.6 to
+  0.3.1 wrote; an older Brit refuses a version 2 copy, or a journal with a floor, without touching
+  it.
+- The scratch limit meters the rebase journal only. A retained copy, a `--skip`'s included, is
+  durable data under the Git directory and is never metered; the preflight's refusal of a
+  history whose objects exceed the limit, and admission's test of the copy, are gone.
 - CI: the planned jobs `.epr-meta/readiness.json` declares deferred run in their own job,
   `run-deferred`, which `Tests pass` does not need, so a deferred leg can no longer hold up or
   fail the gate. Required legs run in `run` as before.

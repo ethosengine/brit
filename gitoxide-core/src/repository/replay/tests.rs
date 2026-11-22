@@ -143,22 +143,27 @@ fn index_loops_cancel_after_sixteen_items() -> Result<()> {
 }
 
 #[test]
-fn history_loops_cancel_after_sixteen_items() -> Result<()> {
+fn chain_walk_cancels_after_sixteen_items_and_reads_nothing_below_the_base() -> Result<()> {
     if gix_testtools::run_in_isolated_process().map_err(anyhow::Error::from_boxed)? {
         return Ok(());
     }
-    for size in [1_000, 10_000] {
-        let ours: BTreeMap<_, _> = (1..=size).map(|n| (object_id(n), vec![object_id(n - 1)])).collect();
-        for point in ["replay-selected-commit", "replay-candidate-chain"] {
-            measure(point, size, || {
-                selected_candidates(object_id(size), &ours, &BTreeMap::new())
-            })?;
-        }
-        let candidates = selected_candidates(object_id(size), &ours, &BTreeMap::new())?;
+    let (_temp, repo, root) = fixture()?;
+    let tree = repo.find_commit(root)?.tree_id()?.detach();
+    let mut commits = vec![root];
+    for n in 0..1_000 {
+        let parent = *commits.last().expect("root");
+        commits.push(repo.commit("HEAD", format!("commit {n}"), tree, [parent])?.detach());
+    }
+    for size in [64, 1_000] {
+        let tip = commits[size];
+        measure("replay-candidate-chain", size, || chain(&repo, tip, root))?;
+        let candidates = chain(&repo, tip, root)?;
         assert_eq!(candidates.len(), size);
-        assert_eq!(candidates[0].parent, object_id(0));
-        assert_eq!(candidates[size - 1].commit, object_id(size));
-        assert!(selected_candidates(object_id(size), &ours, &ours)?.is_empty());
+        assert_eq!(candidates[0].parent, root);
+        assert_eq!(candidates[size - 1].commit, tip);
+        assert!(chain(&repo, tip, tip)?.is_empty());
+        // A base the chain reaches early stops the walk there.
+        assert_eq!(chain(&repo, tip, commits[size - 1])?.len(), 1);
     }
     Ok(())
 }
@@ -185,6 +190,8 @@ fn tree_and_footprint_loops_cancel_after_sixteen_items() -> Result<()> {
             argument: "main".into(),
             candidates: vec![Candidate { commit, parent: commit }; size],
             kind: SelectionKind::Replay,
+            base: commit,
+            floor: BTreeSet::from([commit]),
             closure: BTreeSet::new(),
         };
         measure("replay-footprint-candidate", size, || selection.footprint(&repo))?;

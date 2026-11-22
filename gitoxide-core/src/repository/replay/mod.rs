@@ -1,18 +1,17 @@
 //! Durable local replay with bounded Linux command dispatch.
 //!
-//! Read-only selection proves pinned local history. Linux sessions preserve the
-//! original staging/worktree distinction through separately journaled decisions.
+//! Read-only selection resolves the range from the merge base and the chain of
+//! single-parent commits above it, so its cost is proportional to the range, not
+//! to the history beneath it. Linux sessions preserve the original staging and
+//! worktree distinction through separately journaled decisions.
 //!
-//! Not yet done: refusals that the index and two trees decide still run after the
-//! verification walk, which spools every blob. Moving them before it, each keeping
-//! its message: the refStorage check and branch occupancy (configuration and
-//! worktree HEADs only); multiple merge bases (`merge_bases_many` needs no walk);
-//! preservation's index-only refusals (unmerged and split index, gitlinks with or
-//! without a submodule directory). Belonging to the redesign: merge-bearing, root
-//! and non-linear ranges need a commit-only walk; moved gitlinks and external
-//! filters read unverified trees, so they would then precede corruption errors;
-//! dirty footprints and untracked collisions need dirtiness decided without
-//! spooling worktree files.
+//! What a rebase reads and keeps is bounded by its *floor*: the merge base `p` and
+//! the upstream `U`, both kept reachable by refs the user owns (the original branch
+//! reaches `p`; the user's upstream ref, and once published the new branch, reach
+//! `U`). No walk, verification or retained copy goes below the floor (see
+//! `validation`). `Selection::prepare` verifies what a replay reads before it
+//! returns; a session defers that verification until preparation's index- and
+//! tree-only refusals have run, and verifies before its journal exists.
 use std::collections::{BTreeMap, BTreeSet};
 
 use anyhow::{Context, Result, ensure};
@@ -21,7 +20,7 @@ use gix::bstr::{BStr, BString, ByteSlice};
 mod validation;
 use validation::Validation;
 #[cfg(target_os = "linux")]
-use validation::{history, validate_tree};
+use validation::validate_tree;
 
 #[cfg(target_os = "linux")]
 mod hooks;
@@ -50,7 +49,13 @@ pub struct Selection {
     pub argument: BString,
     pub candidates: Vec<Candidate>,
     pub kind: SelectionKind,
-    /// Native hash-validated object identities required by both pinned histories.
+    /// The single merge base of the original tip and the upstream: the parent of
+    /// the first candidate, or the original tip itself when nothing is replayed.
+    pub base: gix::ObjectId,
+    /// The commits no walk of this replay goes below: `base` and `upstream`.
+    pub floor: BTreeSet<gix::ObjectId>,
+    /// Hash-verified objects the replayed chain holds above the floor (its custody;
+    /// see `validation`), filled in by verification.
     pub closure: BTreeSet<gix::ObjectId>,
 }
 
@@ -71,17 +76,20 @@ pub(crate) fn validate_execution_policy(repo: &gix::Repository) -> Result<()> {
 }
 
 impl Selection {
-    /// Resolve only explicit, local revisions and prove the selected linear chain.
-    /// This function is read-only, including for no-op and fast-forward results.
+    /// Resolve only explicit, local revisions, prove the selected linear chain and
+    /// verify what a replay of it reads. This function is read-only, including for
+    /// no-op and fast-forward results.
     pub fn prepare(repo: &gix::Repository, upstream: &BStr) -> Result<Self> {
-        Self::prepare_inner(repo, upstream, None)
+        let mut selection = Self::prepare_inner(repo, upstream, None)?;
+        selection.verify(repo)?;
+        Ok(selection)
     }
 
-    /// [`Self::prepare`] for a replay session that keeps its retained copy under
-    /// `limit` bytes. Before any object is verified or spooled, it refuses a rebase
-    /// whose retained copy could not fit, because such a rebase could publish and
-    /// then never finish its cleanup, nor be aborted. `interactive` says whether a
-    /// no-op selection would still replay its own commits.
+    /// [`Self::prepare`] for a replay session whose journal the scratch `limit`
+    /// meters. Before any object is verified or spooled, it refuses a rebase whose
+    /// journal could not fit. `interactive` says whether a no-op selection would
+    /// still replay its own commits. Verification is left to [`Self::verify`], which
+    /// the session runs once its index- and tree-only refusals have passed.
     pub fn prepare_for_session(repo: &gix::Repository, upstream: &BStr, interactive: bool, limit: u64) -> Result<Self> {
         Self::prepare_inner(repo, upstream, Some((interactive, limit)))
     }
@@ -107,25 +115,21 @@ impl Selection {
         let attachment = repo.head_name()?.map(|name| name.as_bstr().to_owned());
         let upstream_id = resolve_upstream(repo, upstream)?;
         selection_interrupt()?;
-        if let Some((interactive, limit)) = bound {
-            copy_bound::preflight(repo, original, upstream_id, interactive, limit)?;
-        }
-        let mut closure = BTreeSet::new();
-        let mut validation = Validation::default();
-        let ours = validation.history(repo, original, &mut closure)?;
-        let theirs = validation.history(repo, upstream_id, &mut closure)?;
-        selection_interrupt()?;
         let bases = repo.merge_bases_many(original, &[upstream_id])?;
         selection_interrupt()?;
         ensure!(bases.len() == 1, "replay requires exactly one merge base");
-        let kind = if theirs.contains_key(&original) && original != upstream_id {
+        let base = bases[0].detach();
+        let candidates = chain(repo, original, base)?;
+        let kind = if base == original && original != upstream_id {
             SelectionKind::FastForward
-        } else if ours.contains_key(&upstream_id) {
+        } else if base == upstream_id {
             SelectionKind::Noop
         } else {
             SelectionKind::Replay
         };
-        let candidates = selected_candidates(original, &ours, &theirs)?;
+        if let Some((interactive, limit)) = bound {
+            copy_bound::preflight(repo, original, upstream_id, &candidates, interactive, limit)?;
+        }
         let selection = Self {
             original,
             upstream: upstream_id,
@@ -133,7 +137,9 @@ impl Selection {
             argument: upstream.to_owned(),
             candidates,
             kind,
-            closure,
+            base,
+            floor: BTreeSet::from([base, upstream_id]),
+            closure: BTreeSet::new(),
         };
         if selection.kind != SelectionKind::Noop || !selection.candidates.is_empty() {
             let commits = [selection.original, selection.upstream]
@@ -144,6 +150,22 @@ impl Selection {
         }
         ensure!(!gix::interrupt::is_triggered(), "replay selection interrupted");
         Ok(selection)
+    }
+
+    /// Verify, once, every object a replay of this selection reads or keeps: the
+    /// custody of the replayed chain above the floor, and the upstream's and the
+    /// base's trees and blobs along the footprint. Nothing below the floor is read.
+    pub fn verify(&mut self, repo: &gix::Repository) -> Result<()> {
+        let mut validation = Validation::default();
+        let mut closure = BTreeSet::new();
+        validation.custody(repo, self.original, &self.floor, &mut closure)?;
+        let footprint = self.footprint(repo)?;
+        for commit in [self.upstream, self.base] {
+            validation.along(repo, commit, &footprint)?;
+        }
+        selection_interrupt()?;
+        self.closure = closure;
+        Ok(())
     }
 
     /// An attachment change is foreign movement even if the commit stays equal.
@@ -198,25 +220,21 @@ fn selection_checkpoint(point: &str) -> Result<()> {
     selection_interrupt()
 }
 
-fn selected_candidates(
-    original: gix::ObjectId,
-    ours: &BTreeMap<gix::ObjectId, Vec<gix::ObjectId>>,
-    theirs: &BTreeMap<gix::ObjectId, Vec<gix::ObjectId>>,
-) -> Result<Vec<Candidate>> {
+/// The commits from `original` down to (not including) `base`, oldest first. Each
+/// must have exactly one parent; the walk reads nothing below `base`. Because
+/// `base` is the only best common ancestor, none of these is reachable from the
+/// upstream, and every commit only the original reaches is one of them.
+fn chain(repo: &gix::Repository, original: gix::ObjectId, base: gix::ObjectId) -> Result<Vec<Candidate>> {
     selection_interrupt()?;
-    let mut selected = BTreeSet::new();
-    for commit in ours.keys() {
-        selection_interrupt()?;
-        if !theirs.contains_key(commit) {
-            selected.insert(*commit);
-        }
-        selection_checkpoint("replay-selected-commit")?;
-    }
     let mut candidates = Vec::new();
     let mut current = original;
-    while selected.contains(&current) {
-        selection_interrupt()?;
-        let parents = ours.get(&current).context("selected history disappeared")?;
+    let mut buffer = gix::objs::find::Buffer::default();
+    while current != base {
+        // Each commit is selected and chained in the same step.
+        selection_checkpoint("replay-selected-commit")?;
+        let commit = read_commit(repo, current, &mut buffer)?;
+        let parents: Vec<_> = commit.parents().collect();
+        drop(commit);
         ensure!(
             parents.len() == 1,
             "merge-bearing or root replay selection is unsupported"
@@ -228,8 +246,6 @@ fn selected_candidates(
         current = parents[0];
         selection_checkpoint("replay-candidate-chain")?;
     }
-    ensure!(candidates.len() == selected.len(), "selection is not one linear chain");
-    selection_interrupt()?;
     candidates.reverse();
     selection_interrupt()?;
     Ok(candidates)

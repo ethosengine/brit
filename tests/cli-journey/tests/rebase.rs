@@ -409,6 +409,14 @@ fn checked_out_gitlink_keeps_its_refusal_before_any_state() -> Result<()> {
 fn public_linear_replay_finishes_and_helper_exports_after_cleanup_without_runtime_git() -> Result<()> {
     let repo = fixture(false)?;
     let root = repo.path();
+    // A copy holds what the replayed chain introduces, not the history below its
+    // base, so the chain itself carries the collision fixtures, at new paths.
+    fs::create_dir(root.join("collisions"))?;
+    for name in ["messageA", "messageB"] {
+        fs::copy(root.join(name), root.join("collisions").join(name))?;
+    }
+    git(root, &["add", "collisions"])?;
+    git(root, &["commit", "-q", "-m", "collisions", "--", "collisions"])?;
     fs::write(root.join("private-neighbor"), b"private neighbor\0bytes\n")?;
     let originals = ["messageA", "messageB", "neighbor", "private-neighbor"]
         .into_iter()
@@ -1178,14 +1186,26 @@ mod recovery {
         }
     }
 
-    /// A rebase whose retained copy certainly cannot fit the scratch quota (its
-    /// history's objects alone exceed it, while its journal would fit) is refused
-    /// by the preflight before any journal or spool exists, the repository byte
-    /// for byte as it was. The quota is lowered for the test only.
+    /// A rebase whose journal certainly cannot fit the scratch quota (the file its
+    /// replayed commit changes is kept in it several times) is refused by the
+    /// preflight before any journal or spool exists and before any object is
+    /// verified, the repository byte for byte as it was. A history larger than the
+    /// quota is no longer a reason to refuse: `big_blob_fixture` keeps its large
+    /// file in shared history, and that rebase is admitted at the same quota. The
+    /// quota is lowered for the test only.
     #[test]
-    fn public_rebase_whose_retained_copy_cannot_fit_refuses_before_any_state() -> Result<()> {
-        let repo = big_blob_fixture(2_000_000)?;
+    fn public_rebase_whose_journal_cannot_fit_refuses_before_any_state() -> Result<()> {
+        let repo = TestRepo::new("bounded-journal")?;
         let root = repo.path();
+        fs::write(root.join("big"), noise(450_000, 1))?;
+        git(root, &["add", "big"])?;
+        repo.commit_file("base", "base\n")?;
+        git(root, &["switch", "-q", "-c", "upstream"])?;
+        repo.commit_file("upstream", "upstream\n")?;
+        git(root, &["switch", "-q", "main"])?;
+        fs::write(root.join("big"), noise(450_000, 2))?;
+        git(root, &["add", "big"])?;
+        git(root, &["commit", "-q", "-m", "topic"])?;
         let head = git(root, &["rev-parse", "HEAD"])?;
         let index = fs::read(root.join(".git/index"))?;
         let unguarded = |root: &Path| -> Result<std::collections::BTreeMap<PathBuf, Vec<u8>>> {
@@ -1213,8 +1233,7 @@ mod recovery {
         let message = String::from_utf8_lossy(&output.stderr);
         ensure!(!output.status.success(), "oversized rebase must refuse");
         ensure!(
-            message.contains("the retained copy an abort or a cleanup writes holds at least")
-                && !message.contains("its journal can need up to")
+            message.contains("its journal can need up to")
                 && message.contains("the scratch limit configured for testing is too small for this rebase")
                 && !message.contains("not available on repositories of this size yet")
                 && message.contains("over the 1000000-byte scratch limit")
@@ -1239,6 +1258,14 @@ mod recovery {
         // Under the ordinary quota the same rebase proceeds and finishes.
         success(root, &["rebase", "upstream"])?;
         assert!(!root.join(".git/brit-rebase").exists());
+        // A large file in shared history alone is admitted at the lowered quota.
+        let history = big_blob_fixture(2_000_000)?;
+        let output = quota(history.path(), &["rebase", "upstream"], "1000000")?;
+        ensure!(
+            output.status.success(),
+            "a history over the quota is admitted: {}",
+            String::from_utf8_lossy(&output.stderr)
+        );
         Ok(())
     }
 
@@ -3206,6 +3233,213 @@ mod recovery {
         );
         Ok(())
     }
+
+    /// A history whose objects alone far exceed the 2,000,000-byte test limit:
+    /// twelve incompressible 400 KB versions of `old`, removed again before the
+    /// base, so the current tree is small. Above the base, `upstream` and the
+    /// topic each change small files; with `conflict` both change `doc`.
+    fn deep_history_fixture(conflict: bool) -> Result<TestRepo> {
+        let repo = TestRepo::new("deep-history")?;
+        let root = repo.path();
+        for generation in 0..12u64 {
+            fs::write(root.join("old"), noise(400_000, generation + 10))?;
+            git(root, &["add", "old"])?;
+            git(root, &["commit", "-q", "-m", &format!("history {generation}")])?;
+        }
+        git(root, &["rm", "-q", "old"])?;
+        fs::write(root.join("readme"), b"readme\n")?;
+        git(root, &["add", "readme"])?;
+        repo.commit_file("doc", "base\n")?;
+        git(root, &["switch", "-q", "-c", "upstream"])?;
+        repo.commit_file(if conflict { "doc" } else { "up" }, "upstream\n")?;
+        repo.commit_file("up-notes", "upstream notes\n")?;
+        git(root, &["switch", "-q", "main"])?;
+        repo.commit_file("doc", "topic\n")?;
+        repo.commit_file("notes", "topic notes\n")?;
+        Ok(repo)
+    }
+
+    /// Bytes of every object in the repository, decompressed.
+    fn object_bytes(root: &Path) -> Result<u64> {
+        let sizes = git(
+            root,
+            &["cat-file", "--batch-all-objects", "--batch-check=%(objectsize)"],
+        )?;
+        Ok(String::from_utf8(sizes)?
+            .lines()
+            .map(|size| size.parse::<u64>().unwrap_or(0))
+            .sum())
+    }
+
+    /// The bytes of every retained copy, and of their object members alone.
+    fn copy_bytes(root: &Path) -> Result<(u64, u64)> {
+        let mut total = 0u64;
+        let mut objects = 0u64;
+        for operation in fs::read_dir(root.join(".git/brit-rebase-retained"))? {
+            for copy in fs::read_dir(operation?.path())? {
+                let copy = copy?.path();
+                total += repository_bytes(&copy)?
+                    .values()
+                    .map(|bytes| bytes.len() as u64)
+                    .sum::<u64>();
+                let envelope: serde_json::Value = serde_json::from_slice(&fs::read(copy.join("manifest.json"))?)?;
+                let payload: Vec<u8> = serde_json::from_value(envelope["payload"].clone())?;
+                let manifest: serde_json::Value = serde_json::from_slice(&payload)?;
+                for entry in manifest["entries"].as_array().expect("entries") {
+                    if entry["area"] == "Objects" {
+                        objects += entry["size"].as_u64().expect("size");
+                    }
+                }
+            }
+        }
+        Ok((total, objects))
+    }
+
+    /// The manifest of the newest complete retained copy.
+    fn newest_manifest(root: &Path) -> Result<serde_json::Value> {
+        let envelope: serde_json::Value =
+            serde_json::from_slice(&fs::read(retained_leaf(root)?.join("manifest.json"))?)?;
+        let payload: Vec<u8> = serde_json::from_value(envelope["payload"].clone())?;
+        Ok(serde_json::from_slice(&payload)?)
+    }
+
+    /// A small rebase over a history whose objects alone exceed the scratch
+    /// limit is admitted and publishes: what it retains scales with the change.
+    /// The retained copy holds the replayed commits and what they introduce over
+    /// the base, records the floor it stops at (manifest v2), and its object
+    /// members are a few kilobytes against a history of megabytes.
+    #[test]
+    fn public_a_small_rebase_over_a_history_larger_than_the_limit_retains_only_its_change() -> Result<()> {
+        let repo = deep_history_fixture(false)?;
+        let root = repo.path();
+        let history = object_bytes(root)?;
+        ensure!(history > 4_000_000, "the history is twice the limit: {history}");
+        let base = git(root, &["merge-base", "main", "upstream"])?;
+        let upstream = git(root, &["rev-parse", "upstream"])?;
+        let output = quota(root, &["rebase", "upstream"], "2000000")?;
+        ensure!(
+            output.status.success(),
+            "a small rebase is admitted whatever the history: {}",
+            String::from_utf8_lossy(&output.stderr)
+        );
+        ensure!(
+            git(root, &["rev-parse", "HEAD~2"])? == upstream,
+            "published onto upstream"
+        );
+        assert_eq!(git(root, &["show", "HEAD:doc"])?, b"topic\n");
+        assert_eq!(git(root, &["show", "HEAD:up"])?, b"upstream\n");
+        ensure!(!root.join(".git/brit-rebase").exists(), "the journal is cleaned up");
+        ensure!(
+            git(root, &["for-each-ref", "refs/brit-rebase-retain"])?.is_empty(),
+            "no retention ref remains"
+        );
+        let (total, objects) = copy_bytes(root)?;
+        ensure!(
+            objects < 20_000 && total < 2_000_000,
+            "the retained copies hold {objects} object bytes and {total} bytes in all, against a history of {history}"
+        );
+        let manifest = newest_manifest(root)?;
+        ensure!(manifest["version"] == 2, "every new copy is manifest v2: {manifest}");
+        let floor: Vec<String> = serde_json::from_value(manifest["floor"].clone())?;
+        for id in [&base, &upstream] {
+            let id = String::from_utf8(id.clone())?.trim().to_owned();
+            ensure!(floor.contains(&id), "the floor names {id}: {floor:?}");
+        }
+        success(root, &["branch", "create", "after-scoped-rebase"])?;
+        Ok(())
+    }
+
+    /// The same shape stopped on a conflict: `--abort` restores HEAD, the index
+    /// and every worktree file exactly, and its copy is scoped to the change too.
+    #[test]
+    fn public_a_conflict_over_a_history_larger_than_the_limit_aborts_exactly() -> Result<()> {
+        let repo = deep_history_fixture(true)?;
+        let root = repo.path();
+        fs::write(root.join("readme"), b"readme\nthe user's own unstaged edit\n")?;
+        fs::write(root.join("untracked"), b"the user's untracked file\n")?;
+        let before = live(root)?;
+        let stopped = quota(root, &["rebase", "upstream"], "2000000")?;
+        ensure!(
+            String::from_utf8_lossy(&stopped.stderr).contains("stopped on conflicts"),
+            "{}",
+            String::from_utf8_lossy(&stopped.stderr)
+        );
+        abort_restores(root, "2000000", &before, "a conflict over a deep history")?;
+        let (_, objects) = copy_bytes(root)?;
+        ensure!(objects < 20_000, "the abort's copy holds {objects} object bytes");
+        mutations_work(root)?;
+        Ok(())
+    }
+
+    /// An older Brit's journal (written by `BRIT_REBASE_OLDER_BIN`, a Brit 0.2.6 to
+    /// 0.3.1 binary, whose journal records no floor) stopped on a conflict: this Brit
+    /// still aborts it exactly, and still continues it to a published, cleaned
+    /// rebase whose copy proves the full closure the older journal retains.
+    #[test]
+    fn public_an_older_brits_journal_still_aborts_and_continues() -> Result<()> {
+        let Some(baseline) = std::env::var_os("BRIT_REBASE_OLDER_BIN") else {
+            eprintln!("BRIT_REBASE_OLDER_BIN unset: the older-journal journey needs a Brit 0.2.6 to 0.3.1 binary");
+            return Ok(());
+        };
+        for abort in [true, false] {
+            let repo = fixture(true)?;
+            let root = repo.path();
+            let before = live(root)?;
+            let stopped = BritInvocation::new(PathBuf::from(&baseline))
+                .current_dir(root)
+                .args(["rebase", "upstream"])
+                .env("GIT_EDITOR", ":")
+                .run()?;
+            ensure!(!stopped.status.success(), "the older brit stops on its conflict");
+            let state: serde_json::Value =
+                serde_json::from_slice(&fs::read(root.join(".git/brit-rebase/state.json"))?)?;
+            let payload: Vec<u8> = serde_json::from_value(state["payload"].clone())?;
+            let state: serde_json::Value = serde_json::from_slice(&payload)?;
+            ensure!(state.get("floor").is_none(), "an older journal records no floor");
+            if abort {
+                success(root, &["rebase", "--abort"])?;
+                let after = live(root)?;
+                ensure!(after == before, "an older journal aborts exactly");
+            } else {
+                fs::write(root.join("selected"), b"resolved\n")?;
+                success(root, &["rebase", "--stage", "--", "selected"])?;
+                success(root, &["rebase", "--continue"])?;
+                assert_eq!(git(root, &["show", "HEAD:selected"])?, b"resolved\n");
+                ensure!(!root.join(".git/brit-rebase").exists(), "cleaned up");
+                let manifest = newest_manifest(root)?;
+                ensure!(
+                    manifest["version"] == 2 && manifest["floor"].as_array().is_some_and(Vec::is_empty),
+                    "a copy of an older journal is v2 with an empty floor: {manifest}"
+                );
+            }
+            preserved(root)?;
+        }
+        Ok(())
+    }
+}
+
+/// Untracked and ignored files that appear outside the replay's footprint while
+/// a rebase is stopped (build output, editor files, a new directory) are the
+/// user's business, as under Git: `--continue` neither refuses nor touches them.
+#[test]
+fn public_untracked_and_ignored_files_outside_the_footprint_never_refuse_a_stop() -> Result<()> {
+    let repo = fixture(true)?;
+    let root = repo.path();
+    refused(root, &["rebase", "upstream"])?;
+    fs::write(root.join(".git/info/exclude"), b"*.log\n")?;
+    fs::write(root.join("build.log"), b"ignored output\n")?;
+    fs::create_dir(root.join("target"))?;
+    fs::write(root.join("target/artifact"), b"an untracked artifact\n")?;
+    fs::write(root.join("untracked-notes"), b"the user's notes\n")?;
+    fs::write(root.join("selected"), b"resolved\n")?;
+    success(root, &["rebase", "--stage", "--", "selected"])?;
+    success(root, &["rebase", "--continue"])?;
+    assert_eq!(git(root, &["show", "HEAD:selected"])?, b"resolved\n");
+    assert_eq!(fs::read(root.join("build.log"))?, b"ignored output\n");
+    assert_eq!(fs::read(root.join("target/artifact"))?, b"an untracked artifact\n");
+    assert_eq!(fs::read(root.join("untracked-notes"))?, b"the user's notes\n");
+    preserved(root)?;
+    Ok(())
 }
 
 #[test]

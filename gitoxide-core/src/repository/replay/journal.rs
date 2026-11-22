@@ -199,7 +199,15 @@ struct ParentState {
     upstream: String,
     argument: Vec<u8>,
     candidates: Vec<(String, String)>,
+    /// The objects the retained roots hold. With a `floor`, the union of their
+    /// custody sets above it (see `validation`); without one (a journal written by
+    /// Brit 0.2.6 to 0.3.1), their whole closures.
     closure: Vec<String>,
+    /// The commits no walk, verification or retained copy of this journal goes
+    /// below: the merge base and the upstream. Empty only in an older journal,
+    /// every rule of which then stays exactly as that Brit wrote it.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    floor: Vec<String>,
     retained: Vec<(String, String)>,
     preservation: crate::repository::authoring::conflict::Preservation,
     authorized_stop: Option<String>,
@@ -275,7 +283,8 @@ impl Session {
 
     fn prepare_mode(repo: &gix::Repository, argument: &BStr, interactive: bool) -> Result<Option<Self>> {
         use std::{io::Read, os::unix::fs::DirBuilderExt};
-        let selection = Selection::prepare_for_session(repo, argument, interactive, switch::payload::scratch_limit())?;
+        let mut selection =
+            Selection::prepare_for_session(repo, argument, interactive, switch::payload::scratch_limit())?;
         if selection.kind == SelectionKind::Noop && (!interactive || selection.candidates.is_empty()) {
             return Ok(None);
         }
@@ -298,7 +307,7 @@ impl Session {
         preservation.validate_scope(&active)?;
         let root = repo.workdir().context("worktree required")?;
         let original_tree = repo.index_from_tree(&repo.tree_id_of_commit(selection.original)?)?;
-        let witness = crate::repository::authoring::conflict::worktree_witness(repo, &active)?;
+        let witness = crate::repository::authoring::conflict::scope_witness(repo, &active)?;
         let mut work = Vec::new();
         for path in active {
             ensure!(!gix::interrupt::is_triggered(), "replay preparation interrupted");
@@ -349,6 +358,9 @@ impl Session {
                 }
             }
         }
+        // Every index- and tree-only refusal has run: verify, once, what the replay
+        // reads and keeps, before any journal exists.
+        selection.verify(repo)?;
         let directory = repo.git_dir().join("brit-rebase");
         let identities = [repo.git_dir(), root, repo.common_dir()]
             .into_iter()
@@ -384,6 +396,7 @@ impl Session {
                 .map(|c| (c.commit.to_string(), c.parent.to_string()))
                 .collect(),
             closure: selection.closure.iter().map(ToString::to_string).collect(),
+            floor: selection.floor.iter().map(ToString::to_string).collect(),
             preservation,
             retained: vec![
                 ("original".into(), selection.original.to_string()),
@@ -487,13 +500,7 @@ impl Session {
         self.prepare_payloads(repo)?;
         sync_tree(&repo.common_dir().join("objects"))?;
         let mut retained_objects = self.state.closure.iter().cloned().collect::<BTreeSet<_>>();
-        retained_objects.extend(
-            self.state
-                .preservation
-                .original_object_ids()?
-                .iter()
-                .map(ToString::to_string),
-        );
+        retained_objects.extend(self.original_index_objects(repo)?.iter().map(ToString::to_string));
         for value in &retained_objects {
             switch::checkpoint("replay-retention-verify")?;
             let id = gix::ObjectId::from_hex(value.as_bytes())?;
@@ -590,7 +597,7 @@ impl Session {
         } else {
             let excluded = self.state.work.iter().map(|c| c.path.clone()).collect::<Vec<_>>();
             ensure!(
-                crate::repository::authoring::conflict::worktree_witness(repo, &excluded)? == self.state.witness,
+                self.witness(repo, &excluded)? == self.state.witness,
                 "worktree changed outside replay scope"
             );
         }
@@ -953,22 +960,7 @@ impl Session {
         self.adopt_child_retention(repo, &retained.binding, retained.decisions)?;
         self.adopt_child_work(repo, &retained.work, retained.head)?;
         self.state.accepted_child = Some((retained.binding, retained.receipt));
-        let mut closure = BTreeSet::new();
-        history(repo, retained.head, &mut closure)?;
-        for id in &retained.objects {
-            match super::validation::verify_object(repo, *id)? {
-                gix::objs::Kind::Commit => {
-                    history(repo, *id, &mut closure)?;
-                }
-                gix::objs::Kind::Tree => {
-                    validate_tree(repo, *id, &mut closure)?;
-                }
-                gix::objs::Kind::Blob => {
-                    closure.insert(*id);
-                }
-                _ => anyhow::bail!("unsupported object in authored retention receipt"),
-            }
-        }
+        let closure = self.retained_closures(repo, std::iter::once(retained.head).chain(retained.objects))?;
         sync_tree(&repo.common_dir().join("objects"))?;
         self.state.closure.extend(closure.iter().map(ToString::to_string));
         self.state.closure.sort();
@@ -1036,8 +1028,7 @@ impl Session {
             self.state.index = self.capture_payload(repo, &repo.index_path())?;
             self.capture_after(repo)?;
             self.state.accepted_child = Some((completion.binding, completion.receipt));
-            let mut closure = BTreeSet::new();
-            validate_tree(repo, tree, &mut closure)?;
+            let closure = self.retained_closure(repo, tree)?;
             let label = format!("message-{}", self.state.step);
             self.protect(repo, &label, tree, &closure)?;
             self.state.retained.push((label, tree.to_string()));
@@ -1334,6 +1325,93 @@ impl Session {
         self.save()
     }
 
+    /// The witness of the worktree around `scope` (whose own paths are excluded):
+    /// with a floor, the files and links on the scope's ancestors and beneath scope
+    /// directories only; for an older journal, every other file, as it recorded.
+    fn witness(&self, repo: &gix::Repository, scope: &[Vec<u8>]) -> Result<String> {
+        if self.state.floor.is_empty() {
+            crate::repository::authoring::conflict::worktree_witness(repo, scope)
+        } else {
+            crate::repository::authoring::conflict::scope_witness(repo, scope)
+        }
+    }
+
+    /// The witness an editor invocation must leave unchanged: with a floor, the
+    /// replay's paths and their surroundings; for an older journal, the worktree.
+    fn editor_witness(&self, repo: &gix::Repository) -> Result<String> {
+        if self.state.floor.is_empty() {
+            crate::repository::authoring::conflict::worktree_witness(repo, &[])
+        } else {
+            let scope = self
+                .state
+                .work
+                .iter()
+                .map(|change| change.path.clone())
+                .collect::<Vec<_>>();
+            crate::repository::authoring::conflict::scope_witness_including(repo, &scope)
+        }
+    }
+
+    /// The floor this journal's walks stop at (empty for an older journal).
+    fn floor(&self) -> Result<BTreeSet<gix::ObjectId>> {
+        self.state
+            .floor
+            .iter()
+            .map(|id| gix::ObjectId::from_hex(id.as_bytes()).map_err(Into::into))
+            .collect()
+    }
+
+    /// Verify and name what retaining `id` (a commit, a tree or a blob) keeps: for
+    /// this journal's floor, a commit's custody above it, a tree whole and a blob
+    /// alone; for an older journal without a floor, a commit's whole history, as
+    /// that Brit recorded it. Retention recipes record this set, so recomputing it
+    /// for adoption reproduces them exactly.
+    fn retained_closure(&self, repo: &gix::Repository, id: gix::ObjectId) -> Result<BTreeSet<gix::ObjectId>> {
+        self.retained_closures(repo, [id])
+    }
+
+    /// [`Self::retained_closure`] of every id, verified in one pass.
+    fn retained_closures(
+        &self,
+        repo: &gix::Repository,
+        ids: impl IntoIterator<Item = gix::ObjectId>,
+    ) -> Result<BTreeSet<gix::ObjectId>> {
+        let floor = self.floor()?;
+        let mut validation = super::validation::Validation::default();
+        let mut closure = BTreeSet::new();
+        for id in ids {
+            match super::validation::verify_object(repo, id)? {
+                gix::objs::Kind::Commit if floor.is_empty() => {
+                    validation.history(repo, id, &mut closure)?;
+                }
+                gix::objs::Kind::Commit => validation.custody(repo, id, &floor, &mut closure)?,
+                gix::objs::Kind::Tree if floor.is_empty() => {
+                    validate_tree(repo, id, &mut closure)?;
+                }
+                gix::objs::Kind::Tree => validation.whole_tree(repo, id, &mut closure)?,
+                gix::objs::Kind::Blob => {
+                    closure.insert(id);
+                }
+                gix::objs::Kind::Tag => anyhow::bail!("unsupported object in authored retention receipt"),
+            }
+        }
+        Ok(closure)
+    }
+
+    /// The blobs of the original index a retained copy holds as objects. An older
+    /// journal keeps every one; with a floor, only those the original commit's tree
+    /// does not hold at the same path: the rest are in the replayed chain's custody
+    /// or inherited from the floor. A gitlink's id is never a local object.
+    fn original_index_objects(&self, repo: &gix::Repository) -> Result<BTreeSet<gix::ObjectId>> {
+        let ids = self.state.preservation.original_object_ids()?;
+        if self.state.floor.is_empty() {
+            return Ok(ids);
+        }
+        let original = gix::ObjectId::from_hex(self.state.original.as_bytes())?;
+        let tree = repo.index_from_tree(&repo.tree_id_of_commit(original)?)?;
+        self.state.preservation.staged_beyond(&tree)
+    }
+
     fn protect(
         &self,
         repo: &gix::Repository,
@@ -1482,16 +1560,14 @@ impl Session {
             serde_json::from_slice(&envelope.payload)?;
         ensure!(nonce == self.state.nonce && saved == label, "foreign retention recipe");
         let id = gix::ObjectId::from_hex(value.as_bytes())?;
-        let mut closure = BTreeSet::new();
-        match repo.find_header(id)?.kind() {
-            gix::objs::Kind::Commit => {
-                history(repo, id, &mut closure)?;
-            }
-            gix::objs::Kind::Tree => {
-                validate_tree(repo, id, &mut closure)?;
-            }
-            _ => anyhow::bail!("invalid retained root kind"),
-        }
+        ensure!(
+            matches!(
+                repo.find_header(id)?.kind(),
+                gix::objs::Kind::Commit | gix::objs::Kind::Tree
+            ),
+            "invalid retained root kind"
+        );
+        let closure = self.retained_closure(repo, id)?;
         ensure!(
             closure.iter().map(ToString::to_string).collect::<Vec<_>>() == values,
             "retention closure changed"
@@ -1510,8 +1586,7 @@ impl Session {
     }
 
     fn retain_stop(&self, repo: &gix::Repository, after: &mut ParentState, tree: gix::ObjectId) -> Result<()> {
-        let mut closure = BTreeSet::new();
-        validate_tree(repo, tree, &mut closure)?;
+        let closure = self.retained_closure(repo, tree)?;
         sync_tree(&repo.common_dir().join("objects"))?;
         let label = format!("stop-{}", self.state.step);
         self.protect(repo, &label, tree, &closure)?;
@@ -1563,7 +1638,7 @@ impl Session {
                 after: image,
             });
         }
-        self.state.witness = crate::repository::authoring::conflict::worktree_witness(repo, &active)?;
+        self.state.witness = self.witness(repo, &active)?;
         self.save()
     }
 
@@ -1597,8 +1672,7 @@ impl Session {
             repo.write_buf(gix::objs::Kind::Commit, &bytes)? == commit,
             "replay object write changed identity"
         );
-        let mut closure = BTreeSet::new();
-        history(repo, commit, &mut closure)?;
+        let closure = self.retained_closure(repo, commit)?;
         sync_tree(&repo.common_dir().join("objects"))?;
         self.protect(repo, &self.state.step.to_string(), commit, &closure)?;
         let tree = decoded.tree();
@@ -1668,7 +1742,7 @@ impl Session {
         self.validate_current(repo)?;
         if self.state.phase == "break" {
             // The retained copy, before anything of the skip is written.
-            self.reserve_with_copy(repo, self.step_need(repo, None, false, &[])?)?;
+            self.reserve(repo, self.step_need(repo, None, false, &[])?)?;
             self.state.copies += 1;
             self.save()?;
             let receipt = self.capture_current(repo)?;
@@ -1697,7 +1771,7 @@ impl Session {
                 .transpose()?
                 .unwrap_or(self.tip()?);
             let desired = repo.index_from_tree(&repo.tree_id_of_commit(target)?)?;
-            self.reserve_with_copy(repo, self.step_need(repo, Some(&desired), true, &[])?)?;
+            self.reserve(repo, self.step_need(repo, Some(&desired), true, &[])?)?;
         }
         if self.state.phase != "retaining-skip" {
             self.adopt_abandoned_plan(repo)?;
@@ -2152,15 +2226,16 @@ impl Session {
         let members = self.current_members(repo)?;
         let original = gix::ObjectId::from_hex(self.state.original.as_bytes())?;
         let tip = gix::ObjectId::from_hex(self.state.tip.as_bytes())?;
-        super::retained::capture(
-            repo,
-            &self.state.nonce,
-            self.state.copies,
+        let floor = self.floor()?.into_iter().collect::<Vec<_>>();
+        let identity = super::retained::Identity {
+            nonce: &self.state.nonce,
+            sequence: self.state.copies,
             original,
-            tip,
-            super::head_commit_id(repo)?,
-            &members,
-        )
+            replay: tip,
+            observed: super::head_commit_id(repo)?,
+            floor: Some(&floor),
+        };
+        super::retained::capture_copy(repo, &identity, &members)
     }
 
     /// Every member a retained copy of the current state holds.
@@ -2236,19 +2311,26 @@ impl Session {
             }
         }
         let mut retained_objects = self.state.closure.iter().cloned().collect::<BTreeSet<_>>();
-        retained_objects.extend(
-            self.state
-                .preservation
-                .original_object_ids()?
-                .iter()
-                .map(ToString::to_string),
-        );
-        // A gitlink's id names a submodule commit, never a local object.
+        retained_objects.extend(self.original_index_objects(repo)?.iter().map(ToString::to_string));
+        // A gitlink's id names a submodule commit, never a local object. With a
+        // floor, an observed entry the tip's tree holds at the same path is in the
+        // tip's custody or inherited from the floor, and is not copied again.
+        let tip_tree = if self.state.floor.is_empty() {
+            None
+        } else {
+            Some(repo.index_from_tree(&repo.tree_id_of_commit(gix::ObjectId::from_hex(self.state.tip.as_bytes())?)?)?)
+        };
         retained_objects.extend(
             observed
                 .entries()
                 .iter()
                 .filter(|entry| entry.mode != gix::index::entry::Mode::COMMIT)
+                .filter(|entry| {
+                    tip_tree.as_ref().is_none_or(|tree| {
+                        tree.entry_by_path(entry.path(&observed))
+                            .is_none_or(|committed| committed.id != entry.id)
+                    })
+                })
                 .map(|entry| entry.id.to_string()),
         );
         for value in &retained_objects {
@@ -2270,18 +2352,10 @@ impl Session {
         Ok(members)
     }
 
-    /// The bytes the retained copy of the current state needs at most (members
-    /// and an upper bound of its manifest), the bytes it certainly holds (its
-    /// members alone), and the journal's own bytes.
-    fn quota_usage(&self, repo: &gix::Repository) -> Result<(u64, u64, u64)> {
-        use super::retained::Content;
-        let members = self.current_members(repo)?;
-        let mut held = 0u64;
-        for member in &members {
-            held = held.saturating_add(member.data.size()?);
-        }
-        let copy = super::retained::manifest_bound(members.iter().map(|member| member.path.len())).saturating_add(held);
-        Ok((copy, held, tree_bytes(&self.directory)?))
+    /// The journal's own bytes: all the scratch quota meters. A retained copy is
+    /// durable data and is never metered (see the `copy_bound` module).
+    fn quota_usage(&self) -> Result<u64> {
+        tree_bytes(&self.directory)
     }
 
     /// The records one more decision adds at most: its state images (see
@@ -2357,41 +2431,22 @@ impl Session {
 
     /// Refuse, before anything of a forward step is written, a step after which
     /// the journal could exceed the quota with the safety factor (`requested` is
-    /// what the step adds). The retained copy an abort or a cleanup writes is not
-    /// metered (see the `copy_bound` module), so it never refuses a step that
-    /// admission promised. Recovery (an abort, a cleanup, a decision nothing can
-    /// undo) is never refused here.
+    /// what the step adds). A retained copy, a skip's included, is durable data and
+    /// never metered, so it never refuses a step. Recovery (an abort, a cleanup, a
+    /// decision nothing can undo) is never refused here.
     fn reserve(&self, repo: &gix::Repository, requested: u64) -> Result<()> {
-        self.reserve_for(repo, requested, false)
-    }
-
-    /// [`Self::reserve`] for a step that itself writes a retained copy under the
-    /// quota (a skip): that copy, with `requested`, is reserved with the safety
-    /// factor as the journal is.
-    fn reserve_with_copy(&self, repo: &gix::Repository, requested: u64) -> Result<()> {
-        self.reserve_for(repo, requested, true)
-    }
-
-    fn reserve_for(&self, repo: &gix::Repository, requested: u64, metered_copy: bool) -> Result<()> {
+        let _ = repo;
         if !switch::payload::metered() {
             return Ok(());
         }
         let limit = switch::payload::scratch_limit();
-        let (copy, _, journal) = self.quota_usage(repo)?;
-        let need = |bytes: u64| super::copy_bound::with_safety(bytes.saturating_add(requested));
+        let journal = self.quota_usage()?;
+        let need = super::copy_bound::with_safety(journal.saturating_add(requested));
         ensure!(
-            need(journal) <= limit,
+            need <= limit,
             "rebase refused this step before writing anything of it: its journal ({journal} bytes), with {requested} \
              bytes for the step and the {}/{} safety factor, could exceed the {limit}-byte scratch limit the journal \
              lives under; brit rebase --abort restores the original state",
-            super::copy_bound::SAFETY.0,
-            super::copy_bound::SAFETY.1
-        );
-        ensure!(
-            !metered_copy || need(copy) <= limit,
-            "rebase refused this step before writing anything of it: the retained copy it writes ({copy} bytes), \
-             with {requested} bytes for the step and the {}/{} safety factor, could exceed the {limit}-byte scratch \
-             limit that copy lives under; brit rebase --abort restores the original state",
             super::copy_bound::SAFETY.0,
             super::copy_bound::SAFETY.1
         );
@@ -2399,19 +2454,17 @@ impl Session {
     }
 
     /// Admit, once preparation knows its exact records, only a linear replay whose
-    /// peak journal fits the quota with the safety factor to spare, and whose
-    /// retained copy does not already exceed it. To the present journal the peak
-    /// adds every planned decision's records, one stop's and the final
-    /// publication's, what the replay writes ([`super::copy_bound::Plan`], with a
-    /// stop and a resolution as large as the largest step) and the largest
-    /// publication staged at once. The retained copy an abort or a cleanup writes
-    /// is not metered, so only the bytes it already certainly holds (its members,
-    /// without its manifest) are tested, unscaled. Steps beyond
-    /// the plan (further stops, edits) are reserved for when they happen.
+    /// peak journal fits the quota with the safety factor to spare. To the present
+    /// journal the peak adds every planned decision's records, one stop's and the
+    /// final publication's, what the replay writes ([`super::copy_bound::Plan`], with
+    /// a stop and a resolution as large as the largest step) and the largest
+    /// publication staged at once. A retained copy is durable data and is never
+    /// metered. Steps beyond the plan (further stops, edits) are reserved for when
+    /// they happen.
     fn admit(&self, repo: &gix::Repository) -> Result<()> {
         use super::copy_bound::{DECISION_IMAGES, STATE_BYTES_PER_OBJECT, with_safety};
         let limit = switch::payload::scratch_limit();
-        let (_, held, journal) = self.quota_usage(repo)?;
+        let journal = self.quota_usage()?;
         let replayed = self
             .state
             .candidates
@@ -2450,12 +2503,6 @@ impl Session {
              journal lives under; the preparation was cancelled and nothing was changed; git rebase is the fallback",
             super::copy_bound::SAFETY.0,
             super::copy_bound::SAFETY.1
-        );
-        ensure!(
-            held <= limit,
-            "rebase refused before it changed anything: the retained copy an abort would write already holds {held} \
-             bytes, over the {limit}-byte scratch limit; the preparation was cancelled and nothing was changed; git \
-             rebase is the fallback"
         );
         Ok(())
     }
@@ -3385,7 +3432,7 @@ impl Session {
                 .map(|change| change.path.clone())
                 .collect::<Vec<_>>(),
         )?;
-        after.witness = crate::repository::authoring::conflict::worktree_witness(
+        after.witness = self.witness(
             repo,
             &after.work.iter().map(|change| change.path.clone()).collect::<Vec<_>>(),
         )?;
@@ -3788,8 +3835,7 @@ pub(crate) fn protect_child_commit(
     ensure!(ordinal > 0, "child retention requires a positive decision ordinal");
     validate_child_binding(repo, binding)?;
     let session = Session::open(repo)?;
-    let mut closure = BTreeSet::new();
-    history(repo, commit, &mut closure)?;
+    let closure = session.retained_closure(repo, commit)?;
     sync_tree(&repo.common_dir().join("objects"))?;
     session.protect(repo, &format!("child-{}-{ordinal}", binding.step), commit, &closure)
 }

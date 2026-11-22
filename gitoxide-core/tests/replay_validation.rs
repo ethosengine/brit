@@ -1,4 +1,5 @@
-//! Complete-history validation with shared content and malformed type aliases.
+//! Scoped validation with shared content and malformed type aliases: a selection
+//! verifies and keeps what its chain holds above the merge base, never the history.
 use anyhow::{Result, ensure};
 use gitoxide_core::repository::replay::Selection;
 use gix::{
@@ -29,7 +30,7 @@ fn fixture() -> Result<(tempfile::TempDir, gix::Repository)> {
 }
 
 #[test]
-fn repeated_blob_histories_keep_every_unique_object() -> Result<()> {
+fn repeated_blob_histories_below_the_base_are_never_kept() -> Result<()> {
     if gix_testtools::run_in_isolated_process().map_err(anyhow::Error::from_boxed)? {
         return Ok(());
     }
@@ -37,32 +38,61 @@ fn repeated_blob_histories_keep_every_unique_object() -> Result<()> {
         let (_temp, repo) = fixture()?;
         let blob_id = repo.write_blob(vec![b'x'; 256 * 1024])?.detach();
         let mut parent = None;
-        let mut expected = std::collections::BTreeSet::from([blob_id]);
+        let mut history = std::collections::BTreeSet::new();
+        let mut entries = Vec::new();
         for revision in 0..revisions {
-            let tree = Tree {
-                entries: (0..128)
-                    .map(|alias| Entry {
-                        mode: EntryKind::Blob.into(),
-                        filename: format!("file-{revision:03}-{alias:03}").into(),
-                        oid: blob_id,
-                    })
-                    .collect(),
-            };
-            let tree_id = repo.write_object(&tree)?.detach();
+            entries = (0..128)
+                .map(|alias| Entry {
+                    mode: EntryKind::Blob.into(),
+                    filename: format!("file-{revision:03}-{alias:03}").into(),
+                    oid: blob_id,
+                })
+                .collect();
+            let tree_id = repo
+                .write_object(&Tree {
+                    entries: entries.clone(),
+                })?
+                .detach();
             let commit_id = repo.commit("HEAD", "shared content", tree_id, parent)?.detach();
-            expected.extend([tree_id, commit_id]);
+            history.extend([tree_id, commit_id]);
             parent = Some(commit_id);
         }
+        let base = parent.expect("history");
+        let base_tree = repo.find_commit(base)?.tree_id()?.detach();
+        repo.reference(
+            "refs/heads/base",
+            base,
+            gix::refs::transaction::PreviousValue::Any,
+            "base",
+        )?;
+        entries.push(Entry {
+            mode: EntryKind::Blob.into(),
+            filename: "topic".into(),
+            oid: blob_id,
+        });
+        entries.sort_by(|a, b| a.filename.cmp(&b.filename));
+        let topic_tree = repo.write_object(&Tree { entries })?.detach();
+        let topic = repo.commit("HEAD", "topic", topic_tree, [base])?.detach();
         let started = std::time::Instant::now();
-        let selection = Selection::prepare(&repo, b"main".as_bstr())?;
+        let selection = Selection::prepare(&repo, b"base".as_bstr())?;
         eprintln!(
-            "revisions={revisions} aliases=128 blob_bytes=262144 unique_objects={} selection_us={}",
-            expected.len(),
+            "revisions={revisions} aliases=128 blob_bytes=262144 history_objects={} kept={} selection_us={}",
+            history.len(),
+            selection.closure.len(),
             started.elapsed().as_micros()
         );
         assert_eq!(
-            selection.closure, expected,
-            "all historical objects remain verified and retained"
+            selection.closure,
+            std::collections::BTreeSet::from([topic, topic_tree, base, base_tree, blob_id]),
+            "the chain's commit, its delta over the base, and the base it compares against"
+        );
+        assert_eq!(selection.base, base);
+        assert!(
+            history
+                .iter()
+                .filter(|id| **id != base && **id != base_tree)
+                .all(|id| !selection.closure.contains(id)),
+            "no history below the base is kept"
         );
         assert!(!repo.git_dir().join("brit-rebase").exists());
     }
@@ -76,6 +106,16 @@ fn a_verified_blob_cannot_be_reused_as_a_tree() -> Result<()> {
     }
     let (_temp, repo) = fixture()?;
     let blob_id = repo.write_blob(b"ordinary blob")?.detach();
+    let base_tree = repo.write_object(&Tree { entries: Vec::new() })?.detach();
+    let base = repo
+        .commit("HEAD", "base", base_tree, gix::commit::NO_PARENT_IDS)?
+        .detach();
+    repo.reference(
+        "refs/heads/base",
+        base,
+        gix::refs::transaction::PreviousValue::Any,
+        "base",
+    )?;
     let tree_id = repo
         .write_object(&Tree {
             entries: vec![
@@ -92,9 +132,13 @@ fn a_verified_blob_cannot_be_reused_as_a_tree() -> Result<()> {
             ],
         })?
         .detach();
-    repo.commit("HEAD", "malformed type alias", tree_id, gix::commit::NO_PARENT_IDS)?;
-    let error = Selection::prepare(&repo, b"main".as_bstr()).expect_err("cached identities must retain their type");
-    assert!(error.to_string().contains("wrong type"), "{error:#}");
+    repo.commit("HEAD", "malformed type alias", tree_id, [base])?;
+    let error = Selection::prepare(&repo, b"base".as_bstr()).expect_err("cached identities must retain their type");
+    let message = format!("{error:#}");
+    assert!(
+        message.contains("wrong type") || message.contains("Expected object of kind tree"),
+        "{message}"
+    );
     assert!(!repo.git_dir().join("brit-rebase").exists());
     Ok(())
 }
