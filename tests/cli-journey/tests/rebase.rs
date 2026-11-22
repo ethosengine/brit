@@ -3286,21 +3286,26 @@ mod recovery {
         Ok(())
     }
 
-    /// A history whose objects alone far exceed the 2,000,000-byte test limit:
-    /// twelve incompressible 400 KB versions of `old`, removed again before the
+    /// A history whose objects alone far exceed the 3,000,000-byte test limit:
+    /// sixteen incompressible 400 KB versions of `old`, removed again before the
     /// base, so the current tree is small. Above the base, `upstream` and the
     /// topic each change small files; with `conflict` both change `doc`.
     fn deep_history_fixture(conflict: bool) -> Result<TestRepo> {
         let repo = TestRepo::new("deep-history")?;
         let root = repo.path();
-        for generation in 0..12u64 {
+        for generation in 0..16u64 {
             fs::write(root.join("old"), noise(400_000, generation + 10))?;
             git(root, &["add", "old"])?;
             git(root, &["commit", "-q", "-m", &format!("history {generation}")])?;
         }
         git(root, &["rm", "-q", "old"])?;
         fs::write(root.join("readme"), b"readme\n")?;
-        git(root, &["add", "readme"])?;
+        // An index of 2,000 entries, which no state record may repeat.
+        fs::create_dir(root.join("many"))?;
+        for n in 0..2_000 {
+            fs::write(root.join("many").join(format!("{n:04}")), format!("{n}\n"))?;
+        }
+        git(root, &["add", "readme", "many"])?;
         repo.commit_file("doc", "base\n")?;
         git(root, &["switch", "-q", "-c", "upstream"])?;
         repo.commit_file(if conflict { "doc" } else { "up" }, "upstream\n")?;
@@ -3365,10 +3370,10 @@ mod recovery {
         let repo = deep_history_fixture(false)?;
         let root = repo.path();
         let history = object_bytes(root)?;
-        ensure!(history > 4_000_000, "the history is twice the limit: {history}");
+        ensure!(history > 6_000_000, "the history is twice the limit: {history}");
         let base = git(root, &["merge-base", "main", "upstream"])?;
         let upstream = git(root, &["rev-parse", "upstream"])?;
-        let output = quota(root, &["rebase", "upstream"], "2000000")?;
+        let output = quota(root, &["rebase", "upstream"], "3000000")?;
         ensure!(
             output.status.success(),
             "a small rebase is admitted whatever the history: {}",
@@ -3387,7 +3392,7 @@ mod recovery {
         );
         let (total, objects) = copy_bytes(root)?;
         ensure!(
-            objects < 20_000 && total < 2_000_000,
+            objects < 20_000 && total < 3_000_000,
             "the retained copies hold {objects} object bytes and {total} bytes in all, against a history of {history}"
         );
         let manifest = newest_manifest(root)?;
@@ -3410,15 +3415,31 @@ mod recovery {
         fs::write(root.join("readme"), b"readme\nthe user's own unstaged edit\n")?;
         fs::write(root.join("untracked"), b"the user's untracked file\n")?;
         let before = live(root)?;
-        let stopped = quota(root, &["rebase", "upstream"], "2000000")?;
+        let stopped = quota(root, &["rebase", "upstream"], "3000000")?;
         ensure!(
             String::from_utf8_lossy(&stopped.stderr).contains("stopped on conflicts"),
             "{}",
             String::from_utf8_lossy(&stopped.stderr)
         );
-        abort_restores(root, "2000000", &before, "a conflict over a deep history")?;
+        // The preservation record (the original index and all 2,000 of its
+        // entries) is a payload the stop's state record references, not a copy
+        // in it. (A stop still retains its own tree whole; see docs/rebase.md.)
+        let envelope: serde_json::Value = serde_json::from_slice(&fs::read(root.join(".git/brit-rebase/state.json"))?)?;
+        let payload: Vec<u8> = serde_json::from_value(envelope["payload"].clone())?;
+        let state: serde_json::Value = serde_json::from_slice(&payload)?;
+        ensure!(
+            state.get("preservation").is_none() && state["preservation_payload"].is_array(),
+            "the stop's state record references the preservation payload"
+        );
+        abort_restores(root, "3000000", &before, "a conflict over a deep history")?;
+        // The copy holds the chain's change and the stop's tree (retained whole,
+        // see docs/rebase.md), never the history below the floor.
         let (_, objects) = copy_bytes(root)?;
-        ensure!(objects < 20_000, "the abort's copy holds {objects} object bytes");
+        let history = object_bytes(root)?;
+        ensure!(
+            objects < 400_000 && objects * 10 < history,
+            "the abort's copy holds {objects} object bytes of a {history}-byte history"
+        );
         mutations_work(root)?;
         Ok(())
     }

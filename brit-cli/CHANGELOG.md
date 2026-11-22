@@ -41,6 +41,10 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.0.0/); ver
   This Brit still reads, restores from and cleans version 1 copies and the journals Brit 0.2.6 to
   0.3.1 wrote; an older Brit refuses a version 2 copy, or a journal with a floor, without touching
   it.
+- The rebase journal stores its preservation record (the original index and its entries) once, as
+  a payload, instead of in every state record: on the monorepo's 21,667-entry index each record
+  was 56 MB, about three per decision, so a two-commit rebase projected a 1.48 GB journal and was
+  refused at admission.
 - The scratch limit meters the rebase journal only. A retained copy, a `--skip`'s included, is
   durable data under the Git directory and is never metered; the preflight's refusal of a
   history whose objects exceed the limit, and admission's test of the copy, are gone.

@@ -177,7 +177,11 @@ or copied.
   object once and shares one spool budget.
 - **The journal** records the floor and, for each retained root, its *custody*:
   the commits above the floor and their trees' deltas over their parents, as above.
-  A stop's tree is held whole. The journal lists no history.
+  A stop's tree is held whole. The journal lists no history. The preservation
+  record (the original index file and every entry of it, which for a large index
+  is most of a record) is written once, as a journal payload the first record
+  names, and later records reference it instead of repeating it, so a record's
+  size no longer scales with the index once per decision.
 - **The retained copy** an abort, a skip or a cleanup writes holds: that custody
   union; the original and observed index files and the blobs they stage beyond
   their commit's tree; for each path the rebase touches, its before-image, its

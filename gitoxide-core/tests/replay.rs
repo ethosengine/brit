@@ -1158,6 +1158,14 @@ fn make_legacy_inline(repo: &gix::Repository) -> Result<Vec<u8>> {
     let envelope: serde_json::Value = serde_json::from_slice(&fs::read(&state_path)?)?;
     let payload: Vec<u8> = serde_json::from_value(envelope["payload"].clone())?;
     let mut state: serde_json::Value = serde_json::from_slice(&payload)?;
+    // A legacy journal holds its preservation inline, not as a payload.
+    if let Some(stored) = state.as_object_mut().expect("state").remove("preservation_payload") {
+        let hash = stored[0].as_str().expect("preservation payload hash");
+        let path = directory.join(format!("payload-{hash}"));
+        state["preservation"] = serde_json::from_slice(&fs::read(&path)?)?;
+        state["payloads"].as_object_mut().expect("payloads").remove(hash);
+        fs::remove_file(path)?;
+    }
     let payloads = state["payloads"].as_object().expect("raw payload inventory").clone();
     for change in state["work"].as_array_mut().expect("work images") {
         for side in ["before", "after"] {

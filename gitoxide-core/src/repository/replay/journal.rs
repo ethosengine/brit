@@ -104,6 +104,7 @@ use crate::repository::{authoring::conflict::Preservation, switch};
 use gix::objs::FindStream;
 use gix_sequencer::Command;
 use serde::{Deserialize, Serialize};
+use std::io::Write as _;
 use std::{
     fs,
     os::unix::fs::{MetadataExt, PermissionsExt},
@@ -209,7 +210,12 @@ struct ParentState {
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     floor: Vec<String>,
     retained: Vec<(String, String)>,
-    preservation: crate::repository::authoring::conflict::Preservation,
+    #[serde(default, skip_serializing_if = "Preserved::is_stored")]
+    preservation: Preserved,
+    /// The journal payload holding the preservation once preparation completed
+    /// (see [`Preserved`]): its checksum and size. Absent in an older journal.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    preservation_payload: Option<(String, u64)>,
     authorized_stop: Option<String>,
     accepted_child: Option<(ParentBinding, String)>,
     accepted_children: Vec<(ParentBinding, String)>,
@@ -236,6 +242,100 @@ struct ParentState {
     post_outcome: Option<crate::repository::authoring::invocation::InvocationOutcome>,
     #[serde(default)]
     interactive: Option<interactive::Interactive>,
+}
+
+/// The preservation a state record carries. It never changes after preparation,
+/// and it holds the original index file and every entry of it, so for a large
+/// index it is most of a record. A preparation's first record and an older
+/// journal's records hold it inline. From the `prepared` record on, a journal with
+/// a [`ParentState::preservation_payload`] stores it once, as that payload, which
+/// preparation names before writing it, and its records leave it out.
+#[derive(Clone)]
+struct Preserved {
+    value: Preservation,
+    /// Serialized by reference (left out of the record) rather than inline.
+    stored: bool,
+    /// `false` only for a record that references the payload and was not yet
+    /// read from it (see [`ParentState::hydrate`]).
+    loaded: bool,
+}
+
+impl Preserved {
+    fn inline(value: Preservation) -> Self {
+        Self {
+            value,
+            stored: false,
+            loaded: true,
+        }
+    }
+
+    fn is_stored(&self) -> bool {
+        self.stored
+    }
+}
+
+/// What a record that leaves the preservation out deserializes to, before it is
+/// read from its payload.
+impl Default for Preserved {
+    fn default() -> Self {
+        Self {
+            value: Preservation::default(),
+            stored: true,
+            loaded: false,
+        }
+    }
+}
+
+impl std::ops::Deref for Preserved {
+    type Target = Preservation;
+    fn deref(&self) -> &Preservation {
+        &self.value
+    }
+}
+
+impl Serialize for Preserved {
+    fn serialize<S: serde::Serializer>(&self, serializer: S) -> std::result::Result<S::Ok, S::Error> {
+        self.value.serialize(serializer)
+    }
+}
+
+impl<'de> Deserialize<'de> for Preserved {
+    fn deserialize<D: serde::Deserializer<'de>>(deserializer: D) -> std::result::Result<Self, D::Error> {
+        Preservation::deserialize(deserializer).map(Self::inline)
+    }
+}
+
+impl ParentState {
+    /// Read the preservation this record references from its payload in
+    /// `directory`. A preparation being cancelled needs no preservation, and may
+    /// already have removed the payload: there it stays unread.
+    fn hydrate(&mut self, directory: &Path) -> Result<()> {
+        use std::io::Read;
+        if self.preservation.loaded {
+            return Ok(());
+        }
+        let (checksum, size) = self
+            .preservation_payload
+            .clone()
+            .context("replay state records no preservation")?;
+        if matches!(self.phase.as_str(), "preparing" | "cancelling-prepared")
+            && !present(&directory.join(format!("payload-{checksum}")))?
+        {
+            return Ok(());
+        }
+        let mut bytes = Vec::new();
+        switch::payload::open(directory, size, &checksum)?.read_to_end(&mut bytes)?;
+        ensure!(
+            bytes.len() as u64 == size && switch::payload::checksum(&mut bytes.as_slice(), size)? == checksum,
+            "replay preservation payload changed"
+        );
+        self.preservation = Preserved {
+            value: serde_json::from_slice(&bytes)?,
+            stored: true,
+            loaded: true,
+        };
+        Ok(())
+    }
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -366,6 +466,13 @@ impl Session {
             .into_iter()
             .map(|path| fs::symlink_metadata(path).map(|m| (m.dev(), m.ino())))
             .collect::<std::io::Result<_>>()?;
+        // The preservation is stored once, as a payload named here and written when
+        // preparation completes; this first record holds it inline until then.
+        let preserved = serde_json::to_vec(&preservation)?;
+        let preserved = (
+            switch::payload::checksum(&mut preserved.as_slice(), preserved.len() as u64)?,
+            preserved.len() as u64,
+        );
         let mut state = ParentState {
             version: 2,
             payloads: work
@@ -397,7 +504,8 @@ impl Session {
                 .collect(),
             closure: selection.closure.iter().map(ToString::to_string).collect(),
             floor: selection.floor.iter().map(ToString::to_string).collect(),
-            preservation,
+            preservation: Preserved::inline(preservation),
+            preservation_payload: Some(preserved.clone()),
             retained: vec![
                 ("original".into(), selection.original.to_string()),
                 ("upstream".into(), selection.upstream.to_string()),
@@ -449,6 +557,7 @@ impl Session {
             })
             .collect::<Vec<_>>();
         state.payloads.extend(metadata_payloads);
+        state.payloads.insert(preserved.0, preserved.1);
         // All preservation and metadata reads precede journal allocation. Once
         // save_bytes starts, interruption leaves a recoverable preparation record.
         switch::checkpoint("replay-before-journal")?;
@@ -498,6 +607,7 @@ impl Session {
         switch::validate_object_boundaries(repo)?;
         ensure!(self.state.phase == "preparing", "preparation already completed");
         self.prepare_payloads(repo)?;
+        self.store_preservation(repo)?;
         sync_tree(&repo.common_dir().join("objects"))?;
         let mut retained_objects = self.state.closure.iter().cloned().collect::<BTreeSet<_>>();
         retained_objects.extend(self.original_index_objects(repo)?.iter().map(ToString::to_string));
@@ -533,6 +643,34 @@ impl Session {
         switch::checkpoint("replay-retained")?;
         self.state.phase = "prepared".into();
         self.save()?;
+        Ok(())
+    }
+
+    /// Write the preservation payload the first record named (once; a retry
+    /// finds it whole), after which every record leaves the preservation out.
+    fn store_preservation(&mut self, repo: &gix::Repository) -> Result<()> {
+        let Some((checksum, size)) = self.state.preservation_payload.clone() else {
+            return Ok(());
+        };
+        ensure!(self.state.preservation.loaded, "replay preservation was not read");
+        let bytes = serde_json::to_vec(&*self.state.preservation)?;
+        ensure!(
+            bytes.len() as u64 == size && switch::payload::checksum(&mut bytes.as_slice(), size)? == checksum,
+            "replay preservation changed during preparation"
+        );
+        if present(&self.directory.join(format!("payload-{checksum}")))? {
+            switch::payload::open(&self.directory, size, &checksum)?;
+        } else {
+            let budget = gix::utils::stream::Budget::new(repo.git_dir())?;
+            let _charge = switch::payload::charge(&budget, &self.directory)?;
+            let mut source = budget.spool()?;
+            source.write_all(&bytes)?;
+            source.flush()?;
+            switch::checkpoint("replay-payload-intent")?;
+            switch::payload::persist(&self.directory, source, size, &checksum)?;
+            switch::checkpoint("replay-payload-persisted")?;
+        }
+        self.state.preservation.stored = true;
         Ok(())
     }
 
@@ -2607,7 +2745,8 @@ impl Session {
         );
         // Reading is never refused for the quota: recovery must be able to open a
         // journal that outgrew it. One record is bounded before it is allocated.
-        let state = decode_state(&read_record(&path)?)?;
+        let mut state = decode_state(&read_record(&path)?)?;
+        state.hydrate(&directory)?;
         ensure!(
             matches!(state.version, 1 | 2)
                 && state.nonce.len() == 40
@@ -2665,6 +2804,9 @@ impl Session {
                 "invalid preparation successor"
             );
             comparable.phase.clone_from(&session.state.phase);
+            // A `prepared` successor references the preservation payload the
+            // `preparing` record holds inline; the two are compared inline.
+            comparable.preservation.clone_from(&session.state.preservation);
             ensure!(
                 serde_json::to_vec(&comparable)? == serde_json::to_vec(&session.state)?,
                 "foreign pending preparation state"
@@ -2799,6 +2941,7 @@ impl Session {
                 Ok(candidate) => {
                     let mut comparable = candidate.clone();
                     comparable.phase.clone_from(&current.state.phase);
+                    comparable.preservation.clone_from(&current.state.preservation);
                     ensure!(
                         serde_json::to_vec(&comparable)? == serde_json::to_vec(&current.state)?,
                         "foreign pending preparation state; inspect it before cancelling"
@@ -3494,6 +3637,14 @@ impl Session {
     }
 
     fn apply_decision(&mut self, repo: &gix::Repository, mut decision: Decision, new: bool) -> Result<()> {
+        if !decision.after.preservation.loaded {
+            // A decision read from disk references the preservation it never changes.
+            ensure!(
+                decision.after.preservation_payload == self.state.preservation_payload,
+                "replay decision changed the preservation"
+            );
+            decision.after.preservation = self.state.preservation.clone();
+        }
         ensure!(
             decision.version == 1 && decision.nonce == self.state.nonce && decision.ordinal == self.state.decisions + 1,
             "foreign replay decision identity"

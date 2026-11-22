@@ -38,7 +38,7 @@ enum Image {
 }
 /// Original staging and dirty files, captured once before replay changes the checkout.
 /// This value is private journal data; its file payloads must never enter a commit tree.
-#[derive(Clone, Serialize, Deserialize)]
+#[derive(Clone, Default, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct Preservation {
     original_index: Vec<u8>,
