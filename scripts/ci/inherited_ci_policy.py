@@ -7,8 +7,12 @@ for `Tests pass`, deferred as visible debt, replaced by a first-party job, or di
 A planned job the contract does not name is refused, so a leg that appears upstream
 cannot start or stop gating Brit without a recorded decision.
 
-This reads the planner's `key=value` output lines and writes the same three keys
-(`matrix`, `plan`, `downstream`). It runs no checks and fetches nothing.
+This reads the planner's `key=value` output lines and writes `matrix`, `plan` and
+`downstream` plus `deferred`. `matrix` holds only the required jobs, which `Tests pass`
+waits for; `deferred` holds the deferred ones, which a job outside that gate runs, so a
+slow leg that cannot fail the gate cannot delay its verdict either. `deferred` is empty
+when no deferred job is planned, because GitHub refuses an empty matrix. It runs no
+checks and fetches nothing.
 """
 import argparse
 import json
@@ -23,6 +27,7 @@ PLANNED_JOB = 'run'
 CONSUMER_JOB = 'downstream'
 # Windows limits one environment variable to 32,767 characters; the plan travels in one.
 MAX_PLAN_CHARACTERS = 32_000
+OUTPUTS = ('matrix', 'deferred', 'plan', 'downstream')
 
 
 class PolicyError(ValueError):
@@ -91,6 +96,8 @@ def apply(marker, rows, mode):
                 issues.append(f'{name}: declared {kind}, but the exhaustive plan has no such job')
     if not kept and not issues:
         issues.append('no planned job remains to run')
+    elif not issues and not any(row['blocking'] for row in kept):
+        issues.append('no required planned job remains, so Tests pass would judge nothing planned')
     if issues:
         raise PolicyError('\n'.join(issues))
     return kept, report
@@ -140,12 +147,15 @@ def transform(contract, outputs):
         raise PolicyError('the planner matrix and its execution plan name different jobs')
     rows, report = apply(marker, plan['jobs'], plan['selection']['mode'])
     plan['jobs'] = rows
+    required = [row for row in rows if row['blocking']]
+    deferred = [row for row in rows if not row['blocking']]
     consumers = outputs['downstream']
     if CONSUMER_JOB in marker.get('disabled', {}):
         consumers = ''
     elif consumers:
         consumers = encode(json.loads(consumers))
-    governed = {'matrix': encode({'include': rows}), 'plan': encode(plan), 'downstream': consumers}
+    governed = {'matrix': encode({'include': required}), 'plan': encode(plan), 'downstream': consumers,
+                'deferred': encode({'include': deferred}) if deferred else ''}
     if len(governed['plan']) > MAX_PLAN_CHARACTERS:
         raise PolicyError(f"the execution plan needs {len(governed['plan'])} characters; "
                           f'jobs receive it in one environment variable of at most {MAX_PLAN_CHARACTERS}')
@@ -155,7 +165,7 @@ def transform(contract, outputs):
 def summary(report, marker):
     lines = ['### Inherited QA jobs under Brit\'s contract', '', '| Planned job | Decision |', '| --- | --- |']
     notes = {'required': lambda name: 'required for `Tests pass`',
-             'deferred': lambda name: 'deferred: ' + marker['deferred'][name],
+             'deferred': lambda name: 'deferred to `run-deferred`: ' + marker['deferred'][name],
              'replaced': lambda name: 'replaced by `' + marker['replaced'][name] + '`',
              'disabled': lambda name: 'disabled: ' + marker['disabled'][name]}
     for kind in ('required', 'deferred', 'replaced', 'disabled'):
@@ -182,7 +192,7 @@ def main():
         print(f'cannot apply the inherited-CI contract: {error!r}', file=sys.stderr)
         return 2
     with args.github_output.open('a') as output:
-        for key in ('matrix', 'plan', 'downstream'):
+        for key in OUTPUTS:
             output.write(f'{key}={outputs[key]}\n')
     text = summary(report, contract['milestones'][MILESTONE])
     print(text)

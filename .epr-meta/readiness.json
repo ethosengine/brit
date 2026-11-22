@@ -206,7 +206,8 @@
         "tests@windows-x86_64": "Inherited Windows x86-64 coverage with regenerated fixtures; observed, not maintained by this fork.",
         "native-bins@windows-x86_64": "Inherited Windows x86-64 coverage with regenerated fixtures; observed, not maintained by this fork.",
         "tests@freebsd-x86_64": "FreeBSD coverage of gix-notify in a virtual machine; not a Brit delivery target.",
-        "publish": "Runs on main after Tests pass; publication is evidenced separately."
+        "publish": "Runs on main after Tests pass; publication is evidenced separately.",
+        "run-deferred": "Runs the deferred planned jobs above, outside Tests pass, so they cannot delay its verdict."
       },
       "replaced": {
         "journey@linux-x86_64": "test-journey",

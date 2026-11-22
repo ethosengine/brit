@@ -115,12 +115,19 @@ class PolicyTests(unittest.TestCase):
         plan = {'selection': {'mode': mode, 'packages': ['gix']}, 'jobs': self.rows}
         return {'matrix': json.dumps({'include': self.rows}), 'plan': json.dumps(plan), 'downstream': downstream}
 
-    def test_outputs_keep_matrix_and_execution_plan_identical(self):
+    def test_outputs_split_required_and_deferred_jobs_of_one_execution_plan(self):
         outputs, _ = policy.transform(self.contract, self.outputs())
         matrix, plan = json.loads(outputs['matrix']), json.loads(outputs['plan'])
-        self.assertEqual(matrix['include'], plan['jobs'], 'a job must find itself in the plan it executes')
+        deferred = json.loads(outputs['deferred'])
+        # Each job must find itself in the plan it executes, and run in exactly one matrix.
+        self.assertEqual(matrix['include'] + deferred['include'],
+                         [row for row in plan['jobs'] if row['blocking']] + [row for row in plan['jobs'] if not row['blocking']])
+        self.assertEqual({row['id'] for row in matrix['include']}, self.classes['required'])
+        self.assertEqual({row['id'] for row in deferred['include']}, self.classes['deferred'])
+        self.assertTrue(all(row['blocking'] for row in matrix['include']), 'Tests pass waits only for required jobs')
+        self.assertFalse(any(row['blocking'] for row in deferred['include']))
         self.assertEqual(plan['selection'], {'mode': 'exhaustive', 'packages': ['gix']})
-        self.assertNotIn('\n', outputs['matrix'] + outputs['plan'])
+        self.assertNotIn('\n', outputs['matrix'] + outputs['plan'] + outputs['deferred'])
         self.assertIn('-', json.dumps(matrix), 'the decoded jobs keep their real names')
         self.assertEqual(outputs['downstream'], '', 'disabled consumer checks start no job')
         del self.marker['disabled'][policy.CONSUMER_JOB]
@@ -130,9 +137,21 @@ class PolicyTests(unittest.TestCase):
         with self.assertRaisesRegex(policy.PolicyError, 'name different jobs'):
             policy.transform(self.contract, mismatched)
 
+    def test_no_deferred_job_leaves_the_deferred_matrix_empty(self):
+        # GitHub refuses an empty matrix, so the deferred job is skipped on an empty output.
+        self.rows = [entry for entry in self.rows if policy.retarget(entry, self.marker['runners'])['id'] not in self.classes['deferred']]
+        outputs, _ = policy.transform(self.contract, self.outputs('fast'))
+        self.assertEqual(outputs['deferred'], '')
+        self.assertTrue(json.loads(outputs['matrix'])['include'])
+
+    def test_a_plan_with_only_deferred_jobs_is_refused(self):
+        self.rows = [entry for entry in self.rows if policy.retarget(entry, self.marker['runners'])['id'] in self.classes['deferred']]
+        with self.assertRaisesRegex(policy.PolicyError, 'no required planned job remains'):
+            self.apply('fast')
+
     def test_outputs_survive_a_secret_that_masks_the_hyphen(self):
         outputs, _ = policy.transform(self.contract, self.outputs())
-        for key in ('matrix', 'plan'):
+        for key in ('matrix', 'deferred', 'plan'):
             self.assertNotIn('-', outputs[key], 'GitHub withholds an output containing a masked value')
         self.assertEqual(policy.encode({'path': 'a\\-b', 'flag': '--locked'}), '{"path":"a\\\\\\u002db","flag":"\\u002d\\u002dlocked"}')
         self.assertEqual(json.loads(policy.encode({'path': 'a\\-b'})), {'path': 'a\\-b'})
@@ -156,7 +175,7 @@ class PolicyTests(unittest.TestCase):
             argv = ['--planned', str(planned), '--github-output', str(governed)]
             self.assertEqual(self.run_main(argv), 0)
             written = policy.parse_outputs(governed.read_text())
-            self.assertEqual(set(written), {'matrix', 'plan', 'downstream'})
+            self.assertEqual(set(written), set(policy.OUTPUTS))
             governed.unlink()
             self.rows.append(row('new-check@linux-x86_64'))
             planned.write_text(''.join(f'{key}={value}\n' for key, value in self.outputs().items()))

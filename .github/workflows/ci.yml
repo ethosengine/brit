@@ -54,6 +54,7 @@ jobs:
     runs-on: ubuntu-latest
     outputs:
       matrix: ${{ steps.contract.outputs.matrix }}
+      deferred: ${{ steps.contract.outputs.deferred }}
       plan: ${{ steps.contract.outputs.plan }}
       downstream: ${{ steps.contract.outputs.downstream }}
     env:
@@ -83,11 +84,15 @@ jobs:
           QA_BASE: ${{ github.event.pull_request.base.sha || github.sha }}
         run: cargo run --profile qa --locked -p internal-tools --no-default-features --bin qa -- plan --all-platforms --mode "$QA_MODE" --base "$QA_BASE" --github-output "$RUNNER_TEMP/qa-planned.txt"
       # Brit: `.epr-meta/readiness.json` declares each planned job required, deferred,
-      # replaced by a first-party job, or disabled. An undeclared job is refused.
+      # replaced by a first-party job, or disabled. An undeclared job is refused. Required
+      # jobs form `matrix` for `run`; deferred jobs form `deferred` for `run-deferred`.
       - name: Apply Brit's inherited-CI contract to the planned jobs
         id: contract
         run: python3 scripts/ci/inherited_ci_policy.py --planned "$RUNNER_TEMP/qa-planned.txt" --github-output "$GITHUB_OUTPUT"
 
+  # Brit: `run` executes only the required jobs, so `Tests pass` waits for nothing that
+  # cannot fail it. `run-deferred` below executes the deferred ones from the same plan with
+  # these permissions, environment and steps, shared through YAML anchors.
   run:
     name: ${{ matrix.id }}
     needs: plan
@@ -98,10 +103,10 @@ jobs:
     continue-on-error: ${{ !matrix.blocking }}
     runs-on: ${{ matrix.runner }}
     container: ${{ matrix.container }} # zizmor: ignore[unpinned-images] SHA256 pins in tests/it/src/qa/catalog.rs.
-    permissions:
+    permissions: &qa-permissions
       contents: read # Required to check out the repository.
       actions: read # Required to find and download the base commit's coverage artifacts.
-    env:
+    env: &qa-env
       QA_PLAN: ${{ needs.plan.outputs.plan }}
       QA_JOB: ${{ matrix.id }}
       # Brit: see the plan job. Tasks that need another toolchain name it themselves.
@@ -109,7 +114,7 @@ jobs:
       # Main provides reusable indexes; PR cache misses run ordinary QA without collecting throwaway data.
       # Brit: coverage-guided selection is opt-in through the repository variable QA_COVERAGE (on or shadow).
       GIX_QA_COVERAGE: ${{ (vars.QA_COVERAGE == 'on' || vars.QA_COVERAGE == 'shadow') && (contains(matrix.tasks, 'native-tests') || contains(matrix.tasks, 'isolated-tests') || contains(matrix.tasks, 'feature-tests')) && (github.event_name == 'pull_request' && (vars.QA_COVERAGE == 'shadow' && 'shadow' || 'prune') || github.ref == 'refs/heads/main' && 'collect') || 'off' }}
-    steps:
+    steps: &qa-steps
       # Native 32-bit containers need libraries for the runner's 64-bit Node.js.
       - name: Install container prerequisites
         if: matrix.container != ''
@@ -274,6 +279,24 @@ jobs:
           path: target/qa-coverage/indexes/*.json
           if-no-files-found: ignore
           retention-days: 14
+
+  # Brit: the deferred planned jobs, observed but never gating. `Tests pass` does not need this
+  # job, so its verdict does not wait for them; `continue-on-error` keeps their failures visible
+  # without failing the workflow. An empty output means no deferred job was planned, and GitHub
+  # refuses an empty matrix, so the job is then skipped.
+  run-deferred:
+    name: ${{ matrix.id }}
+    needs: plan
+    if: needs.plan.result == 'success' && needs.plan.outputs.deferred != ''
+    strategy:
+      fail-fast: false
+      matrix: ${{ fromJSON(needs.plan.outputs.deferred) }}
+    continue-on-error: ${{ !matrix.blocking }}
+    runs-on: ${{ matrix.runner }}
+    container: ${{ matrix.container }} # zizmor: ignore[unpinned-images] SHA256 pins in tests/it/src/qa/catalog.rs.
+    permissions: *qa-permissions
+    env: *qa-env
+    steps: *qa-steps
 
   # Brit: disabled in `.epr-meta/readiness.json`, so the planner output this job waits for stays empty.
   downstream:
@@ -728,8 +751,9 @@ jobs:
     permissions: {}
 
     # Every job is listed here or declared deferred or disabled in `.epr-meta/readiness.json`;
-    # `scripts/ci/test_qualify_readiness.py` refuses a job that is neither. Within `run`, the
-    # same contract decides which planned jobs can fail this gate.
+    # `scripts/ci/test_qualify_readiness.py` refuses a job that is neither. The same contract
+    # decides which planned jobs run in `run` and can fail this gate; the deferred ones run in
+    # `run-deferred`, which is deliberately absent here.
     needs:
       - plan
       - run
