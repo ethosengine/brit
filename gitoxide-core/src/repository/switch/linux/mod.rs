@@ -1530,6 +1530,12 @@ fn inspect_removed_directory(root: &Path, name: &[u8], changes: &BTreeMap<Vec<u8
 }
 
 pub(crate) fn checkpoint(name: &str) -> Result<()> {
+    // A test can list every checkpoint a command reaches, in order.
+    #[cfg(feature = "switch-test-faults")]
+    if let Some(trace) = std::env::var_os("BRIT_SWITCH_CHECKPOINT_TRACE") {
+        use std::io::Write;
+        writeln!(fs::OpenOptions::new().create(true).append(true).open(trace)?, "{name}")?;
+    }
     // `name#N` pauses at the Nth time this process reaches `name` (default 1).
     #[cfg(feature = "switch-test-faults")]
     if std::env::var("BRIT_SWITCH_CHECKPOINT").ok().is_some_and(|wanted| {

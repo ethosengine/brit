@@ -1892,7 +1892,7 @@ impl Session {
             self.reserve(repo, self.step_need(repo, None, false, &[])?)?;
             self.state.copies += 1;
             self.save()?;
-            let receipt = self.capture_current(repo)?;
+            let receipt = self.capture_or_reuse(repo)?;
             self.state.phase = "replaying".into();
             self.save()?;
             return Ok(receipt);
@@ -1920,9 +1920,9 @@ impl Session {
             let desired = repo.index_from_tree(&repo.tree_id_of_commit(target)?)?;
             self.reserve(repo, self.step_need(repo, Some(&desired), true, &[])?)?;
         }
-        if self.state.phase != "retaining-skip" {
-            self.adopt_abandoned_plan(repo)?;
-        }
+        // A retried skip adopts the plan a killed one staged and releases its
+        // locks, exactly as an abort does.
+        self.adopt_abandoned_plan(repo)?;
         if self.state.phase == "authoring" {
             self.accept_discard_child(repo, false)?;
         }
@@ -1933,7 +1933,7 @@ impl Session {
             self.save()?;
         }
         self.archive_accepted(repo)?;
-        let receipt = self.capture_current(repo)?;
+        let receipt = self.capture_or_reuse(repo)?;
         switch::checkpoint("replay-skip-copy-complete")?;
         let target = edit
             .as_ref()
@@ -2080,7 +2080,7 @@ impl Session {
         self.adopt_retention(repo)?;
         if self.state.phase == "retaining-skip" {
             self.archive_accepted(repo)?;
-            self.capture_current(repo)?;
+            self.capture_or_reuse(repo)?;
         }
         if self.state.phase != "retaining-abort" || retry_preparation {
             self.state.phase = "retaining-abort".into();
@@ -2367,6 +2367,25 @@ impl Session {
             )?);
         }
         Ok(allowed)
+    }
+
+    /// [`Self::capture_current`], unless the copy at the current sequence is
+    /// already complete: then that copy is the one this step retained, and its
+    /// receipt is returned. A command killed after its copy completed (a skip
+    /// killed in its restoring transition) has since changed the journal (the
+    /// transition's staging, an adopted abandoned plan), so capturing the same
+    /// sequence again could never match the immutable copy. A later copy at a new
+    /// sequence (an abort's, a cleanup's) holds those members.
+    fn capture_or_reuse(&self, repo: &gix::Repository) -> Result<super::retained::Receipt> {
+        let leaf = repo
+            .git_dir()
+            .join("brit-rebase-retained")
+            .join(&self.state.nonce)
+            .join(self.state.copies.to_string());
+        if present(&leaf.join("COPY_COMPLETE"))? {
+            return Ok(super::retained::inspect(&leaf)?.receipt);
+        }
+        self.capture_current(repo)
     }
 
     fn capture_current(&self, repo: &gix::Repository) -> Result<super::retained::Receipt> {

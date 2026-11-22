@@ -2512,6 +2512,142 @@ mod recovery {
         Ok(true)
     }
 
+    /// Stopped on a conflict: `topic` changes `f` (as upstream does) and adds `g`,
+    /// the user has an unstaged edit of `notes`, and with `gitlink` the base holds an
+    /// unchanged gitlink `sub` with no directory. Returns the live state from before
+    /// the rebase began.
+    fn skip_stop_fixture(gitlink: bool) -> Result<(TestRepo, std::collections::BTreeMap<PathBuf, Vec<u8>>)> {
+        let repo = TestRepo::new("skip-kill")?;
+        let root = repo.path();
+        fs::write(root.join("f"), b"base\n")?;
+        fs::write(root.join("notes"), b"n\n")?;
+        git(root, &["add", "f", "notes"])?;
+        if gitlink {
+            git(
+                root,
+                &[
+                    "update-index",
+                    "--add",
+                    "--cacheinfo",
+                    "160000,1111111111111111111111111111111111111111,sub",
+                ],
+            )?;
+        }
+        git(root, &["commit", "-q", "-m", "base"])?;
+        git(root, &["switch", "-q", "-c", "upstream"])?;
+        repo.commit_file("f", "upstream\n")?;
+        git(root, &["switch", "-q", "main"])?;
+        repo.commit_file("f", "topic\n")?;
+        repo.commit_file("g", "g\n")?;
+        fs::write(root.join("notes"), b"n\nthe user's own unstaged edit\n")?;
+        let before = live(root)?;
+        let stopped = quota(root, &["rebase", "upstream"], "1073741824")?;
+        ensure!(
+            String::from_utf8_lossy(&stopped.stderr).contains("stopped on conflicts"),
+            "{}",
+            String::from_utf8_lossy(&stopped.stderr)
+        );
+        Ok((repo, before))
+    }
+
+    /// Every checkpoint `args` reaches, in order, from a fault build's trace.
+    fn traced(root: &Path, args: &[&str]) -> Result<Vec<String>> {
+        let trace = tempfile::NamedTempFile::new()?;
+        let output = quota_env(
+            root,
+            args,
+            "1073741824",
+            &[("BRIT_SWITCH_CHECKPOINT_TRACE", trace.path().as_os_str().to_owned())],
+        )?;
+        ensure!(
+            output.status.success(),
+            "{args:?}: {}",
+            String::from_utf8_lossy(&output.stderr)
+        );
+        Ok(fs::read_to_string(trace.path())?.lines().map(str::to_owned).collect())
+    }
+
+    /// A `--skip` from a conflict stop killed (SIGKILL) at the first and second
+    /// time it reaches each of its checkpoints, with and without an unchanged
+    /// gitlink, never strands the rebase: `--status` succeeds, and `--abort`
+    /// restores HEAD, the index, the branches and every file exactly, the user's
+    /// unstaged edit included, or, where the skip's decision is already durable
+    /// and abort refuses, `--continue` finishes it. Either way nothing is left
+    /// that refuses every command.
+    #[test]
+    fn public_a_skip_killed_at_any_checkpoint_never_strands_the_rebase() -> Result<()> {
+        for gitlink in [false, true] {
+            let (repo, _) = skip_stop_fixture(gitlink)?;
+            let points = traced(repo.path(), &["rebase", "--skip"])?;
+            ensure!(points.iter().any(|point| point == "lock-acquired"), "{points:?}");
+            let mut counts = std::collections::BTreeMap::<String, usize>::new();
+            for point in points {
+                *counts.entry(point).or_default() += 1;
+            }
+            for (point, count) in counts {
+                for ordinal in 1..=count.min(2) {
+                    let what = format!("gitlink={gitlink} {point}#{ordinal}");
+                    let (repo, before) = skip_stop_fixture(gitlink)?;
+                    let root = repo.path();
+                    if !kill_at_ordinal(root, &["rebase", "--skip"], &point, ordinal)? {
+                        continue;
+                    }
+                    let status = invoke(root, &["rebase", "--status"])?;
+                    ensure!(status.status.success(), "{what}: --status: {}", status.stderr);
+                    let aborted = invoke(root, &["rebase", "--abort"])?;
+                    let restored = |root: &Path| -> Result<()> {
+                        let after = live(root)?;
+                        let differing: Vec<_> = before
+                            .keys()
+                            .chain(after.keys())
+                            .filter(|path| before.get(*path) != after.get(*path))
+                            .collect();
+                        ensure!(
+                            differing.is_empty(),
+                            "{what}: --abort restores exactly; differs: {differing:?}"
+                        );
+                        Ok(())
+                    };
+                    let phase = invoke(root, &["rebase", "--status"])?.stdout;
+                    if aborted.status.success() {
+                        ensure!(
+                            !root.join(".git/brit-rebase").exists() && !root.join(".git/brit-authoring").exists(),
+                            "{what}: --abort leaves no journal"
+                        );
+                        restored(root)?;
+                    } else if phase.contains("Rebase phase: aborted") {
+                        // Restored, but the kill left a member cleanup cannot prove
+                        // its own (a transition directory created before its owner
+                        // record): by design it is kept, --status says so, and
+                        // --retire sets the journal aside.
+                        restored(root)?;
+                        ensure!(phase.contains("--retire"), "{what}: --status names --retire: {phase}");
+                        success(root, &["rebase", "--retire"])?;
+                    } else {
+                        let continued = invoke(root, &["rebase", "--continue"])?;
+                        ensure!(
+                            continued.status.success() && !root.join(".git/brit-rebase").exists(),
+                            "{what}: --abort refused ({}) and --continue did not finish: {} {}",
+                            aborted.stderr,
+                            continued.stdout,
+                            continued.stderr
+                        );
+                        // The skipped commit is gone and the next one (adding `g`) is
+                        // replayed onto `upstream`.
+                        assert_eq!(
+                            rev(root, "HEAD~1")?,
+                            rev(root, "upstream")?,
+                            "{what}: the skip finished"
+                        );
+                        assert_eq!(fs::read(root.join("g"))?, b"g\n", "{what}: the next commit replayed");
+                    }
+                    usable(root)?;
+                }
+            }
+        }
+        Ok(())
+    }
+
     /// No rebase remains and Brit mutations work (the fixtures' own uncommitted
     /// work may overlap a switch, so this commits on a new branch instead).
     fn usable(root: &Path) -> Result<()> {
