@@ -9,6 +9,21 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.0.0/); ver
 
 ## Unreleased
 
+## 0.3.2 — 2026-11-22
+
+### Fixed
+
+- brit 0.3.1's crates can be published: `brit-graph` moves to 0.2.4, because 0.3.1 changed it
+  (`ContentFingerprint::from_repo_globs_excluding`) at the 0.2.3 the registry already held, so
+  main's publish refused it as an immutable version collision and `brit-cli` 0.3.1 never reached
+  the registry. `brit-cli` requires `brit-graph` 0.2.4. No behaviour change from 0.3.1.
+
+### Changed
+
+- CI: the planned jobs `.epr-meta/readiness.json` declares deferred run in their own job,
+  `run-deferred`, which `Tests pass` does not need, so a deferred leg can no longer hold up or
+  fail the gate. Required legs run in `run` as before.
+
 ## 0.3.1 — 2026-11-21
 
 ### Added

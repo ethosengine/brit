@@ -474,7 +474,7 @@ dependencies = [
 
 [[package]]
 name = "brit-cli"
-version = "0.3.1"
+version = "0.3.2"
 dependencies = [
  "anyhow",
  "brit-bridge",
@@ -524,7 +524,7 @@ dependencies = [
 
 [[package]]
 name = "brit-graph"
-version = "0.2.3"
+version = "0.2.4"
 dependencies = [
  "brit-epr",
  "gix 0.90.1",
