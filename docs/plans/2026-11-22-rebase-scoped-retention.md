@@ -78,10 +78,23 @@ and the user's uncommitted work on abort. Gitlink ids are never looked up as loc
     replay fault and power-loss suites; clippy `-D warnings`, fmt; real-world probe on a fresh
     monorepo clone.
 
-## Not in scope (stated so nothing is silently weakened)
+## Outcome and what is not done (stated so nothing is silently weakened)
+
+Added while probing the monorepo, each its own commit:
+
+- Unchanged gitlinks are index-only (the monorepo has five; every rebase there was refused by
+  preservation, whatever the range). Changed or staged gitlinks are still refused by name.
+- The preservation record is stored once as a journal payload: with history gone it was the
+  remaining O(index) term, 56 MB per state record on the monorepo, which admission refused.
+  This stands in for item 6's compact encoding: envelopes and byte fields stay JSON arrays
+  (older journals' digests and child bindings depend on their bytes; tests parse them).
+
+Not done:
 
 - Shallow rebase support (item 2's bounded-walk acceptance): the refusal stays as it is.
-- A stop's tree (conflict, message, edit) is retained whole, O(tree) rather than O(change); trees
-  are not history, so this does not scale with history.
-- The authoring child's receipts still cover its stop's tree.
-- Compact (base64) journal payload encoding: optional; JSON arrays stay unless time permits.
+- A stop's tree (conflict, message, edit) is retained whole, O(tree) rather than O(change):
+  its objects are verified, listed in the journal and copied by an abort. The fix is a
+  delta against the tip's tree with the base recorded in the recipe and the manifest.
+- The authoring child's records and receipts still cover its stop's tracked tree.
+- Preservation still hashes every tracked worktree file (O(tracked bytes)), spooling each.
+- The upstream keeps its retention ref during the rebase; the release proof does not walk it.
