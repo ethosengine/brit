@@ -2020,7 +2020,7 @@ dependencies = [
 
 [[package]]
 name = "gitoxide"
-version = "0.61.1"
+version = "0.61.2"
 dependencies = [
  "anstream",
  "anyhow",
@@ -2041,7 +2041,7 @@ dependencies = [
 
 [[package]]
 name = "gitoxide-core"
-version = "0.64.1"
+version = "0.64.2"
 dependencies = [
  "anyhow",
  "async-io",
