@@ -361,47 +361,94 @@ fn uninitialised_gitlink_fixture() -> Result<TestRepo> {
     Ok(repo)
 }
 
-/// The gitlink's commit is not a local object, so preparation must never look
-/// it up. Brit rebase still does not support gitlinks: one without a checked-out
-/// submodule directory is refused by name before any operation state exists,
-/// where it used to fail after creating its journal ("object could not be found").
+/// A gitlink the rebase leaves unchanged is index-only: its commit is not a local
+/// object, so it is never looked up, and its submodule directory, absent,
+/// empty or holding files, is never read or written. The rebase publishes with
+/// the gitlink entry and the directory exactly as they were.
 #[test]
-fn uninitialised_gitlink_refuses_by_name_before_any_state() -> Result<()> {
+fn unchanged_gitlinks_rebase_without_touching_their_directories() -> Result<()> {
+    for directory in [None, Some(false), Some(true)] {
+        let repo = uninitialised_gitlink_fixture()?;
+        let root = repo.path();
+        if let Some(populated) = directory {
+            fs::create_dir(root.join("sub"))?;
+            if populated {
+                fs::write(root.join("sub/inside"), b"the submodule's own file\n")?;
+            }
+        }
+        let gitlink = git(root, &["ls-files", "-s", "sub"])?;
+        success(root, &["rebase", "upstream"])?;
+        assert_eq!(rev(root, "HEAD~1")?, rev(root, "upstream")?);
+        assert_eq!(
+            git(root, &["ls-files", "-s", "sub"])?,
+            gitlink,
+            "the gitlink entry is kept"
+        );
+        assert_eq!(
+            git(root, &["ls-tree", "HEAD", "sub"])?.split(|b| *b == b' ').nth(1),
+            Some(b"commit".as_slice())
+        );
+        match directory {
+            None => ensure!(!root.join("sub").exists(), "an absent directory stays absent"),
+            Some(false) => ensure!(fs::read_dir(root.join("sub"))?.next().is_none(), "stays empty"),
+            Some(true) => assert_eq!(fs::read(root.join("sub/inside"))?, b"the submodule's own file\n"),
+        }
+        ensure!(!root.join(".git/brit-rebase").exists(), "{directory:?}: cleaned up");
+    }
+    Ok(())
+}
+
+/// A gitlink the rebase would change, or one staged differently from HEAD, is
+/// still refused by name before any operation state exists.
+#[test]
+fn changed_or_staged_gitlinks_refuse_before_any_state() -> Result<()> {
     let repo = uninitialised_gitlink_fixture()?;
     let root = repo.path();
+    git(root, &["switch", "-q", "upstream"])?;
+    git(
+        root,
+        &[
+            "update-index",
+            "--cacheinfo",
+            "160000,2222222222222222222222222222222222222222,sub",
+        ],
+    )?;
+    git(root, &["commit", "-q", "-m", "move the gitlink"])?;
+    git(root, &["switch", "-q", "main"])?;
     let head = rev(root, "HEAD")?;
     let index = fs::read(root.join(".git/index"))?;
     let result = refused(root, &["rebase", "upstream"])?;
     ensure!(
-        result
-            .stderr
-            .contains("gitlink sub has no checked-out submodule directory")
-            && !result.stderr.contains("could not be found"),
-        "named early refusal: {}",
-        result.stderr
-    );
-    assert!(!root.join(".git/brit-rebase").exists());
-    assert!(git(root, &["for-each-ref", "refs/brit-rebase-retain"])?.is_empty());
-    assert_eq!(rev(root, "HEAD")?, head);
-    assert_eq!(fs::read(root.join(".git/index"))?, index);
-    success(root, &["branch", "create", "after-refusal"])?;
-    Ok(())
-}
-
-/// Case D, unchanged by this lane: a gitlink whose submodule directory is
-/// checked out is refused before any state, with the message it had before.
-#[test]
-fn checked_out_gitlink_keeps_its_refusal_before_any_state() -> Result<()> {
-    let repo = uninitialised_gitlink_fixture()?;
-    let root = repo.path();
-    fs::create_dir(root.join("sub"))?;
-    let result = refused(root, &["rebase", "upstream"])?;
-    ensure!(
-        result.stderr.contains("Directory staging is not supported"),
+        result.stderr.contains("affected gitlinks are unsupported"),
         "{}",
         result.stderr
     );
     assert!(!root.join(".git/brit-rebase").exists());
+    assert_eq!(rev(root, "HEAD")?, head);
+    assert_eq!(fs::read(root.join(".git/index"))?, index);
+
+    let repo = uninitialised_gitlink_fixture()?;
+    let root = repo.path();
+    git(
+        root,
+        &[
+            "update-index",
+            "--cacheinfo",
+            "160000,3333333333333333333333333333333333333333,sub",
+        ],
+    )?;
+    let index = fs::read(root.join(".git/index"))?;
+    let result = refused(root, &["rebase", "upstream"])?;
+    ensure!(
+        result.stderr.contains("gitlink sub is staged differently from HEAD")
+            && !result.stderr.contains("could not be found"),
+        "{}",
+        result.stderr
+    );
+    assert!(!root.join(".git/brit-rebase").exists());
+    assert!(git(root, &["for-each-ref", "refs/brit-rebase-retain"])?.is_empty());
+    assert_eq!(fs::read(root.join(".git/index"))?, index);
+    success(root, &["branch", "create", "after-refusal"])?;
     Ok(())
 }
 
@@ -1855,6 +1902,11 @@ mod recovery {
         let envelope: serde_json::Value = serde_json::from_slice(&fs::read(&path)?)?;
         let payload: Vec<u8> = serde_json::from_value(envelope["payload"].clone())?;
         let mut state: serde_json::Value = serde_json::from_slice(&payload)?;
+        // An older Brit's journal records no floor.
+        state
+            .as_object_mut()
+            .ok_or_else(|| anyhow::anyhow!("state object"))?
+            .remove("floor");
         state["preservation"]["original"]
             .as_array_mut()
             .ok_or_else(|| anyhow::anyhow!("preservation entries"))?

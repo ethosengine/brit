@@ -2676,8 +2676,11 @@ impl Session {
         }
         if session.state.phase == "preparing" {
             // Older Brit captured gitlinks it could not prepare; finishing their
-            // preparation now would let a refused rebase proceed.
-            if let Some(path) = session.state.preservation.gitlink_paths().next() {
+            // preparation now would let a refused rebase proceed. A journal with a
+            // floor records unchanged gitlinks as index-only entries.
+            if session.state.floor.is_empty()
+                && let Some(path) = session.state.preservation.gitlink_paths().next()
+            {
                 anyhow::bail!(
                     "gitlink {} is unsupported by brit rebase; this preparation cannot continue; brit rebase --abort cancels it",
                     path.as_bstr()

@@ -89,21 +89,13 @@ impl Preservation {
             ensure!(!gix::interrupt::is_triggered(), "preservation capture interrupted");
             let p: BString = e.path(&original).into();
             if replay && e.mode == gix::index::entry::Mode::COMMIT {
-                // Replay refuses every gitlink: one whose submodule directory is
-                // checked out is refused just below as a directory; one without it
-                // is refused here, before any operation state exists.
-                let directory = repo
-                    .workdir()
-                    .context("worktree required")?
-                    .join(gix::path::from_bstr(p.as_bstr())?);
-                let absent = matches!(
-                    fs::symlink_metadata(directory),
-                    Err(error) if error.kind() == std::io::ErrorKind::NotFound
-                );
-                ensure!(
-                    !absent,
-                    "gitlink {p} has no checked-out submodule directory; brit rebase does not support gitlinks yet and changed nothing; use git rebase"
-                );
+                // A gitlink is index-only for a replay: its id names a commit in the
+                // submodule's repository, never a local object, and the submodule's
+                // directory (absent, empty or checked out) is the submodule's own.
+                // Replay never writes it: a gitlink the replay would change is
+                // refused by the selection's footprint, and one staged differently
+                // from HEAD is refused below.
+                continue;
             }
             let current = super::super::index::authoring::worktree_entry_spooled(repo, &original, &p, &budget)?;
             let equal = match current {
@@ -123,6 +115,21 @@ impl Preservation {
             };
             if !equal && !preserved.contains(&p.to_vec()) {
                 preserved.push(p.to_vec());
+            }
+        }
+        if replay {
+            let base_entries = entries(&base);
+            for p in &preserved {
+                let gitlink = |values: &[Entry]| {
+                    values
+                        .iter()
+                        .any(|e| e.path == *p && e.mode == gix::index::entry::Mode::COMMIT.bits())
+                };
+                ensure!(
+                    !gitlink(&base_entries) && !gitlink(&original_entries),
+                    "gitlink {} is staged differently from HEAD; brit rebase supports only gitlinks it leaves unchanged and changed nothing; use git rebase",
+                    p.as_bstr()
+                );
             }
         }
         let root = repo.workdir().context("worktree required")?;
@@ -187,8 +194,8 @@ impl Preservation {
         Ok(ids)
     }
 
-    /// Paths of the gitlinks the original index held. Capture for replay refuses
-    /// them, but a journal written by an older Brit may still record one.
+    /// Paths of the gitlinks the original index held. An older Brit's journal
+    /// (one without a floor) that records one is refused at recovery.
     pub(crate) fn gitlink_paths(&self) -> impl Iterator<Item = &[u8]> {
         self.original
             .iter()

@@ -235,8 +235,11 @@ journal could not fit the limit: when the files it changes, kept several times i
 the journal, or a very long replay approach 1 GiB. The size of the history no
 longer matters. Use `git rebase` there.
 
-Still refused: shallow repositories, and any repository whose index holds a
-gitlink (a submodule), even one the rebase does not touch.
+Gitlinks (submodules) the rebase leaves unchanged are index-only: their ids are
+never looked up as local objects and their directories, absent, empty or checked
+out, are never read or written. A rebase that would change a gitlink, or an index
+that stages one differently from `HEAD`, is still refused by name before anything
+changes. Shallow repositories are still refused.
 
 `brit rebase --retire` sets aside a rebase whose only remaining work is its
 retained copy, which can take long on a large repository or wait for disk space:
