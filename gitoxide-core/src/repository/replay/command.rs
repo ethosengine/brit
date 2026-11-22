@@ -134,6 +134,9 @@ fn run_action(mut repo: gix::Repository, action: Action, out: &mut dyn Write, er
                 writeln!(out, "Cleanup completed; retained copy: {copy:?}")?;
                 return Ok(());
             }
+            _ if !receipts.is_empty() => anyhow::bail!(
+                "no rebase in progress, but a finished rebase's cleanup is pending; brit rebase --continue finishes it"
+            ),
             _ => anyhow::bail!("no rebase in progress"),
         }
     }

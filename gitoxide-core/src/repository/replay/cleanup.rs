@@ -409,8 +409,12 @@ pub(crate) fn ensure_cleanup_retired(git_dir: &Path) -> Result<()> {
             let name = std::str::from_utf8(name)?;
             git_dir.join(format!("{name}.retired.json"))
         };
-        let (ledger, retired) = read_receipt(&repo, &receipt)
-            .with_context(|| format!("replay cleanup pending at {}; recover its receipt", path.display()))?;
+        let (ledger, retired) = read_receipt(&repo, &receipt).with_context(|| {
+            format!(
+                "replay cleanup pending at {}; brit rebase --continue finishes it",
+                path.display()
+            )
+        })?;
         ensure!(retired, "replay cleanup has not retired its reservation");
         let tombstone = git_dir.join(format!("brit-rebase-cleanup-{}", ledger.nonce));
         ensure!(path == receipt || path == tombstone, "unknown cleanup member");

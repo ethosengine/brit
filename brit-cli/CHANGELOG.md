@@ -13,6 +13,13 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.0.0/); ver
 
 ### Fixed
 
+- `brit rebase --skip` killed while restoring the stopped checkout no longer strands the rebase.
+  Every command used to refuse: `--abort` with "retained copy already completes a different
+  capture", `--continue` and `--skip` with phase or policy errors, `--retire` as part-way through.
+  A retried `--skip` or an `--abort` now reuses the skip's complete retained copy and releases
+  the killed transition's locks, so `--abort` restores HEAD, the index, the worktree and the
+  user's work exactly, or `--skip` finishes. After a kill during post-abort cleanup, `--abort`
+  and a new `brit rebase` now name `brit rebase --continue`, the command that finishes it.
 - brit 0.3.1's crates can be published: `brit-graph` moves to 0.2.4, because 0.3.1 changed it
   (`ContentFingerprint::from_repo_globs_excluding`) at the 0.2.3 the registry already held, so
   main's publish refused it as an immutable version collision and `brit-cli` 0.3.1 never reached
