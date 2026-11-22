@@ -235,7 +235,13 @@ fn changed_paths_keep_modes_order_deduplication_and_gitlink_refusal() -> Result<
     }
     for (before, after) in [(&files, &links), (&links, &empty), (&empty, &links)] {
         let error = changed_index_paths(before, after, &mut paths).expect_err("affected gitlinks must refuse");
-        assert_eq!(error.to_string(), "affected gitlinks are unsupported");
+        let message = error.to_string();
+        assert!(
+            message.starts_with("gitlink file-")
+                && message.contains("affected gitlinks are unsupported")
+                && message.contains("nothing was changed"),
+            "{message}"
+        );
     }
     gix::interrupt::trigger();
     let result = changed_index_paths(&empty, &empty, &mut paths);

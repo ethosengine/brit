@@ -27,7 +27,8 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.0.0/); ver
   refused before starting; it is now admitted when its journal fits.
 - `brit rebase` no longer refuses a repository because its index holds gitlinks (submodules):
   one the rebase leaves unchanged is index-only, never looked up as an object and its directory
-  never read or written. A gitlink the rebase would change, or one staged differently from
+  never read or written, at a conflict or edit stop too (`--abort` and `--skip` there never look
+  its id up as an object). A gitlink the rebase would change, or one staged differently from
   `HEAD`, is still refused by name before anything changes.
 - The worktree witness of a rebase and of its conflict and edit stops no longer reads untracked
   or ignored files outside the touched paths: build output or a new file elsewhere no longer

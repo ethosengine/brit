@@ -1884,10 +1884,12 @@ impl Session {
                 "child staging changed outside active retention scope"
             );
         }
+        // A gitlink's id names a commit of the submodule, never a local object.
         let mut objects: BTreeSet<_> = private
             .entries()
             .iter()
             .chain(public.entries())
+            .filter(|entry| entry.mode != gix::index::entry::Mode::COMMIT)
             .map(|entry| entry.id)
             .collect();
         objects.extend(self.receipted_heads(repo)?);
@@ -2291,21 +2293,49 @@ impl Session {
             fs::DirBuilder::new().mode(0o700).create(&directory)?;
         }
         let budget = gix::utils::stream::Budget::new(&std::env::temp_dir())?;
-        let mut stack = self.state.private.iter().map(|e| e.id.clone()).collect::<Vec<_>>();
+        // A gitlink's id names a commit of the submodule, never a local object:
+        // it is index-only, never retained.
+        let gitlink = gix::index::entry::Mode::COMMIT;
+        let mut stack = self
+            .state
+            .private
+            .iter()
+            .filter(|e| e.mode != gitlink.bits())
+            .map(|e| e.id.clone())
+            .collect::<Vec<_>>();
         stack.extend_from_slice(extra);
-        stack.extend(read_public(repo)?.entries().iter().map(|e| e.id.to_string()));
+        stack.extend(
+            read_public(repo)?
+                .entries()
+                .iter()
+                .filter(|e| e.mode != gitlink)
+                .map(|e| e.id.to_string()),
+        );
         let staged = gix::index::File::at(
             self.directory.join("index.private"),
             repo.object_hash(),
             false,
             Default::default(),
         )?;
-        stack.extend(staged.entries().iter().map(|e| e.id.to_string()));
+        stack.extend(
+            staged
+                .entries()
+                .iter()
+                .filter(|e| e.mode != gitlink)
+                .map(|e| e.id.to_string()),
+        );
         stack.push(self.state.head.clone());
         for n in 1..=self.state.children {
             let decision: Decision = load(&self.directory.join(format!("child-{n}.json")))?;
             stack.push(decision.after.head);
-            stack.extend(decision.after.private.iter().map(|e| e.id.clone()));
+            stack.extend(
+                decision
+                    .after
+                    .private
+                    .iter()
+                    .filter(|e| e.mode != gitlink.bits())
+                    .map(|e| e.id.clone()),
+            );
         }
         let baseline = std::str::from_utf8(&self.state.original_head)?.trim();
         let mut seen = BTreeSet::new();
@@ -2330,8 +2360,9 @@ impl Session {
                 gix::objs::Kind::Tree => {
                     let data = retained.metadata(repo)?;
                     for entry in gix::objs::TreeRef::from_bytes(&data, repo.object_hash())?.entries {
-                        ensure!(!entry.mode.is_commit(), "gitlinks unsupported");
-                        stack.push(entry.oid.to_string());
+                        if !entry.mode.is_commit() {
+                            stack.push(entry.oid.to_string());
+                        }
                     }
                 }
                 gix::objs::Kind::Blob => {}

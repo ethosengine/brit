@@ -323,11 +323,20 @@ impl ParentState {
         {
             return Ok(());
         }
+        let name = directory.join(format!("payload-{checksum}"));
         let mut bytes = Vec::new();
-        switch::payload::open(directory, size, &checksum)?.read_to_end(&mut bytes)?;
+        switch::payload::open(directory, size, &checksum)
+            .and_then(|mut file| Ok(file.read_to_end(&mut bytes)?))
+            .with_context(|| {
+                format!(
+                    "the replay journal's preservation payload {} is missing or unreadable",
+                    name.display()
+                )
+            })?;
         ensure!(
             bytes.len() as u64 == size && switch::payload::checksum(&mut bytes.as_slice(), size)? == checksum,
-            "replay preservation payload changed"
+            "the replay journal's preservation payload {} changed",
+            name.display()
         );
         self.preservation = Preserved {
             value: serde_json::from_slice(&bytes)?,

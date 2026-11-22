@@ -368,7 +368,8 @@ fn changed_index_paths(
                     .into_iter()
                     .flatten()
                     .any(|(_, mode)| *mode == gix::index::entry::Mode::COMMIT),
-                "affected gitlinks are unsupported"
+                "gitlink {path} is changed by this rebase; affected gitlinks are unsupported by brit rebase, and \
+                 nothing was changed; git rebase is the fallback"
             );
             paths.insert(path.clone());
         }

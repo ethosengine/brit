@@ -361,6 +361,140 @@ fn uninitialised_gitlink_fixture() -> Result<TestRepo> {
     Ok(repo)
 }
 
+/// A divergent repository whose base carries an unchanged gitlink at `sub`
+/// (its commit is not a local object) and, with `directory`, an empty submodule
+/// directory. With `conflict` both sides change `f`; otherwise the topic adds `g`.
+fn gitlink_stop_fixture(conflict: bool, directory: bool) -> Result<TestRepo> {
+    let repo = TestRepo::new("gitlink-stop")?;
+    let root = repo.path();
+    repo.commit_file("f", "base\n")?;
+    git(
+        root,
+        &[
+            "update-index",
+            "--add",
+            "--cacheinfo",
+            "160000,1111111111111111111111111111111111111111,sub",
+        ],
+    )?;
+    git(root, &["commit", "-q", "-m", "gitlink"])?;
+    if directory {
+        fs::create_dir(root.join("sub"))?;
+    }
+    git(root, &["switch", "-q", "-c", "upstream"])?;
+    repo.commit_file(if conflict { "f" } else { "up" }, "upstream\n")?;
+    git(root, &["switch", "-q", "main"])?;
+    repo.commit_file(if conflict { "f" } else { "g" }, "topic\n")?;
+    Ok(repo)
+}
+
+/// HEAD, the index file, every ref and every worktree file and directory.
+fn gitlink_live(root: &Path) -> Result<Vec<(PathBuf, Vec<u8>)>> {
+    fn walk(root: &Path, path: &Path, out: &mut Vec<(PathBuf, Vec<u8>)>) -> Result<()> {
+        for entry in fs::read_dir(path)? {
+            let path = entry?.path();
+            if path.starts_with(root.join(".git")) {
+                continue;
+            }
+            if path.is_dir() {
+                out.push((path.strip_prefix(root)?.to_path_buf(), b"<directory>".to_vec()));
+                walk(root, &path, out)?;
+            } else {
+                out.push((path.strip_prefix(root)?.to_path_buf(), fs::read(&path)?));
+            }
+        }
+        Ok(())
+    }
+    let mut out = vec![
+        (PathBuf::from(".git/HEAD"), fs::read(root.join(".git/HEAD"))?),
+        (PathBuf::from(".git/index"), fs::read(root.join(".git/index"))?),
+        (PathBuf::from("refs"), git(root, &["for-each-ref", "refs/heads"])?),
+    ];
+    walk(root, root, &mut out)?;
+    out.sort();
+    Ok(out)
+}
+
+/// At a conflict stop and at an interactive `edit` stop, with an unchanged gitlink
+/// whose directory is absent or empty: `--abort` restores HEAD, the index, the
+/// refs and every file exactly, and `--skip` finishes the rebase; either way the
+/// gitlink entry and its directory are untouched and no journal remains. The
+/// gitlink's id is never looked up as a local object.
+#[test]
+fn gitlink_stops_abort_and_skip_exactly() -> Result<()> {
+    for (conflict, directory, action) in [false, true]
+        .into_iter()
+        .flat_map(|conflict| [false, true].into_iter().map(move |directory| (conflict, directory)))
+        .flat_map(|(conflict, directory)| {
+            ["--abort", "--skip"]
+                .into_iter()
+                .map(move |action| (conflict, directory, action))
+        })
+    {
+        let what = format!("conflict={conflict} directory={directory} {action}");
+        let repo = gitlink_stop_fixture(conflict, directory)?;
+        let root = repo.path();
+        let before = gitlink_live(root)?;
+        let gitlink = git(root, &["ls-files", "-s", "sub"])?;
+        let porcelain = git(root, &["status", "--porcelain"])?;
+        let stopped = if conflict {
+            invoke(root, &["rebase", "upstream"])?
+        } else {
+            let topic = rev(root, "HEAD")?;
+            interactive(root, &format!("edit {topic}\n"))?
+        };
+        ensure!(
+            conflict != stopped.status.success(),
+            "{what}: a conflict stop exits non-zero, an edit stop zero: {}",
+            stopped.stdout
+        );
+        ensure!(
+            success(root, &["rebase", "--status"])?.stdout.contains(if conflict {
+                "Conflict stop"
+            } else {
+                "Edit stop"
+            }),
+            "{what}: at its stop"
+        );
+        let result = invoke(root, &["rebase", action])?;
+        ensure!(result.status.success(), "{what}: {}\n{}", result.stdout, result.stderr);
+        ensure!(
+            !result.stderr.contains("could not be found"),
+            "{what}: the gitlink was looked up as an object: {}",
+            result.stderr
+        );
+        ensure!(
+            !root.join(".git/brit-rebase").exists() && !root.join(".git/brit-authoring").exists(),
+            "{what}: no journal remains"
+        );
+        assert_eq!(
+            git(root, &["ls-files", "-s", "sub"])?,
+            gitlink,
+            "{what}: the gitlink entry is kept"
+        );
+        ensure!(
+            root.join("sub").exists() == directory && (!directory || fs::read_dir(root.join("sub"))?.next().is_none()),
+            "{what}: the submodule directory is untouched"
+        );
+        if action == "--abort" {
+            ensure!(gitlink_live(root)? == before, "{what}: --abort restores exactly");
+        } else {
+            assert_eq!(
+                rev(root, "HEAD")?,
+                rev(root, "upstream")?,
+                "{what}: --skip drops the stopped commit"
+            );
+            assert_eq!(
+                git(root, &["status", "--porcelain"])?,
+                porcelain,
+                "{what}: the worktree status is as before"
+            );
+        }
+        success(root, &["branch", "create", "after-gitlink-stop"])?;
+    }
+    Ok(())
+}
+
 /// A gitlink the rebase leaves unchanged is index-only: its commit is not a local
 /// object, so it is never looked up, and its submodule directory, absent,
 /// empty or holding files, is never read or written. The rebase publishes with
@@ -419,8 +553,10 @@ fn changed_or_staged_gitlinks_refuse_before_any_state() -> Result<()> {
     let index = fs::read(root.join(".git/index"))?;
     let result = refused(root, &["rebase", "upstream"])?;
     ensure!(
-        result.stderr.contains("affected gitlinks are unsupported"),
-        "{}",
+        result.stderr.contains("gitlink sub")
+            && result.stderr.contains("nothing was changed")
+            && result.stderr.contains("git rebase"),
+        "a moved gitlink is refused by name: {}",
         result.stderr
     );
     assert!(!root.join(".git/brit-rebase").exists());
