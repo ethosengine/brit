@@ -61,6 +61,8 @@ pub mod revision;
 pub mod show;
 pub mod status;
 pub mod submodule;
+#[cfg(feature = "blocking-client")]
+mod submodule_update;
 pub mod switch;
 pub mod tag;
 pub mod tree;

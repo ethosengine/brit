@@ -94,7 +94,9 @@ fn requires_mutation_guard(cmd: &Subcommands) -> bool {
         | Subcommands::Mailmap(_)
         | Subcommands::Attributes(_)
         | Subcommands::Exclude(_)
-        | Subcommands::Submodule(_)
+        | Subcommands::Submodule(crate::plumbing::options::submodule::Platform {
+            cmds: None | Some(crate::plumbing::options::submodule::Subcommands::List { .. }),
+        })
         | Subcommands::Cat { .. }
         | Subcommands::IsClean
         | Subcommands::IsChanged
@@ -897,6 +899,29 @@ pub fn run_with_command(args: Args, command: clap::Command) -> Result<()> {
                         format,
                         dirty_suffix.map(|suffix| suffix.unwrap_or_else(|| "dirty".to_string())),
                     )
+                })
+            }
+            #[cfg(feature = "gitoxide-core-blocking-client")]
+            crate::plumbing::options::submodule::Subcommands::Update {
+                init,
+                recursive,
+                remote,
+                paths,
+            } => {
+                if recursive || remote {
+                    bail!(gix::error::unsupported(format!(
+                        "submodule update does not support {}",
+                        if recursive && remote {
+                            "--recursive or --remote"
+                        } else if recursive {
+                            "--recursive"
+                        } else {
+                            "--remote"
+                        }
+                    )));
+                }
+                prepare_and_run("submodule-update", verbose, None, move |progress, _out, _err| {
+                    core::repository::submodule::update(repository(Mode::Lenient)?, &paths, init, &config, progress)
                 })
             }
         },

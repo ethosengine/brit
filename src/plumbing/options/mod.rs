@@ -2006,6 +2006,20 @@ pub mod submodule {
             #[clap(short = 'd', long)]
             dirty_suffix: Option<Option<String>>,
         },
+        /// Check out the commits recorded in the index for the named submodules.
+        #[cfg(feature = "gitoxide-core-blocking-client")]
+        Update {
+            /// Register missing submodule URLs from .gitmodules before updating.
+            #[clap(long)]
+            init: bool,
+            #[clap(long, hide = true)]
+            recursive: bool,
+            #[clap(long, hide = true)]
+            remote: bool,
+            /// Literal paths of submodules to update.
+            #[clap(required_unless_present_any = ["recursive", "remote"], value_name = "PATH", value_parser = crate::shared::AsBString)]
+            paths: Vec<gix::bstr::BString>,
+        },
     }
 }
 

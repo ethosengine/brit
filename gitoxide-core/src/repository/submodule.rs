@@ -7,6 +7,9 @@ use gix::{
 
 use crate::OutputFormat;
 
+#[cfg(feature = "blocking-client")]
+pub use super::submodule_update::update;
+
 pub fn list(
     repo: Repository,
     mut out: impl std::io::Write,

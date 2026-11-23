@@ -286,7 +286,10 @@ pub fn delete(
 }
 
 /// Rewrite the repository-local configuration under its lock with `edit`, if `edit` changed anything.
-fn edit_local_config(repo: &gix::Repository, edit: impl FnOnce(&mut gix::config::File) -> bool) -> Result<()> {
+pub(super) fn edit_local_config(
+    repo: &gix::Repository,
+    edit: impl FnOnce(&mut gix::config::File) -> Result<bool>,
+) -> Result<()> {
     use std::io::Write;
     let path = repo.common_dir().join("config");
     let mut lock = gix::lock::File::acquire_to_update_resource(&path, gix::lock::acquire::Fail::Immediately, None, 0)
@@ -299,7 +302,7 @@ fn edit_local_config(repo: &gix::Repository, edit: impl FnOnce(&mut gix::config:
         gix::config::file::Metadata::from(gix::config::Source::Local),
         Default::default(),
     )?;
-    if !edit(&mut config) {
+    if !edit(&mut config)? {
         return Ok(());
     }
     let mut bytes = Vec::with_capacity(input.len());
@@ -322,7 +325,7 @@ fn remove_branch_config(repo: &gix::Repository, names: &[String]) -> Result<()> 
                 changed = true;
             }
         }
-        changed
+        Ok(changed)
     })
     .or_raise(|| gix::error::message("branches were deleted, but their configuration could not be removed"))
 }
@@ -468,14 +471,14 @@ pub fn rename(repo: gix::Repository, old: &str, new: &str) -> Result<()> {
         carried_log(old_log)?;
     }
     edit_local_config(&repo, |config| {
-        config
+        Ok(config
             .rename_section(
                 "branch",
                 Some(old.as_bytes().as_bstr()),
                 "branch",
                 Some(BString::from(new)),
             )
-            .is_ok()
+            .is_ok())
     })
     .or_raise(|| gix::error::message("branch was renamed, but its configuration could not be moved"))
 }
