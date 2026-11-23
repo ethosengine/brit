@@ -158,7 +158,11 @@ requirements below, as they do for the other affected command families.
 - [ ] `brit rebase --status` in `ready-final` offers `--abort`, which a final decision cannot take (`journal.rs:4602`).
 - [ ] Recovery refuses as "replay configuration or hooks changed" when only `GIT_AUTHOR_*`/`GIT_COMMITTER_*` differ, because the policy digest hashes the whole config snapshot (`replay/hooks.rs:10-47`).
 - [ ] A kill during child preparation (`recover_preparation`, `journal.rs:2808`) has no measured recovery fixture.
-- [ ] `brit diff` printed nothing for a change during the release session; not yet reproduced (staged-only and untracked-only print nothing in Git too).
+- [ ] `brit diff` refuses the whole diff with "submodule patches are not supported" when any gitlink differs (`gitoxide-core/src/repository/diff.rs:358`), so it is unusable in the Elohim checkout whenever a pin moves; Git prints `Subproject commit` lines. Reproduced 2026-11-22 on 0.3.0; staged-only blank output matches Git. Sprint 4 item 7.
+- [ ] `brit push` sends an annotated tag as its peeled commit (`gix/src/remote/connection/push/transmit.rs:206`, `peel_to_id`), so the remote loses the tag object (sprint 4 item 1 lane, scratch reproduction 2026-11-22).
+- [ ] The feedback recorder calls `epr feedback` without checking the verb exists: on shem (brit 0.3.1, an epr head without `feedback`) every command prints `feedback capture gap: epr: invalid arguments: unknown command feedback` (ethosengine/shem report, 2026-11-22).
+- [ ] On ethosengine, `diff`, `fetch`, `worktree --help` and `worktree add` print `feedback capture gap: recorder timeout`; the line should name its budget, and a missing verb should fail fast rather than time out (same report).
+- [ ] A whole-crate `cargo test -p cli-journey` in a fresh target fails on the unbuilt `brit-rebase-retained` helper; the journey crate neither builds nor names that prerequisite.
 
 ## Usage feedback across commands
 
