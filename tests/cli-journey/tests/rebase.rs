@@ -3030,6 +3030,15 @@ mod recovery {
             "{}",
             status.stdout
         );
+        // Sprint 4 item 3: in `ready-final` with the final decision durable, no
+        // line offers `--abort`; `--continue` is the only cure named.
+        ensure!(
+            status.stdout.contains("Rebase phase: ready-final")
+                && status.stdout.contains("--continue")
+                && !status.stdout.contains("--abort"),
+            "{}",
+            status.stdout
+        );
         refused(root, &["rebase", "--abort"])?;
         success(root, &["rebase", "--continue"])?;
         ensure!(!root.join(".git/brit-rebase").exists());

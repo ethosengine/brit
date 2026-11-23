@@ -4510,6 +4510,9 @@ impl Session {
             "Original HEAD: {}; upstream: {}",
             self.state.original, self.state.upstream
         )?;
+        // A durable final decision names its own cure; the catch-all below
+        // would otherwise offer `--abort`, which a final decision refuses.
+        let mut final_pending = false;
         if self.has_pending_decision() {
             let path = self
                 .directory
@@ -4523,6 +4526,7 @@ impl Session {
                 Ok(None) => None,
                 Err(_) => Some(None),
             });
+            final_pending = matches!(kind, Some(Some(super::transition::Kind::Final)));
             let line = match kind {
                 None => "An interrupted command left its decision record incomplete; it never became durable, and \
                          the next --continue or --abort discards it and goes on from the state above."
@@ -4619,6 +4623,7 @@ impl Session {
             _ => None,
         };
         if let Some(cure) = cure
+            && !final_pending
             && !(self.phase() == "prepared" && self.directory.join("pre-rebase").try_exists()?)
             && !(self.phase() == "final-published" && self.directory.join("post-rewrite").try_exists()?)
         {

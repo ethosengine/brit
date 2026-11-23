@@ -75,11 +75,17 @@ exists.
   locks, edits and commits the local config. *Done when:* a journey test shows
   `brit config` reporting the value after `set` and not after `unset`, and a
   held `config.lock` refuses with the config unchanged.
-- [ ] **3. `brit rebase --status` advises only what `ready-final` allows.**
+- [x] **3. `brit rebase --status` advises only what `ready-final` allows.**
   (S) The catch-all at `gitoxide-core/src/repository/replay/journal.rs:4602`
   offers `--abort`, which a final decision cannot take (`:4530`). *Done when:*
   a status test in the `ready-final` state names `--continue` and not
   `--abort`.
+  **Measured 2026-11-22:** with the final decision durable, `--status` now
+  prints only the pending-final line; the catch-all is suppressed for it
+  (`public_status_names_the_cure_for_the_decision_actually_pending` asserts no
+  `--abort` in `ready-final`). A `ready-final` without a durable decision keeps
+  the catch-all, because `--abort` is still accepted there (`abort()` admits
+  that phase).
 - [ ] **4. A kill at `replay-transition-directory-created` heals without
   `--retire`.** (S) The staging directory is created before its `owner` file
   (`journal.rs:3754-3761`); a kill between them leaves an owner-less directory
