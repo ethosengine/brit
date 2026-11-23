@@ -3045,6 +3045,84 @@ mod recovery {
         preserved(root)
     }
 
+    /// The one transition staging directory a killed command left in the journal.
+    fn transition_staging(root: &Path) -> Result<PathBuf> {
+        let found: Vec<_> = fs::read_dir(root.join(".git/brit-rebase"))?
+            .map(|entry| entry.map(|entry| entry.path()))
+            .collect::<std::io::Result<Vec<_>>>()?
+            .into_iter()
+            .filter(|path| {
+                path.file_name()
+                    .and_then(|name| name.to_str())
+                    .is_some_and(|name| name.starts_with("transition-"))
+            })
+            .collect();
+        ensure!(found.len() == 1, "one transition staging directory: {found:?}");
+        Ok(found.into_iter().next().expect("checked"))
+    }
+
+    /// Sprint 4 item 4: a kill between creating the transition staging
+    /// directory and writing its `owner` leaves an empty, owner-less, private
+    /// directory of this user. The next command removes it as torn and goes
+    /// on; anything else at that path still refuses as foreign.
+    #[test]
+    fn public_kill_after_staging_directory_creation_heals_and_planted_directories_refuse() -> Result<()> {
+        let repo = fixture(false)?;
+        let root = repo.path();
+        ensure!(kill_at_ordinal(
+            root,
+            &["rebase", "upstream"],
+            "replay-transition-directory-created",
+            1
+        )?);
+        let staging = transition_staging(root)?;
+        ensure!(fs::read_dir(&staging)?.next().is_none(), "the torn directory is empty");
+        success(root, &["rebase", "--continue"])?;
+        ensure!(!root.join(".git/brit-rebase").exists());
+        preserved(root)?;
+
+        for plant in ["member", "mode", "symlink"] {
+            let repo = fixture(false)?;
+            let root = repo.path();
+            ensure!(kill_at_ordinal(
+                root,
+                &["rebase", "upstream"],
+                "replay-transition-directory-created",
+                1
+            )?);
+            let staging = transition_staging(root)?;
+            let elsewhere = tempfile::tempdir()?;
+            match plant {
+                "member" => fs::write(staging.join("planted"), b"planted\n")?,
+                "mode" => fs::set_permissions(&staging, fs::Permissions::from_mode(0o755))?,
+                _ => {
+                    fs::remove_dir(&staging)?;
+                    let target = elsewhere.path().join("private");
+                    fs::create_dir(&target)?;
+                    fs::set_permissions(&target, fs::Permissions::from_mode(0o700))?;
+                    std::os::unix::fs::symlink(&target, &staging)?;
+                }
+            }
+            let result = refused(root, &["rebase", "--continue"])?;
+            // A symlink is already refused by the journal's scratch-member
+            // guard before the staging check reads it.
+            ensure!(
+                result.stderr.contains("foreign replay transition staging directory")
+                    || (plant == "symlink" && result.stderr.contains("unsafe journal scratch member")),
+                "{plant}: {}",
+                result.stderr
+            );
+            ensure!(
+                fs::symlink_metadata(&staging).is_ok(),
+                "{plant}: the planted path is kept"
+            );
+            if plant == "member" {
+                ensure!(staging.join("planted").is_file(), "the planted member is kept");
+            }
+        }
+        Ok(())
+    }
+
     fn preserved_neighbors_unchanged(root: &Path) -> Result<()> {
         assert_eq!(fs::read(root.join("topic"))?, b"topic\n");
         assert_eq!(git(root, &["status", "--porcelain"])?, b"");

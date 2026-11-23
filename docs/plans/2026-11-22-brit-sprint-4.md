@@ -86,13 +86,21 @@ exists.
   `--abort` in `ready-final`). A `ready-final` without a durable decision keeps
   the catch-all, because `--abort` is still accepted there (`abort()` admits
   that phase).
-- [ ] **4. A kill at `replay-transition-directory-created` heals without
+- [x] **4. A kill at `replay-transition-directory-created` heals without
   `--retire`.** (S) The staging directory is created before its `owner` file
   (`journal.rs:3754-3761`); a kill between them leaves an owner-less directory
   that the next run refuses as foreign (`:3746`). Treat an empty, owner-less,
   0700 directory owned by this uid as torn and remove it; anything else still
   refuses. *Done when:* a kill fixture at that checkpoint resumes, and a
   planted non-empty or foreign-owned directory still refuses.
+  **Measured 2026-11-22:** before the fix the resume failed with a bare
+  `No such file or directory` (the `owner` lookup's `?` at `journal.rs:3750`
+  escaped the `ensure!`). Now an empty, real, mode-0700 directory owned by the
+  journal's owner and the effective uid is removed with `remove_dir` and
+  recreated; `public_kill_after_staging_directory_creation_heals_and_planted_directories_refuse`
+  kills there, continues and publishes, and refuses a planted member, mode
+  0755 and a symlink (the last by the scratch-member guard), keeping each. A
+  foreign uid is not exercised: the test cannot `chown` without root.
 - [ ] **5. A changed author or committer identity does not refuse recovery.**
   (M) The policy digest hashes the whole config snapshot
   (`replay/hooks.rs:10-47`, compared at `journal.rs:704` and `:4340`), which
