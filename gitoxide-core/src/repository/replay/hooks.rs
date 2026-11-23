@@ -5,9 +5,89 @@ use anyhow::{Result, ensure};
 
 use crate::repository::authoring::{self, invocation::InvocationOutcome};
 
+/// Configuration that names who is acting rather than how the operation
+/// behaves. Each replayed commit records its own author and committer, so the
+/// identity in force when a rebase resumes is evidence about that commit, not
+/// a change of operation policy; gix also folds `GIT_AUTHOR_*`,
+/// `GIT_COMMITTER_*` and `EMAIL` from the environment into these keys, which
+/// made a resume under another shell's identity refuse. `user.name` and
+/// `user.email` are left out for the same reason wherever they come from;
+/// edits to configuration files are still pinned through their raw bytes
+/// below. Every other key stays pinned: `user.signingKey`, and the
+/// `GIT_AUTHOR_DATE`/`GIT_COMMITTER_DATE` overrides
+/// (`gitoxide.commit.{author,committer}Date`), because an interrupted step
+/// resumes the exact proposed commit bytes, timestamp included.
+const IDENTITY_KEYS: &[(&str, Option<&str>, &str)] = &[
+    ("author", None, "name"),
+    ("author", None, "email"),
+    ("committer", None, "name"),
+    ("committer", None, "email"),
+    ("user", None, "name"),
+    ("user", None, "email"),
+    ("gitoxide", Some("user"), "emailFallback"),
+];
+
+/// Names the digest form: a journal written before identity was left out
+/// (Brit 0.3.2 and earlier) holds the untagged form, which still matches.
+const POLICY_FORM: &str = "replay-policy-v2: identity excluded";
+
+/// The effective configuration without [`IDENTITY_KEYS`]. A section left
+/// empty by the removal is dropped, so whether an identity variable is set
+/// at all does not change the digest either.
+fn configuration_without_identity(config: &gix::config::File) -> Vec<u8> {
+    let mut config = config.clone();
+    let ids: Vec<_> = config.sections_and_ids().map(|(_, id)| id).collect();
+    for id in ids {
+        let Some(mut section) = config.section_mut_by_id(id) else {
+            continue;
+        };
+        let name = section.header().name().to_string();
+        let subsection = section.header().subsection_name().map(ToString::to_string);
+        let mut identity = false;
+        for (key_section, key_subsection, key) in IDENTITY_KEYS {
+            if name.eq_ignore_ascii_case(key_section) && subsection.as_deref() == *key_subsection {
+                identity = true;
+                while section.remove(key).is_some() {}
+            }
+        }
+        if identity && section.num_values() == 0 {
+            config.remove_section_by_id(id);
+        }
+    }
+    config.to_bstring().to_vec()
+}
+
 /// Pin effective configuration and executable operation hooks. Include source
 /// files as well as the snapshot so edits made by a hook are visible immediately.
 pub(super) fn policy(repo: &gix::Repository) -> Result<String> {
+    let (config, sources, hooks) = policy_inputs(repo)?;
+    crate::repository::switch::digest(&serde_json::to_vec(&(
+        POLICY_FORM,
+        configuration_without_identity(&config),
+        sources,
+        hooks,
+    ))?)
+}
+
+/// Whether `pinned`, a digest a journal recorded, still holds. It accepts the
+/// current form and the untagged form Brit 0.3.2 and earlier recorded (which
+/// includes identity), so a rebase in progress across an upgrade resumes
+/// under the identity it began with instead of refusing.
+pub(super) fn policy_matches(repo: &gix::Repository, pinned: &str) -> Result<bool> {
+    if policy(repo)? == pinned {
+        return Ok(true);
+    }
+    let (config, sources, hooks) = policy_inputs(repo)?;
+    Ok(
+        crate::repository::switch::digest(&serde_json::to_vec(&(config.to_bstring().to_vec(), sources, hooks))?)?
+            == pinned,
+    )
+}
+
+type PolicySources = Vec<(Vec<u8>, Option<Vec<u8>>)>;
+type PolicyHooks = Vec<(&'static str, Option<(Vec<u8>, Vec<u8>, u64, u64, u32, Vec<u8>)>)>;
+
+fn policy_inputs(repo: &gix::Repository) -> Result<(gix::config::File, PolicySources, PolicyHooks)> {
     use std::{collections::BTreeSet, fs, os::unix::fs::MetadataExt};
     let config = repo.config_snapshot();
     let mut paths: BTreeSet<_> = config
@@ -43,7 +123,7 @@ pub(super) fn policy(repo: &gix::Repository) -> Result<String> {
         };
         hooks.push((name, image));
     }
-    crate::repository::switch::digest(&serde_json::to_vec(&(config.to_bstring().to_vec(), sources, hooks))?)
+    Ok((config.plumbing().clone(), sources, hooks))
 }
 
 /// `directory` names one invocation, never a reusable operation-wide directory.
@@ -249,6 +329,55 @@ mod tests {
             policy(&repo)?,
             replaced,
             "removing hook execution permission changes effective policy"
+        );
+        Ok(())
+    }
+
+    /// Sprint 4 item 5: identity is not policy, every other key is, and a
+    /// digest in the untagged form Brit 0.3.2 recorded still matches.
+    #[test]
+    fn policy_ignores_identity_pins_other_configuration_and_accepts_the_untagged_form() -> Result<()> {
+        if gix_testtools::run_in_isolated_process().map_err(anyhow::Error::from_boxed)? {
+            return Ok(());
+        }
+        let temp = fixture()?;
+        let mut repo = gix::open(temp.path())?;
+        let untagged = {
+            let (config, sources, hooks) = policy_inputs(&repo)?;
+            crate::repository::switch::digest(&serde_json::to_vec(&(config.to_bstring().to_vec(), sources, hooks))?)?
+        };
+        let pinned = policy(&repo)?;
+        assert_ne!(pinned, untagged, "the two forms never collide");
+        assert!(policy_matches(&repo, &untagged)?, "a 0.3.2 journal still resumes");
+        assert!(policy_matches(&repo, &pinned)?);
+        {
+            let mut config = repo.config_snapshot_mut();
+            config.set_raw_value_by("committer", None, "name", "Another Committer")?;
+            config.set_raw_value_by("author", None, "email", "another@example.com")?;
+            config.set_raw_value_by("user", None, "name", "Another User")?;
+            config.set_raw_value_by("gitoxide", Some("user".into()), "emailFallback", "fallback@example.com")?;
+            config.commit()?;
+        }
+        assert_eq!(policy(&repo)?, pinned, "identity is not operation policy");
+        assert!(
+            !policy_matches(&repo, &untagged)?,
+            "the untagged form keeps pinning identity"
+        );
+        {
+            let mut config = repo.config_snapshot_mut();
+            config.set_raw_value_by("user", None, "signingKey", "another-key")?;
+            config.commit()?;
+        }
+        assert!(!policy_matches(&repo, &pinned)?, "the signing key stays pinned");
+        let signed = policy(&repo)?;
+        {
+            let mut config = repo.config_snapshot_mut();
+            config.set_raw_value_by("gitoxide", Some("commit".into()), "committerDate", "2001-01-01")?;
+            config.commit()?;
+        }
+        assert!(
+            !policy_matches(&repo, &signed)?,
+            "a committer date override stays pinned: resumed proposals keep their timestamp"
         );
         Ok(())
     }

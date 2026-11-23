@@ -72,7 +72,14 @@ argument and message file are mutually exclusive. `--no-edit` is amendment-only;
 without a supplied message, amendment or split commit uses the normal message
 editor contract and its authoring hooks. Choose the message editor before starting
 and keep effective configuration consistent across control commands; changing
-`GIT_EDITOR` can change the pinned configuration and is refused.
+`GIT_EDITOR` can change the pinned configuration and is refused. Author and
+committer identity is not pinned: each commit records its own, so a control
+command run with another `GIT_AUTHOR_NAME`, `GIT_AUTHOR_EMAIL`,
+`GIT_COMMITTER_NAME`, `GIT_COMMITTER_EMAIL`, `EMAIL`,
+`user.name` or `user.email` continues. The `GIT_AUTHOR_DATE` and
+`GIT_COMMITTER_DATE` overrides stay pinned: a resumed step reuses its proposed
+commit exactly. A rebase begun by Brit 0.3.2 or earlier pinned identity too and
+keeps doing so until it ends.
 
 ## Stops and interruption
 

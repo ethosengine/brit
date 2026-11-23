@@ -436,7 +436,7 @@ impl Session {
                 );
                 self.validate_editor_effects(repo, &record)?;
                 ensure!(
-                    super::super::hooks::policy(repo)? == self.state.policy,
+                    super::super::hooks::policy_matches(repo, &self.state.policy)?,
                     "policy changed before editor launch"
                 );
                 self.validate_branch(repo, None)?;
