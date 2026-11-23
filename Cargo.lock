@@ -444,14 +444,14 @@ dependencies = [
 
 [[package]]
 name = "brit-bridge"
-version = "0.1.7"
+version = "0.1.8"
 dependencies = [
  "anyhow",
  "async-trait",
  "bytes",
  "eprfs-core",
  "futures-lite",
- "gix 0.90.1",
+ "gix 0.90.2",
  "gix-testtools",
  "hex",
  "tempfile",
@@ -474,7 +474,7 @@ dependencies = [
 
 [[package]]
 name = "brit-cli"
-version = "0.3.2"
+version = "0.3.3"
 dependencies = [
  "anyhow",
  "brit-bridge",
@@ -487,7 +487,7 @@ dependencies = [
  "eprfs-local",
  "eprfs-storage",
  "gitoxide",
- "gix 0.90.1",
+ "gix 0.90.2",
  "gix-testtools",
  "petgraph",
  "rakia-brit",
@@ -524,10 +524,10 @@ dependencies = [
 
 [[package]]
 name = "brit-graph"
-version = "0.2.4"
+version = "0.2.5"
 dependencies = [
  "brit-epr",
- "gix 0.90.1",
+ "gix 0.90.2",
  "globset",
  "petgraph",
  "regex-automata",
@@ -543,7 +543,7 @@ name = "brit-verify"
 version = "0.0.0"
 dependencies = [
  "brit-epr",
- "gix 0.90.1",
+ "gix 0.90.2",
  "gix-testtools",
  "tempfile",
 ]
@@ -2020,7 +2020,7 @@ dependencies = [
 
 [[package]]
 name = "gitoxide"
-version = "0.61.2"
+version = "0.61.3"
 dependencies = [
  "anstream",
  "anyhow",
@@ -2031,7 +2031,7 @@ dependencies = [
  "env_logger",
  "futures-lite",
  "gitoxide-core",
- "gix 0.90.1",
+ "gix 0.90.2",
  "gix-tix",
  "prodash",
  "serde_derive",
@@ -2041,7 +2041,7 @@ dependencies = [
 
 [[package]]
 name = "gitoxide-core"
-version = "0.64.2"
+version = "0.64.3"
 dependencies = [
  "anyhow",
  "async-io",
@@ -2055,7 +2055,7 @@ dependencies = [
  "futures-io",
  "futures-lite",
  "gitoxide-core",
- "gix 0.90.1",
+ "gix 0.90.2",
  "gix-archive 0.39.1",
  "gix-config-value 0.21.4",
  "gix-fsck",
@@ -2142,11 +2142,11 @@ dependencies = [
 
 [[package]]
 name = "gix"
-version = "0.90.1"
+version = "0.90.2"
 dependencies = [
  "async-std",
  "document-features",
- "gix 0.90.1",
+ "gix 0.90.2",
  "gix-actor 0.45.0",
  "gix-archive 0.39.1",
  "gix-attributes 0.37.5",
@@ -2893,7 +2893,7 @@ name = "gix-fsmonitor-daemon"
 version = "0.1.0"
 dependencies = [
  "anyhow",
- "gix 0.90.1",
+ "gix 0.90.2",
  "gix-fsmonitor-daemon",
  "gix-testtools",
 ]
@@ -3979,12 +3979,12 @@ dependencies = [
 
 [[package]]
 name = "gix-tix"
-version = "0.6.1"
+version = "0.6.2"
 dependencies = [
  "clap",
  "crossterm",
  "directories",
- "gix 0.90.1",
+ "gix 0.90.2",
  "gix-error 0.5.3",
  "gix-testtools",
  "gix-trace 0.3.2",
@@ -4903,7 +4903,7 @@ version = "0.0.0"
 dependencies = [
  "cargo-smart-release-core",
  "clap",
- "gix 0.90.1",
+ "gix 0.90.2",
  "gix-error 0.5.3",
  "gix-testtools",
  "regex",
