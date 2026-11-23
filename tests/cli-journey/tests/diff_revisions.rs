@@ -576,3 +576,142 @@ fn exit_code_and_quiet_report_differences_by_status() -> Result<()> {
     }
     Ok(())
 }
+
+/// A superproject with a checked-out submodule `sub` at the second of its two commits, and the
+/// submodule's source repository, which must outlive the fixture's clones of it.
+fn with_submodule() -> Result<(Fixture, tempfile::TempDir)> {
+    let f = Fixture::new()?;
+    let source = tempfile::tempdir()?;
+    for args in [
+        &["init", "-q", "--initial-branch=main"][..],
+        &["config", "user.name", "Committer Name"],
+    ] {
+        ensure!(f.git_in(source.path(), args)?.status.success());
+    }
+    for content in ["one\n", "two\n"] {
+        fs::write(source.path().join("file"), content)?;
+        ensure!(f.git_in(source.path(), &["add", "file"])?.status.success());
+        ensure!(f
+            .git_in(source.path(), &["commit", "-q", "-m", content])?
+            .status
+            .success());
+    }
+    f.write("ordinary", b"o\n")?;
+    f.commit("base")?;
+    let url = source.path().to_str().expect("UTF-8 temporary path");
+    f.git(&["-c", "protocol.file.allow=always", "submodule", "add", "-q", url, "sub"])?;
+    f.commit("add submodule")?;
+    Ok((f, source))
+}
+
+/// Every output form of `brit diff`, against the index, HEAD and with `--cached`, matches Git.
+fn submodule_parity(f: &Fixture, state: &str) -> Result<()> {
+    for revisions in [&[][..], &["HEAD"], &["--cached"], &["--", "ordinary"]] {
+        for format in FORMATS.iter().chain([&["--exit-code"][..]].iter()) {
+            let mut args: Vec<&str> = format.to_vec();
+            args.extend_from_slice(revisions);
+            parity(f, &args).map_err(|err| err.context(state.to_owned()))?;
+        }
+    }
+    Ok(())
+}
+
+#[test]
+fn gitlinks_print_git_short_submodule_form_against_the_working_files() -> Result<()> {
+    let (f, _source) = with_submodule()?;
+    let sub = f.root().join("sub");
+    let in_sub = |args: &[&str]| -> Result<()> {
+        ensure!(f.git_in(&sub, args)?.status.success(), "git {args:?} in the submodule");
+        Ok(())
+    };
+    submodule_parity(&f, "clean")?;
+    in_sub(&["checkout", "-q", "HEAD~1"])?;
+    submodule_parity(&f, "submodule HEAD moved")?;
+    fs::write(sub.join("file"), "edited\n")?;
+    submodule_parity(&f, "moved and dirty")?;
+    in_sub(&["checkout", "-q", "-f", "main"])?;
+    fs::write(sub.join("file"), "edited\n")?;
+    submodule_parity(&f, "dirty only")?;
+    in_sub(&["checkout", "-q", "-f", "main"])?;
+    in_sub(&["add", "-A"])?;
+    fs::write(sub.join("untracked"), "u\n")?;
+    submodule_parity(&f, "untracked only")?;
+    fs::remove_file(sub.join("untracked"))?;
+    fs::write(sub.join("file"), "staged in the submodule\n")?;
+    in_sub(&["add", "file"])?;
+    submodule_parity(&f, "staged in the submodule")?;
+    in_sub(&["reset", "-q", "--hard"])?;
+    in_sub(&["checkout", "-q", "HEAD~1"])?;
+    f.git(&["add", "sub"])?;
+    submodule_parity(&f, "staged gitlink move")?;
+    f.git(&["reset", "-q"])?;
+    in_sub(&["checkout", "-q", "main"])?;
+
+    // An empty directory is an uninitialized submodule: unchanged, as in Git.
+    let saved = f.root().join("saved-sub");
+    fs::rename(&sub, &saved)?;
+    fs::create_dir(&sub)?;
+    submodule_parity(&f, "uninitialized")?;
+    fs::remove_dir(&sub)?;
+    submodule_parity(&f, "missing directory")?;
+    fs::write(&sub, "a file replaced the submodule\n")?;
+    submodule_parity(&f, "file replaced gitlink")?;
+    fs::remove_file(&sub)?;
+    fs::rename(&saved, &sub)?;
+    f.git(&["rm", "-q", "--cached", "sub"])?;
+    submodule_parity(&f, "gitlink removed from the index")?;
+    f.git(&["reset", "-q"])?;
+    Ok(())
+}
+
+#[test]
+fn gitlink_additions_removals_and_type_changes_match_git_between_revisions() -> Result<()> {
+    let (f, _source) = with_submodule()?;
+    let added = f.rev("HEAD")?;
+    let base = f.rev("HEAD~1")?;
+    f.git(&["rm", "-q", "sub"])?;
+    f.write("sub", b"now a file\n")?;
+    let replaced = f.commit("replace submodule with a file")?;
+    f.git(&["rm", "-q", "sub"])?;
+    let removed = f.commit("remove")?;
+    for pair in [
+        [&base, &added],
+        [&added, &base],
+        [&added, &replaced],
+        [&replaced, &added],
+        [&added, &removed],
+    ] {
+        for format in FORMATS {
+            let mut args: Vec<&str> = format.to_vec();
+            args.extend(pair.iter().map(|rev| rev.as_str()));
+            parity(&f, &args)?;
+        }
+    }
+    Ok(())
+}
+
+#[test]
+fn non_default_submodule_formats_and_ignore_settings_refuse() -> Result<()> {
+    let (f, _source) = with_submodule()?;
+    let sub = f.root().join("sub");
+    ensure!(f.git_in(&sub, &["checkout", "-q", "HEAD~1"])?.status.success());
+    // Git's option is not one of Brit's, so it refuses by name instead of being ignored.
+    refuses(f.root(), &["--submodule=log"], "--submodule")?;
+    for value in ["log", "diff"] {
+        f.git(&["config", "diff.submodule", value])?;
+        refuses(f.root(), &[], &format!("diff.submodule={value}"))?;
+        refuses(f.root(), &["HEAD~1", "HEAD"], &format!("diff.submodule={value}"))?;
+        // Git's summaries do not depend on it.
+        parity(&f, &["--stat"])?;
+    }
+    f.git(&["config", "diff.submodule", "short"])?;
+    parity(&f, &[])?;
+    f.git(&["config", "diff.ignoreSubmodules", "all"])?;
+    refuses(f.root(), &["--name-only"], "diff.ignoreSubmodules=all")?;
+    f.git(&["config", "--unset", "diff.ignoreSubmodules"])?;
+    f.git(&["config", "-f", ".gitmodules", "submodule.sub.ignore", "dirty"])?;
+    refuses(f.root(), &[], "submodule.sub.ignore=dirty")?;
+    f.git(&["config", "-f", ".gitmodules", "submodule.sub.ignore", "none"])?;
+    parity(&f, &[])?;
+    Ok(())
+}

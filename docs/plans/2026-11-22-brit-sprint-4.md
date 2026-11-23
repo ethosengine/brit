@@ -99,12 +99,22 @@ exists.
   `src/plumbing/options/mod.rs:1994`. *Done when:* in a fresh worktree the
   named submodule directory holds the commit the parent records, and an
   unknown path refuses.
-- [ ] **7. `brit diff` printed nothing during the release.** (S) Reproduce
-  first. If the change was staged-only or untracked-only, Brit matches Git:
-  write that here in one line and take the first reserve item instead. If it
-  is a real gap in `working_output`
-  (`gitoxide-core/src/repository/diff.rs:284`), fix it with a diff journey
-  test.
+- [x] **7. `brit diff` refused every diff with a moved submodule pin.** (S)
+  Reproduced with 0.3.0: `working_output` refused the whole worktree diff
+  ("submodule patches are not supported") whenever a gitlink was in the
+  index, so in the Elohim checkout it was unusable; blank output for
+  staged-only changes matches Git. **Measured 2026-11-22:** gitlinks against
+  the working files now print Git's short form (the submodule's checked-out
+  commit, `-dirty` for changed tracked files or index, untracked ignored), with
+  patch, `--stat`, `--numstat`, `--name-only`, `--name-status` and
+  `--exit-code` byte-identical to Git for moved, dirty, staged, uninitialized,
+  missing, file-replaced and index-removed submodules, and for gitlink
+  additions, removals and type changes between revisions
+  (`tests/cli-journey/tests/diff_revisions.rs`, three new tests).
+  `diff.submodule=log|diff` (patches), `diff.ignoreSubmodules` and
+  `submodule.<name>.ignore` set to `dirty`/`all` refuse by name, and
+  `--submodule=` is not an option. Gap: `brit diff -- <submodule path>`
+  still refuses as a directory (shared `literal_paths`).
 
 ## If an item is skipped
 

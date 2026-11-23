@@ -1,6 +1,6 @@
 use gix::{
     ObjectId, Result,
-    bstr::{BString, ByteSlice},
+    bstr::{BStr, BString, ByteSlice},
     error::{OptionExt, ResultExt, bail, message, unsupported},
     objs::FindStream,
     objs::tree::EntryMode,
@@ -345,6 +345,7 @@ fn working_output(
     let mut rendered = std::io::BufWriter::new(budget.spool().or_error()?);
     let mut stats = Vec::new();
     let mut changed = false;
+    let mut submodules_checked = false;
     for path in paths {
         check_interrupted()?;
         // HEAD and index identities prove no staged change, even for paths whose
@@ -352,17 +353,18 @@ fn working_output(
         if cached && before.get(&path) == after.get(&path) {
             continue;
         }
-        // A submodule's working state is its own checkout, which is not read here.
-        if !cached && after.get(&path).is_some_and(|(mode, _)| *mode == GITLINK) {
-            bail!(unsupported(
-                "submodule patches are not supported; select ordinary files or use git diff"
-            ));
+        let gitlink = |side: Option<&(u32, ObjectId)>| side.is_some_and(|(mode, _)| *mode == GITLINK);
+        if !submodules_checked && (gitlink(before.get(&path)) || gitlink(after.get(&path))) {
+            check_submodule_settings(repo, format)?;
+            submodules_checked = true;
         }
         let new = if cached {
             after
                 .get(&path)
                 .map(|&side| load_side(repo, side, &budget, limit))
                 .transpose()?
+        } else if let Some(&(GITLINK, id)) = after.get(&path) {
+            worktree_gitlink(repo, &index, &path, id, &budget)?
         } else if after.contains_key(&path) {
             worktree_patch_blob(repo, &index, &path, &budget)?
         } else {
@@ -376,7 +378,7 @@ fn working_output(
             && before
                 .get(&path)
                 .zip(new.as_ref())
-                .is_some_and(|(&(mode, blob_id), new)| mode == new.mode && blob_id == new.blob_id)
+                .is_some_and(|(&(mode, blob_id), new)| mode == new.mode && blob_id == new.blob_id && !new.dirty)
         {
             continue;
         }
@@ -459,6 +461,8 @@ struct PatchBlob {
     blob_id: ObjectId,
     data: PatchData,
     from_worktree: bool,
+    /// A checked-out submodule whose files differ from its `HEAD`, which Git marks `-dirty`.
+    dirty: bool,
 }
 
 enum PatchData {
@@ -516,6 +520,7 @@ fn load_patch_blob(repo: &gix::Repository, mode: u32, blob_id: ObjectId, budget:
         blob_id,
         data: PatchData::from_spool(repo, data)?,
         from_worktree: false,
+        dirty: false,
     })
 }
 
@@ -536,6 +541,7 @@ fn load_side(
             blob_id: id,
             data: PatchData::Buffered(format!("Subproject commit {id}\n").into_bytes()),
             from_worktree: false,
+            dirty: false,
         });
     }
     let size = repo.find_header(id)?.size();
@@ -545,6 +551,7 @@ fn load_side(
             blob_id: id,
             data: PatchData::TooLarge(size),
             from_worktree: false,
+            dirty: false,
         });
     }
     load_patch_blob(repo, mode, id, budget)
@@ -576,6 +583,7 @@ fn worktree_patch_blob(
             blob_id,
             data: PatchData::TooLarge(size),
             from_worktree: true,
+            dirty: false,
         }));
     }
     let data = PatchData::from_spool(repo, data)?;
@@ -592,7 +600,94 @@ fn worktree_patch_blob(
         blob_id,
         data,
         from_worktree: true,
+        dirty: false,
     }))
+}
+
+/// The working side of the gitlink at `path`, recorded in the index as `index_id`, read like Git's
+/// default (`diff.submodule=short`): the commit checked out in the submodule, marked `-dirty` when
+/// its tracked files or index differ from that commit (untracked files never do). A missing path is
+/// a deletion, a file or symlink there is read as one, and a directory without a repository of its
+/// own, or whose `HEAD` is unborn, is an unpopulated submodule and so unchanged.
+fn worktree_gitlink(
+    repo: &gix::Repository,
+    index: &gix::index::State,
+    path: &BString,
+    index_id: ObjectId,
+    budget: &Arc<Budget>,
+) -> Result<Option<PatchBlob>> {
+    let root = repo
+        .workdir()
+        .ok_or_raise(|| message("A worktree is required").validation())?;
+    let absolute = root.join(gix::path::from_bstr(path.as_bstr())?);
+    let meta = match std::fs::symlink_metadata(&absolute) {
+        Ok(meta) => meta,
+        Err(err) if err.kind() == std::io::ErrorKind::NotFound => return Ok(None),
+        Err(err) => return Err(err).or_error(),
+    };
+    if !meta.is_dir() {
+        return worktree_patch_blob(repo, index, path, budget);
+    }
+    let side = |id: ObjectId, dirty: bool| PatchBlob {
+        mode: GITLINK,
+        blob_id: id,
+        data: PatchData::Buffered(
+            format!("Subproject commit {id}{}\n", if dirty { "-dirty" } else { "" }).into_bytes(),
+        ),
+        from_worktree: true,
+        dirty,
+    };
+    if std::fs::symlink_metadata(absolute.join(gix::discover::DOT_GIT_DIR)).is_err() {
+        return Ok(Some(side(index_id, false)));
+    }
+    let submodule = gix::open(&absolute).or_raise(|| message!("Could not open the submodule at '{path}'"))?;
+    let Ok(head) = submodule.head_id() else {
+        return Ok(Some(side(index_id, false)));
+    };
+    let dirty = submodule
+        .status(gix::progress::Discard)?
+        .untracked_files(gix::status::UntrackedFiles::None)
+        .should_interrupt_shared(&gix::interrupt::IS_INTERRUPTED)
+        .into_iter(None)?
+        .next()
+        .transpose()?
+        .is_some();
+    Ok(Some(side(head.detach(), dirty)))
+}
+
+/// Refuse the submodule settings that make Git print gitlinks other than in its default short
+/// form (`diff.submodule=log|diff`, which changes patches only) or hide some of their changes
+/// (`diff.ignoreSubmodules` or `submodule.<name>.ignore` set to `dirty` or `all`).
+fn check_submodule_settings(repo: &gix::Repository, format: Format) -> Result<()> {
+    let config = repo.config_snapshot();
+    if format == Format::Patch
+        && let Some(value) = config.string("diff.submodule")
+        && value.as_slice() != b"short"
+    {
+        bail!(unsupported(format!(
+            "diff.submodule={value} is not supported; Brit prints submodules in Git's short form; use git diff"
+        )));
+    }
+    if let Some(value) = config.string("diff.ignoreSubmodules")
+        && !matches!(value.as_slice(), b"none" | b"untracked")
+    {
+        bail!(unsupported(format!(
+            "diff.ignoreSubmodules={value} is not supported; use git diff"
+        )));
+    }
+    for submodule in repo.submodules()?.into_iter().flatten() {
+        use gix::submodule::config::Ignore;
+        let value = match submodule.ignore()? {
+            Some(Ignore::Dirty) => "dirty",
+            Some(Ignore::All) => "all",
+            Some(Ignore::None | Ignore::Untracked) | None => continue,
+        };
+        bail!(unsupported(format!(
+            "submodule.{}.ignore={value} is not supported; use git diff",
+            submodule.name()
+        )));
+    }
+    Ok(())
 }
 
 fn binary_attribute(matches: &gix::attrs::search::Outcome, path: &BString) -> Result<bool> {
@@ -617,9 +712,11 @@ fn render_patch(
     new: Option<&PatchBlob>,
     binary: bool,
 ) -> Result<()> {
-    if old
-        .zip(new)
-        .is_some_and(|(old, new)| old.mode == new.mode && old.blob_id == new.blob_id)
+    let dirty = new.is_some_and(|new| new.dirty);
+    if !dirty
+        && old
+            .zip(new)
+            .is_some_and(|(old, new)| old.mode == new.mode && old.blob_id == new.blob_id)
     {
         return Ok(());
     }
@@ -653,9 +750,35 @@ fn render_patch(
     let null = ObjectId::null(repo.object_hash());
     let old_id = old.map_or(null, |b| b.blob_id);
     let new_id = new.map_or(null, |b| b.blob_id);
-    if old_id == new_id {
+    // Like Git, a dirty submodule at its recorded commit has a patch but no `index` line.
+    if old_id == new_id && !dirty {
         return Ok(());
     }
+    if old_id != new_id {
+        write_index_line(repo, out, old, new, old_id, new_id)?;
+    }
+    let a_label = if old.is_some() {
+        a_path.as_bstr()
+    } else {
+        "/dev/null".as_bytes().as_bstr()
+    };
+    let b_label = if new.is_some() {
+        b_path.as_bstr()
+    } else {
+        "/dev/null".as_bytes().as_bstr()
+    };
+    render_patch_body(out, path, old, new, binary, a_label, b_label)
+}
+
+/// Git's `index <old>..<new>[ <mode>]` line, abbreviated as long as Git's.
+fn write_index_line(
+    repo: &gix::Repository,
+    out: &mut dyn std::io::Write,
+    old: Option<&PatchBlob>,
+    new: Option<&PatchBlob>,
+    old_id: ObjectId,
+    new_id: ObjectId,
+) -> Result<()> {
     let configured = repo
         .config_snapshot()
         .string("core.abbrev")
@@ -681,16 +804,19 @@ fn render_patch(
         write!(out, " {:06o}", old.mode).or_error()?;
     }
     writeln!(out).or_error()?;
-    let a_label = if old.is_some() {
-        a_path.as_bstr()
-    } else {
-        "/dev/null".as_bytes().as_bstr()
-    };
-    let b_label = if new.is_some() {
-        b_path.as_bstr()
-    } else {
-        "/dev/null".as_bytes().as_bstr()
-    };
+    Ok(())
+}
+
+/// The `Binary files` line, or the `---`/`+++` labels and hunks, of a patch.
+fn render_patch_body(
+    out: &mut dyn std::io::Write,
+    path: &BString,
+    old: Option<&PatchBlob>,
+    new: Option<&PatchBlob>,
+    binary: bool,
+    a_label: &BStr,
+    b_label: &BStr,
+) -> Result<()> {
     let old_data = old.map_or(&[][..], |b| b.data.as_slice());
     let new_data = new.map_or(&[][..], |b| b.data.as_slice());
     let too_large = old.into_iter().chain(new).any(|b| b.data.is_too_large());
@@ -996,9 +1122,10 @@ fn collect_stat(
     new: Option<&PatchBlob>,
     binary: bool,
 ) -> Result<()> {
-    if old
-        .zip(new)
-        .is_some_and(|(a, b)| a.mode == b.mode && a.blob_id == b.blob_id)
+    if !new.is_some_and(|b| b.dirty)
+        && old
+            .zip(new)
+            .is_some_and(|(a, b)| a.mode == b.mode && a.blob_id == b.blob_id)
     {
         return Ok(());
     }
@@ -1022,6 +1149,13 @@ fn collect_stat(
                 old.map_or(0, |b| b.data.len()) as usize,
             )
         }
+    } else if old
+        .zip(new)
+        .is_some_and(|(a, b)| a.mode == GITLINK && b.mode == GITLINK)
+    {
+        // Git counts a moved submodule as one line out and one in, and a dirty one as none.
+        let moved = usize::from(old.zip(new).is_some_and(|(a, b)| a.blob_id != b.blob_id));
+        (moved, moved)
     } else if type_changed {
         (
             gix::diff::blob::sources::byte_lines(b).count(),
