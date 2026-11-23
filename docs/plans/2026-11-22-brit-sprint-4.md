@@ -68,6 +68,19 @@ exists.
   passes a tag at a reached commit and refuses one at an unreached commit and
   one that moves an existing tag; and the sprint's release tag is pushed by
   `brit push`.
+  **Measured 2026-11-22:** `.githooks/pre-push` judges each update by its own
+  rule: a `refs/tags/X` → `refs/tags/X` creation passes when its peeled commit
+  is an ancestor of `refs/remotes/<remote>/main`, and a tag move, delete or
+  rename is refused. A push of tags alone runs neither `check_source` nor the
+  evaluator. A branch update keeps every existing check, and two branches stay
+  refused. `reach_adapter_admits_tag_creation_at_a_reached_commit_only` failed
+  on the old hook ("only a named local branch is supported") and passes now.
+  `cargo test -p cli-journey --test pre_push` passes 19 of 19, and
+  `scripts/ci/test-brit-reach-hook.sh` passes with nine new tag cases. Still
+  open: the release-tag push itself. `brit push` sends an annotated tag as its
+  peeled commit (`gix/src/remote/connection/push/transmit.rs:206`,
+  `peel_to_id`), so the remote loses the tag object. The journey test asserts
+  only the peeled commit.
 - [ ] **2. `brit config set <key> <value>` and `brit config unset <key>`.**
   (S) `brit config` only reads (`src/plumbing/options/mod.rs:1241`);
   `branch.<b>.britReachBase` had to be set with `git config --local`. Reuse
