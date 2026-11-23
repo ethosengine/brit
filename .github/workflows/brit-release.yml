@@ -10,7 +10,7 @@ on:
   workflow_dispatch:
 
 permissions:
-  contents: read
+  contents: read # Check out the release source for preparation and builds.
 
 env:
   RUSTUP_TOOLCHAIN: 1.100.0
@@ -215,8 +215,8 @@ jobs:
     needs: [prepare, build]
     runs-on: ubuntu-latest
     permissions:
-      contents: write
-      actions: read
+      contents: write # Create and publish the release for the verified tag.
+      actions: read # Download the archives produced in this release run.
     env:
       VERSION_TAG: ${{ github.ref_name }}
       SOURCE_SHA: ${{ needs.prepare.outputs.source_sha }}

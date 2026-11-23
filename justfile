@@ -43,6 +43,11 @@ clippy *clippy-args:
     cargo clippy --workspace --no-default-features --features max-pure -- {{ clippy-args }}
     cargo clippy --workspace --no-default-features --features lean-async --tests -- {{ clippy-args }}
 
+# Lint GitHub Actions workflows with the same pinned zizmor as CI (requires pipx)
+[group('Development')]
+lint-workflows:
+    pipx run --spec zizmor==1.33.1 zizmor --offline --persona pedantic --min-severity low --config .github/zizmor.yml .github/workflows/
+
 # Apply Clippy fixes to all crates, then format
 [group('Development')]
 clippy-fix:

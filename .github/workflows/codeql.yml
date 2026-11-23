@@ -63,6 +63,13 @@ jobs:
               - '**/tests/**'
               - '**/fuzz/**'
               - '**/benches/**'
+            # rustc's unused_variables lint, denied by clippy -D warnings in ci.yml
+            # across every feature set, is the authority here: CodeQL's Rust rule
+            # does not see bindings read through macros (message!, format!, write!)
+            # or under cfg branches, and every alert it raised was such a case.
+            query-filters:
+              - exclude:
+                  id: rust/unused-variable
         # CodeQL supports the following values keywords for 'language': 'actions', 'c-cpp', 'csharp', 'go', 'java-kotlin', 'javascript-typescript', 'python', 'ruby', 'rust', 'swift'
         # Use `c-cpp` to analyze code written in C, C++ or both
         # Use 'java-kotlin' to analyze code written in Java, Kotlin or both

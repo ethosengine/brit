@@ -17,7 +17,7 @@ concurrency:
   cancel-in-progress: ${{ github.event_name == 'pull_request' }}
 
 permissions:
-  contents: read
+  contents: read # Check out source for CI jobs unless a job overrides this grant.
 
 env:
   CARGO_TERM_COLOR: always
@@ -677,10 +677,24 @@ jobs:
       - name: Validate isolated registry-consumer checks without a registry
         run: env PYTHONDONTWRITEBYTECODE=1 python3 -m unittest discover -s scripts/ci -p 'test_verify_brit_consumer.py'
 
+  lint-workflows:
+    runs-on: ubuntu-latest
+    env:
+      CARGO_REGISTRIES_ELOHIM_TOKEN: ''
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: extractions/setup-just@53165ef7e734c5c07cb06b3c8e7b647c5aa16db3 # v4.0.0
+        with:
+          just-version: '1.58.0'
+      - name: Lint GitHub Actions workflows
+        run: just lint-workflows
+
   pure-rust-build:
     runs-on: ubuntu-latest
 
-    container: debian:stable-slim
+    container: debian@sha256:fbfb4059d2127120aa05b6e6064523d2102552f0cf0026ddf0701c12f1f8f3e0 # stable-slim 2026-11-23
 
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
@@ -800,6 +814,8 @@ jobs:
         with:
           save-if: ${{ github.ref == 'refs/heads/main' }}
       - uses: extractions/setup-just@53165ef7e734c5c07cb06b3c8e7b647c5aa16db3 # v4.0.0
+        with:
+          just-version: '1.58.0'
       - name: Run journey tests
         run: just ci-journey-tests
       - name: Prove shared trees through the public Brit executable
@@ -923,7 +939,7 @@ jobs:
   tests-pass:
     name: Tests pass
 
-    permissions: {}
+    permissions: {} # Only reads dependency results from the workflow context.
 
     # Every job is listed here or declared deferred or disabled in `.epr-meta/readiness.json`;
     # `scripts/ci/test_qualify_readiness.py` refuses a job that is neither. The same contract
@@ -937,6 +953,7 @@ jobs:
       - brit-release-package-contract
       - brit-readiness-contract
       - brit-feature-census
+      - lint-workflows
       - pure-rust-build
       - test-journey
 

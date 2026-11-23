@@ -1,13 +1,13 @@
 name: brit build artifacts
 
 on:
-  workflow_run:
+  # Wait for the CI attempt to complete and allow the publisher to be retried independently.
+  workflow_run: # zizmor: ignore[dangerous-triggers] The publisher accepts only same-repository main pushes, verifies the exact attempt, and builds its own artifacts.
     workflows: [ci]
     types: [completed]
+    branches: [main]
 
-permissions:
-  actions: read
-  contents: write
+permissions: {} # Only the guarded publish job needs a token.
 
 concurrency:
   group: brit-build-artifacts-${{ github.event.workflow_run.head_sha }}
@@ -28,6 +28,9 @@ jobs:
       github.event.workflow_run.head_branch == 'main' &&
       github.event.workflow_run.head_repository.full_name == github.repository
     runs-on: ubuntu-24.04
+    permissions:
+      actions: read # Verify the triggering CI run's exact attempt.
+      contents: write # Check out the trusted source and publish its build prerelease.
     steps:
       - name: Require the triggering run's Tests pass verdict
         env:
@@ -45,13 +48,13 @@ jobs:
         with:
           ref: ${{ github.event.workflow_run.head_sha }}
           persist-credentials: false
-      - name: Set the isolated build target
-        run: printf 'CARGO_TARGET_DIR=%s/brit-build-artifacts-target\n' "$RUNNER_TEMP" >> "$GITHUB_ENV"
       - name: Install Rust
         run: |
           rustup toolchain install 1.100.0 --profile minimal --no-self-update
           rustup default 1.100.0
       - name: Build the followed executables
+        env:
+          CARGO_TARGET_DIR: ${{ runner.temp }}/brit-build-artifacts-target
         run: |
           set -euo pipefail
           cargo build --locked --profile release-github \
@@ -61,6 +64,7 @@ jobs:
             --no-default-features --features brit-cli/max-pure
       - name: Verify and checksum the source-pinned bytes
         env:
+          CARGO_TARGET_DIR: ${{ runner.temp }}/brit-build-artifacts-target
           SOURCE_SHA: ${{ github.event.workflow_run.head_sha }}
         run: |
           set -euo pipefail

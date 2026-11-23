@@ -17,7 +17,7 @@ on:
   workflow_dispatch: {}
 
 permissions:
-  contents: write
+  contents: read # Check out the mirror; pushes use the separate GIX_SYNC_TOKEN.
 
 jobs:
   sync:
@@ -72,12 +72,13 @@ jobs:
         if: steps.ff.outputs.changed == 'true'
         env:
           GH_TOKEN: ${{ secrets.GIX_SYNC_TOKEN }}
+          REPO: ${{ github.repository }}
         run: |
           if [ -z "${GH_TOKEN}" ]; then
             echo "::error::GIX_SYNC_TOKEN secret is not set. Upstream commits touch .github/workflows/*, which GITHUB_TOKEN cannot push. Add a token with Contents: write + Workflows: write."
             exit 1
           fi
-          git push "https://x-access-token:${GH_TOKEN}@github.com/${{ github.repository }}.git" HEAD:gix-main
+          git push "https://x-access-token:${GH_TOKEN}@github.com/${REPO}.git" HEAD:gix-main
 
       # Tags are nice-to-have but not critical for our sync purposes, so this
       # step is best-effort. Push only the tags the fork lacks, in batches:

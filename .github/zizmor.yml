@@ -3,3 +3,7 @@ rules:
     disable: true
   concurrency-limits:
     disable: true
+  unpinned-uses:
+    config:
+      policies:
+        "*": hash-pin

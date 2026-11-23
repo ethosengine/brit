@@ -51,6 +51,11 @@
           ]
         },
         {
+          "job": "lint-workflows",
+          "name": "lint-workflows",
+          "steps": ["Lint GitHub Actions workflows"]
+        },
+        {
           "job": "test-journey",
           "name": "test-journey",
           "steps": [
