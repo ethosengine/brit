@@ -725,8 +725,8 @@ fn gitlink_changes_summarize_and_unchanged_staged_neighbors_are_skipped() -> Res
         &["HEAD~", "HEAD"],
     )?;
     parity(repo.path(), &["diff", "--stat", "HEAD~", "HEAD"], &["HEAD~", "HEAD"])?;
-    // The working side of a submodule is its own checkout, which Brit does not read.
-    refuse(repo.path(), &["diff", "--stat"], "submodule")?;
+    // A gitlink with no checked-out directory reads as deleted from the working files, as in Git.
+    parity(repo.path(), &["diff", "--stat"], &[])?;
     Ok(())
 }
 

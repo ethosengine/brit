@@ -1034,7 +1034,8 @@ pub mod diff {
     /// built-in driver with nothing configured) in the patch and count forms (--name-only and
     /// --name-status still work); intent-to-add entries, skip-worktree or assume-unchanged entries,
     /// sparse or split indexes and a conflicted index in the forms that read the index;
-    /// submodules in comparisons with the working files; pathspec patterns (`*`, `?`, `[`, `:`);
+    /// `diff.submodule=log|diff` and submodule ignore settings that hide changes (submodules
+    /// print in Git's default short form); pathspec patterns (`*`, `?`, `[`, `:`);
     /// and, in comparisons with the index or working files, a trailing slash, an absolute path,
     /// `..`, the repository root `.` and `.git` paths. Line counts can differ from Git's on
     /// very large, heavily changed files, because Brit's Myers diff uses different heuristics.

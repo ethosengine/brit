@@ -7,8 +7,11 @@
 //!   nothing configured) refuses the patch, `--stat` and `--numstat` forms; `-diff`/`binary` print
 //!   a binary change, and `--name-only`/`--name-status` never read attributes.
 //! * Intent-to-add, skip-worktree and assume-unchanged entries, sparse and split indexes and a
-//!   conflicted index refuse every form that reads the index; a submodule refuses comparisons with
-//!   the working files, whose side of it is the submodule's own checkout.
+//!   conflicted index refuse every form that reads the index.
+//! * Gitlinks print in Git's default short form (`Subproject commit <id>`), the working side being
+//!   the commit checked out in the submodule with `-dirty` for changed tracked files; settings that
+//!   change that form or hide submodule changes (`diff.submodule=log|diff`, `diff.ignoreSubmodules`,
+//!   `submodule.<name>.ignore` set to `dirty` or `all`) refuse.
 //! * Line diffs use imara-diff's Myers with its own speed heuristics and Brit's slider (indent)
 //!   heuristic; Git uses xdiff's Myers with its cost-limit heuristic and `diff.indentHeuristic`.
 //!   Neither is minimal, and on very large, heavily changed files they can pick different
@@ -27,8 +30,9 @@ use gix::{
 };
 
 use super::{
-    FileStat, GITLINK, binary_attribute, check_external_diff, check_interrupted, collect_stat, load_side, quote_path,
-    render_numstat, render_patch, render_stats, working_output, write_diff_output, write_name,
+    FileStat, GITLINK, binary_attribute, check_external_diff, check_interrupted, check_submodule_settings,
+    collect_stat, load_side, quote_path, render_numstat, render_patch, render_stats, working_output, write_diff_output,
+    write_name,
 };
 use crate::repository::log::{Literal, merge_bases, worktree_path};
 
@@ -407,6 +411,12 @@ pub(crate) fn render(
     format: Format,
 ) -> Result<()> {
     let quote_high = quote_path(repo)?;
+    if changes
+        .iter()
+        .any(|change| change.old.iter().chain(&change.new).any(|(mode, _)| *mode == GITLINK))
+    {
+        check_submodule_settings(repo, format)?;
+    }
     match format {
         Format::Quiet => return Ok(()),
         Format::NameOnly | Format::NameStatus => {
