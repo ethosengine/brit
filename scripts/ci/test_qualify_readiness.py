@@ -145,8 +145,9 @@ class ReadinessTests(unittest.TestCase):
         self.assertIn('continue-on-error: ${{ !matrix.blocking }}', blocks['run'])
         self.assertIn('steps.contract.outputs.matrix', blocks['plan'])
         # Deferred planned jobs run in their own job, which Tests pass does not wait for. It
-        # shares run's permissions, environment and steps by YAML alias, so the two cannot
-        # drift, and it is skipped when the plan has none (GitHub refuses an empty matrix).
+        # carries a verbatim copy of run's permissions, environment and steps (zizmor cannot
+        # audit YAML aliases), checked here so the two cannot drift, and it is skipped when
+        # the plan has none (GitHub refuses an empty matrix).
         self.assertIn('steps.contract.outputs.deferred', blocks['plan'])
         self.assertIn('fromJSON(needs.plan.outputs.matrix)', blocks['run'])
         deferred_job = blocks['run-deferred']
@@ -155,9 +156,12 @@ class ReadinessTests(unittest.TestCase):
         self.assertIn("needs.plan.outputs.deferred != ''", deferred_job)
         self.assertIn('fromJSON(needs.plan.outputs.deferred)', deferred_job)
         self.assertIn('continue-on-error: ${{ !matrix.blocking }}', deferred_job)
-        for key in ('permissions', 'env', 'steps'):
-            self.assertIn(f'    {key}: &qa-{key}\n', blocks['run'])
-            self.assertIn(f'    {key}: *qa-{key}\n', deferred_job)
+        def shared(block):
+            body = block.split('\n    permissions:\n', 1)[1]
+            return re.sub(r'(?:\n  #[^\n]*|\n)*\Z', '', body)
+        self.assertNotIn('&qa-', workflow)
+        self.assertNotIn('*qa-', workflow)
+        self.assertEqual(shared(blocks['run']), shared(deferred_job))
         for planned, job in marker['replaced'].items():
             self.assertIn('@', planned)
             self.assertIn(job, blocking, f'{planned} is replaced by a job that does not gate')

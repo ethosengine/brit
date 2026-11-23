@@ -92,7 +92,9 @@ jobs:
 
   # Brit: `run` executes only the required jobs, so `Tests pass` waits for nothing that
   # cannot fail it. `run-deferred` below executes the deferred ones from the same plan with
-  # these permissions, environment and steps, shared through YAML anchors.
+  # these permissions, environment and steps, copied verbatim: zizmor cannot audit YAML
+  # aliases (its ref-version-mismatch audit aborts on them), and the readiness contract
+  # test refuses any difference between the two copies.
   run:
     name: ${{ matrix.id }}
     needs: plan
@@ -103,10 +105,10 @@ jobs:
     continue-on-error: ${{ !matrix.blocking }}
     runs-on: ${{ matrix.runner }}
     container: ${{ matrix.container }} # zizmor: ignore[unpinned-images] SHA256 pins in tests/it/src/qa/catalog.rs.
-    permissions: &qa-permissions
+    permissions:
       contents: read # Required to check out the repository.
       actions: read # Required to find and download the base commit's coverage artifacts.
-    env: &qa-env
+    env:
       QA_PLAN: ${{ needs.plan.outputs.plan }}
       QA_JOB: ${{ matrix.id }}
       # Brit: see the plan job. Tasks that need another toolchain name it themselves.
@@ -114,7 +116,7 @@ jobs:
       # Main provides reusable indexes; PR cache misses run ordinary QA without collecting throwaway data.
       # Brit: coverage-guided selection is opt-in through the repository variable QA_COVERAGE (on or shadow).
       GIX_QA_COVERAGE: ${{ (vars.QA_COVERAGE == 'on' || vars.QA_COVERAGE == 'shadow') && (contains(matrix.tasks, 'native-tests') || contains(matrix.tasks, 'isolated-tests') || contains(matrix.tasks, 'feature-tests')) && (github.event_name == 'pull_request' && (vars.QA_COVERAGE == 'shadow' && 'shadow' || 'prune') || github.ref == 'refs/heads/main' && 'collect') || 'off' }}
-    steps: &qa-steps
+    steps:
       # Native 32-bit containers need libraries for the runner's 64-bit Node.js.
       - name: Install container prerequisites
         if: matrix.container != ''
@@ -294,9 +296,182 @@ jobs:
     continue-on-error: ${{ !matrix.blocking }}
     runs-on: ${{ matrix.runner }}
     container: ${{ matrix.container }} # zizmor: ignore[unpinned-images] SHA256 pins in tests/it/src/qa/catalog.rs.
-    permissions: *qa-permissions
-    env: *qa-env
-    steps: *qa-steps
+    permissions:
+      contents: read # Required to check out the repository.
+      actions: read # Required to find and download the base commit's coverage artifacts.
+    env:
+      QA_PLAN: ${{ needs.plan.outputs.plan }}
+      QA_JOB: ${{ matrix.id }}
+      # Brit: see the plan job. Tasks that need another toolchain name it themselves.
+      RUSTUP_TOOLCHAIN: stable
+      # Main provides reusable indexes; PR cache misses run ordinary QA without collecting throwaway data.
+      # Brit: coverage-guided selection is opt-in through the repository variable QA_COVERAGE (on or shadow).
+      GIX_QA_COVERAGE: ${{ (vars.QA_COVERAGE == 'on' || vars.QA_COVERAGE == 'shadow') && (contains(matrix.tasks, 'native-tests') || contains(matrix.tasks, 'isolated-tests') || contains(matrix.tasks, 'feature-tests')) && (github.event_name == 'pull_request' && (vars.QA_COVERAGE == 'shadow' && 'shadow' || 'prune') || github.ref == 'refs/heads/main' && 'collect') || 'off' }}
+    steps:
+      # Native 32-bit containers need libraries for the runner's 64-bit Node.js.
+      - name: Install container prerequisites
+        if: matrix.container != ''
+        shell: bash
+        env:
+          RUNNER_ARCHITECTURE: ${{ matrix.runner_architecture }}
+        run: |
+          prerequisites=(
+            build-essential
+            ca-certificates
+            cmake
+            curl
+            git
+            jq
+            libssl-dev
+            "libstdc++6:$RUNNER_ARCHITECTURE"
+            pkgconf
+            python3-minimal
+            # Brit: commit-signature journeys need ssh-keygen, terminal recovery tests need
+            # the standard-library pty module, and bounded-checkout probes use GNU time.
+            openssh-client
+            python3
+            time
+          )
+          dpkg --add-architecture "$RUNNER_ARCHITECTURE"
+          apt-get update
+          apt-get install --no-install-recommends -y -- "${prerequisites[@]}"
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+          # Automatic coverage compares with the base parent of GitHub's PR merge commit.
+          fetch-depth: ${{ matrix.history && '0' || github.event_name == 'pull_request' && '2' || '1' }}
+      # Brit: the workspace's test build and its fixture snapshots outgrow the hosted disk.
+      - name: Make room for the native test build
+        if: runner.os == 'Linux' && matrix.container == '' && matrix.freebsd_release == ''
+        shell: bash
+        run: sudo rm -rf /usr/share/dotnet /usr/local/lib/android /opt/ghc
+      # Brit: attribution probes time child processes with GNU tools on macOS.
+      - name: Install the attribution timer on macOS
+        if: runner.os == 'macOS'
+        run: brew install coreutils
+      - name: Install native Rust
+        if: matrix.container == '' && matrix.freebsd_release == ''
+        shell: bash
+        run: |
+          rustup update stable
+          rustup default stable
+      - name: Install container Rust
+        if: matrix.container != ''
+        shell: bash
+        env:
+          HOST_TRIPLE: ${{ matrix.host }}
+        run: |
+          curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs |
+            sh -s -- -y --default-host "$HOST_TRIPLE" --default-toolchain stable --profile minimal
+          echo "$HOME/.cargo/bin" >> "$GITHUB_PATH"
+      - name: Install additional Rust toolchains
+        if: join(matrix.rust_toolchains, ' ') != ''
+        shell: bash
+        env:
+          RUST_TOOLCHAINS: ${{ join(matrix.rust_toolchains, ' ') }}
+        run: |
+          read -r -a toolchains <<< "$RUST_TOOLCHAINS"
+          for toolchain in "${toolchains[@]}"; do
+            if [[ "$toolchain" != stable ]]; then
+              rustup toolchain install "$toolchain" --profile minimal --no-self-update
+            fi
+          done
+      - name: Install Rust components
+        if: toJSON(matrix.rust_components) != '[]'
+        shell: bash
+        env:
+          RUST_COMPONENTS: ${{ toJSON(matrix.rust_components) }}
+        run: |
+          jq -r '.[] | [.toolchain, .component] | @tsv' <<< "$RUST_COMPONENTS" | tr -d '\r' |
+            while IFS=$'\t' read -r toolchain component; do
+              rustup component add --toolchain "$toolchain" "$component"
+            done
+      - name: Install Rust targets
+        if: toJSON(matrix.rust_targets) != '[]'
+        shell: bash
+        env:
+          RUST_TARGETS: ${{ toJSON(matrix.rust_targets) }}
+        run: |
+          jq -r '.[] | [.toolchain, .target] | @tsv' <<< "$RUST_TARGETS" | tr -d '\r' |
+            while IFS=$'\t' read -r toolchain target; do
+              rustup target add --toolchain "$toolchain" "$target"
+            done
+      - uses: taiki-e/install-action@1e29709c0ec63babbe8f266397a465f29a825f91 # v2.87.31
+        if: matrix.just
+        with:
+          tool: just@${{ matrix.just_version }} # zizmor: ignore[unpinned-tools] Exact version in Cargo.toml's workspace.metadata.qa.tool-versions.
+      - uses: Swatinem/rust-cache@d1527c8f67ef9af357290475d4af4b0fab8f12e0 # v2.9.3
+        if: matrix.freebsd_release == ''
+        with:
+          shared-key: ${{ matrix.cache || matrix.id }}
+          save-if: ${{ github.ref == 'refs/heads/main' }}
+      - name: Install the selected Rust tools
+        if: join(matrix.tools, ',') != ''
+        uses: taiki-e/install-action@1e29709c0ec63babbe8f266397a465f29a825f91 # v2.87.31
+        with:
+          tool: ${{ join(matrix.tools, ',') }}
+      - name: Install archive test dependencies
+        if: matrix.xz && runner.os == 'Linux'
+        shell: bash
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends liblzma-dev
+      - name: Install cargo diet
+        if: matrix.diet
+        shell: bash
+        env:
+          CARGO_DIET_TAG: v${{ matrix.diet_version }}
+        run: |
+          curl -LSfs "https://raw.githubusercontent.com/the-lean-crate/cargo-diet/refs/tags/$CARGO_DIET_TAG/ci/install.sh" |
+            sh -s -- --git the-lean-crate/cargo-diet --target x86_64-unknown-linux-musl --tag "$CARGO_DIET_TAG"
+      - name: Install optional coverage tools
+        if: env.GIX_QA_COVERAGE == 'collect'
+        continue-on-error: true
+        shell: bash
+        run: rustup component add llvm-tools-preview --toolchain stable
+      - name: Download optional coverage indexes from the PR base
+        if: env.GIX_QA_COVERAGE == 'shadow' || env.GIX_QA_COVERAGE == 'prune'
+        continue-on-error: true
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+          COVERAGE_BASE: ${{ github.event.pull_request.base.sha }}
+          COVERAGE_ARTIFACT: qa-coverage-${{ matrix.id }}
+        run: |
+          coverage_run=$(gh run list --repo "$GITHUB_REPOSITORY" --workflow ci.yml --branch main \
+            --commit "$COVERAGE_BASE" --status success --limit 1 --json databaseId --jq '.[0].databaseId // empty')
+          test -n "$coverage_run"
+          gh run download "$coverage_run" --repo "$GITHUB_REPOSITORY" --name "$COVERAGE_ARTIFACT" \
+            --dir target/qa-coverage/indexes
+      - name: Run the selected checks
+        if: matrix.freebsd_release == ''
+        # Keep Windows' native shell; the shared runner configures every task's environment.
+        run: cargo run --profile qa --locked -p internal-tools --no-default-features --bin qa -- run --from-env
+      - name: Run the selected checks in FreeBSD
+        if: matrix.freebsd_release != ''
+        uses: vmactions/freebsd-vm@811efaaac0668df8bfb8308c3ec997b5ab50037b # v1.6.0
+        with:
+          release: ${{ matrix.freebsd_release }}
+          sync: rsync
+          copyback: false
+          # Brit: the virtual machine also needs the toolchain choice and the registry credential.
+          envs: QA_PLAN QA_JOB CARGO_TERM_COLOR CLICOLOR CARGO_PROFILE_DEV_DEBUG CARGO_PROFILE_DEV_STRIP GIX_QA_COVERAGE RUSTUP_TOOLCHAIN CARGO_REGISTRIES_ELOHIM_INDEX CARGO_REGISTRIES_ELOHIM_TOKEN CARGO_REGISTRY_GLOBAL_CREDENTIAL_PROVIDERS
+          prepare: |
+            pkg install -y ca_root_nss curl
+            curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs |
+              sh -s -- -y --default-toolchain stable --profile minimal
+          run: |
+            export PATH="$HOME/.cargo/bin:$PATH"
+            cargo run --profile qa --locked -p internal-tools --no-default-features --bin qa -- run --from-env
+      - name: Publish optional coverage indexes
+        if: success() && env.GIX_QA_COVERAGE == 'collect'
+        continue-on-error: true
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: qa-coverage-${{ matrix.id }}
+          path: target/qa-coverage/indexes/*.json
+          if-no-files-found: ignore
+          retention-days: 14
 
   # Brit: disabled in `.epr-meta/readiness.json`, so the planner output this job waits for stays empty.
   downstream:
