@@ -177,6 +177,9 @@ requirements below, as they do for the other affected command families.
 - [ ] The nightly toolchain for the scoped `brit-*` fmt pass is not pinned, so its output can change between hosts.
 - [ ] The installed brit lags the released one: the 0.3.3 tag needed the freshly built binary, because 0.3.0 still peels tags on push; release notes should say which installed version a workflow needs.
 
+- [ ] No value-only config read: `brit config <key>` prints the filtered section (e.g. `[core]` with unrelated entries) and has no exit-code contract, so scripts still need `git config --get core.hooksPath`; add `brit config get <key>` (prints the value, exit 1 when unset) beside 0.3.3's `set`/`unset` (integration session report, 2026-11-23).
+- [ ] No `brit grep <rev> -- <pattern>` and no `brit log -S <string>` pickaxe: tracing a hook change needed `git grep <rev>` and `git log -S` (same report).
+
 ## Usage feedback across commands
 
 - [ ] `Tests pass` can report success after a hosted macOS matrix member is cancelled without acquiring a runner (CI 44117076422 and 44117418305, attempt 2); expose that missing coverage while distinguishing provider capacity from code/test failures.
