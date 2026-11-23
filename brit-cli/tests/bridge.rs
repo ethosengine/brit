@@ -46,6 +46,10 @@ const ROWS: &[(&[&str], &str)] = &[
         "brit: submodule update is a Git bridge operation; run: git submodule update --init",
     ),
     (
+        &["-C", ".", "submodule", "update", "--merge", "child"],
+        "brit: submodule update is a Git bridge operation; run: git -C . submodule update --merge child",
+    ),
+    (
         &["submodule", "init"],
         "brit: submodule init is a Git bridge operation; run: git submodule init",
     ),

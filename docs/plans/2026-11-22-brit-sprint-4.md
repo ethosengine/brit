@@ -135,11 +135,15 @@ exists.
   Leave the identity keys out of the digest. *Done when:* a resume under a
   different `GIT_COMMITTER_NAME` continues, and a changed hook or other config
   still refuses.
-- [ ] **6. `brit submodule update --init <path>`.** (M) `update` and `init`
+- [x] **6. `brit submodule update --init <path>`.** (M) `update` and `init`
   are bridged to Git (`brit-cli/src/bridge.rs:25`); options at
   `src/plumbing/options/mod.rs:1994`. *Done when:* in a fresh worktree the
   named submodule directory holds the commit the parent records, and an
   unknown path refuses.
+
+  **Measured 2026-11-22:** The `submodule_update` journey checks the index pin
+  and Git's linked-worktree layout, repeats offline, and verifies refusal for
+  unknown paths, local changes, `--recursive`, and `--remote`.
 - [ ] **7. `brit diff` printed nothing during the release.** (S) Reproduce
   first. If the change was staged-only or untracked-only, Brit matches Git:
   write that here in one line and take the first reserve item instead. If it

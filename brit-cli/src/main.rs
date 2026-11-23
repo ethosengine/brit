@@ -516,18 +516,23 @@ fn run(capture: &mut feedback::Capture, read_only: &mut bool) -> Result<()> {
         return run_build(cli.command);
     }
 
-    // Bridged names are answered before clap sees them: brit prints the stock Git command and
-    // never runs it.
-    if let Some(line) = bridge::line(&args) {
+    // Locate submodule after global options before checking whether the invocation needs a bridge.
+    let command = public_command();
+    let prefix = command_prefix(&args, &command);
+    let command_index = prefix.as_ref().map_or(1, |(index, _)| *index);
+    let native_submodule_update = command
+        .find_subcommand("submodule")
+        .and_then(|submodule| submodule.find_subcommand("update"))
+        .is_some();
+    if let Some(line) = bridge::line(&args, command_index, native_submodule_update) {
         brit_epr::diagnostic::emit(line);
         capture.operation = "bridge";
         capture.outcome = Some("bridge-declared");
         return Err(error::CliError::ContextExit(bridge::EXIT_CODE));
     }
 
-    let command = public_command();
     let mut separator = false;
-    if let Some((index, name)) = command_prefix(&args, &command) {
+    if let Some((index, name)) = prefix {
         capture.operation(&name);
         if name == "log" {
             normalize_log_counts(&mut args, index);
