@@ -194,3 +194,17 @@ and push it with `brit push` through the hook from item 1. Tell the
 integrator the release commit; the monorepo pin is theirs to move. Then write
 three lines here: what shipped, what was skipped and why, and the three things
 that hurt most while doing it. Those three start the next list.
+
+## Closing (2026-11-23)
+
+- **Shipped:** all seven items, released as brit 0.3.3 from `main` bdb45bfc; the
+  annotated `brit-v0.3.3` tag was created with `brit tag -a` and pushed with
+  `brit push` through the item 1 hook, and the Nexus publish job is green.
+- **Skipped:** none; no reserve item was needed. The sprint landed as one
+  integration branch with a single version allocation instead of one main move
+  per item, which avoided re-allocating versions six times.
+- **Hurt most:** (1) the host umask and load broke replay journey tests locally,
+  so local green needed `umask 022` and reruns; (2) `brit-rust-style` on
+  run-ci branches needs `main` as an ancestor, so standalone lane runs read
+  red; (3) the installed brit lags the release, so the tag push needed a fresh
+  build. All three are in the backlog's sprint 4 section.

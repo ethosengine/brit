@@ -5,7 +5,7 @@ serves: brit-native-daily-driver
 ---
 # Bounded-memory backlog
 
-> The work in flight is [Brit sprint 4](2026-11-22-brit-sprint-4.md): seven items drawn from this pool.
+> [Brit sprint 4](2026-11-22-brit-sprint-4.md) shipped as brit 0.3.3 (2026-11-23); the next sprint draws from this pool.
 > Add new findings here as one line each; do not work from this list directly.
 
 - [ ] Release Brit for every platform for which we can obtain a runtime to build and verify the installed artifact; restore macOS ARM when a usable runtime is available. The steward suspended hosted ARM on 2026-11-17 after release 44145119161 attempts 1–4 were cancelled before any ARM step; current releases cover Linux x86_64, macOS Intel and Windows x86_64, and ordinary macOS CI uses Intel. Record per-platform build, installation and operational evidence before enabling each target.
@@ -154,16 +154,28 @@ requirements below, as they do for the other affected command families.
 
 ## Found while releasing 0.3.2 (2026-11-22)
 
-- [ ] A kill at checkpoint `replay-transition-directory-created` leaves an owner-less staging directory that the next run refuses as foreign (`gitoxide-core/src/repository/replay/journal.rs:3746-3761`); recovery needs `--retire`.
-- [ ] `brit rebase --status` in `ready-final` offers `--abort`, which a final decision cannot take (`journal.rs:4602`).
-- [ ] Recovery refuses as "replay configuration or hooks changed" when only `GIT_AUTHOR_*`/`GIT_COMMITTER_*` differ, because the policy digest hashes the whole config snapshot (`replay/hooks.rs:10-47`).
+- [x] A kill at checkpoint `replay-transition-directory-created` leaves an owner-less staging directory that the next run refuses as foreign (`gitoxide-core/src/repository/replay/journal.rs:3746-3761`); recovery needs `--retire`. Sprint 4 item 4, fixed in 0.3.3.
+- [x] `brit rebase --status` in `ready-final` offers `--abort`, which a final decision cannot take (`journal.rs:4602`). Sprint 4 item 3, fixed in 0.3.3.
+- [x] Recovery refuses as "replay configuration or hooks changed" when only `GIT_AUTHOR_*`/`GIT_COMMITTER_*` differ, because the policy digest hashes the whole config snapshot (`replay/hooks.rs:10-47`). Sprint 4 item 5, fixed in 0.3.3.
 - [ ] A kill during child preparation (`recover_preparation`, `journal.rs:2808`) has no measured recovery fixture.
 - [x] `brit diff` refuses the whole diff with "submodule patches are not supported" when any gitlink differs (`gitoxide-core/src/repository/diff.rs:358`), so it is unusable in the Elohim checkout whenever a pin moves; Git prints `Subproject commit` lines. Reproduced 2026-11-22 on 0.3.0; staged-only blank output matches Git. Sprint 4 item 7, fixed 2026-11-22.
 - [ ] `brit diff -- <path>` refuses any directory, including a submodule path, because it shares `literal_paths` with staging (`gitoxide-core/src/repository/index/authoring.rs:69`); Git selects the gitlink.
-- [ ] `brit push` sends an annotated tag as its peeled commit (`gix/src/remote/connection/push/transmit.rs:206`, `peel_to_id`), so the remote loses the tag object (sprint 4 item 1 lane, scratch reproduction 2026-11-22).
+- [x] `brit push` sends an annotated tag as its peeled commit (`gix/src/remote/connection/push/transmit.rs:206`, `peel_to_id`), so the remote loses the tag object (sprint 4 item 1 lane, scratch reproduction 2026-11-22). Sprint 4 item 1, fixed in 0.3.3; `brit-v0.3.3` was pushed by Brit as a tag object.
 - [ ] The feedback recorder calls `epr feedback` without checking the verb exists: on shem (brit 0.3.1, an epr head without `feedback`) every command prints `feedback capture gap: epr: invalid arguments: unknown command feedback` (ethosengine/shem report, 2026-11-22).
 - [ ] On ethosengine, `diff`, `fetch`, `worktree --help` and `worktree add` print `feedback capture gap: recorder timeout`; the line should name its budget, and a missing verb should fail fast rather than time out (same report).
 - [ ] A whole-crate `cargo test -p cli-journey` in a fresh target fails on the unbuilt `brit-rebase-retained` helper; the journey crate neither builds nor names that prerequisite.
+
+## Found during sprint 4 (2026-11-22 and 23)
+
+- [ ] With the host umask 0002, two `replay_retained` journey tests fail on group-writable modes; the tests should set their own umask or the check should name it.
+- [ ] Two replay cleanup kill tests time out under host load; their budget should scale or name the load it assumes.
+- [ ] `memory_object_store::explicit_limit_streams_two_hundred_fifty_six_mib` failed once on CI (run 45203142969, `odb stats --extra-header-lookup`: "At least one object couldn't be looked up even though it must exist") and passed on rerun and on the parent commit; record each recurrence.
+- [ ] `brit-rust-style` on a `run-ci/**` branch needs `main` to be an ancestor, so a lane branched before a main move reads red until merged; the check should diff against the merge base.
+- [ ] Every brit commit prints "attribution UNMEASURED"; the prepare-commit-msg path finds no session adapter in this submodule.
+- [ ] `gix-protocol` has a clippy `drop_non_drop` warning under the workspace's current toolchain.
+- [ ] The push journey tests never sent a tag before sprint 4; keep a tag-object case in every push transport test.
+- [ ] The nightly toolchain for the scoped `brit-*` fmt pass is not pinned, so its output can change between hosts.
+- [ ] The installed brit lags the released one: the 0.3.3 tag needed the freshly built binary, because 0.3.0 still peels tags on push; release notes should say which installed version a workflow needs.
 
 ## Usage feedback across commands
 
