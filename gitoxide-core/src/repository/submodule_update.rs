@@ -133,7 +133,7 @@ where
             None
         };
         fetch_pin(&repo, commit_id, progress)?;
-        return checkout(&repo, &work_dir, commit_id, previous.as_ref(), git_dir.as_deref(), None);
+        return checkout(&work_dir, commit_id, previous.as_ref(), git_dir.as_deref(), None, repo);
     }
 
     if !init && configured_url.is_none() {
@@ -206,7 +206,7 @@ where
         config.set_raw_value("core.worktree", git_path(&relative)?)?;
         Ok(true)
     })?;
-    checkout(&repo, work_dir, commit_id, None, Some(git_dir), Some(clone_dir))
+    checkout(work_dir, commit_id, None, Some(git_dir), Some(clone_dir), repo)
 }
 
 fn lock(path: &Path) -> Result<gix::lock::Marker> {
@@ -272,12 +272,12 @@ fn require_empty(path: &Path) -> Result<()> {
 }
 
 fn checkout(
-    repo: &Repository,
     work_dir: &Path,
     commit_id: ObjectId,
     previous: Option<&gix::index::File>,
     link: Option<&Path>,
     clone_dir: Option<tempfile::TempDir>,
+    repo: Repository,
 ) -> Result<()> {
     let existing_parent = work_dir
         .ancestors()
@@ -292,7 +292,7 @@ fn checkout(
     let staged = scratch.path().join("checkout");
     let backup = scratch.path().join("backup");
     fs::create_dir(&staged).or_error()?;
-    let mut next = stage_checkout(repo, commit_id, &staged, scratch.path())?;
+    let mut next = stage_checkout(&repo, commit_id, &staged, scratch.path())?;
     let next_index = metadata.path().join("index");
     next.set_path(next_index.clone());
     next.write(Default::default())?;
@@ -307,15 +307,20 @@ fn checkout(
         fs::write(&gitfile, bytes).or_error()?;
     }
 
+    let repo_git_dir = repo.git_dir().to_owned();
+    let index_path = repo.index_path();
     let mut publication = Publication::default();
     let result = (|| -> Result<()> {
         publication.mkdir(work_dir)?;
         if let Some(previous) = previous {
-            refuse_local_changes(repo)?;
+            refuse_local_changes(&repo)?;
             publication.back_up_checkout(work_dir, &backup, previous)?;
         } else {
             require_empty(work_dir)?;
         }
+        // Windows requires the clone's open handles and pack mappings to be released
+        // before its Git directory can be renamed during publication or rollback.
+        drop(repo);
         for entry in next.entries() {
             let path = gix::path::from_bstr(entry.path(&next))?;
             let destination = checked_parent(work_dir, &path)?;
@@ -330,12 +335,8 @@ fn checkout(
             publication.move_file(&gitfile, &work_dir.join(".git"))?;
         }
         for (source, destination, saved) in [
-            (&next_index, repo.index_path(), metadata.path().join("old-index")),
-            (
-                &next_head,
-                repo.git_dir().join("HEAD"),
-                metadata.path().join("old-HEAD"),
-            ),
+            (&next_index, index_path, metadata.path().join("old-index")),
+            (&next_head, repo_git_dir.join("HEAD"), metadata.path().join("old-HEAD")),
         ] {
             if destination.try_exists().or_error()? {
                 publication.move_file(&destination, &saved)?;
@@ -343,7 +344,7 @@ fn checkout(
             publication.move_file(source, &destination)?;
         }
         if clone_dir.is_some() {
-            publication.move_file(repo.git_dir(), link.expect("a new clone has a gitfile"))?;
+            publication.move_file(&repo_git_dir, link.expect("a new clone has a gitfile"))?;
         }
         Ok(())
     })();
