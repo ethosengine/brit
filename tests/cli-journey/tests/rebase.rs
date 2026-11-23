@@ -733,6 +733,72 @@ fn public_conflict_status_patch_resolution_and_exact_abort() -> Result<()> {
     Ok(())
 }
 
+/// `--continue` with one extra environment variable.
+fn continue_with(root: &Path, name: &str, value: &str) -> Result<Capture> {
+    BritInvocation::new(brit_bin().expect("required public artifact"))
+        .current_dir(root)
+        .args(["rebase", "--continue"])
+        .env("GIT_EDITOR", message_editor(root))
+        .env("GIT_SEQUENCE_EDITOR", ":")
+        .env(name, value)
+        .run()
+}
+
+/// A conflict stop whose resolution is staged, ready for `--continue`.
+fn staged_conflict_stop() -> Result<TestRepo> {
+    let repo = fixture(true)?;
+    let root = repo.path();
+    refused(root, &["rebase", "upstream"])?;
+    fs::write(root.join("selected"), b"resolved\n")?;
+    success(root, &["rebase", "--stage", "--", "selected"])?;
+    Ok(repo)
+}
+
+/// Sprint 4 item 5: the author and committer identity is recorded in each
+/// commit, not pinned by the operation, so resuming under another
+/// `GIT_COMMITTER_NAME` or `GIT_AUTHOR_EMAIL` continues. A changed hook or any
+/// other changed configuration still refuses, and changes nothing.
+#[test]
+fn public_resume_under_another_identity_continues_but_changed_policy_refuses() -> Result<()> {
+    for (name, value) in [
+        ("GIT_COMMITTER_NAME", "Another Committer"),
+        ("GIT_AUTHOR_EMAIL", "another@example.com"),
+    ] {
+        let repo = staged_conflict_stop()?;
+        let root = repo.path();
+        let result = continue_with(root, name, value)?;
+        ensure!(result.status.success(), "{name}: {}\n{}", result.stdout, result.stderr);
+        assert_eq!(git(root, &["show", "HEAD:selected"])?, b"resolved\n");
+        ensure!(!root.join(".git/brit-rebase").exists());
+        preserved(root)?;
+    }
+
+    for change in ["config", "hook"] {
+        let repo = staged_conflict_stop()?;
+        let root = repo.path();
+        match change {
+            "config" => {
+                git(root, &["config", "--local", "brit.unrelated", "changed"])?;
+            }
+            _ => script(&root.join(".git/hooks/post-rewrite"), "exit 0")?,
+        }
+        let result = continue_with(root, "GIT_COMMITTER_NAME", "Another Committer")?;
+        ensure!(
+            !result.status.success()
+                && (result.stderr.contains("configuration or hooks changed")
+                    || result.stderr.contains("hook or configuration changed")),
+            "{change}: {}\n{}",
+            result.stdout,
+            result.stderr
+        );
+        ensure!(
+            success(root, &["rebase", "--status"])?.stdout.contains("Conflict stop"),
+            "{change}: the stop is kept"
+        );
+    }
+    Ok(())
+}
+
 #[test]
 fn public_edit_authoring_forms_scope_expansion_deletion_and_split_messages() -> Result<()> {
     for split in [false, true] {

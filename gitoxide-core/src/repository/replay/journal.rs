@@ -705,7 +705,7 @@ impl Session {
         self.inspect_editor()?;
         super::validate_execution_policy(repo)?;
         ensure!(
-            super::hooks::policy(repo)? == self.state.policy,
+            super::hooks::policy_matches(repo, &self.state.policy)?,
             "replay configuration or hooks changed"
         );
         let current = Self::open(repo)?;
@@ -4352,7 +4352,7 @@ pub(crate) fn validate_child_binding(repo: &gix::Repository, binding: &ParentBin
     switch::validate_local_history(repo)?;
     switch::validate_object_boundaries(repo)?;
     ensure!(
-        super::hooks::policy(repo)? == state.policy,
+        super::hooks::policy_matches(repo, &state.policy)?,
         "replay parent configuration or hooks changed"
     );
     let parent = Session { directory, state };

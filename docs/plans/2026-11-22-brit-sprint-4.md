@@ -128,13 +128,26 @@ exists.
   kills there, continues and publishes, and refuses a planted member, mode
   0755 and a symlink (the last by the scratch-member guard), keeping each. A
   foreign uid is not exercised: the test cannot `chown` without root.
-- [ ] **5. A changed author or committer identity does not refuse recovery.**
+- [x] **5. A changed author or committer identity does not refuse recovery.**
   (M) The policy digest hashes the whole config snapshot
   (`replay/hooks.rs:10-47`, compared at `journal.rs:704` and `:4340`), which
   includes the identity gix derives from `GIT_AUTHOR_*` and `GIT_COMMITTER_*`.
   Leave the identity keys out of the digest. *Done when:* a resume under a
   different `GIT_COMMITTER_NAME` continues, and a changed hook or other config
   still refuses.
+  **Measured 2026-11-22:** `public_resume_under_another_identity_continues_but_changed_policy_refuses`
+  reproduced "replay parent configuration or hooks changed" on `--continue`
+  under another `GIT_COMMITTER_NAME`; it now continues under another
+  `GIT_COMMITTER_NAME` or `GIT_AUTHOR_EMAIL`, and an added config key or a new
+  `post-rewrite` hook still refuses with the stop kept. The digest drops
+  `author.*`, `committer.*`, `user.name`, `user.email` and
+  `gitoxide.user.emailFallback` (file bytes stay pinned; the
+  `GIT_*_DATE` overrides stay pinned, because
+  `interrupted_step_reuses_exact_proposed_commit_bytes_and_committer_time`
+  resumes exact proposed bytes, timestamp included) and is tagged `replay-policy-v2`; `policy_matches`
+  also accepts the untagged form, so a rebase begun under 0.3.2 resumes
+  (unit test `policy_ignores_identity_pins_other_configuration_and_accepts_the_untagged_form`).
+  Whole gitoxide-core crate, rebase journey, strict Clippy and fmt: EXIT=0.
 - [x] **6. `brit submodule update --init <path>`.** (M) `update` and `init`
   are bridged to Git (`brit-cli/src/bridge.rs:25`); options at
   `src/plumbing/options/mod.rs:1994`. *Done when:* in a fresh worktree the
