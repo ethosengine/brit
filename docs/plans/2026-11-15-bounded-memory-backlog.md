@@ -5,7 +5,7 @@ serves: brit-native-daily-driver
 ---
 # Bounded-memory backlog
 
-> The work in flight is [Brit sprint 2](2026-11-16-brit-sprint-2.md): seven items drawn from this pool.
+> The work in flight is [Brit sprint 4](2026-11-22-brit-sprint-4.md): seven items drawn from this pool.
 > Add new findings here as one line each; do not work from this list directly.
 
 - [ ] Release Brit for every platform for which we can obtain a runtime to build and verify the installed artifact; restore macOS ARM when a usable runtime is available. The steward suspended hosted ARM on 2026-11-17 after release 44145119161 attempts 1–4 were cancelled before any ARM step; current releases cover Linux x86_64, macOS Intel and Windows x86_64, and ordinary macOS CI uses Intel. Record per-platform build, installation and operational evidence before enabling each target.
@@ -132,7 +132,7 @@ requirements below, as they do for the other affected command families.
 - [x] Port `a1263002` (disk-sized object-store slots above 32 pack indexes). Not needed: `fe6da99ff`, already in 0.2.0, sizes slots from the final trust. Its 33-pack tests and a clearer slot-exhaustion message landed instead; see the plan's 2026-11-15 correction.
 - [ ] At reduced trust above 32 pack indexes, 0.2.0 reports "rev-spec is malformed" instead of naming the slot cap and its cure (`safe.directory` or a repack). The message is fixed on main after 0.2.0; it reaches devices with the next release.
 - [ ] `epr bin follow` cannot carry a lineage ruling: it refuses `non-descendant` before building, and `--rebase-lineage` exists only on `epr bin land`, which needs an ingested record; a device whose registry predates `brit-rebase-retained` then refuses the release closure with `checksums-mismatch` (second-device report).
-- [ ] `brit tag` only lists; a release tag cannot be created, and the pre-push reach gate refuses tag targets ("only a remote branch is supported").
+- [ ] The pre-push reach gate refuses tag targets (`.githooks/pre-push:19`, "only a named local branch is supported"), so release tags are pushed with `git push --no-verify` (brit-v0.3.2, 2026-11-22). Corrected 2026-11-22: `brit tag <name> [-a -m]` creates tags (`gitoxide-core/src/repository/tag.rs:169`); only the gate is missing.
 - [ ] `brit config` has no write form; setting `branch.<name>.britReachBase` needed `git config`.
 - [ ] No command stages a submodule gitlink at a named commit without a checked-out submodule; the parent pin move needed `git update-index --cacheinfo`.
 - [ ] `brit diff <revision>` is refused as an unexpected argument in 0.2.0.
@@ -151,6 +151,18 @@ requirements below, as they do for the other affected command families.
 - [ ] No remote-ref listing; reading a remote branch head needed `git ls-remote`.
 - [ ] No submodule init or update (`brit submodule` only lists); a fresh worktree needed `git submodule update --init` before its push hook would pass.
 - [ ] `brit log -- <path>` answers that file-based lookup is not implemented.
+
+## Found while releasing 0.3.2 (2026-11-22)
+
+- [ ] A kill at checkpoint `replay-transition-directory-created` leaves an owner-less staging directory that the next run refuses as foreign (`gitoxide-core/src/repository/replay/journal.rs:3746-3761`); recovery needs `--retire`.
+- [ ] `brit rebase --status` in `ready-final` offers `--abort`, which a final decision cannot take (`journal.rs:4602`).
+- [ ] Recovery refuses as "replay configuration or hooks changed" when only `GIT_AUTHOR_*`/`GIT_COMMITTER_*` differ, because the policy digest hashes the whole config snapshot (`replay/hooks.rs:10-47`).
+- [ ] A kill during child preparation (`recover_preparation`, `journal.rs:2808`) has no measured recovery fixture.
+- [ ] `brit diff` refuses the whole diff with "submodule patches are not supported" when any gitlink differs (`gitoxide-core/src/repository/diff.rs:358`), so it is unusable in the Elohim checkout whenever a pin moves; Git prints `Subproject commit` lines. Reproduced 2026-11-22 on 0.3.0; staged-only blank output matches Git. Sprint 4 item 7.
+- [ ] `brit push` sends an annotated tag as its peeled commit (`gix/src/remote/connection/push/transmit.rs:206`, `peel_to_id`), so the remote loses the tag object (sprint 4 item 1 lane, scratch reproduction 2026-11-22).
+- [ ] The feedback recorder calls `epr feedback` without checking the verb exists: on shem (brit 0.3.1, an epr head without `feedback`) every command prints `feedback capture gap: epr: invalid arguments: unknown command feedback` (ethosengine/shem report, 2026-11-22).
+- [ ] On ethosengine, `diff`, `fetch`, `worktree --help` and `worktree add` print `feedback capture gap: recorder timeout`; the line should name its budget, and a missing verb should fail fast rather than time out (same report).
+- [ ] A whole-crate `cargo test -p cli-journey` in a fresh target fails on the unbuilt `brit-rebase-retained` helper; the journey crate neither builds nor names that prerequisite.
 
 ## Usage feedback across commands
 
