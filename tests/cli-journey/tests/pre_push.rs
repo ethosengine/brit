@@ -752,6 +752,87 @@ fn atomic_push_lands_every_ref_or_none() -> Result<()> {
     Ok(())
 }
 
+/// An annotated tag reaches the remote as its tag object, as Git sends it: the annotation, a tag
+/// of a tag, and the commit history behind a tag whose commit the remote lacks all arrive. The
+/// hook sees the tag object id, a repeated push is up to date, and `--tags` sends the same way.
+#[test]
+fn annotated_tags_arrive_as_tag_objects() -> Result<()> {
+    let repo = TestRepo::new("pre-push-annotated-tags")?;
+    let remote = remote(repo.path())?;
+    git(repo.path(), &["push", "origin", "main:main"])?;
+    let zero = "0".repeat(40);
+    let annotate = |name: &str, message: &str, target: &str| {
+        git(
+            repo.path(),
+            &[
+                "-c",
+                "user.name=t",
+                "-c",
+                "user.email=t@example.invalid",
+                "tag",
+                "-a",
+                name,
+                "-m",
+                message,
+                target,
+            ],
+        )
+    };
+    let assert_tag_arrived = |name: &str, message: &str| -> Result<()> {
+        let local = git(repo.path(), &["rev-parse", &format!("refs/tags/{name}")])?;
+        assert_eq!(
+            git(remote.path(), &["rev-parse", &format!("refs/tags/{name}")])?,
+            local,
+            "{name}: the remote holds the tag object itself"
+        );
+        assert_eq!(git(remote.path(), &["cat-file", "-t", &local])?, "tag", "{name}");
+        ensure!(
+            git(remote.path(), &["cat-file", "tag", &local])?.contains(message),
+            "{name}: the annotation arrived"
+        );
+        Ok(())
+    };
+
+    annotate("v1", "release notes v1", "HEAD")?;
+    annotate("outer", "a tag of a tag", "v1")?;
+    hook(repo.path(), "cat >hook-input")?;
+    let specs = [
+        "push",
+        "origin",
+        "refs/tags/v1:refs/tags/v1",
+        "refs/tags/outer:refs/tags/outer",
+    ];
+    let output = brit(repo.path(), &specs)?;
+    ensure!(output.status.success(), "{}", output.stderr);
+    assert_tag_arrived("v1", "release notes v1")?;
+    assert_tag_arrived("outer", "a tag of a tag")?;
+    let v1 = git(repo.path(), &["rev-parse", "refs/tags/v1"])?;
+    ensure!(
+        fs::read_to_string(repo.path().join("hook-input"))?.contains(&format!("refs/tags/v1 {v1} refs/tags/v1 {zero}")),
+        "the hook sees the tag object id"
+    );
+    let output = brit(repo.path(), &specs)?;
+    ensure!(
+        output.status.success(),
+        "a repeated push is up to date: {}",
+        output.stderr
+    );
+
+    // A tag whose commit the remote lacks brings that commit's history with it.
+    let unpushed = repo.commit_file("payload", "only behind a tag")?;
+    annotate("v2", "release notes v2", "HEAD")?;
+    let output = brit(repo.path(), &["push", "--tags", "origin"])?;
+    ensure!(output.status.success(), "--tags: {}", output.stderr);
+    assert_tag_arrived("v2", "release notes v2")?;
+    assert_eq!(git(remote.path(), &["rev-parse", "refs/tags/v2^{commit}"])?, unpushed);
+    assert_eq!(
+        git(remote.path(), &["show", "refs/tags/v2:payload"])?,
+        "only behind a tag"
+    );
+    git(remote.path(), &["fsck", "--full", "--strict"])?;
+    Ok(())
+}
+
 /// This repository's own reach adapter (`.githooks/pre-push`) lets a release tag through only as a
 /// creation whose peeled commit the remote's `main` already holds; a branch push keeps the
 /// evaluator path, and a tag move is refused even with `--force`.
@@ -816,6 +897,12 @@ fn reach_adapter_admits_tag_creation_at_a_reached_commit_only() -> Result<()> {
         remote_tag("refs/tags/v1")?,
         git(repo.path(), &["rev-parse", "refs/tags/v1^{commit}"])?
     );
+    assert_eq!(
+        git(remote.path(), &["rev-parse", "refs/tags/v1"])?,
+        git(repo.path(), &["rev-parse", "refs/tags/v1"])?,
+        "the release tag arrives as its annotated tag object"
+    );
+    assert_eq!(git(remote.path(), &["cat-file", "-t", "refs/tags/v1"])?, "tag");
     assert_eq!(remote_tag("refs/tags/v0")?, base);
     ensure!(!calls.exists(), "a tag creation needs no evaluator");
 

@@ -56,7 +56,7 @@ shallow repository, `log -- <path>`, the bounded-memory matrix rows, and the
 Sizes: S is one function with a test; M is a new mode built on code that
 exists.
 
-- [ ] **1. The pre-push hook lets a release tag through.** (M) The brit
+- [x] **1. The pre-push hook lets a release tag through.** (M) The brit
   repository's own hook refuses any non-branch ref
   (`.githooks/pre-push:19-20`), so brit-v0.3.2 was pushed with
   `git push --no-verify`. The push engine already sends tags
@@ -76,11 +76,17 @@ exists.
   refused. `reach_adapter_admits_tag_creation_at_a_reached_commit_only` failed
   on the old hook ("only a named local branch is supported") and passes now.
   `cargo test -p cli-journey --test pre_push` passes 19 of 19, and
-  `scripts/ci/test-brit-reach-hook.sh` passes with nine new tag cases. Still
-  open: the release-tag push itself. `brit push` sends an annotated tag as its
-  peeled commit (`gix/src/remote/connection/push/transmit.rs:206`,
-  `peel_to_id`), so the remote loses the tag object. The journey test asserts
-  only the peeled commit.
+  `scripts/ci/test-brit-reach-hook.sh` passes with nine new tag cases.
+  `brit push` had sent an annotated tag as its peeled commit. It now sends the
+  ref's own object (`follow_to_object` in
+  `gix/src/remote/connection/push/transmit.rs`), and the pack carries each tag
+  object the remote lacks, including a tag of a tag. A tag's commit history is
+  sent too. The pre-push hook sees the tag object id, as with Git. Re-pushing
+  an existing annotated tag is up to date; before the fix it was refused as a
+  tag move. `annotated_tags_arrive_as_tag_objects` covers explicit refspecs and
+  `--tags`, and it failed before the fix. The reach-adapter test now checks
+  that the remote holds an object of type `tag`. The release tag itself is
+  pushed with `brit push` once this lands on `main`.
 - [ ] **2. `brit config set <key> <value>` and `brit config unset <key>`.**
   (S) `brit config` only reads (`src/plumbing/options/mod.rs:1241`);
   `branch.<b>.britReachBase` had to be set with `git config --local`. Reuse
