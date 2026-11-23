@@ -1238,6 +1238,23 @@ pub fn run_with_command(args: Args, command: clap::Command) -> Result<()> {
                 })
                 .map(|_| ())
             }
+            Some(config::Subcommands::Set { key, value }) => {
+                prepare_and_run("config-set", verbose, None, move |_progress, _out, err| {
+                    core::repository::config::set(
+                        repository(Mode::LenientWithGitInstallConfig)?,
+                        &key,
+                        value.as_ref(),
+                        err,
+                    )
+                })
+                .map(|_| ())
+            }
+            Some(config::Subcommands::Unset { key }) => {
+                prepare_and_run("config-unset", verbose, None, move |_progress, _out, err| {
+                    core::repository::config::unset(repository(Mode::LenientWithGitInstallConfig)?, &key, err)
+                })
+                .map(|_| ())
+            }
             Some(config::Subcommands::Fmt {
                 in_place,
                 in_file,

@@ -87,13 +87,21 @@ exists.
   `--tags`, and it failed before the fix. The reach-adapter test now checks
   that the remote holds an object of type `tag`. The release tag itself is
   pushed with `brit push` once this lands on `main`.
-- [ ] **2. `brit config set <key> <value>` and `brit config unset <key>`.**
+- [x] **2. `brit config set <key> <value>` and `brit config unset <key>`.**
   (S) `brit config` only reads (`src/plumbing/options/mod.rs:1241`);
   `branch.<b>.britReachBase` had to be set with `git config --local`. Reuse
   `edit_local_config` (`gitoxide-core/src/repository/branch.rs:289`), which
   locks, edits and commits the local config. *Done when:* a journey test shows
   `brit config` reporting the value after `set` and not after `unset`, and a
   held `config.lock` refuses with the config unchanged.
+  **Measured 2026-11-22:** `tests/cli-journey/tests/config_write.rs` (3 tests)
+  passes: `set` then `unset` of `branch.a/b.britReachBase`,
+  `branch.sprint4/x.y.britReachBase` and `core.britProbe` leave the config byte
+  for byte as `git config` does, `brit config` shows the value only after `set`;
+  a missing key, a key with no section and a multi-valued key exit 5/2/5 as Git
+  does with the file unchanged; a held `config.lock` refuses `set` and `unset`
+  with config and lock untouched. `edit_local_config` moved to
+  `gitoxide-core/src/repository/config.rs` and is shared with `branch.rs`.
 - [ ] **3. `brit rebase --status` advises only what `ready-final` allows.**
   (S) The catch-all at `gitoxide-core/src/repository/replay/journal.rs:4602`
   offers `--abort`, which a final decision cannot take (`:4530`). *Done when:*

@@ -1267,6 +1267,26 @@ pub mod config {
         ///
         /// Included files are shown as well, along with the Source they inherit and their inclusion level.
         List,
+        /// Set a key in the repository-local configuration, like `git config <key> <value>`.
+        ///
+        /// The key is `section[.subsection].name`: the section ends at the first dot and the name
+        /// starts after the last, so a subsection may hold dots and slashes (`branch.a/b.c.remote`).
+        /// A single existing value is replaced in place; a key with several values is refused.
+        Set {
+            /// The key to set, like `branch.main.britReachBase`.
+            key: String,
+            /// The value to store.
+            #[clap(value_parser = crate::shared::AsBString)]
+            value: BString,
+        },
+        /// Remove a key from the repository-local configuration, like `git config --unset <key>`.
+        ///
+        /// A key that is not set, or has several values, is refused with status 5 and the file is
+        /// left as it was.
+        Unset {
+            /// The key to remove, like `branch.main.britReachBase`.
+            key: String,
+        },
         /// Format a git configuration file, normalizing insignificant whitespace.
         ///
         /// Includes are never resolved; only whitespace, newlines and the `=` separator are rewritten.
