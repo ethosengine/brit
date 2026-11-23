@@ -199,11 +199,12 @@ where
                     head_id.expect("HEAD is matched only after resolving its target"),
                 ),
                 SourceRef::FullName(name) if !name.is_empty() => {
-                    // Resolve the local ref to its peeled object ID.
+                    // Resolve the local ref to the object it names, as Git sends it: symbolic refs
+                    // are followed, annotated tags are not peeled, so a tag arrives as its tag object.
                     let mut reference = repo
                         .find_reference(name.as_ref())
                         .map_err(|e| Error::Resolve(Box::new(e)))?;
-                    let resolved = reference.peel_to_id().map_err(|e| Error::Resolve(Box::new(e)))?;
+                    let resolved = reference.follow_to_object().map_err(|e| Error::Resolve(Box::new(e)))?;
                     (BString::from(name.as_ref()), resolved.detach())
                 }
                 SourceRef::FullName(_empty) => {
@@ -701,35 +702,105 @@ fn build_pack_entries(
     advertised: impl IntoIterator<Item = gix_hash::ObjectId>,
     should_interrupt: &AtomicBool,
 ) -> Result<Vec<gix_pack::data::output::Entry>, Error> {
-    use gix_pack::data::output::{Entry, count::objects::ObjectExpansion};
+    use gix_pack::data::output::count::objects::ObjectExpansion;
     use gix_traverse::commit::Simple;
 
-    let mut tips: Vec<gix_hash::ObjectId> = commands
+    let advertised: std::collections::HashSet<gix_hash::ObjectId> = advertised.into_iter().collect();
+    let kind_of = |id: gix_hash::ObjectId| -> Result<Option<gix_object::Kind>, Error> {
+        Ok(repo
+            .try_find_header(id)
+            .map_err(|error| Error::Resolve(Box::new(error)))?
+            .map(|header| header.kind()))
+    };
+
+    // A pushed id may be an annotated tag, possibly of another tag. Each tag object the remote
+    // does not advertise is sent as it is; the commit it finally names joins the commit walk, and a
+    // tree or blob it names is sent with its contents. A tag the remote advertises is already there
+    // with everything behind it.
+    let mut tips: Vec<gix_hash::ObjectId> = Vec::new();
+    let mut tags: Vec<gix_hash::ObjectId> = Vec::new();
+    let mut others: Vec<gix_hash::ObjectId> = Vec::new();
+    let source = crate::object::bounded::Source::deferred(repo);
+    let mut buf = gix_object::find::Buffer::default();
+    for mut id in commands
         .iter()
         .filter(|c| !c.is_delete() && !c.new_oid.is_null())
         .map(|c| c.new_oid)
-        .collect();
+    {
+        loop {
+            if advertised.contains(&id) {
+                break;
+            }
+            match kind_of(id)? {
+                Some(gix_object::Kind::Tag) => {
+                    if !tags.contains(&id) {
+                        tags.push(id);
+                    }
+                    let tag = source
+                        .load(&id, &mut buf)
+                        .map_err(|source| Error::ReadObject { id, source })?;
+                    let target = gix_object::TagRefIter::from_bytes(tag.data, tag.object_hash)
+                        .target_id()
+                        .map_err(|error| Error::Resolve(Box::new(error)))?;
+                    buf.clear();
+                    id = target;
+                }
+                Some(gix_object::Kind::Commit) | None => {
+                    // A missing object surfaces as the walk's own error, as before.
+                    tips.push(id);
+                    break;
+                }
+                Some(gix_object::Kind::Tree | gix_object::Kind::Blob) => {
+                    others.push(id);
+                    break;
+                }
+            }
+        }
+    }
 
-    if tips.is_empty() {
-        // Pure deletion push — no objects needed in the pack.
+    if tips.is_empty() && tags.is_empty() && others.is_empty() {
+        // Pure deletion push, or everything is already on the remote.
         return Ok(Vec::new());
     }
 
     // Every advertised commit is a common boundary, including refs other than
     // the destination. Unknown remote history cannot prune the local walk.
     let mut hides = std::collections::HashSet::new();
-    for id in advertised {
-        if repo
-            .try_find_header(id)
-            .map_err(|error| Error::Resolve(Box::new(error)))?
-            .is_some_and(|header| header.kind() == gix_object::Kind::Commit)
-        {
+    for &id in &advertised {
+        if kind_of(id)? == Some(gix_object::Kind::Commit) {
             hides.insert(id);
         }
     }
     tips.retain(|id| !hides.contains(id));
+    tips.dedup();
+
+    let progress_discard = crate::progress::Discard;
+    let mut counts = Vec::new();
+    // Tag objects go in as they are; their targets are counted below.
+    if !tags.is_empty() {
+        let (tag_counts, _) = gix_pack::data::output::count::objects_unthreaded_with_source(
+            &source,
+            &mut tags.iter().map(|id| Ok::<_, gix_error::Error>(*id)),
+            &progress_discard,
+            should_interrupt,
+            ObjectExpansion::AsIs,
+        )
+        .map_err(Error::Pack)?;
+        counts.extend(tag_counts);
+    }
+    if !others.is_empty() {
+        let (other_counts, _) = gix_pack::data::output::count::objects_unthreaded_with_source(
+            &source,
+            &mut others.iter().map(|id| Ok::<_, gix_error::Error>(*id)),
+            &progress_discard,
+            should_interrupt,
+            ObjectExpansion::TreeContents,
+        )
+        .map_err(Error::Pack)?;
+        counts.extend(other_counts);
+    }
     if tips.is_empty() {
-        return Ok(Vec::new());
+        return entries_for(&source, &counts);
     }
 
     // Walk commits reachable from tips but hidden behind hides.
@@ -743,27 +814,32 @@ fn build_pack_entries(
             .collect::<Result<_, _>>()
             .map_err(Error::Walk)?;
 
-    if commit_ids.is_empty() {
-        return Ok(Vec::new());
+    if !commit_ids.is_empty() {
+        let (commit_counts, _) = gix_pack::data::output::count::objects_unthreaded_with_source(
+            &source,
+            &mut commit_ids.iter().map(|id| Ok::<_, gix_error::Error>(*id)),
+            &progress_discard,
+            should_interrupt,
+            ObjectExpansion::TreeAdditionsComparedToAncestor,
+        )
+        .map_err(Error::Pack)?;
+        counts.extend(commit_counts);
     }
+    entries_for(&source, &counts)
+}
 
-    let source = crate::object::bounded::Source::deferred(repo);
-
-    let progress_discard = crate::progress::Discard;
-    let (counts, _) = gix_pack::data::output::count::objects_unthreaded_with_source(
-        &source,
-        &mut commit_ids.iter().map(|id| Ok::<_, gix_error::Error>(*id)),
-        &progress_discard,
-        should_interrupt,
-        ObjectExpansion::TreeAdditionsComparedToAncestor,
-    )
-    .map_err(Error::Pack)?;
-
+/// Encode each counted object as a base entry, once.
+fn entries_for(
+    source: &crate::object::bounded::Source<'_>,
+    counts: &[gix_pack::data::output::Count],
+) -> Result<Vec<gix_pack::data::output::Entry>, Error> {
+    use gix_pack::data::output::Entry;
     // Base-entry encoding needs bytes, not a pack location. Reuse bounded
     // operation-owned storage and release each input before reading its successor.
+    let mut seen = std::collections::HashSet::new();
     let mut buf = gix_object::find::Buffer::default();
     let mut entries = Vec::with_capacity(counts.len());
-    for count in &counts {
+    for count in counts.iter().filter(|count| seen.insert(count.id)) {
         let obj = source
             .load(&count.id, &mut buf)
             .map_err(|source| Error::ReadObject { id: count.id, source })?;

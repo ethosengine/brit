@@ -751,3 +751,191 @@ fn atomic_push_lands_every_ref_or_none() -> Result<()> {
     assert_eq!(git(remote.path(), &["rev-parse", "main"])?, next);
     Ok(())
 }
+
+/// An annotated tag reaches the remote as its tag object, as Git sends it: the annotation, a tag
+/// of a tag, and the commit history behind a tag whose commit the remote lacks all arrive. The
+/// hook sees the tag object id, a repeated push is up to date, and `--tags` sends the same way.
+#[test]
+fn annotated_tags_arrive_as_tag_objects() -> Result<()> {
+    let repo = TestRepo::new("pre-push-annotated-tags")?;
+    let remote = remote(repo.path())?;
+    git(repo.path(), &["push", "origin", "main:main"])?;
+    let zero = "0".repeat(40);
+    let annotate = |name: &str, message: &str, target: &str| {
+        git(
+            repo.path(),
+            &[
+                "-c",
+                "user.name=t",
+                "-c",
+                "user.email=t@example.invalid",
+                "tag",
+                "-a",
+                name,
+                "-m",
+                message,
+                target,
+            ],
+        )
+    };
+    let assert_tag_arrived = |name: &str, message: &str| -> Result<()> {
+        let local = git(repo.path(), &["rev-parse", &format!("refs/tags/{name}")])?;
+        assert_eq!(
+            git(remote.path(), &["rev-parse", &format!("refs/tags/{name}")])?,
+            local,
+            "{name}: the remote holds the tag object itself"
+        );
+        assert_eq!(git(remote.path(), &["cat-file", "-t", &local])?, "tag", "{name}");
+        ensure!(
+            git(remote.path(), &["cat-file", "tag", &local])?.contains(message),
+            "{name}: the annotation arrived"
+        );
+        Ok(())
+    };
+
+    annotate("v1", "release notes v1", "HEAD")?;
+    annotate("outer", "a tag of a tag", "v1")?;
+    hook(repo.path(), "cat >hook-input")?;
+    let specs = [
+        "push",
+        "origin",
+        "refs/tags/v1:refs/tags/v1",
+        "refs/tags/outer:refs/tags/outer",
+    ];
+    let output = brit(repo.path(), &specs)?;
+    ensure!(output.status.success(), "{}", output.stderr);
+    assert_tag_arrived("v1", "release notes v1")?;
+    assert_tag_arrived("outer", "a tag of a tag")?;
+    let v1 = git(repo.path(), &["rev-parse", "refs/tags/v1"])?;
+    ensure!(
+        fs::read_to_string(repo.path().join("hook-input"))?.contains(&format!("refs/tags/v1 {v1} refs/tags/v1 {zero}")),
+        "the hook sees the tag object id"
+    );
+    let output = brit(repo.path(), &specs)?;
+    ensure!(
+        output.status.success(),
+        "a repeated push is up to date: {}",
+        output.stderr
+    );
+
+    // A tag whose commit the remote lacks brings that commit's history with it.
+    let unpushed = repo.commit_file("payload", "only behind a tag")?;
+    annotate("v2", "release notes v2", "HEAD")?;
+    let output = brit(repo.path(), &["push", "--tags", "origin"])?;
+    ensure!(output.status.success(), "--tags: {}", output.stderr);
+    assert_tag_arrived("v2", "release notes v2")?;
+    assert_eq!(git(remote.path(), &["rev-parse", "refs/tags/v2^{commit}"])?, unpushed);
+    assert_eq!(
+        git(remote.path(), &["show", "refs/tags/v2:payload"])?,
+        "only behind a tag"
+    );
+    git(remote.path(), &["fsck", "--full", "--strict"])?;
+    Ok(())
+}
+
+/// This repository's own reach adapter (`.githooks/pre-push`) lets a release tag through only as a
+/// creation whose peeled commit the remote's `main` already holds; a branch push keeps the
+/// evaluator path, and a tag move is refused even with `--force`.
+#[cfg(unix)]
+#[test]
+fn reach_adapter_admits_tag_creation_at_a_reached_commit_only() -> Result<()> {
+    use std::os::unix::fs::PermissionsExt;
+    const ADAPTER: &str = include_str!("../../../.githooks/pre-push");
+    let executable = |path: &Path, text: &str| -> Result<()> {
+        if let Some(parent) = path.parent() {
+            fs::create_dir_all(parent)?;
+        }
+        fs::write(path, text)?;
+        fs::set_permissions(path, fs::Permissions::from_mode(0o755))?;
+        Ok(())
+    };
+    let repo = TestRepo::new("pre-push-reach-tag")?;
+    let remote = remote(repo.path())?;
+    let base = repo.head_id()?;
+    let bin = tempfile::tempdir()?;
+    let calls = bin.path().join("epr-calls");
+    executable(
+        &bin.path().join("epr"),
+        &format!("#!/bin/sh\nprintf '%s\\n' \"$*\" >> '{}'\n", calls.display()),
+    )?;
+    executable(&repo.path().join(".githooks/pre-push"), ADAPTER)?;
+    executable(&repo.path().join("scripts/ci/rust-style.sh"), "#!/bin/sh\nexit 0\n")?;
+    git(repo.path(), &["add", ".githooks/pre-push", "scripts/ci/rust-style.sh"])?;
+    git(repo.path(), &["commit", "-q", "-m", "adapter"])?;
+    git(repo.path(), &["config", "core.hooksPath", ".githooks"])?;
+    git(repo.path(), &["config", "branch.main.britReachBase", &base])?;
+    let path = format!("{}:{}", bin.path().display(), std::env::var("PATH")?);
+    let push = |args: &[&str]| -> Result<Capture> {
+        BritInvocation::new(brit_bin().expect("required binary"))
+            .arg("push")
+            .args(args.iter().copied())
+            .env("PATH", &path)
+            .current_dir(repo.path())
+            .run()
+    };
+    let remote_tag = |name: &str| {
+        git(
+            remote.path(),
+            &["for-each-ref", "--format=%(*objectname)%(objectname)", name],
+        )
+        .map(|ids| ids.get(..40).unwrap_or_default().to_owned())
+    };
+
+    // A branch push still goes through the evaluator.
+    let output = push(&["origin", "main:main"])?;
+    ensure!(output.status.success(), "first branch push: {}", output.stderr);
+    ensure!(fs::read_to_string(&calls)?.contains("ready --target"), "evaluator ran");
+    git(repo.path(), &["fetch", "-q", "origin"])?;
+    fs::remove_file(&calls)?;
+
+    // Annotated and lightweight tags at reached commits are created without the evaluator.
+    git(repo.path(), &["tag", "-a", "v1", "-m", "release"])?;
+    git(repo.path(), &["tag", "v0", &base])?;
+    let output = push(&["origin", "refs/tags/v1:refs/tags/v1", "refs/tags/v0:refs/tags/v0"])?;
+    ensure!(output.status.success(), "reached tags: {}", output.stderr);
+    assert_eq!(
+        remote_tag("refs/tags/v1")?,
+        git(repo.path(), &["rev-parse", "refs/tags/v1^{commit}"])?
+    );
+    assert_eq!(
+        git(remote.path(), &["rev-parse", "refs/tags/v1"])?,
+        git(repo.path(), &["rev-parse", "refs/tags/v1"])?,
+        "the release tag arrives as its annotated tag object"
+    );
+    assert_eq!(git(remote.path(), &["cat-file", "-t", "refs/tags/v1"])?, "tag");
+    assert_eq!(remote_tag("refs/tags/v0")?, base);
+    ensure!(!calls.exists(), "a tag creation needs no evaluator");
+
+    // A tag at a commit the remote main does not hold is refused.
+    let unreached = repo.commit_file("payload", "not yet on main")?;
+    git(repo.path(), &["tag", "v2"])?;
+    let output = push(&["origin", "refs/tags/v2:refs/tags/v2"])?;
+    ensure!(!output.status.success(), "an unreached tag must be refused");
+    ensure!(
+        output.stderr.contains("Brit reach refused") && output.stderr.contains("reachable"),
+        "{}",
+        output.stderr
+    );
+    assert_eq!(remote_tag("refs/tags/v2")?, "");
+
+    // Once main carries it, the same tag passes: the branch rule and the tag rule are separate.
+    let output = push(&["origin", "main:main"])?;
+    ensure!(output.status.success(), "branch update: {}", output.stderr);
+    git(repo.path(), &["fetch", "-q", "origin"])?;
+    let output = push(&["origin", "refs/tags/v2:refs/tags/v2"])?;
+    ensure!(output.status.success(), "now-reached tag: {}", output.stderr);
+    assert_eq!(remote_tag("refs/tags/v2")?, unreached);
+
+    // Moving an existing remote tag is refused by the adapter, even when forced.
+    let tagged = remote_tag("refs/tags/v1")?;
+    git(repo.path(), &["tag", "-f", "v1", "HEAD"])?;
+    let output = push(&["--force", "origin", "refs/tags/v1:refs/tags/v1"])?;
+    ensure!(!output.status.success(), "a tag move must be refused");
+    ensure!(
+        output.stderr.contains("Brit reach refused") && output.stderr.contains("existing tag"),
+        "{}",
+        output.stderr
+    );
+    assert_eq!(remote_tag("refs/tags/v1")?, tagged);
+    Ok(())
+}

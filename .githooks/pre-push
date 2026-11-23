@@ -9,12 +9,28 @@ oid_valid() {
 }
 oid_zero() { case "$1" in *[!0]*) return 1 ;; *) return 0 ;; esac; }
 
+remote_name=${1:-}
 count=0
+branches=0
+tags=''
+newline='
+'
 while read -r local_ref local_oid remote_ref remote_oid extra || [ -n "${local_ref:-}" ]; do
     count=$((count + 1))
-    [ "$count" -eq 1 ] || refuse 'multiple updates need a source-aware evaluator; push one checked-out branch at a time'
     [ -n "$remote_oid" ] && [ -z "$extra" ] || refuse 'malformed pre-push update'
     oid_valid "$local_oid" && oid_valid "$remote_oid" || refuse 'update object IDs must be full hexadecimal IDs'
+    # A release tag is judged by its own rule: created once, at a commit main already holds.
+    case "$remote_ref" in
+    refs/tags/*)
+        oid_zero "$local_oid" && refuse "tag deletion is outside this reach adapter: $remote_ref"
+        oid_zero "$remote_oid" || refuse "moving an existing tag is outside this reach adapter: $remote_ref"
+        [ "$local_ref" = "$remote_ref" ] || refuse "a tag must be pushed under its own name: $local_ref -> $remote_ref"
+        tags="$tags$local_oid $remote_ref$newline"
+        continue
+        ;;
+    esac
+    branches=$((branches + 1))
+    [ "$branches" -eq 1 ] || refuse 'multiple updates need a source-aware evaluator; push one checked-out branch at a time'
     oid_zero "$local_oid" && refuse 'branch deletion is outside this reach adapter'
     case "$local_ref" in refs/heads/*) ;; *) refuse 'only a named local branch is supported' ;; esac
     case "$remote_ref" in refs/heads/*) ;; *) refuse 'only a remote branch is supported' ;; esac
@@ -28,6 +44,25 @@ done
 root=$(git rev-parse --show-toplevel) || refuse 'a working tree is required'
 cd "$root"
 git cat-file -e HEAD:.githooks/pre-push 2>/dev/null || refuse 'commit the checked-in reach adapter before requesting reach'
+
+# Tags carry no new authority: their commit must already be on the reach-checked remote main.
+if [ -n "$tags" ]; then
+    case "$remote_name" in
+    ''|*/*|*:*) refuse 'a tag push must name a configured remote so its main can be read' ;;
+    esac
+    reached=$(git rev-parse --verify -q "refs/remotes/$remote_name/main^{commit}") ||
+        refuse "a tag push needs refs/remotes/$remote_name/main; fetch the remote's main first"
+    while read -r tag_oid tag_ref; do
+        [ -n "$tag_oid" ] || continue
+        peeled=$(git rev-parse --verify -q "$tag_oid^{commit}") || refuse "$tag_ref does not peel to a commit"
+        git merge-base --is-ancestor "$peeled" "$reached" ||
+            refuse "$tag_ref names $peeled, which is not reachable from refs/remotes/$remote_name/main; land it on main first"
+    done <<EOF
+$tags
+EOF
+fi
+# A push of tags alone needs no evaluator: nothing it names is new to the reach-checked main.
+[ "$branches" -ne 0 ] || exit 0
 
 check_source() {
     current_ref=$(git symbolic-ref -q HEAD) || refuse 'detached HEAD is outside this reach adapter'

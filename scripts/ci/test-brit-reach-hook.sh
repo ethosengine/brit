@@ -115,6 +115,30 @@ for flag in assume-unchanged skip-worktree; do
   git update-index --no-"$flag" .epr-meta/manifest.md
   git restore .epr-meta/manifest.md
 done
+git tag -a release -m release "$base"
+release=$(git rev-parse refs/tags/release)
+git tag unreached "$candidate"
+tag_tuple="refs/tags/release $release refs/tags/release $zero"
+reject "$tag_tuple" 'tag without a fetched remote main'
+git update-ref refs/remotes/origin/main "$base"
+rm -f "$REACH_TEST_CALLS"
+run_hook "$tag_tuple"
+test ! -e "$REACH_TEST_CALLS"
+echo 'passed: annotated tag creation at a reached commit needs no evaluator'
+reject "refs/tags/unreached $candidate refs/tags/unreached $zero" 'tag at an unreached commit'
+reject "refs/tags/release $release refs/tags/release $base" 'tag move'
+reject "refs/tags/release $zero refs/tags/release $release" 'tag deletion'
+reject "refs/tags/release $release refs/tags/renamed $zero" 'tag rename'
+if printf '%s' "$tag_tuple" | "$hook" "$fixture/remote.git" "$fixture/remote.git" > "$fixture/out" 2>&1; then
+  echo 'unexpected hook acceptance: tag push to a URL' >&2; exit 1
+fi
+echo 'passed: tag push to a URL'
+run_hook "$tag_tuple"$'\n'"$tuple"
+grep -q -- "--target" "$REACH_TEST_CALLS"
+echo 'passed: mixed tag and branch push judges each by its own rule'
+reject "$tag_tuple"$'\n'"$tuple"$'\n'"$tuple" 'two branches beside a tag'
+git update-ref -d refs/remotes/origin/main
+git tag -d release unreached > /dev/null
 other=$(printf 'unrelated\n' | git commit-tree "$(git rev-parse HEAD^{tree})")
 reject "refs/heads/main $candidate refs/heads/main $other" 'unrelated baseline'
 for mode in fail dirty untracked head branch baseline hidden; do
