@@ -7,7 +7,7 @@ repository = "https://github.com/GitoxideLabs/gitoxide"
 authors = ["Sebastian Thiel <sebastian.thiel@icloud.com>"]
 edition = "2024"
 license = "MIT OR Apache-2.0"
-version = "0.61.3"
+version = "0.61.4"
 # Rust 1.95 is required by the synchronization and hexadecimal dependencies.
 rust-version = "1.95"
 include = ["/src/**/*", "/build.rs", "/LICENSE-*", "/README.md"]
@@ -240,14 +240,14 @@ gitoxide-core-async-client = ["gitoxide-core/async-client", "futures-lite"]
 
 [dependencies]
 anyhow = "1.0.98"
-gitoxide-core = { version = "^0.64.3", path = "gitoxide-core", registry = "elohim" }
-gix = { version = "^0.90.2", path = "gix", registry = "elohim", default-features = false, features = [
+gitoxide-core = { version = "^0.64.4", path = "gitoxide-core", registry = "elohim" }
+gix = { version = "^0.90.3", path = "gix", registry = "elohim", default-features = false, features = [
     "error-print-location",
     # brit's commit-encoding range (`show`, `log`); gitoxide-core's own manifest stays upstream's.
     "encoding-legacy",
     "encoding-asian",
 ] }
-gix-tix = { version = "^0.6.2", path = "gix-tix", registry = "elohim", default-features = false, optional = true }
+gix-tix = { version = "^0.6.3", path = "gix-tix", registry = "elohim", default-features = false, optional = true }
 
 clap = { version = "4.5.42", features = ["derive", "cargo"] }
 clap_complete = "4.5.55"

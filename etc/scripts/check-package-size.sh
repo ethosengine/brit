@@ -60,4 +60,4 @@ echo 'in root: gitoxide CLI'
 (enter gix-packetline && indent cargo diet -n --package-size-limit 50KB)
 (enter gix && indent cargo diet -n --package-size-limit 700KB)
 (enter gix-transport && indent cargo diet -n --package-size-limit 150KB)
-(enter gitoxide-core && indent cargo diet -n --package-size-limit 225KB)
+(enter gitoxide-core && indent cargo diet -n --package-size-limit 525KB) # brit's first-party replay and submodule code lives here.

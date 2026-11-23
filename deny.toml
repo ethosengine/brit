@@ -13,6 +13,16 @@ unsound = "all"
 ignore = [
     { id = "RUSTSEC-2025-0052", reason = "`async-std` - unmaintained without replacement - needs some time to replace, but async version isn't too important right now" },
     { id = "RUSTSEC-2026-0441", reason = "`pin-utils` is transitive through `async-std` and test-only `nix`, with no maintained release; remove this exception when those dependencies stop using it" },
+    { id = "RUSTSEC-2026-0543", reason = "`chrono` is unmaintained and is used by `brit-build-ref` for RFC 3339 timestamps and by registry dependencies `rakia-core` and `elohim-epr`; remove when `brit-build-ref` moves to `jiff` and the registry dependencies drop `chrono`" },
+    { id = "RUSTSEC-2026-0574", reason = "`gix-hash` pulls in `faster-hex` 0.10.1, which requires `heapless` ^0.8 and uses only `heapless::String` and `heapless::Vec<u8>`; remove when the affected `gix-hash` versions move to a release using `heapless` >= 0.9.4" },
+    { id = "RUSTSEC-2026-0575", reason = "`gix-hash` pulls in `faster-hex` 0.10.1, which requires `heapless` ^0.8 and uses only `heapless::String` and `heapless::Vec<u8>`; remove when the affected `gix-hash` versions move to a release using `heapless` >= 0.9.4" },
+    { id = "RUSTSEC-2026-0576", reason = "`gix-hash` pulls in `faster-hex` 0.10.1, which requires `heapless` ^0.8 and uses only `heapless::String` and `heapless::Vec<u8>`; remove when the affected `gix-hash` versions move to a release using `heapless` >= 0.9.4" },
+    { id = "RUSTSEC-2026-0577", reason = "`gix-hash` pulls in `faster-hex` 0.10.1, which requires `heapless` ^0.8 and uses only `heapless::String` and `heapless::Vec<u8>`; remove when the affected `gix-hash` versions move to a release using `heapless` >= 0.9.4" },
+    { id = "RUSTSEC-2026-0578", reason = "`gix-hash` pulls in `faster-hex` 0.10.1, which requires `heapless` ^0.8 and uses only `heapless::String` and `heapless::Vec<u8>`; remove when the affected `gix-hash` versions move to a release using `heapless` >= 0.9.4" },
+    { id = "RUSTSEC-2026-0579", reason = "`gix-hash` pulls in `faster-hex` 0.10.1, which requires `heapless` ^0.8 and uses only `heapless::String` and `heapless::Vec<u8>`; remove when the affected `gix-hash` versions move to a release using `heapless` >= 0.9.4" },
+    { id = "RUSTSEC-2026-0580", reason = "`gix-hash` pulls in `faster-hex` 0.10.1, which requires `heapless` ^0.8 and uses only `heapless::String` and `heapless::Vec<u8>`; remove when the affected `gix-hash` versions move to a release using `heapless` >= 0.9.4" },
+    { id = "RUSTSEC-2026-0581", reason = "`gix-hash` pulls in `faster-hex` 0.10.1, which requires `heapless` ^0.8 and uses only `heapless::String` and `heapless::Vec<u8>`; remove when the affected `gix-hash` versions move to a release using `heapless` >= 0.9.4" },
+    { id = "RUSTSEC-2026-0582", reason = "`gix-hash` pulls in `faster-hex` 0.10.1, which requires `heapless` ^0.8 and uses only `heapless::String` and `heapless::Vec<u8>`; remove when the affected `gix-hash` versions move to a release using `heapless` >= 0.9.4" },
 ]
 
 

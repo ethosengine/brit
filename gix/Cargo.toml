@@ -5,7 +5,7 @@ name = "gix"
 repository = "https://github.com/GitoxideLabs/gitoxide"
 description = "Interact with git repositories just like git would"
 license = "MIT OR Apache-2.0"
-version = "0.90.2"
+version = "0.90.3"
 authors = ["Sebastian Thiel <sebastian.thiel@icloud.com>"]
 edition = "2024"
 include = ["/src/**/*", "/LICENSE-*"]
@@ -413,10 +413,10 @@ gix-validate = { version = "^0.13.2", path = "../gix-validate", registry = "eloh
 gix-sec = { version = "^0.16.2", path = "../gix-sec", registry = "elohim" }
 gix-date = { version = "^0.19.0", path = "../gix-date", registry = "elohim" }
 gix-refspec = { version = "^0.47.4", path = "../gix-refspec", registry = "elohim" }
-gix-filter = { version = "^0.36.5", path = "../gix-filter", registry = "elohim", optional = true }
+gix-filter = { version = "^0.36.6", path = "../gix-filter", registry = "elohim", optional = true }
 gix-dir = { version = "^0.32.1", path = "../gix-dir", registry = "elohim", optional = true }
 gix-notify = { version = "^0.1.0", path = "../gix-notify", registry = "elohim", optional = true }
-gix-fsmonitor = { version = "^0.1.1", path = "../gix-fsmonitor", registry = "elohim", optional = true }
+gix-fsmonitor = { version = "^0.1.2", path = "../gix-fsmonitor", registry = "elohim", optional = true }
 tokio = { version = "1.54.1", features = [
     "rt",
     "sync",
@@ -425,13 +425,13 @@ tokio = { version = "1.54.1", features = [
 ], optional = true }
 
 gix-config = { version = "^0.62.4", path = "../gix-config", registry = "elohim" }
-gix-odb = { version = "^0.87.1", path = "../gix-odb", registry = "elohim" }
+gix-odb = { version = "^0.87.2", path = "../gix-odb", registry = "elohim" }
 gix-zlib = { version = "^0.4.0", path = "../gix-zlib", registry = "elohim" }
 gix-hash = { version = "^0.28.4", path = "../gix-hash", registry = "elohim" }
 gix-shallow = { version = "^0.15.4", path = "../gix-shallow", registry = "elohim" }
 gix-object = { version = "^0.66.4", path = "../gix-object", registry = "elohim" }
 gix-actor = { version = "^0.45.0", path = "../gix-actor", registry = "elohim" }
-gix-pack = { version = "^0.77.1", path = "../gix-pack", registry = "elohim", default-features = false, features = [
+gix-pack = { version = "^0.77.2", path = "../gix-pack", registry = "elohim", default-features = false, features = [
     "object-cache-dynamic",
 ] }
 gix-revision = { version = "^0.52.1", path = "../gix-revision", registry = "elohim", default-features = false }
@@ -442,8 +442,8 @@ gix-path = { version = "^0.14.2", path = "../gix-path", registry = "elohim" }
 gix-quote = { version = "^0.10.4", path = "../gix-quote", registry = "elohim" }
 gix-url = { version = "^0.40.4", path = "../gix-url", registry = "elohim" }
 gix-traverse = { version = "^0.64.1", path = "../gix-traverse", registry = "elohim" }
-gix-diff = { version = "^0.70.1", path = "../gix-diff", registry = "elohim", default-features = false }
-gix-merge = { version = "^0.23.1", path = "../gix-merge", registry = "elohim", default-features = false, optional = true }
+gix-diff = { version = "^0.70.2", path = "../gix-diff", registry = "elohim", default-features = false }
+gix-merge = { version = "^0.23.2", path = "../gix-merge", registry = "elohim", default-features = false, optional = true }
 gix-mailmap = { version = "^0.36.2", path = "../gix-mailmap", registry = "elohim", optional = true }
 gix-note = { version = "^0.3.4", path = "../gix-note", registry = "elohim", optional = true }
 gix-trace = { version = "^0.3.2", path = "../gix-trace", registry = "elohim" }
@@ -455,23 +455,23 @@ gix-index = { version = "^0.58.1", path = "../gix-index", registry = "elohim", o
 gix-attributes = { version = "^0.37.5", path = "../gix-attributes", registry = "elohim", optional = true }
 gix-ignore = { version = "^0.24.4", path = "../gix-ignore", registry = "elohim", optional = true }
 gix-worktree = { version = "^0.59.1", path = "../gix-worktree", registry = "elohim", optional = true, default-features = false }
-gix-worktree-state = { version = "^0.37.1", path = "../gix-worktree-state", registry = "elohim", optional = true }
+gix-worktree-state = { version = "^0.37.2", path = "../gix-worktree-state", registry = "elohim", optional = true }
 gix-hashtable = { version = "^0.18.4", path = "../gix-hashtable", registry = "elohim" }
 gix-commitgraph = { version = "^0.42.1", path = "../gix-commitgraph", registry = "elohim" }
 gix-pathspec = { version = "^0.22.6", path = "../gix-pathspec", registry = "elohim", optional = true }
 gix-submodule = { version = "^0.36.6", path = "../gix-submodule", registry = "elohim", optional = true }
-gix-status = { version = "^0.37.1", path = "../gix-status", registry = "elohim", optional = true, features = [
+gix-status = { version = "^0.37.2", path = "../gix-status", registry = "elohim", optional = true, features = [
     "worktree-rewrites",
 ] }
 gix-command = { version = "^0.12.4", path = "../gix-command", registry = "elohim", optional = true }
 
-gix-worktree-stream = { version = "^0.39.1", path = "../gix-worktree-stream", registry = "elohim", optional = true }
-gix-archive = { version = "^0.39.1", path = "../gix-archive", registry = "elohim", default-features = false, optional = true }
-gix-blame = { version = "^0.20.1", path = "../gix-blame", registry = "elohim", optional = true }
+gix-worktree-stream = { version = "^0.39.2", path = "../gix-worktree-stream", registry = "elohim", optional = true }
+gix-archive = { version = "^0.39.2", path = "../gix-archive", registry = "elohim", default-features = false, optional = true }
+gix-blame = { version = "^0.20.2", path = "../gix-blame", registry = "elohim", optional = true }
 
 # For communication with remotes
-gix-protocol = { version = "^0.68.1", path = "../gix-protocol", registry = "elohim" }
-gix-transport = { version = "^0.62.1", path = "../gix-transport", registry = "elohim", optional = true }
+gix-protocol = { version = "^0.68.2", path = "../gix-protocol", registry = "elohim" }
+gix-transport = { version = "^0.62.2", path = "../gix-transport", registry = "elohim", optional = true }
 
 # Just to get the progress-tree feature
 prodash = { version = "31.0.1", optional = true, features = ["progress-tree"] }
@@ -507,7 +507,7 @@ gix = { path = ".", default-features = false, features = [
     "tree-error",
 ] }
 gix-hash = { version = "^0.28.4", path = "../gix-hash", registry = "elohim" }
-gix-pack = { version = "^0.77.1", path = "../gix-pack", registry = "elohim", default-features = false, features = [
+gix-pack = { version = "^0.77.2", path = "../gix-pack", registry = "elohim", default-features = false, features = [
     "generate",
     "streaming-input",
 ] }

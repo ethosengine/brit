@@ -2,7 +2,7 @@ lints.workspace = true
 
 [package]
 name = "gix-blame"
-version = "0.20.1"
+version = "0.20.2"
 repository = "https://github.com/GitoxideLabs/gitoxide"
 license = "MIT OR Apache-2.0"
 description = "A crate of the gitoxide project dedicated to implementing a 'blame' algorithm"
@@ -24,7 +24,7 @@ gix-commitgraph = { version = "^0.42.1", path = "../gix-commitgraph", registry =
 gix-revwalk = { version = "^0.38.1", path = "../gix-revwalk", registry = "elohim" }
 gix-trace = { version = "^0.3.2", path = "../gix-trace", registry = "elohim" }
 gix-date = { version = "^0.19.0", path = "../gix-date", registry = "elohim" }
-gix-diff = { version = "^0.70.1", path = "../gix-diff", registry = "elohim", default-features = false, features = [
+gix-diff = { version = "^0.70.2", path = "../gix-diff", registry = "elohim", default-features = false, features = [
     "blob",
 ] }
 gix-object = { version = "^0.66.4", path = "../gix-object", registry = "elohim" }

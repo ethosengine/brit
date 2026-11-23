@@ -2,7 +2,7 @@ lints.workspace = true
 
 [package]
 name = "gix-odb"
-version = "0.87.1"
+version = "0.87.2"
 repository = "https://github.com/GitoxideLabs/gitoxide"
 authors = ["Sebastian Thiel <sebastian.thiel@icloud.com>"]
 license = "MIT OR Apache-2.0"
@@ -35,7 +35,7 @@ gix-hash = { version = "^0.28.4", path = "../gix-hash", registry = "elohim" }
 gix-path = { version = "^0.14.2", path = "../gix-path", registry = "elohim" }
 gix-quote = { version = "^0.10.4", path = "../gix-quote", registry = "elohim" }
 gix-object = { version = "^0.66.4", path = "../gix-object", registry = "elohim", features = ["stream"] }
-gix-pack = { version = "^0.77.1", path = "../gix-pack", registry = "elohim", default-features = false }
+gix-pack = { version = "^0.77.2", path = "../gix-pack", registry = "elohim", default-features = false }
 gix-fs = { version = "^1.0.1", path = "../gix-fs", registry = "elohim", features = ["walkdir", "unstable"] }
 serde = { version = "1.0.114", optional = true, default-features = false, features = [
     "derive",

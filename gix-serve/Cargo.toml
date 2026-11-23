@@ -26,22 +26,22 @@ blocking-server = [
 [dependencies]
 gix-ref = { version = "^0.69.4", path = "../gix-ref", registry = "elohim" }
 gix-hash = { version = "^0.28.4", path = "../gix-hash", registry = "elohim" }
-gix-pack = { version = "^0.77.1", path = "../gix-pack", registry = "elohim", features = [
+gix-pack = { version = "^0.77.2", path = "../gix-pack", registry = "elohim", features = [
   "generate",
 ] }
 gix-features = { version = "^0.48.1", path = "../gix-features", registry = "elohim" }
-gix-protocol = { version = "^0.68.1", path = "../gix-protocol", registry = "elohim", optional = true }
-gix-transport = { version = "^0.62.1", path = "../gix-transport", registry = "elohim", optional = true }
+gix-protocol = { version = "^0.68.2", path = "../gix-protocol", registry = "elohim", optional = true }
+gix-transport = { version = "^0.62.2", path = "../gix-transport", registry = "elohim", optional = true }
 bstr = { version = "1.12.0", default-features = false, features = ["std"] }
 thiserror = "2.0.18"
 
 [dev-dependencies]
 gix-testtools = { path = "../tests/tools" }
-gix-odb = { version = "^0.87.1", path = "../gix-odb", registry = "elohim" }
-gix-packetline = { version = "^0.24.2", path = "../gix-packetline", registry = "elohim", features = [
+gix-odb = { version = "^0.87.2", path = "../gix-odb", registry = "elohim" }
+gix-packetline = { version = "^0.24.3", path = "../gix-packetline", registry = "elohim", features = [
   "blocking-io",
 ] }
-gix-transport = { version = "^0.62.1", path = "../gix-transport", registry = "elohim", features = [
+gix-transport = { version = "^0.62.2", path = "../gix-transport", registry = "elohim", features = [
   "blocking-server",
 ] }
 gix-serve = { path = ".", features = ["blocking-server"] }

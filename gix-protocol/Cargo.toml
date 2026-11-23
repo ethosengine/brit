@@ -2,7 +2,7 @@ lints.workspace = true
 
 [package]
 name = "gix-protocol"
-version = "0.68.1"
+version = "0.68.2"
 repository = "https://github.com/GitoxideLabs/gitoxide"
 license = "MIT OR Apache-2.0"
 description = "A crate of the gitoxide project for implementing git protocols"
@@ -75,10 +75,10 @@ path = "tests/async-protocol.rs"
 required-features = ["async-client"]
 
 [dependencies]
-gix-pack = { version = "^0.77.1", path = "../gix-pack", registry = "elohim", default-features = false, features = ["generate"] }
+gix-pack = { version = "^0.77.2", path = "../gix-pack", registry = "elohim", default-features = false, features = ["generate"] }
 thiserror = "2.0.18"
 gix-error = { version = "^0.5.3", path = "../gix-error", registry = "elohim" }
-gix-transport = { version = "^0.62.1", path = "../gix-transport", registry = "elohim" }
+gix-transport = { version = "^0.62.2", path = "../gix-transport", registry = "elohim" }
 gix-hash = { version = "^0.28.4", path = "../gix-hash", registry = "elohim" }
 gix-shallow = { version = "^0.15.4", path = "../gix-shallow", registry = "elohim" }
 gix-date = { version = "^0.19.0", path = "../gix-date", registry = "elohim" }
@@ -114,7 +114,7 @@ document-features = { version = "0.2.0", optional = true }
 gix-testtools = { path = "../tests/tools", default-features = false, features = ["sha1"] }
 insta = "1.46.3"
 async-std = { version = "1.9.0", features = ["attributes"] }
-gix-packetline = { path = "../gix-packetline", registry = "elohim", version = "^0.24.2" }
+gix-packetline = { path = "../gix-packetline", registry = "elohim", version = "^0.24.3" }
 gix-protocol = { path = "../gix-protocol", features = ["sha1"] }
 
 [package.metadata.docs.rs]
