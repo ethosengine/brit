@@ -947,6 +947,8 @@ mod tests {
             &["brit", "commit", "describe"],
             &["brit", "submodule", "list"],
             &["brit", "config", "fmt"],
+            &["brit", "config", "set", "a.b", "c"],
+            &["brit", "config", "unset", "a.b"],
             &["brit", "build", "baseline", "write", "p", "HEAD"],
             &["brit", "build", "baseline", "migrate", "x.json"],
         ] {
