@@ -102,18 +102,32 @@ exists.
   does with the file unchanged; a held `config.lock` refuses `set` and `unset`
   with config and lock untouched. `edit_local_config` moved to
   `gitoxide-core/src/repository/config.rs` and is shared with `branch.rs`.
-- [ ] **3. `brit rebase --status` advises only what `ready-final` allows.**
+- [x] **3. `brit rebase --status` advises only what `ready-final` allows.**
   (S) The catch-all at `gitoxide-core/src/repository/replay/journal.rs:4602`
   offers `--abort`, which a final decision cannot take (`:4530`). *Done when:*
   a status test in the `ready-final` state names `--continue` and not
   `--abort`.
-- [ ] **4. A kill at `replay-transition-directory-created` heals without
+  **Measured 2026-11-22:** with the final decision durable, `--status` now
+  prints only the pending-final line; the catch-all is suppressed for it
+  (`public_status_names_the_cure_for_the_decision_actually_pending` asserts no
+  `--abort` in `ready-final`). A `ready-final` without a durable decision keeps
+  the catch-all, because `--abort` is still accepted there (`abort()` admits
+  that phase).
+- [x] **4. A kill at `replay-transition-directory-created` heals without
   `--retire`.** (S) The staging directory is created before its `owner` file
   (`journal.rs:3754-3761`); a kill between them leaves an owner-less directory
   that the next run refuses as foreign (`:3746`). Treat an empty, owner-less,
   0700 directory owned by this uid as torn and remove it; anything else still
   refuses. *Done when:* a kill fixture at that checkpoint resumes, and a
   planted non-empty or foreign-owned directory still refuses.
+  **Measured 2026-11-22:** before the fix the resume failed with a bare
+  `No such file or directory` (the `owner` lookup's `?` at `journal.rs:3750`
+  escaped the `ensure!`). Now an empty, real, mode-0700 directory owned by the
+  journal's owner and the effective uid is removed with `remove_dir` and
+  recreated; `public_kill_after_staging_directory_creation_heals_and_planted_directories_refuse`
+  kills there, continues and publishes, and refuses a planted member, mode
+  0755 and a symlink (the last by the scratch-member guard), keeping each. A
+  foreign uid is not exercised: the test cannot `chown` without root.
 - [ ] **5. A changed author or committer identity does not refuse recovery.**
   (M) The policy digest hashes the whole config snapshot
   (`replay/hooks.rs:10-47`, compared at `journal.rs:704` and `:4340`), which

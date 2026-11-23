@@ -3742,12 +3742,28 @@ impl Session {
         )
         .then(switch::payload::Recovery::enter);
         let owner = serde_json::to_vec(&(decision.nonce.as_str(), decision.ordinal, decision.before.as_str()))?;
+        // A kill between creating the directory and writing its `owner` (at
+        // `replay-transition-directory-created`) leaves exactly what the
+        // creation below makes: an empty, real directory, mode 0700, owned by
+        // the journal's owner and this process. Only that is torn and removed;
+        // `remove_dir` refuses if anything appeared in it meanwhile. Anything
+        // else at this path stays foreign and is refused untouched.
+        if let Ok(metadata) = fs::symlink_metadata(&staging)
+            && metadata.is_dir()
+            && metadata.permissions().mode() & 0o7777 == 0o700
+            && metadata.uid() == fs::metadata(&self.directory)?.uid()
+            && metadata.uid() == rustix::process::geteuid().as_raw()
+            && fs::read_dir(&staging)?.next().is_none()
+        {
+            fs::remove_dir(&staging)?;
+            switch::sync_dir(&self.directory)?;
+        }
         match fs::symlink_metadata(&staging) {
             Ok(metadata) => ensure!(
                 metadata.is_dir()
                     && metadata.permissions().mode().trailing_zeros() >= 6
                     && metadata.uid() == fs::metadata(&self.directory)?.uid()
-                    && fs::symlink_metadata(staging.join("owner"))?.is_file()
+                    && fs::symlink_metadata(staging.join("owner")).is_ok_and(|owner| owner.is_file())
                     && fs::read(staging.join("owner"))? == owner,
                 "foreign replay transition staging directory"
             ),
@@ -4510,6 +4526,9 @@ impl Session {
             "Original HEAD: {}; upstream: {}",
             self.state.original, self.state.upstream
         )?;
+        // A durable final decision names its own cure; the catch-all below
+        // would otherwise offer `--abort`, which a final decision refuses.
+        let mut final_pending = false;
         if self.has_pending_decision() {
             let path = self
                 .directory
@@ -4523,6 +4542,7 @@ impl Session {
                 Ok(None) => None,
                 Err(_) => Some(None),
             });
+            final_pending = matches!(kind, Some(Some(super::transition::Kind::Final)));
             let line = match kind {
                 None => "An interrupted command left its decision record incomplete; it never became durable, and \
                          the next --continue or --abort discards it and goes on from the state above."
@@ -4619,6 +4639,7 @@ impl Session {
             _ => None,
         };
         if let Some(cure) = cure
+            && !final_pending
             && !(self.phase() == "prepared" && self.directory.join("pre-rebase").try_exists()?)
             && !(self.phase() == "final-published" && self.directory.join("post-rewrite").try_exists()?)
         {
