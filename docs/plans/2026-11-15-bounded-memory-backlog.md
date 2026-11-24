@@ -183,6 +183,22 @@ requirements below, as they do for the other affected command families.
 - [ ] No value-only config read: `brit config <key>` prints the filtered section (e.g. `[core]` with unrelated entries) and has no exit-code contract, so scripts still need `git config --get core.hooksPath`; add `brit config get <key>` (prints the value, exit 1 when unset) beside 0.3.3's `set`/`unset` (integration session report, 2026-11-23).
 - [ ] No `brit grep <rev> -- <pattern>` and no `brit log -S <string>` pickaxe: tracing a hook change needed `git grep <rev>` and `git log -S` (same report).
 
+Peer feedback round, 2026-11-24 (integration session on ethosengine with installed 0.3.1; shem with 0.3.1 until 03:01Z, then 0.3.4; laptop with 0.3.3). Items already listed above (cherry-pick, gitlink staging, `config get`, `grep <rev>`, `log -S`, shallow `pull`, the feedback verb check) are not repeated here.
+
+- [ ] Most commands on all three devices print `brit: feedback capture gap: epr feedback: invalid feedback: feedback capacity format requires explicit migrate --legacy-writers-quiesced`. An agent reads it as a failure. Print it at most once per session or checkout, and name the one command that cures it.
+- [ ] `brit rev-parse` and `brit ls-remote` print `brit: …` lines on stdout beside the answer, so every scripted use needs `grep -v '^brit:'`. Diagnostics belong on stderr.
+- [ ] `brit status --no-write` writes the ANSI erase-line `\x1b[2K` into piped output, so a naive parse read the first path as `M`. Suppress progress control codes when stdout is not a terminal.
+- [ ] Missing read verbs that sent agents to Git: `ls-tree`, `notes show` (for `refs/notes/brit/build/*`), `commit-tree`, `branch --contains`, `branch --show-current`, `remote -v` / `remote get-url`.
+- [ ] Inside a submodule or a worktree's submodule, 0.3.1 refuses fetch, `checkout --detach`, ls-remote and `remote get-url` with "Selected nested repositories and submodules require Git". Re-test on 0.3.4, now that `submodule update --init` exists.
+- [ ] `brit pull --ff-only` refuses when a submodule pin moved; shem uses fetch plus `merge --ff-only`.
+- [ ] `brit push origin <sha>:<ref>` and `HEAD:<ref>` are refused with "only a named local branch is supported", and the message does not say how to fix it. Suggest `brit branch create <name> <rev>` then `push origin <name>:<ref>`, or accept a revision.
+- [ ] A refused pre-push prints only `pre-push hook rejected the operation (exit status: 1)`; the hook's own `REFUSED` line is above it and easy to lose. Repeat the hook's last `REFUSED`/`error` line in brit's refusal.
+- [ ] `brit diff` and `diff --stat` printed nothing when shem wanted one committed change's patch for one file, and shem fell back to `git show`. Add a `brit show <commit> -- <path>` example to `diff --help` and `show --help`.
+- [ ] A worktree's submodule has the main checkout's local submodule as its `origin`, so ls-remote there reads a stale local copy. That misreport said 0.3.4 was missing from GitHub when it was not. When origin is a local path, brit could add a note such as "origin is a local path; the forge may differ".
+- [ ] The device follow of brit reads the main checkout's gitlink, so a main checkout on an old branch never gets a newer brit. ethosengine stayed on 0.3.1, and the laptop's follow refused with "brit pin does not descend from landed head". This is the device-runtime side of "installed lags released" above; follow should read the published ref (`origin/dev:elohim/brit`).
+- [ ] The landing push still uses the Git exception (send-pack after a green hook) on every device. Re-test `brit push` for the `dev` landing on 0.3.4 and retire the exception if it holds.
+- Worked well on every device: `worktree add`, add/commit (including `-r <worktree>` and a gitlink staged by `git add`), `show <rev>:<path>`, `merge-base --is-ancestor`, single-ref fetch, ls-remote of a URL, `log` and `status --no-write`.
+
 ## Usage feedback across commands
 
 - [ ] `Tests pass` can report success after a hosted macOS matrix member is cancelled without acquiring a runner (CI 44117076422 and 44117418305, attempt 2); expose that missing coverage while distinguishing provider capacity from code/test failures.
