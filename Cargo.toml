@@ -246,6 +246,7 @@ gix = { version = "^0.90.3", path = "gix", registry = "elohim", default-features
     # brit's commit-encoding range (`show`, `log`); gitoxide-core's own manifest stays upstream's.
     "encoding-legacy",
     "encoding-asian",
+    "notes",
 ] }
 gix-tix = { version = "^0.6.3", path = "gix-tix", registry = "elohim", default-features = false, optional = true }
 

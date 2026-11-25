@@ -180,8 +180,10 @@ pub use function::push;
 pub(crate) mod function {
     use std::io::Write as _;
 
-    use super::Options;
     use anyhow::Context as _;
+
+    use super::Options;
+    use crate::repository::notes_refspec;
 
     /// Mirror git's `die_for_incompatible_opt4` in `vendor/git/parse-options.c`:
     /// given up to four `(predicate, name)` pairs, if two or more predicates are
@@ -245,6 +247,19 @@ pub(crate) mod function {
         P: gix::NestedProgress,
         P::SubProgress: 'static,
     {
+        if notes_refspec::single(&opts.ref_specs)?.is_some() {
+            anyhow::ensure!(
+                !opts.force
+                    && opts.force_with_lease.is_none()
+                    && !opts.delete
+                    && !opts.prune
+                    && !opts.tags
+                    && !opts.follow_tags
+                    && !opts.all
+                    && !opts.mirror,
+                notes_refspec::ONE_REF_FORM
+            );
+        }
         // Mirror git_config_bool's die shape (vendor/git/config.c):
         //     fatal: bad boolean config value '<v>' for '<key-lower>'
         // Keys come in as mixed-case (push.followTags) but git lowercases
@@ -708,6 +723,10 @@ pub(crate) mod function {
             } else {
                 effective_specs
             };
+            let notes = notes_refspec::single(&specs_to_send)?;
+            if notes.is_some() {
+                anyhow::ensure!(!opts.force && !opts.prune, notes_refspec::ONE_REF_FORM);
+            }
             let conn = remote.connect(gix::remote::Direction::Push)?;
             let prepare = conn.prepare_push(gix::progress::Discard)?;
             let push_opt_bytes: Vec<&[u8]> = opts.push_options.iter().map(String::as_bytes).collect();
@@ -734,19 +753,40 @@ pub(crate) mod function {
                     gix::progress::Discard,
                     &std::sync::atomic::AtomicBool::new(false),
                     |updates| {
+                        if let Some(name) = &notes {
+                            let [update] = updates else {
+                                return Err(std::io::Error::other(notes_refspec::ONE_REF_FORM).into());
+                            };
+                            if update.local != name.as_bstr() || update.remote != name.as_bstr() || update.new_oid.is_null() {
+                                return Err(std::io::Error::other(notes_refspec::ONE_REF_FORM).into());
+                            }
+                            let mut actual = repo.clone();
+                            actual.objects.ignore_replacements = true;
+                            if actual.find_header(update.new_oid)?.kind() != gix::object::Kind::Commit {
+                                return Err(std::io::Error::other(format!("notes ref {name} must point to a commit")).into());
+                            }
+                            if !update.old_oid.is_null() && update.old_oid != update.new_oid
+                                && !notes_refspec::is_fast_forward(&actual, update.old_oid, update.new_oid).unwrap_or(false)
+                            {
+                                return Err(std::io::Error::other(format!("refusing unverified fast-forward update of {name}"))
+                                    .into());
+                            }
+                        } else if updates.iter().any(|update| notes_refspec::is_notes(update.remote.as_bstr()))
+                        {
+                            return Err(std::io::Error::other(notes_refspec::ONE_REF_FORM).into());
+                        }
                         // Authorize against this connection's advertisement, including no-ops.
                         // Keep its old OID in the command: receive-pack enforces the later race.
                         if let Some(lease) = &lease {
                             lease.validate_updates(updates)?;
                         }
                         // Hook bypass and global force never bypass a lease refusal.
-                        if !opts.force && lease.is_none() {
+                        if notes.is_none() && !opts.force && lease.is_none() {
                             for update in updates.iter().filter(|update| update.old_oid != update.new_oid) {
                                 if update.old_oid.is_null() || update.new_oid.is_null() {
                                     continue;
                                 }
-                                // Git's rule: an existing tag never moves without force; any other
-                                // ref (branches, notes) may fast-forward from commit to commit.
+                                // An existing tag only moves with force.
                                 if update.remote.starts_with(b"refs/tags/") {
                                     return Err(std::io::Error::other(format!(
                                         "refusing to update existing tag {}; tags move only with --force",

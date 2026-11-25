@@ -302,8 +302,12 @@ pub(crate) fn pull_receive(
 pub(crate) mod function {
     use gix::{
         Result,
-        error::{ResultExt, bail},
+        error::{OptionExt, ResultExt, bail, validation},
         prelude::ObjectIdExt,
+        refs::{
+            Target,
+            transaction::{PreviousValue, RefEdit},
+        },
         refspec::match_group::validate::Fix,
         remote::fetch::{Status, refs::update::TypeChange},
     };
@@ -314,7 +318,7 @@ pub(crate) mod function {
     };
 
     use super::Options;
-    use crate::OutputFormat;
+    use crate::{OutputFormat, repository::notes_refspec};
 
     pub fn fetch<P>(
         repo: gix::Repository,
@@ -358,9 +362,47 @@ pub(crate) mod function {
             },
         };
         let first_positional_is_refspec = !explicit_remote && remote.is_none() && !ref_specs.is_empty();
-        let mut remote = crate::repository::remote::by_name_or_url(&repo, remote.as_deref())?;
+        let remote_selector = remote.as_deref();
+        let mut remote = crate::repository::remote::by_name_or_url(&repo, remote_selector)?;
         // Read the configured mapping before the command line replaces it.
         let configured = remote.refspecs(gix::remote::Direction::Fetch).to_vec();
+        let configured_specs;
+        let effective_specs = if ref_specs.is_empty() {
+            configured_specs = configured
+                .iter()
+                .map(|spec| spec.to_ref().to_bstring())
+                .collect::<Vec<_>>();
+            &configured_specs
+        } else {
+            &ref_specs
+        };
+        if let Some(name) = notes_refspec::single(effective_specs)? {
+            if !matches!(shallow, gix::remote::fetch::Shallow::NoChange) {
+                bail!(validation(
+                    "notes fetch requires complete history and accepts no depth options"
+                ));
+            }
+            let res = fetch_notes(&repo, remote_selector, name.as_ref(), dry_run, &mut progress)?;
+            if handshake_info {
+                writeln!(out, "Handshake Information\n\t{:?}", res.handshake).or_error()?;
+            }
+            let negotiate = match &res.status {
+                Status::Change { negotiate, .. } => Some(negotiate),
+                Status::NoPackReceived { negotiate, .. } => negotiate.as_ref(),
+            };
+            if negotiation_info {
+                print_negotiate_info(&mut out, negotiate).or_error()?;
+            }
+            if let Some((negotiate, path)) = negotiate.zip(open_negotiation_graph) {
+                render_graph(&repo, &negotiate.graph, &path, progress)?;
+            }
+            if dry_run {
+                writeln!(out, "DRY-RUN: {name} can be fetched without changing the repository.").or_error()?;
+            } else {
+                writeln!(out, "{name} -> {name}").or_error()?;
+            }
+            return Ok(());
+        }
         let named = remote.name().is_some();
         let remote_display = remote.name().map_or_else(
             || {
@@ -438,6 +480,14 @@ pub(crate) mod function {
                 ensure_matched(prepared.ref_map())?;
             }
         }
+        if prepared.ref_map().mappings.iter().any(|mapping| {
+            mapping
+                .local
+                .as_ref()
+                .is_some_and(|name| notes_refspec::is_notes(name.as_bstr()))
+        }) {
+            bail!(validation(notes_refspec::ONE_REF_FORM));
+        }
         let res: gix::remote::fetch::Outcome = prepared
             .with_dry_run(dry_run)
             .with_shallow(shallow)
@@ -505,6 +555,145 @@ pub(crate) mod function {
             )));
         }
         Ok(())
+    }
+
+    fn fetch_notes<P: gix::NestedProgress>(
+        repo: &gix::Repository,
+        remote_selector: Option<&str>,
+        name: &gix::refs::FullNameRef,
+        dry_run: bool,
+        progress: P,
+    ) -> Result<gix::remote::fetch::Outcome>
+    where
+        P::SubProgress: 'static,
+    {
+        use std::fs;
+
+        use gix::{bstr::ByteVec, object::Kind, remote::fetch::refmap::Source};
+
+        let local = repo
+            .try_find_reference(name.as_bstr())?
+            .filter(|reference| reference.name() == name);
+        let old_commit_id = local
+            .as_ref()
+            .map(|reference| {
+                reference
+                    .try_id()
+                    .ok_or_raise(|| validation(format!("notes ref {name} must be a direct reference")))
+            })
+            .transpose()?;
+
+        // Keep received packs out of the live object store until ancestry has been verified.
+        // The original store remains available for negotiation and thin-pack bases.
+        let objects_dir = repo.objects.store_ref().path();
+        let quarantine = tempfile::tempdir().or_error()?;
+        let info = quarantine.path().join("info");
+        fs::create_dir(&info).or_error()?;
+        fs::create_dir(quarantine.path().join("pack")).or_error()?;
+        let absolute = std::path::absolute(objects_dir).or_error()?;
+        let path = gix::path::os_str_into_bstr(absolute.as_os_str())?;
+        let mut alternate = gix::quote::ansi_c::quote(path).into_owned();
+        alternate.push_byte(b'\n');
+        fs::write(info.join("alternates"), alternate).or_error()?;
+        let mut isolated = repo.clone();
+        isolated.objects = gix::odb::at_opts(
+            quarantine.path().to_owned(),
+            repo.object_hash(),
+            None,
+            gix::odb::store::init::Options {
+                alloc_limit_bytes: repo.allocation_limit(),
+                ..Default::default()
+            },
+        )
+        .or_error()?
+        .into();
+        isolated
+            .config_snapshot_mut()
+            .set_value(&gix::config::tree::Clone::REJECT_SHALLOW, "true")?;
+        let mut remote = crate::repository::remote::by_name_or_url(&isolated, remote_selector)?;
+        remote.replace_refspecs([name.as_bstr()], gix::remote::Direction::Fetch)?;
+        let remote = remote.with_fetch_tags(gix::remote::fetch::Tags::None);
+        let prepared = remote
+            .connect(gix::remote::Direction::Fetch)?
+            .prepare_fetch(gix::progress::Discard, Default::default())?;
+        let new_commit_id = match prepared.ref_map().mappings.as_slice() {
+            [mapping] if mapping.local.is_none() => match &mapping.remote {
+                Source::Ref(reference) if reference.unpack().0 == name.as_bstr() => {
+                    reference.unpack().1.map(ToOwned::to_owned)
+                }
+                _ => None,
+            },
+            _ => None,
+        }
+        .ok_or_raise(|| validation(format!("couldn't find remote ref {name}")))?;
+        let res = prepared.receive(progress, &gix::interrupt::IS_INTERRUPTED)?;
+        if isolated.find_header(new_commit_id)?.kind() != Kind::Commit {
+            bail!(validation(format!("notes ref {name} must point to a commit")));
+        }
+        if let Some(old_commit_id) = old_commit_id {
+            if old_commit_id == new_commit_id {
+                return Ok(res);
+            }
+            if !notes_refspec::is_fast_forward(&isolated, old_commit_id.detach(), new_commit_id)? {
+                bail!(validation(format!("refusing non-fast-forward update of {name}")));
+            }
+        }
+        if dry_run {
+            return Ok(res);
+        }
+        let expected = old_commit_id.map_or(PreviousValue::MustNotExist, |id| {
+            PreviousValue::MustExistAndMatch(Target::Object(id.detach()))
+        });
+        // Check again under Git's ref lock before promoting any objects.
+        let config = repo.config_snapshot();
+        let file_timeout = gix::config::tree::Core::FILES_REF_LOCK_TIMEOUT
+            .try_into_lock_timeout(config.try_integer("core.filesRefLockTimeout"))?
+            .unwrap_or(gix::lock::acquire::Fail::AfterDurationWithBackoff(
+                std::time::Duration::from_millis(100),
+            ));
+        let packed_timeout = gix::config::tree::Core::PACKED_REFS_TIMEOUT
+            .try_into_lock_timeout(config.try_integer("core.packedRefsTimeout"))?
+            .unwrap_or(gix::lock::acquire::Fail::AfterDurationWithBackoff(
+                std::time::Duration::from_secs(1),
+            ));
+        let committer = repo.committer().transpose()?;
+        let edit = RefEdit::update(name.to_owned(), new_commit_id, expected, "fetch: update notes");
+        let transaction = repo.refs.transaction().prepare([edit], file_timeout, packed_timeout)?;
+        let mut keep = None;
+        if let Status::Change { write_pack_bundle, .. } = &res.status {
+            let pack_dir = objects_dir.join("pack");
+            fs::create_dir_all(&pack_dir).or_error()?;
+            if let Some(file_name) = write_pack_bundle
+                .keep_path
+                .as_deref()
+                .and_then(std::path::Path::file_name)
+            {
+                match gix::tempfile::mark_at(
+                    pack_dir.join(file_name),
+                    gix::tempfile::ContainingDirectory::Exists,
+                    gix::tempfile::AutoRemove::Tempfile,
+                ) {
+                    Ok(marker) => keep = Some(marker),
+                    Err(err) if err.kind() == std::io::ErrorKind::AlreadyExists => {}
+                    Err(err) => return Err(err).or_error(),
+                }
+            }
+            for path in write_pack_bundle.data_path.iter().chain(&write_pack_bundle.index_path) {
+                let file_name = path
+                    .file_name()
+                    .ok_or_raise(|| validation("received pack path has no file name"))?;
+                let mut file = tempfile::NamedTempFile::new_in(&pack_dir).or_error()?;
+                std::io::copy(&mut fs::File::open(path).or_error()?, file.as_file_mut()).or_error()?;
+                if let Err(err) = file.persist_noclobber(pack_dir.join(file_name))
+                    && err.error.kind() != std::io::ErrorKind::AlreadyExists
+                {
+                    return Err(err.error).or_error();
+                }
+            }
+        }
+        transaction.commit(committer)?;
+        drop(keep);
+        Ok(res)
     }
 
     /// Every local ref whose update was refused, as `<ref> (<reason>)`. Git exits 1 for these.

@@ -357,6 +357,7 @@ const READ_ONLY_COMMANDS: &[&[&str]] = &[
     &["rev-list"],
     &["log"],
     &["cat"],
+    &["notes", "show"],
     &["blame"],
     &["diff"],
     &["diff", "tree"],
@@ -516,7 +517,7 @@ fn run(capture: &mut feedback::Capture, read_only: &mut bool) -> Result<()> {
         return run_build(cli.command);
     }
 
-    // Locate submodule after global options before checking whether the invocation needs a bridge.
+    // Locate the command after global options before checking whether it needs a bridge.
     let command = public_command();
     let prefix = command_prefix(&args, &command);
     let command_index = prefix.as_ref().map_or(1, |(index, _)| *index);

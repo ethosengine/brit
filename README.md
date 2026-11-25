@@ -77,7 +77,8 @@ global options in the suggested Git command.
 
 | Owned by `brit` (daily verbs; `brit --help` lists all) | Bridged to stock Git (exit 2) |
 | --- | --- |
-| `status`, `diff`, `show`, `log`, `add`, `restore`, `switch`, `commit`, `tag`, `branch`, `merge`, `rebase`, `clone`, `fetch`, `pull`, `push`, `worktree` | `reset`, `rm`, `mv`, `stash`, `cherry-pick`, `revert`, `checkout`, `notes` |
+| `status`, `diff`, `show`, `log`, `add`, `restore`, `switch`, `commit`, `tag`, `branch`, `merge`, `rebase`, `clone`, `fetch`, `pull`, `push`, `worktree` | `reset`, `rm`, `mv`, `stash`, `cherry-pick`, `revert`, `checkout` |
+| `notes show [--ref <notes-ref>] [<object>]` | `notes add`, `notes list`, and other notes verbs |
 | `submodule list`, `submodule update [--init] <path>...` | `submodule init`, `submodule sync`, pathless updates and options such as `--merge` |
 | `build`, `snapshot`, `context`, `integrate`, `verify` | |
 
@@ -85,6 +86,10 @@ global options in the suggested Git command.
 each named submodule at the gitlink recorded in the superproject's index. Brit
 refuses unknown paths, local modifications, `--recursive` and `--remote`.
 Presets without blocking transport bridge submodule updates to Git.
+
+Transfer a single notes ref with `brit fetch <remote> refs/notes/X:refs/notes/X`
+or `brit push <remote> refs/notes/X:refs/notes/X`. Brit accepts creation and
+fast-forward updates and refuses wildcard notes refspecs.
 
 Two milestones remain distinct:
 
