@@ -321,6 +321,16 @@ pub(crate) fn changes(
     new: Option<ObjectId>,
     filter: &PathFilter,
 ) -> Result<Vec<Change>> {
+    changes_matching(repo, old, new, |path, gitlink| filter.matches(path, gitlink))
+}
+
+/// Collect changed file pairs passing a repository-relative path predicate.
+pub(in crate::repository) fn changes_matching(
+    repo: &gix::Repository,
+    old: Option<ObjectId>,
+    new: Option<ObjectId>,
+    mut includes: impl FnMut(&BStr, bool) -> bool,
+) -> Result<Vec<Change>> {
     use gix::{
         diff::tree::recorder::Change as TreeChange,
         objs::find::{Buffer, Source as _},
@@ -373,7 +383,7 @@ pub(crate) fn changes(
         .into_iter()
         .filter(|(path, (old, new))| {
             let gitlink = old.iter().chain(new).any(|(mode, _)| *mode == GITLINK);
-            filter.matches(path.as_bstr(), gitlink)
+            includes(path.as_bstr(), gitlink)
         })
         .map(|(path, (old, new))| Change { path, old, new })
         .collect())

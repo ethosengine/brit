@@ -44,6 +44,7 @@ pub use fetch::function::fetch;
 pub mod commitgraph;
 mod fsck;
 pub use fsck::function as fsck;
+pub mod grep;
 pub mod index;
 pub mod log;
 pub mod mailmap;
@@ -53,6 +54,7 @@ pub use merge_base::merge_base;
 pub mod fsmonitor;
 pub mod merge;
 pub mod odb;
+mod pickaxe;
 #[cfg(feature = "blocking-client")]
 pub mod pull;
 pub mod remote;

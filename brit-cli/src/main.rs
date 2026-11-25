@@ -325,10 +325,15 @@ fn normalize_log_counts(args: &mut [std::ffi::OsString], index: usize) {
     // Familiar bounded history spelling, scoped to log and before `--`. Never reinterpret
     // a path after the option terminator or a numeric argument to another command. Let
     // the real parser identify log after root options; a repository named "log" is not it.
+    let mut takes_value = false;
     for arg in args.iter_mut().skip(index + 1) {
+        if std::mem::take(&mut takes_value) {
+            continue;
+        }
         if arg == "--" {
             break;
         }
+        takes_value = matches!(arg.to_str(), Some("-S" | "-n" | "--max-count" | "--sort"));
         if let Some(count) = arg
             .to_str()
             .and_then(|s| s.strip_prefix('-'))
@@ -356,6 +361,7 @@ const READ_ONLY_COMMANDS: &[&[&str]] = &[
     &["merge-base"],
     &["rev-list"],
     &["log"],
+    &["grep"],
     &["cat"],
     &["blame"],
     &["diff"],

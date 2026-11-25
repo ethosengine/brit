@@ -51,6 +51,17 @@ published libraries. The old invocation name `rakia` has a deprecated
 compatibility path, but installation does not require renaming binaries or
 replacing a standalone Rakia installation.
 
+### Search committed content
+
+Use `brit grep <pattern> <rev> [-- <pathspec>…]` to search a revision without
+reading working files. `brit grep <rev> -- <pattern>` also works. Add `-n` for
+line numbers, `-i` to ignore case, `-l` for file names, `-F` for literal
+patterns or `-E` for extended regular expressions.
+
+Use `brit log --oneline -S <string> [<rev>] [-- <pathspec>…]` to find commits
+that change the number of occurrences of a literal string in a file. Moving
+the string within a file preserves the count.
+
 ### Not yet a drop-in daily driver
 
 Command names are not a promise of Git porcelain parity. In particular, current
