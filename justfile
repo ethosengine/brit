@@ -204,7 +204,7 @@ sbom *args:
 sbom-test:
     cargo test --locked -p gix-testtools --features sha1,sbom --test sbom -- --include-ignored
 
-# Run API-check regressions, including release comparisons (requires Rust 1.99 and cargo-semver-checks 0.51+)
+# Run API-check regressions, including release comparisons (requires Rust 1.100 and cargo-semver-checks 0.51+)
 [group('Tests')]
 check-api:
     cargo test --locked -p internal-tools --test check_api -- --include-ignored

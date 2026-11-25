@@ -51,4 +51,4 @@ gix-testtools = { path = "../tools", default-features = false, features = ["sha1
 
 [package.metadata.qa]
 api-checker = true
-api-toolchain = "1.99.0"
+api-toolchain = "1.100.0"
