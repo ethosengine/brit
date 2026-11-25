@@ -7,8 +7,8 @@ for `Tests pass`, deferred as visible debt, replaced by a first-party job, or di
 A planned job the contract does not name is refused, so a leg that appears upstream
 cannot start or stop gating Brit without a recorded decision.
 
-This reads the planner's `key=value` output lines and writes `matrix`, `plan` and
-`downstream` plus `deferred`. `matrix` holds only the required jobs, which `Tests pass`
+This reads the planner's `key=value` output lines and writes the governed matrices,
+execution plan and diagnostic scope. `matrix` holds the required jobs, which `Tests pass`
 waits for; `deferred` holds the deferred ones, which a job outside that gate runs, so a
 slow leg that cannot fail the gate cannot delay its verdict either. `deferred` is empty
 when no deferred job is planned, because GitHub refuses an empty matrix. It runs no
@@ -27,7 +27,7 @@ PLANNED_JOB = 'run'
 CONSUMER_JOB = 'downstream'
 # Windows limits one environment variable to 32,767 characters; the plan travels in one.
 MAX_PLAN_CHARACTERS = 32_000
-OUTPUTS = ('matrix', 'deferred', 'plan', 'downstream')
+OUTPUTS = ('matrix', 'deferred', 'plan', 'downstream', 'narrowed')
 
 
 class PolicyError(ValueError):
@@ -67,7 +67,7 @@ def retarget(row, runners):
     return moved
 
 
-def apply(marker, rows, mode):
+def apply(marker, rows, mode, *, narrowed=False, explicit_platforms=False):
     """Return the jobs to run and a report of what happened to every planned job."""
     if mode not in ('fast', 'exhaustive'):
         raise PolicyError(f'unknown planner mode {mode!r}')
@@ -76,27 +76,29 @@ def apply(marker, rows, mode):
     issues, kept, seen = [], [], set()
     report = {kind: [] for kind in classes}
     for row in rows:
-        row = retarget(row, runners)
-        name = row['id']
-        if name in seen:
+        governed = retarget(row, runners)
+        if not explicit_platforms:
+            row = governed
+        name = governed['id']
+        if row['id'] in seen:
             issues.append(f'{name}: planned more than once after platform substitution')
             continue
-        seen.add(name)
+        seen.add(row['id'])
         kind = next((kind for kind, names in classes.items() if name in names), None)
         if kind is None:
             issues.append(f'{name}: not declared required, deferred, replaced or disabled')
             continue
         report[kind].append(name)
-        if kind in ('required', 'deferred'):
-            kept.append(dict(row, blocking=kind == 'required'))
-    if mode == 'exhaustive':
+        if kind in ('required', 'deferred') or (narrowed and kind == 'replaced'):
+            kept.append(dict(row, blocking=kind != 'deferred'))
+    if mode == 'exhaustive' and not narrowed:
         # Every package and stage is selected, so a declared job that is absent no longer exists.
         for kind, names in classes.items():
             for name in sorted(names - seen):
                 issues.append(f'{name}: declared {kind}, but the exhaustive plan has no such job')
-    if not kept and not issues:
+    if not narrowed and not kept and not issues:
         issues.append('no planned job remains to run')
-    elif not issues and not any(row['blocking'] for row in kept):
+    elif not narrowed and not issues and not any(row['blocking'] for row in kept):
         issues.append('no required planned job remains, so Tests pass would judge nothing planned')
     if issues:
         raise PolicyError('\n'.join(issues))
@@ -145,7 +147,16 @@ def transform(contract, outputs):
     matrix = json.loads(outputs['matrix'])
     if matrix.get('include') != plan.get('jobs'):
         raise PolicyError('the planner matrix and its execution plan name different jobs')
-    rows, report = apply(marker, plan['jobs'], plan['selection']['mode'])
+    narrowed = plan.get('narrowed', False)
+    if not isinstance(narrowed, bool):
+        raise PolicyError('the planner must report narrowing as a boolean')
+    rows, report = apply(marker, plan['jobs'], plan['selection']['mode'],
+                         narrowed=narrowed, explicit_platforms=narrowed and bool(plan.get('platforms')))
+    if narrowed and not (rows or outputs.get('self_test') == 'true'):
+        raise PolicyError('no checks match the selected platforms, stages and mode')
+    if narrowed and rows and not any(row['blocking'] for row in rows):
+        # On a diagnostic run of advisory jobs alone, their results determine the verdict.
+        rows = [dict(row, blocking=True) for row in rows]
     plan['jobs'] = rows
     required = [row for row in rows if row['blocking']]
     deferred = [row for row in rows if not row['blocking']]
@@ -154,20 +165,25 @@ def transform(contract, outputs):
         consumers = ''
     elif consumers:
         consumers = encode(json.loads(consumers))
-    governed = {'matrix': encode({'include': required}), 'plan': encode(plan), 'downstream': consumers,
-                'deferred': encode({'include': deferred}) if deferred else ''}
+    governed = {'matrix': encode({'include': required}) if required else '', 'plan': encode(plan),
+                'downstream': consumers, 'deferred': encode({'include': deferred}) if deferred else '',
+                'narrowed': json.dumps(narrowed)}
     if len(governed['plan']) > MAX_PLAN_CHARACTERS:
         raise PolicyError(f"the execution plan needs {len(governed['plan'])} characters; "
                           f'jobs receive it in one environment variable of at most {MAX_PLAN_CHARACTERS}')
     return governed, report
 
 
-def summary(report, marker):
+def summary(report, marker, narrowed):
     lines = ['### Inherited QA jobs under Brit\'s contract', '', '| Planned job | Decision |', '| --- | --- |']
     notes = {'required': lambda name: 'required for `Tests pass`',
              'deferred': lambda name: 'deferred to `run-deferred`: ' + marker['deferred'][name],
              'replaced': lambda name: 'replaced by `' + marker['replaced'][name] + '`',
              'disabled': lambda name: 'disabled: ' + marker['disabled'][name]}
+    if narrowed:
+        notes.update(required=lambda name: 'required for the narrow verdict',
+                     deferred=lambda name: 'advisory in the landing contract: ' + marker['deferred'][name],
+                     replaced=lambda name: 'run as a scheduler task for this diagnostic')
     for kind in ('required', 'deferred', 'replaced', 'disabled'):
         for name in report[kind]:
             lines.append(f'| `{name}` | {notes[kind](name)} |')
@@ -194,7 +210,7 @@ def main():
     with args.github_output.open('a') as output:
         for key in OUTPUTS:
             output.write(f'{key}={outputs[key]}\n')
-    text = summary(report, contract['milestones'][MILESTONE])
+    text = summary(report, contract['milestones'][MILESTONE], outputs['narrowed'] == 'true')
     print(text)
     step_summary = os.environ.get('GITHUB_STEP_SUMMARY')
     if step_summary:

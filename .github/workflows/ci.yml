@@ -1,4 +1,11 @@
 name: ci
+run-name: >-
+  ${{ github.event_name == 'workflow_dispatch' &&
+      format('{0}{1}{2}{3}',
+        (inputs.mode == 'fast' || inputs.platforms != '' || (inputs.stage != '' && !contains(format(',{0},', inputs.stage), ',all,')) || inputs.tests != '') && 'ci narrow: ' || 'ci exhaustive: ',
+        inputs.platforms || 'all platforms',
+        inputs.stage != '' && format(' · {0}', inputs.stage) || '',
+        inputs.tests != '' && format(' · {0}', inputs.tests) || '') || '' }}
 
 on:
   push:
@@ -10,6 +17,24 @@ on:
     branches:
       - main
   workflow_dispatch:
+    inputs:
+      mode:
+        description: QA mode
+        type: choice
+        options: [fast, exhaustive]
+        default: fast
+      platforms:
+        description: Comma-separated QA platforms (empty selects all)
+        type: string
+        default: ''
+      stage:
+        description: Comma-separated QA stages (empty selects all)
+        type: string
+        default: ''
+      tests:
+        description: Nextest filterset (empty selects all tests)
+        type: string
+        default: ''
 
 # Keep every landed commit's exhaustive run, while cancelling obsolete PR runs.
 concurrency:
@@ -57,16 +82,19 @@ jobs:
       deferred: ${{ steps.contract.outputs.deferred }}
       plan: ${{ steps.contract.outputs.plan }}
       downstream: ${{ steps.contract.outputs.downstream }}
+      narrowed: ${{ steps.contract.outputs.narrowed }}
     env:
       # Brit: `rust-toolchain.toml` pins the first-party jobs. The inherited checks run on
       # stable, as upstream runs them; the scheduler selects any other toolchain itself.
       RUSTUP_TOOLCHAIN: stable
+      QA_MODE: ${{ github.event_name == 'workflow_dispatch' && inputs.mode || github.event_name == 'pull_request' && 'fast' || 'exhaustive' }}
+      QA_TESTS: ${{ inputs.tests }}
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           persist-credentials: false
           # PR merge commits include the comparison base as a parent.
-          fetch-depth: ${{ github.event_name == 'pull_request' && '2' || '1' }}
+          fetch-depth: ${{ github.event_name == 'workflow_dispatch' && env.QA_MODE == 'fast' && env.QA_TESTS == '' && '0' || github.event_name == 'pull_request' && '2' || '1' }}
       - name: Install Rust
         run: rustup update stable && rustup default stable
       - uses: Swatinem/rust-cache@d1527c8f67ef9af357290475d4af4b0fab8f12e0 # v2.9.3
@@ -74,15 +102,30 @@ jobs:
           shared-key: ci-plan
           save-if: ${{ github.ref == 'refs/heads/main' }}
       - name: Cache dependency metadata for offline feature selection
+        if: env.QA_TESTS == ''
         run: cargo fetch --locked
       - name: Test the planner without building Git tooling
+        if: github.event_name != 'workflow_dispatch'
         run: cargo run --profile qa --locked -p internal-tools --no-default-features --bin qa -- run --mode exhaustive --stage self-test
       - name: Select checks and distribute them across platforms
         id: plan
+        shell: bash
         env:
-          QA_MODE: ${{ github.event_name == 'pull_request' && 'fast' || 'exhaustive' }}
-          QA_BASE: ${{ github.event.pull_request.base.sha || github.sha }}
-        run: cargo run --profile qa --locked -p internal-tools --no-default-features --bin qa -- plan --all-platforms --mode "$QA_MODE" --base "$QA_BASE" --github-output "$RUNNER_TEMP/qa-planned.txt"
+          QA_BASE: ${{ github.event_name == 'workflow_dispatch' && 'origin/main' || github.event.pull_request.base.sha || github.sha }}
+          QA_PLATFORMS: ${{ inputs.platforms }}
+          QA_STAGE: ${{ inputs.stage }}
+        run: |
+          args=(--all-platforms --mode "$QA_MODE" --base "$QA_BASE")
+          if [[ -n "$QA_PLATFORMS" ]]; then args+=("--platforms=$QA_PLATFORMS"); fi
+          if [[ -n "$QA_STAGE" ]]; then args+=("--stage=$QA_STAGE"); fi
+          if [[ -n "$QA_TESTS" ]]; then args+=("--tests=$QA_TESTS"); fi
+          cargo run --profile qa --locked -p internal-tools --no-default-features --bin qa -- plan "${args[@]}" --github-output "$RUNNER_TEMP/qa-planned.txt"
+      - name: Run the planner self-tests when selected by the dispatch
+        if: github.event_name == 'workflow_dispatch'
+        run: |
+          if grep -Fxq self_test=true "$RUNNER_TEMP/qa-planned.txt"; then
+            cargo run --profile qa --locked -p internal-tools --no-default-features --bin qa -- run --mode exhaustive --stage self-test
+          fi
       # Brit: `.epr-meta/readiness.json` declares each planned job required, deferred,
       # replaced by a first-party job, or disabled. An undeclared job is refused. Required
       # jobs form `matrix` for `run`; deferred jobs form `deferred` for `run-deferred`.
@@ -98,7 +141,7 @@ jobs:
   run:
     name: ${{ matrix.id }}
     needs: plan
-    if: needs.plan.result == 'success'
+    if: needs.plan.result == 'success' && needs.plan.outputs.matrix != ''
     strategy:
       fail-fast: false
       matrix: ${{ fromJSON(needs.plan.outputs.matrix) }}
@@ -115,7 +158,7 @@ jobs:
       RUSTUP_TOOLCHAIN: stable
       # Main provides reusable indexes; PR cache misses run ordinary QA without collecting throwaway data.
       # Brit: coverage-guided selection is opt-in through the repository variable QA_COVERAGE (on or shadow).
-      GIX_QA_COVERAGE: ${{ (vars.QA_COVERAGE == 'on' || vars.QA_COVERAGE == 'shadow') && (contains(matrix.tasks, 'native-tests') || contains(matrix.tasks, 'isolated-tests') || contains(matrix.tasks, 'feature-tests')) && (github.event_name == 'pull_request' && (vars.QA_COVERAGE == 'shadow' && 'shadow' || 'prune') || github.ref == 'refs/heads/main' && 'collect') || 'off' }}
+      GIX_QA_COVERAGE: ${{ needs.plan.outputs.narrowed == 'false' && (vars.QA_COVERAGE == 'on' || vars.QA_COVERAGE == 'shadow') && (contains(matrix.tasks, 'native-tests') || contains(matrix.tasks, 'isolated-tests') || contains(matrix.tasks, 'feature-tests')) && (github.event_name == 'pull_request' && (vars.QA_COVERAGE == 'shadow' && 'shadow' || 'prune') || github.ref == 'refs/heads/main' && 'collect') || 'off' }}
     steps:
       # Native 32-bit containers need libraries for the runner's 64-bit Node.js.
       - name: Install container prerequisites
@@ -306,7 +349,7 @@ jobs:
       RUSTUP_TOOLCHAIN: stable
       # Main provides reusable indexes; PR cache misses run ordinary QA without collecting throwaway data.
       # Brit: coverage-guided selection is opt-in through the repository variable QA_COVERAGE (on or shadow).
-      GIX_QA_COVERAGE: ${{ (vars.QA_COVERAGE == 'on' || vars.QA_COVERAGE == 'shadow') && (contains(matrix.tasks, 'native-tests') || contains(matrix.tasks, 'isolated-tests') || contains(matrix.tasks, 'feature-tests')) && (github.event_name == 'pull_request' && (vars.QA_COVERAGE == 'shadow' && 'shadow' || 'prune') || github.ref == 'refs/heads/main' && 'collect') || 'off' }}
+      GIX_QA_COVERAGE: ${{ needs.plan.outputs.narrowed == 'false' && (vars.QA_COVERAGE == 'on' || vars.QA_COVERAGE == 'shadow') && (contains(matrix.tasks, 'native-tests') || contains(matrix.tasks, 'isolated-tests') || contains(matrix.tasks, 'feature-tests')) && (github.event_name == 'pull_request' && (vars.QA_COVERAGE == 'shadow' && 'shadow' || 'prune') || github.ref == 'refs/heads/main' && 'collect') || 'off' }}
     steps:
       # Native 32-bit containers need libraries for the runner's 64-bit Node.js.
       - name: Install container prerequisites
@@ -526,6 +569,7 @@ jobs:
 
   # ---- Brit's first-party checks ------------------------------------------------------
   brit-cpu-compatibility:
+    if: github.event_name != 'workflow_dispatch' || (inputs.mode == 'exhaustive' && inputs.platforms == '' && (inputs.stage == '' || contains(format(',{0},', inputs.stage), ',all,')) && inputs.tests == '')
     # Distribution includes prebuilt CRT/loader/ABI inputs, not just our flags.
     # Keep the shipping baseline explicit; ordinary source jobs still cover latest.
     runs-on: ubuntu-24.04
@@ -582,6 +626,7 @@ jobs:
           retention-days: 1
 
   brit-rust-style:
+    if: github.event_name != 'workflow_dispatch' || (inputs.mode == 'exhaustive' && inputs.platforms == '' && (inputs.stage == '' || contains(format(',{0},', inputs.stage), ',all,')) && inputs.tests == '')
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
@@ -608,6 +653,7 @@ jobs:
         run: bash scripts/ci/rust-style-ci.sh
 
   brit-feature-census:
+    if: github.event_name != 'workflow_dispatch' || (inputs.mode == 'exhaustive' && inputs.platforms == '' && (inputs.stage == '' || contains(format(',{0},', inputs.stage), ',all,')) && inputs.tests == '')
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
@@ -634,6 +680,7 @@ jobs:
         run: bash etc/parity/shortcomings.sh --check
 
   brit-readiness-contract:
+    if: github.event_name != 'workflow_dispatch' || (inputs.mode == 'exhaustive' && inputs.platforms == '' && (inputs.stage == '' || contains(format(',{0},', inputs.stage), ',all,')) && inputs.tests == '')
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
@@ -650,6 +697,7 @@ jobs:
           bash scripts/ci/test-brit-reach-hook.sh
 
   brit-release-package-contract:
+    if: github.event_name != 'workflow_dispatch' || (inputs.mode == 'exhaustive' && inputs.platforms == '' && (inputs.stage == '' || contains(format(',{0},', inputs.stage), ',all,')) && inputs.tests == '')
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
@@ -678,6 +726,7 @@ jobs:
         run: env PYTHONDONTWRITEBYTECODE=1 python3 -m unittest discover -s scripts/ci -p 'test_verify_brit_consumer.py'
 
   lint-workflows:
+    if: github.event_name != 'workflow_dispatch' || (inputs.mode == 'exhaustive' && inputs.platforms == '' && (inputs.stage == '' || contains(format(',{0},', inputs.stage), ',all,')) && inputs.tests == '')
     runs-on: ubuntu-latest
     env:
       CARGO_REGISTRIES_ELOHIM_TOKEN: ''
@@ -692,6 +741,7 @@ jobs:
         run: just lint-workflows
 
   pure-rust-build:
+    if: github.event_name != 'workflow_dispatch' || (inputs.mode == 'exhaustive' && inputs.platforms == '' && (inputs.stage == '' || contains(format(',{0},', inputs.stage), ',all,')) && inputs.tests == '')
     runs-on: ubuntu-latest
 
     container: debian@sha256:fbfb4059d2127120aa05b6e6064523d2102552f0cf0026ddf0701c12f1f8f3e0 # stable-slim 2026-11-23
@@ -800,6 +850,7 @@ jobs:
         continue-on-error: true
 
   test-journey:
+    if: github.event_name != 'workflow_dispatch' || (inputs.mode == 'exhaustive' && inputs.platforms == '' && (inputs.stage == '' || contains(format(',{0},', inputs.stage), ',all,')) && inputs.tests == '')
     runs-on: ubuntu-latest
 
     steps:
@@ -935,9 +986,9 @@ jobs:
           version=$(python3 -c 'import tomllib; print(tomllib.load(open("brit-cli/Cargo.toml", "rb"))["package"]["version"])')
           bash scripts/ci/verify-brit-consumer.sh "$version"
 
-  # Stable name for the "all tests pass" requirement.
+  # Only a full-scope run can use the required check name.
   tests-pass:
-    name: Tests pass
+    name: ${{ (needs.plan.outputs.narrowed == 'true' || (github.event_name == 'workflow_dispatch' && needs.plan.outputs.narrowed != 'false')) && 'Narrow checks pass (not a landing proof)' || 'Tests pass' }}
 
     permissions: {} # Only reads dependency results from the workflow context.
 
@@ -967,11 +1018,12 @@ jobs:
         env:
           NEEDS: ${{ toJSON(needs) }}
         run: printf '%s\n' "$NEEDS"
-      - name: Fail unless EVERY dependency succeeded
+      - name: Check all scheduled dependency results
         if: always()
         env:
           RESULTS: ${{ join(needs.*.result, ' ') }}
           NEEDS: ${{ toJSON(needs) }}
+          NARROWED: ${{ needs.plan.outputs.narrowed }}
         run: |
           if [ -z "$RESULTS" ]; then
             echo "no dependency results to judge"
@@ -981,13 +1033,16 @@ jobs:
           # runner (re-run it) reads differently from a code failure. Still a failure.
           printf '%s\n' "$NEEDS" | jq -r 'to_entries[] | select(.value.result != "success") | "not success: \(.key) = \(.value.result)" + (if .value.result == "cancelled" then " (cancelled, often no runner: re-run the failed jobs)" else "" end)' || true
           for result in $RESULTS; do
+            if [ "$result" = skipped ] && [ "$NARROWED" = true ]; then
+              continue
+            fi
             if [ "$result" != success ]; then
               echo "a dependency ended as '$result', not 'success'"
               exit 1
             fi
           done
       - name: Fail if ANY dependency failed, was cancelled, or was skipped
-        if: contains(needs.*.result, 'failure') || contains(needs.*.result, 'cancelled') || contains(needs.*.result, 'skipped')
+        if: contains(needs.*.result, 'failure') || contains(needs.*.result, 'cancelled') || (needs.plan.outputs.narrowed != 'true' && contains(needs.*.result, 'skipped'))
         run: exit 1
       - name: OK
         run: exit 0

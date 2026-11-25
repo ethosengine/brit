@@ -88,6 +88,37 @@ fn parts(platform: &str) -> Result<(&str, &str)> {
 }
 
 pub fn tasks(metadata: &Value, selection: &Value, platform: &str) -> Result<Vec<Task>> {
+    let mut tasks = unfiltered_tasks(metadata, selection, platform)?;
+    if let Some(filter) = selection["tests"].as_str() {
+        tasks.retain_mut(|task| {
+            task.commands.retain_mut(|command| {
+                let nextest = (command.program == "cargo"
+                    && command.args.starts_with(&["nextest".into(), "run".into()]))
+                    || (command.program == "@qa"
+                        && command
+                            .args
+                            .first()
+                            .is_some_and(|arg| matches!(arg.as_str(), "native-tests" | "no-git")));
+                if nextest {
+                    let end = command
+                        .args
+                        .iter()
+                        .position(|arg| arg == "--")
+                        .unwrap_or(command.args.len());
+                    command
+                        .args
+                        .splice(end..end, ["-E".into(), filter.into(), "--no-tests=pass".into()]);
+                }
+                nextest
+            });
+            task.requirements = Requirements::commands(&task.commands);
+            !task.commands.is_empty()
+        });
+    }
+    Ok(tasks)
+}
+
+fn unfiltered_tasks(metadata: &Value, selection: &Value, platform: &str) -> Result<Vec<Task>> {
     let (os, arch) = parts(platform)?;
     // Validate even empty selections before adding mandatory policy checks.
     run::commands(metadata, selection, &[])?;
@@ -450,13 +481,13 @@ pub fn select(tasks: Vec<Task>, stages: &[String]) -> Result<Vec<Task>> {
         .collect())
 }
 
-fn assigned(task: &Task, platform: &str, exhaustive: bool) -> bool {
+fn assigned(task: &Task, platform: &str, exhaustive: bool, wide_native: bool) -> bool {
     match task.id {
         // The gate runs this task before it publishes a matrix.
         "self-test" => false,
         "platform-tests" => platform == "freebsd-x86_64",
         "native-tests" | "native-bins" | "isolated-tests" | "without-git" | "size32" => {
-            exhaustive || matches!(platform, "linux-x86_64" | "macos-aarch64" | "windows-x86_64")
+            exhaustive || wide_native || matches!(platform, "linux-x86_64" | "macos-aarch64" | "windows-x86_64")
         }
         "msrv" => matches!(platform, "linux-x86_64" | "windows-x86_64"),
         "default-doctests" => platform == "linux-x86_64" || (exhaustive && platform == "windows-x86_64"),
@@ -503,21 +534,57 @@ fn job(metadata: &Value, platform: &str, group: &str, tasks: &[Task]) -> Result<
     Ok(row)
 }
 
-pub fn plan(metadata: &Value, selection: &Value, platform: &str, all_platforms: bool) -> Result<Value> {
+pub fn ci_plan(
+    metadata: &Value,
+    selection: &Value,
+    platforms: &[String],
+    stages: &[String],
+    fast_dispatch: bool,
+) -> Result<Value> {
+    let explicit: BTreeSet<_> = platforms.iter().map(String::as_str).collect();
+    let explicit: Vec<_> = explicit.into_iter().collect();
+    let platforms = if explicit.is_empty() { CI_PLATFORMS } else { &explicit };
+    let mut plan = assignment(
+        metadata,
+        selection,
+        platforms.iter().copied(),
+        stages,
+        true,
+        fast_dispatch || !explicit.is_empty(),
+    )?;
+    plan["downstream"] = if platforms.contains(&"linux-x86_64")
+        && selection["tests"].is_null()
+        && stages.iter().any(|stage| stage == "all")
+    {
+        super::downstream::matrix(metadata, selection)?
+    } else {
+        json!({"include": []})
+    };
+    Ok(plan)
+}
+
+pub fn local_plan(metadata: &Value, selection: &Value, platform: &str, stages: &[String]) -> Result<Value> {
+    assignment(metadata, selection, [platform], stages, false, false)
+}
+
+fn assignment<'a>(
+    metadata: &Value,
+    selection: &Value,
+    platforms: impl IntoIterator<Item = &'a str>,
+    stages: &[String],
+    ci: bool,
+    wide_native: bool,
+) -> Result<Value> {
     let mut described = Vec::new();
     let mut jobs = Vec::new();
-    for platform in if all_platforms {
-        CI_PLATFORMS
-    } else {
-        std::slice::from_ref(&platform)
-    } {
-        let tasks = tasks(metadata, selection, platform)?;
+    for platform in platforms {
+        let tasks = select(tasks(metadata, selection, platform)?, stages)?;
         let mut grouped: BTreeMap<&str, Vec<Task>> = BTreeMap::new();
         for task in tasks {
-            if !all_platforms || assigned(&task, platform, selection["mode"] == "exhaustive") {
+            if !ci || assigned(&task, platform, selection["mode"] == "exhaustive", wide_native) {
                 described.push(json!({"platform": platform, "task": task.json(metadata)?}));
                 grouped.entry(task.group).or_default().push(task);
-            } else if task.id == "self-test" && *platform == "linux-x86_64" {
+            } else if task.id == "self-test" && platform == "linux-x86_64" {
                 described.push(json!({"platform": platform, "task": task.json(metadata)?}));
             }
         }
@@ -525,7 +592,7 @@ pub fn plan(metadata: &Value, selection: &Value, platform: &str, all_platforms: 
             jobs.push(job(metadata, platform, group, &tasks)?);
         }
     }
-    Ok(json!({"selection": selection, "platform": platform, "tasks": described, "jobs": jobs}))
+    Ok(json!({"selection": selection, "tasks": described, "jobs": jobs}))
 }
 
 pub fn job_tasks(metadata: &Value, plan: &Value, job_id: &str) -> Result<Vec<Task>> {
@@ -660,6 +727,91 @@ pub fn execute(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn explicit_platforms_restrict_ci_assignment_and_validate_names() -> gix_error::TestResult {
+        let mut metadata = metadata();
+        metadata["packages"].as_array_mut().expect("test packages").push(json!({
+            "name": "gix", "targets": [{"kind": ["lib"], "test": true}],
+            "metadata": {"qa": {"downstream": [{"name": "consumer", "repository": "owner/consumer", "package": "consumer"}]}}
+        }));
+        let selection = json!({"mode": "exhaustive", "packages": []});
+        let platforms = ["windows-x86_64".into(), "macos-x86_64".into()];
+        let plan = ci_plan(&metadata, &selection, &platforms, &["all".into()], false)?;
+        let jobs = plan["jobs"].as_array().expect("CI rows");
+        assert_eq!(
+            jobs.iter()
+                .filter_map(|row| row["platform"].as_str())
+                .collect::<BTreeSet<_>>(),
+            BTreeSet::from(["windows-x86_64", "macos-x86_64"]),
+            "all planned jobs, including those governed as deferred, are on requested platforms"
+        );
+        assert_eq!(plan["downstream"], json!({"include": []}), "downstream runs on Linux");
+        let linux = ["linux-x86_64".into()];
+        let all = ["all".into()];
+        let consumers = json!({"include": [{"name": "consumer", "repository": "owner/consumer"}]});
+        assert_eq!(
+            ci_plan(&metadata, &selection, &linux, &all, false)?["downstream"],
+            consumers
+        );
+        let mut filtered = selection.clone();
+        filtered["tests"] = "test(one)".into();
+        assert_eq!(
+            ci_plan(&metadata, &filtered, &linux, &all, false)?["downstream"],
+            json!({"include": []})
+        );
+        let error = ci_plan(&metadata, &selection, &["planet-x".into()], &["all".into()], false)
+            .expect_err("unknown platform must fail")
+            .to_string();
+        assert!(PLATFORMS.iter().all(|platform| error.contains(platform)), "{error}");
+        Ok(())
+    }
+
+    #[test]
+    fn filtered_plan_and_workers_keep_only_nextest_commands() -> gix_error::TestResult {
+        let mut metadata = metadata();
+        metadata["packages"][0]["metadata"]["qa"]["tests"] = json!([{}]);
+        metadata["packages"].as_array_mut().expect("test packages").push(json!({
+            "name": "isolated", "targets": [{"kind": ["lib"], "test": true}],
+            "metadata": {"qa": {"isolated": true}}
+        }));
+        let filter = "test(one) & package(two)";
+        let selection = json!({"mode": "exhaustive", "packages": [], "tests": filter});
+        let plan = ci_plan(&metadata, &selection, &[], &["all".into()], false)?;
+        let descriptions = plan["tasks"].as_array().expect("described tests");
+        assert_eq!(
+            descriptions
+                .iter()
+                .filter_map(|row| row["task"]["id"].as_str())
+                .collect::<BTreeSet<_>>(),
+            BTreeSet::from([
+                "native-tests",
+                "feature-tests",
+                "isolated-tests",
+                "without-git",
+                "size32"
+            ]),
+            "filtered plans omit all other work"
+        );
+        for row in descriptions {
+            for command in row["task"]["commands"].as_array().expect("test commands") {
+                let args = command["args"].as_array().expect("test arguments");
+                assert!(args.windows(2).any(|pair| pair == ["-E", filter]), "{args:?}");
+                assert!(args.contains(&json!("--no-tests=pass")), "{args:?}");
+            }
+        }
+        assert_eq!(plan["downstream"], json!({"include": []}));
+        let staged = ci_plan(&metadata, &selection, &[], &["default-tests".into()], false)?;
+        assert!(
+            staged["tasks"]
+                .as_array()
+                .expect("selected tasks")
+                .iter()
+                .all(|row| row["task"]["id"] != "feature-tests"),
+            "CI applies the same stage selectors as local QA"
+        );
+        Ok(())
+    }
 
     #[test]
     #[cfg(unix)]
@@ -818,7 +970,7 @@ mod tests {
                 tasks(&metadata, &selection, "freebsd-x86_64")?.is_empty(),
                 "unaffected extra platforms need no work"
             );
-            let plan = plan(&metadata, &selection, "linux-x86_64", true)?;
+            let plan = ci_plan(&metadata, &selection, &[], &["all".into()], false)?;
             assert!(
                 !plan["jobs"]
                     .as_array()
@@ -852,7 +1004,7 @@ mod tests {
                 tasks,
                 "extra platform tests use the ordinary tests stage"
             );
-            let plan = plan(&metadata, &selection, "linux-x86_64", true)?;
+            let plan = ci_plan(&metadata, &selection, &[], &["all".into()], false)?;
             let row = plan["jobs"]
                 .as_array()
                 .expect("plan jobs")
@@ -926,11 +1078,12 @@ mod tests {
         metadata["packages"][0]["metadata"]["qa"]["msrv"] = json!({"checks":[{
             "args":["--target", "wasm32-wasip1"], "requires":["rustfmt"]
         }]});
-        let plan = plan(
+        let plan = ci_plan(
             &metadata,
             &json!({"mode":"exhaustive","packages":[]}),
-            "linux-x86_64",
-            true,
+            &[],
+            &["all".into()],
+            false,
         )?;
         let job = plan["jobs"]
             .as_array()
@@ -990,7 +1143,7 @@ mod tests {
         for mode in ["fast", "exhaustive"] {
             let selection =
                 json!({"mode":mode, "packages":["gix-path","gitoxide","internal-tools","isolated-library"]});
-            let plan = plan(&metadata, &selection, "linux-x86_64", true)?;
+            let plan = ci_plan(&metadata, &selection, &[], &["all".into()], false)?;
             let jobs = plan["jobs"].as_array().expect("plan jobs");
             let owner = |task| {
                 jobs.iter()
@@ -1066,7 +1219,7 @@ mod tests {
                 for task in tasks(&metadata, &selection, platform)? {
                     assert_eq!(
                         seen.contains(&(*platform, task.id)),
-                        assigned(&task, platform, mode == "exhaustive"),
+                        assigned(&task, platform, mode == "exhaustive", false),
                         "every selected task is assigned once, including nonblocking tasks"
                     );
                 }

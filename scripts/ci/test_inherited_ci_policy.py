@@ -149,6 +149,29 @@ class PolicyTests(unittest.TestCase):
         with self.assertRaisesRegex(policy.PolicyError, 'no required planned job remains'):
             self.apply('fast')
 
+    def test_narrow_assignment_preserves_explicit_platforms_and_splits_matrices(self):
+        self.rows = [row('tests@macos-aarch64'), row('isolated-tests@macos-aarch64')]
+        outputs = self.outputs(downstream='')
+        plan = json.loads(outputs['plan'])
+        plan.update(narrowed=True, platforms=['macos-aarch64'])
+        outputs['plan'] = json.dumps(plan)
+        governed, _ = policy.transform(self.contract, outputs)
+        self.assertEqual(governed['narrowed'], 'true')
+        self.assertEqual([row['id'] for row in json.loads(governed['matrix'])['include']], ['tests@macos-aarch64'])
+        self.assertEqual([row['id'] for row in json.loads(governed['deferred'])['include']],
+                         ['isolated-tests@macos-aarch64'])
+        self.assertEqual(governed['downstream'], '')
+
+    def test_narrow_deferred_only_scope_still_judges_the_selected_work(self):
+        self.rows = [row('isolated-tests@macos-x86_64')]
+        outputs = self.outputs(downstream='')
+        plan = json.loads(outputs['plan'])
+        plan['narrowed'] = True
+        outputs['plan'] = json.dumps(plan)
+        governed, _ = policy.transform(self.contract, outputs)
+        self.assertTrue(json.loads(governed['matrix'])['include'][0]['blocking'])
+        self.assertEqual(governed['deferred'], '')
+
     def test_outputs_survive_a_secret_that_masks_the_hyphen(self):
         outputs, _ = policy.transform(self.contract, self.outputs())
         for key in ('matrix', 'deferred', 'plan'):
