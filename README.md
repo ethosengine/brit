@@ -51,6 +51,13 @@ published libraries. The old invocation name `rakia` has a deprecated
 compatibility path, but installation does not require renaming binaries or
 replacing a standalone Rakia installation.
 
+If optional EPR feedback capture fails, Brit reports its cause on stderr once
+per session. Use `brit --quiet <command>` or set `BRIT_QUIET=1` to suppress the
+notice while still attempting capture. Brit uses the declared EPR session ID
+or the exported Claude or Codex session ID when available. Without an exported
+ID, Brit reports at most once per UTC day. The notice markers live in the
+user's cache directory.
+
 ### Not yet a drop-in daily driver
 
 Command names are not a promise of Git porcelain parity. In particular, current
@@ -72,8 +79,8 @@ Operations brit owns and operations it leaves to stock Git are named, never
 guessed. A bridged name prints `brit: <name> is a Git bridge operation; run: git
 <name> <the same arguments>` to stderr and exits with status 2; it changes nothing,
 does not fall back to Git and is not an alias. Top-level bridge names are
-recognized as the first argument. A submodule bridge also preserves leading
-global options in the suggested Git command.
+recognized as the first argument or immediately after `--quiet`. A submodule
+bridge also preserves leading Git options in the suggested command.
 
 | Owned by `brit` (daily verbs; `brit --help` lists all) | Bridged to stock Git (exit 2) |
 | --- | --- |

@@ -1,6 +1,7 @@
 //! Optional local EPR capture through the installed executable, like the context adapter.
 //! No sibling path dependency, raw argv, diagnostics, environment or network transmission.
 use std::{
+    fs::{self, OpenOptions},
     io::{BufRead, BufReader, Read},
     path::PathBuf,
     process::{Command, Stdio},
@@ -10,6 +11,7 @@ use std::{
 pub(crate) struct Capture {
     pub operation: &'static str,
     pub outcome: Option<&'static str>,
+    pub quiet: bool,
     started: Instant,
 }
 
@@ -18,6 +20,7 @@ impl Capture {
         Self {
             operation: "other",
             outcome: None,
+            quiet: false,
             started: Instant::now(),
         }
     }
@@ -62,8 +65,8 @@ impl Capture {
                 .map(PathBuf::from)
         });
         let Some(root) = root else { return };
-        let result = self.record(root, code);
-        if let Err(error) = result {
+        let Err(error) = self.record(root, code) else { return };
+        if !self.quiet && std::env::var_os("BRIT_QUIET").is_none_or(|value| value != "1") && claim_gap_notice() {
             brit_epr::diagnostic::emit(format_args!(
                 "brit: feedback capture gap: {error}; command result unchanged"
             ));
@@ -103,7 +106,8 @@ impl Capture {
             .stdin(Stdio::null())
             .stdout(Stdio::null())
             .stderr(Stdio::piped())
-            .spawn()?;
+            .spawn()
+            .map_err(|error| std::io::Error::other(format!("could not start epr feedback recorder: {error}")))?;
         let deadline = Instant::now() + Duration::from_secs(2);
         let mut stderr = child
             .stderr
@@ -158,4 +162,48 @@ impl Capture {
             std::thread::sleep(Duration::from_millis(10));
         }
     }
+}
+
+/// Claim the one diagnostic for this session, even if several Brit processes fail together.
+fn claim_gap_notice() -> bool {
+    let cache = std::env::var_os("XDG_CACHE_HOME")
+        .map(PathBuf::from)
+        .filter(|path| path.is_absolute())
+        .or_else(|| gix::path::env::home_dir().map(|home| home.join(".cache")));
+    let Some(cache) = cache else { return false };
+    let directory = cache.join("brit").join("feedback-notices");
+    if fs::create_dir_all(&directory).is_err() {
+        return false;
+    }
+    OpenOptions::new()
+        .write(true)
+        .create_new(true)
+        .open(directory.join(gap_notice_key()))
+        .is_ok()
+}
+
+fn gap_notice_key() -> String {
+    // EPR accepts ELOHIM_SESSION_ID as a declaration. Claude and Codex also
+    // export native session IDs. These values are only a local reporting hint.
+    let session = [
+        "ELOHIM_SESSION_ID",
+        "CLAUDE_SESSION_ID",
+        "CLAUDE_CODE_SESSION_ID",
+        "CODEX_THREAD_ID",
+        "CODEX_SESSION_ID",
+    ]
+    .into_iter()
+    .filter_map(|name| std::env::var(name).ok())
+    .find(|value| !value.trim().is_empty());
+    if let Some(session) = session {
+        let mut hasher = gix::hash::hasher(gix::hash::Kind::Sha256);
+        hasher.update(session.trim().as_bytes());
+        if let Ok(hash) = hasher.try_finalize() {
+            return format!("session-{hash}");
+        }
+    }
+    // A UTC day keeps retries quiet across shells and platforms with no exported ID.
+    let elapsed = SystemTime::now().duration_since(UNIX_EPOCH).unwrap_or_default();
+    let day = elapsed.as_secs() / 86_400;
+    format!("day-{day}")
 }

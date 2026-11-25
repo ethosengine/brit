@@ -117,7 +117,7 @@ exit 47
     .expect("recorder");
     std::fs::set_permissions(&recorder, std::fs::Permissions::from_mode(0o700)).expect("executable");
     let captured = fixture.path().join("args");
-    for (args, operation, outcome, code) in [
+    for (index, (args, operation, outcome, code)) in [
         (&["--version"][..], "other", "passed", 0),
         (&["stash", "SECRET_ARGUMENT"][..], "bridge", "bridge-declared", 2),
         (&["log", "--unknown-secret-option"][..], "log", "refused", 2),
@@ -128,7 +128,10 @@ exit 47
             "refused",
             2,
         ),
-    ] {
+    ]
+    .into_iter()
+    .enumerate()
+    {
         let mut command = Command::new(env!("CARGO_BIN_EXE_brit"));
         gix_testtools::configure_git_environment(&mut command, fixture.path());
         let out = command
@@ -136,7 +139,10 @@ exit 47
             .args(args)
             .env("PATH", &bin)
             .env("EPR_FEEDBACK_ROOT", fixture.path())
+            .env("ELOHIM_SESSION_ID", index.to_string())
             .env("EPR_FEEDBACK_INVOCATION", "same-invocation")
+            .env("XDG_CACHE_HOME", fixture.path().join("cache"))
+            .env_remove("BRIT_QUIET")
             .env("FEEDBACK_TEST_ARGS", &captured)
             .output()
             .expect("brit");
@@ -184,16 +190,22 @@ fn absent_or_stalled_recorder_cannot_change_command_results() {
                 .args(args)
                 .env("PATH", &bin)
                 .env("EPR_FEEDBACK_ROOT", fixture.path())
+                .env("ELOHIM_SESSION_ID", format!("{stalled}-{code}"))
+                .env("XDG_CACHE_HOME", fixture.path().join("cache"))
+                .env_remove("BRIT_QUIET")
                 .output()
                 .expect("brit");
             assert_eq!(out.status.code(), Some(code));
-            assert!(String::from_utf8_lossy(&out.stderr).contains("feedback capture gap"));
-            if stalled {
-                assert!(
-                    String::from_utf8_lossy(&out.stderr).contains("timeout"),
-                    "a timeout is distinguished from a recorder refusal"
-                );
-            }
+            let cause = if stalled {
+                "recorder timeout"
+            } else {
+                "could not start epr feedback recorder"
+            };
+            let stderr = String::from_utf8_lossy(&out.stderr);
+            assert!(
+                stderr.contains(&format!("feedback capture gap: {cause}")),
+                "the recorder failure names its cause: {stderr}"
+            );
             assert!(start.elapsed() < Duration::from_secs(8), "bounded recorder wait");
         }
     }
