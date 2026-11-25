@@ -491,6 +491,81 @@ fn command_config_selects_the_linked_worktree_hook() -> Result<()> {
     Ok(())
 }
 
+/// Stated contract for landing agents: the hook's parent is the pushing brit, `BRIT_GUARD_HELD_BY`
+/// reads `v1 <that pid> <its start ticks> …`, and that process sends and stays alive until the
+/// remote ref has moved — so waiting on it is waiting on the landing.
+#[cfg(target_os = "linux")]
+#[test]
+fn hook_parent_is_the_marked_brit_that_sends_and_outlives_the_ref_move() -> Result<()> {
+    let repo = TestRepo::new("pre-push-pusher-identity")?;
+    let remote = remote(repo.path())?;
+    let pushed = repo.head_id()?;
+    hook(
+        repo.path(),
+        r#"set -eu
+cat >/dev/null
+here=$PWD
+printf '%s\n' "$BRIT_GUARD_HELD_BY" >"$here/marker"
+printf '%s\n' "$PPID" >"$here/parent"
+cat "/proc/$PPID/stat" >"$here/parent-stat"
+origin=$(git remote get-url origin)
+git --git-dir="$origin" rev-parse --verify -q refs/heads/dev >"$here/at-hook" || printf 'absent\n' >"$here/at-hook"
+(
+    while kill -0 "$PPID" 2>/dev/null; do sleep 0.02; done
+    git --git-dir="$origin" rev-parse refs/heads/dev >"$here/at-exit.tmp"
+    mv "$here/at-exit.tmp" "$here/at-exit"
+) </dev/null >/dev/null 2>&1 &"#,
+    )?;
+
+    let output = brit(repo.path(), &["push", "origin", "HEAD:dev"])?;
+    ensure!(output.status.success(), "{}", output.stderr);
+
+    let at_exit = repo.path().join("at-exit");
+    let started = Instant::now();
+    while !at_exit.exists() {
+        ensure!(
+            started.elapsed() < Duration::from_secs(20),
+            "watcher never saw brit exit"
+        );
+        std::thread::sleep(Duration::from_millis(20));
+    }
+
+    let parent = fs::read_to_string(repo.path().join("parent"))?.trim().to_owned();
+    let stat = fs::read_to_string(repo.path().join("parent-stat"))?;
+    // Field 2 (comm) may hold spaces; fields after its closing parenthesis start at field 3.
+    let after_comm = &stat[stat.rfind(')').expect("stat names comm") + 2..];
+    let start_ticks = after_comm.split(' ').nth(22 - 3).expect("stat field 22").to_owned();
+    let marker = fs::read_to_string(repo.path().join("marker"))?;
+    let fields: Vec<&str> = marker.split_whitespace().collect();
+    assert_eq!(fields.first(), Some(&"v1"), "marker version: {marker}");
+    assert_eq!(
+        fields.get(1),
+        Some(&parent.as_str()),
+        "marker pid is the hook's parent: {marker}"
+    );
+    assert_eq!(
+        fields.get(2),
+        Some(&start_ticks.as_str()),
+        "marker start ticks: {marker}"
+    );
+    assert!(
+        stat.contains("(brit)"),
+        "the hook's parent is brit itself, not a shell: {stat}"
+    );
+    assert_eq!(
+        fs::read_to_string(repo.path().join("at-hook"))?.trim(),
+        "absent",
+        "the remote moved before the hook returned"
+    );
+    assert_eq!(
+        fs::read_to_string(at_exit)?.trim(),
+        pushed,
+        "brit exited before the remote ref moved"
+    );
+    assert_eq!(git(remote.path(), &["rev-parse", "refs/heads/dev"])?, pushed);
+    Ok(())
+}
+
 #[test]
 fn hook_inherits_gate_environment_and_streams_both_outputs_live() -> Result<()> {
     let repo = TestRepo::new("pre-push-live-hook")?;
