@@ -1,6 +1,6 @@
 ---
 title: Brit sprint 5 — the daily driver's largest fallbacks
-status: draft
+status: active
 serves: brit-native-daily-driver
 ---
 # Brit sprint 5: the daily driver's largest fallbacks
@@ -109,35 +109,75 @@ Sizes:
 
   Work: accept a revision (`HEAD`, a sha) as a push source, or name the cure in
   the refusal. Keep the transport open, or reconnect, across a long hook.
-  *Done when:*
-  - a journey test passes in which a pre-push hook sleeps past the transport's
-    idle timeout, exits 0, and the remote ref then moves;
-  - a second journey test passes in which `push origin HEAD:<ref>` moves the
-    remote ref;
-  - shem completes one real `dev` landing with `brit push` on a build of this
-    item, with `[pre-push]` lines in its log.
+  The real landing command is `GATE_EVIDENCE=reuse git -c
+  core.hooksPath=<worktree>/.husky/_ push origin HEAD:dev`, so the item also
+  covers what that command does.
+  *Done when* journey tests show each of these:
+  - a pre-push hook sleeps past the transport's idle timeout and exits 0, and
+    the remote ref then moves;
+  - `push origin HEAD:<ref>` and `push origin <sha>:<ref>` move the remote ref;
+  - (a) a hooks path can be given per invocation (the equivalent of `-c
+    core.hooksPath=…`), so a worktree landing runs that worktree's hook and not
+    the main checkout's;
+  - (b) the hook's environment reaches it unchanged (`GATE_EVIDENCE`,
+    `GATE_LANDING_INTENT`, `GATE_CARRY_WAIT`, `HUSKY`), and its stdout and
+    stderr reach the caller line by line while it runs, so a watcher sees
+    `[pre-push]` and `[gate-live]` lines live;
+  - (c) a hooks path that is missing or not executable refuses, and nothing is
+    sent. Git treats that as no hook and pushes ungated without a word, as in
+    elohim landing 21 on 2026-11-13;
+  - (d) the sha sent is the sha the hook judged. The revision is resolved once,
+    before the hook, given to the hook on stdin, and sent exactly. Test: HEAD
+    moves while the hook sleeps, and the remote receives the old sha;
+  - if the remote branch moved during the long hook (not a fast-forward any
+    more), the push refuses, writes nothing and exits non-zero.
 
-  The integrator then decides whether the exception is retired.
+  Then shem completes one real `dev` landing with `brit push` on a build of
+  this item, with `[pre-push]` lines in its log. The build reaches shem as a
+  named brit branch and full commit sha, which shem builds with `epr bin` from
+  a clean brit checkout. A release closure is not used, because the device
+  store refused one for 0.3.4. The integrator then decides whether the
+  exception is retired. This item alone retires the root `CLAUDE.md` landing
+  exception.
 - [ ] **2. `brit cherry-pick <commit>`.** (L) This is 150 kept occurrences. The
   pool records it as a new replay mode, and sprint 4 put it out of scope. Scope
   is one commit with no conflict, including a commit that only moves a gitlink.
   A conflict refuses, names the paths, and leaves the tree untouched.
-  `--continue` is not part of this item. *Done when:* journey tests show the
-  result tree matching `git cherry-pick` for one file change and for one pin
-  move, and show a conflict refusing with the tree unchanged.
+  `--continue` is not part of this item. The author, author date, message and
+  every trailer (`Change-Id`, `Co-Authored-By`, the session trailers) are kept
+  byte for byte, because the elohim hand-over hook keys on `Change-Id`. One
+  commit per call is enough, since the elohim `landing-pick` wrapper loops.
+  *Done when:* journey tests show three things:
+  - the result tree matches `git cherry-pick` for one file change and for one
+    pin move;
+  - the picked commit's author, date, message and trailers equal the source
+    commit's;
+  - a conflict refuses with the tree unchanged.
+
+  This retires the Git inside `landing-pick`.
 - [ ] **3. Local `brit merge --ff-only <ref>`, and `pull --ff-only` across a
   pin move.** (M) This is 149 kept occurrences. `brit merge` has only object
   merges. `brit pull --ff-only` refuses when a submodule pin moved, so the
   integrator uses `git merge --ff-only`. *Done when:* journey tests show both a
   fast-forward of the checked-out branch and a pull across a gitlink move
-  leaving the same HEAD, index and worktree as Git does. They also show a
-  non-fast-forward refused with nothing written.
+  leaving the same HEAD, index and worktree as Git does. They also show:
+  - a non-fast-forward refused with nothing written;
+  - a fast-forward that succeeds while unrelated tracked files are dirty.
+    Hooks keep `.claude/data` ledgers dirty in every elohim main checkout;
+  - a refusal, naming the path, only when a dirty path is one the fast-forward
+    would change.
+
+  This retires the integrator's `git merge --ff-only` after each landing.
 - [ ] **4. Notes refs: `brit notes show` and fast-forward fetch and push of
   `refs/notes/*`.** (M) This is 62 kept occurrences. Each elohim device
   publishes its build receipts to its own
   `refs/notes/brit/devices/<did>/build/*`, fast-forward only, and today does it
-  through Git. *Done when:* a journey test round-trips a device notes ref
-  through a bare remote, refuses a non-fast-forward, and shows one note's body.
+  through Git. Fetch and push take ONE named notes ref and touch no other;
+  never a wildcard push, because the shared `refs/notes/brit/build/*` on origin
+  is frozen. *Done when:* a journey test round-trips one device notes ref
+  through a bare remote while a second notes ref there stays unchanged. The
+  test also refuses a non-fast-forward and shows one note's body. This retires
+  the Git in `just dev notes publish`.
 - [ ] **5. Stage a gitlink at a named commit without a checked-out
   submodule.** (S–M) This was sprint 4's second reserve. A pin move still needs
   `git update-index --cacheinfo`. *Done when:* the index entry holds the named
@@ -158,7 +198,8 @@ Sizes:
 
   Work: diagnostics go to stderr; no control codes when stdout is not a
   terminal; the capture gap prints at most once per session and names its
-  cause.
+  cause; a `--quiet` flag and an environment switch that scripts can set now
+  silence it.
 
   *Done when:* journey tests show piped `rev-parse` and `status` output byte-
   equal to the bare answer, and a second command in the same session prints no
@@ -180,6 +221,11 @@ Take one replacement from this reserve, in order, and keep the count at seven:
   verb.
 - `brit ls-tree <rev> [-- path]`, or a documented `brit tree entries` form with
   the same output. Test: byte-equal to Git on one tree.
+- brit's own pre-push needs the pinned rust-style checker built locally even
+  for a docs-only push: 1m42s and 333 MB of target on the laptop on
+  2026-11-25. A first contributor should not pay that build. Ship the checker,
+  or skip it when no Rust file changed. Test: a docs-only push on a host with
+  no checker installed.
 
 ## Meeting points with the epr runtime
 
@@ -190,6 +236,14 @@ an item does not undo one:
   main checkout's gitlink and refuses `non-descendant` from a feature-branch
   checkout. The laptop never follows a newer brit for that reason. Until then,
   a release here must say which installed brit version a workflow needs.
+- A session stays on the brit it started with while the device head moves, so
+  a fixed verb is absent for hours. The sharp case, seen 2026-11-25: on 0.3.0,
+  `brit config set <key> <value>` exits 0 and writes nothing, because `set`
+  only arrived in 0.3.3. An absent verb must refuse, never no-op. Every new verb
+  in this sprint therefore says, in its refusal on older builds, which version
+  it needs.
+- Items 1 to 4 together make a whole elohim landing Git-free. Items 5 to 7 are
+  quality.
 - Item 7 touches the `epr feedback` call. Keep the recorder's contract;
   change only what is printed.
 - Item 4 must keep the device notes publish fast-forward only, because the
@@ -202,8 +256,9 @@ Then:
 1. Cut one release (`brit-v0.3.5`, matching the CLI version), create the tag
    with `brit tag -a`, and push it with `brit push`.
 2. Tell the integrator the release commit; the monorepo pin is theirs to move.
-3. Ask the integrator to re-count the register's classes for the period after
-   the pin moves.
+3. The integrator re-counts the register's classes from transcripts after the
+   pin moves, with the extraction script kept beside the register so the two
+   counts compare.
 4. Write three lines here: what shipped, what was skipped and why, and the
    three things that hurt most while doing it. Those three start the next
    list.
