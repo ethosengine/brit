@@ -179,6 +179,12 @@ pub enum Subcommands {
     /// Fetch data from remotes and store it in the repository.
     #[cfg(feature = "gitoxide-core-blocking-client")]
     Fetch(fetch::Platform),
+    /// Consolidate local packs while preserving every packed object.
+    Maintenance {
+        /// Report pack counts and input bytes without writing.
+        #[clap(long)]
+        dry_run: bool,
+    },
     /// Fetch one explicit remote branch and integrate only a fast-forward, with explicit recovery.
     #[cfg(feature = "gitoxide-core-blocking-client")]
     Pull {

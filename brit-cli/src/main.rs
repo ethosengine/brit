@@ -443,6 +443,9 @@ fn read_only_path(path: &[&str]) -> bool {
 }
 
 fn read_only_command(matches: &clap::ArgMatches) -> bool {
+    if let Some(sub) = matches.subcommand_matches("maintenance") {
+        return sub.get_flag("dry_run");
+    }
     let mut path = Vec::new();
     let mut current = matches;
     while let Some((name, sub)) = current.subcommand() {
@@ -592,6 +595,7 @@ fn run(capture: &mut feedback::Capture, read_only: &mut bool) -> Result<()> {
         capture.operation(name);
     }
     *read_only = read_only_command(&matches);
+    capture.skip = *read_only && matches.subcommand_name() == Some("maintenance");
     if matches.get_flag("cli-surface-json") {
         return Err(error::CliError::Args("--cli-surface-json must be used alone".into()));
     }
