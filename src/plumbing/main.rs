@@ -548,11 +548,22 @@ pub fn run_with_command(args: Args, command: clap::Command) -> Result<()> {
             }
             core::repository::merge_base(repository(Mode::Lenient)?, first, others, out, format)
         }),
-        Subcommands::Add { paths, update, all: _ } => {
-            prepare_and_run("add", verbose, None, move |_progress, _out, _err| {
-                core::repository::index::stage_paths(repository(Mode::Strict)?, &paths, update)
-            })
-        }
+        Subcommands::Add {
+            paths,
+            update,
+            all: _,
+            gitlink,
+        } => prepare_and_run("add", verbose, None, move |_progress, _out, _err| {
+            let repo = repository(Mode::Strict)?;
+            if let Some(commit) = gitlink {
+                let [path] = paths.as_slice() else {
+                    bail!("--gitlink requires exactly one literal submodule path".validation());
+                };
+                core::repository::index::stage_gitlink(&repo, &commit, path)
+            } else {
+                core::repository::index::stage_paths(repo, &paths, update)
+            }
+        }),
         Subcommands::Restore {
             staged,
             worktree,

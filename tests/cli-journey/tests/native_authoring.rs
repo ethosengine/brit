@@ -56,6 +56,61 @@ fn fixture(label: &str) -> Result<TestRepo> {
 }
 
 #[test]
+fn add_gitlink_stages_and_moves_an_uninitialized_submodule_pin() -> gix_testtools::TestResult {
+    let child = TestRepo::new("gitlink-child")?;
+    let first = child.commit_file("tracked", "first\n")?;
+    let next = child.commit_file("tracked", "next\n")?;
+    let parent = TestRepo::new("gitlink-parent")?;
+    let root = parent.path();
+    parent.commit_file(
+        ".gitmodules",
+        "[submodule \"child-name\"]
+    path = deps/child
+    url = ../child
+",
+    )?;
+    parent.commit_file("ordinary", "ordinary file\n")?;
+
+    assert!(
+        !gix_testtools::git_command(root)
+            .args(["cat-file", "-e", &next])
+            .output()?
+            .status
+            .success(),
+        "the new pin must exist only in the child repository"
+    );
+    for commit in [&first, &next] {
+        success(root, &["add", "--gitlink", commit, "deps/child"])?;
+        assert_eq!(
+            git(root, &["ls-files", "--stage", "--", "deps/child"])?,
+            format!("160000 {commit} 0\tdeps/child\n").into_bytes(),
+            "the index must contain exactly the requested stage-zero gitlink"
+        );
+    }
+    assert!(!root.join("deps").exists(), "staging must leave the checkout absent");
+    assert!(
+        !root.join(".git/modules").exists(),
+        "staging must leave module storage absent"
+    );
+
+    let before = index(root)?;
+    let null_id = "0".repeat(next.len());
+    let blob_id = String::from_utf8(git(root, &["rev-parse", "HEAD:ordinary"])?)?;
+    for (commit, path, diagnostic) in [
+        ("invalid-object-id", "deps/child", "gitlink commit ID"),
+        (null_id.as_str(), "deps/child", "gitlink commit ID"),
+        (blob_id.trim(), "deps/child", "does not identify a commit"),
+        (first.as_str(), "ordinary", "Unknown submodule path"),
+    ] {
+        let out = brit(root, &["add", "--gitlink", commit, path])?;
+        assert!(!out.status.success(), "must refuse {commit} at {path}");
+        assert!(out.stderr.contains(diagnostic), "{}", out.stderr);
+        assert_eq!(index(root)?, before, "refusal must preserve the index byte for byte");
+    }
+    Ok(())
+}
+
+#[test]
 fn stage_inspect_unstage_and_commit_preserves_neighbors() -> Result<()> {
     let actual = fixture("native")?;
     let oracle = fixture("oracle")?;
