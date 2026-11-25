@@ -97,7 +97,7 @@ Sizes:
 - M is a new mode built on code that exists.
 - L is a new command over an existing engine.
 
-- [ ] **1. `brit push` completes a gated `dev` landing.** (M) The elohim
+- [x] **1. `brit push` completes a gated `dev` landing.** (M) The elohim
   repository still lands with `git push` under a standing exception written for
   brit 0.1.12, which closed send-pack after a green hook. On 0.3.4, shem pushed
   a hand-over ref with a `src:dst` refspec through a green hook. Two cases
@@ -139,7 +139,7 @@ Sizes:
   store refused one for 0.3.4. The integrator then decides whether the
   exception is retired. This item alone retires the root `CLAUDE.md` landing
   exception.
-- [ ] **2. `brit cherry-pick <commit>`.** (L) This is 150 kept occurrences. The
+- [x] **2. `brit cherry-pick <commit>`.** (L) This is 150 kept occurrences. The
   pool records it as a new replay mode, and sprint 4 put it out of scope. Scope
   is one commit with no conflict, including a commit that only moves a gitlink.
   A conflict refuses, names the paths, and leaves the tree untouched.
@@ -155,7 +155,7 @@ Sizes:
   - a conflict refuses with the tree unchanged.
 
   This retires the Git inside `landing-pick`.
-- [ ] **3. Local `brit merge --ff-only <ref>`, and `pull --ff-only` across a
+- [x] **3. Local `brit merge --ff-only <ref>`, and `pull --ff-only` across a
   pin move.** (M) This is 149 kept occurrences. `brit merge` has only object
   merges. `brit pull --ff-only` refuses when a submodule pin moved, so the
   integrator uses `git merge --ff-only`. *Done when:* journey tests show both a
@@ -168,7 +168,7 @@ Sizes:
     would change.
 
   This retires the integrator's `git merge --ff-only` after each landing.
-- [ ] **4. Notes refs: `brit notes show` and fast-forward fetch and push of
+- [x] **4. Notes refs: `brit notes show` and fast-forward fetch and push of
   `refs/notes/*`.** (M) This is 62 kept occurrences. Each elohim device
   publishes its build receipts to its own
   `refs/notes/brit/devices/<did>/build/*`, fast-forward only, and today does it
@@ -178,15 +178,15 @@ Sizes:
   through a bare remote while a second notes ref there stays unchanged. The
   test also refuses a non-fast-forward and shows one note's body. This retires
   the Git in `just dev notes publish`.
-- [ ] **5. Stage a gitlink at a named commit without a checked-out
+- [x] **5. Stage a gitlink at a named commit without a checked-out
   submodule.** (S–M) This was sprint 4's second reserve. A pin move still needs
   `git update-index --cacheinfo`. *Done when:* the index entry holds the named
   commit with mode `160000`, for a submodule that was never initialized.
-- [ ] **6. `brit grep <rev> -- <pattern>` and `brit log -S <string>`.** (M)
+- [x] **6. `brit grep <rev> -- <pattern>` and `brit log -S <string>`.** (M)
   This is the open part of the read-form and log classes. Tracing a hook change
   needed `git grep <rev>` and `git log -S`. *Done when:* both match Git's output
   byte for byte on a fixture repository at one revision.
-- [ ] **7. Diagnostics stay off stdout, and the feedback-capture line is
+- [x] **7. Diagnostics stay off stdout, and the feedback-capture line is
   quiet.** (S) This is every scripted use, on all three devices:
   - `brit rev-parse` and `ls-remote` print `brit: …` lines on stdout beside the
     answer;
@@ -204,7 +204,7 @@ Sizes:
   *Done when:* journey tests show piped `rev-parse` and `status` output byte-
   equal to the bare answer, and a second command in the same session prints no
   capture line.
-- [ ] **8. Layered CI: narrow runs build confidence cheaply before the
+- [x] **8. Layered CI: narrow runs build confidence cheaply before the
   exhaustive run.** (M) The steward added this on 2026-11-25: "we should be able
   to target layer up the confidence cheaply before eating a huge pipeline run."
   Every `run-ci/**` push and every manual run is exhaustive: about 6,770 tests on
