@@ -160,7 +160,7 @@ pub(crate) use linux::{
     Change, Lock, State, acquire_recorded_locks, checkpoint, complete_directory_ledger, creation_mode, digest, payload,
     prepare_directories, private_copy, private_publish, private_write, publish_file_from, publish_metadata_at,
     shared_guard, snapshot, sync_dir, sync_file, sync_path, validate_local_history, validate_object_boundaries,
-    verify_files, verify_locks,
+    validate_path, verify_files, verify_locks,
 };
 #[cfg(target_os = "linux")]
 pub use linux::{

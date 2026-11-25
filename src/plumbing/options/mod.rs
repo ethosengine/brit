@@ -128,6 +128,11 @@ impl Args {
 pub enum Subcommands {
     /// Replay a linear history with durable local recovery.
     Rebase(rebase::Platform),
+    /// Apply one commit to the checked-out branch.
+    CherryPick {
+        /// Commit to apply.
+        commit: BString,
+    },
     /// Subcommands for creating worktree archives.
     #[cfg(feature = "gitoxide-core-tools-archive")]
     Archive(archive::Platform),
