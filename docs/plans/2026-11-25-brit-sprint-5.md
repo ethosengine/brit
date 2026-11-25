@@ -5,8 +5,8 @@ serves: brit-native-daily-driver
 ---
 # Brit sprint 5: the daily driver's largest fallbacks
 
-This is the whole sprint. It has seven items and it ends when they are done or
-skipped. Progress is always "x of 7". The
+This is the whole sprint. It has seven items, plus item 8, which the steward added
+on 2026-11-25. It ends when they are done or skipped. Progress is "x of 8". The
 [backlog](2026-11-15-bounded-memory-backlog.md) is the pool; do not work from
 the pool, and do not add to this list. Anything new you find goes into the pool
 as one line.
@@ -204,6 +204,27 @@ Sizes:
   *Done when:* journey tests show piped `rev-parse` and `status` output byte-
   equal to the bare answer, and a second command in the same session prints no
   capture line.
+- [ ] **8. Layered CI: narrow runs build confidence cheaply before the
+  exhaustive run.** (M) The steward added this on 2026-11-25: "we should be able
+  to target layer up the confidence cheaply before eating a huge pipeline run."
+  Every `run-ci/**` push and every manual run is exhaustive: about 6,770 tests on
+  every platform, and the macOS job alone takes about an hour. The same day, three
+  macOS-only failures cost a full cycle each. The confidence ladder:
+  1. the failing test on a local build;
+  2. that test, or a stage, on the one platform that failed it;
+  3. fast mode (the affected crates and their dependents) on every platform;
+  4. the exhaustive run.
+
+  Only the exhaustive run counts for landing. Work: give `ci.yml`'s
+  `workflow_dispatch` the inputs `mode`, `platforms`, `stage` and `tests` (a
+  nextest filterset), and give the QA scheduler the matching plan options so the
+  CI matrix carries them. A narrowed run must not produce a check named
+  `Tests pass`. *Done when:*
+  - scheduler tests show a platform list restricting the CI assignment, and a
+    test filter reaching every nextest command while non-test tasks drop out;
+  - workflow policy checks pass;
+  - one real dispatch, on one platform with a single test, finishes in well
+    under the exhaustive time and reports a check that is not `Tests pass`.
 
 ## If an item is skipped
 
