@@ -17,6 +17,18 @@ use std::collections::{BTreeMap, BTreeSet};
 use anyhow::{Context, Result, ensure};
 use gix::bstr::{BStr, BString, ByteSlice};
 
+#[cfg(target_os = "linux")]
+mod cherry_pick;
+#[cfg(target_os = "linux")]
+pub use cherry_pick::execute as cherry_pick;
+
+/// Apply one commit to the checked-out branch while holding the writer guards.
+#[cfg(not(target_os = "linux"))]
+pub fn cherry_pick(_: &gix::Repository, revision: &BStr) -> Result<()> {
+    // Elsewhere this stays a Git bridge: name the exact command, as the bridge did before.
+    anyhow::bail!("native cherry-pick requires Linux; run: git cherry-pick {revision}")
+}
+
 mod validation;
 use validation::Validation;
 #[cfg(target_os = "linux")]
@@ -347,6 +359,15 @@ fn changed_index_paths(
     after: &gix::index::State,
     paths: &mut BTreeSet<BString>,
 ) -> Result<()> {
+    collect_changed_index_paths(before, after, paths, false)
+}
+
+fn collect_changed_index_paths(
+    before: &gix::index::State,
+    after: &gix::index::State,
+    paths: &mut BTreeSet<BString>,
+    allow_gitlinks: bool,
+) -> Result<()> {
     let entries = |index: &gix::index::State, point| -> Result<BTreeMap<_, _>> {
         selection_interrupt()?;
         let mut entries = BTreeMap::new();
@@ -364,10 +385,11 @@ fn changed_index_paths(
         selection_interrupt()?;
         if before.get(path) != after.get(path) {
             ensure!(
-                ![before.get(path), after.get(path)]
-                    .into_iter()
-                    .flatten()
-                    .any(|(_, mode)| *mode == gix::index::entry::Mode::COMMIT),
+                allow_gitlinks
+                    || ![before.get(path), after.get(path)]
+                        .into_iter()
+                        .flatten()
+                        .any(|(_, mode)| *mode == gix::index::entry::Mode::COMMIT),
                 "gitlink {path} is changed by this rebase; affected gitlinks are unsupported by brit rebase, and \
                  nothing was changed; git rebase is the fallback"
             );
@@ -425,21 +447,39 @@ pub struct Step {
     pub newly_empty: bool,
 }
 
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum ReplayMode {
+    Rebase,
+    CherryPick,
+}
+
 impl Step {
     pub fn merge(repo: &gix::Repository, candidate: &Candidate, tip: gix::ObjectId) -> Result<Self> {
+        Self::merge_commit(repo, candidate.commit, Some(candidate.parent), tip, ReplayMode::Rebase)
+    }
+
+    fn merge_commit(
+        repo: &gix::Repository,
+        commit: gix::ObjectId,
+        parent: Option<gix::ObjectId>,
+        tip: gix::ObjectId,
+        mode: ReplayMode,
+    ) -> Result<Self> {
         selection_interrupt()?;
         validate_execution_policy(repo)?;
         let mut buffer = gix::objs::find::Buffer::default();
-        let original = read_commit(repo, candidate.commit, &mut buffer)?;
-        let parents: Vec<_> = original.parents().collect();
+        let original = read_commit(repo, commit, &mut buffer)?;
         ensure!(
-            parents == [candidate.parent],
+            original.parents().eq(parent),
             "candidate parent does not match pinned selection"
         );
         let theirs = original.tree();
         drop(original);
         buffer.clear();
-        let base = commit_tree(repo, candidate.parent)?;
+        let base = match parent {
+            Some(parent) => commit_tree(repo, parent)?,
+            None => gix::ObjectId::empty_tree(repo.object_hash()),
+        };
         let ours = commit_tree(repo, tip)?;
         selection_interrupt()?;
         let options = repo.tree_merge_options()?;
@@ -461,6 +501,11 @@ impl Step {
                 }
             }
         }
+        let cherry_pick = mode == ReplayMode::CherryPick;
+        if cherry_pick && !conflicts.is_empty() {
+            let paths: Vec<_> = conflicts.iter().map(|path| format!("{path:?}")).collect();
+            anyhow::bail!("cherry-pick conflicts: {}", paths.join(", "));
+        }
         selection_interrupt()?;
         let tree = result
             .tree
@@ -476,13 +521,13 @@ impl Step {
             selection_interrupt()?;
             let theirs_index = repo.index_from_tree(&theirs)?;
             selection_interrupt()?;
-            changed_index_paths(&base_index, &theirs_index, &mut footprint)?;
+            collect_changed_index_paths(&base_index, &theirs_index, &mut footprint, cherry_pick)?;
         }
         {
             selection_interrupt()?;
             let ours_index = repo.index_from_tree(&ours)?;
             selection_interrupt()?;
-            changed_index_paths(&ours_index, &tree_index, &mut footprint)?;
+            collect_changed_index_paths(&ours_index, &tree_index, &mut footprint, cherry_pick)?;
         }
         // The merged tree's attributes govern the files this step will write.
         let footprint = collect_footprint(footprint)?;
@@ -495,7 +540,7 @@ impl Step {
         index.verify_entries()?;
         selection_interrupt()?;
         Ok(Self {
-            original: candidate.commit,
+            original: commit,
             parent: tip,
             tree,
             index,

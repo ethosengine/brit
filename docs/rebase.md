@@ -26,6 +26,20 @@ selections, shallow histories and unsupported object/index/filter arrangements
 refuse before live replay. The original branch stays reserved across linked
 worktrees until final publication or completed abort.
 
+## Pick one commit
+
+On Linux, `brit cherry-pick <commit>` applies one local commit to the checked-out
+branch, including an index-only pin move for an uninitialized submodule. The
+new commit uses the current committer identity and preserves the source author,
+author date, message and trailers byte for byte.
+
+Conflicts list the affected paths and leave HEAD, the index and checkout intact.
+Overlapping staged or unstaged changes also refuse the pick. Unrelated changes
+stay staged or unstaged as before. A refused pick has no continuation state.
+Merge commits and empty picks are outside this command's scope.
+
+## Interactive rebase
+
 Interactive todos support `pick`, `reword`, `edit`, `squash`, plain `fixup`,
 `drop`, `break`, and their unambiguous one-letter aliases. Every unconsumed
 candidate must appear exactly once. Completed entries cannot change. An invalid

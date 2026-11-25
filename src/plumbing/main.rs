@@ -56,6 +56,7 @@ fn mutation_guard_scope(cmd: &Subcommands) -> GuardScope {
         Subcommands::Commit(commit::Platform { cmd: None, .. }) => GuardScope::None,
         // Rewrite the invoking worktree. Switch, pull and rebase take the same pair themselves.
         Subcommands::Restore { .. }
+        | Subcommands::CherryPick { .. }
         | Subcommands::Merge(merge::Platform {
             cmd: merge::SubCommands::Tree { update_head: true, .. },
         }) => GuardScope::RepositoryAndWorktree,
@@ -585,6 +586,12 @@ pub fn run_with_command(args: Args, command: clap::Command) -> Result<()> {
             core::repository::replay::command::run(repository(Mode::Strict)?, options.action(), out, err)
                 .map_err(anyhow_to_gix)
         }),
+        Subcommands::CherryPick { commit } => {
+            prepare_and_run("cherry-pick", verbose, None, move |_progress, _out, _err| {
+                core::repository::replay::cherry_pick(&repository(Mode::Strict)?, commit.as_ref())
+                    .map_err(anyhow_to_gix)
+            })
+        }
         Subcommands::Switch {
             branch,
             status,

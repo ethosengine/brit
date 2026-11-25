@@ -530,7 +530,7 @@ pub(crate) fn snapshot(path: &Path) -> Result<State> {
         bytes: fs::read(path)?,
     })
 }
-fn validate_path(bytes: &[u8]) -> Result<()> {
+pub(crate) fn validate_path(bytes: &[u8]) -> Result<()> {
     ensure!(
         !bytes.is_empty() && !bytes.starts_with(b"/") && !bytes.contains(&0),
         "invalid journal path"

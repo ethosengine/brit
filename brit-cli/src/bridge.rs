@@ -10,16 +10,7 @@ use std::ffi::OsString;
 pub const EXIT_CODE: i32 = 2;
 
 /// Top-level subcommands that Git owns and brit bridges.
-pub const BRIDGED: &[&str] = &[
-    "reset",
-    "rm",
-    "mv",
-    "stash",
-    "cherry-pick",
-    "revert",
-    "checkout",
-    "notes",
-];
+pub const BRIDGED: &[&str] = &["reset", "rm", "mv", "stash", "revert", "checkout", "notes"];
 
 /// Submodule verbs handled entirely by Git.
 pub const BRIDGED_SUBMODULE: &[&str] = &["init", "sync"];

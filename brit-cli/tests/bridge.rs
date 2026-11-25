@@ -26,10 +26,6 @@ const ROWS: &[(&[&str], &str)] = &[
         "brit: stash is a Git bridge operation; run: git stash push -m 'wip item'",
     ),
     (
-        &["cherry-pick", "topic"],
-        "brit: cherry-pick is a Git bridge operation; run: git cherry-pick topic",
-    ),
-    (
         &["revert", "--no-edit", "HEAD"],
         "brit: revert is a Git bridge operation; run: git revert --no-edit HEAD",
     ),
