@@ -89,7 +89,7 @@ pub fn commands(metadata: &Value, selection: &Value, stages: &[String]) -> Resul
     if !exhaustive && selected.is_empty() {
         return Ok(Vec::new());
     }
-    let selected = if exhaustive {
+    let selected = if exhaustive && selection["package_scope"] != true {
         by_name.keys().copied().collect::<Vec<_>>()
     } else {
         selected

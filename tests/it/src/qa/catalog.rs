@@ -89,7 +89,12 @@ fn parts(platform: &str) -> Result<(&str, &str)> {
 
 pub fn tasks(metadata: &Value, selection: &Value, platform: &str) -> Result<Vec<Task>> {
     let mut tasks = unfiltered_tasks(metadata, selection, platform)?;
-    if let Some(filter) = selection["tests"].as_str() {
+    let filter = selection["tests"].as_str();
+    let repeat = selection["repeat"].as_u64();
+    if repeat.is_some() && filter.is_none() {
+        bail!("A repeat count requires a Nextest filterset");
+    }
+    if filter.is_some() || selection["package_scope"] == true {
         tasks.retain_mut(|task| {
             task.commands.retain_mut(|command| {
                 let nextest = (command.program == "cargo"
@@ -99,8 +104,11 @@ pub fn tasks(metadata: &Value, selection: &Value, platform: &str) -> Result<Vec<
                             .args
                             .first()
                             .is_some_and(|arg| matches!(arg.as_str(), "native-tests" | "no-git")));
-                if nextest {
-                    let end = command
+                if nextest && let Some(filter) = filter {
+                    if repeat.is_some() {
+                        command.args.retain(|arg| arg != "--no-fail-fast");
+                    }
+                    let mut end = command
                         .args
                         .iter()
                         .position(|arg| arg == "--")
@@ -108,6 +116,17 @@ pub fn tasks(metadata: &Value, selection: &Value, platform: &str) -> Result<Vec<
                     command
                         .args
                         .splice(end..end, ["-E".into(), filter.into(), "--no-tests=pass".into()]);
+                    end += 3;
+                    if let Some(repeat) = repeat {
+                        command.args.splice(
+                            end..end,
+                            [
+                                format!("--stress-count={repeat}"),
+                                "--fail-fast".into(),
+                                "--retries=0".into(),
+                            ],
+                        );
+                    }
                 }
                 nextest
             });
@@ -126,7 +145,8 @@ fn unfiltered_tasks(metadata: &Value, selection: &Value, platform: &str) -> Resu
     let packages = metadata["packages"]
         .as_array()
         .ok_or_raise(|| message("missing packages"))?;
-    let selected: Vec<&str> = if exhaustive {
+    let scoped = selection["package_scope"] == true;
+    let selected: Vec<&str> = if exhaustive && !scoped {
         packages.iter().filter_map(|package| package["name"].as_str()).collect()
     } else {
         selection["packages"]
@@ -292,18 +312,13 @@ fn unfiltered_tasks(metadata: &Value, selection: &Value, platform: &str) -> Resu
     if !tested.is_empty() {
         let mut command = Command::new("@qa", &["native-tests", if exhaustive { "exhaustive" } else { "fast" }])
             .requiring(&["cargo-nextest"]);
-        if selected_packages.len() == packages.len() {
+        if !scoped && selected_packages.len() == packages.len() {
             command.args.push("--workspace".into());
             for name in isolated {
                 command.args.extend(["--exclude".into(), name.into()]);
             }
         } else {
-            for package in tested {
-                let id = package["id"]
-                    .as_str()
-                    .ok_or_raise(|| message!("Cargo metadata must contain workspace package IDs"))?;
-                command.args.extend(["-p".into(), id.into()]);
-            }
+            add_workspace_ids(&mut command, tested.into_iter().copied())?;
         }
         out.push(Task::new(
             "native-tests",
@@ -392,10 +407,14 @@ fn unfiltered_tasks(metadata: &Value, selection: &Value, platform: &str) -> Resu
                 .collect();
             if !without_git.is_empty() {
                 let mut command = Command::new("@qa", &["no-git", "--no-fail-fast"]).requiring(&["cargo-nextest"]);
-                for package in without_git {
-                    command
-                        .args
-                        .extend(["-p".into(), package["name"].as_str().expect("validated name").into()]);
+                if scoped {
+                    add_workspace_ids(&mut command, without_git.into_iter().copied())?;
+                } else {
+                    for package in without_git {
+                        command
+                            .args
+                            .extend(["-p".into(), package["name"].as_str().expect("validated name").into()]);
+                    }
                 }
                 if arch == "aarch64" {
                     command
@@ -410,23 +429,28 @@ fn unfiltered_tasks(metadata: &Value, selection: &Value, platform: &str) -> Resu
                 ));
             }
             if arch == "x86_64" {
+                let mut command = Command::new(
+                    "cargo",
+                    &[
+                        "nextest",
+                        "run",
+                        "--locked",
+                        "--target",
+                        "i686-pc-windows-msvc",
+                        "--no-fail-fast",
+                        "size",
+                    ],
+                );
+                if scoped {
+                    add_workspace_ids(&mut command, selected_packages.iter().copied())?;
+                } else {
+                    command.args.push("--workspace".into());
+                }
                 out.push(Task::new(
                     "size32",
                     "size32",
                     &["tests", "default-tests"],
-                    vec![Command::new(
-                        "cargo",
-                        &[
-                            "nextest",
-                            "run",
-                            "--locked",
-                            "--target",
-                            "i686-pc-windows-msvc",
-                            "--workspace",
-                            "--no-fail-fast",
-                            "size",
-                        ],
-                    )],
+                    vec![command],
                 ));
             }
         }
@@ -443,6 +467,16 @@ fn unfiltered_tasks(metadata: &Value, selection: &Value, platform: &str) -> Resu
     }
 
     Ok(out)
+}
+
+fn add_workspace_ids<'a>(command: &mut Command, packages: impl IntoIterator<Item = &'a Value>) -> Result<()> {
+    for package in packages {
+        let id = package["id"]
+            .as_str()
+            .ok_or_raise(|| message("Cargo metadata must contain workspace package IDs"))?;
+        command.args.extend(["-p".into(), id.into()]);
+    }
+    Ok(())
 }
 
 pub const STAGES: [&str; 19] = [
@@ -556,6 +590,7 @@ pub fn ci_plan(
     )?;
     plan["downstream"] = if platforms.contains(&"linux-x86_64")
         && selection["tests"].is_null()
+        && selection["package_scope"] != true
         && stages.iter().any(|stage| stage == "all")
     {
         super::downstream::matrix(metadata, selection)?
@@ -775,7 +810,15 @@ mod tests {
         let root = Path::new(env!("CARGO_MANIFEST_DIR")).join("../..");
         let metadata = super::super::plan::metadata(&root)?;
         let filter = "test(eight_writers_by_twenty_five)";
-        let mut selection = super::super::plan::filtered(&metadata, "fast", filter.into())?;
+        let mut selection = super::super::plan::filtered(
+            &root,
+            &metadata,
+            "fast",
+            super::super::TestScope {
+                tests: Some(filter.into()),
+                ..Default::default()
+            },
+        )?;
         let native_args = |selection: &Value| -> Result<Vec<String>> {
             Ok(tasks(&metadata, selection, "linux-x86_64")?
                 .into_iter()
@@ -851,6 +894,28 @@ mod tests {
                 .all(|row| row["task"]["id"] != "feature-tests"),
             "CI applies the same stage selectors as local QA"
         );
+        Ok(())
+    }
+
+    #[test]
+    fn exhaustive_native_commands_keep_explicit_package_ids_and_repeat() -> gix_error::TestResult {
+        let metadata = metadata();
+        let selection = json!({
+            "mode": "exhaustive", "packages": ["gix-path", "internal-tools"],
+            "package_scope": true, "tests": "test(example)", "repeat": 3
+        });
+        let plan = local_plan(&metadata, &selection, &host(), &["tests".into()])?;
+        let task = job_tasks(&metadata, &plan, &format!("tests@{}", host()))?
+            .into_iter()
+            .find(|task| task.id == "native-tests")
+            .expect("native test task");
+        let args = &task.commands[0].args;
+        for package in &metadata["packages"].as_array().expect("workspace packages")[..2] {
+            let id = package["id"].as_str().expect("workspace package ID");
+            assert!(args.windows(2).any(|pair| pair == ["-p", id]), "{args:?}");
+        }
+        assert!(!args.iter().any(|arg| arg == "--workspace"), "{args:?}");
+        assert!(args.iter().any(|arg| arg == "--stress-count=3"), "{args:?}");
         Ok(())
     }
 

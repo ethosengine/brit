@@ -2,6 +2,7 @@ use std::{
     fs::{self, File},
     path::{Path, PathBuf},
     process::{Command, Stdio},
+    time::Instant,
 };
 
 use gix_error::{OptionExt, Result, ResultExt, bail, message};
@@ -83,7 +84,6 @@ fn reuse_binaries(command: &mut Command, metadata: &Path, binaries: &Path, snaps
         .arg(binaries)
         .arg("--workspace-remap")
         .arg(snapshot)
-        .arg("--no-fail-fast")
         .env("GIX_TEST_FIXTURE_CACHE", cache)
         .env("GIX_TEST_FIXTURE_SOURCE_ROOT", snapshot);
 }
@@ -139,9 +139,11 @@ pub fn execute(
     let (mode, args) = args
         .split_first()
         .ok_or_raise(|| message("native-tests needs a mode and Cargo selection arguments"))?;
-    let modes = fixture_modes(mode, cfg!(windows))?;
+    let arguments = replay_arguments(args.iter().cloned())?;
+    // A stress run has exactly the requested number of iterations, even in exhaustive mode.
+    let modes = fixture_modes(if arguments.stress.is_empty() { mode } else { "fast" }, cfg!(windows))?;
     let before = source_state(root)?;
-    let result = run(root, args, modes, snapshots, log, coverage);
+    let result = run(root, arguments, modes, snapshots, log, coverage);
     if before != source_state(root)? {
         bail!("Native tests changed tracked or visible untracked source files; changes were retained for inspection");
     }
@@ -150,16 +152,15 @@ pub fn execute(
 
 fn run(
     root: &Path,
-    args: &[String],
+    arguments: ReplayArguments,
     modes: &[Fixtures],
     snapshots: &mut NativeSnapshots,
     log: Option<&File>,
     coverage: &mut Option<super::coverage::Run>,
 ) -> Result<()> {
-    let (args, requested, _) = replay_arguments(args.iter().cloned())?;
     let filter = native_filter(
         cfg!(all(windows, target_arch = "aarch64")),
-        requested.last().map(String::as_str),
+        arguments.expressions.last().map(String::as_str),
     );
     let mut build = cargo(root)?;
     build
@@ -172,14 +173,20 @@ fn run(
             "json",
             "--locked",
         ])
-        .args(args)
+        .args(arguments.build)
         .stderr(Stdio::inherit());
     run::redirect(&mut build, log, false)?;
+    let started = Instant::now();
     let (binaries, instrumented) = super::coverage::build(&mut build, coverage.as_ref(), log)?;
+    eprintln!("Native test build completed in {:.3}s", started.elapsed().as_secs_f64());
     let first = snapshots.add(root, modes.len())?;
     // Keep metadata beside the first snapshot's index, outside fixture status checks.
     let state = snapshots.sources[first].0.path.join(".git");
-    let metadata_path = save_metadata(root, &snapshots.sources[first].0.path)?;
+    let metadata_path = save_metadata(
+        root,
+        &snapshots.sources[first].0.path,
+        filter.contains("deps").then_some(binaries.as_slice()),
+    )?;
     let binaries_path = state.join("binaries-metadata.json");
     fs::write(&binaries_path, binaries).or_raise(|| message("Save nextest binaries for native tests"))?;
     let mut result = Ok(());
@@ -200,11 +207,18 @@ fn run(
             *fixtures,
             &filter,
         )?;
+        if arguments.stress.is_empty() {
+            command.arg("--no-fail-fast");
+        } else {
+            command.args(&arguments.stress);
+        }
         let configuration = coverage
             .as_ref()
             .map(|coverage| coverage.configuration(&build, &command));
+        let started = Instant::now();
         let test_result =
             super::coverage::execute(root, configuration, &mut command, instrumented, coverage.as_mut(), log);
+        eprintln!("Native test run took {:.3}s", started.elapsed().as_secs_f64());
         snapshots.check()?;
         if test_result.is_err() {
             result = test_result;
@@ -222,9 +236,24 @@ fn snapshot(root: &Path) -> Result<(Snapshot, SourceState)> {
     Ok((snapshot, state))
 }
 
-fn save_metadata(root: &Path, snapshot: &Path) -> Result<PathBuf> {
-    let metadata = output(cargo(root)?.args(["metadata", "--no-deps", "--format-version", "1", "--locked"]))?;
-    let path = snapshot.join(".git/cargo-metadata.json");
+fn save_metadata(root: &Path, snapshot: &Path, dependency_binaries: Option<&[u8]>) -> Result<PathBuf> {
+    let mut command = cargo(root)?;
+    command.args(["metadata", "--format-version", "1", "--locked"]);
+    let filename = if let Some(binaries) = dependency_binaries {
+        // Match Nextest's graph on the build target when evaluating deps() and rdeps().
+        let binaries: serde_json::Value =
+            serde_json::from_slice(binaries).or_raise(|| message("Read Nextest binary metadata"))?;
+        let target = binaries["rust-build-meta"]["target-platforms"][0]["triple"]
+            .as_str()
+            .ok_or_raise(|| message("Nextest binary metadata is missing the build target"))?;
+        command.args(["--all-features", "--filter-platform", target]);
+        "dependency-metadata.json"
+    } else {
+        command.arg("--no-deps");
+        "cargo-metadata.json"
+    };
+    let metadata = output(&mut command)?;
+    let path = snapshot.join(".git").join(filename);
     fs::write(&path, metadata).or_raise(|| message("Save Cargo metadata for native tests"))?;
     Ok(path)
 }
@@ -243,9 +272,18 @@ fn variant_arguments(mut command: run::Command) -> Result<(run::Command, Vec<Str
     ]
     .map(String::from)
     .to_vec();
-    let (cargo, mut expressions, no_tests) = replay_arguments(command.args.drain(2..))?;
+    let ReplayArguments {
+        build: cargo,
+        mut expressions,
+        no_tests,
+        stress,
+    } = replay_arguments(command.args.drain(2..))?;
     build.extend(cargo);
-    let mut replay = Vec::new();
+    let mut replay = if stress.is_empty() {
+        vec!["--no-fail-fast".into()]
+    } else {
+        stress
+    };
     if no_tests {
         replay.push("--no-tests=pass".into());
         // Nextest unions multiple -E expressions. The requested filter is appended last.
@@ -262,27 +300,37 @@ fn variant_arguments(mut command: run::Command) -> Result<(run::Command, Vec<Str
     Ok((run::normalize(command), replay))
 }
 
-fn replay_arguments(mut args: impl Iterator<Item = String>) -> Result<(Vec<String>, Vec<String>, bool)> {
-    let mut build = Vec::new();
-    let mut expressions = Vec::new();
-    let mut no_tests = false;
+#[derive(Default)]
+struct ReplayArguments {
+    build: Vec<String>,
+    expressions: Vec<String>,
+    no_tests: bool,
+    stress: Vec<String>,
+}
+
+fn replay_arguments(mut args: impl Iterator<Item = String>) -> Result<ReplayArguments> {
+    let mut replay = ReplayArguments::default();
     while let Some(arg) = args.next() {
         match arg.as_str() {
             "--no-fail-fast" => {}
-            "--no-tests=pass" => no_tests = true,
+            "--no-tests=pass" => replay.no_tests = true,
+            "--fail-fast" | "--retries=0" => replay.stress.push(arg),
+            _ if arg.starts_with("--stress-count=") => replay.stress.push(arg),
             "-E" | "--filter-expr" | "--filterset" => {
-                expressions.push(
+                replay.expressions.push(
                     args.next()
                         .ok_or_raise(|| message("Missing nextest filter expression"))?,
                 );
             }
             _ if arg.starts_with("--filter-expr=") || arg.starts_with("--filterset=") => {
-                expressions.push(arg.split_once('=').expect("matched an equals sign").1.into());
+                replay
+                    .expressions
+                    .push(arg.split_once('=').expect("matched an equals sign").1.into());
             }
-            _ => build.push(arg),
+            _ => replay.build.push(arg),
         }
     }
-    Ok((build, expressions, no_tests))
+    Ok(replay)
 }
 
 pub fn variants(
@@ -311,7 +359,6 @@ pub fn variants(
                 "<snapshot>/.git/binaries-metadata.json",
                 "--workspace-remap",
                 "<snapshot>",
-                "--no-fail-fast",
             ]
             .map(String::from)
             .to_vec();
@@ -323,7 +370,7 @@ pub fn variants(
     let result = (|| {
         let index = snapshots.add(root, 1)?;
         let (snapshot, _) = &snapshots.sources[index];
-        let metadata = save_metadata(root, &snapshot.path)?;
+        let metadata = save_metadata(root, &snapshot.path, None)?;
         let binaries = snapshot.path.join(".git/binaries-metadata.json");
         eprintln!("Native variants use generated fixtures in {}", snapshot.path.display());
         let result = run::each_case(commands, log, |command| {
@@ -332,12 +379,17 @@ pub fn variants(
             compilation.stderr(Stdio::inherit());
             run::redirect(&mut compilation, log, false)?;
             let (listed, instrumented) = super::coverage::build(&mut compilation, coverage.as_ref(), log)?;
+            let dependency_metadata = if filters.iter().any(|arg| arg.contains("deps")) {
+                Some(save_metadata(root, &snapshot.path, Some(&listed))?)
+            } else {
+                None
+            };
             fs::write(&binaries, listed).or_raise(|| message("Save nextest variant binaries"))?;
             build.args.clear();
             let mut command = run::process(root, &build)?;
             reuse_binaries(
                 &mut command,
-                &metadata,
+                dependency_metadata.as_deref().unwrap_or(&metadata),
                 &binaries,
                 &snapshot.path,
                 &snapshots
@@ -586,7 +638,7 @@ mod tests {
         );
         assert_eq!(
             filters,
-            ["-E", "test(handshake)"],
+            ["--no-fail-fast", "-E", "test(handshake)"],
             "test-name filters belong to the replay"
         );
         assert_eq!(
@@ -615,6 +667,9 @@ mod tests {
                 "-E",
                 requested,
                 "--no-tests=pass",
+                "--stress-count=3",
+                "--fail-fast",
+                "--retries=0",
             ],
         ))?;
         assert!(
@@ -623,17 +678,40 @@ mod tests {
         );
         assert_eq!(
             replay,
-            ["--no-tests=pass", "-E", "(test(one) | test(two)) & ((test(original)))"],
+            [
+                "--stress-count=3",
+                "--fail-fast",
+                "--retries=0",
+                "--no-tests=pass",
+                "-E",
+                "(test(one) | test(two)) & ((test(original)))"
+            ],
             "a variant replay can only run tests admitted by both filters"
         );
-        let (build, expressions, no_tests) = replay_arguments(
-            ["--workspace", "-E", requested, "--no-tests=pass"]
-                .map(String::from)
-                .into_iter(),
+        let replay = replay_arguments(
+            [
+                "-p",
+                "path+file:///workspace/gix#0.90.3",
+                "-E",
+                requested,
+                "--no-tests=pass",
+                "--stress-count=3",
+            ]
+            .map(String::from)
+            .into_iter(),
         )?;
-        assert_eq!(build, ["--workspace"]);
-        assert!(no_tests, "zero matches must pass");
-        let expression = native_filter(true, expressions.first().map(String::as_str));
+        assert_eq!(
+            replay.build,
+            ["-p", "path+file:///workspace/gix#0.90.3"],
+            "only the selected package is built"
+        );
+        assert_eq!(
+            replay.stress,
+            ["--stress-count=3"],
+            "repeat is applied when replaying the selected package's binaries"
+        );
+        assert!(replay.no_tests, "zero matches must pass");
+        let expression = native_filter(true, replay.expressions.first().map(String::as_str));
         assert!(expression.starts_with("(test(one) | test(two)) & not ("));
         assert!(expression.contains("test(performance)"));
         Ok(())
@@ -706,7 +784,6 @@ mod tests {
                     "binaries.json",
                     "--workspace-remap",
                     "snapshot",
-                    "--no-fail-fast",
                     "--no-tests=pass",
                     "-E",
                     "not ((package(=internal-tools) & binary(=qa)) | (package(=gix) & (test(notify::) | test(=repository::worktree::linked_worktree_removal_notifies_through_shared_metadata))))",
