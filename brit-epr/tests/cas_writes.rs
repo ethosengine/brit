@@ -812,3 +812,35 @@ fn eight_writers_by_twenty_five_puts_every_ok_reads_back_verified() {
         "scratch refs keep no reflog, so concurrent writers share no log directory to race on"
     );
 }
+
+/// A publication that finds another writer's ref lock in place lost a race, even though the ref
+/// has not moved yet: the bounded `Concurrent` refusal, never `GitFailed`. macOS CI 45675576739
+/// failed `eight_writers_by_twenty_five…` this way (iteration 8 of 20).
+#[test]
+fn a_ref_lock_held_by_another_writer_is_a_bounded_concurrent_refusal() {
+    let tmp = repo();
+    let target = commit(tmp.path(), "target");
+    let k = key(&tmp, "a");
+    let node = build(&k, STEP, &target);
+    let lock = tmp.path().join(".git/refs/notes/brit/build/gate%3Ax.lock");
+    std::fs::create_dir_all(lock.parent().unwrap()).unwrap();
+    std::fs::write(&lock, b"").unwrap();
+
+    let err = BritRefManager::new(tmp.path())
+        .unwrap()
+        .put_build_ref(STEP, &target, &node)
+        .unwrap_err();
+    assert!(matches!(err, RefError::Concurrent { attempts: 3, .. }), "{err:?}");
+    assert_eq!(ref_oid(tmp.path(), NOTES), None, "nothing was published");
+    assert!(scratch_refs(tmp.path()).is_empty());
+
+    std::fs::remove_file(&lock).unwrap();
+    BritRefManager::new(tmp.path())
+        .unwrap()
+        .put_build_ref(STEP, &target, &node)
+        .unwrap();
+    assert!(
+        ref_oid(tmp.path(), NOTES).is_some(),
+        "the next writer publishes once the lock is gone"
+    );
+}

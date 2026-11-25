@@ -239,6 +239,13 @@ fn admissible<T: PartialEq>(ref_name: &str, node: &T, read: Result<T, String>) -
     }
 }
 
+/// Whether git declined an update because another writer holds the ref's lock file: a lost race
+/// whose winner has not published yet, so the ref still reads unmoved. macOS surfaces it under
+/// eight concurrent writers; it is a bounded `Concurrent` refusal, not a git failure.
+fn held_by_another_writer(stderr: &str) -> bool {
+    stderr.contains("cannot lock ref") && (stderr.contains("File exists") || stderr.contains(".lock'"))
+}
+
 fn unix_now() -> u64 {
     std::time::SystemTime::now()
         .duration_since(std::time::UNIX_EPOCH)
@@ -981,7 +988,7 @@ impl BritRefManager {
             let observed = head.clone().unwrap_or_else(|| zero.clone());
             let changed = entry_seen.as_ref().is_some_and(|seen| *seen != entry);
             if changed || attempts == MAX_ATTEMPTS {
-                if !changed && observed == published_against {
+                if !changed && observed == published_against && !held_by_another_writer(&last_failure) {
                     return Err(RefError::GitFailed(format!(
                         "update-ref {ref_name} failed {attempts} times with the ref unmoved: {last_failure}"
                     )));
@@ -1136,6 +1143,14 @@ impl BritRefManager {
                 });
             }
             if attempts == MAX_ATTEMPTS {
+                if held_by_another_writer(&last_failure) {
+                    return Err(RefError::Concurrent {
+                        ref_name: ref_name.to_string(),
+                        expected,
+                        observed: current.unwrap_or(zero),
+                        attempts,
+                    });
+                }
                 return Err(RefError::GitFailed(format!(
                     "update-ref {ref_name} failed {attempts} times with the ref unmoved: {last_failure}"
                 )));
