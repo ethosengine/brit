@@ -40,7 +40,7 @@ pub fn line(args: &[OsString], command_index: usize, native_update: bool) -> Opt
         return None;
     };
     let mut line = format!("brit: {name} is a Git bridge operation; run: git");
-    for arg in &args[1..command_index] {
+    for arg in args[1..command_index].iter().filter(|arg| *arg != "--quiet") {
         line.push(' ');
         line.push_str(&shell_quote(&arg.to_string_lossy()));
     }

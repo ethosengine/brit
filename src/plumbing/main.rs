@@ -402,6 +402,8 @@ pub fn run_with_command(args: Args, command: clap::Command) -> Result<()> {
     };
 
     let auto_verbose = !args.no_verbose;
+    // The status progress renderer clears its final line on shutdown even on a pipe.
+    let status_verbose = auto_verbose && std::io::stderr().is_terminal();
 
     let should_interrupt = Arc::new(AtomicBool::new(false));
     #[expect(
@@ -807,7 +809,7 @@ pub fn run_with_command(args: Args, command: clap::Command) -> Result<()> {
             no_write,
             pathspec,
             index_worktree_renames,
-        }) => prepare_and_run("status", auto_verbose, None, move |progress, out, err| {
+        }) => prepare_and_run("status", status_verbose, None, move |progress, out, err| {
             use crate::plumbing::options::status::Submodules;
             let repo = repository(Mode::Lenient)?;
             // An index refresh is a worktree-local mutation. On contention or pending

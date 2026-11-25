@@ -218,6 +218,12 @@ fn public_command() -> clap::Command {
         .version(env!("CARGO_PKG_VERSION"))
         .long_version(VERSION_DETAIL)
         .arg(
+            clap::Arg::new("capture-quiet")
+                .long("quiet")
+                .help("Silence feedback capture gap notices (also BRIT_QUIET=1)")
+                .action(clap::ArgAction::SetTrue),
+        )
+        .arg(
             clap::Arg::new("cli-surface-json")
                 .long("cli-surface-json")
                 .help("Print the compiled parser surface as JSON; no behavior or acceptance claim")
@@ -518,8 +524,19 @@ fn run(capture: &mut feedback::Capture, read_only: &mut bool) -> Result<()> {
 
     // Locate submodule after global options before checking whether the invocation needs a bridge.
     let command = public_command();
+    // Read the root flag before clap can stop at a later help, version or usage exit.
+    capture.quiet = args.iter().position(|arg| arg == "--quiet").is_some_and(|index| {
+        command
+            .clone()
+            .ignore_errors(true)
+            .try_get_matches_from(&args[..=index])
+            .is_ok_and(|matches| matches.get_flag("capture-quiet"))
+    });
     let prefix = command_prefix(&args, &command);
-    let command_index = prefix.as_ref().map_or(1, |(index, _)| *index);
+    let command_index = prefix.as_ref().map_or_else(
+        || 1 + usize::from(args.get(1).is_some_and(|arg| arg == "--quiet")),
+        |(index, _)| *index,
+    );
     let native_submodule_update = command
         .find_subcommand("submodule")
         .and_then(|submodule| submodule.find_subcommand("update"))
@@ -576,14 +593,16 @@ fn run(capture: &mut feedback::Capture, read_only: &mut bool) -> Result<()> {
         Some("build" | "snapshot" | "context" | "integrate")
     ) {
         let namespace = matches.subcommand_name().unwrap_or("native");
-        // `--wait` is the one global option these namespaces honour: their writes take the same
-        // guards. Only a `--wait` before the first passed-through argument is Brit's; later
-        // tokens belong to the namespace (for `context` and `integrate`, to epr).
+        // Native writes use the same guards. Only a `--wait` before the first passed-through
+        // argument is Brit's; later tokens belong to the namespace (to epr for `context` and `integrate`).
         let wait = matches.get_one::<plumbing::MutationWait>("wait").copied();
         plumbing::configure_mutation_guards(wait, &command).map_err(|err| error::CliError::Git(err.into()))?;
         if let Some(option) = matches
             .ids()
-            .filter(|id| id.as_str() != "wait" && command.get_arguments().any(|arg| arg.get_id() == *id))
+            .filter(|id| {
+                !matches!(id.as_str(), "wait" | "capture-quiet")
+                    && command.get_arguments().any(|arg| arg.get_id() == *id)
+            })
             .find(|id| matches.value_source(id.as_str()) == Some(ValueSource::CommandLine))
         {
             let root_option = if matches!(namespace, "context" | "integrate") {
