@@ -100,6 +100,7 @@ fn requires_mutation_guard(cmd: &Subcommands) -> bool {
             cmds: None | Some(crate::plumbing::options::submodule::Subcommands::List { .. }),
         })
         | Subcommands::Cat { .. }
+        | Subcommands::Notes(_)
         | Subcommands::IsClean
         | Subcommands::IsChanged
         | Subcommands::ConfigTree
@@ -1830,6 +1831,12 @@ pub fn run_with_command(args: Args, command: clap::Command) -> Result<()> {
         }),
         Subcommands::Cat { revspec } => prepare_and_run("cat", verbose, None, move |_progress, out, _err| {
             core::repository::cat(repository(Mode::Lenient)?, &revspec, out)
+        }),
+        Subcommands::Notes(crate::plumbing::options::notes::Platform {
+            reference,
+            command: crate::plumbing::options::notes::Subcommand::Show { object },
+        }) => prepare_and_run("notes show", false, None, move |_progress, out, err| {
+            super::notes::show(&repository(Mode::Lenient)?, reference, object.as_ref(), out, err)
         }),
         Subcommands::Commit(platform) => match platform.cmd {
             None => prepare_and_run("commit", auto_verbose, None, move |_progress, out, _err| {

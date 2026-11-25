@@ -10,7 +10,7 @@ use std::ffi::OsString;
 pub const EXIT_CODE: i32 = 2;
 
 /// Top-level subcommands that Git owns and brit bridges.
-pub const BRIDGED: &[&str] = &["reset", "rm", "mv", "stash", "revert", "checkout", "notes"];
+pub const BRIDGED: &[&str] = &["reset", "rm", "mv", "stash", "revert", "checkout"];
 
 /// Submodule verbs handled entirely by Git.
 pub const BRIDGED_SUBMODULE: &[&str] = &["init", "sync"];
@@ -25,6 +25,12 @@ pub fn line(args: &[OsString], command_index: usize, native_update: bool) -> Opt
             return None;
         }
         (format!("submodule {verb}"), rest)
+    } else if name == "notes" {
+        let rest = &args[command_index + 1..];
+        if native_notes(rest) {
+            return None;
+        }
+        (name.to_owned(), rest)
     } else if BRIDGED.contains(&name) {
         (name.to_owned(), &args[command_index + 1..])
     } else {
@@ -42,6 +48,21 @@ pub fn line(args: &[OsString], command_index: usize, native_update: bool) -> Opt
         line.push_str(&shell_quote(&arg.to_string_lossy()));
     }
     Some(line)
+}
+
+fn native_notes(args: &[OsString]) -> bool {
+    let mut args = args.iter();
+    while let Some(arg) = args.next() {
+        match arg.to_str() {
+            Some("--ref") => {
+                args.next();
+            }
+            Some(arg) if arg.starts_with("--ref=") => {}
+            Some("show" | "--help" | "-h") => return true,
+            _ => return false,
+        }
+    }
+    false
 }
 
 fn bridge_update(args: &[OsString]) -> bool {

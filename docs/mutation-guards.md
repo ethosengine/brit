@@ -24,7 +24,7 @@ worktree guard while holding the repository guard.
 | `commit` | worktree for the whole command; repository shared only at start and to publish | Released before `pre-commit`, `prepare-commit-msg` and `commit-msg`. Re-taken (patience at least 600 s) to write the tree, the commit and the ref. Every guard is released before `post-commit` and `post-rewrite`. |
 | `push` | worktree for the whole command; repository shared for resolution and send-pack | Released across `pre-push`, re-taken (patience at least 600 s) for send-pack. Push never queues at the turnstile. |
 | `switch`, `pull`, `rebase` (replay), `restore`, `merge --ff-only`, `merge tree --update-head`, `clean --execute` | worktree, then repository exclusive | the whole guarded section, **including their own hooks** (`post-checkout`, `post-merge`) |
-| `fetch`, `branch`, `tag`, `config`, `worktree add`, notes and every other writer | repository exclusive | the whole command, **including fetch's whole transfer** |
+| `fetch`, `branch`, `tag`, `config`, `worktree add`, and every other writer | repository exclusive | the whole command, **including fetch's whole transfer** |
 | `worktree remove` | repository exclusive, then the target worktree's guard without waiting | refuses at once if that worktree is in use |
 
 Switch, fast-forward merge, pull and replay hold the repository guard through durable

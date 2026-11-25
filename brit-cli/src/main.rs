@@ -363,6 +363,7 @@ const READ_ONLY_COMMANDS: &[&[&str]] = &[
     &["rev-list"],
     &["log"],
     &["cat"],
+    &["notes", "show"],
     &["blame"],
     &["diff"],
     &["diff", "tree"],
@@ -522,7 +523,7 @@ fn run(capture: &mut feedback::Capture, read_only: &mut bool) -> Result<()> {
         return run_build(cli.command);
     }
 
-    // Locate submodule after global options before checking whether the invocation needs a bridge.
+    // Locate the command after global options before checking whether it needs a bridge.
     let command = public_command();
     // Read the root flag before clap can stop at a later help, version or usage exit.
     capture.quiet = args.iter().position(|arg| arg == "--quiet").is_some_and(|index| {

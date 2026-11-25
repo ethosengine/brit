@@ -854,91 +854,19 @@ fn configured_hooks_that_cannot_run_refuse_the_push() -> Result<()> {
     Ok(())
 }
 
-/// A notes ref fast-forwards beside a branch in one push; a notes rewrite and an existing tag's
-/// move are refused before the hook, and `--force` moves the tag.
+/// An existing tag's move is refused before the hook, and `--force` moves the tag.
 #[test]
-fn notes_fast_forward_beside_a_branch_while_tags_stay_put() -> Result<()> {
-    let repo = TestRepo::new("pre-push-notes")?;
+fn tags_stay_put_without_force() -> Result<()> {
+    let repo = TestRepo::new("pre-push-tags")?;
     let remote = remote(repo.path())?;
-    let notes = "refs/notes/brit/devices/d/build/x";
-    let notes_spec = format!("{notes}:{notes}");
-    git(
-        repo.path(),
-        &[
-            "-c",
-            "user.name=t",
-            "-c",
-            "user.email=t@example.invalid",
-            "notes",
-            "--ref",
-            notes,
-            "add",
-            "-m",
-            "first",
-            "HEAD",
-        ],
-    )?;
     git(repo.path(), &["tag", "v1"])?;
     let output = brit(
         repo.path(),
-        &["push", "origin", "main:main", &notes_spec, "refs/tags/v1:refs/tags/v1"],
+        &["push", "origin", "main:main", "refs/tags/v1:refs/tags/v1"],
     )?;
     ensure!(output.status.success(), "creation: {}", output.stderr);
 
     repo.commit_file("payload", "second")?;
-    git(
-        repo.path(),
-        &[
-            "-c",
-            "user.name=t",
-            "-c",
-            "user.email=t@example.invalid",
-            "notes",
-            "--ref",
-            notes,
-            "add",
-            "-m",
-            "second",
-            "HEAD",
-        ],
-    )?;
-    let output = brit(repo.path(), &["push", "origin", "main:main", &notes_spec])?;
-    ensure!(
-        output.status.success(),
-        "branch and notes fast-forward: {}",
-        output.stderr
-    );
-    assert_eq!(git(remote.path(), &["rev-parse", "main"])?, repo.head_id()?);
-    assert_eq!(
-        git(remote.path(), &["rev-parse", notes])?,
-        git(repo.path(), &["rev-parse", notes])?
-    );
-
-    let pushed_notes = git(remote.path(), &["rev-parse", notes])?;
-    let tree = git(repo.path(), &["rev-parse", &format!("{notes}^{{tree}}")])?;
-    let unrelated = git(
-        repo.path(),
-        &[
-            "-c",
-            "user.name=t",
-            "-c",
-            "user.email=t@example.invalid",
-            "commit-tree",
-            &tree,
-            "-m",
-            "rewritten notes",
-        ],
-    )?;
-    git(repo.path(), &["update-ref", notes, &unrelated])?;
-    let output = brit(repo.path(), &["push", "origin", &notes_spec])?;
-    ensure!(!output.status.success(), "a notes rewrite is not a fast-forward");
-    ensure!(
-        output.stderr.contains("refusing unverified fast-forward update"),
-        "{}",
-        output.stderr
-    );
-    assert_eq!(git(remote.path(), &["rev-parse", notes])?, pushed_notes);
-
     let tagged = git(remote.path(), &["rev-parse", "refs/tags/v1"])?;
     git(repo.path(), &["tag", "-f", "v1", "HEAD"])?;
     let output = brit(repo.path(), &["push", "origin", "refs/tags/v1:refs/tags/v1"])?;

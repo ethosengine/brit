@@ -1,5 +1,4 @@
-use std::fmt::Formatter;
-use std::path::PathBuf;
+use std::{fmt::Formatter, path::PathBuf};
 
 use gix::{
     Result,
@@ -35,6 +34,8 @@ pub mod exclude;
 #[cfg(feature = "blocking-client")]
 pub mod fetch;
 #[cfg(feature = "blocking-client")]
+mod notes_refspec;
+#[cfg(feature = "blocking-client")]
 pub mod push;
 #[cfg(feature = "blocking-client")]
 pub use clone::function::clone;
@@ -48,8 +49,7 @@ pub mod index;
 pub mod log;
 pub mod mailmap;
 mod merge_base;
-pub use merge_base::is_ancestor as merge_base_is_ancestor;
-pub use merge_base::merge_base;
+pub use merge_base::{is_ancestor as merge_base_is_ancestor, merge_base};
 pub mod fsmonitor;
 pub mod merge;
 pub mod odb;

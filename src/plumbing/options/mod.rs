@@ -1,4 +1,5 @@
 pub mod git_spellings;
+pub mod notes;
 pub mod rebase;
 use std::path::PathBuf;
 
@@ -224,6 +225,8 @@ pub enum Subcommands {
     /// Interact with submodules.
     #[clap(alias = "submodules")]
     Submodule(submodule::Platform),
+    /// Read Git notes.
+    Notes(notes::Platform),
     /// Show whatever object is at the given spec.
     Cat {
         /// The object to print to stdout.

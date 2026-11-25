@@ -1,6 +1,7 @@
 mod guard_label;
 mod main;
 mod mutation;
+mod notes;
 /// The error a `diff --exit-code` or `--quiet` run returns when the compared versions differ.
 pub use gitoxide_core::repository::diff::Differences;
 /// The status a Git-shaped ending asks for, when a command answers through its exit code.
