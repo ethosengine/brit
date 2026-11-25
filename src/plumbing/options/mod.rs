@@ -958,10 +958,22 @@ pub mod merge {
     }
 
     #[derive(Debug, clap::Parser)]
-    #[command(about = "Perform merges of various kinds")]
+    #[command(
+        about = "Fast-forward the current branch or perform object merges",
+        args_conflicts_with_subcommands = true,
+        subcommand_negates_reqs = true
+    )]
     pub struct Platform {
+        /// Require a fast-forward of the checked-out branch.
+        #[clap(long, required = true, requires = "revision")]
+        pub ff_only: bool,
+
+        /// Local commit to fast-forward to.
+        #[clap(value_name = "REF", value_parser = crate::shared::AsBString, requires = "ff_only")]
+        pub revision: Option<BString>,
+
         #[clap(subcommand)]
-        pub cmd: SubCommands,
+        pub cmd: Option<SubCommands>,
     }
 
     #[derive(Debug, clap::Subcommand)]

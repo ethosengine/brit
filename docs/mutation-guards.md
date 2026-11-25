@@ -23,12 +23,12 @@ worktree guard while holding the repository guard.
 | `add`, `status` index refresh | worktree, then repository shared | the whole command (`status` never waits and skips its refresh when contended) |
 | `commit` | worktree for the whole command; repository shared only at start and to publish | Released before `pre-commit`, `prepare-commit-msg` and `commit-msg`. Re-taken (patience at least 600 s) to write the tree, the commit and the ref. Every guard is released before `post-commit` and `post-rewrite`. |
 | `push` | worktree for the whole command; repository shared for resolution and send-pack | Released across `pre-push`, re-taken (patience at least 600 s) for send-pack. Push never queues at the turnstile. |
-| `switch`, `pull`, `rebase` (replay), `restore`, `merge tree --update-head`, `clean --execute` | worktree, then repository exclusive | the whole guarded section, **including their own hooks** (`post-checkout`, `post-merge`) |
+| `switch`, `pull`, `rebase` (replay), `restore`, `merge --ff-only`, `merge tree --update-head`, `clean --execute` | worktree, then repository exclusive | the whole guarded section, **including their own hooks** (`post-checkout`, `post-merge`) |
 | `fetch`, `branch`, `tag`, `config`, `worktree add`, notes and every other writer | repository exclusive | the whole command, **including fetch's whole transfer** |
 | `worktree remove` | repository exclusive, then the target worktree's guard without waiting | refuses at once if that worktree is in use |
 
-The long holds that remain are deliberate: switch, pull and replay journal their work and keep
-the repository exclusive until it is durable, and fetch holds it for its transfer.
+Switch, fast-forward merge, pull and replay hold the repository guard through durable
+publication. Fetch holds it for its transfer.
 
 ## Waiting
 
@@ -53,8 +53,8 @@ really its ancestor.
 - **Same-worktree writers refuse at once.** A `pre-commit` hook cannot run `brit add` in its own
   worktree, nor a `pre-push` hook `brit commit`: the command the hook runs under holds that
   worktree. Stage files from a hook through the index directly, for example with `git add`.
-- **Exclusive writers inside a `post-checkout`/`post-merge` hook refuse at once**: switch and pull
-  hold the repository exclusively while their hooks run.
+- **Exclusive writers inside a `post-checkout`/`post-merge` hook refuse at once**: switch, pull
+  and fast-forward merge hold the repository exclusively while their hooks run.
 - **Other writers work.** A `pre-push` or `pre-commit` hook may create branches, write notes or
   commit in another worktree; writers in another repository are unaffected. `post-commit` and
   `post-rewrite` hold no guard, so they may run any Brit writer, in their own worktree too.
@@ -65,16 +65,22 @@ really its ancestor.
 
 ## Recovery journals
 
-`switch`, `pull` and `rebase` journal their work under the worktree's Git directory, and
+`switch`, `merge --ff-only`, `pull` and `rebase` journal their work under the worktree's Git directory, and
 while a journal is pending every writer in every worktree refuses and names the command that
 recovers it. Only that operation's own recovery command, run in the worktree that owns the
 journal, removes it: a writer elsewhere holds the repository guard (perhaps only shared) and
 its own worktree's guard, never the owning worktree's, so clearing another worktree's journal
 would be a write the model reserves for `other_worktree_guard`.
 
-- A `switch` or `pull` stopped after creating its journal directory and before publishing its
-  first record leaves `brit-switch` with no `manifest.json`. Both publish that record before
-  they take any lock or touch any live file, so nothing was changed. `brit switch --status`
+On Linux, `brit merge --ff-only <ref>` integrates a local revision on the checked-out branch.
+It checks for staged or unstaged changes to affected paths before publishing the checkout.
+Local merge and fast-forward pull update moved submodule pins in the index while leaving the
+submodule worktrees alone. Use `brit switch --status` to inspect an interrupted local merge
+and `brit switch --continue` or `brit switch --abort` to recover it.
+
+- A `switch`, fast-forward merge or `pull` stopped after creating its journal directory and before publishing its
+  first record leaves `brit-switch` with no `manifest.json`. Each publishes that record before
+  taking ordinary Git locks or updating live files, so nothing was changed. `brit switch --status`
   says so, other writers refuse naming `brit switch --abort`, and `--abort` (`brit pull --abort`
   too) removes it; `--continue` refuses, since nothing was recorded.
 - A rebase whose preparation failed, or was killed, is cancelled by `brit rebase --abort`
