@@ -46,6 +46,11 @@ const COVENANT_PREFIX: &str = "refs/notes/brit/covenant/";
 /// only on refs under `refs/notes/`, so the private ref lives here — outside `refs/notes/brit/`,
 /// where no brit listing and no `refs/notes/brit/*` refspec sees it.
 const SCRATCH_PREFIX: &str = "refs/notes/brit-tmp/";
+/// Git options for every write to a scratch ref: no reflog. A scratch ref lives for one write, and
+/// concurrent writers creating and deleting reflogs under one shared `logs/refs/notes/brit-tmp/`
+/// directory race (one prunes the empty directory while another appends), which macOS reports as
+/// `EINVAL` and which no retry here classifies.
+const SCRATCH_NO_REFLOG: [&str; 2] = ["-c", "core.logAllRefUpdates=false"];
 /// A scratch ref older than this was left by a writer that died; the next writer sweeps it.
 const SCRATCH_TTL_SECS: u64 = 3600;
 /// Publications a write attempts before it refuses.
@@ -295,7 +300,13 @@ impl<'a> Scratch<'a> {
         };
         let mut last_delete_failure = String::new();
         for attempt in 1..=SCRATCH_DELETE_ATTEMPTS {
-            let delete = git(&["update-ref", "-d", &self.name])?;
+            let delete = git(&[
+                SCRATCH_NO_REFLOG[0],
+                SCRATCH_NO_REFLOG[1],
+                "update-ref",
+                "-d",
+                &self.name,
+            ])?;
             if delete.status.success() {
                 return Ok(());
             }
@@ -987,7 +998,18 @@ impl BritRefManager {
 
             let scratch = Scratch::create(self, head.as_deref(), &zero)?;
             self.git_ok(
-                &["notes", "--ref", &scratch.name, "add", "-f", "-C", &blob, commit_sha],
+                &[
+                    SCRATCH_NO_REFLOG[0],
+                    SCRATCH_NO_REFLOG[1],
+                    "notes",
+                    "--ref",
+                    &scratch.name,
+                    "add",
+                    "-f",
+                    "-C",
+                    &blob,
+                    commit_sha,
+                ],
                 &[
                     ("GIT_AUTHOR_NAME", NOTES_IDENT.0),
                     ("GIT_AUTHOR_EMAIL", NOTES_IDENT.1),
@@ -1133,7 +1155,13 @@ impl BritRefManager {
     /// `git update-ref <ref_name> <new> <expected>`: `Ok(Err(stderr))` when git declined it (the
     /// ref moved, or was locked), `Err` when git could not be run.
     fn update_ref(&self, ref_name: &str, new: &str, expected: &str) -> Result<Result<(), String>, RefError> {
+        let no_reflog: &[&str] = if ref_name.starts_with(SCRATCH_PREFIX) {
+            &SCRATCH_NO_REFLOG
+        } else {
+            &[]
+        };
         let output = Command::new("git")
+            .args(no_reflog)
             .args(["update-ref", ref_name, new, expected])
             .current_dir(&self.repo_path)
             .output()
