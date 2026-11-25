@@ -189,6 +189,20 @@ Take one replacement from this reserve, in order, and keep the count at eight:
    reproduces on 0.3.5).
 4. `ls-tree <rev> [-- <path>]`.
 5. `ls-remote` inside a submodule.
+6. A guard refusal names its lock. Today `brit commit` beside a running
+   pre-push in another worktree fails with only `Resource temporarily
+   unavailable (os error 11)` from `try_lock` (`switch/linux/guard.rs:250`).
+   Name the lock path, the holder's pid and command (from the hook marker),
+   and how long it has been held. (Reported by the steward, 2026-11-25.)
+
+**Item 2 release note owes two proofs** before 0.3.6 states them:
+- A fetch in worktree B while a push in worktree A holds the repository guard
+  waits or refuses, and runs no consolidation. The guard is a `flock` in the
+  common dir, so this should hold; a journey test proves it.
+- A reader that already has an old pack mapped keeps reading it through the
+  swap, and a reader that misses an object finds it in the replacement. On
+  Windows, a mapped source pack makes retirement stop with an error, and the
+  next run completes it.
 
 ## Meeting points with the epr runtime and the monorepo
 
