@@ -58,7 +58,8 @@ fn mutation_guard_scope(cmd: &Subcommands) -> GuardScope {
         Subcommands::Restore { .. }
         | Subcommands::CherryPick { .. }
         | Subcommands::Merge(merge::Platform {
-            cmd: merge::SubCommands::Tree { update_head: true, .. },
+            cmd: Some(merge::SubCommands::Tree { update_head: true, .. }),
+            ..
         }) => GuardScope::RepositoryAndWorktree,
         #[cfg(feature = "gitoxide-core-tools-clean")]
         Subcommands::Clean(crate::plumbing::options::clean::Command { execute: true, .. }) => {
@@ -131,7 +132,7 @@ fn requires_mutation_guard(cmd: &Subcommands) -> bool {
             cmd: worktree::SubCommands::List,
         }) => false,
         Subcommands::Rebase(_) => false,
-        Subcommands::Switch { .. } => false,
+        Subcommands::Switch { .. } | Subcommands::Merge(merge::Platform { cmd: None, .. }) => false,
         #[cfg(feature = "gitoxide-core-blocking-client")]
         Subcommands::Pull { .. } => false,
         #[cfg(any(feature = "gitoxide-core-async-client", feature = "gitoxide-core-blocking-client"))]
@@ -463,13 +464,17 @@ pub fn run_with_command(args: Args, command: clap::Command) -> Result<()> {
         ),
         Subcommands::Env => prepare_and_run("env", verbose, None, move |_progress, out, _err| core::env(out, format)),
         Subcommands::Editor { paths } => core::repository::editor(repository(Mode::Lenient)?, paths),
-        Subcommands::Merge(merge::Platform { cmd }) => match cmd {
-            merge::SubCommands::File {
+        Subcommands::Merge(merge::Platform { cmd, revision, .. }) => match cmd {
+            None => prepare_and_run("merge", verbose, None, move |_progress, _out, _err| {
+                let revision = revision.ok_or_raise(|| message("merge --ff-only requires a ref"))?;
+                core::repository::merge::ff_only(repository(Mode::Strict)?, revision.as_ref()).map_err(anyhow_to_gix)
+            }),
+            Some(merge::SubCommands::File {
                 resolve_with,
                 ours,
                 base,
                 theirs,
-            } => prepare_and_run("merge-file", verbose, None, move |_progress, out, _err| {
+            }) => prepare_and_run("merge-file", verbose, None, move |_progress, out, _err| {
                 core::repository::merge::file(
                     repository(Mode::Lenient)?,
                     out,
@@ -480,7 +485,7 @@ pub fn run_with_command(args: Args, command: clap::Command) -> Result<()> {
                     theirs,
                 )
             }),
-            merge::SubCommands::Tree {
+            Some(merge::SubCommands::Tree {
                 opts:
                     merge::SharedOptions {
                         in_memory,
@@ -493,7 +498,7 @@ pub fn run_with_command(args: Args, command: clap::Command) -> Result<()> {
                 ours,
                 base,
                 theirs,
-            } => prepare_and_run("merge-tree", verbose, None, move |_progress, out, err| {
+            }) => prepare_and_run("merge-tree", verbose, None, move |_progress, out, err| {
                 core::repository::merge::tree(
                     repository(Mode::Lenient)?,
                     out,
@@ -512,7 +517,7 @@ pub fn run_with_command(args: Args, command: clap::Command) -> Result<()> {
                     },
                 )
             }),
-            merge::SubCommands::Commit {
+            Some(merge::SubCommands::Commit {
                 opts:
                     merge::SharedOptions {
                         in_memory,
@@ -522,7 +527,7 @@ pub fn run_with_command(args: Args, command: clap::Command) -> Result<()> {
                     },
                 ours,
                 theirs,
-            } => prepare_and_run("merge-commit", verbose, None, move |_progress, out, err| {
+            }) => prepare_and_run("merge-commit", verbose, None, move |_progress, out, err| {
                 core::repository::merge::commit(
                     repository(Mode::Lenient)?,
                     out,

@@ -1,5 +1,8 @@
 //! Explicit remote-branch fast-forward integration, sharing switch's private durable transition.
-use super::*;
+use super::{
+    integration::{Reach, append_log, reach, set_bytes, shallow_boundary, unchanged},
+    *,
+};
 use crate::repository::fetch::{pull_receive, pull_tracking};
 
 pub fn execute(repo: gix::Repository, remote: &str, branch: &BStr) -> Result<()> {
@@ -91,6 +94,7 @@ pub fn execute(repo: gix::Repository, remote: &str, branch: &BStr) -> Result<()>
             objects: Vec::new(),
             keeps: Vec::new(),
         }),
+        merge: None,
         git_dir: raw(&fs::canonicalize(git_dir)?)?,
         root: raw(&fs::canonicalize(root)?)?,
         common: raw(&fs::canonicalize(repo.common_dir())?)?,
@@ -169,46 +173,6 @@ fn preflight(repo: &gix::Repository) -> Result<()> {
     }
     Ok(())
 }
-fn unchanged(repo: &gix::Repository, resource: &Path) -> Result<Change> {
-    let before = snapshot(resource)?;
-    ensure!(
-        matches!(before, State::Absent | State::File { .. })
-            || (resource == repo.git_dir().join("logs") && matches!(before, State::Directory { .. })),
-        "unsafe metadata resource {}",
-        resource.display()
-    );
-    Ok(Change {
-        path: raw(&absolute(repo, resource))?,
-        after: before.clone(),
-        before,
-    })
-}
-fn set_bytes(change: &mut Change, bytes: Vec<u8>) {
-    change.after = State::File {
-        mode: file_mode(&change.before, 0o644),
-        bytes,
-    };
-}
-fn append_log(repo: &gix::Repository, change: &mut Change, old: &str, new: &str, message: &str) -> Result<()> {
-    let mut bytes = match &change.before {
-        State::Absent => Vec::new(),
-        State::File { bytes, .. } => bytes.clone(),
-        _ => bail!("unsupported reflog"),
-    };
-    gix::refs::log::Line {
-        previous_oid: gix::ObjectId::from_hex(old.as_bytes())?,
-        new_oid: gix::ObjectId::from_hex(new.as_bytes())?,
-        signature: repo
-            .committer()
-            .context("committer identity required for pull reflog")??
-            .to_owned()?,
-        message: message.into(),
-    }
-    .write_to(&mut bytes)?;
-    set_bytes(change, bytes);
-    Ok(())
-}
-
 pub(super) fn prepare_pull_metadata(repo: &gix::Repository, state: &mut Manifest) -> Result<()> {
     let pull = state.pull.as_mut().context("pull state")?;
     state.head.after = if state.source.is_some() {
@@ -241,86 +205,6 @@ pub(super) fn prepare_pull_metadata(repo: &gix::Repository, state: &mut Manifest
     Ok(())
 }
 
-fn prepare_directories(repo: &gix::Repository, state: &mut Manifest) -> Result<()> {
-    use std::os::unix::fs::DirBuilderExt;
-    let mut missing = BTreeSet::new();
-    let pull = state.pull.as_ref().context("pull state")?;
-    for change in pull
-        .fetch_metadata
-        .iter()
-        .chain(&pull.metadata)
-        .chain(std::iter::once(&state.reflog))
-    {
-        validate_metadata_ancestors(repo, &path(&change.path)?)?;
-        let mut parent = path(&change.path)?;
-        parent.pop();
-        while snapshot(&parent)? == State::Absent {
-            missing.insert(parent.clone());
-            ensure!(parent.pop(), "missing metadata root");
-        }
-        ensure!(
-            matches!(snapshot(&parent)?, State::Directory { .. }),
-            "unsafe metadata ancestor"
-        );
-    }
-    for directory in missing {
-        let pull = state.pull.as_mut().context("pull state")?;
-        if !pull
-            .directories
-            .iter()
-            .any(|change| path(&change.path).ok().as_ref() == Some(&directory))
-        {
-            pull.directories.push(Change {
-                path: raw(&directory)?,
-                before: State::Absent,
-                after: State::Absent,
-            });
-            save(repo, state)?;
-        }
-    }
-    let count = state.pull.as_ref().context("pull state")?.directories.len();
-    for i in 0..count {
-        let change = state.pull.as_ref().context("pull state")?.directories[i].clone();
-        let directory = path(&change.path)?;
-        let temporary = journal(repo).join(format!("metadata-dir-{i}"));
-        if change.after == State::Absent {
-            ensure!(
-                snapshot(&directory)? == State::Absent,
-                "foreign metadata directory appeared"
-            );
-            if present(&temporary)? {
-                fs::remove_dir(&temporary)?;
-            }
-            fs::DirBuilder::new().mode(creation_mode(0o777)?).create(&temporary)?;
-            sync_dir(&temporary)?;
-            state.pull.as_mut().context("pull state")?.directories[i].after = snapshot(&temporary)?;
-            save(repo, state)?;
-        }
-        let change = &state.pull.as_ref().context("pull state")?.directories[i];
-        let actual = snapshot(&directory)?;
-        ensure!(
-            actual == State::Absent || actual == change.after,
-            "foreign metadata directory"
-        );
-        if actual == State::Absent {
-            ensure!(
-                snapshot(&temporary)? == change.after,
-                "private metadata directory changed"
-            );
-            fs::rename(&temporary, &directory)?;
-            sync_dir(&directory)?;
-            sync_dir(directory.parent().context("metadata directory parent")?)?;
-            sync_dir(&journal(repo))?;
-        }
-    }
-    // The shared transition's HEAD-log directory was captured before fetch preparation.
-    if state.log_directory.before == State::Absent && present(&repo.git_dir().join("logs"))? {
-        state.log_directory.before = snapshot(&repo.git_dir().join("logs"))?;
-        state.log_directory.after = state.log_directory.before.clone();
-    }
-    save(repo, state)
-}
-
 pub(super) fn resume_fetch(
     repo: gix::Repository,
     mut state: Manifest,
@@ -341,7 +225,7 @@ fn resume_fetch_inner(repo: &gix::Repository, state: &mut Manifest, abort: bool)
     if (abort || state.aborting) && !state.pull.as_ref().context("pull state")?.fetch_decision {
         return Ok(());
     }
-    prepare_directories(repo, state)?;
+    prepare_metadata_directories(repo, state)?;
     let mut locks = lock_resources(repo, state)?;
     refs_match(repo, state)?;
     if !state.pull.as_ref().context("pull state")?.fetched {
@@ -568,10 +452,9 @@ pub(super) fn integrate(
             bail!("Not possible to fast-forward; fetched results retained, branch and worktree unchanged");
         }
     }
-    let branch = BString::from(state.target.clone());
     // A normal preservation refusal leaves fetch results and no active integration.
     let retained = repo.clone();
-    let result = execute_locked(repo, branch.as_bstr(), shared, Some(state));
+    let result = execute_locked(repo, shared, Checkout::Pinned, Some(state));
     if result.is_err() && !gix::interrupt::is_triggered() {
         // Releasing a start that changed nothing is cleanup: never metered.
         let _recovery = payload::Recovery::enter();
@@ -587,90 +470,12 @@ pub fn recover(repo: gix::Repository, abort: bool) -> Result<()> {
     recover_operation(repo, abort, true)
 }
 
-/// What a walk of local history proved about one commit's ancestry.
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-enum Reach {
-    /// A path of local commits reaches the ancestor.
-    Found,
-    /// The complete local history holds no such path.
-    Absent,
-    /// No path above the shallow boundary; one may run below this boundary commit.
-    Hidden(gix::ObjectId),
-}
-
-/// The commits `.git/shallow` declares parentless; empty for a complete repository.
-fn shallow_boundary(repo: &gix::Repository) -> Result<BTreeSet<gix::ObjectId>> {
-    Ok(repo
-        .shallow_commits()?
-        .map(|commits| commits.iter().copied().collect())
-        .unwrap_or_default())
-}
-
 fn shallow_refusal(boundary: gix::ObjectId, remote: &str) -> String {
     format!(
         "needs history below the shallow boundary at {boundary}; deepen it first with `brit fetch -r {remote} --deepen <N>` (or `--unshallow`)"
     )
 }
 
-/// Walk the commits reachable from `tip` without reading a parent of a `boundary` commit.
-/// Return whether `stop` was reached, and the boundary commits the walk reached.
-fn visible_history(
-    repo: &gix::Repository,
-    tip: gix::ObjectId,
-    boundary: &BTreeSet<gix::ObjectId>,
-    stop: Option<gix::ObjectId>,
-) -> Result<(bool, BTreeSet<gix::ObjectId>)> {
-    let mut pending = vec![tip];
-    let mut seen = BTreeSet::new();
-    let mut reached = BTreeSet::new();
-    while let Some(commit_id) = pending.pop() {
-        if Some(commit_id) == stop {
-            return Ok((true, reached));
-        }
-        if !seen.insert(commit_id) {
-            continue;
-        }
-        if boundary.contains(&commit_id) {
-            reached.insert(commit_id);
-            continue;
-        }
-        let commit = repo.find_object(commit_id)?.try_into_commit()?;
-        let decoded = commit.decode()?;
-        pending.extend(decoded.parents());
-    }
-    Ok((false, reached))
-}
-
-/// Whether `ancestor` is reachable from `descendant`, never reading past `boundary`.
-///
-/// The walk from `descendant` sees every commit reachable above the boundary, so any path to
-/// `ancestor` it misses runs through one of the boundary commits H it stopped at, with
-/// `ancestor` strictly below that h (h != `ancestor`, or the walk had found it). If every h in
-/// H is itself reachable from `ancestor` by a path one walk from `ancestor` proves above the
-/// boundary, `ancestor` would lie both above and below h, a cycle, so no such path exists:
-/// Absent. Every h must be proven: a single h the walk cannot reach may be exactly the one a
-/// real path runs through, so it leaves the question open as Hidden(h), never a guess.
-fn reach(
-    repo: &gix::Repository,
-    ancestor: &str,
-    descendant: &str,
-    boundary: &BTreeSet<gix::ObjectId>,
-) -> Result<Reach> {
-    let ancestor = gix::ObjectId::from_hex(ancestor.as_bytes())?;
-    let descendant = gix::ObjectId::from_hex(descendant.as_bytes())?;
-    let (found, hidden) = visible_history(repo, descendant, boundary, Some(ancestor))?;
-    if found {
-        return Ok(Reach::Found);
-    }
-    if hidden.is_empty() {
-        return Ok(Reach::Absent);
-    }
-    let (_, below_ancestor) = visible_history(repo, ancestor, boundary, None)?;
-    Ok(match hidden.difference(&below_ancestor).next() {
-        Some(&h) => Reach::Hidden(h),
-        None => Reach::Absent,
-    })
-}
 /// Verify every object reachable from `target`, down to the roots or the shallow boundary,
 /// whose commits are verified with their trees but whose absent parents are never read.
 fn validate_connectivity(repo: &gix::Repository, target: &str) -> Result<()> {
@@ -828,27 +633,7 @@ pub(super) fn validate_pull(repo: &gix::Repository, state: &Manifest, pull: &Pul
         );
         ensure!(unique.insert(resource), "duplicate integration metadata");
     }
-    for change in &pull.directories {
-        let directory = path(&change.path)?;
-        ensure!(
-            pull.fetch_metadata
-                .iter()
-                .chain(&pull.metadata)
-                .chain(std::iter::once(&state.reflog))
-                .any(|metadata| path(&metadata.path)
-                    .ok()
-                    .is_some_and(|resource| resource != directory && resource.starts_with(&directory))),
-            "foreign metadata directory"
-        );
-        ensure!(
-            directory.starts_with(&common) || directory.starts_with(&git_dir),
-            "foreign metadata directory root"
-        );
-        ensure!(
-            change.before == State::Absent && matches!(change.after, State::Absent | State::Directory { .. }),
-            "invalid owned directory state"
-        );
-    }
+    integration::validate_metadata_directories(repo, state)?;
     for (name, _) in &pull.objects {
         validate_path(name)?;
         ensure!(object_member(name), "invalid object recovery path");
@@ -867,41 +652,6 @@ pub(super) fn validate_pull(repo: &gix::Repository, state: &Manifest, pull: &Pul
             "invalid pack protection name"
         );
         ensure!(keep.checksum == digest(b"")?, "invalid pack protection checksum");
-    }
-    Ok(())
-}
-
-/// Check every component, not just the nearest parent: a refs/remotes symlink
-/// must not let the publication escape through an ordinary directory beneath it.
-pub(super) fn validate_metadata_ancestors(repo: &gix::Repository, resource: &Path) -> Result<()> {
-    use std::os::unix::fs::MetadataExt;
-    let common = absolute(repo, repo.common_dir());
-    let git_dir = absolute(repo, repo.git_dir());
-    // A linked worktree's common root can be spelled `git_dir/../..`.
-    // Match that declared root before interpreting its descendants.
-    let root = [&git_dir, &common]
-        .into_iter()
-        .filter(|root| resource.starts_with(root))
-        .max_by_key(|root| root.components().count())
-        .context("foreign metadata resource")?;
-    let relative = resource.strip_prefix(root).context("foreign metadata resource")?;
-    let mut cursor = root.clone();
-    let device = fs::metadata(repo.git_dir())?.dev();
-    for component in relative.parent().context("metadata parent")?.components() {
-        ensure!(
-            matches!(component, std::path::Component::Normal(_)),
-            "unsafe metadata component"
-        );
-        cursor.push(component);
-        match fs::symlink_metadata(&cursor) {
-            Ok(metadata) => ensure!(
-                metadata.is_dir() && metadata.dev() == device,
-                "unsafe or cross-filesystem metadata ancestor {}",
-                cursor.display()
-            ),
-            Err(error) if error.kind() == std::io::ErrorKind::NotFound => {}
-            Err(error) => return Err(error.into()),
-        }
     }
     Ok(())
 }
