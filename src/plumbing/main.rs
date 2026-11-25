@@ -111,6 +111,7 @@ fn requires_mutation_guard(cmd: &Subcommands) -> bool {
         | Subcommands::Diff(_)
         | Subcommands::Show(_)
         | Subcommands::Log(_)
+        | Subcommands::Grep(_)
         | Subcommands::Blame { .. }
         | Subcommands::RevParse(_)
         | Subcommands::ForEachRef(_)
@@ -723,6 +724,9 @@ pub fn run_with_command(args: Args, command: clap::Command) -> Result<()> {
             };
             core::repository::show::show(repository(Mode::Strict)?, out, options)
         }),
+        Subcommands::Grep(args) => prepare_and_run("grep", verbose, None, move |_progress, out, _err| {
+            super::grep::grep(&repository(Mode::Strict)?, out, args)
+        }),
         Subcommands::Log(crate::plumbing::options::log::Platform {
             max_count,
             sort,
@@ -730,8 +734,9 @@ pub fn run_with_command(args: Args, command: clap::Command) -> Result<()> {
             oneline,
             revisions,
             paths,
+            pickaxe,
         }) => prepare_and_run("log", verbose, None, move |_progress, out, _err| {
-            core::repository::log::log(
+            core::repository::log::log_with_pickaxe(
                 repository(Mode::Lenient)?,
                 out,
                 paths,
@@ -746,6 +751,7 @@ pub fn run_with_command(args: Args, command: clap::Command) -> Result<()> {
                     max_count,
                     oneline,
                 },
+                pickaxe.as_ref().map(AsRef::as_ref),
             )
         }),
         Subcommands::Worktree(worktree::Platform { cmd }) => match cmd {

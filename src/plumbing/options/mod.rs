@@ -300,6 +300,7 @@ pub enum Subcommands {
     Diff(diff::Platform),
     Show(show::Platform),
     Log(log::Platform),
+    Grep(grep::Platform),
     /// Interactively browse commits and their graph.
     #[cfg(feature = "tix")]
     #[clap(visible_alias = "tui", visible_alias = "interactive", visible_alias = "i")]
@@ -1190,6 +1191,39 @@ pub mod show {
     }
 }
 
+pub mod grep {
+    use gix::bstr::BString;
+
+    /// Search blobs in a revision for lines matching a pattern.
+    #[derive(Debug, clap::Parser)]
+    pub struct Platform {
+        /// Prefix each matching line with its line number.
+        #[clap(short = 'n', long)]
+        pub line_number: bool,
+        /// Ignore case when matching.
+        #[clap(short = 'i', long)]
+        pub ignore_case: bool,
+        /// Print only names of files with matches.
+        #[clap(short = 'l', long)]
+        pub files_with_matches: bool,
+        /// Match literal strings.
+        #[clap(short = 'F', long, overrides_with = "extended_regexp")]
+        pub fixed_strings: bool,
+        /// Match POSIX extended regular expressions. The default is basic regular expressions.
+        #[clap(short = 'E', long, overrides_with = "fixed_strings")]
+        pub extended_regexp: bool,
+        /// Add a pattern, including one that begins with a dash.
+        #[clap(short = 'e', value_parser = crate::shared::AsBString, allow_hyphen_values = true)]
+        pub patterns: Vec<BString>,
+        /// Give PATTERN REVISION, or just REVISION with -e or in the form REVISION -- PATTERN.
+        #[clap(value_parser = crate::shared::AsBString, value_name = "PATTERN_OR_REVISION", num_args = 1..=2)]
+        pub positionals: Vec<BString>,
+        /// Restrict the search to Git pathspecs. In the form REVISION -- PATTERN, give the pattern here.
+        #[clap(last = true, value_parser = crate::shared::AsBString, value_name = "PATHSPEC")]
+        pub paths: Vec<BString>,
+    }
+}
+
 pub mod log {
     use gix::bstr::BString;
 
@@ -1235,6 +1269,7 @@ pub mod log {
     /// is followed, and a root or shallow-boundary commit counts when the path exists. Paths
     /// support only the default order over all parents.
     ///
+    /// With -S, count literal occurrences per changed file and use Git's default log order.
     /// Every form stops at a shallow boundary, as Git does.
     #[derive(Debug, clap::Parser)]
     pub struct Platform {
@@ -1250,13 +1285,16 @@ pub mod log {
         /// Print the abbreviated hash (honouring core.abbrev, like `git log --oneline`) and title.
         #[clap(long)]
         pub oneline: bool,
+        /// Show commits that change the number of occurrences of this literal string in a file.
+        #[clap(short = 'S', value_parser = crate::shared::AsBString, allow_hyphen_values = true, value_name = "STRING")]
+        pub pickaxe: Option<BString>,
         /// Revisions to list instead of HEAD: `origin/dev`, `^A`, `A..B`, `A...B`, `A^@` or
         /// `A^!`, combinable. A lone name that is no revision but an existing worktree path is
         /// read as a path; use `--` to force paths.
         #[clap(value_parser = crate::shared::AsBString, value_name = "REVISION")]
         pub revisions: Vec<BString>,
-        /// Only list commits that change one of these literal paths (files or directories,
-        /// relative to the current directory); a trailing slash matches only directories.
+        /// Only list commits changing these paths relative to the current directory.
+        /// Paths are literal unless -S is used, which accepts Git pathspecs.
         #[clap(last = true, value_parser = crate::shared::AsBString, value_name = "PATH")]
         pub paths: Vec<BString>,
     }

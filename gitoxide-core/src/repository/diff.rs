@@ -415,7 +415,7 @@ fn working_output(
 }
 
 /// Whether `core.quotePath` asks for bytes above 0x7f to be quoted (Git's default).
-fn quote_path(repo: &gix::Repository) -> Result<bool> {
+pub(super) fn quote_path(repo: &gix::Repository) -> Result<bool> {
     Ok(repo.config_snapshot().try_boolean("core.quotePath")?.unwrap_or(true))
 }
 
@@ -944,7 +944,7 @@ impl gix::diff::blob::unified_diff::ConsumeHunk for PatchHunks<'_> {
     fn finish(self) {}
 }
 
-fn quote_patch_path(path: &[u8], quote_high: bool) -> BString {
+pub(super) fn quote_patch_path(path: &[u8], quote_high: bool) -> BString {
     if !path
         .iter()
         .any(|b| *b < 32 || *b == 127 || b"\"\\".contains(b) || (quote_high && *b >= 128))

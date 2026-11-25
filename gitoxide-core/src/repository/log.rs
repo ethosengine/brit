@@ -15,6 +15,8 @@ use gix::{
     traverse::commit::Parents,
 };
 
+use super::pickaxe::Pickaxe;
+
 /// Configure the starting commits, hidden ancestry, order, and printing of a log traversal.
 #[derive(Clone)]
 pub struct Options {
@@ -66,11 +68,27 @@ pub fn log(
     pathspecs: Vec<BString>,
     options: Options,
 ) -> Result<()> {
+    log_with_pickaxe(repo, out, pathspecs, options, None)
+}
+
+/// Like [`log()`]. With a literal `needle`, restrict output to commits changing its
+/// occurrence count in a file. In this mode paths accept Git pathspecs and the default
+/// traversal uses Git's commit-date queue.
+pub fn log_with_pickaxe(
+    repo: gix::Repository,
+    out: &mut dyn std::io::Write,
+    mut pathspecs: Vec<BString>,
+    options: Options,
+    needle: Option<&BStr>,
+) -> Result<()> {
     let format = if options.oneline {
         Format::Oneline
     } else {
         Format::Default
     };
+    if needle.is_some_and(|needle| needle.is_empty()) {
+        bail!(message!("-S requires a non-empty argument").validation());
+    }
     let remaining = options.max_count.unwrap_or(usize::MAX);
     if remaining == 0 {
         return Ok(());
@@ -79,19 +97,23 @@ pub fn log(
         &repo,
         gix::utils::stream::Budget::new(&std::env::temp_dir()).or_error()?,
     )?;
-    let mut paths = pathspecs
-        .iter()
-        .map(|path| Literal::new(&repo, path.as_bstr()))
-        .collect::<Result<Vec<_>>>()?;
+    let mut paths = Vec::new();
+    if needle.is_none() {
+        paths = pathspecs
+            .iter()
+            .map(|path| Literal::new(&repo, path.as_bstr()))
+            .collect::<Result<_>>()?;
+    }
     let starts = match options.revisions.as_slice() {
         [] => vec![Start::include(head_commit(&repo, &source)?)],
         // Like Git, a lone argument that names no revision but an existing worktree path is a path.
-        [single] if paths.is_empty() && !single.contains_str("..") && !single.starts_with(b"^") => {
+        [single] if pathspecs.is_empty() && !single.contains_str("..") && !single.starts_with(b"^") => {
             match starts(&repo, &source, &options.revisions) {
                 Ok(starts) => starts,
                 Err(error) => match worktree_path(&repo, single.as_bstr()) {
                     Some(path) if repo.rev_parse(single.as_bstr()).is_err() => {
                         paths.push(path);
+                        pathspecs.push(single.clone());
                         vec![Start::include(head_commit(&repo, &source)?)]
                     }
                     _ => return Err(error),
@@ -102,17 +124,22 @@ pub fn log(
     };
 
     let default_order = matches!(options.sorting, Sorting::DateOrder) && matches!(options.parents, Parents::All);
-    if !paths.is_empty() {
+    let pickaxe = needle
+        .map(|needle| Pickaxe::new(&repo, &source, &pathspecs, needle))
+        .transpose()?;
+    if !pathspecs.is_empty() || (pickaxe.is_some() && default_order) {
         if !default_order {
             bail!(unsupported(
                 "Path-limited history supports only the default date order over all parents; omit --sort and --first-parent or use `git log`"
             ));
         }
-        let walk = SimplifiedWalk::new(&repo, &source, &paths)?;
+        let mut walk = SimplifiedWalk::new(&repo, &source, &paths)?;
+        walk.pickaxe_paths = pickaxe.is_some() && !pathspecs.is_empty();
+        walk.pickaxe = pickaxe;
         return walk.run(&repo, out, &starts, remaining, format);
     }
     if !default_order {
-        return log_sorted(&repo, &source, out, starts, &options, remaining, format);
+        return log_sorted(&repo, &source, out, starts, &options, pickaxe, format);
     }
     // Every form honours the shallow boundary, as Git does, even where the boundary's parents
     // happen to be present.
@@ -157,9 +184,10 @@ fn log_sorted(
     out: &mut dyn std::io::Write,
     starts: Vec<Start>,
     options: &Options,
-    remaining: usize,
+    mut pickaxe: Option<Pickaxe<'_, '_>>,
     format: Format,
 ) -> Result<()> {
+    let mut remaining = options.max_count.unwrap_or(usize::MAX);
     let (mut tips, mut hidden) = (Vec::new(), Vec::new());
     for start in starts {
         if start.excluded {
@@ -174,8 +202,27 @@ fn log_sorted(
         walk = walk.first_parent_only();
     }
     let mut buffer = Buffer::default();
-    for info in walk.all()?.take(remaining) {
-        write_info(repo, source, &mut buffer, &mut *out, info?.id, format)?;
+    for info in walk.all()? {
+        let info = info?;
+        if let Some(pickaxe) = pickaxe.as_mut() {
+            if info.parent_ids.len() > 1 {
+                continue;
+            }
+            let old_tree_id = info
+                .parent_ids
+                .first()
+                .map(|parent| pickaxe.tree_id(*parent))
+                .transpose()?;
+            let new_tree_id = pickaxe.tree_id(info.id)?;
+            if !pickaxe.matches(old_tree_id, new_tree_id)? {
+                continue;
+            }
+        }
+        write_info(repo, source, &mut buffer, &mut *out, info.id, format)?;
+        remaining -= 1;
+        if remaining == 0 {
+            break;
+        }
     }
     Ok(())
 }
@@ -338,6 +385,7 @@ fn without_parents(data: &[u8]) -> Vec<u8> {
 struct Node {
     time: gix::date::SecondsSinceUnixEpoch,
     parents: Vec<ObjectId>,
+    tree_id: ObjectId,
     entries: Vec<Option<Located>>,
 }
 
@@ -360,6 +408,8 @@ const SLOP: u8 = 5;
 struct SimplifiedWalk<'a, 'repo> {
     source: &'a Source<'repo>,
     paths: &'a [Literal],
+    pickaxe: Option<Pickaxe<'repo, 'a>>,
+    pickaxe_paths: bool,
     shallow: Option<gix::shallow::Commits>,
     buffer: Buffer,
     flags: HashMap<ObjectId, u8>,
@@ -373,6 +423,8 @@ impl<'a, 'repo> SimplifiedWalk<'a, 'repo> {
         Ok(SimplifiedWalk {
             source,
             paths,
+            pickaxe: None,
+            pickaxe_paths: false,
             // Shallow boundary commits have no parents here, so they count as roots, like in Git.
             shallow: repo.shallow_commits()?,
             buffer: Buffer::default(),
@@ -414,7 +466,7 @@ impl<'a, 'repo> SimplifiedWalk<'a, 'repo> {
         if !starts.iter().any(|start| start.excluded) {
             while let Some((_, _, id)) = self.queue.pop() {
                 self.process_parents(id)?;
-                if self.flags(id) & (UNINTERESTING | TREESAME) == 0 && print(id)? {
+                if self.should_print(id)? && print(id)? {
                     break;
                 }
             }
@@ -437,11 +489,28 @@ impl<'a, 'repo> SimplifiedWalk<'a, 'repo> {
             listed.push(id);
         }
         for id in listed {
-            if self.flags(id) & (UNINTERESTING | TREESAME) == 0 && print(id)? {
+            if self.should_print(id)? && print(id)? {
                 break;
             }
         }
         Ok(())
+    }
+
+    fn should_print(&mut self, id: ObjectId) -> Result<bool> {
+        if self.flags(id) & (UNINTERESTING | TREESAME) != 0 {
+            return Ok(false);
+        }
+        let Some(pickaxe) = self.pickaxe.as_mut() else {
+            return Ok(true);
+        };
+        let node = &self.nodes[&id];
+        let old_tree_id = match node.parents.as_slice() {
+            [] => None,
+            [parent] => Some(self.nodes[parent].tree_id),
+            // Git's default log diff omits merges.
+            _ => return Ok(false),
+        };
+        pickaxe.matches(old_tree_id, node.tree_id)
     }
 
     fn flags(&self, id: ObjectId) -> u8 {
@@ -509,6 +578,9 @@ impl<'a, 'repo> SimplifiedWalk<'a, 'repo> {
     /// Git's `try_to_simplify_commit()` for the paths.
     fn simplify(&mut self, id: ObjectId) -> Result<()> {
         let parents = self.parents(id);
+        if self.pickaxe.is_some() && (!self.pickaxe_paths || parents.len() < 2) {
+            return Ok(());
+        }
         if parents.is_empty() {
             if self.nodes[&id].entries.iter().all(Option::is_none) {
                 self.set(id, TREESAME);
@@ -522,7 +594,12 @@ impl<'a, 'repo> SimplifiedWalk<'a, 'repo> {
                 relevant_parents += 1;
             }
             self.parse(parent, false)?;
-            if self.nodes[&parent].entries == self.nodes[&id].entries {
+            let treesame = if let Some(pickaxe) = self.pickaxe.as_mut() {
+                pickaxe.treesame(self.nodes[&parent].tree_id, self.nodes[&id].tree_id)?
+            } else {
+                self.nodes[&parent].entries == self.nodes[&id].entries
+            };
+            if treesame {
                 // An uninteresting side that brought the whole change keeps the other parents.
                 if !relevant {
                     continue;
@@ -612,7 +689,12 @@ fn read_node(
         .iter()
         .map(|path| lookup(source, buffer, tree, path))
         .collect::<Result<_>>()?;
-    Ok(Node { time, parents, entries })
+    Ok(Node {
+        time,
+        parents,
+        tree_id: tree,
+        entries,
+    })
 }
 
 /// The kind and object of a path's entry, which together say whether the path changed.
