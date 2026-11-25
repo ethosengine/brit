@@ -1,5 +1,5 @@
 use std::{
-    collections::BTreeSet,
+    collections::{BTreeMap, BTreeSet},
     path::{Component, Path, PathBuf},
     process::Command,
 };
@@ -7,7 +7,10 @@ use std::{
 use gix_error::{OptionExt, Result, ResultExt, bail, message};
 use serde_json::{Value, json};
 
-use super::ops::{git, output};
+use super::{
+    TestScope,
+    ops::{git, output},
+};
 
 struct Package {
     name: String,
@@ -159,14 +162,184 @@ fn packages(metadata: &Value) -> Result<Vec<Package>> {
         .collect()
 }
 
-pub fn filtered(metadata: &Value, mode: &str, filter: String) -> Result<Value> {
+pub(super) fn filtered(root: &Path, metadata: &Value, mode: &str, scope: TestScope) -> Result<Value> {
+    let workspace = packages(metadata)?;
+    let known: BTreeSet<_> = workspace.iter().map(|package| package.name.as_str()).collect();
+    let validate = |name: &str| -> Result<()> {
+        if !known.contains(name) {
+            bail!(
+                "Unknown workspace package '{name}'; valid packages: {}",
+                known.iter().copied().collect::<Vec<_>>().join(", ")
+            );
+        }
+        Ok(())
+    };
     let mut selection = exhaustive(
-        &packages(metadata)?,
-        "A test filter searches across workspace packages and omits non-Nextest tasks, including Clippy, formatting, documentation, policy and downstream checks",
+        &workspace,
+        "Test selection omits non-Nextest tasks and downstream checks",
     );
     selection["mode"] = mode.into();
-    selection["tests"] = filter.into();
+    let mut reasons = Vec::new();
+    let names = if scope.packages.is_empty() {
+        let derived = if let Some(filter) = scope.tests.as_deref() {
+            derive_packages(filter, &validate, || reverse_dependencies(root, metadata))?
+        } else {
+            None
+        };
+        if derived.is_some() {
+            reasons.push("Derived package scope from the Nextest filterset".into());
+        } else {
+            reasons.push("The Nextest filterset has no safely derived package scope; searching the workspace".into());
+        }
+        derived
+    } else {
+        for name in &scope.packages {
+            validate(name)?;
+        }
+        reasons.push("Restricted package scope to the requested workspace packages".into());
+        Some(scope.packages.into_iter().collect())
+    };
+    if let Some(names) = names {
+        selection["package_scope"] = true.into();
+        selection["packages"] = json!(names);
+    }
+    if let Some(filter) = scope.tests {
+        selection["tests"] = filter.into();
+    }
+    if let Some(repeat) = scope.repeat {
+        reasons.push(json!(format!(
+            "Repeat each selected test {repeat} times with Nextest stress testing"
+        )));
+        selection["repeat"] = repeat.into();
+    }
+    selection["reasons"]
+        .as_array_mut()
+        .expect("selection reasons")
+        .extend(reasons);
     Ok(selection)
+}
+
+// Recognize flat expressions with literal matchers. Any unrecognized syntax keeps
+// workspace selection, so quoting, regexes and grouping remain Nextest's responsibility.
+fn derive_packages(
+    filter: &str,
+    validate: &impl Fn(&str) -> Result<()>,
+    reverse_dependencies: impl FnOnce() -> Option<BTreeMap<String, BTreeSet<String>>>,
+) -> Result<Option<BTreeSet<String>>> {
+    let mut rest = filter.trim();
+    let mut groups = vec![Vec::new()];
+    loop {
+        let Some((atom, tail)) = rest.split_once(')') else {
+            return Ok(None);
+        };
+        let Some((predicate, matcher)) = atom.split_once('(') else {
+            return Ok(None);
+        };
+        let matcher = matcher.trim();
+        if !matcher
+            .bytes()
+            .all(|byte| byte.is_ascii_alphanumeric() || b"_-=:#".contains(&byte))
+        {
+            return Ok(None);
+        }
+        match predicate.trim_end() {
+            predicate @ ("package" | "rdeps") => {
+                let name = matcher.strip_prefix(['=', '#']).unwrap_or(matcher);
+                if name.is_empty()
+                    || !name
+                        .bytes()
+                        .all(|byte| byte.is_ascii_alphanumeric() || b"-_".contains(&byte))
+                {
+                    return Ok(None);
+                }
+                groups.last_mut().expect("at least one group").push((predicate, name));
+            }
+            "test" | "binary" | "binary_id" | "platform" | "kind" | "group" | "all" | "none" | "default" | "deps" => {}
+            _ => return Ok(None),
+        }
+        rest = tail.trim_start();
+        if rest.is_empty() {
+            break;
+        }
+        if let Some(tail) = rest.strip_prefix(['|', '+']).or_else(|| rest.strip_prefix("or ")) {
+            groups.push(Vec::new());
+            rest = tail.trim_start();
+        } else if let Some(tail) = rest.strip_prefix('&').or_else(|| rest.strip_prefix("and ")) {
+            rest = tail.trim_start();
+        } else {
+            return Ok(None);
+        }
+    }
+    for (_, name) in groups.iter().flatten() {
+        validate(name)?;
+    }
+    if groups.iter().any(Vec::is_empty) {
+        return Ok(None);
+    }
+    let reverse = if groups.iter().flatten().any(|(predicate, _)| *predicate == "rdeps") {
+        reverse_dependencies()
+    } else {
+        None
+    };
+    let mut selected = BTreeSet::new();
+    for group in groups {
+        // Any single positive bound is sufficient for an intersection.
+        if let Some((_, name)) = group.iter().find(|(predicate, _)| *predicate == "package") {
+            selected.insert((*name).into());
+        } else if let Some(names) = reverse.as_ref().and_then(|graph| graph.get(group[0].1)) {
+            selected.extend(names.iter().cloned());
+        } else {
+            return Ok(None);
+        }
+    }
+    Ok(Some(selected))
+}
+
+fn reverse_dependencies(root: &Path, metadata: &Value) -> Option<BTreeMap<String, BTreeSet<String>>> {
+    // All features and targets form a superset of the graph on each runner.
+    let graph: Value = serde_json::from_slice(
+        &output(Command::new("cargo").current_dir(root).args([
+            "metadata",
+            "--format-version",
+            "1",
+            "--locked",
+            "--offline",
+            "--all-features",
+        ]))
+        .ok()?,
+    )
+    .ok()?;
+    let nodes = graph["resolve"]["nodes"].as_array()?;
+    let members = metadata["packages"].as_array()?;
+    let mut reverse = BTreeMap::<&str, Vec<&str>>::new();
+    for node in nodes {
+        for dependency in node["dependencies"].as_array()? {
+            reverse
+                .entry(dependency.as_str()?)
+                .or_default()
+                .push(node["id"].as_str()?);
+        }
+    }
+    let mut packages = BTreeMap::new();
+    for package in members {
+        let id = package["id"].as_str()?;
+        let mut visited = BTreeSet::from([id]);
+        let mut pending = vec![id];
+        while let Some(id) = pending.pop() {
+            for &consumer in reverse.get(id).into_iter().flatten() {
+                if visited.insert(consumer) {
+                    pending.push(consumer);
+                }
+            }
+        }
+        let names = members
+            .iter()
+            .filter(|package| package["id"].as_str().is_some_and(|id| visited.contains(id)))
+            .map(|package| package["name"].as_str().map(str::to_owned))
+            .collect::<Option<_>>()?;
+        packages.insert(package["name"].as_str()?.into(), names);
+    }
+    Some(packages)
 }
 
 fn exhaustive(packages: &[Package], reason: &str) -> Value {
@@ -292,6 +465,76 @@ fn prose_only(path: &Path) -> bool {
 
 #[cfg(test)]
 mod tests {
+    #[test]
+    fn test_filter_derives_workspace_packages_only_when_safe() -> gix_error::TestResult {
+        let root = Path::new(env!("CARGO_MANIFEST_DIR")).join("../..");
+        let metadata = super::metadata(&root)?;
+        let plan = |filter: &str| {
+            super::filtered(
+                &root,
+                &metadata,
+                "exhaustive",
+                super::TestScope {
+                    tests: Some(filter.into()),
+                    ..Default::default()
+                },
+            )
+        };
+        for filter in ["package(brit-epr)", "test(example) & package(=brit-epr)"] {
+            let plan = plan(filter)?;
+            assert_eq!(plan["packages"], json!(["brit-epr"]), "{filter}");
+            assert!(
+                plan["reasons"].to_string().contains("Derived"),
+                "the plan explains the derived scope"
+            );
+        }
+        for filter in [
+            "package(brit-epr) | test(example)",
+            "not package(brit-epr)",
+            "package(brit-*)",
+        ] {
+            let plan = plan(filter)?;
+            assert!(
+                plan["packages"].as_array().expect("workspace packages").len() > 1,
+                "{filter}"
+            );
+        }
+        let error = plan("package(unknown-plan-test)").expect_err("an unknown literal package must be refused");
+        assert!(error.to_string().contains("unknown-plan-test"), "{error}");
+        assert!(error.to_string().contains("brit-epr"), "{error}");
+        let error = super::filtered(
+            &root,
+            &metadata,
+            "exhaustive",
+            super::TestScope {
+                packages: vec!["unknown-plan-test".into()],
+                ..Default::default()
+            },
+        )
+        .expect_err("explicit package lists validate all names");
+        assert!(error.to_string().contains("unknown-plan-test"), "{error}");
+        assert!(error.to_string().contains("brit-epr"), "{error}");
+        Ok(())
+    }
+
+    #[test]
+    fn rdeps_uses_a_resolved_graph_or_keeps_workspace_selection() -> gix_error::TestResult {
+        let filter = "rdeps(=api) & test(example) | package(other)";
+        let validate = |_: &str| Ok(());
+        let graph = Some([("api".into(), ["api".into(), "consumer".into()].into())].into());
+        assert_eq!(
+            super::derive_packages(filter, &validate, || graph)?,
+            Some(["api".into(), "consumer".into(), "other".into()].into()),
+            "reverse dependencies and the independent package arm form a safe bound"
+        );
+        assert_eq!(
+            super::derive_packages(filter, &validate, || None)?,
+            None,
+            "missing dependency metadata must keep the workspace"
+        );
+        Ok(())
+    }
+
     use super::*;
     use gix_error::TestResult;
 

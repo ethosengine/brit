@@ -372,16 +372,28 @@ Start with the failing test locally if you can reproduce it. Dispatch CI against
 already on GitHub, then widen the scope as each check passes:
 
 ```bash
-scripts/ci/narrow.sh my-branch --platforms macos-x86_64 --tests 'test(eight_writers_by_twenty_five)'
+scripts/ci/narrow.sh my-branch --platforms macos-x86_64 --packages brit-epr --tests 'test(eight_writers_by_twenty_five)' --repeat 20
+scripts/ci/narrow.sh my-branch --platforms linux-x86_64 --tests 'package(=brit-epr) & test(eight_writers_by_twenty_five)'
 scripts/ci/narrow.sh my-branch --platforms macos-x86_64,linux-x86_64 --stage tests --mode exhaustive
 scripts/ci/narrow.sh my-branch --mode fast
 scripts/ci/narrow.sh my-branch --mode exhaustive
 ```
 
 Manual runs default to fast and compare against `origin/main`. The fast dispatch uses
-affected-package selection and schedules native tests across the CI platforms. A Nextest filterset
-searches across workspace packages and runs only matching Nextest tests. Compilation can still
-build test binaries that contain no matches. FreeBSD's Cargo tests and shell journeys can be
+affected-package selection and schedules native tests across the CI platforms. Use
+`--packages` to select Nextest jobs for a comma-separated list of workspace packages. Native
+builds select those packages by their full Cargo IDs and the run reuses those binaries. Grouped
+feature variants retain their configured package combinations. Without an explicit list, QA
+can derive a package scope from simple literal `package(...)` and `rdeps(...)` filtersets.
+The plan records the reason for the scope and keeps a workspace build when it cannot determine
+a safe package set. Nextest applies the complete filterset at runtime.
+
+`--repeat N` requires `--tests`. Nextest runs the filtered selection in stress mode,
+reports passed iterations out of the requested count and stops on failure without retries.
+A repeated native job uses generated fixtures on Unix and archived fixtures on Windows so
+it runs exactly the requested number of iterations.
+
+FreeBSD's Cargo tests and shell journeys can be
 selected by stage. For the platform and stage names, see
 `just qa-plan --help` and `just qa --help`.
 

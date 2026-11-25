@@ -36,6 +36,25 @@ struct Selection {
     base: String,
 }
 
+#[derive(clap::Args, Default)]
+struct TestScope {
+    /// Run only Nextest commands, restricted to this filterset.
+    #[arg(long, value_parser = clap::builder::NonEmptyStringValueParser::new())]
+    tests: Option<String>,
+    /// Restrict test jobs to these comma-separated workspace package names.
+    #[arg(long, value_delimiter = ',', value_parser = clap::builder::NonEmptyStringValueParser::new())]
+    packages: Vec<String>,
+    /// Run the selected tests this many times.
+    #[arg(long, requires = "tests", value_parser = clap::value_parser!(u32).range(1..))]
+    repeat: Option<u32>,
+}
+
+impl TestScope {
+    fn is_narrowed(&self) -> bool {
+        self.tests.is_some() || !self.packages.is_empty() || self.repeat.is_some()
+    }
+}
+
 #[derive(Subcommand)]
 enum Action {
     /// Show complete tasks and their commands for this host, or the CI assignment.
@@ -48,15 +67,14 @@ enum Action {
         #[arg(long)]
         all_platforms: bool,
         /// Restrict CI assignments to a comma-separated list of platform names.
-        #[arg(long, requires = "all_platforms", value_delimiter = ',',
+        #[arg(long, value_delimiter = ',',
             value_parser = clap::builder::PossibleValuesParser::new(catalog::PLATFORMS.iter().copied()))]
         platforms: Vec<String>,
         /// Select a union of QA stages.
         #[arg(long, value_delimiter = ',', default_value = "all", value_parser = catalog::STAGES)]
         stage: Vec<String>,
-        /// Run only Nextest commands, restricted to this filterset.
-        #[arg(long, value_parser = clap::builder::NonEmptyStringValueParser::new())]
-        tests: Option<String>,
+        #[command(flatten)]
+        test_scope: TestScope,
         #[arg(long)]
         github_output: Option<PathBuf>,
     },
@@ -158,7 +176,7 @@ fn main() -> Result<()> {
             all_platforms,
             platforms,
             stage,
-            tests,
+            test_scope,
             github_output,
         } => {
             let pull_request = std::env::var("GITHUB_EVENT_NAME").as_deref() == Ok("pull_request");
@@ -168,10 +186,10 @@ fn main() -> Result<()> {
                 pull_request,
                 !platforms.is_empty(),
                 stage_subset,
-                tests.is_some(),
+                test_scope.is_narrowed(),
             );
-            let mut selected = if let Some(filter) = tests {
-                plan::filtered(&metadata, &selection.mode, filter)?
+            let mut selected = if test_scope.is_narrowed() {
+                plan::filtered(&root, &metadata, &selection.mode, test_scope)?
             } else {
                 let mut selected = plan::plan(&root, &metadata, &selection.mode, &selection.base)?;
                 scope::prune(&root, &metadata, &mut selected)?;
@@ -179,7 +197,7 @@ fn main() -> Result<()> {
             };
             let fast_dispatch = std::env::var("GITHUB_EVENT_NAME").as_deref() == Ok("workflow_dispatch");
             let platform = platform.unwrap_or_else(catalog::host);
-            let mut plan = if all_platforms {
+            let mut plan = if all_platforms || !platforms.is_empty() {
                 catalog::ci_plan(&metadata, &selected, &platforms, &stage, fast_dispatch)?
             } else {
                 catalog::local_plan(&metadata, &selected, &platform, &stage)?
@@ -304,9 +322,9 @@ fn main() -> Result<()> {
                 .or_else(|| saved.as_ref().map(|saved| &saved["selection"]))
                 .is_some_and(|selection| selection["mode"] == "fast");
             let mut coverage = if dry_run
-                || saved
-                    .as_ref()
-                    .is_some_and(|plan| plan["selection"]["tests"].is_string())
+                || saved.as_ref().is_some_and(|plan| {
+                    plan["selection"]["package_scope"] == true || plan["selection"]["tests"].is_string()
+                })
                 || !tasks
                     .iter()
                     .any(|task| matches!(task.id, "native-tests" | "feature-tests" | "isolated-tests"))
@@ -360,8 +378,10 @@ fn execution_plan(plan: &Value) -> Value {
     if let Some(commands) = plan["selection"].get("unaffected_dependencies") {
         selection["unaffected_dependencies"] = commands.clone();
     }
-    if let Some(filter) = plan["selection"].get("tests") {
-        selection["tests"] = filter.clone();
+    for key in ["tests", "package_scope", "repeat"] {
+        if let Some(value) = plan["selection"].get(key) {
+            selection[key] = value.clone();
+        }
     }
     let mut compact = json!({"selection": selection, "jobs": plan["jobs"]});
     for key in ["narrowed", "platforms", "stages"] {
@@ -432,7 +452,8 @@ mod tests {
     #[test]
     fn ci_payload_keeps_the_requested_filter_and_scope() {
         let plan = serde_json::json!({
-            "selection": {"mode": "fast", "packages": ["gix"], "tests": "test(example)"},
+            "selection": {"mode": "fast", "packages": ["gix"], "tests": "test(example)",
+                "package_scope": true, "repeat": 3},
             "jobs": [], "narrowed": true, "platforms": ["macos-x86_64"], "stages": ["tests"]
         });
         assert_eq!(
@@ -440,6 +461,58 @@ mod tests {
             plan,
             "a worker replays the planned filter and scope"
         );
+    }
+
+    #[test]
+    fn repeat_requires_a_test_filter_and_positive_count() {
+        use clap::{Parser, error::ErrorKind};
+
+        for (args, kind) in [
+            (vec!["qa", "plan", "--repeat", "3"], ErrorKind::MissingRequiredArgument),
+            (
+                vec!["qa", "plan", "--tests", "all()", "--repeat", "0"],
+                ErrorKind::ValueValidation,
+            ),
+        ] {
+            let Err(error) = super::Args::try_parse_from(args) else {
+                panic!("invalid repeat arguments must be refused");
+            };
+            assert_eq!(error.kind(), kind, "{error}");
+        }
+    }
+
+    #[test]
+    fn packages_and_repeat_each_mark_a_plan_narrowed() -> gix_error::TestResult {
+        use clap::Parser;
+
+        let parsed = super::Args::try_parse_from(["qa", "plan", "--packages", "gix,gix-path"])?;
+        let super::Action::Plan { test_scope, .. } = parsed.command else {
+            panic!("expected a plan");
+        };
+        assert_eq!(
+            test_scope.packages,
+            ["gix", "gix-path"],
+            "package names are comma separated"
+        );
+        assert!(super::is_narrowed(
+            "exhaustive",
+            false,
+            false,
+            false,
+            test_scope.is_narrowed()
+        ));
+        let repeat = super::TestScope {
+            repeat: Some(1),
+            ..Default::default()
+        };
+        assert!(super::is_narrowed(
+            "exhaustive",
+            false,
+            false,
+            false,
+            repeat.is_narrowed()
+        ));
+        Ok(())
     }
 
     #[test]

@@ -1,11 +1,13 @@
 name: ci
 run-name: >-
   ${{ github.event_name == 'workflow_dispatch' &&
-      format('{0}{1}{2}{3}',
-        (inputs.mode == 'fast' || inputs.platforms != '' || (inputs.stage != '' && !contains(format(',{0},', inputs.stage), ',all,')) || inputs.tests != '') && 'ci narrow: ' || 'ci exhaustive: ',
+      format('{0}{1}{2}{3}{4}{5}',
+        (inputs.mode == 'fast' || inputs.platforms != '' || (inputs.stage != '' && !contains(format(',{0},', inputs.stage), ',all,')) || inputs.tests != '' || inputs.packages != '' || inputs.repeat != '') && 'ci narrow: ' || 'ci exhaustive: ',
         inputs.platforms || 'all platforms',
         inputs.stage != '' && format(' · {0}', inputs.stage) || '',
-        inputs.tests != '' && format(' · {0}', inputs.tests) || '') || '' }}
+        inputs.packages != '' && format(' · {0}', inputs.packages) || '',
+        inputs.tests != '' && format(' · {0}', inputs.tests) || '',
+        inputs.repeat != '' && format(' · ×{0}', inputs.repeat) || '') || '' }}
 
 on:
   push:
@@ -33,6 +35,14 @@ on:
         default: ''
       tests:
         description: Nextest filterset (empty selects all tests)
+        type: string
+        default: ''
+      packages:
+        description: Comma-separated workspace packages for test jobs
+        type: string
+        default: ''
+      repeat:
+        description: Positive Nextest stress iteration count (requires a test filterset)
         type: string
         default: ''
 
@@ -89,12 +99,13 @@ jobs:
       RUSTUP_TOOLCHAIN: stable
       QA_MODE: ${{ github.event_name == 'workflow_dispatch' && inputs.mode || github.event_name == 'pull_request' && 'fast' || 'exhaustive' }}
       QA_TESTS: ${{ inputs.tests }}
+      QA_PACKAGES: ${{ inputs.packages }}
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           persist-credentials: false
           # PR merge commits include the comparison base as a parent.
-          fetch-depth: ${{ github.event_name == 'workflow_dispatch' && env.QA_MODE == 'fast' && env.QA_TESTS == '' && '0' || github.event_name == 'pull_request' && '2' || '1' }}
+          fetch-depth: ${{ github.event_name == 'workflow_dispatch' && env.QA_MODE == 'fast' && env.QA_TESTS == '' && env.QA_PACKAGES == '' && '0' || github.event_name == 'pull_request' && '2' || '1' }}
       - name: Install Rust
         run: rustup update stable && rustup default stable
       - uses: Swatinem/rust-cache@d1527c8f67ef9af357290475d4af4b0fab8f12e0 # v2.9.3
@@ -102,8 +113,11 @@ jobs:
           shared-key: ci-plan
           save-if: ${{ github.ref == 'refs/heads/main' }}
       - name: Cache dependency metadata for offline feature selection
-        if: env.QA_TESTS == ''
+        if: env.QA_TESTS == '' && env.QA_PACKAGES == ''
         run: cargo fetch --locked
+      - name: Cache dependency metadata for reverse-dependency filtersets
+        if: env.QA_PACKAGES == '' && contains(env.QA_TESTS, 'rdeps(')
+        run: cargo fetch --locked || echo '::warning::Dependency metadata is unavailable for package scope inference'
       - name: Test the planner without building Git tooling
         if: github.event_name != 'workflow_dispatch'
         run: cargo run --profile qa --locked -p internal-tools --no-default-features --bin qa -- run --mode exhaustive --stage self-test
@@ -114,11 +128,14 @@ jobs:
           QA_BASE: ${{ github.event_name == 'workflow_dispatch' && 'origin/main' || github.event.pull_request.base.sha || github.sha }}
           QA_PLATFORMS: ${{ inputs.platforms }}
           QA_STAGE: ${{ inputs.stage }}
+          QA_REPEAT: ${{ inputs.repeat }}
         run: |
           args=(--all-platforms --mode "$QA_MODE" --base "$QA_BASE")
           if [[ -n "$QA_PLATFORMS" ]]; then args+=("--platforms=$QA_PLATFORMS"); fi
           if [[ -n "$QA_STAGE" ]]; then args+=("--stage=$QA_STAGE"); fi
           if [[ -n "$QA_TESTS" ]]; then args+=("--tests=$QA_TESTS"); fi
+          if [[ -n "$QA_PACKAGES" ]]; then args+=("--packages=$QA_PACKAGES"); fi
+          if [[ -n "$QA_REPEAT" ]]; then args+=("--repeat=$QA_REPEAT"); fi
           cargo run --profile qa --locked -p internal-tools --no-default-features --bin qa -- plan "${args[@]}" --github-output "$RUNNER_TEMP/qa-planned.txt"
       - name: Run the planner self-tests when selected by the dispatch
         if: github.event_name == 'workflow_dispatch'

@@ -2,7 +2,7 @@
 set -euo pipefail
 
 usage() {
-    echo "Usage: $0 <branch> [--platforms a,b] [--stage s] [--tests '<filterset>'] [--mode fast|exhaustive]"
+    echo "Usage: $0 <branch> [--platforms a,b] [--stage s] [--packages a,b] [--tests '<filterset>' [--repeat N]] [--mode fast|exhaustive]"
 }
 
 if [[ ${1:-} == --help || ${1:-} == -h ]]; then
@@ -20,7 +20,7 @@ repo=ethosengine/brit
 dispatch=(gh workflow run ci -R "$repo" --ref "$branch")
 while (($#)); do
     case $1 in
-        --platforms|--stage|--tests|--mode)
+        --platforms|--stage|--packages|--tests|--repeat|--mode)
             if (($# < 2)) || [[ $2 == --* ]]; then
                 echo "Missing value for $1" >&2
                 exit 2
