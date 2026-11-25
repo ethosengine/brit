@@ -212,7 +212,13 @@ where
                     (BString::default(), null_oid)
                 }
                 SourceRef::ObjectId(id) => {
-                    // Literal OID spec (e.g. `<sha>:refs/heads/main`).
+                    if id.is_null() || id.kind() != hash_kind {
+                        return Err(Error::Resolve(Box::new(std::io::Error::new(
+                            std::io::ErrorKind::InvalidInput,
+                            format!("push source {id} must be a nonzero object ID in the repository's object format"),
+                        ))));
+                    }
+                    repo.find_header(*id).map_err(|err| Error::Resolve(Box::new(err)))?;
                     (BString::from(id.to_string().as_bytes()), *id)
                 }
             };
@@ -235,7 +241,6 @@ where
                 old_oid,
                 new_oid,
             });
-            // Matching a literal OID may identify a local ref holding that object.
             // Preserve the user's source spelling for pre-push and porcelain output.
             let local_name = parsed_refspecs[mapping.spec_index]
                 .to_ref()

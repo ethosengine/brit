@@ -199,6 +199,8 @@ impl<'spec> MatchGroup<'spec> {
     /// - **Delete spec** (`":refs/heads/gone"`) — the spec has no source; the mapping carries
     ///   `item_index = None` and `rhs = Some("refs/heads/gone")`.  Callers treat this as a remote
     ///   deletion request.
+    /// - **Literal source with a destination** — the mapping carries the object ID directly,
+    ///   even when no item points to it. The caller checks that the object exists.
     /// - **One-sided spec** (`"refs/heads/main"`) — the source and destination are the same ref
     ///   name, following git's convention of pushing to the same remote ref.
     ///
@@ -256,6 +258,15 @@ impl<'spec> MatchGroup<'spec> {
                 continue;
             }
             let Some(matcher) = matcher else { continue };
+            if let (Some(Needle::Object(id)), Some(rhs)) = (matcher.lhs, matcher.rhs) {
+                push_unique(Mapping {
+                    item_index: None,
+                    lhs: SourceRef::ObjectId(id),
+                    rhs: Some(rhs.to_bstr()),
+                    spec_index,
+                });
+                continue;
+            }
             for (item_index, item) in items.clone().enumerate() {
                 let (matched, rhs) = matcher.matches_lhs(item);
                 if matched {
