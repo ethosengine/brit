@@ -807,4 +807,8 @@ fn eight_writers_by_twenty_five_puts_every_ok_reads_back_verified() {
         "every Ok put is in the published notes, and nothing else is"
     );
     assert!(scratch_refs(tmp.path()).is_empty());
+    assert!(
+        !tmp.path().join(".git/logs/refs/notes/brit-tmp").exists(),
+        "scratch refs keep no reflog, so concurrent writers share no log directory to race on"
+    );
 }

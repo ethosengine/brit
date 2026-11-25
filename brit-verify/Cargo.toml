@@ -18,7 +18,7 @@ name = "brit-verify"
 path = "src/main.rs"
 
 [dependencies]
-brit-epr = { version = "0.2.3", path = "../brit-epr" }
+brit-epr = { version = "0.2.4", path = "../brit-epr" }
 gix = { version = "^0.90.3", path = "../gix", registry = "elohim", default-features = false, features = ["revision", "sha1"] }
 
 [dev-dependencies]
