@@ -4,11 +4,11 @@ lints.workspace = true
 name = "gitoxide-core"
 description = "The library implementing all capabilities of the gitoxide CLI"
 repository = "https://github.com/GitoxideLabs/gitoxide"
-version = "0.64.4"
+version = "0.64.5"
 authors = ["Sebastian Thiel <sebastian.thiel@icloud.com>"]
 license = "MIT OR Apache-2.0"
 edition = "2024"
-rust-version = "1.95"
+rust-version = "1.100"
 include = ["/src/**/*", "/LICENSE-*"]
 
 [lib]
@@ -62,7 +62,7 @@ gix-sequencer = { version = "^0.0.1", path = "../gix-sequencer", registry = "elo
 anyhow = "1.0.102"
 gix-config-value = { version = "^0.21.4", path = "../gix-config-value", registry = "elohim" }
 # deselect everything else (like "performance") as this should be controllable by the parent application.
-gix = { version = "^0.90.3", path = "../gix", registry = "elohim", default-features = false, features = ["anyhow", "merge", "blob-diff", "blame", "revision", "mailmap", "excludes", "attributes", "worktree-mutation", "credentials", "interrupt", "status", "dirwalk", "command", "notify", "fsmonitor-daemon"] }
+gix = { version = "^0.90.4", path = "../gix", registry = "elohim", default-features = false, features = ["anyhow", "merge", "blob-diff", "blame", "revision", "mailmap", "excludes", "attributes", "worktree-mutation", "credentials", "interrupt", "status", "dirwalk", "command", "notify", "fsmonitor-daemon"] }
 gix-pack = { version = "^0.77.2", path = "../gix-pack", registry = "elohim", default-features = false, features = ["pack-cache-lru-dynamic", "pack-cache-lru-static", "generate", "streaming-input"] }
 gix-transport = { version = "^0.62.2", path = "../gix-transport", registry = "elohim", default-features = false }
 gix-archive = { version = "^0.39.2", path = "../gix-archive", registry = "elohim", optional = true, features = ["tar", "tar_gz"] }
