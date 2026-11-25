@@ -827,6 +827,7 @@ name = "cli-journey"
 version = "0.0.0"
 dependencies = [
  "anyhow",
+ "gix 0.90.4",
  "gix-testtools",
  "libc",
  "regex",

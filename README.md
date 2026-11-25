@@ -95,7 +95,7 @@ bridge also preserves leading Git options in the suggested command.
 
 | Owned by `brit` (daily verbs; `brit --help` lists all) | Bridged to stock Git (exit 2) |
 | --- | --- |
-| `status`, `diff`, `show`, `log`, `add`, `restore`, `switch`, `commit`, `tag`, `branch`, `merge`, `rebase`, `clone`, `fetch`, `pull`, `push`, `worktree` | `reset`, `rm`, `mv`, `stash`, `cherry-pick`, `revert`, `checkout` |
+| `status`, `diff`, `show`, `log`, `add`, `restore`, `switch`, `commit`, `tag`, `branch`, `merge`, `rebase`, `clone`, `fetch`, `pull`, `push`, `worktree`, `maintenance` | `reset`, `rm`, `mv`, `stash`, `cherry-pick`, `revert`, `checkout` |
 | `notes show [--ref <notes-ref>] [<object>]` | `notes add`, `notes list`, and other notes verbs |
 | `submodule list`, `submodule update [--init] <path>...` | `submodule init`, `submodule sync`, pathless updates and options such as `--merge` |
 | `build`, `snapshot`, `context`, `integrate`, `verify` | |
@@ -108,6 +108,22 @@ Presets without blocking transport bridge submodule updates to Git.
 Transfer a single notes ref with `brit fetch <remote> refs/notes/X:refs/notes/X`
 or `brit push <remote> refs/notes/X:refs/notes/X`. Brit accepts creation and
 fast-forward updates and refuses wildcard notes refspecs.
+
+`brit maintenance --dry-run` reports the current and planned pack counts
+and the bytes in the input packs and indexes. `brit maintenance` combines
+the smallest eligible packs to reach `brit.maintenanceTarget` (default 8).
+It preserves every packed object, including objects known only to linked
+worktrees, reflogs, or repositories that borrow this object store through
+alternates. Loose objects and packs marked `.keep`, `.promisor`, or
+`.mtimes` stay in place. Those packs count toward the target.
+On Unix, a replacement combines packs with matching read permissions and
+ownership. Stores with mixed permissions may take more than one run to reach
+the target.
+
+After a successful fetch, Brit attempts one maintenance batch if the pack
+count exceeds `brit.maintenanceFetchThreshold` (default 24). It selects at
+most 24 input packs and reports maintenance errors as warnings. Run
+`brit maintenance` again to finish an interrupted consolidation.
 
 Two milestones remain distinct:
 

@@ -12,6 +12,7 @@ pub(crate) struct Capture {
     pub operation: &'static str,
     pub outcome: Option<&'static str>,
     pub quiet: bool,
+    pub skip: bool,
     started: Instant,
 }
 
@@ -21,6 +22,7 @@ impl Capture {
             operation: "other",
             outcome: None,
             quiet: false,
+            skip: false,
             started: Instant::now(),
         }
     }
@@ -55,6 +57,9 @@ impl Capture {
     }
 
     pub fn finish(&self, code: i32) {
+        if self.skip {
+            return;
+        }
         // An explicit contextual policy enables capture. Standalone Brit has no implicit
         // workspace policy, and still builds/runs without EPR installed.
         let root = std::env::var_os("EPR_FEEDBACK_ROOT").map(PathBuf::from).or_else(|| {

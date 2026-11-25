@@ -116,6 +116,7 @@ fn requires_mutation_guard(cmd: &Subcommands) -> bool {
         | Subcommands::RevParse(_)
         | Subcommands::ForEachRef(_)
         | Subcommands::CheckRefFormat(_)
+        | Subcommands::Maintenance { dry_run: true }
         | Subcommands::RevList(_) => false,
         Subcommands::Commit(commit::Platform {
             cmd: Some(commit::Subcommands::Verify { .. } | commit::Subcommands::Describe { .. }),
@@ -306,6 +307,7 @@ pub fn run_with_command(args: Args, command: clap::Command) -> Result<()> {
     #[cfg(not(feature = "tracing"))]
     let trace = 0;
     let cmd = args.cmd;
+    let pack_repair = matches!(&cmd, Subcommands::Maintenance { .. });
     let guards = std::cell::RefCell::new(super::MutationGuards::default());
     configure_mutation_guards(args.wait, &command)?;
     let guard_scope = mutation_guard_scope(&cmd);
@@ -359,6 +361,13 @@ pub fn run_with_command(args: Args, command: clap::Command) -> Result<()> {
             let strict_toggle = matches!(mode, Mode::Strict | Mode::StrictWithGitInstallConfig) || args.strict;
             mapping.full = mapping.full.strict_config(strict_toggle);
             mapping.reduced = mapping.reduced.strict_config(strict_toggle);
+            if pack_repair {
+                // Maintenance only needs the repository paths and hash kind.
+                // It writes from a separate store containing the selected packs.
+                let slots = gix::odb::store::init::Slots::Given(1);
+                mapping.full = mapping.full.object_store_slots(slots);
+                mapping.reduced = mapping.reduced.object_store_slots(slots);
+            }
             let git_installation = matches!(
                 mode,
                 Mode::StrictWithGitInstallConfig | Mode::LenientWithGitInstallConfig
@@ -1134,11 +1143,25 @@ pub fn run_with_command(args: Args, command: clap::Command) -> Result<()> {
                 "fetch",
                 auto_verbose,
                 core::repository::fetch::PROGRESS_RANGE,
-                move |progress, out, err| {
-                    core::repository::fetch(repository(Mode::LenientWithGitInstallConfig)?, progress, out, err, opts)
+                move |progress, out, mut err| {
+                    let repo = repository(Mode::LenientWithGitInstallConfig)?;
+                    let maintenance = (!dry_run).then(|| core::repository::maintenance::Store::from_repo(&repo));
+                    core::repository::fetch(repo, progress, out, &mut err, opts)?;
+                    if let Some(maintenance) = maintenance
+                        && let Err(error) = maintenance.and_then(|store| store.after_fetch())
+                    {
+                        let _ = writeln!(err, "warning: pack maintenance after fetch failed: {error}");
+                    }
+                    Ok(())
                 },
             )
         }
+        Subcommands::Maintenance { dry_run } => prepare_and_run("maintenance", verbose, None, move |_, out, _| {
+            let repo = repository(Mode::Strict)?;
+            let store = core::repository::maintenance::Store::from_repo(&repo)?;
+            drop(repo);
+            store.run(dry_run, out)
+        }),
         #[cfg(feature = "gitoxide-core-blocking-client")]
         Subcommands::Push(p) => {
             let opts = core::repository::push::Options {

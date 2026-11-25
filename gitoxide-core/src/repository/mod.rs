@@ -49,6 +49,7 @@ pub mod grep;
 pub mod index;
 pub mod log;
 pub mod mailmap;
+pub mod maintenance;
 mod merge_base;
 pub use merge_base::{is_ancestor as merge_base_is_ancestor, merge_base};
 pub mod fsmonitor;
