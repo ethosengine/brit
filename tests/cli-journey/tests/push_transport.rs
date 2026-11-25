@@ -207,9 +207,9 @@ fn never_masked(stderr: &str) -> Result<()> {
 fn connection_dropped_during_the_hook_still_delivers() -> Result<()> {
     for build in builds() {
         let published = Published::new(&format!("push-transport-idle-{}", build.http))?;
-        let server = HttpRemote::start(published.root.path(), Mode::DropIdle(Duration::from_millis(300)))?;
+        let server = HttpRemote::start(published.root.path(), Mode::DropIdle(Duration::from_secs(1)))?;
         published.origin(&server.url("r.git"))?;
-        published.hook("cat >hook-input; sleep 1")?;
+        published.hook("set -eu; cat >hook-input; sleep 2; echo passed >hook-passed")?;
         let new = published.repo.commit_file("payload", "second")?;
         let out = push(&build, published.repo.path())?;
         ensure!(
@@ -224,6 +224,14 @@ fn connection_dropped_during_the_hook_still_delivers() -> Result<()> {
             new,
             "{}: the remote has the commit",
             build.http
+        );
+        assert_eq!(fs::read(published.repo.path().join("hook-passed"))?, b"passed\n");
+        assert_eq!(
+            receive_pack_requests(&server),
+            ["GET", "GET", "POST"],
+            "{}: a fresh advertisement precedes the upload: {:?}",
+            build.http,
+            server.log()
         );
     }
     Ok(())
@@ -337,6 +345,22 @@ fn remotes<'a>(published: &Published, server: &'a HttpRemote, builds: &'a [Build
     out
 }
 
+fn receive_pack_requests(server: &HttpRemote) -> Vec<&'static str> {
+    server
+        .log()
+        .iter()
+        .filter_map(|line| {
+            if line == "GET /r.git/info/refs?service=git-receive-pack" {
+                Some("GET")
+            } else if line.starts_with("POST /r.git/git-receive-pack") && !line.contains(" -> ") {
+                Some("POST")
+            } else {
+                None
+            }
+        })
+        .collect()
+}
+
 /// A hook that moves the remote ref sees the push refused with both ids, and the remote untouched.
 #[test]
 fn remote_moved_by_the_hook_is_refused() -> Result<()> {
@@ -363,7 +387,11 @@ fn remote_moved_by_the_hook_is_refused() -> Result<()> {
             ],
         )?;
         published.hook(&format!(
-            "cat >hook-input; git --git-dir='{}' update-ref refs/heads/main {elsewhere}",
+            "set -eu
+cat >hook-input
+sleep 1
+git --git-dir='{}' update-ref refs/heads/main {elsewhere}
+echo passed >hook-passed",
             published.bare().display()
         ))?;
         let new = published.repo.commit_file("payload", "second")?;
@@ -383,6 +411,20 @@ fn remote_moved_by_the_hook_is_refused() -> Result<()> {
         );
         assert_eq!(published.remote_main()?, elsewhere, "{what}: the remote is unchanged");
         ensure!(!published.remote_has(&new), "{what}: no object was sent");
+        assert_eq!(fs::read(published.repo.path().join("hook-passed"))?, b"passed\n");
+        assert_eq!(
+            fs::read_to_string(published.repo.path().join("hook-input"))?,
+            format!("refs/heads/main {new} refs/heads/main {}\n", published.first),
+            "{what}: the hook judged the original fast-forward update"
+        );
+        if transport != 0 {
+            assert_eq!(
+                receive_pack_requests(&server),
+                ["GET", "GET"],
+                "{what}: the new advertisement stopped the push before upload: {:?}",
+                server.log()
+            );
+        }
     }
     Ok(())
 }
@@ -622,15 +664,6 @@ fn stalled_clone_download_is_cut_by_the_stall_guard() -> Result<()> {
 /// `--no-verify`), and a second, re-validating one only after a hook ran.
 #[test]
 fn push_handshakes_again_only_after_a_hook_ran() -> Result<()> {
-    let handshakes = |server: &HttpRemote| {
-        server
-            .log()
-            .iter()
-            .filter(|line| {
-                line.starts_with("GET ") && line.contains("service=git-receive-pack") && !line.contains(" -> ")
-            })
-            .count()
-    };
     for build in builds() {
         for (label, hook, args, expected) in [
             ("none", false, &["push", "origin", "main:main"][..], 1),
@@ -657,7 +690,11 @@ fn push_handshakes_again_only_after_a_hook_ran() -> Result<()> {
                 label == "ran",
                 "{what}: the hook ran exactly when expected"
             );
-            assert_eq!(handshakes(&server), expected, "{what}: {:?}", server.log());
+            let handshakes = receive_pack_requests(&server)
+                .into_iter()
+                .filter(|method| *method == "GET")
+                .count();
+            assert_eq!(handshakes, expected, "{what}: {:?}", server.log());
         }
     }
     Ok(())

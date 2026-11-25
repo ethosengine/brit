@@ -33,9 +33,12 @@ fn brit(repo: &Path, args: &[&str]) -> Result<Capture> {
 }
 
 fn hook(repo: &Path, body: &str) -> Result<()> {
-    let dir = repo.join("hooks with spaces");
-    fs::create_dir_all(&dir)?;
     git(repo, &["config", "core.hooksPath", "hooks with spaces"])?;
+    write_hook(&repo.join("hooks with spaces"), body)
+}
+
+fn write_hook(dir: &Path, body: &str) -> Result<()> {
+    fs::create_dir_all(dir)?;
     let path = dir.join("pre-push");
     fs::write(&path, format!("#!/bin/sh\n{body}\n"))?;
     #[cfg(unix)]
@@ -387,16 +390,248 @@ fn nested_push_uses_pushurl_and_relative_hook_path() -> Result<()> {
 fn literal_object_source_is_preserved_in_hook_input() -> Result<()> {
     let repo = TestRepo::new("pre-push-object")?;
     let remote = remote(repo.path())?;
-    let head = repo.head_id()?;
-    let spec = format!("{head}:refs/heads/from-object");
+    let base = repo.head_id()?;
+    git(repo.path(), &["push", "origin", "HEAD:dev"])?;
+    let commit_id = repo.commit_file("payload", "landing commit")?;
+    repo.commit_file("payload", "later commit")?;
+    assert_eq!(
+        git(repo.path(), &["for-each-ref", "--points-at", &commit_id])?,
+        "",
+        "the landing source is named only by its object ID"
+    );
+    let spec = format!("{commit_id}:dev");
     hook(repo.path(), "cat >hook-input")?;
     let output = brit(repo.path(), &["push", "origin", &spec])?;
     ensure!(output.status.success(), "{}", output.stderr);
     assert_eq!(
         fs::read_to_string(repo.path().join("hook-input"))?,
-        format!("{head} {head} refs/heads/from-object {}\n", "0".repeat(head.len()))
+        format!("{commit_id} {commit_id} refs/heads/dev {base}\n")
     );
-    assert_eq!(git(remote.path(), &["rev-parse", "from-object"])?, head);
+    assert_eq!(git(remote.path(), &["rev-parse", "refs/heads/dev"])?, commit_id);
+
+    fs::remove_file(repo.path().join("hook-input"))?;
+    let zero_spec = format!("{}:dev", "0".repeat(commit_id.len()));
+    let output = brit(repo.path(), &["push", "origin", &zero_spec])?;
+    ensure!(!output.status.success(), "a zero object ID must not delete dev");
+    ensure!(
+        !repo.path().join("hook-input").exists(),
+        "invalid source reached the hook"
+    );
+    assert_eq!(git(remote.path(), &["rev-parse", "refs/heads/dev"])?, commit_id);
+    Ok(())
+}
+
+#[test]
+fn head_landing_sends_the_object_the_hook_judged() -> Result<()> {
+    let repo = TestRepo::new("pre-push-pinned-head")?;
+    let remote = remote(repo.path())?;
+    let base = repo.head_id()?;
+    git(repo.path(), &["push", "origin", "HEAD:dev"])?;
+    let judged = repo.commit_file("payload", "judged")?;
+    hook(
+        repo.path(),
+        "set -eu
+cat >hook-input
+sleep 1
+git commit --allow-empty -m 'advance the branch during pre-push'",
+    )?;
+
+    let output = brit(repo.path(), &["push", "origin", "HEAD:dev"])?;
+    ensure!(output.status.success(), "{}", output.stderr);
+    assert_eq!(
+        git(repo.path(), &["rev-parse", "HEAD^"])?,
+        judged,
+        "the hook advanced the checked-out branch"
+    );
+    assert_eq!(
+        fs::read_to_string(repo.path().join("hook-input"))?,
+        format!("HEAD {judged} refs/heads/dev {base}\n")
+    );
+    assert_eq!(git(remote.path(), &["rev-parse", "refs/heads/dev"])?, judged);
+    Ok(())
+}
+
+#[test]
+fn command_config_selects_the_linked_worktree_hook() -> Result<()> {
+    let repo = TestRepo::new("pre-push-command-hooks-path")?;
+    let remote = remote(repo.path())?;
+    let linked = tempfile::tempdir()?;
+    git(
+        repo.path(),
+        &[
+            "worktree",
+            "add",
+            "-b",
+            "landing",
+            linked.path().to_str().expect("temp path"),
+        ],
+    )?;
+    hook(repo.path(), "echo shared >shared-hook-ran; exit 1")?;
+    let shared_hooks = repo.path().join("hooks with spaces");
+    git(
+        repo.path(),
+        &["config", "core.hooksPath", shared_hooks.to_str().expect("temp path")],
+    )?;
+    let landing_hooks = linked.path().join(".husky/_");
+    write_hook(&landing_hooks, "cat >landing-hook-input")?;
+    let config = format!("core.hooksPath={}", landing_hooks.display());
+
+    let output = brit(linked.path(), &["-c", &config, "push", "origin", "HEAD:dev"])?;
+    ensure!(output.status.success(), "{}", output.stderr);
+    let commit_id = repo.head_id()?;
+    assert_eq!(
+        fs::read_to_string(linked.path().join("landing-hook-input"))?,
+        format!("HEAD {commit_id} refs/heads/dev {}\n", "0".repeat(commit_id.len()))
+    );
+    ensure!(
+        !linked.path().join("shared-hook-ran").exists() && !repo.path().join("shared-hook-ran").exists(),
+        "the shared hook did not run"
+    );
+    assert_eq!(git(remote.path(), &["rev-parse", "refs/heads/dev"])?, commit_id);
+    Ok(())
+}
+
+/// Stated contract for landing agents: the hook's parent is the pushing brit, `BRIT_GUARD_HELD_BY`
+/// reads `v1 <that pid> <its start ticks> …`, and that process sends and stays alive until the
+/// remote ref has moved — so waiting on it is waiting on the landing.
+#[cfg(target_os = "linux")]
+#[test]
+fn hook_parent_is_the_marked_brit_that_sends_and_outlives_the_ref_move() -> Result<()> {
+    let repo = TestRepo::new("pre-push-pusher-identity")?;
+    let remote = remote(repo.path())?;
+    let pushed = repo.head_id()?;
+    hook(
+        repo.path(),
+        r#"set -eu
+cat >/dev/null
+here=$PWD
+printf '%s\n' "$BRIT_GUARD_HELD_BY" >"$here/marker"
+printf '%s\n' "$PPID" >"$here/parent"
+cat "/proc/$PPID/stat" >"$here/parent-stat"
+origin=$(git remote get-url origin)
+git --git-dir="$origin" rev-parse --verify -q refs/heads/dev >"$here/at-hook" || printf 'absent\n' >"$here/at-hook"
+(
+    while kill -0 "$PPID" 2>/dev/null; do sleep 0.02; done
+    git --git-dir="$origin" rev-parse refs/heads/dev >"$here/at-exit.tmp"
+    mv "$here/at-exit.tmp" "$here/at-exit"
+) </dev/null >/dev/null 2>&1 &"#,
+    )?;
+
+    let output = brit(repo.path(), &["push", "origin", "HEAD:dev"])?;
+    ensure!(output.status.success(), "{}", output.stderr);
+
+    let at_exit = repo.path().join("at-exit");
+    let started = Instant::now();
+    while !at_exit.exists() {
+        ensure!(
+            started.elapsed() < Duration::from_secs(20),
+            "watcher never saw brit exit"
+        );
+        std::thread::sleep(Duration::from_millis(20));
+    }
+
+    let parent = fs::read_to_string(repo.path().join("parent"))?.trim().to_owned();
+    let stat = fs::read_to_string(repo.path().join("parent-stat"))?;
+    // Field 2 (comm) may hold spaces; fields after its closing parenthesis start at field 3.
+    let after_comm = &stat[stat.rfind(')').expect("stat names comm") + 2..];
+    let start_ticks = after_comm.split(' ').nth(22 - 3).expect("stat field 22").to_owned();
+    let marker = fs::read_to_string(repo.path().join("marker"))?;
+    let fields: Vec<&str> = marker.split_whitespace().collect();
+    assert_eq!(fields.first(), Some(&"v1"), "marker version: {marker}");
+    assert_eq!(
+        fields.get(1),
+        Some(&parent.as_str()),
+        "marker pid is the hook's parent: {marker}"
+    );
+    assert_eq!(
+        fields.get(2),
+        Some(&start_ticks.as_str()),
+        "marker start ticks: {marker}"
+    );
+    assert!(
+        stat.contains("(brit)"),
+        "the hook's parent is brit itself, not a shell: {stat}"
+    );
+    assert_eq!(
+        fs::read_to_string(repo.path().join("at-hook"))?.trim(),
+        "absent",
+        "the remote moved before the hook returned"
+    );
+    assert_eq!(
+        fs::read_to_string(at_exit)?.trim(),
+        pushed,
+        "brit exited before the remote ref moved"
+    );
+    assert_eq!(git(remote.path(), &["rev-parse", "refs/heads/dev"])?, pushed);
+    Ok(())
+}
+
+#[test]
+fn hook_inherits_gate_environment_and_streams_both_outputs_live() -> Result<()> {
+    let repo = TestRepo::new("pre-push-live-hook")?;
+    let remote = remote(repo.path())?;
+    hook(
+        repo.path(),
+        r#"set -eu
+cat >/dev/null
+printf '%s\n' "$GATE_EVIDENCE" "$GATE_LANDING_INTENT" "$GATE_CARRY_WAIT" "$HUSKY" >gate-env
+printf '[pre-push] live\n'
+printf '[gate-live] live\n' >&2
+for attempt in 1 2 3 4 5 6 7 8 9 10; do
+    [ ! -f hook-release ] || exit 0
+    sleep 1
+done
+exit 1"#,
+    )?;
+    let output_dir = tempfile::tempdir()?;
+    let stdout = output_dir.path().join("stdout");
+    let stderr = output_dir.path().join("stderr");
+    let mut command = std::process::Command::new(brit_bin().expect("required binary"));
+    gix_testtools::configure_git_environment(&mut command, repo.path());
+    let mut child = command
+        .env("GIT_CONFIG_GLOBAL", output_dir.path().join("missing.gitconfig"))
+        .envs([
+            ("GATE_EVIDENCE", "reuse"),
+            ("GATE_LANDING_INTENT", "land dev"),
+            ("GATE_CARRY_WAIT", "37"),
+            ("HUSKY", "0"),
+        ])
+        .current_dir(repo.path())
+        .args(["push", "origin", "HEAD:dev"])
+        .stdout(fs::File::create(&stdout)?)
+        .stderr(fs::File::create(&stderr)?)
+        .spawn()?;
+    let observed = (|| -> Result<()> {
+        let started = Instant::now();
+        let mut released = false;
+        loop {
+            if let Some(status) = child.try_wait()? {
+                let errors = fs::read_to_string(&stderr)?;
+                ensure!(released, "push exited before both live lines were observed: {errors}");
+                ensure!(status.success(), "{errors}");
+                return Ok(());
+            }
+            if !released
+                && fs::read_to_string(&stdout)?.contains("[pre-push] live\n")
+                && fs::read_to_string(&stderr)?.contains("[gate-live] live\n")
+            {
+                fs::write(repo.path().join("hook-release"), b"")?;
+                released = true;
+            }
+            ensure!(started.elapsed() < Duration::from_secs(20), "push timed out");
+            std::thread::sleep(Duration::from_millis(20));
+        }
+    })();
+    if observed.is_err() {
+        child.kill().ok();
+        child.wait().ok();
+    }
+    observed?;
+    assert_eq!(
+        fs::read_to_string(repo.path().join("gate-env"))?,
+        "reuse\nland dev\n37\n0\n"
+    );
+    assert_eq!(git(remote.path(), &["rev-parse", "refs/heads/dev"])?, repo.head_id()?);
     Ok(())
 }
 
@@ -562,30 +797,47 @@ fn configured_hooks_that_cannot_run_refuse_the_push() -> Result<()> {
     let remote = remote(repo.path())?;
     let hooks = repo.path().join("hooks with spaces");
     let pre_push = hooks.join("pre-push");
+    let commit_id = repo.head_id()?;
     // The path is named as the repository spells it (`<worktree>/./<core.hooksPath>`).
     let refused = |cause: &str, path: &str| -> Result<()> {
-        let output = brit(repo.path(), &["push", "origin", "main:main"])?;
-        ensure!(!output.status.success(), "{cause}: the push must be refused");
-        for needle in [path, cause, "--no-verify"] {
+        git(repo.path(), &["config", "core.hooksPath", "hooks with spaces"])?;
+        for (source, args) in [
+            ("config", &["push", "origin", "main:main"][..]),
+            (
+                "-c",
+                &["-c", "core.hooksPath=hooks with spaces", "push", "origin", "main:main"][..],
+            ),
+        ] {
+            let output = brit(repo.path(), args)?;
+            ensure!(!output.status.success(), "{source}, {cause}: the push must be refused");
+            for needle in [path, cause, "--no-verify"] {
+                ensure!(
+                    output.stderr.contains(needle),
+                    "{source}, {cause}: expected {needle:?} in\n{}",
+                    output.stderr
+                );
+            }
+            assert_eq!(git(remote.path(), &["for-each-ref"])?, "", "{source}: no ref moved");
             ensure!(
-                output.stderr.contains(needle),
-                "{cause}: expected {needle:?} in\n{}",
-                output.stderr
+                git(remote.path(), &["cat-file", "-e", &commit_id]).is_err(),
+                "{source}: the commit was not sent"
             );
+            if source == "config" {
+                git(repo.path(), &["config", "--unset", "core.hooksPath"])?;
+            }
         }
-        assert_eq!(git(remote.path(), &["for-each-ref"])?, "", "{cause}: nothing was sent");
         Ok(())
     };
 
-    git(repo.path(), &["config", "core.hooksPath", "hooks with spaces"])?;
     refused("not a directory", "hooks with spaces,")?;
-    hook(repo.path(), "exit 0")?;
+    write_hook(&hooks, "exit 0")?;
     fs::set_permissions(&pre_push, fs::Permissions::from_mode(0o644))?;
     refused("not an executable file", "hooks with spaces/pre-push is")?;
     fs::remove_file(&pre_push)?;
     std::os::unix::fs::symlink(hooks.join("nowhere"), &pre_push)?;
     refused("not an executable file", "hooks with spaces/pre-push is")?;
 
+    git(repo.path(), &["config", "core.hooksPath", "hooks with spaces"])?;
     let output = brit(repo.path(), &["push", "--no-verify", "origin", "main:main"])?;
     ensure!(
         output.status.success(),
