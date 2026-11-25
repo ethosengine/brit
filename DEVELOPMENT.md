@@ -504,6 +504,8 @@ Ordinary checks reuse `target`.
 
 The runner sets `CI=true` locally too, including journey assertions and Git-version checks.
 It disables snapshot/baseline updates and overrides inherited fixture-selection variables.
+Workspace-wide native test selections build with `--workspace` and leave isolated packages to
+their own jobs. Partial selections use workspace package IDs from Cargo metadata.
 Native fast tests on Windows reuse valid checked-in fixture archives, falling back to generation
 when an archive is absent or stale. This avoids repeated expensive Git subprocesses on Windows;
 comparisons against freshly generated Git baselines still run in exhaustive QA. Linux and macOS

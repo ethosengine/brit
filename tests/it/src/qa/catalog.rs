@@ -288,19 +288,21 @@ fn unfiltered_tasks(metadata: &Value, selection: &Value, platform: &str) -> Resu
     let tested: Vec<_> = selected_packages
         .iter()
         .filter(|p| run::has_target(p, "test") && !isolated.contains(&p["name"].as_str().expect("validated name")))
-        .map(|p| p["name"].as_str().expect("validated name"))
         .collect();
     if !tested.is_empty() {
         let mut command = Command::new("@qa", &["native-tests", if exhaustive { "exhaustive" } else { "fast" }])
             .requiring(&["cargo-nextest"]);
-        if exhaustive {
+        if selected_packages.len() == packages.len() {
             command.args.push("--workspace".into());
             for name in isolated {
                 command.args.extend(["--exclude".into(), name.into()]);
             }
         } else {
-            for name in tested {
-                command.args.extend(["-p".into(), name.into()]);
+            for package in tested {
+                let id = package["id"]
+                    .as_str()
+                    .ok_or_raise(|| message!("Cargo metadata must contain workspace package IDs"))?;
+                command.args.extend(["-p".into(), id.into()]);
             }
         }
         out.push(Task::new(
@@ -768,6 +770,45 @@ mod tests {
     }
 
     #[test]
+    fn native_test_selection_disambiguates_workspace_gix() -> gix_error::TestResult {
+        // The workspace's `gix` and the registry's `gix` both appear in Cargo.lock.
+        let root = Path::new(env!("CARGO_MANIFEST_DIR")).join("../..");
+        let metadata = super::super::plan::metadata(&root)?;
+        let filter = "test(eight_writers_by_twenty_five)";
+        let mut selection = super::super::plan::filtered(&metadata, "fast", filter.into())?;
+        let native_args = |selection: &Value| -> Result<Vec<String>> {
+            Ok(tasks(&metadata, selection, "linux-x86_64")?
+                .into_iter()
+                .find(|task| task.id == "native-tests")
+                .expect("native test task")
+                .commands
+                .remove(0)
+                .args)
+        };
+        let args = native_args(&selection)?;
+        assert!(
+            args.contains(&"--workspace".into()),
+            "a workspace-wide test filter must avoid ambiguous package names: {args:?}"
+        );
+
+        selection["packages"] = json!(["gix"]);
+        let id = metadata["packages"]
+            .as_array()
+            .expect("workspace packages")
+            .iter()
+            .find(|package| package["name"] == "gix")
+            .expect("workspace gix")["id"]
+            .as_str()
+            .expect("Cargo package ID");
+        assert_eq!(
+            native_args(&selection)?,
+            ["native-tests", "fast", "-p", id, "-E", filter, "--no-tests=pass"],
+            "a subset must use the workspace package ID from Cargo metadata"
+        );
+        Ok(())
+    }
+
+    #[test]
     fn filtered_plan_and_workers_keep_only_nextest_commands() -> gix_error::TestResult {
         let mut metadata = metadata();
         metadata["packages"][0]["metadata"]["qa"]["tests"] = json!([{}]);
@@ -901,8 +942,8 @@ mod tests {
 
     fn metadata() -> Value {
         json!({"packages": [
-            {"name":"gix-path", "targets":[{"kind":["lib"], "test":true,"doc":true,"doctest":true}], "metadata":{"qa":{"without-git":true}}},
-            {"name":"internal-tools", "targets":[{"kind":["bin"],"test":true}], "metadata":{"qa":{"api-checker":true,"api-toolchain":"1.99.0"}}},
+            {"name":"gix-path", "id":"path+file:///workspace/gix-path#0.1.0", "targets":[{"kind":["lib"], "test":true,"doc":true,"doctest":true}], "metadata":{"qa":{"without-git":true}}},
+            {"name":"internal-tools", "id":"path+file:///workspace/tests/it#internal-tools@0.0.0", "targets":[{"kind":["bin"],"test":true}], "metadata":{"qa":{"api-checker":true,"api-toolchain":"1.99.0"}}},
             {"name":"gitoxide", "targets":[{"kind":["bin"],"test":false}], "metadata":{"qa":{"journey":true,"auditable":true}}}
         ],"metadata":{"qa":{"tool-versions":{
             "cargo-nextest":"0.9.122","cargo-deny":"0.20.0","cargo-machete":"0.9.1",
