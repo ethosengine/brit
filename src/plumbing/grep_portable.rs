@@ -1,7 +1,7 @@
 //! Byte-oriented regex matching on platforms without the POSIX regex API.
 use gix::{
     Result,
-    error::{ResultExt, bail, message},
+    error::{OptionExt, ResultExt, bail, message},
 };
 
 pub(super) struct Regex(regex::bytes::Regex);
