@@ -177,6 +177,14 @@ Sizes:
   count on macOS, and fix it or quarantine it with a reason. The Windows
   `gix-notify` helper flake (`windows.rs:43`) stays in the pool.
 
+  Also in scope, because it reproduces locally on Linux (5 of 200 runs of the
+  test binary on the laptop, 2026-11-25; first seen in integration run
+  45672180791): `server::asynchronous::cancelling_startup_does_not_leave_an_endpoint_owned`
+  asserts at `gix-fsmonitor/tests/fsmonitor/server/asynchronous.rs:215` that
+  no endpoint is running right after the replacement shuts down. Find out
+  whether the timed-out startup can still take the endpoint after its lock is
+  released (a product bug) or only releases it late (a test race).
+
   *Done when:* a `repeat=50` macOS narrow run of the file passes 50 of 50, or
   the quarantine lands with its reason and a pool line.
 
