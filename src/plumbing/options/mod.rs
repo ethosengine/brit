@@ -244,7 +244,7 @@ pub enum Subcommands {
         /// Paths to open, or none to start the editor without a file.
         paths: Vec<PathBuf>,
     },
-    /// Stage literal files or directories in one index transaction.
+    /// Stage literal files, directories or a submodule pin in one index transaction.
     Add {
         /// Stage tracked modifications and deletions; without paths, select the entire repository.
         #[clap(short = 'u', long, conflicts_with = "all")]
@@ -252,6 +252,9 @@ pub enum Subcommands {
         /// Include additions, modifications and deletions; without paths, select the entire repository.
         #[clap(short = 'A', long)]
         all: bool,
+        /// Stage a full commit ID at one declared submodule path without checking it out.
+        #[clap(long, value_name = "COMMIT", conflicts_with_all = ["update", "all"])]
+        gitlink: Option<String>,
         /// Literal file or directory paths. Pathspec patterns are unsupported.
         #[clap(required_unless_present_any = ["update", "all"], value_parser = crate::shared::AsBString)]
         paths: Vec<BString>,

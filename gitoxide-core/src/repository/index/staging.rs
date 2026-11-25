@@ -2,14 +2,68 @@
 use std::{borrow::Cow, collections::BTreeSet, path::Path};
 
 use gix::{
-    Result,
+    ObjectId, Result,
     bstr::{BStr, BString, ByteSlice},
     dir::{entry::Kind, walk::EmissionMode},
-    error::{ResultExt, bail},
-    index::entry::{Flags, Mode, Stat},
+    error::{ResultExt, bail, message},
+    index::entry::{Flags, Mode, Stage, Stat},
 };
 
 use super::authoring::{component_options, read_index_for_staging, worktree_entry_spooled};
+
+/// Stage a full commit ID for a declared submodule without initializing it or writing working files.
+pub fn stage_gitlink(repo: &gix::Repository, commit: &str, input: &BString) -> Result<()> {
+    let commit_id =
+        ObjectId::from_hex(commit.as_bytes()).or_raise(|| message("Invalid gitlink commit ID").validation())?;
+    if commit_id.kind() != repo.object_hash() || commit_id.is_null() {
+        bail!("Invalid gitlink commit ID: expected a nonzero ID in the repository's object format".validation());
+    }
+    let root = repo
+        .workdir()
+        .ok_or_else(|| message("A worktree is required").validation_error())?;
+    let lock =
+        gix::lock::File::acquire_to_update_resource(repo.index_path(), gix::lock::acquire::Fail::Immediately, None, 0)
+            .or_error()?;
+    let mut index = read_index_for_staging(repo)?;
+    let path = select_path(repo, root, input)?;
+    let declared = match repo.modules()? {
+        Some(modules) => modules.name_by_path(path.as_bstr())?.is_some(),
+        None => false,
+    };
+    if !declared {
+        bail!("Unknown submodule path {input:?}".not_found());
+    }
+    // Gitlinks normally name commits in the child repository. An absent local object is valid.
+    if repo
+        .try_find_header(commit_id)?
+        .is_some_and(|header| header.kind() != gix::objs::Kind::Commit)
+    {
+        bail!("Gitlink ID {commit_id} does not identify a commit".validation());
+    }
+
+    let ignore_case = repo.config_snapshot().try_boolean("core.ignorecase")? == Some(true);
+    let precompose = repo.config_snapshot().try_boolean("core.precomposeunicode")? == Some(true);
+    validate_path_spelling(&path, &index, ignore_case, precompose)?;
+    for entry in index.entries() {
+        let other = entry.path(&index);
+        if other == path.as_bstr() {
+            if entry.stage_raw() != 0 || entry.mode != Mode::COMMIT {
+                bail!("Cannot replace a conflicted or non-gitlink index entry at {path}".validation());
+            }
+        } else if contains(other, path.as_bstr()) || contains(path.as_bstr(), other) {
+            bail!("Cannot replace an indexed ancestor or directory at {path}".validation());
+        }
+    }
+    if let Some(entry) = index.entry_mut_by_path_and_stage(path.as_bstr(), Stage::Unconflicted) {
+        entry.id = commit_id;
+        entry.stat = Stat::default();
+        entry.flags.remove(Flags::FSMONITOR_VALID);
+    } else {
+        index.dangerously_push_entry(Stat::default(), commit_id, Flags::empty(), Mode::COMMIT, path.as_bstr());
+        index.sort_entries();
+    }
+    publish_index(&index, lock)
+}
 
 /// Stage literal files and directories. Empty paths select the whole repository.
 /// With `update`, only existing index paths are selected.
@@ -17,7 +71,7 @@ pub fn stage_paths(repo: gix::Repository, paths: &[BString], update: bool) -> Re
     let root = repo
         .workdir()
         .ok_or_else(|| gix::error::message("A worktree is required").validation_error())?;
-    let mut lock =
+    let lock =
         gix::lock::File::acquire_to_update_resource(repo.index_path(), gix::lock::acquire::Fail::Immediately, None, 0)
             .or_error()?;
     let index = read_index_for_staging(&repo)?;
@@ -129,21 +183,7 @@ pub fn stage_paths(repo: gix::Repository, paths: &[BString], update: bool) -> Re
     let mut replacements = Vec::new();
     for path in &candidates {
         check_cancelled()?;
-        if precompose && !path.is_ascii() {
-            bail!("Unicode precomposition requires Git for non-ASCII paths".unsupported());
-        }
-        if ignore_case {
-            for entry in index.entries() {
-                for (selected, tracked) in path.split(|b| *b == b'/').zip(entry.path(&index).split(|b| *b == b'/')) {
-                    if !selected.eq_ignore_ascii_case(tracked) {
-                        break;
-                    }
-                    if selected != tracked {
-                        bail!("Case aliases of indexed paths require Git".unsupported());
-                    }
-                }
-            }
-        }
+        validate_path_spelling(path, &index, ignore_case, precompose)?;
         // A tracked file replaced by a directory, or hidden beneath a replacement
         // file/symlink, is a deletion. Never follow that symlink to read its target.
         let replacement = if is_file(root, path.as_bstr())? {
@@ -217,13 +257,41 @@ pub fn stage_paths(repo: gix::Repository, paths: &[BString], update: bool) -> Re
     undo.sort_by(|a, b| a.name.cmp(&b.name));
     state.set_resolve_undo(undo);
     state.sort_entries();
-    state.verify_entries()?;
     let output = gix::index::File::from_state(state, repo.index_path());
+    publish_index(&output, lock)
+}
+
+fn publish_index(index: &gix::index::File, mut lock: gix::lock::File) -> Result<()> {
+    index.verify_entries()?;
     check_cancelled()?;
-    output.write_to(&mut lock, Default::default())?;
+    index.write_to(&mut lock, Default::default())?;
     check_cancelled()?;
     lock.commit().or_error()?;
     // Publication is final: a later interrupt must not be reported as a rollback.
+    Ok(())
+}
+
+fn validate_path_spelling(
+    path: &BString,
+    index: &gix::index::State,
+    ignore_case: bool,
+    precompose: bool,
+) -> Result<()> {
+    if precompose && !path.is_ascii() {
+        bail!("Unicode precomposition requires Git for non-ASCII paths".unsupported());
+    }
+    if ignore_case {
+        for entry in index.entries() {
+            for (selected, tracked) in path.split(|b| *b == b'/').zip(entry.path(index).split(|b| *b == b'/')) {
+                if !selected.eq_ignore_ascii_case(tracked) {
+                    break;
+                }
+                if selected != tracked {
+                    bail!("Case aliases of indexed paths require Git".unsupported());
+                }
+            }
+        }
+    }
     Ok(())
 }
 
@@ -244,56 +312,58 @@ fn selection(repo: &gix::Repository, root: &Path, paths: &[BString]) -> Result<V
     }
     let mut scopes = BTreeSet::new();
     for input in paths {
-        let raw = input.as_bytes();
-        if raw.is_empty() || raw[0] == b':' || raw.iter().any(|b| b"*?[]\\\0".contains(b)) {
-            bail!("Only literal file and directory paths are supported; use Git for pathspecs".unsupported());
-        }
-        let input_path = gix::path::from_bstr(Cow::Borrowed(input.as_bstr()))?;
-        if input_path.is_absolute()
-            || input_path
-                .components()
-                .any(|c| matches!(c, std::path::Component::ParentDir))
-        {
-            bail!("Use relative paths without parent traversal".unsupported());
-        }
-        // Normalization removes terminal `/.`, but that spelling still requires
-        // a physical directory and must never turn `link/.` into symlink staging.
-        let requires_directory = raw.last() == Some(&b'/') || raw.ends_with(b"/.");
-        let mut path = repo.normalize_path(input)?.into_owned();
-        while path.last() == Some(&b'/') {
-            path.pop();
-        }
-        if path == b".".as_bstr() {
-            path.clear();
-        }
-        let components: Vec<_> = path.split(|b| *b == b'/').filter(|c| !c.is_empty()).collect();
-        let mut current = root.to_owned();
-        for (position, component) in components.iter().enumerate() {
-            gix::validate::path::component(component.as_bstr(), None, component_options()).or_error()?;
-            current.push(gix::path::from_bstr(Cow::Borrowed(component.as_bstr()))?.as_ref());
-            match std::fs::symlink_metadata(&current) {
-                Ok(meta) => {
-                    if position + 1 == components.len() && requires_directory && !meta.is_dir() {
-                        bail!(
-                            "A directory spelling requires a directory, never a symlink or regular file".validation()
-                        );
-                    }
-                    if position + 1 < components.len() && !meta.is_dir() {
-                        bail!("Paths must not traverse symlink or non-directory ancestors".validation());
-                    }
-                    if meta.is_dir()
-                        && (current.join(".git").symlink_metadata().is_ok() || gix::discover::is_git(&current).is_ok())
-                    {
-                        bail!("Selected nested repositories and submodules require Git".unsupported());
-                    }
-                }
-                Err(err) if err.kind() == std::io::ErrorKind::NotFound => {}
-                Err(err) => return Err(err).or_error(),
-            }
-        }
-        scopes.insert(path);
+        scopes.insert(select_path(repo, root, input)?);
     }
     Ok(scopes.into_iter().collect())
+}
+
+fn select_path(repo: &gix::Repository, root: &Path, input: &BString) -> Result<BString> {
+    let raw = input.as_bytes();
+    if raw.is_empty() || raw[0] == b':' || raw.iter().any(|b| b"*?[]\\\0".contains(b)) {
+        bail!("Only literal file and directory paths are supported; use Git for pathspecs".unsupported());
+    }
+    let input_path = gix::path::from_bstr(Cow::Borrowed(input.as_bstr()))?;
+    if input_path.is_absolute()
+        || input_path
+            .components()
+            .any(|c| matches!(c, std::path::Component::ParentDir))
+    {
+        bail!("Use relative paths without parent traversal".unsupported());
+    }
+    // Normalization removes terminal `/.`, but that spelling still requires
+    // a physical directory and must never turn `link/.` into symlink staging.
+    let requires_directory = raw.last() == Some(&b'/') || raw.ends_with(b"/.");
+    let mut path = repo.normalize_path(input)?.into_owned();
+    while path.last() == Some(&b'/') {
+        path.pop();
+    }
+    if path == b".".as_bstr() {
+        path.clear();
+    }
+    let components: Vec<_> = path.split(|b| *b == b'/').filter(|c| !c.is_empty()).collect();
+    let mut current = root.to_owned();
+    for (position, component) in components.iter().enumerate() {
+        gix::validate::path::component(component.as_bstr(), None, component_options()).or_error()?;
+        current.push(gix::path::from_bstr(Cow::Borrowed(component.as_bstr()))?.as_ref());
+        match std::fs::symlink_metadata(&current) {
+            Ok(meta) => {
+                if position + 1 == components.len() && requires_directory && !meta.is_dir() {
+                    bail!("A directory spelling requires a directory, never a symlink or regular file".validation());
+                }
+                if position + 1 < components.len() && !meta.is_dir() {
+                    bail!("Paths must not traverse symlink or non-directory ancestors".validation());
+                }
+                if meta.is_dir()
+                    && (current.join(".git").symlink_metadata().is_ok() || gix::discover::is_git(&current).is_ok())
+                {
+                    bail!("Selected nested repositories and submodules require Git".unsupported());
+                }
+            }
+            Err(err) if err.kind() == std::io::ErrorKind::NotFound => {}
+            Err(err) => return Err(err).or_error(),
+        }
+    }
+    Ok(path)
 }
 
 /// Whether a path still names a file without following any directory symlink.
