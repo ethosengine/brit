@@ -5,7 +5,7 @@ serves: brit-native-daily-driver
 ---
 # Bounded-memory backlog
 
-> [Brit sprint 4](2026-11-22-brit-sprint-4.md) shipped as brit 0.3.3 (2026-11-23); the next sprint draws from this pool.
+> [Brit sprint 4](2026-11-22-brit-sprint-4.md) shipped as brit 0.3.3 (2026-11-23). [Brit sprint 5](2026-11-25-brit-sprint-5.md) (draft) draws from this pool and from the elohim friction register of 2026-11-25.
 > Add new findings here as one line each; do not work from this list directly.
 
 - [ ] Release Brit for every platform for which we can obtain a runtime to build and verify the installed artifact; restore macOS ARM when a usable runtime is available. The steward suspended hosted ARM on 2026-11-17 after release 44145119161 attempts 1–4 were cancelled before any ARM step; current releases cover Linux x86_64, macOS Intel and Windows x86_64, and ordinary macOS CI uses Intel. Record per-platform build, installation and operational evidence before enabling each target.
