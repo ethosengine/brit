@@ -30,7 +30,7 @@ switch-test-faults = ["gitoxide/switch-test-faults"]
 [dependencies]
 anyhow = "1.0.98"
 brit-bridge = { version = "0.1.9", path = "../brit-bridge", registry = "elohim" }
-brit-epr = { version = "0.2.4", path = "../brit-epr", registry = "elohim", default-features = false }
+brit-epr = { version = "0.2.3", path = "../brit-epr", registry = "elohim", default-features = false }
 eprfs-core = { version = "=0.3.3", registry = "elohim" }
 eprfs-host = { version = "=0.3.3", registry = "elohim" }
 eprfs-local = { version = "=0.3.4", registry = "elohim" }
