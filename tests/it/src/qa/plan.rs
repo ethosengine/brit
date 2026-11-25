@@ -159,6 +159,16 @@ fn packages(metadata: &Value) -> Result<Vec<Package>> {
         .collect()
 }
 
+pub fn filtered(metadata: &Value, mode: &str, filter: String) -> Result<Value> {
+    let mut selection = exhaustive(
+        &packages(metadata)?,
+        "A test filter searches across workspace packages and omits non-Nextest tasks, including Clippy, formatting, documentation, policy and downstream checks",
+    );
+    selection["mode"] = mode.into();
+    selection["tests"] = filter.into();
+    Ok(selection)
+}
+
 fn exhaustive(packages: &[Package], reason: &str) -> Value {
     json!({
         "mode": "exhaustive",

@@ -360,11 +360,33 @@ environment variables; excess configurations remain selected. CI fetches the loc
 dependencies into its planning cache so offline queries also work there. Local planning does
 not fetch dependencies. Exhaustive mode retains every configuration.
 
-All PRs request fast mode. Pushes to `main` or `run-ci/**`, and manual workflow dispatch,
-request exhaustive mode. Exhaustive checks on landed commits provide feedback for forward
+All PRs request fast mode. Pushes to `main` or `run-ci/**` request exhaustive mode.
+Exhaustive checks on landed commits provide feedback for forward
 fixes when fast selection misses an undeclared dependency. CI cancels obsolete PR runs but
 keeps landed-commit runs. The `Tests pass` gate requires the planner and all required jobs.
 Advisory, package-size and WASM failures remain informational, locally and in CI.
+
+### Widening a CI diagnosis
+
+Start with the failing test locally if you can reproduce it. Dispatch CI against a branch
+already on GitHub, then widen the scope as each check passes:
+
+```bash
+scripts/ci/narrow.sh my-branch --platforms macos-x86_64 --tests 'test(eight_writers_by_twenty_five)'
+scripts/ci/narrow.sh my-branch --platforms macos-x86_64,linux-x86_64 --stage tests --mode exhaustive
+scripts/ci/narrow.sh my-branch --mode fast
+scripts/ci/narrow.sh my-branch --mode exhaustive
+```
+
+Manual runs default to fast and compare against `origin/main`. The fast dispatch uses
+affected-package selection and schedules native tests across the CI platforms. A Nextest filterset
+searches across workspace packages and runs only matching Nextest tests. Compilation can still
+build test binaries that contain no matches. FreeBSD's Cargo tests and shell journeys can be
+selected by stage. For the platform and stage names, see
+`just qa-plan --help` and `just qa --help`.
+
+Narrowed dispatches report `Narrow checks pass (not a landing proof)`. The exhaustive
+dispatch with every selector left empty is the landing proof.
 
 ### What runs where
 
@@ -482,6 +504,8 @@ Ordinary checks reuse `target`.
 
 The runner sets `CI=true` locally too, including journey assertions and Git-version checks.
 It disables snapshot/baseline updates and overrides inherited fixture-selection variables.
+Workspace-wide native test selections build with `--workspace` and leave isolated packages to
+their own jobs. Partial selections use workspace package IDs from Cargo metadata.
 Native fast tests on Windows reuse valid checked-in fixture archives, falling back to generation
 when an archive is absent or stale. This avoids repeated expensive Git subprocesses on Windows;
 comparisons against freshly generated Git baselines still run in exhaustive QA. Linux and macOS

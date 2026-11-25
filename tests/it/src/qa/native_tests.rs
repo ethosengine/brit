@@ -95,12 +95,12 @@ fn test_command(
     snapshot: &Path,
     cache: &Path,
     fixtures: Fixtures,
-    windows_arm: bool,
+    filter: &str,
 ) -> Result<Command> {
     let mut command = cargo(root)?;
     reuse_binaries(&mut command, metadata, binaries, snapshot, cache);
     command
-        .args(["--no-tests", "pass"])
+        .arg("--no-tests=pass")
         .env_remove("GIX_TEST_IGNORE_ARCHIVES")
         .env_remove("GIX_TEST_CREATE_ARCHIVES_EVEN_ON_CI");
     command.env(
@@ -110,6 +110,11 @@ fn test_command(
         },
         "1",
     );
+    command.args(["-E", filter]);
+    Ok(command)
+}
+
+fn native_filter(windows_arm: bool, requested: Option<&str>) -> String {
     // Workspace unification can enable notify, but gix/Cargo.toml runs these tests once in a dedicated variant.
     let mut excluded = String::from(
         "(package(=internal-tools) & binary(=qa)) | (package(=gix) & (test(notify::) | test(=repository::worktree::linked_worktree_removal_notifies_through_shared_metadata)))",
@@ -117,8 +122,11 @@ fn test_command(
     if windows_arm {
         excluded.push_str(" | test(performance) | test(speed)");
     }
-    command.args(["-E", &format!("not ({excluded})")]);
-    Ok(command)
+    let filter = format!("not ({excluded})");
+    match requested {
+        Some(requested) => format!("({requested}) & {filter}"),
+        None => filter,
+    }
 }
 
 pub fn execute(
@@ -148,6 +156,11 @@ fn run(
     log: Option<&File>,
     coverage: &mut Option<super::coverage::Run>,
 ) -> Result<()> {
+    let (args, requested, _) = replay_arguments(args.iter().cloned())?;
+    let filter = native_filter(
+        cfg!(all(windows, target_arch = "aarch64")),
+        requested.last().map(String::as_str),
+    );
     let mut build = cargo(root)?;
     build
         .args([
@@ -185,7 +198,7 @@ fn run(
                 .expect("adding a snapshot creates the cache")
                 .path,
             *fixtures,
-            cfg!(all(windows, target_arch = "aarch64")),
+            &filter,
         )?;
         let configuration = coverage
             .as_ref()
@@ -230,25 +243,46 @@ fn variant_arguments(mut command: run::Command) -> Result<(run::Command, Vec<Str
     ]
     .map(String::from)
     .to_vec();
-    let mut filters = Vec::new();
-    let mut args = command.args.drain(2..);
+    let (cargo, mut expressions, no_tests) = replay_arguments(command.args.drain(2..))?;
+    build.extend(cargo);
+    let mut replay = Vec::new();
+    if no_tests {
+        replay.push("--no-tests=pass".into());
+        // Nextest unions multiple -E expressions. The requested filter is appended last.
+        if expressions.len() > 1 {
+            let requested = expressions.pop().expect("at least two expressions");
+            let union = expressions.join(") | (");
+            expressions = vec![format!("({requested}) & (({union}))")];
+        }
+    }
+    for expression in expressions {
+        replay.extend(["-E".into(), expression]);
+    }
+    command.args = build;
+    Ok((run::normalize(command), replay))
+}
+
+fn replay_arguments(mut args: impl Iterator<Item = String>) -> Result<(Vec<String>, Vec<String>, bool)> {
+    let mut build = Vec::new();
+    let mut expressions = Vec::new();
+    let mut no_tests = false;
     while let Some(arg) = args.next() {
         match arg.as_str() {
             "--no-fail-fast" => {}
-            "-E" | "--filter-expr" => {
-                filters.push(arg);
-                filters.push(
+            "--no-tests=pass" => no_tests = true,
+            "-E" | "--filter-expr" | "--filterset" => {
+                expressions.push(
                     args.next()
                         .ok_or_raise(|| message("Missing nextest filter expression"))?,
                 );
             }
-            _ if arg.starts_with("--filter-expr=") => filters.push(arg),
+            _ if arg.starts_with("--filter-expr=") || arg.starts_with("--filterset=") => {
+                expressions.push(arg.split_once('=').expect("matched an equals sign").1.into());
+            }
             _ => build.push(arg),
         }
     }
-    drop(args);
-    command.args = build;
-    Ok((run::normalize(command), filters))
+    Ok((build, expressions, no_tests))
 }
 
 pub fn variants(
@@ -379,7 +413,7 @@ mod tests {
             Path::new("native-snapshot"),
             Path::new("fixture-cache"),
             Fixtures::Generated,
-            false,
+            &native_filter(false, None),
         )?;
         let native_env: BTreeMap<_, _> = native.get_envs().collect();
         assert_eq!(
@@ -567,6 +601,45 @@ mod tests {
     }
 
     #[test]
+    fn diagnostic_filter_intersects_existing_replay_filters() -> gix_error::TestResult {
+        let requested = "test(one) | test(two)";
+        let (build, replay) = variant_arguments(run::Command::new(
+            "cargo",
+            &[
+                "nextest",
+                "run",
+                "-p",
+                "gix",
+                "-E",
+                "test(original)",
+                "-E",
+                requested,
+                "--no-tests=pass",
+            ],
+        ))?;
+        assert!(
+            build.args.ends_with(&["-p".into(), "gix".into()]),
+            "listing binaries takes build arguments only"
+        );
+        assert_eq!(
+            replay,
+            ["--no-tests=pass", "-E", "(test(one) | test(two)) & ((test(original)))"],
+            "a variant replay can only run tests admitted by both filters"
+        );
+        let (build, expressions, no_tests) = replay_arguments(
+            ["--workspace", "-E", requested, "--no-tests=pass"]
+                .map(String::from)
+                .into_iter(),
+        )?;
+        assert_eq!(build, ["--workspace"]);
+        assert!(no_tests, "zero matches must pass");
+        let expression = native_filter(true, expressions.first().map(String::as_str));
+        assert!(expression.starts_with("(test(one) | test(two)) & not ("));
+        assert!(expression.contains("test(performance)"));
+        Ok(())
+    }
+
+    #[test]
     fn failing_variants_do_not_skip_independent_variants() -> gix_error::TestResult {
         let mut visited = Vec::new();
         let result = run::each_case(
@@ -620,7 +693,7 @@ mod tests {
                 Path::new("snapshot"),
                 Path::new("fixture-cache"),
                 *fixtures,
-                false,
+                &native_filter(false, None),
             )?;
             assert_eq!(
                 command.get_args().collect::<Vec<_>>(),
@@ -634,8 +707,7 @@ mod tests {
                     "--workspace-remap",
                     "snapshot",
                     "--no-fail-fast",
-                    "--no-tests",
-                    "pass",
+                    "--no-tests=pass",
                     "-E",
                     "not ((package(=internal-tools) & binary(=qa)) | (package(=gix) & (test(notify::) | test(=repository::worktree::linked_worktree_removal_notifies_through_shared_metadata))))",
                 ]
@@ -677,7 +749,7 @@ mod tests {
             Path::new("snapshot"),
             Path::new("fixture-cache"),
             Fixtures::Generated,
-            true,
+            &native_filter(true, None),
         )?;
         assert!(
             command.get_args().collect::<Vec<_>>().ends_with(
