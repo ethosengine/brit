@@ -156,6 +156,8 @@ fn ensure_no_replay_cleanup(git_dir: &std::path::Path) -> anyhow::Result<()> {
 #[cfg(target_os = "linux")]
 mod linux;
 #[cfg(target_os = "linux")]
+pub(crate) use linux::guard::describe_object_pin_holders;
+#[cfg(target_os = "linux")]
 pub(crate) use linux::{
     Change, Lock, State, acquire_recorded_locks, checkpoint, complete_directory_ledger, creation_mode, digest,
     merge_ff_only, payload, prepare_directories, private_copy, private_publish, private_write, publish_file_from,

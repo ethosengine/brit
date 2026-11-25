@@ -1147,10 +1147,16 @@ pub fn run_with_command(args: Args, command: clap::Command) -> Result<()> {
                     let repo = repository(Mode::LenientWithGitInstallConfig)?;
                     let maintenance = (!dry_run).then(|| core::repository::maintenance::Store::from_repo(&repo));
                     core::repository::fetch(repo, progress, out, &mut err, opts)?;
-                    if let Some(maintenance) = maintenance
-                        && let Err(error) = maintenance.and_then(|store| store.after_fetch())
-                    {
-                        let _ = writeln!(err, "warning: pack maintenance after fetch failed: {error}");
+                    if let Some(maintenance) = maintenance {
+                        match maintenance.and_then(|store| store.after_fetch_with_notice()) {
+                            Ok(Some(deferred)) => {
+                                let _ = writeln!(err, "{deferred}");
+                            }
+                            Ok(None) => {}
+                            Err(error) => {
+                                let _ = writeln!(err, "warning: pack maintenance after fetch failed: {error}");
+                            }
+                        }
                     }
                     Ok(())
                 },
