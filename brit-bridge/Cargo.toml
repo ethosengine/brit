@@ -2,13 +2,13 @@ lints.workspace = true
 
 [package]
 name = "brit-bridge"
-version = "0.1.9"
+version = "0.1.10"
 description = "Lossless Git tree bridge for canonical EPRFS content closures"
 repository = "https://github.com/ethosengine/brit"
 authors = ["Matthew Dowell <matthew@ethosengine.com>"]
 license = "MIT OR Apache-2.0"
 edition = "2021"
-rust-version = "1.88"
+rust-version = "1.100"
 
 [dependencies]
 anyhow = "1"

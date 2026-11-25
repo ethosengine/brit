@@ -2,13 +2,13 @@ lints.workspace = true
 
 [package]
 name = "gix-tix"
-version = "0.6.3"
+version = "0.6.4"
 repository = "https://github.com/GitoxideLabs/gitoxide"
 license = "MIT OR Apache-2.0"
 description = "A tool like `tig`, but minimal, fast and efficient"
 authors = ["Sebastian Thiel <sebastian.thiel@icloud.com>"]
 edition = "2024"
-rust-version = "1.95"
+rust-version = "1.100"
 include = ["/src/**/*", "/LICENSE-*"]
 
 [[bin]]

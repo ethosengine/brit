@@ -2,13 +2,13 @@ lints.workspace = true
 
 [package]
 name = "gix-submodule"
-version = "0.36.6"
+version = "0.36.7"
 repository = "https://github.com/GitoxideLabs/gitoxide"
 license = "MIT OR Apache-2.0"
 description = "A crate of the gitoxide project dealing git submodules"
 authors = ["Sebastian Thiel <sebastian.thiel@icloud.com>"]
 edition = "2024"
-rust-version = "1.95"
+rust-version = "1.100"
 include = ["/src/**/*", "/LICENSE-*"]
 
 [lib]

@@ -444,7 +444,7 @@ dependencies = [
 
 [[package]]
 name = "brit-bridge"
-version = "0.1.9"
+version = "0.1.10"
 dependencies = [
  "anyhow",
  "async-trait",
@@ -459,7 +459,7 @@ dependencies = [
 
 [[package]]
 name = "brit-build-ref"
-version = "0.1.10"
+version = "0.1.11"
 dependencies = [
  "anyhow",
  "brit-epr",
@@ -524,7 +524,7 @@ dependencies = [
 
 [[package]]
 name = "brit-graph"
-version = "0.2.6"
+version = "0.2.7"
 dependencies = [
  "brit-epr",
  "gix 0.90.4",
@@ -2183,7 +2183,7 @@ dependencies = [
  "gix-path 0.14.2",
  "gix-pathspec 0.22.6",
  "gix-prompt",
- "gix-protocol 0.68.2",
+ "gix-protocol 0.68.3",
  "gix-quote 0.10.4",
  "gix-ref 0.69.4",
  "gix-refspec 0.47.5",
@@ -2192,7 +2192,7 @@ dependencies = [
  "gix-sec 0.16.2",
  "gix-shallow 0.15.4",
  "gix-status 0.37.2",
- "gix-submodule 0.36.6",
+ "gix-submodule 0.36.7",
  "gix-tempfile 27.0.1",
  "gix-testtools",
  "gix-trace 0.3.2",
@@ -2892,7 +2892,7 @@ dependencies = [
 
 [[package]]
 name = "gix-fsmonitor-daemon"
-version = "0.1.0"
+version = "0.1.1"
 dependencies = [
  "anyhow",
  "gix 0.90.4",
@@ -3566,7 +3566,7 @@ dependencies = [
 
 [[package]]
 name = "gix-protocol"
-version = "0.68.2"
+version = "0.68.3"
 dependencies = [
  "async-std",
  "async-trait",
@@ -3584,7 +3584,7 @@ dependencies = [
  "gix-object 0.66.4",
  "gix-pack 0.77.2",
  "gix-packetline 0.24.3",
- "gix-protocol 0.68.2",
+ "gix-protocol 0.68.3",
  "gix-ref 0.69.4",
  "gix-refspec 0.47.5",
  "gix-revwalk 0.38.1",
@@ -3899,7 +3899,7 @@ dependencies = [
 
 [[package]]
 name = "gix-submodule"
-version = "0.36.6"
+version = "0.36.7"
 dependencies = [
  "bstr",
  "gix-config 0.62.4",
@@ -3981,7 +3981,7 @@ dependencies = [
 
 [[package]]
 name = "gix-tix"
-version = "0.6.3"
+version = "0.6.4"
 dependencies = [
  "clap",
  "crossterm",
