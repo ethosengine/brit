@@ -1,4 +1,7 @@
 //! Consolidate local packs without making reachability decisions.
+//!
+//! A push pins the common object store through send-pack, including its pre-push hook.
+//! Consolidation defers or refuses when it cannot take the pin exclusively.
 
 #[cfg(unix)]
 use std::os::unix::fs::{MetadataExt, PermissionsExt};
@@ -18,13 +21,18 @@ use gix::{
     progress::Discard,
 };
 
+#[cfg(target_os = "linux")]
+use super::switch::describe_object_pin_holders as describe_pin_holder;
+
 const TARGET: usize = 8;
 const FETCH_THRESHOLD: usize = 24;
 const FETCH_BATCH: usize = 24;
+const OBJECT_PIN: &str = "brit-objects.pin";
 
 /// The invoking repository's local pack directory and maintenance settings.
 pub struct Store {
     pack_dir: PathBuf,
+    pin_path: PathBuf,
     object_hash: gix::hash::Kind,
     target: usize,
     threshold: usize,
@@ -54,6 +62,12 @@ struct Plan {
     inputs: Vec<Input>,
 }
 
+enum Consolidation {
+    Complete(Plan, usize),
+    Skipped,
+    Pinned(String),
+}
+
 struct Transaction {
     replacement: gix::ObjectId,
     sources: Vec<gix::ObjectId>,
@@ -61,6 +75,33 @@ struct Transaction {
 
 fn pack_path(dir: &Path, id: gix::ObjectId, ext: &str) -> PathBuf {
     dir.join(format!("pack-{id}.{ext}"))
+}
+
+fn open_pin(path: &Path) -> Result<fs::File> {
+    let mut options = fs::OpenOptions::new();
+    options.read(true).write(true).create(true).truncate(false);
+    #[cfg(target_os = "linux")]
+    {
+        use std::os::unix::fs::OpenOptionsExt;
+        options.custom_flags(rustix::fs::OFlags::NOFOLLOW.bits() as i32);
+    }
+    options
+        .open(path)
+        .or_raise(|| message!("could not open object pin {}", path.display()))
+}
+
+#[cfg(feature = "blocking-client")]
+pub(crate) fn pin_for_push(repo: &gix::Repository) -> Result<fs::File> {
+    let path = repo.common_dir().join(OBJECT_PIN);
+    let pin = open_pin(&path)?;
+    pin.lock_shared()
+        .or_raise(|| message!("could not take shared object pin {}", path.display()))?;
+    Ok(pin)
+}
+
+#[cfg(not(target_os = "linux"))]
+fn describe_pin_holder(_: &fs::File) -> String {
+    "a process holding the object pin (holder identity unavailable on this platform)".into()
 }
 
 impl Store {
@@ -79,6 +120,7 @@ impl Store {
         };
         Ok(Self {
             pack_dir: repo.objects.store_ref().path().join("pack"),
+            pin_path: repo.common_dir().join(OBJECT_PIN),
             object_hash: repo.object_hash(),
             target: count("brit.maintenanceTarget", TARGET, 1)?,
             threshold: count("brit.maintenanceFetchThreshold", FETCH_THRESHOLD, 2)?,
@@ -90,16 +132,32 @@ impl Store {
         if dry_run {
             return self.plan(false)?.print("Plan", out);
         }
-        if let Some((plan, after)) = self.consolidate(false)? {
-            plan.print_with_count("Maintenance", after, out)?;
+        match self.consolidate(false)? {
+            Consolidation::Complete(plan, after) => plan.print_with_count("Maintenance", after, out),
+            Consolidation::Skipped => Ok(()),
+            Consolidation::Pinned(holder) => {
+                bail!(message!(
+                    "cannot consolidate packs because object pin {} is held by {holder}",
+                    self.pin_path.display()
+                ));
+            }
         }
-        Ok(())
     }
 
     /// Consolidate at most one batch, under the same guard as the successful fetch.
     pub fn after_fetch(&self) -> Result<()> {
-        self.consolidate(true)?;
-        Ok(())
+        self.after_fetch_with_notice().map(|_| ())
+    }
+
+    /// Like [`Self::after_fetch`], returning a notice when the object pin defers consolidation.
+    pub fn after_fetch_with_notice(&self) -> Result<Option<String>> {
+        Ok(match self.consolidate(true)? {
+            Consolidation::Pinned(holder) => Some(format!(
+                "pack consolidation deferred because a push is in progress ({} held by {holder})",
+                self.pin_path.display()
+            )),
+            Consolidation::Complete(..) | Consolidation::Skipped => None,
+        })
     }
 
     fn plan(&self, automatic: bool) -> Result<Plan> {
@@ -166,18 +224,18 @@ impl Store {
         Ok(Plan { before, inputs })
     }
 
-    fn consolidate(&self, automatic: bool) -> Result<Option<(Plan, usize)>> {
+    fn consolidate(&self, automatic: bool) -> Result<Consolidation> {
         let stage = self.pack_dir.join(".brit-maintenance");
         // Avoid creating a lock file on the normal below-threshold fetch path.
         if automatic
             && missing_ok(fs::symlink_metadata(&stage)).or_error()?.is_none()
             && self.plan(true)?.inputs.is_empty()
         {
-            return Ok(None);
+            return Ok(Consolidation::Skipped);
         }
         if !self.pack_dir.is_dir() {
             let plan = self.plan(automatic)?;
-            return Ok(Some((plan, 0)));
+            return Ok(Consolidation::Complete(plan, 0));
         }
         // The caller holds Brit's repository guard. An OS lock also serializes
         // maintenance on systems where the shared mutation guard is a stub.
@@ -189,11 +247,20 @@ impl Store {
             .or_error()?;
         lock.try_lock()
             .or_raise(|| message("another pack maintenance operation may be running"))?;
+        let pin = open_pin(&self.pin_path)?;
+        match pin.try_lock() {
+            Ok(()) => {}
+            Err(fs::TryLockError::WouldBlock) => return Ok(Consolidation::Pinned(describe_pin_holder(&pin))),
+            Err(fs::TryLockError::Error(err)) => {
+                return Err(err)
+                    .or_raise(|| message!("could not take exclusive object pin {}", self.pin_path.display()));
+            }
+        }
         let resumed = self.resume(&stage, automatic)?;
         let plan = self.plan(automatic)?;
         if plan.inputs.is_empty() || (automatic && resumed) {
             let after = plan.before;
-            return Ok(Some((plan, after)));
+            return Ok(Consolidation::Complete(plan, after));
         }
         if plan.after() > gix::open::REDUCED_TRUST_MAX_PACK_INDEXES
             && missing_ok(fs::symlink_metadata(self.pack_dir.join("multi-pack-index")))
@@ -217,7 +284,7 @@ impl Store {
         self.publish(&stage, &receipt)?;
         fs::remove_dir_all(&stage).or_error()?;
         sync_dir(&self.pack_dir)?;
-        Ok(Some((plan, self.plan(automatic)?.before)))
+        Ok(Consolidation::Complete(plan, self.plan(automatic)?.before))
     }
 
     fn resume(&self, stage: &Path, automatic: bool) -> Result<bool> {

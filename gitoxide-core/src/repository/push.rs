@@ -742,6 +742,7 @@ pub(crate) mod function {
             // while a long gate runs. The pushing worktree's guard stays held throughout, so
             // the checkout a gate builds and tests cannot change under it.
             let held = std::cell::RefCell::new(super::super::switch::push_guard(&repo)?);
+            let _pin = super::super::maintenance::pin_for_push(&repo)?;
             let result = prepare
                 .with_refspecs(specs_to_send.iter())
                 .with_dry_run(opts.dry_run)

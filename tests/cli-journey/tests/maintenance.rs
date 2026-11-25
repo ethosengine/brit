@@ -110,6 +110,10 @@ fn forty_packs_become_readable_with_legacy_reduced_slots() -> Result<()> {
         !path.join(".git/objects/pack/.brit-maintenance.lock").exists(),
         "dry run creates no maintenance metadata"
     );
+    assert!(
+        !path.join(".git/brit-objects.pin").exists(),
+        "dry run leaves the pin untouched"
+    );
 
     brit(path, &["maintenance"])?;
     assert_eq!(pack_count(path)?, 8, "maintenance reaches its default target");
@@ -303,9 +307,12 @@ fn fetch_fixture(packs: usize) -> Result<(TestRepo, TestRepo, String)> {
 
 #[test]
 fn fetch_crossing_threshold_reduces_pack_count() -> Result<()> {
-    for packs in [24, 40] {
+    for packs in [2, 24, 40] {
         let (repo, _remote, advanced) = fetch_fixture(packs)?;
         let path = repo.path();
+        if packs == 2 {
+            git(path, &["config", "brit.maintenanceFetchThreshold", "3"])?;
+        }
         if packs == 40 {
             git(path, &["config", "brit.maintenanceFetchThreshold", "40"])?;
             let head = gix::ObjectId::from_hex(repo.head_id()?.as_bytes())?;
@@ -314,11 +321,19 @@ fn fetch_crossing_threshold_reduces_pack_count() -> Result<()> {
         brit(path, &["fetch", "--dry-run", "origin"])?;
         assert_eq!(pack_count(path)?, packs, "dry-run fetch skips maintenance");
         brit(path, &["fetch", "origin"])?;
-        assert_eq!(
-            pack_count(path)?,
-            if packs == 24 { 8 } else { 18 },
-            "fetch repacks at most 24 inputs"
-        );
+        if packs == 2 {
+            assert_eq!(pack_count(path)?, 3, "a fetch at the threshold leaves all packs");
+            assert!(
+                !path.join(".git/brit-objects.pin").exists(),
+                "a fetch without consolidation leaves the pin untouched"
+            );
+        } else {
+            assert_eq!(
+                pack_count(path)?,
+                if packs == 24 { 8 } else { 18 },
+                "fetch repacks at most 24 inputs"
+            );
+        }
         assert_eq!(git(path, &["rev-parse", "origin/main"])?.trim(), advanced);
         assert_reads(&reduced(path, true)?, &git(path, &["rev-list", "--objects", "--all"])?)?;
     }
@@ -335,6 +350,149 @@ fn fetch_keeps_success_when_maintenance_fails() -> Result<()> {
     assert_eq!(git(path, &["rev-parse", "origin/main"])?.trim(), advanced);
     assert_eq!(pack_count(path)?, 25, "the new pack is still available");
     Ok(())
+}
+
+#[cfg(target_os = "linux")]
+fn with_push_in_hook<T>(repo: &TestRepo, during_hook: impl FnOnce(&Path, u32) -> Result<T>) -> Result<T> {
+    use std::{
+        os::unix::fs::PermissionsExt,
+        time::{Duration, Instant},
+    };
+
+    let path = repo.path();
+    let scratch = tempfile::tempdir()?;
+    let remote = scratch.path().join("remote.git");
+    let linked = scratch.path().join("linked");
+    let remote_path = remote.to_str().context("remote path")?;
+    let linked_path = linked.to_str().context("worktree path")?;
+    git(
+        scratch.path(),
+        &["init", "--bare", "--initial-branch=main", remote_path],
+    )?;
+    git(path, &["remote", "add", "origin", remote_path])?;
+    git(path, &["push", "origin", "main"])?;
+    git(path, &["worktree", "add", "-b", "landing", linked_path])?;
+    fs::write(linked.join("landing"), "only the pushing worktree has this object\n")?;
+    git(&linked, &["add", "landing"])?;
+    git(&linked, &["commit", "-m", "landing commit"])?;
+    git(&linked, &["repack", "-d"])?;
+    let pushed = git(&linked, &["rev-parse", "HEAD"])?;
+    let pushed = pushed.trim();
+    let objects = git(&linked, &["rev-list", "--objects", pushed])?;
+
+    let hook = path.join(".git/hooks/pre-push");
+    fs::write(
+        &hook,
+        r#"#!/bin/sh
+set -eu
+cat >/dev/null
+touch "$BRIT_TEST_HOOK_DIR/started"
+for i in $(seq 600); do
+    test ! -f "$BRIT_TEST_HOOK_DIR/release" || exit 0
+    sleep 0.05
+done
+exit 1
+"#,
+    )?;
+    fs::set_permissions(&hook, fs::Permissions::from_mode(0o755))?;
+    let args = ["push", "origin", "landing"];
+    let mut push = brit_command(&linked)
+        .args(args)
+        .env("BRIT_TEST_HOOK_DIR", scratch.path())
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped())
+        .spawn()?;
+    let observed = (|| {
+        let deadline = Instant::now() + Duration::from_secs(10);
+        while !scratch.path().join("started").exists() {
+            ensure!(push.try_wait()?.is_none(), "push exited before starting the hook");
+            ensure!(Instant::now() < deadline, "push hook did not start");
+            std::thread::sleep(Duration::from_millis(10));
+        }
+        during_hook(&remote, push.id())
+    })();
+    let release = fs::write(scratch.path().join("release"), "");
+    let output = push.wait_with_output()?;
+    release?;
+    let observed = observed.with_context(|| format!("push stderr: {}", String::from_utf8_lossy(&output.stderr)))?;
+    checked(output, &args)?;
+    assert_eq!(git(&remote, &["rev-parse", "refs/heads/landing"])?.trim(), pushed);
+    git(&remote, &["fsck", "--full"])?;
+    assert_eq!(git(&remote, &["rev-list", "--objects", pushed])?, objects);
+    Ok(observed)
+}
+
+#[cfg(target_os = "linux")]
+#[test]
+fn fetch_defers_consolidation_while_a_linked_worktree_push_runs_its_hook() -> Result<()> {
+    let repo = fixture(2)?;
+    let path = repo.path();
+    git(path, &["config", "brit.maintenanceFetchThreshold", "3"])?;
+    git(path, &["config", "brit.maintenanceTarget", "2"])?;
+    let (stderr, packs, push_pid) = with_push_in_hook(&repo, |remote, push_pid| {
+        ensure!(pack_count(path)? == 3, "push starts with the store at the threshold");
+        fs::write(path.join("local"), "committed during the push hook\n")?;
+        git(path, &["add", "local"])?;
+        brit(path, &["commit", "-m", "commit during push"])?;
+        ensure!(
+            git(path, &["show", "HEAD:local"])? == "committed during the push hook\n",
+            "the main worktree commit advances HEAD during the hook"
+        );
+
+        let upstream = TestRepo::new("maintenance-upstream")?;
+        let remote_path = remote.to_str().context("remote path")?;
+        git(upstream.path(), &["fetch", remote_path, "main"])?;
+        git(upstream.path(), &["reset", "--hard", "FETCH_HEAD"])?;
+        let advanced = upstream.commit_file("upstream", "only the remote has this object\n")?;
+        git(upstream.path(), &["push", remote_path, "main"])?;
+        let fetched = brit(path, &["fetch", "origin"])?;
+        ensure!(
+            git(path, &["rev-parse", "origin/main"])?.trim() == advanced,
+            "fetch advances the remote-tracking ref during the hook"
+        );
+        let stderr = String::from_utf8(fetched.stderr)?;
+        let packs = pack_count(path)?;
+        Ok((stderr, packs, push_pid))
+    })?;
+    assert_eq!(packs, 4, "fetch adds a pack and leaves the original three in place");
+    assert_eq!(
+        pack_count(path)?,
+        packs,
+        "pack count stays steady through the end of the push"
+    );
+    let mut notices = stderr
+        .lines()
+        .filter(|line| line.contains("pack consolidation deferred because a push is in progress"));
+    let notice = notices
+        .next()
+        .with_context(|| format!("fetch deferral missing from {stderr}"))?;
+    assert!(notice.contains(&format!("pid {push_pid} ")), "{notice}");
+    assert!(notices.next().is_none(), "fetch reports one deferral: {stderr}");
+
+    brit(path, &["maintenance"])?;
+    assert_eq!(
+        pack_count(path)?,
+        2,
+        "maintenance consolidates after the push releases its pin"
+    );
+    Ok(())
+}
+
+#[cfg(target_os = "linux")]
+#[test]
+fn manual_maintenance_refuses_while_a_linked_worktree_push_runs_its_hook() -> Result<()> {
+    let repo = fixture(2)?;
+    let path = repo.path();
+    git(path, &["config", "brit.maintenanceTarget", "2"])?;
+    with_push_in_hook(&repo, |_, push_pid| {
+        let result = brit_command(path).arg("maintenance").output()?;
+        let stderr = String::from_utf8(result.stderr)?;
+        ensure!(!result.status.success(), "maintenance refuses the push's shared pin");
+        ensure!(stderr.contains("brit-objects.pin"), "{stderr}");
+        ensure!(stderr.contains(&format!("pid {push_pid} ")), "{stderr}");
+        ensure!(pack_count(path)? == 3, "refused maintenance leaves all packs in place");
+        Ok(())
+    })
 }
 
 #[cfg(feature = "switch-test-faults")]

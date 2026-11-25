@@ -14,6 +14,10 @@
 //!   wait, keeps waiting exclusive writers from starving: an exclusive waiter holds it until it
 //!   has the repository guard, and a new shared acquirer passes through it first.
 //!
+//! Pushes also hold `<common-dir>/brit-objects.pin` shared through the pre-push hook and send.
+//! Pack consolidation tries to take it exclusively without waiting. A push keeps this pin
+//! when it releases the repository guard, so other worktrees can still commit and fetch.
+//!
 //! Order: a worktree guard is always taken before the repository guard, and nobody waits for
 //! a worktree guard while holding the repository guard. Waiting for the repository guard while
 //! holding a worktree guard is allowed (push re-acquires the repository guard after its
@@ -179,6 +183,7 @@ enum Level {
     Repository,
     Worktree,
     Turnstile,
+    ObjectPin,
 }
 
 /// One deadline across every lock of an acquisition.
@@ -689,6 +694,7 @@ fn role(level: Level, shared: bool) -> &'static str {
         (Level::Repository, true) => "holds the repository guard shared",
         (Level::Worktree, _) => "holds this worktree's guard",
         (Level::Turnstile, _) => "queued for the repository guard",
+        (Level::ObjectPin, _) => "holds the object pin",
     }
 }
 
@@ -701,6 +707,10 @@ fn render(holders: &[(u32, bool)], level: Level) -> String {
         .map(|(pid, shared)| describe(*pid, role(level, *shared)))
         .collect::<Vec<_>>()
         .join("; ")
+}
+
+pub(crate) fn describe_object_pin_holders(file: &fs::File) -> String {
+    render(&holders_of(file), Level::ObjectPin)
 }
 
 fn holders_of(file: &fs::File) -> Vec<(u32, bool)> {
