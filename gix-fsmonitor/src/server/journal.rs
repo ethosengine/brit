@@ -39,7 +39,13 @@ impl Journal {
         })
     }
 
+    #[track_caller]
     pub fn reset(&mut self) {
+        super::trace(format_args!(
+            "reset epoch {} at {}",
+            self.generation,
+            std::panic::Location::caller()
+        ));
         self.generation = self.generation.wrapping_add(1);
         self.sequence = 0;
         self.floor = 0;
@@ -107,6 +113,12 @@ impl Journal {
         let mut out = self.token().into_bytes();
         out.push(0);
         if !complete || since.is_none() {
+            super::trace(format_args!(
+                "full response: requested={requested:?} token={token:?} complete={complete} accepted={since:?} floor={}",
+                self.floor,
+                requested = bstr::BStr::new(requested),
+                token = bstr::BStr::new(&out[..out.len() - 1])
+            ));
             out.extend_from_slice(b"/\0");
             return out;
         }

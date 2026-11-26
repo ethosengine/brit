@@ -470,6 +470,7 @@ impl Layout {
                 {
                     continue;
                 }
+                trace(format_args!("worktree root notification: {path:?} ({:?})", event.kind));
                 return None;
             }
             let path = gix_path::to_unix_separators_on_windows(gix_path::into_bstr(relative).ok()?);
@@ -542,6 +543,15 @@ use blocking::Monitor;
 /// Tokio orchestration using the shared notification interpretation and token journal.
 pub mod asynchronous;
 mod state;
+
+fn trace(args: std::fmt::Arguments<'_>) {
+    use std::{io::Write as _, sync::OnceLock};
+
+    static ENABLED: OnceLock<bool> = OnceLock::new();
+    if *ENABLED.get_or_init(|| std::env::var_os("GIX_FSMONITOR_TRACE").is_some()) {
+        let _ = writeln!(io::stderr().lock(), "fsmonitor: {args}");
+    }
+}
 
 fn run<S: EventSource>(
     mut listener: transport::Listener,

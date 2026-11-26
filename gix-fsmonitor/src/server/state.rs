@@ -29,6 +29,10 @@ impl State {
 
     pub(super) fn ingest(&mut self, batch: gix_notify::Batch, now: Instant) {
         if self.generation != Some(batch.generation) || batch.loss.is_some() {
+            super::trace(format_args!(
+                "notification generation {:?} -> {} loss={:?} error={:?}",
+                self.generation, batch.generation, batch.loss, batch.error
+            ));
             self.journal.reset();
             self.generation = Some(batch.generation);
         }
@@ -40,12 +44,14 @@ impl State {
             self.retry.get_or_insert(now + self.options.retry_interval);
         }
         if let Some(_error) = batch.error {
+            super::trace(format_args!("notification error: {_error}"));
             gix_trace::warn!(error = %_error, "filesystem notification error");
             self.healthy = false;
             self.retry.get_or_insert(now + self.options.retry_interval);
         }
         for event in batch.events {
             if self.layout.root_lost(&event) {
+                super::trace(format_args!("root lost: {event:?}"));
                 self.root_lost = true;
                 self.journal.reset();
                 continue;
@@ -58,6 +64,7 @@ impl State {
                     .iter()
                     .any(|path| self.layout.relative_to(&self.layout.cookie_dir, path).is_some())
             {
+                super::trace(format_args!("cookie directory changed: {event:?}"));
                 self.journal.reset();
                 self.healthy = false;
                 self.retry.get_or_insert(now);

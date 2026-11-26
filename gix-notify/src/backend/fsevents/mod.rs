@@ -27,6 +27,13 @@ mod mounts;
 // SDK event flags through ItemCloned occupy bits 0 through 22. Treat future bits as loss.
 const KNOWN_FLAGS: u32 = 0x007f_ffff;
 
+fn trace(args: std::fmt::Arguments<'_>) {
+    static ENABLED: std::sync::OnceLock<bool> = std::sync::OnceLock::new();
+    if *ENABLED.get_or_init(|| std::env::var_os("GIX_FSMONITOR_TRACE").is_some()) {
+        let _ = writeln!(std::io::stderr().lock(), "FSEvents: {args}");
+    }
+}
+
 // fsevent-sys exposes the rest of FSEvents but omits its modern scheduling function.
 unsafe extern "C" {
     fn FSEventStreamSetDispatchQueue(stream: fs::FSEventStreamRef, queue: *const DispatchQueue);
@@ -326,6 +333,7 @@ impl Stream {
         if !out.started {
             return Err(message("the FSEvents service refused to start the stream").raise());
         }
+        trace(format_args!("started; watches={:?}", out.context.watches));
         Ok(out)
     }
 
@@ -376,13 +384,21 @@ impl Stream {
         }
         // Close the file handle but keep its name present until observation (or timeout), so
         // native create/remove coalescing cannot erase the marker before it is delivered.
-        let _cookie = cookie.into_temp_path();
+        let cookie_path = cookie.into_temp_path();
+        trace(format_args!(
+            "flushing for marker {cookie_path:?} in generation {generation}"
+        ));
         unsafe {
             // SAFETY: only the control worker calls this on a started stream. FlushSync reduces
             // latency, but does NOT fence writes whose kernel events have not reached the service.
             // The callback must actually observe our unique marker before returning a fence.
             fs::FSEventStreamFlushSync(self.stream.as_ptr());
         }
+        trace(format_args!(
+            "native flush returned for {:?}; {:?} remaining",
+            cookie_path,
+            deadline.saturating_duration_since(Instant::now())
+        ));
         let result = receive
             .recv_timeout(deadline.saturating_duration_since(Instant::now()))
             .map_err(|error| match error {
@@ -550,12 +566,23 @@ extern "C" fn callback(
                         | fs::kFSEventStreamEventFlagUnmount)
                     != 0
             {
+                trace(format_args!(
+                    "loss flags {flags:#010x} on {:?}",
+                    std::ffi::OsStr::from_bytes(path)
+                ));
                 loss = Some(Loss::Rescan);
             }
             if flags & fs::kFSEventStreamEventFlagHistoryDone != 0 {
                 continue;
             }
             let path = PathBuf::from(OsString::from_vec(path.to_vec()));
+            if let Some(marker) = marker_path.as_ref()
+                && marker.file_name() == path.file_name()
+            {
+                trace(format_args!(
+                    "marker callback: expected={marker:?} observed={path:?} flags={flags:#010x}"
+                ));
+            }
             if marker_path.as_ref() == Some(&path) {
                 marker_seen = true;
                 continue;

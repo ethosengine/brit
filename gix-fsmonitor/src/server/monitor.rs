@@ -96,7 +96,12 @@ impl<S: EventSource> Monitor<S> {
         let mut complete = false;
         if self.state.healthy && !self.state.root_lost {
             let directory = self.state.layout.cookie_dir.clone();
-            match self.watcher.synchronize_at(&directory, deadline).await {
+            let fence = self.watcher.synchronize_at(&directory, deadline).await;
+            super::trace(format_args!(
+                "native fence at {directory:?} for {:?}: {fence:?}",
+                bstr::BStr::new(requested)
+            ));
+            match fence {
                 Ok(fence) => loop {
                     let batch = self.watcher.drain(Budget::default());
                     let generation = batch.generation;
@@ -133,6 +138,10 @@ impl<S: EventSource> Monitor<S> {
             }
         }
         if !complete {
+            super::trace(format_args!(
+                "incomplete synchronization: healthy={} root_lost={} watcher_generation={:?} retry={:?}",
+                self.state.healthy, self.state.root_lost, self.state.generation, self.state.retry
+            ));
             self.state.journal.reset();
         }
         self.state.journal.response(requested, complete, now)

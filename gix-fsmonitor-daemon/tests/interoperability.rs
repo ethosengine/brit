@@ -86,14 +86,11 @@ impl Daemon {
     }
 
     fn start_with_args(root: &Path, arguments: &[&str]) -> TestResult<Self> {
-        let child = command(root)
-            .arg("run")
-            .arg("--repo")
-            .arg(root)
-            .args(arguments)
-            .stdout(Stdio::null())
-            .stderr(Stdio::piped())
-            .spawn()?;
+        Self::start_foreground(root, command(root).arg("run").args(arguments).stderr(Stdio::piped()))
+    }
+
+    fn start_foreground(root: &Path, run: &mut Command) -> TestResult<Self> {
+        let child = run.arg("--repo").arg(root).stdout(Stdio::null()).spawn()?;
         let mut daemon = Self {
             root: root.to_owned(),
             child: Some(child),
@@ -642,12 +639,39 @@ fn native_queries_preserve_coverage_through_unicode_and_case_root_aliases() -> T
         if !alias.exists() {
             continue; // Case-sensitive volumes need not resolve case aliases.
         }
-        let _daemon = Daemon::start(&alias)?;
+        // Keep the startup probe and both fences in the trace. A file outside this fixture's
+        // watch roots lets the child write diagnostics without waiting for a pipe reader.
+        let trace = gix_testtools::tempfile::NamedTempFile::new()?;
+        let read_trace =
+            || std::fs::read_to_string(trace.path()).unwrap_or_else(|err| format!("could not read trace: {err}"));
+        let daemon = Daemon::start_foreground(
+            &alias,
+            command(&alias)
+                .arg("run")
+                .env("GIX_FSMONITOR_TRACE", "1")
+                .stderr(trace.reopen()?),
+        )
+        .map_err(|err| format!("{err}\ndaemon trace:\n{}", read_trace()))?;
         let initial = successful(command(&alias).arg("query").output()?)?;
-        let warmed = successful(command(&alias).arg("query").arg(token(&initial)?).output()?)?;
+        let requested = token(&initial)?;
+        let warmed = successful(command(&alias).arg("query").arg(requested).output()?)?;
         assert!(
             !warmed.ends_with(b"\0/\0"),
-            "root aliases retain useful native synchronization"
+            "root aliases retain useful native synchronization\n\
+             alias={alias:?} canonical_root={:?} endpoint={:?} daemon_pid={:?}\n\
+             requested_token={requested:?} warmed_token={:?}\n\
+             initial={:?} warmed={:?}\n\
+             daemon trace:\n{}",
+            alias.canonicalize(),
+            command(&alias)
+                .arg("path")
+                .output()
+                .map(|out| String::from_utf8_lossy(&out.stdout).into_owned()),
+            daemon.child.as_ref().map(Child::id),
+            token(&warmed),
+            gix::bstr::BStr::new(&initial),
+            gix::bstr::BStr::new(&warmed),
+            read_trace(),
         );
         std::fs::write(root.join("tracked"), "changed through the physical root\n")?;
         let changed = successful(command(&alias).arg("query").arg(token(&warmed)?).output()?)?;
