@@ -570,15 +570,25 @@ pub fn run_with_command(args: Args, command: clap::Command) -> Result<()> {
         Subcommands::Add {
             paths,
             update,
-            all: _,
+            all,
             gitlink,
-        } => prepare_and_run("add", verbose, None, move |_progress, _out, _err| {
+        } => prepare_and_run("add", verbose, None, move |_progress, _out, err| {
             let repo = repository(Mode::Strict)?;
             if let Some(commit) = gitlink {
                 let [path] = paths.as_slice() else {
                     bail!("--gitlink requires exactly one literal submodule path".validation());
                 };
                 core::repository::index::stage_gitlink(&repo, &commit, path)
+            } else if all && paths.is_empty() {
+                for path in core::repository::index::stage_all(repo)? {
+                    writeln!(
+                        err,
+                        "warning: skipping embedded git repository: {}",
+                        gix::quote::ansi_c::quote(path.as_ref())
+                    )
+                    .or_error()?;
+                }
+                Ok(())
             } else {
                 core::repository::index::stage_paths(repo, &paths, update)
             }
