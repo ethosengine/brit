@@ -110,7 +110,7 @@ jobs:
         run: |
           rustup toolchain install 1.100.0 --profile minimal --no-self-update
           rustup target add "$TARGET"
-      - name: Build Brit and the qualified Linux retained-copy helper
+      - name: Build Brit, companion tools, and the qualified Linux retained-copy helper
         run: |
           set -euo pipefail
           # C dependencies do not inherit Rust's target CPU. Pin both explicitly.
@@ -119,6 +119,8 @@ jobs:
           fi
           cargo build --locked -p brit-cli --bin brit --profile "$PROFILE" \
             --target "$TARGET" --no-default-features --features "$FEATURE"
+          cargo build --locked -p brit-build-ref -p brit-verify --bin brit-build-ref --bin brit-verify \
+            --profile "$PROFILE" --target "$TARGET"
           if [ "$RUNNER_OS" = Linux ]; then
             cargo build --locked -p brit-cli --bin brit-rebase-retained --profile "$PROFILE" \
               --target "$TARGET" --no-default-features --features "$FEATURE"
@@ -162,6 +164,8 @@ jobs:
           tar -xzf "$ASSET" -C "$isolated/extracted"
           package="$isolated/extracted/${ASSET%.tar.gz}"
           bash scripts/ci/install-brit-release.sh "$package" "$isolated/install" "$SOURCE_SHA" "$binary_sha"
+          test -x "$isolated/install/bin/brit-build-ref"
+          test -x "$isolated/install/bin/brit-verify"
           if [ "$RUNNER_OS" = Linux ]; then
             helper_name=$(awk -F= '$1 == "retained_helper_binary" { count++; value=$2 } END { if (count != 1) exit 2; print value }' "$package/BUILD-INFO.txt")
             helper_sha=$(awk -F= '$1 == "retained_helper_sha256" { count++; value=$2 } END { if (count != 1) exit 2; print value }' "$package/BUILD-INFO.txt")

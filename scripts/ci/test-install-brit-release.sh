@@ -50,20 +50,63 @@ source_checkout=clean-at-packaging
 target=$target
 RECEIPT
 }
+add_release_tools() {
+  local directory=$1 version=$2 tool key
+  for tool in brit-build-ref brit-verify; do
+    printf '#!/usr/bin/env bash\nprintf "%s %s\\n"\n' "$tool" "$version" > "$directory/$tool"
+    chmod +x "$directory/$tool"
+    key=${tool//-/_}
+    printf '%s_binary=%s\n%s_sha256=%s\n' "$key" "$tool" "$key" "$(sha256_file "$directory/$tool")" \
+      >> "$directory/BUILD-INFO.txt"
+  done
+}
+installed_release_tools_match() {
+  local version=$1 tool
+  for tool in brit-build-ref brit-verify; do
+    test -x "$fixture/prefix/bin/$tool"
+    test "$("$fixture/prefix/bin/$tool")" = "$tool $version"
+  done
+}
 make_package "$fixture/a" "$source_a" 0.1.0
 make_package "$fixture/b" "$source_b" 0.2.0
+add_release_tools "$fixture/a" 0.1.0
+add_release_tools "$fixture/b" 0.2.0
 hash_a=$(sha256_file "$fixture/a/brit")
 hash_b=$(sha256_file "$fixture/b/brit")
 install() { bash "$script_dir/install-brit-release.sh" "$1" "$fixture/prefix" "$2" "$3" >/dev/null; }
+release_install_migrates_legacy_link() {
+  local old_release=$fixture/prefix/releases/$source_b.legacy
+  mkdir -p "$old_release" "$fixture/prefix/bin"
+  cp "$fixture/b/brit" "$old_release/brit"
+  ln -s "$old_release/brit" "$fixture/prefix/bin/brit"
+  install "$fixture/a" "$source_a" "$hash_a"
+  test "$(sha256_file "$fixture/prefix/bin/brit")" = "$hash_a"
+  test "$(sha256_file "$old_release/brit")" = "$hash_b"
+  installed_release_tools_match 0.1.0
+}
+release_install_migrates_legacy_link
 install "$fixture/a" "$source_a" "$hash_a"
 test "$(sha256_file "$fixture/prefix/bin/brit")" = "$hash_a"
+installed_release_tools_match 0.1.0
 install "$fixture/b" "$source_b" "$hash_b"
 test "$(sha256_file "$fixture/prefix/bin/brit")" = "$hash_b"
+installed_release_tools_match 0.2.0
 install "$fixture/a" "$source_a" "$hash_a"
 test "$(sha256_file "$fixture/prefix/bin/brit")" = "$hash_a"
-active=$(readlink "$fixture/prefix/bin/brit")
-assert_retained() { test "$(readlink "$fixture/prefix/bin/brit")" = "$active"; test "$(sha256_file "$fixture/prefix/bin/brit")" = "$hash_a"; }
+active=$(readlink "$fixture/prefix/current")
+assert_retained() {
+  test "$(readlink "$fixture/prefix/current")" = "$active"
+  test "$(sha256_file "$fixture/prefix/bin/brit")" = "$hash_a"
+  installed_release_tools_match 0.1.0
+}
 refuse() { if install "$@" >/dev/null 2>&1; then echo 'invalid installation accepted' >&2; exit 1; fi; assert_retained; }
+release_install_refuses_tampered_tool() {
+  cp "$fixture/b/brit-verify" "$fixture/original-verify"
+  printf 'tampered bytes\n' >> "$fixture/b/brit-verify"
+  refuse "$fixture/b" "$source_b" "$hash_b"
+  mv "$fixture/original-verify" "$fixture/b/brit-verify"
+}
+release_install_refuses_tampered_tool
 if [ "$target" = x86_64-unknown-linux-gnu ]; then
   for failure in signal timeout success wrong-error wrong-certificate; do
     BRIT_FIXTURE_TLS="$failure" refuse "$fixture/b" "$source_b" "$hash_b"
@@ -111,4 +154,6 @@ if wait "$installer_pid"; then echo 'interrupted installation reported success' 
 assert_retained
 install "$fixture/b" "$source_b" "$hash_b"
 test "$(sha256_file "$fixture/prefix/bin/brit")" = "$hash_b"
+test ! -e "$fixture/prefix/bin/brit-build-ref"
+test ! -e "$fixture/prefix/bin/brit-verify"
 printf 'installer-fault-fixtures=passed (synthetic A/B; not released-version or human acceptance)\n'

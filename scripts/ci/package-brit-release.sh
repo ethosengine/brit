@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Package Brit and an explicitly supplied Linux retained-copy helper with a build receipt.
+# Package Brit, its companion tools, and an optional Linux retained-copy helper.
 set -euo pipefail
 
 if [ "$#" -ne 8 ]; then
@@ -71,9 +71,10 @@ if [ -n "$(git_source status --porcelain --untracked-files=all)" ]; then
 fi
 
 case "$target" in
-  *-windows-*) expected_name=brit.exe; extension=zip ;;
-  *) expected_name=brit; extension=tar.gz ;;
+  *-windows-*) suffix=.exe; extension=zip ;;
+  *) suffix=; extension=tar.gz ;;
 esac
+expected_name=brit$suffix
 if [ "$(basename -- "$binary")" != "$expected_name" ]; then
   echo "expected $expected_name for target $target" >&2
   exit 2
@@ -100,10 +101,28 @@ if [ -n "$helper" ]; then
   helper_sha=$(sha256_file "$helper")
 fi
 
+tools=(brit-build-ref brit-verify)
+tool_dir=$(dirname -- "$binary")
+tool_shas=()
+for tool in "${tools[@]}"; do
+  tool_path=$tool_dir/$tool$suffix
+  if [ ! -f "$tool_path" ] || [ -L "$tool_path" ] || [ ! -s "$tool_path" ] || [ ! -x "$tool_path" ]; then
+    echo "expected a regular executable $tool$suffix beside $expected_name" >&2
+    exit 2
+  fi
+  tool_sha=$(sha256_file "$tool_path")
+  tool_shas+=("$tool_sha")
+done
+
 binary_sha=$(sha256_file "$binary")
 lock_sha=$(sha256_file "$source_root/Cargo.lock")
 mkdir -- "$archive_base"
 cp -- "$binary" "$archive_base/$expected_name"
+for i in "${!tools[@]}"; do
+  filename=${tools[i]}$suffix
+  cp -- "$tool_dir/$filename" "$archive_base/$filename"
+  test "$(sha256_file "$archive_base/$filename")" = "${tool_shas[i]}"
+done
 if [ -n "$helper" ]; then
   cp -- "$helper" "$archive_base/brit-rebase-retained"
   test "$(sha256_file "$archive_base/brit-rebase-retained")" = "$helper_sha"
@@ -118,6 +137,11 @@ done
   printf 'format=brit-binary-archive-v1\n'
   printf 'binary=%s\n' "$expected_name"
   printf 'binary_sha256=%s\n' "$binary_sha"
+  for i in "${!tools[@]}"; do
+    tool=${tools[i]}
+    key=${tool//-/_}
+    printf '%s_binary=%s\n%s_sha256=%s\n' "$key" "$tool$suffix" "$key" "${tool_shas[i]}"
+  done
   if [ -n "$helper" ]; then
     printf 'retained_helper_binary=brit-rebase-retained\n'
     printf 'retained_helper_sha256=%s\n' "$helper_sha"
