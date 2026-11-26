@@ -200,11 +200,23 @@ fn gap_notice_key() -> String {
     .into_iter()
     .filter_map(|name| std::env::var(name).ok())
     .find(|value| !value.trim().is_empty());
-    if let Some(session) = session {
+    // A declared invocation (EPR_FEEDBACK_INVOCATION, as `epr feedback` qualification sets per
+    // probe) is its own reporting unit: each one shows its gap once, inside any session.
+    let invocation = std::env::var("EPR_FEEDBACK_INVOCATION")
+        .ok()
+        .filter(|value| !value.trim().is_empty());
+    if session.is_some() || invocation.is_some() {
         let mut hasher = gix::hash::hasher(gix::hash::Kind::Sha256);
-        hasher.update(session.trim().as_bytes());
+        hasher.update(session.as_deref().unwrap_or_default().trim().as_bytes());
+        let prefix = if let Some(invocation) = &invocation {
+            hasher.update(b"\0");
+            hasher.update(invocation.trim().as_bytes());
+            "invocation"
+        } else {
+            "session"
+        };
         if let Ok(hash) = hasher.try_finalize() {
-            return format!("session-{hash}");
+            return format!("{prefix}-{hash}");
         }
     }
     // A UTC day keeps retries quiet across shells and platforms with no exported ID.

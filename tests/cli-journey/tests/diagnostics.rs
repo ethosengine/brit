@@ -120,6 +120,34 @@ exit 47
         Ok(())
     }
 
+    /// `epr`'s pair qualification breaks the recorder and runs two declared invocations in one
+    /// session; each must show the gap, while undeclared calls in that session stay quiet.
+    #[test]
+    fn each_declared_invocation_reports_its_own_capture_gap() -> TestResult {
+        let fixture = Fixture::new()?;
+        for (invocation, count) in [
+            (Some("recorder-success"), 1),
+            (Some("recorder-refusal"), 1),
+            (Some("recorder-refusal"), 0),
+            (None, 1),
+            (None, 0),
+        ] {
+            let mut cmd = fixture.brit("qualifying-session");
+            if let Some(id) = invocation {
+                cmd = cmd.env("EPR_FEEDBACK_INVOCATION", id);
+            }
+            let out = cmd.args(["rev-parse", "HEAD"]).run()?;
+            assert!(out.status.success(), "rev-parse succeeds: {}", out.stderr);
+            assert_eq!(
+                out.stderr.matches(GAP).count(),
+                count,
+                "capture gaps for invocation {invocation:?}: {}",
+                out.stderr
+            );
+        }
+        Ok(())
+    }
+
     #[test]
     fn quiet_switches_suppress_the_line_without_disabling_capture() -> TestResult {
         let fixture = Fixture::new()?;
