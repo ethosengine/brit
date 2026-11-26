@@ -49,6 +49,10 @@ pub(crate) struct Listener {
 
 impl Listener {
     pub fn bind(path: &Path) -> io::Result<Self> {
+        Self::bind_unless_cancelled(path, || false)
+    }
+
+    pub(crate) fn bind_unless_cancelled(path: &Path, cancelled: impl FnOnce() -> bool) -> io::Result<Self> {
         // Git uses a temporary create-new <socket>.lock while probing and binding. Sharing
         // that protocol prevents concurrent native/Git starts from stealing each other's socket.
         let lock = gix_lock::Marker::acquire_to_hold_resource(path, Duration::from_millis(100).into(), None, 0)
@@ -62,6 +66,10 @@ impl Listener {
                 };
                 io::Error::new(kind, error)
             })?;
+        // The lock may have become available only after cancellation and a replacement's shutdown.
+        if cancelled() {
+            return Err(io::Error::new(io::ErrorKind::Interrupted, "IPC startup cancelled"));
+        }
         match connect(path) {
             Ok(_) => {
                 return Err(io::Error::new(
@@ -418,6 +426,16 @@ mod tests {
             "a competing process must not remove the native startup lock"
         );
         drop(lock);
+        let cancelled = Listener::bind_unless_cancelled(&path, || {
+            assert!(lock_path.exists(), "check cancellation while holding the startup lock");
+            true
+        });
+        assert!(
+            matches!(cancelled, Err(error) if error.kind() == io::ErrorKind::Interrupted),
+            "a cancelled startup must stop even when it can acquire the lock"
+        );
+        assert!(!path.exists(), "a cancelled startup must not create the socket");
+        assert!(!lock_path.exists(), "a cancelled startup releases its startup lock");
         let listener = Listener::bind(&path)?;
         assert!(
             !lock_path.exists(),
