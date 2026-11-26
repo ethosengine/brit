@@ -19,13 +19,18 @@
 //!   BRIT_TEST_PAGE_STAGING/rust/brit/commit/<leaf>.txt
 //!   BRIT_TEST_PAGE_STAGING/rust/brit/tag/<leaf>.txt
 
-use std::{fs, path::PathBuf};
+use std::{
+    fs,
+    path::{Path, PathBuf},
+};
 
+use anyhow::{anyhow, Context};
 use cli_journey::support::{
     mock_remote::MockRemote,
-    runner::{brit_bin, BritInvocation},
+    runner::{brit_bin, BritInvocation, Capture},
     test_repo::TestRepo,
 };
+use gix_testtools::TestResult;
 
 /// Dump captured output to BRIT_TEST_PAGE_STAGING/rust/<path[0]>/<path[1]>/.../<last>.txt
 ///
@@ -444,6 +449,252 @@ fn fetch_from_mock_remote() {
         &["brit", "fetch"],
         &format!("{}\n---stderr---\n{}", cap.stdout, cap.stderr),
     );
+}
+
+struct FetchClones {
+    remote: MockRemote,
+    _clones: tempfile::TempDir,
+    a: PathBuf,
+    b: PathBuf,
+}
+
+impl FetchClones {
+    fn new(file_url: bool) -> TestResult<Self> {
+        let remote = MockRemote::new("named-fetch")?;
+        let seed = TestRepo::new("named-fetch-seed")?;
+        let path = remote.path().to_str().context("UTF-8 remote path")?;
+        fetch_git(seed.path(), &["push", "-q", path, "main"])?;
+        fetch_git(remote.path(), &["symbolic-ref", "HEAD", "refs/heads/main"])?;
+        let url = if file_url { remote.url() } else { path.to_owned() };
+        let clones = tempfile::tempdir()?;
+        for name in ["a", "b"] {
+            // Keep the receiver's object store independent of the bare remote.
+            fetch_git(clones.path(), &["clone", "-q", "--no-local", &url, name])?;
+        }
+        let a = clones.path().join("a");
+        let b = clones.path().join("b");
+        Ok(Self {
+            a,
+            b,
+            remote,
+            _clones: clones,
+        })
+    }
+
+    fn commit_and_push(&self, bin: &Path, branch: &str, use_git: bool) -> TestResult<String> {
+        fetch_git(&self.a, &["commit", "-q", "--allow-empty", "-m", branch])?;
+        let commit = fetch_git(&self.a, &["rev-parse", "HEAD"])?;
+        let refspec = format!("HEAD:refs/heads/{branch}");
+        if use_git {
+            fetch_git(&self.a, &["push", "-q", "origin", &refspec])?;
+        } else {
+            fetch_brit(bin, &self.a, &["push", "origin", &refspec])?;
+        }
+        Ok(commit)
+    }
+}
+
+fn fetch_git(repo: &Path, args: &[&str]) -> TestResult<String> {
+    let out = gix_testtools::git_command(repo).args(args).output()?;
+    if !out.status.success() {
+        return Err(anyhow!(
+            "git {args:?} in {}: {}",
+            repo.display(),
+            String::from_utf8_lossy(&out.stderr)
+        )
+        .into());
+    }
+    Ok(String::from_utf8(out.stdout)?.trim().to_owned())
+}
+
+fn fetch_brit(bin: &Path, repo: &Path, args: &[&str]) -> TestResult<Capture> {
+    let out = BritInvocation::new(bin)
+        .args(args.iter().copied())
+        .current_dir(repo)
+        .run()?;
+    assert!(
+        out.status.success(),
+        "brit {args:?} in {}: {}\n{}",
+        repo.display(),
+        out.stdout,
+        out.stderr
+    );
+    Ok(out)
+}
+
+#[test]
+fn named_fetch_immediately_after_push() -> TestResult {
+    let rounds = std::env::var("BRIT_FETCH_REPEAT").map_or(Ok(2), |value| value.parse::<usize>())?;
+    assert!(rounds > 0, "BRIT_FETCH_REPEAT must be positive");
+    let bin = brit_bin().context("brit binary")?;
+    for file_url in [false, true] {
+        for use_git in [false, true] {
+            let clones = FetchClones::new(file_url)?;
+            for round in 0..rounds {
+                let branch = format!("fetch-round-{round}");
+                fetch_git(&clones.a, &["switch", "-q", "-c", &branch])?;
+                let tracking = format!("refs/remotes/origin/{branch}");
+                for mode in ["new", "fast-forward"] {
+                    let pushed = clones.commit_and_push(&bin, &branch, use_git)?;
+                    let out = fetch_brit(&bin, &clones.b, &["fetch", "origin", &branch])?;
+                    let case = format!("{branch} {mode}, file_url={file_url}, git_push={use_git}");
+                    assert_eq!(
+                        fetch_git(&clones.b, &["rev-parse", "--verify", &tracking])
+                            .map_err(gix::Error::from)
+                            .with_context(|| format!("{case}\n{}", out.stdout))?,
+                        pushed,
+                        "{case}: fetch installs the pushed commit\n{}",
+                        out.stdout
+                    );
+                    assert!(
+                        out.stdout.contains(&format!(" -> {tracking} [{mode}]")),
+                        "{case}: stdout names the tracking update\n{}",
+                        out.stdout
+                    );
+                }
+            }
+        }
+    }
+    Ok(())
+}
+
+#[test]
+fn named_fetch_reports_when_no_tracking_ref_changes() -> TestResult {
+    let bin = brit_bin().context("brit binary")?;
+    let clones = FetchClones::new(false)?;
+    let branch = "outside-fetch-map";
+    let tracking = "refs/remotes/origin/outside-fetch-map";
+    fetch_git(
+        &clones.b,
+        &[
+            "config",
+            "--add",
+            "remote.origin.fetch",
+            "^refs/heads/outside-fetch-map",
+        ],
+    )?;
+    let pushed = clones.commit_and_push(&bin, branch, true)?;
+    assert_eq!(
+        fetch_git(clones.remote.path(), &["rev-parse", "refs/heads/outside-fetch-map"])?,
+        pushed,
+        "the branch is advertised by the origin"
+    );
+    let out = fetch_brit(&bin, &clones.b, &["fetch", "origin", branch])?;
+    assert!(
+        out.stdout.contains("index file:"),
+        "a pack was received\n{}",
+        out.stdout
+    );
+    fetch_git(&clones.b, &["cat-file", "-e", &pushed])?;
+    let local = gix_testtools::git_command(&clones.b)
+        .args(["show-ref", "--verify", "--quiet", tracking])
+        .status()?;
+    assert_eq!(local.code(), Some(1), "the negative fetch refspec excludes {tracking}");
+    assert!(
+        out.stdout
+            .lines()
+            .any(|line| line.contains(branch) && line.contains("no local ref updated")),
+        "stdout explains the missing tracking update for {branch}\n{}",
+        out.stdout
+    );
+    Ok(())
+}
+
+#[test]
+fn named_fetch_reports_an_unchanged_tracking_ref() -> TestResult {
+    let bin = brit_bin().context("brit binary")?;
+    let clones = FetchClones::new(false)?;
+    let tracking = "refs/remotes/origin/main";
+    let before = fetch_git(&clones.b, &["rev-parse", "--verify", tracking])?;
+    fetch_git(&clones.b, &["pack-refs", "--all"])?;
+
+    let out = fetch_brit(&bin, &clones.b, &["fetch", "origin", "main"])?;
+    assert!(
+        !out.stdout.contains("index file:"),
+        "the advertised commit is already in the receiver"
+    );
+    assert!(
+        out.stdout.contains(&format!(" -> {tracking} [unchanged]")),
+        "stdout identifies the unchanged tracking ref\n{}",
+        out.stdout
+    );
+    assert_eq!(
+        fetch_git(&clones.b, &["rev-parse", "--verify", tracking])?,
+        before,
+        "the packed tracking ref still points to the advertised commit"
+    );
+    Ok(())
+}
+
+/// A same-named tag forces a second advertisement. Removing only the tag
+/// between connections makes the branch the best match on that advertisement.
+#[cfg(unix)]
+#[test]
+fn named_fetch_retains_tracking_when_the_name_changes_resolution() -> TestResult {
+    use std::os::unix::fs::PermissionsExt;
+
+    let bin = brit_bin().context("brit binary")?;
+    let clones = FetchClones::new(true)?;
+    let branch = "ambiguous";
+    let tracking = "refs/remotes/origin/ambiguous";
+    fetch_git(clones.remote.path(), &["tag", branch])?;
+    let pushed = clones.commit_and_push(&bin, branch, true)?;
+
+    let wrapper = tempfile::tempdir()?;
+    let upload_pack = wrapper.path().join("git-upload-pack");
+    fs::write(
+        &upload_pack,
+        r#"#!/bin/sh
+set -eu
+count=0
+if [ -f "$FETCH_HANDSHAKES" ]; then
+    read -r count < "$FETCH_HANDSHAKES"
+fi
+count=$((count + 1))
+echo "$count" > "$FETCH_HANDSHAKES"
+if [ "$count" -eq 2 ]; then
+    git -C "$FETCH_ORIGIN" update-ref -d refs/tags/ambiguous
+fi
+exec git upload-pack "$@"
+"#,
+    )?;
+    fs::set_permissions(&upload_pack, fs::Permissions::from_mode(0o755))?;
+    let counter = wrapper.path().join("count");
+    let inherited = std::env::var_os("PATH").context("PATH")?;
+    let path =
+        std::env::join_paths(std::iter::once(wrapper.path().to_owned()).chain(std::env::split_paths(&inherited)))?;
+    let out = BritInvocation::new(bin)
+        .args(["fetch", "origin", branch])
+        .current_dir(&clones.b)
+        .env("PATH", path)
+        .env("FETCH_HANDSHAKES", &counter)
+        .env("FETCH_ORIGIN", clones.remote.path())
+        .run()?;
+    assert!(out.status.success(), "{}\n{}", out.stdout, out.stderr);
+    assert!(
+        out.stdout.contains("index file:"),
+        "a pack was received\n{}",
+        out.stdout
+    );
+    fetch_git(&clones.b, &["cat-file", "-e", &pushed])?;
+    assert_eq!(
+        fetch_git(&clones.b, &["rev-parse", "--verify", tracking])
+            .map_err(gix::Error::from)
+            .with_context(|| format!("missing tracking ref after receiving {pushed}\n{}", out.stdout))?,
+        pushed,
+        "the receiver tracks the branch selected by the latest advertisement"
+    );
+    assert!(
+        out.stdout.contains(&format!(" -> {tracking} [new]")),
+        "stdout names the new tracking ref\n{}",
+        out.stdout
+    );
+    assert_eq!(
+        fs::read_to_string(counter)?.trim(),
+        "3",
+        "the third advertisement confirms the revised tracking mapping"
+    );
+    Ok(())
 }
 
 // ─── push ─────────────────────────────────────────────────────────────────────
