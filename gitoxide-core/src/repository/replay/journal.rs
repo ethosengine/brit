@@ -230,6 +230,10 @@ struct ParentState {
     original_head_state: switch::State,
     original_orig_head: switch::State,
     original_branch_log: Option<switch::State>,
+    /// A cherry-pick advances the checked-out branch at each step. Its loose
+    /// preimage may be absent when the original tip came from packed-refs.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pick_branch_before: Option<switch::State>,
     published_branch_log: Option<switch::State>,
     decisions: usize,
     mappings: Vec<(String, Vec<String>)>,
@@ -306,6 +310,22 @@ impl<'de> Deserialize<'de> for Preserved {
 }
 
 impl ParentState {
+    fn branch_tip(&self) -> &str {
+        if self.pick_branch_before.is_some() {
+            &self.tip
+        } else {
+            &self.original
+        }
+    }
+
+    fn branch_guard(&self) -> Option<(Vec<u8>, String)> {
+        self.attachment.clone().map(|name| (name, self.branch_tip().to_owned()))
+    }
+
+    fn is_initial_root(&self, label: &str) -> bool {
+        matches!(label, "original" | "upstream") || (self.pick_branch_before.is_some() && label.starts_with("input-"))
+    }
+
     /// Read the preservation this record references from its payload in
     /// `directory`. A preparation being cancelled needs no preservation, and may
     /// already have removed the payload: there it stays unread.
@@ -391,12 +411,25 @@ impl Session {
     }
 
     fn prepare_mode(repo: &gix::Repository, argument: &BStr, interactive: bool) -> Result<Option<Self>> {
-        use std::{io::Read, os::unix::fs::DirBuilderExt};
-        let mut selection =
-            Selection::prepare_for_session(repo, argument, interactive, switch::payload::scratch_limit())?;
+        let selection = Selection::prepare_for_session(repo, argument, interactive, switch::payload::scratch_limit())?;
         if selection.kind == SelectionKind::Noop && (!interactive || selection.candidates.is_empty()) {
             return Ok(None);
         }
+        Self::prepare_selection(repo, selection, interactive, false).map(Some)
+    }
+
+    pub(super) fn prepare_pick(repo: &gix::Repository, revisions: &[BString]) -> Result<Self> {
+        let selection = super::cherry_pick::select(repo, revisions)?;
+        Self::prepare_selection(repo, selection, false, true)
+    }
+
+    fn prepare_selection(
+        repo: &gix::Repository,
+        mut selection: Selection,
+        interactive: bool,
+        cherry_pick: bool,
+    ) -> Result<Self> {
+        use std::{io::Read, os::unix::fs::DirBuilderExt};
         ensure!(
             repo.config_snapshot()
                 .string("extensions.refStorage")
@@ -446,7 +479,27 @@ impl Session {
         let mut entropy = [0; 32];
         fs::File::open("/dev/urandom")?.read_exact(&mut entropy)?;
         let nonce = switch::digest(&entropy)?;
-        for label in ["original", "upstream"] {
+        let mut retained = vec![
+            ("original".into(), selection.original.to_string()),
+            ("upstream".into(), selection.upstream.to_string()),
+        ];
+        let pick_branch_before = if cherry_pick {
+            retained.extend(
+                selection
+                    .candidates
+                    .iter()
+                    .enumerate()
+                    .map(|(i, c)| (format!("input-{i}"), c.commit.to_string())),
+            );
+            let attachment = selection.attachment.as_ref().context("checked-out branch required")?;
+            let path = repo
+                .common_dir()
+                .join(gix::path::from_bstr(attachment.as_bstr())?.as_ref());
+            Some(switch::snapshot(&path)?)
+        } else {
+            None
+        };
+        for (label, _) in &retained {
             ensure!(
                 repo.try_find_reference(format!("refs/brit-rebase-retain/{nonce}/{label}").as_str())?
                     .is_none(),
@@ -469,7 +522,11 @@ impl Session {
         }
         // Every index- and tree-only refusal has run: verify, once, what the replay
         // reads and keeps, before any journal exists.
-        selection.verify(repo)?;
+        if cherry_pick {
+            super::cherry_pick::verify(repo, &mut selection)?;
+        } else {
+            selection.verify(repo)?;
+        }
         let directory = repo.git_dir().join("brit-rebase");
         let identities = [repo.git_dir(), root, repo.common_dir()]
             .into_iter()
@@ -515,10 +572,7 @@ impl Session {
             floor: selection.floor.iter().map(ToString::to_string).collect(),
             preservation: Preserved::inline(preservation),
             preservation_payload: Some(preserved.clone()),
-            retained: vec![
-                ("original".into(), selection.original.to_string()),
-                ("upstream".into(), selection.upstream.to_string()),
-            ],
+            retained,
             authorized_stop: None,
             accepted_child: None,
             accepted_children: Vec::new(),
@@ -544,6 +598,7 @@ impl Session {
                     )
                 })
                 .transpose()?,
+            pick_branch_before,
             published_branch_log: None,
             decisions: 0,
             mappings: Vec::new(),
@@ -608,7 +663,7 @@ impl Session {
             Self::cancel_locked(repo, &session.directory)?;
             return Err(error);
         }
-        Ok(Some(session))
+        Ok(session)
     }
 
     fn complete_preparation(&mut self, repo: &gix::Repository) -> Result<()> {
@@ -701,6 +756,48 @@ impl Session {
         Ok(gix::ObjectId::from_hex(self.state.tip.as_bytes())?)
     }
 
+    pub(super) fn is_cherry_pick(&self) -> bool {
+        self.state.pick_branch_before.is_some()
+    }
+
+    pub(super) fn require_operation(&self, cherry_pick: bool) -> Result<()> {
+        let command = if self.is_cherry_pick() { "cherry-pick" } else { "rebase" };
+        ensure!(
+            self.is_cherry_pick() == cherry_pick,
+            "{command} in progress; run brit {command} --status"
+        );
+        Ok(())
+    }
+
+    /// Identify the active operation from its ownership record before dispatch.
+    pub(super) fn recorded_cherry_pick(repo: &gix::Repository) -> Result<Option<bool>> {
+        let directory = repo.git_dir().join("brit-rebase");
+        for name in ["state.json", "state.pending"] {
+            if present(&directory.join(name))? {
+                return Ok(Some(
+                    Self::open_directory_checked(repo, directory, name, false)?.is_cherry_pick(),
+                ));
+            }
+        }
+        Ok(None)
+    }
+
+    pub(super) fn describe_pick_conflict(&self, repo: &gix::Repository) -> Result<String> {
+        let commit = self.current_candidate()?.commit;
+        let index = repo.open_index()?;
+        let paths: BTreeSet<_> = index
+            .entries()
+            .iter()
+            .filter(|entry| entry.stage_raw() != 0)
+            .map(|entry| entry.path(&index))
+            .collect();
+        let paths = paths.into_iter().map(|path| format!("{path:?}")).collect::<Vec<_>>();
+        Ok(format!(
+            "cherry-pick stopped at {commit}, conflicts: {}",
+            paths.join(", ")
+        ))
+    }
+
     fn validate_current(&self, repo: &gix::Repository) -> Result<()> {
         self.inspect_editor()?;
         super::validate_execution_policy(repo)?;
@@ -766,6 +863,13 @@ impl Session {
                 self.accept_editor(repo)?;
             }
             return self.continue_edit(repo);
+        }
+        if self.state.phase == "prepared" && self.is_cherry_pick() {
+            let _guard = switch::shared_guard(repo)?;
+            self.validate_current(repo)?;
+            self.state.phase = "replaying".into();
+            self.save()?;
+            return Ok(Advance::Started);
         }
         if self.state.phase == "prepared" {
             {
@@ -986,7 +1090,7 @@ impl Session {
             )?;
             return Ok(Advance::Conflict);
         }
-        if step.newly_empty && self.state.phase != "empty" {
+        if (step.newly_empty || (self.is_cherry_pick() && step.initially_empty)) && self.state.phase != "empty" {
             let (mut after, transition) =
                 self.checkout_transition(repo, step.tree, &step.index, self.tip()?, super::transition::Kind::Stop)?;
             after.phase = "empty".into();
@@ -1216,6 +1320,17 @@ impl Session {
     /// Publish the final tip only after callers explicitly leave READY_FINAL.
     /// Post-rewrite is supervised separately from the irrevocable final decision.
     pub fn finish(&mut self, repo: &gix::Repository) -> Result<()> {
+        if self.is_cherry_pick() {
+            let _guard = switch::shared_guard(repo)?;
+            self.validate_current(repo)?;
+            ensure!(
+                self.state.phase == "ready-final",
+                "cherry-pick still has inputs to apply"
+            );
+            self.validate_published_resources(repo)?;
+            self.state.phase = "completed".into();
+            return self.save();
+        }
         {
             let _guard = switch::shared_guard(repo)?;
             self.validate_current(repo)?;
@@ -1412,9 +1527,13 @@ impl Session {
                 && switch::payload::fingerprint(&repo.git_dir().join("logs/HEAD"))? == self.state.log,
             "published replay metadata changed"
         );
-        let orig_head = switch::State::File {
-            mode: 0o644,
-            bytes: format!("{}\n", self.state.original).into_bytes(),
+        let orig_head = if self.is_cherry_pick() {
+            self.state.original_orig_head.clone()
+        } else {
+            switch::State::File {
+                mode: 0o644,
+                bytes: format!("{}\n", self.state.original).into_bytes(),
+            }
         };
         ensure!(
             switch::snapshot(&repo.git_dir().join("ORIG_HEAD"))? == orig_head,
@@ -1995,7 +2114,7 @@ impl Session {
             .join(format!("decision-{}.json", self.state.decisions + 1))
             .exists()
         {
-            *self = Self::recover_decision_guarded(repo, true)?;
+            *self = Self::recover_decision_guarded(repo, true, Some(&self.state.nonce))?;
             if self.state.phase == "aborted" {
                 let copy = repo
                     .git_dir()
@@ -2120,6 +2239,10 @@ impl Session {
                 });
             }
         }
+        let final_tip = self.pick_branch_changes(repo, &after, &mut metadata)?;
+        if self.is_cherry_pick() {
+            after.published_branch_log = None;
+        }
         self.publish_decision(
             repo,
             after,
@@ -2127,12 +2250,8 @@ impl Session {
                 kind: super::transition::Kind::Abort,
                 work,
                 metadata,
-                branch: self
-                    .state
-                    .attachment
-                    .clone()
-                    .map(|name| (name, self.state.original.clone())),
-                final_tip: None,
+                branch: self.state.branch_guard(),
+                final_tip,
                 packed_refs: switch::payload::fingerprint(&repo.common_dir().join("packed-refs"))?,
             },
         )?;
@@ -2257,7 +2376,7 @@ impl Session {
             }
         }
         for (label, id) in &self.state.retained {
-            if matches!(label.as_str(), "original" | "upstream") {
+            if self.state.is_initial_root(label) {
                 continue;
             }
             let name = format!("retention-{label}.json");
@@ -2806,10 +2925,22 @@ impl Session {
     /// Finish only a verified interrupted preparation. This never detaches HEAD
     /// or invokes a hook; it synchronizes the pinned closure and its GC roots.
     pub fn recover_preparation(repo: &gix::Repository) -> Result<Self> {
+        Self::recover_preparation_for(repo, None)
+    }
+
+    pub(super) fn resume_preparation(&self, repo: &gix::Repository) -> Result<Self> {
+        Self::recover_preparation_for(repo, Some(&self.state.nonce))
+    }
+
+    fn recover_preparation_for(repo: &gix::Repository, nonce: Option<&str>) -> Result<Self> {
         let _guard = switch::shared_guard(repo)?;
         switch::validate_local_history(repo)?;
         switch::validate_object_boundaries(repo)?;
         let mut session = Self::open(repo)?;
+        ensure!(
+            nonce.is_none_or(|nonce| nonce == session.state.nonce),
+            "stale replay session"
+        );
         ensure!(
             matches!(session.state.phase.as_str(), "preparing" | "prepared"),
             "journal has progressed beyond preparation"
@@ -2884,7 +3015,7 @@ impl Session {
             );
             let id = reference.id().to_string();
             ensure!(
-                id == self.state.original || decided_final == Some(id.as_str()),
+                id == self.state.branch_tip() || decided_final == Some(id.as_str()),
                 "original branch moved during replay"
             );
             let owner = fs::canonicalize(repo.git_dir())?;
@@ -2931,8 +3062,19 @@ impl Session {
     /// quota. Live state that differs from the pinned fingerprints is someone
     /// else's change; it is left as found and returned for the caller to report.
     pub fn cancel_preparation(repo: &gix::Repository) -> Result<Option<Vec<String>>> {
+        Self::cancel_preparation_for(repo, false)
+    }
+
+    pub(super) fn cancel_preparation_for(repo: &gix::Repository, cherry_pick: bool) -> Result<Option<Vec<String>>> {
         let _guard = switch::shared_guard(repo)?;
-        Self::cancel_locked(repo, &repo.git_dir().join("brit-rebase"))
+        let directory = repo.git_dir().join("brit-rebase");
+        for name in ["state.json", "state.pending"] {
+            if present(&directory.join(name))? {
+                Self::open_directory_checked(repo, directory.clone(), name, false)?.require_operation(cherry_pick)?;
+                break;
+            }
+        }
+        Self::cancel_locked(repo, &directory)
     }
 
     fn cancel_locked(repo: &gix::Repository, directory: &Path) -> Result<Option<Vec<String>>> {
@@ -3041,10 +3183,11 @@ impl Session {
             }
         }
         switch::sync_dir(directory)?;
-        for (label, id) in [
-            ("original", &current.state.original),
-            ("upstream", &current.state.upstream),
-        ] {
+        for (label, id) in &current.state.retained {
+            ensure!(
+                current.state.is_initial_root(label),
+                "unexpected preparation retention root"
+            );
             let name = format!("refs/brit-rebase-retain/{}/{label}", current.state.nonce);
             if let Some(reference) = repo.try_find_reference(name.as_str())? {
                 ensure!(
@@ -3087,6 +3230,7 @@ impl Session {
             "brit rebase --retire takes only a journal this repository opens as its own; it changed nothing. \
              brit rebase --status says what failed",
         )?;
+        session.require_operation(false)?;
         let state = &session.state;
         let phase = state.phase.as_str();
         ensure!(
@@ -3467,6 +3611,59 @@ impl Session {
         self.apply_decision(repo, decision, true)
     }
 
+    fn pick_branch_changes(
+        &self,
+        repo: &gix::Repository,
+        after: &ParentState,
+        metadata: &mut Vec<switch::Change>,
+    ) -> Result<Option<String>> {
+        use switch::State;
+        let Some(original) = &self.state.pick_branch_before else {
+            return Ok(None);
+        };
+        if self.state.tip == after.tip {
+            return Ok(None);
+        }
+        let name = self.state.attachment.as_ref().context("missing cherry-pick branch")?;
+        let relative = gix::path::from_bstr(name.as_bstr())?;
+        let branch = repo.common_dir().join(relative.as_ref());
+        let loose = |tip: &str| State::File {
+            mode: 0o644,
+            bytes: format!("{tip}\n").into_bytes(),
+        };
+        let before = if self.state.tip == self.state.original {
+            original.clone()
+        } else {
+            loose(&self.state.tip)
+        };
+        let restoring = after.phase == "aborted";
+        let desired = if restoring { original.clone() } else { loose(&after.tip) };
+        metadata.push(switch::Change {
+            path: gix::path::into_bstr(branch)?.to_vec(),
+            before,
+            after: desired,
+        });
+        let original_log = self
+            .state
+            .original_branch_log
+            .as_ref()
+            .context("missing original cherry-pick branch log")?;
+        let before = self.state.published_branch_log.as_ref().unwrap_or(original_log);
+        let desired = if restoring {
+            original_log
+        } else {
+            after.published_branch_log.as_ref().unwrap_or(original_log)
+        };
+        if before != desired {
+            metadata.push(switch::Change {
+                path: gix::path::into_bstr(repo.common_dir().join("logs").join(relative.as_ref()))?.to_vec(),
+                before: before.clone(),
+                after: desired.clone(),
+            });
+        }
+        Ok(Some(after.tip.clone()))
+    }
+
     fn checkout_transition(
         &mut self,
         repo: &gix::Repository,
@@ -3614,10 +3811,12 @@ impl Session {
         let mut source = budget.spool()?;
         gix::index::File::from_state(public, repo.index_path()).write_to(&mut source, Default::default())?;
         after.index = self.store_payload(repo, source, 0o644)?;
-        after.head = switch::State::File {
-            mode: 0o644,
-            bytes: format!("{tip}\n").into_bytes(),
-        };
+        if !self.is_cherry_pick() {
+            after.head = switch::State::File {
+                mode: 0o644,
+                bytes: format!("{tip}\n").into_bytes(),
+            };
+        }
         if gix::ObjectId::from_hex(self.state.tip.as_bytes())? != tip
             && repo.config_snapshot().try_boolean("core.logAllRefUpdates")? != Some(false)
         {
@@ -3628,9 +3827,24 @@ impl Session {
                     .committer()
                     .context("committer required for replay log")??
                     .to_owned()?,
-                message: format!("brit rebase {} step {} {:?}", self.state.nonce, self.state.step, kind).into(),
+                message: if self.is_cherry_pick() {
+                    format!("brit cherry-pick {}", self.current_candidate()?.commit)
+                } else {
+                    format!("brit rebase {} step {} {:?}", self.state.nonce, self.state.step, kind)
+                }
+                .into(),
             };
-            after.log = self.append_metadata(repo, after.log.clone(), line)?;
+            after.log = self.append_metadata(repo, after.log.clone(), line.clone())?;
+            if self.is_cherry_pick() {
+                let before = self
+                    .state
+                    .published_branch_log
+                    .as_ref()
+                    .or(self.state.original_branch_log.as_ref())
+                    .context("cherry-pick branch log was not pinned")?
+                    .clone();
+                after.published_branch_log = Some(self.append_metadata(repo, before, line)?);
+            }
         }
         after.tip = tip.to_string();
         let mut metadata = Vec::new();
@@ -3647,18 +3861,15 @@ impl Session {
                 });
             }
         }
+        let final_tip = self.pick_branch_changes(repo, &after, &mut metadata)?;
         Ok((
             after,
             super::transition::Transition {
                 kind,
                 work: changes,
                 metadata,
-                branch: self
-                    .state
-                    .attachment
-                    .clone()
-                    .map(|name| (name, self.state.original.clone())),
-                final_tip: None,
+                branch: self.state.branch_guard(),
+                final_tip,
                 packed_refs: switch::payload::fingerprint(&repo.common_dir().join("packed-refs"))?,
             },
         ))
@@ -3683,12 +3894,7 @@ impl Session {
         );
         self.validate_retention(repo)?;
         ensure!(
-            decision.transition.branch
-                == self
-                    .state
-                    .attachment
-                    .as_ref()
-                    .map(|name| (name.clone(), self.state.original.clone())),
+            decision.transition.branch == self.state.branch_guard(),
             "decision branch ownership changed"
         );
         switch::validate_local_history(repo)?;
@@ -3708,15 +3914,16 @@ impl Session {
         }
         sync_tree(&repo.common_dir().join("objects"))?;
         sync_reference_storage(repo)?;
-        self.validate_branch(
-            repo,
-            (decision.transition.kind == super::transition::Kind::Final).then_some(decision.after.tip.as_str()),
-        )?;
+        use super::transition::Kind;
+        let publishes_branch = decision.transition.kind == Kind::Final
+            || (self.is_cherry_pick()
+                && matches!(decision.transition.kind, Kind::Step | Kind::Abort)
+                && decision.after.tip != self.state.tip);
         ensure!(
-            decision.transition.final_tip
-                == (decision.transition.kind == super::transition::Kind::Final).then(|| decision.after.tip.clone()),
-            "decision final tip ownership changed"
+            decision.transition.final_tip == publishes_branch.then(|| decision.after.tip.clone()),
+            "decision successor tip ownership changed"
         );
+        self.validate_branch(repo, decision.transition.final_tip.as_deref())?;
         let staging = self
             .directory
             .join(format!("transition-{}-{}", decision.ordinal, decision.before));
@@ -3969,13 +4176,22 @@ impl Session {
     /// from observed HEAD, launches a hook, or resumes a stopped replay.
     pub fn recover_decision(repo: &gix::Repository) -> Result<Self> {
         let _guard = switch::shared_guard(repo)?;
-        Self::recover_decision_guarded(repo, false)
+        Self::recover_decision_guarded(repo, false, None)
     }
 
-    fn recover_decision_guarded(repo: &gix::Repository, aborting: bool) -> Result<Self> {
+    pub(super) fn resume_pending_decision(&self, repo: &gix::Repository) -> Result<Self> {
+        let _guard = switch::shared_guard(repo)?;
+        Self::recover_decision_guarded(repo, false, Some(&self.state.nonce))
+    }
+
+    fn recover_decision_guarded(repo: &gix::Repository, aborting: bool, nonce: Option<&str>) -> Result<Self> {
         switch::validate_local_history(repo)?;
         switch::validate_object_boundaries(repo)?;
         let mut session = Self::open(repo)?;
+        ensure!(
+            nonce.is_none_or(|nonce| nonce == session.state.nonce),
+            "stale replay session"
+        );
         let path = session
             .directory
             .join(format!("decision-{}.json", session.state.decisions + 1));
@@ -4513,6 +4729,29 @@ impl Session {
 
     /// Read-only status deliberately does not validate mutable stop work or recover.
     pub fn status(&self, out: &mut dyn std::io::Write) -> Result<()> {
+        if self.is_cherry_pick() {
+            writeln!(out, "cherry-pick phase: {}", self.phase())?;
+            writeln!(
+                out,
+                "Inputs consumed: {}/{}; HEAD: {}",
+                self.state.step,
+                self.state.candidates.len(),
+                self.state.tip
+            )?;
+            if self.phase() == "authoring" {
+                writeln!(
+                    out,
+                    "Current input: {}. Resolve and run brit add <paths>, then brit cherry-pick --continue.",
+                    self.current_candidate()?.commit
+                )?;
+            } else if self.has_pending_decision() {
+                writeln!(
+                    out,
+                    "A durable decision is pending. Run brit cherry-pick --continue or --abort."
+                )?;
+            }
+            return Ok(());
+        }
         writeln!(out, "Rebase phase: {}", self.phase())?;
         writeln!(
             out,

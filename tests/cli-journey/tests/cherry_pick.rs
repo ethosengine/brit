@@ -8,6 +8,7 @@ use cli_journey::support::{
     runner::{brit_bin, BritInvocation, Capture},
     test_repo::TestRepo,
 };
+use gix_testtools::TestResult;
 
 fn git(root: &Path, args: &[&str]) -> Result<Vec<u8>> {
     let output = gix_testtools::git_command(root).args(args).output()?;
@@ -20,9 +21,13 @@ fn git(root: &Path, args: &[&str]) -> Result<Vec<u8>> {
 }
 
 fn pick(root: &Path, revision: &str) -> Result<Capture> {
+    pick_args(root, &[revision])
+}
+
+fn pick_args(root: &Path, args: &[&str]) -> Result<Capture> {
     BritInvocation::new(brit_bin().expect("required binary"))
         .current_dir(root)
-        .args(["cherry-pick", revision])
+        .args(std::iter::once("cherry-pick").chain(args.iter().copied()))
         .env("GIT_COMMITTER_NAME", "Current Committer")
         .env("GIT_COMMITTER_EMAIL", "current@example.org")
         .run()
@@ -265,5 +270,307 @@ fn pending_recovery_and_ref_lock_refuse_before_publication() -> Result<()> {
         b"held by another writer",
         "foreign lock survives"
     );
+    Ok(())
+}
+
+fn sequence_fixture(conflict: bool) -> TestResult<TestRepo> {
+    let repo = TestRepo::new("cherry-pick-sequence")?;
+    let root = repo.path();
+    repo.commit_file("selected", "base\n")?;
+    repo.commit_file("neighbor", "base neighbor\n")?;
+    git(root, &["branch", "base"])?;
+    git(root, &["switch", "-c", "source"])?;
+    for (path, message) in [
+        (
+            "first",
+            "First
+
+Change-Id: I1111
+",
+        ),
+        (
+            "selected",
+            "Second
+
+Co-Authored-By: A Person <a@example.org>
+",
+        ),
+        (
+            "third",
+            "Third
+
+Session-Id: 0123
+",
+        ),
+    ] {
+        fs::write(root.join(path), b"source\n")?;
+        git(root, &["add", path])?;
+        git(
+            root,
+            &[
+                "commit",
+                "--cleanup=verbatim",
+                "--author=Source Author <source@example.org>",
+                "--date=2001-02-03T04:05:06-07:30",
+                "-m",
+                message,
+            ],
+        )?;
+    }
+    git(root, &["switch", "main"])?;
+    repo.commit_file("destination", "destination change\n")?;
+    if conflict {
+        repo.commit_file("selected", "destination\n")?;
+    }
+    Ok(repo)
+}
+
+#[derive(Debug, PartialEq, Eq)]
+struct ReplayedCommit {
+    tree: Vec<u8>,
+    author_and_message: Vec<u8>,
+}
+
+fn replayed(root: &Path, count: usize) -> TestResult<Vec<ReplayedCommit>> {
+    (0..count)
+        .rev()
+        .map(|offset| {
+            let raw = git(root, &["cat-file", "commit", &format!("HEAD~{offset}")])?;
+            let mut parts = raw.splitn(2, |byte| *byte == b'\n');
+            let tree = parts.next().expect("commit has a tree header").to_vec();
+            let body = parts.next().expect("commit has headers and a message");
+            let separator = body
+                .windows(2)
+                .position(|bytes| bytes == b"\n\n")
+                .expect("message separator");
+            let author = body[..separator]
+                .split(|byte| *byte == b'\n')
+                .find(|line| line.starts_with(b"author "))
+                .expect("commit has an author");
+            Ok(ReplayedCommit {
+                tree,
+                author_and_message: [author, &body[separator..]].concat(),
+            })
+        })
+        .collect()
+}
+
+#[test]
+fn range_replays_oldest_first_with_git_metadata_and_tree_parity() -> TestResult {
+    let repo = sequence_fixture(false)?;
+    let root = repo.path();
+    git(root, &["switch", "-c", "git-result"])?;
+    git(root, &["cherry-pick", "base..source"])?;
+    let expected = replayed(root, 3)?;
+    git(root, &["switch", "main"])?;
+    pick_success(root, "base..source")?;
+    assert_eq!(
+        replayed(root, 3)?,
+        expected,
+        "each pick matches Git's tree, author and message"
+    );
+    Ok(())
+}
+
+#[test]
+fn explicit_list_replays_in_argument_order() -> TestResult {
+    let repo = sequence_fixture(false)?;
+    let root = repo.path();
+    git(root, &["switch", "-c", "git-result"])?;
+    git(root, &["cherry-pick", "source", "source~2"])?;
+    let expected = replayed(root, 2)?;
+    git(root, &["switch", "main"])?;
+    let output = pick_args(root, &["source", "source~2"])?;
+    assert!(output.status.success(), "{}", output.stderr);
+    assert_eq!(replayed(root, 2)?, expected, "the list is applied in argument order");
+    Ok(())
+}
+
+fn expect_sequence_conflict(root: &Path) -> TestResult {
+    let before = git(root, &["rev-parse", "HEAD"])?;
+    let commit = git(root, &["rev-parse", "source~1"])?;
+    let output = pick(root, "base..source")?;
+    assert!(!output.status.success(), "the second pick conflicts");
+    assert!(
+        output.stderr.contains("selected"),
+        "conflicting path: {}",
+        output.stderr
+    );
+    assert!(
+        output.stderr.contains(&String::from_utf8_lossy(&commit)[..7]),
+        "conflicting commit: {}",
+        output.stderr
+    );
+    assert_eq!(
+        git(root, &["rev-parse", "HEAD^"])?,
+        before,
+        "the first pick advanced HEAD"
+    );
+    assert_eq!(
+        git(root, &["ls-files", "-u", "selected"])?
+            .split(|b| *b == b'\n')
+            .count(),
+        4,
+        "the index has all three conflict stages"
+    );
+    assert_eq!(
+        git(root, &["symbolic-ref", "HEAD"])?,
+        b"refs/heads/main\n",
+        "the destination branch stays checked out during the conflict"
+    );
+    assert!(!root.join("third").exists(), "the third pick is still pending");
+    let status = pick(root, "--status")?;
+    assert!(
+        status.status.success() && status.stdout.contains("cherry-pick"),
+        "stdout: {}; stderr: {}",
+        status.stdout,
+        status.stderr
+    );
+    Ok(())
+}
+
+fn stage_resolution(root: &Path) -> TestResult {
+    let add = BritInvocation::new(brit_bin().expect("required binary"))
+        .current_dir(root)
+        .args(["add", "selected"])
+        .run()?;
+    assert!(add.status.success(), "{}", add.stderr);
+    Ok(())
+}
+
+#[test]
+fn sequence_conflict_continue_matches_git() -> TestResult {
+    let repo = sequence_fixture(true)?;
+    let root = repo.path();
+    git(root, &["switch", "-c", "git-result"])?;
+    let conflict = gix_testtools::git_command(root)
+        .args(["cherry-pick", "base..source"])
+        .output()?;
+    assert!(!conflict.status.success(), "Git stops on the second pick");
+    fs::write(root.join("selected"), b"resolved\n")?;
+    git(root, &["add", "selected"])?;
+    git(root, &["-c", "core.editor=true", "cherry-pick", "--continue"])?;
+    let expected = replayed(root, 3)?;
+    git(root, &["switch", "main"])?;
+    expect_sequence_conflict(root)?;
+    fs::write(root.join("selected"), b"resolved\n")?;
+    stage_resolution(root)?;
+    pick_success(root, "--continue")?;
+    assert_eq!(replayed(root, 3)?, expected, "continued picks match Git");
+    assert_eq!(
+        git(root, &["status", "--porcelain"])?,
+        b"",
+        "checkout is clean after continuing"
+    );
+    Ok(())
+}
+
+#[test]
+fn sequence_conflict_abort_restores_original_bytes() -> TestResult {
+    let repo = sequence_fixture(true)?;
+    let root = repo.path();
+    git(root, &["pack-refs", "--all"])?;
+    fs::write(root.join("neighbor"), b"staged neighbor\n")?;
+    git(root, &["add", "neighbor"])?;
+    fs::write(root.join("neighbor"), b"unstaged neighbor\n")?;
+    let before = live(root)?;
+    let log_before = fs::read(root.join(".git/logs/refs/heads/main"))?;
+    assert!(
+        !root.join(".git/refs/heads/main").exists(),
+        "the starting branch is packed"
+    );
+    expect_sequence_conflict(root)?;
+    fs::write(root.join("selected"), b"resolved\n")?;
+    stage_resolution(root)?;
+    pick_success(root, "--abort")?;
+    assert_eq!(live(root)?, before, "abort restores HEAD, index and tracked file bytes");
+    assert_eq!(
+        fs::read(root.join(".git/logs/refs/heads/main"))?,
+        log_before,
+        "branch log is restored"
+    );
+    assert!(
+        !root.join(".git/refs/heads/main").exists(),
+        "abort restores the packed branch"
+    );
+    assert!(!root.join("first").exists(), "abort removes the first pick's file");
+    assert!(!root.join("third").exists(), "the pending pick stays unapplied");
+    Ok(())
+}
+
+#[test]
+fn empty_range_names_the_range_and_changes_nothing() -> TestResult {
+    let repo = sequence_fixture(false)?;
+    let root = repo.path();
+    let before = live(root)?;
+    let range = "source..base";
+    let output = pick(root, range)?;
+    assert!(!output.status.success(), "the empty range is refused");
+    assert!(
+        output.stderr.contains(range) && output.stderr.contains("empty"),
+        "{}",
+        output.stderr
+    );
+    assert_eq!(live(root)?, before, "an empty range changes nothing");
+    Ok(())
+}
+
+#[test]
+fn range_refuses_a_merge_before_applying_any_input() -> TestResult {
+    let repo = sequence_fixture(false)?;
+    let root = repo.path();
+    git(root, &["switch", "-c", "side", "base"])?;
+    repo.commit_file("side", "side change\n")?;
+    git(root, &["switch", "source"])?;
+    git(root, &["merge", "--no-edit", "side"])?;
+    repo.commit_file("after-merge", "later change\n")?;
+    git(root, &["switch", "main"])?;
+    let before = live(root)?;
+    let merge = git(root, &["rev-parse", "source^"])?;
+    let output = pick(root, "base..source")?;
+    assert!(!output.status.success(), "a selected merge requires a mainline");
+    assert!(
+        output.stderr.contains("mainline") && output.stderr.contains(&String::from_utf8_lossy(&merge)[..7]),
+        "{}",
+        output.stderr
+    );
+    assert_eq!(live(root)?, before, "the merge refusal leaves the original bytes");
+    assert!(!root.join("first").exists(), "earlier inputs were never applied");
+    Ok(())
+}
+
+#[test]
+fn sequence_conflict_skip_applies_remaining_picks() -> TestResult {
+    let repo = sequence_fixture(true)?;
+    let root = repo.path();
+    git(root, &["switch", "-c", "git-result"])?;
+    let conflict = gix_testtools::git_command(root)
+        .args(["cherry-pick", "base..source"])
+        .output()?;
+    assert!(!conflict.status.success(), "Git stops on the second pick");
+    git(root, &["cherry-pick", "--skip"])?;
+    let expected = replayed(root, 2)?;
+    git(root, &["switch", "main"])?;
+    expect_sequence_conflict(root)?;
+    pick_success(root, "--skip")?;
+    assert_eq!(replayed(root, 2)?, expected, "skipping a pick matches Git");
+    Ok(())
+}
+
+#[test]
+fn range_with_unrelated_exclusion_includes_the_root() -> TestResult {
+    let repo = TestRepo::new("cherry-pick-unrelated")?;
+    let root = repo.path();
+    repo.commit_file("destination", "destination\n")?;
+    git(root, &["switch", "--orphan", "source"])?;
+    repo.commit_file("first", "first source commit\n")?;
+    repo.commit_file("second", "second source commit\n")?;
+    git(root, &["switch", "main"])?;
+    git(root, &["switch", "-c", "git-result"])?;
+    git(root, &["cherry-pick", "main..source"])?;
+    let expected = replayed(root, 2)?;
+    git(root, &["switch", "main"])?;
+    pick_success(root, "main..source")?;
+    assert_eq!(replayed(root, 2)?, expected, "the unrelated range includes its root");
     Ok(())
 }

@@ -1,4 +1,4 @@
-//! One-shot replay onto the current branch.
+//! Cherry-pick selection and the one-shot checkout path.
 use std::{
     collections::{BTreeMap, BTreeSet},
     fs,
@@ -16,18 +16,122 @@ use gix::{
     utils::stream::{self, Budget, Spool},
 };
 
-use super::{ReplayMode, Step, read_commit};
+use super::{Candidate, ReplayMode, Selection, SelectionKind, Step, read_commit};
 use crate::repository::{
     index::authoring::{read_index, worktree_entry_spooled},
     switch::{self, Change, State, payload},
 };
 
-/// Apply one local commit. The caller holds the repository and worktree writer guards.
-pub fn execute(repo: &gix::Repository, revision: &BStr) -> Result<()> {
-    let root = repo.workdir().context("cherry-pick requires a worktree")?;
-    let index_path = repo.index_path();
+/// Pin the entire sequence before the replay can change the checkout.
+pub(super) fn select(repo: &gix::Repository, revisions: &[gix::bstr::BString]) -> Result<Selection> {
+    use gix::revision::plumbing::Spec;
+
+    super::validate_selection_repository(repo)?;
+    validate_checkout(repo)?;
+    ensure!(!revisions.is_empty(), "at least one cherry-pick revision is required");
+    let original = super::head_commit_id(repo)?;
+    let attachment = checked_out_branch(repo)?.as_bstr().to_owned();
+    let source = gix::object::bounded::Source::deferred(repo);
+    let peel = |id| source.peel(id, Kind::Commit);
+    let mut candidates = Vec::new();
+    let mut buffer = gix::objs::find::Buffer::default();
+    let mut candidate = |commit| -> Result<Candidate> {
+        super::selection_interrupt()?;
+        let input = read_commit(repo, commit, &mut buffer)?;
+        let mut parents = input.parents();
+        let parent = parents
+            .next()
+            .unwrap_or_else(|| gix::ObjectId::null(repo.object_hash()));
+        ensure!(
+            parents.next().is_none(),
+            "cherry-pick of merge commit {commit} requires a mainline (-m)"
+        );
+        Ok(Candidate { commit, parent })
+    };
+    for revision in revisions {
+        match repo.rev_parse(revision.as_bstr())?.detach() {
+            Spec::Include(commit) => candidates.push(candidate(peel(commit)?)?),
+            Spec::Range { from, to } => {
+                let (from, mut to) = (peel(from)?, peel(to)?);
+                let bases = repo.merge_bases_many(to, &[from])?;
+                let start = candidates.len();
+                // Until we hit a merge base, every reachable commit on this
+                // single-parent chain is in the range. A merge in that chain
+                // would itself be selected, so reject it before walking its parents.
+                while !to.is_null() && !bases.iter().any(|base| base.as_ref() == to.as_ref()) {
+                    let input = candidate(to)?;
+                    to = input.parent;
+                    candidates.push(input);
+                }
+                ensure!(candidates.len() > start, "empty cherry-pick range {revision}");
+                candidates[start..].reverse();
+            }
+            _ => bail!("expected a commit or A..B range: {revision}"),
+        }
+    }
+    let selected = candidates.iter().map(|c| c.commit).collect::<BTreeSet<_>>();
+    let mut floor = BTreeSet::from([original]);
+    floor.extend(
+        candidates
+            .iter()
+            .map(|c| c.parent)
+            .filter(|parent| !parent.is_null() && !selected.contains(parent)),
+    );
+    let argument = revisions
+        .iter()
+        .map(|rev| rev.as_ref())
+        .collect::<Vec<&[u8]>>()
+        .join(&b' ');
+    let selection = Selection {
+        original,
+        upstream: original,
+        attachment: Some(attachment),
+        argument: argument.into(),
+        candidates,
+        kind: SelectionKind::Replay,
+        base: original,
+        floor,
+        closure: BTreeSet::new(),
+    };
+    let commits = std::iter::once(original).chain(
+        selection
+            .candidates
+            .iter()
+            .flat_map(|c| [c.parent, c.commit])
+            .filter(|id| !id.is_null()),
+    );
+    let trees = super::collect_trees(repo, commits)?;
+    super::refuse_external_filters(repo, trees, &selection.footprint(repo)?)?;
+    Ok(selection)
+}
+
+pub(super) fn verify(repo: &gix::Repository, selection: &mut Selection) -> Result<()> {
+    let mut validation = super::Validation::default();
+    let footprint = selection.footprint(repo)?;
+    validation.along(repo, selection.original, &footprint)?;
+    for candidate in &selection.candidates {
+        validation.custody(repo, candidate.commit, &selection.floor, &mut selection.closure)?;
+        validation.along(repo, candidate.commit, &footprint)?;
+        if !candidate.parent.is_null() {
+            validation.along(repo, candidate.parent, &footprint)?;
+        }
+    }
+    Ok(())
+}
+
+fn checked_out_branch(repo: &gix::Repository) -> Result<gix::refs::FullName> {
+    let branch = repo.head_name()?.context("cherry-pick requires a checked-out branch")?;
     ensure!(
-        index_path == repo.current_dir().join(repo.git_dir()).join("index"),
+        branch.as_bstr().starts_with(b"refs/heads/")
+            && repo.find_reference("HEAD")?.target().try_name() == Some(branch.as_ref()),
+        "cherry-pick requires HEAD to name a local branch directly"
+    );
+    Ok(branch)
+}
+
+fn validate_checkout(repo: &gix::Repository) -> Result<()> {
+    ensure!(
+        repo.index_path() == repo.current_dir().join(repo.git_dir()).join("index"),
         "alternate indexes require Git"
     );
     ensure!(repo.namespace().is_none(), "reference namespaces require Git");
@@ -47,12 +151,15 @@ pub fn execute(repo: &gix::Repository, revision: &BStr) -> Result<()> {
         }
     }
 
-    let branch = repo.head_name()?.context("cherry-pick requires a checked-out branch")?;
-    ensure!(
-        branch.as_bstr().starts_with(b"refs/heads/")
-            && repo.find_reference("HEAD")?.target().try_name() == Some(branch.as_ref()),
-        "cherry-pick requires HEAD to name a local branch directly"
-    );
+    Ok(())
+}
+
+/// Apply one local commit. The caller holds the repository and worktree writer guards.
+pub fn execute(repo: &gix::Repository, revision: &BStr) -> Result<()> {
+    let root = repo.workdir().context("cherry-pick requires a worktree")?;
+    validate_checkout(repo)?;
+    let index_path = repo.index_path();
+    let branch = checked_out_branch(repo)?;
     let tip = super::head_commit_id(repo)?;
     let commit =
         gix::object::bounded::Source::deferred(repo).peel(repo.rev_parse_single(revision)?.detach(), Kind::Commit)?;

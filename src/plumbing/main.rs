@@ -37,9 +37,6 @@ pub fn main() -> Result<()> {
 enum GuardScope {
     /// Read-only, or the command scopes its own guards (switch, pull, rebase, push, commit).
     None,
-    /// Writes only its own worktree's index, HEAD and checkout, new objects, and
-    /// compare-and-swap reference updates; excludes shared writers and same-worktree writers.
-    Worktree,
     /// Writes shared repository state; excludes every other Brit writer.
     Repository,
     /// Writes shared repository state and rewrites its own worktree's index, HEAD or files:
@@ -51,12 +48,10 @@ enum GuardScope {
 // boundary until their read-only semantics are explicitly established here.
 fn mutation_guard_scope(cmd: &Subcommands) -> GuardScope {
     match cmd {
-        Subcommands::Add { .. } => GuardScope::Worktree,
         // Commit holds its worktree guard throughout and the repository guard only to publish.
         Subcommands::Commit(commit::Platform { cmd: None, .. }) => GuardScope::None,
         // Rewrite the invoking worktree. Switch, pull and rebase take the same pair themselves.
         Subcommands::Restore { .. }
-        | Subcommands::CherryPick { .. }
         | Subcommands::Merge(merge::Platform {
             cmd: Some(merge::SubCommands::Tree { update_head: true, .. }),
             ..
@@ -134,7 +129,7 @@ fn requires_mutation_guard(cmd: &Subcommands) -> bool {
         Subcommands::Worktree(worktree::Platform {
             cmd: worktree::SubCommands::List,
         }) => false,
-        Subcommands::Rebase(_) => false,
+        Subcommands::Add { .. } | Subcommands::Rebase(_) | Subcommands::CherryPick(_) => false,
         Subcommands::Switch { .. } | Subcommands::Merge(merge::Platform { cmd: None, .. }) => false,
         #[cfg(feature = "gitoxide-core-blocking-client")]
         Subcommands::Pull { .. } => false,
@@ -314,6 +309,7 @@ pub fn run_with_command(args: Args, command: clap::Command) -> Result<()> {
     for path in explicit_write_paths(&cmd) {
         guards.borrow_mut().path(path)?;
     }
+    let guards = &guards;
     #[cfg(feature = "tix")]
     let cmd = match cmd {
         Subcommands::Tix(command) if !command.requires_repository() => {
@@ -348,7 +344,6 @@ pub fn run_with_command(args: Args, command: clap::Command) -> Result<()> {
 
     let repository = {
         let config = config.clone();
-        let guards = &guards;
         move |mut mode: Mode| -> Result<gix::Repository> {
             let mut mapping: gix::sec::trust::Mapping<gix::open::Options> = Default::default();
             if !config.is_empty() {
@@ -406,7 +401,6 @@ pub fn run_with_command(args: Args, command: clap::Command) -> Result<()> {
             }
             match guard_scope {
                 GuardScope::None => {}
-                GuardScope::Worktree => guards.borrow_mut().worktree(&repo)?,
                 GuardScope::Repository => guards.borrow_mut().repository(&repo)?,
                 GuardScope::RepositoryAndWorktree => guards.borrow_mut().repository_and_worktree(&repo)?,
             }
@@ -572,8 +566,18 @@ pub fn run_with_command(args: Args, command: clap::Command) -> Result<()> {
             update,
             all,
             gitlink,
-        } => prepare_and_run("add", verbose, None, move |_progress, _out, err| {
+        } => prepare_and_run("add", verbose, None, move |_progress, out, err| {
+            use core::repository::replay::command::{Action, cherry_pick_in_progress, run_cherry_pick};
             let repo = repository(Mode::Strict)?;
+            if !paths.is_empty()
+                && !update
+                && !all
+                && gitlink.is_none()
+                && cherry_pick_in_progress(&repo).map_err(anyhow_to_gix)?
+            {
+                return run_cherry_pick(repo, Action::Stage { paths, expand: false }, out, err).map_err(anyhow_to_gix);
+            }
+            guards.borrow_mut().worktree(&repo)?;
             if let Some(commit) = gitlink {
                 let [path] = paths.as_slice() else {
                     bail!("--gitlink requires exactly one literal submodule path".validation());
@@ -611,10 +615,15 @@ pub fn run_with_command(args: Args, command: clap::Command) -> Result<()> {
             core::repository::replay::command::run(repository(Mode::Strict)?, options.action(), out, err)
                 .map_err(anyhow_to_gix)
         }),
-        Subcommands::CherryPick { commit } => {
-            prepare_and_run("cherry-pick", verbose, None, move |_progress, _out, _err| {
-                core::repository::replay::cherry_pick(&repository(Mode::Strict)?, commit.as_ref())
-                    .map_err(anyhow_to_gix)
+        Subcommands::CherryPick(options) => {
+            prepare_and_run("cherry-pick", verbose, None, move |_progress, out, err| {
+                core::repository::replay::command::run_cherry_pick(
+                    repository(Mode::Strict)?,
+                    options.action(),
+                    out,
+                    err,
+                )
+                .map_err(anyhow_to_gix)
             })
         }
         Subcommands::Switch {

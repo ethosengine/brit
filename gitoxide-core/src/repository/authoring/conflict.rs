@@ -816,8 +816,8 @@ impl Session {
         validate_metadata_directories(repo)?;
         ensure!(repo.state().is_none(), "foreign operation in progress");
         ensure!(
-            repo.head()?.referent_name().is_none(),
-            "replay child requires detached HEAD"
+            kind == StopKind::Conflict || repo.head()?.referent_name().is_none(),
+            "replay edit child requires detached HEAD"
         );
         private.verify_entries()?;
         validate_public(private)?;
@@ -1422,11 +1422,23 @@ impl Session {
         }
     }
 
+    fn validate_head_attachment(&self, repo: &gix::Repository) -> Result<()> {
+        if self.state.kind == StopKind::Conflict && self.state.replay_parent.is_some() {
+            ensure!(
+                fs::read(repo.git_dir().join("HEAD"))? == self.state.original_head,
+                "external HEAD attachment change"
+            );
+        } else {
+            ensure!(repo.head()?.referent_name().is_none(), "external HEAD attachment");
+        }
+        Ok(())
+    }
+
     fn validate_observed(&self, repo: &gix::Repository, active: &[Vec<u8>]) -> Result<()> {
         ensure!(policy(repo)? == self.state.policy, "hook or configuration changed");
+        self.validate_head_attachment(repo)?;
         ensure!(
-            repo.head()?.referent_name().is_none()
-                && repo.head_commit()?.id == gix::ObjectId::from_hex(self.state.head.as_bytes())?,
+            repo.head_commit()?.id == gix::ObjectId::from_hex(self.state.head.as_bytes())?,
             "external HEAD movement"
         );
         let current = entries(&*read_public(repo)?);
@@ -1840,9 +1852,9 @@ impl Session {
         for number in 1..=self.state.invocation {
             super::invocation::inspect(&self.directory.join(format!("invocation-{number}")))?;
         }
+        self.validate_head_attachment(repo)?;
         ensure!(
-            repo.head()?.referent_name().is_none()
-                && repo.head_commit()?.id == gix::ObjectId::from_hex(self.state.head.as_bytes())?,
+            repo.head_commit()?.id == gix::ObjectId::from_hex(self.state.head.as_bytes())?,
             "foreign child HEAD movement"
         );
         if allow_unrelated_work {
@@ -1964,13 +1976,18 @@ impl Session {
             }
             .write_to(log)?;
         }
+        let new_head = if after.head == self.state.head {
+            old_head.clone()
+        } else {
+            format!("{}\n", after.head).into_bytes()
+        };
         let decision = Decision {
             before: self.state.clone(),
             new_index: bytes(repo, &after.public)?,
             after: after.clone(),
             old_index,
             old_head,
-            new_head: format!("{}\n", after.head).into_bytes(),
+            new_head,
             old_log,
             new_log,
         };
@@ -2004,9 +2021,8 @@ impl Session {
             current == d.old_index || current == d.new_index,
             "third-state index refuses recovery"
         );
-        let head = repo.head()?;
-        ensure!(head.referent_name().is_none(), "external HEAD attachment");
-        let id = head.id().context("HEAD")?.to_string();
+        self.validate_head_attachment(repo)?;
+        let id = repo.head()?.id().context("HEAD")?.to_string();
         ensure!(
             id == d.before.head || id == d.after.head,
             "third-state HEAD refuses recovery"

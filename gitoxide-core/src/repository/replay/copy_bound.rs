@@ -351,8 +351,12 @@ pub(super) fn plan(
         drop(data);
         let tree = entries(commit)?;
         let mut paths = BTreeSet::new();
-        for parent in parents {
-            paths.extend(changed(&entries(parent)?, &tree));
+        if parents.is_empty() {
+            paths.extend(tree.keys().cloned());
+        } else {
+            for parent in parents {
+                paths.extend(changed(&entries(parent)?, &tree));
+            }
         }
         touched.extend(paths.iter().cloned());
         steps.push((tree, paths));

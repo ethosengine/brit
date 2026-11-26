@@ -335,7 +335,8 @@ impl Transition {
             .transpose()?
             .unwrap_or(false);
         ensure!(
-            allowed.iter().any(|p| p == path.as_ref()) || (self.kind == Kind::Final && branch),
+            allowed.iter().any(|p| p == path.as_ref())
+                || (branch && (self.kind == Kind::Final || self.final_tip.is_some())),
             "unowned replay metadata resource"
         );
         let current = metadata_image(repo, &path)?;
@@ -359,7 +360,7 @@ impl Transition {
             );
             let id = reference.id().to_string();
             ensure!(
-                id == *original || (self.kind == Kind::Final && self.final_tip.as_ref() == Some(&id)),
+                id == *original || self.final_tip.as_ref() == Some(&id),
                 "effective original branch moved during replay transition"
             );
         }

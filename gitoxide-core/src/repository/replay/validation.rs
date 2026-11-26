@@ -237,17 +237,18 @@ pub(super) fn walk_custody(
         let tree = commit.tree();
         drop(commit);
         buffer.clear();
-        ensure!(
-            parents.len() == 1,
-            "retained commit {commit_id} is a merge or a root above the replay's floor"
-        );
-        let parent = parents[0];
-        if floor.contains(&parent) {
-            visit.visit(repo, parent, gix::objs::Kind::Commit)?;
+        match parents.as_slice() {
+            [] => walk_tree_delta(repo, tree, None, visit)?,
+            [parent] => {
+                if floor.contains(parent) {
+                    visit.visit(repo, *parent, gix::objs::Kind::Commit)?;
+                }
+                let base = super::commit_tree(repo, *parent)?;
+                walk_tree_delta(repo, tree, Some(base), visit)?;
+                pending.push(*parent);
+            }
+            _ => anyhow::bail!("retained commit {commit_id} is a merge above the replay's floor"),
         }
-        let base = super::commit_tree(repo, parent)?;
-        walk_tree_delta(repo, tree, Some(base), visit)?;
-        pending.push(parent);
     }
     Ok(())
 }

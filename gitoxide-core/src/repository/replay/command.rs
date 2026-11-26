@@ -16,6 +16,7 @@ pub enum Action {
         upstream: BString,
         interactive: bool,
     },
+    StartPick(Vec<BString>),
     Status,
     Continue,
     Skip,
@@ -40,7 +41,7 @@ pub fn run(_repo: gix::Repository, _action: Action, _out: &mut dyn Write, _err: 
 
 #[cfg(target_os = "linux")]
 pub fn run(repo: gix::Repository, action: Action, out: &mut dyn Write, err: &mut dyn Write) -> Result<()> {
-    run_action(repo, action, out, err).map_err(|error| {
+    run_action(repo, action, out, err, "rebase").map_err(|error| {
         let full = error
             .chain()
             .filter_map(|cause| cause.downcast_ref::<std::io::Error>())
@@ -56,13 +57,78 @@ pub fn run(repo: gix::Repository, action: Action, out: &mut dyn Write, err: &mut
     })
 }
 
+/// Run a cherry-pick, using the one-shot path for the original single-commit form.
 #[cfg(target_os = "linux")]
-fn run_action(mut repo: gix::Repository, action: Action, out: &mut dyn Write, err: &mut dyn Write) -> Result<()> {
+pub fn run_cherry_pick(repo: gix::Repository, action: Action, out: &mut dyn Write, err: &mut dyn Write) -> Result<()> {
+    use gix::bstr::ByteSlice;
+    if let Action::StartPick(revisions) = &action
+        && let [revision] = revisions.as_slice()
+        && !revision.contains_str("..")
+    {
+        let _guard = crate::repository::switch::worktree_writer_guard(&repo)?;
+        return super::cherry_pick(&repo, revision.as_bstr());
+    }
+    run_action(repo, action, out, err, "cherry-pick")
+}
+
+#[cfg(not(target_os = "linux"))]
+pub fn run_cherry_pick(
+    _repo: gix::Repository,
+    action: Action,
+    _out: &mut dyn Write,
+    _err: &mut dyn Write,
+) -> Result<()> {
+    let arguments = match action {
+        Action::StartPick(revisions) => revisions.iter().map(ToString::to_string).collect::<Vec<_>>().join(" "),
+        Action::Continue => "--continue".into(),
+        Action::Abort => "--abort".into(),
+        Action::Skip => "--skip".into(),
+        Action::Status => anyhow::bail!("native cherry-pick requires Linux; run: git status"),
+        _ => anyhow::bail!("native cherry-pick requires Linux"),
+    };
+    anyhow::bail!("native cherry-pick requires Linux; run: git cherry-pick {arguments}")
+}
+
+/// Check whether ordinary literal staging should be routed to the replay child.
+pub fn cherry_pick_in_progress(repo: &gix::Repository) -> Result<bool> {
+    #[cfg(target_os = "linux")]
+    return Ok(super::Session::recorded_cherry_pick(repo)? == Some(true));
+    #[cfg(not(target_os = "linux"))]
+    {
+        let _ = repo;
+        Ok(false)
+    }
+}
+
+#[cfg(target_os = "linux")]
+fn run_action(
+    mut repo: gix::Repository,
+    action: Action,
+    out: &mut dyn Write,
+    err: &mut dyn Write,
+    command: &str,
+) -> Result<()> {
     use super::Session;
     use anyhow::{Context, ensure};
     use gix::bstr::ByteSlice;
     repo.make_paths_absolute()?;
     let active = repo.git_dir().join("brit-rebase").try_exists()?;
+    if let Action::StartPick(revisions) = action {
+        let mut session = Session::prepare_pick(&repo, &revisions)?;
+        return drive(&repo, &mut session, out, err);
+    }
+    let cherry_pick = command == "cherry-pick";
+    if active
+        && let Some(recorded) = Session::recorded_cherry_pick(&repo).ok().flatten()
+        && recorded != cherry_pick
+    {
+        let other = if recorded { "cherry-pick" } else { "rebase" };
+        if matches!(action, Action::Status) {
+            writeln!(out, "No active {command}. Run brit {other} --status.")?;
+            return Ok(());
+        }
+        anyhow::bail!("{other} in progress; run brit {other} --status");
+    }
     if let Action::Retire = action {
         match Session::retire(&repo)? {
             Some(retired) => report_retired(&retired, out)?,
@@ -87,7 +153,7 @@ fn run_action(mut repo: gix::Repository, action: Action, out: &mut dyn Write, er
         let cancelled = cancelled_preparations(&repo)?;
         match action {
             Action::Status => {
-                writeln!(out, "No active rebase.")?;
+                writeln!(out, "No active {command}.")?;
                 for path in receipts {
                     let (retired, copy) = super::cleanup::inspect(&repo, &path)?;
                     writeln!(
@@ -98,7 +164,7 @@ fn run_action(mut repo: gix::Repository, action: Action, out: &mut dyn Write, er
                 for path in cancelled {
                     writeln!(
                         out,
-                        "Cancelled preparation not yet removed: {path:?}; brit rebase --abort finishes it"
+                        "Cancelled preparation not yet removed: {path:?}; brit {command} --abort finishes it"
                     )?;
                 }
                 for path in crate::repository::switch::scratch_leftovers(repo.git_dir())? {
@@ -135,30 +201,34 @@ fn run_action(mut repo: gix::Repository, action: Action, out: &mut dyn Write, er
                 return Ok(());
             }
             _ if !receipts.is_empty() => anyhow::bail!(
-                "no rebase in progress, but a finished rebase's cleanup is pending; brit rebase --continue finishes it"
+                "no {command} in progress, but a finished replay's cleanup is pending; brit {command} --continue finishes it"
             ),
-            _ => anyhow::bail!("no rebase in progress"),
+            _ => anyhow::bail!("no {command} in progress"),
         }
     }
     if let Err(error) = Session::check_own(&repo) {
         if matches!(action, Action::Status) {
-            return report_unopenable(&repo, &error, out);
+            return report_unopenable(&repo, &error, out, command);
         }
-        return Err(error.context(
-            "the rebase journal does not open as this repository's own, so no brit command will change, rename or \
-             remove it; nothing was changed; brit rebase --status says what failed and what to do by hand",
-        ));
+        return Err(error.context(format!(
+            "the {command} journal does not open as this repository's own, so no brit command will change, rename or \
+             remove it; nothing was changed; brit {command} --status says what failed and what to do by hand",
+        )));
     }
     if !matches!(action, Action::Status) {
         Session::settle_pending(&repo)?;
     }
     if matches!(action, Action::Abort)
-        && let Some(differences) = Session::cancel_preparation(&repo)?
+        && let Some(differences) = Session::cancel_preparation_for(&repo, cherry_pick)?
     {
-        writeln!(
-            out,
-            "Rebase preparation cancelled; it had changed nothing live, so nothing was restored."
-        )?;
+        if cherry_pick {
+            writeln!(out, "Cherry-pick preparation cancelled before changing live state.")?;
+        } else {
+            writeln!(
+                out,
+                "Rebase preparation cancelled; it had changed nothing live, so nothing was restored."
+            )?;
+        }
         for difference in differences {
             writeln!(err, "warning: {difference}; left as found")?;
         }
@@ -171,8 +241,8 @@ fn run_action(mut repo: gix::Repository, action: Action, out: &mut dyn Write, er
             .any(|name| journal.join(name).symlink_metadata().is_ok())
     {
         anyhow::bail!(
-            "a rebase preparation stopped before it recorded anything and changed nothing live, so there is \
-             nothing to continue; brit rebase --abort removes its directory {journal:?}, then the rebase can be \
+            "a {command} preparation stopped before it recorded anything and changed nothing live, so there is \
+             nothing to continue; brit {command} --abort removes its directory {journal:?}, then the {command} can be \
              started again"
         );
     }
@@ -186,13 +256,13 @@ fn run_action(mut repo: gix::Repository, action: Action, out: &mut dyn Write, er
             {
                 writeln!(
                     out,
-                    "A rebase journal of this repository exists but could not be read in full: {error:#}. Nothing \
-                     was changed; brit rebase --abort tries to restore the original state."
+                    "A {command} journal of this repository exists but could not be read in full: {error:#}. Nothing \
+                     was changed; brit {command} --abort tries to restore the original state."
                 )?;
             } else {
                 writeln!(
                     out,
-                    "A rebase preparation stopped before it recorded anything and changed nothing live; brit rebase \
+                    "A {command} preparation stopped before it recorded anything and changed nothing live; brit {command} \
                      --abort removes its directory {journal:?}."
                 )?;
             }
@@ -200,6 +270,7 @@ fn run_action(mut repo: gix::Repository, action: Action, out: &mut dyn Write, er
         }
         Err(error) => return Err(error),
     };
+    session.require_operation(cherry_pick)?;
     // A stop recorded before its authoring session was created (a kill between
     // the two): each authoring command first creates it, as --continue does.
     if matches!(
@@ -241,7 +312,7 @@ fn run_action(mut repo: gix::Repository, action: Action, out: &mut dyn Write, er
         }
         Action::Stage { paths, expand } => {
             session.stage(&repo, &paths, expand)?;
-            session.status(out)
+            if cherry_pick { Ok(()) } else { session.status(out) }
         }
         Action::BeginSplit => {
             session.begin_split(&repo)?;
@@ -249,9 +320,9 @@ fn run_action(mut repo: gix::Repository, action: Action, out: &mut dyn Write, er
         }
         Action::Amend(message) => author(&repo, &mut session, message, out, err, true),
         Action::Commit(message) => author(&repo, &mut session, message, out, err, false),
-        Action::Start { .. } | Action::Retire => unreachable!("handled above"),
+        Action::Start { .. } | Action::StartPick(_) | Action::Retire => unreachable!("handled above"),
     };
-    result.with_context(|| format!("rebase phase {}; inspect with --status", session.phase()))
+    result.with_context(|| format!("{command} phase {}; inspect with --status", session.phase()))
 }
 
 #[cfg(target_os = "linux")]
@@ -289,14 +360,14 @@ fn continue_operation(
     out: &mut dyn Write,
     err: &mut dyn Write,
 ) -> Result<()> {
-    use super::{Advance, Session};
+    use super::Advance;
     if session.has_pending_decision() {
-        *session = Session::recover_decision(repo)?;
+        *session = session.resume_pending_decision(repo)?;
         if matches!(session.phase(), "authoring" | "empty" | "break") {
             if session.phase() == "authoring" && !repo.git_dir().join("brit-authoring").try_exists()? {
                 session.recover_stop(repo)?;
             }
-            return stopped(session, out);
+            return stopped(repo, session, out);
         }
     }
     if session.phase() == "prepared" && session.directory().join("pre-rebase").try_exists()? {
@@ -308,7 +379,7 @@ fn continue_operation(
     }
     match session.phase() {
         "preparing" => {
-            *session = Session::recover_preparation(repo)?;
+            *session = session.resume_preparation(repo)?;
         }
         "invoking-pre" => {
             session.recover_pre_hook(repo)?;
@@ -348,7 +419,7 @@ fn continue_operation(
                 progress,
                 Advance::Conflict | Advance::Empty | Advance::Edit | Advance::Break | Advance::Message
             ) {
-                return stopped(session, out);
+                return stopped(repo, session, out);
             }
         }
         _ => {}
@@ -367,21 +438,35 @@ fn drive(
     loop {
         if matches!(session.phase(), "ready-final" | "final-published") {
             session.finish(repo)?;
-            writeln!(out, "Rebase published at {}.", session.tip()?)?;
+            let command = if session.is_cherry_pick() {
+                "Cherry-pick"
+            } else {
+                "Rebase"
+            };
+            writeln!(out, "{command} published at {}.", session.tip()?)?;
             return cleanup(repo, session, out);
         }
         match session.advance(repo)? {
             Advance::Started | Advance::Step { .. } | Advance::Dropped | Advance::ReadyFinal => {}
             Advance::Conflict | Advance::Empty | Advance::Edit | Advance::Break | Advance::Message => {
-                return stopped(session, out);
+                return stopped(repo, session, out);
             }
         }
     }
 }
 
 #[cfg(target_os = "linux")]
-fn stopped(session: &super::Session, out: &mut dyn Write) -> Result<()> {
+fn stopped(repo: &gix::Repository, session: &super::Session, out: &mut dyn Write) -> Result<()> {
     session.status(out)?;
+    if session.is_cherry_pick() {
+        if session.phase() == "authoring" {
+            anyhow::bail!(
+                "{}; resolve and run brit add <paths>, then brit cherry-pick --continue",
+                session.describe_pick_conflict(repo)?
+            );
+        }
+        anyhow::bail!("cherry-pick stopped on an empty input; --continue keeps it, --skip drops it");
+    }
     if session.phase() == "empty" {
         anyhow::bail!("rebase stopped on an empty input; --continue keeps it, --skip drops it")
     }
@@ -395,12 +480,17 @@ fn stopped(session: &super::Session, out: &mut dyn Write) -> Result<()> {
 fn cleanup(repo: &gix::Repository, session: &mut super::Session, out: &mut dyn Write) -> Result<()> {
     let terminal = session.phase().to_owned();
     session.status(out)?;
+    let command = if session.is_cherry_pick() {
+        "Cherry-pick"
+    } else {
+        "Rebase"
+    };
     match session.cleanup(repo) {
         Ok(copy) => {
-            writeln!(out, "Rebase {terminal}; retained copy: {:?}", copy.path)?;
+            writeln!(out, "{command} {terminal}; retained copy: {:?}", copy.path)?;
             Ok(())
         }
-        Err(error) => anyhow::bail!("rebase {terminal}; cleanup pending, retained data remains: {error:#}"),
+        Err(error) => anyhow::bail!("{command} {terminal}; cleanup pending, retained data remains: {error:#}"),
     }
 }
 
@@ -450,11 +540,11 @@ fn report_retired(retired: &super::Retired, out: &mut dyn Write) -> Result<()> {
 /// `--status` for a journal that does not open as this repository's own: say what
 /// failed, that no Brit command will touch it, and what a person can do by hand.
 #[cfg(target_os = "linux")]
-fn report_unopenable(repo: &gix::Repository, error: &anyhow::Error, out: &mut dyn Write) -> Result<()> {
+fn report_unopenable(repo: &gix::Repository, error: &anyhow::Error, out: &mut dyn Write, command: &str) -> Result<()> {
     let directory = repo.git_dir().join("brit-rebase");
     writeln!(
         out,
-        "A rebase journal exists at {directory:?}, but it does not open as this repository's own: {error:#}."
+        "A {command} journal exists at {directory:?}, but it does not open as this repository's own: {error:#}."
     )?;
     writeln!(
         out,
@@ -463,8 +553,8 @@ fn report_unopenable(repo: &gix::Repository, error: &anyhow::Error, out: &mut dy
     )?;
     writeln!(
         out,
-        "If this repository was copied or moved while a rebase was in progress, the journal may describe ANOTHER \
-         repository's live rebase, at the location it records: finish or abort that rebase there, not here. HEAD, the \
+        "If this repository was copied or moved while a {command} was in progress, the journal may describe ANOTHER \
+         repository's live {command}, at the location it records: finish or abort that {command} there, not here. HEAD, the \
          index and the worktree of this copy may be part-way through it, and the journal's payload-* files hold the \
          uncommitted work it preserved."
     )?;
@@ -477,10 +567,10 @@ fn report_unopenable(repo: &gix::Repository, error: &anyhow::Error, out: &mut dy
     if let Some(recorded) = super::Session::recorded_location(repo) {
         writeln!(
             out,
-            "The journal records that its rebase ran in {} (no longer present), so this repository was most likely \
-             moved from there part-way through it. Moving it back to {} and running brit rebase --abort there \
-             restores HEAD, the index, the worktree and the uncommitted work exactly; brit rebase --continue there \
-             carries the rebase on.",
+            "The journal records that its {command} ran in {} (no longer present), so this repository was most likely \
+             moved from there part-way through it. Moving it back to {} and running brit {command} --abort there \
+             restores HEAD, the index, the worktree and the uncommitted work exactly; brit {command} --continue there \
+             carries the {command} on.",
             shell_quote(&recorded),
             shell_quote(&recorded)
         )?;
@@ -502,7 +592,7 @@ fn report_unopenable(repo: &gix::Repository, error: &anyhow::Error, out: &mut dy
     for name in references {
         writeln!(
             out,
-            "Retention ref {name} keeps that rebase's commits from garbage collection; remove it, once the journal \
+            "Retention ref {name} keeps that {command}'s commits from garbage collection; remove it, once the journal \
              is set aside, with: git update-ref -d {name}"
         )?;
     }

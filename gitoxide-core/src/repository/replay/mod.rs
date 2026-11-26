@@ -50,6 +50,7 @@ pub enum SelectionKind {
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct Candidate {
     pub commit: gix::ObjectId,
+    /// A null ID represents a root input to cherry-pick.
     pub parent: gix::ObjectId,
 }
 
@@ -87,6 +88,23 @@ pub(crate) fn validate_execution_policy(repo: &gix::Repository) -> Result<()> {
     Ok(())
 }
 
+fn validate_selection_repository(repo: &gix::Repository) -> Result<()> {
+    validate_execution_policy(repo)?;
+    #[cfg(target_os = "linux")]
+    {
+        super::switch::validate_local_history(repo)?;
+        super::switch::validate_object_boundaries(repo)?;
+    }
+    super::switch::ensure_no_pending(repo)?;
+    ensure!(repo.state().is_none(), "foreign operation in progress");
+    ensure!(!repo.is_shallow()?, "shallow history cannot prove replay selection");
+    ensure!(
+        std::env::var_os("GIT_INDEX_FILE").is_none(),
+        "alternate indexes are unsupported"
+    );
+    selection_interrupt()
+}
+
 impl Selection {
     /// Resolve only explicit, local revisions, prove the selected linear chain and
     /// verify what a replay of it reads. This function is read-only, including for
@@ -109,20 +127,7 @@ impl Selection {
     fn prepare_inner(repo: &gix::Repository, upstream: &BStr, bound: Option<(bool, u64)>) -> Result<Self> {
         ensure!(!gix::interrupt::is_triggered(), "replay selection interrupted");
         ensure!(!upstream.is_empty(), "an explicit local upstream is required");
-        validate_execution_policy(repo)?;
-        #[cfg(target_os = "linux")]
-        {
-            super::switch::validate_local_history(repo)?;
-            super::switch::validate_object_boundaries(repo)?;
-        }
-        super::switch::ensure_no_pending(repo)?;
-        ensure!(repo.state().is_none(), "foreign operation in progress");
-        ensure!(!repo.is_shallow()?, "shallow history cannot prove replay selection");
-        ensure!(
-            std::env::var_os("GIT_INDEX_FILE").is_none(),
-            "alternate indexes are unsupported"
-        );
-        selection_interrupt()?;
+        validate_selection_repository(repo)?;
         let original = head_commit_id(repo)?;
         let attachment = repo.head_name()?.map(|name| name.as_bstr().to_owned());
         let upstream_id = resolve_upstream(repo, upstream)?;
@@ -343,9 +348,13 @@ fn changed_paths(
     paths: &mut BTreeSet<BString>,
 ) -> Result<()> {
     selection_interrupt()?;
-    let before_tree = commit_tree(repo, before)?;
-    selection_interrupt()?;
-    let before = repo.index_from_tree(&before_tree)?;
+    let before = if before.is_null() {
+        gix::index::State::new(repo.object_hash())
+    } else {
+        let before_tree = commit_tree(repo, before)?;
+        selection_interrupt()?;
+        repo.index_from_tree(&before_tree)?.into()
+    };
     selection_interrupt()?;
     let after_tree = commit_tree(repo, after)?;
     selection_interrupt()?;
@@ -455,7 +464,13 @@ enum ReplayMode {
 
 impl Step {
     pub fn merge(repo: &gix::Repository, candidate: &Candidate, tip: gix::ObjectId) -> Result<Self> {
-        Self::merge_commit(repo, candidate.commit, Some(candidate.parent), tip, ReplayMode::Rebase)
+        Self::merge_commit(
+            repo,
+            candidate.commit,
+            (!candidate.parent.is_null()).then_some(candidate.parent),
+            tip,
+            ReplayMode::Rebase,
+        )
     }
 
     fn merge_commit(
@@ -517,7 +532,11 @@ impl Step {
         selection_interrupt()?;
         let mut footprint = conflicts.clone();
         {
-            let base_index = repo.index_from_tree(&base)?;
+            let base_index = if parent.is_none() {
+                gix::index::State::new(repo.object_hash())
+            } else {
+                repo.index_from_tree(&base)?.into()
+            };
             selection_interrupt()?;
             let theirs_index = repo.index_from_tree(&theirs)?;
             selection_interrupt()?;
