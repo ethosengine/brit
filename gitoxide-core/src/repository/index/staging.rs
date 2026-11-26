@@ -1,5 +1,10 @@
 //! Literal selection and native traversal, with one locked index publication.
-use std::{borrow::Cow, collections::BTreeSet, path::Path};
+use std::{
+    borrow::Cow,
+    collections::{BTreeMap, BTreeSet},
+    fs::Metadata,
+    path::{Path, PathBuf},
+};
 
 use gix::{
     ObjectId, Result,
@@ -68,6 +73,16 @@ pub fn stage_gitlink(repo: &gix::Repository, commit: &str, input: &BString) -> R
 /// Stage literal files and directories. Empty paths select the whole repository.
 /// With `update`, only existing index paths are selected.
 pub fn stage_paths(repo: gix::Repository, paths: &[BString], update: bool) -> Result<()> {
+    stage(repo, paths, update, false).map(drop)
+}
+
+/// Stage the whole worktree, including registered submodule pins.
+/// Return the paths of unregistered repositories skipped during staging.
+pub fn stage_all(repo: gix::Repository) -> Result<Vec<BString>> {
+    stage(repo, &[], false, true)
+}
+
+fn stage(repo: gix::Repository, paths: &[BString], update: bool, stage_submodules: bool) -> Result<Vec<BString>> {
     let root = repo
         .workdir()
         .ok_or_else(|| gix::error::message("A worktree is required").validation_error())?;
@@ -77,17 +92,68 @@ pub fn stage_paths(repo: gix::Repository, paths: &[BString], update: bool) -> Re
     let index = read_index_for_staging(&repo)?;
     let scopes = selection(&repo, root, paths)?;
     let selected = |path: &BStr| scopes.iter().any(|scope| contains(scope.as_bstr(), path));
+    let mut submodules = BTreeSet::new();
+    if stage_submodules && let Some(modules) = repo.modules()? {
+        for name in modules.names() {
+            submodules.extend(modules.try_path(name)?);
+        }
+    }
     let mut candidates = BTreeSet::<BString>::new();
     for entry in index.entries() {
         let path = entry.path(&index);
-        if selected(path) {
+        if submodules.contains(path) {
+            if entry.mode != Mode::COMMIT || entry.stage_raw() != 0 {
+                bail!("Cannot replace a conflicted or non-gitlink index entry at {path}".validation());
+            }
+        } else if selected(path) {
             if !matches!(entry.mode, Mode::FILE | Mode::FILE_EXECUTABLE | Mode::SYMLINK) {
                 bail!("Selected submodules and unsupported index modes require Git: {path}".unsupported());
             }
             candidates.insert(path.into());
         }
     }
+    let ignore_case = repo.config_snapshot().try_boolean("core.ignorecase")? == Some(true);
+    let precompose = repo.config_snapshot().try_boolean("core.precomposeunicode")? == Some(true);
     let mut ignores = repo.excludes(&index, None, Default::default())?;
+    let mut gitlink_changes = BTreeMap::new();
+    for path in &submodules {
+        check_cancelled()?;
+        validate_path_spelling(path, &index, ignore_case, precompose)?;
+        let mut prefix = path.clone();
+        prefix.push(b'/');
+        if index.prefixed_entries_range(prefix.as_bstr()).is_some()
+            || submodules
+                .range(prefix.clone()..)
+                .next()
+                .is_some_and(|other| other.starts_with(prefix.as_bytes()))
+        {
+            bail!("Cannot stage a submodule over indexed files or another submodule: {path}".validation());
+        }
+        let indexed = index.entry_by_path(path.as_bstr()).map(|entry| entry.id);
+        let (absolute, metadata) = worktree_metadata(root, path.as_bstr(), true)?;
+        match metadata {
+            Some(meta) if meta.is_dir() => {
+                if let Some(commit_id) = submodule_head(&repo, path, &absolute)? {
+                    if Some(commit_id) != indexed
+                        && (indexed.is_some()
+                            || ignores
+                                .at_entry(path.as_bstr(), Some(Mode::DIR))?
+                                .matching_exclude_pattern()
+                                .is_none_or(|m| m.pattern.is_negative()))
+                    {
+                        gitlink_changes.insert(path.clone(), Some((Mode::COMMIT, commit_id)));
+                    }
+                } else if indexed.is_none() {
+                    bail!("Submodule {path} has neither a checkout nor an index gitlink".validation());
+                }
+            }
+            Some(_) => bail!("Submodule checkout is not a directory: {path}".validation()),
+            None if indexed.is_some() => {
+                gitlink_changes.insert(path.clone(), None);
+            }
+            None => bail!("Submodule {path} has neither a checkout nor an index gitlink".validation()),
+        }
+    }
     for scope in &scopes {
         if scope.is_empty() {
             continue;
@@ -134,6 +200,9 @@ pub fn stage_paths(repo: gix::Repository, paths: &[BString], update: bool) -> Re
         scopes: &scopes,
         entries: Vec::new(),
         nested: None,
+        submodules: &submodules,
+        warn_embedded: stage_submodules,
+        embedded: BTreeSet::new(),
     };
     repo.dirwalk(
         &index,
@@ -153,6 +222,7 @@ pub fn stage_paths(repo: gix::Repository, paths: &[BString], update: bool) -> Re
     for entry in walk.entries {
         let path = entry.rela_path;
         if !selected(path.as_bstr())
+            || submodules.contains(&path)
             || matches!(
                 entry.status,
                 gix::dir::entry::Status::Ignored(_) | gix::dir::entry::Status::Pruned
@@ -161,8 +231,11 @@ pub fn stage_paths(repo: gix::Repository, paths: &[BString], update: bool) -> Re
             continue;
         }
         if entry.disk_kind == Some(Kind::Repository) || entry.index_kind == Some(Kind::Repository) {
-            if entry.index_kind.is_some() || matches!(entry.status, gix::dir::entry::Status::Tracked) {
+            if entry.index_kind.is_some() || (!stage_submodules && entry.status == gix::dir::entry::Status::Tracked) {
                 bail!("Selected nested repositories and submodules require Git: {path}".unsupported());
+            }
+            if stage_submodules {
+                walk.embedded.insert(path);
             }
             continue;
         }
@@ -177,8 +250,6 @@ pub fn stage_paths(repo: gix::Repository, paths: &[BString], update: bool) -> Re
         }
     }
     check_cancelled()?;
-    let ignore_case = repo.config_snapshot().try_boolean("core.ignorecase")? == Some(true);
-    let precompose = repo.config_snapshot().try_boolean("core.precomposeunicode")? == Some(true);
     let budget = gix::utils::stream::Budget::new(&std::env::temp_dir()).or_error()?;
     let mut replacements = Vec::new();
     for path in &candidates {
@@ -204,7 +275,7 @@ pub fn stage_paths(repo: gix::Repository, paths: &[BString], update: bool) -> Re
     let mut state = gix::index::State::new(repo.object_hash());
     for entry in index.entries() {
         let path = entry.path(&index);
-        if !candidates.contains(path) {
+        if !candidates.contains(path) && !gitlink_changes.contains_key(path) {
             state.dangerously_push_entry(
                 entry.stat,
                 entry.id,
@@ -214,8 +285,11 @@ pub fn stage_paths(repo: gix::Repository, paths: &[BString], update: bool) -> Re
             );
         }
     }
-    for (path, replacement) in replacements {
-        if let Some((mode, blob_id)) = replacement {
+    for (path, replacement) in replacements
+        .into_iter()
+        .chain(gitlink_changes.iter().map(|(path, &replacement)| (path, replacement)))
+    {
+        if let Some((mode, object_id)) = replacement {
             // Replacing an ancestor outside the selection would damage an unrelated
             // staged entry. A broader directory selection must name that transition.
             if state.entries().iter().any(|entry| {
@@ -227,7 +301,7 @@ pub fn stage_paths(repo: gix::Repository, paths: &[BString], update: bool) -> Re
                         .validation()
                 );
             }
-            state.dangerously_push_entry(Stat::default(), blob_id, Flags::empty(), mode, path.as_bstr());
+            state.dangerously_push_entry(Stat::default(), object_id, Flags::empty(), mode, path.as_bstr());
         }
     }
     let mut undo = index.resolve_undo().cloned().unwrap_or_default();
@@ -258,7 +332,30 @@ pub fn stage_paths(repo: gix::Repository, paths: &[BString], update: bool) -> Re
     state.set_resolve_undo(undo);
     state.sort_entries();
     let output = gix::index::File::from_state(state, repo.index_path());
-    publish_index(&output, lock)
+    publish_index(&output, lock)?;
+    Ok(walk.embedded.into_iter().collect())
+}
+
+fn submodule_head(repo: &gix::Repository, path: &BString, checkout: &Path) -> Result<Option<ObjectId>> {
+    let git_entry = checkout.join(gix::discover::DOT_GIT_DIR);
+    match git_entry.symlink_metadata() {
+        Ok(meta) if meta.is_dir() || meta.is_file() => {}
+        Ok(_) => bail!("Unsupported .git entry in submodule {path}".validation()),
+        Err(err) if err.kind() == std::io::ErrorKind::NotFound => return Ok(None),
+        Err(err) => return Err(err).or_error(),
+    }
+    let child = gix::open_opts(git_entry, gix::open::Options::isolated())
+        .or_raise(|| gix::error::message!("Could not open submodule {path}"))?;
+    if child.common_dir().canonicalize().or_error()? == repo.common_dir().canonicalize().or_error()?
+        || child.workdir().map(Path::canonicalize).transpose().or_error()? != Some(checkout.canonicalize().or_error()?)
+        || child.object_hash() != repo.object_hash()
+    {
+        bail!("Submodule {path} has an incompatible Git directory, worktree or object format".validation());
+    }
+    let commit = child
+        .head_commit()
+        .or_raise(|| gix::error::message!("Could not read the checked-out commit of submodule {path}"))?;
+    Ok(Some(commit.id))
 }
 
 fn publish_index(index: &gix::index::File, mut lock: gix::lock::File) -> Result<()> {
@@ -368,26 +465,37 @@ fn select_path(repo: &gix::Repository, root: &Path, input: &BString) -> Result<B
 
 /// Whether a path still names a file without following any directory symlink.
 fn is_file(root: &Path, path: &BStr) -> Result<bool> {
+    Ok(worktree_metadata(root, path, false)?
+        .1
+        .is_some_and(|meta| !meta.is_dir()))
+}
+
+fn worktree_metadata(root: &Path, path: &BStr, allow_repository_at_leaf: bool) -> Result<(PathBuf, Option<Metadata>)> {
     let mut current = root.to_owned();
-    let components: Vec<_> = path.split(|b| *b == b'/').collect();
-    for (position, component) in components.iter().enumerate() {
+    let mut components = path.split(|b| *b == b'/').peekable();
+    while let Some(component) = components.next() {
         gix::validate::path::component(component.as_bstr(), None, component_options()).or_error()?;
         current.push(gix::path::from_bstr(Cow::Borrowed(component.as_bstr()))?.as_ref());
+        let leaf = components.peek().is_none();
         match std::fs::symlink_metadata(&current) {
             Ok(meta)
-                if meta.is_dir()
+                if !(leaf && allow_repository_at_leaf)
+                    && meta.is_dir()
                     && (current.join(".git").symlink_metadata().is_ok() || gix::discover::is_git(&current).is_ok()) =>
             {
                 bail!("Selected nested repositories and submodules require Git: {path}".unsupported());
             }
-            Ok(meta) if position + 1 == components.len() => return Ok(!meta.is_dir()),
-            Ok(meta) if !meta.is_dir() => return Ok(false),
+            Ok(meta) if leaf => return Ok((current, Some(meta))),
+            Ok(meta) if !meta.is_dir() && allow_repository_at_leaf => {
+                bail!("Submodule paths must not traverse symlink or non-directory ancestors: {path}".validation());
+            }
+            Ok(meta) if !meta.is_dir() => return Ok((current, None)),
             Ok(_) => {}
-            Err(err) if err.kind() == std::io::ErrorKind::NotFound => return Ok(false),
+            Err(err) if err.kind() == std::io::ErrorKind::NotFound => return Ok((current, None)),
             Err(err) => return Err(err).or_error(),
         }
     }
-    Ok(false)
+    Ok((current, None))
 }
 
 struct SelectionWalk<'a> {
@@ -395,6 +503,9 @@ struct SelectionWalk<'a> {
     nested: Option<BString>,
     scopes: &'a [BString],
     entries: Vec<gix::dir::Entry>,
+    submodules: &'a BTreeSet<BString>,
+    warn_embedded: bool,
+    embedded: BTreeSet<BString>,
 }
 
 impl gix::dir::walk::Delegate for SelectionWalk<'_> {
@@ -413,6 +524,7 @@ impl gix::dir::walk::Delegate for SelectionWalk<'_> {
             contains(scope.as_bstr(), entry.rela_path.as_ref()) || contains(entry.rela_path.as_ref(), scope.as_bstr())
         });
         if !relevant
+            || self.submodules.contains(entry.rela_path.as_ref())
             || !entry
                 .status
                 .can_recurse(entry.disk_kind, entry.pathspec_match, for_deletion, root_is_repository)
@@ -427,6 +539,8 @@ impl gix::dir::walk::Delegate for SelectionWalk<'_> {
             if absolute.join(".git").symlink_metadata().is_ok() || gix::discover::is_git(&absolute).is_ok() {
                 if entry.index_kind.is_some() || matches!(entry.status, gix::dir::entry::Status::Tracked) {
                     self.nested = Some(entry.rela_path.clone().into_owned());
+                } else if self.warn_embedded && entry.status == gix::dir::entry::Status::Untracked {
+                    self.embedded.insert(entry.rela_path.into_owned());
                 }
                 return false;
             }

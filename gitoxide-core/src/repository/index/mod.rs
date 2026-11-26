@@ -106,7 +106,7 @@ pub mod authoring;
 pub use authoring::{add_paths, restore_staged, restore_staged_and_worktree};
 
 mod staging;
-pub use staging::{stage_gitlink, stage_paths};
+pub use staging::{stage_all, stage_gitlink, stage_paths};
 
 mod worktree_restore;
 pub use worktree_restore::restore_worktree;

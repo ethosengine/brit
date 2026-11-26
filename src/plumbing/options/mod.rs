@@ -263,7 +263,8 @@ pub enum Subcommands {
         /// Stage tracked modifications and deletions; without paths, select the entire repository.
         #[clap(short = 'u', long, conflicts_with = "all")]
         update: bool,
-        /// Include additions, modifications and deletions; without paths, select the entire repository.
+        /// Include additions, modifications and deletions. Without paths, also stage registered
+        /// submodule pins and warn about embedded repositories left unstaged.
         #[clap(short = 'A', long)]
         all: bool,
         /// Stage a full commit ID at one declared submodule path without checking it out.

@@ -1,4 +1,4 @@
-//! Explicit-path native authoring, compared with stock Git in disposable repositories.
+//! Native authoring, compared with stock Git in disposable repositories.
 use std::{fs, path::Path};
 
 use anyhow::{ensure, Result};
@@ -53,6 +53,145 @@ fn fixture(label: &str) -> Result<TestRepo> {
     fs::write(repo.path().join("private"), "private\n")?;
     fs::write(repo.path().join("selected"), "selected change\n")?;
     Ok(repo)
+}
+
+#[test]
+fn add_all_stages_submodule_pins_and_skips_embedded_repositories() -> gix_testtools::TestResult {
+    add_all_submodule_parity(false)
+}
+
+#[test]
+fn add_all_stages_submodule_pins_in_a_linked_worktree() -> gix_testtools::TestResult {
+    add_all_submodule_parity(true)
+}
+
+fn add_all_submodule_parity(linked: bool) -> gix_testtools::TestResult {
+    let child = TestRepo::new("add-all-child")?;
+    let first = child.commit_file("tracked", "first\n")?;
+    let next = child.commit_file("tracked", "next\n")?;
+    let source = child.path().to_string_lossy().replace(std::path::MAIN_SEPARATOR, "/");
+    let actual = TestRepo::new("add-all-brit")?;
+    let oracle = TestRepo::new("add-all-git")?;
+    let worktrees = tempfile::tempdir()?;
+    let setup = |repo: &TestRepo, label: &str| -> Result<std::path::PathBuf> {
+        repo.commit_file("modified", "original\n")?;
+        for module in ["deps/stable", "deps/moved", "deps/unpopulated", "deps/removed"] {
+            git(
+                repo.path(),
+                &["-c", "protocol.file.allow=always", "submodule", "add", &source, module],
+            )?;
+            git(&repo.path().join(module), &["checkout", "--detach", &first])?;
+            git(repo.path(), &["add", "--", module])?;
+        }
+        repo.commit_file("deleted", "remove me\n")?;
+        let root = if linked {
+            let root = worktrees.path().join(label);
+            let path = root.to_str().expect("UTF-8 linked fixture path");
+            git(repo.path(), &["worktree", "add", "--detach", path])?;
+            git(
+                &root,
+                &["-c", "protocol.file.allow=always", "submodule", "update", "--init"],
+            )?;
+            root
+        } else {
+            repo.path().to_owned()
+        };
+        git(&root.join("deps/moved"), &["checkout", "--detach", &next])?;
+        fs::write(root.join("deps/stable/tracked"), "dirty at the original pin\n")?;
+        fs::write(root.join("deps/moved/untracked"), "untracked inside submodule\n")?;
+        git(&root, &["submodule", "deinit", "--", "deps/unpopulated"])?;
+        fs::write(root.join("deps/unpopulated/private"), "inside unpopulated submodule\n")?;
+        fs::remove_dir_all(root.join("deps/removed"))?;
+        git(&root, &["clone", &source, "embedded"])?;
+        fs::write(root.join("embedded/private"), "inside embedded repository\n")?;
+        git(&root, &["clone", &source, "deps/ignored"])?;
+        git(
+            &root,
+            &[
+                "config",
+                "--file",
+                ".gitmodules",
+                "submodule.ignored.path",
+                "deps/ignored",
+            ],
+        )?;
+        fs::write(root.join(".gitignore"), "/deps/ignored/\n")?;
+        fs::write(root.join("modified"), "updated\n")?;
+        fs::write(root.join("new"), "new file\n")?;
+        fs::remove_file(root.join("deleted"))?;
+        Ok(root)
+    };
+    let actual_root = setup(&actual, "brit")?;
+    let oracle_root = setup(&oracle, "git")?;
+    let actual_main_before = index(actual.path())?;
+    let oracle_result = gix_testtools::git_command(&oracle_root)
+        .env("LC_ALL", "C")
+        .args(["add", "-A"])
+        .output()?;
+    assert!(oracle_result.status.success(), "Git add: {:?}", oracle_result.stderr);
+    assert!(
+        String::from_utf8(oracle_result.stderr)?.contains("warning: adding embedded git repository: embedded"),
+        "Git should warn when it stages the embedded repository"
+    );
+    assert_eq!(
+        git(&oracle_root, &["ls-files", "--stage", "--", "embedded"])?,
+        format!("160000 {next} 0\tembedded\n").into_bytes(),
+        "Git stages the embedded repo as one gitlink"
+    );
+    git(&oracle_root, &["update-index", "--force-remove", "--", "embedded"])?;
+
+    let output = success(&actual_root, &["add", "-A"])?;
+    assert_eq!(
+        output.stderr.lines().collect::<Vec<_>>(),
+        ["warning: skipping embedded git repository: embedded"],
+        "Brit should warn once and name the unstaged repository"
+    );
+    assert_eq!(
+        entries(&actual_root)?,
+        entries(&oracle_root)?,
+        "mode, OID, stage and path must match Git after removing its embedded gitlink"
+    );
+    for (module, pin) in [
+        ("deps/stable", &first),
+        ("deps/moved", &next),
+        ("deps/unpopulated", &first),
+    ] {
+        assert_eq!(
+            git(&actual_root, &["ls-files", "--stage", "--", module])?,
+            format!("160000 {pin} 0\t{module}\n").into_bytes(),
+            "only the expected gitlink belongs in the index for {module}"
+        );
+    }
+    if linked {
+        assert_eq!(
+            index(actual.path())?,
+            actual_main_before,
+            "stage in the linked index only"
+        );
+    }
+    Ok(())
+}
+
+#[test]
+fn add_all_refuses_declared_submodule_without_checkout_or_pin() -> gix_testtools::TestResult {
+    let repo = TestRepo::new("add-all-missing-submodule")?;
+    repo.commit_file(
+        ".gitmodules",
+        "[submodule \"child\"]
+    path = deps/child
+    url = ../child
+",
+    )?;
+    fs::write(repo.path().join("ordinary"), "would be staged\n")?;
+    let before = index(repo.path())?;
+    let output = brit(repo.path(), &["add", "-A"])?;
+    assert!(
+        !output.status.success(),
+        "a declared submodule with no checkout or pin must refuse"
+    );
+    assert!(output.stderr.contains("deps/child"), "{}", output.stderr);
+    assert_eq!(index(repo.path())?, before, "refusal must leave the index untouched");
+    Ok(())
 }
 
 #[test]
