@@ -45,3 +45,6 @@ $**/fuzz/Cargo.lock
 !/.zed/
 /.zed/*
 !/.zed/tasks.json
+
+# Git sources for parity reference; CI checks them out (docs/parity/git-reference.json)
+/vendor/git/
