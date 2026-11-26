@@ -78,7 +78,10 @@ release_install_migrates_legacy_link() {
   local old_release=$fixture/prefix/releases/$source_b.legacy
   mkdir -p "$old_release" "$fixture/prefix/bin"
   cp "$fixture/b/brit" "$old_release/brit"
-  ln -s "$old_release/brit" "$fixture/prefix/bin/brit"
+  # Write the legacy link through a symbolic parent, as macOS's /var -> /private/var does
+  # for every mktemp path. The installer compares physical paths, so this still migrates.
+  ln -s . "$fixture/alias"
+  ln -s "$fixture/alias/prefix/releases/$source_b.legacy/brit" "$fixture/prefix/bin/brit"
   install "$fixture/a" "$source_a" "$hash_a"
   test "$(sha256_file "$fixture/prefix/bin/brit")" = "$hash_a"
   test "$(sha256_file "$old_release/brit")" = "$hash_b"

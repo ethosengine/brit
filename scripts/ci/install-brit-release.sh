@@ -66,7 +66,14 @@ mkdir -p -- "$prefix/bin" "$prefix/releases"
 [ ! -d "$prefix/bin/brit" ] || fail 'active executable must not name a directory'
 current=$prefix/current
 release_for_binary() {
-  local target=$1 generation
+  local target=$1 generation dir
+  # The prefix is physical (pwd -P). A link written through a symbolic parent, such as
+  # macOS's /var -> /private/var, names the same release by another spelling, so compare
+  # the release directory physically. The release directory itself must not be a link.
+  dir=${target%/brit}
+  [ "$dir" != "$target" ] && [ -d "$dir" ] && [ ! -L "$dir" ] || return 1
+  dir=$(cd -- "$dir" && pwd -P) || return 1
+  target=$dir/brit
   case "$target" in "$prefix/releases/"*) ;; *) return 1 ;; esac
   generation=${target#"$prefix/releases/"}
   [[ "$generation" =~ ^[0-9a-f]{40}\.[a-zA-Z0-9]+/brit$ ]] &&
