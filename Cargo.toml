@@ -7,7 +7,7 @@ repository = "https://github.com/GitoxideLabs/gitoxide"
 authors = ["Sebastian Thiel <sebastian.thiel@icloud.com>"]
 edition = "2024"
 license = "MIT OR Apache-2.0"
-version = "0.61.7"
+version = "0.61.8"
 # Rust 1.100 is the pinned toolchain (rust-toolchain.toml); brit raises each crate as it changes.
 rust-version = "1.100"
 include = ["/src/**/*", "/build.rs", "/LICENSE-*", "/README.md"]
