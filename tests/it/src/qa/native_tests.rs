@@ -114,11 +114,32 @@ fn test_command(
     Ok(command)
 }
 
+/// Upstream tests that fail intermittently because of an upstream defect brit has diagnosed but does not
+/// patch: upstream-owned `gix-*` code stays byte-identical. Each entry names its cause; remove it once
+/// an upstream merge brings in the fix.
+const QUARANTINED: &[(&str, &str)] = &[
+    (
+        "package(=gix-fsmonitor) & test(=server::asynchronous::cancelling_startup_does_not_leave_an_endpoint_owned)",
+        "a timed-out Unix startup's bind worker retries the startup lock without reading the stop flag, so it can bind \
+         the socket after its replacement shut down (18 of 3000 on Linux, 2026-11-25)",
+    ),
+    (
+        "package(=gix-fsmonitor-daemon) & binary(=interoperability) & (test(=native_queries_preserve_coverage_through_unicode_and_case_root_aliases) | test(=linked_worktree_uses_external_cookie_coverage))",
+        "on macOS a cold FSEventStreamFlushSync can outlast the fence deadline after the marker was delivered; the \
+         timeout marks coverage unhealthy and every query answers a full rescan for the five-second retry",
+    ),
+];
+
 fn native_filter(windows_arm: bool, requested: Option<&str>) -> String {
     // Workspace unification can enable notify, but gix/Cargo.toml runs these tests once in a dedicated variant.
     let mut excluded = String::from(
         "(package(=internal-tools) & binary(=qa)) | (package(=gix) & (test(notify::) | test(=repository::worktree::linked_worktree_removal_notifies_through_shared_metadata)))",
     );
+    for (expression, _cause) in QUARANTINED {
+        excluded.push_str(" | (");
+        excluded.push_str(expression);
+        excluded.push(')');
+    }
     if windows_arm {
         excluded.push_str(" | test(performance) | test(speed)");
     }
@@ -653,6 +674,18 @@ mod tests {
     }
 
     #[test]
+    fn every_quarantined_upstream_test_names_its_cause() {
+        for (expression, cause) in QUARANTINED {
+            assert!(expression.contains("package(="), "{expression} names its package");
+            assert!(cause.len() > 40, "{expression} explains why it is quarantined");
+            assert!(
+                native_filter(false, None).contains(expression),
+                "{expression} is excluded"
+            );
+        }
+    }
+
+    #[test]
     fn diagnostic_filter_intersects_existing_replay_filters() -> gix_error::TestResult {
         let requested = "test(one) | test(two)";
         let (build, replay) = variant_arguments(run::Command::new(
@@ -786,7 +819,7 @@ mod tests {
                     "snapshot",
                     "--no-tests=pass",
                     "-E",
-                    "not ((package(=internal-tools) & binary(=qa)) | (package(=gix) & (test(notify::) | test(=repository::worktree::linked_worktree_removal_notifies_through_shared_metadata))))",
+                    "not ((package(=internal-tools) & binary(=qa)) | (package(=gix) & (test(notify::) | test(=repository::worktree::linked_worktree_removal_notifies_through_shared_metadata))) | (package(=gix-fsmonitor) & test(=server::asynchronous::cancelling_startup_does_not_leave_an_endpoint_owned)) | (package(=gix-fsmonitor-daemon) & binary(=interoperability) & (test(=native_queries_preserve_coverage_through_unicode_and_case_root_aliases) | test(=linked_worktree_uses_external_cookie_coverage))))",
                 ]
                 .map(OsStr::new),
                 "both fixture modes reuse saved binaries without repeating self-tests or the dedicated notify variant"
@@ -832,7 +865,7 @@ mod tests {
             command.get_args().collect::<Vec<_>>().ends_with(
                 &[
                     "-E",
-                    "not ((package(=internal-tools) & binary(=qa)) | (package(=gix) & (test(notify::) | test(=repository::worktree::linked_worktree_removal_notifies_through_shared_metadata))) | test(performance) | test(speed))",
+                    "not ((package(=internal-tools) & binary(=qa)) | (package(=gix) & (test(notify::) | test(=repository::worktree::linked_worktree_removal_notifies_through_shared_metadata))) | (package(=gix-fsmonitor) & test(=server::asynchronous::cancelling_startup_does_not_leave_an_endpoint_owned)) | (package(=gix-fsmonitor-daemon) & binary(=interoperability) & (test(=native_queries_preserve_coverage_through_unicode_and_case_root_aliases) | test(=linked_worktree_uses_external_cookie_coverage))) | test(performance) | test(speed))",
                 ]
                 .map(OsStr::new)
             ),
