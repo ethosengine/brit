@@ -6,7 +6,9 @@ pub struct Options {
     pub format: OutputFormat,
     pub dry_run: bool,
     pub remote: Option<String>,
-    /// If non-empty, override all ref-specs otherwise configured in the remote
+    /// If non-empty, override the configured fetch refspecs. A named source without an
+    /// explicit destination uses any applicable configured tracking mappings. Fetch reports
+    /// whether a named source changes a local ref.
     pub ref_specs: Vec<BString>,
     pub shallow: gix::remote::fetch::Shallow,
     pub handshake_info: bool,
@@ -309,7 +311,11 @@ pub(crate) mod function {
             transaction::{PreviousValue, RefEdit},
         },
         refspec::match_group::validate::Fix,
-        remote::fetch::{Status, refs::update::TypeChange},
+        remote::fetch::{
+            Status,
+            refmap::Source,
+            refs::update::{Mode, TypeChange},
+        },
     };
     use layout::{
         backends::svg::SVGWriter,
@@ -415,16 +421,12 @@ pub(crate) mod function {
         let tracking = |advertised: Option<&std::collections::BTreeSet<gix::bstr::BString>>| {
             super::opportunistic_tracking_specs(&configured, named, &ref_specs, advertised)
         };
-        let provisional = if ref_specs.is_empty() {
+        let mut extra_refspecs = if ref_specs.is_empty() {
             Vec::new()
         } else {
             remote.replace_refspecs(ref_specs.iter(), gix::remote::Direction::Fetch)?;
             remote = remote.with_fetch_tags(gix::remote::fetch::Tags::None);
             tracking(None)
-        };
-        let options = |extra_refspecs| gix::remote::ref_map::Options {
-            extra_refspecs,
-            ..Default::default()
         };
         // Every advertisement a fetch proceeds on must hold each ref the command line names.
         let ensure_matched = |map: &gix::remote::fetch::RefMap| -> Result<()> {
@@ -451,35 +453,43 @@ pub(crate) mod function {
                     .join(", ")
             )));
         };
-        let mut prepared = remote
-            .connect(gix::remote::Direction::Fetch)?
-            .prepare_fetch(&mut progress, options(provisional.clone()))?;
-        if !ref_specs.is_empty() {
-            ensure_matched(prepared.ref_map())?;
-            // A short name that more than one advertised ref expands to resolves to the best
-            // one only; reconnect without the other candidates' tracking updates.
-            let advertised: std::collections::BTreeSet<gix::bstr::BString> = prepared
-                .ref_map()
-                .remote_refs
-                .iter()
-                .map(|r| r.unpack().0.to_owned())
-                .collect();
+        let mut reconnects = 0;
+        let prepared = loop {
+            let prepared = remote.connect(gix::remote::Direction::Fetch)?.prepare_fetch(
+                &mut progress,
+                gix::remote::ref_map::Options {
+                    extra_refspecs,
+                    ..Default::default()
+                },
+            )?;
+            if ref_specs.is_empty() {
+                break prepared;
+            }
+            let map = prepared.ref_map();
+            ensure_matched(map)?;
+            // A short name resolves to its best match on this connection. Reconnect if the
+            // map includes a lower-priority candidate or lacks the newly selected mapping.
+            let advertised: std::collections::BTreeSet<gix::bstr::BString> =
+                map.remote_refs.iter().map(|r| r.unpack().0.to_owned()).collect();
             let needed = tracking(Some(&advertised));
-            let stray = prepared.ref_map().mappings.iter().any(|mapping| {
+            let unexpected = map.mappings.iter().any(|mapping| {
                 mapping
                     .spec_index
                     .implicit_index()
-                    .is_some_and(|index| !needed.contains(&provisional[index]))
+                    .is_some_and(|index| !needed.contains(&map.extra_refspecs[index]))
             });
-            if stray {
-                drop(prepared);
-                prepared = remote
-                    .connect(gix::remote::Direction::Fetch)?
-                    .prepare_fetch(&mut progress, options(needed))?;
-                // The remote may have changed between the two advertisements.
-                ensure_matched(prepared.ref_map())?;
+            if !unexpected && needed.iter().all(|spec| map.extra_refspecs.contains(spec)) {
+                break prepared;
             }
-        }
+            // Allow one reconnect to narrow the candidates and one more if the remote changed.
+            if reconnects == 2 {
+                bail!(validation(format!(
+                    "ref selection on {remote_display} kept changing. Retry the fetch."
+                )));
+            }
+            reconnects += 1;
+            extra_refspecs = needed;
+        };
         if prepared.ref_map().mappings.iter().any(|mapping| {
             mapping
                 .local
@@ -701,7 +711,6 @@ pub(crate) mod function {
     /// Updates pair with ref-map mappings by position; a count mismatch would name the wrong
     /// refs, so it is an error rather than a silent truncation.
     fn rejected_updates(res: &gix::remote::fetch::Outcome) -> Result<Vec<String>> {
-        use gix::remote::fetch::refs::update::Mode;
         let update_refs = match &res.status {
             Status::NoPackReceived { update_refs, .. } | Status::Change { update_refs, .. } => update_refs,
         };
@@ -819,6 +828,13 @@ pub(crate) mod function {
         mut out: impl std::io::Write,
         mut err: impl std::io::Write,
     ) -> Result<()> {
+        // Several refspecs can map one remote ref. Record whether any gives it a destination.
+        let mut mapped_refs = std::collections::BTreeMap::new();
+        for mapping in &map.mappings {
+            if let Some(name) = mapping.remote.as_name() {
+                *mapped_refs.entry(name).or_default() |= mapping.local.is_some();
+            }
+        }
         let mut last_spec_index = gix::remote::fetch::refmap::SpecIndex::ExplicitInRemote(usize::MAX);
         let mut updates = update_refs
             .iter_mapping_updates(&map.mappings, refspecs, &map.extra_refspecs)
@@ -860,7 +876,7 @@ pub(crate) mod function {
             }
 
             match skipped_due_to_implicit_tag.as_mut() {
-                Some(num_skipped) if matches!(update.mode, gix::remote::fetch::refs::update::Mode::NoChangeNeeded) => {
+                Some(num_skipped) if update.mode == Mode::NoChangeNeeded => {
                     *num_skipped += 1;
                     continue;
                 }
@@ -869,30 +885,38 @@ pub(crate) mod function {
 
             write!(out, "\t").or_error()?;
             match &mapping.remote {
-                gix::remote::fetch::refmap::Source::ObjectId(id) => {
+                Source::ObjectId(id) => {
                     write!(out, "{}", id.attach(repo).shorten_or_id()).or_error()?;
                 }
-                gix::remote::fetch::refmap::Source::Ref(r) => {
+                Source::Ref(r) => {
                     crate::repository::remote::refs::print_ref(&mut out, r).or_error()?;
                 }
             }
-            let mode_and_type = update.type_change.map_or_else(
-                || format!("{}", update.mode),
-                |type_change| {
-                    format!(
-                        "{} ({})",
-                        update.mode,
-                        match type_change {
-                            TypeChange::DirectToSymbolic => {
-                                "direct ref overwrites symbolic"
-                            }
-                            TypeChange::SymbolicToDirect => {
-                                "symbolic ref overwrites direct"
-                            }
-                        }
-                    )
-                },
-            );
+            let mode = match (&mapping.remote, &update.mode) {
+                (Source::Ref(reference), Mode::NoChangeNeeded) if mapping.local.is_none() => {
+                    if mapped_refs[reference.unpack().0] {
+                        "source only".to_owned()
+                    } else {
+                        "no local ref updated".to_owned()
+                    }
+                }
+                (Source::Ref(_), Mode::NoChangeNeeded)
+                    if edit.is_some_and(|edit| edit.change.previous_value() == edit.change.new_value()) =>
+                {
+                    "unchanged".to_owned()
+                }
+                _ => update.mode.to_string(),
+            };
+            let mode_and_type = match update.type_change {
+                Some(type_change) => format!(
+                    "{mode} ({})",
+                    match type_change {
+                        TypeChange::DirectToSymbolic => "direct ref overwrites symbolic",
+                        TypeChange::SymbolicToDirect => "symbolic ref overwrites direct",
+                    }
+                ),
+                None => mode,
+            };
             match edit {
                 Some(edit) => {
                     writeln!(out, " -> {} [{mode_and_type}]", edit.name)
@@ -928,19 +952,10 @@ pub(crate) mod function {
                 }
             }
         }
-        // Several refspecs may map the same tip, so count tips, not mappings.
-        let mapped: std::collections::BTreeSet<_> = map
-            .mappings
-            .iter()
-            .filter_map(|mapping| match &mapping.remote {
-                gix::remote::fetch::refmap::Source::Ref(r) => Some(r.unpack().0),
-                gix::remote::fetch::refmap::Source::ObjectId(_) => None,
-            })
-            .collect();
         let filtered = map
             .remote_refs
             .iter()
-            .filter(|r| !mapped.contains(r.unpack().0))
+            .filter(|r| !mapped_refs.contains_key(r.unpack().0))
             .count();
         if filtered != 0 {
             writeln!(
