@@ -245,3 +245,13 @@ Take one replacement from this reserve, in order, and keep the count at eight:
 2. Tell the integrator the release commit; the monorepo pin is theirs to move.
 3. Write three lines here: what shipped, what was skipped and why, and the
    three biggest pains.
+
+*Ended 2026-11-26 as `brit-v0.3.8`* ([notes](../releases/brit-0.3.8.md)). The CLI had reached
+0.3.8 by the time the sprint and backlog batch 1 were integrated.
+- **Shipped:** items 1–5 and 7. Item 8 was quarantined with its causes, and the fixes were
+  offered upstream. Batch 1 also landed eight backlog lines.
+- **Skipped:** item 6, the small object store. The daily-driver fallbacks ranked higher by
+  how many permission prompts they cause.
+- **Pains:** a whole exhaustive rerun for each unrelated flake; publish refusing a version
+  that was already published; each new worktree needing its own rust-style checker before
+  its first push.
