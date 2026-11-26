@@ -68,6 +68,22 @@ fn pack_files(path: &Path, extension: &str) -> Result<usize> {
         .count())
 }
 
+#[cfg(target_os = "linux")]
+fn pack_file_names(path: &Path) -> Result<std::collections::BTreeSet<std::ffi::OsString>> {
+    let mut names = std::collections::BTreeSet::new();
+    for entry in fs::read_dir(path.join(".git/objects/pack"))? {
+        let entry = entry?;
+        if entry
+            .path()
+            .extension()
+            .is_some_and(|ext| ext == "pack" || ext == "idx")
+        {
+            names.insert(entry.file_name());
+        }
+    }
+    Ok(names)
+}
+
 fn reduced(path: &Path, legacy: bool) -> gix::Result<gix::Repository> {
     let mut opts = gix::open::Options::isolated().with_trust(gix::sec::Trust::Reduced);
     if legacy {
@@ -119,6 +135,57 @@ fn forty_packs_become_readable_with_legacy_reduced_slots() -> Result<()> {
     assert_eq!(pack_count(path)?, 8, "maintenance reaches its default target");
     assert_reads(&reduced(path, true)?, &objects)?;
     git(path, &["fsck", "--full"])?;
+    Ok(())
+}
+
+// Windows retirement and retry with a mapped source pack are outside this Linux test.
+#[cfg(target_os = "linux")]
+#[test]
+fn reader_keeps_a_mapped_pack_and_refreshes_for_an_unread_object_after_maintenance() -> Result<()> {
+    let repo = fixture(2)?;
+    let path = repo.path();
+    let blob_id = |revision| -> Result<gix::ObjectId> {
+        let hex = git(path, &["rev-parse", revision])?;
+        Ok(gix::ObjectId::from_hex(hex.trim().as_bytes())?)
+    };
+    let mapped_blob_id = blob_id("HEAD:tracked")?;
+    let unread_blob_id = blob_id("HEAD^:tracked")?;
+    let sources = pack_file_names(path)?;
+    let reader = reduced(path, false)?;
+    let store = reader.objects.store_ref();
+    assert_eq!(
+        reader.find_blob(mapped_blob_id)?.data,
+        b"version 1\n",
+        "the first read maps the packed blob"
+    );
+    let before = store.metrics();
+    assert_eq!(before.open_reachable_packs, 1, "only the first blob's pack is mapped");
+
+    brit(path, &["-c", "brit.maintenanceTarget=1", "maintenance"])?;
+    let replacement = pack_file_names(path)?;
+    assert_eq!(replacement.len(), 2, "maintenance publishes one pack and its index");
+    assert!(
+        sources.is_disjoint(&replacement),
+        "both source packs and indexes are retired"
+    );
+
+    let mapped = reader
+        .find_blob(mapped_blob_id)
+        .context("reread the blob from its unlinked pack")?;
+    assert_eq!(mapped.data, b"version 1\n", "the mapping retains the original bytes");
+    assert_eq!(
+        store.metrics().num_refreshes,
+        before.num_refreshes,
+        "the old mapping still serves reads"
+    );
+    let unread = reader
+        .find_blob(unread_blob_id)
+        .context("read the previously unread blob after retirement")?;
+    assert_eq!(unread.data, b"version 0\n", "the replacement has the same bytes");
+    assert!(
+        store.metrics().num_refreshes > before.num_refreshes,
+        "the miss discovers the replacement pack"
+    );
     Ok(())
 }
 
@@ -353,22 +420,22 @@ fn fetch_keeps_success_when_maintenance_fails() -> Result<()> {
 }
 
 #[cfg(target_os = "linux")]
-fn with_push_in_hook<T>(repo: &TestRepo, during_hook: impl FnOnce(&Path, u32) -> Result<T>) -> Result<T> {
+fn with_push_in_hook<T>(
+    repo: &TestRepo,
+    scratch: &Path,
+    during_hook: impl FnOnce(&Path, u32) -> Result<T>,
+) -> Result<T> {
     use std::{
         os::unix::fs::PermissionsExt,
         time::{Duration, Instant},
     };
 
     let path = repo.path();
-    let scratch = tempfile::tempdir()?;
-    let remote = scratch.path().join("remote.git");
-    let linked = scratch.path().join("linked");
+    let remote = scratch.join("remote.git");
+    let linked = scratch.join("linked");
     let remote_path = remote.to_str().context("remote path")?;
     let linked_path = linked.to_str().context("worktree path")?;
-    git(
-        scratch.path(),
-        &["init", "--bare", "--initial-branch=main", remote_path],
-    )?;
+    git(scratch, &["init", "--bare", "--initial-branch=main", remote_path])?;
     git(path, &["remote", "add", "origin", remote_path])?;
     git(path, &["push", "origin", "main"])?;
     git(path, &["worktree", "add", "-b", "landing", linked_path])?;
@@ -398,20 +465,20 @@ exit 1
     let args = ["push", "origin", "landing"];
     let mut push = brit_command(&linked)
         .args(args)
-        .env("BRIT_TEST_HOOK_DIR", scratch.path())
+        .env("BRIT_TEST_HOOK_DIR", scratch)
         .stdout(Stdio::piped())
         .stderr(Stdio::piped())
         .spawn()?;
     let observed = (|| {
         let deadline = Instant::now() + Duration::from_secs(10);
-        while !scratch.path().join("started").exists() {
+        while !scratch.join("started").exists() {
             ensure!(push.try_wait()?.is_none(), "push exited before starting the hook");
             ensure!(Instant::now() < deadline, "push hook did not start");
             std::thread::sleep(Duration::from_millis(10));
         }
         during_hook(&remote, push.id())
     })();
-    let release = fs::write(scratch.path().join("release"), "");
+    let release = fs::write(scratch.join("release"), "");
     let output = push.wait_with_output()?;
     release?;
     let observed = observed.with_context(|| format!("push stderr: {}", String::from_utf8_lossy(&output.stderr)))?;
@@ -429,7 +496,8 @@ fn fetch_defers_consolidation_while_a_linked_worktree_push_runs_its_hook() -> Re
     let path = repo.path();
     git(path, &["config", "brit.maintenanceFetchThreshold", "3"])?;
     git(path, &["config", "brit.maintenanceTarget", "2"])?;
-    let (stderr, packs, push_pid) = with_push_in_hook(&repo, |remote, push_pid| {
+    let scratch = tempfile::tempdir()?;
+    let (stderr, packs, push_pid) = with_push_in_hook(&repo, scratch.path(), |remote, push_pid| {
         ensure!(pack_count(path)? == 3, "push starts with the store at the threshold");
         fs::write(path.join("local"), "committed during the push hook\n")?;
         git(path, &["add", "local"])?;
@@ -480,11 +548,73 @@ fn fetch_defers_consolidation_while_a_linked_worktree_push_runs_its_hook() -> Re
 
 #[cfg(target_os = "linux")]
 #[test]
+fn up_to_date_fetch_from_a_second_linked_worktree_defers_consolidation_until_push_releases_pin() -> Result<()> {
+    let repo = fixture(25)?;
+    let path = repo.path();
+    let scratch = tempfile::tempdir()?;
+    let linked = scratch.path().join("fetching");
+    git(
+        path,
+        &[
+            "worktree",
+            "add",
+            "--detach",
+            linked.to_str().context("fetch worktree path")?,
+        ],
+    )?;
+    // Only fetch main so both invocations transfer no objects, even after landing is pushed.
+    let fetch_args = ["--wait=0", "fetch", "origin", "main"];
+
+    let before = with_push_in_hook(&repo, scratch.path(), |_, push_pid| {
+        let before = pack_file_names(path)?;
+        ensure!(
+            pack_count(path)? == 26,
+            "the shared store starts above the default threshold of 24"
+        );
+        let fetched = brit(&linked, &fetch_args)?;
+        let after = pack_file_names(path)?;
+        ensure!(
+            after == before,
+            "fetch changed the pack and index names while pinned: {before:?} -> {after:?}"
+        );
+        let stderr = String::from_utf8(fetched.stderr)?;
+        ensure!(
+            stderr.lines().any(
+                |line| line.contains("pack consolidation deferred because a push is in progress")
+                    && line.contains(&format!("pid {push_pid} "))
+            ),
+            "fetch succeeds but consolidation refuses the push's object pin: {stderr}"
+        );
+        Ok(before)
+    })?;
+
+    assert_eq!(
+        pack_file_names(path)?,
+        before,
+        "push releases its pin without consolidating"
+    );
+    brit(&linked, &fetch_args)?;
+    assert_eq!(
+        pack_count(path)?,
+        8,
+        "the next fetch consolidates to the default target"
+    );
+    assert_eq!(
+        pack_file_names(path)?.difference(&before).count(),
+        2,
+        "the next fetch publishes a new pack and index"
+    );
+    Ok(())
+}
+
+#[cfg(target_os = "linux")]
+#[test]
 fn manual_maintenance_refuses_while_a_linked_worktree_push_runs_its_hook() -> Result<()> {
     let repo = fixture(2)?;
     let path = repo.path();
     git(path, &["config", "brit.maintenanceTarget", "2"])?;
-    with_push_in_hook(&repo, |_, push_pid| {
+    let scratch = tempfile::tempdir()?;
+    with_push_in_hook(&repo, scratch.path(), |_, push_pid| {
         let result = brit_command(path).arg("maintenance").output()?;
         let stderr = String::from_utf8(result.stderr)?;
         ensure!(!result.status.success(), "maintenance refuses the push's shared pin");
