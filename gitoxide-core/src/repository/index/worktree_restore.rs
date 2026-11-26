@@ -8,7 +8,7 @@ use std::{
 
 use gix::{
     Result,
-    bstr::{BString, ByteSlice},
+    bstr::{BStr, BString, ByteSlice},
     error::{ResultExt, bail},
     index::entry::Mode,
     objs::FindStream,
@@ -20,32 +20,37 @@ use super::authoring::{component_options, literal_paths, read_index, refuse_exte
 /// Restore literal worktree files from the index, or HEAD when `from_head` is set.
 /// The index is read only. Publication is atomic per file, not across the selection.
 pub fn restore_worktree(repo: gix::Repository, paths: &[BString], from_head: bool) -> Result<()> {
-    let head = if from_head {
-        Some(repo.index_from_tree(&repo.head_tree_id()?)?)
-    } else {
-        None
-    };
-    restore_worktree_from_index(repo, paths, head.as_deref())
+    restore_worktree_with_source(repo, paths, from_head.then_some(b"HEAD".as_bstr()))
+}
+
+pub(super) fn restore_worktree_with_source(
+    repo: gix::Repository,
+    paths: &[BString],
+    revision: Option<&BStr>,
+) -> Result<()> {
+    let index = read_index(&repo)?;
+    let paths = literal_paths(&repo, paths)?;
+    let source = revision
+        .map(|rev| super::restore_source_index(&repo, rev))
+        .transpose()?;
+    restore_worktree_from_index(repo, &index, &paths, source.as_deref().unwrap_or(&index))
 }
 
 pub(super) fn restore_worktree_from_index(
     repo: gix::Repository,
+    index: &gix::index::State,
     paths: &[BString],
-    head: Option<&gix::index::State>,
+    source: &gix::index::State,
 ) -> Result<()> {
-    let from_head = head.is_some();
     // Attribute snapshots below are private objects, never additions to the repository.
     let repo = repo.with_object_memory();
-    let index = read_index(&repo)?;
-    let paths = literal_paths(&repo, paths)?;
     let root = repo.workdir().expect("literal_paths required a worktree");
     if repo.config_snapshot().try_boolean("core.precomposeunicode")? == Some(true)
         && paths.iter().any(|path| !path.is_ascii())
     {
         bail!("Unicode precomposition requires Git for non-ASCII paths".unsupported());
     }
-    let source: &gix::index::State = head.unwrap_or(&index);
-    let attribute_index = attribute_snapshot(&repo, &index, source, &paths)?;
+    let attribute_index = attribute_snapshot(&repo, index, source, paths)?;
     let mut attributes = repo.attributes_only(
         &attribute_index,
         gix::worktree::stack::state::attributes::Source::IdMapping,
@@ -55,8 +60,8 @@ pub(super) fn restore_worktree_from_index(
     let budget = Budget::new(root).or_error()?;
     let emulate_symlinks = repo.config_snapshot().try_boolean("core.symlinks")? == Some(false);
     let mut replacements = Vec::with_capacity(paths.len());
-    for path in &paths {
-        for state in [&*index, source] {
+    for path in paths {
+        for state in [index, source] {
             if state.path_is_directory(path.as_bstr()) {
                 bail!("Restoring indexed directories requires Git: {path}".unsupported());
             }
@@ -90,91 +95,85 @@ pub(super) fn restore_worktree_from_index(
             Err(err) if err.kind() == std::io::ErrorKind::NotFound => {}
             Err(err) => return Err(err).or_error(),
         }
-        let replacement = match source.entry_by_path(path.as_bstr()) {
-            None if !from_head || index.entry_by_path(path.as_bstr()).is_none() => {
-                bail!("Path is absent from the restore source: {path}".validation());
-            }
-            None => None,
-            Some(entry) => {
-                let (kind, mut blob) = repo
-                    .objects
-                    .find_stream(&entry.id, &budget, &gix::interrupt::IS_INTERRUPTED)?;
-                if kind != gix::objs::Kind::Blob {
-                    bail!("Restore source is not a blob: {path} ({})", entry.id);
-                }
-                let bytes = if entry.mode == Mode::SYMLINK {
-                    if !cfg!(unix) && !emulate_symlinks {
-                        bail!("Native symlink restoration is unsupported on this platform".unsupported());
-                    }
-                    gix::validate::path::component(
-                        path.rsplit(|b| *b == b'/').next().unwrap_or_default().as_bstr(),
-                        Some(gix::validate::path::component::Mode::Symlink),
-                        component_options(),
-                    )
-                    .or_error()?;
-                    let mut chunk = [0; stream::CHUNK];
-                    let mut invalid = blob.is_empty();
-                    loop {
-                        stream::check(&gix::interrupt::IS_INTERRUPTED).or_error()?;
-                        let n = blob.read(&mut chunk).or_error()?;
-                        if n == 0 {
-                            break;
-                        }
-                        invalid |= chunk[..n].contains(&0);
-                    }
-                    blob.rewind().or_error()?;
-                    if invalid {
-                        bail!("Invalid symlink target: {path}".validation());
-                    }
-                    blob
-                } else {
-                    let platform = attributes.at_entry(path.as_bstr(), None, &repo.objects).or_error()?;
-                    let converted = pipeline.convert_to_worktree_stream(
-                        blob,
-                        path.as_bstr(),
-                        &mut |_, attrs| {
-                            platform.matching_attributes(attrs);
-                        },
-                        Default::default(),
-                        &budget,
-                        &gix::interrupt::IS_INTERRUPTED,
-                    )?;
-                    let gix::filter::plumbing::pipeline::stream::Outcome::Ready(bytes) = converted else {
-                        unreachable!("delay is forbidden")
-                    };
-                    bytes
-                };
-                let mode = if entry.mode == Mode::SYMLINK && emulate_symlinks {
-                    Mode::FILE
-                } else {
-                    entry.mode
-                };
-                Some((mode, bytes))
-            }
+        let Some(entry) = source.entry_by_path(path.as_bstr()) else {
+            bail!("Path is absent from the restore source: {path}".validation());
         };
-        replacements.push(replacement);
+        let (kind, mut blob) = repo
+            .objects
+            .find_stream(&entry.id, &budget, &gix::interrupt::IS_INTERRUPTED)?;
+        if kind != gix::objs::Kind::Blob {
+            bail!("Restore source is not a blob: {path} ({})", entry.id);
+        }
+        let bytes = if entry.mode == Mode::SYMLINK {
+            if !cfg!(unix) && !emulate_symlinks {
+                bail!("Native symlink restoration is unsupported on this platform".unsupported());
+            }
+            gix::validate::path::component(
+                path.rsplit(|b| *b == b'/').next().unwrap_or_default().as_bstr(),
+                Some(gix::validate::path::component::Mode::Symlink),
+                component_options(),
+            )
+            .or_error()?;
+            let mut chunk = [0; stream::CHUNK];
+            let mut invalid = blob.is_empty();
+            loop {
+                stream::check(&gix::interrupt::IS_INTERRUPTED).or_error()?;
+                let n = blob.read(&mut chunk).or_error()?;
+                if n == 0 {
+                    break;
+                }
+                invalid |= chunk[..n].contains(&0);
+            }
+            blob.rewind().or_error()?;
+            if invalid {
+                bail!("Invalid symlink target: {path}".validation());
+            }
+            blob
+        } else {
+            let platform = attributes.at_entry(path.as_bstr(), None, &repo.objects).or_error()?;
+            let converted = pipeline.convert_to_worktree_stream(
+                blob,
+                path.as_bstr(),
+                &mut |_, attrs| {
+                    platform.matching_attributes(attrs);
+                },
+                Default::default(),
+                &budget,
+                &gix::interrupt::IS_INTERRUPTED,
+            )?;
+            let gix::filter::plumbing::pipeline::stream::Outcome::Ready(bytes) = converted else {
+                unreachable!("delay is forbidden")
+            };
+            bytes
+        };
+        let mode = if entry.mode == Mode::SYMLINK && emulate_symlinks {
+            Mode::FILE
+        } else {
+            entry.mode
+        };
+        replacements.push((mode, bytes));
         if gix::interrupt::is_triggered() {
-            return stopped(&paths, 0, "cancelled before publication");
+            return stopped(paths, 0, "cancelled before publication");
         }
     }
     for (position, (path, replacement)) in paths.iter().zip(replacements).enumerate() {
         if gix::interrupt::is_triggered() {
-            return stopped(&paths, position, "cancelled before publication of the next file");
+            return stopped(paths, position, "cancelled before publication of the next file");
         }
         let result = publish(root, path, replacement, &budget);
         if let Err(err) = result {
-            return stopped(&paths, position, &err.to_string());
+            return stopped(paths, position, &err.to_string());
         }
     }
     if gix::interrupt::is_triggered() {
-        return stopped(&paths, paths.len(), "cancelled after the final publication");
+        return stopped(paths, paths.len(), "cancelled after the final publication");
     }
     Ok(())
 }
 
 /// Model the attributes visible after selected attribute files have been restored, without
 /// touching the worktree. Unselected files retain worktree precedence and actual-index fallback,
-/// including when the content source is HEAD. The ordinary native filter pipeline consumes this.
+/// including when the content source is a revision. The native filter pipeline consumes this.
 fn attribute_snapshot(
     repo: &gix::Repository,
     index: &gix::index::State,
@@ -239,20 +238,10 @@ fn stopped(paths: &[BString], completed: usize, reason: &str) -> Result<()> {
     );
 }
 
-fn publish(root: &Path, path: &BString, replacement: Option<(Mode, Spool)>, budget: &Arc<Budget>) -> Result<()> {
+fn publish(root: &Path, path: &BString, (mode, mut bytes): (Mode, Spool), budget: &Arc<Budget>) -> Result<()> {
     // Repeat traversal validation immediately before each publication; never follow a final symlink.
     validate_relative_path(root, path.as_bstr())?;
     let absolute = root.join(gix::path::from_bstr(Cow::Borrowed(path.as_bstr()))?.as_ref());
-    let Some((mode, mut bytes)) = replacement else {
-        if gix::interrupt::is_triggered() {
-            bail!("cancelled before publication");
-        }
-        return match std::fs::remove_file(&absolute) {
-            Ok(()) => Ok(()),
-            Err(err) if err.kind() == std::io::ErrorKind::NotFound => Ok(()),
-            Err(err) => Err(err).or_error(),
-        };
-    };
     let parent = absolute.parent().expect("a literal file has a parent");
     // Missing ancestors are created only during publication. Remove them on failure/cancellation.
     let mut missing = Vec::new();

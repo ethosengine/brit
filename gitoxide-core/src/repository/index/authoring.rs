@@ -3,7 +3,7 @@ use std::{borrow::Cow, io::Read};
 
 use gix::{
     Result,
-    bstr::{BString, ByteSlice},
+    bstr::{BStr, BString, ByteSlice},
     error::{ResultExt, bail},
     index::entry::{Flags, Mode, Stat},
 };
@@ -253,13 +253,13 @@ pub fn add_paths(repo: gix::Repository, paths: &[BString]) -> Result<()> {
 
 /// Restore only named index entries from HEAD, without writing worktree files.
 pub fn restore_staged(repo: gix::Repository, paths: &[BString]) -> Result<()> {
-    restore_index_paths(repo, paths, false)
+    restore_index_paths(repo, paths, None, false)
 }
 
 /// Restore selected index entries and working files from the same HEAD snapshot.
 /// The index stays locked throughout; worktree publication remains atomic per file.
 pub fn restore_staged_and_worktree(repo: gix::Repository, paths: &[BString]) -> Result<()> {
-    restore_index_paths(repo, paths, true)
+    restore_index_paths(repo, paths, None, true)
 }
 
 /// Read the original index form, refusing split-index expansion and special files.
@@ -292,7 +292,12 @@ pub(crate) fn read_index_for_staging(repo: &gix::Repository) -> Result<gix::inde
     Ok(index)
 }
 
-fn restore_index_paths(repo: gix::Repository, paths: &[BString], worktree: bool) -> Result<()> {
+pub(super) fn restore_index_paths(
+    repo: gix::Repository,
+    paths: &[BString],
+    source: Option<&BStr>,
+    worktree: bool,
+) -> Result<()> {
     let mut lock =
         gix::lock::File::acquire_to_update_resource(repo.index_path(), gix::lock::acquire::Fail::Immediately, None, 0)
             .or_error()?;
@@ -319,7 +324,7 @@ fn restore_index_paths(repo: gix::Repository, paths: &[BString], worktree: bool)
         bail!("Unicode precomposition requires Git for non-ASCII paths".unsupported());
     }
 
-    let head = repo.index_from_tree(&repo.head_tree_id()?)?;
+    let source = super::restore_source_index(&repo, source.unwrap_or(b"HEAD".as_bstr()))?;
     let mut replacements = Vec::new();
     for path in &paths {
         let existing = index.entry_by_path(path.as_bstr());
@@ -332,15 +337,14 @@ fn restore_index_paths(repo: gix::Repository, paths: &[BString], worktree: bool)
         }) {
             bail!("Replacing an indexed ancestor requires Git".unsupported());
         }
-        let source = head.entry_by_path(path.as_bstr());
-        if head.path_is_directory(path.as_bstr()) || source.is_some_and(|entry| entry.mode == Mode::COMMIT) {
+        let entry = source.entry_by_path(path.as_bstr());
+        if source.path_is_directory(path.as_bstr()) || entry.is_some_and(|entry| entry.mode == Mode::COMMIT) {
             bail!("Restoring directories and submodules requires Git".unsupported());
         }
-        if source.is_none() && existing.is_none() {
-            bail!("Path is absent from both HEAD and the index: {path}".validation());
-        }
-        let replacement = source.map(|entry| (entry.mode, entry.id));
-        replacements.push((path, replacement));
+        let Some(entry) = entry else {
+            bail!("Path is absent from the restore source: {path}".validation());
+        };
+        replacements.push((path, entry));
     }
     // Rebuild to drop TREE, FSMN, UNTR, REUC and other caches invalidated by entry changes.
     let mut state = gix::index::State::new(repo.object_hash());
@@ -356,16 +360,14 @@ fn restore_index_paths(repo: gix::Repository, paths: &[BString], worktree: bool)
             );
         }
     }
-    for (path, replacement) in replacements {
-        if let Some((mode, blob_id)) = replacement {
-            state.dangerously_push_entry(Stat::default(), blob_id, Flags::empty(), mode, path.as_bstr());
-        }
+    for (path, entry) in replacements {
+        state.dangerously_push_entry(Stat::default(), entry.id, Flags::empty(), entry.mode, path.as_bstr());
     }
     state.sort_entries();
     let output = gix::index::File::from_state(state, repo.index_path());
     output.write_to(&mut lock, Default::default())?;
     if worktree {
-        super::worktree_restore::restore_worktree_from_index(repo.clone(), &paths, Some(&head))?;
+        super::worktree_restore::restore_worktree_from_index(repo, &index, &paths, &source)?;
         lock.commit()
             .or_raise(|| gix::error::message("working files restored, but index publication failed"))?;
     } else {

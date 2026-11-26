@@ -1,8 +1,10 @@
+use std::{ffi::OsString, path::PathBuf};
+
 use gix::{
     Result,
+    bstr::{BStr, BString},
     error::{ResultExt, bail, message},
 };
-use std::{ffi::OsString, path::PathBuf};
 
 pub fn from_tree(
     repo: gix::Repository,
@@ -108,3 +110,25 @@ pub use staging::{stage_gitlink, stage_paths};
 
 mod worktree_restore;
 pub use worktree_restore::restore_worktree;
+
+/// Restore literal files in the index, worktree, or both. Without a revision, use HEAD
+/// for staged restores and the index for worktree-only restores.
+pub fn restore(
+    repo: gix::Repository,
+    paths: &[BString],
+    source: Option<&BStr>,
+    staged: bool,
+    worktree: bool,
+) -> Result<()> {
+    if staged {
+        authoring::restore_index_paths(repo, paths, source, worktree)
+    } else {
+        worktree_restore::restore_worktree_with_source(repo, paths, source)
+    }
+}
+
+fn restore_source_index(repo: &gix::Repository, source: &BStr) -> Result<gix::index::File> {
+    let revision = repo.rev_parse_single(source)?;
+    let tree_id = gix::object::bounded::Source::deferred(repo).peel(revision.detach(), gix::object::Kind::Tree)?;
+    repo.index_from_tree(&tree_id)
+}

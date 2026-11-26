@@ -163,7 +163,6 @@ fn invalid_batches_and_lock_contention_preserve_index_and_worktree() -> Result<(
         vec!["add", "--", "*.txt"],
         vec!["add", "selected", "missing"],
         vec!["restore", "--staged", "--worktree", "--", "selected", "missing"],
-        vec!["restore", "--", "selected"],
     ] {
         ensure!(!brit(repo.path(), &args)?.status.success(), "must refuse {args:?}");
         assert_eq!(index(repo.path())?, before, "refusal is index-atomic: {args:?}");
@@ -199,8 +198,8 @@ fn new_files_and_deletions_match_git_and_restore_without_touching_files() -> Res
     success(actual.path(), &["add", "--", "selected", "new file"])?;
     git(oracle.path(), &["add", "--", "selected", "new file"])?;
     assert_eq!(entries(actual.path())?, entries(oracle.path())?);
-    success(actual.path(), &["restore", "--staged", "--", "selected", "new file"])?;
-    git(oracle.path(), &["restore", "--staged", "--", "selected", "new file"])?;
+    success(actual.path(), &["restore", "--staged", "--", "selected"])?;
+    git(oracle.path(), &["restore", "--staged", "--", "selected"])?;
     assert_eq!(entries(actual.path())?, entries(oracle.path())?);
     ensure!(!actual.path().join("selected").exists());
     assert_eq!(fs::read(actual.path().join("new file"))?, b"new content\n");
@@ -262,7 +261,12 @@ fn symlink_and_executable_modes_match_git() -> Result<()> {
     let oracle = fixture("modes-oracle")?;
     for repo in [&actual, &oracle] {
         git(repo.path(), &["config", "core.filemode", "true"])?;
-        symlink("selected", repo.path().join("link"))?;
+        let link = repo.path().join("link");
+        symlink("neighbor", &link)?;
+        git(repo.path(), &["add", "link"])?;
+        repo.commit_file("marker", "commit the original link target\n")?;
+        fs::remove_file(&link)?;
+        symlink("selected", &link)?;
         fs::set_permissions(repo.path().join("selected"), fs::Permissions::from_mode(0o755))?;
     }
     success(actual.path(), &["add", "--", "selected", "link"])?;

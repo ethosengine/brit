@@ -589,14 +589,13 @@ pub fn run_with_command(args: Args, command: clap::Command) -> Result<()> {
             source,
             paths,
         } => prepare_and_run("restore", verbose, None, move |_progress, _out, _err| {
-            let repo = repository(Mode::Strict)?;
-            if staged && worktree {
-                core::repository::index::restore_staged_and_worktree(repo, &paths)
-            } else if staged {
-                core::repository::index::restore_staged(repo, &paths)
-            } else {
-                core::repository::index::restore_worktree(repo, &paths, source.is_some())
-            }
+            core::repository::index::restore(
+                repository(Mode::Strict)?,
+                &paths,
+                source.as_ref().map(BString::as_ref),
+                staged,
+                worktree,
+            )
         }),
         Subcommands::Rebase(options) => prepare_and_run("rebase", verbose, None, move |_progress, out, err| {
             core::repository::replay::command::run(repository(Mode::Strict)?, options.action(), out, err)
