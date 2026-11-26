@@ -128,6 +128,12 @@ const QUARANTINED: &[(&str, &str)] = &[
         "on macOS a cold FSEventStreamFlushSync can outlast the fence deadline after the marker was delivered; the \
          timeout marks coverage unhealthy and every query answers a full rescan for the five-second retry",
     ),
+    (
+        "package(=gix-notify) & binary(=notify) & test(=windows::replacement_stops_old_coverage_and_starts_new_coverage_before_returning)",
+        "the Windows backend answers Loss::Rescan when ready completions do not drain within its 20 ms deadline; a \
+         loaded runner exceeds it (205 ms in a full suite pass, 50 of 50 pass alone at 15 ms, 2026-11-26) while the \
+         test asserts no loss",
+    ),
 ];
 
 fn native_filter(windows_arm: bool, requested: Option<&str>) -> String {
@@ -819,7 +825,7 @@ mod tests {
                     "snapshot",
                     "--no-tests=pass",
                     "-E",
-                    "not ((package(=internal-tools) & binary(=qa)) | (package(=gix) & (test(notify::) | test(=repository::worktree::linked_worktree_removal_notifies_through_shared_metadata))) | (package(=gix-fsmonitor) & test(=server::asynchronous::cancelling_startup_does_not_leave_an_endpoint_owned)) | (package(=gix-fsmonitor-daemon) & binary(=interoperability) & (test(=native_queries_preserve_coverage_through_unicode_and_case_root_aliases) | test(=linked_worktree_uses_external_cookie_coverage))))",
+                    "not ((package(=internal-tools) & binary(=qa)) | (package(=gix) & (test(notify::) | test(=repository::worktree::linked_worktree_removal_notifies_through_shared_metadata))) | (package(=gix-fsmonitor) & test(=server::asynchronous::cancelling_startup_does_not_leave_an_endpoint_owned)) | (package(=gix-fsmonitor-daemon) & binary(=interoperability) & (test(=native_queries_preserve_coverage_through_unicode_and_case_root_aliases) | test(=linked_worktree_uses_external_cookie_coverage))) | (package(=gix-notify) & binary(=notify) & test(=windows::replacement_stops_old_coverage_and_starts_new_coverage_before_returning)))",
                 ]
                 .map(OsStr::new),
                 "both fixture modes reuse saved binaries without repeating self-tests or the dedicated notify variant"
@@ -865,7 +871,7 @@ mod tests {
             command.get_args().collect::<Vec<_>>().ends_with(
                 &[
                     "-E",
-                    "not ((package(=internal-tools) & binary(=qa)) | (package(=gix) & (test(notify::) | test(=repository::worktree::linked_worktree_removal_notifies_through_shared_metadata))) | (package(=gix-fsmonitor) & test(=server::asynchronous::cancelling_startup_does_not_leave_an_endpoint_owned)) | (package(=gix-fsmonitor-daemon) & binary(=interoperability) & (test(=native_queries_preserve_coverage_through_unicode_and_case_root_aliases) | test(=linked_worktree_uses_external_cookie_coverage))) | test(performance) | test(speed))",
+                    "not ((package(=internal-tools) & binary(=qa)) | (package(=gix) & (test(notify::) | test(=repository::worktree::linked_worktree_removal_notifies_through_shared_metadata))) | (package(=gix-fsmonitor) & test(=server::asynchronous::cancelling_startup_does_not_leave_an_endpoint_owned)) | (package(=gix-fsmonitor-daemon) & binary(=interoperability) & (test(=native_queries_preserve_coverage_through_unicode_and_case_root_aliases) | test(=linked_worktree_uses_external_cookie_coverage))) | (package(=gix-notify) & binary(=notify) & test(=windows::replacement_stops_old_coverage_and_starts_new_coverage_before_returning)) | test(performance) | test(speed))",
                 ]
                 .map(OsStr::new)
             ),
