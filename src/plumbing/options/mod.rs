@@ -726,8 +726,18 @@ pub mod status {
         /// A basic format that is easy to read, and useful for a first glimpse as flat list.
         #[default]
         Simplified,
-        /// Output very similar to `git status --porcelain=2`.
+        /// Output like `git status --porcelain=v1`.
+        PorcelainV1,
+        /// Output like `git status --porcelain=v2`.
         PorcelainV2,
+    }
+
+    #[derive(Debug, Copy, Clone, clap::ValueEnum)]
+    pub enum PorcelainVersion {
+        #[value(name = "v1", alias = "1")]
+        V1,
+        #[value(name = "v2", alias = "2")]
+        V2,
     }
 
     #[derive(Debug, clap::Parser)]
@@ -736,6 +746,15 @@ pub mod status {
         /// The way status data is displayed.
         #[clap(long, short = 'f')]
         pub format: Option<Format>,
+        /// Emit machine-readable status (v1 by default).
+        #[clap(long, require_equals = true, num_args = 0..=1, default_missing_value = "v1", conflicts_with = "format")]
+        pub porcelain: Option<PorcelainVersion>,
+        /// Terminate porcelain records with NUL and write paths verbatim.
+        #[clap(short = 'z')]
+        pub nul: bool,
+        /// Include the current branch and upstream in porcelain output.
+        #[clap(long, short = 'b')]
+        pub branch: bool,
         /// If enabled, show ignored files and directories.
         #[clap(long)]
         pub ignored: Option<Option<Ignored>>,
@@ -1233,6 +1252,26 @@ pub mod log {
     use gix::bstr::BString;
 
     #[derive(Debug, Copy, Clone, clap::ValueEnum)]
+    pub enum Date {
+        Iso,
+        IsoStrict,
+        Unix,
+        Short,
+    }
+
+    impl From<Date> for gix::date::time::Format {
+        fn from(date: Date) -> Self {
+            use gix::date::time::format::{ISO8601, ISO8601_STRICT, SHORT, UNIX};
+            match date {
+                Date::Iso => ISO8601.into(),
+                Date::IsoStrict => ISO8601_STRICT.into(),
+                Date::Unix => UNIX,
+                Date::Short => SHORT.into(),
+            }
+        }
+    }
+
+    #[derive(Debug, Copy, Clone, clap::ValueEnum)]
     pub(crate) enum Sorting {
         /// Visit commits breadth-first, without guaranteeing children precede parents.
         BreadthFirst,
@@ -1288,8 +1327,21 @@ pub mod log {
         #[clap(long)]
         pub first_parent: bool,
         /// Print the abbreviated hash (honouring core.abbrev, like `git log --oneline`) and title.
-        #[clap(long)]
+        #[clap(long, overrides_with_all = ["format", "pretty"])]
         pub oneline: bool,
+        /// Format each commit with a newline terminator. Supports %H %h %s %b %B %an %ae %ad
+        /// %aI %at %cn %ce %cI %ct %P %p %d %D %n and %%.
+        #[clap(long, overrides_with_all = ["pretty", "oneline"], value_name = "FMT")]
+        pub format: Option<String>,
+        /// Use format:FMT to separate commits, or tformat:FMT to terminate each one.
+        #[clap(long, overrides_with_all = ["format", "oneline"], value_name = "FORMAT")]
+        pub pretty: Option<String>,
+        /// Choose the author date style in %ad and the standard log header.
+        #[clap(long, value_enum)]
+        pub date: Option<Date>,
+        /// Show a diffstat for each commit.
+        #[clap(long)]
+        pub stat: bool,
         /// Show commits that change the number of occurrences of this literal string in a file.
         #[clap(short = 'S', value_parser = crate::shared::AsBString, allow_hyphen_values = true, value_name = "STRING")]
         pub pickaxe: Option<BString>,

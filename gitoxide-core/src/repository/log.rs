@@ -17,6 +17,9 @@ use gix::{
 
 use super::pickaxe::Pickaxe;
 
+mod output;
+pub use output::PrettyFormat;
+
 /// Configure the starting commits, hidden ancestry, order, and printing of a log traversal.
 #[derive(Clone)]
 pub struct Options {
@@ -30,6 +33,12 @@ pub struct Options {
     pub max_count: Option<usize>,
     /// Abbreviate hashes like `git log --oneline` instead of printing eight hex digits.
     pub oneline: bool,
+    /// Explicit per-commit format.
+    pub pretty: Option<PrettyFormat>,
+    /// Date style for `%ad` and the standard log header.
+    pub date: Option<gix::date::time::Format>,
+    /// Show a diffstat below each commit.
+    pub stat: bool,
 }
 
 impl Default for Options {
@@ -40,6 +49,9 @@ impl Default for Options {
             parents: Parents::default(),
             max_count: None,
             oneline: false,
+            pretty: None,
+            date: None,
+            stat: false,
         }
     }
 }
@@ -81,11 +93,7 @@ pub fn log_with_pickaxe(
     options: Options,
     needle: Option<&BStr>,
 ) -> Result<()> {
-    let format = if options.oneline {
-        Format::Oneline
-    } else {
-        Format::Default
-    };
+    let template = options.pretty.as_ref().map(output::Template::new).transpose()?;
     if needle.is_some_and(|needle| needle.is_empty()) {
         bail!(message!("-S requires a non-empty argument").validation());
     }
@@ -124,6 +132,7 @@ pub fn log_with_pickaxe(
     };
 
     let default_order = matches!(options.sorting, Sorting::DateOrder) && matches!(options.parents, Parents::All);
+    let mut render = output::Render::new(&repo, out, &options, &pathspecs, template)?;
     let pickaxe = needle
         .map(|needle| Pickaxe::new(&repo, &source, &pathspecs, needle))
         .transpose()?;
@@ -136,10 +145,10 @@ pub fn log_with_pickaxe(
         let mut walk = SimplifiedWalk::new(&repo, &source, &paths)?;
         walk.pickaxe_paths = pickaxe.is_some() && !pathspecs.is_empty();
         walk.pickaxe = pickaxe;
-        return walk.run(&repo, out, &starts, remaining, format);
+        return walk.run(&mut render, &starts, remaining);
     }
     if !default_order {
-        return log_sorted(&repo, &source, out, starts, &options, pickaxe, format);
+        return log_sorted(&repo, &source, &mut render, starts, &options, pickaxe);
     }
     // Every form honours the shallow boundary, as Git does, even where the boundary's parents
     // happen to be present.
@@ -171,7 +180,7 @@ pub fn log_with_pickaxe(
         .build()?;
     let mut buffer = Buffer::default();
     for info in topo.take(remaining) {
-        write_info(&repo, &source, &mut buffer, &mut *out, info?.id, format)?;
+        render.commit(&source, &mut buffer, info?.id)?;
     }
     Ok(())
 }
@@ -181,11 +190,10 @@ pub fn log_with_pickaxe(
 fn log_sorted(
     repo: &gix::Repository,
     source: &Source<'_>,
-    out: &mut dyn std::io::Write,
+    render: &mut output::Render<'_>,
     starts: Vec<Start>,
     options: &Options,
     mut pickaxe: Option<Pickaxe<'_, '_>>,
-    format: Format,
 ) -> Result<()> {
     let mut remaining = options.max_count.unwrap_or(usize::MAX);
     let (mut tips, mut hidden) = (Vec::new(), Vec::new());
@@ -218,21 +226,13 @@ fn log_sorted(
                 continue;
             }
         }
-        write_info(repo, source, &mut buffer, &mut *out, info.id, format)?;
+        render.commit(source, &mut buffer, info.id)?;
         remaining -= 1;
         if remaining == 0 {
             break;
         }
     }
     Ok(())
-}
-
-#[derive(Clone, Copy)]
-enum Format {
-    /// Eight hex digits and the title.
-    Default,
-    /// Git's abbreviation (honouring `core.abbrev`) and the title.
-    Oneline,
 }
 
 /// A commit a walk starts from, or (when `excluded`) whose ancestry it hides.
@@ -435,14 +435,7 @@ impl<'a, 'repo> SimplifiedWalk<'a, 'repo> {
         })
     }
 
-    fn run(
-        mut self,
-        repo: &gix::Repository,
-        out: &mut dyn std::io::Write,
-        starts: &[Start],
-        mut remaining: usize,
-        format: Format,
-    ) -> Result<()> {
+    fn run(mut self, render: &mut output::Render<'_>, starts: &[Start], mut remaining: usize) -> Result<()> {
         for start in starts {
             self.parse(start.id, false)?;
             if start.excluded {
@@ -459,7 +452,7 @@ impl<'a, 'repo> SimplifiedWalk<'a, 'repo> {
         let source = self.source;
         let mut buffer = Buffer::default();
         let mut print = |id: ObjectId| -> Result<bool> {
-            write_info(repo, source, &mut buffer, &mut *out, id, format)?;
+            render.commit(source, &mut buffer, id)?;
             remaining -= 1;
             Ok(remaining == 0)
         };
@@ -822,36 +815,4 @@ fn peel_to_commit(repo: &gix::Repository, source: &Source<'_>, mut id: ObjectId,
             .ok_or_raise(|| message!("{name} does not point to a commit").validation())?;
         id = tag.target_id()?;
     }
-}
-
-fn write_info(
-    repo: &gix::Repository,
-    source: &Source<'_>,
-    buffer: &mut Buffer,
-    mut out: impl std::io::Write,
-    id: ObjectId,
-    format: Format,
-) -> Result<()> {
-    let commit = source.load(&id, buffer)?;
-    if commit.kind != Kind::Commit {
-        bail!(message!("Expected commit {}", id).validation());
-    }
-    // Like Git, the message is re-encoded from the encoding the commit declares to UTF-8.
-    let data = super::show::commit_to_utf8(commit.data, id)?;
-    // Keep message_raw_sloppy's existing byte selection without copying the title.
-    let message = data.find(b"\n\n").map(|pos| &data[pos + 2..]).unwrap_or_default();
-    let title = message.lines().next();
-    match format {
-        Format::Default => write!(out, "{} ", id.to_hex_with_len(8)).or_error()?,
-        Format::Oneline => {
-            use gix::prelude::ObjectIdExt;
-            write!(out, "{} ", id.attach(repo).shorten_or_id()).or_error()?;
-        }
-    }
-    let mut title = title.unwrap_or(b"<no message>");
-    gix::utils::stream::copy(&mut title, &mut out, &gix::interrupt::IS_INTERRUPTED).or_error()?;
-    writeln!(out).or_error()?;
-    buffer.clear();
-
-    Ok(())
 }

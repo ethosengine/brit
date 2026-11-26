@@ -759,10 +759,20 @@ pub fn run_with_command(args: Args, command: clap::Command) -> Result<()> {
             sort,
             first_parent,
             oneline,
+            format: log_format,
+            pretty,
+            date,
+            stat,
             revisions,
             paths,
             pickaxe,
         }) => prepare_and_run("log", verbose, None, move |_progress, out, _err| {
+            use core::repository::log::PrettyFormat;
+            let pretty = match (log_format, pretty) {
+                (Some(format), _) => Some(PrettyFormat::terminated(format)),
+                (_, Some(pretty)) => Some(PrettyFormat::parse(pretty)?),
+                _ => None,
+            };
             core::repository::log::log_with_pickaxe(
                 repository(Mode::Lenient)?,
                 out,
@@ -777,6 +787,9 @@ pub fn run_with_command(args: Args, command: clap::Command) -> Result<()> {
                     },
                     max_count,
                     oneline,
+                    pretty,
+                    date: date.map(Into::into),
+                    stat,
                 },
                 pickaxe.as_ref().map(AsRef::as_ref),
             )
@@ -861,13 +874,26 @@ pub fn run_with_command(args: Args, command: clap::Command) -> Result<()> {
             untracked,
             ahead_behind,
             format: status_format,
+            porcelain,
+            nul,
+            branch,
             statistics,
             submodules,
             no_write,
             pathspec,
             index_worktree_renames,
         }) => prepare_and_run("status", status_verbose, None, move |progress, out, err| {
-            use crate::plumbing::options::status::Submodules;
+            use crate::plumbing::options::status::{Format, PorcelainVersion, Submodules};
+            let status_format = match (status_format, porcelain, nul, branch) {
+                (Some(Format::PorcelainV2), ..) | (_, Some(PorcelainVersion::V2), ..) => {
+                    core::repository::status::Format::PorcelainV2
+                }
+                (Some(Format::PorcelainV1), ..)
+                | (_, Some(PorcelainVersion::V1), ..)
+                | (_, _, true, _)
+                | (_, _, _, true) => core::repository::status::Format::PorcelainV1,
+                _ => core::repository::status::Format::Simplified,
+            };
             let repo = repository(Mode::Lenient)?;
             // An index refresh is a worktree-local mutation. On contention or pending
             // recovery, retain read-only inspection and leave the index bytes alone.
@@ -886,14 +912,9 @@ pub fn run_with_command(args: Args, command: clap::Command) -> Result<()> {
                 err,
                 progress,
                 core::repository::status::Options {
-                    format: match status_format.unwrap_or_default() {
-                        crate::plumbing::options::status::Format::Simplified => {
-                            core::repository::status::Format::Simplified
-                        }
-                        crate::plumbing::options::status::Format::PorcelainV2 => {
-                            core::repository::status::Format::PorcelainV2
-                        }
-                    },
+                    format: status_format,
+                    nul,
+                    branch,
                     ignored: ignored.map(|ignored| match ignored.unwrap_or_default() {
                         crate::plumbing::options::status::Ignored::Matching => {
                             core::repository::status::Ignored::Matching

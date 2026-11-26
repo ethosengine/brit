@@ -402,7 +402,15 @@ fn working_output(
         if format == Format::Patch {
             render_patch(repo, &mut rendered, &path, old.as_ref(), new.as_ref(), binary)?;
         } else {
-            collect_stat(repo, &mut stats, &path, old.as_ref(), new.as_ref(), binary)?;
+            collect_stat(
+                repo,
+                &mut stats,
+                path.as_bstr(),
+                old.as_ref(),
+                new.as_ref(),
+                binary,
+                None,
+            )?;
         }
     }
     match format {
@@ -1117,12 +1125,14 @@ struct FileStat {
 fn collect_stat(
     repo: &gix::Repository,
     stats: &mut Vec<FileStat>,
-    path: &BString,
+    path: &BStr,
     old: Option<&PatchBlob>,
     new: Option<&PatchBlob>,
     binary: bool,
+    rename_from: Option<&BStr>,
 ) -> Result<()> {
-    if !new.is_some_and(|b| b.dirty)
+    if rename_from.is_none()
+        && !new.is_some_and(|b| b.dirty)
         && old
             .zip(new)
             .is_some_and(|(a, b)| a.mode == b.mode && a.blob_id == b.blob_id)
@@ -1172,13 +1182,51 @@ fn collect_stat(
         (diff.count_additions() as usize, diff.count_removals() as usize)
     };
     let quote_high = repo.config_snapshot().try_boolean("core.quotePath")?.unwrap_or(true);
+    let name = match rename_from {
+        Some(source) => stat_rename_name(source, path, quote_high),
+        None => quote_patch_path(path, quote_high),
+    };
     stats.push(FileStat {
-        name: quote_patch_path(path, quote_high),
+        name,
         added,
         removed,
         binary,
     });
     Ok(())
+}
+
+fn stat_rename_name(old: &BStr, new: &BStr, quote_high: bool) -> BString {
+    let mut old_quoted = quote_patch_path(old, quote_high);
+    let new_quoted = quote_patch_path(new, quote_high);
+    if old_quoted.as_slice() != old || new_quoted.as_slice() != new {
+        old_quoted.extend_from_slice(b" => ");
+        old_quoted.extend_from_slice(&new_quoted);
+        return old_quoted;
+    }
+
+    let shared = old.iter().zip(new.iter()).take_while(|(a, b)| a == b).count();
+    let prefix = old[..shared].rfind_byte(b'/').map_or(0, |slash| slash + 1);
+    let shared = old[prefix..]
+        .iter()
+        .rev()
+        .zip(new[prefix..].iter().rev())
+        .take_while(|(a, b)| a == b)
+        .count();
+    let suffix = &old[old.len() - shared..];
+    let suffix_len = suffix.find_byte(b'/').map_or(0, |slash| suffix.len() - slash);
+    let braces = prefix != 0 || suffix_len != 0;
+    let mut name = BString::from(&old[..prefix]);
+    if braces {
+        name.push(b'{');
+    }
+    name.extend_from_slice(&old[prefix..old.len() - suffix_len]);
+    name.extend_from_slice(b" => ");
+    name.extend_from_slice(&new[prefix..new.len() - suffix_len]);
+    if braces {
+        name.push(b'}');
+        name.extend_from_slice(&old[old.len() - suffix_len..]);
+    }
+    name
 }
 
 fn stat_name_width(name: &[u8]) -> usize {

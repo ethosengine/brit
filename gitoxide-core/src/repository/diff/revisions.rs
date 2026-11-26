@@ -24,7 +24,7 @@ use std::collections::BTreeMap;
 use gix::{
     ObjectId, Result,
     bstr::{BStr, BString, ByteSlice},
-    error::{ResultExt, bail, message},
+    error::{OptionExt, ResultExt, bail, message},
     object::bounded::Source,
     utils::stream::Budget,
 };
@@ -158,8 +158,11 @@ pub(super) fn trees(
     compare_trees(repo, out, Some(old), Some(new), &[], format)
 }
 
-fn is_range(revision: &[u8]) -> bool {
-    revision.contains_str("..")
+pub(crate) fn is_range(revision: &[u8]) -> bool {
+    revision
+        .split_once_str(":")
+        .map_or(revision, |(name, _)| name)
+        .contains_str("..")
 }
 
 fn rev_parse(repo: &gix::Repository, revision: &BStr) -> Result<ObjectId> {
@@ -190,6 +193,8 @@ pub(crate) fn split_positionals(
                 bail!(message!("ambiguous argument '{name}': both revision and filename\n{SEPARATE}").validation())
             }
             Ok(_) => revisions.push(name.clone()),
+            // The revision parser knows which index stage was requested and whether it exists.
+            Err(error) if name.starts_with(b":") && !name.starts_with(b":/") => return Err(error),
             Err(_) if is_path => paths.push(name.clone()),
             Err(_) if after_separator => bail!(message!("bad revision '{name}'").validation()),
             Err(_) => bail!(message!("{}", unresolved(repo, name.as_bstr())).validation()),
@@ -311,6 +316,7 @@ pub(crate) struct Change {
     pub(crate) path: BString,
     pub(crate) old: Option<Side>,
     pub(crate) new: Option<Side>,
+    rename_from: Option<BString>,
 }
 
 /// The changed paths between two trees (an absent tree is empty) that `filter` selects, in Git's
@@ -385,8 +391,99 @@ pub(in crate::repository) fn changes_matching(
             let gitlink = old.iter().chain(new).any(|(mode, _)| *mode == GITLINK);
             includes(path.as_bstr(), gitlink)
         })
-        .map(|(path, (old, new))| Change { path, old, new })
+        .map(|(path, (old, new))| Change {
+            path,
+            old,
+            new,
+            rename_from: None,
+        })
         .collect())
+}
+
+/// Collect the changes for `log --stat`, which applies rename detection after path selection.
+pub(crate) fn stat_changes(
+    repo: &gix::Repository,
+    old: Option<ObjectId>,
+    new: Option<ObjectId>,
+    filter: &PathFilter,
+) -> Result<Vec<Change>> {
+    use gix::diff::{
+        rewrites::{
+            Tracker,
+            tracker::{Context, visit::SourceKind},
+        },
+        tree::visit::Change as TreeChange,
+    };
+    let mut changes = changes(repo, old, new, filter)?;
+    if old.is_none() || !changes.iter().any(|change| change.old.is_none()) {
+        return Ok(changes);
+    }
+    let (rewrites, configured) = gix::diff::new_rewrites(repo.config_snapshot().plumbing(), true)?;
+    let Some(rewrites) = (if configured { rewrites } else { Some(Default::default()) }) else {
+        return Ok(changes);
+    };
+    if rewrites.copies.is_none() && !changes.iter().any(|change| change.new.is_none()) {
+        return Ok(changes);
+    }
+    let mut tracker = Tracker::new(rewrites);
+    for change in &changes {
+        let mode = |bits| {
+            gix::objs::tree::EntryMode::try_from(bits)
+                .ok()
+                .ok_or_raise(|| message!("Invalid tree entry mode {bits:o}").corrupted())
+        };
+        let change_for_tracking = match (change.old, change.new) {
+            (Some((bits, oid)), None) => TreeChange::Deletion {
+                entry_mode: mode(bits)?,
+                oid,
+                relation: None,
+            },
+            (None, Some((bits, oid))) => TreeChange::Addition {
+                entry_mode: mode(bits)?,
+                oid,
+                relation: None,
+            },
+            (Some((old_mode, previous_oid)), Some((new_mode, oid))) => TreeChange::Modification {
+                previous_entry_mode: mode(old_mode)?,
+                previous_oid,
+                entry_mode: mode(new_mode)?,
+                oid,
+            },
+            (None, None) => continue,
+        };
+        tracker.try_push_change(change_for_tracking, change.path.as_bstr());
+    }
+    let mut matches = BTreeMap::new();
+    let mut removed = std::collections::BTreeSet::new();
+    tracker.emit(
+        |destination, source| {
+            if let Some(source) = source
+                && let Some(id) = source.id
+            {
+                let path = BString::from(source.location);
+                if source.kind == SourceKind::Rename {
+                    removed.insert(path.clone());
+                }
+                matches.insert(
+                    BString::from(destination.location),
+                    (path, (u32::from(source.entry_mode.value()), id)),
+                );
+            }
+            std::ops::ControlFlow::Continue(())
+        },
+        &mut repo.diff_resource_cache_for_tree_diff()?,
+        repo,
+        |_| Ok::<_, std::io::Error>(()),
+        Context::default(),
+    )?;
+    changes.retain_mut(|change| {
+        if let Some((path, side)) = matches.remove(&change.path) {
+            change.rename_from = Some(path);
+            change.old = Some(side);
+        }
+        !removed.contains(&change.path)
+    });
+    Ok(changes)
 }
 
 /// Compare two trees, buffering the output so a refusal never leaves partial output.
@@ -458,12 +555,11 @@ pub(crate) fn render(
     for change in changes {
         check_interrupted()?;
         let mut binary = false;
-        for attrs in [&mut old_attrs, &mut new_attrs] {
+        let old_path = change.rename_from.as_ref().unwrap_or(&change.path);
+        for (attrs, path) in [(&mut old_attrs, old_path), (&mut new_attrs, &change.path)] {
             let mut matches = attrs.attribute_matches();
-            attrs
-                .at_entry(change.path.as_bstr(), None)?
-                .matching_attributes(&mut matches);
-            binary |= binary_attribute(&matches, &change.path)?;
+            attrs.at_entry(path.as_bstr(), None)?.matching_attributes(&mut matches);
+            binary |= binary_attribute(&matches, path)?;
         }
         let old = change
             .old
@@ -476,7 +572,15 @@ pub(crate) fn render(
         if format == Format::Patch {
             render_patch(repo, out, &change.path, old.as_ref(), new.as_ref(), binary)?;
         } else {
-            collect_stat(repo, &mut stats, &change.path, old.as_ref(), new.as_ref(), binary)?;
+            collect_stat(
+                repo,
+                &mut stats,
+                change.path.as_bstr(),
+                old.as_ref(),
+                new.as_ref(),
+                binary,
+                change.rename_from.as_ref().map(|path| path.as_bstr()),
+            )?;
         }
     }
     match format {

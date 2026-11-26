@@ -20,7 +20,7 @@ use gix::{
 
 use super::diff::{
     Format,
-    revisions::{Change, PathFilter, changes, render, split_positionals},
+    revisions::{Change, PathFilter, changes, is_range, render, split_positionals},
 };
 
 /// What `show` prints for each revision.
@@ -45,7 +45,8 @@ pub struct Options {
 /// changes against its first parent, as Git does; where Git would print a combined diff (a path
 /// that differs from every parent), it refuses rather than print a different patch. With paths, a
 /// commit that does not change them is not shown. An annotated tag prints its header and message,
-/// then the object it points to. A blob prints its content, and a tree `tree <name>`, a blank line
+/// then the object it points to. A blob prints its content, including blobs selected by
+/// `:<path>` or `:<stage>:<path>` from the index. A tree prints `tree <name>`, a blank line
 /// and its entry names, directories with a trailing slash, as in Git.
 pub fn show(repo: gix::Repository, out: &mut dyn std::io::Write, options: Options) -> Result<()> {
     // Git re-encodes commit headers and messages to the log output encoding, which falls back to
@@ -73,7 +74,7 @@ pub fn show(repo: gix::Repository, out: &mut dyn std::io::Write, options: Option
         .into_iter()
         .chain(options.paths.iter().cloned())
         .collect();
-    if let Some(range) = revisions.iter().find(|revision| revision.contains_str("..")) {
+    if let Some(range) = revisions.iter().find(|revision| is_range(revision)) {
         bail!(unsupported(format!(
             "brit show takes single revisions, not the range '{range}'; use brit log or git show"
         )));
@@ -439,7 +440,7 @@ fn is_space(byte: u8) -> bool {
     byte.is_ascii_whitespace() || byte == 0x0b
 }
 
-fn is_blank(line: &[u8]) -> bool {
+pub(super) fn is_blank(line: &[u8]) -> bool {
     line.iter().all(|byte| is_space(*byte))
 }
 
@@ -450,7 +451,7 @@ fn message_lines(message: &BStr) -> impl Iterator<Item = &[u8]> {
 }
 
 /// Git's medium body: every line indented by four columns, tabs expanded to eight-column stops.
-fn indent_message(out: &mut Vec<u8>, message: &BStr) {
+pub(super) fn indent_message(out: &mut Vec<u8>, message: &BStr) {
     use unicode_width::UnicodeWidthChar;
     for line in message_lines(message) {
         out.extend_from_slice(b"    ");
@@ -476,13 +477,14 @@ fn indent_message(out: &mut Vec<u8>, message: &BStr) {
 }
 
 /// Git's one-line subject: the first paragraph with its lines joined by spaces.
-fn subject(message: &BStr) -> Vec<u8> {
+pub(super) fn subject(message: &BStr) -> Vec<u8> {
     let mut subject = Vec::new();
     for line in message_lines(message).take_while(|line| !is_blank(line)) {
         if !subject.is_empty() {
             subject.push(b' ');
         }
-        subject.extend_from_slice(line);
+        let end = line.iter().rposition(|byte| !is_space(*byte)).map_or(0, |pos| pos + 1);
+        subject.extend_from_slice(&line[..end]);
     }
     subject
 }

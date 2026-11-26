@@ -3,12 +3,14 @@ use std::{io, path::Path};
 use gix::{
     Result,
     bstr::{BStr, BString, ByteSlice},
-    error::{ResultExt, bail, message, unsupported},
+    error::{ResultExt, bail, message},
     status::{self, index_worktree},
 };
 use gix_status::index_as_worktree::{Change, EntryStatus};
 
 use crate::OutputFormat;
+
+mod porcelain;
 
 pub enum Submodules {
     /// display all information about submodules, including ref changes, modifications and untracked files.
@@ -30,12 +32,17 @@ pub enum Ignored {
 #[derive(Copy, Clone)]
 pub enum Format {
     Simplified,
+    PorcelainV1,
     PorcelainV2,
 }
 
 pub struct Options {
     pub ignored: Option<Ignored>,
     pub format: Format,
+    /// Terminate porcelain records with NUL.
+    pub nul: bool,
+    /// Include the branch and its upstream in porcelain output.
+    pub branch: bool,
     pub output_format: OutputFormat,
     pub submodules: Option<Submodules>,
     pub thread_limit: Option<usize>,
@@ -56,6 +63,8 @@ pub fn show(
     Options {
         ignored,
         format,
+        nul,
+        branch,
         output_format,
         submodules,
         thread_limit,
@@ -69,12 +78,14 @@ pub fn show(
     if output_format != OutputFormat::Human {
         bail!(gix::error::unsupported("Only human format is supported right now"));
     }
-    if !matches!(format, Format::Simplified) {
-        bail!(unsupported("Only the simplified format is currently implemented"));
-    }
+    let mut porcelain = match format {
+        Format::Simplified => None,
+        Format::PorcelainV1 => Some(porcelain::Status::new(false)),
+        Format::PorcelainV2 => Some(porcelain::Status::new(true)),
+    };
 
     let start = std::time::Instant::now();
-    if ahead_behind {
+    if ahead_behind && porcelain.is_none() {
         print_ahead_behind(&repo, &mut out)?;
     }
     let prefix = repo.prefix()?.unwrap_or(Path::new(""));
@@ -129,6 +140,10 @@ pub fn show(
 
     for item in iter.by_ref() {
         let item = item?;
+        if let Some(porcelain) = &mut porcelain {
+            porcelain.record(&repo, item)?;
+            continue;
+        }
         match item {
             status::Item::TreeIndex(change) => {
                 let location = change.location();
@@ -209,19 +224,24 @@ pub fn show(
     if gix::interrupt::is_triggered() {
         bail!(gix::error::cancelled("interrupted by user"));
     }
+    let outcome = iter.outcome_mut().expect("successful iteration has outcome");
+    if let Some(porcelain) = porcelain {
+        porcelain.write(&repo, &outcome.worktree_index, &mut out, nul, branch, ahead_behind)?;
+    }
 
-    let out = iter.outcome_mut().expect("successful iteration has outcome");
-
-    if out.has_changes() && allow_write {
-        out.write_changes().transpose()?;
+    if outcome.has_changes() && allow_write {
+        outcome.write_changes().transpose()?;
     }
 
     if statistics {
-        writeln!(err, "{outcome:#?}", outcome = out.index_worktree).ok();
+        writeln!(err, "{:#?}", outcome.index_worktree).ok();
     }
 
-    progress.init(Some(out.worktree_index.entries().len()), gix::progress::count("files"));
-    progress.set(out.worktree_index.entries().len());
+    progress.init(
+        Some(outcome.worktree_index.entries().len()),
+        gix::progress::count("files"),
+    );
+    progress.set(outcome.worktree_index.entries().len());
     progress.show_throughput(start);
     Ok(())
 }
@@ -230,17 +250,7 @@ fn print_ahead_behind(repo: &gix::Repository, out: &mut dyn io::Write) -> Result
     let Some(mut branch) = repo.head()?.try_into_referent() else {
         return Ok(());
     };
-    let direction = gix::remote::Direction::Fetch;
-    let upstream_name = if branch.remote_name(direction).is_some_and(|name| name == ".") {
-        // A local upstream uses branch.<name>.merge directly, without a fetch refspec mapping.
-        branch.remote_ref_name(direction)
-    } else {
-        branch.remote_tracking_ref_name(direction)
-    };
-    let Some(upstream_name) = upstream_name
-        .transpose()
-        .or_raise(|| message("Could not resolve the current branch's upstream"))?
-    else {
+    let Some(upstream_name) = upstream_name(&branch)? else {
         return Ok(());
     };
     let Some(mut upstream) = repo.try_find_reference(upstream_name.as_ref())? else {
@@ -267,6 +277,18 @@ fn print_ahead_behind(repo: &gix::Repository, out: &mut dyn io::Write) -> Result
         counts.behind
     )
     .or_error()
+}
+
+fn upstream_name(branch: &gix::Reference<'_>) -> Result<Option<gix::refs::FullName>> {
+    let direction = gix::remote::Direction::Fetch;
+    if branch.remote_name(direction).is_some_and(|name| name == ".") {
+        // A local upstream uses branch.<name>.merge directly, without a fetch refspec mapping.
+        branch.remote_ref_name(direction)
+    } else {
+        branch.remote_tracking_ref_name(direction)
+    }
+    .transpose()
+    .or_raise(|| message("Could not resolve the current branch's upstream"))
 }
 
 fn print_index_entry_status(
