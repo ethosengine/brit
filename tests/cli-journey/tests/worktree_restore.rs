@@ -3,7 +3,7 @@ use anyhow::{ensure, Result};
 use cli_journey::support::{runner::brit_bin, test_repo::TestRepo};
 use std::{
     fs,
-    path::Path,
+    path::{Path, PathBuf},
     process::{Command, Output},
 };
 
@@ -44,6 +44,181 @@ fn fixture(label: &str) -> Result<TestRepo> {
     fs::write(repo.path().join("private"), "private\n")?;
     Ok(repo)
 }
+
+fn path_restore_fixture(linked: bool) -> Result<(TestRepo, PathBuf)> {
+    let repo = TestRepo::new("restore-path")?;
+    repo.commit_file("dir/selected", "older\n")?;
+    repo.commit_file("neighbor", "neighbor head\n")?;
+    repo.commit_file("dir/selected", "head\n")?;
+    let checkout = if linked {
+        git(repo.path(), &["worktree", "add", "--detach", "linked"])?;
+        repo.commit_file("dir/selected", "primary head\n")?;
+        repo.path().join("linked")
+    } else {
+        repo.path().to_owned()
+    };
+    fs::write(checkout.join("dir/selected"), "staged\n")?;
+    git(&checkout, &["add", "dir/selected"])?;
+    git(&checkout, &["update-index", "--chmod=+x", "dir/selected"])?;
+    fs::write(checkout.join("dir/selected"), "dirty\n")?;
+    fs::write(checkout.join("neighbor"), "neighbor dirty\n")?;
+    fs::write(checkout.join("z-added"), "staged addition\n")?;
+    git(&checkout, &["add", "z-added"])?;
+    Ok((repo, checkout))
+}
+
+fn compare_restore_path(args: &[&str], changes_index: bool) -> Result<()> {
+    for linked in [false, true] {
+        let (primary, actual) = path_restore_fixture(linked)?;
+        let (_oracle_primary, oracle) = path_restore_fixture(linked)?;
+        let before = index(&actual)?;
+        let primary_index = index(primary.path())?;
+        git(&oracle, args)?;
+        let out = run(&actual, true, args)?;
+        ensure!(
+            out.status.success(),
+            "Brit {args:?} with linked={linked}: {}",
+            String::from_utf8_lossy(&out.stderr)
+        );
+        assert_eq!(
+            git(&actual, &["ls-files", "--stage", "-z"])?,
+            git(&oracle, &["ls-files", "--stage", "-z"])?,
+            "index modes, oids and paths with linked={linked}"
+        );
+        for path in ["dir/selected", "neighbor", "z-added"] {
+            assert_eq!(
+                fs::read(actual.join(path))?,
+                fs::read(oracle.join(path))?,
+                "{path} bytes with linked={linked}"
+            );
+        }
+        if !changes_index {
+            assert_eq!(
+                index(&actual)?,
+                before,
+                "worktree-only restore leaves the index file untouched"
+            );
+        }
+        if linked {
+            assert_eq!(index(primary.path())?, primary_index, "the primary index is untouched");
+            assert_eq!(
+                fs::read(primary.path().join("dir/selected"))?,
+                b"primary head\n",
+                "linked restore leaves the primary working file untouched"
+            );
+        }
+    }
+    Ok(())
+}
+
+#[test]
+fn restore_path_from_index_matches_git() -> Result<()> {
+    compare_restore_path(&["restore", "dir/selected"], false)
+}
+
+#[test]
+fn restore_path_from_revision_matches_git() -> Result<()> {
+    compare_restore_path(&["restore", "--source", "HEAD~2", "dir/selected"], false)
+}
+
+#[test]
+fn restore_staged_path_matches_git() -> Result<()> {
+    compare_restore_path(&["restore", "--staged", "dir/selected"], true)
+}
+
+#[test]
+fn restore_staged_and_worktree_path_matches_git() -> Result<()> {
+    compare_restore_path(&["restore", "--staged", "--worktree", "dir/selected"], true)?;
+    compare_restore_path(
+        &[
+            "-C",
+            "dir",
+            "restore",
+            "--staged",
+            "--worktree",
+            "--source=HEAD~2",
+            "selected",
+        ],
+        true,
+    )?;
+    compare_restore_path(&["restore", "--staged", "--source=HEAD~2", "dir/selected"], true)
+}
+
+#[test]
+fn restore_path_refuses_missing_and_outside_paths_without_writes() -> Result<()> {
+    let outside = tempfile::NamedTempFile::new()?;
+    fs::write(outside.path(), "outside\n")?;
+    let outside_path = outside.path().to_str().expect("temporary path");
+    for linked in [false, true] {
+        let (_primary, actual) = path_restore_fixture(linked)?;
+        let (_oracle_primary, oracle) = path_restore_fixture(linked)?;
+        for options in [
+            &[][..],
+            &["--source", "HEAD~2"],
+            &["--staged"],
+            &["--staged", "--worktree"],
+        ] {
+            for tail in ["absent", "../outside", outside_path] {
+                let args: Vec<_> = ["restore"]
+                    .into_iter()
+                    .chain(options.iter().copied())
+                    .chain(["dir/selected", tail])
+                    .collect();
+                for (checkout, native) in [(&actual, true), (&oracle, false)] {
+                    let before = index(checkout)?;
+                    let out = run(checkout, native, &args)?;
+                    ensure!(
+                        !out.status.success(),
+                        "{args:?} must refuse with linked={linked}, Brit={native}"
+                    );
+                    assert_eq!(index(checkout)?, before, "refusal leaves the index untouched");
+                    assert_eq!(
+                        fs::read(checkout.join("dir/selected"))?,
+                        b"dirty\n",
+                        "refusal leaves the valid path untouched"
+                    );
+                    assert!(!checkout.join("absent").exists(), "refusal creates no file");
+                    assert_eq!(
+                        fs::read(outside.path())?,
+                        b"outside\n",
+                        "refusal preserves outside files"
+                    );
+                }
+            }
+        }
+    }
+    Ok(())
+}
+
+#[test]
+fn restore_path_absent_from_source_refuses_even_if_in_index() -> Result<()> {
+    for linked in [false, true] {
+        let (_primary, checkout) = path_restore_fixture(linked)?;
+        let before = index(&checkout)?;
+        for options in [&["--source", "HEAD~2"][..], &["--staged"], &["--staged", "--worktree"]] {
+            let args: Vec<_> = ["restore"]
+                .into_iter()
+                .chain(options.iter().copied())
+                .chain(["--", "dir/selected", "z-added"])
+                .collect();
+            let out = run(&checkout, true, &args)?;
+            ensure!(!out.status.success(), "{args:?} must refuse with linked={linked}");
+            assert_eq!(index(&checkout)?, before, "refusal leaves the index untouched");
+            assert_eq!(
+                fs::read(checkout.join("dir/selected"))?,
+                b"dirty\n",
+                "refusal leaves the valid path untouched"
+            );
+            assert_eq!(
+                fs::read(checkout.join("z-added"))?,
+                b"staged addition\n",
+                "refusal preserves the staged addition in the worktree"
+            );
+        }
+    }
+    Ok(())
+}
+
 fn compare(actual: &Path, oracle: &Path, args: &[&str], paths: &[&str]) -> Result<()> {
     let before = index(actual)?;
     let head = git(actual, &["rev-parse", "HEAD"])?;
@@ -90,18 +265,23 @@ fn compare(actual: &Path, oracle: &Path, args: &[&str], paths: &[&str]) -> Resul
 }
 
 #[test]
-fn combined_restore_matches_git_conversion_when_removing_attributes() -> Result<()> {
+fn combined_restore_matches_git_conversion_when_restoring_attributes() -> Result<()> {
     let actual = fixture("restore-both-attributes")?;
     let oracle = fixture("restore-both-attributes-oracle")?;
     for repo in [&actual, &oracle] {
-        fs::write(repo.path().join(".gitattributes"), "selected text eol=crlf\n")?;
+        repo.commit_file(".gitattributes", "selected text eol=crlf\n")?;
+        fs::write(repo.path().join(".gitattributes"), "selected text eol=lf\n")?;
         git(repo.path(), &["add", ".gitattributes"])?;
     }
     let args = ["restore", "--staged", "--worktree", "--", ".gitattributes", "selected"];
     git(oracle.path(), &args)?;
     let result = run(actual.path(), true, &args)?;
     ensure!(result.status.success(), "restore both with attributes: {result:?}");
-    assert!(!actual.path().join(".gitattributes").exists());
+    assert_eq!(
+        fs::read(actual.path().join(".gitattributes"))?,
+        b"selected text eol=crlf\n",
+        "combined restore reinstates HEAD's attributes"
+    );
     assert_eq!(
         fs::read(actual.path().join("selected"))?,
         fs::read(oracle.path().join("selected"))?
@@ -119,8 +299,7 @@ fn staged_and_worktree_restore_head_together_and_preserve_neighbors() -> Result<
         let actual = fixture("restore-both")?;
         let oracle = fixture("restore-both-oracle")?;
         for repo in [&actual, &oracle] {
-            fs::write(repo.path().join("added"), "staged addition\n")?;
-            git(repo.path(), &["add", "added", "neighbor"])?;
+            git(repo.path(), &["add", "neighbor"])?;
             fs::write(repo.path().join("neighbor"), "neighbor unstaged\n")?;
         }
         let head = git(actual.path(), &["rev-parse", "HEAD"])?;
@@ -128,7 +307,7 @@ fn staged_and_worktree_restore_head_together_and_preserve_neighbors() -> Result<
         if explicit_source {
             args.push("--source=HEAD");
         }
-        args.extend(["--", "selected", "added"]);
+        args.extend(["--", "selected"]);
         git(oracle.path(), &args)?;
         let result = run(actual.path(), true, &args)?;
         ensure!(result.status.success(), "restore both: {result:?}");
@@ -140,7 +319,6 @@ fn staged_and_worktree_restore_head_together_and_preserve_neighbors() -> Result<
         for name in ["selected", "neighbor", "private"] {
             assert_eq!(fs::read(actual.path().join(name))?, fs::read(oracle.path().join(name))?);
         }
-        assert!(!actual.path().join("added").exists());
     }
     Ok(())
 }
@@ -194,19 +372,16 @@ fn deletions_and_missing_parent_directories_match_git() -> Result<()> {
         for repo in [&actual, &oracle] {
             repo.commit_file("nested/gone", "nested head\n")?;
             fs::remove_dir_all(repo.path().join("nested"))?;
-            fs::write(repo.path().join("added"), "added index\n")?;
-            git(repo.path(), &["add", "added"])?;
-            fs::write(repo.path().join("added"), "added dirty\n")?;
             fs::remove_file(repo.path().join("selected"))?;
         }
         let mut args = vec!["restore", "--worktree"];
         args.extend(source);
-        args.extend(["--", "selected", "nested/gone", "added"]);
+        args.extend(["--", "selected", "nested/gone"]);
         compare(
             actual.path(),
             oracle.path(),
             &args,
-            &["selected", "nested/gone", "added", "neighbor", "private"],
+            &["selected", "nested/gone", "neighbor", "private"],
         )?;
     }
     Ok(())
@@ -298,8 +473,9 @@ fn invalid_whole_selections_refuse_before_changing_any_file() -> Result<()> {
         assert_eq!(index(repo.path())?, before);
     }
     for args in [
-        vec!["restore", "--worktree", "selected"],
-        vec!["restore", "--worktree", "--source=HEAD~1", "--", "selected"],
+        vec!["restore", "--worktree"],
+        vec!["restore", "--worktree", "--source=missing-revision", "--", "selected"],
+        vec!["restore", "--worktree", "--source=HEAD:selected", "--", "selected"],
     ] {
         ensure!(!run(repo.path(), true, &args)?.status.success(), "must refuse {args:?}");
         assert_eq!(index(repo.path())?, before);
@@ -804,27 +980,5 @@ fn restoring_attributes_with_content_matches_git_conversion_order() -> Result<()
             }
         }
     }
-    let actual = fixture("restore-deleted-attributes")?;
-    let oracle = fixture("restore-deleted-attributes-oracle")?;
-    for repo in [&actual, &oracle] {
-        fs::write(repo.path().join(".gitattributes"), "selected text eol=crlf\n")?;
-        git(repo.path(), &["add", ".gitattributes"])?;
-        fs::write(repo.path().join(".gitattributes"), "selected text eol=lf\n")?;
-    }
-    // Removing a staged-new attributes file from HEAD leaves no worktree
-    // attributes, so conversion falls back to its preserved index version.
-    compare(
-        actual.path(),
-        oracle.path(),
-        &[
-            "restore",
-            "--worktree",
-            "--source=HEAD",
-            "--",
-            ".gitattributes",
-            "selected",
-        ],
-        &[".gitattributes", "selected", "neighbor", "private"],
-    )?;
     Ok(())
 }

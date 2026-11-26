@@ -275,17 +275,17 @@ pub enum Subcommands {
     },
     /// Restore literal files in the index, worktree, or both.
     Restore {
-        /// Restore the index from HEAD. Combine with --worktree to restore working files too.
-        #[clap(long, required_unless_present = "worktree")]
+        /// Restore the index from HEAD or --source. Combine with --worktree to restore working files too.
+        #[clap(long)]
         staged: bool,
-        /// Restore working files. Combine with --staged to restore the index too.
-        #[clap(long, required_unless_present = "staged")]
+        /// Restore working files. This is the default unless --staged is given.
+        #[clap(long)]
         worktree: bool,
-        /// Worktree source: HEAD; defaults to the index when omitted.
-        #[clap(long, requires = "worktree", value_parser = ["HEAD"])]
-        source: Option<String>,
+        /// Restore from a revision instead of the index (or HEAD when --staged).
+        #[clap(long, value_name = "REV", value_parser = crate::shared::AsBString)]
+        source: Option<BString>,
         /// Literal file paths; directories and pathspec patterns are unsupported.
-        #[clap(last = true, required = true, value_parser = crate::shared::AsBString)]
+        #[clap(required = true, value_parser = crate::shared::AsBString)]
         paths: Vec<BString>,
     },
     /// Switch to an existing local branch, or explicitly recover an interrupted switch.

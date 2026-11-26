@@ -189,14 +189,19 @@ Git commit. `brit verify` instead checks repository/object integrity.
 brit add -- src/example.rs README.md
 brit diff --cached                    # HEAD → index; --staged is an alias
 brit diff -- src/example.rs           # index → working file
-brit restore --staged -- README.md    # restore index from HEAD; keep working bytes
+brit restore README.md                # copy the index version to the working file
+brit restore --source HEAD~1 README.md # copy an older version to the working file
+brit restore --staged README.md       # copy HEAD to the index and keep working bytes
 brit commit -m "Describe the staged change"
 ```
 
-Name literal files after `--`; additions, modifications and tracked deletions
-are supported. These operations run locally without invoking Git. Directory or
+Name literal files, optionally after `--`. Add supports additions, modifications
+and tracked deletions. Restore works in the primary checkout and linked
+worktrees. Combine `--staged --worktree` to restore both from HEAD or
+`--source <rev>`. Each selected file must exist in the restore source.
+These operations run locally without invoking Git. Directory or
 interactive staging, pathspec patterns, custom filter/diff drivers and special
-index states require stock Git. Restore requires an existing HEAD. Plain `brit
+index states require stock Git. Plain `brit
 diff` inspects tracked working changes; new files become visible in cached diff
 after staging. Existing `diff tree` and `diff file` commands remain available.
 See the [native authoring scope and verification](docs/plans/2026-09-28-daily-driver.md#native-authoring-sprint--2026-10-12)
