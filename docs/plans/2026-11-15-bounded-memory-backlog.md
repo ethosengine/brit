@@ -182,7 +182,7 @@ requirements below, as they do for the other affected command families.
 
 ## Found during sprint 4 (2026-11-22 and 23)
 
-- [ ] With the host umask 0002, two `replay_retained` journey tests fail on group-writable modes; the tests should set their own umask or the check should name it.
+- [x] With the host umask 0002, two `replay_retained` journey tests fail on group-writable modes; the tests should set their own umask or the check should name it. *Fixed 552da4c8.*
 - [ ] Two replay cleanup kill tests time out under host load; their budget should scale or name the load it assumes.
 - [ ] `memory_object_store::explicit_limit_streams_two_hundred_fifty_six_mib` failed once on CI (run 45203142969, `odb stats --extra-header-lookup`: "At least one object couldn't be looked up even though it must exist") and passed on rerun and on the parent commit; record each recurrence.
 - [ ] macOS `gix-discover is_git::verify_on_exfat` failed once on CI (run 45249125300: `hdiutil: couldn't eject "disk2" - Resource busy`) and passed on rerun; the test should retry the eject or report a runner fault separately.
@@ -217,14 +217,14 @@ Peer feedback round, 2026-11-24 (integration session on ethosengine with install
 ## Found during sprint 6 (2026-11-26)
 
 - [ ] Upstream offer: the gix-fsmonitor fixes on `sprint6/fsmonitor-race` (Linux cancelled-startup bind, 712e3fa6; macOS fence completes on the observed marker, 86e5a41b) go to gitoxide as one PR the steward opens or approves. When a gix-main sync brings them in, drop their `QUARANTINED` entries in `tests/it/src/qa/native_tests.rs`.
-- [ ] `brit fetch origin` exits with an error ("rejected ref update(s): refs/tags/brit-v0.3.5 (would overwrite existing tag)") on every fetch. Branch refs still update. The local tag is annotated (c6ce14d0) and the remote one is lightweight, and both name commit 89ca6e18. Report it as a warning, and treat a tag that peels to the same commit as up to date.
-- [ ] `cargo-publish-brit.sh --check` validates all 73 crates and their registry edges, then fails on the laptop at `cargo package -p gix-error` with "No such file or directory (os error 2)". Find which path is missing, so the rehearsal runs end to end off CI.
-- [ ] The release archive lacks `brit-build-ref` and `brit-verify`, so a device installing from the archive has no build-ref or verify tool.
-- [ ] `replay_retained` umask tests depend on the host umask (0002 here). This is the sprint 4 line again; the tests should set their own umask.
-- [ ] Narrow CI `--packages` should add `brit-cli` on its own whenever the selection runs journey tests, which need the built binary; today the caller has to remember it.
-- [ ] Narrow CI `--repeat` should refuse a filter that selects 0 tests. A wrong package reported "50/50 passed" with nothing run.
+- [x] `brit fetch origin` exits with an error ("rejected ref update(s): refs/tags/brit-v0.3.5 (would overwrite existing tag)") on every fetch. Branch refs still update. The local tag is annotated (c6ce14d0) and the remote one is lightweight, and both name commit 89ca6e18. Report it as a warning, and treat a tag that peels to the same commit as up to date. *Fixed 9df6eabe: a tag that peels to the same commit is up to date; a different commit still refuses, as Git does.*
+- [x] `cargo-publish-brit.sh --check` validates all 73 crates and their registry edges, then fails on the laptop at `cargo package -p gix-error` with "No such file or directory (os error 2)". Find which path is missing, so the rehearsal runs end to end off CI. *Fixed 0e651a26: the stale `vendor/git` entry in `.gitmodules` (no gitlink in the tree) made libgit2 probe `vendor/git/.git`; dropped, and `vendor/git` is ignored.*
+- [x] The release archive lacks `brit-build-ref` and `brit-verify`, so a device installing from the archive has no build-ref or verify tool. *Fixed ca4bad4f.*
+- [x] `replay_retained` umask tests depend on the host umask (0002 here). This is the sprint 4 line again; the tests should set their own umask. *Fixed 552da4c8: the fixtures create their destinations 0700; the product's refusal of a group-writable destination is unchanged.*
+- [x] Narrow CI `--packages` should add `brit-cli` on its own whenever the selection runs journey tests, which need the built binary; today the caller has to remember it. *Fixed 4c0962fc.*
+- [x] Narrow CI `--repeat` should refuse a filter that selects 0 tests. A wrong package reported "50/50 passed" with nothing run. *Fixed 4c0962fc (`--no-tests=fail`).*
 - [ ] `brit rebase` on a shallow repository still refuses (see the 0.3.2 lines); `pull` and `rebase` need a shallow path.
-- [ ] `brit notes fetch|push` and `brit pull --ff-only` ship without help text describing their arguments.
+- [x] `brit notes fetch|push` and `brit pull --ff-only` ship without help text describing their arguments. *Fixed f85d537b. There is no `notes fetch|push` subcommand: notes travel through `brit fetch` and `brit push` with one notes refspec, and that help now says so.*
 - [ ] `brit restore` covers `--source` and the short forms, but not directories or pathspec patterns.
 - [ ] `brit switch` refuses when unstaged changes overlap the target, with no option to carry them; the workaround is archive, restore, switch, then unarchive.
 

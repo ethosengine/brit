@@ -85,14 +85,14 @@ Sizes:
 - M is a new mode built on code that exists.
 - L is a new command over an existing engine.
 
-- [ ] **1. Narrow CI: per-package builds and a repeat count.** (M)
+- [x] **1. Narrow CI: per-package builds and a repeat count.** (M) *Landed: 09fce5b0.*
   - A `packages` input, or a package set derived from `package(...)` in the
     filterset, builds only the owning crates.
   - A `repeat` input runs the selected tests N times (nextest's stress or
     retries support, or N jobs), so a narrow run can confirm a flake fix.
   *Done when:* a one-test macOS dispatch for a brit-epr test takes under 6
   minutes from dispatch to finish, and a `repeat=20` run reports 20 passes.
-- [ ] **2. Pack maintenance: reads never stop at the reduced-trust cap.** (L)
+- [x] **2. Pack maintenance: reads never stop at the reduced-trust cap.** (L) *Landed: 69ed107c, e3a0e251; proofs 230c8041.*
   - `brit maintenance` consolidates packs under the cap.
   - `fetch` consolidates on its own once the count passes a threshold below
     the cap. Each fetch does bounded work, so a fetch never takes unbounded
@@ -112,7 +112,7 @@ Sizes:
     completes.
 
   The laptop's own elohim checkout (51 packs) is the live proof.
-- [ ] **3. Restore one tracked path in a worktree.** (S–M) This replaces
+- [x] **3. Restore one tracked path in a worktree.** (S–M) This replaces *Landed: 2b8f4bf0.*
   `git checkout -- <file>`. First find out what `brit restore` does today for a
   path in a linked worktree, then close the gap:
   - restore from the index (the default);
@@ -123,7 +123,7 @@ Sizes:
   *Done when:* journey tests show each form leaving the same worktree and index
   bytes as `git restore` does, in both kinds of checkout, and a path that
   doesn't exist refuses and changes nothing.
-- [ ] **4. `add -A` with submodules and nested repositories.** (M) Today it
+- [x] **4. `add -A` with submodules and nested repositories.** (M) Today it *Landed: dacc19e3.*
   refuses and names the submodule, so every agent stages by path. Do what Git
   does:
   - stage every other change;
@@ -133,7 +133,7 @@ Sizes:
   *Done when:* a journey test on a fixture with a registered submodule (moved
   and unmoved), an unregistered nested repository and ordinary changes gives the
   same index as `git add -A`, with the warning on stderr.
-- [ ] **5. The silent fetch miss.** (S–M) `brit fetch origin <branch>` once
+- [x] **5. The silent fetch miss.** (S–M) `brit fetch origin <branch>` once *Landed: 36f4a558.*
   printed an index-file line and no ref, and left a branch pushed seconds
   earlier unfetched; a second fetch got it. Seen three times on shem on
   2026-11-25. Reproduce first, in a journey test that pushes from a second
@@ -160,7 +160,7 @@ Sizes:
   *Done when:* the measurement table is in the design note, and a journey test
   on a blobless clone of a fixture runs the path above end to end, with the
   blob fetches counted.
-- [ ] **7. Name the epr in the attribution warning.** (S) A commit made by a
+- [x] **7. Name the epr in the attribution warning.** (S) A commit made by a *Landed: 2ed39ec3.*
   session whose epr predates `commit-trailers` prints `Brit attribution
   UNMEASURED` and carries no trailers. Agents read that as a brit fault. The
   warning must name:
@@ -218,7 +218,7 @@ Take one replacement from this reserve, in order, and keep the count at eight:
    Name the lock path, the holder's pid and command (from the hook marker),
    and how long it has been held. (Reported by the steward, 2026-11-25.)
 
-**Item 2 release note owes two proofs** before 0.3.6 states them:
+**Item 2 release note owed two proofs; both landed in 230c8041 (2026-11-26, Linux; the Windows mapped-pack retirement path stays uncovered):**
 - A fetch in worktree B while a push in worktree A holds the repository guard
   waits or refuses, and runs no consolidation. The guard is a `flock` in the
   common dir, so this should hold; a journey test proves it.
