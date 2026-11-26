@@ -105,9 +105,12 @@ pub fn tasks(metadata: &Value, selection: &Value, platform: &str) -> Result<Vec<
                             .first()
                             .is_some_and(|arg| matches!(arg.as_str(), "native-tests" | "no-git")));
                 if nextest && let Some(filter) = filter {
-                    if repeat.is_some() {
+                    let no_tests = if repeat.is_some() {
                         command.args.retain(|arg| arg != "--no-fail-fast");
-                    }
+                        "--no-tests=fail"
+                    } else {
+                        "--no-tests=pass"
+                    };
                     let mut end = command
                         .args
                         .iter()
@@ -115,7 +118,7 @@ pub fn tasks(metadata: &Value, selection: &Value, platform: &str) -> Result<Vec<
                         .unwrap_or(command.args.len());
                     command
                         .args
-                        .splice(end..end, ["-E".into(), filter.into(), "--no-tests=pass".into()]);
+                        .splice(end..end, ["-E".into(), filter.into(), no_tests.into()]);
                     end += 3;
                     if let Some(repeat) = repeat {
                         command.args.splice(
@@ -916,6 +919,8 @@ mod tests {
         }
         assert!(!args.iter().any(|arg| arg == "--workspace"), "{args:?}");
         assert!(args.iter().any(|arg| arg == "--stress-count=3"), "{args:?}");
+        assert!(args.iter().any(|arg| arg == "--no-tests=fail"), "{args:?}");
+        assert!(!args.iter().any(|arg| arg == "--no-tests=pass"), "{args:?}");
         Ok(())
     }
 

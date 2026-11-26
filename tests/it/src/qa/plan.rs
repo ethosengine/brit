@@ -199,7 +199,10 @@ pub(super) fn filtered(root: &Path, metadata: &Value, mode: &str, scope: TestSco
         reasons.push("Restricted package scope to the requested workspace packages".into());
         Some(scope.packages.into_iter().collect())
     };
-    if let Some(names) = names {
+    if let Some(mut names) = names {
+        if names.contains("cli-journey") && names.insert("brit-cli".into()) {
+            reasons.push("Added brit-cli to build the brit executable required by cli-journey".into());
+        }
         selection["package_scope"] = true.into();
         selection["packages"] = json!(names);
     }
@@ -465,6 +468,52 @@ fn prose_only(path: &Path) -> bool {
 
 #[cfg(test)]
 mod tests {
+    #[test]
+    fn narrow_journey_selection_includes_brit_cli_once() -> gix_error::TestResult {
+        let root = Path::new(env!("CARGO_MANIFEST_DIR")).join("../..");
+        let metadata = super::metadata(&root)?;
+        for (packages, tests, added) in [
+            (vec!["cli-journey"], None, true),
+            (vec!["cli-journey", "brit-cli"], None, false),
+            (vec![], Some("package(=cli-journey)"), true),
+        ] {
+            let selection = super::filtered(
+                &root,
+                &metadata,
+                "fast",
+                super::TestScope {
+                    packages: packages.into_iter().map(String::from).collect(),
+                    tests: tests.map(String::from),
+                    ..Default::default()
+                },
+            )?;
+            assert_eq!(selection["packages"], json!(["brit-cli", "cli-journey"]));
+            assert_eq!(
+                selection["reasons"].to_string().contains("Added brit-cli"),
+                added,
+                "the plan explains when it adds the binary package"
+            );
+            let native = super::super::catalog::tasks(&metadata, &selection, "linux-x86_64")?
+                .into_iter()
+                .find(|task| task.id == "native-tests")
+                .expect("the journey selection has a native test task");
+            let packages = metadata["packages"].as_array().expect("workspace packages");
+            for name in ["brit-cli", "cli-journey"] {
+                let id = packages
+                    .iter()
+                    .find(|package| package["name"] == name)
+                    .expect("workspace package")["id"]
+                    .as_str()
+                    .expect("workspace package ID");
+                assert!(
+                    native.commands[0].args.windows(2).any(|pair| pair == ["-p", id]),
+                    "the native Nextest build includes {name}"
+                );
+            }
+        }
+        Ok(())
+    }
+
     #[test]
     fn test_filter_derives_workspace_packages_only_when_safe() -> gix_error::TestResult {
         let root = Path::new(env!("CARGO_MANIFEST_DIR")).join("../..");

@@ -95,12 +95,11 @@ fn test_command(
     snapshot: &Path,
     cache: &Path,
     fixtures: Fixtures,
-    filter: &str,
+    args: &[&str],
 ) -> Result<Command> {
     let mut command = cargo(root)?;
     reuse_binaries(&mut command, metadata, binaries, snapshot, cache);
     command
-        .arg("--no-tests=pass")
         .env_remove("GIX_TEST_IGNORE_ARCHIVES")
         .env_remove("GIX_TEST_CREATE_ARCHIVES_EVEN_ON_CI");
     command.env(
@@ -110,7 +109,7 @@ fn test_command(
         },
         "1",
     );
-    command.args(["-E", filter]);
+    command.args(args);
     Ok(command)
 }
 
@@ -216,6 +215,7 @@ fn run(
     )?;
     let binaries_path = state.join("binaries-metadata.json");
     fs::write(&binaries_path, binaries).or_raise(|| message("Save nextest binaries for native tests"))?;
+    let no_tests = arguments.no_tests.as_deref().unwrap_or("--no-tests=pass");
     let mut result = Ok(());
     for (index, fixtures) in modes.iter().enumerate() {
         let index = first + index;
@@ -232,7 +232,7 @@ fn run(
                 .expect("adding a snapshot creates the cache")
                 .path,
             *fixtures,
-            &filter,
+            &[no_tests, "-E", &filter],
         )?;
         if arguments.stress.is_empty() {
             command.arg("--no-fail-fast");
@@ -311,8 +311,8 @@ fn variant_arguments(mut command: run::Command) -> Result<(run::Command, Vec<Str
     } else {
         stress
     };
-    if no_tests {
-        replay.push("--no-tests=pass".into());
+    if let Some(no_tests) = no_tests {
+        replay.push(no_tests);
         // Nextest unions multiple -E expressions. The requested filter is appended last.
         if expressions.len() > 1 {
             let requested = expressions.pop().expect("at least two expressions");
@@ -331,7 +331,7 @@ fn variant_arguments(mut command: run::Command) -> Result<(run::Command, Vec<Str
 struct ReplayArguments {
     build: Vec<String>,
     expressions: Vec<String>,
-    no_tests: bool,
+    no_tests: Option<String>,
     stress: Vec<String>,
 }
 
@@ -340,7 +340,7 @@ fn replay_arguments(mut args: impl Iterator<Item = String>) -> Result<ReplayArgu
     while let Some(arg) = args.next() {
         match arg.as_str() {
             "--no-fail-fast" => {}
-            "--no-tests=pass" => replay.no_tests = true,
+            _ if arg.starts_with("--no-tests=") => replay.no_tests = Some(arg),
             "--fail-fast" | "--retries=0" => replay.stress.push(arg),
             _ if arg.starts_with("--stress-count=") => replay.stress.push(arg),
             "-E" | "--filter-expr" | "--filterset" => {
@@ -492,7 +492,7 @@ mod tests {
             Path::new("native-snapshot"),
             Path::new("fixture-cache"),
             Fixtures::Generated,
-            &native_filter(false, None),
+            &["--no-tests=pass", "-E", &native_filter(false, None)],
         )?;
         let native_env: BTreeMap<_, _> = native.get_envs().collect();
         assert_eq!(
@@ -705,7 +705,7 @@ mod tests {
                 "test(original)",
                 "-E",
                 requested,
-                "--no-tests=pass",
+                "--no-tests=fail",
                 "--stress-count=3",
                 "--fail-fast",
                 "--retries=0",
@@ -721,7 +721,7 @@ mod tests {
                 "--stress-count=3",
                 "--fail-fast",
                 "--retries=0",
-                "--no-tests=pass",
+                "--no-tests=fail",
                 "-E",
                 "(test(one) | test(two)) & ((test(original)))"
             ],
@@ -733,7 +733,7 @@ mod tests {
                 "path+file:///workspace/gix#0.90.3",
                 "-E",
                 requested,
-                "--no-tests=pass",
+                "--no-tests=fail",
                 "--stress-count=3",
             ]
             .map(String::from)
@@ -749,7 +749,11 @@ mod tests {
             ["--stress-count=3"],
             "repeat is applied when replaying the selected package's binaries"
         );
-        assert!(replay.no_tests, "zero matches must pass");
+        assert_eq!(
+            replay.no_tests.as_deref(),
+            Some("--no-tests=fail"),
+            "the no-tests policy belongs to the replay arguments"
+        );
         let expression = native_filter(true, replay.expressions.first().map(String::as_str));
         assert!(expression.starts_with("(test(one) | test(two)) & not ("));
         assert!(expression.contains("test(performance)"));
@@ -810,7 +814,7 @@ mod tests {
                 Path::new("snapshot"),
                 Path::new("fixture-cache"),
                 *fixtures,
-                &native_filter(false, None),
+                &["--no-tests=pass", "-E", &native_filter(false, None)],
             )?;
             assert_eq!(
                 command.get_args().collect::<Vec<_>>(),
@@ -865,7 +869,7 @@ mod tests {
             Path::new("snapshot"),
             Path::new("fixture-cache"),
             Fixtures::Generated,
-            &native_filter(true, None),
+            &["--no-tests=pass", "-E", &native_filter(true, None)],
         )?;
         assert!(
             command.get_args().collect::<Vec<_>>().ends_with(
