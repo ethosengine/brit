@@ -44,6 +44,7 @@
 use super::super::MutationWait;
 use anyhow::{Context, Result, bail};
 use std::{
+    cell::Cell,
     collections::BTreeMap,
     fs,
     path::{Path, PathBuf},
@@ -491,6 +492,8 @@ struct Waiting<'a> {
     pass_stopped: bool,
     /// The repository guard a turnstile holder is queued for, to name what really blocks.
     queued_for: Option<&'a fs::File>,
+    /// Share one announcement between the turnstile and the repository guard.
+    announced: Option<&'a Cell<bool>>,
 }
 
 fn lock(file: &fs::File, level: Level, mode: Mode, deadline: &Deadline) -> Result<()> {
@@ -520,7 +523,8 @@ fn lock_with(file: &fs::File, level: Level, mode: Mode, deadline: &Deadline, wai
         None => render(holders, level),
     };
     let mut retried = false;
-    let mut announced = false;
+    let local_announcement = Cell::new(false);
+    let announced = waiting.announced.unwrap_or(&local_announcement);
     let mut pause = Duration::from_millis(20);
     loop {
         if try_lock(file, mode)? {
@@ -549,12 +553,11 @@ fn lock_with(file: &fs::File, level: Level, mode: Mode, deadline: &Deadline, wai
                 )
             });
         }
-        if !announced {
+        if !announced.replace(true) {
             eprintln!(
                 "brit: waiting for the Brit mutation guard held by {}",
                 describe_holders(&holders)
             );
-            announced = true;
         }
         if gix::interrupt::is_triggered() {
             bail!("interrupted while waiting for the Brit mutation guard; nothing was changed");
@@ -588,14 +591,26 @@ fn lock_repository_exclusive(repo: &gix::Repository, file: &fs::File, deadline: 
     }
     // A turnstile that cannot be opened (another user's checkout) only loses fairness.
     let turnstile = open(&repo.common_dir().join(TURNSTILE)).ok();
+    let announced = Cell::new(false);
     if let Some(turnstile) = &turnstile {
         let waiting = Waiting {
             pass_stopped: true,
             queued_for: Some(file),
+            announced: Some(&announced),
         };
         lock_with(turnstile, Level::Turnstile, Mode::Exclusive, deadline, waiting)?;
     }
-    lock(file, Level::Repository, Mode::Exclusive, deadline)
+    lock_with(
+        file,
+        Level::Repository,
+        Mode::Exclusive,
+        deadline,
+        Waiting {
+            announced: Some(&announced),
+            ..Waiting::default()
+        },
+    )
+    .map(|_| ())
 }
 
 /// Let a shared acquirer through only when no exclusive writer is queued.
@@ -623,6 +638,7 @@ fn pass_turnstile(repo: &gix::Repository, repository: &fs::File, deadline: &Dead
     let waiting = Waiting {
         pass_stopped: true,
         queued_for: Some(repository),
+        ..Waiting::default()
     };
     lock_with(&turnstile, Level::Turnstile, Mode::Shared, deadline, waiting).map(|_| ())
 }

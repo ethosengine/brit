@@ -369,6 +369,8 @@ const READ_ONLY_COMMANDS: &[&[&str]] = &[
     &["log"],
     &["grep"],
     &["cat"],
+    &["cat-file"],
+    &["ls-tree"],
     &["notes", "show"],
     &["blame"],
     &["diff"],

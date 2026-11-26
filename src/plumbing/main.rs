@@ -95,6 +95,8 @@ fn requires_mutation_guard(cmd: &Subcommands) -> bool {
             cmds: None | Some(crate::plumbing::options::submodule::Subcommands::List { .. }),
         })
         | Subcommands::Cat { .. }
+        | Subcommands::CatFile(_)
+        | Subcommands::LsTree { .. }
         | Subcommands::Notes(_)
         | Subcommands::IsClean
         | Subcommands::IsChanged
@@ -1905,6 +1907,48 @@ pub fn run_with_command(args: Args, command: clap::Command) -> Result<()> {
         }),
         Subcommands::Cat { revspec } => prepare_and_run("cat", verbose, None, move |_progress, out, _err| {
             core::repository::cat(repository(Mode::Lenient)?, &revspec, out)
+        }),
+        Subcommands::CatFile(crate::plumbing::options::git_spellings::CatFile { flags, object }) => {
+            prepare_and_run("cat-file", verbose, None, move |_progress, out, err| {
+                use core::repository::git_spellings::cat_file::Mode as CatMode;
+                let mode = if flags.pretty {
+                    CatMode::Pretty
+                } else if flags.kind {
+                    CatMode::Kind
+                } else if flags.size {
+                    CatMode::Size
+                } else {
+                    debug_assert!(flags.exists, "clap requires a cat-file mode");
+                    CatMode::Exists
+                };
+                core::repository::git_spellings::cat_file::run(
+                    &repository(Mode::Strict)?,
+                    object.as_ref(),
+                    mode,
+                    out,
+                    err,
+                )
+            })
+        }
+        Subcommands::LsTree {
+            treeish,
+            recursive,
+            name_only,
+            nul,
+            paths,
+        } => prepare_and_run("ls-tree", verbose, None, move |_progress, out, err| {
+            core::repository::tree::ls_tree(
+                &repository(Mode::Strict)?,
+                treeish.as_ref(),
+                &paths,
+                core::repository::tree::LsTreeOptions {
+                    recursive,
+                    name_only,
+                    nul,
+                },
+                out,
+                err,
+            )
         }),
         Subcommands::Notes(crate::plumbing::options::notes::Platform {
             reference,

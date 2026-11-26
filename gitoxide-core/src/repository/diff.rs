@@ -290,18 +290,13 @@ fn working_output(
     paths: &[BString],
     format: Format,
 ) -> Result<bool> {
-    use super::index::authoring::{literal_paths, read_index, validate_index};
+    use super::index::authoring::{literal_paths_with_directories, read_index, validate_index};
     use std::collections::{BTreeMap, BTreeSet};
 
     if format.needs_content() {
         check_external_diff(repo)?;
     }
     let index = read_index(repo)?;
-    let selected = if paths.is_empty() {
-        Vec::new()
-    } else {
-        literal_paths(repo, paths)?
-    };
     let mut before = BTreeMap::new();
     let mut after = BTreeMap::new();
     let insert = |state: &gix::index::State, map: &mut BTreeMap<BString, (u32, ObjectId)>| -> Result<()> {
@@ -323,6 +318,16 @@ fn working_output(
     } else if !cached {
         before.clone_from(&after);
     }
+    let selected = if paths.is_empty() {
+        Vec::new()
+    } else {
+        literal_paths_with_directories(repo, paths, |path| {
+            [before.get(path), after.get(path)]
+                .into_iter()
+                .flatten()
+                .any(|&(mode, _)| mode == GITLINK)
+        })?
+    };
     // A literal path selects itself or, as a directory, every tracked path below it.
     let is_selected = |path: &BString, selected: &BString| {
         path == selected || (path.starts_with(selected) && path.get(selected.len()) == Some(&b'/'))
@@ -627,6 +632,7 @@ fn worktree_gitlink(
     let root = repo
         .workdir()
         .ok_or_raise(|| message("A worktree is required").validation())?;
+    super::index::authoring::validate_relative_path_with_directory(root, path.as_bstr(), true)?;
     let absolute = root.join(gix::path::from_bstr(path.as_bstr())?);
     let meta = match std::fs::symlink_metadata(&absolute) {
         Ok(meta) => meta,

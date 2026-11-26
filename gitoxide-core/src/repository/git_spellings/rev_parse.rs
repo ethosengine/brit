@@ -407,7 +407,7 @@ fn verify_filename(cwd: &Path, arg: &str, repo: Option<&gix::Repository>) -> std
 }
 
 /// Git's `diagnose_invalid_oid_path()` and `diagnose_invalid_index_path()` for `<rev>:<path>` and `:<path>`.
-fn misspelt_object_path(repo: &gix::Repository, arg: &str) -> Option<String> {
+pub(super) fn misspelt_object_path(repo: &gix::Repository, arg: &str) -> Option<String> {
     let top = repo.workdir().map(|workdir| absolute(workdir, repo.current_dir()));
     let on_disk = |path: &str| {
         top.as_ref()

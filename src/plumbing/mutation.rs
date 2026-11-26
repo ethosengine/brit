@@ -73,7 +73,9 @@ impl MutationGuards {
             if rewrites_worktree {
                 gitoxide_core::repository::switch::worktree_writer_guard(repo)
             } else {
-                gitoxide_core::repository::switch::mutation_guard(repo)
+                use gitoxide_core::repository::switch::{MutationWait, mutation_guard_waiting, mutation_wait_or};
+                let wait = mutation_wait_or(MutationWait::For(std::time::Duration::from_secs(10)));
+                mutation_guard_waiting(repo, wait)
             }
             .map_err(super::main::anyhow_to_gix)?,
         );

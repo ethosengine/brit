@@ -5,6 +5,32 @@
 
 use clap::{Arg, ArgAction, ArgMatches, Command};
 
+#[derive(Debug, clap::Args)]
+#[group(required = true, multiple = false)]
+pub struct CatFileFlags {
+    /// Pretty-print trees and write other objects verbatim.
+    #[arg(short = 'p')]
+    pub pretty: bool,
+    /// Print the object type.
+    #[arg(short = 't')]
+    pub kind: bool,
+    /// Print the uncompressed object size in bytes.
+    #[arg(short = 's')]
+    pub size: bool,
+    /// Check whether the object exists.
+    #[arg(short = 'e')]
+    pub exists: bool,
+}
+
+#[derive(Debug, clap::Args)]
+pub struct CatFile {
+    #[command(flatten)]
+    pub flags: CatFileFlags,
+    /// An object name or revision, such as HEAD:path.
+    #[arg(value_parser = crate::shared::AsBString)]
+    pub object: gix::bstr::BString,
+}
+
 /// `rev-parse`, parsed by hand so that flags, path queries and revisions keep their command-line order.
 ///
 /// Flags before the first revision are parsed by clap; from the first revision on, every argument

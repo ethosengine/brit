@@ -81,14 +81,19 @@ pub fn display_object(
                 }
             }
         }
-        _ => {
-            let budget = Budget::new(&std::env::temp_dir()).or_error()?;
-            let (_, mut object) = repo
-                .objects
-                .find_stream(&id, &budget, &gix::interrupt::IS_INTERRUPTED)?;
-            stream::copy(&mut object, &mut out, &gix::interrupt::IS_INTERRUPTED).or_error()?;
-        }
+        _ => display_raw_object(repo, &id, out)?,
     }
+    Ok(())
+}
+
+pub(super) fn display_raw_object(
+    repo: &gix::Repository,
+    id: &gix::hash::oid,
+    mut out: impl std::io::Write,
+) -> Result<()> {
+    let budget = Budget::new(&std::env::temp_dir()).or_error()?;
+    let (_, mut object) = repo.objects.find_stream(id, &budget, &gix::interrupt::IS_INTERRUPTED)?;
+    stream::copy(&mut object, &mut out, &gix::interrupt::IS_INTERRUPTED).or_error()?;
     Ok(())
 }
 

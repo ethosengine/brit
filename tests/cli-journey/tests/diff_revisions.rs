@@ -715,3 +715,26 @@ fn non_default_submodule_formats_and_ignore_settings_refuse() -> Result<()> {
     parity(&f, &[])?;
     Ok(())
 }
+
+#[test]
+fn a_selected_submodule_path_matches_git_for_moved_and_dirty_pins() -> Result<()> {
+    let (f, _source) = with_submodule()?;
+    let sub = f.root().join("sub");
+    ensure!(f.git_in(&sub, &["checkout", "-q", "HEAD~"])?.status.success());
+    for dirty in [false, true] {
+        if dirty {
+            fs::write(sub.join("file"), "dirty\n")?;
+        }
+        for options in [&[][..], &["HEAD"], &["--stat"], &["--stat", "HEAD"]] {
+            for path in ["sub", "sub/"] {
+                let mut args = options.to_vec();
+                args.extend(["--", path]);
+                parity(&f, &args)?;
+            }
+        }
+    }
+    f.commit("record moved pin")?;
+    parity(&f, &["HEAD~", "HEAD", "--", "sub"])?;
+    parity(&f, &["--stat", "HEAD~", "HEAD", "--", "sub"])?;
+    Ok(())
+}

@@ -15,6 +15,7 @@
 //!   `--git-dir=<dir>` requires `<dir>` itself to be a Git directory. `GIT_DIR` overrides `-r`.
 //! - `ls-remote` may wait on a configured credential helper; see its module for how a caller avoids it.
 
+pub mod cat_file;
 pub mod check_ref_format;
 pub mod for_each_ref;
 #[cfg(any(feature = "blocking-client", feature = "async-client"))]

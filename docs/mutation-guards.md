@@ -36,6 +36,10 @@ publication. Fetch holds it for its transfer.
   subcommand (never its arguments), role, directory, start time and session.
 - `add` and a commit start wait up to 2 seconds by default, so a momentary fetch or branch
   command does not fail them.
+- On Linux, `worktree add` and the other writers that take only the repository guard (such as
+  `branch create`) wait up to 10 seconds by default. They print one line naming the holder
+  when they start waiting, and if the guard is still held at the limit they refuse and name
+  it. Push keeps its own waits.
 - `--wait[=SECONDS]` (before the subcommand, or anywhere for plumbing commands) waits instead:
   bare `--wait` without limit, `--wait=0` refuses at once. `BRIT_MUTATION_WAIT=SECONDS` or
   `forever` sets the default. For `brit context` and `brit integrate`, only a `--wait` before

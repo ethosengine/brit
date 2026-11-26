@@ -10,6 +10,14 @@ use gix::{
 
 /// Resolve explicit literal file paths without following directory symlinks.
 pub fn literal_paths(repo: &gix::Repository, paths: &[BString]) -> Result<Vec<BString>> {
+    literal_paths_with_directories(repo, paths, |_| false)
+}
+
+pub(crate) fn literal_paths_with_directories(
+    repo: &gix::Repository,
+    paths: &[BString],
+    allow_directory: impl Fn(&BStr) -> bool,
+) -> Result<Vec<BString>> {
     let root = repo
         .workdir()
         .ok_or_else(|| gix::error::message("A worktree is required").validation_error())?;
@@ -19,8 +27,7 @@ pub fn literal_paths(repo: &gix::Repository, paths: &[BString]) -> Result<Vec<BS
     let mut out = Vec::new();
     for input in paths {
         let raw = input.as_bytes();
-        if raw.is_empty() || raw.last() == Some(&b'/') || raw[0] == b':' || raw.iter().any(|b| b"*?[]\\\0".contains(b))
-        {
+        if raw.is_empty() || raw[0] == b':' || raw.iter().any(|b| b"*?[]\\\0".contains(b)) {
             bail!("Only literal file paths are supported; use Git for pathspecs".unsupported());
         }
         let input_path = gix::path::from_bstr(Cow::Borrowed(input.as_bstr()))?;
@@ -32,13 +39,17 @@ pub fn literal_paths(repo: &gix::Repository, paths: &[BString]) -> Result<Vec<BS
             bail!("Use relative file paths without parent traversal".unsupported());
         }
         let path = repo.normalize_path(input)?.into_owned();
+        let directory_allowed = allow_directory(path.as_bstr());
+        if raw.ends_with(b"/") && !directory_allowed {
+            bail!("Only literal file paths are supported; use Git for pathspecs".unsupported());
+        }
         if path.is_empty()
             || path == b".".as_bstr()
             || path.split(|b| *b == b'/').any(|c| c.eq_ignore_ascii_case(b".git"))
         {
             bail!("Repository root and .git paths cannot be authored".validation());
         }
-        validate_relative_path(root, path.as_bstr())?;
+        validate_relative_path_with_directory(root, path.as_bstr(), directory_allowed)?;
         if !out.contains(&path) {
             out.push(path);
         }
@@ -57,6 +68,14 @@ pub(crate) fn component_options() -> gix::validate::path::component::Options {
 }
 
 pub(crate) fn validate_relative_path(root: &std::path::Path, path: &gix::bstr::BStr) -> Result<()> {
+    validate_relative_path_with_directory(root, path, false)
+}
+
+pub(crate) fn validate_relative_path_with_directory(
+    root: &std::path::Path,
+    path: &BStr,
+    allow_directory: bool,
+) -> Result<()> {
     let mut current = root.to_owned();
     let components: Vec<_> = path.split(|b| *b == b'/').collect();
     for (position, component) in components.iter().enumerate() {
@@ -66,7 +85,7 @@ pub(crate) fn validate_relative_path(root: &std::path::Path, path: &gix::bstr::B
             Ok(meta) if position + 1 < components.len() && !meta.is_dir() => {
                 bail!("File paths must not traverse symlink or non-directory ancestors".validation());
             }
-            Ok(meta) if position + 1 == components.len() && meta.is_dir() => {
+            Ok(meta) if position + 1 == components.len() && meta.is_dir() && !allow_directory => {
                 bail!("Directory staging is not supported; name explicit files".unsupported());
             }
             Ok(_) => {}

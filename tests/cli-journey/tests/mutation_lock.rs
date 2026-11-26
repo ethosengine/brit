@@ -521,10 +521,10 @@ fn a_refused_exclusive_write_names_its_holder_and_can_be_awaited() -> Result<()>
     let holder = SharedHolder::start(repo.path(), remote.path(), &scratch, "names")?;
     let pid = holder.pid().to_string();
 
-    // A shared write refuses at once by default, naming the holder.
+    // A writer can opt out of the wait and still get the holder's name.
     let refs_before = git(repo.path(), &["show-ref"])?;
     ensure_refusal_names(
-        &brit(&other, &["branch", "create", "blocked"])?,
+        &brit(&other, &["--wait=0", "branch", "create", "blocked"])?,
         "exclusive write",
         &["another Brit mutation is active", &pid, "push", "--wait"],
     )?;
@@ -1343,6 +1343,8 @@ fn git_spellings_take_no_guard_and_dash_c_guards_the_repository_it_enters() -> R
         &["for-each-ref"][..],
         &["check-ref-format", "refs/heads/x"][..],
         &["rev-list", "--count", "HEAD"][..],
+        &["ls-tree", "-r", "HEAD"][..],
+        &["cat-file", "-e", "HEAD:base"][..],
         &["merge-base", "--is-ancestor", "HEAD~1", "HEAD"][..],
         &["ls-remote", &path][..],
         // `show` and every `diff` form read only, the working-file forms included (nothing is refreshed).
@@ -1359,7 +1361,7 @@ fn git_spellings_take_no_guard_and_dash_c_guards_the_repository_it_enters() -> R
     }
     let away = tempfile::tempdir()?;
     ensure_refusal_names(
-        &brit(away.path(), &["-C", &path, "branch", "create", "blocked"])?,
+        &brit(away.path(), &["-C", &path, "--wait=0", "branch", "create", "blocked"])?,
         "a write through -C",
         &["another Brit mutation is active", &pid],
     )?;
@@ -1376,5 +1378,85 @@ fn git_spellings_take_no_guard_and_dash_c_guards_the_repository_it_enters() -> R
         git(repo.path(), &["rev-parse", "--verify", "-q", "refs/heads/blocked"]).is_err(),
         "the refused writes changed nothing"
     );
+    Ok(())
+}
+
+#[test]
+fn worktree_add_waits_for_the_repository_guard_by_default() -> Result<()> {
+    let repo = TestRepo::new("worktree-guard-wait")?;
+    let holder = ExternalHolder::hold(repo.path())?;
+    let pid = format!("pid {}", holder.child.id());
+    let scratch = tempfile::tempdir()?;
+    let path = scratch.path().join("linked");
+    let mut add = Background::spawn(
+        repo.path(),
+        &[
+            "worktree",
+            "add",
+            "--detach",
+            path.to_str().expect("UTF-8 fixture path"),
+        ],
+        &[],
+    )?;
+    add.await_stderr("waiting for the Brit mutation guard")?;
+    std::thread::sleep(Duration::from_secs(1));
+    ensure!(add.running()?, "worktree add stays queued while the guard is held");
+    holder.release()?;
+    let output = add.finish_within(Duration::from_secs(5))?;
+    ensure!(output.status.success(), "worktree add after release: {}", output.stderr);
+    assert_eq!(
+        output
+            .stderr
+            .lines()
+            .filter(|line| line.contains("waiting for the Brit mutation guard"))
+            .count(),
+        1,
+        "a single wait announcement"
+    );
+    ensure!(
+        output.stderr.contains(&pid) && output.stderr.contains("flock"),
+        "{}",
+        output.stderr
+    );
+    assert_eq!(git(&path, &["rev-parse", "HEAD"])?, repo.head_id()?);
+    Ok(())
+}
+
+#[test]
+fn worktree_add_times_out_naming_the_repository_guard_holder() -> Result<()> {
+    let repo = TestRepo::new("worktree-guard-timeout")?;
+    let mut holder = ExternalHolder::hold(repo.path())?;
+    let pid = format!("pid {}", holder.child.id());
+    let scratch = tempfile::tempdir()?;
+    let path = scratch.path().join("linked");
+    let start = Instant::now();
+    let output = Background::spawn(
+        repo.path(),
+        &[
+            "worktree",
+            "add",
+            "--detach",
+            path.to_str().expect("UTF-8 fixture path"),
+        ],
+        &[],
+    )?
+    .finish_within(Duration::from_secs(20))?;
+    ensure_refusal_names(&output, "worktree add timeout", &[&pid, "flock", "after waiting"])?;
+    assert_eq!(
+        output
+            .stderr
+            .lines()
+            .filter(|line| line.contains("waiting for the Brit mutation guard"))
+            .count(),
+        1,
+        "a single wait announcement before refusal"
+    );
+    ensure!(
+        start.elapsed() >= Duration::from_secs(10),
+        "the default wait budget was honoured"
+    );
+    ensure!(holder.running()?, "the holder outlasted the deadline");
+    ensure!(!path.exists(), "the refused worktree add leaves no destination");
+    holder.release()?;
     Ok(())
 }

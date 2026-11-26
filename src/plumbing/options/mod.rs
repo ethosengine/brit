@@ -93,8 +93,9 @@ pub struct Args {
     /// Wait for another Brit writer's guard instead of refusing at once.
     ///
     /// Without SECONDS, wait until the guard is free. `0` refuses at once.
-    /// `BRIT_MUTATION_WAIT=SECONDS` (or `forever`) sets the default. With neither, writers
-    /// refuse at once, except `add` and a commit start, which wait up to 2 seconds.
+    /// `BRIT_MUTATION_WAIT=SECONDS` (or `forever`) sets the default. With neither, `worktree add`
+    /// and other repository-only writers such as `branch create` wait up to 10 seconds.
+    /// `add` and a commit start wait up to 2 seconds by default.
     /// Under a Brit hook every wait is capped by `BRIT_HOOK_GUARD_WAIT` (default 30 seconds).
     /// The guard model, and what hooks may run: docs/mutation-guards.md in the Brit sources.
     #[clap(
@@ -330,6 +331,26 @@ pub enum Subcommands {
     },
     /// Git's spelling of `brit revision resolve`, plus repository path queries, with Git's output.
     RevParse(git_spellings::RevParse),
+    /// List tree entries like Git. See also `brit tree entries`.
+    LsTree {
+        /// Tree or revision to list.
+        #[clap(value_parser = crate::shared::AsBString)]
+        treeish: BString,
+        /// Recurse into subtrees.
+        #[clap(short = 'r')]
+        recursive: bool,
+        /// Print only paths.
+        #[clap(long)]
+        name_only: bool,
+        /// Separate records with NUL and print paths verbatim.
+        #[clap(short = 'z')]
+        nul: bool,
+        /// Limit the listing to these paths.
+        #[clap(value_parser = crate::shared::AsBString)]
+        paths: Vec<BString>,
+    },
+    /// Read an object's contents, type, size or existence like Git. See also `brit cat`.
+    CatFile(git_spellings::CatFile),
     /// List local refs like Git. Brit's own branch listing is `brit branch list`.
     ForEachRef(git_spellings::ForEachRef),
     /// Git's spelling of `brit remote refs`, printing Git's `<oid>\t<refname>` lines.
