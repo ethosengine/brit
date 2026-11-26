@@ -643,7 +643,9 @@ fn public_linear_replay_finishes_and_helper_exports_after_cleanup_without_runtim
     assert!(manifest["manifest"]["entries"]
         .as_array()
         .is_some_and(|entries| !entries.is_empty()));
-    let destination = tempfile::tempdir()?;
+    let destination = tempfile::Builder::new()
+        .permissions(fs::Permissions::from_mode(0o700))
+        .tempdir()?;
     let extracted = BritInvocation::new(&helper)
         .args(["extract", "--copy"])
         .arg(copy.as_os_str())

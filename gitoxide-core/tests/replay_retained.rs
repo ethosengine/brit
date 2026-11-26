@@ -4,6 +4,7 @@
 use std::{
     collections::BTreeMap,
     fs,
+    os::unix::fs::PermissionsExt,
     path::{Path, PathBuf},
 };
 
@@ -33,6 +34,12 @@ fn fixture() -> Result<tempfile::TempDir> {
     git(root, &["add", "file"])?;
     git(root, &["commit", "-qm", "baseline"])?;
     Ok(temp)
+}
+
+fn extraction_destination() -> std::io::Result<tempfile::TempDir> {
+    tempfile::Builder::new()
+        .permissions(fs::Permissions::from_mode(0o700))
+        .tempdir()
 }
 
 fn files(root: &Path) -> Result<BTreeMap<PathBuf, Vec<u8>>> {
@@ -180,7 +187,7 @@ fn collision_payloads_roundtrip_without_aliasing_or_relaxing_object_verification
     assert_ne!(copy.manifest.entries[0].checksum, copy.manifest.entries[1].checksum);
     assert_eq!(copy.payload(0)?, a);
     assert_eq!(copy.payload(1)?, b);
-    let destination = tempfile::tempdir()?;
+    let destination = extraction_destination()?;
     retained::extract(&receipt.path, destination.path())?;
     assert_eq!(fs::read(destination.path().join("objects/00000000.payload"))?, a);
     assert_eq!(fs::read(destination.path().join("objects/00000001.payload"))?, b);
@@ -479,7 +486,7 @@ fn extract_is_independent_lossless_and_never_recreates_symlinks() -> Result<()> 
     let mut members = sample_members(&repo)?;
     members[0].path = b"raw-\xff/nested".to_vec();
     let receipt = retained::capture(&repo, NONCE, 1, commit, commit, commit, &members)?;
-    let destination = tempfile::tempdir()?;
+    let destination = extraction_destination()?;
     let before = files(&receipt.path)?;
     retained::extract(&receipt.path, destination.path())?;
     let manifest: serde_json::Value = serde_json::from_slice(&fs::read(destination.path().join("manifest.json"))?)?;
@@ -518,7 +525,7 @@ fn inspection_and_extraction_refuse_ancestor_links_unsafe_names_and_corruption_b
     let commit = repo.head_commit()?.id;
     let members = sample_members(&repo)?;
     let receipt = retained::capture(&repo, NONCE, 1, commit, commit, commit, &members)?;
-    let destination = tempfile::tempdir()?;
+    let destination = extraction_destination()?;
     assert!(
         retained::extract(&receipt.path, destination.path()).is_err(),
         "logical parent traversal rejected even with opaque outputs"
@@ -561,6 +568,7 @@ fn extraction_destination_replacement_child_helper() -> Result<()> {
 #[test]
 fn extraction_revalidates_parent_replaced_by_symlink_after_initial_destination_check() -> Result<()> {
     use std::{
+        os::unix::fs::DirBuilderExt,
         process::{Command, Stdio},
         time::{Duration, Instant},
     };
@@ -577,7 +585,7 @@ fn extraction_revalidates_parent_replaced_by_symlink_after_initial_destination_c
     let extraction = tempfile::tempdir()?;
     let parent = extraction.path().join("parent");
     let destination = parent.join("destination");
-    fs::create_dir_all(&destination)?;
+    fs::DirBuilder::new().recursive(true).mode(0o700).create(&destination)?;
     let outside = tempfile::tempdir()?;
     fs::create_dir(outside.path().join("destination"))?;
     fs::write(outside.path().join("sentinel"), b"outside remains untouched")?;
