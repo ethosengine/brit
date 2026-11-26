@@ -2,6 +2,32 @@
 use cli_journey::support::runner::{brit_bin, BritInvocation};
 
 #[test]
+fn pull_help_describes_remote_branch_and_fast_forward_limit() -> gix_testtools::TestResult {
+    let fixture = tempfile::tempdir()?;
+    let binary = brit_bin().expect("fresh Brit executable");
+    let help = BritInvocation::new(&binary)
+        .args(["pull", "--help"])
+        .current_dir(fixture.path())
+        .run()?;
+    assert!(help.status.success(), "pull help failed: {}", help.stderr);
+    for text in [
+        "[REMOTE]",
+        "[BRANCH]",
+        "Repository to fetch from",
+        "Branch to fetch from the remote",
+        "refs/heads/",
+        "refuse to merge or rebase",
+    ] {
+        assert!(
+            help.stdout.contains(text),
+            "pull help must mention {text}\n{}",
+            help.stdout
+        );
+    }
+    Ok(())
+}
+
+#[test]
 fn compiled_surface_includes_composed_namespaces_and_version_provenance_without_a_repository() {
     let fixture = tempfile::tempdir().unwrap();
     let binary = brit_bin().expect("fresh Brit executable");

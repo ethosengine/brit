@@ -185,25 +185,25 @@ pub enum Subcommands {
         #[clap(long)]
         dry_run: bool,
     },
-    /// Fetch one explicit remote branch and integrate only a fast-forward, with explicit recovery.
+    /// Fetch one remote branch and fast-forward the current branch.
     #[cfg(feature = "gitoxide-core-blocking-client")]
     Pull {
-        /// Require fast-forward-only integration.
+        /// Advance the current branch only if the fetched history includes the current branch's tip. If the branches have diverged, refuse to merge or rebase.
         #[clap(long, required_unless_present_any = ["status", "continue_pull", "abort"], conflicts_with_all = ["status", "continue_pull", "abort"], requires_all = ["remote", "branch"])]
         ff_only: bool,
-        /// Configured remote, URL, or filesystem path.
+        /// Repository to fetch from. Pass a configured remote name, a URL, or a filesystem path.
         #[clap(requires_all = ["ff_only", "branch"], conflicts_with_all = ["status", "continue_pull", "abort"])]
         remote: Option<String>,
-        /// Remote branch, short name or refs/heads/name.
+        /// Branch to fetch from the remote. Pass a short name like main or a full name like refs/heads/main.
         #[clap(requires_all = ["ff_only", "remote"], conflicts_with_all = ["status", "continue_pull", "abort"], value_parser = crate::shared::AsBString)]
         branch: Option<BString>,
-        /// Inspect any pending switch or pull without changing it.
+        /// Show the status of any pending switch or pull without changing it.
         #[clap(long, conflicts_with_all = ["continue_pull", "abort"])]
         status: bool,
-        /// Explicitly continue an interrupted pull.
+        /// Resume an interrupted pull from where it stopped.
         #[clap(long = "continue", conflicts_with = "abort")]
         continue_pull: bool,
-        /// Abort integration before its durable commit decision; retain completed fetch results.
+        /// Stop an interrupted pull before it records the decision to update the branch. Keep any completed fetch results.
         #[clap(long)]
         abort: bool,
     },
@@ -1411,6 +1411,9 @@ pub mod fetch {
         /// rest are refspecs; with `--remote`, every value is a refspec. A refspec naming one ref
         /// that the remote does not advertise is an error. A branch fetched without a destination
         /// also updates the remote-tracking ref the remote's configured refspecs map it to.
+        ///
+        /// To fetch one notes ref into the same name locally, pass `refs/notes/X:refs/notes/X` as the
+        /// only refspec. Brit refuses updates that cannot fast-forward and refuses depth options.
         #[clap(value_parser = crate::shared::AsBString)]
         pub ref_spec: Vec<gix::bstr::BString>,
     }

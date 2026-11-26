@@ -52,6 +52,21 @@ fn note(repo: &TestRepo, reference: &str, body: &str) -> Result<()> {
 }
 
 #[test]
+fn notes_transfer_help_describes_the_single_refspec() -> gix_testtools::TestResult {
+    let fixture = tempfile::tempdir()?;
+    for command in ["fetch", "push"] {
+        let help = brit(fixture.path(), &[command, "--help"])?;
+        assert!(help.status.success(), "{command} help failed: {}", help.stderr);
+        assert!(
+            help.stdout.contains("refs/notes/X:refs/notes/X") && help.stdout.contains("fast-forward"),
+            "{command} help must describe the notes refspec and its fast-forward limit\n{}",
+            help.stdout
+        );
+    }
+    Ok(())
+}
+
+#[test]
 fn round_trips_one_notes_ref() -> Result<()> {
     let a = TestRepo::new("notes-writer")?;
     let b = TestRepo::new("notes-reader")?;
