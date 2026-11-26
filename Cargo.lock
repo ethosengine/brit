@@ -459,7 +459,7 @@ dependencies = [
 
 [[package]]
 name = "brit-build-ref"
-version = "0.1.11"
+version = "0.1.12"
 dependencies = [
  "anyhow",
  "brit-epr",
@@ -474,7 +474,7 @@ dependencies = [
 
 [[package]]
 name = "brit-cli"
-version = "0.3.5"
+version = "0.3.6"
 dependencies = [
  "anyhow",
  "brit-bridge",
@@ -500,7 +500,7 @@ dependencies = [
 
 [[package]]
 name = "brit-epr"
-version = "0.2.4"
+version = "0.2.5"
 dependencies = [
  "blake3",
  "cid",
@@ -524,7 +524,7 @@ dependencies = [
 
 [[package]]
 name = "brit-graph"
-version = "0.2.7"
+version = "0.2.8"
 dependencies = [
  "brit-epr",
  "gix 0.90.4",
@@ -2021,7 +2021,7 @@ dependencies = [
 
 [[package]]
 name = "gitoxide"
-version = "0.61.5"
+version = "0.61.6"
 dependencies = [
  "anstream",
  "anyhow",
@@ -2044,7 +2044,7 @@ dependencies = [
 
 [[package]]
 name = "gitoxide-core"
-version = "0.64.5"
+version = "0.64.6"
 dependencies = [
  "anyhow",
  "async-io",
