@@ -313,7 +313,7 @@ pub(crate) mod function {
         refspec::match_group::validate::Fix,
         remote::fetch::{
             Status,
-            refmap::Source,
+            refmap::{Mapping, Source},
             refs::update::{Mode, TypeChange},
         },
     };
@@ -498,7 +498,7 @@ pub(crate) mod function {
         }) {
             bail!(validation(notes_refspec::ONE_REF_FORM));
         }
-        let res: gix::remote::fetch::Outcome = prepared
+        let mut res: gix::remote::fetch::Outcome = prepared
             .with_dry_run(dry_run)
             .with_shallow(shallow)
             .receive(&mut progress, &gix::interrupt::IS_INTERRUPTED)?;
@@ -509,7 +509,7 @@ pub(crate) mod function {
         }
 
         let ref_specs = remote.refspecs(gix::remote::Direction::Fetch);
-        let rejected = rejected_updates(&res)?;
+        let rejected = classify_updates(&repo, &mut res)?;
         match res.status {
             Status::NoPackReceived {
                 update_refs,
@@ -706,12 +706,12 @@ pub(crate) mod function {
         Ok(res)
     }
 
-    /// Every local ref whose update was refused, as `<ref> (<reason>)`. Git exits 1 for these.
+    /// Mark equivalent tags as up to date and list the remaining refusals as `<ref> (<reason>)`.
     ///
     /// Updates pair with ref-map mappings by position; a count mismatch would name the wrong
     /// refs, so it is an error rather than a silent truncation.
-    fn rejected_updates(res: &gix::remote::fetch::Outcome) -> Result<Vec<String>> {
-        let update_refs = match &res.status {
+    fn classify_updates(repo: &gix::Repository, res: &mut gix::remote::fetch::Outcome) -> Result<Vec<String>> {
+        let update_refs = match &mut res.status {
             Status::NoPackReceived { update_refs, .. } | Status::Change { update_refs, .. } => update_refs,
         };
         if update_refs.updates.len() != res.ref_map.mappings.len() {
@@ -721,28 +721,39 @@ pub(crate) mod function {
                 res.ref_map.mappings.len()
             ));
         }
-        Ok(update_refs
-            .updates
-            .iter()
-            .zip(&res.ref_map.mappings)
-            .filter(|(update, _)| {
-                matches!(
-                    update.mode,
-                    Mode::RejectedSourceObjectNotFound { .. }
-                        | Mode::RejectedTagUpdate
-                        | Mode::RejectedNonFastForward
-                        | Mode::RejectedToReplaceWithUnborn
-                        | Mode::RejectedCurrentlyCheckedOut { .. }
-                )
-            })
-            .map(|(update, mapping)| {
-                let name = mapping
-                    .local
-                    .as_ref()
-                    .map_or_else(|| "(no local ref)".to_owned(), ToString::to_string);
-                format!("{name} ({})", update.mode)
-            })
-            .collect())
+        let mut rejected = Vec::new();
+        for (update, mapping) in update_refs.updates.iter_mut().zip(&res.ref_map.mappings) {
+            match update.mode {
+                Mode::RejectedTagUpdate if tags_peel_to_same_commit(repo, mapping) == Some(true) => {
+                    update.mode = Mode::NoChangeNeeded;
+                }
+                Mode::RejectedSourceObjectNotFound { .. }
+                | Mode::RejectedTagUpdate
+                | Mode::RejectedNonFastForward
+                | Mode::RejectedToReplaceWithUnborn
+                | Mode::RejectedCurrentlyCheckedOut { .. } => {
+                    let name = mapping
+                        .local
+                        .as_ref()
+                        .map_or_else(|| "(no local ref)".to_owned(), ToString::to_string);
+                    rejected.push(format!("{name} ({})", update.mode));
+                }
+                _ => {}
+            }
+        }
+        Ok(rejected)
+    }
+
+    /// An unavailable or unpeelable target leaves the original rejection in place.
+    fn tags_peel_to_same_commit(repo: &gix::Repository, mapping: &Mapping) -> Option<bool> {
+        let name: &gix::bstr::BStr = mapping.local.as_ref()?.as_ref();
+        let mut local = repo.try_find_reference(name).ok()??;
+        if local.name().as_bstr() != name {
+            return None;
+        }
+        let local_commit = local.peel_to_commit().ok()?;
+        let remote_commit = repo.find_object(mapping.remote.as_id()?).ok()?.peel_to_commit().ok()?;
+        Some(local_commit.id == remote_commit.id)
     }
 
     fn render_graph(
@@ -875,8 +886,11 @@ pub(crate) mod function {
                 writeln!(out).or_error()?;
             }
 
+            // Equivalent tag updates have a destination but gix never created an edit for them.
+            let equivalent_tag =
+                update.mode == Mode::NoChangeNeeded && mapping.local.is_some() && update.edit_index.is_none();
             match skipped_due_to_implicit_tag.as_mut() {
-                Some(num_skipped) if update.mode == Mode::NoChangeNeeded => {
+                Some(num_skipped) if update.mode == Mode::NoChangeNeeded && !equivalent_tag => {
                     *num_skipped += 1;
                     continue;
                 }
@@ -893,6 +907,7 @@ pub(crate) mod function {
                 }
             }
             let mode = match (&mapping.remote, &update.mode) {
+                (_, Mode::NoChangeNeeded) if equivalent_tag => "up to date".to_owned(),
                 (Source::Ref(reference), Mode::NoChangeNeeded) if mapping.local.is_none() => {
                     if mapped_refs[reference.unpack().0] {
                         "source only".to_owned()

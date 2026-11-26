@@ -626,6 +626,65 @@ fn named_fetch_reports_an_unchanged_tracking_ref() -> TestResult {
     Ok(())
 }
 
+#[test]
+fn fetch_preserves_annotated_tag_when_remote_lightweight_tag_peels_to_same_commit() -> TestResult {
+    let bin = brit_bin().context("brit binary")?;
+    let clones = FetchClones::new(false)?;
+    let reference = "refs/tags/release";
+    fetch_git(&clones.b, &["tag", "-a", "release", "-m", "local annotation"])?;
+    let tag_id = fetch_git(&clones.b, &["rev-parse", reference])?;
+    fetch_git(clones.remote.path(), &["tag", "release"])?;
+
+    let output = fetch_brit(&bin, &clones.b, &["fetch", "origin"])?;
+    assert!(
+        output
+            .stdout
+            .lines()
+            .any(|line| line.contains(reference) && line.contains("up to date")),
+        "fetch reports the equivalent tag as up to date\n{}",
+        output.stdout
+    );
+    assert_eq!(
+        fetch_git(&clones.b, &["rev-parse", reference])?,
+        tag_id,
+        "fetch preserves the original annotated tag object"
+    );
+    Ok(())
+}
+
+#[test]
+fn fetch_refuses_to_replace_annotated_tag_at_a_different_commit() -> TestResult {
+    let bin = brit_bin().context("brit binary")?;
+    let clones = FetchClones::new(false)?;
+    let reference = "refs/tags/release";
+    fetch_git(&clones.b, &["tag", "-a", "release", "-m", "local annotation"])?;
+    let tag_id = fetch_git(&clones.b, &["rev-parse", reference])?;
+    let commit_id = clones.commit_and_push(&bin, "main", true)?;
+    fetch_git(clones.remote.path(), &["tag", "release", &commit_id])?;
+
+    let output = BritInvocation::new(&bin)
+        .args(["fetch", "origin"])
+        .current_dir(&clones.b)
+        .run()?;
+    assert!(!output.status.success(), "fetch must refuse a conflicting tag");
+    assert!(
+        output.stderr.contains(reference) && output.stderr.contains("would overwrite existing tag"),
+        "fetch names the rejected tag and explains the refusal\n{}",
+        output.stderr
+    );
+    assert_eq!(
+        fetch_git(&clones.b, &["rev-parse", reference])?,
+        tag_id,
+        "fetch preserves the original annotated tag object after refusal"
+    );
+    assert_eq!(
+        fetch_git(&clones.b, &["rev-parse", "refs/remotes/origin/main"])?,
+        commit_id,
+        "fetch still updates the remote-tracking branch"
+    );
+    Ok(())
+}
+
 /// A same-named tag forces a second advertisement. Removing only the tag
 /// between connections makes the branch the best match on that advertisement.
 #[cfg(unix)]
