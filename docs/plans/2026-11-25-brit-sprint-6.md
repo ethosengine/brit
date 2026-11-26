@@ -168,7 +168,7 @@ Sizes:
   - that a newer epr is installed, when one is.
   *Done when:* a test with a stub old epr and a stub newer epr shows both
   facts in the warning.
-- [ ] **8. The costliest flake: the macOS fsmonitor interop tests.** (M) This
+- [x] **8. The costliest flake: the macOS fsmonitor interop tests.** (M) This
   file cost three exhaustive reruns on 2026-11-25:
   `native_queries_preserve_coverage_through_unicode_and_case_root_aliases`
   failed twice (`interoperability.rs:648`), and
@@ -187,6 +187,21 @@ Sizes:
 
   *Done when:* a `repeat=50` macOS narrow run of the file passes 50 of 50, or
   the quarantine lands with its reason and a pool line.
+
+  *Outcome (2026-11-26): quarantined with causes; fixes offered upstream.* Both
+  causes were found and fixed on `sprint6/fsmonitor-race`. Linux (712e3fa6):
+  the timed-out startup's bind worker now checks the stop flag under the startup
+  lock (0 of 3000 failed, against 18 before). macOS (86e5a41b): the fence
+  completes on the observed marker, and FlushSync is only a nudge (50 of 50 on
+  macOS CI). Both fixes touch upstream `gix-*` code, which stays byte-identical
+  here, so brit's CI filter (`tests/it/src/qa/native_tests.rs`, `QUARANTINED`)
+  excludes the three tests with their causes, and the fixes go to gitoxide. The
+  steward opens or approves that PR. Drop each entry once an upstream merge
+  brings its fix in. Integration-3 then hit the Windows `gix-notify`
+  replacement test under load (205 ms in a full suite pass, 50 of 50 alone at
+  15 ms). The backend's 20 ms ready deadline answers `Rescan` and the test
+  asserts no loss, so it joined the list (a7c6148d3). Landed on main as
+  a7c6148d3 (integration-4, CI 45836533860).
 
 ## If an item is skipped
 

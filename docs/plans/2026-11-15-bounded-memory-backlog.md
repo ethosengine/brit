@@ -21,7 +21,7 @@ serves: brit-native-daily-driver
 - [ ] Code that compiles only on some platforms isn't checked locally: item 6's Windows/musl-only `grep_portable.rs` missed an import (E0599, CI 45636199854). A local `cargo check --target <musl>` needs a musl C toolchain for openssl-sys and aws-lc-sys. Consider a cfg(test) compile of the portable backend on Linux, or a fast-mode Windows check through item 8's narrow runs.
 - [ ] `brit add -A` refuses when the selection includes a submodule or a nested fixture repository, so agents stage by path (shem 2026-11-25; also seen here on `gix-odb/tests/fixtures/repos/small-packs.git`).
 - [ ] `brit fetch origin <branch>` printed nothing and left the ref unfetched once, seconds after the branch was pushed; a second fetch got it (shem 2026-11-25, not reproduced).
-- [ ] Windows gix-notify flake is a whole file, not one test: CI 45640631727 also failed `windows::replacing_a_directory_identity_invalidates_coverage_and_can_be_retried`, at the same assertion (tests/notify/windows.rs:43) as `nonrecursive_directory…`. Look at the shared helper at :43.
+- [ ] Windows gix-notify flake is a whole file, not one test: CI 45640631727 also failed `windows::replacing_a_directory_identity_invalidates_coverage_and_can_be_retried`, at the same assertion (tests/notify/windows.rs:43) as `nonrecursive_directory…`. Look at the shared helper at :43. Likely shared cause (2026-11-26): `collect_ready` answers `Loss::Rescan` when ready completions do not drain within `MAX_READY_DURATION` (20 ms, `gix-notify/src/backend/windows/mod.rs:26`), and `observe` asserts no loss. Under full-suite load, CI 45821645766 ran `replacement_stops_old_coverage_and_starts_new_coverage_before_returning` at 205 ms and hit it; alone it passed 50 of 50 at 15 ms. Only that test is quarantined (a7c6148d3); the other two stay in the suite and are recorded here.
 - [ ] `archive_cancels_during_large_object_spooling` now also fails on Linux x86_64 (CI 45640631727, item 4 notes branch, which doesn't touch archive). It was previously recorded only on Linux ARM.
 - [ ] Narrow CI, the next rung: a single-test macOS dispatch took 19 min (CI 45658959262). The test ran in 50 s; about 18 min went to building every workspace test binary, because a `--tests` filter still selects the whole workspace. Add a `packages` input (or derive the package set from `package(...)` in the filterset) so only the owning crate builds. A one-crate check should then take a few minutes.
 - [ ] A single green narrow run doesn't prove a racy test fixed. `eight_writers_by_twenty_five` passed on macOS without the scratch-reflog fix (CI 45658959262). A narrow run needs a repeat count (nextest `--stress-count`, if the pinned nextest has it; otherwise run the job N times) before it can confirm a flake fix.
@@ -213,6 +213,20 @@ Peer feedback round, 2026-11-24 (integration session on ethosengine with install
 - [ ] The device follow of brit reads the main checkout's gitlink, so a main checkout on an old branch never gets a newer brit. ethosengine stayed on 0.3.1, and the laptop's follow refused with "brit pin does not descend from landed head". This is the device-runtime side of "installed lags released" above; follow should read the published ref (`origin/dev:elohim/brit`).
 - [ ] The landing push still uses the Git exception (send-pack after a green hook) on every device. Re-test `brit push` for the `dev` landing on 0.3.4 and retire the exception if it holds.
 - Worked well on every device: `worktree add`, add/commit (including `-r <worktree>` and a gitlink staged by `git add`), `show <rev>:<path>`, `merge-base --is-ancestor`, single-ref fetch, ls-remote of a URL, `log` and `status --no-write`.
+
+## Found during sprint 6 (2026-11-26)
+
+- [ ] Upstream offer: the gix-fsmonitor fixes on `sprint6/fsmonitor-race` (Linux cancelled-startup bind, 712e3fa6; macOS fence completes on the observed marker, 86e5a41b) go to gitoxide as one PR the steward opens or approves. When a gix-main sync brings them in, drop their `QUARANTINED` entries in `tests/it/src/qa/native_tests.rs`.
+- [ ] `brit fetch origin` exits with an error ("rejected ref update(s): refs/tags/brit-v0.3.5 (would overwrite existing tag)") on every fetch. Branch refs still update. The local tag is annotated (c6ce14d0) and the remote one is lightweight, and both name commit 89ca6e18. Report it as a warning, and treat a tag that peels to the same commit as up to date.
+- [ ] `cargo-publish-brit.sh --check` validates all 73 crates and their registry edges, then fails on the laptop at `cargo package -p gix-error` with "No such file or directory (os error 2)". Find which path is missing, so the rehearsal runs end to end off CI.
+- [ ] The release archive lacks `brit-build-ref` and `brit-verify`, so a device installing from the archive has no build-ref or verify tool.
+- [ ] `replay_retained` umask tests depend on the host umask (0002 here). This is the sprint 4 line again; the tests should set their own umask.
+- [ ] Narrow CI `--packages` should add `brit-cli` on its own whenever the selection runs journey tests, which need the built binary; today the caller has to remember it.
+- [ ] Narrow CI `--repeat` should refuse a filter that selects 0 tests. A wrong package reported "50/50 passed" with nothing run.
+- [ ] `brit rebase` on a shallow repository still refuses (see the 0.3.2 lines); `pull` and `rebase` need a shallow path.
+- [ ] `brit notes fetch|push` and `brit pull --ff-only` ship without help text describing their arguments.
+- [ ] `brit restore` covers `--source` and the short forms, but not directories or pathspec patterns.
+- [ ] `brit switch` refuses when unstaged changes overlap the target, with no option to carry them; the workaround is archive, restore, switch, then unarchive.
 
 ## Usage feedback across commands
 
