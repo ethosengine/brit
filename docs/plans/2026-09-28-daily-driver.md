@@ -383,6 +383,10 @@ preserves its permissions, and replaces the original only after success.
 `not-applicable` is quiet. Missing prerequisites, incompatible EPR, invalid
 responses, timeouts and processing failures leave the original message intact
 and warn `UNMEASURED`; attribution remains passive, including under `--no-verify`.
+When EPR lookup or response validation fails, the warning names the resolved
+executable and its source (`EPR_BIN` or PATH), with its CID or version when
+available. It reads the device head from the store's `current.json` and names
+the head CID when its executable differs from the one asked.
 
 `tests/cli-journey/tests/commit_attribution.rs` runs the checked-in hook through
 Brit and stock Git in disposable main and linked worktrees. It checks exact

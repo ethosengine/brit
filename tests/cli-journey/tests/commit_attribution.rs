@@ -15,6 +15,15 @@ const HOOK: &str = include_str!("../../../.githooks/prepare-commit-msg");
 const MEASURED: &str = r#"{"status":"measured","trailers":[["Co-Authored-By","Test Agent <agent@example.com>"],["Codex-Session","fixture-session"]]}"#;
 const MESSAGE: &str = "Scoped change\n\nBody.\n\nCo-Authored-By: Existing Human <human@example.com>\n";
 const DECORATED: &str = "Scoped change\n\nBody.\n\nCo-Authored-By: Existing Human <human@example.com>\nCo-Authored-By: Test Agent <agent@example.com>\nCodex-Session: fixture-session\n";
+const OLD_EPR: &str = "#!/bin/sh
+case \"$*\" in
+  --version) echo 'epr 0.1.0';;
+  'session commit-trailers --json') echo 'epr session: unknown session command commit-trailers' >&2; exit 2;;
+  *) exit 12;;
+esac
+";
+const LOOKUP_WARNING: &str =
+    "Brit attribution UNMEASURED: EPR lookup failed or timed out (requires session commit-trailers --json)";
 
 fn executable(path: &Path, text: &str) -> Result<()> {
     fs::write(path, text)?;
@@ -260,7 +269,7 @@ fn absent_incompatible_and_malformed_responses_are_passive_and_atomic() -> Resul
 fn tool_path(fixture: &Fixture, omit: &str, gtimeout: bool) -> Result<PathBuf> {
     let directory = fixture.root.join(format!("tools-{omit}-{gtimeout}"));
     fs::create_dir(&directory)?;
-    for tool in ["bash", "jq", "git", "timeout", "mktemp", "cp", "mv", "rm"] {
+    for tool in ["bash", "jq", "git", "timeout", "mktemp", "cp", "mv", "rm", "readlink"] {
         if tool == omit {
             continue;
         }
@@ -286,6 +295,193 @@ fn tool_path(fixture: &Fixture, omit: &str, gtimeout: bool) -> Result<PathBuf> {
     }
     symlink(&fixture.epr, directory.join("epr"))?;
     Ok(directory)
+}
+
+fn install_head(store: &Path, cid: &str, script: &str) -> Result<PathBuf> {
+    let release = store.join(cid);
+    fs::create_dir_all(&release)?;
+    let head = release.join("epr");
+    executable(&head, script)?;
+    fs::write(store.join("current.json"), format!(r#"{{"cid":"{cid}"}}"#))?;
+    Ok(head)
+}
+
+const NEW_EPR: &str = "#!/bin/sh
+: > device-head-ran
+exit 12
+";
+
+fn assert_unmeasured_commit(fixture: &Fixture, cmd: &mut Command, expected: &str) -> Result<()> {
+    let output = cmd.args(["commit", "--allow-empty", "-m", MESSAGE]).output()?;
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    let stderr = stderr.strip_suffix("\x1b[2K\r").unwrap_or(&stderr).to_owned();
+    let stdout = success(output)?;
+    assert_eq!(
+        stderr,
+        format!("{LOOKUP_WARNING}; {expected}\n"),
+        "one warning on stderr"
+    );
+    assert!(
+        !String::from_utf8_lossy(&stdout).contains("UNMEASURED"),
+        "stdout contains no warning"
+    );
+    assert_eq!(
+        git(&fixture.root, &["show", "-s", "--format=%B", "HEAD"])?,
+        format!("{MESSAGE}\n").as_bytes(),
+        "the commit keeps its original message without adding attribution trailers"
+    );
+    assert!(
+        !fixture.root.join("device-head-ran").exists(),
+        "head inspection never runs epr"
+    );
+    Ok(())
+}
+
+fn isolated_attribution_command(fixture: &Fixture, tools: &Path, native: bool) -> Command {
+    let mut cmd = command(&fixture.root, native);
+    cmd.env("PATH", tools)
+        .env("HOME", fixture.root.join("home"))
+        .env_remove("EPR_STORE")
+        .env_remove("BIN_STORE");
+    cmd
+}
+
+#[test]
+fn path_epr_and_device_head_are_named_in_the_commit_warning() -> Result<()> {
+    let fixture = Fixture::new(false)?;
+    executable(&fixture.epr, OLD_EPR)?;
+    let tools = tool_path(&fixture, "none", false)?;
+    let store = fixture.root.join("bin-store");
+    install_head(&store.join("epr"), "new-cid", NEW_EPR)?;
+    let old = fixture.epr.canonicalize()?.display().to_string();
+    assert_unmeasured_commit(
+        &fixture,
+        isolated_attribution_command(&fixture, &tools, true).env("BIN_STORE", &store),
+        &format!("asked epr {old} (PATH, version epr 0.1.0); session epr {old} lacks commit-trailers; this device's head is new-cid"),
+    )
+}
+
+#[test]
+fn stale_epr_bin_names_the_override_and_uses_the_path_launchers_store() -> Result<()> {
+    let fixture = Fixture::new(false)?;
+    executable(&fixture.epr, OLD_EPR)?;
+    let tools = tool_path(&fixture, "none", false)?;
+    fs::remove_file(tools.join("epr"))?;
+    let store = fixture.root.join("bin-store");
+    let launcher = store.join("bin/bin-launch");
+    fs::create_dir_all(launcher.parent().expect("launcher directory"))?;
+    executable(&launcher, NEW_EPR)?;
+    symlink(&launcher, tools.join("epr"))?;
+    install_head(&store.join("epr"), "new-cid", NEW_EPR)?;
+    let old = fixture.epr.canonicalize()?.display().to_string();
+    assert_unmeasured_commit(
+        &fixture,
+        isolated_attribution_command(&fixture, &tools, false).env("EPR_BIN", "./fake epr"),
+        &format!("asked epr {old} (EPR_BIN, version epr 0.1.0); session epr {old} lacks commit-trailers; this device's head is new-cid"),
+    )
+}
+
+#[test]
+fn missing_head_leaves_only_the_asked_epr_in_the_commit_warning() -> Result<()> {
+    let fixture = Fixture::new(false)?;
+    executable(&fixture.epr, OLD_EPR)?;
+    let tools = tool_path(&fixture, "none", false)?;
+    let old = fixture.epr.canonicalize()?.display().to_string();
+    assert_unmeasured_commit(
+        &fixture,
+        &mut isolated_attribution_command(&fixture, &tools, true),
+        &format!("asked epr {old} (PATH, version epr 0.1.0)"),
+    )?;
+
+    let store = fixture.root.join("bin-store/epr");
+    fs::create_dir_all(&store)?;
+    for pointer in ["broken JSON", r#"{"cid":"uninstalled-cid"}"#] {
+        fs::write(store.join("current.json"), pointer)?;
+        assert_unmeasured_commit(
+            &fixture,
+            isolated_attribution_command(&fixture, &tools, true).env("EPR_STORE", &store),
+            &format!("asked epr {old} (PATH, version epr 0.1.0)"),
+        )?;
+    }
+    Ok(())
+}
+
+#[test]
+fn the_asked_epr_is_the_device_head_even_through_a_symlink() -> Result<()> {
+    let fixture = Fixture::new(false)?;
+    let tools = tool_path(&fixture, "none", false)?;
+    let store = fixture.root.join("bin-store");
+    let head = install_head(&store.join("epr"), "old-cid", OLD_EPR)?;
+    fs::remove_file(&fixture.epr)?;
+    symlink(&head, &fixture.epr)?;
+    let shadow = fixture.root.join("shadow-store");
+    install_head(&shadow.join("epr"), "new-cid", NEW_EPR)?;
+    assert_unmeasured_commit(
+        &fixture,
+        isolated_attribution_command(&fixture, &tools, true)
+            .env("EPR_BIN", &fixture.epr)
+            .env("EPR_STORE", store.join("epr"))
+            .env("BIN_STORE", &shadow),
+        &format!("asked epr {} (EPR_BIN, CID old-cid)", head.canonicalize()?.display()),
+    )
+}
+
+#[test]
+fn path_launcher_names_its_pinned_executable_from_the_version_cid() -> Result<()> {
+    let fixture = Fixture::new(false)?;
+    let tools = tool_path(&fixture, "none", false)?;
+    fs::remove_file(tools.join("epr"))?;
+    let store = fixture.root.join("bin-store");
+    let launcher = store.join("bin/bin-launch");
+    fs::create_dir_all(launcher.parent().expect("launcher directory"))?;
+    executable(
+        &launcher,
+        "#!/bin/sh
+exec ./bin-store/epr/old-cid/epr \"$@\"
+",
+    )?;
+    symlink(&launcher, tools.join("epr"))?;
+    let old = install_head(
+        &store.join("epr"),
+        "old-cid",
+        &OLD_EPR.replace("epr 0.1.0", r#"{"version":"0.1.0","cid":"old-bytes-cid"}"#),
+    )?;
+    fs::write(old.with_file_name("record.json"), r#"{"bins":{"epr":"old-bytes-cid"}}"#)?;
+    install_head(&store.join("epr"), "new-cid", NEW_EPR)?;
+    assert_unmeasured_commit(
+        &fixture,
+        &mut isolated_attribution_command(&fixture, &tools, true),
+        &format!(
+            "asked epr {} (PATH, CID old-cid); session epr old-cid lacks commit-trailers; this device's head is new-cid",
+            old.canonicalize()?.display()
+        ),
+    )?;
+    fs::write(store.join("epr/current.json"), r#"{"cid":"old-cid"}"#)?;
+    assert_unmeasured_commit(
+        &fixture,
+        &mut isolated_attribution_command(&fixture, &tools, true),
+        &format!("asked epr {} (PATH, CID old-cid)", old.canonicalize()?.display()),
+    )
+}
+
+#[test]
+fn device_head_can_be_found_via_the_home_launcher() -> Result<()> {
+    let fixture = Fixture::new(false)?;
+    executable(&fixture.epr, OLD_EPR)?;
+    let tools = tool_path(&fixture, "none", false)?;
+    let launcher = fixture.root.join("bin-store/bin/bin-launch");
+    fs::create_dir_all(launcher.parent().expect("launcher directory"))?;
+    executable(&launcher, NEW_EPR)?;
+    let home_bin = fixture.root.join("home/.local/bin");
+    fs::create_dir_all(&home_bin)?;
+    symlink(&launcher, home_bin.join("epr"))?;
+    install_head(&fixture.root.join("bin-store/epr"), "new-cid", NEW_EPR)?;
+    let old = fixture.epr.canonicalize()?.display().to_string();
+    assert_unmeasured_commit(
+        &fixture,
+        &mut isolated_attribution_command(&fixture, &tools, false),
+        &format!("asked epr {old} (PATH, version epr 0.1.0); session epr {old} lacks commit-trailers; this device's head is new-cid"),
+    )
 }
 
 #[test]

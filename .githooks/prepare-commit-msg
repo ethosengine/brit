@@ -3,6 +3,118 @@
 set -u
 unmeasured() { printf 'Brit attribution UNMEASURED: %s\n' "$*" >&2; exit 0; }
 
+# Resolve links for display only. The launcher must still see its original epr name.
+resolved_path() {
+  local path=$1 directory link depth=0
+  while :; do
+    directory=${path%/*}
+    [[ "$directory" != "$path" ]] || directory=.
+    directory=$(CDPATH= cd -P -- "${directory:-/}" && pwd -P) || return 1
+    path=${directory%/}/${path##*/}
+    [[ -L "$path" ]] || break
+    link=$(readlink "$path") || return 1
+    case "$link" in
+      /*) path=$link ;;
+      *) path=$directory/$link ;;
+    esac
+    (( ++depth <= 40 )) || return 1
+  done
+  printf '%s\n' "$path"
+}
+
+launcher_store() {
+  local path
+  [[ -n "$1" ]] || return 1
+  path=$(resolved_path "$1") || return 1
+  case "$path" in
+    */bin/bin-launch) printf '%s/epr\n' "${path%/bin/bin-launch}" ;;
+    *) return 1 ;;
+  esac
+}
+
+device_store() {
+  if [[ -n "${EPR_STORE:-}" ]]; then
+    printf '%s\n' "$EPR_STORE"
+  elif [[ -n "${BIN_STORE:-}" ]]; then
+    printf '%s/epr\n' "${BIN_STORE%/}"
+  else
+    launcher_store "$(type -P epr)" ||
+      { [[ -n "${HOME:-}" ]] && launcher_store "$HOME/.local/bin/epr"; }
+  fi
+}
+
+record_names_epr() {
+  [[ -f "$1" ]] && jq -e --arg cid "$2" '.bins.epr == $cid' "$1" >/dev/null 2>&1
+}
+
+# A multi-binary release has a different CID from the bytes reported by epr --version.
+launcher_target() {
+  local store=$1 cid=$2 record path found=
+  if [[ -f "$store/$cid/epr" && -x "$store/$cid/epr" ]]; then
+    resolved_path "$store/$cid/epr"
+    return
+  fi
+  for record in "$store"/*/record.json; do
+    path=${record%/record.json}/epr
+    [[ -f "$path" && -x "$path" ]] && record_names_epr "$record" "$cid" || continue
+    [[ -z "$found" ]] || return 1
+    found=$path
+  done
+  [[ -n "$found" ]] && resolved_path "$found"
+}
+
+epr_unmeasured() {
+  local reason=$1 status=$2 path display_path store cid= byte_cid= version= identity= head line unsupported=
+  path=$(resolved_path "$epr_entry" 2>/dev/null) || path=$epr_entry
+  store=$(device_store 2>/dev/null) || store=
+  if [[ "$store" == '~/'* && -n "${HOME:-}" ]]; then store=$HOME/${store:2}; fi
+  if [[ -n "$store" ]]; then
+    store=$(CDPATH= cd -P -- "$store" 2>/dev/null && pwd -P) || store=
+  fi
+  case "$path" in
+    */bin-store/epr/*/epr | "$store"/*/epr)
+      cid=${path%/epr}
+      cid=${cid##*/}
+      ;;
+  esac
+  # A timeout already spent the lookup budget. Otherwise ask only the same epr for its identity.
+  if [[ -z "$cid" && "$status" != 124 && "$status" != 137 ]] &&
+    { "$timer" -k 1 1 "$epr_entry" --version >"$temporary/version"; } 2>/dev/null; then
+    IFS= read -r version <"$temporary/version" || :
+    if [[ "$version" == '{'* ]]; then
+      byte_cid=$(jq -er '.cid | strings | select(test("^[a-zA-Z0-9_-]+$"))' "$temporary/version" 2>/dev/null) || byte_cid=
+      version=$(jq -er '.version | strings' "$temporary/version" 2>/dev/null) || version=
+    fi
+    if [[ "$path" == */bin/bin-launch && -n "$store" && -n "$byte_cid" ]] &&
+      line=$(launcher_target "$store" "$byte_cid" 2>/dev/null); then
+      path=$line
+      cid=${path%/epr}
+      cid=${cid##*/}
+    fi
+  fi
+  if [[ -n "${cid:-$byte_cid}" ]]; then
+    identity=", CID ${cid:-$byte_cid}"
+  elif [[ -n "$version" ]]; then
+    identity=", version $version"
+  fi
+  display_path=${path//[[:cntrl:]]/?}
+  reason="$reason; asked epr $display_path ($epr_source${identity//[[:cntrl:]]/?})"
+
+  if [[ -n "$store" && "$path" != */bin/bin-launch && -f "$store/current.json" ]] &&
+    head=$(jq -ers 'select(length == 1) | .[0].cid | strings | select(test("^[a-zA-Z0-9_-]+$"))' "$store/current.json" 2>/dev/null) &&
+    [[ -f "$store/$head/epr" && -x "$store/$head/epr" && "$head" != "${cid:-$byte_cid}" && ! "$path" -ef "$store/$head/epr" ]] &&
+    ! { [[ -n "$byte_cid" ]] && record_names_epr "$store/$head/record.json" "$byte_cid"; }; then
+    while IFS= read -r line || [[ -n "$line" ]]; do
+      if [[ "$line" == *'unknown session command commit-trailers'* ]]; then
+        unsupported="session epr ${cid:-${byte_cid:-$display_path}} lacks commit-trailers; "
+        break
+      fi
+    done <"$temporary/error"
+    reason="$reason; ${unsupported}this device's head is $head"
+  fi
+  unmeasured "$reason"
+}
+
 message=${1:-}
 [[ -f "$message" && ! -L "$message" ]] || unmeasured 'missing or nonregular commit message'
 for dependency in jq git mktemp cp mv rm; do
@@ -16,13 +128,17 @@ else
   unmeasured 'missing prerequisite: timeout or gtimeout'
 fi
 epr=${EPR_BIN-epr}
-[[ -n "$epr" ]] && command -v "$epr" >/dev/null 2>&1 || unmeasured 'EPR executable unavailable'
+epr_source=PATH
+[[ "${EPR_BIN+x}" ]] && epr_source=EPR_BIN
+[[ -n "$epr" ]] && epr_entry=$(type -P -- "$epr") && [[ -f "$epr_entry" && -x "$epr_entry" ]] ||
+  unmeasured 'EPR executable unavailable'
+[[ "$epr_entry" == /* ]] || epr_entry=$PWD/$epr_entry
 
 temporary=$(mktemp -d -- "$message.attribution.XXXXXX") || unmeasured 'cannot create temporary directory'
 trap 'rm -rf -- "$temporary"' EXIT
 trap 'unmeasured "interrupted"' HUP INT TERM
-"$timer" -k 1 5 "$epr" session commit-trailers --json >"$temporary/response" 2>"$temporary/error" ||
-  unmeasured 'EPR lookup failed or timed out (requires session commit-trailers --json)'
+{ "$timer" -k 1 5 "$epr" session commit-trailers --json >"$temporary/response"; } 2>"$temporary/error" ||
+  epr_unmeasured 'EPR lookup failed or timed out (requires session commit-trailers --json)' "$?"
 
 # Validate the entire response before extracting any pair. Slurping rejects
 # multiple JSON documents; raw bytes stay in a file so Bash cannot discard NULs.
@@ -39,7 +155,7 @@ trap 'unmeasured "interrupted"' HUP INT TERM
     else error("invalid trailer pair") end
   else error("unmeasured or incompatible response") end
 ' "$temporary/response" >"$temporary/trailers" 2>"$temporary/error" ||
-  unmeasured 'invalid or unavailable EPR attribution'
+  epr_unmeasured 'invalid or unavailable EPR attribution' "$?"
 
 trailers=()
 while IFS= read -r line; do trailers+=("$line"); done <"$temporary/trailers"
