@@ -228,6 +228,21 @@ Peer feedback round, 2026-11-24 (integration session on ethosengine with install
 - [ ] `brit restore` covers `--source` and the short forms, but not directories or pathspec patterns.
 - [ ] `brit switch` refuses when unstaged changes overlap the target, with no option to carry them; the workaround is archive, restore, switch, then unarchive.
 
+## Found during backlog batch 2 (2026-11-26)
+
+Batch 2 closed the fallbacks that peer sessions ranked as the most frequent sources of permission prompts:
+- cherry-pick ranges and lists, with `--continue`, `--skip`, `--abort` and `--status`;
+- `status --porcelain` v1 and v2, `log --format` and `--stat`, and `show :<n>:<path>`;
+- `ls-tree` and `cat-file`;
+- `diff` on a submodule path;
+- a bounded repository-guard wait for `worktree add`.
+
+- [x] brit-v0.3.8's macOS delivery failed in the installer's legacy-link migration ("active executable must name a managed release"), so nothing was published under that tag. The installer compared a link written through a symbolic parent (`/var` → `/private/var`) against its physical prefix. *Fixed b692c97b; the fixture now writes its link through a symbolic parent, so Linux CI covers the case.*
+- [ ] `brit push origin X:refs/heads/main` leaves `refs/remotes/origin/main` where it was, so a tag push that follows is refused by the reach check until `brit fetch origin main` runs. Git updates the tracking ref on a successful push.
+- [ ] Each new worktree needs the rust-style checker installed at `<worktree>/.eprfs/tools/rust-style` before its first push; today `BRIT_RUST_STYLE_PREFIX` has to name another worktree's copy. Share one prefix per repository.
+- [ ] The repository-guard wait for `worktree add` is Linux-only; other hosts still refuse at once.
+- [ ] Six `gitoxide-core` `organize` tests fail inside Codex's sandbox, because a `.git` directory under its `TMPDIR` makes fixtures look nested. They pass outside it. The tests should not depend on what lies above `TMPDIR`.
+
 ## Usage feedback across commands
 
 - [ ] `Tests pass` can report success after a hosted macOS matrix member is cancelled without acquiring a runner (CI 44117076422 and 44117418305, attempt 2); expose that missing coverage while distinguishing provider capacity from code/test failures.
