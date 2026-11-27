@@ -200,6 +200,9 @@ fn a_failure_reported_to_a_closed_stderr_keeps_its_code_and_is_recorded() -> Res
             .env("PATH", &path)
             .env("EPR_FEEDBACK_ROOT", fixture.path())
             .env("EPR_FEEDBACK_INVOCATION", "closed-stderr")
+            // Capture markers and the spool must not outlive the fixture, or a rerun skips the recorder.
+            .env("XDG_CACHE_HOME", fixture.path().join("cache"))
+            .env("XDG_STATE_HOME", fixture.path().join("state"))
             .env("FEEDBACK_TEST_ARGS", &captured)
             .env_remove("RUST_BACKTRACE")
             .stderr(writer)

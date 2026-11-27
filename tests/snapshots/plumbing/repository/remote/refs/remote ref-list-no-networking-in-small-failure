@@ -1,4 +1,4 @@
-error: unrecognized subcommand 'remote'
+error: unrecognized subcommand 'remote' [fb brit/capability-absent:unknown]
 
   tip: some similar subcommands exist: 'r', 'merge', 'tree', 'free', 'restore'
 
