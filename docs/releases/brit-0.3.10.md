@@ -29,8 +29,10 @@ The format is described in [docs/feedback.md](../feedback.md).
 
 | Crate | 0.3.9 release | 0.3.10 release |
 | --- | --- | --- |
+| `brit-build-ref` | 0.1.12 | 0.1.13 |
 | `brit-cli` | 0.3.9 | 0.3.10 |
 | `brit-epr` | 0.2.5 | 0.2.6 |
+| `brit-graph` | 0.2.8 | 0.2.9 |
 | `gitoxide` | 0.61.9 | 0.61.10 |
 | `gitoxide-core` | 0.64.9 | 0.64.10 |
 
