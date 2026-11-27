@@ -667,7 +667,24 @@ fn diagnostic(error: &error::CliError) -> String {
     }
 }
 
+/// The stack every command runs on. Windows gives the main thread 1 MiB, and a debug build's
+/// argument parsing and dispatch frames outgrew it; an explicit size is the same on every host.
+const COMMAND_STACK_BYTES: usize = 16 * 1024 * 1024;
+
 fn main() -> ExitCode {
+    // Named `main` so panic and backtrace text reads as it did on the process's own thread.
+    match std::thread::Builder::new()
+        .name("main".into())
+        .stack_size(COMMAND_STACK_BYTES)
+        .spawn(run_command)
+    {
+        // A panic was already reported by the hook; exit as a panicking main thread does.
+        Ok(worker) => worker.join().unwrap_or(ExitCode::from(101)),
+        Err(_) => run_command(),
+    }
+}
+
+fn run_command() -> ExitCode {
     brit_epr::diagnostic::install_panic_hook("brit", env!("CARGO_PKG_VERSION"));
     gix::utils::stream::Budget::share_process_quota();
     let mut capture = feedback::Capture::new();

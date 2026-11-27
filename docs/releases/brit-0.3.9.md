@@ -37,6 +37,8 @@ That tag has no release assets. 0.3.9 carries everything in
 - **The installer migrates a legacy link through a symbolic parent.** On macOS every
   temporary path lives under `/var`, which is a link to `/private/var`. The installer now
   compares the release directory physically.
+- **Commands run on an explicit 16 MiB stack.** Windows gives a process's main thread 1 MiB,
+  which a debug build's command dispatch outgrew; every host now runs commands on the same size.
 
 ## Allocated versions
 

@@ -240,6 +240,8 @@ Batch 2 closed the fallbacks that peer sessions ranked as the most frequent sour
 - [x] brit-v0.3.8's macOS delivery failed in the installer's legacy-link migration ("active executable must name a managed release"), so nothing was published under that tag. The installer compared a link written through a symbolic parent (`/var` → `/private/var`) against its physical prefix. *Fixed b692c97b; the fixture now writes its link through a symbolic parent, so Linux CI covers the case.*
 - [ ] `brit push origin X:refs/heads/main` leaves `refs/remotes/origin/main` where it was, so a tag push that follows is refused by the reach check until `brit fetch origin main` runs. Git updates the tracking ref on a successful push.
 - [ ] Each new worktree needs the rust-style checker installed at `<worktree>/.eprfs/tools/rust-style` before its first push; today `BRIT_RUST_STYLE_PREFIX` has to name another worktree's copy. Share one prefix per repository.
+- [x] Batch 2's Windows debug build overflowed the 1 MiB main-thread stack on every command (`0xC00000FD`, ci run 45912235737). *Fixed: brit runs each command on a named 16 MiB thread.* Nothing guards the frame sizes themselves.
+- [ ] `native_fence_gives_useful_empty_queries_and_immediate_write_coverage` failed once on macOS x86_64 (ci run 45912235737) with no fsmonitor change in the batch; the fence's one-second cookie wait is still load-sensitive.
 - [ ] The repository-guard wait for `worktree add` is Linux-only; other hosts still refuse at once.
 - [ ] Six `gitoxide-core` `organize` tests fail inside Codex's sandbox, because a `.git` directory under its `TMPDIR` makes fixtures look nested. They pass outside it. The tests should not depend on what lies above `TMPDIR`.
 
