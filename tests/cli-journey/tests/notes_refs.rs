@@ -170,6 +170,75 @@ fn non_fast_forward_writes_nothing() -> Result<()> {
     Ok(())
 }
 
+/// A device publishes its local notes ref under a shared name: only the destination moves, and
+/// only by fast-forward.
+#[test]
+fn push_maps_one_notes_ref_onto_another_name() -> Result<()> {
+    const SHARED: &str = "refs/notes/brit/build/x";
+    let a = TestRepo::new("notes-mapped-a")?;
+    let b = TestRepo::new("notes-mapped-b")?;
+    let remote = bare_remote(&[&a, &b])?;
+    let mapped = format!("{DEVICE}:{SHARED}");
+    let shared_path = remote.path().join(SHARED);
+
+    note(&a, DEVICE, "first receipt")?;
+    let pushed = brit(a.path(), &["push", "origin", &mapped])?;
+    ensure!(pushed.status.success(), "mapped notes push: {}", pushed.stderr);
+    assert_eq!(
+        git_ok(remote.path(), &["for-each-ref", "--format=%(refname)", "refs/notes/"])?,
+        format!("{SHARED}\n").as_bytes(),
+        "only the destination name exists on the remote"
+    );
+    assert_eq!(
+        git_ok(remote.path(), &["rev-parse", SHARED])?,
+        git_ok(a.path(), &["rev-parse", DEVICE])?
+    );
+
+    note(&a, DEVICE, "second receipt")?;
+    let pushed = brit(a.path(), &["push", "origin", &mapped])?;
+    ensure!(pushed.status.success(), "mapped fast-forward: {}", pushed.stderr);
+    assert_eq!(
+        git_ok(remote.path(), &["rev-parse", SHARED])?,
+        git_ok(a.path(), &["rev-parse", DEVICE])?
+    );
+
+    // b's own history for the device ref does not descend from the shared ref.
+    note(&b, DEVICE, "unrelated history")?;
+    let before = fs::read(&shared_path)?;
+    let refused = brit(b.path(), &["push", "origin", &mapped])?;
+    ensure!(!refused.status.success(), "a mapped non-fast-forward must be refused");
+    ensure!(refused.stderr.contains("fast-forward"), "{}", refused.stderr);
+    assert_eq!(
+        fs::read(&shared_path)?,
+        before,
+        "the refused push leaves the remote ref intact"
+    );
+
+    for spec in [
+        format!("{DEVICE}:refs/heads/notes"),
+        format!("{DEVICE}:{SHARED}/*"),
+        format!("+{mapped}"),
+        format!(":{SHARED}"),
+    ] {
+        let output = brit(a.path(), &["push", "origin", &spec])?;
+        ensure!(!output.status.success(), "{spec} must be refused");
+        ensure!(
+            output.stderr.contains("refs/notes/X:refs/notes/Y"),
+            "{spec}: {}",
+            output.stderr
+        );
+    }
+    let fetched = brit(b.path(), &["fetch", "origin", &format!("{SHARED}:{DEVICE}")])?;
+    ensure!(!fetched.status.success(), "fetch lands notes under their own name only");
+    ensure!(
+        fetched.stderr.contains("refs/notes/X:refs/notes/X"),
+        "{}",
+        fetched.stderr
+    );
+    assert_eq!(fs::read(&shared_path)?, before);
+    Ok(())
+}
+
 #[test]
 fn wildcard_notes_refspecs_are_refused() -> Result<()> {
     let repo = TestRepo::new("notes-wildcard")?;

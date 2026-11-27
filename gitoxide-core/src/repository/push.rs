@@ -761,11 +761,16 @@ pub(crate) mod function {
                     gix::progress::Discard,
                     &std::sync::atomic::AtomicBool::new(false),
                     |updates| {
-                        if let Some(name) = &notes {
+                        if let Some(transfer) = &notes {
                             let [update] = updates else {
                                 return Err(std::io::Error::other(notes_refspec::ONE_REF_FORM).into());
                             };
-                            if update.local != name.as_bstr() || update.remote != name.as_bstr() || update.new_oid.is_null() {
+                            // The fast-forward check below is against the destination's remote value.
+                            let name = &transfer.destination;
+                            if update.local != transfer.source.as_bstr()
+                                || update.remote != name.as_bstr()
+                                || update.new_oid.is_null()
+                            {
                                 return Err(std::io::Error::other(notes_refspec::ONE_REF_FORM).into());
                             }
                             let mut actual = repo.clone();

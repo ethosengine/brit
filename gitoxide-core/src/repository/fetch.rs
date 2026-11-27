@@ -382,7 +382,11 @@ pub(crate) mod function {
         } else {
             &ref_specs
         };
-        if let Some(name) = notes_refspec::single(effective_specs)? {
+        if let Some(transfer) = notes_refspec::single(effective_specs)? {
+            // Fetch lands a notes ref under its own name only.
+            let Some(name) = transfer.same_name().cloned() else {
+                bail!(validation(notes_refspec::ONE_REF_FORM));
+            };
             if !matches!(shallow, gix::remote::fetch::Shallow::NoChange) {
                 bail!(validation(
                     "notes fetch requires complete history and accepts no depth options"

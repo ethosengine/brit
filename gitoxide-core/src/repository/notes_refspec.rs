@@ -5,15 +5,30 @@ use gix::{
     prelude::ObjectIdExt,
 };
 
-pub(super) const ONE_REF_FORM: &str =
-    "notes transfers require one named ref in the form refs/notes/X:refs/notes/X (fast-forward only)";
+pub(super) const ONE_REF_FORM: &str = "notes transfers require one named ref in the form refs/notes/X:refs/notes/X, or refs/notes/X:refs/notes/Y for push (fast-forward only)";
 
 pub(super) fn is_notes(name: &BStr) -> bool {
     name.starts_with(b"refs/notes/")
 }
 
+/// One explicit notes transfer: a named notes ref and the notes ref it lands as on the other side.
+pub(super) struct Transfer {
+    pub source: gix::refs::FullName,
+    pub destination: gix::refs::FullName,
+}
+
+impl Transfer {
+    /// The one name of a same-name transfer, or `None` when the two sides differ.
+    pub(super) fn same_name(&self) -> Option<&gix::refs::FullName> {
+        (self.source == self.destination).then_some(&self.source)
+    }
+}
+
 /// Recognize explicit notes transfers before parsing generic Git refspecs.
-pub(super) fn single(specs: &[BString]) -> Result<Option<gix::refs::FullName>> {
+///
+/// Both sides must be full names under `refs/notes/`; they may differ. Callers that cannot map
+/// a notes ref onto another name refuse a transfer whose [`Transfer::same_name`] is `None`.
+pub(super) fn single(specs: &[BString]) -> Result<Option<Transfer>> {
     if !specs.iter().any(|spec| {
         spec.trim_start_with(|b| matches!(b, '+' | '^'))
             .split_str(":")
@@ -23,11 +38,12 @@ pub(super) fn single(specs: &[BString]) -> Result<Option<gix::refs::FullName>> {
     }
     if let [spec] = specs
         && let Some((source, destination)) = spec.split_once_str(":")
-        && source == destination
         && is_notes(source.as_bstr())
-        && let Ok(name) = gix::refs::FullName::try_from(source.as_bstr().to_owned())
+        && is_notes(destination.as_bstr())
+        && let Ok(source) = gix::refs::FullName::try_from(source.as_bstr().to_owned())
+        && let Ok(destination) = gix::refs::FullName::try_from(destination.as_bstr().to_owned())
     {
-        return Ok(Some(name));
+        return Ok(Some(Transfer { source, destination }));
     }
     bail!(validation(ONE_REF_FORM))
 }

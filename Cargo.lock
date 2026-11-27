@@ -474,7 +474,7 @@ dependencies = [
 
 [[package]]
 name = "brit-cli"
-version = "0.3.10"
+version = "0.3.11"
 dependencies = [
  "anstream",
  "anyhow",
@@ -2026,7 +2026,7 @@ dependencies = [
 
 [[package]]
 name = "gitoxide"
-version = "0.61.10"
+version = "0.61.11"
 dependencies = [
  "anstream",
  "anyhow",
@@ -2049,7 +2049,7 @@ dependencies = [
 
 [[package]]
 name = "gitoxide-core"
-version = "0.64.10"
+version = "0.64.11"
 dependencies = [
  "anyhow",
  "async-io",

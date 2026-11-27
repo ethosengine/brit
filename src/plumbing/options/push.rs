@@ -180,7 +180,8 @@ pub struct Platform {
     /// Refspecs to push (e.g. `main`, `main:main`, `+main:upstream`).
     ///
     /// To push one notes ref to the same name on the remote, pass `refs/notes/X:refs/notes/X` as
-    /// the only refspec. Brit refuses updates that cannot fast-forward, force options, and deletions.
+    /// the only refspec; `refs/notes/X:refs/notes/Y` pushes it under another notes name. Brit
+    /// refuses updates that cannot fast-forward the destination, force options, and deletions.
     #[clap(value_parser = crate::shared::AsBString)]
     pub refspec: Vec<gix::bstr::BString>,
 }
