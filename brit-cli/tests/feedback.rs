@@ -282,7 +282,8 @@ mod markers {
     #[test]
     fn full_feedback_spool_silently_skips_further_recorder_spawns() -> TestResult {
         let fixture = Fixture::new()?;
-        fixture.recorder("exit 47\n")?;
+        // A recorder that never answers is unavailable for the session; a refusal is not.
+        fixture.recorder("/bin/sleep 5\n")?;
         let spool = fixture.root.path().join("state/brit/feedback-spool");
         fs::create_dir_all(&spool)?;
         for index in 0..256 {
@@ -310,6 +311,31 @@ mod markers {
         fixture.recorder("# a different recorder identity\nexit 0\n")?;
         fixture.run("first", &["--version"], 0)?;
         assert_eq!(fixture.calls()?, 2, "a replacement recorder can capture at capacity");
+        Ok(())
+    }
+
+    #[test]
+    fn a_refusing_recorder_marks_only_the_refused_claim() -> TestResult {
+        let fixture = Fixture::new()?;
+        fixture.recorder("exit 47\n")?;
+        let spool = fixture.root.path().join("state/brit/feedback-spool");
+
+        fixture.run("first", &["--version"], 0)?;
+        assert_eq!(fixture.calls()?, 1);
+        assert_eq!(fs::read_dir(&spool)?.count(), 1, "the refusal is kept for epr");
+        fixture.run("first", &["--version"], 0)?;
+        assert_eq!(fixture.calls()?, 1, "the refused claim is not retried in the session");
+        let other = fixture.run("first", &["status", "--no-write"], 0)?;
+        assert_eq!(fixture.calls()?, 2, "a refusal does not silence other claims");
+        assert!(
+            other.stderr.is_empty(),
+            "the gap line is still shown at most once per session: {other:?}"
+        );
+        assert_eq!(
+            fs::read_dir(&spool)?.count(),
+            2,
+            "each refused claim keeps its own record"
+        );
         Ok(())
     }
 
@@ -671,7 +697,7 @@ fn feedback_claims_lists_the_same_ids_in_plain_and_json_output() -> gix_testtool
             "id": "brit/command:status",
             "asserts": "Brit handled a command recorded as status.",
             "contradictedBy": "The invocation was not handled as this command.",
-            "validityHorizon": 14,
+            "validityHorizon": "P14D",
             "supersedes": [],
             "clears": [],
             "polarity": "positive",

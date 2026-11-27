@@ -17,7 +17,7 @@ Each declaration contains these fields.
 | --- | --- |
 | `id` | The published claim ID. |
 | `asserts`, `contradictedBy` | One sentence each describing the claim and what would contradict it. |
-| `validityHorizon` | Validity in days, currently 14. |
+| `validityHorizon` | An ISO 8601 duration, currently `P14D` (14 days). |
 | `supersedes` | Earlier claim IDs superseded by this declaration. Those IDs stay in the table. |
 | `clears` | Clearing conditions drawn from `release-current:<tool>`, `release-at-least:<tool>@<ver>`, `path:<p>`, `bound:<measure@v>`, and `observed`. |
 | `polarity` | `negative` or `positive`. |
@@ -40,6 +40,12 @@ outcome `passed`. The parsed `cherry-pick` actions map to the published
 Capture is enabled by `EPR_FEEDBACK_ROOT` or a `.epr-meta/feedback-policy.json`
 in the working directory or an ancestor. Brit passes `EPR_FEEDBACK_CLAIM` and
 `EPR_FEEDBACK_EMITTER` to `epr feedback capture` in the child environment. The
+argument list is unchanged from earlier releases. Its `--operation` word comes from the
+closed vocabulary every installed recorder accepts (`status`, `log`, `help`, `version`,
+`surface`, `parse`, `bridge`, `guard`, `build`, `snapshot`, `context`, `integrate`, `init`,
+`clone`, `fetch`, `push`, `pull`, `add`, `commit`, `diff`, `branch`, `switch`, `merge`,
+`rebase`, `restore`, `tag`, `remote`, `submodule`, `other`), and any other command is sent
+as `other`. The claim names the command exactly. The
 emitter is `EPR_BIN_RECORD` when set, otherwise
 `unrecorded:<version>+<sha12>`. When the build SHA is `unavailable`, the
 fallback is `unrecorded:<version>+exe.<sha12>` using SHA-256 over the running
@@ -69,8 +75,14 @@ by `.json`. Each hash input is framed by its byte length as a little-endian
 the size as a little-endian `u64`, and mtime as little-endian signed Unix
 nanoseconds (`i128`, empty when unavailable). If the executable is missing,
 the inputs after the session key are replaced by the bytes of `missing`.
-Brit skips further spawns for that session and recorder identity while its
-record exists. A changed path, size, or mtime is eligible for another attempt.
+When the recorder is missing, times out or cannot be spawned, Brit skips further
+spawns for that session and recorder identity while its record exists. A changed
+path, size, or mtime is eligible for another attempt.
+
+A recorder that *refuses* a record is not unavailable: it may accept others. Its
+record is keyed on the session key and the claim ID (`<session key>\0<claim id>`
+in place of the session key above), so only that claim is not retried in the
+session, and other claims are still captured.
 
 Each file is one JSON object, at most 1024 bytes, written to a temporary file
 in the directory and published atomically without overwriting an existing record.

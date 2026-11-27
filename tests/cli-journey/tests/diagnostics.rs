@@ -184,8 +184,9 @@ exit 47
         let calls = std::fs::read_to_string(fixture.state.path().join("calls"))?;
         assert_eq!(
             calls.lines().count(),
-            1,
-            "quiet leaves capture enabled but the gap suppresses retries"
+            3,
+            "quiet leaves capture enabled; a refusing recorder is tried once per claim \
+             (rev-parse, help and the stash bridge), and a repeated claim is not retried"
         );
         Ok(())
     }

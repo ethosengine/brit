@@ -22,7 +22,7 @@ pub(crate) struct Declaration {
     pub id: &'static str,
     asserts: &'static str,
     contradicted_by: &'static str,
-    validity_horizon: u16,
+    validity_horizon: &'static str,
     supersedes: &'static [&'static str],
     clears: &'static [&'static str],
     polarity: &'static str,
@@ -38,7 +38,7 @@ const DEFAULT: Declaration = Declaration {
     id: "",
     asserts: "",
     contradicted_by: "",
-    validity_horizon: 14,
+    validity_horizon: "P14D",
     supersedes: &[],
     clears: &[],
     polarity: "negative",
@@ -466,6 +466,19 @@ fn lookup(prefix: &str, param: &str) -> Option<Claim> {
         .map(Claim)
 }
 
+/// Every typed code [`form_claim`] can return. A cure is observable only for one of these;
+/// extend this list together with `form_claim` when a new form becomes observable.
+#[cfg(test)]
+const FORM_CODES: [FeedbackCode; 7] = [
+    FeedbackCode::CherryPickContinue,
+    FeedbackCode::CherryPickAbort,
+    FeedbackCode::CherryPickSkip,
+    FeedbackCode::CherryPickStatus,
+    FeedbackCode::CherryPickRange,
+    FeedbackCode::CherryPickSingle,
+    FeedbackCode::CherryPickList,
+];
+
 pub(super) fn form_claim(matches: &clap::ArgMatches) -> Option<Claim> {
     use gix::bstr::{BString, ByteSlice};
 
@@ -584,7 +597,11 @@ mod tests {
                 "trace" | "debug" | "info" | "warn" | "error" | "fatal"
             ));
             assert!(matches!(row.ceiling, "device" | "steward"));
-            assert!(row.validity_horizon > 0, "{} has a positive horizon", row.id);
+            assert!(
+                iso_day_duration(row.validity_horizon),
+                "{} has an ISO 8601 day duration",
+                row.id
+            );
             assert!(
                 row.retire_when.is_none(),
                 "{} has no retirement condition in this release",
@@ -639,7 +656,20 @@ mod tests {
             );
             assert!(!cure.cite.trim().is_empty(), "{} requires a citation", cure.claim);
             assert!(!cure.summary.trim().is_empty(), "{} requires a summary", cure.claim);
+            assert!(
+                FORM_CODES.iter().any(|code| refusal(*code).id() == cure.claim),
+                "{} has no successful form that `form_claim` maps to it, so its passage would never be observed",
+                cure.claim
+            );
         }
+    }
+
+    /// `P<n>D` with a positive day count: the only duration form this table declares.
+    fn iso_day_duration(value: &str) -> bool {
+        value
+            .strip_prefix('P')
+            .and_then(|rest| rest.strip_suffix('D'))
+            .is_some_and(|days| !days.is_empty() && days.bytes().all(|b| b.is_ascii_digit()) && days != "0")
     }
 
     #[test]

@@ -63,12 +63,8 @@ impl Capture {
     }
 
     pub fn operation(&mut self, name: &str) {
-        let declaration = claims::command(name);
-        self.claim = declaration.unwrap_or(claims::UNKNOWN_COMMAND);
-        // Keep the legacy recorder's operation vocabulary for the unchanged capture arguments.
-        self.operation = declaration
-            .and_then(|claim| claim.id().strip_prefix("brit/command:"))
-            .unwrap_or("other");
+        self.claim = claims::command(name).unwrap_or(claims::UNKNOWN_COMMAND);
+        self.operation = recorder_operation(name);
     }
 
     pub fn note_successful_form(&mut self, matches: &clap::ArgMatches) {
@@ -124,17 +120,40 @@ impl Capture {
         if full_spool.as_ref().is_some_and(|path| path.is_file()) {
             return;
         }
-        if let Some(path) = spool.as_ref().filter(|path| path.is_file()) {
-            if let Some(gap) = markers::read_gap(path) {
-                self.report_gap(session, gap.cause);
-            }
+        // A recorder that refuses one record still records others, so a refusal is kept under a
+        // key that also names the claim: it stops retries of that claim only, never the session.
+        let claim_spool = recorder.spool_file(&format!("{session}\0{}", claim.id()));
+        let full_claim_spool = claim_spool.as_deref().and_then(markers::full_spool_marker);
+        if full_claim_spool.as_ref().is_some_and(|path| path.is_file()) {
             return;
+        }
+        for path in [&spool, &claim_spool].into_iter().flatten() {
+            if path.is_file() {
+                if let Some(gap) = markers::read_gap(path) {
+                    self.report_gap(session, gap.cause);
+                }
+                return;
+            }
         }
         match self.record(root, claim, outcome, emitter, &recorder) {
             Ok(()) => {
                 if let Some(path) = success {
                     let _ = markers::mark(&path);
                 }
+            }
+            Err(gap) if matches!(gap.cause, RecorderCause::Refused) => {
+                if claim_spool.is_some_and(|path| {
+                    matches!(
+                        markers::write_gap(&path, &recorder, gap.cause, emitter, session, gap.stderr.as_deref()),
+                        Ok(GapWrite::Full)
+                    )
+                }) {
+                    if let Some(path) = full_claim_spool {
+                        let _ = markers::mark(&path);
+                    }
+                    return;
+                }
+                self.report_gap(session, gap.cause);
             }
             Err(gap) => {
                 if spool.is_some_and(|path| {
@@ -270,6 +289,50 @@ impl Capture {
             }
         }
     }
+}
+
+/// The `--operation` words every installed `epr feedback capture` accepts. It refuses any
+/// other word, so the argument keeps this closed vocabulary and the claim, carried in
+/// `EPR_FEEDBACK_CLAIM`, says which command it was. Never add a word here: older recorders
+/// would refuse it.
+const RECORDER_OPERATIONS: &[&str] = &[
+    "status",
+    "log",
+    "help",
+    "version",
+    "surface",
+    "parse",
+    "bridge",
+    "guard",
+    "build",
+    "snapshot",
+    "context",
+    "integrate",
+    "init",
+    "clone",
+    "fetch",
+    "push",
+    "pull",
+    "add",
+    "commit",
+    "diff",
+    "branch",
+    "switch",
+    "merge",
+    "rebase",
+    "restore",
+    "tag",
+    "remote",
+    "submodule",
+    "other",
+];
+
+fn recorder_operation(name: &str) -> &'static str {
+    RECORDER_OPERATIONS
+        .iter()
+        .find(|word| **word == name)
+        .copied()
+        .unwrap_or("other")
 }
 
 struct RecorderFailure {
@@ -416,5 +479,73 @@ printf '%s %s %s %s\n' "$EPR_FEEDBACK_CLAIM" "$EPR_FEEDBACK_EMITTER" "$6" "$8" >
             "a prior symptom does not block the passage, which is recorded once for each session and emitter"
         );
         Ok(())
+    }
+}
+
+#[cfg(test)]
+mod operation_tests {
+    use super::*;
+
+    #[test]
+    fn every_operation_word_is_one_installed_recorders_accept() {
+        // The vocabulary of `epr feedback capture --operation` in every released epr. Changing
+        // this list breaks capture on installed recorders; the claim carries anything finer.
+        assert_eq!(
+            RECORDER_OPERATIONS,
+            [
+                "status",
+                "log",
+                "help",
+                "version",
+                "surface",
+                "parse",
+                "bridge",
+                "guard",
+                "build",
+                "snapshot",
+                "context",
+                "integrate",
+                "init",
+                "clone",
+                "fetch",
+                "push",
+                "pull",
+                "add",
+                "commit",
+                "diff",
+                "branch",
+                "switch",
+                "merge",
+                "rebase",
+                "restore",
+                "tag",
+                "remote",
+                "submodule",
+                "other",
+            ]
+        );
+        for row in claims::DECLARATIONS {
+            let Some(verb) = row.id.strip_prefix("brit/command:") else {
+                continue;
+            };
+            let mut capture = Capture::new();
+            capture.operation(verb);
+            assert!(
+                RECORDER_OPERATIONS.contains(&capture.operation),
+                "{} sends --operation {}",
+                row.id,
+                capture.operation
+            );
+            assert_eq!(capture.claim.id(), row.id, "the claim still names the command");
+        }
+        let mut capture = Capture::new();
+        capture.operation("show");
+        assert_eq!(
+            (capture.operation, capture.claim.id()),
+            ("other", "brit/command:show"),
+            "a verb outside the recorder's list is sent as other"
+        );
+        capture.operation("no-such-verb");
+        assert_eq!(capture.operation, "other");
     }
 }
