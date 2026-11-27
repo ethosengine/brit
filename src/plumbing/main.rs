@@ -2293,7 +2293,10 @@ fn verify_mode(decode: bool, re_encode: bool) -> verify::Mode {
 }
 
 pub(super) fn anyhow_to_gix(error: anyhow::Error) -> gix::error::Error {
-    gix::error::Error::from_boxed(error.into_boxed_dyn_error())
+    match error.downcast::<core::repository::feedback::FeedbackRefusal>() {
+        Ok(refusal) => gix::error::Error::from_error(refusal),
+        Err(error) => gix::error::Error::from_boxed(error.into_boxed_dyn_error()),
+    }
 }
 
 #[cfg(test)]

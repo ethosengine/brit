@@ -51,6 +51,11 @@ pub fn emit(message: impl Display) {
     let _ = writeln!(std::io::stderr().lock(), "{message}");
 }
 
+/// Append one feedback claim suffix to the diagnostic's final line and write it to stderr.
+pub fn emit_with_claim(message: impl Display, claim: &str) {
+    emit(format_args!("{message} [fb {claim}]"));
+}
+
 /// Exit status of a read-only command whose reader closed stdout early: 141, Git's status when `SIGPIPE` kills it.
 pub const CLOSED_READER_EXIT: u8 = 141;
 

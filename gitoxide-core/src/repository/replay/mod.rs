@@ -26,7 +26,9 @@ pub use cherry_pick::execute as cherry_pick;
 #[cfg(not(target_os = "linux"))]
 pub fn cherry_pick(_: &gix::Repository, revision: &BStr) -> Result<()> {
     // Elsewhere this stays a Git bridge: name the exact command, as the bridge did before.
-    anyhow::bail!("native cherry-pick requires Linux; run: git cherry-pick {revision}")
+    anyhow::bail!(super::feedback::FeedbackCode::CherryPickSingle.because(format!(
+        "native cherry-pick requires Linux; run: git cherry-pick {revision}"
+    )))
 }
 
 mod validation;

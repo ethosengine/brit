@@ -2,7 +2,7 @@ lints.workspace = true
 
 [package]
 name = "brit-cli"
-version = "0.3.9"
+version = "0.3.10"
 description = "Unified Brit Git and build CLI"
 repository = "https://github.com/ethosengine/brit"
 authors = ["Matthew Dowell <matthew@ethosengine.com>"]
@@ -28,6 +28,7 @@ lean-async = ["gitoxide/lean-async"]
 switch-test-faults = ["gitoxide/switch-test-faults"]
 
 [dependencies]
+anstream = "1"
 anyhow = "1.0.98"
 brit-bridge = { version = "0.1.9", path = "../brit-bridge", registry = "elohim" }
 brit-epr = { version = "0.2.3", path = "../brit-epr", registry = "elohim", default-features = false }
@@ -46,12 +47,20 @@ gitoxide = { version = "^0.61.4", registry = "elohim", path = "..", default-feat
 rakia-core = { version = "0.1.2", registry = "elohim" }
 rakia-brit = { version = "0.1.2", registry = "elohim" }
 
+chrono = { version = "0.4", default-features = false, features = ["std"] }
 clap = { version = "4", features = ["derive"] }
 gix = { version = "^0.90.4", path = "../gix", registry = "elohim", default-features = false, features = ["basic", "revision", "blob-diff", "sha1", "sha256"] }
 petgraph = "0.7"
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
+tempfile = "3"
 thiserror = "2"
+
+[target.'cfg(unix)'.dependencies]
+rustix = { version = "1", features = ["fs"] }
+
+[target.'cfg(windows)'.dependencies]
+windows-sys = { version = "0.61", features = ["Win32_System_SystemInformation"] }
 
 [dev-dependencies]
 gix-testtools = { path = "../tests/tools", features = ["sha1"] }

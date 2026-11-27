@@ -78,15 +78,32 @@ pub fn run_cherry_pick(
     _out: &mut dyn Write,
     _err: &mut dyn Write,
 ) -> Result<()> {
-    let arguments = match action {
-        Action::StartPick(revisions) => revisions.iter().map(ToString::to_string).collect::<Vec<_>>().join(" "),
-        Action::Continue => "--continue".into(),
-        Action::Abort => "--abort".into(),
-        Action::Skip => "--skip".into(),
-        Action::Status => anyhow::bail!("native cherry-pick requires Linux; run: git status"),
+    use crate::repository::feedback::FeedbackCode;
+    use gix::bstr::ByteSlice;
+
+    let (code, arguments) = match action {
+        Action::StartPick(revisions) => {
+            let code = match revisions.as_slice() {
+                [revision] if revision.contains_str("..") => FeedbackCode::CherryPickRange,
+                [_] => FeedbackCode::CherryPickSingle,
+                _ => FeedbackCode::CherryPickList,
+            };
+            (
+                code,
+                revisions.iter().map(ToString::to_string).collect::<Vec<_>>().join(" "),
+            )
+        }
+        Action::Continue => (FeedbackCode::CherryPickContinue, "--continue".into()),
+        Action::Abort => (FeedbackCode::CherryPickAbort, "--abort".into()),
+        Action::Skip => (FeedbackCode::CherryPickSkip, "--skip".into()),
+        Action::Status => {
+            anyhow::bail!(FeedbackCode::CherryPickStatus.because("native cherry-pick requires Linux; run: git status"))
+        }
         _ => anyhow::bail!("native cherry-pick requires Linux"),
     };
-    anyhow::bail!("native cherry-pick requires Linux; run: git cherry-pick {arguments}")
+    anyhow::bail!(code.because(format!(
+        "native cherry-pick requires Linux; run: git cherry-pick {arguments}"
+    )))
 }
 
 /// Check whether ordinary literal staging should be routed to the replay child.

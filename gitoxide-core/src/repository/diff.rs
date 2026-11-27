@@ -678,16 +678,17 @@ fn check_submodule_settings(repo: &gix::Repository, format: Format) -> Result<()
         && let Some(value) = config.string("diff.submodule")
         && value.as_slice() != b"short"
     {
-        bail!(unsupported(format!(
+        bail!(super::feedback::FeedbackCode::DiffSubmoduleFormat.unsupported(format!(
             "diff.submodule={value} is not supported; Brit prints submodules in Git's short form; use git diff"
         )));
     }
     if let Some(value) = config.string("diff.ignoreSubmodules")
         && !matches!(value.as_slice(), b"none" | b"untracked")
     {
-        bail!(unsupported(format!(
-            "diff.ignoreSubmodules={value} is not supported; use git diff"
-        )));
+        bail!(
+            super::feedback::FeedbackCode::DiffSubmoduleIgnore
+                .unsupported(format!("diff.ignoreSubmodules={value} is not supported; use git diff"))
+        );
     }
     for submodule in repo.submodules()?.into_iter().flatten() {
         use gix::submodule::config::Ignore;
@@ -696,7 +697,7 @@ fn check_submodule_settings(repo: &gix::Repository, format: Format) -> Result<()
             Some(Ignore::All) => "all",
             Some(Ignore::None | Ignore::Untracked) | None => continue,
         };
-        bail!(unsupported(format!(
+        bail!(super::feedback::FeedbackCode::DiffSubmoduleIgnore.unsupported(format!(
             "submodule.{}.ignore={value} is not supported; use git diff",
             submodule.name()
         )));
@@ -712,7 +713,7 @@ fn binary_attribute(matches: &gix::attrs::search::Outcome, path: &BString) -> Re
     {
         None | Some(gix::attrs::StateRef::Unspecified) => Ok(false),
         Some(gix::attrs::StateRef::Unset) => Ok(true),
-        _ => bail!(unsupported(format!(
+        _ => bail!(super::feedback::FeedbackCode::DiffAttributes.unsupported(format!(
             "diff attributes and text conversion are not supported for '{path}'; use git diff"
         ))),
     }
@@ -1046,7 +1047,10 @@ pub fn pinned_commit(repo: &gix::Repository, out: &mut dyn std::io::Write, commi
 
 fn check_external_diff(repo: &gix::Repository) -> Result<()> {
     if repo.config_snapshot().string("diff.external").is_some() || std::env::var_os("GIT_EXTERNAL_DIFF").is_some() {
-        bail!(unsupported("external diff commands are not supported; use git diff"));
+        bail!(
+            super::feedback::FeedbackCode::DiffExternal
+                .unsupported("external diff commands are not supported; use git diff")
+        );
     }
     Ok(())
 }

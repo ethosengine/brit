@@ -1,5 +1,7 @@
 use std::io::Write;
 
+use super::feedback::FeedbackCode;
+
 use gix::{
     Result,
     error::{OptionExt, ResultExt, bail, message},
@@ -260,7 +262,7 @@ pub fn create(
     }
 
     if !amend && repo.config_snapshot().try_boolean("commit.gpgSign")?.unwrap_or(false) {
-        bail!("commit.gpgSign requires a signed commit; run: git commit -S");
+        bail!(FeedbackCode::CommitSigning.because("commit.gpgSign requires a signed commit; run: git commit -S"));
     }
 
     // `--cleanup=<mode>` validation. git's parse_cleanup_arg
@@ -298,7 +300,9 @@ pub fn create(
         std::process::exit(128);
     }
     if !pathspec.is_empty() || include || only {
-        bail!("path-scoped commit is not yet supported; stage explicit paths and inspect the index, or use git commit");
+        bail!(FeedbackCode::CommitPaths.because(
+            "path-scoped commit is not yet supported; stage explicit paths and inspect the index, or use git commit"
+        ));
     }
     // The worktree guard is held for the whole command. The repository guard (shared) is held
     // only to read the starting state and to publish: hooks run without it, so a commit sitting
@@ -320,7 +324,9 @@ pub fn create(
             bail!("resolved merge commit requires -m or -F and does not support amendment or implicit messages");
         }
     } else if let Some(state) = repo.state() {
-        bail!("commit during {state:?} is not yet supported; use git commit");
+        bail!(
+            FeedbackCode::CommitState.because(format!("commit during {state:?} is not yet supported; use git commit"))
+        );
     }
     if no_edit && (!amend || !message.is_empty() || file.is_some()) {
         bail!("--no-edit requires --amend and conflicts with -m/-F");
@@ -511,7 +517,11 @@ pub fn create(
         }
     }
     if cleanup_mode == "strip" && (comment_prefix == "auto" || comment_prefix.is_empty()) {
-        bail!("commit cleanup with an automatic or empty comment prefix is not yet supported; use git commit");
+        bail!(
+            FeedbackCode::CommitCleanup.because(
+                "commit cleanup with an automatic or empty comment prefix is not yet supported; use git commit"
+            )
+        );
     }
     // Git cleans whitespace before message hooks, but removes comments only
     // after hooks have supplied or validated the message.

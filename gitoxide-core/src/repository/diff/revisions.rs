@@ -142,7 +142,11 @@ pub fn diff(
             let (old, new) = endpoints(&repo, err, old.as_bstr(), Some(new.as_bstr()), merge_base)?;
             compare_trees(&repo, out, Some(old), Some(new), &paths, format)
         }
-        _ => bail!(message("diff compares at most two revisions; use git diff for combined diffs").validation()),
+        _ => bail!(gix::error::tag(
+            super::super::feedback::FeedbackCode::DiffCombined
+                .because("diff compares at most two revisions; use git diff for combined diffs"),
+            gix::error::Class::Validation,
+        )),
     }
 }
 
@@ -285,9 +289,9 @@ impl PathFilter {
         let mut literals = Vec::new();
         for path in paths {
             if path.starts_with(b":") || path.iter().any(|byte| b"*?[".contains(byte)) {
-                bail!(
-                    message!("only literal paths are supported, not the pathspec `{path}`; use git diff").unsupported()
-                );
+                bail!(super::super::feedback::FeedbackCode::DiffPathspec.unsupported(format!(
+                    "only literal paths are supported, not the pathspec `{path}`; use git diff"
+                )));
             }
             let literal = Literal::new(repo, path.as_bstr())?;
             literals.push((literal.components.join(&b'/').into(), literal.directory));

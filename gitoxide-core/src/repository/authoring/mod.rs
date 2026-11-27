@@ -214,7 +214,10 @@ pub(super) fn index_tree(repo: &gix::Repository) -> Result<gix::ObjectId> {
             continue;
         }
         if entry.mode.is_sparse() {
-            bail!("sparse index authoring is not supported; use git commit");
+            bail!(
+                super::feedback::FeedbackCode::CommitSparseIndex
+                    .because("sparse index authoring is not supported; use git commit")
+            );
         }
         let mode = entry.mode.to_tree_entry_mode().context("invalid index entry mode")?;
         tree.upsert(entry.path(&index), mode.kind(), entry.id)?;

@@ -69,6 +69,9 @@ installed_release_tools_match() {
 }
 make_package "$fixture/a" "$source_a" 0.1.0
 make_package "$fixture/b" "$source_b" 0.2.0
+# Current archives add a declaration sidecar and its receipt field.
+printf '%s\n' '{"claims":[{"id":"brit/command:status"}],"cures":[]}' > "$fixture/a/claims.json"
+printf 'claims_sha256=%s\n' "$(sha256_file "$fixture/a/claims.json")" >> "$fixture/a/BUILD-INFO.txt"
 add_release_tools "$fixture/a" 0.1.0
 add_release_tools "$fixture/b" 0.2.0
 hash_a=$(sha256_file "$fixture/a/brit")

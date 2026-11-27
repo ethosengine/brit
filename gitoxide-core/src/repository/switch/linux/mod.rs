@@ -1120,7 +1120,8 @@ fn execute_locked(
     if let Some(source) = &source {
         ensure!(
             source.starts_with(b"refs/heads/"),
-            "non-local HEAD attachment requires Git"
+            crate::repository::feedback::FeedbackCode::CheckoutNonLocalHead
+                .because("non-local HEAD attachment requires Git")
         );
         branch_oid(&repo, source)?;
     }
@@ -1132,9 +1133,10 @@ fn execute_locked(
     let source_oid = source_id.to_string();
     let (target, target_oid, merge) = match checkout {
         Checkout::Merge(revision) => {
-            let branch = source
-                .as_ref()
-                .context("merge --ff-only requires a checked-out branch")?;
+            let branch = source.as_ref().ok_or_else(|| {
+                crate::repository::feedback::FeedbackCode::MergeDetachedHead
+                    .because("merge --ff-only requires a checked-out branch")
+            })?;
             occupancy(&repo, branch)?;
             let (target_oid, merge) = integration::prepare_merge(&repo, branch, &source_oid, revision)?;
             (branch.clone(), target_oid, Some(merge))
@@ -1145,7 +1147,8 @@ fn execute_locked(
             } else {
                 ensure!(
                     !branch.starts_with(b"refs/") && !branch.starts_with(b"-"),
-                    "existing local branch name required"
+                    crate::repository::feedback::FeedbackCode::SwitchNonBranchTarget
+                        .because("existing local branch name required")
                 );
                 [b"refs/heads/".as_slice(), branch.as_bytes()].concat()
             };

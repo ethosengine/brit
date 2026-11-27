@@ -267,7 +267,8 @@ fn missing_note_matches_git_and_other_verbs_stay_bridged() -> Result<()> {
     ] {
         let output = brit(repo.path(), args)?;
         assert_eq!(output.status.code(), Some(2), "{command} remains bridged");
-        let bridge = format!("brit: notes is a Git bridge operation; run: {command}\n");
+        let bridge =
+            format!("brit: notes is a Git bridge operation; run: {command} [fb brit/capability-absent:notes]\n");
         assert_eq!(output.stderr, bridge, "{command} prints the bridge line on stderr");
         assert!(output.stdout.is_empty(), "{command} leaves stdout empty");
     }

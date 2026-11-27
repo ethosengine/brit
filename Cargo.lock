@@ -474,13 +474,15 @@ dependencies = [
 
 [[package]]
 name = "brit-cli"
-version = "0.3.9"
+version = "0.3.10"
 dependencies = [
+ "anstream",
  "anyhow",
  "brit-bridge",
  "brit-epr",
  "brit-graph",
  "cc",
+ "chrono",
  "clap",
  "eprfs-core",
  "eprfs-host",
@@ -492,15 +494,18 @@ dependencies = [
  "petgraph",
  "rakia-brit",
  "rakia-core",
+ "rustix",
  "serde",
  "serde_json",
+ "tempfile",
  "thiserror",
  "tokio",
+ "windows-sys 0.61.2",
 ]
 
 [[package]]
 name = "brit-epr"
-version = "0.2.5"
+version = "0.2.6"
 dependencies = [
  "blake3",
  "cid",
@@ -2021,7 +2026,7 @@ dependencies = [
 
 [[package]]
 name = "gitoxide"
-version = "0.61.9"
+version = "0.61.10"
 dependencies = [
  "anstream",
  "anyhow",
@@ -2044,7 +2049,7 @@ dependencies = [
 
 [[package]]
 name = "gitoxide-core"
-version = "0.64.9"
+version = "0.64.10"
 dependencies = [
  "anyhow",
  "async-io",

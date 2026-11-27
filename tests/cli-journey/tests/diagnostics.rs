@@ -31,7 +31,8 @@ mod feedback {
     };
     use gix_testtools::TestResult;
 
-    const GAP: &str = "brit: feedback capture gap: epr: test policy refused";
+    const GAP: &str =
+        "brit: feedback capture gap: refused; command result unchanged [fb epr/recorder-unavailable:refused]";
 
     struct Fixture {
         repo: TestRepo,
@@ -75,6 +76,8 @@ exit 47
                 .env("EPR_FEEDBACK_ROOT", self.state.path())
                 .env("ELOHIM_SESSION_ID", session)
                 .env("XDG_CACHE_HOME", self.state.path().join("cache"))
+                .env("XDG_STATE_HOME", self.state.path().join("state"))
+                .env("EPR_FEEDBACK_INVOCATION", "")
                 .env("FEEDBACK_TEST_CALLS", self.state.path().join("calls"))
                 .env("BRIT_QUIET", "0")
         }
@@ -116,7 +119,7 @@ exit 47
             );
         }
         let calls = std::fs::read_to_string(fixture.state.path().join("calls"))?;
-        assert_eq!(calls.lines().count(), 3, "the recorder is called on every invocation");
+        assert_eq!(calls.lines().count(), 2, "each session tries the recorder only once");
         Ok(())
     }
 
@@ -166,7 +169,8 @@ exit 47
         let bridge = fixture.brit("quiet").args(["--quiet", "stash", "list"]).run()?;
         assert_eq!(bridge.status.code(), Some(2), "the bridge still refuses");
         assert_eq!(
-            bridge.stderr, "brit: stash is a Git bridge operation; run: git stash list\n",
+            bridge.stderr,
+            "brit: stash is a Git bridge operation; run: git stash list [fb brit/capability-absent:stash]\n",
             "root --quiet leaves the bridge diagnostic on stderr"
         );
         assert!(bridge.stdout.is_empty(), "the bridge writes its diagnostic to stderr");
@@ -178,7 +182,11 @@ exit 47
             "quiet invocations leave the warning available"
         );
         let calls = std::fs::read_to_string(fixture.state.path().join("calls"))?;
-        assert_eq!(calls.lines().count(), 5, "quiet only affects reporting");
+        assert_eq!(
+            calls.lines().count(),
+            1,
+            "quiet leaves capture enabled but the gap suppresses retries"
+        );
         Ok(())
     }
 }

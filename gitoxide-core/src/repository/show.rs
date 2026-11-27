@@ -12,7 +12,7 @@ use std::borrow::Cow;
 use gix::{
     ObjectId, Result,
     bstr::{BStr, BString, ByteSlice},
-    error::{ResultExt, bail, unsupported},
+    error::{ResultExt, bail},
     objs::Kind,
     prelude::ObjectIdExt,
     utils::stream::{self, Budget},
@@ -22,6 +22,7 @@ use super::diff::{
     Format,
     revisions::{Change, PathFilter, changes, is_range, render, split_positionals},
 };
+use super::feedback::FeedbackCode;
 
 /// What `show` prints for each revision.
 #[derive(Debug, Default, Clone)]
@@ -58,7 +59,7 @@ pub fn show(repo: gix::Repository, out: &mut dyn std::io::Write, options: Option
             if !is_utf8_label(encoding.as_ref()) {
                 let refusal = format!("{key} asks for '{encoding}' output, but brit show prints UTF-8 only");
                 if !is_ascii_compatible(encoding.as_ref()) {
-                    bail!(unsupported(format!("{refusal}; use git show")));
+                    bail!(FeedbackCode::ShowOutputEncoding.unsupported(format!("{refusal}; use git show")));
                 }
                 output = Some(refusal);
             }
@@ -75,7 +76,7 @@ pub fn show(repo: gix::Repository, out: &mut dyn std::io::Write, options: Option
         .chain(options.paths.iter().cloned())
         .collect();
     if let Some(range) = revisions.iter().find(|revision| is_range(revision)) {
-        bail!(unsupported(format!(
+        bail!(FeedbackCode::ShowRange.unsupported(format!(
             "brit show takes single revisions, not the range '{range}'; use brit log or git show"
         )));
     }
@@ -199,9 +200,10 @@ impl State<'_> {
     fn ascii_for_output(&self, text: &[u8], kind: &str, id: ObjectId) -> Result<()> {
         match &self.output {
             Some(refusal) if !text.is_ascii() => {
-                bail!(unsupported(format!(
-                    "{refusal} and {kind} {id} is not ASCII; use git show"
-                )))
+                bail!(
+                    FeedbackCode::ShowOutputEncoding
+                        .unsupported(format!("{refusal} and {kind} {id} is not ASCII; use git show"))
+                )
             }
             _ => Ok(()),
         }
@@ -305,7 +307,7 @@ impl State<'_> {
             if !matches!(format, Format::Stat | Format::NumStat) {
                 let combined = combined_paths(&first, &parent_trees[1..], &against)?;
                 if let Some(path) = combined.first() {
-                    bail!(unsupported(format!(
+                    bail!(FeedbackCode::ShowCombinedDiff.unsupported(format!(
                         "merge {id} changes '{path}' against every parent, which needs a combined diff; use git show"
                     )));
                 }
@@ -397,7 +399,7 @@ pub(crate) fn to_utf8<'a>(data: &'a [u8], encoding: Option<&BStr>, id: ObjectId)
     }
     let known = Encoding::for_label(label).filter(|encoding| ascii_compatible(*encoding));
     let Some(known) = known else {
-        bail!(unsupported(format!(
+        bail!(FeedbackCode::ShowCommitEncoding.unsupported(format!(
             "commit {id} declares the encoding '{label}', which brit cannot decode as Git would; use git show"
         )));
     };

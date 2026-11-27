@@ -1,59 +1,81 @@
 //! Optional local EPR capture through the installed executable, like the context adapter.
-//! No sibling path dependency, raw argv, diagnostics, environment or network transmission.
+//! Capture sends a fixed argument list and compiled claim IDs to the local recorder.
+pub(crate) mod claims;
+mod markers;
+
 use std::{
-    fs::{self, OpenOptions},
-    io::{BufRead, BufReader, Read},
-    path::PathBuf,
+    io::{BufRead, BufReader, ErrorKind, Read, Write},
+    path::{Path, PathBuf},
     process::{Command, Stdio},
     time::{Duration, Instant, SystemTime, UNIX_EPOCH},
 };
 
+use self::{
+    claims::RecorderCause,
+    markers::{GapWrite, Recorder},
+};
+
+#[derive(clap::Subcommand)]
+pub(crate) enum CommandLine {
+    /// Print the compiled feedback claim declarations.
+    Claims {
+        /// Write the declarations as JSON.
+        #[arg(long)]
+        json: bool,
+    },
+}
+
+pub(crate) fn write_claims(mut out: impl Write, json: bool) -> crate::error::Result<()> {
+    if json {
+        serde_json::to_writer(&mut out, &claims::Manifest::COMPILED)?;
+        writeln!(out)?;
+    } else {
+        for row in claims::DECLARATIONS {
+            writeln!(out, "{}", row.id)?;
+        }
+    }
+    Ok(())
+}
+
 pub(crate) struct Capture {
+    pub claim: claims::Claim,
     pub operation: &'static str,
     pub outcome: Option<&'static str>,
     pub quiet: bool,
     pub skip: bool,
+    cures: &'static [claims::Cure],
+    cured_claim: Option<claims::Claim>,
     started: Instant,
 }
 
 impl Capture {
     pub fn new() -> Self {
         Self {
+            claim: claims::OTHER,
             operation: "other",
             outcome: None,
             quiet: false,
             skip: false,
+            cures: claims::CURES,
+            cured_claim: None,
             started: Instant::now(),
         }
     }
 
     pub fn operation(&mut self, name: &str) {
-        self.operation = match name {
-            "status" => "status",
-            "log" => "log",
-            "build" => "build",
-            "snapshot" => "snapshot",
-            "context" => "context",
-            "integrate" => "integrate",
-            "init" => "init",
-            "clone" => "clone",
-            "fetch" => "fetch",
-            "push" => "push",
-            "pull" => "pull",
-            "add" => "add",
-            "commit" => "commit",
-            "diff" => "diff",
-            "show" => "show",
-            "branch" => "branch",
-            "switch" => "switch",
-            "merge" => "merge",
-            "rebase" => "rebase",
-            "restore" => "restore",
-            "tag" => "tag",
-            "remote" => "remote",
-            "submodule" => "submodule",
-            _ => "other",
-        };
+        let declaration = claims::command(name);
+        self.claim = declaration.unwrap_or(claims::UNKNOWN_COMMAND);
+        // Keep the legacy recorder's operation vocabulary for the unchanged capture arguments.
+        self.operation = declaration
+            .and_then(|claim| claim.id().strip_prefix("brit/command:"))
+            .unwrap_or("other");
+    }
+
+    pub fn note_successful_form(&mut self, matches: &clap::ArgMatches) {
+        if !self.cures.is_empty() {
+            self.cured_claim =
+                claims::form_claim(matches).filter(|claim| self.cures.iter().any(|cure| cure.claim == claim.id()));
+        }
     }
 
     pub fn finish(&self, code: i32) {
@@ -70,15 +92,91 @@ impl Capture {
                 .map(PathBuf::from)
         });
         let Some(root) = root else { return };
-        let Err(error) = self.record(root, code) else { return };
-        if !self.quiet && std::env::var_os("BRIT_QUIET").is_none_or(|value| value != "1") && claim_gap_notice() {
-            brit_epr::diagnostic::emit(format_args!(
-                "brit: feedback capture gap: {error}; command result unchanged"
-            ));
+        let Some(emitter) = markers::emitter() else { return };
+        let outcome = self.outcome.unwrap_or(if code == 0 { "passed" } else { "failed" });
+        let session = gap_notice_key();
+        self.observe(&root, &session, &emitter, self.claim, outcome, false);
+        if let Some(claim) = self.cured_claim.filter(|_| code == 0 && outcome == "passed") {
+            self.observe(&root, &session, &emitter, claim, "passed", true);
         }
     }
 
-    fn record(&self, root: PathBuf, code: i32) -> std::io::Result<()> {
+    fn observe(&self, root: &Path, session: &str, emitter: &str, claim: claims::Claim, outcome: &str, cure: bool) {
+        let success = markers::success_file(session, emitter, claim, outcome);
+        if success.as_ref().is_some_and(|path| path.is_file()) {
+            return;
+        }
+        let _cure_lock = if cure {
+            let Some(marker) = &success else { return };
+            let Ok(lock) = markers::lock_file(&marker.with_extension("lock")) else {
+                return;
+            };
+            if marker.is_file() {
+                return;
+            }
+            Some(lock)
+        } else {
+            None
+        };
+        let recorder = Recorder::resolve();
+        let spool = recorder.spool_file(session);
+        let full_spool = spool.as_deref().and_then(markers::full_spool_marker);
+        if full_spool.as_ref().is_some_and(|path| path.is_file()) {
+            return;
+        }
+        if let Some(path) = spool.as_ref().filter(|path| path.is_file()) {
+            if let Some(gap) = markers::read_gap(path) {
+                self.report_gap(session, gap.cause);
+            }
+            return;
+        }
+        match self.record(root, claim, outcome, emitter, &recorder) {
+            Ok(()) => {
+                if let Some(path) = success {
+                    let _ = markers::mark(&path);
+                }
+            }
+            Err(gap) => {
+                if spool.is_some_and(|path| {
+                    matches!(
+                        markers::write_gap(&path, &recorder, gap.cause, emitter, session, gap.stderr.as_deref()),
+                        Ok(GapWrite::Full)
+                    )
+                }) {
+                    if let Some(path) = full_spool {
+                        let _ = markers::mark(&path);
+                    }
+                    return;
+                }
+                self.report_gap(session, gap.cause);
+            }
+        }
+    }
+
+    fn gap_is_visible(&self) -> bool {
+        !self.quiet && std::env::var_os("BRIT_QUIET").is_none_or(|value| value != "1")
+    }
+
+    fn report_gap(&self, session: &str, cause: RecorderCause) {
+        if self.gap_is_visible() && markers::claim_gap_notice(session) {
+            brit_epr::diagnostic::emit_with_claim(
+                format_args!(
+                    "brit: feedback capture gap: {}; command result unchanged",
+                    cause.as_str()
+                ),
+                cause.claim().id(),
+            );
+        }
+    }
+
+    fn record(
+        &self,
+        root: &Path,
+        claim: claims::Claim,
+        outcome: &str,
+        emitter: &str,
+        recorder: &Recorder,
+    ) -> Result<(), RecorderFailure> {
         let nanos = SystemTime::now()
             .duration_since(UNIX_EPOCH)
             .unwrap_or_default()
@@ -90,7 +188,6 @@ impl Capture {
             .filter(|s| !s.is_empty() && s.len() <= 128 && s.bytes().all(|b| b.is_ascii_alphanumeric() || b == b'-'))
             .unwrap_or_else(|| format!("{}-{nanos}", std::process::id()));
         let elapsed = self.started.elapsed().as_millis().to_string();
-        let outcome = self.outcome.unwrap_or(if code == 0 { "passed" } else { "failed" });
         let mut child = Command::new("epr")
             .args([
                 "feedback",
@@ -108,83 +205,82 @@ impl Capture {
                 "--root",
             ])
             .arg(root)
+            .env("EPR_FEEDBACK_CLAIM", claim.id())
+            .env("EPR_FEEDBACK_EMITTER", emitter)
             .stdin(Stdio::null())
             .stdout(Stdio::null())
             .stderr(Stdio::piped())
             .spawn()
-            .map_err(|error| std::io::Error::other(format!("could not start epr feedback recorder: {error}")))?;
+            .map_err(|error| {
+                let cause = if error.kind() == ErrorKind::NotFound && !recorder.found() {
+                    RecorderCause::NotFound
+                } else {
+                    RecorderCause::SpawnFailed
+                };
+                RecorderFailure::new(cause, None)
+            })?;
         let deadline = Instant::now() + Duration::from_secs(2);
-        let mut stderr = child
-            .stderr
-            .take()
-            .ok_or_else(|| std::io::Error::other("recorder stderr unavailable"))?;
+        let mut stderr = child.stderr.take().expect("the recorder stderr is piped");
         let (send, receive) = std::sync::mpsc::sync_channel(1);
-        // Drain concurrently so a verbose refusal cannot fill the pipe and become a
-        // false timeout. Bound the diagnostic, and never join a reader whose pipe
-        // may still be held by a descendant after the recorder exits.
-        if let Err(error) = std::thread::Builder::new()
+        // Drain concurrently to keep a verbose refusal from blocking on a full pipe.
+        // A descendant can hold the pipe open, so wait for its first line only until the deadline.
+        if std::thread::Builder::new()
             .name("feedback-stderr".into())
             .spawn(move || {
                 let mut line = Vec::new();
-                let diagnostic = BufReader::new(stderr.by_ref().take(4097))
+                let diagnostic = BufReader::new(stderr.by_ref().take((markers::STDERR_LIMIT + 4) as u64))
                     .read_until(b'\n', &mut line)
+                    .ok()
+                    .filter(|count| *count != 0)
                     .map(|_| {
-                        let truncated = line.len() > 4096;
-                        line.truncate(4096);
-                        let mut line = String::from_utf8_lossy(&line).trim_end_matches(['\r', '\n']).to_owned();
-                        if truncated {
-                            line.push_str(" [truncated]");
-                        }
-                        line
+                        let line = String::from_utf8_lossy(&line);
+                        let line = line.trim_end_matches(['\r', '\n']);
+                        line[..line.floor_char_boundary(markers::STDERR_LIMIT)].to_owned()
                     });
                 let _ = send.send(diagnostic);
                 let _ = std::io::copy(&mut stderr, &mut std::io::sink());
             })
+            .is_err()
         {
             let _ = child.kill();
             let _ = child.wait();
-            return Err(error);
+            return Err(RecorderFailure::new(RecorderCause::SpawnFailed, None));
         }
         loop {
-            if let Some(status) = child.try_wait()? {
-                return if status.success() {
-                    Ok(())
-                } else {
-                    let diagnostic = receive
+            match child.try_wait() {
+                Ok(Some(status)) if status.success() => return Ok(()),
+                Ok(Some(_)) => {
+                    let stderr = receive
                         .recv_timeout(deadline.saturating_duration_since(Instant::now()))
                         .ok()
-                        .and_then(Result::ok)
-                        .filter(|line| !line.is_empty())
-                        .unwrap_or_else(|| format!("recorder refused ({status})"));
-                    Err(std::io::Error::other(diagnostic))
-                };
+                        .flatten();
+                    return Err(RecorderFailure::new(RecorderCause::Refused, stderr));
+                }
+                Ok(None) if Instant::now() < deadline => std::thread::sleep(Duration::from_millis(10)),
+                result => {
+                    let cause = if result.is_ok() {
+                        RecorderCause::Timeout
+                    } else {
+                        RecorderCause::SpawnFailed
+                    };
+                    let _ = child.kill();
+                    let _ = child.wait();
+                    return Err(RecorderFailure::new(cause, receive.try_recv().ok().flatten()));
+                }
             }
-            if Instant::now() >= deadline {
-                let _ = child.kill();
-                let _ = child.wait();
-                return Err(std::io::Error::new(std::io::ErrorKind::TimedOut, "recorder timeout"));
-            }
-            std::thread::sleep(Duration::from_millis(10));
         }
     }
 }
 
-/// Claim the one diagnostic for this session, even if several Brit processes fail together.
-fn claim_gap_notice() -> bool {
-    let cache = std::env::var_os("XDG_CACHE_HOME")
-        .map(PathBuf::from)
-        .filter(|path| path.is_absolute())
-        .or_else(|| gix::path::env::home_dir().map(|home| home.join(".cache")));
-    let Some(cache) = cache else { return false };
-    let directory = cache.join("brit").join("feedback-notices");
-    if fs::create_dir_all(&directory).is_err() {
-        return false;
+struct RecorderFailure {
+    cause: RecorderCause,
+    stderr: Option<String>,
+}
+
+impl RecorderFailure {
+    fn new(cause: RecorderCause, stderr: Option<String>) -> Self {
+        Self { cause, stderr }
     }
-    OpenOptions::new()
-        .write(true)
-        .create_new(true)
-        .open(directory.join(gap_notice_key()))
-        .is_ok()
 }
 
 fn gap_notice_key() -> String {
@@ -223,4 +319,102 @@ fn gap_notice_key() -> String {
     let elapsed = SystemTime::now().duration_since(UNIX_EPOCH).unwrap_or_default();
     let day = elapsed.as_secs() / 86_400;
     format!("day-{day}")
+}
+
+#[cfg(all(test, target_os = "linux"))]
+mod tests {
+    use std::{fs, os::unix::fs::PermissionsExt};
+
+    use gix_testtools::TestResult;
+
+    use super::*;
+
+    #[test]
+    fn successful_form_observes_an_injected_cure_once_per_session_and_emitter() -> TestResult {
+        const CURES: &[claims::Cure] = &[claims::Cure {
+            claim: "brit/capability-absent:cherry-pick.status",
+            cite: "test note",
+            summary: "Brit can report cherry-pick status on this platform.",
+        }];
+        if let Some(action) = std::env::var_os("BRIT_TEST_CURE_ACTION") {
+            let mut capture = Capture::new();
+            capture.cures = CURES;
+            if action == "symptom" {
+                capture.claim = claims::refusal(gitoxide::plumbing::FeedbackCode::CherryPickStatus);
+                capture.finish(1);
+                return Ok(());
+            }
+            let dir = std::env::var_os("BRIT_TEST_CURE_REPO").expect("fixture repository");
+            let args = ["brit".into(), "-r".into(), dir, "cherry-pick".into(), action];
+            let result = crate::run(args.into(), &mut capture, &mut false);
+            let (code, _) = crate::exit_status(&result, false, false);
+            let expected = std::env::var("BRIT_TEST_CURE_EXIT")?.parse::<i32>()?;
+            assert_eq!(code, expected, "{result:?}");
+            capture.finish(code);
+            return Ok(());
+        }
+
+        let repo = gix_testtools::scripted_fixture_read_only("feedback-cure.sh")?;
+        let temp = tempfile::tempdir()?;
+        let root = temp.path();
+        let recorder = root.join("epr");
+        fs::write(
+            &recorder,
+            r#"#!/bin/sh
+printf '%s %s %s %s\n' "$EPR_FEEDBACK_CLAIM" "$EPR_FEEDBACK_EMITTER" "$6" "$8" >> "$EPR_FEEDBACK_ROOT/calls"
+"#,
+        )?;
+        fs::set_permissions(recorder, fs::Permissions::from_mode(0o700))?;
+        let thread = std::thread::current();
+        let name = thread.name().expect("named test thread");
+        let run = |dir: &std::path::Path, action: &str, session: &str, emitter: &str, expected: i32| -> TestResult {
+            let mut child = Command::new(std::env::current_exe()?);
+            gix_testtools::configure_git_environment(&mut child, root);
+            let out = child
+                .current_dir(root)
+                .args(["--exact", name, "--nocapture"])
+                .env("BRIT_TEST_CURE_ACTION", action)
+                .env("BRIT_TEST_CURE_REPO", dir)
+                .env("BRIT_TEST_CURE_EXIT", expected.to_string())
+                .env("PATH", root)
+                .env("EPR_FEEDBACK_ROOT", root)
+                .env("XDG_CACHE_HOME", root.join("cache"))
+                .env("XDG_STATE_HOME", root.join("state"))
+                .env("ELOHIM_SESSION_ID", session)
+                .env("EPR_BIN_RECORD", emitter)
+                .env_remove("EPR_FEEDBACK_INVOCATION")
+                .output()?;
+            assert!(out.status.success(), "{action}: {out:?}");
+            Ok(())
+        };
+        run(root, "--status", "first", "release-a", 1)?;
+        run(&repo, "--help", "first", "release-a", 0)?;
+        let calls = root.join("calls");
+        assert!(
+            !fs::read_to_string(&calls)?.contains(CURES[0].claim),
+            "failure and help do not observe the cure"
+        );
+
+        // A symptom recorded with the same session and emitter has its own marker.
+        run(&repo, "symptom", "first", "release-a", 1)?;
+        run(&repo, "--status", "first", "release-a", 0)?;
+        run(&repo, "--status", "first", "release-a", 0)?;
+        run(&repo, "--status", "second", "release-a", 0)?;
+        run(&repo, "--status", "first", "release-b", 0)?;
+        let calls = fs::read_to_string(calls)?;
+        assert_eq!(
+            calls
+                .lines()
+                .filter(|line| line.starts_with(CURES[0].claim))
+                .collect::<Vec<_>>(),
+            [
+                "brit/capability-absent:cherry-pick.status release-a other failed",
+                "brit/capability-absent:cherry-pick.status release-a other passed",
+                "brit/capability-absent:cherry-pick.status release-a other passed",
+                "brit/capability-absent:cherry-pick.status release-b other passed",
+            ],
+            "a prior symptom does not block the passage, which is recorded once for each session and emitter"
+        );
+        Ok(())
+    }
 }

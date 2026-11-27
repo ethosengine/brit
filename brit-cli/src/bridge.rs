@@ -6,6 +6,8 @@
 
 use std::ffi::OsString;
 
+use crate::feedback::claims::{self, Claim};
+
 /// Exit code of every bridge refusal; the same code clap and `CliError::Args` use for usage errors.
 pub const EXIT_CODE: i32 = 2;
 
@@ -16,23 +18,29 @@ pub const BRIDGED: &[&str] = &["reset", "rm", "mv", "stash", "revert", "checkout
 pub const BRIDGED_SUBMODULE: &[&str] = &["init", "sync"];
 
 /// Return the line to print if `args` (including the program name) invoke a bridged operation.
-pub fn line(args: &[OsString], command_index: usize, native_update: bool) -> Option<String> {
+pub fn line(args: &[OsString], command_index: usize, native_update: bool) -> Option<(String, Claim)> {
     let name = args.get(command_index)?.to_str()?;
-    let (name, rest) = if matches!(name, "submodule" | "submodules") {
+    let (name, rest, claim) = if matches!(name, "submodule" | "submodules") {
         let verb = args.get(command_index + 1)?.to_str()?;
         let rest = &args[command_index + 2..];
         if !(BRIDGED_SUBMODULE.contains(&verb) || verb == "update" && (!native_update || bridge_update(rest))) {
             return None;
         }
-        (format!("submodule {verb}"), rest)
+        let form = match verb {
+            "init" => "submodule.init",
+            "sync" => "submodule.sync",
+            "update" => "submodule.update",
+            _ => return None,
+        };
+        (format!("submodule {verb}"), rest, claims::capability(form)?)
     } else if name == "notes" {
         let rest = &args[command_index + 1..];
         if native_notes(rest) {
             return None;
         }
-        (name.to_owned(), rest)
+        (name.to_owned(), rest, claims::capability(name)?)
     } else if BRIDGED.contains(&name) {
-        (name.to_owned(), &args[command_index + 1..])
+        (name.to_owned(), &args[command_index + 1..], claims::capability(name)?)
     } else {
         return None;
     };
@@ -47,7 +55,7 @@ pub fn line(args: &[OsString], command_index: usize, native_update: bool) -> Opt
         line.push(' ');
         line.push_str(&shell_quote(&arg.to_string_lossy()));
     }
-    Some(line)
+    Some((line, claim))
 }
 
 fn native_notes(args: &[OsString]) -> bool {
@@ -117,7 +125,7 @@ mod tests {
     }
 
     fn bridge_line(list: &[&str]) -> Option<String> {
-        line(&args(list), 1, true)
+        line(&args(list), 1, true).map(|(line, _claim)| line)
     }
 
     #[test]

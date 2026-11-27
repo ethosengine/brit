@@ -5,6 +5,7 @@ mod mutation;
 mod notes;
 /// The error a `diff --exit-code` or `--quiet` run returns when the compared versions differ.
 pub use gitoxide_core::repository::diff::Differences;
+pub use gitoxide_core::repository::feedback::{FeedbackCode, FeedbackRefusal};
 /// The status a Git-shaped ending asks for, when a command answers through its exit code.
 pub use gitoxide_core::repository::git_spellings::{Exit as GitExit, exit_status};
 pub use gitoxide_core::repository::switch::MutationWait;

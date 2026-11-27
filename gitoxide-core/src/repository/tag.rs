@@ -6,6 +6,7 @@ use gix::{
     prelude::ObjectIdExt,
 };
 
+use super::feedback::FeedbackCode;
 use crate::OutputFormat;
 
 #[derive(Eq, PartialEq, PartialOrd, Ord)]
@@ -158,7 +159,7 @@ fn comment_prefix(repo: &gix::Repository) -> Result<String> {
         }
     }
     if prefix == "auto" || prefix.is_empty() {
-        bail!(gix::error::unsupported(
+        bail!(FeedbackCode::TagCleanup.unsupported(
             "tag message cleanup with an automatic or empty comment prefix is not yet supported; use git tag"
         ));
     }
@@ -192,7 +193,7 @@ pub fn create(repo: gix::Repository, options: create::Options, out: &mut dyn std
         let message = super::commit::clean_message(&message, Some(comment_prefix(&repo)?.as_str()));
         if message.is_empty() {
             // gix encodes an empty message without the blank separator line Git always writes.
-            bail!(gix::error::unsupported(
+            bail!(FeedbackCode::TagEmptyMessage.unsupported(
                 "an annotated tag needs a non-empty message after cleanup; use git tag for empty messages"
             ));
         }

@@ -8,7 +8,16 @@ fixture_dir=$(mktemp -d)
 trap 'rm -r -- "$fixture_dir"' EXIT
 
 mkdir -p -- "$fixture_dir/source/brit-cli" "$fixture_dir/output"
-printf 'fixture executable\n' > "$fixture_dir/brit"
+printf '%s\n' '{"claims":[{"id":"brit/command:status"}],"cures":[]}' > "$fixture_dir/claims.json"
+cat > "$fixture_dir/brit" <<'SCRIPT'
+#!/bin/sh
+set -eu
+test "$#" -eq 3
+test "$1" = feedback
+test "$2" = claims
+test "$3" = --json
+printf '%s\n' '{"claims":[{"id":"brit/command:status"}],"cures":[]}'
+SCRIPT
 chmod +x -- "$fixture_dir/brit"
 cp -- "$fixture_dir/brit" "$fixture_dir/brit.exe"
 for tool in brit-build-ref brit-verify; do
@@ -45,6 +54,7 @@ printf '%s\n' \
   'brit-max-pure-v0.1.1-x86_64-unknown-linux-gnu/BUILD-INFO.txt' \
   'brit-max-pure-v0.1.1-x86_64-unknown-linux-gnu/LICENSE-MIT' \
   'brit-max-pure-v0.1.1-x86_64-unknown-linux-gnu/README.md' \
+  'brit-max-pure-v0.1.1-x86_64-unknown-linux-gnu/claims.json' \
   'brit-max-pure-v0.1.1-x86_64-unknown-linux-gnu/brit' \
   'brit-max-pure-v0.1.1-x86_64-unknown-linux-gnu/brit-build-ref' \
   'brit-max-pure-v0.1.1-x86_64-unknown-linux-gnu/brit-verify' | sort > expected-members.txt
@@ -56,8 +66,14 @@ printf '%s\n' "$receipt" | grep -Fx "source_commit=$source_sha"
 printf '%s\n' "$receipt" | grep -Fx 'cargo_feature_preset=max-pure'
 printf '%s\n' "$receipt" | grep -Fx "binary_sha256=$(sha256sum "$fixture_dir/brit" | awk '{print $1}')"
 
+release_claims_match_receipt() {
+  local package=$1
+  cmp "$fixture_dir/claims.json" "$package/claims.json"
+  grep -Fx "claims_sha256=$(sha256sum "$package/claims.json" | awk '{print $1}')" "$package/BUILD-INFO.txt"
+}
 release_tools_match_receipt() {
   local package=$1 suffix=${2:-} tool filename key
+  release_claims_match_receipt "$package"
   for tool in brit-build-ref brit-verify; do
     filename=$tool$suffix
     key=${tool//-/_}
@@ -93,6 +109,7 @@ if command -v 7z >/dev/null 2>&1 && command -v unzip >/dev/null 2>&1; then
     'brit-max-pure-v0.1.1-x86_64-pc-windows-msvc/BUILD-INFO.txt' \
     'brit-max-pure-v0.1.1-x86_64-pc-windows-msvc/LICENSE-MIT' \
     'brit-max-pure-v0.1.1-x86_64-pc-windows-msvc/README.md' \
+    'brit-max-pure-v0.1.1-x86_64-pc-windows-msvc/claims.json' \
     'brit-max-pure-v0.1.1-x86_64-pc-windows-msvc/brit.exe' \
     'brit-max-pure-v0.1.1-x86_64-pc-windows-msvc/brit-build-ref.exe' \
     'brit-max-pure-v0.1.1-x86_64-pc-windows-msvc/brit-verify.exe' | sort > windows-expected-members.txt
@@ -157,6 +174,7 @@ chmod +x "$fixture_dir/brit-rebase-retained"
   sha256sum -c brit-max-pure-v0.1.1-x86_64-unknown-linux-gnu.tar.gz.sha256
   tar -xzf brit-max-pure-v0.1.1-x86_64-unknown-linux-gnu.tar.gz
   helper_package=brit-max-pure-v0.1.1-x86_64-unknown-linux-gnu
+  release_claims_match_receipt "$helper_package"
   test -f "$helper_package/brit-rebase-retained"
   test ! -L "$helper_package/brit-rebase-retained"
   test -x "$helper_package/brit-rebase-retained"

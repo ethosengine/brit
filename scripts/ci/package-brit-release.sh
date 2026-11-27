@@ -118,6 +118,9 @@ binary_sha=$(sha256_file "$binary")
 lock_sha=$(sha256_file "$source_root/Cargo.lock")
 mkdir -- "$archive_base"
 cp -- "$binary" "$archive_base/$expected_name"
+"./$archive_base/$expected_name" feedback claims --json > "$archive_base/claims.json"
+test -s "$archive_base/claims.json"
+claims_sha=$(sha256_file "$archive_base/claims.json")
 for i in "${!tools[@]}"; do
   filename=${tools[i]}$suffix
   cp -- "$tool_dir/$filename" "$archive_base/$filename"
@@ -137,6 +140,7 @@ done
   printf 'format=brit-binary-archive-v1\n'
   printf 'binary=%s\n' "$expected_name"
   printf 'binary_sha256=%s\n' "$binary_sha"
+  printf 'claims_sha256=%s\n' "$claims_sha"
   for i in "${!tools[@]}"; do
     tool=${tools[i]}
     key=${tool//-/_}

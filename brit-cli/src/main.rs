@@ -213,8 +213,14 @@ fn run_build(command: Command) -> Result<()> {
     }
 }
 
+#[derive(Subcommand)]
+enum FeedbackNamespace {
+    #[command(hide = true, subcommand)]
+    Feedback(feedback::CommandLine),
+}
+
 fn public_command() -> clap::Command {
-    BuildNamespace::augment_subcommands(plumbing::Args::command())
+    FeedbackNamespace::augment_subcommands(BuildNamespace::augment_subcommands(plumbing::Args::command()))
         .version(env!("CARGO_PKG_VERSION"))
         .long_version(VERSION_DETAIL)
         .arg(
@@ -515,8 +521,20 @@ fn exit_status(outcome: &Result<()>, read_only: bool, reader_closed: bool) -> (i
     }
 }
 
-fn run(capture: &mut feedback::Capture, read_only: &mut bool) -> Result<()> {
-    let mut args: Vec<_> = plumbing::args_os().collect();
+fn print_parse_error(error: &clap::Error, capture: &mut feedback::Capture) {
+    if error.kind() != clap::error::ErrorKind::InvalidSubcommand {
+        let _ = error.print();
+        return;
+    }
+    let claim = feedback::claims::UNKNOWN_CAPABILITY;
+    capture.claim = claim;
+    let rendered = error.render().ansi().to_string();
+    let (line, rest) = rendered.split_once('\n').unwrap_or((&rendered, ""));
+    let mut stderr = anstream::AutoStream::auto(std::io::stderr().lock());
+    let _ = write!(stderr, "{line} [fb {}]\n{rest}", claim.id());
+}
+
+fn run(mut args: Vec<std::ffi::OsString>, capture: &mut feedback::Capture, read_only: &mut bool) -> Result<()> {
     let invoked_as_rakia = args
         .first()
         .and_then(|name| std::path::PathBuf::from(name).file_stem().map(|stem| stem == "rakia"))
@@ -528,7 +546,7 @@ fn run(capture: &mut feedback::Capture, read_only: &mut bool) -> Result<()> {
         let cli = Cli::try_parse_from(args).map_err(|error| {
             let code = error.exit_code();
             capture.outcome = Some(if code == 0 { "passed" } else { "refused" });
-            let _ = error.print();
+            print_parse_error(&error, capture);
             error::CliError::ContextExit(code)
         })?;
         return run_build(cli.command);
@@ -553,8 +571,9 @@ fn run(capture: &mut feedback::Capture, read_only: &mut bool) -> Result<()> {
         .find_subcommand("submodule")
         .and_then(|submodule| submodule.find_subcommand("update"))
         .is_some();
-    if let Some(line) = bridge::line(&args, command_index, native_submodule_update) {
-        brit_epr::diagnostic::emit(line);
+    if let Some((line, claim)) = bridge::line(&args, command_index, native_submodule_update) {
+        brit_epr::diagnostic::emit_with_claim(line, claim.id());
+        capture.claim = claim;
         capture.operation = "bridge";
         capture.outcome = Some("bridge-declared");
         return Err(error::CliError::ContextExit(bridge::EXIT_CODE));
@@ -572,7 +591,7 @@ fn run(capture: &mut feedback::Capture, read_only: &mut bool) -> Result<()> {
     // Introspection is deliberately standalone. Never dispatch a Git/native command
     // when the caller combines a census request with work-performing arguments.
     if args.get(1).is_some_and(|arg| arg == "--cli-surface-json") {
-        capture.operation = "surface";
+        capture.operation("surface");
         if args.len() != 2 {
             return Err(error::CliError::Args("--cli-surface-json must be used alone".into()));
         }
@@ -590,9 +609,20 @@ fn run(capture: &mut feedback::Capture, read_only: &mut bool) -> Result<()> {
         }
         let code = error.exit_code();
         capture.outcome = Some(if code == 0 { "passed" } else { "refused" });
-        let _ = error.print();
+        print_parse_error(&error, capture);
         error::CliError::ContextExit(code)
     })?;
+    if matches.subcommand_name() == Some("feedback") {
+        capture.skip = true;
+        *read_only = true;
+        let dirs = change_dirs_before_command(&args, &command);
+        if plumbing::change_dirs(&dirs).is_err() {
+            return Err(error::CliError::ContextExit(128));
+        }
+        let FeedbackNamespace::Feedback(feedback::CommandLine::Claims { json }) =
+            FeedbackNamespace::from_arg_matches(&matches).map_err(|e| error::CliError::Args(e.to_string()))?;
+        return feedback::write_claims(gitoxide::shared::closed_reader::Watch(std::io::stdout().lock()), json);
+    }
     if let Some(name) = matches.subcommand_name() {
         capture.operation(name);
     }
@@ -652,7 +682,9 @@ fn run(capture: &mut feedback::Capture, read_only: &mut bool) -> Result<()> {
             } else {
                 error::CliError::Git(err.into())
             }
-        })
+        })?;
+        capture.note_successful_form(&matches);
+        Ok(())
     }
 }
 
@@ -689,7 +721,7 @@ fn run_command() -> ExitCode {
     gix::utils::stream::Budget::share_process_quota();
     let mut capture = feedback::Capture::new();
     let mut read_only = false;
-    let outcome = run(&mut capture, &mut read_only);
+    let outcome = run(plumbing::args_os().collect(), &mut capture, &mut read_only);
     if read_only {
         // Bytes still in stdout's line buffer (a short blob or `[]` without a newline) would otherwise
         // meet a closed reader only at process exit, after the status was chosen.
@@ -699,11 +731,32 @@ fn run_command() -> ExitCode {
     // result ignored (a reader of stderr may have closed, and `eprintln!` would then panic and exit
     // 101), and the run is recorded after it whatever the write did.
     let (code, report) = exit_status(&outcome, read_only, gitoxide::shared::closed_reader::seen());
+    let refusal = if let Err(error::CliError::Git(cause)) = &outcome {
+        cause
+            .chain()
+            .find_map(|error| {
+                error.downcast_ref::<plumbing::FeedbackRefusal>().or_else(|| {
+                    error
+                        .downcast_ref::<gix::Error>()?
+                        .downcast_any_ref::<plumbing::FeedbackRefusal>()
+                })
+            })
+            .map(|refusal| feedback::claims::refusal(refusal.code))
+    } else {
+        None
+    };
+    if let Some(claim) = refusal {
+        capture.claim = claim;
+    }
     if let (true, Err(e)) = (report, &outcome) {
         if matches!(e, error::CliError::Args(_)) {
             capture.outcome = Some("refused");
         }
-        let _ = writeln!(std::io::stderr(), "{}", diagnostic(e));
+        if let Some(claim) = refusal {
+            brit_epr::diagnostic::emit_with_claim(diagnostic(e), claim.id());
+        } else {
+            brit_epr::diagnostic::emit(diagnostic(e));
+        }
     }
     capture.finish(code);
     ExitCode::from(code as u8)

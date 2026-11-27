@@ -14,44 +14,44 @@ const EXIT_CODE: i32 = 2;
 const ROWS: &[(&[&str], &str)] = &[
     (
         &["reset", "--hard", "HEAD"],
-        "brit: reset is a Git bridge operation; run: git reset --hard HEAD",
+        "brit: reset is a Git bridge operation; run: git reset --hard HEAD [fb brit/capability-absent:reset]",
     ),
     (
         &["rm", "--cached", "file"],
-        "brit: rm is a Git bridge operation; run: git rm --cached file",
+        "brit: rm is a Git bridge operation; run: git rm --cached file [fb brit/capability-absent:rm]",
     ),
-    (&["mv", "a", "b"], "brit: mv is a Git bridge operation; run: git mv a b"),
+    (&["mv", "a", "b"], "brit: mv is a Git bridge operation; run: git mv a b [fb brit/capability-absent:mv]"),
     (
         &["stash", "push", "-m", "wip item"],
-        "brit: stash is a Git bridge operation; run: git stash push -m 'wip item'",
+        "brit: stash is a Git bridge operation; run: git stash push -m 'wip item' [fb brit/capability-absent:stash]",
     ),
     (
         &["revert", "--no-edit", "HEAD"],
-        "brit: revert is a Git bridge operation; run: git revert --no-edit HEAD",
+        "brit: revert is a Git bridge operation; run: git revert --no-edit HEAD [fb brit/capability-absent:revert]",
     ),
     (
         &["checkout", "-b", "feature"],
-        "brit: checkout is a Git bridge operation; run: git checkout -b feature",
+        "brit: checkout is a Git bridge operation; run: git checkout -b feature [fb brit/capability-absent:checkout]",
     ),
     (
         &["notes", "add", "-m", "note", "HEAD"],
-        "brit: notes is a Git bridge operation; run: git notes add -m note HEAD",
+        "brit: notes is a Git bridge operation; run: git notes add -m note HEAD [fb brit/capability-absent:notes]",
     ),
     (
         &["submodule", "update", "--init"],
-        "brit: submodule update is a Git bridge operation; run: git submodule update --init",
+        "brit: submodule update is a Git bridge operation; run: git submodule update --init [fb brit/capability-absent:submodule.update]",
     ),
     (
         &["-C", ".", "submodule", "update", "--merge", "child"],
-        "brit: submodule update is a Git bridge operation; run: git -C . submodule update --merge child",
+        "brit: submodule update is a Git bridge operation; run: git -C . submodule update --merge child [fb brit/capability-absent:submodule.update]",
     ),
     (
         &["submodule", "init"],
-        "brit: submodule init is a Git bridge operation; run: git submodule init",
+        "brit: submodule init is a Git bridge operation; run: git submodule init [fb brit/capability-absent:submodule.init]",
     ),
     (
         &["submodule", "sync", "--recursive"],
-        "brit: submodule sync is a Git bridge operation; run: git submodule sync --recursive",
+        "brit: submodule sync is a Git bridge operation; run: git submodule sync --recursive [fb brit/capability-absent:submodule.sync]",
     ),
 ];
 
@@ -95,7 +95,12 @@ fn repository_git_would_change() -> gix_testtools::tempfile::TempDir {
 fn brit(repo: &Path, args: &[&str]) -> std::process::Output {
     let mut command = Command::new(env!("CARGO_BIN_EXE_brit"));
     gix_testtools::configure_git_environment(&mut command, repo);
-    command.current_dir(repo).args(args).output().expect("run brit")
+    command
+        .current_dir(repo)
+        .env_remove("EPR_FEEDBACK_ROOT")
+        .args(args)
+        .output()
+        .expect("run brit")
 }
 
 #[test]

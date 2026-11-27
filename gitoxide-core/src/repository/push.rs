@@ -183,7 +183,7 @@ pub(crate) mod function {
     use anyhow::Context as _;
 
     use super::Options;
-    use crate::repository::notes_refspec;
+    use crate::repository::{feedback::FeedbackCode, notes_refspec};
 
     /// Mirror git's `die_for_incompatible_opt4` in `vendor/git/parse-options.c`:
     /// given up to four `(predicate, name)` pairs, if two or more predicates are
@@ -248,15 +248,14 @@ pub(crate) mod function {
         P::SubProgress: 'static,
     {
         if notes_refspec::single(&opts.ref_specs)?.is_some() {
+            if opts.delete {
+                anyhow::bail!(FeedbackCode::PushDeletion.because(notes_refspec::ONE_REF_FORM));
+            }
+            if opts.force || opts.force_with_lease.is_some() {
+                anyhow::bail!(FeedbackCode::PushForce.because(notes_refspec::ONE_REF_FORM));
+            }
             anyhow::ensure!(
-                !opts.force
-                    && opts.force_with_lease.is_none()
-                    && !opts.delete
-                    && !opts.prune
-                    && !opts.tags
-                    && !opts.follow_tags
-                    && !opts.all
-                    && !opts.mirror,
+                !opts.prune && !opts.tags && !opts.follow_tags && !opts.all && !opts.mirror,
                 notes_refspec::ONE_REF_FORM
             );
         }
@@ -444,7 +443,8 @@ pub(crate) mod function {
 
         anyhow::ensure!(
             !opts.force_if_includes,
-            "Brit cannot yet enforce --force-if-includes; use git push for this protection"
+            FeedbackCode::PushForceIfIncludes
+                .because("Brit cannot yet enforce --force-if-includes; use git push for this protection")
         );
         let lease = opts
             .force_with_lease
@@ -452,10 +452,14 @@ pub(crate) mod function {
             .map(|arg| super::ExplicitLease::parse(arg, repo.object_hash()))
             .transpose()?;
         if let Some(lease) = &lease {
+            if opts.delete {
+                anyhow::bail!(
+                    FeedbackCode::PushDeletion.because("explicit leases support only one existing branch update")
+                );
+            }
             anyhow::ensure!(
                 !opts.all
                     && !opts.mirror
-                    && !opts.delete
                     && !opts.tags
                     && !opts.follow_tags
                     && !opts.prune
@@ -725,7 +729,10 @@ pub(crate) mod function {
             };
             let notes = notes_refspec::single(&specs_to_send)?;
             if notes.is_some() {
-                anyhow::ensure!(!opts.force && !opts.prune, notes_refspec::ONE_REF_FORM);
+                if opts.force {
+                    anyhow::bail!(FeedbackCode::PushForce.because(notes_refspec::ONE_REF_FORM));
+                }
+                anyhow::ensure!(!opts.prune, notes_refspec::ONE_REF_FORM);
             }
             let conn = remote.connect(gix::remote::Direction::Push)?;
             let prepare = conn.prepare_push(gix::progress::Discard)?;
@@ -769,7 +776,7 @@ pub(crate) mod function {
                             if !update.old_oid.is_null() && update.old_oid != update.new_oid
                                 && !notes_refspec::is_fast_forward(&actual, update.old_oid, update.new_oid).unwrap_or(false)
                             {
-                                return Err(std::io::Error::other(format!("refusing unverified fast-forward update of {name}"))
+                                return Err(FeedbackCode::PushUnverifiedFastForward.because(format!("refusing unverified fast-forward update of {name}"))
                                     .into());
                             }
                         } else if updates.iter().any(|update| notes_refspec::is_notes(update.remote.as_bstr()))
@@ -801,7 +808,7 @@ pub(crate) mod function {
                                         .flatten()
                                         .is_some_and(|base| base.as_ref() == update.old_oid.as_ref());
                                 if !fast_forward {
-                                    return Err(std::io::Error::other(format!(
+                                    return Err(FeedbackCode::PushUnverifiedFastForward.because(format!(
                                         "refusing unverified fast-forward update of {}; fetch remote history and retry, or use git push for force/refspec policy",
                                         update.remote
                                     ))

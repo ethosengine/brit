@@ -26,6 +26,7 @@ pub mod diff;
 pub mod dirty;
 pub mod dirwalk;
 mod editor;
+pub mod feedback;
 pub mod git_spellings;
 pub use editor::function as editor;
 #[cfg(feature = "blocking-client")]
