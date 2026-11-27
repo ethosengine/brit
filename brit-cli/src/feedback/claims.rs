@@ -10,10 +10,6 @@ impl Claim {
     pub fn id(self) -> &'static str {
         self.0.id
     }
-
-    pub fn is_command(self) -> bool {
-        self.id().starts_with("brit/command:")
-    }
 }
 
 #[derive(Serialize)]
@@ -403,11 +399,45 @@ pub(crate) const DECLARATIONS: &[Declaration] = &[
 #[derive(Serialize)]
 pub(super) struct Cure {
     pub(super) claim: &'static str,
+    pub(super) release: &'static str,
+    pub(super) state: CureState,
     pub(super) cite: &'static str,
     pub(super) summary: &'static str,
 }
 
+#[derive(Clone, Copy, PartialEq, Eq, Serialize)]
+#[serde(rename_all = "lowercase")]
+pub(super) enum CureState {
+    Cured,
+    #[allow(dead_code, reason = "The published list has no withdrawals yet")]
+    Withdrawn,
+}
+
+/// Entries are append-only and are never edited or removed. To reopen a claim,
+/// append an entry with state `withdrawn` in the release that withdraws the cure.
 pub(super) const CURES: &[Cure] = &[];
+
+pub(super) fn cure_standing(cures: &[Cure], claim_id: &str) -> bool {
+    cures
+        .iter()
+        .filter(|cure| cure.claim == claim_id)
+        .filter_map(|cure| Some((release_version(cure.release)?, cure.state)))
+        .max_by_key(|(version, _)| *version)
+        .is_some_and(|(_, state)| state == CureState::Cured)
+}
+
+fn release_version(release: &str) -> Option<[u64; 3]> {
+    let mut components = release.split('.');
+    let mut version = [0; 3];
+    for number in &mut version {
+        let component = components.next()?;
+        if (component.len() > 1 && component.starts_with('0')) || !component.bytes().all(|b| b.is_ascii_digit()) {
+            return None;
+        }
+        *number = component.parse().ok()?;
+    }
+    components.next().is_none().then_some(version)
+}
 
 #[derive(Serialize)]
 pub(super) struct Manifest {
@@ -540,7 +570,7 @@ pub(crate) fn refusal(code: FeedbackCode) -> Claim {
     }
 }
 
-#[derive(Clone, Copy, Deserialize)]
+#[derive(Clone, Copy, Deserialize, Serialize)]
 #[serde(rename_all = "kebab-case")]
 pub(crate) enum RecorderCause {
     NotFound,
@@ -647,21 +677,146 @@ mod tests {
     }
 
     #[test]
-    fn cures_reference_declared_claims() {
-        for cure in CURES {
-            assert!(
-                DECLARATIONS.iter().any(|row| row.id == cure.claim),
-                "undeclared cure claim {}",
-                cure.claim
-            );
-            assert!(!cure.cite.trim().is_empty(), "{} requires a citation", cure.claim);
-            assert!(!cure.summary.trim().is_empty(), "{} requires a summary", cure.claim);
+    fn cures_reference_declared_claims() -> gix_testtools::TestResult {
+        validate_cures(CURES)?;
+        validate_cures(&[CURED, WITHDRAWN, CURED_AGAIN])?;
+        assert!(
+            validate_cures(&[Cure {
+                claim: "brit/capability-absent:undeclared",
+                ..CURED
+            }])
+            .is_err(),
+            "each cure must reference a declared claim"
+        );
+        Ok(())
+    }
+
+    const CURED: Cure = Cure {
+        claim: "brit/capability-absent:cherry-pick.status",
+        release: "0.3.12",
+        state: CureState::Cured,
+        cite: "test citation",
+        summary: "Brit can report cherry-pick status.",
+    };
+    const WITHDRAWN: Cure = Cure {
+        release: "0.3.13",
+        state: CureState::Withdrawn,
+        ..CURED
+    };
+    const CURED_AGAIN: Cure = Cure {
+        release: "0.3.14",
+        ..CURED
+    };
+
+    fn validate_cures(cures: &[Cure]) -> gix_testtools::TestResult {
+        let mut entries = HashSet::new();
+        for cure in cures {
+            if !DECLARATIONS.iter().any(|row| row.id == cure.claim) {
+                return Err(format!("undeclared cure claim {}", cure.claim).into());
+            }
+            if release_version(cure.release).is_none() {
+                return Err(format!("invalid cure release {}", cure.release).into());
+            }
+            if !entries.insert((cure.claim, cure.release)) {
+                return Err(format!("duplicate cure entry for {} at {}", cure.claim, cure.release).into());
+            }
+            if cure.cite.trim().is_empty() || cure.summary.trim().is_empty() {
+                return Err(format!("{} requires a citation and a summary", cure.claim).into());
+            }
             assert!(
                 FORM_CODES.iter().any(|code| refusal(*code).id() == cure.claim),
                 "{} has no successful form that `form_claim` maps to it, so its passage would never be observed",
                 cure.claim
             );
         }
+        Ok(())
+    }
+
+    #[test]
+    fn cures_require_a_unique_claim_and_release_pair() -> gix_testtools::TestResult {
+        validate_cures(&[CURED, WITHDRAWN])?;
+        validate_cures(&[
+            CURED,
+            Cure {
+                claim: "brit/capability-absent:cherry-pick.skip",
+                ..CURED
+            },
+        ])?;
+        assert!(
+            validate_cures(&[
+                CURED,
+                Cure {
+                    release: CURED.release,
+                    ..WITHDRAWN
+                }
+            ])
+            .is_err(),
+            "one release cannot declare two states for the same claim"
+        );
+        Ok(())
+    }
+
+    #[test]
+    fn cures_require_a_release_citation_and_summary_in_either_state() -> gix_testtools::TestResult {
+        for cure in [CURED, WITHDRAWN] {
+            validate_cures(std::slice::from_ref(&cure))?;
+            for release in ["0.3", "0.03.12", "0.3.+12", "0.3.12.1", "v0.3.12"] {
+                assert!(
+                    validate_cures(&[Cure { release, ..cure }]).is_err(),
+                    "{release} is outside the major.minor.patch release format"
+                );
+            }
+            assert!(
+                validate_cures(&[Cure { cite: " ", ..cure }]).is_err(),
+                "citation is required"
+            );
+            assert!(
+                validate_cures(&[Cure { summary: "", ..cure }]).is_err(),
+                "summary is required"
+            );
+        }
+        Ok(())
+    }
+
+    #[test]
+    fn latest_cure_standing_uses_numeric_release_precedence() {
+        for cures in [[CURED, WITHDRAWN, CURED_AGAIN], [CURED_AGAIN, CURED, WITHDRAWN]] {
+            assert!(cure_standing(&cures, CURED.claim), "the latest entry restores the cure");
+        }
+        for cures in [[CURED, WITHDRAWN], [WITHDRAWN, CURED]] {
+            assert!(
+                !cure_standing(&cures, CURED.claim),
+                "the latest entry withdraws the cure"
+            );
+        }
+        let cures = [
+            Cure {
+                release: "0.3.10",
+                ..CURED
+            },
+            Cure {
+                release: "0.3.9",
+                ..WITHDRAWN
+            },
+        ];
+        assert!(cure_standing(&cures, CURED.claim), "0.3.10 follows 0.3.9");
+        assert!(!cure_standing(&cures, OTHER.id()), "the history is scoped by claim");
+        assert!(!cure_standing(CURES, CURED.claim), "an empty list declares no cure");
+    }
+
+    #[test]
+    fn cures_serialize_all_five_fields_in_order() -> gix_testtools::TestResult {
+        for (cure, state) in [(CURED, "cured"), (WITHDRAWN, "withdrawn")] {
+            assert_eq!(
+                serde_json::to_string(&cure)?,
+                format!(
+                    r#"{{"claim":"{}","release":"{}","state":"{state}","cite":"{}","summary":"{}"}}"#,
+                    cure.claim, cure.release, cure.cite, cure.summary
+                ),
+                "the declaration uses the agreed wire schema"
+            );
+        }
+        Ok(())
     }
 
     /// `P<n>D` with a positive day count: the only duration form this table declares.

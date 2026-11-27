@@ -27,11 +27,20 @@ Each declaration contains these fields.
 | `retireWhen` | An optional retirement condition, serialized as `null` for every current row. |
 | `cure` | Optional short action text, omitted when absent. |
 
-Each reviewed entry in `cures` has `claim` (a declared ID), `cite` (the commit,
-landing, or note with the root-cause analysis), and `summary` (one plain-text
-sentence). Brit currently ships an empty list. When a mapped form completes
-successfully and its claim is on the list, Brit also captures that claim with
-outcome `passed`. The parsed `cherry-pick` actions map to the published
+Each reviewed entry in `cures` has five required fields. `claim` is a declared
+ID. `release` is a Brit version. `state` is `cured` or `withdrawn`. `cite` points
+to the commit, landing, or note with the root-cause analysis. `summary` is one
+plain-text sentence. Both states require a citation and a summary.
+
+The list is cumulative from the floor release 0.3.10 and is append-only. Each
+claim has at most one entry per release. Releases are ordered by semantic-version
+precedence. A claim's state comes from its latest entry by release in the
+declaration of the head release the device has taken. Brit currently ships an
+empty list.
+
+When a mapped form completes successfully and the claim's latest entry is
+`cured`, Brit also captures that claim with outcome `passed`. The parsed
+`cherry-pick` actions map to the published
 `cherry-pick.single`, `.range`, `.list`, `.continue`, `.abort`, `.skip`, or
 `.status` capability claim.
 
@@ -60,10 +69,17 @@ separator followed by the trimmed invocation. Brit prefixes that hash with
 
 A successful capture creates a marker in
 `$XDG_CACHE_HOME/brit/feedback-markers/` (fallback
-`~/.cache/brit/feedback-markers/`). The marker keys on session, emitter, and
-claim. Command markers include the outcome, and a cure's `passed` observation
-has its own marker even if a symptom was already captured. Brit skips the
-recorder when the marker exists.
+`~/.cache/brit/feedback-markers/`). The marker key includes the session,
+emitter, claim (including its producer), and outcome. Brit skips the recorder
+when the marker exists. Once-per-session notices use marker files in
+`$XDG_CACHE_HOME/brit/feedback-notices/`, one or two small files per session.
+
+Both directories have the same limits:
+
+| Store | Limit |
+| --- | --- |
+| `feedback-markers/`, `feedback-notices/` | 4096 entries each. At the limit, Brit removes regular files last modified more than 7 days ago and never removes `*.lock` files. If the directory is still at 4096 entries, Brit skips writing the marker: the recorder may run again, or the notice may print again, but no record is lost. |
+| `feedback-spool/` | 256 entries, at most 1024 bytes each. See [Spool v1](#spool-v1). |
 
 ## Spool v1
 
@@ -101,10 +117,11 @@ in the directory and published atomically without overwriting an existing record
 `stderr` and `recorder.path` are open fields that never cross devices. To fit
 the size limit, Brit may shorten or omit `stderr` and set `recorder.path` to
 `null`. Brit leaves spool files for EPR to drain. When the spool already has
-256 entries, a recorder failure adds neither a spool record nor a stderr notice.
-A local cache marker still suppresses repeat spawns for that session and recorder
-identity. With space available, a visible gap notice is emitted at most once
-per session.
+256 entries, a recorder failure leaves no spool record. Brit reports the full
+spool on stderr at most once per session, subject to the same quiet settings
+as gap notices. A local cache marker suppresses repeat spawns for that session
+and recorder identity. Full-spool and gap notices each have their own
+once-per-session marker.
 
 Che workspaces wipe `$HOME` at restart, and `XDG_STATE_HOME` may be unset.
 Spool files can therefore disappear on restart. That loses notices, never

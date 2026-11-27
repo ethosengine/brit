@@ -280,10 +280,10 @@ mod markers {
     }
 
     #[test]
-    fn full_feedback_spool_silently_skips_further_recorder_spawns() -> TestResult {
+    fn full_feedback_spool_reports_once_and_skips_further_recorder_spawns() -> TestResult {
         let fixture = Fixture::new()?;
         // A recorder that never answers is unavailable for the session; a refusal is not.
-        fixture.recorder("/bin/sleep 5\n")?;
+        fixture.recorder("exec /bin/sleep 5\n")?;
         let spool = fixture.root.path().join("state/brit/feedback-spool");
         fs::create_dir_all(&spool)?;
         for index in 0..256 {
@@ -291,9 +291,10 @@ mod markers {
         }
 
         let first = fixture.run("first", &["--version"], 0)?;
-        assert!(
-            first.stderr.is_empty(),
-            "a full spool suppresses the gap notice: {first:?}"
+        assert_eq!(
+            String::from_utf8(first.stderr)?,
+            full_spool_notice("timeout"),
+            "the initial full-spool notice carries the actual gap cause"
         );
         assert_eq!(
             fixture.calls()?,
@@ -312,6 +313,40 @@ mod markers {
         fixture.run("first", &["--version"], 0)?;
         assert_eq!(fixture.calls()?, 2, "a replacement recorder can capture at capacity");
         Ok(())
+    }
+
+    #[test]
+    fn quiet_full_feedback_spool_notices_wait_for_a_visible_observe() -> TestResult {
+        let fixture = Fixture::new()?;
+        fixture.recorder("exit 47\n")?;
+        let spool = fixture.root.path().join("state/brit/feedback-spool");
+        fs::create_dir_all(&spool)?;
+        for index in 0..256 {
+            fs::write(spool.join(format!("{index}.json")), b"{}")?;
+        }
+        let quiet = fixture
+            .command("first")
+            .env("BRIT_QUIET", "1")
+            .arg("--version")
+            .output()?;
+        assert!(quiet.status.success(), "capture preserves the command result");
+        assert!(quiet.stderr.is_empty(), "quiet mode suppresses the full-spool notice");
+
+        let visible = fixture.run("first", &["--version"], 0)?;
+        assert_eq!(
+            String::from_utf8(visible.stderr)?,
+            full_spool_notice("refused"),
+            "a visible observation reports the cause saved by the quiet observation"
+        );
+        assert_eq!(fixture.calls()?, 1, "the full-spool marker suppresses a repeat spawn");
+        let other_claim = fixture.run("first", &["status", "--no-write"], 0)?;
+        assert!(other_claim.stderr.is_empty(), "another claim shares the session notice");
+        assert_eq!(fixture.calls()?, 2, "a refusal only suppresses the original claim");
+        Ok(())
+    }
+
+    fn full_spool_notice(cause: &str) -> String {
+        format!("brit: feedback spool full (256 entries); recorder gaps are not kept until epr drains it; command result unchanged [fb epr/recorder-unavailable:{cause}]\n")
     }
 
     #[test]

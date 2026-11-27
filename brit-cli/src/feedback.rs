@@ -70,7 +70,7 @@ impl Capture {
     pub fn note_successful_form(&mut self, matches: &clap::ArgMatches) {
         if !self.cures.is_empty() {
             self.cured_claim =
-                claims::form_claim(matches).filter(|claim| self.cures.iter().any(|cure| cure.claim == claim.id()));
+                claims::form_claim(matches).filter(|claim| claims::cure_standing(self.cures, claim.id()));
         }
     }
 
@@ -117,14 +117,18 @@ impl Capture {
         let recorder = Recorder::resolve();
         let spool = recorder.spool_file(session);
         let full_spool = spool.as_deref().and_then(markers::full_spool_marker);
-        if full_spool.as_ref().is_some_and(|path| path.is_file()) {
-            return;
-        }
         // A recorder that refuses one record still records others, so a refusal is kept under a
         // key that also names the claim: it stops retries of that claim only, never the session.
         let claim_spool = recorder.spool_file(&format!("{session}\0{}", claim.id()));
         let full_claim_spool = claim_spool.as_deref().and_then(markers::full_spool_marker);
-        if full_claim_spool.as_ref().is_some_and(|path| path.is_file()) {
+        // Older empty markers have no cause to report. Refresh them on the next failure.
+        if let Some(gap) = [&full_spool, &full_claim_spool]
+            .into_iter()
+            .flatten()
+            .filter(|path| path.is_file())
+            .find_map(|path| markers::read_gap(path))
+        {
+            self.report_full_spool(session, gap.cause);
             return;
         }
         for path in [&spool, &claim_spool].into_iter().flatten() {
@@ -141,30 +145,22 @@ impl Capture {
                     let _ = markers::mark(&path);
                 }
             }
-            Err(gap) if matches!(gap.cause, RecorderCause::Refused) => {
-                if claim_spool.is_some_and(|path| {
-                    matches!(
-                        markers::write_gap(&path, &recorder, gap.cause, emitter, session, gap.stderr.as_deref()),
-                        Ok(GapWrite::Full)
-                    )
-                }) {
-                    if let Some(path) = full_claim_spool {
-                        let _ = markers::mark(&path);
-                    }
-                    return;
-                }
-                self.report_gap(session, gap.cause);
-            }
             Err(gap) => {
+                let (spool, full_marker) = if matches!(gap.cause, RecorderCause::Refused) {
+                    (claim_spool, full_claim_spool)
+                } else {
+                    (spool, full_spool)
+                };
                 if spool.is_some_and(|path| {
                     matches!(
                         markers::write_gap(&path, &recorder, gap.cause, emitter, session, gap.stderr.as_deref()),
                         Ok(GapWrite::Full)
                     )
                 }) {
-                    if let Some(path) = full_spool {
-                        let _ = markers::mark(&path);
+                    if let Some(path) = full_marker {
+                        let _ = markers::mark_full_spool(&path, gap.cause);
                     }
+                    self.report_full_spool(session, gap.cause);
                     return;
                 }
                 self.report_gap(session, gap.cause);
@@ -177,11 +173,23 @@ impl Capture {
     }
 
     fn report_gap(&self, session: &str, cause: RecorderCause) {
-        if self.gap_is_visible() && markers::claim_gap_notice(session) {
+        if self.gap_is_visible() && markers::claim_notice(session) {
             brit_epr::diagnostic::emit_with_claim(
                 format_args!(
                     "brit: feedback capture gap: {}; command result unchanged",
                     cause.as_str()
+                ),
+                cause.claim().id(),
+            );
+        }
+    }
+
+    fn report_full_spool(&self, session: &str, cause: RecorderCause) {
+        if self.gap_is_visible() && markers::claim_notice(&format!("{session}.spool-full")) {
+            brit_epr::diagnostic::emit_with_claim(
+                format_args!(
+                    "brit: feedback spool full ({} entries); recorder gaps are not kept until epr drains it; command result unchanged",
+                    markers::SPOOL_MAX_ENTRIES
                 ),
                 cause.claim().id(),
             );
@@ -396,6 +404,8 @@ mod tests {
     fn successful_form_observes_an_injected_cure_once_per_session_and_emitter() -> TestResult {
         const CURES: &[claims::Cure] = &[claims::Cure {
             claim: "brit/capability-absent:cherry-pick.status",
+            release: "0.3.12",
+            state: claims::CureState::Cured,
             cite: "test note",
             summary: "Brit can report cherry-pick status on this platform.",
         }];

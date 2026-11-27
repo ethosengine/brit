@@ -6,7 +6,7 @@ use std::{
     fs::{self, File, OpenOptions},
     io::{self, Read, Write},
     path::{Path, PathBuf},
-    time::{SystemTime, UNIX_EPOCH},
+    time::{Duration, SystemTime, UNIX_EPOCH},
 };
 
 use serde::{Deserialize, Serialize};
@@ -14,7 +14,9 @@ use serde::{Deserialize, Serialize};
 use super::claims::{Claim, RecorderCause};
 
 const SPOOL_LIMIT: usize = 1024;
-const SPOOL_MAX_ENTRIES: usize = 256;
+pub(super) const SPOOL_MAX_ENTRIES: usize = 256;
+const MARKER_MAX_ENTRIES: usize = 4096;
+const MARKER_MAX_AGE: Duration = Duration::from_hours(7 * 24);
 pub(super) const STDERR_LIMIT: usize = 256;
 
 fn xdg_dir(variable: &str, default: &str) -> Option<PathBuf> {
@@ -156,30 +158,81 @@ fn markers_dir() -> Option<PathBuf> {
     Some(xdg_dir("XDG_CACHE_HOME", ".cache")?.join("feedback-markers"))
 }
 
+fn notices_dir() -> Option<PathBuf> {
+    Some(xdg_dir("XDG_CACHE_HOME", ".cache")?.join("feedback-notices"))
+}
+
 pub(super) fn success_file(session: &str, emitter: &str, claim: Claim, outcome: &str) -> Option<PathBuf> {
     let key = digest(&[
         session.as_bytes(),
         emitter.as_bytes(),
         claim.id().as_bytes(),
-        if claim.is_command() || outcome == "passed" {
-            outcome.as_bytes()
-        } else {
-            b""
-        },
+        outcome.as_bytes(),
     ]);
     Some(markers_dir()?.join(key))
 }
 
-pub(super) fn claim_gap_notice(session: &str) -> bool {
-    xdg_dir("XDG_CACHE_HOME", ".cache")
-        .map(|base| base.join("feedback-notices").join(session))
+pub(super) fn claim_notice(name: &str) -> bool {
+    notices_dir()
+        .map(|directory| directory.join(name))
+        // A full notice directory skips the marker, so the notice repeats rather than going silent.
         .is_some_and(|path| mark(&path).is_ok())
 }
 
 pub(super) fn mark(path: &Path) -> io::Result<()> {
-    fs::create_dir_all(path.parent().expect("a marker has a directory"))?;
-    OpenOptions::new().write(true).create_new(true).open(path)?;
-    Ok(())
+    create_marker(path, |_| {
+        OpenOptions::new().write(true).create_new(true).open(path)?;
+        Ok(())
+    })
+}
+
+pub(super) fn mark_full_spool(path: &Path, cause: RecorderCause) -> io::Result<()> {
+    create_marker(path, |directory| {
+        // Publish the cause atomically so a later visible observation can report it.
+        let mut temp = tempfile::NamedTempFile::new_in(directory)?;
+        serde_json::to_writer(&mut temp, &StoredGap { cause })?;
+        temp.persist(path)?;
+        Ok(())
+    })
+}
+
+fn create_marker(path: &Path, write: impl FnOnce(&Path) -> io::Result<()>) -> io::Result<()> {
+    let parent = path.parent().expect("a marker has a directory");
+    fs::create_dir_all(parent)?;
+    // Both cache directories carry the same bound; anything else is written unbounded.
+    let Some(directory) = [markers_dir(), notices_dir()]
+        .into_iter()
+        .flatten()
+        .find(|directory| parent.starts_with(directory))
+    else {
+        return write(parent);
+    };
+    let _lock = lock_file(&directory.with_extension("lock"))?;
+    if !marker_directory_has_space(&directory)? {
+        let cutoff = SystemTime::now() - MARKER_MAX_AGE;
+        for entry in fs::read_dir(&directory)? {
+            let entry = entry?;
+            let path = entry.path();
+            if path.extension() != Some(OsStr::new("lock"))
+                && entry.metadata().is_ok_and(|metadata| {
+                    metadata.is_file() && metadata.modified().is_ok_and(|modified| modified < cutoff)
+                })
+            {
+                let _ = fs::remove_file(path);
+            }
+        }
+        if !marker_directory_has_space(&directory)? {
+            return Ok(());
+        }
+    }
+    write(parent)
+}
+
+fn marker_directory_has_space(directory: &Path) -> io::Result<bool> {
+    let count = fs::read_dir(directory)?
+        .take(MARKER_MAX_ENTRIES)
+        .try_fold(0, |count, entry| entry.map(|_| count + 1))?;
+    Ok(count < MARKER_MAX_ENTRIES)
 }
 
 pub(super) fn lock_file(path: &Path) -> io::Result<File> {
@@ -325,7 +378,7 @@ pub(super) enum GapWrite {
     Full,
 }
 
-#[derive(Deserialize)]
+#[derive(Deserialize, Serialize)]
 pub(super) struct StoredGap {
     pub cause: RecorderCause,
 }
@@ -339,6 +392,71 @@ mod tests {
     use gix_testtools::TestResult;
 
     use super::*;
+
+    #[test]
+    fn non_command_markers_distinguish_non_passing_outcomes() -> TestResult {
+        if gix_testtools::run_in_isolated_process()? {
+            return Ok(());
+        }
+        let cache = tempfile::tempdir()?;
+        let _env = gix_testtools::Env::new().set("XDG_CACHE_HOME", cache.path().to_str().expect("fixture path"));
+        let claim = super::super::claims::UNKNOWN_CAPABILITY;
+        assert_ne!(
+            success_file("session", "emitter", claim, "failed").expect("failure marker path"),
+            success_file("session", "emitter", claim, "refused").expect("refusal marker path"),
+            "each outcome has its own marker"
+        );
+        Ok(())
+    }
+
+    #[test]
+    fn full_marker_directory_prunes_old_regular_files() -> TestResult {
+        check_full_marker_directory(markers_dir, true)
+    }
+
+    #[test]
+    fn full_marker_directory_keeps_fresh_entries_and_skips_new_marker() -> TestResult {
+        check_full_marker_directory(markers_dir, false)
+    }
+
+    #[test]
+    fn full_notice_directory_follows_the_marker_bound() -> TestResult {
+        check_full_marker_directory(notices_dir, true)?;
+        check_full_marker_directory(notices_dir, false)
+    }
+
+    fn check_full_marker_directory(dir: fn() -> Option<PathBuf>, old: bool) -> TestResult {
+        if gix_testtools::run_in_isolated_process()? {
+            return Ok(());
+        }
+        let cache = tempfile::tempdir()?;
+        let _env = gix_testtools::Env::new().set("XDG_CACHE_HOME", cache.path().to_str().expect("fixture path"));
+        let directory = dir().expect("fixture marker directory");
+        fs::create_dir_all(&directory)?;
+        let old_mtime = SystemTime::now() - Duration::from_hours(8 * 24);
+        let lock = directory.join("cure.lock");
+        let lock_file = File::create(&lock)?;
+        if old {
+            lock_file.set_modified(old_mtime)?;
+        }
+        drop(lock_file);
+        for index in 1..4096 {
+            let file = File::create(directory.join(format!("marker-{index}")))?;
+            if old {
+                file.set_modified(old_mtime)?;
+            }
+        }
+        let marker = directory.join("new-marker");
+        mark(&marker)?;
+        assert_eq!(marker.is_file(), old, "only pruning makes space for a new marker");
+        assert!(lock.is_file(), "the lock must survive pruning");
+        assert_eq!(
+            fs::read_dir(directory)?.collect::<io::Result<Vec<_>>>()?.len(),
+            if old { 2 } else { 4096 },
+            "old markers are cleaned up and fresh entries are kept"
+        );
+        Ok(())
+    }
 
     #[test]
     fn executable_hash_is_cached_by_canonical_path_size_and_mtime() -> TestResult {
