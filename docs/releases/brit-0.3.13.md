@@ -27,5 +27,8 @@ decided by epr. The format is described in
 | `brit-cli` | 0.3.12 | 0.3.13 |
 | `brit-epr` | 0.2.6 | 0.2.7 |
 | `brit-build-ref` | 0.1.13 | 0.1.14 |
+| `brit-graph` | 0.2.9 | 0.2.10 |
+
+brit-graph has no source change. Its published package carries a Cargo.lock, and that lock now resolves brit-epr 0.2.7, so 0.2.9 could not be republished.
 
 Each crate in the table declares `rust-version = "1.100"`.
