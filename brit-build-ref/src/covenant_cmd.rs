@@ -7,7 +7,10 @@ use std::path::Path;
 use brit_epr::{
     elohim::{
         attestation::{
-            covenant::{validate_payload, CovenantClause, CovenantClauseBody, CovenantClauseKind, CovenantRecord},
+            covenant::{
+                validate_clause_window, validate_payload, CovenantClause, CovenantClauseBody, CovenantClauseKind,
+                CovenantRecord,
+            },
             note::EnvelopeNote,
         },
         refs::{BritRefManager, Lookup},
@@ -44,6 +47,8 @@ pub fn put(repo: &Path, args: &PutArgs<'_>) -> anyhow::Result<()> {
         chrono::DateTime::parse_from_rfc3339(until)
             .map_err(|e| anyhow::anyhow!("invalid --valid-until (ISO-8601 expected): {e}"))?;
     }
+    let valid_from = chrono::Utc::now().to_rfc3339();
+    validate_clause_window(kind, &valid_from, args.valid_until).map_err(|e| anyhow::anyhow!(e))?;
 
     let refs = BritRefManager::new(repo)?;
     let agent_key = AgentKey::load_or_generate(&agent_key_path(repo)?)?;
@@ -55,7 +60,7 @@ pub fn put(repo: &Path, args: &PutArgs<'_>) -> anyhow::Result<()> {
         party: args.party.to_string(),
         quote: args.quote.to_string(),
         payload,
-        valid_from: chrono::Utc::now().to_rfc3339(),
+        valid_from,
         valid_until: args.valid_until.map(str::to_string),
         supersedes,
         agent_id: agent_key.agent_id(),
@@ -85,12 +90,27 @@ fn record_row(record: &CovenantRecord) -> serde_json::Result<serde_json::Value> 
     Ok(serde_json::json!({ "cid": record.cid, "clause": record.clause.view()? }))
 }
 
-/// The session's verified clauses in validFrom order; each record that failed verification is
+/// The matching verified clauses in validFrom order; each record that failed verification is
 /// dropped and named on stderr as `unverifiable: <ref> <reason>`, each held record (an epoch or
 /// scheme this reader does not implement) as `held: <ref> <reason>`.
-pub fn list(repo: &Path, session: &str, output_json: bool) -> anyhow::Result<()> {
+pub fn list(
+    repo: &Path,
+    session: Option<&str>,
+    kind: Option<CovenantClauseKind>,
+    output_json: bool,
+) -> anyhow::Result<()> {
     let refs = BritRefManager::new(repo)?;
-    let scan = refs.list_covenant_clauses(session)?;
+    let scan = match (session, kind) {
+        (Some(session), kind) => {
+            let mut scan = refs.list_covenant_clauses(session)?;
+            if let Some(kind) = kind {
+                scan.verified.retain(|(_, record)| record.clause.body().kind == kind);
+            }
+            scan
+        }
+        (None, Some(kind)) => refs.list_covenant_clauses_by_kind(kind)?,
+        (None, None) => anyhow::bail!("covenant list requires --session or --kind"),
+    };
     if output_json {
         let rows = scan
             .verified

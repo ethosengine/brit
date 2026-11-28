@@ -38,13 +38,13 @@ Behind the `elohim-protocol` feature, beside the build/validation attestations
 
 | field | type | meaning |
 |---|---|---|
-| `kind` | enum `affirmsStewardOfRecord \| declaresPurpose \| variesRule \| revokesClause` | what the clause says |
+| `kind` | enum `affirmsStewardOfRecord \| declaresPurpose \| variesRule \| revokesClause \| grantsCarry` | what the clause says |
 | `session` | string | the agent session the clause binds (opaque to brit) |
 | `party` | string | who spoke, e.g. `human:matthew`; recorded, never judged |
 | `quote` | string | the party's own words, verbatim |
 | `payload` | kind-specific object (below) | |
 | `validFrom` | ISO-8601 | |
-| `validUntil` | ISO-8601 or null | null = until the session ends (the consumer decides what "ends" means) |
+| `validUntil` | ISO-8601 or null | required for `grantsCarry`; for other kinds, null means until the session ends |
 | `supersedes` | BritCid or null | an earlier clause this one restates |
 | `agentId` | string | public key (hex) of the device that recorded it |
 | `signature` | bytes | ed25519 over `canonical_bytes()` with the signature empty |
@@ -60,8 +60,21 @@ Payloads:
   writes one.
 - `revokesClause`: `{ revokes: BritCid }`.
 
-Attenuation-only is a consumer obligation that brit's shape supports: no field can widen a rule.
-The only things a clause can name are a floor the rule declares and a subset of its paths.
+For `variesRule`, attenuation is a consumer obligation. The payload names a floor the rule
+declares and a subset of its paths.
+
+`grantsCarry` has exactly three required payload fields.
+
+- `runner` is the carrying device's `did:key:z…` string. Its base58btc bytes must start with the
+  Ed25519 public-key multicodec prefix `0xed 0x01` and contain exactly 32 key bytes after it.
+- `projects` is a list of gate project names. Use `["*"]` for all projects. A project name cannot
+  contain `*`.
+- `refs` is a list of branch-name globs such as `self/*`. Each glob must omit the `refs/` prefix.
+  Only `*` is a metacharacter. The characters `?`, `[`, `]`, `{`, `}`, and `\` are refused.
+
+Both lists must contain at least one entry. Entries must be non-empty and contain no whitespace.
+`validFrom` and `validUntil` use RFC 3339. `validUntil` must be at or after `validFrom` and at most
+24 hours later. Brit checks the shape. The consuming `epr` judges coverage and standing.
 
 ## Index: append-only refs
 
@@ -83,13 +96,17 @@ revocation is a new clause. Segments are percent-encoded with `encode_segment`.
 brit-build-ref [--repo R] covenant put  --session S --kind K --party P --quote Q
                                         [--payload-json JSON] [--valid-until T] [--supersedes CID]
                                         [--output-json]
-brit-build-ref [--repo R] covenant list --session S [--output-json]
+brit-build-ref [--repo R] covenant list --session S [--kind K] [--output-json]
+brit-build-ref [--repo R] covenant list --kind K [--output-json]
 brit-build-ref [--repo R] covenant show --cid CID   [--output-json]
 ```
 
 `put` signs with the repo's agent key and prints the clause CID, or the full `{cid, clause}` when
-given `--output-json`. `list` prints a JSON array of `{cid, clause}` in `validFrom` order. Exit
-status is non-zero on malformed input. An empty session lists `[]` with exit status 0.
+given `--output-json`. A refused put exits non-zero before writing. List requires `--session`
+or `--kind`. Use `covenant list --kind grantsCarry` to scan all sessions. Give both options to
+filter within one session. The verified rows appear once per CID, ordered by `validFrom` and
+then CID. List prints text rows by default or a JSON array of `{cid, clause}` with `--output-json`.
+Held and unverifiable records are reported on stderr. An empty result lists `[]` with exit status 0.
 
 **Agent key location:** resolve `<git-common-dir>/brit/agent-key`, not `<repo>/.git/brit/agent-key`.
 In a linked worktree `.git` is a file, so the old path breaks there. This fix applies to the

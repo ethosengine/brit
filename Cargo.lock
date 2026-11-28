@@ -459,7 +459,7 @@ dependencies = [
 
 [[package]]
 name = "brit-build-ref"
-version = "0.1.13"
+version = "0.1.14"
 dependencies = [
  "anyhow",
  "brit-epr",
@@ -474,7 +474,7 @@ dependencies = [
 
 [[package]]
 name = "brit-cli"
-version = "0.3.12"
+version = "0.3.13"
 dependencies = [
  "anstream",
  "anyhow",
@@ -505,7 +505,7 @@ dependencies = [
 
 [[package]]
 name = "brit-epr"
-version = "0.2.6"
+version = "0.2.7"
 dependencies = [
  "blake3",
  "cid",

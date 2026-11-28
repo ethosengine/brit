@@ -29,7 +29,7 @@ pub use crate::elohim::attestation::note::HeldReason;
 use crate::{
     elohim::attestation::{
         build::{BuildBody, BuildNote},
-        covenant::{decode_covenant_record, CovenantClause, CovenantRecord},
+        covenant::{decode_covenant_record, CovenantClause, CovenantClauseKind, CovenantRecord},
         deploy::{DeployBody, DeployNote},
         note::{decode_note, Decoded, NoteBody, VersionedNote},
         validation::{ValidationBody, ValidationNote},
@@ -698,11 +698,24 @@ impl BritRefManager {
             refs.extend(self.covenant_session_refs(&legacy)?);
         }
         let mut scan = self.covenant_scan(refs, Some(session))?;
+        Self::sort_covenant_clauses(&mut scan);
+        Ok(scan)
+    }
+
+    /// Verified clauses of `kind` across all sessions, ordered by `(validFrom, CID)` and
+    /// listed once per CID. Held and unverifiable records from the scan are included.
+    pub fn list_covenant_clauses_by_kind(&self, kind: CovenantClauseKind) -> Result<Scan<CovenantRecord>, RefError> {
+        let mut scan = self.covenant_scan(self.for_each_ref(COVENANT_PREFIX)?, None)?;
+        scan.verified.retain(|(_, record)| record.clause.body().kind == kind);
+        Self::sort_covenant_clauses(&mut scan);
+        Ok(scan)
+    }
+
+    fn sort_covenant_clauses(scan: &mut Scan<CovenantRecord>) {
         scan.verified
             .sort_by_cached_key(|(name, r)| (r.clause.body().valid_from, r.cid.clone(), name.clone()));
         // A verified CID is computed from the whole clause, so equal CIDs are equal records.
         scan.verified.dedup_by(|later, earlier| later.1.cid == earlier.1.cid);
-        Ok(scan)
     }
 
     /// Whether the session directory `segment` holds a record that verifies for exactly `session`.

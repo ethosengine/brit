@@ -11,7 +11,10 @@ use std::{
 };
 
 use brit_epr::{
-    elohim::attestation::{build::BuildAttestationContentNode, covenant::CovenantClauseKind},
+    elohim::attestation::{
+        build::BuildAttestationContentNode,
+        covenant::{decode_covenant_record, CovenantClauseKind},
+    },
     engine::{cid::BritCid, content_node::ContentNode, signing::AgentKey},
 };
 use serde_json::Value;
@@ -826,6 +829,157 @@ fn write_ref_json(repo: &Path, ref_name: &str, value: &Value) {
         &serde_json::to_vec(value).expect("JSON encodes"),
     );
     git(repo, &["update-ref", ref_name, &blob]);
+}
+
+// Ed25519 multicodec prefix followed by 32 bytes of 0x2a.
+const CARRY_PAYLOAD: &str =
+    r#"{"runner":"did:key:z6MkhHrTbtosB4xyyJM217fS4ry35F7JhZ5oA9uVHErBJDL5","projects":["gate"],"refs":["self/*"]}"#;
+
+fn put_carry(repo: &Path, session: &str, payload: &str, expiry: &[&str]) -> Output {
+    let mut args = vec![
+        "covenant",
+        "put",
+        "--session",
+        session,
+        "--kind",
+        "grantsCarry",
+        "--party",
+        "human:t",
+        "--quote",
+        "carry this project",
+        "--payload-json",
+        payload,
+        "--output-json",
+    ];
+    args.extend_from_slice(expiry);
+    brit(repo, &args)
+}
+
+#[test]
+fn covenant_put_refuses_invalid_carry_without_writes() {
+    let tmp = repo();
+    let objects = git(tmp.path(), &["count-objects"]);
+    let within = (chrono::Utc::now() + chrono::TimeDelta::hours(1)).to_rfc3339();
+    let too_late = (chrono::Utc::now() + chrono::TimeDelta::hours(25)).to_rfc3339();
+    for (payload, expiry, reason) in [
+        ("{}", &["--valid-until", within.as_str()][..], "invalid payload"),
+        (CARRY_PAYLOAD, &[][..], "validUntil is required"),
+        (CARRY_PAYLOAD, &["--valid-until", too_late.as_str()][..], "24 hours"),
+        (
+            CARRY_PAYLOAD,
+            &["--valid-until", "2000-01-01T00:00:00Z"][..],
+            "before validFrom",
+        ),
+    ] {
+        let out = put_carry(tmp.path(), "s1", payload, expiry);
+        assert!(!out.status.success(), "put must refuse {reason}");
+        assert!(stdout(&out).is_empty(), "a refusal prints no successful result");
+        assert!(stderr(&out).contains(reason), "{}", stderr(&out));
+    }
+    assert!(
+        !tmp.path().join(".git/brit").exists(),
+        "refused puts create no brit state"
+    );
+    assert_eq!(
+        git(tmp.path(), &["count-objects"]),
+        objects,
+        "no Git objects were written"
+    );
+    assert!(
+        git(tmp.path(), &["for-each-ref", "refs/notes/brit/covenant/"]).is_empty(),
+        "no covenant refs were written"
+    );
+}
+
+#[test]
+fn covenant_unknown_kind_fails_decode_and_is_listed_as_unverifiable() -> gix_testtools::TestResult {
+    let tmp = repo();
+    let row = put_clause(tmp.path(), "s1", "yes");
+    let cid = row["cid"].as_str().expect("cid");
+    let ref_name = format!("refs/notes/brit/covenant/s1/{cid}");
+    let mut stored = stored_record(tmp.path(), &ref_name);
+    body_mut(&mut stored["clause"])["kind"] = Value::String("grantsCarryV2".into());
+    let reason = decode_covenant_record(&serde_json::to_vec(&stored)?).expect_err("unknown kinds must fail decoding");
+    assert!(reason.contains("unknown variant `grantsCarryV2`"), "{reason}");
+    write_ref_json(tmp.path(), &ref_name, &stored);
+
+    for filter in [["--session", "s1"], ["--kind", "affirmsStewardOfRecord"]] {
+        let out = brit(tmp.path(), &["covenant", "list", filter[0], filter[1], "--output-json"]);
+        assert!(out.status.success(), "{}", stderr(&out));
+        assert_eq!(stdout(&out).trim(), "[]", "unknown kinds are never returned");
+        let err = stderr(&out);
+        let lines = unverifiable_lines(&err);
+        assert_eq!(lines.len(), 1, "{err}");
+        assert!(
+            lines[0].contains(&ref_name) && lines[0].contains("grantsCarryV2"),
+            "{err}"
+        );
+    }
+    Ok(())
+}
+
+#[test]
+fn covenant_list_filters_grants_carry_across_sessions_and_within_one() -> gix_testtools::TestResult {
+    let tmp = repo();
+    let until = (chrono::Utc::now() + chrono::TimeDelta::hours(1)).to_rfc3339();
+    let put = |session| -> serde_json::Result<Value> {
+        let out = put_carry(tmp.path(), session, CARRY_PAYLOAD, &["--valid-until", &until]);
+        assert!(out.status.success(), "{}", stderr(&out));
+        serde_json::from_str(&stdout(&out))
+    };
+    let first = put("z/1")?;
+    let second = put("a")?;
+    put_clause(tmp.path(), "z/1", "yes");
+    put_clause(tmp.path(), "a", "yes");
+
+    let cid = first["cid"].as_str().expect("cid");
+    let duplicate = stored_record(tmp.path(), &format!("refs/notes/brit/covenant/z%2F1/{cid}"));
+    write_ref_json(tmp.path(), &format!("refs/notes/brit/covenant/z/1/{cid}"), &duplicate);
+
+    let list = |filter: &[&str]| -> serde_json::Result<Vec<Value>> {
+        let mut args = vec!["covenant", "list", "--kind", "grantsCarry", "--output-json"];
+        args.extend_from_slice(filter);
+        let out = brit(tmp.path(), &args);
+        assert!(out.status.success(), "{}", stderr(&out));
+        assert!(stderr(&out).is_empty(), "{}", stderr(&out));
+        serde_json::from_str(&stdout(&out))
+    };
+    let mut expected = [first.clone(), second];
+    expected.sort_by_cached_key(|row| (row["clause"]["validFrom"].to_string(), row["cid"].to_string()));
+    assert_eq!(
+        list(&[])?,
+        expected,
+        "list both sessions by (validFrom, CID), once per CID"
+    );
+    assert_eq!(list(&["--session", "z/1"])?, [first], "list only the requested session");
+
+    let out = brit(tmp.path(), &["covenant", "list", "--kind", "grantsCarry"]);
+    assert!(out.status.success(), "{}", stderr(&out));
+    let rows: Vec<_> = expected
+        .iter()
+        .map(|row| {
+            let clause = &row["clause"];
+            format!(
+                "{} {} grantsCarry human:t",
+                row["cid"].as_str().expect("cid"),
+                clause["validFrom"].as_str().expect("validFrom")
+            )
+        })
+        .collect();
+    assert_eq!(
+        stdout(&out),
+        format!("{}\n", rows.join("\n")),
+        "list uses the usual text rows"
+    );
+    Ok(())
+}
+
+#[test]
+fn covenant_list_requires_session_or_kind() {
+    let tmp = repo();
+    let out = brit(tmp.path(), &["covenant", "list"]);
+    assert_eq!(out.status.code(), Some(2), "{}", stderr(&out));
+    assert!(stderr(&out).contains("Usage:"), "{}", stderr(&out));
 }
 
 #[test]

@@ -2,6 +2,7 @@
 
 use std::path::PathBuf;
 
+use brit_epr::elohim::attestation::covenant::CovenantClauseKind;
 use clap::{Parser, Subcommand};
 
 mod build_cmd;
@@ -68,7 +69,7 @@ enum CovenantCmd {
         /// The agent session the clause binds.
         #[arg(long)]
         session: String,
-        /// affirmsStewardOfRecord | declaresPurpose | variesRule | revokesClause.
+        /// affirmsStewardOfRecord | declaresPurpose | variesRule | revokesClause | grantsCarry.
         #[arg(long)]
         kind: String,
         /// Who spoke (recorded verbatim, never judged), e.g. `human:matthew`.
@@ -80,7 +81,7 @@ enum CovenantCmd {
         /// Kind-specific payload as JSON text.
         #[arg(long, default_value = "{}")]
         payload_json: String,
-        /// ISO-8601 end of validity (default: until the session ends).
+        /// ISO-8601 end of validity. Required for grantsCarry; otherwise defaults to the session end.
         #[arg(long)]
         valid_until: Option<String>,
         /// CID of an earlier clause this one restates.
@@ -90,11 +91,14 @@ enum CovenantCmd {
         #[arg(long)]
         output_json: bool,
     },
-    /// List a session's clauses in validFrom order.
+    /// List clauses in validFrom order.
     List {
         /// The session to list.
+        #[arg(long, required_unless_present = "kind")]
+        session: Option<String>,
+        /// The clause kind to list. Scans all sessions when --session is omitted.
         #[arg(long)]
-        session: String,
+        kind: Option<CovenantClauseKind>,
         /// Print a JSON array of `{cid, clause}`.
         #[arg(long)]
         output_json: bool,
@@ -433,7 +437,11 @@ fn run(cli: Cli) -> anyhow::Result<()> {
                     output_json,
                 },
             ),
-            CovenantCmd::List { session, output_json } => covenant_cmd::list(&repo, &session, output_json),
+            CovenantCmd::List {
+                session,
+                kind,
+                output_json,
+            } => covenant_cmd::list(&repo, session.as_deref(), kind, output_json),
             CovenantCmd::Show { cid, output_json } => covenant_cmd::show(&repo, &cid, output_json),
         },
 
