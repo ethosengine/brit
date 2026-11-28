@@ -280,6 +280,29 @@ mod markers {
     }
 
     #[test]
+    fn relative_home_does_not_create_local_capture_files() -> TestResult {
+        let fixture = Fixture::new()?;
+        let cwd = fixture.root.path().join("cwd");
+        fs::create_dir(&cwd)?;
+        let out = fixture
+            .command("first")
+            .current_dir(&cwd)
+            .env("HOME", "relative-home")
+            .env("EPR_BIN_RECORD", "feedback-test")
+            .env_remove("XDG_STATE_HOME")
+            .env_remove("XDG_CACHE_HOME")
+            .arg("--version")
+            .output()?;
+        assert!(out.status.success(), "capture preserves the command result: {out:?}");
+        assert!(
+            fs::read_dir(cwd)?.next().is_none(),
+            "missing recorder must not create spool or cache files under the working directory"
+        );
+        assert!(out.stderr.is_empty(), "no notice is emitted without a cache directory");
+        Ok(())
+    }
+
+    #[test]
     fn full_feedback_spool_reports_once_and_skips_further_recorder_spawns() -> TestResult {
         let fixture = Fixture::new()?;
         // A recorder that never answers is unavailable for the session; a refusal is not.

@@ -15,15 +15,39 @@ use super::claims::{Claim, RecorderCause};
 
 const SPOOL_LIMIT: usize = 1024;
 pub(super) const SPOOL_MAX_ENTRIES: usize = 256;
+const SPOOL_TEMP_MAX_AGE: Duration = Duration::from_hours(1);
 const MARKER_MAX_ENTRIES: usize = 4096;
 const MARKER_MAX_AGE: Duration = Duration::from_hours(7 * 24);
 pub(super) const STDERR_LIMIT: usize = 256;
 
 fn xdg_dir(variable: &str, default: &str) -> Option<PathBuf> {
-    env::var_os(variable)
-        .map(PathBuf::from)
-        .filter(|path| path.is_absolute())
-        .or_else(|| gix::path::env::home_dir().map(|home| home.join(default)))
+    let xdg = env::var_os(variable);
+    let home = env::var_os("HOME");
+    let windows = cfg!(windows);
+    let platform_home = windows.then(env::home_dir).flatten();
+    resolve_xdg_dir(
+        xdg.as_deref().map(Path::new),
+        home.as_deref().map(Path::new),
+        windows,
+        platform_home.as_deref(),
+        default,
+    )
+}
+
+fn resolve_xdg_dir(
+    xdg: Option<&Path>,
+    home: Option<&Path>,
+    windows: bool,
+    platform_home: Option<&Path>,
+    default: &str,
+) -> Option<PathBuf> {
+    xdg.filter(|path| path.is_absolute())
+        .map(Path::to_path_buf)
+        .or_else(|| {
+            home.filter(|path| path.is_absolute())
+                .or_else(|| platform_home.filter(|path| windows && path.is_absolute()))
+                .map(|home| home.join(default))
+        })
         .map(|base| base.join("brit"))
 }
 
@@ -320,9 +344,28 @@ pub(super) fn write_gap(
     if path.is_file() {
         return Ok(GapWrite::Stored);
     }
-    for (index, entry) in fs::read_dir(directory)?.take(SPOOL_MAX_ENTRIES).enumerate() {
-        entry?;
-        if index + 1 == SPOOL_MAX_ENTRIES {
+    // A clock within an hour of the epoch has nothing old enough to prune.
+    let cutoff = SystemTime::now().checked_sub(SPOOL_TEMP_MAX_AGE).unwrap_or(UNIX_EPOCH);
+    for entry in fs::read_dir(directory)? {
+        let entry = entry?;
+        let name = entry.file_name();
+        let name = name.as_encoded_bytes();
+        if name.starts_with(b".tmp")
+            && !name.ends_with(b".json")
+            && entry
+                .metadata()
+                .is_ok_and(|metadata| metadata.is_file() && metadata.modified().is_ok_and(|modified| modified < cutoff))
+        {
+            let _ = fs::remove_file(entry.path());
+        }
+    }
+    let mut count = 0;
+    for entry in fs::read_dir(directory)? {
+        if !entry?.file_name().as_encoded_bytes().ends_with(b".json") {
+            continue;
+        }
+        count += 1;
+        if count == SPOOL_MAX_ENTRIES {
             return Ok(GapWrite::Full);
         }
     }
@@ -392,6 +435,112 @@ mod tests {
     use gix_testtools::TestResult;
 
     use super::*;
+
+    #[test]
+    fn xdg_directory_prefers_absolute_xdg_then_absolute_home() {
+        let root = Path::new(if cfg!(windows) { r"C:\test" } else { "/test" });
+        let xdg = root.join("xdg");
+        let home = root.join("home");
+        let default = ".local/state";
+        for (variable, expected) in [
+            (Some(xdg.as_path()), xdg.join("brit")),
+            (Some(Path::new("relative-xdg")), home.join(default).join("brit")),
+            (None, home.join(default).join("brit")),
+        ] {
+            assert_eq!(
+                resolve_xdg_dir(variable, Some(&home), false, None, default),
+                Some(expected),
+                "resolve the state directory for XDG_STATE_HOME={variable:?}"
+            );
+        }
+    }
+
+    #[test]
+    fn xdg_directory_uses_only_an_absolute_windows_fallback_without_absolute_home() {
+        let profile = Path::new(if cfg!(windows) { r"C:\profile" } else { "/profile" });
+        let default = ".cache";
+        for home in [Some(Path::new("relative-home")), Some(Path::new("")), None] {
+            assert_eq!(
+                resolve_xdg_dir(None, home, false, Some(profile), default),
+                None,
+                "no Unix cache directory for HOME={home:?}"
+            );
+            assert_eq!(
+                resolve_xdg_dir(None, home, true, Some(profile), default),
+                Some(profile.join(default).join("brit")),
+                "use the Windows profile for HOME={home:?}"
+            );
+        }
+        assert_eq!(
+            resolve_xdg_dir(None, None, true, Some(Path::new("relative-profile")), default),
+            None,
+            "the Windows fallback also has to be absolute"
+        );
+    }
+
+    #[test]
+    fn spool_capacity_counts_only_json_entries() -> TestResult {
+        let dir = tempfile::tempdir()?;
+        let spool = dir.path().join("feedback-spool");
+        fs::create_dir(&spool)?;
+        for index in 0..SPOOL_MAX_ENTRIES - 1 {
+            fs::write(spool.join(format!("{index}.json")), b"{}")?;
+        }
+        for index in 0..10 {
+            File::create(spool.join(format!(".tmp{index}")))?;
+        }
+        let write = |name| {
+            write_gap(
+                &spool.join(name),
+                &Recorder(None),
+                RecorderCause::NotFound,
+                "test",
+                "first",
+                None,
+            )
+        };
+        assert!(
+            matches!(write("last.json")?, GapWrite::Stored),
+            "temporaries leave the last slot free"
+        );
+        assert!(spool.join("last.json").is_file(), "the last record fills the spool");
+        assert!(
+            matches!(write("extra.json")?, GapWrite::Full),
+            "256 records fill the spool"
+        );
+        Ok(())
+    }
+
+    #[test]
+    fn spool_prunes_only_old_temporary_files() -> TestResult {
+        let dir = tempfile::tempdir()?;
+        let spool = dir.path().join("feedback-spool");
+        fs::create_dir(&spool)?;
+        let old_mtime = SystemTime::now() - Duration::from_hours(2);
+        for name in [".tmp-old", ".tmp-keep.json", "keep.txt"] {
+            File::create(spool.join(name))?.set_modified(old_mtime)?;
+        }
+        File::create(spool.join(".tmp-fresh"))?;
+        #[cfg(unix)]
+        std::os::unix::fs::symlink("keep.txt", spool.join(".tmp-link"))?;
+
+        write_gap(
+            &spool.join("new.json"),
+            &Recorder(None),
+            RecorderCause::NotFound,
+            "test",
+            "first",
+            None,
+        )?;
+
+        assert!(!spool.join(".tmp-old").exists(), "stale temporary files are removed");
+        for name in [".tmp-fresh", ".tmp-keep.json", "keep.txt"] {
+            assert!(spool.join(name).is_file(), "{name} survives cleanup");
+        }
+        #[cfg(unix)]
+        assert!(spool.join(".tmp-link").is_symlink(), "cleanup preserves symlinks");
+        Ok(())
+    }
 
     #[test]
     fn non_command_markers_distinguish_non_passing_outcomes() -> TestResult {

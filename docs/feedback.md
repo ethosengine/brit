@@ -67,26 +67,33 @@ session. The key hashes the trimmed session value and, when present, a NUL
 separator followed by the trimmed invocation. Brit prefixes that hash with
 `session-` or `invocation-`. With neither variable it uses `day-<UTC epoch day>`.
 
-A successful capture creates a marker in
-`$XDG_CACHE_HOME/brit/feedback-markers/` (fallback
-`~/.cache/brit/feedback-markers/`). The marker key includes the session,
-emitter, claim (including its producer), and outcome. Brit skips the recorder
-when the marker exists. Once-per-session notices use marker files in
-`$XDG_CACHE_HOME/brit/feedback-notices/`, one or two small files per session.
+Brit uses `XDG_CACHE_HOME` for markers and notices and `XDG_STATE_HOME` for
+the spool when the respective variable is absolute. Otherwise, Brit uses
+`.cache` or `.local/state` under an absolute `HOME`. On Windows, if `HOME` is
+unset, empty, or relative, Brit uses the same subdirectory under the Windows
+profile directory if it is absolute. Without an applicable absolute path,
+Brit has no local capture directory for that store.
+
+A successful capture creates a marker in `brit/feedback-markers/` under the
+resolved cache directory. The marker key includes the session, emitter, claim
+(including its producer), and outcome. Brit skips the recorder when the
+marker exists. Once-per-session notices use marker files in
+`brit/feedback-notices/` under the same cache directory, one or two small files
+per session.
 
 Both directories have the same limits:
 
 | Store | Limit |
 | --- | --- |
 | `feedback-markers/`, `feedback-notices/` | 4096 entries each. At the limit, Brit removes regular files last modified more than 7 days ago and never removes `*.lock` files. If the directory is still at 4096 entries, Brit skips writing the marker: the recorder may run again, or the notice may print again, but no record is lost. |
-| `feedback-spool/` | 256 entries, at most 1024 bytes each. See [Spool v1](#spool-v1). |
+| `feedback-spool/` | 256 `.json` records, at most 1024 bytes each. See [Spool v1](#spool-v1). |
 
 ## Spool v1
 
-An unavailable recorder is recorded under `$XDG_STATE_HOME/brit/feedback-spool/`
-(fallback `~/.local/state/brit/feedback-spool/`). The filename is the first 32
-hex characters of SHA-256 over the session key and recorder identity, followed
-by `.json`. Each hash input is framed by its byte length as a little-endian
+An unavailable recorder is recorded in `brit/feedback-spool/` under the
+resolved state directory. The filename is the first 32 hex characters of
+SHA-256 over the session key and recorder identity, followed by `.json`.
+Each hash input is framed by its byte length as a little-endian
 `u64`. The inputs are the session key, the canonical path's native encoded bytes,
 the size as a little-endian `u64`, and mtime as little-endian signed Unix
 nanoseconds (`i128`, empty when unavailable). If the executable is missing,
@@ -116,11 +123,14 @@ in the directory and published atomically without overwriting an existing record
 
 `stderr` and `recorder.path` are open fields that never cross devices. To fit
 the size limit, Brit may shorten or omit `stderr` and set `recorder.path` to
-`null`. Brit leaves spool files for EPR to drain. When the spool already has
-256 entries, a recorder failure leaves no spool record. Brit reports the full
-spool on stderr at most once per session, subject to the same quiet settings
-as gap notices. A local cache marker suppresses repeat spawns for that session
-and recorder identity. Full-spool and gap notices each have their own
+`null`. Brit leaves spool files for EPR to drain. Under the spool lock, Brit
+removes regular files with names starting with `.tmp` that were last modified
+more than an hour ago. It keeps `.json` records and counts only those records
+toward the limit. When the spool already has 256 records, a recorder failure
+leaves no spool record. Brit reports the full spool on stderr at most once per
+session, subject to the same quiet settings as gap notices. A local cache
+marker suppresses repeat spawns for that session and recorder identity.
+Full-spool and gap notices each have their own
 once-per-session marker.
 
 Che workspaces wipe `$HOME` at restart, and `XDG_STATE_HOME` may be unset.
